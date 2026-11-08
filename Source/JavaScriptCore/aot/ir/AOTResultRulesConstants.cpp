@@ -101,7 +101,7 @@ struct WrittenContentsOfData {
 
 } // anonymous namespace
 
-static TypeID typeOfArrayInData(const TypingContext&, const DataNode::Array&);
+static TypeID typeOfArrayInData(const TypingContext&, const DataNode::Array&, DataID whoseRootItIs = { });
 
 static void addToWrittenContentsOfData(const TypingContext& context, const DataNode& node, WrittenContentsOfData& contents)
 {
@@ -151,14 +151,28 @@ static TypeID typeOfWrittenContentsOfData(TypeArena& types, const WrittenContent
     return types.unionOf(types.intern(parts), contents.objects);
 }
 
-static TypeID typeOfArrayInData(const TypingContext& context, const DataNode::Array& array)
+static TypeID typeOfArrayInData(const TypingContext& context, const DataNode::Array& array, DataID whoseRootItIs)
 {
     TypeArena& types = context.types;
-    WrittenContentsOfData contents;
-    for (const DataNode& element : array.elements)
-        addToWrittenContentsOfData(context, element, contents);
+    auto askEachElement = [&] {
+        WrittenContentsOfData contents;
+        for (const DataNode& element : array.elements)
+            addToWrittenContentsOfData(context, element, contents);
+        return typeOfWrittenContentsOfData(types, contents);
+    };
 
-    TypeID written = array.elements.isEmpty() ? array.contents : typeOfWrittenContentsOfData(types, contents);
+    TypeID written = array.contents;
+    if (whoseRootItIs && array.elements.size() >= TypeArena::fewestElementsOfArrayWhoseContentsAreKeptForBuild) {
+        if (std::optional<TypeID> remembered = types.rememberedContentsOfArrayInData(whoseRootItIs)) {
+            written = *remembered;
+            if constexpr (SharedAnswers::worksFoundAnswersOutAgain)
+                RELEASE_ASSERT(askEachElement() == written);
+        } else {
+            written = askEachElement();
+            types.rememberContentsOfArrayInData(whoseRootItIs, written);
+        }
+    } else if (!array.elements.isEmpty())
+        written = askEachElement();
     if (!written || isNeverType(written))
         return types.builtinClass(BuiltinClasses::Array);
     return types.builtinClass(BuiltinClasses::Array, singleElementSpan(written));
@@ -245,8 +259,12 @@ ALWAYS_INLINE_INTO_OTHER_FILES TypeID typeOfConstant(const TypingContext& contex
         return typeOfBuiltinObjectOfModule(context, operation.builtin(), operation.module());
     case Opcode::KeyConstant:
         return typeOfKeyConstant(context, operation.key());
-    case Opcode::Data:
-        return typeOfData(context, context.program.at(operation.data()).root, created);
+    case Opcode::Data: {
+        const DataNode& root = context.program.at(operation.data()).root;
+        if (const auto* array = created ? nullptr : root.tryAs<DataNode::Array>())
+            return typeOfArrayInData(context, *array, operation.data());
+        return typeOfData(context, root, created);
+    }
     case Opcode::NewClosure:
         return created ? types.forObject(created) : types.forFunction(operation.function());
     default:

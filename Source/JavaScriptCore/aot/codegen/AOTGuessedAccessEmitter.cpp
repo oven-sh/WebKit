@@ -50,7 +50,7 @@ static bool isGuessedFormOf(const ValueContext& access, Opcode genericOperation)
 
 static bool guessedAccessFindsSlot(const FieldAccess& access)
 {
-    return access.coverage != FieldAccess::Coverage::NoMember && access.hasLocation && access.slot.hasStorage() && !access.membersWithField.isEmpty();
+    return access.coverage != FieldAccess::Coverage::NoMember && access.hasLocation && access.slot.hasStorage() && !access.slot.holdsAccessor && !access.membersWithField.isEmpty();
 }
 
 static const PlacedSlot* extensionWordOfGuessedAccess(const FieldAccess& access)

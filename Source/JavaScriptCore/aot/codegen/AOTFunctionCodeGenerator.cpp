@@ -62,6 +62,7 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
         .checksAllocation = runsMachineChecks(build),
         .ordersBlocksAsWhenOrderedAgain = hasFlag(build.options().testing, Wire::TestingSwitch::OrderBlocksAgain),
         .leavesOutSavesThatPatchesAloneRead = hasFlag(build.options().testing, Wire::TestingSwitch::SavesAtHeadsThatPatchesAloneReadAreLeftOut),
+        .takesSpillsThatStepsReadToBeReadByNone = hasFlag(build.options().testing, Wire::TestingSwitch::SpillsThatStepsReadAreTakenToBeReadByNone),
         .notesRangesOfOrigins = hasFlag(build.options().reports, ReportSet::Flow) || !build.options().logging.mapFilePath.isNull(),
         .features = build.targetFeatures(),
     };

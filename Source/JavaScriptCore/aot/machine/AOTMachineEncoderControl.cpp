@@ -296,7 +296,7 @@ void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
             otherConstant = static_cast<int32_t>(test.right()->asInt());
     }
     bool storesSumAnew = test.isWidenedWhereTestFails && m_allocation.isStoredBehindDefinition(test.sum);
-    MacroAssembler::Address spillOfSum = storesSumAnew ? addressOf(Location::spill(m_allocation.spillOf(test.sum))) : MacroAssembler::Address(InvalidGPRReg, 0);
+    MacroAssembler::Address spillOfSum = storesSumAnew ? addressOf(Location::spill(m_allocation.spillOf(test.sum)), MemoryOfEncodedMove::IsWritten) : MacroAssembler::Address(InvalidGPRReg, 0);
 
     MacroAssembler::Jump overflowed = jumpOnOverflow(true);
     MacroAssembler::Jump liesBelowLeastResult;

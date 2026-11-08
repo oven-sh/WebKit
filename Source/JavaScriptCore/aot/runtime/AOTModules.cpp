@@ -999,6 +999,7 @@ void Modules::throwEvaluationError(ModuleID module)
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     ModuleRecord* record = recordIfExists(module);
     RELEASE_ASSERT(record && record->evaluationError());
+    tellThatFailureStayedBehindMock(module);
     if (JSPromise* capability = record->topLevelCapability())
         capability->markAsHandled();
     throwException(m_instance.globalObject, scope, record->evaluationError());
@@ -4152,6 +4153,17 @@ void Modules::holdMockThatStandsUntilImportSettles(ModuleID root, JSPromise* pro
         promise->setFlags(promise->flags() & ~JSPromise::isHandledFlag);
 }
 
+JSPromise* Modules::loadCopyOfOriginal(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSPromise* copyOfOriginal = loader()->requestImportModule(realm, Identifier::fromString(vm, makeString(m_table.pathText(file), "?actual"_s)), moduleKey(file), nullptr, nullptr);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_copiesOfOriginalsBeingLoaded.append({ file, Strong<JSPromise>(vm, copyOfOriginal) });
+    return copyOfOriginal;
+}
+
 JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSPromise* promiseOfCaller, JSValue stateOfWait, std::optional<bool> answerOfWalkAlreadyMade)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -4186,9 +4198,19 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             return rejectedPromiseWithPendingException(realm, scope);
         }
     }
+    JSPromise* originalOwed = nullptr;
     if (text == TextOfImport::HasCome) {
         if (JSPromise* failed = takeFailureOfLoadForWantOfMock(module)) [[unlikely]]
             return failed;
+        if (takeBookingOfLoadWhoseMockHasEnded(module)) [[unlikely]] {
+            JSPromise* copyOfOriginal = loadCopyOfOriginal(fileOf(module));
+            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+            return copyOfOriginal;
+        }
+        if (owesOriginalUnderMockThatHasSettled(module)) [[unlikely]] {
+            originalOwed = loadCopyOfOriginal(fileOf(module));
+            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        }
     }
     if (text != TextOfImport::MayComeLater && !m_modulesWithMockToRun.isEmpty()) [[unlikely]]
         forgetMockLaidBehindCallWhoseTextHasCome(fileOf(module));
@@ -4220,6 +4242,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         factories = factoryThatWaitsBelow(module, askedBy, stateOfWait);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
+    if (!factories)
+        factories = originalOwed;
     if (factories) [[unlikely]] {
         VM& vm = *m_instance.vm;
         JSPromise* promise = promiseForCaller();
@@ -4597,6 +4621,8 @@ JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> r
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (isLeftToHost(module)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loader()->requestImportModuleForKey(m_instance.globalObject, keyWithoutForm(fileOf(module)), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), nullptr, resultPromise));
+    if (status(module) == ModuleStatus::Failed) [[unlikely]]
+        tellThatFailureStayedBehindMock(module);
     RequestToHost requestUnderWay = std::exchange(m_isAskingHost, RequestToHost(true));
     ModuleRecord* record = nullptr;
     {
@@ -7049,6 +7075,8 @@ bool setMock(JSGlobalObject* realm, ModuleID module, JSObject* mock, JSValue wha
 {
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, mock ? "setMock"_s : "setMock, none"_s);
+    if (modules && mock)
+        modules->evictFilesRequiredWithOriginalWhileFactoryRan(module);
     if (modules && mock && modules->isLeftAloneByMock(module))
         return modules->setMockOverModuleThatHasRun(module, mock, whatRequireAnswers, leavesEarlierMockToItsImporters);
     return modules && modules->setMockInPlace(module, mock, whatRequireAnswers, leavesEarlierMockToItsImporters);
@@ -7404,6 +7432,8 @@ void didCallImportOfHost(JSGlobalObject* realm, ModuleID imported, JSPromise* pr
 JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> loadThatCalledFactory)
 {
     Modules* modules = modulesOf(realm);
+    if (modules && modules->bodySetAsideCallsImportNow(module))
+        return modules->evaluationOnceBodySetAsideHasGoneOn(module, loadThatCalledFactory);
     return modules && !modules->bodySetAsideWaitsForItsMock(module, loadThatCalledFactory) ? modules->evaluationOfRecordSetAside(module) : nullptr;
 }
 
@@ -7429,6 +7459,7 @@ void didEndMock(JSGlobalObject* realm, ModuleID module, OriginalBehindEntryOfPro
     if (!modules)
         return;
     MockDoor door(modules, module, "didEndMock"_s);
+    modules->letLoadsThatRequiresLeftAboveKeepNoError(module);
     modules->noteDeedOnMockUnderCallsOfImport(module, Modules::DeedOnMock::Ends);
     modules->forgetLinksInRefusedLoadsThatCameTo(module);
     if (original == OriginalBehindEntryOfProgram::GoesWithPatch && modules->hasMockLaidOver(module))
@@ -8501,14 +8532,57 @@ void Modules::letGoOfImportsThatHaveSettled()
     });
 }
 
+bool Modules::bodySetAsideCallsImportNow(ModuleID module)
+{
+    return m_importThatBodySetAsideCallsNow && recordSetAside(module) && reachedByStatements(module, AtMock::GoesOn).quickGet(m_importThatBodySetAsideCallsNow->first.index()) && reachedByStatements(m_importThatBodySetAsideCallsNow->second, AtMock::Stops).get(module.index());
+}
+
+static JSC_DECLARE_HOST_FUNCTION(decideWhetherBodySetAsideWaits);
+
+JSC_DEFINE_HOST_FUNCTION(decideWhetherBodySetAsideWaits, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    modulesOf(realm)->decideWhetherBodySetAsideWaits(asArray(callFrame->argument(1)));
+    return JSValue::encode(jsUndefined());
+}
+
+JSPromise* Modules::evaluationOnceBodySetAsideHasGoneOn(ModuleID module, std::optional<ModuleID> loadThatCalledFactory)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSPromise* decided = JSPromise::create(vm, realm->promiseStructure());
+    MarkedArgumentBuffer question;
+    question.append(jsNumber(module.index()));
+    question.append(loadThatCalledFactory ? jsNumber(loadThatCalledFactory->index()) : jsUndefined());
+    question.append(decided);
+    JSArray* asked = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), question);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSPromise* fulfilled = JSPromise::create(vm, realm->promiseStructure());
+    fulfilled->fulfill(vm, jsUndefined());
+    JSFunction* goOn = JSFunction::create(vm, realm, 2, String(), JSC::AOT::decideWhetherBodySetAsideWaits, ImplementationVisibility::Private);
+    fulfilled->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), jsUndefined(), asked);
+    return decided;
+}
+
+void Modules::decideWhetherBodySetAsideWaits(JSArray* asked)
+{
+    VM& vm = *m_instance.vm;
+    ModuleID module(asked->getIndexQuickly(0).asUInt32());
+    JSValue load = asked->getIndexQuickly(1);
+    JSPromise* decided = uncheckedDowncast<JSPromise>(asked->getIndexQuickly(2));
+    JSPromise* evaluation = bodySetAsideWaitsForItsMock(module, load.isUndefined() ? std::nullopt : std::optional(ModuleID(load.asUInt32()))) ? nullptr : evaluationOfRecordSetAside(module);
+    if (evaluation)
+        decided->pipeFrom(vm, evaluation);
+    else
+        decided->fulfill(vm, jsUndefined());
+}
+
 bool Modules::bodySetAsideWaitsForItsMock(ModuleID module, std::optional<ModuleID> loadThatCalledFactory)
 {
     letGoOfImportsThatHaveSettled();
     ModuleRecord* record = recordSetAside(module);
     if (!record)
         return false;
-    if (m_importThatBodySetAsideCallsNow && reachedByStatements(module, AtMock::GoesOn).quickGet(m_importThatBodySetAsideCallsNow->first.index()) && reachedByStatements(m_importThatBodySetAsideCallsNow->second, AtMock::Stops).get(module.index()))
-        return true;
     CyclicModuleRecord* root = record->cycleRoot() ? record->cycleRoot() : record;
     AbstractModuleRecord::AsyncEvaluationOrder order = root->asyncEvaluationOrder();
     auto waitsFor = [&](const ImportCalledByBodySetAside& call) {

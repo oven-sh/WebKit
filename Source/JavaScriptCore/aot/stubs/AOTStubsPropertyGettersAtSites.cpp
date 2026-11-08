@@ -226,7 +226,7 @@ void generateGetterAtSite(StubAssembler& jit)
     isNoPair.link(&jit);
     RELEASE_ASSERT(noOverlap(object, distance, nameBehindMiss, scratchBehindMiss, instanceGPR));
     JumpList isSample;
-    countMissOfEmptySite(jit, distance, scratchBehindMiss, isSample);
+    countMissOfPlace(jit, distance, scratchBehindMiss, isSample);
     Label isCounted = jit.label();
     jit.addOutOfLinePart([=](StubAssembler& jit) mutable {
         isSample.link(&jit);

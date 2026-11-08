@@ -458,7 +458,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteAnswers, void, (Instance* 
         caches.answersAtSites().moveUpFurtherAnswer(place, static_cast<SiteUse>(use & ~visitorHitFurtherAnswer), base->structureID());
         return;
     }
-    beginPeriodOfAnotherLength(instance);
+    caches.answersAtSites().beginPeriodOfAnotherLength(place);
     if (!caches.answersAtSites().isDueForFilling(place))
         return;
     LeafOperationScope leaf(*instance->vm);

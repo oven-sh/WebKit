@@ -197,6 +197,9 @@ public:
     SetOfRound setOfRound(ObjectSetID set) { return !set || holdsOneMember(set) ? SetOfRound { set.bits(), false } : setOfRoundOverSeveral(set); }
     std::optional<WordsOfRound> rememberedRound(uint8_t question, size_t numberOfWords, SetOfRound, uint32_t second);
     void rememberRound(uint8_t question, size_t numberOfWords, uint8_t typesAmongWords, SetOfRound, uint32_t second, const WordsOfRound&);
+    static constexpr size_t fewestElementsOfArrayWhoseContentsAreKeptForBuild = 8;
+    std::optional<TypeID> rememberedContentsOfArrayInData(DataID);
+    void rememberContentsOfArrayInData(DataID, TypeID);
 
     TypeID typeMadeBefore(MakerOfType, uint32_t first, uint32_t second) const;
     void noteTypeMade(MakerOfType, uint32_t first, uint32_t second, TypeID made, bool internedNothingInThread);

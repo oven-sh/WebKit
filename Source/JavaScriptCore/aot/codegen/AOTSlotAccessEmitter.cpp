@@ -410,7 +410,7 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
         return undefinedResult(value);
     if (!slotAccessFindsSlot(access))
         return resultWithoutSlot(value);
-    if (access.slot.representation == SlotRepresentation::DeferredClosure)
+    if (access.slot.representation == SlotRepresentation::DeferredClosure || access.slot.holdsAccessor)
         return failRead(value, InternalErrorKind::SlotAccessNotPlaced);
 
     bool mayBeAbsent = absentIsUndefined && typeOf(value.id()).primitives & Primitive::Undefined;

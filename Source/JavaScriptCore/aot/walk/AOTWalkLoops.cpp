@@ -2259,6 +2259,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                 m_answersOfLoops[place].listsAreStruck = true;
                 m_listsAreStruckInRow = true;
                 isBuilt = buildSeveralTimes(learned);
+                isBuilt = !std::exchange(m_typedBuildEndedListsTestedInFront, false) && isBuilt;
             }
             auto isKept = [&](bool built) {
                 bool leavesWithoutTest = std::exchange(m_turnOfTypedBuildLeavesWithoutTest, turnAroundLeavesWithoutTest);

@@ -95,6 +95,25 @@ void countMissOfEmptySite(StubAssembler& jit, GPRReg site, GPRReg scratch, JumpL
 #endif
 }
 
+void countMissOfPlace(StubAssembler& jit, GPRReg distance, GPRReg scratch, JumpList& isSample)
+{
+    constexpr int32_t step = SiteCacheState::sampleStep;
+    RELEASE_ASSERT(noOverlap(distance, scratch, instanceGPR));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.missesOfPlacesByDistance)), scratch);
+#if CPU(ARM64)
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg misses = ownedScratch;
+    jit.addPtr(distance, scratch);
+    jit.load8(Address(scratch), misses);
+    jit.add32(TrustedImm32(step), misses);
+    jit.store8(misses, Address(scratch));
+    isSample.append(jit.branchTest32(CCallHelpers::NonZero, misses, TrustedImm32(UINT8_MAX + 1)));
+#else
+    jit.m_assembler.addb_im(step, 0, scratch, distance, 0);
+    isSample.append(Jump(jit.m_assembler.jCC(X86Assembler::ConditionC)));
+#endif
+}
+
 void refillSiteCache(StubAssembler& jit, GPRReg receiver, GPRReg identifierNumber, GPRReg site, SlotAccess access)
 {
     jit.preservingCallerSavedRegisters(false, [&](unsigned) {
@@ -725,7 +744,7 @@ static void countMissAtSite(StubAssembler& jit, GPRReg receiver, GPRReg distance
 {
     RELEASE_ASSERT(noOverlap(receiver, distance, name, scratch, instanceGPR));
     JumpList isSample;
-    countMissOfEmptySite(jit, distance, scratch, isSample);
+    countMissOfPlace(jit, distance, scratch, isSample);
     Label isCounted = jit.label();
     jit.addOutOfLinePart([=](StubAssembler& jit) mutable {
         isSample.link(&jit);

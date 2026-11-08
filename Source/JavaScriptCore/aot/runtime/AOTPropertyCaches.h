@@ -199,6 +199,7 @@ public:
     }
 
     bool isDueForFilling(uint32_t place);
+    void beginPeriodOfAnotherLength(uint32_t place);
     void pointAtAnswersThatHoldNothingUnlessFilled(uint32_t place)
     {
         if (!m_indices[place])
@@ -255,8 +256,8 @@ private:
     Vector<uint32_t> m_placesOfWideAnswers;
     Vector<uint16_t> m_numbersOfWideAnswersGivenBack;
     uint32_t m_nextStructureToForget { 0 };
-    uint64_t* m_placesThatMissed { nullptr };
     uint64_t* m_placesThatFailed { nullptr };
+    uint16_t* m_missesOfPlaces { nullptr };
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_visitorsPutOut;
     static constexpr uint8_t requestsThatOpenPage = 3;
     unsigned m_placesInPageShift { 0 };

@@ -284,11 +284,19 @@ public:
     }
     AddressForm resolveAddressSlowCase(const Operation* access, LeafCursor&);
     AddressForm resolveScaledSum(const Operation* sum, LeafCursor&);
-    ALWAYS_INLINE MacroAssembler::Address addressOf(Location memory) const
+    NEVER_INLINE void failBecauseSlotThatNoStepReadsIsRead(SpillIndex) const;
+    ALWAYS_INLINE void noteThatSlotIsRead(SpillIndex spill) const
+    {
+        if (m_allocation.spills()[spill].isReadByNoStep) [[unlikely]]
+            failBecauseSlotThatNoStepReadsIsRead(spill);
+    }
+    ALWAYS_INLINE MacroAssembler::Address addressOf(Location memory, MemoryOfEncodedMove use = MemoryOfEncodedMove::IsRead) const
     {
         switch (memory.kind()) {
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
+            if (use == MemoryOfEncodedMove::IsRead)
+                noteThatSlotIsRead(memory.spillIndex());
             return m_frame.addressInFrame(m_frame.offsetFromFPOf(memory.spillIndex()));
 
         case Location::Outgoing:
@@ -329,6 +337,7 @@ public:
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
             RELEASE_ASSERT(m_frame.hasFrameRecord() || patch->findsOperandsInFrameWithoutRecord());
+            noteThatSlotIsRead(location.spillIndex());
             return ValueRep::stack(m_frame.offsetFromFPOf(location.spillIndex()));
         case Location::Outgoing:
             RELEASE_ASSERT(m_frameIsSetUp);
@@ -586,7 +595,7 @@ ALWAYS_INLINE void Encoder::encodeSave(const Step& step)
     checkMemoryOfEncodedMove(*this, step.destination, step.width, MemoryOfEncodedMove::IsWritten);
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination));
+    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination, MemoryOfEncodedMove::IsWritten));
 }
 
 ALWAYS_INLINE bool patchRepAnswersConstraint(const ValueRep& answer, const ValueRep& constraint)

@@ -3593,6 +3593,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
     if (m_mocks && referrer && isMocked(target) && targetData.isESModuleOfProgram() && !targetData.isFaceOfFile() && isOfPackage(referrer) && host().isLeftToItselfByMock && host().isLeftToItselfByMock(m_instance.globalObject, m_table.pathText(target), m_table.pathText(referrer))) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
+    if (m_mocks && isMocked(target) && targetData.isESModuleOfProgram() && !targetData.isFaceOfFile() && m_modulesWithMockToRun.get(target.index()) && !isLeftAloneByMock(target) && hasRunItself(target) && host().givesOriginalBesideMock && host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(target), String(), false)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
     if (m_mocks && targetData.kind == ModuleKind::CommonJs && isMocked(target) && !targetData.isOfLibrary() && status(target) == ModuleStatus::Linked && !mockInPlace(target) && (m_modulesWhoseFactoryRuns.get(target.index()) || (!m_modulesWithMockToRun.get(target.index()) && host().isCalledFromFactoryThatWaits && host().isCalledFromFactoryThatWaits(m_instance.globalObject, target)))) [[unlikely]] {
         m_filesWhoseOriginalRuns.set(target.index());
         evaluateCommonJS(target);

@@ -388,7 +388,7 @@ void readListsOfStableBindingsInFrontOfLoop(Walker& walker, BlockID inputHead)
             bool mayBeInDeadZone = isHolderOfAnotherFile || (walker.types().at(widest).primitives & (isHolder ? Primitive::Absent | Primitive::Undefined : Primitive::Absent));
             if (mayBeInDeadZone && isHolder && walker.state().variable(variable))
                 continue;
-            if (mayBeInDeadZone && !isHolder && (isHandedOver || (!loopReckonsWithElementRead(walker, operation) && !loopComparesElementWithCharacters(operation)) || walker.state().variable(variable) || !walker.types().saysNothing(walker.types().withoutPrimitives(widest, Primitive::Absent))))
+            if (mayBeInDeadZone && !isHolder && (isHandedOver || (!loopReckonsWithElementRead(walker, operation) && !loopComparesElementWithCharacters(operation) && !(member == inputHead && operation.opcode() == Opcode::PropGet && bodyOnlyMeasuresVariable(program, index, variable))) || walker.state().variable(variable) || !walker.types().saysNothing(walker.types().withoutPrimitives(widest, Primitive::Absent))))
                 continue;
             Draft draft = walker.draftOf(read);
             walker.chooseConservativeFields(draft);

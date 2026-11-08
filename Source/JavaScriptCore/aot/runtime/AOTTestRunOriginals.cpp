@@ -473,7 +473,7 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     m_requiresThatGaveUp.removeAllMatching([&](const RequireThatGaveUp& pair) {
-        return pair.call != callOfFactoryThatHasNotSettled(pair.mocked) || mockInPlace(pair.mocked) || isEvicted(pair.mocked) || isEvicted(pair.required);
+        return pair.call != callOfFactoryThatHasNotSettled(pair.mocked) || mockInPlace(pair.mocked);
     });
     if (m_requiresThatGaveUp.isEmpty())
         return { };
@@ -496,6 +496,18 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
         }
         return givesUpAgain();
     }
+    if (!isMocked(target)) {
+        for (const RequireThatGaveUp& pair : m_requiresThatGaveUp) {
+            if (pair.required == pair.mocked || !reachedByStatements(pair.required, AtMock::Stops).get(target.index()) || !reachedByStatements(target, AtMock::Stops).get(pair.mocked.index()))
+                continue;
+            ModuleID above = pair.required;
+            if (!m_instance.vm->m_synchronousModuleQueue) {
+                waitForFactoriesThatRequireLeft(above);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            return givesUpAgain();
+        }
+    }
     if (wasGivenUpOn(target)) {
         if (cannotBeRequired(target))
             return givesUpAgain();
@@ -511,6 +523,7 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
             return givesUpAgain();
         requireModuleItselfBesideMock(mocked);
         RETURN_IF_EXCEPTION(scope, { });
+        m_filesRequiredWithOriginalWhileFactoryRan.append({ target, mocked });
     }
     return { };
 }

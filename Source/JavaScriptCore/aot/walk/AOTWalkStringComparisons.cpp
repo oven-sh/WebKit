@@ -286,8 +286,6 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
     Reference length = walker.isInLoop() ? lengthSharedByComparisonsForStringComparisons(walker, value, subject, text, origin) : Reference();
     if (walker.isUnreachable())
         return true;
-    if (!flat && !length)
-        return false;
     if (length && !types.at(walker.typeOf(length)).integers.contains(lengthOfTextForStrings(walker, text))) {
         walker.bind(value.id(), booleanForStringComparisons(walker, false));
         return true;
@@ -301,6 +299,12 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
     if (flat)
         comparison.setFlatOperand(flat);
     comparison.setLiteral(text);
+    if (!flat && !length) {
+        if (!(walker.comparisonWithTextLeavesLoop(comparison)))
+            return false;
+        walker.count(StatisticID::ComparisonsWithTextsThatStandInFrontOfLoops);
+        comparison.setHasLeftLoop(true);
+    }
     if (Reference answer = walker.build(WTF::move(comparison)))
         walker.bind(value.id(), answer);
     return true;

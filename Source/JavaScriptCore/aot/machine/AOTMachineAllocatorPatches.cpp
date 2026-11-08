@@ -1529,7 +1529,8 @@ void Allocator::allocatePatch(PatchOperation* patch)
     bool releasesItsChild = false;
     if ((bits & PatchOperation::ReleasesDeadValues) && !endsBlock && numberOfChildren == firstChild + 1) {
         Operation* child = children[firstChild];
-        if (!child->hasNoPosition() && !isLiveBehind(child, late) && m_liveness.of(child).lastUse <= early) {
+        bool isReadBehindByPosition = isLiveBehind(child, late) || m_liveness.of(child).lastUse > early;
+        if (!child->hasNoPosition() && (!isReadBehindByPosition || (!isReadOnSomeWayOn(child, early + 1) && !isHeldAtHeadThatWayLeadsBackTo(child)))) {
             releasesItsChild = true;
             patch->m_registersToRelease = stateOf(child).registers & m_file.allocatableIn(Bank::GP);
         }
@@ -1816,12 +1817,9 @@ bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
 {
     if (m_order.of(m_block).isRare() || m_liveness.of(value).has(ValueFlag::IsKeptForCollector))
         return true;
-    const uint32_t firstUse = m_liveness.of(value).firstUse;
-    for (uint32_t use = firstUse; use; use = m_liveness.use(use).next) {
-        Position read = m_liveness.use(use).position;
-        if (read >= position && read < m_order.endOf(m_block))
-            return true;
-    }
+    uint32_t nextRead = findReadFrom(value, position);
+    if (nextRead && m_liveness.use(nextRead).position < m_order.endOf(m_block))
+        return true;
 
     findBlocksThatLeadToReadsOf(value, firstBlockOnWaysFrom(m_block, value));
     return std::ranges::any_of(m_block->successors(), [&](const Edge& successor) {
@@ -1910,11 +1908,14 @@ void Allocator::findBlocksThatLeadToReadsOf(const Operation* value, uint32_t fir
 
 void Allocator::releaseDeadValue(PatchOperation* patch)
 {
+    Operation* released = patch->child(firstPlacedChildOfPatch(patch));
+    RegisterMask freed = stateOf(released).registers & m_file.allocatableIn(Bank::GP);
+    if (freed)
+        unbindAll(released);
     patch->m_registersToRelease |= registersWhereReleasedValueMayHaveWaited();
     patch->m_registersToRelease &= ~m_bound;
-    Operation* released = patch->child(firstPlacedChildOfPatch(patch));
     clearMemoryOfReleasedValue(*this, released);
-    RegisterMask freed = clearPlacesOfValuesHandedTo(released, earlyPositionOfAllocatedPatch(*this, patch) + 1);
+    freed |= clearPlacesOfValuesHandedTo(released, earlyPositionOfAllocatedPatch(*this, patch) + 1);
     patch->m_registersToRelease |= freed;
     m_allocation.m_patchAssignments.last().usedRegisters &= ~freed;
 }

@@ -295,6 +295,7 @@ JS_EXPORT_PRIVATE bool hasLoadInFlightAskedForOriginalOf(JSGlobalObject*, Module
 JS_EXPORT_PRIVATE void didFinishTestsOfFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE void letMockWaitBehindLateFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void dropErrorsOfLoadsEndedByMocks(JSGlobalObject*);
+JS_EXPORT_PRIVATE void letLoadsThatRequiresLeftKeepNoError(JSGlobalObject*);
 enum class OriginalBehindEntryOfProgram : uint8_t { GoesWithPatch, Stays };
 JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID, OriginalBehindEntryOfProgram = OriginalBehindEntryOfProgram::GoesWithPatch, bool wasLaidOverMockOfPreload = true, bool bringsBackWhatWasSetAside = true);
 JS_EXPORT_PRIVATE void letMockStandForLoadsInFlight(JSGlobalObject*, ModuleID);

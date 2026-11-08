@@ -190,7 +190,8 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         Reference passes = walker.build(WTF::move(test));
         if (!passes)
             return true;
-        bool isAskedHere = passes.isValue() && passes.id().index() >= firstNewValue && walker.code().blockOf(passes.id()) == blockOfTest;
+        bool isAskedHere = passes.isValue() && passes.id().index() >= firstNewValue && walker.code().blockOf(passes.id()) == blockOfTest
+            && walker.code().at(passes.id()).opcode == Opcode::ShapeTest && walker.code().at(passes.id()).refusesMarkedObjects();
         bool isLast = place + 1 == arms.size();
         BlockID passed = walker.addBlock();
         BlockID failed = isLast && closedArmOfAll ? closedArmOfAll : walker.addBlock(isLast ? BlockFrequency::Rare : BlockFrequency::Normal);
@@ -237,7 +238,7 @@ bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& 
 
 bool callMethodsOfExpectedReceiversBehindTestsOfShape(Walker& walker, const BodyValue& read)
 {
-    if (!walker.isInLoop() || !walker.opensGuesses() || walker.isNestedTooDeeply())
+    if (!walker.isInLoop() || !walker.opensGuesses() || !walker.facts().layoutsByNames().severalLayoutsHold(read.as<Opcode::PropGet>().key()) || walker.isNestedTooDeeply())
         return false;
     Reference receiver = walker.referenceOf(read.as<Opcode::PropGet>().objectOperand());
     if (!receiver || !receiver.isValue() || !walker.code().at(walker.code().blockOf(receiver.id())).isInLoop)

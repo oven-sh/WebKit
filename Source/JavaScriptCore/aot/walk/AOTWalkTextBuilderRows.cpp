@@ -334,9 +334,10 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
         return false;
     TypeID expected = typeOfPartGuessedBesideString;
     if (expectation.type) {
-        if (!hasTextByItself(types.at(expectation.type)))
+        TypeID withText = hasTextByItself(types.at(expectation.type)) ? expectation.type : walker.isInLoop() ? findPrimitivesExpectedBesideObjects(walker, guessed) : TypeID();
+        if (!withText || types.at(withText).isUndefinedOrNull())
             return false;
-        expected = types.intersectionOf(expectation.type, expected);
+        expected = types.intersectionOf(withText, expected);
     }
     TypeID tested = types.testablePartOf(types.withLiteralStringsWidened(expected));
     TypeID proven = walker.typeOf(value);

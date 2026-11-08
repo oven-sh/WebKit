@@ -18,6 +18,7 @@
 #include <limits>
 #include <optional>
 #include <type_traits>
+#include <wtf/HashSet.h>
 #include <wtf/MathExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -194,6 +195,9 @@ private:
     static bool leadToOnePlace(const Block*, const Block*);
     static bool mayBeFollowedByTestOfOtherBound(const Block*);
     void askBothBoundsAtOnce(Block* first);
+    static bool isFollowedByThreeLittleTests(const Block*);
+    static bool areOneValue(const Operation*, const Operation*);
+    void askEqualitiesBySwitch(Block* first);
     NEVER_INLINE void askTestsBehindNextThatImplyThem();
 
     struct JoinPassedBy {
@@ -1320,13 +1324,97 @@ void JumpThreader::askBothBoundsAtOnce(Block* first)
     }
 }
 
+ALWAYS_INLINE bool JumpThreader::isFollowedByThreeLittleTests(const Block* first)
+{
+    const Block* block = first;
+    for (unsigned step = 0; step < 3; ++step) {
+        const Block* next = nullptr;
+        for (const Edge& edge : block->successors()) {
+            const Block* target = edge.block();
+            if (target->numberOfIncomingEdges() == 1 && target->numSuccessors() == 2 && target->size() <= 3)
+                next = target;
+        }
+        if (!next)
+            return false;
+        block = next;
+    }
+    return true;
+}
+
+ALWAYS_INLINE bool JumpThreader::areOneValue(const Operation* one, const Operation* other)
+{
+    return one == other || (one->opcode() == Trunc && other->opcode() == Trunc && one->child(0) == other->child(0));
+}
+
+void JumpThreader::askEqualitiesBySwitch(Block* first)
+{
+    static constexpr size_t fewestEqualitiesOfSwitch = 4;
+    static constexpr size_t fewestConstantsKeptInSet = 16;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> constantsAsked;
+    Vector<Order::CaseOfEquality, 8> cases;
+    Vector<Block*, 8> laterLinks;
+    const Operation* subject = nullptr;
+    Edge otherwise;
+    if (Block* before = first->singlePredecessor(); before && before != first && !before->isEmpty() && before->last()->opcode() == Branch && before->numSuccessors() == 2 && !first->isEmpty() && first->last()->opcode() == Branch) {
+        const Operation* askedBefore = simplifyPredicateOfBranch(before->last()->child(0)).predicate;
+        const Operation* asked = simplifyPredicateOfBranch(first->last()->child(0)).predicate;
+        bool bothAreEqualities = (askedBefore->opcode() == Equal || askedBefore->opcode() == NotEqual) && (asked->opcode() == Equal || asked->opcode() == NotEqual);
+        if (bothAreEqualities && askedBefore->child(1)->hasInt() && areOneValue(askedBefore->child(0), asked->child(0)) && holdsNothingButItsTest(first))
+            return;
+    }
+    for (Block* block = first;;) {
+        if (block->isEmpty() || block->last()->opcode() != Branch || block->numSuccessors() != 2 || !block->upsilons().empty())
+            break;
+        if (block != first && (block->numberOfIncomingEdges() != 1 || !holdsNothingButItsTest(block)))
+            break;
+        std::optional<LeavingTest> test = describeTestLeavingBy(block, 0);
+        if (!test || (test->relation != Equal && test->relation != NotEqual) || test->subject->type() != Int32 || (subject && !areOneValue(test->subject, subject)))
+            break;
+        unsigned hit = (test->relation == Equal) == test->leavesWhenItHolds ? 0 : 1;
+        Edge toHit = block->successor(hit);
+        Edge toMiss = block->successor(1 - hit);
+        int64_t value = static_cast<int32_t>(test->constant);
+        bool isAskedAlready;
+        if (cases.size() < fewestConstantsKeptInSet) {
+            isAskedAlready = cases.containsIf([&](const Order::CaseOfEquality& one) {
+                return one.value == value;
+            });
+        } else {
+            if (constantsAsked.isEmpty()) {
+                for (const Order::CaseOfEquality& one : cases)
+                    constantsAsked.add(static_cast<uint32_t>(one.value));
+            }
+            isAskedAlready = !constantsAsked.add(static_cast<uint32_t>(value)).isNewEntry;
+        }
+        if (isAskedAlready || (!cases.isEmpty() && !leadToOnePlace(cases[0].target.block(), toHit.block())) || !canGainPredecessor(toHit.block()) || toHit.block() == first || toMiss.block() == first || toHit.block() == block || toMiss.block() == block)
+            break;
+        if (!subject)
+            subject = test->subject;
+        cases.append({ value, toHit });
+        if (block != first)
+            laterLinks.append(block);
+        otherwise = toMiss;
+        if (toMiss.edgeClass() != EdgeClass::Normal)
+            break;
+        block = toMiss.block();
+    }
+    if (cases.size() < fewestEqualitiesOfSwitch || !canGainPredecessor(otherwise.block()))
+        return;
+    std::ranges::sort(cases, { }, &Order::CaseOfEquality::value);
+    Order::askEqualitiesBySwitch(first, const_cast<Operation*>(subject), laterLinks.span(), cases.span(), otherwise);
+}
+
 void JumpThreader::askTestsBehindNextThatImplyThem()
 {
     if (m_testsOfBranchesAreInOrder) [[likely]] {
         for (const TestOfBranch& test : m_testsOfBranches) {
             if (test.opcode && test.opcode != BitAnd + 1) {
-                if (test.opcode != Equal + 1 && mayBeFollowedByTestOfOtherBound(m_proc.blockAt(test.block)))
-                    askBothBoundsAtOnce(m_proc.blockAt(test.block));
+                if (mayBeFollowedByTestOfOtherBound(m_proc.blockAt(test.block))) {
+                    if (test.opcode != Equal + 1)
+                        askBothBoundsAtOnce(m_proc.blockAt(test.block));
+                    else if (isFollowedByThreeLittleTests(m_proc.blockAt(test.block)))
+                        askEqualitiesBySwitch(m_proc.blockAt(test.block));
+                }
                 continue;
             }
             Block* block = m_proc.blockAt(test.block);
@@ -1343,6 +1431,7 @@ void JumpThreader::askTestsBehindNextThatImplyThem()
             askTestBehindNextThatImpliesIt(block);
         askBitsOfNextTestAtOnce(block);
         askBothBoundsAtOnce(block);
+        askEqualitiesBySwitch(block);
     }
 }
 

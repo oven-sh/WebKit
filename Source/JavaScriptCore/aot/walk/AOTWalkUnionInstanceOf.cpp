@@ -90,10 +90,19 @@ public:
     {
     }
 
+    void letArmsEndWithBranchBehind(const BodyValue& test) { m_testWhoseArmsEndWithBranch = test; }
+    bool armsEndWithBranch() const { return !!m_testWhoseArmsEndWithBranch; }
+
     void arrive(Reference answer)
     {
         if (!answer || m_walker.isUnreachable())
             return;
+        if (m_testWhoseArmsEndWithBranch) {
+            m_walker.bind(m_testWhoseArmsEndWithBranch->id(), answer);
+            if (!m_walker.endArmWithBranchBehind(*m_testWhoseArmsEndWithBranch))
+                m_walker.fail("an arm of instanceof does not walk the end of its block"_s);
+            return;
+        }
         if (!m_meeting) {
             m_meeting = m_walker.addBlock();
             m_answer = m_walker.addParameter(m_meeting, TypeTable::boolean, m_walker.formOfParameter(TypeTable::boolean, { }));
@@ -111,6 +120,7 @@ public:
 
 private:
     Walker& m_walker;
+    std::optional<BodyValue> m_testWhoseArmsEndWithBranch;
     BlockID m_meeting;
     Reference m_answer;
 };
@@ -683,6 +693,14 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
 
     Origin origin = walker.originOf(test);
     AnswersOfInstanceOf answers(walker);
+    if (form->kin && walker.armsMayEndWithBranchBehind(test)) {
+        answers.letArmsEndWithBranchBehind(test);
+        walker.count(StatisticID::QuestionsOfInstanceOfWhoseArmsEndWithBranch);
+    }
+    auto noteNameThatArmHasTested = [&](Reference name) {
+        if (answers.armsEndWithBranch() && name && !walker.isUnreachable() && !walker.state().checkedNameOf(value))
+            walker.state().noteCheckedName(value, name);
+    };
     bool hasArms = false;
     BlockID asWritten;
     for (std::span<const MemberConditionRecord> conditions : { std::span<const MemberConditionRecord>(form->conditions.span()), form->linksOfKin }) {
@@ -724,6 +742,17 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         read.setLayout(form->tested);
         Reference prototype = walker.build(WTF::move(read));
         return walker.mayBeginTurnAgainInClosedCopy() ? buildWalkOfChainThatGivesWayForInstanceOf(walker, value, prototype, origin) : buildWalkOfChainForInstanceOf(walker, value, prototype, origin);
+    };
+
+    auto holdAnswerOfShapesToWalkOfChain = [&](bool answerOfShapes) {
+        if (!walker.checksProofs() || !prototypeObjectIsInTable || walker.isUnreachable())
+            return;
+        Draft read(Opcode::GetClassPrototype, origin);
+        walker.chooseConservativeFields(read);
+        read.setClassObjectOperand(constructor);
+        read.setLayout(form->tested);
+        if (Reference found = buildWalkOfChainForInstanceOf(walker, value, walker.build(WTF::move(read)), origin))
+            walker.checkProof(found, TypeArena::fromPrimitives(answerOfShapes ? Primitive::True : Primitive::False), TypeTable::boolean, ProofSource::OtherOperation, origin);
     };
 
     bool testsPrototype = form->testsPrototypeOfInstance && !factsOfCellAsPlannerTakesThem(walker, value).contains(FactOfCell::HasLayoutPrototype);
@@ -778,8 +807,10 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
                 BlockID isBelowClass = walker.addBlock();
                 walker.branch(standsWhereMade, isBelowClass, walksChain);
                 walker.continueIn(isBelowClass);
+                noteNameThatArmHasTested(instance);
             }
         }
+        holdAnswerOfShapesToWalkOfChain(true);
         answers.arrive(booleanAnswerOfInstanceOf(walker, true));
 
         if (asksWhetherMissIsStranger) {
@@ -790,11 +821,13 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
             strangerTest.setLayouts(form->kin);
             Reference isStranger = walker.build(WTF::move(strangerTest));
             Reference standsWhereMade;
+            Reference stranger;
             if (isStranger) {
                 BlockID hasShapeOfStranger = walker.addBlock();
                 walker.branch(isStranger, hasShapeOfStranger, walksChain);
                 walker.continueIn(hasShapeOfStranger);
-                if (Reference stranger = buildProofOfInstanceOf(walker, value, isStranger, OperandIndex::ShapeTest::object, origin)) {
+                stranger = buildProofOfInstanceOf(walker, value, isStranger, OperandIndex::ShapeTest::object, origin);
+                if (stranger) {
                     Draft linkTest(Opcode::HasLayoutPrototype, origin);
                     walker.chooseConservativeFields(linkTest);
                     linkTest.setObjectOperand(stranger);
@@ -806,6 +839,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
                 walker.branch(standsWhereMade, standsBesideClass, walksChain);
                 walker.continueIn(standsBesideClass);
                 walker.count(StatisticID::MissesOfInstanceOfAnsweredByShapesOfKin);
+                noteNameThatArmHasTested(stranger);
+                holdAnswerOfShapesToWalkOfChain(false);
                 answers.arrive(booleanAnswerOfInstanceOf(walker, false));
             } else if (!walker.isUnreachable())
                 walker.jumpTo(walksChain);
@@ -818,7 +853,11 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         if (!missIsAskedAsWritten && (!form->missMeansFalse || testsPrototype)) {
             walker.continueIn(walksChain);
             bool missMeansFalse = std::exchange(form->missMeansFalse, false);
-            answers.arrive(buildAnswerOfMiss());
+            if (answers.armsEndWithBranch()) {
+                Walker::ClosedArm closedArm(walker);
+                answers.arrive(buildAnswerOfMiss());
+            } else
+                answers.arrive(buildAnswerOfMiss());
             form->missMeansFalse = missMeansFalse;
         }
         return { };
@@ -831,7 +870,10 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
             walker.continueIn(asWritten);
             if (prototypeObjectIsInTable && !hasOneClosedArm && !walker.isUnreachable() && walker.mayBeginTurnAgainInClosedCopy())
                 walker.beginTurnAgainInClosedCopy();
-            else
+            else if (answers.armsEndWithBranch()) {
+                Walker::ClosedArm closedArm(walker);
+                answers.arrive(buildInstanceOfAsWritten(walker, test));
+            } else
                 answers.arrive(buildInstanceOfAsWritten(walker, test));
         }
         answer = answers.meet();

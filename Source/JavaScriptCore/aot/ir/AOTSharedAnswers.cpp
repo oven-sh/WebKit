@@ -31,6 +31,8 @@ ASCIILiteral nameOf(SharedQuestion question)
         return "NamedObjectsOfUnionPartKind"_s;
     case SharedQuestion::RoundOverSet:
         return "RoundOverSet"_s;
+    case SharedQuestion::ContentsOfArrayInData:
+        return "ContentsOfArrayInData"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

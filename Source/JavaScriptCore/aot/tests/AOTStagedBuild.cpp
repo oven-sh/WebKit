@@ -310,7 +310,7 @@ struct StagedBuild::State {
 
 StagedBuild::State::State(std::unique_ptr<Program>&& program, BuildContext& build, Mechanisms mechanisms, OrderOfWorklist orderOfWorklist)
     : build(build)
-    , mechanisms(withoutMechanismsMissingDependencies(mechanisms))
+    , mechanisms(withoutMechanismsMissingDependencies(withoutMechanismsThatOptionsWithhold(mechanisms, build.options().testing)))
     , orderOfWorklist(orderOfWorklist)
     , hasFailed(!program)
 {

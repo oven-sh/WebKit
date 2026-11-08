@@ -253,6 +253,13 @@ void Modules::tellThatFileDidNotRunAgain(ModuleID module)
         tellRefusedChangeListener(m_instance.globalObject, makeString("Kept the run of '"_s, m_table.pathText(module), '\''));
 }
 
+void Modules::tellThatFailureStayedBehindMock(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    if (LoadedModule* loaded = loadedIfExists(file); loaded && loaded->keepsFailureThatMockTakesOut) [[unlikely]]
+        tellThatFileDidNotRunAgain(file);
+}
+
 void Modules::tellOfFilesThatStayedLoadedBelow(ModuleID root)
 {
     if (m_filesThatStayLoadedAboveMock.isEmpty()) [[likely]]

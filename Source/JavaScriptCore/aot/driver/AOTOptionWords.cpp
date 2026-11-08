@@ -185,6 +185,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::ShuffleChoices:
     case Wire::TestingSwitch::OrderBlocksAgain:
     case Wire::TestingSwitch::SavesAtHeadsThatPatchesAloneReadAreLeftOut:
+    case Wire::TestingSwitch::SpillsThatStepsReadAreTakenToBeReadByNone:
     case Wire::TestingSwitch::WalksUnitsBy:
     case Wire::TestingSwitch::CutWalksOfLoopsShort:
     case Wire::TestingSwitch::NobodyWakesSleepersOfSharedCalls:

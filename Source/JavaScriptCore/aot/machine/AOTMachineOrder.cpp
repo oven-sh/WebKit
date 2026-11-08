@@ -364,6 +364,36 @@ void Order::askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, 
         letGoOfBlockThatNothingLeadsTo(leavingSecond.block());
 }
 
+void Order::askEqualitiesBySwitch(Block* first, Operation* subject, std::span<Block* const> laterLinks, std::span<const CaseOfEquality> sortedCases, Edge otherwise)
+{
+    Procedure& procedure = first->procedure();
+    Arena& arena = procedure.arena();
+    RELEASE_ASSERT(first->last()->opcode() == Branch && first->upsilons().empty() && subject->type() == Int32);
+
+    for (Block* link : laterLinks)
+        link->clearSuccessors();
+    first->clearSuccessors();
+
+    std::span<int64_t> values = arena.createSpan<int64_t>(sortedCases.size());
+    for (size_t index = 0; index < sortedCases.size(); ++index) {
+        RELEASE_ASSERT(!index || sortedCases[index - 1].value < sortedCases[index].value);
+        values[index] = sortedCases[index].value;
+    }
+    Operation* end = first->last();
+    end->m_children[0]->loseUse();
+    end->m_opcode = Switch;
+    end->m_auxiliary = 1;
+    end->m_children[0] = subject;
+    subject->gainUse();
+    end->m_payload.switchData = arena.create<SwitchData>(SwitchData { values });
+    for (const CaseOfEquality& one : sortedCases)
+        first->appendSuccessor(one.target);
+    first->appendSuccessor(otherwise);
+
+    for (Block* link : laterLinks)
+        letGoOfBlockThatNothingLeadsTo(link);
+}
+
 void Order::joinEdgesToOneBlock(Block* from)
 {
     ASSERT(from->isTerminated());

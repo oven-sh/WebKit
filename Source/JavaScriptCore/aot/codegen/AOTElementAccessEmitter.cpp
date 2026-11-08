@@ -570,6 +570,14 @@ void ElementAccessEmitter::stopUnlessInside(const ValueContext& access, Conditio
     emitter<ThrowEmitter>().requireOrStopAtFalseProof(access, isInside, std::nullopt, ProofSource::WhatIsRemembered);
 }
 
+void ElementAccessEmitter::holdElementToldToBeThere(const ValueContext& read, Condition isThere)
+{
+    if (!testsEveryPosition())
+        return;
+    stopUnlessInside(read, isThere);
+    build().statistics().count(StatisticID::ElementsToldToBeThereHeldAgainstHoles);
+}
+
 void ElementAccessEmitter::stopWhereHoleWouldBeStored(const ValueContext& store, const ArrayStorageForm& form, Operand rawElement)
 {
     if (emittersCheckProofs())
@@ -695,8 +703,8 @@ Operand ElementAccessEmitter::readElementInsideLength(const ValueContext& value,
         LBasicBlock holdsValue = newBlock();
         m_out.branch(this->isHole(form, rawElement).value(), rareEdge(isHole), normalEdge(holdsValue));
         m_out.appendTo(holdsValue);
-    } else if (!readsHoleAsNaN(value) && testsEveryPosition())
-        stopUnlessInside(value, logicalNot(this->isHole(form, rawElement)));
+    } else if (!readsHoleAsNaN(value))
+        holdElementToldToBeThere(value, logicalNot(this->isHole(form, rawElement)));
     return convertRawElement(value, form, rawElement, value.representation(), typeIDOf(value.id()));
 }
 
@@ -874,6 +882,8 @@ void ElementAccessEmitter::readWithOneArmInLine(const ValueContext& value, const
         Operand element = loadRawElement(doubles, elements, test.indexInside);
         if (!findsElement(value))
             branchUnless(logicalNot(isHole(doubles, element)), outOfLine);
+        else if (!readsHoleAsNaN(value))
+            holdElementToldToBeThere(value, logicalNot(isHole(doubles, element)));
         join.add(convertElementThatHasBeenAsked(value, doubles, element, representation, typeIDOf(value.id())));
     }
 
@@ -1031,6 +1041,8 @@ Operand ElementAccessEmitter::readNumberInsideLength(const ValueContext& value, 
     if (generator().asksBehindTurnsWhetherElementIsThere(value.id())) {
         if (!value->isPresent())
             generator().noteBoxedWordOfElementInTurns(rawElement.value());
+        else
+            holdElementToldToBeThere(value, isNotEmpty(rawElement));
         Word32 word = unboxInt32Element(rawElement);
         generator().noteWordOfElementInTurnLaidOut(value.id(), word.value());
         Number number = toNumber(word);

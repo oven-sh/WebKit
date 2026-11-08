@@ -844,6 +844,14 @@ void Modules::dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& is
         dropErrorOfLoadEndedByMock(module);
 }
 
+void Modules::letLoadsThatRequiresLeftAboveKeepNoError(ModuleID module)
+{
+    for (WaitThatRequireLeft& left : m_waitsThatRequiresLeft) {
+        if (left.keepsError && reachedByStatements(left.required, AtMock::Stops).get(module.index()))
+            left.keepsError = false;
+    }
+}
+
 void Modules::dropErrorsOfLoadsEndedByMocks()
 {
     BitVector kept = m_modulesWithLoadEndedByMock;
@@ -986,6 +994,18 @@ bool Modules::hasLoaderSettledOriginalOf(ModuleID mocked)
     ModuleRegistryEntry* entry = loader()->registryEntry(Identifier::fromString(*m_instance.vm, makeString(m_table.pathText(mocked), "?actual"_s)));
     auto* record = entry && entry->record() ? dynamicDowncast<CyclicModuleRecord>(entry->record()) : nullptr;
     return record && record->status() == CyclicModuleRecord::Status::Evaluated;
+}
+
+bool Modules::isTextOfSomeCopyOfOriginalStillToCome()
+{
+    m_copiesOfOriginalsBeingLoaded.removeAllMatching([&](const auto& copy) {
+        if (copy.second->status() != JSPromise::Status::Pending)
+            return true;
+        ModuleRegistryEntry* entry = loader()->registryEntry(Identifier::fromString(*m_instance.vm, makeString(m_table.pathText(copy.first), "?actual"_s)));
+        auto* record = entry && entry->record() ? dynamicDowncast<CyclicModuleRecord>(entry->record()) : nullptr;
+        return record && record->status() >= CyclicModuleRecord::Status::Evaluating;
+    });
+    return !m_copiesOfOriginalsBeingLoaded.isEmpty();
 }
 
 auto Modules::runOriginalInSweep(ModuleID mocked) -> OriginalInSweep
@@ -1604,6 +1624,12 @@ void dropErrorsOfLoadsEndedByMocks(JSGlobalObject* realm)
 {
     if (Modules* modules = modulesOf(realm))
         modules->dropFailuresThatEvictionTakesOut();
+}
+
+void letLoadsThatRequiresLeftKeepNoError(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->letLoadsThatRequiresLeftKeepNoError();
 }
 
 void letMockWaitBehindLateFailure(JSGlobalObject* realm, ModuleID module)

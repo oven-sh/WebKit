@@ -528,7 +528,7 @@ std::optional<NumberedImmediate> AccessEmitter::answersOfReadOutOfRow(BlockID bl
     PropertyKeyID key = read.key();
     if (m_program.nameClassOf(key) == NameClass::Length || isSymbolOfRealm(key) || m_code.at(block).frequency == BlockFrequency::Rare || !m_generator.isInLoop(block))
         return std::nullopt;
-    if (liesInThread(m_unit.function) || m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key))
+    if (liesInThread(m_unit.function) || (!read.receiverIsNoObjectOfCompiledCode() && m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key)))
         return std::nullopt;
     return answersAtSite(read.origin(), key, SiteUse::Read);
 }
@@ -724,7 +724,7 @@ void AccessEmitter::generateGetValueAtSiteOrAbsent(const ValueContext& value)
         return;
     }
     ReceiverAtSite receiverIs = typeOf(value->objectOperand()).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
-    bool asksShapeFirst = m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key);
+    bool asksShapeFirst = !value->receiverIsNoObjectOfCompiledCode() && m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key);
     build().statistics().count(StatisticID::ReadsByNameThatAskTheirSitesAlone);
     Boxed receiver = in<Boxed>(value->objectOperand());
     if (answersOfReadOutOfRow(value.block(), value.value())) {

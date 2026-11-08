@@ -1154,6 +1154,11 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeExecuteInline(const Step& ste
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+void Encoder::failBecauseSlotThatNoStepReadsIsRead(SpillIndex spill) const
+{
+    m_proc.fail(FailureKind::SpillSlotLacksItsValue, m_allocation.spills()[spill].value);
+}
+
 void Encoder::storeToSpill(const Operation* value)
 {
     SpillIndex spill = m_allocation.spillOf(value);
@@ -1165,7 +1170,7 @@ void Encoder::storeToSpill(const Operation* value)
     RELEASE_ASSERT(m_frameIsSetUp);
     ASSERT(m_allocation.spills()[spill].width == widthOf(value->type()));
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::StoreBehindDefinition));
-    MacroAssembler::Address address = addressOf(Location::spill(spill));
+    MacroAssembler::Address address = addressOf(Location::spill(spill), MemoryOfEncodedMove::IsWritten);
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     switch (value->type().kind()) {
     case Int32:

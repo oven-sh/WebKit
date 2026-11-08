@@ -167,6 +167,7 @@ public:
 
     bool isNameOfSomeInstance(PropertyKeyID name) const { return m_isNameOfSomeInstance.get(name.index()); }
     bool isNameOfSomeLayout(PropertyKeyID name) const { return !holdersOf(name).empty(); }
+    bool severalLayoutsHold(PropertyKeyID name) const { return holdersOf(name).size() > 1; }
 
     bool isInUse(LayoutID layout) const { return static_cast<size_t>(layout.index()) + 1 < m_firstNameOfLayout.size() && m_firstNameOfLayout[layout.index()] < m_firstNameOfLayout[layout.index() + 1]; }
 

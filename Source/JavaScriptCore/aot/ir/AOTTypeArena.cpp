@@ -860,6 +860,14 @@ public:
     std::array<std::unique_ptr<PartsOfTypeKeptForBuild>, TypeArena::mostWordsOfRound> types;
 };
 
+class TypeKeptForBuild final : public SharedAnswers::Answer {
+public:
+    size_t sizeInBytes() const final { return sizeof(TypeKeptForBuild) + (parts ? parts->sizeInBytes() : 0); }
+
+    TypeID atRest;
+    std::unique_ptr<PartsOfTypeKeptForBuild> parts;
+};
+
 } // anonymous namespace
 
 template<typename SetID>
@@ -1015,6 +1023,29 @@ void TypeArena::rememberRound(uint8_t question, size_t numberOfWords, uint8_t ty
             round->types[index] = partsOfTypeInThread(*this, answers, TypeID::fromBits(words[index]));
     }
     answers.add({ SharedQuestion::RoundOverSet, question, set.word, second }, WTF::move(round));
+}
+
+std::optional<TypeID> TypeArena::rememberedContentsOfArrayInData(DataID data)
+{
+    SharedAnswers* answers = answersThatKeepRounds(*this);
+    const SharedAnswers::Answer* found = answers ? answers->find({ SharedQuestion::ContentsOfArrayInData, data.index() }) : nullptr;
+    if (!found)
+        return std::nullopt;
+    const auto& kept = static_cast<const TypeKeptForBuild&>(*found);
+    return kept.parts ? typeOfPartsKeptForBuild(*this, *answers, *kept.parts) : kept.atRest;
+}
+
+void TypeArena::rememberContentsOfArrayInData(DataID data, TypeID type)
+{
+    SharedAnswers* answers = answersThatKeepRounds(*this);
+    if (!answers)
+        return;
+    auto kept = makeUniqueWithoutFastMallocCheck<TypeKeptForBuild>();
+    if (liesInThread(type))
+        kept->parts = partsOfTypeInThread(*this, *answers, type);
+    else
+        kept->atRest = type;
+    answers->add({ SharedQuestion::ContentsOfArrayInData, data.index() }, WTF::move(kept));
 }
 
 PropertyKeyID TypeArena::intern(const PropertyKey& key)

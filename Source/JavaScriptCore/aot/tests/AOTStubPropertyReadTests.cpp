@@ -2235,6 +2235,7 @@ public:
     {
         *reinterpret_cast<uint16_t*>(m_instance + distance) = index;
         runner.instance().propertyCaches.firstWordOfWideAnswers = UINT32_MAX;
+        runner.instance().propertyCaches.missesOfPlacesByDistance = reinterpret_cast<uint8_t*>(&m_misses) - distance;
         answers() = SiteAnswers::forPlacesWithout();
     }
 
@@ -2242,8 +2243,11 @@ public:
     WideSiteAnswers& wideAnswers() { return *reinterpret_cast<WideSiteAnswers*>(m_instance + offsetOfAnswers); }
     static_assert(-offsetOfAnswers >= static_cast<ptrdiff_t>(sizeof(InstancePrefix) + sizeof(WideSiteAnswers)) && !(offsetOfAnswers % static_cast<ptrdiff_t>(alignof(WideSiteAnswers))));
 
+    uint8_t& misses() { return *reinterpret_cast<uint8_t*>(&m_misses); }
+
 private:
     uint8_t* m_instance;
+    uint16_t m_misses { 0 };
 };
 
 struct OrdinaryObjectWithTwoValues : FakeObject<32> {
@@ -2626,16 +2630,17 @@ static void testStubThatCanMeetNoFieldAsksNoShape()
     Instance& instance = reads.runner.instance();
     std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
     instance.image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
-    instance.propertyCaches.missesOfEmptySites = 0;
+    place.misses() = 0;
     OrdinaryObjectWithTwoValues visitor(PropertyReads::structureID, 1, 2);
     reads.fileInFrontBesideOthers(Slot::createInStorage(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::Value, Slot::isOwn, nullptr, 0));
     reads.runner.setCountsInstructions(true);
     auto instructionsOfMiss = [&](StubKey stub, uint64_t expected) {
         uint32_t instructions = 0;
         for (unsigned turn = 0; turn < 2; ++turn) {
-            uint8_t counted = instance.propertyCaches.missesOfEmptySites;
+            uint8_t counted = place.misses();
+            uint8_t countedForEmptySiteCaches = instance.propertyCaches.missesOfEmptySites;
             StubRun run = reads.runner.run(stub, { visitor.address() }, AnswersAtOnePlace::distance);
-            AOT_TEST_CHECK(!run.calledOperation && run.result == expected && instance.propertyCaches.missesOfEmptySites != counted);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == expected && place.misses() != counted && instance.propertyCaches.missesOfEmptySites == countedForEmptySiteCaches);
             instructions = run.instructionsInStubs.value_or(0);
         }
         return instructions;
@@ -2701,7 +2706,7 @@ static void testLengthReadAtSite()
     const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
     std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
     runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
-    runner.instance().propertyCaches.missesOfEmptySites = 0;
+    place.misses() = 0;
     place.answers().first = SiteAnswers::byShape(shapeWordOf(FieldTable::shapeWithOtherField), FakeTypedObject::offsetOfField);
     place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, otherStructureID, SiteAnswers::Form::OwnValueInCell, OrdinaryObjectWithTwoValues::offsetInCell);
     reads.fileInFrontBesideOthers(Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain));
@@ -2757,19 +2762,19 @@ static void testMissAtPlaceRunningNoCode()
     AnswersAtOnePlace place(reads.runner);
     std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
     reads.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
-    reads.runner.instance().propertyCaches.missesOfEmptySites = 0;
+    place.misses() = 0;
     OrdinaryObjectWithTwoValues ordinary(PropertyReads::structureID, 1, 2);
     FakeObject<16> text;
     text.setHeader(PropertyReads::structureID, StringType);
     for (bool asksShapeFirst : { true, false }) {
-        uint8_t counted = reads.runner.instance().propertyCaches.missesOfEmptySites;
+        uint8_t counted = place.misses();
         StubRun run = reads.runner.run(readAtSiteRunningNoCode(ReceiverAtSite::IsAnyValue, asksShapeFirst), { ordinary.address() }, AnswersAtOnePlace::distance);
-        AOT_TEST_CHECK(!run.calledOperation && !run.result && reads.runner.instance().propertyCaches.missesOfEmptySites != counted);
-        counted = reads.runner.instance().propertyCaches.missesOfEmptySites;
+        AOT_TEST_CHECK(!run.calledOperation && !run.result && place.misses() != counted);
+        counted = place.misses();
         run = reads.runner.run(readAtSiteRunningNoCode(ReceiverAtSite::IsAnyValue, asksShapeFirst), { text.address() }, AnswersAtOnePlace::distance);
-        AOT_TEST_CHECK(!run.calledOperation && !run.result && reads.runner.instance().propertyCaches.missesOfEmptySites == counted);
+        AOT_TEST_CHECK(!run.calledOperation && !run.result && place.misses() == counted);
         run = reads.runner.run(readAtSiteRunningNoCode(ReceiverAtSite::IsAnyValue, asksShapeFirst), { bitsOf(jsNumber(7)) }, AnswersAtOnePlace::distance);
-        AOT_TEST_CHECK(!run.calledOperation && !run.result && reads.runner.instance().propertyCaches.missesOfEmptySites == counted);
+        AOT_TEST_CHECK(!run.calledOperation && !run.result && place.misses() == counted);
     }
 }
 
@@ -2781,15 +2786,15 @@ static void testFrontOfTablesAnswersWherePlaceHoldsAnotherStructureRunningNoCode
     const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
     std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
     reads.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
-    reads.runner.instance().propertyCaches.missesOfEmptySites = 0;
+    place.misses() = 0;
     place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, otherStructureID, SiteAnswers::Form::OwnValueInCell, OrdinaryObjectWithTwoValues::offsetInCell);
     OrdinaryObjectWithTwoValues ordinary(PropertyReads::structureID, 1, 2);
     auto readIs = [&](uint64_t expected) {
         for (bool asksShapeFirst : { true, false }) {
             for (ReceiverAtSite receiverIs : { ReceiverAtSite::IsAnyValue, ReceiverAtSite::IsCell }) {
-                uint8_t counted = reads.runner.instance().propertyCaches.missesOfEmptySites;
+                uint8_t counted = place.misses();
                 StubRun run = reads.runner.run(readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { ordinary.address() }, AnswersAtOnePlace::distance);
-                if (run.calledOperation || run.result != expected || (reads.runner.instance().propertyCaches.missesOfEmptySites == counted) != !!expected)
+                if (run.calledOperation || run.result != expected || (place.misses() == counted) != !!expected)
                     return false;
             }
         }
@@ -2875,9 +2880,9 @@ static void testFormsThatAreNoHitsRunningNoCode()
         place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, std::bit_cast<StructureID>(PropertyReads::structureID), form, wordsToHolder);
         for (bool asksShapeFirst : { true, false }) {
             for (ReceiverAtSite receiverIs : { ReceiverAtSite::IsAnyValue, ReceiverAtSite::IsCell }) {
-                uint8_t counted = reads.runner.instance().propertyCaches.missesOfEmptySites;
+                uint8_t counted = place.misses();
                 StubRun run = reads.runner.run(readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { receiver.address() }, AnswersAtOnePlace::distance);
-                AOT_TEST_CHECK(!run.calledOperation && !run.result && reads.runner.instance().propertyCaches.missesOfEmptySites == counted);
+                AOT_TEST_CHECK(!run.calledOperation && !run.result && place.misses() == counted);
             }
         }
     }
@@ -3043,7 +3048,7 @@ enum class MissAtPlace : uint8_t { OwnValueInCell, OwnValueInStorage, NoProperty
     const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
     std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
     reads.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
-    reads.runner.instance().propertyCaches.missesOfEmptySites = 0;
+    place.misses() = 0;
     place.answers().first = SiteAnswers::byShape(shapeWordOf(FieldTable::shapeWithOtherField), FakeTypedObject::offsetOfField);
     place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, otherStructureID, SiteAnswers::Form::OwnValueInCell, OrdinaryObjectWithTwoValues::offsetInCell);
 
@@ -3405,15 +3410,15 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/read-at-site/a-field-in-the-extension-by-structure-and-both-ways-out"_s, ImageTests::whenExecutable<testFieldInExtensionByStructure> },
         { "stubs/read-at-site-running-no-code/an-extra-value-of-a-narrow-record-is-read"_s, ImageTests::whenExecutable<testExtraValuesOfNarrowRecordRunningNoCode> },
         { "stubs/call-method-at-site/a-getter-in-each-of-six-places-is-called-and-what-it-gives-is-called-on-the-receiver"_s, ImageTests::whenExecutable<testGettersAnswerCallsByNameAtSite> },
-        { "stubs/read-at-site/instructions-of-misses/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInCell, 43>> },
-        { "stubs/read-at-site/instructions-of-misses/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInStorage, 50>> },
-        { "stubs/read-at-site/instructions-of-misses/no-property"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::NoProperty, 44>> },
-        { "stubs/read-at-site/instructions-of-misses/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::BoxedField, 39>> },
-        { "stubs/read-at-site/instructions-of-misses/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::Int32Field, 43>> },
-        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInCell, 41, NameAtSite::HasColumn>> },
-        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInStorage, 48, NameAtSite::HasColumn>> },
-        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/no-property"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::NoProperty, 42, NameAtSite::HasColumn>> },
-        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::BoxedField, 37, NameAtSite::HasColumn>> },
+        { "stubs/read-at-site/instructions-of-misses/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInCell, 44>> },
+        { "stubs/read-at-site/instructions-of-misses/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInStorage, 51>> },
+        { "stubs/read-at-site/instructions-of-misses/no-property"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::NoProperty, 45>> },
+        { "stubs/read-at-site/instructions-of-misses/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::BoxedField, 40>> },
+        { "stubs/read-at-site/instructions-of-misses/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::Int32Field, 44>> },
+        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInCell, 42, NameAtSite::HasColumn>> },
+        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInStorage, 49, NameAtSite::HasColumn>> },
+        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/no-property"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::NoProperty, 43, NameAtSite::HasColumn>> },
+        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::BoxedField, 38, NameAtSite::HasColumn>> },
         { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::Int32Field, 42, NameAtSite::HasColumn>> },
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
         { "stubs/read-at-site/instructions-that-were-enough/an-integer-field-takes-22-not-21"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::Int32Field, 21>>, "reads by name: 22 instructions where the compiler before this one took 21"_s },

@@ -1426,6 +1426,7 @@ void initializePropertyCacheWords(Instance& instance)
     words.booleanStructureID = (booleanStructure ? booleanStructure : structureOfNoReceiver)->id().bits();
     uintptr_t wordsToUndefined = (std::bit_cast<uintptr_t>(instance.state->objectThatHoldsUndefined->inlineStorage()) - vm.heap.cage().base()) / sizeof(EncodedJSValue);
     words.wordOfCageThatHoldsUndefined = wordsToUndefined <= UINT32_MAX ? static_cast<uint32_t>(wordsToUndefined) : 0;
+    words.missesOfPlacesByDistance = reinterpret_cast<uint8_t*>(instance.state->tableArena.allocate<uint16_t>(instance.indicesOfSiteAnswers().size())) - InstanceLayout::offsetOfIndicesOfSiteAnswers(instance.tables().instanceSizes);
     words.hasInstanceUID = vm.propertyNames->hasInstanceSymbol.impl();
     words.prototypeUID = vm.propertyNames->prototype.impl();
     words.lengthUID = vm.propertyNames->length.impl();
@@ -2100,8 +2101,8 @@ AnswersAtSites::AnswersAtSites(State& state, SiteCaches& states)
     , m_indices(state.instance.indicesOfSiteAnswers())
     , m_answers(state.instance.siteAnswers())
     , m_endOfWideAnswers(reinterpret_cast<WideSiteAnswers*>(state.instance.siteAnswers().data() + state.instance.siteAnswers().size()))
-    , m_placesThatMissed(state.tableArena.allocate<uint64_t>((std::min<size_t>(m_indices.size(), numberOfMissBits) + 63) / 64))
     , m_placesThatFailed(state.tableArena.allocate<uint64_t>((std::min<size_t>(m_indices.size(), numberOfMissBits) + 63) / 64))
+    , m_missesOfPlaces(reinterpret_cast<uint16_t*>(state.instance.propertyCaches.missesOfPlacesByDistance + InstanceLayout::offsetOfIndicesOfSiteAnswers(state.instance.tables().instanceSizes)))
     , m_placesInPageShift(WTF::fastLog2(static_cast<unsigned>(pageSize() / sizeof(uint16_t))))
     , m_requestsOfPages(state.tableArena.allocate<uint8_t>((m_indices.size() >> m_placesInPageShift) + 1))
     , m_ownerID(state.chainDependents->addOwner(*this))
@@ -2119,13 +2120,18 @@ uint32_t AnswersAtSites::placeAtDistanceFromInstance(uint32_t distance) const
     return static_cast<uint32_t>(offset / sizeof(uint16_t));
 }
 
+void AnswersAtSites::beginPeriodOfAnotherLength(uint32_t place)
+{
+    static constexpr std::array<uint8_t, 8> missesLeftOut { 0, 5, 2, 7, 1, 4, 6, 3 };
+    uint8_t& misses = *reinterpret_cast<uint8_t*>(&m_missesOfPlaces[place]);
+    uint8_t turn = (misses + 1) & 7;
+    misses = static_cast<uint8_t>(SiteCacheState::sampleStep * missesLeftOut[turn] | turn);
+}
+
 bool AnswersAtSites::isDueForFilling(uint32_t place)
 {
     uint32_t missBit = place % numberOfMissBits;
-    uint64_t& word = m_placesThatMissed[missBit / 64];
     uint64_t bit = 1ull << (missBit % 64);
-    if (!(std::exchange(word, word | bit) & bit))
-        return false;
     if (!answersOf(place)) {
         uint8_t& requests = m_requestsOfPages[place >> m_placesInPageShift];
         if (requests < requestsThatOpenPage) {

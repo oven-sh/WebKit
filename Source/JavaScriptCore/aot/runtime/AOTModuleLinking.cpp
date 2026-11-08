@@ -1170,6 +1170,7 @@ void Modules::noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displa
         return;
     LoadedModule& loaded = ensureLoaded(file);
     loaded.hadThrownWhenMockWasMade = !setsModuleAside && isESModuleThatThrew(file) && !wasLetGoByLoader(file) && !loaded.holdsValueOfMockThatEnded;
+    loaded.keepsFailureThatMockTakesOut |= setsModuleAside && isESModuleThatThrew(file) && !wasLoadedWithImporter(file);
 }
 
 void Modules::keepWhatMockIsLaidOver(ModuleID file)
@@ -1321,6 +1322,7 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedB
         if (ModuleRecord* record = error ? nullptr : recordSetAside(file))
             error = record->evaluationError();
         if (error) [[unlikely]] {
+            tellThatFailureStayedBehindMock(file);
             throwException(realm, scope, error);
             return { };
         }

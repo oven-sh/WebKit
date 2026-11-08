@@ -147,7 +147,8 @@ bool StringEmitter::readsCharactersInLine(const OperationContext& context)
     static_assert(formByLoopAlone(Opcode::StringEqualsLiteral, StateOfKnowledge::Always, false).form == formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false).form);
     static constexpr FormAtPlace namedInLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, true);
     static constexpr FormAtPlace namedOutsideLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false);
-    FormAtPlace named = context.block() && generator().isInLoop(context.block()) ? namedInLoops : namedOutsideLoops;
+    bool hasLeftLoop = context.valueID() && comparisonsWithLiteral.contains(generator().code().at(context.valueID()).opcode) && generator().code().at(context.valueID()).hasLeftLoop();
+    FormAtPlace named = context.block() && (generator().isInLoop(context.block()) || hasLeftLoop) ? namedInLoops : namedOutsideLoops;
     m_out.noteFormOf(comparisonsWithLiteral, named.form, StateOfKnowledge::Always, named.place);
     return named.form == Form::Open;
 }

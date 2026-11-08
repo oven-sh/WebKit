@@ -26,6 +26,8 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr AbstractHeapSet heapsWrittenOnceForLoopInvariants { AbstractHeap::ShapeWords };
 
+static constexpr OpcodeSet answeredByTextAloneForLoopInvariants { Opcode::StringEqualsLiteral, Opcode::ValueEqualsLiteral };
+
 static constexpr OpcodeSet readsKeptByStateInLoopInvariants { Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
 
 static bool findsSameInEveryTurnForLoopInvariants(const Program& program, const BodyValue& operation, const Effects& effectsOfLoop)
@@ -485,6 +487,8 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
     }
 
     LocationMasks reads = effects.reads.without(heapsWrittenOnceForLoopInvariants);
+    if (answeredByTextAloneForLoopInvariants.contains(draft.opcode))
+        reads = reads.without(AbstractHeapSet { AbstractHeap::StringStorage });
     if (takesStorageAndLengthsToBeAsInFront())
         reads = reads.without(AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths, AbstractHeap::TypedArrayStorage });
     HoistPoint point = currentHoistPoint();
@@ -528,6 +532,16 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         return IterationStatus::Continue;
     });
     return outermost;
+}
+
+bool Walker::comparisonWithTextLeavesLoop(const Draft& comparison) const
+{
+    std::optional<uint32_t> outermost = m_openLoops.isEmpty() ? std::nullopt : findLoopToBuildInFrontOf(comparison, declaredBoundInTable(comparison.opcode), TypeTable::boolean);
+    for (uint32_t loop = outermost.value_or(0); outermost && loop < std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft); ++loop) {
+        if (!firstTurnOfOpenLoopIsKnownToBegin(loop))
+            return false;
+    }
+    return !!outermost;
 }
 
 std::optional<uint32_t> Walker::findLoopThatReaderVouchesFor(const Draft& draft, uint32_t outermostLoopThatMayBeLeft) const

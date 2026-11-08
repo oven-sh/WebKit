@@ -114,6 +114,11 @@ public:
     static Block* split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeToTarget);
     static Block* askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond);
     static void askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond, Operation* subject, int32_t low, int32_t high);
+    struct CaseOfEquality {
+        int64_t value;
+        Edge target;
+    };
+    static void askEqualitiesBySwitch(Block* first, Operation* subject, std::span<Block* const> laterLinks, std::span<const CaseOfEquality> sortedCases, Edge otherwise);
     static void askBitsOfTwoTestsAtOnce(Block* first, unsigned wayOfFirstWhereBitIsSet, Operation* bitsOfFirst, Block* second, unsigned wayOfSecondWhereBitIsSet, Operation* bitsOfSecond);
     static void makePhiOfTruncationBehindJoin(Block* join, Operation* truncation);
     static void passJoinBy(Block* from, Block* target, Operation* phi, Operation* value);

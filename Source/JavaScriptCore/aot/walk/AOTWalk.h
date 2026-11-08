@@ -1554,6 +1554,7 @@ public:
 
     std::optional<uint32_t> innermostOpenLoop() const;
     bool standsInFrontOfOpenLoop(uint32_t indexOfLoop, Reference) const;
+    bool comparisonWithTextLeavesLoop(const Draft&) const;
     Reference buildInFrontOfOpenLoop(uint32_t indexOfLoop, Draft&&, const Effects* foundByCaller = nullptr);
     std::optional<uint32_t> outermostLoopToMakeTextInFrontOf(std::span<const Reference> operands, const Effects& ofText) const;
     Reference askInFrontOfOpenLoopWhetherItsFirstTurnBegins(uint32_t indexOfLoop);
@@ -3950,6 +3951,7 @@ struct ExpectationOfValue {
     bool isDeclared { false };
 };
 ExpectationOfValue findExpectation(Walker&, ValueID input);
+TypeID findPrimitivesExpectedBesideObjects(Walker&, ValueID input);
 LayoutID layoutThatNamesFamily(Walker&, TypeID);
 bool valueFitsSlot(Walker&, FieldReference, Reference value);
 ExpectationOfValue expectationOfAnswerOfCallBeingCopied(Walker&, const BodyValue& call);
@@ -4031,6 +4033,7 @@ bool holdRowRememberedAgainstReadInTurn(Walker&, const BodyValue& read, Referenc
 bool readRowOfCopyAgainInTurn(Walker&, const BodyValue& read);
 TypeID textsThatNamesOfHolderSayOfKey(Walker&, const BodyValue& read);
 bool loopReckonsWithElementRead(Walker&, const BodyValue& read);
+bool bodyOnlyMeasuresVariable(const Program&, const BodyIndex&, VariableID);
 BitVector findHoldersOfElementsThatLoopComparesWithCharactersOrNumbers(const Program&, const BodyIndex&, LoopID);
 bool loopComparesWhatStepsHandOutWithCharacters(const Program&, const BodyIndex&, LoopID, ValueID open);
 bool writtenWordOfParameterNamesTextBesideList(Walker&, ValueID operand);

@@ -612,7 +612,7 @@ void Allocator::findSpillsThatNoStepReads()
         return;
     for (SpillIndex index = 0; index < spills.size(); ++index) {
         SpillFacts& facts = spills[index];
-        if (facts.isRead || !facts.value)
+        if ((facts.isRead && !m_proc.traits().takesSpillsThatStepsReadToBeReadByNone) || !facts.value)
             continue;
         facts.isReadByNoStep = !isReadByMoreThanSteps(facts);
     }

@@ -204,7 +204,7 @@ void Encoder::encodeClearSpill(const Step& step)
     ASSERT(step.kind == StepKind::ClearSpill);
     RELEASE_ASSERT(step.destination.isSpill() && m_frameIsSetUp);
     Width width = m_allocation.spills()[step.destination.spillIndex()].width;
-    MacroAssembler::Address address = addressOf(step.destination);
+    MacroAssembler::Address address = addressOf(step.destination, MemoryOfEncodedMove::IsWritten);
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     if (encodedMoveIsWide(width))
@@ -232,7 +232,7 @@ void Encoder::encodeKeepPointer(const Step& step)
         m_jit.load32(addressOf(reference), pointer);
         decodeKeptReference(m_jit, pointer, pointer);
     }
-    m_jit.store64(pointer, addressOf(step.destination));
+    m_jit.store64(pointer, addressOf(step.destination, MemoryOfEncodedMove::IsWritten));
 }
 
 void Encoder::encodeMaterialize(const Operation* operation, Reg destination)
@@ -292,8 +292,8 @@ bool Encoder::tryEncodePairOfMoves(const Step& first, const Step& second)
     MemoryOfEncodedMove access = isSave ? MemoryOfEncodedMove::IsWritten : MemoryOfEncodedMove::IsRead;
     checkMemoryOfEncodedMove(*this, firstMemory, Width64, access);
     checkMemoryOfEncodedMove(*this, secondMemory, Width64, access);
-    MacroAssembler::Address firstAddress = addressOf(firstMemory);
-    MacroAssembler::Address secondAddress = addressOf(secondMemory);
+    MacroAssembler::Address firstAddress = addressOf(firstMemory, access);
+    MacroAssembler::Address secondAddress = addressOf(secondMemory, access);
     if (firstAddress.base != secondAddress.base)
         return false;
     constexpr int64_t bytesOfWord = bytesForWidth(Width64);
