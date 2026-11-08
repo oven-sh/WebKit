@@ -31,6 +31,7 @@
 #include "WebExtensionAPIEvent.h"
 #include "WebExtensionAPIObject.h"
 
+OBJC_CLASS NSArray;
 OBJC_CLASS NSDictionary;
 OBJC_CLASS NSString;
 
@@ -49,7 +50,7 @@ public:
 
     void getAllCookieStores(Ref<WebExtensionCallbackHandler>&&);
 
-    NSDictionary *LEGACY_NODELETE sameSiteStatus();
+    NODELETE NSDictionary *sameSiteStatus();
 
     WebExtensionAPIEvent& onChanged();
 

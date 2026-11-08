@@ -48,20 +48,19 @@ namespace {
 // An arbitrary message ID that does not collide with Mach notification messages.
 static constexpr mach_msg_id_t webkitMachMessageID = 0xdba0dba;
 
-// The mach message size that is built without touching the heap. A body that does not fit is sent
-// out-of-line; the messages that do not fit even then are the ones with many attachments, and they are the
-// only ones that need a heap allocation. With current limits, this fits:
-// 0 attachments and 4072 bytes of inline body.
-// 127 attachments and 2544 bytes of inline body.
-static constexpr size_t messageStorageSize = 4096;
+static constexpr size_t typicalMaximumAttachmentCount = 16;
 
-// The largest message that can be built, which is one carrying the most attachments a message may have.
+// Sized to fit the largest inline body plus a typical number of attachments without a heap
+// allocation.
+static constexpr size_t messageStorageSize = round_msg(sizeof(mach_msg_header_t) + sizeof(mach_msg_body_t)
+    + typicalMaximumAttachmentCount * sizeof(mach_msg_port_descriptor_t) + Encoder::maximumInlineBodySize);
+
 static constexpr size_t maxMessageSize = sizeof(mach_msg_header_t) + sizeof(mach_msg_body_t)
-    + MachMessage::maxAttachmentCount * sizeof(mach_msg_port_descriptor_t) + sizeof(mach_msg_ool_descriptor_t);
+    + MachMessage::maxAttachmentCount * sizeof(mach_msg_port_descriptor_t) + std::max(sizeof(mach_msg_ool_descriptor_t), Encoder::maximumInlineBodySize);
 static_assert(maxMessageSize <= std::numeric_limits<mach_msg_size_t>::max());
 
-// Storage for one message. The messages that fit messageStorageSize, plus the trailer a received message
-// comes with, are built and received in the inline storage, so that the common case does not allocate.
+// Storage for one received message. The messages that fit messageStorageSize, plus the trailer a received
+// message comes with, are received in the inline storage, so that the common case does not allocate.
 class MessageBuffer {
     WTF_MAKE_NONCOPYABLE(MessageBuffer);
 public:
@@ -70,11 +69,10 @@ public:
     MessageBuffer() = default;
 
     // Returns storage for `size` bytes, or an empty span if it could not be allocated. The storage is inline
-    // when `size` is at most `inlineCapacity`. Invalidates the storage returned by an earlier call.
-    std::span<std::byte> allocate(size_t size, size_t inlineCapacity = inlineStorageSize)
+    // when `size` is at most inlineStorageSize. Invalidates the storage returned by an earlier call.
+    std::span<std::byte> allocate(size_t size)
     {
-        ASSERT(inlineCapacity <= inlineStorageSize);
-        if (size <= inlineCapacity)
+        if (size <= inlineStorageSize)
             return std::span<std::byte> { m_inlineStorage }.first(size);
         m_heapStorage = MallocSpan<std::byte>::tryMalloc(size);
         if (!m_heapStorage) [[unlikely]]
@@ -122,28 +120,17 @@ static MachMessage::SendResult sendResult(kern_return_t kr, MessageName messageN
 
 } // namespace
 
-MachMessage::MachMessage(MessageName messageName)
+MachMessage::MachMessage(MessageName messageName, MmapSpan<uint8_t>&& outOfLineBody)
     : m_messageName { messageName }
+    , m_outOfLineBody { WTF::move(outOfLineBody) }
 {
 }
 
 MachMessage::~MachMessage()
 {
-    if (m_shouldDestroy)
+    // Successful message sends already consume the rights associated with the message.
+    if (m_state != State::Sent)
         ::mach_msg_destroy(m_messageHeader);
-}
-
-std::unique_ptr<MachMessage> MachMessage::adoptPseudoReceived(MessageName messageName, std::span<const std::byte> message)
-{
-    // The message is copied over the whole of the allocation that follows the instance, so the memory does
-    // not need to be zeroed.
-    void* memory = nullptr;
-    if (!tryFastMalloc(sizeof(MachMessage) + message.size()).getValue(memory)) [[unlikely]]
-        return nullptr;
-    std::unique_ptr<MachMessage> result { new (NotNull, memory) MachMessage { messageName } };
-    auto newMessage = unsafeMakeSpan(reinterpret_cast<std::byte*>(result->m_messageHeader), message.size());
-    memcpySpan(newMessage, message);
-    return result;
 }
 
 // A message with no attachments and a body that fits is the header and the body of the encoder:
@@ -156,51 +143,46 @@ std::unique_ptr<MachMessage> MachMessage::adoptPseudoReceived(MessageName messag
 //     mach_msg_header_t header;
 //     mach_msg_body_t body;
 //     mach_msg_port_descriptor_t attachments[attachmentCount];
-//     mach_msg_ool_descriptor_t outOfLineEncoderBody  // when the body does not fit,
+//     mach_msg_ool_descriptor_t outOfLineEncoderBody  // when the encoder keeps the body out-of-line,
 //         | std::byte encoderBody[];                  // and otherwise the body itself
 //
 // The attachments are not sent as an out-of-line array of port names, even though that would keep every
 // message within messageStorageSize: the kernel refuses a mach_msg_ool_ports_descriptor_t sent to an
 // ordinary connection port with a fatal EXC_GUARD, see IPC_SEC_POLICY_RESTRICT_OOL_PORT_ARRAYS.
 
-MachMessage::SendEncoderResult MachMessage::sendEncoder(UniqueRef<Encoder>&& encoderIn, mach_port_t destination, Timeout timeout)
+std::unique_ptr<MachMessage> MachMessage::create(UniqueRef<Encoder>&& encoderIn)
 {
     auto encoder = WTF::move(encoderIn);
 
-    auto body = encoder->span();
-    size_t attachmentCount = encoder->attachmentCount();
-
     // To optimize the base-case, encoder does not record validity during encoding.
+    size_t attachmentCount = encoder->attachmentCount();
     if (attachmentCount > maxAttachmentCount) [[unlikely]]
-        return { SendResult::InvalidEncoder, nullptr };
+        return nullptr;
+
+    auto body = encoder->span();
+    auto outOfLineBuffer = encoder->releaseOutOfLineBuffer();
+    bool bodyIsOutOfLine = !!outOfLineBuffer;
+    ASSERT(bodyIsOutOfLine || body.size() <= Encoder::maximumInlineBodySize);
 
     // The number of attachments a message may carry is bounded, so the arithmetic below cannot overflow,
     // which is what maxMessageSize holds to.
     size_t attachmentDescriptorsSize = attachmentCount * sizeof(mach_msg_port_descriptor_t);
     size_t headerAndDescriptorsSize = sizeof(mach_msg_header_t) + (attachmentCount ? sizeof(mach_msg_body_t) + attachmentDescriptorsSize : 0);
-
-    // A body that does not fit is sent out-of-line, so that the kernel makes a virtual copy of it instead of
-    // it being copied into the message and out of it again.
-    bool bodyIsOutOfLine = headerAndDescriptorsSize + body.size() > messageStorageSize;
     size_t messageSize = round_msg(bodyIsOutOfLine
         ? sizeof(mach_msg_header_t) + sizeof(mach_msg_body_t) + attachmentDescriptorsSize + sizeof(mach_msg_ool_descriptor_t)
         : headerAndDescriptorsSize + body.size());
     ASSERT(messageSize <= maxMessageSize);
 
-    // Only the messages with more attachments than fit are built on the heap. The room for the trailer is
-    // only for receiving.
-    MessageBuffer buffer;
-    auto message = buffer.allocate(messageSize, messageStorageSize);
-    if (message.empty()) [[unlikely]]
-        return { SendResult::OutOfMemory, nullptr };
+    // Every byte of the trailing messageSize storage is initialized below (including padding).
+    void* memory = fastMalloc(sizeof(MachMessage) + messageSize);
+    std::unique_ptr<MachMessage> result { new (NotNull, memory) MachMessage { encoder->messageName(), WTF::move(outOfLineBuffer) } };
 
     size_t descriptorCount = attachmentCount + bodyIsOutOfLine;
-    auto remaining = message;
-    auto& header = consumeAndReinterpretCastTo<mach_msg_header_t>(remaining);
-    header = {
+    auto remaining = unsafeMakeSpan(reinterpret_cast<std::byte*>(result->m_messageHeader), messageSize);
+    consumeAndReinterpretCastTo<mach_msg_header_t>(remaining) = {
         .msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0) | (descriptorCount ? MACH_MSGH_BITS_COMPLEX : 0),
         .msgh_size = static_cast<mach_msg_size_t>(messageSize),
-        .msgh_remote_port = destination,
+        .msgh_remote_port = MACH_PORT_NULL,
         .msgh_local_port = MACH_PORT_NULL,
         .msgh_voucher_port = MACH_PORT_NULL,
         .msgh_id = webkitMachMessageID
@@ -239,29 +221,42 @@ MachMessage::SendEncoderResult MachMessage::sendEncoder(UniqueRef<Encoder>&& enc
     if (!remaining.empty())
         zeroSpan(remaining);
 
-    auto result = sendResult(sendMessage(&header, timeout), encoder->messageName());
-    if (result == SendResult::Success)
-        return { result, nullptr };
-
-    // The kernel copies the message back out when the send times out, so that the resources it named
-    // are the caller's again.
-    if (result == SendResult::Timeout) {
-        // Kernel rewrote the resources. Adopt them for retry.
-        auto retryableMessage = adoptPseudoReceived(encoder->messageName(), message);
-        if (retryableMessage)
-            return { result, WTF::move(retryableMessage) };
-        result = SendResult::OutOfMemory;
-    }
-
-    ::mach_msg_destroy(&header);
-    return { result, nullptr };
+    return result;
 }
 
-MachMessage::SendResult MachMessage::send(Timeout timeout)
+MachMessage::SendResult MachMessage::send(mach_port_t destination, Timeout timeout)
 {
-    auto result = sendResult(sendMessage(m_messageHeader, timeout), m_messageName);
-    if (result == SendResult::Success)
-        m_shouldDestroy = false;
+    RELEASE_ASSERT(m_state != State::Sent);
+
+    auto& header = *m_messageHeader;
+
+    // A message returned from a timed-out send holds its own reference to the destination, so
+    // readdressing it would leak that reference. Its msgh_remote_port should be one of:
+    //
+    // - `destination`, if the port was alive when the kernel returned the message.
+    // - MACH_PORT_DEAD, if the port died before the kernel returned the message.
+    RELEASE_ASSERT_IMPLIES(m_state == State::TimedOut, header.msgh_remote_port == destination || header.msgh_remote_port == MACH_PORT_DEAD);
+
+    if (m_state == State::NotSent)
+        header.msgh_remote_port = destination;
+
+    auto result = sendResult(sendMessage(&header, timeout), m_messageName);
+    switch (result) {
+    case SendResult::Success:
+        m_state = State::Sent;
+        m_outOfLineBody = { };
+        break;
+
+    case SendResult::Timeout:
+        // On timeout, the kernel rewrites the message in place with an OOL descriptor that points
+        // to a new mapping that the message owns. So we can release the original OOL body.
+        m_state = State::TimedOut;
+        m_outOfLineBody = { };
+        break;
+
+    case SendResult::InvalidDestinationPort:
+        break;
+    }
     return result;
 }
 

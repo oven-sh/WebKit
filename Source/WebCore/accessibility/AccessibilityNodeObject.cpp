@@ -1085,7 +1085,7 @@ bool AccessibilityNodeObject::hasElementDescendant() const
     return element && childrenOfType<Element>(*element).first();
 }
 
-static bool LEGACY_NODELETE isFlowContent(Node& node)
+NODELETE static bool isFlowContent(Node& node)
 {
     if (auto* element = dynamicDowncast<HTMLElement>(node)) {
         // https://html.spec.whatwg.org/#flow-content
@@ -1621,7 +1621,7 @@ bool AccessibilityNodeObject::isHiddenUntilFoundContainer() const
     return element && element->isHiddenUntilFound();
 }
 
-static bool LEGACY_NODELETE isDateFieldWithStandardFocus(HTMLInputElement& input)
+NODELETE static bool isDateFieldWithStandardFocus(HTMLInputElement& input)
 {
     return (input.isDateField() || input.isDateTimeLocalField()) && !input.hasCustomFocusLogic();
 }
@@ -3933,7 +3933,7 @@ static void appendNameToStringBuilder(StringBuilder& builder, String&& text, boo
 }
 
 
-static bool LEGACY_NODELETE displayNeedsSpace(Style::Display display)
+NODELETE static bool displayNeedsSpace(Style::Display display)
 {
     return display == Style::DisplayType::BlockFlow
         || display == Style::DisplayType::InlineFlowRoot
@@ -4224,7 +4224,7 @@ Vector<AXStitchGroup> AccessibilityNodeObject::stitchGroups() const
     auto stitchableExcludedMarker = [&]() -> CheckedPtr<RenderListOutsideMarker> {
         // The marker's list item is this block flow itself when the item's own content makes the line, and an
         // ancestor of it when the line is in a descendant block of the item.
-        for (CheckedPtr<const RenderBlock> ancestor = renderBlockFlow.get(); ancestor; ancestor = ancestor->containingBlock()) {
+        for (CheckedPtr<const RenderBoxModelObject> ancestor = renderBlockFlow; ancestor; ancestor = ancestor->containingBlock()) {
             CheckedPtr listItem = dynamicDowncast<RenderListItem>(ancestor.get());
             CheckedPtr marker = listItem ? listItem->markerBox() : nullptr;
             if (!marker || !marker->isExcludedMarker() || marker->isDisclosureMarker())

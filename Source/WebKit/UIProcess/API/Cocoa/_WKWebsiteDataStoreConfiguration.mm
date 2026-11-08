@@ -422,7 +422,7 @@ static void checkURLArgument(NSURL *url)
     protect(_configuration.get())->setGeneralStorageDirectory(url.path);
 }
 
-static _WKUnifiedOriginStorageLevel LEGACY_NODELETE toWKUnifiedOriginStorageLevel(WebKit::UnifiedOriginStorageLevel level)
+NODELETE static _WKUnifiedOriginStorageLevel toWKUnifiedOriginStorageLevel(WebKit::UnifiedOriginStorageLevel level)
 {
     switch (level) {
     case WebKit::UnifiedOriginStorageLevel::None:
@@ -434,7 +434,7 @@ static _WKUnifiedOriginStorageLevel LEGACY_NODELETE toWKUnifiedOriginStorageLeve
     }
 }
 
-static WebKit::UnifiedOriginStorageLevel LEGACY_NODELETE toUnifiedOriginStorageLevel(_WKUnifiedOriginStorageLevel wkLevel)
+NODELETE static WebKit::UnifiedOriginStorageLevel toUnifiedOriginStorageLevel(_WKUnifiedOriginStorageLevel wkLevel)
 {
     switch (wkLevel) {
     case _WKUnifiedOriginStorageLevelNone:
@@ -588,8 +588,7 @@ static WebKit::UnifiedOriginStorageLevel LEGACY_NODELETE toUnifiedOriginStorageL
 
 - (void)setMockPushSubscriptionOriginsForTesting:(NSArray<NSString *> *)originStrings
 {
-    Vector<WebCore::SecurityOriginData> origins;
-    origins.reserveInitialCapacity(originStrings.count);
+    Vector<WebCore::SecurityOriginData> origins(ReserveCapacityTag { }, originStrings.count);
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL NSString *originString in originStrings) {
         auto origin = WebCore::SecurityOriginData::fromURL(URL { String { originString } });

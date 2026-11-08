@@ -35,6 +35,7 @@
 #include "ImageOrientation.h"
 #include "IntRect.h"
 #include "LayoutRoundedRect.h"
+#include "MeshGradientRendererCPU.h"
 #include "SourceImage.h"
 #include "SystemImage.h"
 #include "TextRun.h"
@@ -221,8 +222,7 @@ Vector<TextRun> GraphicsContext::visuallyOrderedSubruns(const TextRun& run)
         return { };
     }
 
-    Vector<TextRun> subruns;
-    subruns.reserveInitialCapacity(runCount);
+    Vector<TextRun> subruns(ReserveCapacityTag { }, runCount);
     for (int32_t visualIndex = 0; visualIndex < runCount; ++visualIndex) {
         int32_t start = 0;
         int32_t length = 0;
@@ -450,6 +450,11 @@ void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect&
     part.draw(*this, borderRect, deviceScaleFactor, style);
 }
 
+void GraphicsContext::drawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
+{
+    MeshGradientRendererCPU { }.draw(*this, gradient, destination);
+}
+
 #if ENABLE(VIDEO)
 void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, RasterDrawingOptions options)
 {
@@ -460,9 +465,9 @@ void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& d
     if (options.orientation().usesWidthAsHeight())
         size = size.transposedSize();
     // Copy is equivalent to SourceOver when the frame's alpha is not used, and cheaper.
-    // FIXME: This overrides whatever composite operator the caller asked for, so drawing a video
-    // frame into a canvas ignores its globalCompositeOperation.
-    auto compositeOperator = ((shouldDiscardAlpha == ShouldDiscardAlpha::No) && image->hasAlpha()) ? CompositeOperator::SourceOver : CompositeOperator::Copy;
+    auto compositeOperator = options.compositeOperator();
+    if (compositeOperator == CompositeOperator::SourceOver && (shouldDiscardAlpha == ShouldDiscardAlpha::Yes || !image->hasAlpha()))
+        compositeOperator = CompositeOperator::Copy;
     drawNativeImage(*image, destination, { { }, size }, { options, compositeOperator });
 }
 #endif

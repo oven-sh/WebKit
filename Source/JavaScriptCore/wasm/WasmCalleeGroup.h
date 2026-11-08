@@ -258,7 +258,7 @@ public:
         return m_wasmToWasmExitStubs[functionIndex].code();
     }
 
-    bool LEGACY_NODELETE isSafeToRun(MemoryMode);
+    NODELETE bool isSafeToRun(MemoryMode);
 
     MemoryMode mode() const { return m_mode; }
 

@@ -62,7 +62,7 @@ public:
     static SyntheticModuleRecord* createTextModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, SourceCode&&);
 
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
-    JS_EXPORT_PRIVATE JSValue LEGACY_NODELETE evaluate(JSGlobalObject*);
+    NODELETE JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*);
 
 #if USE(BUN_JSC_ADDITIONS)
     // Creates a record (reported as a JavaScript module, SourceProviderSourceType::Module) exporting exportValues

@@ -112,6 +112,11 @@
             "behaviors": [{ "id": "ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk" }]
         },
         {
+            "bugs": ["rdar://162447105"],
+            "matches": ["*://*.bbc.co.uk/*", "*://*.bbc.com/*"],
+            "behaviors": [{ "id": "NeedsDarkAppearanceWithoutColorSchemeQuirk" }]
+        },
+        {
             "bugs": ["rdar://136235936"],
             "matches": ["*://*.bestbuy.com/*"],
             "behaviors": [
@@ -222,8 +227,8 @@
             "behaviors": [{ "id": "ShouldUseLayoutViewportForClientRectsQuirk" }]
         },
         {
-            "bugs": ["rdar://189766320"],
-            "matches": ["*://*.chatgpt.com/*"],
+            "bugs": ["rdar://189766320", "rdar://191470125"],
+            "matches": ["*://*.chatgpt.com/*", "*://*.grok.com/*"],
             "behaviors": [{ "id": "NeedsMarginTrimInlineSupportsQuirk" }]
         },
         {
@@ -359,6 +364,13 @@
             "behaviors": [{ "id": "NeedsZeroMaxTouchPointsQuirk" }]
         },
         {
+            "bugs": ["rdar://188849586"],
+            "matches": ["*://*.disneyplus.com/*"],
+            "available": "iOS",
+            "environment": "Desktop",
+            "behaviors": [{ "id": "NeedsZeroMaxTouchPointsQuirk" }]
+        },
+        {
             "bugs": ["rdar://190675819"],
             "matches": ["*://englishtest.duolingo.com/*", "*://englishtest.duolingo.cn/*"],
             "behaviors": [{ "id": "NeedsChromeCompatibilityUserAgentQuirk", "chromeCompatibilityVersion": "157" }]
@@ -484,8 +496,10 @@
             "behaviors": [{ "id": "RequiresUserGestureToPauseInPictureInPictureQuirk" }]
         },
         {
+            "bugs": ["https://webkit.org/b/303622"],
+            "comment": "FIXME: Remove as soon as nvidia adjusts the site for Safari. https://webkit.org/b/303718",
             "matches": ["*://play.geforcenow.com/*"],
-            "behaviors": [{ "id": "NeedsGeforcenowWarningDisplayNoneQuirk" }]
+            "behaviors": [{ "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": "div.cdk-overlay-container, div.unsupported-scenario-container { display: none !important; }" }]
         },
         {
             "bugs": ["https://webkit.org/b/319011", "rdar://181825035"],
@@ -572,6 +586,17 @@
             "behaviors": [{ "id": "ShouldIgnoreInputModeNone" }]
         },
         {
+            "bugs": ["rdar://191131755"],
+            "comment": "accounts.youtube.com resolves through a CNAME to google.com. Capping the expiry of the cookies it sets on youtube.com signs users out of YouTube.",
+            "matches": ["*://*.youtube.com/*", "*://*.google.com/*"],
+            "behaviors": [
+                {
+                    "id": "NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk",
+                    "secondaryURL": ["*://*.youtube.com/*", "*://*.google.com/*"]
+                }
+            ]
+        },
+        {
             "bugs": ["rdar://49403416"],
             "matches": ["*://mail.google.com/*"],
             "behaviors": [{ "id": "NeedsGMailOverflowScrollQuirk" }]
@@ -609,6 +634,11 @@
                     "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
                 }
             ]
+        },
+        {
+            "bugs": ["rdar://158560192"],
+            "matches": ["*://*.gradescope.com/*"],
+            "behaviors": [{ "id": "NeedsPartitionedCookiesQuirk" }]
         },
         {
             "bugs": ["rdar://157388533"],
@@ -716,7 +746,6 @@
             "matches": ["*://*.imdb.com/*"],
             "behaviors": [
                 { "id": "NeedsChromeMediaControlsPseudoElementQuirk", "bugs": ["rdar://137991466"] },
-                { "id": "NeedsWebKitMediaTextTrackDisplayQuirk", "bugs": ["rdar://137012134"] },
                 { "id": "NeedsZeroMaxTouchPointsQuirk", "bugs": ["rdar://162684936"] }
             ]
         },
@@ -862,6 +891,11 @@
             "behaviors": [{ "id": "IsNeverRichlyEditableForTouchBarQuirk" }]
         },
         {
+            "bugs": ["rdar://189705627"],
+            "matches": ["*://*.openrice.com/*"],
+            "behaviors": [{ "id": "NeedsOpenRiceAdPopupHeightQuirk", "elementSelector": ".popup-ad-subview-container" }]
+        },
+        {
             "bugs": ["https://webkit.org/b/296989"],
             "matches": ["*://*.madisoncity.k12.al.us/*"],
             "behaviors": [{ "id": "NeedsFormControlToBeMouseFocusableQuirk" }]
@@ -967,10 +1001,6 @@
         {
             "matches": ["*://*.nfl.com/*"],
             "behaviors": [{ "id": "ShouldSuppressHLSSubtitles" }]
-        },
-        {
-            "matches": ["*://*.nhl.com/*"],
-            "behaviors": [{ "id": "NeedsWebKitMediaTextTrackDisplayQuirk" }]
         },
         {
             "bugs": ["rdar://5976384"],
@@ -1084,7 +1114,6 @@
                 { "id": "NeedsBodyScrollbarWidthNoneDisabledQuirk" },
                 { "id": "ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor" },
                 { "id": "ShouldLimitHLSPlaybackRate" },
-                { "id": "NeedsWebKitMediaTextTrackDisplayQuirk" },
                 { "id": "ShouldDeferIntersectionObserversDuringResize" },
                 { "id": "ShouldBlockAudiblePlaybackWhileAudioIsPlaying" },
                 { "id": "NeedsWebKitMediaKeysTransportStreamIsTypeSupportedQuirk" }
@@ -1394,6 +1423,12 @@
                     "elementSelector": ".DPvwYc.sm8sCf, .vjs-subs-cap-button.vjs-menu-button"
                 }
             ]
+        },
+        {
+            "bugs": ["rdar://177395486"],
+            "comment": "FIXME: Remove once Yelp stops covering the top of the video lightbox with a pointer-event-eating Share/Report bar.",
+            "matches": ["*://*.yelp.com/*"],
+            "behaviors": [{ "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": "div:has(button[aria-label=\"Share\"]):has(button[aria-label=\"Report\"]):not(:has(video)) { pointer-events: none; } button[aria-label=\"Share\"], button[aria-label=\"Report\"] { pointer-events: auto; }" }]
         },
         {
             "bugs": ["rdar://127246368"],

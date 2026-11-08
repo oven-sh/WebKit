@@ -68,7 +68,14 @@ else { \
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderPassEncoder);
 
-static std::pair<uint64_t, uint32_t> LEGACY_NODELETE makeKey(uint64_t bufferIdentifier, uint32_t offset)
+NODELETE static bool renderPassDefinesAttachmentMemory(std::optional<WebGPU::LoadOp> loadOp, std::optional<WebGPU::StoreOp> storeOp)
+{
+    if (storeOp == WebGPU::StoreOp::Store)
+        return true;
+    return storeOp == WebGPU::StoreOp::Discard && loadOp == WebGPU::LoadOp::Load;
+}
+
+NODELETE static std::pair<uint64_t, uint32_t> makeKey(uint64_t bufferIdentifier, uint32_t offset)
 {
     return std::make_pair(bufferIdentifier, offset);
 }
@@ -150,7 +157,8 @@ RenderPassEncoder::RenderPassEncoder(id<MTLRenderCommandEncoder> renderCommandEn
         if (texture.isDestroyed())
             m_parentEncoder->makeSubmitInvalid();
 
-        texture.setProvisionallyCleared(m_parentEncoder);
+        if (renderPassDefinesAttachmentMemory(attachment.loadOp, attachment.storeOp))
+            texture.setProvisionallyCleared(m_parentEncoder);
         addResourceToActiveResources(texture, BindGroupEntryUsage::Attachment);
         m_rasterSampleCount = texture.sampleCount();
         if (attachment.resolveTarget) {
@@ -180,7 +188,19 @@ RenderPassEncoder::RenderPassEncoder(id<MTLRenderCommandEncoder> renderCommandEn
 
     if (const auto* attachment = depthStencilAttachment) {
         auto textureView = attachment->view;
-        textureView.setProvisionallyCleared(m_parentEncoder);
+        auto depthStencilFormat = textureView.format();
+        bool hasDepthAspect = Texture::containsDepthAspect(depthStencilFormat);
+        bool hasStencilAspect = Texture::containsStencilAspect(depthStencilFormat);
+        bool depthIsDefined = !hasDepthAspect || renderPassDefinesAttachmentMemory(attachment->depthLoadOp, attachment->depthStoreOp);
+        bool stencilIsDefined = !hasStencilAspect || renderPassDefinesAttachmentMemory(attachment->stencilLoadOp, attachment->stencilStoreOp);
+        // Cleared state is tracked per subresource, not per aspect, so if this pass clears both aspects
+        // of a texture that is not cleared yet and discards only one, the lazy clear of the discarded
+        // aspect would also zero the stored one. Zero the discarded aspect at the end of the pass instead.
+        bool clearsBothAspects = hasDepthAspect && hasStencilAspect && attachment->depthLoadOp == WebGPU::LoadOp::Clear && attachment->stencilLoadOp == WebGPU::LoadOp::Clear && !textureView.previouslyCleared();
+        bool zeroDiscardedDepth = clearsBothAspects && attachment->depthStoreOp == WebGPU::StoreOp::Discard && attachment->stencilStoreOp == WebGPU::StoreOp::Store;
+        bool zeroDiscardedStencil = clearsBothAspects && attachment->stencilStoreOp == WebGPU::StoreOp::Discard && attachment->depthStoreOp == WebGPU::StoreOp::Store;
+        if ((depthIsDefined || zeroDiscardedDepth) && (stencilIsDefined || zeroDiscardedStencil))
+            textureView.setProvisionallyCleared(m_parentEncoder);
         textureView.setCommandEncoder(m_parentEncoder);
         id<MTLTexture> depthTexture = textureView.isDestroyed() ? nil : textureView.texture();
         if (textureView.width() && !m_renderTargetWidth) {
@@ -191,14 +211,14 @@ RenderPassEncoder::RenderPassEncoder(id<MTLRenderCommandEncoder> renderCommandEn
 
         m_depthClearValue = attachment->depthStoreOp == WebGPU::StoreOp::Discard ? 0 : quantizedDepthValue(attachment->depthClearValue, textureView.format());
         if (!Device::isStencilOnlyFormat(depthTexture.pixelFormat)) {
-            m_clearDepthAttachment = depthTexture && attachment->depthStoreOp == WebGPU::StoreOp::Discard && attachment->depthLoadOp == WebGPU::LoadOp::Load;
+            m_clearDepthAttachment = depthTexture && attachment->depthStoreOp == WebGPU::StoreOp::Discard && (attachment->depthLoadOp == WebGPU::LoadOp::Load || zeroDiscardedDepth);
             m_depthStencilAttachmentToClear = depthTexture;
             addResourceToActiveResources(textureView, attachment->depthReadOnly ? BindGroupEntryUsage::AttachmentRead : BindGroupEntryUsage::Attachment, WebGPU::TextureAspect::DepthOnly);
         }
 
         m_stencilClearValue = attachment->stencilStoreOp == WebGPU::StoreOp::Discard ? 0 : attachment->stencilClearValue;
         if (Texture::stencilOnlyAspectMetalFormat(textureView.format())) {
-            m_clearStencilAttachment = depthTexture && attachment->stencilStoreOp == WebGPU::StoreOp::Discard && attachment->stencilLoadOp == WebGPU::LoadOp::Load;
+            m_clearStencilAttachment = depthTexture && attachment->stencilStoreOp == WebGPU::StoreOp::Discard && (attachment->stencilLoadOp == WebGPU::LoadOp::Load || zeroDiscardedStencil);
             m_depthStencilAttachmentToClear = depthTexture;
             addResourceToActiveResources(textureView, attachment->stencilReadOnly ? BindGroupEntryUsage::AttachmentRead : BindGroupEntryUsage::Attachment, WebGPU::TextureAspect::StencilOnly);
         }
@@ -792,7 +812,7 @@ void RenderPassEncoder::emitMemoryBarrier(id<MTLRenderCommandEncoder> renderComm
 }
 
 template <typename T>
-static T* LEGACY_NODELETE typedCast(auto& s)
+NODELETE static T* typedCast(auto& s)
 {
     return static_cast<T*>(static_cast<void*>(&s));
 }
@@ -1103,7 +1123,7 @@ bool RenderPassEncoder::clampIndirectIndexBufferDispatch2Batched(Buffer* apiInde
 }
 
 
-static NSUInteger LEGACY_NODELETE verticesPerPrimitive(MTLPrimitiveType primitiveType)
+NODELETE static NSUInteger verticesPerPrimitive(MTLPrimitiveType primitiveType)
 {
     switch (primitiveType) {
     case MTLPrimitiveTypePoint:
@@ -2134,11 +2154,26 @@ void RenderPassEncoder::setViewport(float x, float y, float width, float height,
         makeInvalid(@"GPURenderPassEncoder.setViewport: viewport is out of bounds");
         return;
     }
+    auto originX = x;
+    auto originY = y;
+    auto viewportWidth = width;
+    auto viewportHeight = height;
+
+    if (id<MTLRasterizationRateMap> map = m_rasterizationRateMap) {
+        MTLSize physicalSize = [map physicalSizeForLayer:0];
+        MTLCoordinate2D start = [map mapPhysicalToScreenCoordinates:MTLCoordinate2DMake(std::min<float>(physicalSize.width, x), std::min<float>(physicalSize.height, y)) forLayer:0];
+        MTLCoordinate2D end = [map mapPhysicalToScreenCoordinates:MTLCoordinate2DMake(std::min<float>(physicalSize.width, x + width), std::min<float>(physicalSize.height, y + height)) forLayer:0];
+        originX = start.x;
+        originY = start.y;
+        viewportWidth = end.x - start.x;
+        viewportHeight = end.y - start.y;
+    }
+
     m_viewport = MTLViewport {
-        .originX = x,
-        .originY = y,
-        .width = width,
-        .height = height,
+        .originX = originX,
+        .originY = originY,
+        .width = viewportWidth,
+        .height = viewportHeight,
         .znear = minDepth,
         .zfar = maxDepth
     };
@@ -2157,7 +2192,7 @@ void RenderPassEncoder::setLabel(String&& label)
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuRenderPassEncoderAddRef(WGPURenderPassEncoder renderPassEncoder)
+NODELETE void wgpuRenderPassEncoderAddRef(WGPURenderPassEncoder renderPassEncoder)
 {
     WebGPU::Metal::fromAPI(renderPassEncoder).ref();
 }

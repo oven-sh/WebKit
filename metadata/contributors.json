@@ -793,7 +793,8 @@
       "name" : "Andrew Martinez",
       "nicks" : [
          "andrewmartinez"
-      ]
+      ],
+      "status" : "committer"
    },
    {
       "emails" : [
@@ -7423,7 +7424,7 @@
       "nicks" : [
          "robertor"
       ],
-      "status" : "committer"
+      "status" : "reviewer"
    },
    {
       "emails" : [

@@ -64,7 +64,7 @@ public:
     const Vector<Ref<CSSStyleSheet>>& injectedAuthorStyleSheets() const LIFETIME_BOUND;
     const Vector<Ref<CSSStyleSheet>>& authorStyleSheetsForTesting() const LIFETIME_BOUND { return m_authorStyleSheetsForTesting; }
 
-    bool LEGACY_NODELETE hasCachedInjectedStyleSheets() const;
+    NODELETE bool hasCachedInjectedStyleSheets() const;
 
     void clearPageUserSheet();
     void updatePageUserSheet();
@@ -83,7 +83,9 @@ public:
     void injectPageSpecificUserStyleSheet(const UserStyleSheet&);
     void removePageSpecificUserStyleSheet(const UserStyleSheet&);
 
-    String LEGACY_NODELETE contentForInjectedStyleSheet(CSSStyleSheet&) const;
+    void setQuirkStyleSheets(Vector<String>&&);
+
+    NODELETE String contentForInjectedStyleSheet(CSSStyleSheet&) const;
 
     void detachFromDocument();
 
@@ -100,6 +102,7 @@ private:
     Vector<Ref<CSSStyleSheet>> m_userStyleSheets;
     Vector<Ref<CSSStyleSheet>> m_authorStyleSheetsForTesting;
     Vector<UserStyleSheet> m_pageSpecificStyleSheets;
+    Vector<String> m_quirkStyleSheets;
 
 #if ENABLE(CONTENT_EXTENSIONS)
     MemoryCompactRobinHoodHashMap<String, Ref<CSSStyleSheet>> m_contentExtensionSheets;

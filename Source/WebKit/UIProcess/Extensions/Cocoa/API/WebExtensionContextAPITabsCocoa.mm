@@ -220,8 +220,13 @@ void WebExtensionContext::tabsUpdate(WebPageProxyIdentifier webPageProxyIdentifi
     };
 
     auto updateParentTab = [this, protectedThis = Ref { *this }](WebExtensionTab& tab, const WebExtensionTabParameters& parameters, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& stepCompletionHandler) {
+        if (!parameters.parentTabIdentifier) {
+            stepCompletionHandler({ });
+            return;
+        }
+
         auto currentParentTab = tab.parentTab();
-        auto newParentTab = parameters.parentTabIdentifier ? getTab(parameters.parentTabIdentifier.value()) : nullptr;
+        auto newParentTab = getTab(parameters.parentTabIdentifier.value());
 
         if (currentParentTab == newParentTab) {
             stepCompletionHandler({ });
@@ -461,9 +466,8 @@ void WebExtensionContext::tabsCaptureVisibleTab(WebPageProxyIdentifier webPagePr
                 return;
             }
 
-            static NeverDestroyed<Ref<WorkQueue>> queue { WorkQueue::create("org.WebKit.WKWebExtension.tabsCaptureVisibleTab"_s) };
-            // FIXME: rdar://190389704. NeverDestroyed<Ref<T>>::get() is not recognized as safe.
-            SUPPRESS_UNCOUNTED_ARG queue.get()->dispatch([cgImage = WTF::move(cgImage), imageFormat, imageQuality, completionHandler = WTF::move(completionHandler)]() mutable {
+            static NeverDestroyed<const Ref<WorkQueue>> queue { WorkQueue::create("org.WebKit.WKWebExtension.tabsCaptureVisibleTab"_s) };
+            queue.get()->dispatch([cgImage = WTF::move(cgImage), imageFormat, imageQuality, completionHandler = WTF::move(completionHandler)]() mutable {
                 URL result { WebCore::encodeDataURL(cgImage.get(), toMIMEType(imageFormat), imageQuality) };
                 WorkQueue::mainSingleton().dispatch([completionHandler = WTF::move(completionHandler), result = crossThreadCopy(WTF::move(result))]() mutable {
                     completionHandler(WTF::move(result));
@@ -484,7 +488,7 @@ void WebExtensionContext::tabsToggleReaderMode(WebPageProxyIdentifier webPagePro
     tab->toggleReaderMode(WTF::move(completionHandler));
 }
 
-void WebExtensionContext::tabsSendMessage(WebExtensionTabIdentifier tabIdentifier, const String& messageJSON, const WebExtensionMessageTargetParameters& targetParameters, const WebExtensionMessageSenderParameters& senderParameters, bool userGesture, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::tabsSendMessage(WebExtensionTabIdentifier tabIdentifier, const WebExtensionMessage& message, const WebExtensionMessageTargetParameters& targetParameters, const WebExtensionMessageSenderParameters& senderParameters, bool userGesture, CompletionHandler<void(std::expected<WebExtensionMessage, WebExtensionError>&&)>&& completionHandler)
 {
     static NSString * const apiName = @"tabs.sendMessage()";
 
@@ -514,14 +518,14 @@ void WebExtensionContext::tabsSendMessage(WebExtensionTabIdentifier tabIdentifie
     auto completeSenderParameters = senderParameters;
     completeSenderParameters.windowIdentifier = windowIdentifierForPage(senderParameters.pageProxyIdentifier);
 
-    Ref callbackAggregator = EagerCallbackAggregator<void(std::expected<String, WebExtensionError>)>::create(WTF::move(completionHandler), { });
+    Ref callbackAggregator = EagerCallbackAggregator<void(std::expected<WebExtensionMessage, WebExtensionError>)>::create(WTF::move(completionHandler), { });
 
     for (Ref process : processes) {
-        process->sendWithAsyncReply(Messages::WebExtensionContextProxy::DispatchRuntimeMessageEvent(targetContentWorldType, messageJSON, targetParametersCopy, completeSenderParameters, userGesture), [callbackAggregator](String&& replyJSON) {
-            if (replyJSON.isNull())
+        process->sendWithAsyncReply(Messages::WebExtensionContextProxy::DispatchRuntimeMessageEvent(targetContentWorldType, message, targetParametersCopy, completeSenderParameters, userGesture), [callbackAggregator](std::optional<WebExtensionMessage>&& reply) {
+            if (!reply)
                 return;
 
-            callbackAggregator.get()(WTF::move(replyJSON));
+            callbackAggregator.get()(WTF::move(*reply));
         }, identifier());
     }
 }
@@ -616,8 +620,7 @@ void WebExtensionContext::tabsMove(Vector<WebExtensionTabIdentifier> tabIdentifi
         return;
     }
 
-    Vector<Ref<WebExtensionTab>> tabs;
-    tabs.reserveInitialCapacity(tabIdentifiers.size());
+    Vector<Ref<WebExtensionTab>> tabs(ReserveCapacityTag { }, tabIdentifiers.size());
 
     for (auto& tabIdentifier : borrow(tabIdentifiers)) {
         if (RefPtr tab = getTab(tabIdentifier))
@@ -719,8 +722,7 @@ void WebExtensionContext::tabsMove(Vector<WebExtensionTabIdentifier> tabIdentifi
 
 void WebExtensionContext::tabsRemove(Vector<WebExtensionTabIdentifier> tabIdentifiers, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& completionHandler)
 {
-    Vector<Ref<WebExtensionTab>> tabs;
-    tabs.reserveInitialCapacity(tabIdentifiers.size());
+    Vector<Ref<WebExtensionTab>> tabs(ReserveCapacityTag { }, tabIdentifiers.size());
 
     for (auto& tabIdentifier : borrow(tabIdentifiers)) {
         if (RefPtr tab = getTab(tabIdentifier))

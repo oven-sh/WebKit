@@ -2133,7 +2133,7 @@ void WebLocalFrameLoaderClient::sendH2Ping(const URL& url, CompletionHandler<voi
 #if ENABLE(APP_BOUND_DOMAINS)
     isNavigatingToAppBoundDomain = m_frame->isTopFrameNavigatingToAppBoundDomain();
 #endif
-    protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::SendH2Ping(url, webPage->webPageProxyIdentifier(), webPage->identifier(), m_frame->frameID(), isNavigatingToAppBoundDomain), WTF::move(completionHandler));
+    protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::SendH2Ping(url, webPage->webPageProxyIdentifier(), webPage->identifier(), m_frame->frameID(), isNavigatingToAppBoundDomain, m_frame->advancedPrivacyProtections()), WTF::move(completionHandler));
 }
 
 void WebLocalFrameLoaderClient::didRestoreScrollPosition()
@@ -2151,11 +2151,10 @@ void WebLocalFrameLoaderClient::getLoadDecisionForIcons(const Vector<std::pair<W
     if (!webPage)
         return;
 
-    HashMap<CallbackID, WebCore::LinkIcon> callbackIdIconMap;
-    for (auto& icon : borrow(icons))
-        callbackIdIconMap.add(CallbackID::fromInteger(icon.second), icon.first);
-
-    webPage->send(Messages::WebPageProxy::GetLoadDecisionForIcons(WTF::move(callbackIdIconMap)));
+    // Keep LinkIconCollector's order, most appropriate first.
+    webPage->send(Messages::WebPageProxy::GetLoadDecisionForIcons(WTF::map(icons, [](auto& icon) -> std::pair<CallbackID, WebCore::LinkIcon> {
+        return { CallbackID::fromInteger(icon.second), icon.first };
+    })));
 }
 
 void WebLocalFrameLoaderClient::didFinishServiceWorkerPageRegistration(bool success)

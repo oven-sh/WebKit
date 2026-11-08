@@ -36,6 +36,7 @@
 #include "RemoteGradientIdentifier.h"
 #include "RemoteGraphicsContextMessages.h"
 #include "RemoteImageBufferProxy.h"
+#include "RemoteMeshGradientIdentifier.h"
 #include "RemotePathImplIdentifier.h"
 #include "RemoteRenderingBackendIdentifier.h"
 #include "RemoteRenderingBackendMessages.h"
@@ -84,6 +85,8 @@ class RemoteLayerBackingStore;
 class RemoteImageBufferProxyFlushState;
 class RemoteImageBufferSetProxy;
 
+enum class UsesRenderingUpdateBackpressure : bool { No, Yes };
+
 namespace ShapeDetection {
 class RemoteBarcodeDetectorProxy;
 class RemoteTextDetectorProxy;
@@ -103,12 +106,13 @@ public:
 
     ~RemoteRenderingBackendProxy();
 
-    static bool canMapRemoteImageBufferBackendBackingStore();
 
     RemoteResourceCacheProxy& remoteResourceCacheProxy() const { return m_remoteResourceCacheProxy; }
 
     void transferImageBuffer(std::unique_ptr<RemoteSerializedImageBufferProxy>, WebCore::ImageBuffer&);
     std::unique_ptr<RemoteSerializedImageBufferProxy> moveToSerializedBuffer(RemoteImageBufferProxy&);
+    // The GPU process turns the buffer into the returned NativeImage without copying the pixels.
+    Ref<RemoteNativeImageProxy> sinkIntoNativeImage(RemoteImageBufferProxy&);
     RefPtr<RemoteImageBufferProxy> moveToImageBuffer(RemoteSerializedImageBufferProxy&);
     std::optional<WebCore::ImageBufferTransferIdentifier> moveSerializedBufferToTransferHeap(RemoteSerializedImageBufferProxy&);
     RefPtr<RemoteImageBufferProxy> takeTransferredBuffer(const WebCore::ImageBufferTransferHandle&);
@@ -133,6 +137,8 @@ public:
     void releaseFontCustomPlatformData(WebCore::RenderingResourceIdentifier);
     void cacheGradient(Ref<WebCore::Gradient>&&, RemoteGradientIdentifier);
     void releaseGradient(RemoteGradientIdentifier);
+    void cacheMeshGradient(Ref<WebCore::MeshGradient>&&, RemoteMeshGradientIdentifier);
+    void releaseMeshGradient(RemoteMeshGradientIdentifier);
     void cacheFilter(Ref<WebCore::Filter>&&);
     void releaseFilter(WebCore::RenderingResourceIdentifier);
     void cacheDisplayList(RemoteDisplayListIdentifier, const WebCore::DisplayList::DisplayList&);
@@ -174,25 +180,27 @@ public:
         bool requiresClearedPixels { true };
     };
 
-    void LEGACY_NODELETE startPreparingImageBufferSetsForDisplay();
+    NODELETE void startPreparingImageBufferSetsForDisplay();
     void endPreparingImageBufferSetsForDisplay();
 
     void prepareImageBufferSetForDisplay(LayerPrepareBuffersData&&);
 #endif
 
-    void finalizeRenderingUpdate();
+    void finalizeRenderingUpdate(UsesRenderingUpdateBackpressure);
     void didPaintLayers();
 
     RenderingUpdateID renderingUpdateID() const { return m_renderingUpdateID; }
     unsigned delayedRenderingUpdateCount() const { return m_renderingUpdateID - m_didRenderingUpdateID; }
 
-    RemoteRenderingBackendIdentifier LEGACY_NODELETE renderingBackendIdentifier() const;
+    NODELETE RemoteRenderingBackendIdentifier renderingBackendIdentifier() const;
 
     RemoteRenderingBackendIdentifier ensureBackendCreated();
 
     bool isGPUProcessConnectionClosed() const { return !m_connection; }
 
     RefPtr<IPC::StreamClientConnection> connection();
+    // The connection of the GPU process connection that connection() was created on.
+    RefPtr<IPC::Connection> gpuProcessIPCConnection();
 
     bool isCurrent() const final;
     Ref<WorkQueue> workQueue() { return m_queue; }
@@ -201,7 +209,7 @@ public:
 
     static constexpr Seconds defaultTimeout = 15_s;
 
-    unsigned LEGACY_NODELETE nativeImageCountForTesting() const;
+    NODELETE unsigned nativeImageCountForTesting() const;
 private:
     explicit RemoteRenderingBackendProxy(SerialFunctionDispatcher&);
 
@@ -223,7 +231,7 @@ private:
     void ensureGPUProcessConnection();
 
     bool dispatchMessage(IPC::Connection&, IPC::Decoder&);
-    bool LEGACY_NODELETE dispatchSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
+    NODELETE bool dispatchSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
     // Returns std::nullopt if no update is needed or allocation failed.
     // Returns handle if that should be sent to the receiver process.
@@ -241,6 +249,7 @@ private:
     ThreadSafeWeakPtr<SerialFunctionDispatcher> m_dispatcher;
     WeakPtr<GPUProcessConnection> m_gpuProcessConnection; // Only for main thread operation.
     RefPtr<IPC::StreamClientConnection> m_connection;
+    RefPtr<IPC::Connection> m_gpuProcessIPCConnection;
     RefPtr<RemoteSharedResourceCacheProxy> m_sharedResourceCache;
     RemoteRenderingBackendIdentifier m_identifier { RemoteRenderingBackendIdentifier::generate() };
     const UniqueRef<RemoteResourceCacheProxy> m_remoteResourceCacheProxy { RemoteResourceCacheProxy::create(*this) };

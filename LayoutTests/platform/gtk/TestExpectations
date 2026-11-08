@@ -66,6 +66,9 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 
 webkit.org/b/320062 imported/w3c/web-platform-tests/web-animations/responsive/toggle-animated-iframe-visibility.html [ ImageOnlyFailure Pass ]
 
+# Passing since at least 325332@main.
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/selection-alone-with-decorations-painted.tentative.html [ Pass ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of PASSING tests. See below where to put expected failures.
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -1211,7 +1214,6 @@ webkit.org/b/322632 [ Release ] inspector/dom-debugger/dom-breakpoint-attribute-
 webkit.org/b/323049 [ Debug ] imported/w3c/web-platform-tests/webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=cross-origin&frame=nested&visibility=zero-size [ Crash Pass ]
 webkit.org/b/323049 [ Debug ] imported/w3c/web-platform-tests/service-workers/service-worker/static-router-main-resource.https.html [ Crash Failure Pass ]
 
-webkit.org/b/323667 imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-disabled-tracks.https.html [ Crash Pass Timeout ]
 
 webkit.org/b/323784 css3/filters/filter-repaint-blur-nested-pixel-moving-filter.html [ ImageOnlyFailure ]
 webkit.org/b/323612 imported/w3c/web-platform-tests/css/css-counter-styles/counter-style-at-rule/disclosure-line-height.html [ ImageOnlyFailure ]
@@ -1295,3 +1297,16 @@ fast/images/pdf-as-tiled-background.html [ Skip ]
 imported/w3c/web-platform-tests/css/css-scroll-snap/input/mouse-wheel.html [ Skip ]
 
 webkit.org/b/329530 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/css-clip-path-on-div.tentative.html [ ImageOnlyFailure ]
+
+webkit.org/b/328381 imported/w3c/web-platform-tests/svg/text/scripted/range-getboundingclientrect-scaled.html [ Failure ]
+
+webkit.org/b/273396 imported/w3c/web-platform-tests/css/css-view-transitions/rotated-cat-off-top-edge.html [ ImageOnlyFailure ]
+
+webkit.org/b/329970 [ Debug ] media/video-orientation.html [ Failure Pass ]
+
+webkit.org/b/329973 fullscreen/full-screen-enter-while-exiting-mid-completion-handler.html [ Crash Pass ]
+webkit.org/b/329973 [ Debug ] fullscreen/full-screen-enter-while-exiting-fully-mid-completion-handler.html [ Crash Pass ]
+webkit.org/b/330314 [ Debug ] imported/w3c/web-platform-tests/css/css-overflow/scrollbar-gutter-scroll-into-view.html [ ImageOnlyFailure Pass ]
+webkit.org/b/330317 webanimations/accelerated-backdrop-filter.html [ ImageOnlyFailure Pass ]
+
+webkit.org/b/330505 [ Debug ] imported/w3c/web-platform-tests/hr-time/idlharness.any.serviceworker.html [ Failure Pass ]

@@ -160,8 +160,9 @@ auto LibWebRTCCodecsProxy::createDecoderCallback(VideoDecoderIdentifier identifi
             return;
         }
 
-        auto properties = videoFrameObjectHeap->add(WTF::move(videoFrame));
-        connection->send(Messages::LibWebRTCCodecs::CompletedDecoding { identifier, timeStamp, timeStampNs, WTF::move(properties) }, 0);
+        auto properties = RemoteVideoFrameProxy::properties(videoFrame);
+        auto reference = videoFrameObjectHeap->add(WTF::move(videoFrame));
+        connection->send(Messages::LibWebRTCCodecs::CompletedDecoding { identifier, timeStamp, timeStampNs, reference, WTF::move(properties) }, 0);
     };
 }
 
@@ -399,7 +400,7 @@ void LibWebRTCCodecsProxy::releaseEncoder(VideoEncoderIdentifier identifier)
     m_hasEncodersOrDecoders = !m_encoders.isEmpty() || !m_decoders.isEmpty();
 }
 
-static bool LEGACY_NODELETE validateEncoderInitializationData(WebCore::VideoCodecType codecType, bool useLowLatency, size_t width, size_t height)
+NODELETE static bool validateEncoderInitializationData(WebCore::VideoCodecType codecType, bool useLowLatency, size_t width, size_t height)
 {
     switch (codecType) {
     case WebCore::VideoCodecType::H264:

@@ -43,6 +43,7 @@
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/UserGestureIndicator.h>
+#include <expected>
 #include <wtf/Forward.h>
 
 namespace WebCore {
@@ -55,6 +56,7 @@ class UIEventWithKeyState;
 
 enum class SyntheticClickType : uint8_t;
 enum class MouseButton : int8_t;
+enum class MouseButtonState : int8_t;
 enum class NavigationNavigationType : uint8_t;
 enum class PolicyAlreadyDecided : bool { No, Yes };
 
@@ -80,7 +82,7 @@ public:
     const std::optional<NavigationRequester>& requester() const LIFETIME_BOUND { return m_requester; }
 
     struct UIEventWithKeyStateData {
-        UIEventWithKeyStateData(const UIEventWithKeyState&);
+        NODELETE UIEventWithKeyStateData(const UIEventWithKeyState&);
 
         bool isTrusted;
         bool shiftKey;
@@ -93,7 +95,7 @@ public:
 
         LayoutPoint absoluteLocation;
         FloatPoint locationInRootViewCoordinates;
-        MouseButton button;
+        std::expected<MouseButton, MouseButtonState> button;
         SyntheticClickType syntheticClickType;
         bool buttonDown;
     };
@@ -118,7 +120,7 @@ public:
     bool openedByDOMWithOpener() const { return m_openedByDOMWithOpener; }
     void setOpenedByDOMWithOpener() { m_openedByDOMWithOpener = true; }
 
-    void LEGACY_NODELETE setSourceBackForwardItem(HistoryItem*);
+    NODELETE void setSourceBackForwardItem(HistoryItem*);
     const std::optional<BackForwardItemIdentifier>& sourceBackForwardItemIdentifier() const LIFETIME_BOUND { return m_sourceBackForwardItemIdentifier; }
 
     const std::optional<PrivateClickMeasurement>& privateClickMeasurement() const { return m_privateClickMeasurement; };
@@ -130,7 +132,7 @@ public:
 
     // The NavigationHistoryBehavior which m_navigationAPIType was resolved from, so that a process taking
     // over this navigation can resolve the navigation API type the same way.
-    WEBCORE_EXPORT NavigationHistoryBehavior LEGACY_NODELETE navigationHistoryBehavior() const;
+    NODELETE WEBCORE_EXPORT NavigationHistoryBehavior navigationHistoryBehavior() const;
 
     using DispatchNavigateEventFunction = std::function<NavigateEventDispatchResult()>;
 

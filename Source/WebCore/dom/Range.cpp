@@ -32,6 +32,7 @@
 #include "DOMRect.h"
 #include "DOMRectList.h"
 #include "DocumentFragment.h"
+#include "DocumentQuirks.h"
 #include "DocumentType.h"
 #include "ElementInlines.h"
 #include "Event.h"
@@ -99,8 +100,13 @@ Node* Range::commonAncestorContainer() const
 
 void Range::updateAssociatedSelection()
 {
-    if (m_isAssociatedWithSelection)
-        m_ownerDocument->selection().updateFromAssociatedLiveRange();
+    if (!m_isAssociatedWithSelection)
+        return;
+
+    OptionSet<FrameSelection::SetSelectionOption> options;
+    if (m_ownerDocument->quirks().shouldNotMoveFocusWhenMutatingSelectionRange())
+        options.add(FrameSelection::SetSelectionOption::DoNotSetFocus);
+    m_ownerDocument->selection().updateFromAssociatedLiveRange(options);
 }
 
 void Range::updateAssociatedHighlight()
@@ -293,7 +299,7 @@ bool Range::intersectsNode(Node& node) const
     return intersects(makeSimpleRange(*this), node);
 }
 
-static inline Node* LEGACY_NODELETE highestAncestorUnderCommonRoot(Node* node, Node* commonRoot)
+NODELETE static inline Node* highestAncestorUnderCommonRoot(Node* node, Node* commonRoot)
 {
     if (node == commonRoot)
         return 0;
@@ -306,7 +312,7 @@ static inline Node* LEGACY_NODELETE highestAncestorUnderCommonRoot(Node* node, N
     return node;
 }
 
-static inline Node* LEGACY_NODELETE childOfCommonRootBeforeOffset(Node* container, unsigned offset, Node* commonRoot)
+NODELETE static inline Node* childOfCommonRootBeforeOffset(Node* container, unsigned offset, Node* commonRoot)
 {
     ASSERT(container);
     ASSERT(commonRoot);
@@ -926,7 +932,7 @@ String Range::debugDescription() const
 }
 #endif
 
-static inline void LEGACY_NODELETE boundaryNodeChildrenChanged(Locker<Lock>&, RangeBoundaryPoint& boundary, ContainerNode& container)
+NODELETE static inline void boundaryNodeChildrenChanged(Locker<Lock>&, RangeBoundaryPoint& boundary, ContainerNode& container)
 {
     if (boundary.childBefore() && &boundary.container() == &container)
         boundary.invalidateOffset();
@@ -989,7 +995,7 @@ void Range::updateRangeForParentlessNodeMovedToNewDocument(Node& node)
     protect(m_ownerDocument)->attachRange(*this);
 }
 
-static inline void LEGACY_NODELETE boundaryTextInserted(Locker<Lock>&, RangeBoundaryPoint& boundary, Node& text, unsigned offset, unsigned length)
+NODELETE static inline void boundaryTextInserted(Locker<Lock>&, RangeBoundaryPoint& boundary, Node& text, unsigned offset, unsigned length)
 {
     if (&boundary.container() != &text)
         return;
@@ -1008,7 +1014,7 @@ void Range::textInserted(Node& text, unsigned offset, unsigned length)
     m_didChangeForHighlight = true;
 }
 
-static inline void LEGACY_NODELETE boundaryTextRemoved(Locker<Lock>&, RangeBoundaryPoint& boundary, Node& text, unsigned offset, unsigned length)
+NODELETE static inline void boundaryTextRemoved(Locker<Lock>&, RangeBoundaryPoint& boundary, Node& text, unsigned offset, unsigned length)
 {
     if (&boundary.container() != &text)
         return;

@@ -28,6 +28,7 @@
 #include "AXObjectCache.h"
 #include "AnchorPositionEvaluator.h"
 #include "BorderShape.h"
+#include "CachedResourceLoader.h"
 #include "ContainerNodeInlines.h"
 #include "ContentVisibilityDocumentState.h"
 #include "DocumentPage.h"
@@ -45,11 +46,13 @@
 #include "HTMLNames.h"
 #include "HTMLTableCellElement.h"
 #include "HTMLTableElement.h"
+#include "ImageAnimationTimeline.h"
 #include "InlineIteratorLineBox.h"
 #include "InlineIteratorTextBox.h"
 #include "InlineWalker.h"
 #include "InspectorInstrumentation.h"
 #include "LayoutElementBox.h"
+#include "LayoutIntegrationBoxTreeUpdater.h"
 #include "LayoutIntegrationLineLayout.h"
 #include "LocalFrame.h"
 #include "LocalFrameViewLayoutContext.h"
@@ -115,6 +118,7 @@
 #include "TextManipulationController.h"
 #include "ViewTransition.h"
 #include <wtf/MathExtras.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
@@ -140,18 +144,19 @@ float opacity(const RenderElement& renderer)
 
 static_assert(sizeof(RenderElement) == sizeof(SameSizeAsRenderElement), "RenderElement should stay small");
 
-static Visibility LEGACY_NODELETE visibilityIncludingForceHidden(const Style::ComputedStyle& style)
+NODELETE static Visibility visibilityIncludingForceHidden(const Style::ComputedStyle& style)
 {
     return style.isForceHidden() ? Visibility::Hidden : style.visibility();
 }
 
 inline RenderElement::RenderElement(Type type, ContainerNode& elementOrDocument, Style::ComputedStyle&& style, OptionSet<TypeFlag> flags, TypeSpecificFlags typeSpecificFlags)
     : RenderObject(type, elementOrDocument, flags, typeSpecificFlags)
-    , Layout::ElementBox(WTF::move(style))
+    , Layout::ElementBox(WTF::move(style), LayoutIntegration::BoxTreeUpdater::elementAttributes(*this))
     , m_firstChild(nullptr)
     , m_lastChild(nullptr)
 {
     ASSERT(RenderObject::isRenderElement());
+    ASSERT(&RenderObject::layoutBox() == &layoutBox());
 }
 
 RenderElement::RenderElement(Type type, Element& element, Style::ComputedStyle&& style, OptionSet<TypeFlag> baseTypeFlags, TypeSpecificFlags typeSpecificFlags)
@@ -170,7 +175,7 @@ RenderElement::~RenderElement()
     ASSERT(!m_firstChild);
 }
 
-static RefPtr<Style::Image> LEGACY_NODELETE minimallySupportedContentDataImage(const Style::Content& content)
+NODELETE static RefPtr<Style::Image> minimallySupportedContentDataImage(const Style::Content& content)
 {
     // Minimal support for content properties replacing an entire element.
     // Works only if we have exactly one piece of content and it's a URL.
@@ -410,6 +415,29 @@ inline bool RenderElement::shouldRepaintForStyleDifference(Style::Difference dif
     return false;
 }
 
+static void forEachRegisteredImageInStyle(const Style::ComputedStyle& style, NOESCAPE const auto& function)
+{
+    auto callFunction = [&](RefPtr<Style::Image> image) {
+        if (image)
+            function(*image);
+    };
+
+    for (auto& backgroundLayer : style.backgroundLayers().usedValues())
+        callFunction(backgroundLayer.image().tryStyleImage());
+    for (auto& maskLayer : style.maskLayers().usedValues())
+        callFunction(maskLayer.image().tryStyleImage());
+    callFunction(style.borderImageSource().tryStyleImage());
+    callFunction(style.maskBorderSource().tryStyleImage());
+    callFunction(style.shapeOutside().image());
+}
+
+void RenderElement::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    forEachRegisteredImageInStyle(style(), function);
+    if (auto* firstLineStyle = style().pseudoElementStyle({ PseudoElementType::FirstLine }))
+        forEachRegisteredImageInStyle(*firstLineStyle, function);
+}
+
 template<typename FillLayers> void RenderElement::updateFillImages(const FillLayers* oldLayers, const FillLayers* newLayers)
 {
     auto fillImagesAreIdentical = [](const FillLayers* layers1, const FillLayers* layers2) -> bool {
@@ -581,6 +609,7 @@ void RenderElement::initializeStyle()
 
     styleWillChange(Style::DifferenceResult::NewStyle, style());
     m_hasInitializedStyle = true;
+    LayoutIntegration::BoxTreeUpdater::updateFirstLineStyleState(*this);
     styleDidChange(Style::DifferenceResult::NewStyle, nullptr);
 
     // We shouldn't have any text children that would need styleDidChange at this point.
@@ -631,6 +660,8 @@ void RenderElement::setStyle(Style::ComputedStyle&& style, Style::DifferenceResu
     styleWillChange(diff, style);
     auto oldStyle = mutableStyle().replace(WTF::move(style));
     bool detachedFromParent = !parent();
+    // Also on equal style changes, since the first-line style of an inline box can change with them. Text reads it below.
+    LayoutIntegration::BoxTreeUpdater::updateFirstLineStyleState(*this);
 
     // Text renderers inherit from their parent.
     bool hasTextChildren = false;
@@ -645,8 +676,10 @@ void RenderElement::setStyle(Style::ComputedStyle&& style, Style::DifferenceResu
 
     if (hasTextChildren) {
         // The old style has the old inherited values of the text.
-        for (CheckedRef child : childrenOfType<RenderText>(*this))
-            child->styleDidChange(diff, &oldStyle);
+        for (CheckedRef child : childrenOfType<RenderText>(*this)) {
+            if (!child->inheritsStyleFromDisplayContentsParent())
+                child->styleDidChange(diff, &oldStyle);
+        }
     }
 
     // FIXME: |this| might be destroyed here. This can currently happen for a RenderTextFragment when
@@ -696,6 +729,10 @@ RenderObject* RenderElement::attachRendererInternal(RenderPtr<RenderObject> chil
     child->setParent(this);
     if (CheckedPtr textChild = dynamicDowncast<RenderText>(*child))
         textChild->inheritStyleFromParent();
+    else if (CheckedPtr element = dynamicDowncast<RenderElement>(*child); element && element->isAnonymousBlock()) {
+        // An anonymous block uses the first-line style of its parent.
+        LayoutIntegration::BoxTreeUpdater::updateFirstLineStyleState(*element);
+    }
 
     if (m_firstChild == beforeChild)
         m_firstChild = child.get();
@@ -757,7 +794,7 @@ void RenderElement::setMayHaveNonScalingStrokeInSubtreeIncludingAncestors()
         renderer->m_mayHaveNonScalingStrokeInSubtree = true;
 }
 
-static RenderLayer* LEGACY_NODELETE findNextLayer(const RenderElement& currRenderer, const RenderLayer& parentLayer, const RenderObject* siblingToTraverseFrom, bool checkParent = true)
+NODELETE static RenderLayer* findNextLayer(const RenderElement& currRenderer, const RenderLayer& parentLayer, const RenderObject* siblingToTraverseFrom, bool checkParent = true)
 {
     // Step 1: If our layer is a child of the desired parent, then return our layer.
     SUPPRESS_UNCOUNTED_LOCAL auto* ourLayer = currRenderer.hasLayer() ? downcast<RenderLayerModelObject>(currRenderer).layer() : nullptr;
@@ -1245,11 +1282,6 @@ void RenderElement::styleDidChange(Style::Difference diff, const Style::Computed
         LOG_WITH_STREAM(ScrollAnchoring, stream << "RenderElement::styleDidChange: scroll anchoring suppression style change on " << *this);
         setScrollAnchoringSuppressionStyleChanged(true);
     }
-
-    // FIXME: First line change on the block comes in as equal on inline boxes.
-    auto needsLayoutBoxStyleUpdate = (diff >= Style::DifferenceResult::Repaint || (isInlineBox() && &style() != &firstLineStyle())) && LayoutIntegration::BoxTreeUpdater::isLaidOutByIntegration(*this);
-    if (needsLayoutBoxStyleUpdate)
-        LayoutIntegration::LineLayout::updateStyle(*this);
 }
 
 void RenderElement::dirtyEnclosingLayerSVGChildrenIfNeeded()
@@ -1353,19 +1385,10 @@ void RenderElement::willBeDestroyed()
 
     clearSubtreeLayoutRootIfNeeded();
 
-    auto unregisterImage = [this](auto* image) {
-        if (image)
-            image->removeClient(*this);
-    };
-
     auto unregisterImages = [&](auto& style) {
-        for (auto& backgroundLayer : style.backgroundLayers().usedValues())
-            unregisterImage(backgroundLayer.image().tryStyleImage().get());
-        for (auto& maskLayer : style.maskLayers().usedValues())
-            unregisterImage(maskLayer.image().tryStyleImage().get());
-        unregisterImage(style.borderImageSource().tryStyleImage().get());
-        unregisterImage(style.maskBorderSource().tryStyleImage().get());
-        unregisterImage(style.shapeOutside().image().get());
+        forEachRegisteredImageInStyle(style, [&](Style::Image& image) {
+            image.removeClient(*this);
+        });
     };
 
     if (hasInitializedStyle()) {
@@ -1876,7 +1899,7 @@ VisibleInViewportState RenderElement::imageFrameAvailable(CachedImage& image, Im
     bool isVisible = isVisibleInViewport();
 
     if (!isVisible && animatingState == ImageAnimatingState::Yes)
-        protect(view())->addRendererWithPausedImageAnimations(*this, image);
+        protect(view())->addRendererWithPausedImageAnimations(*this);
 
     // Static images should repaint even if they are outside the viewport rectangle
     // because they should be inside the TileCoverageRect.
@@ -1901,8 +1924,6 @@ void RenderElement::notifyFinished(CachedResource& resource, const NetworkLoadMe
 {
     if (auto* cachedImage = dynamicDowncast<CachedImage>(resource))
         imageContentChanged(*cachedImage);
-
-    protect(protect(document())->cachedResourceLoader())->notifyFinished(resource);
 }
 
 bool RenderElement::allowsAnimation() const
@@ -1912,10 +1933,26 @@ bool RenderElement::allowsAnimation() const
     return page().imageAnimationEnabled();
 }
 
+Ref<ImageAnimationTimeline> RenderElement::imageAnimationTimeline() const
+{
+    if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element()))
+        return imageElement->imageAnimationTimeline();
+    return page().imageAnimationTimeline();
+}
+
 void RenderElement::didRemoveCachedImageClient(CachedImage& cachedImage)
 {
-    if (hasPausedImageAnimations())
-        protect(view())->removeRendererWithPausedImageAnimations(*this, cachedImage);
+    if (!hasPausedImageAnimations())
+        return;
+
+    bool hasAnimation = false;
+    forEachStyleImage([&, cachedImage = protect(cachedImage)](Style::Image& image) {
+        if (image.cachedImage() != cachedImage.ptr() && (image.isAnimated() || image.drawsSVGImage()))
+            hasAnimation = true;
+    });
+
+    if (!hasAnimation)
+        protect(view())->removeRendererWithPausedImageAnimations(*this);
 }
 
 void RenderElement::imageContentChanged(CachedImage& cachedImage)
@@ -1943,13 +1980,12 @@ void RenderElement::imageContentChanged(CachedImage& cachedImage)
 #endif
 }
 
-void RenderElement::scheduleRenderingUpdateForImage(CachedImage&)
+void RenderElement::scheduleRenderingUpdateForImage(CachedImage& cachedImage)
 {
-    if (RefPtr page = document().page())
-        page->scheduleRenderingUpdate(RenderingUpdateStep::Images);
+    protect(protect(document())->cachedResourceLoader())->scheduleRenderingUpdateForImage(cachedImage);
 }
 
-bool RenderElement::repaintForPausedImageAnimationsIfNeeded(const IntRect& visibleRect, CachedImage& cachedImage)
+bool RenderElement::repaintForPausedImageAnimationsIfNeeded(const IntRect& visibleRect)
 {
     ASSERT(m_hasPausedImageAnimations);
     if (!allowsAnimation() || !isVisibleInDocumentRect(visibleRect))
@@ -1957,8 +1993,9 @@ bool RenderElement::repaintForPausedImageAnimationsIfNeeded(const IntRect& visib
 
     repaint();
 
-    if (RefPtr image = cachedImage.image())
-        image->startAnimation();
+    forEachStyleImage([](Style::Image& image) {
+        image.startAnimation();
+    });
 
     // For directly-composited animated GIFs it does not suffice to call repaint() to resume animation. We need to mark the image as changed.
     if (CheckedPtr modelObject = dynamicDowncast<RenderBoxModelObject>(*this))
@@ -2857,7 +2894,7 @@ void RenderElement::establishesTopLayerWillChange()
 
     // Remove from the current containing block's out-of-flow list. The renderer will be
     // re-inserted into the correct containing block's list during the next layout.
-    RenderBlock::removeOutOfFlowBox(*renderBox);
+    RenderBoxModelObject::removeOutOfFlowBox(*renderBox);
     if (CheckedPtr parent = RenderObject::containingBlockForPositionType(PositionType::Static, *renderBox))
         parent->setChildNeedsLayout();
     renderBox->setNeedsLayout();
@@ -2869,7 +2906,7 @@ void RenderElement::establishesTopLayerDidChange()
         protect(renderer->layer())->establishesTopLayerDidChange();
 }
 
-void RenderElement::markRendererDirtyAfterTopLayerChange(RenderElement* renderer, RenderBlock* containingBlockBeforeStyleResolution)
+void RenderElement::markRendererDirtyAfterTopLayerChange(RenderElement* renderer, RenderBoxModelObject* containingBlockBeforeStyleResolution)
 {
     auto* renderBox = dynamicDowncast<RenderBox>(renderer);
     if (!renderBox || !renderBox->parent() || !containingBlockBeforeStyleResolution)
@@ -2883,7 +2920,7 @@ void RenderElement::markRendererDirtyAfterTopLayerChange(RenderElement* renderer
     if (!renderBox->isOutOfFlowPositioned())
         return;
 
-    RenderBlock::removeOutOfFlowBox(*renderBox);
+    RenderBoxModelObject::removeOutOfFlowBox(*renderBox);
     // This is to make sure we insert the box to the correct containing block list during static position computation.
     renderBox->parent()->setChildNeedsLayout();
     newContainingBlock->setChildNeedsLayout();

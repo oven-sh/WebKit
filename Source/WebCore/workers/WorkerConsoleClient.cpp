@@ -157,7 +157,7 @@ void WorkerConsoleClient::timeStamp(JSC::JSGlobalObject*, Ref<ScriptArguments>&&
         InspectorInstrumentation::consoleTimeStamp(*worker, WTF::move(arguments));
 }
 
-static JSC::JSObject* LEGACY_NODELETE objectArgumentAt(ScriptArguments& arguments, unsigned index)
+NODELETE static JSC::JSObject* objectArgumentAt(ScriptArguments& arguments, unsigned index)
 {
     return arguments.argumentCount() > index ? arguments.argumentAt(index).getObject() : nullptr;
 }
@@ -260,8 +260,7 @@ void WorkerConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, R
         }
     }
 
-    Vector<JSC::Strong<JSC::Unknown>> adjustedArguments;
-    adjustedArguments.reserveInitialCapacity(arguments->argumentCount() + !target);
+    Vector<JSC::Strong<JSC::Unknown>> adjustedArguments(ReserveCapacityTag { }, arguments->argumentCount() + !target);
     adjustedArguments.append({ vm, target ? target : JSC::jsNontrivialString(vm, "Viewport"_s) });
     for (size_t i = (!target ? 0 : 1); i < arguments->argumentCount(); ++i)
         adjustedArguments.append({ vm, arguments->argumentAt(i) });

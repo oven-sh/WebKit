@@ -97,7 +97,7 @@ private:
 #endif // ENABLE(GPU_PROCESS)
 #if ENABLE(MODEL_PROCESS)
     void didCreateContextInModelProcessForVisibilityPropagation(LayerHostingContextID) override;
-    void didReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier>) override;
+    void didReceiveInteractiveModelElement(std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::NodeIdentifier>) override;
 #endif // ENABLE(MODEL_PROCESS)
     RetainPtr<UIView> createVisibilityPropagationView() override;
     void removeVisibilityPropagationView(UIView *) override;
@@ -250,7 +250,7 @@ private:
     void requestScrollToRect(const WebCore::FloatRect& targetRect, const WebCore::FloatPoint& origin) override;
 
 #if ENABLE(FULLSCREEN_API)
-    WebFullScreenManagerProxyClient& LEGACY_NODELETE fullScreenManagerProxyClient() final;
+    NODELETE WebFullScreenManagerProxyClient& fullScreenManagerProxyClient() final;
 
     // WebFullScreenManagerProxyClient
     void closeFullScreenManager() override;

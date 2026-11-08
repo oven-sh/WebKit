@@ -204,7 +204,7 @@ void TextureView::destroy()
 
 void TextureView::setCommandEncoder(CommandEncoder& commandEncoder) const
 {
-    CommandEncoder::trackEncoder(commandEncoder, m_commandEncoders);
+    commandEncoder.trackEncoderForTextureView(*this, m_commandEncoders);
     m_parentTexture->setCommandEncoder(commandEncoder);
     if (isDestroyed() && !m_parentTexture->isCanvasBacking())
         commandEncoder.makeSubmitInvalid();
@@ -219,7 +219,7 @@ id<MTLRasterizationRateMap> TextureView::rasterizationMapForSlice(uint32_t slice
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuTextureViewAddRef(WGPUTextureView textureView)
+NODELETE void wgpuTextureViewAddRef(WGPUTextureView textureView)
 {
     WebGPU::Metal::fromAPI(textureView).ref();
 }

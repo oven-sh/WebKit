@@ -68,12 +68,12 @@ public:
     WEBCORE_EXPORT static void decodeToShareableBitmap(std::span<const uint8_t>, std::optional<FloatSize> preferredSize, CompletionHandler<void(RefPtr<ShareableBitmap>&&)>&&);
 
     virtual bool isBitmapImage() const { return false; }
-    virtual bool LEGACY_NODELETE isSVGImage() const { return false; }
+    NODELETE virtual bool isSVGImage() const { return false; }
     virtual bool isPDFDocumentImage() const { return false; }
 
     virtual void subresourcesAreFinished(Document*, CompletionHandler<void()>&&);
 
-    bool LEGACY_NODELETE drawsSVGImage() const { return isSVGImage(); }
+    NODELETE bool drawsSVGImage() const { return isSVGImage(); }
 
     virtual unsigned frameCount() const { return 1; }
 
@@ -133,15 +133,19 @@ public:
     virtual void stopAnimation() { }
     virtual void resetAnimation() { }
     virtual bool isAnimating() const { return false; }
-    WEBCORE_EXPORT bool LEGACY_NODELETE animationPending() const;
-    std::optional<bool> allowsAnimation() const { return m_allowsAnimation; }
-    void setAllowsAnimation(std::optional<bool> allowsAnimation) { m_allowsAnimation = allowsAnimation; }
+    NODELETE WEBCORE_EXPORT bool animationPending() const;
+    ImageAnimationOverride animationOverride() const { return m_animationOverride; }
+    void setAnimationOverride(ImageAnimationOverride animationOverride) { m_animationOverride = animationOverride; }
+
+    // Brings the image up to date for a rendering update it asked for through ImageObserver::scheduleRenderingUpdate().
+    virtual void updateRendering() { }
+
     static bool systemAllowsAnimationControls() { return gSystemAllowsAnimationControls; }
-    WEBCORE_EXPORT static void LEGACY_NODELETE setSystemAllowsAnimationControls(bool allowsControls);
+    NODELETE WEBCORE_EXPORT static void setSystemAllowsAnimationControls(bool allowsControls);
 
     // Typically the CachedImage that owns us.
-    RefPtr<ImageObserver> LEGACY_NODELETE imageObserver() const;
-    void LEGACY_NODELETE setImageObserver(RefPtr<ImageObserver>&&);
+    NODELETE RefPtr<ImageObserver> imageObserver() const;
+    NODELETE void setImageObserver(RefPtr<ImageObserver>&&);
 
     WEBCORE_EXPORT ImageAdapter& adapter();
     void invalidateAdapter();
@@ -206,7 +210,7 @@ private:
     const std::unique_ptr<ImageAdapter> m_adapter;
 
     // A value of true or false will override the default Page::imageAnimationEnabled state.
-    std::optional<bool> m_allowsAnimation { std::nullopt };
+    ImageAnimationOverride m_animationOverride { ImageAnimationOverride::None };
     const std::unique_ptr<Timer> m_animationStartTimer;
     WEBCORE_EXPORT static bool gSystemAllowsAnimationControls;
 };

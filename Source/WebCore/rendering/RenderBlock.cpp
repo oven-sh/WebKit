@@ -62,7 +62,6 @@
 #include "RenderBoxInlines.h"
 #include "RenderButton.h"
 #include "RenderChildIterator.h"
-#include "RenderCombineText.h"
 #include "RenderDeprecatedFlexibleBox.h"
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
@@ -164,98 +163,6 @@ static void removeFromTrackedRendererMaps(RenderBox& descendant)
         if (descendantSet->isEmptyIgnoringNullReferences())
             percentHeightDescendantsMap->remove(descendantsMapIterator);
     }
-}
-
-class OutOfFlowDescendantsMap {
-public:
-    void addDescendant(const RenderBlock& containingBlock, RenderBox& outOfFlowDescendant)
-    {
-        // Protect against double insert where a descendant would end up with multiple containing blocks.
-        auto previousContainingBlock = m_containerMap.get(outOfFlowDescendant);
-        if (previousContainingBlock && previousContainingBlock != &containingBlock) {
-            if (auto* descendants = m_descendantsMap.get(*previousContainingBlock))
-                descendants->remove(outOfFlowDescendant);
-        }
-
-        auto& descendants = m_descendantsMap.ensure(containingBlock, [] {
-            return makeUnique<TrackedRendererListHashSet>();
-        }).iterator->value;
-
-        auto isNewEntry = false;
-        if (!is<RenderView>(containingBlock) || descendants->isEmptyIgnoringNullReferences())
-            isNewEntry = descendants->add(outOfFlowDescendant).isNewEntry;
-        else if (outOfFlowDescendant.isFixedPositioned() || isInTopLayerOrBackdrop(outOfFlowDescendant.style(), outOfFlowDescendant.element()))
-            isNewEntry = descendants->appendOrMoveToLast(outOfFlowDescendant).isNewEntry;
-        else {
-            auto ensureLayoutDependentBoxPosition = [&] {
-                // RenderView is a special containing block as it may hold both absolute and fixed positioned containing blocks.
-                // When a fixed positioned box is also a descendant of an absolute positioned box anchored to the RenderView,
-                // we have to make sure that the absolute positioned box is inserted before the fixed box to follow
-                // block layout dependency.
-                for (auto it = descendants->begin(); it != descendants->end(); ++it) {
-                    if (it->isFixedPositioned()) {
-                        isNewEntry = descendants->insertBefore(it, outOfFlowDescendant).isNewEntry;
-                        return;
-                    }
-                }
-                isNewEntry = descendants->appendOrMoveToLast(outOfFlowDescendant).isNewEntry;
-            };
-            ensureLayoutDependentBoxPosition();
-        }
-
-        if (!isNewEntry) {
-            ASSERT(m_containerMap.contains(outOfFlowDescendant));
-            return;
-        }
-        m_containerMap.set(outOfFlowDescendant, containingBlock);
-    }
-
-    void removeDescendant(const RenderBox& outOfFlowDescendant)
-    {
-        auto containingBlock = m_containerMap.take(outOfFlowDescendant);
-        if (!containingBlock)
-            return;
-
-        auto descendantsIterator = m_descendantsMap.find(*containingBlock.get());
-        ASSERT(descendantsIterator != m_descendantsMap.end());
-        if (descendantsIterator == m_descendantsMap.end())
-            return;
-
-        auto& descendants = descendantsIterator->value;
-        ASSERT(descendants->contains(const_cast<RenderBox&>(outOfFlowDescendant)));
-
-        descendants->remove(const_cast<RenderBox&>(outOfFlowDescendant));
-        if (descendants->isEmptyIgnoringNullReferences())
-            m_descendantsMap.remove(descendantsIterator);
-    }
-    
-    void removeContainingBlock(const RenderBlock& containingBlock)
-    {
-        auto descendants = m_descendantsMap.take(containingBlock);
-        if (!descendants)
-            return;
-
-        for (auto& renderer : *descendants)
-            m_containerMap.remove(renderer);
-    }
-    
-    TrackedRendererListHashSet* LEGACY_NODELETE positionedRenderers(const RenderBlock& containingBlock) const
-    {
-        return m_descendantsMap.get(containingBlock);
-    }
-
-private:
-    using DescendantsMap = SingleThreadWeakHashMap<const RenderBlock, std::unique_ptr<TrackedRendererListHashSet>>;
-    using ContainerMap = SingleThreadWeakHashMap<const RenderBox, SingleThreadWeakPtr<const RenderBlock>>;
-    
-    DescendantsMap m_descendantsMap;
-    ContainerMap m_containerMap;
-};
-
-static OutOfFlowDescendantsMap& LEGACY_NODELETE outOfFlowDescendantsMap()
-{
-    static NeverDestroyed<OutOfFlowDescendantsMap> mapForOutOfFlowDescendants;
-    return mapForOutOfFlowDescendants;
 }
 
 // Allocated only when some of these fields have non-default values
@@ -506,7 +413,7 @@ void RenderBlock::endAndCommitUpdateScrollInfoAfterLayoutTransaction()
     }
 }
 
-static inline bool LEGACY_NODELETE isDelayingUpdateScrollInfoAfterLayout(const RenderBlock& renderer)
+NODELETE static inline bool isDelayingUpdateScrollInfoAfterLayout(const RenderBlock& renderer)
 {
     auto* transaction = renderer.view().frameView().layoutContext().updateScrollInfoAfterLayoutTransactionIfExists();
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=97937
@@ -579,7 +486,7 @@ static EnumSet<LogicalBoxAxis> sizesAffectedByScrollbarsForSubtreeRoot(const Ren
     return sizesAffected;
 }
 
-static bool LEGACY_NODELETE canContainDescendantScrollbarChanges(const RenderBlock& renderBlock, const LocalFrameViewLayoutContext& layoutContext)
+NODELETE static bool canContainDescendantScrollbarChanges(const RenderBlock& renderBlock, const LocalFrameViewLayoutContext& layoutContext)
 {
     return layoutContext.subtreeScrollbarChangesState().has_value() && renderBlock.style().logicalWidth().isFixed();
 }
@@ -990,16 +897,6 @@ void RenderBlock::layoutOutOfFlowBoxes(RelayoutChildren relayoutChildren, bool f
     for (auto& descendant : *outOfFlowDescendants)
         layoutOutOfFlowBox(descendant, relayoutChildren, fixedPositionObjectsOnly);
     setOutOfFlowChildNeedsLayoutBit(false);
-}
-
-void RenderBlock::markOutOfFlowBoxesForLayout(MarkingBehavior markingBehavior)
-{
-    auto* outOfFlowDescendants = outOfFlowBoxes();
-    if (!outOfFlowDescendants)
-        return;
-
-    for (auto& descendant : *outOfFlowDescendants)
-        descendant.setChildNeedsLayout(markingBehavior);
 }
 
 void RenderBlock::markForPaginationRelayoutIfNeeded()
@@ -1606,7 +1503,7 @@ GapRects RenderBlock::selectionGaps(RenderBlock& rootBlock, const LayoutPoint& r
     return result;
 }
 
-GapRects LEGACY_NODELETE RenderBlock::inlineSelectionGaps(RenderBlock&, const LayoutPoint&, const LayoutSize&, LayoutUnit&, LayoutUnit&, LayoutUnit&, const LogicalSelectionOffsetCaches&, const PaintInfo*)
+NODELETE GapRects RenderBlock::inlineSelectionGaps(RenderBlock&, const LayoutPoint&, const LayoutSize&, LayoutUnit&, LayoutUnit&, LayoutUnit&, const LogicalSelectionOffsetCaches&, const PaintInfo*)
 {
     ASSERT_NOT_REACHED();
     return GapRects();
@@ -1795,86 +1692,6 @@ LayoutUnit RenderBlock::logicalRightSelectionOffset(RenderBlock& rootBlock, Layo
         currentCache = info.cache();
     }
     return logicalRight;
-}
-
-TrackedRendererListHashSet* RenderBlock::outOfFlowBoxes() const
-{
-    return outOfFlowDescendantsMap().positionedRenderers(*this);
-}
-
-void RenderBlock::addOutOfFlowBox(RenderBox& outOfFlowBox)
-{
-    ASSERT(outOfFlowBox.isOutOfFlowPositioned());
-    ASSERT(!isAnonymousBlock());
-
-    outOfFlowBox.clearGridAreaContentSize();
-
-    if (outOfFlowBox.isRenderFragmentedFlow())
-        return;
-    // FIXME: Find out if we can do this as part of outOfFlowBox.setChildNeedsLayout(MarkingBehavior::OnlyThis)
-    if (outOfFlowBox.needsLayout()) {
-        // We should turn this bit on only while in layout.
-        ASSERT(outOfFlowChildNeedsLayout() || view().frameView().layoutContext().isInLayout());
-        setOutOfFlowChildNeedsLayoutBit(true);
-    }
-    outOfFlowDescendantsMap().addDescendant(*this, outOfFlowBox);
-}
-
-void RenderBlock::removeOutOfFlowBox(const RenderBox& rendererToRemove)
-{
-    outOfFlowDescendantsMap().removeDescendant(rendererToRemove);
-}
-
-static inline void markRendererAndParentForLayout(RenderBox& renderer)
-{
-    renderer.setChildNeedsLayout(MarkingBehavior::OnlyThis);
-    if (renderer.shouldInvalidateContentWidths())
-        renderer.invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
-    auto* parentBlock = RenderObject::containingBlockForPositionType(PositionType::Static, renderer);
-    if (!parentBlock) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-    // Parent has to be mark for layout to run static positioning on the out-of-flow content.
-    parentBlock->setChildNeedsLayout();
-}
-
-void RenderBlock::removeOutOfFlowBoxes(const RenderElement* newContainingBlockCandidate, ContainingBlockState containingBlockState)
-{
-    auto* outOfFlowDescendants = outOfFlowBoxes();
-    if (!outOfFlowDescendants)
-        return;
-
-    Vector<CheckedRef<RenderBox>, 16> renderersToRemove;
-    if (!newContainingBlockCandidate) {
-        // We don't form containing block for these boxes anymore (either through style change or internal render tree shuffle)
-        for (auto& renderer : *outOfFlowDescendants) {
-            renderersToRemove.append(renderer);
-
-            markRendererAndParentForLayout(renderer);
-            auto markNewContainingBlockForLayout = [&] {
-                auto isAbsolutePositioned = renderer.isAbsolutelyPositioned();
-                // During style change we can't tell which ancestor is going to be the final containing block, so let's just mark the new candidate dirty.
-                auto* newContainingBlock = containingBlock();
-                for (; newContainingBlock && (isAbsolutePositioned ? !newContainingBlock->canContainAbsolutelyPositionedObjects() : newContainingBlock->canContainFixedPositionObjects()); newContainingBlock = newContainingBlock->containingBlock()) { }
-                if (newContainingBlock)
-                    newContainingBlock->setNeedsLayout();
-            };
-            markNewContainingBlockForLayout();
-        }
-    } else if (containingBlockState == ContainingBlockState::NewContainingBlock) {
-        // Some of the positioned boxes are getting transferred over to newContainingBlockCandidate.
-        for (auto& renderer : *outOfFlowDescendants) {
-            if (!renderer.isDescendantOf(newContainingBlockCandidate))
-                continue;
-            renderersToRemove.append(renderer);
-            markRendererAndParentForLayout(renderer);
-        }
-    } else
-        ASSERT_NOT_REACHED();
-
-    for (auto& renderer : renderersToRemove)
-        removeOutOfFlowBox(renderer);
 }
 
 void RenderBlock::addPercentHeightDescendant(RenderBox& descendant)
@@ -2194,7 +2011,7 @@ PositionWithAffinity RenderBlock::positionForPointWithInlineChildren(const Layou
     return PositionWithAffinity();
 }
 
-static inline bool LEGACY_NODELETE isChildHitTestCandidate(const RenderBox& box, HitTestSource source)
+NODELETE static inline bool isChildHitTestCandidate(const RenderBox& box, HitTestSource source)
 {
     auto isVisible = source == HitTestSource::Script ? box.style().visibility() == Visibility::Visible : box.usedStyle().visibility() == UsedVisibility::Visible;
     return box.borderBoxHeight() && isVisible && !box.isOutOfFlowPositioned() && !box.isRenderFragmentedFlow();
@@ -2303,14 +2120,6 @@ void RenderBlock::offsetForContents(LayoutPoint& offset) const
     offset = flipForWritingMode(offset);
     offset += toLayoutSize(scrollPosition());
     offset = flipForWritingMode(offset);
-}
-
-bool RenderBlock::willStretchItem(const RenderBox& item, LogicalBoxAxis containingAxis, StretchingMode mode) const
-{
-    UNUSED_PARAM(item);
-    UNUSED_PARAM(containingAxis);
-    UNUSED_PARAM(mode);
-    return false;
 }
 
 std::pair<LayoutUnit, LayoutUnit> RenderBlock::computeIntrinsicLogicalWidths() const
@@ -2576,7 +2385,7 @@ std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
     return lastInFlowBaseline();
 }
 
-static inline bool LEGACY_NODELETE isRenderBlockFlowOrRenderButton(RenderElement& renderElement)
+NODELETE static inline bool isRenderBlockFlowOrRenderButton(RenderElement& renderElement)
 {
     // We include isRenderButton in this check because buttons are implemented
     // using flex box but should still support first-line|first-letter.

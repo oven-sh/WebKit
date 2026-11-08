@@ -30,6 +30,7 @@
 #include "UIProcess/WebFrameProxy.h"
 #include <JavaScriptCore/InspectorAgentRegistry.h>
 #include <JavaScriptCore/InspectorTargetAgent.h>
+#include <WebCore/DebuggerPauseSessionIdentifier.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
@@ -105,7 +106,7 @@ public:
     void willDestroyProvisionalFrame(const ProvisionalFrameProxy&);
     void didCommitProvisionalFrame(WebFrameProxy&, WebCore::ProcessIdentifier oldProcessID, std::optional<WebCore::PageIdentifier> oldPageID, WebCore::ProcessIdentifier newProcessID);
 
-    InspectorBrowserAgent* LEGACY_NODELETE enabledBrowserAgent() const;
+    NODELETE InspectorBrowserAgent* enabledBrowserAgent() const;
     void setEnabledBrowserAgent(InspectorBrowserAgent*);
 
     void browserExtensionsEnabled(HashMap<String, String>&&);
@@ -118,10 +119,12 @@ public:
 
     void disconnectFrameTargetForTesting(WebCore::FrameIdentifier);
 
+    void debuggerPauseSessionDidChange(WebCore::DebuggerPauseSessionIdentifier, bool isPaused, const Vector<String>& stoppingTargetIDs);
+
 private:
     void browsingContextGroupPageWasAddedToProcess(WebProcessProxy&, WebCore::PageIdentifier);
 
-    WebPageAgentContext LEGACY_NODELETE webPageAgentContext();
+    NODELETE WebPageAgentContext webPageAgentContext();
     void createLazyAgents();
 
     void addTarget(std::unique_ptr<InspectorTargetProxy>&&);

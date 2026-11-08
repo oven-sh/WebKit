@@ -616,7 +616,7 @@ void WebChromeClient::rootFrameRemoved(const WebCore::LocalFrame& frame)
         drawingArea->removeRootFrame(frame.frameID());
 }
 
-static bool LEGACY_NODELETE shouldSuppressJavaScriptDialogs(LocalFrame& frame)
+NODELETE static bool shouldSuppressJavaScriptDialogs(LocalFrame& frame)
 {
     if (frame.opener() && frame.loader().stateMachine().isDisplayingInitialEmptyDocument() && frame.loader().provisionalDocumentLoader())
         return true;
@@ -1314,15 +1314,18 @@ RefPtr<GraphicsContextGL> WebChromeClient::createGraphicsContextGL(const Graphic
     WebProcess::singleton().initializePlatformDisplayIfNeeded();
     WebProcess::singleton().initializeVulkanIfNeeded();
 #endif
-#if ENABLE(GPU_PROCESS)
-    if (WebProcess::singleton().shouldUseRemoteRenderingForWebGL()) {
-        RefPtr page = m_page.get();
-        if (!page)
-            return nullptr;
-        return RemoteGraphicsContextGLProxy::create(attributes, page.releaseNonNull());
-    }
+#if ENABLE(GPU_PROCESS) && !PLATFORM(COCOA)
+    if (!WebProcess::singleton().shouldUseRemoteRenderingForWebGL())
+        return WebCore::createWebProcessGraphicsContextGL(attributes);
 #endif
+#if ENABLE(GPU_PROCESS)
+    RefPtr page = m_page.get();
+    if (!page)
+        return nullptr;
+    return RemoteGraphicsContextGLProxy::create(attributes, page.releaseNonNull());
+#else
     return WebCore::createWebProcessGraphicsContextGL(attributes);
+#endif
 }
 #endif
 
@@ -2482,7 +2485,7 @@ void WebChromeClient::showMediaControlsContextMenu(FloatRect&& targetFrame, Vect
 void WebChromeClient::enumerateImmersiveXRDevices(CompletionHandler<void(const PlatformXR::DeviceList&)>&& completionHandler)
 {
     if (RefPtr page = m_page.get())
-        page->xrSystemProxy().enumerateImmersiveXRDevices(WTF::move(completionHandler));
+        protect(page->xrSystemProxy())->enumerateImmersiveXRDevices(WTF::move(completionHandler));
     else
         completionHandler({ });
 }
@@ -2490,7 +2493,7 @@ void WebChromeClient::enumerateImmersiveXRDevices(CompletionHandler<void(const P
 void WebChromeClient::requestPermissionOnXRSessionFeatures(const SecurityOriginData& origin, PlatformXR::SessionMode mode, const PlatformXR::Device::FeatureList& granted, const PlatformXR::Device::FeatureList& consentRequired, const PlatformXR::Device::FeatureList& consentOptional, const PlatformXR::Device::FeatureList& requiredFeaturesRequested, const PlatformXR::Device::FeatureList& optionalFeaturesRequested,  CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&& completionHandler)
 {
     if (RefPtr page = m_page.get())
-        page->xrSystemProxy().requestPermissionOnSessionFeatures(origin, mode, granted, consentRequired, consentOptional, requiredFeaturesRequested, optionalFeaturesRequested, WTF::move(completionHandler));
+        protect(page->xrSystemProxy())->requestPermissionOnSessionFeatures(origin, mode, granted, consentRequired, consentOptional, requiredFeaturesRequested, optionalFeaturesRequested, WTF::move(completionHandler));
     else
         completionHandler(std::nullopt);
 }
@@ -2766,7 +2769,7 @@ void WebChromeClient::showCaptionDisplaySettings(HTMLMediaElement& element, cons
 void WebChromeClient::didFinishContentChangeObserving(WebCore::LocalFrame& frame, WebCore::ContentChange observedContentChange)
 {
     if (RefPtr page = m_page.get())
-        page->didFinishContentChangeObserving(frame.frameID(), observedContentChange);
+        page->didFinishContentChangeObserving(frame.rootFrame().frameID(), observedContentChange);
 }
 #endif
 

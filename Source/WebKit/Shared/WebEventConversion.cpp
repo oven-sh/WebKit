@@ -38,11 +38,11 @@
 
 namespace WebKit {
 
-WebCore::MouseButton platform(WebMouseEventButton button)
+std::expected<WebCore::MouseButton, WebCore::MouseButtonState> platform(WebMouseEventButton button)
 {
     switch (button) {
     case WebMouseEventButton::None:
-        return WebCore::MouseButton::None;
+        return std::unexpected { WebCore::MouseButtonState::None };
     case WebMouseEventButton::Left:
         return WebCore::MouseButton::Left;
     case WebMouseEventButton::Middle:
@@ -58,11 +58,14 @@ WebCore::MouseButton platform(WebMouseEventButton button)
     }
 }
 
-WebMouseEventButton kit(WebCore::MouseButton button)
+WebMouseEventButton kit(std::expected<WebCore::MouseButton, WebCore::MouseButtonState> button)
 {
-    switch (button) {
-    case WebCore::MouseButton::None:
+    if (!button) {
+        RELEASE_ASSERT(button.error() == WebCore::MouseButtonState::None);
         return WebMouseEventButton::None;
+    }
+
+    switch (*button) {
     case WebCore::MouseButton::Left:
         return WebMouseEventButton::Left;
     case WebCore::MouseButton::Middle:
@@ -254,7 +257,7 @@ OptionSet<WebEventModifier> kit(OptionSet<WebCore::PlatformEvent::Modifier> modi
     return result;
 }
 
-static double LEGACY_NODELETE forceForEvent(const WebMouseEvent& webEvent)
+NODELETE static double forceForEvent(const WebMouseEvent& webEvent)
 {
     switch (webEvent.type()) {
     case WebEventType::MouseDown:
@@ -286,6 +289,7 @@ public:
         // PlatformMouseEvent
         m_button = platform(webEvent.button());
         m_buttons = webEvent.buttons();
+        m_syntheticClickType = coreSyntheticClickType(webEvent.syntheticClickType());
 
         m_position = webEvent.position();
         m_movementDelta = WebCore::DoublePoint(webEvent.deltaX(), webEvent.deltaY());
@@ -307,8 +311,6 @@ public:
         m_menuTypeForEvent = webEvent.menuTypeForEvent();
 #elif PLATFORM(GTK)
         m_isTouchEvent = webEvent.isTouchEvent();
-#elif PLATFORM(WPE)
-        m_syntheticClickType = static_cast<WebCore::SyntheticClickType>(webEvent.syntheticClickType());
 #endif
 
         m_pointerId = webEvent.pointerId();

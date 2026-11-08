@@ -453,7 +453,7 @@ ExceptionOr<Ref<GPUTexture>> GPUDevice::createTexture(GPUTextureDescriptor&& tex
     return result;
 }
 
-static WebGPU::SamplerDescriptor LEGACY_NODELETE convertToBacking(const std::optional<GPUSamplerDescriptor>& samplerDescriptor)
+NODELETE static WebGPU::SamplerDescriptor convertToBacking(const std::optional<GPUSamplerDescriptor>& samplerDescriptor)
 {
     if (!samplerDescriptor) {
         return {
@@ -530,7 +530,7 @@ private:
     {
     }
 
-    bool LEGACY_NODELETE hasCallback() const final { return true; }
+    NODELETE bool hasCallback() const final { return true; }
 
     CallbackResult<void> invoke(double, const VideoFrameMetadata&) override
     {
@@ -702,9 +702,9 @@ ExceptionOr<Ref<GPUShaderModule>> GPUDevice::createShaderModule(GPUShaderModuleD
 
     auto descriptor = shaderModuleDescriptor.convertToBacking(*m_autoPipelineLayout);
     auto backingDescriptor = descriptor;
-#if PLATFORM(VISION)
+#if ENABLE(WEBXR)
     // FIXME: Remove once https://bugs.webkit.org/show_bug.cgi?id=297538 is addressed
-    if (auto context = scriptExecutionContext(); context && context->url().string().contains("toji.github.io/webgpu-metaballs"_s))
+    if (RefPtr context = scriptExecutionContext(); context && context->url().string().contains("toji.github.io/webgpu-metaballs"_s))
         backingDescriptor.code = makeStringByReplacingAll(descriptor.code, "fma(depthSample"_s, "fma(min(depthSample, 0.95)"_s);
 #endif
     RefPtr shaderModule = WebCore::createShaderModule(m_backing, backingDescriptor);
@@ -818,7 +818,7 @@ ExceptionOr<void> GPUDevice::createRenderPipelineAsync(UniquelyAnnotatedDescript
     return { };
 }
 
-static WebGPU::CommandEncoderDescriptor LEGACY_NODELETE convertToBacking(const std::optional<GPUCommandEncoderDescriptor>& commandEncoderDescriptor)
+NODELETE static WebGPU::CommandEncoderDescriptor convertToBacking(const std::optional<GPUCommandEncoderDescriptor>& commandEncoderDescriptor)
 {
     if (!commandEncoderDescriptor)
         return { };
@@ -955,7 +955,7 @@ Ref<GPUAdapterInfo> GPUDevice::adapterInfo() const
 }
 
 
-static OptionSet<::WebGPU::ColorWrite> LEGACY_NODELETE convertToAPI(uint32_t writeMask)
+NODELETE static OptionSet<::WebGPU::ColorWrite> convertToAPI(uint32_t writeMask)
 {
     auto result = OptionSet<::WebGPU::ColorWrite>::fromRaw(writeMask & webGPUColorWriteMaskAll);
     if (writeMask & ~webGPUColorWriteMaskAll)

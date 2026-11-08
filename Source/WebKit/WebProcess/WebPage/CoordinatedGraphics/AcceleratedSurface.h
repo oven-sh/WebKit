@@ -28,6 +28,7 @@
 #if USE(COORDINATED_GRAPHICS)
 
 #include "MessageReceiver.h"
+#include "RendererBufferIdentifier.h"
 #include <WebCore/Color.h>
 #include <WebCore/CoordinatedCompositionReason.h>
 #include <WebCore/DMABufBuffer.h>
@@ -132,10 +133,6 @@ public:
     void didRenderFrame(TargetContents = TargetContents::Valid);
     void sendFrame();
 
-#if USE(TEXTURE_MAPPER)
-    void clear(const OptionSet<WebCore::CompositionReason>&);
-#endif
-
     std::optional<SkColor> skiaClearColor(const OptionSet<WebCore::CompositionReason>&);
 
 #if ENABLE(DAMAGE_TRACKING)
@@ -165,7 +162,6 @@ private:
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
     bool hardwareAccelerationEnabled() const { return m_hardwareAccelerationEnabled; }
 #endif
-    bool useSkia() const { return m_useSkia; }
     bool isOpaque() const;
     std::optional<WebCore::Color> backgroundColor();
 
@@ -173,7 +169,7 @@ private:
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
-    void releaseBuffer(uint64_t, WTF::UnixFileDescriptor&&);
+    void releaseBuffer(RendererBufferIdentifier, WTF::UnixFileDescriptor&&);
 #endif
     void frameDone();
     void releaseUnusedBuffersTimerFired();
@@ -191,7 +187,7 @@ private:
     public:
         virtual ~RenderTarget();
 
-        uint64_t id() const { return m_id; }
+        RendererBufferIdentifier id() const { return m_id; }
 
         virtual void willRenderFrame() { }
         virtual void didRenderFrame() { }
@@ -224,7 +220,7 @@ private:
 
         void createSkiaSurfaceForFramebuffer(unsigned);
 
-        uint64_t m_id { 0 };
+        RendererBufferIdentifier m_id;
         const CheckedRef<AcceleratedSurface> m_surface;
         WebCore::IntSize m_size;
         sk_sp<SkSurface> m_skiaSurface;
@@ -386,7 +382,7 @@ private:
         const WebCore::IntSize& size() const LIFETIME_BOUND { return m_size; }
         bool isEmpty() const { return m_freeTargets.isEmpty() && m_lockedTargets.isEmpty(); }
         RenderTarget* nextTarget();
-        void releaseTarget(uint64_t, UnixFileDescriptor&& releaseFence);
+        void releaseTarget(RendererBufferIdentifier, UnixFileDescriptor&& releaseFence);
         void reset();
         void releaseUnusedBuffers();
 
@@ -483,7 +479,6 @@ private:
 
     const WeakRef<WebPage> m_webPage;
     Function<void()> m_frameCompleteHandler;
-    bool m_useSkia { false };
     uint64_t m_id { 0 };
     RenderingPurpose m_renderingPurpose { RenderingPurpose::Composited };
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)

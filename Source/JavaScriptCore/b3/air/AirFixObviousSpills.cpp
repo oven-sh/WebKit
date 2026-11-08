@@ -438,7 +438,7 @@ private:
             });
     }
     
-    static bool LEGACY_NODELETE isSpillSlot(const Arg& arg)
+    NODELETE static bool isSpillSlot(const Arg& arg)
     {
         return arg.isStack() && arg.stackSlot()->isSpill();
     }
@@ -477,9 +477,9 @@ private:
             return slot && reg;
         }
         
-        friend bool LEGACY_NODELETE operator==(const RegSlot&, const RegSlot&) = default;
+        NODELETE friend bool operator==(const RegSlot&, const RegSlot&) = default;
 
-        bool LEGACY_NODELETE operator<(const RegSlot& other) const
+        NODELETE bool operator<(const RegSlot& other) const
         {
             // We ignore `mode` on purpose, see merge() for how we deal with it.
             return slot < other.slot || (slot == other.slot && reg < other.reg);
@@ -522,9 +522,9 @@ private:
             return slot;
         }
 
-        friend bool LEGACY_NODELETE operator==(const SlotConst&, const SlotConst&) = default;
+        NODELETE friend bool operator==(const SlotConst&, const SlotConst&) = default;
 
-        bool LEGACY_NODELETE operator<(const SlotConst& other) const
+        NODELETE bool operator<(const SlotConst& other) const
         {
             return slot < other.slot || (slot == other.slot && constant < other.constant);
         }

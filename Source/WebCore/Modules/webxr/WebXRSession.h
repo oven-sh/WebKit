@@ -44,6 +44,7 @@
 #include "XRSessionMode.h"
 #include "XRVisibilityState.h"
 #include <numbers>
+#include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Ref.h>
@@ -62,6 +63,7 @@ class XRFrameRequestCallback;
 class WebCoreOpaqueRoot;
 class WebXRView;
 class WebXRReferenceSpace;
+class XRCompositionLayer;
 struct XRCanvasConfiguration;
 struct XRRenderStateInit;
 
@@ -88,7 +90,7 @@ public:
     XREnvironmentBlendMode environmentBlendMode() const;
     XRInteractionMode interactionMode() const;
     XRVisibilityState visibilityState() const;
-    const WebXRRenderState& LEGACY_NODELETE renderState() const;
+    NODELETE const WebXRRenderState& renderState() const;
     const WebXRInputSourceArray& inputSources() const LIFETIME_BOUND { return m_inputSources; }
     RefPtr<PlatformXR::Device> device() const { return m_device; }
 
@@ -150,6 +152,7 @@ public:
 
 #if ENABLE(WEBXR_LAYERS)
     unsigned maxRenderLayers() const;
+    void layerDestroyed(const XRCompositionLayer&);
 #endif
 
     void initializeTrackingAndRendering(std::optional<XRCanvasConfiguration>&&);
@@ -160,6 +163,7 @@ public:
         uint32_t arrayLength { 0 };
     };
     std::optional<InitialRenderingDimensions> initialRenderingDimensions() const { return m_initialRenderingDimensions; }
+    void whenRenderingInitialized(CompletionHandler<void(bool)>&&);
 
 private:
     WebXRSession(Document&, XRSessionMode, PlatformXR::Device&, FeatureList&&);
@@ -226,6 +230,7 @@ private:
     PlatformXR::FrameData m_frameData;
     std::optional<PlatformXR::RequestData> m_requestData;
     std::optional<InitialRenderingDimensions> m_initialRenderingDimensions;
+    Vector<CompletionHandler<void(bool)>> m_renderingInitializedCallbacks;
 
     double m_minimumInlineFOV { 0.0 };
     double m_maximumInlineFOV { std::numbers::pi };

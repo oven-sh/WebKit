@@ -1,5 +1,4 @@
 StyleBuilderGenerated.cpp
-[ iOS ] accessibility/ios/WebAccessibilityObjectWrapperIOS.mm
 css/CSSStyleProperties.cpp
 dom/Attr.cpp
 dom/ComposedTreeIterator.h
@@ -41,9 +40,6 @@ layout/integration/inline/LayoutIntegrationInlineContentPainter.cpp
 layout/integration/inline/LayoutIntegrationLineLayout.cpp
 layout/layouttree/FormattingContextBoxIterator.h
 layout/layouttree/LayoutContainingBlockChainIterator.h
-[ iOS ] page/cocoa/ContentChangeObserver.cpp
-[ iOS ] page/ios/EventHandlerIOS.mm
-[ iOS ] platform/ios/WebCoreMotionManager.mm
 [ macOS ] rendering/AccessibilityRegionContext.cpp
 rendering/AutoTableLayout.cpp
 rendering/BackgroundPainter.cpp
@@ -69,7 +65,6 @@ rendering/RenderBlockFlow.cpp
 rendering/RenderBox.cpp
 rendering/RenderBoxModelObject.cpp
 rendering/RenderButton.cpp
-rendering/RenderCombineText.cpp
 rendering/RenderCounter.cpp
 rendering/RenderDeprecatedFlexibleBox.cpp
 rendering/RenderDescendantIterator.h
@@ -121,7 +116,6 @@ rendering/TextBoxTrimmer.cpp
 rendering/TextDecorationPainter.cpp
 rendering/cocoa/RenderThemeCocoa.mm
 [ iOS ] rendering/ios/RenderThemeIOS.mm
-rendering/line/WordTrailingSpace.h
 rendering/shapes/ShapeOutsideInfo.cpp
 rendering/svg/RenderSVGBlock.cpp
 rendering/svg/RenderSVGInline.cpp

@@ -1227,7 +1227,6 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
 
 String Interpreter::stackTraceAsString(VM& vm, const Vector<StackFrame>& stackTrace)
 {
-    // FIXME: JSStringJoiner could be more efficient than StringBuilder here.
     static constexpr unsigned expectedLengthOfFrame = 96;
     StringBuilder builder;
     builder.reserveCapacity(std::min<size_t>(stackTrace.size() * expectedLengthOfFrame, String::MaxLength));
@@ -1236,7 +1235,7 @@ String Interpreter::stackTraceAsString(VM& vm, const Vector<StackFrame>& stackTr
         if (i != stackTrace.size() - 1)
             builder.append('\n');
     }
-    return builder.toString();
+    return WTF::move(builder).toString();
 }
 
 ALWAYS_INLINE static HandlerInfo* findExceptionHandler(StackVisitor& visitor, CodeBlock* codeBlock, RequiredHandler requiredHandler)

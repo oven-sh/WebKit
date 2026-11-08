@@ -126,7 +126,7 @@ void QuerySet::setOverrideLocation(QuerySet&, uint32_t, uint32_t)
 
 void QuerySet::setCommandEncoder(CommandEncoder& commandEncoder) const
 {
-    CommandEncoder::trackEncoder(commandEncoder, m_commandEncoders);
+    commandEncoder.trackEncoderForQuerySet(*this, m_commandEncoders);
     commandEncoder.addBuffer(m_visibilityBuffer);
     commandEncoder.addBuffer(m_timestampBufferWithOffset.buffer);
     if (isDestroyed())
@@ -220,7 +220,7 @@ void QuerySet::createContainersIfNeeded()
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuQuerySetAddRef(WGPUQuerySet querySet)
+NODELETE void wgpuQuerySetAddRef(WGPUQuerySet querySet)
 {
     WebGPU::Metal::fromAPI(querySet).ref();
 }

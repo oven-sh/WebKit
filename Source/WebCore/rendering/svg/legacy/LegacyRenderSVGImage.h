@@ -39,7 +39,7 @@ public:
     LegacyRenderSVGImage(SVGImageElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGImage();
 
-    SVGImageElement& LEGACY_NODELETE imageElement() const;
+    NODELETE SVGImageElement& imageElement() const;
 
     bool updateImageViewport();
     void setNeedsBoundariesUpdate() override { m_needsBoundariesUpdate = true; }
@@ -75,6 +75,7 @@ private:
     void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer = nullptr) const override;
 
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
+    void forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>&) override final;
 
     void layout() override;
     void paint(PaintInfo&, const LayoutPoint&) override;

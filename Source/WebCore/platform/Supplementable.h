@@ -86,7 +86,7 @@ public:
     virtual bool isDeviceMotionController() const { return false; }
     virtual bool isDeviceOrientationController() const { return false; }
     virtual bool isDocumentMediaElement() const { return false; }
-    virtual bool isDocumentPictureInPicture() const { return false; }
+    virtual bool isVideoPictureInPicture() const { return false; }
     virtual bool isDocumentStorageAccess() const { return false; }
     virtual bool isGeolocationController() const { return false; }
     virtual bool isHTMLVideoElementPictureInPicture() const { return false; }
@@ -109,6 +109,7 @@ public:
     virtual bool isNavigatorPermissions() const { return false; }
     virtual bool isNavigatorScreenWakeLock() const { return false; }
     virtual bool isNavigatorUserActivation() const { return false; }
+    virtual bool isNavigatorWebXR() const { return false; }
     virtual bool isNotificationController() const { return false; }
     virtual bool isServiceWorkerRegistrationBackgroundFetchAPI() const { return false; }
     virtual bool isServiceWorkerRegistrationPushAPI() const { return false; }

@@ -52,6 +52,7 @@ class FilterResults;
 class FloatRoundedRect;
 class Gradient;
 class ImageBuffer;
+class MeshGradient;
 class Path;
 class SourceImage;
 class SystemImage;
@@ -77,7 +78,7 @@ public:
         No,
         Yes
     };
-    WEBCORE_EXPORT GraphicsContext(IsDeferred = IsDeferred::No, const GraphicsContextState::ChangeFlags& = { }, InterpolationQuality = InterpolationQuality::Default);
+    NODELETE WEBCORE_EXPORT GraphicsContext(IsDeferred = IsDeferred::No, const GraphicsContextState::ChangeFlags& = { }, InterpolationQuality = InterpolationQuality::Default);
     WEBCORE_EXPORT GraphicsContext(IsDeferred, const GraphicsContextState&);
     WEBCORE_EXPORT virtual ~GraphicsContext();
 
@@ -160,7 +161,7 @@ public:
 
     bool shadowsIgnoreTransforms() const { return m_state.shadowsIgnoreTransforms(); }
     void setShadowsIgnoreTransforms(bool shadowsIgnoreTransforms) { m_state.setShadowsIgnoreTransforms(shadowsIgnoreTransforms); didUpdateState(m_state); }
-    FloatSize LEGACY_NODELETE platformShadowOffset(const FloatSize&) const;
+    NODELETE FloatSize platformShadowOffset(const FloatSize&) const;
 
     const GraphicsContextState& state() const LIFETIME_BOUND { return m_state; }
     void mergeLastChanges(const GraphicsContextState&);
@@ -318,6 +319,8 @@ public:
     virtual void drawLinesForText(const FloatPoint& origin, float thickness, std::span<const FloatSegment> lineSegments, bool isPrinting, bool doubleLines, StrokeStyle) = 0;
     virtual void drawDotsForDocumentMarker(const FloatRect&, DocumentMarkerLineStyle) = 0;
 
+    WEBCORE_EXPORT virtual void drawMeshGradient(MeshGradient&, const FloatRect& destination);
+
     // Transparency Layers
 
     WEBCORE_EXPORT virtual void beginTransparencyLayer(float opacity);
@@ -395,9 +398,9 @@ protected:
 
     FloatRect computeLineBoundsAndAntialiasingModeForText(const FloatRect&, bool printing, Color&);
 
-    float LEGACY_NODELETE dashedLineCornerWidthForStrokeWidth(float) const;
-    float LEGACY_NODELETE dashedLinePatternWidthForStrokeWidth(float) const;
-    float LEGACY_NODELETE dashedLinePatternOffsetForPatternAndStrokeWidth(float patternWidth, float strokeWidth) const;
+    NODELETE float dashedLineCornerWidthForStrokeWidth(float) const;
+    NODELETE float dashedLinePatternWidthForStrokeWidth(float) const;
+    NODELETE float dashedLinePatternOffsetForPatternAndStrokeWidth(float patternWidth, float strokeWidth) const;
     Vector<FloatPoint> centerLineAndCutOffCorners(bool isVerticalLine, float cornerWidth, FloatPoint point1, FloatPoint point2) const;
 
     struct RectsAndStrokeColor {

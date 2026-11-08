@@ -40,6 +40,7 @@
 #include <wtf/ListHashSet.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RobinHoodHashSet.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/text/StringHash.h>
 
 namespace WebCore {
@@ -62,7 +63,6 @@ class DocumentLoader;
 class ImageLoader;
 class LocalFrame;
 class Page;
-class SVGImage;
 class Settings;
 
 template <typename T>
@@ -132,8 +132,8 @@ public:
 
     URL urlWithRequestedFragmentIdentifier(const CachedResource&) const;
 
-    void notifyFinished(const CachedResource&);
-    Vector<Ref<SVGImage>> allCachedSVGImages() const;
+    void scheduleRenderingUpdateForImage(CachedImage&);
+    void updateRenderingOfImages();
 
     bool autoLoadImages() const { return m_autoLoadImages; }
     void setAutoLoadImages(bool);
@@ -146,16 +146,16 @@ public:
     
     CachePolicy cachePolicy(CachedResource::Type, const URL&) const;
     
-    LocalFrame* LEGACY_NODELETE frame() const; // Can be null
+    NODELETE LocalFrame* frame() const; // Can be null
     Document* document() const { return m_document.get(); } // Can be null
     void setDocument(Document* document) { m_document = document; }
-    void LEGACY_NODELETE clearDocumentLoader();
+    NODELETE void clearDocumentLoader();
     void loadDone(LoadCompletionType, bool shouldPerformPostLoadActions = true);
 
     WEBCORE_EXPORT void garbageCollectDocumentResources();
 
-    void LEGACY_NODELETE incrementRequestCount(const CachedResource&);
-    void LEGACY_NODELETE decrementRequestCount(const CachedResource&);
+    NODELETE void incrementRequestCount(const CachedResource&);
+    NODELETE void decrementRequestCount(const CachedResource&);
     int requestCount() const { return m_requestCount; }
 
     WEBCORE_EXPORT bool isPreloaded(const String& urlString) const;
@@ -169,7 +169,7 @@ public:
     bool updateRequestAfterRedirection(CachedResource::Type, ResourceRequest&, const ResourceLoaderOptions&, FetchMetadataSite, const URL& preRedirectURL, const URL& lastRedirectURL);
     bool allowedByContentSecurityPolicy(CachedResource::Type, const URL&, const ResourceLoaderOptions&, ContentSecurityPolicy::RedirectResponseReceived, const URL& preRedirectURL = URL(), bool shouldReportViolationAsConsoleMessage = true) const;
 
-    static const ResourceLoaderOptions& LEGACY_NODELETE defaultCachedResourceOptions();
+    NODELETE static const ResourceLoaderOptions& defaultCachedResourceOptions();
 
     void documentDidFinishLoadEvent();
 
@@ -210,14 +210,14 @@ private:
 
     void performPostLoadActions();
 
-    ImageLoading LEGACY_NODELETE clientDefersImage(const URL&) const;
+    NODELETE ImageLoading clientDefersImage(const URL&) const;
     void reloadImagesIfNotDeferred();
 
     bool canRequestAfterRedirection(CachedResource::Type, const URL&, const ResourceLoaderOptions&, const URL& preRedirectURL, IPAddressSpace targetAddressSpace) const;
     bool canRequestInContentDispositionAttachmentSandbox(CachedResource::Type, const URL&) const;
 
     MemoryCompactRobinHoodHashSet<URL> m_validatedURLs;
-    MemoryCompactRobinHoodHashSet<URL> m_cachedSVGImagesURLs;
+    WeakHashSet<CachedImage> m_imagesNeedingRenderingUpdate;
     mutable DocumentResourceMap m_documentResources;
     HashMap<String, String> m_documentResourceFragmentIdentifiers;
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;

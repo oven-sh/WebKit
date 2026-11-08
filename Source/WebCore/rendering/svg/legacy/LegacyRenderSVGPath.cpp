@@ -187,7 +187,7 @@ void LegacyRenderSVGPath::strokeZeroLengthSubpaths(GraphicsContext& context) con
 
     AffineTransform nonScalingTransform;
     if (hasNonScalingStroke())
-        nonScalingTransform = nonScalingStrokeTransform();
+        nonScalingTransform = computeNonScalingStrokeTransform();
 
     GraphicsContextStateSaver stateSaver(context, true);
     legacyUseStrokeStyleToFill(context);
@@ -208,7 +208,7 @@ void LegacyRenderSVGPath::strokeZeroLengthSubpaths(GraphicsContext& context) con
     }
 }
 
-static inline LegacyRenderSVGResourceMarker* LEGACY_NODELETE markerForType(SVGMarkerType type, LegacyRenderSVGResourceMarker* markerStart, LegacyRenderSVGResourceMarker* markerMid, LegacyRenderSVGResourceMarker* markerEnd)
+NODELETE static inline LegacyRenderSVGResourceMarker* markerForType(SVGMarkerType type, LegacyRenderSVGResourceMarker* markerStart, LegacyRenderSVGResourceMarker* markerMid, LegacyRenderSVGResourceMarker* markerEnd)
 {
     switch (type) {
     case SVGMarkerType::Start:

@@ -148,7 +148,7 @@ struct RenderLayerCompositor::OverlapExtent {
     bool animationCausesExtentUncertainty { false };
     bool clippingScopesComputed { false };
 
-    bool LEGACY_NODELETE knownToBeHaveExtentUncertainty() const { return extentComputed && animationCausesExtentUncertainty; }
+    NODELETE bool knownToBeHaveExtentUncertainty() const { return extentComputed && animationCausesExtentUncertainty; }
 };
 
 struct RenderLayerCompositor::CompositingState {
@@ -158,7 +158,7 @@ struct RenderLayerCompositor::CompositingState {
     {
     }
     
-    CompositingState LEGACY_NODELETE stateForPaintOrderChildren(RenderLayer& layer) const
+    NODELETE CompositingState stateForPaintOrderChildren(RenderLayer& layer) const
     {
         UNUSED_PARAM(layer);
         CompositingState childState(compositingAncestor);
@@ -227,7 +227,7 @@ struct RenderLayerCompositor::CompositingState {
 #endif
     }
 
-    bool LEGACY_NODELETE hasNonRootCompositedAncestor() const
+    NODELETE bool hasNonRootCompositedAncestor() const
     {
         return compositingAncestor && !compositingAncestor->isRenderViewLayer();
     }
@@ -257,7 +257,7 @@ struct RenderLayerCompositor::UpdateBackingTraversalState {
     {
     }
 
-    UpdateBackingTraversalState LEGACY_NODELETE stateForDescendants() const
+    NODELETE UpdateBackingTraversalState stateForDescendants() const
     {
         UpdateBackingTraversalState state(compositingAncestor, layersClippedByScrollers, overflowScrollLayers);
 #if !LOG_DISABLED
@@ -329,18 +329,18 @@ public:
         LayoutRect absoluteBounds;
     };
 
-    auto& LEGACY_NODELETE backingProviderCandidates() { return m_backingProviderCandidates; }
+    NODELETE auto& backingProviderCandidates() { return m_backingProviderCandidates; }
 
-    const RenderLayer* LEGACY_NODELETE firstProviderCandidateLayer() const
+    NODELETE const RenderLayer* firstProviderCandidateLayer() const
     {
         return !m_backingProviderCandidates.isEmpty() ? m_backingProviderCandidates.first().providerLayer.get() : nullptr;
     }
 
-    RenderLayer* LEGACY_NODELETE backingSharingStackingContext() const { return m_backingSharingStackingContext; }
+    NODELETE RenderLayer* backingSharingStackingContext() const { return m_backingSharingStackingContext; }
 
     Provider* backingProviderCandidateForLayer(const RenderLayer&, const RenderLayerCompositor&, LayerOverlapMap&, OverlapExtent&);
-    Provider* LEGACY_NODELETE existingBackingProviderCandidateForLayer(const RenderLayer&);
-    Provider* LEGACY_NODELETE backingProviderForLayer(const RenderLayer&);
+    NODELETE Provider* existingBackingProviderCandidateForLayer(const RenderLayer&);
+    NODELETE Provider* backingProviderForLayer(const RenderLayer&);
 
     // Add a layer that would repaint into a layer in m_backingSharingLayers.
     // That repaint has to wait until we've set the provider's backing-sharing layers.
@@ -350,17 +350,17 @@ public:
     }
 
     void addBackingSharingCandidate(RenderLayer& candidateLayer, LayoutRect candidateAbsoluteBounds, RenderLayer& candidateStackingContext, const std::optional<BackingSharingSnapshot>&);
-    bool LEGACY_NODELETE isAdditionalProviderCandidate(RenderLayer* stackingContextAncestor) const;
+    NODELETE bool isAdditionalProviderCandidate(RenderLayer* stackingContextAncestor) const;
     void startBackingSharingSequence(RenderLayer& candidateLayer, LayoutRect candidateAbsoluteBounds, RenderLayer& candidateStackingContext);
     void endBackingSharingSequence(RenderLayer&);
 
-    std::optional<BackingSharingSnapshot> LEGACY_NODELETE snapshot() const
+    NODELETE std::optional<BackingSharingSnapshot> snapshot() const
     {
         if (!m_backingSharingStackingContext)
             return std::nullopt;
         return BackingSharingSnapshot { m_sequenceIdentifier, m_backingProviderCandidates.size() };
     }
-    BackingSharingSequenceIdentifier LEGACY_NODELETE sequenceIdentifier() const { return m_sequenceIdentifier; }
+    NODELETE BackingSharingSequenceIdentifier sequenceIdentifier() const { return m_sequenceIdentifier; }
 
 private:
     void layerWillBeComposited(RenderLayer&);
@@ -553,12 +553,17 @@ static inline bool layersLogEnabled()
 
 static constexpr Seconds conservativeCompositingPolicyHysteresisDuration { 2_s };
 
+static constexpr double willChangeBudgetViewportAreaMultiplier = 8;
+static constexpr Seconds initialWillChangeBudgetBackoff { 2_s };
+static constexpr Seconds maximumWillChangeBudgetBackoff { 32_s };
+
 RenderLayerCompositor::RenderLayerCompositor(RenderView& renderView)
     : m_renderView(renderView)
     , m_updateCompositingLayersTimer(*this, &RenderLayerCompositor::updateCompositingLayersTimerFired)
     , m_updateRenderingTimer(*this, &RenderLayerCompositor::scheduleRenderingUpdate)
     , m_compositingPolicy { CompositingPolicy::Normal }
     , m_compositingPolicyHysteresis([](PAL::HysteresisState) { }, conservativeCompositingPolicyHysteresisDuration)
+    , m_willChangeBudgetBackoffDuration(initialWillChangeBudgetBackoff)
 {
 #if PLATFORM(IOS_FAMILY)
     if (m_renderView.frameView().platformWidget())
@@ -791,7 +796,7 @@ void RenderLayerCompositor::scheduleRenderingUpdate()
     protect(page())->scheduleRenderingUpdate(RenderingUpdateStep::LayerFlush);
 }
 
-static inline ScrollableArea::VisibleContentRectIncludesScrollbars LEGACY_NODELETE scrollbarInclusionForVisibleRect()
+NODELETE static inline ScrollableArea::VisibleContentRectIncludesScrollbars scrollbarInclusionForVisibleRect()
 {
 #if USE(COORDINATED_GRAPHICS)
     return ScrollableArea::VisibleContentRectIncludesScrollbars::Yes;
@@ -1141,7 +1146,17 @@ bool RenderLayerCompositor::updateCompositingLayers(CompositingUpdateType update
         BackingSharingState backingSharingState;
         LayerOverlapMap overlapMap(rootLayer);
 
+        beginWillChangeAreaEstimate();
         computeCompositingRequirements(nullptr, rootLayer, overlapMap, compositingState, backingSharingState);
+
+        if (willChangeAreaEstimateExceedsBudget()) {
+            rootLayer->setDescendantsNeedCompositingRequirementsTraversal();
+
+            CompositingState overBudgetCompositingState(updateRoot);
+            BackingSharingState overBudgetBackingSharingState;
+            LayerOverlapMap overBudgetOverlapMap(rootLayer);
+            computeCompositingRequirements(nullptr, rootLayer, overBudgetOverlapMap, overBudgetCompositingState, overBudgetBackingSharingState);
+        }
     }
 
     LOG(Compositing, "\nRenderLayerCompositor::updateCompositingLayers - mid");
@@ -1531,6 +1546,9 @@ void RenderLayerCompositor::computeCompositingRequirements(RenderLayer* ancestor
 
     ASSERT(willBeComposited == needsToBeComposited(layer, queryData));
 
+    if (willBeComposited)
+        addToWillChangeAreaEstimate(overlapMap, layer);
+
     // Create or destroy backing here. However, we can't update geometry because layers above us may become composited
     // during post-order traversal (e.g. for clipping).
     bool needsCompositingStatusUpdate = false;
@@ -1632,6 +1650,7 @@ void RenderLayerCompositor::traverseUnchangedSubtree(RenderLayer* ancestorLayer,
         LOG_WITH_STREAM(CompositingOverlap, stream << "unchangedSubtree: layer " << &layer << " will composite, pushed container " << overlapMap);
 
         computeExtent(overlapMap, layer, layerExtent);
+        addToWillChangeAreaEstimate(overlapMap, layer);
         currentState.ancestorHasTransformAnimation |= layerExtent.hasTransformAnimation;
         // Too hard to compute animated bounds if both us and some ancestor is animating transform.
         layerExtent.animationCausesExtentUncertainty |= layerExtent.hasTransformAnimation && compositingState.ancestorHasTransformAnimation;
@@ -2154,7 +2173,7 @@ void RenderLayerCompositor::logLayerInfo(const RenderLayer& layer, ASCIILiteral 
 }
 #endif
 
-static bool LEGACY_NODELETE clippingChanged(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle)
+NODELETE static bool clippingChanged(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle)
 {
     return oldStyle.overflowX() != newStyle.overflowX()
         || oldStyle.overflowY() != newStyle.overflowY()
@@ -2200,7 +2219,7 @@ static bool recompositeChangeRequiresGeometryUpdate(const Style::ComputedStyle& 
         || oldStyle.overscrollBehaviorY() != newStyle.overscrollBehaviorY();
 }
 
-static bool LEGACY_NODELETE recompositeChangeRequiresChildrenGeometryUpdate(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle)
+NODELETE static bool recompositeChangeRequiresChildrenGeometryUpdate(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle)
 {
     return oldStyle.perspective().isNone() != newStyle.perspective().isNone()
         || oldStyle.usedTransformStyle3D() != newStyle.usedTransformStyle3D();
@@ -2328,6 +2347,12 @@ void RenderLayerCompositor::layerStyleChanged(Style::Difference diff, RenderLaye
         // image rendering mode can determine whether we use device pixel ratio for the backing store.
         if (oldStyle && oldStyle->imageRendering() != newStyle.imageRendering())
             layer.setNeedsCompositingConfigurationUpdate();
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        // A forced color filter has to be painted, so it decides whether an image can be composited directly.
+        if (oldStyle && oldStyle->appleColorFilterOverride() != newStyle.appleColorFilterOverride())
+            layer.setNeedsCompositingConfigurationUpdate();
+#endif
     }
 
     if (diff >= Style::DifferenceResult::RecompositeLayer) {
@@ -2383,7 +2408,7 @@ void RenderLayerCompositor::clearBackingProviderSequencesInStackingContextOfLaye
 }
 
 // FIXME: remove and never ask questions about reflection layers.
-static RenderLayerModelObject& LEGACY_NODELETE rendererForCompositingTests(const RenderLayer& layer)
+NODELETE static RenderLayerModelObject& rendererForCompositingTests(const RenderLayer& layer)
 {
     auto* renderer = &layer.renderer();
 
@@ -3699,17 +3724,7 @@ Vector<CompositedClipData> RenderLayerCompositor::computeAncestorClippingStack(c
         if (clipRect.isInfinite())
             return;
 
-        auto infiniteRect = LayoutRect::infiniteRect();
-        auto renderableInfiniteRect = LayoutRect::renderableInfiniteRect();
-        if (clipRect.width() == infiniteRect.width()) {
-            clipRect.setX(renderableInfiniteRect.x());
-            clipRect.setWidth(renderableInfiniteRect.width());
-        }
-
-        if (clipRect.height() == infiniteRect.height()) {
-            clipRect.setY(renderableInfiniteRect.y());
-            clipRect.setHeight(renderableInfiniteRect.height());
-        }
+        clipRect.makeRenderable();
 
         auto offset = layer.convertToLayerCoords(&clippingRoot, { }, RenderLayer::AdjustForColumns);
         clipRect.moveBy(-offset);
@@ -4028,6 +4043,9 @@ bool RenderLayerCompositor::requiresCompositingForWillChange(RenderLayerModelObj
     if (!renderer.style().willChange().canTriggerCompositing())
         return false;
 
+    if (m_ignoresWillChangeOverBudget)
+        return false;
+
 #if ENABLE(FULLSCREEN_API)
     // FIXME: does this require layout?
     if (renderer.layer() && isDescendantOfFullScreenLayer(*renderer.layer()) == FullScreenDescendant::No)
@@ -4044,6 +4062,66 @@ bool RenderLayerCompositor::requiresCompositingForWillChange(RenderLayerModelObj
         return true;
 
     return renderer.style().willChange().canTriggerCompositingOnInline();
+}
+
+// Will-change is only a hint, so stop honoring it when pages use it for far more area than they can display.
+void RenderLayerCompositor::beginWillChangeAreaEstimate()
+{
+    m_willChangeAreaEstimate = std::nullopt;
+
+    if (m_ignoresWillChangeOverBudget) {
+        if (MonotonicTime::now() < m_willChangeBudgetBackoffEndTime)
+            return;
+        m_ignoresWillChangeOverBudget = false;
+        rootRenderLayer().setDescendantsNeedCompositingRequirementsTraversal();
+    }
+
+    Ref frameView = m_renderView.frameView();
+    FloatRect visibleRect = frameView->visibleContentRect();
+#if PLATFORM(IOS_FAMILY)
+    FloatRect coverageRect = frameView->exposedContentRect().raw();
+#else
+    FloatRect coverageRect = visibleRect;
+#endif
+    // Tiled layers only retain tiles near the visible area.
+    if (auto* backing = rootRenderLayer().backing()) {
+        if (CheckedPtr tiledBacking = backing->tiledBacking())
+            coverageRect.unite(tiledBacking->coverageRect());
+    }
+
+    m_willChangeAreaEstimate = WillChangeAreaEstimate { visibleRect.area() * willChangeBudgetViewportAreaMultiplier, coverageRect };
+}
+
+void RenderLayerCompositor::addToWillChangeAreaEstimate(const LayerOverlapMap& overlapMap, const RenderLayer& layer)
+{
+    if (!m_willChangeAreaEstimate)
+        return;
+
+    if (!requiresCompositingForWillChange(rendererForCompositingTests(layer)))
+        return;
+
+    // Not the OverlapExtent bounds, which inflate fixed and sticky layers to cover every scroll position.
+    auto bounds = overlapMap.geometryMap().absoluteRect(layer.overlapBounds());
+    m_willChangeAreaEstimate->area += intersection(bounds, m_willChangeAreaEstimate->coverageRect).area();
+}
+
+bool RenderLayerCompositor::willChangeAreaEstimateExceedsBudget()
+{
+    auto estimate = std::exchange(m_willChangeAreaEstimate, std::nullopt);
+    if (!estimate)
+        return false;
+
+    if (estimate->area <= estimate->budget) {
+        if (estimate->area < estimate->budget / 2)
+            m_willChangeBudgetBackoffDuration = initialWillChangeBudgetBackoff;
+        return false;
+    }
+
+    RELEASE_LOG(Compositing, "RenderLayerCompositor %p will-change area %.0f exceeds budget %.0f, ignoring will-change for %.0fs", this, estimate->area, estimate->budget, m_willChangeBudgetBackoffDuration.seconds());
+    m_ignoresWillChangeOverBudget = true;
+    m_willChangeBudgetBackoffEndTime = MonotonicTime::now() + m_willChangeBudgetBackoffDuration;
+    m_willChangeBudgetBackoffDuration = std::min(m_willChangeBudgetBackoffDuration * 2, maximumWillChangeBudgetBackoff);
+    return true;
 }
 
 bool RenderLayerCompositor::requiresCompositingForModel(RenderLayerModelObject& renderer) const
@@ -5561,7 +5639,7 @@ StickyPositionViewportConstraints RenderLayerCompositor::computeStickyViewportCo
     return constraints;
 }
 
-static inline ScrollCoordinationRole LEGACY_NODELETE scrollCoordinationRoleForNodeType(ScrollingNodeType nodeType)
+NODELETE static inline ScrollCoordinationRole scrollCoordinationRoleForNodeType(ScrollingNodeType nodeType)
 {
     switch (nodeType) {
     case ScrollingNodeType::MainFrame:

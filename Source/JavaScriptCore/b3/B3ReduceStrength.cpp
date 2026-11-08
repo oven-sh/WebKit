@@ -320,6 +320,7 @@ public:
             m_enteredFromReachableBlock.clearAll();
             m_enteredFromReachableBlock.ensureSize(m_proc.size());
             m_valueForConstant.clear();
+            m_proc.resetValueOwners(); // Used by Phi folding.
 
             m_dominators = &m_proc.dominators(); // Recompute if necessary.
             m_layeredCSE.clear();
@@ -1480,11 +1481,10 @@ private:
 
             // Turn this: BitAnd(SExt32(value), mask) where (mask & 0xffffffff00000000) == 0
             // Into this: BitAnd(ZExt32(value), mask)
-            if (m_value->child(0)->opcode() == SExt32 && m_value->child(1)->hasInt32()
-                && !(m_value->child(1)->asInt32() & 0xffffffff00000000llu)) {
+            if (m_value->child(0)->opcode() == SExt32 && m_value->child(1)->hasInt64()
+                && !(m_value->child(1)->asInt64() & 0xffffffff00000000llu)) {
                 m_value->child(0) = m_insertionSet.insert<Value>(
-                    m_index, ZExt32, m_value->origin(),
-                    m_value->child(0)->child(0), m_value->child(0)->child(1));
+                    m_index, ZExt32, m_value->origin(), m_value->child(0)->child(0));
                 m_changed = true;
                 break;
             }

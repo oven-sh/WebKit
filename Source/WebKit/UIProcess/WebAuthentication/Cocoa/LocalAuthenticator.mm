@@ -86,7 +86,7 @@ static void updateQueryIfNecessary(NSMutableDictionary *dictionary)
     [dictionary setObject:@YES forKey:(__bridge id)kSecAttrSynchronizable];
 }
 
-static inline RefPtr<ArrayBuffer> LEGACY_NODELETE alternateBlobIfNecessary(const WebKit::WebAuthenticationRequestData& requestData)
+NODELETE static inline RefPtr<ArrayBuffer> alternateBlobIfNecessary(const WebKit::WebAuthenticationRequestData& requestData)
 {
 #if HAVE(WEB_AUTHN_PRF_API)
     return nullptr;
@@ -228,7 +228,7 @@ static inline HashSet<String> produceHashSet(const Vector<PublicKeyCredentialDes
     return result;
 }
 
-static inline uint8_t LEGACY_NODELETE authDataFlags(ClientDataType type, LocalConnection::UserVerification verification, bool synchronizable, std::optional<MediationRequirement> mediation)
+NODELETE static inline uint8_t authDataFlags(ClientDataType type, LocalConnection::UserVerification verification, bool synchronizable, std::optional<MediationRequirement> mediation)
 {
     auto flags = 0;
     if (type != ClientDataType::Create || mediation != MediationRequirement::Conditional)
@@ -296,8 +296,7 @@ LocalAuthenticator::LocalAuthenticator(Ref<LocalConnection>&& connection)
 std::optional<Vector<Ref<AuthenticatorAssertionResponse>>> LocalAuthenticator::getExistingCredentials(const String& rpId)
 {
     RetainPtr sortedAttributesArray = m_connection->getExistingCredentials(rpId);
-    Vector<Ref<AuthenticatorAssertionResponse>> result;
-    result.reserveInitialCapacity([sortedAttributesArray count]);
+    Vector<Ref<AuthenticatorAssertionResponse>> result(ReserveCapacityTag { }, [sortedAttributesArray count]);
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *attributes in sortedAttributesArray.get()) {
         auto decodedResponse = cbor::CBORReader::read(makeVector(protect(checked_objc_cast<NSData>(attributes[(id)kSecAttrApplicationTag])).get()));

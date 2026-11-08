@@ -60,7 +60,7 @@
 
 namespace WebCore {
 
-static HashMap<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<SharedWorkerThreadProxy>>& LEGACY_NODELETE allSharedWorkerThreadProxies()
+NODELETE static HashMap<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<SharedWorkerThreadProxy>>& allSharedWorkerThreadProxies()
 {
     static MainThreadNeverDestroyed<HashMap<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<SharedWorkerThreadProxy>>> map;
     return map;
@@ -75,6 +75,7 @@ static WorkerParameters generateWorkerParameters(const WorkerFetchResult& worker
         workerOptions.name,
         makeString("sharedworker:"_s, generateInspectorObjectIdentifierString()),
         WTF::move(initializationData.userAgent),
+        WTF::move(initializationData.navigatorPlatform),
         platformStrategies()->loaderStrategy()->isOnLine(),
         workerFetchResult.contentSecurityPolicy,
         false,

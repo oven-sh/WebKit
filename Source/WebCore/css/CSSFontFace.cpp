@@ -47,6 +47,7 @@
 #include "FontFace.h"
 #include "FontPaletteValues.h"
 #include "SVGFontFaceElement.h"
+#include "ScriptDisallowedScope.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
 #include "StyleFontMetricsOverride.h"
@@ -65,6 +66,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSFontFace);
 
 static void iterateClients(WeakHashSet<CSSFontFaceClient>& clients, NOESCAPE const Function<void(CSSFontFaceClient&)>& callback)
 {
+    ScriptDisallowedScope scope;
     for (auto& client : copyToVectorOf<Ref<CSSFontFaceClient>>(clients)) {
         if (clients.contains(client))
             callback(client);
@@ -768,7 +770,7 @@ void CSSFontFace::load()
     pump(ExternalResourceDownloadPolicy::Allow);
 }
 
-static Font::Visibility LEGACY_NODELETE visibility(CSSFontFace::Status status, CSSFontFace::FontLoadTiming timing)
+NODELETE static Font::Visibility visibility(CSSFontFace::Status status, CSSFontFace::FontLoadTiming timing)
 {
     switch (status) {
     case CSSFontFace::Status::Pending:
@@ -840,6 +842,14 @@ bool CSSFontFace::hasSVGFontFaceSource() const
 {
     return m_sources.containsIf([](auto& source) {
         return protect(*source)->isSVGFontFaceSource();
+    });
+}
+
+bool CSSFontFace::supportsSVGVariantCaps(FontVariantCaps variantCaps) const
+{
+    return std::ranges::all_of(m_sources, [&](auto& source) {
+        RefPtr element = source->svgFontFaceElement();
+        return !element || element->supportsVariantCaps(variantCaps);
     });
 }
 

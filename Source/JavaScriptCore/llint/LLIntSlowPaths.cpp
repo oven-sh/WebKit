@@ -111,8 +111,8 @@ namespace JSC { namespace LLInt {
     LLINT_BEGIN_NO_SET_PC();                    \
     LLINT_SET_PC_FOR_STUBS()
 
-static inline JSValue LEGACY_NODELETE getNonConstantOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->uncheckedR(operand).jsValue(); }
-static inline JSValue LEGACY_NODELETE getOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->r(operand).jsValue(); }
+NODELETE static inline JSValue getNonConstantOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->uncheckedR(operand).jsValue(); }
+NODELETE static inline JSValue getOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->r(operand).jsValue(); }
 
 #define LLINT_RETURN_TWO(first, second) do {       \
         return encodeResult(first, second);        \
@@ -233,9 +233,9 @@ ALLOW_NONLITERAL_FORMAT_END
 
 #else // not LLINT_TRACING
 
-template<typename... Types> void LEGACY_NODELETE slowPathLog(const Types&...) { }
+template<typename... Types> NODELETE void slowPathLog(const Types&...) { }
 template<typename... Types> void slowPathLogLn(const Types&...) { }
-template<typename... Types> void LEGACY_NODELETE slowPathLogF(const char*, const Types&...) { }
+template<typename... Types> NODELETE void slowPathLogF(const char*, const Types&...) { }
 
 #endif // LLINT_TRACING
 
@@ -2895,21 +2895,21 @@ static void throwArityCheckStackOverflowError(JSGlobalObject* globalObject, Thro
 #endif
 }
 
-static ALWAYS_INLINE int LEGACY_NODELETE numberOfExtraSlots(int argumentCountIncludingThis)
+NODELETE static ALWAYS_INLINE int numberOfExtraSlots(int argumentCountIncludingThis)
 {
     int frameSize = argumentCountIncludingThis + CallFrame::headerSizeInRegisters;
     int alignedFrameSize = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), frameSize);
     return alignedFrameSize - frameSize;
 }
 
-static ALWAYS_INLINE int LEGACY_NODELETE numberOfStackPaddingSlotsWithExtraSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)
+NODELETE static ALWAYS_INLINE int numberOfStackPaddingSlotsWithExtraSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)
 {
     if (static_cast<unsigned>(argumentCountIncludingThis) >= codeBlock->numParameters())
         return 0;
     return CommonSlowPaths::numberOfStackPaddingSlots(codeBlock, argumentCountIncludingThis) + numberOfExtraSlots(argumentCountIncludingThis);
 }
 
-static ALWAYS_INLINE int LEGACY_NODELETE arityCheckFor(VM& vm, CallFrame* callFrame, CodeBlock* newCodeBlock)
+NODELETE static ALWAYS_INLINE int arityCheckFor(VM& vm, CallFrame* callFrame, CodeBlock* newCodeBlock)
 {
     ASSERT(callFrame->argumentCountIncludingThis() < static_cast<unsigned>(newCodeBlock->numParameters()));
     int slotsToAdd = numberOfStackPaddingSlotsWithExtraSlots(newCodeBlock, callFrame->argumentCountIncludingThis());
@@ -2969,29 +2969,21 @@ static void handleVarargsCheckpoint(VM& vm, CallFrame* callFrame, JSGlobalObject
     callFrame->uncheckedR(bytecode.m_dst) = result;
 }
 
-static void handleVarargsWithSpreadCheckpoint(VM& vm, CallFrame* callFrame, JSGlobalObject* globalObject, CodeBlock* codeBlock, const OpCallVarargsWithSpread& bytecode)
+static void handleVarargsWithSpreadCheckpoint(VM& vm, CallFrame* callFrame, JSGlobalObject* globalObject, CodeBlock* codeBlock, const OpCallVarargsWithSpread& bytecode, CheckpointOSRExitSideState& sideState)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     const BitVector& bitVector = codeBlock->unlinkedCodeBlock()->bitVector(bytecode.m_bitVector);
     JSValue* values = std::bit_cast<JSValue*>(&callFrame->r(bytecode.m_argv));
     unsigned argc = bytecode.m_argc;
+    unsigned length = sideState.tmps[OpCallVarargsWithSpread::argCountIncludingThis].asUInt32() - 1;
 
-    // Recount rather than trusting the optimizing JIT's argument count: on overflow it reports a
-    // clamped count that is smaller than the number of values the copy below would write.
-    CheckedUint32 length = 0;
-    for (unsigned i = 0; i < argc; ++i) {
-        if (bitVector.get(i))
-            length += uncheckedDowncast<JSCellButterfly>(values[-static_cast<int>(i)])->publicLength();
-        else
-            length += 1U;
-    }
-    if (length.hasOverflowed() || length > maxArguments) [[unlikely]] {
+    if (length > maxArguments) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return;
     }
 
     MarkedArgumentBuffer args;
-    args.fill(vm, length.value(), [&](JSValue* buffer) {
+    args.fill(vm, length, [&](JSValue* buffer) {
         JSValue* dest = buffer;
         for (unsigned i = 0; i < argc; ++i) {
             JSValue value = values[-static_cast<int>(i)];
@@ -3257,7 +3249,7 @@ extern "C" UGPRPair SYSV_ABI llint_slow_path_checkpoint_osr_exit(CallFrame* call
         handleVarargsCheckpoint(vm, callFrame, globalObject, pc->as<OpCallVarargs>(), *sideState.get());
         break;
     case op_call_varargs_with_spread:
-        handleVarargsWithSpreadCheckpoint(vm, callFrame, globalObject, codeBlock, pc->as<OpCallVarargsWithSpread>());
+        handleVarargsWithSpreadCheckpoint(vm, callFrame, globalObject, codeBlock, pc->as<OpCallVarargsWithSpread>(), *sideState.get());
         break;
     case op_construct_varargs:
         handleVarargsCheckpoint(vm, callFrame, globalObject, pc->as<OpConstructVarargs>(), *sideState.get());

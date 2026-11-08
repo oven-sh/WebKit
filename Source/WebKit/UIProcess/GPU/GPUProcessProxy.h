@@ -95,7 +95,7 @@ class GPUProcessProxy final : public AuxiliaryProcessProxy {
 public:
     static void keepProcessAliveTemporarily();
     static Ref<GPUProcessProxy> getOrCreate();
-    static GPUProcessProxy* LEGACY_NODELETE singletonIfCreated();
+    NODELETE static GPUProcessProxy* singletonIfCreated();
     ~GPUProcessProxy();
 
     void createGPUProcessConnection(WebProcessProxy&, IPC::Connection::Handle&&, GPUProcessConnectionParameters&&);
@@ -162,7 +162,7 @@ public:
 
     void terminateForTesting();
     void webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&&);
-    void runDisplayListDataTestsForTesting(CompletionHandler<void(Vector<String>&&)>&&);
+    void runDisplayListDataTestsForTesting(Vector<Ref<WebCore::SharedBuffer>>&& webFonts, CompletionHandler<void(std::optional<Vector<String>>&&)>&&);
 
 #if PLATFORM(COCOA)
     static void setEnableMetalDebugDeviceInNewGPUProcessesForTesting(bool enable) { s_enableMetalDebugDeviceInNewGPUProcessesForTesting = enable; }
@@ -198,7 +198,8 @@ public:
 
     // Draws the snapshot at the size its root was recorded at, once it is complete. May be sent as soon
     // as the root has been asked for.
-    std::optional<IPC::Connection::AsyncReplyID> sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier, WebCore::FrameIdentifier root, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
+    std::optional<IPC::Connection::AsyncReplyID> sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier, WebCore::FrameIdentifier root, std::optional<WebCore::ProcessIdentifier> printProcessIdentifier, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
+    void printProcessDrawingCountsForTesting(CompletionHandler<void(uint64_t drawnInPrintProcess, uint64_t drawnAfterPrintProcessFailed)>&&);
 #endif
     std::optional<IPC::Connection::AsyncReplyID> sinkCompletedSnapshotToBitmap(RemoteSnapshotIdentifier, WebCore::FrameIdentifier root, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
 #if HAVE(IOSURFACE)

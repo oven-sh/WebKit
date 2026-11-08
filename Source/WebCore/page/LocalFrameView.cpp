@@ -3573,7 +3573,7 @@ void LocalFrameView::cancelScheduledTextFragmentIndicatorTimer()
     m_delayedTextFragmentIndicatorTimer.stop();
 }
 
-static void LEGACY_NODELETE adjustScrollRectToVisibleOptionsForHiddenOverflow(ScrollRectToVisibleOptions& options, const Style::ComputedStyle& style)
+NODELETE static void adjustScrollRectToVisibleOptionsForHiddenOverflow(ScrollRectToVisibleOptions& options, const Style::ComputedStyle& style)
 {
     if (options.allowScrollingOverflowHidden == AllowScrollingOverflowHidden::Yes)
         return;
@@ -4323,7 +4323,7 @@ void LocalFrameView::adjustTiledBackingCoverage()
 #endif
 }
 
-static bool LEGACY_NODELETE shouldEnableSpeculativeTilingDuringLoading(const LocalFrameView& view)
+NODELETE static bool shouldEnableSpeculativeTilingDuringLoading(const LocalFrameView& view)
 {
     auto* page = view.frame().page();
     return page && view.isVisuallyNonEmpty() && !page->progress().isMainLoadProgressing();
@@ -5260,8 +5260,14 @@ void LocalFrameView::performSizeToContentAutoSize()
             if (!localVerticalScrollbar)
                 localVerticalScrollbar = createScrollbar(ScrollbarOrientation::Vertical);
             newSize.expand(localVerticalScrollbar->occupiedWidth(), 0);
+            // scrollbar-gutter: stable both-edges also reserves a gutter on the leading edge.
+            if (scrollbarGutterStyle().isStableBothEdges())
+                newSize.expand(localVerticalScrollbar->occupiedWidth(), 0);
             // Don't bother checking for a horizontal scrollbar because the height is
             // already greater the maximum.
+        } else if (!verticalScrollbar()) {
+            // No scrollbar is needed, but scrollbar-gutter may still reserve space that is not part of the content.
+            newSize.expand(totalScrollbarSpace().width(), 0);
         }
 
         // Ensure the size is at least the min bounds.
@@ -5307,8 +5313,12 @@ void LocalFrameView::performSizeToContentAutoSize()
     // FIXME: Use the final layout's result as the content size (webkit.org/b/173561).
     layoutWithAdjustedStyleIfNeeded();
     m_autoSizeContentSize = contentsSize();
-    if (RefPtr scrollbar = verticalScrollbar())
+    if (RefPtr scrollbar = verticalScrollbar()) {
         m_autoSizeContentSize.expand(scrollbar->occupiedWidth(), 0);
+        if (scrollbarGutterStyle().isStableBothEdges())
+            m_autoSizeContentSize.expand(scrollbar->occupiedWidth(), 0);
+    } else
+        m_autoSizeContentSize.expand(totalScrollbarSpace().width(), 0);
     if (RefPtr scrollbar = horizontalScrollbar())
         m_autoSizeContentSize.expand(0, scrollbar->occupiedHeight());
 }
@@ -5957,7 +5967,8 @@ void LocalFrameView::paintContents(GraphicsContext& context, const IntRect& dirt
         if (m_frame->document()->printing())
             return false; // Printing, don't fill with warning color (can't remember why).
 
-        if (m_frame->ownerElement())
+        // Not ownerElement(): with Site Isolation, a subframe's owner element can be in another process.
+        if (!m_frame->isMainFrame())
             return false; // Subframe, don't fill with warning color.
 
         if (isTransparent())
@@ -7232,10 +7243,15 @@ FloatSize LocalFrameView::calculateSizeForCSSViewportUnitsOverride(std::optional
 
 FloatSize LocalFrameView::sizeForCSSDynamicViewportUnits() const
 {
+    bool useFixedLayout = this->useFixedLayout();
+
+    if (useFixedLayout && sizeForCSSSmallViewportUnits() == sizeForCSSLargeViewportUnits())
+        return fixedLayoutSize();
+
     if (m_layoutViewportOverrideRect)
         return m_layoutViewportOverrideRect->size();
 
-    if (useFixedLayout())
+    if (useFixedLayout)
         return fixedLayoutSize();
 
     if (m_frame->settings().visualViewportEnabled()) {

@@ -160,11 +160,14 @@ macro(WEBKIT_COMPUTE_SOURCES _framework)
 
     if (ENABLE_UNIFIED_BUILDS)
         # One pass generates the bundles (stdout = files to compile) and writes the
-        # bundled member list to a side file via --print-bundled-sources.
+        # bundled member list to a side file via --print-bundled-sources, plus the
+        # standalone ARC sources via --print-arc-sources.
         set(_bundledSourcesFile "${CMAKE_CURRENT_BINARY_DIR}/${_framework}BundledSources.txt")
+        set(_arcSourcesFile "${CMAKE_CURRENT_BINARY_DIR}/${_framework}ARCSources.txt")
         execute_process(COMMAND ${Python_EXECUTABLE} ${WTF_SCRIPTS_DIR}/generate-unified-source-bundles.py
             ${gusb_args}
             --print-bundled-sources "${_bundledSourcesFile}"
+            --print-arc-sources "${_arcSourcesFile}"
             ${_sourceListFileTruePaths}
             RESULT_VARIABLE _resultTmp
             OUTPUT_VARIABLE _outputTmp)
@@ -181,7 +184,12 @@ macro(WEBKIT_COMPUTE_SOURCES _framework)
         endforeach ()
         unset(_sourceFileTmp)
 
+        file(STRINGS "${_arcSourcesFile}" _arcSources)
         foreach (_file IN LISTS _outputTmp)
+            set(_isARCSource OFF)
+            if (_file MATCHES "-ARC\\.mm$" OR _file IN_LIST _arcSources)
+                set(_isARCSource ON)
+            endif ()
             # Disambiguate top-level generated sources in DerivedSources vs top-level regular sources.
             get_filename_component(_fileDir "${_file}" DIRECTORY)
             if (NOT _fileDir AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_file}")
@@ -189,16 +197,19 @@ macro(WEBKIT_COMPUTE_SOURCES _framework)
             endif ()
             if (_file MATCHES "\\.c$")
                 list(APPEND ${_framework}_C_SOURCES ${_file})
-            elseif (_file MATCHES "-ARC\\.mm$")
+            elseif (_isARCSource)
                 # generate-unified-source-bundles.rb emits *-ARC.mm and *-nonARC.mm bundles based
-                # on @nonARC annotations in Sources*.txt. The ARC bundles compile in a separate
-                # OBJECT library so the OBJCXX precompiled header agrees on -fobjc-arc.
+                # on @nonARC annotations in Sources*.txt. The ARC bundles, and @no-unify sources
+                # not annotated @nonARC, compile in a separate OBJECT library so the OBJCXX
+                # precompiled header agrees on -fobjc-arc.
                 list(APPEND ${_framework}_ARC_SOURCES ${_file})
             else ()
                 list(APPEND ${_framework}_SOURCES ${_file})
             endif ()
         endforeach ()
 
+        unset(_isARCSource)
+        unset(_arcSources)
         unset(_resultTmp)
         unset(_outputTmp)
     else ()
@@ -871,11 +882,12 @@ function(_WEBKIT_ADD_CODE_SIGN _target)
             VERBATIM
             COMMENT "Code signing ${_target}")
         # A POST_BUILD command only re-runs when the target relinks, so make a
-        # change to the entitlements force a relink; otherwise editing the
-        # entitlements would leave the binary signed with the stale set.
-        if (_entitlements_path)
+        # change to any signing input, like the entitlements or the
+        # ${_target}_CODE_SIGN_INPUTS, force a relink; otherwise the binary
+        # would stay signed with the stale inputs.
+        if (_arg_DEPENDS)
             set_property(TARGET ${_target} APPEND PROPERTY
-                LINK_DEPENDS ${_entitlements_path})
+                LINK_DEPENDS ${_arg_DEPENDS})
         endif ()
         # Preserve a named ${_target}_CodeSign target so ordering edges elsewhere
         # (e.g. WebKit.framework signing after its XPC services) keep resolving.
@@ -1056,7 +1068,7 @@ function(WEBKIT_COPY_FILES target_name)
         if (opt_COMMAND)
             set(command ${opt_COMMAND})
         elseif (APPLE AND NOT opt_NO_SYMLINK)
-            set(command ${CMAKE_COMMAND} -E create_symlink)
+            set(command ln -sfn)
         else ()
             set(command ${CMAKE_COMMAND} -E copy_if_different)
         endif ()
@@ -1093,8 +1105,13 @@ function(WEBKIT_SYMLINK_FILES target_name)
             file(MAKE_DIRECTORY ${opt_DESTINATION}/${file_dir})
             set(dst_file ${opt_DESTINATION}/${file})
         endif ()
+        if (CMAKE_HOST_UNIX)
+            set(command ln -sfn)
+        else ()
+            set(command ${CMAKE_COMMAND} -E create_symlink)
+        endif ()
         add_custom_command(OUTPUT ${dst_file}
-            COMMAND ${CMAKE_COMMAND} -E create_symlink ${src_file} ${dst_file}
+            COMMAND ${command} ${src_file} ${dst_file}
             MAIN_DEPENDENCY ${src_file}
             VERBATIM
         )
@@ -1267,6 +1284,7 @@ function(webkit_generate_platform_feature_defines_file)
     if (CMAKE_OSX_SYSROOT)
         list(APPEND _clang_cmd "-isysroot" "${CMAKE_OSX_SYSROOT}"
             "-F" "${CMAKE_BINARY_DIR}"
+            ${WEBKIT_SDK_SYSTEM_SEARCH_FLAGS}
             "-iframework" "${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks")
     endif ()
     if (CMAKE_OSX_ARCHITECTURES)
@@ -1327,9 +1345,7 @@ function(_WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS _outvar)
         -DWTF_EXPORT_PRIVATE=${_dllimport_decl}
         -D__WEBGPU__
     )
-    # iOS WebKit_Internal headers gate textual #imports behind this macro that
-    # trip strict cross-module-import-visibility checks (bug 312083).
-    if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
+    if (APPLE)
         list(APPEND _flags -DWK_SUPPORTS_SWIFT_OBJCXX_INTEROP=1)
     endif ()
     # -fexperimental-bounds-safety-attributes belongs to this hash-normalizing
@@ -1367,6 +1383,7 @@ function(_webkit_generate_platform_swift_args _target _resp_path)
         "${_depfile}" "${_resp_path}" "${WTF_FRAMEWORK_HEADERS_DIR}")
     if (CMAKE_OSX_SYSROOT)
         list(APPEND _clang_cmd "-isysroot" "${CMAKE_OSX_SYSROOT}"
+            ${WEBKIT_SDK_SYSTEM_SEARCH_FLAGS}
             "-iframework" "${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks")
     endif ()
     if (CMAKE_Swift_COMPILER_TARGET)
@@ -1744,10 +1761,12 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
                 # here, applied to the helper by _webkit_setup_swift_header_deps.
                 set(${_target}_SWIFT_EMIT_HEADER_FLAGS "${_swift_emit_header_flags}")
             endif ()
+            # swiftc leaves the module's mtime alone when only C++ headers that it imports change, though the
+            # header's thunks can; rebuild_trigger.py touches the trigger then.
             add_custom_command(
                 OUTPUT ${_header_stamp_path}
                 BYPRODUCTS ${_header_path}
-                DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${_module_name}.swiftmodule
+                DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${_module_name}.swiftmodule "${_trigger_path}"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_header_tmp_path} ${_header_path}
                 COMMAND ${CMAKE_COMMAND} -E touch ${_header_stamp_path}
                 COMMENT "Generating ${_target} Swift-C++ header"

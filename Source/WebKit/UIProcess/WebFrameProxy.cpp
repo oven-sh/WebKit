@@ -145,7 +145,7 @@ private:
     RunLoop::Timer m_expirationTimer;
 };
 
-static HashMap<FrameIdentifier, WeakRef<WebFrameProxy>>& LEGACY_NODELETE allFrames()
+NODELETE static HashMap<FrameIdentifier, WeakRef<WebFrameProxy>>& allFrames()
 {
     ASSERT(RunLoop::isMain());
     static NeverDestroyed<HashMap<FrameIdentifier, WeakRef<WebFrameProxy>>> map;
@@ -365,10 +365,10 @@ void WebFrameProxy::didStartProvisionalLoad(URL&& url)
     m_frameLoadState.didStartProvisionalLoad(WTF::move(url));
 }
 
-void WebFrameProxy::didExplicitOpen(URL&& url, String&& mimeType)
+void WebFrameProxy::didExplicitOpen(URL&& url, String&& mimeType, ShouldClearProvisionalURL shouldClearProvisionalURL)
 {
     m_MIMEType = WTF::move(mimeType);
-    m_frameLoadState.didExplicitOpen(WTF::move(url));
+    m_frameLoadState.didExplicitOpen(WTF::move(url), shouldClearProvisionalURL);
 }
 
 void WebFrameProxy::didReceiveServerRedirectForProvisionalLoad(URL&& url)
@@ -720,7 +720,7 @@ void WebFrameProxy::commitProvisionalFrame(IPC::Connection& connection, FrameIde
         ASSERT(url().isEmpty() || WebCore::Site { url() } != WebCore::Site { request.url() } || process().isDocumentIsolationPolicyProcess() != m_provisionalFrame->process().isDocumentIsolationPolicyProcess());
 
         // Keep FrameProcess alive until message reply, so the current active document could finish dispatching necessary events.
-        protect(process())->sendWithAsyncReply(Messages::WebPage::LoadDidCommitInAnotherProcess(frameID, m_provisionalFrame->process().coreProcessIdentifier(), m_layerHostingContextIdentifier, nullptr), [keepAlive = FrameProcessRefWithExpiration::create(Ref { frameProcess() }, unloadEventsExpirationDelay)] { }, *webPageIDInCurrentProcess());
+        protect(process())->sendWithAsyncReply(Messages::WebPage::LoadDidCommitInAnotherProcess(frameID, m_provisionalFrame->process().coreProcessIdentifier(), m_layerHostingContextIdentifier, nullptr, std::nullopt), [keepAlive = FrameProcessRefWithExpiration::create(Ref { frameProcess() }, unloadEventsExpirationDelay)](DidCacheOutgoingDocument) { }, *webPageIDInCurrentProcess());
 
         WebCore::ProcessIdentifier oldProcessID = process().coreProcessIdentifier();
         std::optional<WebCore::PageIdentifier> oldPageID = webPageIDInCurrentProcess();
@@ -850,8 +850,7 @@ void WebFrameProxy::removeChildFrames()
 
 Vector<Ref<WebFrameProxy>> WebFrameProxy::takeChildFrames()
 {
-    Vector<Ref<WebFrameProxy>> frames;
-    frames.reserveInitialCapacity(m_childFrames.size());
+    Vector<Ref<WebFrameProxy>> frames(ReserveCapacityTag { }, m_childFrames.size());
     for (auto& child : m_childFrames)
         frames.append(child.copyRef());
     m_childFrames.clear();

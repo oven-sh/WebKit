@@ -1225,7 +1225,7 @@ void NetworkResourceLoader::storeCompressionDictionaryIfNeeded(const ResourceRes
     protect(m_cache)->storeCompressionDictionary(m_networkLoad ? m_networkLoad->currentRequest() : originalRequest(), response, WTF::move(body), WTF::move(*info));
 }
 
-static BrowsingContextGroupSwitchDecision LEGACY_NODELETE toBrowsingContextGroupSwitchDecision(const std::optional<CrossOriginOpenerPolicyEnforcementResult>& currentCoopEnforcementResult)
+NODELETE static BrowsingContextGroupSwitchDecision toBrowsingContextGroupSwitchDecision(const std::optional<CrossOriginOpenerPolicyEnforcementResult>& currentCoopEnforcementResult)
 {
     if (!currentCoopEnforcementResult || !currentCoopEnforcementResult->needsBrowsingContextGroupSwitch)
         return BrowsingContextGroupSwitchDecision::StayInGroup;
@@ -1300,17 +1300,15 @@ void NetworkResourceLoader::startPreconnectTask(const URL& baseURL, const LinkHe
     if (!contentSecurityPolicy.allowConnectToSource(url, { }, ContentSecurityPolicy::RedirectResponseReceived::No, originalRequest().url()))
         return;
 
-    NetworkLoadParameters parameters;
-    auto globalFrameID = this->globalFrameID();
-    parameters.webPageProxyID = globalFrameID.webPageProxyID;
-    parameters.webPageID = globalFrameID.webPageID;
-    parameters.webFrameID = globalFrameID.frameID;
+    auto parameters = this->parameters().networkLoadParameters();
+    parameters.request = constructPreconnectRequest(originalRequest(), url);
     parameters.storedCredentialsPolicy = equalLettersIgnoringASCIICase(header.crossOrigin(), "anonymous"_s) ? StoredCredentialsPolicy::DoNotUse : StoredCredentialsPolicy::Use;
     parameters.contentSniffingPolicy = ContentSniffingPolicy::DoNotSniffContent;
     parameters.contentEncodingSniffingPolicy = ContentEncodingSniffingPolicy::Default;
     parameters.shouldPreconnectOnly = PreconnectOnly::Yes;
-    parameters.request = constructPreconnectRequest(originalRequest(), url);
-    parameters.isNavigatingToAppBoundDomain = this->parameters().isNavigatingToAppBoundDomain;
+    parameters.isMainFrameNavigation = false;
+    parameters.mainResourceNavigationDataForAnyFrame = std::nullopt;
+    parameters.needsCertificateInfo = false;
 
     startPreconnectTaskAfterContentRuleListCheck(WTF::move(parameters), baseURL);
 #else
@@ -2194,7 +2192,7 @@ void NetworkResourceLoader::restartNetworkLoad(WebCore::ResourceRequest&& newReq
         startNetworkLoad(WTF::move(newRequest), FirstLoad::No);
 }
 
-static bool LEGACY_NODELETE shouldTryToMatchRegistrationOnRedirection(const FetchOptions& options, bool isServiceWorkerLoaded)
+NODELETE static bool shouldTryToMatchRegistrationOnRedirection(const FetchOptions& options, bool isServiceWorkerLoaded)
 {
     if (options.mode == FetchOptions::Mode::Navigate)
         return true;

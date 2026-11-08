@@ -175,10 +175,10 @@ private:
     NetworkStorageManager(NetworkProcess&, PAL::SessionID, Markable<WTF::UUID>, std::optional<IPC::Connection::UniqueID>, const String& path, const String& customLocalStoragePath, const String& customIDBStoragePath, const String& customCacheStoragePath, const String& customServiceWorkerStoragePath, uint64_t defaultOriginQuota, std::optional<double> originQuotaRatio, std::optional<double> totalQuotaRatio, std::optional<uint64_t> standardVolumeCapacity, std::optional<uint64_t> volumeCapacityOverride, UnifiedOriginStorageLevel, bool storageSiteValidationEnabled, TimeBasedEvictionMode, Seconds timeBasedEvictionThreshold, std::optional<Seconds> lastModificationTimeUpdateIntervalOverride, std::optional<Seconds> timeBasedEvictionIntervalOverride);
     ~NetworkStorageManager();
 
-    std::optional<SharedPreferencesForWebProcess> LEGACY_NODELETE sharedPreferencesForWebProcess(IPC::Connection&) const;
-    bool LEGACY_NODELETE isStorageTypeEnabled(IPC::Connection&, WebCore::StorageType) const;
-    bool LEGACY_NODELETE isStorageAreaTypeEnabled(IPC::Connection&, StorageAreaBase::StorageType) const;
-    bool LEGACY_NODELETE useSQLiteMemoryBackingStore() const;
+    NODELETE std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(IPC::Connection&) const;
+    NODELETE bool isStorageTypeEnabled(IPC::Connection&, WebCore::StorageType) const;
+    NODELETE bool isStorageAreaTypeEnabled(IPC::Connection&, StorageAreaBase::StorageType) const;
+    NODELETE bool useSQLiteMemoryBackingStore() const;
 
     enum class ShouldUpdateOriginAccessTime: bool { No, Yes };
     void writeOriginToFileIfNecessary(const WebCore::ClientOrigin&, ShouldUpdateOriginAccessTime, StorageAreaBase* = nullptr);
@@ -274,14 +274,14 @@ private:
     void cacheStorageDereference(IPC::Connection&, WebCore::DOMCacheIdentifier);
     void lockCacheStorage(IPC::Connection&, const WebCore::ClientOrigin&);
     void unlockCacheStorage(IPC::Connection&, const WebCore::ClientOrigin&);
-    void cacheStorageRetrieveRecords(IPC::Connection&, WebCore::DOMCacheIdentifier, WebCore::RetrieveRecordsOptions&&, WebCore::DOMCacheEngine::CrossThreadRecordsCallback&&);
+    void cacheStorageRetrieveRecords(IPC::Connection&, WebCore::DOMCacheIdentifier, WebCore::RetrieveRecordsOptions&&, WebCore::DOMCacheEngine::RetrieveRecordsCallback&&);
     void cacheStorageRemoveRecords(IPC::Connection&, WebCore::DOMCacheIdentifier, WebCore::ResourceRequest&&, WebCore::CacheQueryOptions&&, WebCore::DOMCacheEngine::RecordIdentifiersCallback&&);
     void cacheStoragePutRecords(IPC::Connection&, WebCore::DOMCacheIdentifier, Vector<WebCore::DOMCacheEngine::CrossThreadRecord>&&, WebCore::DOMCacheEngine::RecordIdentifiersCallback&&);
     void cacheStorageClearMemoryRepresentation(IPC::Connection&, const WebCore::ClientOrigin&, CompletionHandler<void()>&&);
     void cacheStorageRepresentation(CompletionHandler<void(const String&)>&&);
 
     void cloneSessionStorageNamespace(StorageNamespaceIdentifier, StorageNamespaceIdentifier);
-    bool LEGACY_NODELETE shouldManageServiceWorkerRegistrationsByOrigin();
+    NODELETE bool shouldManageServiceWorkerRegistrationsByOrigin();
     void migrateServiceWorkerRegistrationsToOrigins();
     Vector<WebCore::ServiceWorkerScripts> updateServiceWorkerRegistrationsByOrigin(Vector<WebCore::ServiceWorkerContextData>&&, Vector<WebCore::ServiceWorkerRegistrationKey>&&);
 
@@ -312,7 +312,7 @@ private:
     const SuspendableWorkQueue& workQueue() const WTF_RETURNS_CAPABILITY(m_queue.get()) { return m_queue; }
     SuspendableWorkQueue& workQueue() WTF_RETURNS_CAPABILITY(m_queue.get()) { return m_queue; }
     OriginQuotaManager::Parameters originQuotaManagerParameters(const WebCore::ClientOrigin&);
-    RefPtr<WebCore::IDBServer::UniqueIDBDatabaseTransaction> LEGACY_NODELETE idbTransaction(const WebCore::IDBRequestData&, IPC::Connection&);
+    NODELETE RefPtr<WebCore::IDBServer::UniqueIDBDatabaseTransaction> idbTransaction(const WebCore::IDBRequestData&, IPC::Connection&);
     void setStorageSiteValidationEnabledInternal(bool);
     void updateAllowedSitesForConnectionInternal(IPC::Connection::UniqueID, std::optional<HashSet<WebCore::RegistrableDomain>>&&);
     bool isSiteAllowedForConnection(IPC::Connection::UniqueID, const WebCore::RegistrableDomain&) const;

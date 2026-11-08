@@ -69,6 +69,7 @@ set(WEBKIT_SWIFT_UPCOMING_FEATURE_FLAGS
     "-enable-upcoming-feature ExistentialAny"
     "-enable-upcoming-feature InternalImportsByDefault"
     "-enable-upcoming-feature MemberImportVisibility"
+    "-enable-upcoming-feature NonisolatedNonsendingByDefault"
 )
 
 set(WEBKIT_SWIFT_EXPERIMENTAL_FEATURE_FLAGS
@@ -76,7 +77,6 @@ set(WEBKIT_SWIFT_EXPERIMENTAL_FEATURE_FLAGS
     "-enable-experimental-feature ForeignReferenceTypeInheritance"
     "-enable-experimental-feature ImportCxxMembersLazily"
     "-enable-experimental-feature SafeInteropWrappers"
-    "-enable-experimental-feature SuppressedAssociatedTypes"
     "-enable-experimental-feature SuppressedAssociatedTypesWithDefaults"
 )
 
@@ -90,6 +90,7 @@ set(WEBKIT_SWIFT_MEMORY_SAFETY_FLAGS
 set(WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS
     "-Werror ForeignReferenceType"
     "-Werror RegionIsolation"
+    "-Werror SendableClosureCaptures"
     "-Werror StrictMemorySafety"
 )
 
@@ -97,6 +98,7 @@ set(WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS
     "-Werror ExistentialAny"
     "-Werror NoUsage"
     "-Werror NoUseUnstructuredThrowingTask"
+    "-Werror UnnecessaryEffectMarker"
     "-Werror UnusedImportAccess"
     "-Werror VariableNeverMutated"
     ${WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS}

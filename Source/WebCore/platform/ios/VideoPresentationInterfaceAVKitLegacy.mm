@@ -1019,4 +1019,3 @@ void VideoPresentationInterfaceAVKitLegacy::setupCaptionsLayer(CALayer *, const 
 } // namespace WebCore
 
 #endif // PLATFORM(IOS_FAMILY) && HAVE(AVKIT)
-||||||| ac70c44051a4

@@ -1959,7 +1959,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncTrimEnd, (JSGlobalObject* globalObject, 
     return JSValue::encode(trimString<TrimKind::TrimEnd>(globalObject, thisValue));
 }
 
-static inline unsigned LEGACY_NODELETE clampAndTruncateToUnsigned(double value, unsigned min, unsigned max)
+NODELETE static inline unsigned clampAndTruncateToUnsigned(double value, unsigned min, unsigned max)
 {
     if (value < min)
         return min;
@@ -2799,7 +2799,7 @@ static JSString* createHTML(JSGlobalObject* globalObject, JSValue thisValue, ASC
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    RELEASE_AND_RETURN(scope, jsString(vm, result.toString()));
+    RELEASE_AND_RETURN(scope, jsString(vm, WTF::move(result).toString()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncAnchor, (JSGlobalObject* globalObject, CallFrame* callFrame))

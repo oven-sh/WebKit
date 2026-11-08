@@ -607,6 +607,10 @@ struct LiveResizeSnapshotState {
 #if ENABLE(SYSTEM_TEXT_EXTRACTION)
     std::optional<WTF::UUID> _textExtractionIdentifier;
 #endif
+
+#if PLATFORM(IOS_FAMILY)
+    WebCore::IntDegrees _cameraRotationAdjustment;
+#endif
 }
 
 - (BOOL)_isValid;
@@ -839,12 +843,6 @@ RetainPtr<NSError> nsErrorFromExceptionDetails(const std::optional<WebCore::Exce
 #if PLATFORM(VISION)
 - (UIMenu *)fullScreenWindowSceneDimmingAction;
 #endif
-@end
-#endif
-
-#if HAVE(UIKIT_PRINTING)
-@interface WKWebView (_WKWebViewPrintFormatter)
-@property (nonatomic, readonly) id <_WKWebViewPrintProvider> _printProvider;
 @end
 #endif
 

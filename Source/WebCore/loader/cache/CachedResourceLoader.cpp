@@ -84,7 +84,6 @@
 #include "ResourceLoadInfo.h"
 #include "ResourceTiming.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGImage.h"
 #include "ScriptController.h"
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
@@ -277,7 +276,7 @@ URL CachedResourceLoader::urlWithRequestedFragmentIdentifier(const CachedResourc
     return url;
 }
 
-LocalFrame* LEGACY_NODELETE CachedResourceLoader::frame() const
+NODELETE LocalFrame* CachedResourceLoader::frame() const
 {
     return m_documentLoader ? m_documentLoader->frame() : nullptr;
 }
@@ -458,7 +457,7 @@ ResourceErrorOr<Ref<CachedRawResource>> CachedResourceLoader::requestModelResour
 }
 #endif
 
-static MixedContentChecker::IsUpgradable LEGACY_NODELETE isUpgradableTypeFromResourceType(CachedResource::Type type)
+NODELETE static MixedContentChecker::IsUpgradable isUpgradableTypeFromResourceType(CachedResource::Type type)
 {
     // https://www.w3.org/TR/mixed-content/#category-upgradeable
     // Editor’s Draft, 23 February 2023
@@ -995,7 +994,7 @@ bool CachedResourceLoader::shouldUpdateCachedResourceWithCurrentRequest(const Ca
     return false;
 }
 
-static inline bool LEGACY_NODELETE isResourceSuitableForDirectReuse(const CachedResource& resource, const CachedResourceRequest& request)
+NODELETE static inline bool isResourceSuitableForDirectReuse(const CachedResource& resource, const CachedResourceRequest& request)
 {
     // FIXME: For being loaded requests, the response tainting may not be correctly computed if the fetch mode is not the same.
     // Even if the fetch mode is the same, we are not sure that the resource can be reused (Vary: Origin header for instance).
@@ -1022,7 +1021,7 @@ static inline bool LEGACY_NODELETE isResourceSuitableForDirectReuse(const Cached
     return true;
 }
 
-static bool LEGACY_NODELETE requiresCORP(const Document& document)
+NODELETE static bool requiresCORP(const Document& document)
 {
     auto& embedderPolicy = document.crossOriginEmbedderPolicy();
     auto& documentIsolationPolicy = document.documentIsolationPolicy();
@@ -1110,7 +1109,7 @@ void CachedResourceLoader::updateHTTPRequestHeaders(FrameLoader& frameLoader, Ca
     request.updateAcceptEncodingHeader();
 }
 
-static FetchOptions::Destination LEGACY_NODELETE destinationForType(CachedResource::Type type, LocalFrame& frame)
+NODELETE static FetchOptions::Destination destinationForType(CachedResource::Type type, LocalFrame& frame)
 {
     switch (type) {
     case CachedResource::Type::MainResource:
@@ -1159,19 +1158,7 @@ static FetchOptions::Destination LEGACY_NODELETE destinationForType(CachedResour
     return FetchOptions::Destination::EmptyString;
 }
 
-static inline bool isSVGImageCachedResource(const CachedResource* resource)
-{
-    auto* cachedImage = dynamicDowncast<CachedImage>(resource);
-    return cachedImage && is<SVGImage>(cachedImage->image());
-}
-
-static inline SVGImage* cachedResourceSVGImage(CachedResource* resource)
-{
-    auto* cachedImage = dynamicDowncast<CachedImage>(resource);
-    return cachedImage ? dynamicDowncast<SVGImage>(cachedImage->image()) : nullptr;
-}
-
-static bool LEGACY_NODELETE computeMayAddToMemoryCache(const CachedResourceRequest& newRequest, const CachedResource* existingResource)
+NODELETE static bool computeMayAddToMemoryCache(const CachedResourceRequest& newRequest, const CachedResource* existingResource)
 {
     return !existingResource || !existingResource->isPreloaded() || newRequest.options().serviceWorkersMode != ServiceWorkersMode::None || existingResource->options().serviceWorkersMode == ServiceWorkersMode::None;
 }
@@ -1579,7 +1566,7 @@ Ref<CachedResource> CachedResourceLoader::loadResource(CachedResource::Type type
     return resource;
 }
 
-static inline bool LEGACY_NODELETE mustReloadFromServiceWorkerOptions(const ResourceLoaderOptions& options, const ResourceLoaderOptions& cachedOptions)
+NODELETE static inline bool mustReloadFromServiceWorkerOptions(const ResourceLoaderOptions& options, const ResourceLoaderOptions& cachedOptions)
 {
     if (cachedOptions.cachingPolicy == CachingPolicy::AllowCachingMainResourcePrefetch)
         return false;
@@ -1946,23 +1933,20 @@ void CachedResourceLoader::decrementRequestCount(const CachedResource& resource)
     ASSERT(m_requestCount > -1);
 }
 
-void CachedResourceLoader::notifyFinished(const CachedResource& resource)
+void CachedResourceLoader::scheduleRenderingUpdateForImage(CachedImage& cachedImage)
 {
-    if (isSVGImageCachedResource(&resource))
-        m_cachedSVGImagesURLs.add(resource.url());
+    RefPtr page = m_document ? m_document->page() : nullptr;
+    if (!page)
+        return;
+
+    m_imagesNeedingRenderingUpdate.add(cachedImage);
+    page->scheduleRenderingUpdate(RenderingUpdateStep::Images);
 }
 
-Vector<Ref<SVGImage>> CachedResourceLoader::allCachedSVGImages() const
+void CachedResourceLoader::updateRenderingOfImages()
 {
-    Vector<Ref<SVGImage>> allCachedSVGImages;
-
-    for (auto& cachedSVGImageURL : m_cachedSVGImagesURLs) {
-        RefPtr resource = cachedResource(cachedSVGImageURL);
-        if (RefPtr image = cachedResourceSVGImage(resource.get()))
-            allCachedSVGImages.append(image.releaseNonNull());
-    }
-        
-    return allCachedSVGImages;
+    for (Ref cachedImage : copyToVectorOf<Ref<CachedImage>>(std::exchange(m_imagesNeedingRenderingUpdate, { })))
+        protect(cachedImage->image())->updateRendering();
 }
 
 ResourceErrorOr<Ref<CachedResource>> CachedResourceLoader::preload(CachedResource::Type type, CachedResourceRequest&& request)

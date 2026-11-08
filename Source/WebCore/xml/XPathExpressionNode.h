@@ -44,7 +44,7 @@ class Expression {
     WTF_MAKE_TZONE_ALLOCATED(Expression);
     WTF_MAKE_NONCOPYABLE(Expression);
 public:
-    static EvaluationContext& LEGACY_NODELETE evaluationContext();
+    NODELETE static EvaluationContext& evaluationContext();
 
     virtual ~Expression() = default;
 
@@ -56,7 +56,7 @@ public:
     bool isContextSizeSensitive() const { return m_isContextSizeSensitive; }
 
 protected:
-    Expression();
+    NODELETE Expression();
 
     unsigned subexpressionCount() const { return m_subexpressions.size(); }
     const Expression& subexpression(unsigned i) const { return *m_subexpressions[i]; }

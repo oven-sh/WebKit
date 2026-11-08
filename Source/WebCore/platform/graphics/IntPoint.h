@@ -58,7 +58,7 @@ public:
     constexpr IntPoint() : m_x(0), m_y(0) { }
     constexpr IntPoint(int x, int y) : m_x(x), m_y(y) { }
     explicit IntPoint(const IntSize& size) : m_x(size.width()), m_y(size.height()) { }
-    WEBCORE_EXPORT explicit IntPoint(const FloatPoint&); // don't do this implicitly since it's lossy
+    NODELETE WEBCORE_EXPORT explicit IntPoint(const FloatPoint&); // don't do this implicitly since it's lossy
 
     static constexpr IntPoint zero() { return IntPoint(); }
     constexpr bool isZero() const { return !m_x && !m_y; }
@@ -109,9 +109,9 @@ public:
         };
     }
 
-    WEBCORE_EXPORT IntPoint LEGACY_NODELETE constrainedBetween(const IntPoint& min, const IntPoint& max) const;
+    NODELETE WEBCORE_EXPORT IntPoint constrainedBetween(const IntPoint& min, const IntPoint& max) const;
     
-    WEBCORE_EXPORT IntPoint LEGACY_NODELETE constrainedWithin(const IntRect&) const;
+    NODELETE WEBCORE_EXPORT IntPoint constrainedWithin(const IntRect&) const;
 
     int distanceSquaredToPoint(const IntPoint&) const;
 
@@ -128,8 +128,8 @@ public:
     friend bool operator==(const IntPoint&, const IntPoint&) = default;
 
 #if USE(CG)
-    WEBCORE_EXPORT explicit IntPoint(const CGPoint&); // don't do this implicitly since it's lossy
-    WEBCORE_EXPORT operator CGPoint LEGACY_NODELETE () const;
+    NODELETE WEBCORE_EXPORT explicit IntPoint(const CGPoint&); // don't do this implicitly since it's lossy
+    NODELETE WEBCORE_EXPORT operator CGPoint() const;
 #endif
 
 #if PLATFORM(WIN)

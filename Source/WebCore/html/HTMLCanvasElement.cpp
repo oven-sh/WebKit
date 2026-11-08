@@ -521,7 +521,8 @@ WebGLRenderingContextBase* HTMLCanvasElement::createContextWebGL(WebGLVersion ty
         if (RefPtr window = document().window()) {
             // FIXME: how to make this sync without blocking the main thread?
             // For reference: https://immersive-web.github.io/webxr/#ref-for-dom-webglcontextattributes-xrcompatible
-            NavigatorWebXR::xr(window->navigator()).ensureImmersiveXRDeviceIsSelected([]() { });
+            Ref xrSystem = NavigatorWebXR::xr(protect(window->navigator()).get());
+            xrSystem->ensureImmersiveXRDeviceIsSelected([] { });
         }
     }
 #endif
@@ -741,7 +742,7 @@ static String toEncodingMimeType(const String& mimeType)
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#a-serialisation-of-the-bitmap-as-a-file
-static std::optional<double> LEGACY_NODELETE qualityFromJSValue(JSC::JSValue qualityValue)
+NODELETE static std::optional<double> qualityFromJSValue(JSC::JSValue qualityValue)
 {
     if (!qualityValue.isNumber())
         return std::nullopt;

@@ -56,7 +56,7 @@ bool isAnyClick(const Event&);
 class MouseEvent : public MouseRelatedEvent {
     WTF_MAKE_TZONE_ALLOCATED(MouseEvent);
 public:
-    WEBCORE_EXPORT static Ref<MouseEvent> LEGACY_NODELETE create(
+    NODELETE WEBCORE_EXPORT static Ref<MouseEvent> create(
         const AtomString& type,
         CanBubble,
         IsCancelable,
@@ -69,7 +69,7 @@ public:
         double movementX,
         double movementY,
         OptionSet<Modifier>,
-        MouseButton,
+        std::expected<MouseButton, MouseButtonState>,
         unsigned short buttons,
         RefPtr<EventTarget>&& relatedTarget,
         double force,
@@ -104,13 +104,13 @@ public:
         double clientX,
         double clientY,
         OptionSet<Modifier>,
-        MouseButton,
+        std::expected<MouseButton, MouseButtonState>,
         unsigned short buttons,
         SyntheticClickType,
         RefPtr<EventTarget>&& relatedTarget
     );
 
-    static Ref<MouseEvent> LEGACY_NODELETE createForBindings();
+    NODELETE static Ref<MouseEvent> createForBindings();
 
     static Ref<MouseEvent> create(const AtomString& eventType, const MouseEventInit&);
 
@@ -141,7 +141,7 @@ public:
 
     const std::optional<MouseEventInputSource>& inputSource() const LIFETIME_BOUND { return m_inputSource; }
 
-    MouseButton button() const;
+    std::expected<MouseButton, MouseButtonState> button() const;
     int16_t buttonAsShort() const { return m_button; }
     unsigned short buttons() const { return m_buttons; }
     SyntheticClickType syntheticClickType() const { return m_syntheticClickType; }
@@ -176,7 +176,7 @@ protected:
         double movementX,
         double movementY,
         OptionSet<Modifier>,
-        MouseButton,
+        std::expected<MouseButton, MouseButtonState>,
         unsigned short buttons,
         RefPtr<EventTarget>&& relatedTarget,
         double force,
@@ -202,7 +202,7 @@ protected:
         double movementX,
         double movementY,
         OptionSet<Modifier>,
-        MouseButton,
+        std::expected<MouseButton, MouseButtonState>,
         unsigned short buttons,
         SyntheticClickType,
         RefPtr<EventTarget>&& relatedTarget

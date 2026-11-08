@@ -148,6 +148,7 @@
 #import <WebCore/NodeList.h>
 #import <WebCore/NodeRenderStyle.h>
 #import <WebCore/NotImplemented.h>
+#import <WebCore/PDFDocumentBuffer.h>
 #import <WebCore/Page.h>
 #import <WebCore/PagePasteboardContext.h>
 #import <WebCore/Pasteboard.h>
@@ -1046,7 +1047,7 @@ void WebPage::insertDroppedImagePlaceholders(const Vector<IntSize>& imageSizes, 
 {
     m_page->dragController().insertDroppedImagePlaceholdersAtCaret(imageSizes);
     auto placeholderRects = m_page->dragController().droppedImagePlaceholders().map([&] (auto& element) {
-        return rootViewBounds(element);
+        return mainFrameViewBounds(element);
     });
 
     auto imagePlaceholderRange = m_page->dragController().droppedImagePlaceholderRange();
@@ -1191,7 +1192,7 @@ void WebPage::inspectorNodeSearchMovedToPosition(const FloatPoint& position)
         return;
     IntPoint adjustedPoint = roundedIntPoint(position);
 
-    localMainFrame->eventHandler().mouseMoved(PlatformMouseEvent(adjustedPoint, adjustedPoint, MouseButton::None, PlatformEvent::Type::MouseMoved, 0, { }, { }, 0, WebCore::SyntheticClickType::NoTap, WebCore::MouseEventInputSource::UserDriven));
+    localMainFrame->eventHandler().mouseMoved(PlatformMouseEvent(adjustedPoint, adjustedPoint, std::unexpected { MouseButtonState::None }, PlatformEvent::Type::MouseMoved, 0, { }, { }, 0, WebCore::SyntheticClickType::NoTap, WebCore::MouseEventInputSource::UserDriven));
     protect(localMainFrame->document())->updateStyleIfNeeded();
 }
 
@@ -1339,17 +1340,18 @@ static std::pair<std::optional<SimpleRange>, SelectionWasFlipped> rangeForPointI
     VisiblePosition selectionStart = existingSelection.visibleStart();
     VisiblePosition selectionEnd = existingSelection.visibleEnd();
 
-    RefPtr localMainFrame = frame.localMainFrame();
     RefPtr frameView = frame.view();
     if (!frameView)
         return { std::nullopt, SelectionWasFlipped::No };
 
     // Constrain the drag point (in this frame's root-view coordinates) to the visible viewport so the
-    // selection can't be extended outside it. For the main frame its unobscured content rect is used
-    // directly (root-view and contents coincide there). For a cross-origin subframe -- whose main
-    // frame is remote -- use this frame's own unobscured content rect converted to root-view
-    // coordinates; clamping against the contents-space rect directly would fold the frame's scroll
-    // offset into the point, which rootViewToContents would then apply a second time.
+    // selection can't be extended outside it. For a frame whose local root is the main frame, the main
+    // frame's unobscured content rect is used directly (root-view and contents coincide there). For a
+    // frame under a remote ancestor -- whose local root isn't the main frame -- use this frame's own
+    // unobscured content rect converted to root-view coordinates; clamping against the contents-space
+    // rect directly would fold the frame's scroll offset into the point, which rootViewToContents
+    // would then apply a second time.
+    RefPtr localMainFrame = frame.rootFrame().isMainFrame() ? frame.localMainFrame() : nullptr;
     auto viewportToConstrainWithin = localMainFrame ? protect(localMainFrame->view())->unobscuredContentRect() : frameView->contentsToRootView(frameView->unobscuredContentRect());
     auto pointInDocument = frameView->rootViewToContents(pointInRootViewCoordinates.constrainedWithin(viewportToConstrainWithin));
 
@@ -1488,23 +1490,6 @@ static std::optional<SimpleRange> rangeAtWordBoundaryForPosition(LocalFrame* fra
     if (!(base < extent))
         std::swap(base, extent);
     return makeSimpleRange(base, extent);
-}
-
-IntRect WebPage::rootViewBounds(const Node& node)
-{
-    RefPtr frame = node.document().frame();
-    if (!frame)
-        return { };
-
-    RefPtr view = frame->view();
-    if (!view)
-        return { };
-
-    CheckedPtr renderer = node.renderer();
-    if (!renderer)
-        return { };
-
-    return view->contentsToRootView(renderer->absoluteBoundingBoxRect());
 }
 
 IntRect WebPage::mainFrameViewBounds(const Node& node)
@@ -1656,11 +1641,13 @@ void WebPage::updateSelectionWithTouches(const IntPoint& point, SelectionTouch s
     if (!frame)
         return completionHandler(point, selectionTouch, { });
 
+    auto localPoint = mainFrameCoordinatesToRootView(point);
+
 #if ENABLE(PDF_PLUGIN)
     if (RefPtr pluginView = focusedPluginViewForFrame(*frame)) {
         OptionSet<SelectionFlags> resultFlags;
         auto startOrEnd = baseIsStart ? SelectionEndpoint::End : SelectionEndpoint::Start;
-        if (pluginView->moveSelectionEndpoint(point, startOrEnd) == SelectionWasFlipped::Yes)
+        if (pluginView->moveSelectionEndpoint(localPoint, startOrEnd) == SelectionWasFlipped::Yes)
             resultFlags.add(SelectionFlags::SelectionFlipped);
         return completionHandler(point, selectionTouch, resultFlags);
     }
@@ -1676,8 +1663,6 @@ void WebPage::updateSelectionWithTouches(const IntPoint& point, SelectionTouch s
 
     if (selectionTouch == SelectionTouch::Started)
         addTextInteractionSources(TextInteractionSource::Touch);
-
-    auto localPoint = mainFrameCoordinatesToRootView(point);
 
     IntPoint pointInDocument = RefPtr(frame->view())->rootViewToContents(localPoint);
     VisiblePosition position = frame->visiblePositionForPoint(pointInDocument);
@@ -2455,15 +2440,15 @@ bool WebPage::applyAutocorrectionInternal(const String& correction, const String
 
 WebAutocorrectionContext WebPage::autocorrectionContext()
 {
-    if (!m_focusedElement)
-        return { };
-
     RefPtr frame = m_page->focusController().focusedOrMainFrame();
     if (!frame)
         return { };
 
-    if (!frame->selection().selection().hasEditableStyle())
-        return { };
+    WebAutocorrectionContext correction;
+    correction.frameID = frame->frameID();
+
+    if (!m_focusedElement || !frame->selection().selection().hasEditableStyle())
+        return correction;
 
     String contextBefore;
     String markedText;
@@ -2523,7 +2508,6 @@ WebAutocorrectionContext WebPage::autocorrectionContext()
         }
     }
 
-    WebAutocorrectionContext correction;
     correction.contextBefore = WTF::move(contextBefore);
     correction.markedText = WTF::move(markedText);
     correction.selectedText = WTF::move(selectedText);
@@ -2602,10 +2586,10 @@ static void handleAnimationActions(Element& element, uint32_t action)
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     if (static_cast<SheetAction>(action) == SheetAction::PlayAnimation) {
         if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element))
-            imageElement->setAllowsAnimation(true);
+            imageElement->setAnimationOverride(ImageAnimationOverride::Play);
     } else if (static_cast<SheetAction>(action) == SheetAction::PauseAnimation) {
         if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element))
-            imageElement->setAllowsAnimation(false);
+            imageElement->setAnimationOverride(ImageAnimationOverride::Pause);
     }
 #endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 }
@@ -3783,7 +3767,7 @@ void WebPage::cancelAsynchronousTouchEvents(UniqueRef<EventDispatcher::TouchEven
 }
 #endif
 
-void WebPage::computePagesForPrintingiOS(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(uint64_t)>&& reply)
+void WebPage::computePagesForPrintingiOS(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(uint64_t, const WebCore::FloatBoxExtent&)>&& reply)
 {
     ASSERT_WITH_MESSAGE(!printInfo.snapshotFirstPage, "If we are just snapshotting the first page, we don't need a synchronous message to determine the page count, which is 1.");
 
@@ -3795,7 +3779,7 @@ void WebPage::computePagesForPrintingiOS(WebCore::FrameIdentifier frameID, const
     RELEASE_LOG(Printing, "Computing pages for printing. Page rects size = %zu", pageRects.size());
 
     ASSERT(pageRects.size() >= 1);
-    reply(pageRects.size());
+    reply(pageRects.size(), margin);
 }
 
 void WebPage::drawToImage(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& reply)
@@ -3953,7 +3937,7 @@ void WebPage::drawToPDFiOS(FrameIdentifier frameID, const PrintInfo& printInfo, 
 
         auto snapshotRect = IntRect { FloatRect { { }, FloatSize { printInfo.availablePaperWidth, printInfo.availablePaperHeight } } };
 
-        RefPtr buffer = ImageBuffer::create(snapshotRect.size(), RenderingMode::PDFDocument, RenderingPurpose::Snapshot, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
+        auto buffer = PDFDocumentBuffer::create(snapshotRect.size());
         if (!buffer)
             return;
 
@@ -3964,7 +3948,7 @@ void WebPage::drawToPDFiOS(FrameIdentifier frameID, const PrintInfo& printInfo, 
         pdfSnapshotAtSize(*localMainFrame, buffer->context(), snapshotRect, { });
 
         frameView->setLayoutViewportOverrideRect(originalLayoutViewportOverrideRect);
-        reply(buffer->sinkIntoPDFDocument());
+        reply(buffer->takeData());
         return;
     }
 

@@ -9773,7 +9773,7 @@ IGNORE_CLANG_WARNINGS_END
             Int64, operationCreateRest, weakPointer(globalObject), argumentStart, m_out.constInt32(numberOfArgumentsToSkip), arrayLength));
     }
 
-    const AbstractHeap& LEGACY_NODELETE abstractHeapForOwnPropertyKeysCache(NodeType type)
+    NODELETE const AbstractHeap& abstractHeapForOwnPropertyKeysCache(NodeType type)
     {
         switch (type) {
         case ObjectKeys:
@@ -10738,8 +10738,17 @@ IGNORE_CLANG_WARNINGS_END
         else if (m_node->child1().useKind() == SetObjectUse)
             speculateSetObject(m_node->child1());
 
-        bool fastSpreadProven = m_graph.canDoFastSpread(m_node, m_state.forNode(m_node->child1()));
-        bool fastSpreadWithStructureCheck = !fastSpreadProven && m_graph.canDoFastSpreadWithStructureCheck(m_node);
+        // Same two decisions the pre-fix code made, so everything downstream is shared verbatim.
+        constexpr bool canSpeculate = true;
+        Graph::ProtocolWatchResult arrayWatch = Graph::ProtocolWatchResult::Unwatchable;
+        // The structures a RequiresSemanticStructureCheck operand must be narrowed to, which is every
+        // realm the operand's proven structures belong to rather than just the semantic origin's.
+        RegisteredStructureSet arrayStructuresToCheck;
+        if (m_node->child1().useKind() == ArrayUse)
+            std::tie(arrayWatch, arrayStructuresToCheck) = m_graph.tryWatchArrayIteratorProtocol(m_node->child1().node(), m_state.forNode(m_node->child1()), canSpeculate);
+
+        bool fastSpreadProven = arrayWatch == Graph::ProtocolWatchResult::Proven;
+        bool fastSpreadWithStructureCheck = arrayWatch == Graph::ProtocolWatchResult::RequiresSemanticStructureCheck;
 
         if (fastSpreadProven || fastSpreadWithStructureCheck) {
             LBasicBlock indexingTypeCheck = fastSpreadWithStructureCheck ? m_out.newBlock() : nullptr;
@@ -10756,14 +10765,15 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock lastNext = nullptr;
 
             if (fastSpreadWithStructureCheck) {
-                JSGlobalObject* childGlobalObject = m_graph.globalObjectFor(m_node->child1()->origin.semantic);
                 LValue structureID = m_out.load32(argument, m_heaps.JSCell_structureID);
-                constexpr size_t numShapes = std::size(Graph::originalArrayShapesForSpread);
-                for (size_t i = 0; i < numShapes; ++i) {
-                    RegisteredStructure registered = m_graph.registerStructure(childGlobalObject->originalArrayStructureForIndexingType(Graph::originalArrayShapesForSpread[i]));
-                    bool isLast = (i + 1 == numShapes);
+                Vector<RegisteredStructure, 8> structures;
+                arrayStructuresToCheck.forEach([&](RegisteredStructure registered) {
+                    structures.append(registered);
+                });
+                for (size_t i = 0; i < structures.size(); ++i) {
+                    bool isLast = (i + 1 == structures.size());
                     LBasicBlock nextCompare = isLast ? slowPath : m_out.newBlock();
-                    m_out.branch(m_out.equal(structureID, weakStructureID(registered)),
+                    m_out.branch(m_out.equal(structureID, weakStructureID(structures[i])),
                         unsure(indexingTypeCheck), unsure(nextCompare));
                     if (!isLast)
                         m_out.appendTo(nextCompare);
@@ -10871,25 +10881,27 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock slowPath = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
 
-            // Guard: route prototype-mutated or own-Symbol.iterator Sets to slowPath.
-            // The check can be folded when an upstream CheckStructure has already
-            // proven that the operand carries the original Set structure.
-            // FixupPhase arms the Set iterator protocol watchpoint on m_node->child1(), so
-            // child1's global object must be used.
-            JSGlobalObject* childGlobalObject = m_graph.globalObjectFor(m_node->child1()->origin.semantic);
-            Structure* originalSetStructure = childGlobalObject->setStructureConcurrently();
-            if (!originalSetStructure)
+            // The inline path below walks the Set's storage directly, bypassing Symbol.iterator, so
+            // it is only valid where the iteration protocol has been proven non-observable. Anything
+            // else goes to slowPath, which performs the authoritative
+            // isIteratorProtocolFastAndNonObservable check.
+            auto [setWatch, setStructureToCheck] = m_graph.tryWatchSetIteratorProtocol(m_node->child1().node(), m_state.forNode(m_node->child1()), canSpeculate);
+            switch (setWatch) {
+            case Graph::ProtocolWatchResult::Unwatchable:
                 m_out.jump(slowPath);
-            else {
-                RegisteredStructure registeredSetStructure = m_graph.registerStructure(originalSetStructure);
-                if (m_state.forNode(m_node->child1()).m_structure.isSubsetOf(RegisteredStructureSet { registeredSetStructure }))
-                    m_out.jump(storageCheck);
-                else {
-                    LValue structureID = m_out.load32(argument, m_heaps.JSCell_structureID);
-                    m_out.branch(m_out.notEqual(structureID,
-                        weakStructureID(registeredSetStructure)),
-                        rarely(slowPath), usually(storageCheck));
-                }
+                break;
+
+            case Graph::ProtocolWatchResult::RequiresSemanticStructureCheck: {
+                LValue structureID = m_out.load32(argument, m_heaps.JSCell_structureID);
+                m_out.branch(m_out.notEqual(structureID,
+                    weakStructureID(setStructureToCheck)),
+                    rarely(slowPath), usually(storageCheck));
+                break;
+            }
+
+            case Graph::ProtocolWatchResult::Proven:
+                m_out.jump(storageCheck);
+                break;
             }
             LBasicBlock lastNext = m_out.appendTo(storageCheck, obsoleteCheck);
 
@@ -11059,6 +11071,7 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock loopHeader = m_out.newBlock();
         LBasicBlock loopBody = m_out.newBlock();
         LBasicBlock storeSlot = m_out.newBlock();
+        LBasicBlock releaseScratch = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
         LValue cached = m_out.loadPtr(m_out.absolute(&vm().m_cachedSortScratch));
@@ -11083,17 +11096,24 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(loopBody, storeSlot);
         LValue value = m_out.load64(m_out.baseIndex(sourceHeap, butterfly, index));
-        ValueFromBlock holeResult = m_out.anchor(m_out.constIntPtr(std::bit_cast<void*>(vm().m_sortScratchSentinel.get())));
         LValue isHole = m_out.isZero64(value);
         if (m_node->arrayMode().type() == Array::Contiguous)
             isHole = m_out.bitOr(isHole, m_out.equal(value, m_out.constInt64(JSValue::encode(jsUndefined()))));
-        m_out.branch(isHole, rarely(continuation), usually(storeSlot));
+        m_out.branch(isHole, rarely(releaseScratch), usually(storeSlot));
 
-        m_out.appendTo(storeSlot, continuation);
+        m_out.appendTo(storeSlot, releaseScratch);
         m_out.store64(value, m_out.baseIndex(m_heaps.indexedContiguousProperties, scratch, index, JSValue(), JSCellButterfly::offsetOfData()));
         LValue nextIndex = m_out.add(index, m_out.intPtrOne);
         m_out.addIncomingToPhi(index, m_out.anchor(nextIndex));
         m_out.jump(loopHeader);
+
+        // The scratch won't be barriered, so need to undo the writes.
+        // Without this, we could have an unremembered old/black cell referencing new/white cells.
+        m_out.appendTo(releaseScratch, continuation);
+        splatWords(m_out.add(scratch, m_out.constIntPtr(JSCellButterfly::offsetOfData())), m_out.int32Zero, m_out.constInt32(sortScratchSlotCount), m_out.int64Zero, m_heaps.indexedContiguousProperties.atAnyIndex());
+        m_out.storePtr(scratch, m_out.absolute(&vm().m_cachedSortScratch));
+        ValueFromBlock holeResult = m_out.anchor(m_out.constIntPtr(std::bit_cast<void*>(vm().m_sortScratchSentinel.get())));
+        m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
         setJSValue(m_out.phi(pointerType(), successResult, holeResult));
@@ -12699,30 +12719,51 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock notRopeCase = m_out.newBlock();
         LBasicBlock lengthOKCase = m_out.newBlock();
+        LBasicBlock ropeCase = m_out.newBlock();
+        LBasicBlock ropeLengthOKCase = m_out.newBlock();
+        LBasicBlock substringCase = m_out.newBlock();
         LBasicBlock is8BitCase = m_out.newBlock();
         LBasicBlock trueCase = m_out.newBlock();
         LBasicBlock falseCase = m_out.newBlock();
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(isRopeString(base, m_node->child1()), rarely(slowCase), usually(notRopeCase));
+        m_out.branch(isRopeString(base, m_node->child1()), rarely(ropeCase), usually(notRopeCase));
 
         LBasicBlock lastNext = m_out.appendTo(notRopeCase, lengthOKCase);
         LValue impl = m_out.loadPtr(base, m_heaps.JSString_value);
         LValue length = m_out.load32(impl, m_heaps.StringImpl_length);
         m_out.branch(m_out.below(length, m_out.constInt32(searchLength)), unsure(falseCase), unsure(lengthOKCase));
 
-        m_out.appendTo(lengthOKCase, is8BitCase);
+        m_out.appendTo(lengthOKCase, ropeCase);
+        ValueFromBlock resolvedData = m_out.anchor(m_out.loadPtr(impl, m_heaps.StringImpl_data));
+        ValueFromBlock resolvedLength = m_out.anchor(length);
         m_out.branch(
             m_out.testIsZero32(m_out.load32(impl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())),
             rarely(slowCase), usually(is8BitCase));
 
+        m_out.appendTo(ropeCase, ropeLengthOKCase);
+        LValue ropeLength = m_out.load32NonNegative(base, m_heaps.JSRopeString_length);
+        m_out.branch(m_out.below(ropeLength, m_out.constInt32(searchLength)), unsure(falseCase), unsure(ropeLengthOKCase));
+
+        m_out.appendTo(ropeLengthOKCase, substringCase);
+        m_out.branch(
+            m_out.testIsZeroPtr(m_out.loadPtr(base, m_heaps.JSRopeString_fiber0), m_out.constIntPtr(JSRopeString::isSubstringInPointer)),
+            unsure(slowCase), unsure(substringCase));
+
+        m_out.appendTo(substringCase, is8BitCase);
+        auto [baseImpl, substringOffset] = substringRopeBaseImplAndOffset(base);
+        ValueFromBlock substringData = m_out.anchor(m_out.add(m_out.loadPtr(baseImpl, m_heaps.StringImpl_data), substringOffset));
+        ValueFromBlock substringLength = m_out.anchor(ropeLength);
+        m_out.branch(isNot8BitStringImpl(baseImpl), rarely(slowCase), usually(is8BitCase));
+
         m_out.appendTo(is8BitCase, trueCase);
         // Anchor the window at data[0] for startsWith, or data[length - searchLength] for endsWith.
-        LValue data = m_out.loadPtr(impl, m_heaps.StringImpl_data);
+        LValue data = m_out.phi(pointerType(), resolvedData, substringData);
+        LValue dataLength = m_out.phi(Int32, resolvedLength, substringLength);
         LValue windowBase = isStartsWith
             ? data
-            : m_out.add(data, m_out.zeroExtPtr(m_out.sub(length, m_out.constInt32(searchLength))));
+            : m_out.add(data, m_out.zeroExtPtr(m_out.sub(dataLength, m_out.constInt32(searchLength))));
 
         // Encode the search bytes as little-endian immediates so the comparison is a few
         // wide loads + compares, with overlap when searchLength isn't a power of two.
@@ -16005,9 +16046,13 @@ IGNORE_CLANG_WARNINGS_END
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LoadVarargsData* data = m_node->loadVarargsData();
-        LValue jsArguments = lowJSValue(m_node->argumentsChild());
 
-        LValue length = vmCall(Int32, operationSizeOfVarargs, weakPointer(globalObject), jsArguments, m_out.constInt32(data->offset));
+        LValue length;
+        if (m_node->argumentsChild().useKind() == KnownCellUse) {
+            length = m_out.load32NonNegative(toButterfly(lowCell(m_node->argumentsChild())), m_heaps.Butterfly_publicLength);
+            speculate(VarargsOverflow, noValue(), nullptr, m_out.above(length, m_out.constInt32(maxArguments)));
+        } else
+            length = vmCall(Int32, operationSizeOfVarargs, weakPointer(globalObject), lowJSValue(m_node->argumentsChild()), m_out.constInt32(data->offset));
 
         LValue lengthIncludingThis = m_out.add(length, m_out.int32One);
 
@@ -16032,6 +16077,12 @@ IGNORE_CLANG_WARNINGS_END
             // https://bugs.webkit.org/show_bug.cgi?id=141660
             LValue machineStart = m_out.lShr(m_out.sub(addressFor(data->machineStart).value(), m_callFrame), m_out.constIntPtr(3));
             vmCall(Void, operationLoadVarargs, weakPointer(globalObject), m_out.castToInt32(machineStart), jsArguments, m_out.constInt32(data->offset), lengthIncludingThis, m_out.constInt32(data->mandatoryMinimum));
+            break;
+        }
+        case KnownCellUse: {
+            speculate(VarargsOverflow, noValue(), nullptr, m_out.bitOr(m_out.isZero32(lengthIncludingThis), m_out.above(lengthIncludingThis, m_out.constInt32(data->limit))));
+            m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
+            emitLoadVarargsFromContiguousStorage(m_heaps.indexedContiguousProperties, toButterfly(lowCell(m_node->argumentsChild())), lengthIncludingThis);
             break;
         }
         case OtherUse: {
@@ -16145,14 +16196,19 @@ IGNORE_CLANG_WARNINGS_END
         unsigned numberOfArgumentsToSkip = data->offset;
         LValue lengthIncludingThis = lowInt32(m_node->child1());
 
-        LValue length = m_out.sub(lengthIncludingThis, m_out.int32One);
         speculate(
             VarargsOverflow, noValue(), nullptr,
             m_out.above(lengthIncludingThis, m_out.constInt32(data->limit)));
 
         m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
 
-        LValue sourceStart = getArgumentsStart(inlineCallFrame, numberOfArgumentsToSkip);
+        emitLoadVarargsFromContiguousStorage(m_heaps.variables, getArgumentsStart(inlineCallFrame, numberOfArgumentsToSkip), lengthIncludingThis);
+    }
+
+    void emitLoadVarargsFromContiguousStorage(IndexedAbstractHeap& sourceHeap, LValue sourceStart, LValue lengthIncludingThis)
+    {
+        LoadVarargsData* data = m_node->loadVarargsData();
+        LValue length = m_out.sub(lengthIncludingThis, m_out.int32One);
         LValue targetStart = addressFor(data->machineStart).value();
 
         LBasicBlock undefinedLoop = m_out.newBlock();
@@ -16185,7 +16241,7 @@ IGNORE_CLANG_WARNINGS_END
         previousIndex = m_out.phi(pointerType(), loopBound);
         currentIndex = m_out.sub(previousIndex, m_out.intPtrOne);
         LValue value = m_out.load64(
-            m_out.baseIndex(m_heaps.variables, sourceStart, currentIndex));
+            m_out.baseIndex(sourceHeap, sourceStart, currentIndex));
         m_out.store64(value, m_out.baseIndex(m_heaps.variables, targetStart, currentIndex));
         nextIndex = m_out.anchor(currentIndex);
         m_out.addIncomingToPhi(previousIndex, nextIndex);
@@ -16584,7 +16640,7 @@ IGNORE_CLANG_WARNINGS_END
         terminate(InadequateCoverage);
     }
 
-    void LEGACY_NODELETE compileCPUIntrinsic()
+    NODELETE void compileCPUIntrinsic()
     {
 #if CPU(X86_64)
         Intrinsic intrinsic = m_node->intrinsic();
@@ -23137,7 +23193,12 @@ IGNORE_CLANG_WARNINGS_END
                     PatchpointValue* patchpoint = m_out.patchpoint(Int32);
                     patchpoint->appendSomeRegister(valueToStore);
                     patchpoint->numFPScratchRegisters = 1;
+                    if (isX86_64()) {
+                        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+                        patchpoint->clobber(RegisterSet::macroClobberedFPRs());
+                    }
                     patchpoint->setGenerator([=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
+                        AllowMacroScratchRegisterUsageIf allowScratchIf(jit, isX86_64());
                         FPRReg scratchFPR = params.fpScratch(0);
                         jit.convertDoubleToFloat16(params[1].fpr(), scratchFPR);
                         jit.moveFloat16To16(scratchFPR, params[0].gpr());
@@ -25597,7 +25658,7 @@ IGNORE_CLANG_WARNINGS_END
         {
         }
 
-        bool LEGACY_NODELETE operator<(const CharacterCase& other) const
+        NODELETE bool operator<(const CharacterCase& other) const
         {
             return character < other.character;
         }
@@ -26396,7 +26457,7 @@ IGNORE_CLANG_WARNINGS_END
         didAlreadyTerminate();
     }
 
-    void LEGACY_NODELETE didAlreadyTerminate()
+    NODELETE void didAlreadyTerminate()
     {
         m_state.setIsValid(false);
     }
@@ -27198,7 +27259,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.constInt64(JSValue::ValueNull));
     }
 
-    LValue LEGACY_NODELETE isProvenValue(SpeculatedType provenType, SpeculatedType wantedType)
+    NODELETE LValue isProvenValue(SpeculatedType provenType, SpeculatedType wantedType)
     {
         if (!(provenType & ~wantedType))
             return m_out.booleanTrue;
@@ -28962,7 +29023,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         m_doubleValues.set(node, LoweredNodeValue(value, m_highBlock));
     }
-    void LEGACY_NODELETE setTuple(Node* tuple, unsigned index, LValue value)
+    NODELETE void setTuple(Node* tuple, unsigned index, LValue value)
     {
         ASSERT(index < tuple->tupleSize());
         m_tupleValues.at(tuple->tupleOffset() + index) = LoweredNodeValue(value, m_highBlock);
@@ -29000,12 +29061,12 @@ IGNORE_CLANG_WARNINGS_END
     {
         setDouble(m_node, value);
     }
-    void LEGACY_NODELETE setTuple(unsigned index, LValue value)
+    NODELETE void setTuple(unsigned index, LValue value)
     {
         setTuple(m_node, index, value);
     }
 
-    bool LEGACY_NODELETE isValid(const LoweredNodeValue& value)
+    NODELETE bool isValid(const LoweredNodeValue& value)
     {
         if (!value)
             return false;
@@ -29232,10 +29293,10 @@ IGNORE_CLANG_WARNINGS_END
         return result;
     }
 
-    AvailabilityMap& LEGACY_NODELETE availabilityMap() { return m_availabilityCalculator.m_availability; }
+    NODELETE AvailabilityMap& availabilityMap() { return m_availabilityCalculator.m_availability; }
 
-    VM& LEGACY_NODELETE vm() { return m_graph.m_vm; }
-    CodeBlock* LEGACY_NODELETE codeBlock() { return m_graph.m_codeBlock; }
+    NODELETE VM& vm() { return m_graph.m_vm; }
+    NODELETE CodeBlock* codeBlock() { return m_graph.m_codeBlock; }
 
     Graph& m_graph;
     State& m_ftlState;

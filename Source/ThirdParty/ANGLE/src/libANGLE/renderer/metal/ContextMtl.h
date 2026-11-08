@@ -310,17 +310,10 @@ class ContextMtl : public ContextImpl, public mtl::Context
     void onOcclusionQueryDestroy(QueryMtl &query);
 
     // Useful for temporarily pause then restart occlusion query during clear/blit with draw.
-    bool isOcclusionQueryEnabledInRenderPass() const
-    {
-        return mOcclusionQueryIsEnabledInRenderPass;
-    }
+    bool hasActiveOcclusionQuery() const { return mOcclusionQueryIsEnabledInRenderPass; }
     // Disable the occlusion query in the current render pass.
     // The render pass must already started.
-    void disableOcclusionQueryInRenderPass();
-    // Re-enable the occlusion query in the current render pass.
-    // The render pass must already started.
-    // NOTE: the old query's result will be retained and combined with the new result.
-    angle::Result enableOcclusionQueryInRenderPass();
+    void disableActiveOcclusionQueryInRenderPass();
 
     // Invoke by TransformFeedbackMtl
     void onTransformFeedbackActive(const gl::Context *context, TransformFeedbackMtl *xfb);
@@ -413,6 +406,9 @@ class ContextMtl : public ContextImpl, public mtl::Context
     mtl::BufferManager &getBufferManager() { return mBufferManager; }
 
     ProvokingVertexHelper &getProvokingVertexHelper() { return mProvokingVertexHelper; }
+
+    // The staging buffers of small texture uploads.
+    mtl::BufferPool &getStagingBufferPool() { return mStagingBufferPool; }
 
     mtl::PipelineCache &getPipelineCache() { return mPipelineCache; }
 
@@ -543,6 +539,10 @@ class ContextMtl : public ContextImpl, public mtl::Context
     angle::Result handleDirtyDepthStencilState(const gl::Context *context);
     angle::Result handleDirtyDepthBias(const gl::Context *context);
     angle::Result handleDirtyRenderPass(const gl::Context *context);
+    // Re-enable the occlusion query in the current render pass.
+    // The render pass must already started.
+    // NOTE: the old query's result will be retained and combined with the new result.
+    angle::Result enableOcclusionQueryInRenderPass();
     angle::Result checkIfPipelineChanged(const gl::Context *context,
                                          bool xfbPass,
                                          bool *pipelineDescChanged);
@@ -649,6 +649,7 @@ class ContextMtl : public ContextImpl, public mtl::Context
     mtl::BufferPool mLineLoopIndexBuffer;
     mtl::BufferPool mLineLoopLastSegmentIndexBuffer;
     mtl::BufferPool mTriFanIndexBuffer;
+    mtl::BufferPool mStagingBufferPool;
     // one buffer can be reused for any starting vertex in DrawArrays()
     mtl::BufferRef mTriFanArraysIndexBuffer;
 

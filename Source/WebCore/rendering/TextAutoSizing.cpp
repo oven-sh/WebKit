@@ -55,7 +55,7 @@ struct TextAutoSizingHashTranslator {
     static unsigned hash(const Style::ComputedStyle&);
     static bool equal(const Style::ComputedStyle&, const Style::ComputedStyle&);
     static bool equal(const TextAutoSizingKey&, const Style::ComputedStyle&);
-    static void translate(TextAutoSizingKey&, const Style::ComputedStyle&, unsigned hash);
+    static void translate(TextAutoSizingKey*, const Style::ComputedStyle&, unsigned hash);
 };
 
 class TextAutoSizingValue {
@@ -161,9 +161,9 @@ bool TextAutoSizingHashTranslator::equal(const Style::ComputedStyle& styleA, con
         && styleA.textOverflow() == styleB.textOverflow();
 }
 
-void TextAutoSizingHashTranslator::translate(TextAutoSizingKey& key, const Style::ComputedStyle& style, unsigned hash)
+void TextAutoSizingHashTranslator::translate(TextAutoSizingKey* key, const Style::ComputedStyle& style, unsigned hash)
 {
-    key = { style, hash };
+    new (NotNull, key) TextAutoSizingKey(style, hash);
 }
 
 // MARK: - TextAutoSizingValue
@@ -329,7 +329,7 @@ void TextAutoSizingValue::reset()
         float originalSize = fontDescription.computedSize();
         if (fontDescription.usedSize() != originalSize) {
             fontDescription.setUsedSize(originalSize);
-            auto style = cloneRenderStyleWithState(renderer->style());
+            auto style = cloneRenderStyleWithState(parentRenderer->style());
             style.setFontDescription(FontCascadeDescription { fontDescription });
             parentRenderer->setStyle(WTF::move(style));
         }

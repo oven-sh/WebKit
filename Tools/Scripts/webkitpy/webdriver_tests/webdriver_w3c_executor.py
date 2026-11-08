@@ -42,7 +42,7 @@ def _ensure_directory_in_path(directory):
 _ensure_directory_in_path(os.path.join(w3c_tools_dir, 'webdriver'))
 _ensure_directory_in_path(os.path.join(w3c_tools_dir, 'wptrunner'))
 
-from wptrunner.executors.base import WdspecExecutor, WdspecProtocol  # noqa
+from wptrunner.executors.base import PytestExecutor  # noqa
 from wptrunner.browsers.base import WebDriverBrowser  # noqa
 
 pytest_runner = None
@@ -123,8 +123,9 @@ class WebKitDriverBrowser(WebDriverBrowser):
         return [self.webdriver_binary, f"--port={self.port}"] + self.webdriver_args
 
 
-class WebDriverW3CExecutor(WdspecExecutor):
+class WebDriverW3CExecutor(PytestExecutor):
     WARM_UP_TIMEOUT_SECONDS = 120
+    PYTEST_ARGS = ['--strict-markers', '-p', 'no:mozlog']
 
     def __init__(self, driver, server, env, timeout, expectations, target_platform):
         WebKitDriverBrowser.test_env = env
@@ -138,7 +139,7 @@ class WebDriverW3CExecutor(WdspecExecutor):
                          'doc_root': server.document_root()}
         self.runner = TestRunner()
         browser = WebKitDriverBrowser(self.runner.logger, webdriver_binary=driver.binary_path())
-        WdspecExecutor.__init__(self, self.runner.logger, browser, server_config, driver.binary_path(), None, capabilities=driver.capabilities(), target_platform=target_platform)
+        PytestExecutor.__init__(self, self.runner.logger, browser, server_config, driver.binary_path(), None, capabilities=driver.capabilities(), target_platform=target_platform)
 
         self._timeout = timeout
         self._expectations = expectations
@@ -150,6 +151,13 @@ class WebDriverW3CExecutor(WdspecExecutor):
         # When a subtest times out, the browser may be stuck too, for example showing a dialog.
         self._test_process = TestProcess(self._run_file, self._timeout, restart=self._restart_driver)
         self._test_process.start()
+
+    def collect(self, tests):
+        # Collecting the tests imports pytest, its plugins and everything that the tests import, and AutoInstall may
+        # have to download some of that. Do it here, before any test process is forked: a download in a test process
+        # crashes on macOS, where looking up the system proxy settings isn't safe in a child of a multi-threaded process.
+        do_delayed_imports()
+        pytest_runner.collect(tests, self.PYTEST_ARGS)
 
     def warm_up(self):
         # The first launch of a newly built browser can take much longer than later ones, for example while
@@ -198,15 +206,14 @@ class WebDriverW3CExecutor(WdspecExecutor):
                       'capabilities': self.capabilities,
                       'webdriver': {'binary': self.browser.webdriver_binary},
                       'wptserve': self.server_config,
-                      'timeout_multiplier': 10,
+                      'timeout_multiplier': 1,
                       'target_platform': self.target_platform,
                       }
             with open(config_path, 'w') as f:
                 json.dump(config, f)
 
             env.update(WebKitDriverBrowser.test_env)
-            args = ['--strict-markers', '-p', 'no:mozlog']
-            harness_result, _ = pytest_runner.run(test, args, self._timeout, env, self._expectations, report=report, deselected=deselected)
+            harness_result, _ = pytest_runner.run(test, self.PYTEST_ARGS, self._timeout, env, self._expectations, report=report, deselected=deselected)
             return harness_result
 
     def run(self, test):

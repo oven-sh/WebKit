@@ -93,7 +93,7 @@ RenderTable::RenderTable(Type type, Document& document, Style::ComputedStyle&& s
 
 RenderTable::~RenderTable() = default;
 
-RenderTableSection* LEGACY_NODELETE RenderTable::topSection() const
+NODELETE RenderTableSection* RenderTable::topSection() const
 {
     ASSERT(!needsSectionRecalc());
     if (m_head)
@@ -608,7 +608,10 @@ void RenderTable::layout()
         }
 
         auto& logicalHeightLength = style().logicalHeight();
-        if (!isOutOfFlowPositioned() && (logicalHeightLength.isIntrinsicOrStretch() || (logicalHeightLength.isSpecified() && logicalHeightLength.isPossiblyPositive())))
+        if (!isOutOfFlowPositioned() && shouldComputeLogicalHeightFromAspectRatio()) {
+            auto borderBoxLogicalHeight = blockSizeFromAspectRatio(horizontalBorderAndPaddingExtent(), verticalBorderAndPaddingExtent(), style().logicalAspectRatio(), style().boxSizingForAspectRatio(), logicalWidth(), style().aspectRatio(), false);
+            computedLogicalHeight = borderBoxLogicalHeight - (borderAndPaddingBefore + borderAndPaddingAfter);
+        } else if (!isOutOfFlowPositioned() && (logicalHeightLength.isIntrinsicOrStretch() || (logicalHeightLength.isSpecified() && logicalHeightLength.isPossiblyPositive())))
             computedLogicalHeight = convertStyleLogicalHeightToComputedHeight(logicalHeightLength);
 
         if (auto overridingLogicalHeight = this->overridingBorderBoxLogicalHeight())

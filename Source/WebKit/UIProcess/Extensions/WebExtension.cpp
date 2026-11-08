@@ -55,6 +55,8 @@ using namespace WebCore;
 
 static constexpr auto defaultLocaleManifestKey = "default_locale"_s;
 
+static constexpr auto messageSerializationManifestKey = "message_serialization"_s;
+
 static constexpr auto iconsManifestKey = "icons"_s;
 
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
@@ -550,6 +552,16 @@ URL WebExtension::resourceFileURLForPath(const String& originalPath)
     return result;
 }
 
+String WebExtension::resourceKeyForPath(const String& originalPath)
+{
+    // Read the path as a URL, like resourceFileURLForPath(), so a query or fragment is dropped and percent-encoding is decoded.
+    auto path = URL { URL { "file:///"_s }, originalPath }.fileSystemPath();
+    if (path.startsWith('/'))
+        path = path.substring(1);
+
+    return path;
+}
+
 bool WebExtension::hasResourceForPath(const String& originalPath)
 {
     ASSERT(originalPath);
@@ -561,7 +573,8 @@ bool WebExtension::hasResourceForPath(const String& originalPath)
     if (path == generatedBackgroundPageFilename || path == generatedBackgroundServiceWorkerFilename)
         return true;
 
-    if (m_stringResources.contains(path) || m_dataResources.contains(path))
+    auto resourceKey = resourceKeyForPath(originalPath);
+    if (m_stringResources.contains(resourceKey) || m_dataResources.contains(resourceKey))
         return true;
 
     return !resourceFileURLForPath(path).isEmpty();
@@ -598,12 +611,14 @@ std::expected<String, RefPtr<API::Error>> WebExtension::resourceStringForPath(co
     if (path == generatedBackgroundPageFilename || path == generatedBackgroundServiceWorkerFilename)
         return generatedBackgroundContent();
 
-    if (auto maybeString = m_stringResources.getOptional(path))
+    auto resourceKey = resourceKeyForPath(originalPath);
+
+    if (auto maybeString = m_stringResources.getOptional(resourceKey))
         return *maybeString;
 
-    if (auto maybeData = m_dataResources.getOptional(path)) {
+    if (auto maybeData = m_dataResources.getOptional(resourceKey)) {
         auto string = String::fromUTF8(maybeData->get().span());
-        m_stringResources.set(path, string);
+        m_stringResources.set(resourceKey, string);
         return string;
     }
 
@@ -621,12 +636,12 @@ std::expected<String, RefPtr<API::Error>> WebExtension::resourceStringForPath(co
 
     auto result = decoder->decode(data->span());
     if (cacheResult == CacheResult::Yes)
-        m_stringResources.set(path, result);
+        m_stringResources.set(resourceKey, result);
 
     return result;
 }
 
-static int LEGACY_NODELETE toAPI(WebExtension::Error error)
+NODELETE static int toAPI(WebExtension::Error error)
 {
     switch (error) {
     case WebExtension::Error::Unknown:
@@ -655,6 +670,7 @@ static int LEGACY_NODELETE toAPI(WebExtension::Error error)
     case WebExtension::Error::InvalidDescription:
     case WebExtension::Error::InvalidExternallyConnectable:
     case WebExtension::Error::InvalidIcon:
+    case WebExtension::Error::InvalidMessageSerialization:
     case WebExtension::Error::InvalidName:
     case WebExtension::Error::InvalidOptionsPage:
     case WebExtension::Error::InvalidURLOverrides:
@@ -757,6 +773,10 @@ Ref<API::Error> WebExtension::createError(Error error, const String& customLocal
         localizedDescription = WEB_UI_STRING("Empty or invalid `externally_connectable` manifest entry.", "WKWebExtensionErrorInvalidManifestEntry description for externally_connectable");
         break;
 
+    case Error::InvalidMessageSerialization:
+        localizedDescription = WEB_UI_STRING("Invalid `message_serialization` manifest entry. The value must be `json` or `structured_clone`.", "WKWebExtensionErrorInvalidManifestEntry description for message_serialization");
+        break;
+
     case Error::InvalidIcon:
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
         if (manifestObject()->getValue(iconVariantsManifestKey))
@@ -820,6 +840,7 @@ Vector<Ref<API::Error>> WebExtension::errors()
     populatePermissionsPropertiesIfNeeded();
     populatePagePropertiesIfNeeded();
     populateContentSecurityPolicyStringsIfNeeded();
+    populateMessageSerializationIfNeeded();
     populateWebAccessibleResourcesIfNeeded();
     populateCommandsIfNeeded();
     populateDeclarativeNetRequestPropertiesIfNeeded();
@@ -1013,6 +1034,38 @@ void WebExtension::populateContentSecurityPolicyStringsIfNeeded()
         m_contentSecurityPolicy = "script-src 'self'"_s;
 }
 
+bool WebExtension::usesStructuredCloneMessageSerialization()
+{
+    populateMessageSerializationIfNeeded();
+    return m_usesStructuredCloneMessageSerialization;
+}
+
+void WebExtension::populateMessageSerializationIfNeeded()
+{
+    if (m_parsedManifestMessageSerialization)
+        return;
+
+    m_parsedManifestMessageSerialization = true;
+
+    RefPtr manifestObject = this->manifestObject();
+    if (!manifestObject)
+        return;
+
+    // Documentation: https://github.com/w3c/webextensions/issues/931
+
+    if (!manifestObject->getValue(messageSerializationManifestKey))
+        return;
+
+    auto messageSerialization = manifestObject->getString(messageSerializationManifestKey);
+    if (messageSerialization == "structured_clone"_s) {
+        m_usesStructuredCloneMessageSerialization = true;
+        return;
+    }
+
+    if (messageSerialization != "json"_s)
+        recordError(createError(Error::InvalidMessageSerialization));
+}
+
 bool WebExtension::hasBackgroundContent()
 {
     populateBackgroundPropertiesIfNeeded();
@@ -1107,7 +1160,7 @@ const String& WebExtension::generatedBackgroundContent()
 
     StringBuilder generatedBackgroundContent;
     if (!isServiceWorker)
-        generatedBackgroundContent.append("<!DOCTYPE html>\n<body>\n"_s);
+        generatedBackgroundContent.append("<!DOCTYPE html>\n<meta charset=\"utf-8\">\n<body>\n"_s);
 
     for (auto& scriptPath : scripts)
         generatedBackgroundContent.append(scriptPath, "\n"_s);
@@ -2030,14 +2083,6 @@ size_t WebExtension::bestIconSize(const JSON::Object& iconsObject, size_t idealP
     if (!iconsObject.size())
         return 0;
 
-#if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
-    // Check if the "any" size exists (typically a vector image), and prefer it.
-    if (iconsObject.getValue(anyManifestKey)) {
-        // Return max to ensure it takes precedence over all other sizes.
-        return std::numeric_limits<size_t>::max();
-    }
-#endif
-
     // Check if the ideal size exists, if so return it.
     auto idealSizeString = String::number(idealPixelSize);
     if (iconsObject.getValue(idealSizeString))
@@ -2052,9 +2097,6 @@ size_t WebExtension::bestIconSize(const JSON::Object& iconsObject, size_t idealP
             sizeValues.append(*integerValue);
     }
 
-    if (!sizeValues.size())
-        return 0;
-
     // Sort the remaining keys and find the next largest size.
     std::ranges::sort(sizeValues);
 
@@ -2062,8 +2104,16 @@ size_t WebExtension::bestIconSize(const JSON::Object& iconsObject, size_t idealP
     for (auto size : sizeValues) {
         bestSize = size;
         if (bestSize >= idealPixelSize)
-            break;
+            return bestSize;
     }
+
+#if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
+    // No explicit size is large enough, so use "any" (typically a vector image) before the largest smaller size.
+    if (iconsObject.getValue(anyManifestKey)) {
+        // Return max to ensure it takes precedence over the smaller sizes.
+        return std::numeric_limits<size_t>::max();
+    }
+#endif
 
     return bestSize;
 }

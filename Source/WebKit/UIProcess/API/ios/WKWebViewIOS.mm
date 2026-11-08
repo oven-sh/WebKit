@@ -254,7 +254,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [self addSubview:_scrollView.get()];
 
     [self _dispatchSetDeviceOrientation:[self _deviceOrientationIgnoringOverrides]];
-    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationIgnoringOverrides]];
+    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationForMediaCapture]];
 
     [_contentView layer].anchorPoint = CGPointZero;
     [_contentView setFrame:bounds];
@@ -401,6 +401,20 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             return windowScene.effectiveGeometry.interfaceOrientation;
         return UIInterfaceOrientationUnknown;
     }());
+}
+
+- (void)_setCameraRotationAdjustment:(WebCore::IntDegrees)degrees
+{
+    if (_cameraRotationAdjustment == degrees)
+        return;
+
+    _cameraRotationAdjustment = degrees;
+    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationForMediaCapture]];
+}
+
+- (WebCore::IntDegrees)_deviceOrientationForMediaCapture
+{
+    return [self _deviceOrientationIgnoringOverrides] + _cameraRotationAdjustment;
 }
 
 - (void)_dynamicUserInterfaceTraitDidChange
@@ -1215,7 +1229,12 @@ static void changeContentOffsetBoundedInValidRange(UIScrollView *scrollView, Web
 
         if (WebKit::scalesAreEssentiallyEqual(contentZoomScale(self), _scaleToRestore)) {
             scaledScrollOffset.scale(_scaleToRestore);
-            WebCore::FloatPoint contentOffsetInScrollViewCoordinates = [self _contentOffsetAdjustedForObscuredInset:scaledScrollOffset];
+
+            WebCore::FloatPoint contentOffsetInScrollViewCoordinates;
+            if (_gestureController && _gestureController->isShowingSwipeSnapshotImage())
+                contentOffsetInScrollViewCoordinates = scaledScrollOffset - WebCore::FloatSize(_obscuredInsetsWhenSaved.left(), _obscuredInsetsWhenSaved.top());
+            else
+                contentOffsetInScrollViewCoordinates = [self _contentOffsetAdjustedForObscuredInset:scaledScrollOffset];
 
             changeContentOffsetBoundedInValidRange(_scrollView.get(), contentOffsetInScrollViewCoordinates);
             _perProcessState.commitDidRestoreScrollPosition = YES;
@@ -3793,7 +3812,7 @@ static WebCore::IntDegrees activeOrientation(WKWebView *webView)
 {
     if (!_overridesInterfaceOrientation)
         [self _dispatchSetDeviceOrientation:[self _deviceOrientationIgnoringOverrides]];
-    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationIgnoringOverrides]];
+    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationForMediaCapture]];
 }
 
 - (void)_contentSizeCategoryDidChange:(NSNotification *)notification
@@ -5730,14 +5749,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (Class)_printFormatterClass
 {
     return [_WKWebViewPrintFormatter class];
-}
-
-- (id <_WKWebViewPrintProvider>)_printProvider
-{
-    RetainPtr printProvider = _customContentView ? _customContentView.get() : _contentView.get();
-    if ([printProvider conformsToProtocol:@protocol(_WKWebViewPrintProvider)])
-        return (id<_WKWebViewPrintProvider>)printProvider.autorelease();
-    return nil;
 }
 
 @end

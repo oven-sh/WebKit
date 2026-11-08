@@ -363,10 +363,10 @@ Modules/phonenumberpossession/PhoneNumberPossessionCoordinator.cpp
 Modules/phonenumberpossession/PhoneNumberPossessionCredential.cpp
 Modules/phonenumberpossession/PhoneNumberPossessionRequest.cpp
 Modules/pictureinpicture/DocumentOrShadowRootPictureInPicture.cpp
-Modules/pictureinpicture/DocumentPictureInPicture.cpp
 Modules/pictureinpicture/HTMLVideoElementPictureInPicture.cpp
 Modules/pictureinpicture/PictureInPictureEvent.cpp
 Modules/pictureinpicture/PictureInPictureWindow.cpp
+Modules/pictureinpicture/VideoPictureInPicture.cpp
 Modules/push-api/PushCrypto.cpp
 Modules/push-api/PushDatabase.cpp
 Modules/push-api/PushEvent.cpp
@@ -828,7 +828,6 @@ bindings/js/JSPopStateEventCustom.cpp
 bindings/js/JSPromiseRejectionEventCustom.cpp
 bindings/js/JSRangeCustom.cpp
 bindings/js/JSReadableStreamSourceCustom.cpp
-bindings/js/JSReportBodyCustom.cpp
 bindings/js/JSReportingObserverCustom.cpp
 bindings/js/JSResizeObserverCustom.cpp @cost:3
 bindings/js/JSResizeObserverEntryCustom.cpp
@@ -1770,6 +1769,7 @@ html/InputType.cpp @header:RenderStyleGetters @cost:7
 html/InputTypeNames.cpp
 html/LabelsNodeList.cpp
 html/LazyLoadElementObserver.cpp
+html/LazyLoading.cpp
 html/LinkIconCollector.cpp
 html/LinkRelAttribute.cpp
 html/MediaController.cpp
@@ -2042,7 +2042,9 @@ inspector/agents/frame/FrameDOMDebuggerAgent.cpp
 inspector/agents/frame/FrameDOMStorageAgent.cpp
 inspector/agents/frame/FrameDebuggerAgent.cpp
 inspector/agents/frame/FrameIndexedDBAgent.cpp
+inspector/agents/frame/FrameTimelineAgent.cpp
 inspector/agents/frame/FrameWorkerAgent.cpp
+inspector/agents/page/PageAnimationAgent.cpp
 inspector/agents/page/PageAuditAgent.cpp
 inspector/agents/page/PageCanvasAgent.cpp
 inspector/agents/page/PageConsoleAgent.cpp
@@ -2242,6 +2244,7 @@ loader/cache/TrustedFonts.cpp
 loader/icon/IconLoader.cpp
 loader/images/Image.cpp
 loader/images/ImageAdapter.cpp
+loader/images/ImageAnimationTimeline.cpp
 loader/images/ImageContentSettings.cpp
 loader/images/ImageDrawDescriptor.cpp
 loader/images/ImageRenditionOptions.cpp
@@ -2254,6 +2257,8 @@ loader/images/bitmap/ImageSource.cpp
 loader/images/sizing/ImageSizingContext.cpp
 loader/images/sizing/ObjectSizeNegotiation.cpp
 loader/images/svg/SVGImage.cpp @header:RenderStyleGetters
+loader/images/svg/SVGImageInstance.cpp
+loader/images/svg/SVGImageInstanceCache.cpp
 mathml/MathMLAnchorElement.cpp @header:RenderStyleGetters
 mathml/MathMLAnnotationElement.cpp @header:RenderStyleGetters
 mathml/MathMLElement.cpp @header:RenderStyleGetters
@@ -2765,6 +2770,9 @@ platform/graphics/MediaPlayerPrivateWirelessPlayback.cpp
 platform/graphics/MediaResourceSniffer.cpp
 platform/graphics/MediaSampleConverter.cpp
 platform/graphics/MediaSourcePrivate.cpp
+platform/graphics/MeshGradient.cpp
+platform/graphics/MeshGradientRenderer.cpp
+platform/graphics/MeshGradientRendererCPU.cpp
 platform/graphics/Model.cpp
 platform/graphics/ModelContext.cpp
 platform/graphics/NativeImage.cpp
@@ -3066,7 +3074,6 @@ rendering/RenderBlockFlow.cpp @header:RenderStyleGetters @cost:8
 rendering/RenderBox.cpp @header:RenderStyleGetters @cost:10
 rendering/RenderBoxModelObject.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderButton.cpp @header:RenderStyleGetters @cost:7
-rendering/RenderCombineText.cpp @header:RenderStyleGetters @cost:5
 rendering/RenderCounter.cpp @header:RenderStyleGetters @cost:6
 rendering/RenderDeprecatedFlexibleBox.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderElement.cpp @header:RenderStyleGetters @cost:12
@@ -4012,9 +4019,6 @@ JSBufferedChangeEvent.cpp
 JSByteLengthQueuingStrategy.cpp
 JSCDATASection.cpp
 JSCallToActionLabel.cpp
-JSCOEPInheritenceViolationReportBody.cpp
-JSCORPViolationReportBody.cpp
-JSCSPViolationReportBody.cpp
 JSCSSAnimation.cpp
 JSCSSAnimationEvent.cpp
 JSCSSConditionRule.cpp
@@ -4258,7 +4262,6 @@ JSDeprecatedCSSOMRGBColor.cpp
 JSDeprecatedCSSOMRect.cpp
 JSDeprecatedCSSOMValue.cpp
 JSDeprecatedCSSOMValueList.cpp
-JSDeprecationReportBody.cpp
 JSDetectedBarcode.cpp
 JSDetectedFace.cpp
 JSDetectedText.cpp
@@ -4662,7 +4665,6 @@ JSInspectorAuditDOMObject.cpp
 JSInspectorAuditResourcesObject.cpp
 JSInspectorFrontendHost.cpp
 JSInstallEvent.cpp
-JSIntegrityPolicyViolationReportBody.cpp
 JSIntersectionObserver.cpp
 JSIntersectionObserverCallback.cpp
 JSIntersectionObserverEntry.cpp
@@ -5015,7 +5017,6 @@ JSRemotePlayback.cpp
 JSRemotePlaybackAvailabilityCallback.cpp
 JSRenderingMode.cpp
 JSReport.cpp
-JSReportBody.cpp
 JSReportingObserver.cpp
 JSReportingObserverCallback.cpp
 JSRequestAnimationFrameCallback.cpp
@@ -5220,7 +5221,6 @@ JSSubscriberCallback.cpp
 JSSubscriptionObserver.cpp
 JSSubscriptionObserverCallback.cpp
 JSSubtleCrypto.cpp
-JSTestReportBody.cpp
 JSText.cpp
 JSTextDecoder.cpp
 JSTextDecoderStream.cpp

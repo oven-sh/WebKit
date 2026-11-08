@@ -439,7 +439,7 @@ void GraphicsLayerCoordinated::setContentsDisplayDelegate(RefPtr<GraphicsLayerCo
 
     EnumSet<Change> change = { Change::ContentsBuffer };
     if (m_contentsDisplayDelegate) {
-#if !USE(TEXTURE_MAPPER)
+#if USE(SKIA)
         m_contentsDisplayDelegate->setThreadSafeGrContext(m_platformLayer->threadSafeGrContext());
 #endif
         if (m_contentsBufferProxy) {
@@ -458,7 +458,7 @@ RefPtr<GraphicsLayerAsyncContentsDisplayDelegate> GraphicsLayerCoordinated::crea
         return existing;
     }
     auto delegate = GraphicsLayerAsyncContentsDisplayDelegateCoordinated::create(*this);
-#if !USE(TEXTURE_MAPPER)
+#if USE(SKIA)
     delegate->setThreadSafeGrContext(m_platformLayer->threadSafeGrContext());
 #endif
     return delegate;
@@ -780,6 +780,7 @@ void GraphicsLayerCoordinated::setShowRepaintCounter(bool showRepaintCounter)
     noteLayerPropertyChanged(Change::DebugIndicators, ScheduleFlush::Yes);
 }
 
+#if USE(TEXTURE_MAPPER)
 static void dumpInnerLayer(TextStream& textStream, const String& label, CoordinatedPlatformLayer* layer, OptionSet<LayerTreeAsTextOptions> options)
 {
     if (!layer)
@@ -794,11 +795,22 @@ static void dumpInnerLayer(TextStream& textStream, const String& label, Coordina
         textStream << " hidden";
     textStream << ")\n";
 }
+#endif
 
 void GraphicsLayerCoordinated::dumpAdditionalProperties(TextStream& textStream, OptionSet<LayerTreeAsTextOptions> options) const
 {
+#if USE(TEXTURE_MAPPER)
     if (options & LayerTreeAsTextOptions::IncludeContentLayers)
         dumpInnerLayer(textStream, "backdrop layer"_s, m_backdropLayer.get(), options);
+#else
+    if ((options & LayerTreeAsTextOptions::IncludeContentLayers) && needsBackdrop()) {
+        const auto& rect = m_backdropFiltersRect.rect();
+        textStream << indent << "(backdrop layer 0.00, 0.00 " << rect.width() << " x " << rect.height();
+        if (!m_contentsVisible)
+            textStream << " hidden";
+        textStream << ")\n";
+    }
+#endif
 }
 
 bool GraphicsLayerCoordinated::filtersCanBeComposited(const FilterOperations& filters) const
@@ -847,9 +859,13 @@ void GraphicsLayerCoordinated::flushCompositingState(const FloatRect& visibleRec
 
     recursiveCommitChanges(commitState);
 
+#if USE(CAIRO)
     bool hasPendingTilesCreation = updateBackingStoresIfNeeded();
     if (hasPendingTilesCreation)
         client().notifySubsequentFlushRequired(this);
+#else
+    updateBackingStoresIfNeeded();
+#endif
 }
 
 void GraphicsLayerCoordinated::flushCompositingStateForThisLayerOnly()
@@ -1016,6 +1032,7 @@ void GraphicsLayerCoordinated::updateVisibleRect(const FloatRect& rect)
     m_platformLayer->setTransformedVisibleRect(WTF::move(visibleRect));
 }
 
+#if USE(TEXTURE_MAPPER)
 void GraphicsLayerCoordinated::updateBackdropFilters()
 {
     assertIsHeld(m_platformLayer->lock());
@@ -1070,6 +1087,7 @@ void GraphicsLayerCoordinated::updateBackdropFiltersRect()
 
     m_platformLayer->setBackdropRect(m_backdropFiltersRect);
 }
+#endif
 
 void GraphicsLayerCoordinated::updateAnimations()
 {
@@ -1110,15 +1128,23 @@ void GraphicsLayerCoordinated::commitLayerChanges(CommitState& commitState, floa
     Locker locker { m_platformLayer->lock() };
 
     if (m_pendingChanges.contains(Change::ContentsBuffer)) {
-        if (!m_contentsDisplayDelegate && !m_contentsBufferProxy)
-            m_platformLayer->setContentsBuffer(nullptr);
+        if (!m_contentsBufferProxy) {
+            if (m_contentsDisplayDelegate)
+                m_platformLayer->discardVideoContentsBuffer();
+            else {
+                m_platformLayer->clearVideoContentsBuffer();
+                m_platformLayer->setContentsBuffer(nullptr);
+            }
+        }
     }
 
     if (m_pendingChanges.contains(Change::ContentsBufferNeedsDisplay)) {
         if (m_contentsDisplayDelegate)
             m_contentsDisplayDelegate->display(m_platformLayer.get(), std::exchange(m_contentsDirtyRegion, std::nullopt));
-        else if (m_contentsBufferProxy)
-            m_contentsBufferProxy->consumePendingBufferIfNeeded();
+        else if (m_contentsBufferProxy) {
+            if (auto buffer = m_contentsBufferProxy->takePendingBuffer())
+                m_platformLayer->setVideoContentsBuffer(WTF::move(buffer), CoordinatedPlatformLayer::RequireComposition::No);
+        }
     }
 
     if (m_pendingChanges.containsAny(Change::Geometry))
@@ -1161,10 +1187,12 @@ void GraphicsLayerCoordinated::commitLayerChanges(CommitState& commitState, floa
 
     if (m_pendingChanges.contains(Change::ContentsVisible)) {
         m_platformLayer->setContentsVisible(m_contentsVisible);
+#if USE(TEXTURE_MAPPER)
         if (m_backdropLayer) {
             Locker locker { m_backdropLayer->lock() };
             m_backdropLayer->setContentsVisible(m_contentsVisible);
         }
+#endif
     }
 
     if (m_pendingChanges.contains(Change::ContentsOpaque))
@@ -1212,11 +1240,19 @@ void GraphicsLayerCoordinated::commitLayerChanges(CommitState& commitState, floa
     if (m_pendingChanges.contains(Change::Replica))
         m_platformLayer->setReplica(m_replicaLayer ? &downcast<GraphicsLayerCoordinated>(m_replicaLayer)->coordinatedPlatformLayer() : nullptr);
 
+#if USE(TEXTURE_MAPPER)
     if (m_pendingChanges.contains(Change::Backdrop) || needsBackdrop())
         updateBackdropFilters();
 
     if (m_pendingChanges.contains(Change::BackdropRect))
         updateBackdropFiltersRect();
+#else
+    if (m_pendingChanges.contains(Change::Backdrop))
+        m_platformLayer->setBackdropFilters(m_backdropFilters);
+
+    if (m_pendingChanges.contains(Change::BackdropRect))
+        m_platformLayer->setBackdropRect(m_backdropFiltersRect);
+#endif
 
     if (m_pendingChanges.contains(Change::BackdropShapePath))
         m_platformLayer->setBackdropShapePath(backdropFiltersShapePath());
@@ -1264,8 +1300,10 @@ bool GraphicsLayerCoordinated::needsCommit(CommitState& commitState) const
     if (isRunningTransformAnimation() || m_hasDescendantsWithRunningTransformAnimations)
         return true;
 
+#if USE(CAIRO)
     if (m_platformLayer->hasPendingTilesCreation() || m_hasDescendantsWithPendingTilesCreation)
         return true;
+#endif
 
     return false;
 }
@@ -1301,23 +1339,30 @@ void GraphicsLayerCoordinated::recursiveCommitChanges(CommitState& commitState, 
     if (RefPtr replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
         replicaLayer->commitLayerChanges(childCommitState, pageScaleFactor, baseRelativePosition, affectedByTransformAnimation);
 
+#if USE(CAIRO)
     bool hasDescendantsWithPendingTilesCreation = false;
+#endif
     bool hasDescendantsWithRunningTransformAnimations = false;
     for (auto& currentChild : children()) {
         auto& child = downcast<GraphicsLayerCoordinated>(currentChild.get());
         child.recursiveCommitChanges(childCommitState, pageScaleFactor, positionRelativeToBase, affectedByPageScale);
 
+#if USE(CAIRO)
         if (child.coordinatedPlatformLayer().hasPendingTilesCreation() || child.m_hasDescendantsWithPendingTilesCreation)
             hasDescendantsWithPendingTilesCreation = true;
+#endif
         if (child.isRunningTransformAnimation() || child.m_hasDescendantsWithRunningTransformAnimations)
             hasDescendantsWithRunningTransformAnimations = true;
     }
 
     m_hasDescendantsWithPendingChanges = false;
+#if USE(CAIRO)
     m_hasDescendantsWithPendingTilesCreation = hasDescendantsWithPendingTilesCreation;
+#endif
     m_hasDescendantsWithRunningTransformAnimations = hasDescendantsWithRunningTransformAnimations;
 }
 
+#if USE(CAIRO)
 bool GraphicsLayerCoordinated::updateBackingStoresIfNeeded()
 {
     bool hasPendingTilesCreation = false;
@@ -1341,6 +1386,26 @@ bool GraphicsLayerCoordinated::updateBackingStoreIfNeeded()
     m_platformLayer->updateBackingStore();
     return m_platformLayer->hasPendingTilesCreation();
 }
+
+#else
+void GraphicsLayerCoordinated::updateBackingStoresIfNeeded()
+{
+    if (RefPtr maskLayer = downcast<GraphicsLayerCoordinated>(m_maskLayer))
+        maskLayer->updateBackingStoreIfNeeded();
+    if (RefPtr replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
+        replicaLayer->updateBackingStoreIfNeeded();
+
+    updateBackingStoreIfNeeded();
+
+    for (auto& currentChild : children())
+        downcast<GraphicsLayerCoordinated>(currentChild).updateBackingStoresIfNeeded();
+}
+
+void GraphicsLayerCoordinated::updateBackingStoreIfNeeded()
+{
+    m_platformLayer->updateBackingStore();
+}
+#endif
 
 } // namespace WebCore
 

@@ -91,13 +91,13 @@ private:
     RefPtr<ProcessThrottler::Activity> m_activity;
 };
 
-static HashMap<IPC::Connection::UniqueID, WeakPtr<AuxiliaryProcessProxy>>& LEGACY_NODELETE connectionToProcessMap()
+NODELETE static HashMap<IPC::Connection::UniqueID, WeakPtr<AuxiliaryProcessProxy>>& connectionToProcessMap()
 {
     static MainRunLoopNeverDestroyed<HashMap<IPC::Connection::UniqueID, WeakPtr<AuxiliaryProcessProxy>>> map;
     return map.get();
 }
 
-static Seconds LEGACY_NODELETE adjustedTimeoutForThermalState(Seconds timeout)
+NODELETE static Seconds adjustedTimeoutForThermalState(Seconds timeout)
 {
 #if PLATFORM(VISION)
     return WebCore::ThermalMitigationNotifier::isThermalMitigationEnabled() ? (timeout * 20) : timeout;
@@ -662,6 +662,7 @@ AuxiliaryProcessCreationParameters AuxiliaryProcessProxy::auxiliaryProcessParame
     parameters.shouldEnableIPCSignposts = IPC::Connection::signpostsEnabled();
     parameters.shouldEnableStreamingIPCSignposts = IPC::StreamClientConnection::signpostsEnabled();
 #endif
+    parameters.shouldEnableIPCSendOnCallingThread = IPC::Connection::sendOnCallingThreadEnabled();
 
     return parameters;
 }
@@ -740,8 +741,7 @@ void AuxiliaryProcessProxy::didChangeThrottleState(ProcessThrottleState state)
 
     if (!isNowSuspended && !m_messagesToSendOnResume.isEmpty()) {
         using PairType = std::pair<unsigned, std::unique_ptr<IPC::Encoder>>;
-        Vector<PairType> indexMessagePairs;
-        indexMessagePairs.reserveInitialCapacity(m_messagesToSendOnResume.size());
+        Vector<PairType> indexMessagePairs(ReserveCapacityTag { }, m_messagesToSendOnResume.size());
 
         for (auto& indexMessagePair : m_messagesToSendOnResume.values())
             indexMessagePairs.append(WTF::move(indexMessagePair));

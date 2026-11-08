@@ -89,6 +89,10 @@ public:
 
     RefPtr<WebCore::AudioVideoRenderer> rendererFor(std::optional<WebCore::MediaPlayerIdentifier>) const;
 
+#if PLATFORM(COCOA)
+    std::optional<WebCore::FloatRect> hostedVideoLayerBoundsForTesting(WebCore::HTMLMediaElementIdentifier) const;
+#endif
+
 private:
     explicit RemoteAudioVideoRendererProxyManager(GPUConnectionToWebProcess&);
 
@@ -152,7 +156,7 @@ private:
     void setResourceOwner(RemoteAudioVideoRendererIdentifier, const WebCore::ProcessIdentity& resourceOwner);
     void setVideoPlaybackMetricsUpdateInterval(RemoteAudioVideoRendererIdentifier, double);
     void flushAndRemoveImage(RemoteAudioVideoRendererIdentifier);
-    void currentVideoFrame(RemoteAudioVideoRendererIdentifier, CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>)>&&) const;
+    void currentVideoFrame(RemoteAudioVideoRendererIdentifier, RemoteVideoFrameReference, CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>)>&&) const;
     void currentBitmapImage(RemoteAudioVideoRendererIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&) const;
 
     // VideoFullscreenInterface
@@ -188,7 +192,7 @@ private:
     RefPtr<WebCore::AudioVideoRenderer> createRenderer(UniqueRef<WebCore::SharedTimebase>&&);
     RefPtr<WebCore::AudioVideoRenderer> rendererFor(RemoteAudioVideoRendererIdentifier) const;
     RemoteAudioVideoRendererState stateFor(RemoteAudioVideoRendererIdentifier) const;
-    RendererContext& LEGACY_NODELETE contextFor(RemoteAudioVideoRendererIdentifier);
+    NODELETE RendererContext& contextFor(RemoteAudioVideoRendererIdentifier);
     void rendereringModeChanged(RemoteAudioVideoRendererIdentifier);
     void updateCachedVideoMetrics(RemoteAudioVideoRendererIdentifier);
     void maybeUpdateCachedVideoMetrics(RemoteAudioVideoRendererIdentifier);
@@ -205,7 +209,7 @@ private:
 
 #if !RELEASE_LOG_DISABLED
     Logger& logger() { return m_logger; }
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
     ASCIILiteral logClassName() const { return "RemoteAudioVideoRendererProxyManager"; }
     uint64_t logIdentifier() const { return m_logIdentifier; }
 #endif

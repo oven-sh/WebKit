@@ -44,9 +44,9 @@ namespace Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Box::BoxRareData);
 
-Box::Box(Style::ComputedStyle&& style, EnumSet<BaseTypeFlag> baseTypeFlags)
-    : m_nodeType(baseTypeFlags.contains(InlineTextBoxFlag) ? NodeType::Text : NodeType::GenericElement)
-    , m_isAnonymous(baseTypeFlags.contains(InlineTextBoxFlag))
+Box::Box(Style::ComputedStyle&& style, ElementAttributes elementAttributes, EnumSet<BaseTypeFlag> baseTypeFlags)
+    : m_nodeType(elementAttributes.nodeType)
+    , m_isAnonymous(elementAttributes.isAnonymous == IsAnonymous::Yes)
     , m_baseTypeFlags(baseTypeFlags.toRaw())
     , m_style(WTF::move(style))
 {
@@ -58,19 +58,8 @@ Box::~Box()
         removeBoxRareData();
 }
 
-void Box::setElementAttributes(ElementAttributes elementAttributes)
-{
-    m_nodeType = elementAttributes.nodeType;
-    m_isAnonymous = elementAttributes.isAnonymous == IsAnonymous::Yes;
-}
-
 void Box::clearFormattingContextData()
 {
-    if (auto* elementBox = dynamicDowncast<ElementBox>(*this)) {
-        elementBox->m_replacedData = nullptr;
-        elementBox->m_baselineForIntegration = { };
-    }
-
     if (hasBoxRareData())
         removeBoxRareData();
     m_isAnonymousTextIndentCandidateForIntegration = false;
@@ -78,14 +67,6 @@ void Box::clearFormattingContextData()
     m_primaryLayoutState = nullptr;
 #endif
     m_cachedGeometryForPrimaryLayoutState = nullptr;
-}
-
-void Box::setFirstLineStyle(std::unique_ptr<Style::ComputedStyle>&& newFirstLineStyle)
-{
-    if (newFirstLineStyle)
-        ensureBoxRareData().firstLineStyle = WTF::move(newFirstLineStyle);
-    else if (hasBoxRareData())
-        boxRareData().firstLineStyle = { };
 }
 
 bool Box::establishesFormattingContext() const
@@ -233,7 +214,7 @@ bool Box::isInlineTableBox() const
     return m_style.display() == Style::DisplayType::InlineTable;
 }
 
-static bool LEGACY_NODELETE isInsideTable(const Box& box)
+NODELETE static bool isInsideTable(const Box& box)
 {
     auto& parent = box.parent();
     return parent.isTableBox() || parent.isTableWrapperBox() || parent.style().display().isInternalTableBox();
@@ -620,10 +601,13 @@ const ElementBox& containingBlock(const Box& layoutBox)
     return layoutBox.parent();
 }
 
-const Style::ComputedStyle& Box::firstLineStyleForText() const
+const Style::ComputedStyle& Box::firstLineStyleSlowCase() const
 {
-    ASSERT(isInlineTextBox());
-    SUPPRESS_UNCHECKED_LOCAL auto* parent = RenderObject::fromLayoutBox(*this).parent();
+    ASSERT(!isInitialContainingBlock());
+    SUPPRESS_UNCHECKED_LOCAL auto& renderer = RenderObject::fromLayoutBox(*this);
+    if (!isInlineTextBox())
+        return uncheckedDowncast<RenderElement>(renderer).firstLineStyle();
+    SUPPRESS_UNCHECKED_LOCAL auto* parent = renderer.parent();
     ASSERT(parent);
     auto& parentFirstLineStyle = parent->firstLineStyle();
     return &parentFirstLineStyle == &parent->style() ? m_style : parentFirstLineStyle;

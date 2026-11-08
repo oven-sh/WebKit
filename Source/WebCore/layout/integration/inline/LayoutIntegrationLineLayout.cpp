@@ -189,7 +189,7 @@ static bool shouldInvalidateLineLayoutAfterChangeFor(const RenderBlockFlow& root
     }
 }
 
-static const InlineDisplay::Line& LEGACY_NODELETE lastLineWithInflowContent(const InlineDisplay::Lines& lines)
+NODELETE static const InlineDisplay::Line& lastLineWithInflowContent(const InlineDisplay::Lines& lines)
 {
     // Out-of-flow/float content only don't produce lines with inline content. They should not be taken into
     // account when computing content box height/baselines.
@@ -201,6 +201,17 @@ static const InlineDisplay::Line& LEGACY_NODELETE lastLineWithInflowContent(cons
     return lines.first();
 }
 
+// Either the first anonymous block box child or a simple anonymous block container (e.g. a flex item).
+static bool isAnonymousTextIndentCandidate(const RenderBlockFlow& root)
+{
+    if (!root.isAnonymousBlock())
+        return false;
+    if (root.isBlockBox())
+        return !root.parent() || root.parent()->firstChild() == &root;
+    // E.g. flex and grid items are not block boxes (they are block containers though).
+    return root.isBlockContainer();
+}
+
 LineLayout::LineLayout(RenderBlockFlow& flow)
     : m_rootLayoutBox(&flow.layoutBox())
     , m_document(flow.document())
@@ -208,7 +219,7 @@ LineLayout::LineLayout(RenderBlockFlow& flow)
     , m_boxGeometryUpdater(flow.view().layoutState(), rootLayoutBox())
 {
     rootLayoutBox().setIsInlineIntegrationRoot(true);
-    BoxTreeUpdater { flow }.build();
+    rootLayoutBox().setIsAnonymousTextIndentCandidateForIntegration(isAnonymousTextIndentCandidate(flow));
 }
 
 LineLayout::~LineLayout()
@@ -246,11 +257,12 @@ LineLayout::~LineLayout()
     m_lineDamage = { };
 
     BoxTreeUpdater { rootRenderer }.tearDown();
+    rootLayoutBox().setIsAnonymousTextIndentCandidateForIntegration(false);
     rootLayoutBox().setIsInlineIntegrationRoot(false);
     m_rootLayoutBox = nullptr;
 }
 
-static inline bool LEGACY_NODELETE isContentRenderer(const RenderObject& renderer)
+NODELETE static inline bool isContentRenderer(const RenderObject& renderer)
 {
     // FIXME: These fake renderers have their parent set but are not actually in the tree.
     return !renderer.isRenderReplica() && !renderer.isRenderScrollbarPart();
@@ -354,23 +366,25 @@ void LineLayout::updateFormattingContextGeometries(LayoutUnit availableLogicalWi
     m_boxGeometryUpdater.setFormattingContextContentGeometry(m_inlineContentConstraints->horizontal().logicalWidth, { });
 }
 
-void LineLayout::updateStyle(const RenderElement& renderer)
-{
-    BoxTreeUpdater::updateStyle(renderer);
-}
-
 bool LineLayout::rootStyleWillChange(const RenderBlockFlow& root, const Style::ComputedStyle& newStyle)
 {
-    if (!m_inlineContent)
-        return false;
+    if (!m_inlineContent) {
+        // Inline items built for intrinsic sizing are measured with the old style.
+        if (Layout::InlineInvalidation::rootStyleChangeInvalidatesInlineItemsWithoutLines(m_lineDamage.get(), inlineItemsForInvalidation(), root.layoutBox(), newStyle))
+            Layout::InlineInvalidation::inlineItemListWillChange(ensureLineDamage());
+        return true;
+    }
 
     return Layout::InlineInvalidation { ensureLineDamage(), inlineItemsForInvalidation(), m_inlineContent->displayContent() }.rootStyleWillChange(root.layoutBox(), newStyle);
 }
 
 bool LineLayout::styleWillChange(const RenderElement& renderer, const Style::ComputedStyle& newStyle, Style::Difference diff)
 {
-    if (!m_inlineContent)
-        return false;
+    if (!m_inlineContent) {
+        if (Layout::InlineInvalidation::styleChangeInvalidatesInlineItemsWithoutLines(m_lineDamage.get(), inlineItemsForInvalidation(), renderer.layoutBox(), newStyle))
+            Layout::InlineInvalidation::inlineItemListWillChange(ensureLineDamage());
+        return true;
+    }
 
     return Layout::InlineInvalidation { ensureLineDamage(), inlineItemsForInvalidation(), m_inlineContent->displayContent() }.styleWillChange(renderer.layoutBox(), newStyle, diff);
 }
@@ -440,7 +454,7 @@ void LineLayout::resetIntrinsicWidthConstraints()
     ensureInlineContentCache().resetMinimumMaximumContentSizes();
 }
 
-static inline std::optional<Layout::BlockLayoutState::LineClamp> LEGACY_NODELETE lineClamp(const RenderBlockFlow& rootRenderer)
+NODELETE static inline std::optional<Layout::BlockLayoutState::LineClamp> lineClamp(const RenderBlockFlow& rootRenderer)
 {
     auto& layoutState = *rootRenderer.view().frameView().layoutContext().layoutState();
     if (auto legacyLineClamp = layoutState.legacyLineClamp())
@@ -450,7 +464,7 @@ static inline std::optional<Layout::BlockLayoutState::LineClamp> LEGACY_NODELETE
     return { };
 }
 
-static inline Layout::BlockLayoutState::TextBoxTrim LEGACY_NODELETE textBoxTrim(const RenderBlockFlow& rootRenderer)
+NODELETE static inline Layout::BlockLayoutState::TextBoxTrim textBoxTrim(const RenderBlockFlow& rootRenderer)
 {
     auto textBoxTrim = rootRenderer.view().frameView().layoutContext().textBoxTrim();
     if (!textBoxTrim)
@@ -1454,7 +1468,7 @@ Vector<FloatRect> LineLayout::collectInlineBoxRects(const RenderBoxModelObject& 
     return result;
 }
 
-static LayoutPoint LEGACY_NODELETE flippedContentOffsetIfNeeded(const RenderBlockFlow& root, const RenderBox& childRenderer, LayoutPoint contentOffset)
+NODELETE static LayoutPoint flippedContentOffsetIfNeeded(const RenderBlockFlow& root, const RenderBox& childRenderer, LayoutPoint contentOffset)
 {
     if (root.writingMode().isBlockFlipped())
         return root.flipForWritingModeForChild(childRenderer, contentOffset);
@@ -1535,7 +1549,7 @@ void LineLayout::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset, con
     InlineContentPainter { paintInfo, paintOffset, layerRenderer, *m_inlineContent, flow() }.paint();
 }
 
-static FloatRect LEGACY_NODELETE visibleLineRectIncludingEllipsis(const InlineDisplay::Content& displayContent, size_t lineIndex)
+NODELETE static FloatRect visibleLineRectIncludingEllipsis(const InlineDisplay::Content& displayContent, size_t lineIndex)
 {
     auto& line = displayContent.lines[lineIndex];
     if (line.isFullyTruncatedInBlockDirection())
@@ -1695,7 +1709,6 @@ bool LineLayout::insertedIntoTree(RenderObject& child)
         return false;
     }
 
-    BoxTreeUpdater { flow() }.insert(child);
     CheckedRef childLayoutBox = child.layoutBox();
     if (flow().isRenderSVGText()) {
         // SVG text is always fully laid out.
@@ -1791,7 +1804,11 @@ bool LineLayout::updateTextContent(RenderText& textRenderer, std::optional<size_
         return false;
     }
 
+    auto wasCombined = textRenderer.layoutBox().isCombined();
     textRenderer.updateLayoutBoxContent();
+    // Combined text is a single inline item.
+    if (wasCombined != textRenderer.layoutBox().isCombined())
+        return false;
 
     if (flow().isRenderSVGText()) {
         // SVG text is always fully laid out.

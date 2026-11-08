@@ -983,8 +983,7 @@ AXTextMarkerRange AccessibilityObject::textMarkerRange() const
 
 Vector<BoundaryPoint> AccessibilityObject::previousLineStartBoundaryPoints(const VisiblePosition& startingPosition, const SimpleRange& targetRange, unsigned positionsToRetrieve) const
 {
-    Vector<BoundaryPoint> boundaryPoints;
-    boundaryPoints.reserveInitialCapacity(positionsToRetrieve);
+    Vector<BoundaryPoint> boundaryPoints(ReserveCapacityTag { }, positionsToRetrieve);
 
     std::optional<VisiblePosition> lastPosition = startingPosition;
     for (unsigned i = 0; i < positionsToRetrieve; i++) {
@@ -1029,14 +1028,14 @@ std::optional<BoundaryPoint> AccessibilityObject::lastBoundaryPointContainedInRe
     return lastBoundaryPointContainedInRect(boundaryPoints, startBoundary, rect, midIndex + 1, rightIndex, isFlippedWritingMode);
 }
 
-static IntPoint LEGACY_NODELETE textStartPoint(const IntRect& rect, bool isFlippedWritingMode)
+NODELETE static IntPoint textStartPoint(const IntRect& rect, bool isFlippedWritingMode)
 {
     if (!isFlippedWritingMode)
         return rect.minXMinYCorner();
     return rect.maxXMinYCorner();
 }
 
-static IntPoint LEGACY_NODELETE textEndPoint(const IntRect& rect, bool isFlippedWritingMode)
+NODELETE static IntPoint textEndPoint(const IntRect& rect, bool isFlippedWritingMode)
 {
     if (!isFlippedWritingMode)
         return rect.maxXMaxYCorner();
@@ -1302,11 +1301,9 @@ static SimpleRange rangeFromTextOperationRange(const TextOperationRange& textOpe
 
 Vector<String> AccessibilityObject::performTextOperation(const AccessibilityTextOperation& operation)
 {
-    Vector<TextOperationRange> textOperationRanges;
-    textOperationRanges.reserveInitialCapacity(operation.textRanges.size());
+    Vector<TextOperationRange> textOperationRanges(ReserveCapacityTag { }, operation.textRanges.size());
 
-    Vector<String> result;
-    result.reserveInitialCapacity(operation.textRanges.size());
+    Vector<String> result(ReserveCapacityTag { }, operation.textRanges.size());
 
     if (operation.textRanges.isEmpty())
         return result;
@@ -2220,7 +2217,7 @@ ModelPlayerAccessibilityChildren AccessibilityObject::modelElementChildren()
 #endif
 
 // Finds a RenderListItem parent given a node.
-static RenderListItem* LEGACY_NODELETE renderListItemContainer(Node* node)
+NODELETE static RenderListItem* renderListItemContainer(Node* node)
 {
     for (; node; node = node->parentNode()) {
         if (auto* listItem = dynamicDowncast<RenderListItem>(node->renderer()))
@@ -2971,7 +2968,7 @@ static CheckedPtr<RenderObject> nearestRendererFromNode(Node& node)
     return renderer;
 }
 
-static int LEGACY_NODELETE zIndexFromRenderer(RenderObject* renderer)
+NODELETE static int zIndexFromRenderer(RenderObject* renderer)
 {
     for (auto* layer = renderer->enclosingLayer(); layer; layer = layer->parent()) {
         if (int zIndex = layer->zIndex())
@@ -3101,13 +3098,12 @@ bool AccessibilityObject::replaceTextInRange(const String& replacementString, co
         return true;
     }
 
-    if (RefPtr input = dynamicDowncast<HTMLInputElement>(element)) {
-        input->setRangeText(replacementString, range.location, range.length, emptyString());
-        return true;
-    }
-    if (RefPtr textarea = dynamicDowncast<HTMLTextAreaElement>(element)) {
-        textarea->setRangeText(replacementString, range.location, range.length, emptyString());
-        return true;
+    // On Cocoa, text that AX clients insert in password fields reaches this code path, since password fields don't use input methods.
+    if (RefPtr textControl = dynamicDowncast<HTMLTextFormControlElement>(element)) {
+        // setRangeText() takes the end of the range, not its length. It clamps both to the length of the value.
+        unsigned start = clampTo<unsigned>(range.location);
+        unsigned end = clampTo<unsigned>(range.location + std::min(range.length, std::numeric_limits<uint64_t>::max() - range.location));
+        return !textControl->setRangeText(replacementString, start, end, emptyString()).hasException();
     }
 
     return false;
@@ -3494,7 +3490,12 @@ const Style::ComputedStyle* AccessibilityObject::style() const
             // set yet, or it was destroyed as part of an in-progress render-tree update) will cause a
             // crash because RenderTexts get their style from their parent.
             // Non-inherited properties like the background color come from the parent.
-            return renderText->parent() ? &renderText->parent()->style() : nullptr;
+            if (!renderText->parent())
+                return nullptr;
+            // Text in a display: contents element has inherited properties of its own and no parent box of its own.
+            if (renderText->inheritsStyleFromDisplayContentsParent())
+                return &renderText->style();
+            return &renderText->parent()->style();
         }
         return &renderer->style();
     }
@@ -4109,7 +4110,7 @@ HashMap<String, AXEditingStyleValueVariant> AccessibilityObject::resolvedEditing
 // Note that the return value represents the ideal new scroll offset.
 // This may be out of range - the calling function should clip this
 // to the available range.
-static int LEGACY_NODELETE computeBestScrollOffset(int currentScrollOffset, int subfocusMin, int subfocusMax, int objectMin, int objectMax, int viewportMin, int viewportMax)
+NODELETE static int computeBestScrollOffset(int currentScrollOffset, int subfocusMin, int subfocusMax, int objectMin, int objectMax, int viewportMin, int viewportMax)
 {
     int viewportSize = viewportMax - viewportMin;
 

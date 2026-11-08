@@ -119,10 +119,8 @@ UIProcess/ViewGestureController.cpp
 UIProcess/ViewSnapshotStore.cpp
 UIProcess/WebGrammarDetail.cpp
 UIProcess/WebMemoryPressureHandler.cpp
-UIProcess/WebViewportAttributes.cpp
 
 UIProcess/API/C/WKGrammarDetail.cpp
-UIProcess/API/C/WKViewportAttributes.cpp
 
 UIProcess/API/C/glib/WKContextConfigurationGlib.cpp
 UIProcess/API/C/glib/WKTextCheckerGLib.cpp
@@ -336,7 +334,6 @@ UIProcess/XR/openxr/OpenXRSwapchain.cpp
 UIProcess/XR/openxr/PlatformXROpenXR.cpp
 UIProcess/XR/openxr/PlatformXRSystemOpenXR.cpp
 
-WebProcess/Extensions/API/glib/WebExtensionAPIEventGLib.cpp
 WebProcess/Extensions/API/glib/WebExtensionAPIPortGLib.cpp
 WebProcess/Extensions/API/glib/WebExtensionAPITestGLib.cpp
 

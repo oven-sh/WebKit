@@ -114,7 +114,7 @@ public:
     WebCore::PageIdentifier webPageID() const { return m_webPageID; }
     WebFrameProxy* mainFrame() const { return m_mainFrame.get(); }
     BrowsingContextGroup& browsingContextGroup() const { return m_browsingContextGroup.get(); }
-    WebProcessProxy& LEGACY_NODELETE process() const;
+    NODELETE WebProcessProxy& process() const;
     ProcessSwapRequestedByClient processSwapRequestedByClient() const { return m_processSwapRequestedByClient; }
     WebCore::NavigationIdentifier navigationID() const { return m_navigationID; }
     const URL& provisionalURL() const LIFETIME_BOUND { return m_provisionalLoadURL; }
@@ -123,6 +123,7 @@ public:
     bool isProcessSwappingOnNavigationResponse() const { return m_isProcessSwappingOnNavigationResponse; }
     bool didFailProvisionalLoad() const { return m_didFailProvisionalLoad; }
     const std::optional<WebCore::Site>& deferredRemoteTransitionSite() const { return m_deferredRemoteTransitionSite; }
+    FrameProcess* previousMainFrameProcess() const;
     bool hasActiveLoadForNavigation(const API::Navigation&) const;
 
     void setDeferredTopDocumentSyncData(Ref<WebCore::DocumentSyncData>&&);
@@ -132,7 +133,7 @@ public:
     DrawingAreaProxy* drawingArea() const { return m_drawingArea.get(); }
     RefPtr<DrawingAreaProxy> takeDrawingArea();
 
-    void LEGACY_NODELETE setNavigation(API::Navigation&);
+    NODELETE void setNavigation(API::Navigation&);
 
 #if PLATFORM(COCOA)
     Vector<uint8_t> takeAccessibilityToken() { return WTF::move(m_accessibilityToken); }
@@ -220,7 +221,7 @@ private:
 #endif
 
     void initializeWebPage(RefPtr<API::WebsitePolicies>&&, bool isRestoringFromBFCache = false);
-    bool LEGACY_NODELETE validateInput(WebCore::FrameIdentifier, const std::optional<WebCore::NavigationIdentifier>& = std::nullopt);
+    NODELETE bool validateInput(WebCore::FrameIdentifier, const std::optional<WebCore::NavigationIdentifier>& = std::nullopt);
 
     WeakPtr<WebPageProxy> m_page;
     WebCore::PageIdentifier m_webPageID;
@@ -246,6 +247,7 @@ private:
     bool m_shouldClosePage { true };
     bool m_didFailProvisionalLoad { false };
     std::optional<WebCore::Site> m_deferredRemoteTransitionSite;
+    RefPtr<FrameProcess> m_previousMainFrameProcess;
     RefPtr<WebCore::DocumentSyncData> m_deferredTopDocumentSyncData;
     URL m_provisionalLoadURL;
     WebPageProxyMessageReceiverRegistration m_messageReceiverRegistration;

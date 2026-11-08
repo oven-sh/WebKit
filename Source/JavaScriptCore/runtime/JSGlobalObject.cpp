@@ -215,6 +215,7 @@
 #include "JSWebAssemblyModule.h"
 #include "JSWebAssemblyRuntimeError.h"
 #include "JSWebAssemblyStruct.h"
+#include "JSWebAssemblySuspendingWrapper.h"
 #include "JSWebAssemblyTable.h"
 #include "JSWebAssemblyTag.h"
 #include "JSWithScope.h"
@@ -1650,7 +1651,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_iteratorConstructor.set(vm, this, iteratorConstructor);
     putDirectWithoutTransition(vm, vm.propertyNames->Iterator, iteratorConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-    if (Options::useSharedArrayBuffer())
+    if (Options::alwaysUseSharedArrayBuffer())
         putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     if (Options::useExplicitResourceManagement()) {
@@ -2667,7 +2668,7 @@ void JSGlobalObject::notifyArrayBufferDetachingSlow()
     m_arrayBufferDetachWatchpointSet->fireAll(vm(), "ArrayBuffer detached");
 }
 
-static inline JSObject* LEGACY_NODELETE lastInPrototypeChain(JSObject* object)
+NODELETE static inline JSObject* lastInPrototypeChain(JSObject* object)
 {
     JSObject* o = object;
     while (o->getPrototypeDirect().isObject())
@@ -2752,7 +2753,7 @@ public:
     ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, JSGlobalObject*);
     ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, UncheckedKeyHashSet<JSGlobalObject*>&);
 
-    bool LEGACY_NODELETE needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
+    NODELETE bool needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
     IterationStatus operator()(HeapCell*, HeapCell::Kind) const;
 
 private:
@@ -2778,12 +2779,12 @@ ObjectsWithBrokenIndexingFinder<BadTimeFinderMode::MultipleGlobals>::ObjectsWith
 {
 }
 
-inline bool LEGACY_NODELETE hasBrokenIndexing(IndexingType type)
+NODELETE inline bool hasBrokenIndexing(IndexingType type)
 {
     return type && !hasSlowPutArrayStorage(type);
 }
 
-inline bool LEGACY_NODELETE hasBrokenIndexing(JSObject* object)
+NODELETE inline bool hasBrokenIndexing(JSObject* object)
 {
     IndexingType type = object->indexingType();
     return hasBrokenIndexing(type);
@@ -4025,7 +4026,7 @@ void JSGlobalObject::tryInstallPropertyDescriptorFastPathWatchpoint()
         installObjectAdaptiveStructureWatchpoint(condition, m_propertyDescriptorFastPathWatchpointSet);
 }
 
-void LEGACY_NODELETE slowValidateCell(JSGlobalObject* globalObject)
+NODELETE void slowValidateCell(JSGlobalObject* globalObject)
 {
     RELEASE_ASSERT(globalObject->isGlobalObject());
     ASSERT_GC_OBJECT_INHERITS(globalObject, JSGlobalObject::info());
@@ -4281,8 +4282,10 @@ void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
 
 void JSGlobalObject::exposeSharedArrayBuffer()
 {
-    if (!Options::allowSharedArrayBuffer() || Options::useSharedArrayBuffer())
+    if (!Options::allowSharedArrayBuffer())
         return;
+    if (Options::alwaysUseSharedArrayBuffer())
+        return; // Nothing to do because JSGlobalObject::init() already exposed it.
     VM& vm = this->vm();
     putDirect(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 }

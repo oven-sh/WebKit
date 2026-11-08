@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
 #include "AcceleratedAnimations.h"
 #include "BoxExtents.h"
 #include "Color.h"
@@ -111,10 +111,24 @@ public:
     void addDamage(Damage&&);
 #endif
 
+    void damageWholeLayer()
+    {
+#if ENABLE(DAMAGE_TRACKING)
+        if (!damagePropagationEnabled() || m_rect.isEmpty())
+            return;
+
+        if (!m_layerDamage)
+            m_layerDamage = Damage(m_rect.size(), Damage::Mode::Full);
+        else
+            m_layerDamage->makeFull();
+#endif
+    }
+
     void setUseBackingStore(bool, CoordinatedAnimatedBackingStoreClient* = nullptr);
     void updateBackingStore(CoordinatedBackingStoreProxy::Update&&, float);
     bool hasPendingBackingStoreTileUpdates() const;
     void processPendingTileUpdates();
+    bool processPendingTileUpdatesIncludingPreRendered(const Function<bool()>& shouldStopProcessingTiles);
     void setImageBackingStore(CoordinatedImageBackingStore*);
     void setContentsBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&&);
     std::unique_ptr<CoordinatedPlatformLayerBuffer> takeContentsBuffer();
@@ -285,19 +299,6 @@ private:
     enum class IncludesFilterOutsets : bool { No, Yes };
     void computeOverlapRegions(ComputeOverlapRegionData&, const TransformationMatrix& accumulatedReplicaTransform, IncludesReplica = IncludesReplica::Yes, IncludesFilterOutsets = IncludesFilterOutsets::Yes);
 
-    void damageWholeLayer()
-    {
-#if ENABLE(DAMAGE_TRACKING)
-        if (!damagePropagationEnabled() || m_rect.isEmpty())
-            return;
-
-        if (!m_layerDamage)
-            m_layerDamage = Damage(m_rect.size(), Damage::Mode::Full);
-        else
-            m_layerDamage->makeFull();
-#endif
-    }
-
     void groupPropertyChanged()
     {
 #if ENABLE(DAMAGE_TRACKING)
@@ -413,4 +414,4 @@ private:
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)

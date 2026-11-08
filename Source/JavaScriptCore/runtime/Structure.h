@@ -246,7 +246,7 @@ protected:
 private:
     inline void finishCreation(VM&, CreatingEarlyCellTag); // Defined in StructureInlines.h
 
-    void LEGACY_NODELETE validateFlags();
+    NODELETE void validateFlags();
 
 public:
     StructureID id() const { return StructureID::encode(this); }
@@ -710,10 +710,10 @@ public:
     void setContainsReadOnlyProperties() { setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true); }
     
     void setCachedPropertyNameEnumerator(VM&, JSPropertyNameEnumerator*, StructureChain*);
-    JSPropertyNameEnumerator* LEGACY_NODELETE cachedPropertyNameEnumerator() const;
-    uintptr_t LEGACY_NODELETE cachedPropertyNameEnumeratorAndFlag() const;
-    bool LEGACY_NODELETE canCachePropertyNameEnumerator(VM&) const;
-    bool LEGACY_NODELETE canAccessPropertiesQuicklyForEnumeration() const;
+    NODELETE JSPropertyNameEnumerator* cachedPropertyNameEnumerator() const;
+    NODELETE uintptr_t cachedPropertyNameEnumeratorAndFlag() const;
+    NODELETE bool canCachePropertyNameEnumerator(VM&) const;
+    NODELETE bool canAccessPropertiesQuicklyForEnumeration() const;
 
     inline JSCellButterfly* cachedPropertyNames(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
     inline JSCellButterfly* cachedPropertyNamesIgnoringSentinel(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
@@ -849,7 +849,7 @@ public:
         
     inline void addTransitionWatchpoint(Watchpoint* watchpoint) const; // Defined in StructureInlinesLight.h
     
-    void LEGACY_NODELETE didTransitionFromThisStructureWithoutFiringWatchpoint() const;
+    NODELETE void didTransitionFromThisStructureWithoutFiringWatchpoint() const;
     void fireStructureTransitionWatchpoint(DeferredStructureTransitionWatchpointFire*) const;
 
     InlineWatchpointSet& transitionWatchpointSet() const
@@ -1122,7 +1122,7 @@ private:
 
     inline void clearCachedPrototypeChain(); // Defined in StructureInlines.h
 
-    bool LEGACY_NODELETE holesMustForwardToPrototypeSlow(JSObject*) const;
+    NODELETE bool holesMustForwardToPrototypeSlow(JSObject*) const;
 
     JS_EXPORT_PRIVATE bool isListedImmutableProperty(UniquedStringImpl*) const;
     JS_EXPORT_PRIVATE bool refusesWriteToListedProperty(UniquedStringImpl*) const;

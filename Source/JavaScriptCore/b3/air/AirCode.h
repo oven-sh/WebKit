@@ -130,7 +130,7 @@ public:
     void setOptLevel(unsigned optLevel) { m_optLevel = optLevel; }
     unsigned optLevel() const { return m_optLevel; }
     
-    bool LEGACY_NODELETE needsUsedRegisters() const;
+    NODELETE bool needsUsedRegisters() const;
 
     JS_EXPORT_PRIVATE BasicBlock* addBlock(double frequency = 1);
 
@@ -212,9 +212,9 @@ public:
     unsigned numEntrypoints() const { return m_entrypoints.size(); }
     const Vector<FrequentedBlock>& entrypoints() const LIFETIME_BOUND { return m_entrypoints; }
     const FrequentedBlock& entrypoint(unsigned index) const { return m_entrypoints[index]; }
-    bool LEGACY_NODELETE isEntrypoint(BasicBlock*) const;
+    NODELETE bool isEntrypoint(BasicBlock*) const;
     // Note: It is only valid to call this function after LowerEntrySwitch.
-    std::optional<unsigned> LEGACY_NODELETE entrypointIndex(BasicBlock*) const;
+    NODELETE std::optional<unsigned> entrypointIndex(BasicBlock*) const;
 
     // Note: We allow this to be called even before we set m_entrypoints just for convenience to users of this API.
     // However, if you call this before setNumEntrypoints, setNumEntrypoints will overwrite this value.
@@ -284,7 +284,7 @@ public:
     JS_EXPORT_PRIVATE void adoptBlockOrder(const Vector<BasicBlock*>&);
 
     // Finds the smallest index' such that at(index') != null and index' >= index.
-    unsigned LEGACY_NODELETE findFirstBlockIndex(unsigned index) const
+    NODELETE unsigned findFirstBlockIndex(unsigned index) const
     {
         while (index < size() && !at(index))
             index++;
@@ -292,9 +292,9 @@ public:
     }
 
     // Finds the smallest index' such that at(index') != null and index' > index.
-    unsigned LEGACY_NODELETE findNextBlockIndex(unsigned index) const;
+    NODELETE unsigned findNextBlockIndex(unsigned index) const;
 
-    BasicBlock* LEGACY_NODELETE findNextBlock(BasicBlock*) const;
+    NODELETE BasicBlock* findNextBlock(BasicBlock*) const;
 
     class iterator {
     public:
@@ -391,7 +391,7 @@ public:
     bool shouldPreserveB3Origins() const { return m_preserveB3Origins; }
     void forcePreservationOfB3Origins() { m_preserveB3Origins = true; }
 
-    bool LEGACY_NODELETE usesSIMD() const;
+    NODELETE bool usesSIMD() const;
 
     void setDisassembler(std::unique_ptr<Disassembler>&& disassembler)
     {

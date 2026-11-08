@@ -1638,6 +1638,11 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [_keyboardDismissalGestureRecognizer setDelegate:nil];
     [self removeGestureRecognizer:_keyboardDismissalGestureRecognizer.get()];
 
+#if ENABLE(GAMEPAD)
+    [_gamepadInteractionGestureRecognizer setDelegate:nil];
+    [self removeGestureRecognizer:_gamepadInteractionGestureRecognizer];
+#endif
+
     [_singleTapGestureRecognizer setDelegate:nil];
     [_singleTapGestureRecognizer setGestureIdentifiedTarget:nil action:nil];
     [_singleTapGestureRecognizer setResetTarget:nil action:nil];
@@ -1792,6 +1797,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [self removeGestureRecognizer:_touchActionUpSwipeGestureRecognizer.get()];
     [self removeGestureRecognizer:_touchActionDownSwipeGestureRecognizer.get()];
     [self removeGestureRecognizer:_keyboardDismissalGestureRecognizer.get()];
+#if ENABLE(GAMEPAD)
+    [self removeGestureRecognizer:_gamepadInteractionGestureRecognizer];
+#endif
 }
 
 - (void)_addDefaultGestureRecognizers
@@ -3694,7 +3702,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (![self ensurePositionInformationIsUpToDate:request])
         return NO;
 
-    if ((gesture == WKBEGestureTypeLoupe || gesture == WKBEGestureTypeOneFingerDoubleTap) && _positionInformation.selectability == WebKit::InteractionInformationAtPosition::Selectability::UnselectableDueToUserSelectNoneOrQuirk)
+    if ((gesture == WKBEGestureTypeLoupe || gesture == WKBEGestureTypeOneFingerDoubleTap || gesture == WKBEGestureTypeDoubleTapAndHold) && _positionInformation.selectability == WebKit::InteractionInformationAtPosition::Selectability::UnselectableDueToUserSelectNoneOrQuirk)
         return NO;
 
     if (_positionInformation.preventTextInteraction)
@@ -4069,6 +4077,7 @@ static void cancelPotentialTapIfNecessary(WKContentView* contentView)
         _textInteractionWrapper = adoptNS([[WKTextInteractionWrapper alloc] initWithView:self]);
     else {
         // Reset the gesture recognizers in case editability has changed.
+        SetForScope isResettingGestureRecognizersScope { _isResettingTextInteractionGestureRecognizers, YES };
         [protect(_textInteractionWrapper) setGestureRecognizers];
     }
 
@@ -5773,6 +5782,13 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
 
 - (void)selectPositionAtPoint:(CGPoint)point completionHandler:(void (^)(void))completionHandler
 {
+    if (_isResettingTextInteractionGestureRecognizers) {
+        RELEASE_LOG(TextInteraction, "Ignoring request to select position at (%.0f, %.0f) while resetting text interaction gesture recognizers.", point.x, point.y);
+        if (completionHandler)
+            completionHandler();
+        return;
+    }
+
     _autocorrectionContextNeedsUpdate = YES;
     [self _selectPositionAtPoint:point stayingWithinFocusedElement:self._hasFocusedElement completionHandler:completionHandler];
 }
@@ -6697,8 +6713,7 @@ static Vector<WebCore::CompositionHighlight> compositionHighlights(NSAttributedS
 
     std::ranges::sort(highlights);
 
-    Vector<WebCore::CompositionHighlight> mergedHighlights;
-    mergedHighlights.reserveInitialCapacity(highlights.size());
+    Vector<WebCore::CompositionHighlight> mergedHighlights(ReserveCapacityTag { }, highlights.size());
     for (auto& highlight : highlights) {
         if (mergedHighlights.isEmpty() || mergedHighlights.last().backgroundColor != highlight.backgroundColor || mergedHighlights.last().foregroundColor != highlight.foregroundColor)
             mergedHighlights.append(highlight);
@@ -11685,25 +11700,26 @@ static Vector<WebCore::IntSize> sizesOfPlaceholderElementsToInsertWhenDroppingIt
         WebCore::TransformationMatrix transform;
         transform.translate3d(inputPoint.x, inputPoint.y, 0);
         _stageModeSession->transform = transform;
-        _page->stageModeSessionDidUpdate(_stageModeSession->nodeID, _stageModeSession->transform);
+        _page->stageModeSessionDidUpdate(_stageModeSession->frameID, _stageModeSession->nodeID, _stageModeSession->transform);
     }
 }
 
 - (void)modelInteractionPanGestureDidEnd
 {
     if (_stageModeSession && !_stageModeSession->isPreparingForInteraction)
-        _page->stageModeSessionDidEnd(_stageModeSession->nodeID);
+        _page->stageModeSessionDidEnd(_stageModeSession->frameID, _stageModeSession->nodeID);
 
     [self cleanUpStageModeSessionState];
 }
 
-- (void)didReceiveInteractiveModelElement:(std::optional<WebCore::NodeIdentifier>)nodeID
+- (void)didReceiveInteractiveModelElement:(std::optional<WebCore::NodeIdentifier>)nodeID frameID:(std::optional<WebCore::FrameIdentifier>)frameID
 {
     if (!_stageModeSession || !_stageModeSession->isPreparingForInteraction)
         return;
 
     _stageModeSession->isPreparingForInteraction = !nodeID;
     _stageModeSession->nodeID = nodeID;
+    _stageModeSession->frameID = frameID;
 }
 
 - (void)cleanUpStageModeSessionState
@@ -12326,6 +12342,12 @@ static WebKit::DocumentEditingContextRequest toWebRequest(id request)
         RetainPtr strongSelf = weakSelf.get();
         if (!strongSelf)
             return;
+
+        if (RetainPtr webView = strongSelf->_webView.get()) {
+            auto status = update.hinge ? update.hinge.status : UIHingeStatusUnknown;
+            bool isOpen = status == UIHingeStatusPartiallyOpen || status == UIHingeStatusFullyOpen;
+            [webView _setCameraRotationAdjustment:(isOpen ? 90 : 0)];
+        }
 
         if (RefPtr page = strongSelf->_page) {
             bool isFolded = update.hinge.status == UIHingeStatusPartiallyOpen;

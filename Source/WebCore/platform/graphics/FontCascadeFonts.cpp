@@ -49,7 +49,7 @@ public:
         }
     }
 
-    GlyphData LEGACY_NODELETE glyphDataForCharacter(char32_t c) const
+    NODELETE GlyphData glyphDataForCharacter(char32_t c) const
     {
         unsigned index = GlyphPage::indexForCodePoint(c);
         return { m_glyphs[index], m_fonts[index].get() };
@@ -61,7 +61,7 @@ public:
     }
 
 private:
-    void LEGACY_NODELETE setGlyphDataForIndex(unsigned index, const GlyphData& glyphData)
+    NODELETE void setGlyphDataForIndex(unsigned index, const GlyphData& glyphData)
     {
         m_glyphs[index] = glyphData.glyph;
         m_fonts[index] = glyphData.font.get();
@@ -122,7 +122,7 @@ FontCascadeFonts::FontCascadeFonts(const FontPlatformData& platformData)
     , m_generation(FontCache::forCurrentThread().generation())
     , m_isForPlatformFont(true)
 {
-    m_realizedFallbackRanges.append(FontRanges(protect(FontCache::forCurrentThread())->fontForPlatformData(platformData)));
+    appendRealizedFallbackRanges(FontRanges(protect(FontCache::forCurrentThread())->fontForPlatformData(platformData)));
 }
 
 FontCascadeFonts::~FontCascadeFonts() = default;
@@ -140,6 +140,11 @@ void FontCascadeFonts::determinePitch(const FontCascadeDescription& description,
 void FontCascadeFonts::determineCanTakeFixedPitchFastContentMeasuring(const FontCascadeDescription& description, FontSelector* fontSelector)
 {
 #if PLATFORM(COCOA)
+    // Upright glyphs use their vertical advance, which differs from the space width that fixed pitch measuring uses for every character.
+    if (description.orientation() == FontOrientation::Vertical && description.nonCJKGlyphOrientation() == NonCJKGlyphOrientation::Upright) {
+        m_canTakeFixedPitchFastContentMeasuring = TriState::False;
+        return;
+    }
     auto& primaryRanges = realizeFallbackRangesAt(description, fontSelector, 0);
     unsigned numRanges = primaryRanges.size();
     if (numRanges == 1)
@@ -156,7 +161,7 @@ void FontCascadeFonts::determineCanTakeFixedPitchFastContentMeasuring(const Font
 bool FontCascadeFonts::isLoadingCustomFonts() const
 {
     for (auto& fontRanges : m_realizedFallbackRanges) {
-        if (fontRanges.isLoading())
+        if (fontRanges->isLoading())
             return true;
     }
     return false;
@@ -197,6 +202,12 @@ static FontRanges realizeNextFallback(const FontCascadeDescription& description,
     return { };
 }
 
+const FontRanges& FontCascadeFonts::appendRealizedFallbackRanges(FontRanges&& fontRanges)
+{
+    m_realizedFallbackRanges.append(makeUniqueRef<FontRanges>(WTF::move(fontRanges)));
+    return m_realizedFallbackRanges.last();
+}
+
 const FontRanges& FontCascadeFonts::realizeFallbackRangesAt(const FontCascadeDescription& description, FontSelector* fontSelector, unsigned index)
 {
     if (index < m_realizedFallbackRanges.size())
@@ -205,8 +216,8 @@ const FontRanges& FontCascadeFonts::realizeFallbackRangesAt(const FontCascadeDes
     ASSERT(index == m_realizedFallbackRanges.size());
     ASSERT(FontCache::forCurrentThread().generation() == m_generation);
 
-    m_realizedFallbackRanges.append(FontRanges());
-    auto& fontRanges = m_realizedFallbackRanges.last();
+    // Build the result in a local to avoid half-initialized entries in m_realizedFallbackRanges.
+    FontRanges fontRanges;
 
     if (!index) {
         fontRanges = realizeNextFallback(description, m_lastRealizedFallbackIndex, fontSelector);
@@ -214,7 +225,7 @@ const FontRanges& FontCascadeFonts::realizeFallbackRangesAt(const FontCascadeDes
             fontRanges = fontSelector->fontRangesForFamily(description, FontFamily { *familyNamesData->at(FamilyNamesIndex::StandardFamily), FontFamilyKind::Generic });
         if (fontRanges.isNull())
             fontRanges = FontRanges(protect(FontCache::forCurrentThread())->lastResortFallbackFont(description));
-        return fontRanges;
+        return appendRealizedFallbackRanges(WTF::move(fontRanges));
     }
 
     if (m_lastRealizedFallbackIndex < description.effectiveFamilyCount())
@@ -225,20 +236,20 @@ const FontRanges& FontCascadeFonts::realizeFallbackRangesAt(const FontCascadeDes
 
         unsigned fontSelectorFallbackIndex = m_lastRealizedFallbackIndex - description.effectiveFamilyCount();
         if (fontSelectorFallbackIndex == fontSelector->fallbackFontCount())
-            return fontRanges;
+            return appendRealizedFallbackRanges({ });
         ++m_lastRealizedFallbackIndex;
         fontRanges = FontRanges(fontSelector->fallbackFontAt(description, fontSelectorFallbackIndex));
     }
 
-    return fontRanges;
+    return appendRealizedFallbackRanges(WTF::move(fontRanges));
 }
 
-static inline bool LEGACY_NODELETE isInRange(char32_t character, char32_t lowerBound, char32_t upperBound)
+NODELETE static inline bool isInRange(char32_t character, char32_t lowerBound, char32_t upperBound)
 {
     return character >= lowerBound && character <= upperBound;
 }
 
-static bool LEGACY_NODELETE shouldIgnoreRotation(char32_t character)
+NODELETE static bool shouldIgnoreRotation(char32_t character)
 {
     if (character == 0x000A7 || character == 0x000A9 || character == 0x000AE)
         return true;
@@ -544,19 +555,29 @@ GlyphData FontCascadeFonts::glyphDataForCharacter(char32_t c, const FontCascadeD
         return glyphDataForVariant(c, description, fontSelector, variant, resolvedEmojiPolicy);
 
     const unsigned pageNumber = GlyphPage::pageNumberForCodePoint(c);
+    auto& cachedPages = m_cachedPages[resolvedEmojiPolicy];
 
-    auto& cacheEntry = m_cachedPages[resolvedEmojiPolicy].ensure(pageNumber, [&] {
-        // Initialize cache with a full page of glyph mappings from a single font.
-        return GlyphPageCacheEntry { glyphPageFromFontRanges(pageNumber, realizeFallbackRangesAt(description, fontSelector, 0)) };
-    }).iterator->value;
+    auto glyphData = [&]() {
+        auto cacheEntry = cachedPages.find(pageNumber);
+        if (cacheEntry == cachedPages.end()) {
+            // We need to build the cache page. This can trigger font loading /
+            // cache changes, so build the entry on the stack, then insert.
+            GlyphPageCacheEntry newEntry { glyphPageFromFontRanges(pageNumber, realizeFallbackRangesAt(description, fontSelector, 0)) };
+            cacheEntry = cachedPages.add(pageNumber, WTF::move(newEntry)).iterator;
+        }
+        return cacheEntry->value.glyphDataForCharacter(c);
+    }();
 
-    GlyphData glyphData = cacheEntry.glyphDataForCharacter(c);
     if (!glyphData.isValid()) {
         // No glyph, resolve per-character.
         ASSERT(variant == FontVariant::Normal);
         glyphData = glyphDataForVariant(c, description, fontSelector, variant, resolvedEmojiPolicy);
-        // Cache the results.
-        cacheEntry.setGlyphDataForCharacter(c, glyphData);
+
+        // Since glyphDataForVariant() can itself trigger cache changes,
+        // do a fresh lookup for the cache page before storing.
+        auto cacheEntry = cachedPages.find(pageNumber);
+        if (cacheEntry != cachedPages.end() && !cacheEntry->value.glyphDataForCharacter(c).isValid())
+            cacheEntry->value.setGlyphDataForCharacter(c, glyphData);
     }
 
     return glyphData;
@@ -584,8 +605,8 @@ void FontCascadeFonts::addSystemFallbackFont(Ref<Font>&& font)
 void FontCascadeFonts::forEachRealizedFont(NOESCAPE const Function<void(const Font&)>& function) const
 {
     for (auto& ranges : m_realizedFallbackRanges) {
-        for (unsigned i = 0; i < ranges.size(); ++i) {
-            if (RefPtr font = ranges.rangeAt(i).font(ExternalResourceDownloadPolicy::Forbid))
+        for (unsigned i = 0; i < ranges->size(); ++i) {
+            if (RefPtr font = ranges->rangeAt(i).font(ExternalResourceDownloadPolicy::Forbid))
                 function(*font);
         }
     }
@@ -598,9 +619,6 @@ TextShapingResultAndDisplayList* FontCascadeFonts::getOrCreateCachedShapedText(c
             return false;
         unsigned destination = to.value_or(run.length());
         if (from || destination != run.length() || forTextEmphasis == ForTextEmphasis::Yes)
-            return false;
-        // These properties are not keyed in the cache. We could add it directly to TextMeasurementCache but this is not relevant for width
-        if (run.rtl() || run.directionalOverride())
             return false;
         // Expansion distributes extra space across glyphs in the presence of expansion
         if (run.expansion())

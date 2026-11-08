@@ -150,7 +150,7 @@ static Ref<Inspector::Protocol::Network::Request> buildObjectForResourceRequest(
     return ResourceUtilities::buildObjectForResourceRequest(request, ResourceUtilities::copyRequestExtras(request, resourceLoader));
 }
 
-static Inspector::Protocol::Network::Response::Source LEGACY_NODELETE responseSource(ResourceResponse::Source source)
+NODELETE static Inspector::Protocol::Network::Response::Source responseSource(ResourceResponse::Source source)
 {
     switch (source) {
     case ResourceResponse::Source::DOMCache:
@@ -225,7 +225,8 @@ double InspectorNetworkAgent::timestamp()
 
 void InspectorNetworkAgent::willSendRequest(ResourceLoaderIdentifier identifier, DocumentLoader* loader, ResourceRequest& request, const ResourceResponse& redirectResponse, Inspector::ResourceType type, ResourceLoader* resourceLoader)
 {
-    if (request.hiddenFromInspector()) {
+    // A redirect hop's request is rebuilt by the network layer without the hidden bit.
+    if (request.hiddenFromInspector() || m_hiddenRequestIdentifiers.contains(identifier)) {
         m_hiddenRequestIdentifiers.add(identifier);
         return;
     }
@@ -264,7 +265,7 @@ static ResourceType resourceTypeForCachedResource(const CachedResource* resource
     return ResourceType::Other;
 }
 
-static ResourceType LEGACY_NODELETE resourceTypeForLoadType(UncachedLoadType loadType)
+NODELETE static ResourceType resourceTypeForLoadType(UncachedLoadType loadType)
 {
     switch (loadType) {
     case UncachedLoadType::Ping:
@@ -658,7 +659,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::disable()
     return { };
 }
 
-static NetworkStage LEGACY_NODELETE networkStageFromProtocol(Inspector::Protocol::Network::NetworkStage stage)
+NODELETE static NetworkStage networkStageFromProtocol(Inspector::Protocol::Network::NetworkStage stage)
 {
     switch (stage) {
     case Inspector::Protocol::Network::NetworkStage::Request:
@@ -1103,7 +1104,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::interceptRequest
     return { };
 }
 
-static ResourceError::Type LEGACY_NODELETE toResourceErrorType(Inspector::Protocol::Network::ResourceErrorType protocolResourceErrorType)
+NODELETE static ResourceError::Type toResourceErrorType(Inspector::Protocol::Network::ResourceErrorType protocolResourceErrorType)
 {
     switch (protocolResourceErrorType) {
     case Inspector::Protocol::Network::ResourceErrorType::General:
@@ -1187,6 +1188,8 @@ void InspectorNetworkAgent::searchOtherRequests(const JSC::Yarr::RegularExpressi
 {
     Vector<NetworkResourcesData::ResourceData*> resources = m_resourcesData->resources();
     for (auto* resourceData : resources) {
+        if (resourceData->url().isNull())
+            continue;
         // Skip resources already reported by the page agent's cached-resource search to avoid duplicate results.
         if (alreadySearchedURLs.contains(resourceData->url()))
             continue;

@@ -32,6 +32,7 @@
 #include "Document.h"
 #include "ElementInlines.h"
 #include "NodeTraversal.h"
+#include "XPathUtil.h"
 
 namespace WebCore::XPath {
 
@@ -39,7 +40,7 @@ namespace WebCore::XPath {
 // assume that we aren't dealing with documents that we cannot even traverse in reasonable time).
 const unsigned traversalSortCutoff = 10000;
 
-static inline Node* LEGACY_NODELETE parentWithDepth(unsigned depth, const Vector<Ref<Node>>& parents)
+NODELETE static inline Node* parentWithDepth(unsigned depth, const Vector<Ref<Node>>& parents)
 {
     ASSERT(parents.size() >= depth + 1);
     return parents[parents.size() - 1 - depth].ptr();
@@ -140,11 +141,23 @@ void NodeSet::sort() const
     if (m_isSorted)
         return;
 
-    unsigned nodeCount = m_nodes.size();
-    if (nodeCount < 2) {
+    if (m_nodes.size() < 2) {
         m_isSorted = true;
         return;
     }
+
+    if (allNodesAreInOneTree())
+        sortOneTree();
+    else
+        sortEachTree();
+    m_isSorted = true;
+}
+
+void NodeSet::sortOneTree() const
+{
+    unsigned nodeCount = m_nodes.size();
+    if (nodeCount <= 1)
+        return;
 
     if (nodeCount > traversalSortCutoff) {
         traversalSort();
@@ -171,25 +184,48 @@ void NodeSet::sort() const
     sortBlock(0, nodeCount, parentMatrix, containsAttributeNodes);
 
     // It is not possible to just assign the result to m_nodes, because some nodes may get dereferenced and destroyed.
-    Vector<Ref<Node>> sortedNodes;
-    sortedNodes.reserveInitialCapacity(nodeCount);
+    Vector<Ref<Node>> sortedNodes(ReserveCapacityTag { }, nodeCount);
     for (unsigned i = 0; i < nodeCount; ++i)
         sortedNodes.append(WTF::move(parentMatrix[i][0]));
 
     m_nodes = WTF::move(sortedNodes);
-    m_isSorted = true;
 }
 
-static inline RefPtr<Node> findRootNode(Node* node)
+bool NodeSet::allNodesAreInOneTree() const
 {
-    RefPtr<Node> current = node;
-    if (RefPtr attr = dynamicDowncast<Attr>(*current))
-        current = attr->ownerElement();
-    if (current->isConnected())
-        return protect(current->document());
-    for (RefPtr parent = current->parentNode(); parent; parent = current->parentNode())
-        current = WTF::move(parent);
-    return current;
+    auto& root = treeRoot(m_nodes.first());
+    for (auto& node : m_nodes) {
+        if (&treeRoot(node) != &root)
+            return false;
+    }
+    return true;
+}
+
+// Nodes in different trees have no defined order; keep the trees in first-seen order.
+void NodeSet::sortEachTree() const
+{
+    HashMap<Ref<Node>, unsigned> treeIndices;
+    Vector<NodeSet> trees;
+#if ASSERT_ENABLED
+    HashSet<Ref<Node>> shadowIncludingRoots;
+#endif
+    for (auto& node : m_nodes) {
+        auto result = treeIndices.add(treeRoot(node), trees.size());
+        if (result.isNewEntry) {
+            // XPath doesn't cross shadow boundaries, so no two trees share a shadow-including root.
+            ASSERT(shadowIncludingRoots.add(result.iterator->key->shadowIncludingRoot()).isNewEntry);
+            trees.constructAndAppend();
+        }
+        trees[result.iterator->value].append(node.copyRef());
+    }
+
+    Vector<Ref<Node>> sortedNodes(ReserveCapacityTag { }, m_nodes.size());
+    for (auto& tree : trees) {
+        tree.sortOneTree();
+        sortedNodes.appendVector(tree.m_nodes);
+    }
+
+    m_nodes = WTF::move(sortedNodes);
 }
 
 void NodeSet::traversalSort() const
@@ -205,10 +241,9 @@ void NodeSet::traversalSort() const
             containsAttributeNodes = true;
     }
 
-    Vector<Ref<Node>> sortedNodes;
-    sortedNodes.reserveInitialCapacity(nodeCount);
+    Vector<Ref<Node>> sortedNodes(ReserveCapacityTag { }, nodeCount);
 
-    for (RefPtr node = findRootNode(m_nodes.first().ptr()); node; node = NodeTraversal::next(*node)) {
+    for (RefPtr node = &treeRoot(m_nodes.first()); node; node = NodeTraversal::next(*node)) {
         if (nodes.contains(*node))
             sortedNodes.append(*node);
 
@@ -228,7 +263,6 @@ void NodeSet::traversalSort() const
 
     ASSERT(sortedNodes.size() == nodeCount);
     m_nodes = WTF::move(sortedNodes);
-    m_isSorted = true;
 }
 
 Node* NodeSet::firstNode() const

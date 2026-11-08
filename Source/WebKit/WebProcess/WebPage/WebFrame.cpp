@@ -45,6 +45,7 @@
 #include "NetworkProcessConnection.h"
 #include "PluginView.h"
 #include "ProvisionalFrameCreationParameters.h"
+#include "SessionState.h"
 #include "SessionStateConversion.h"
 #include "WKAPICast.h"
 #include "WKBundleAPICast.h"
@@ -69,6 +70,7 @@
 #include <JavaScriptCore/JSValueRef.h>
 #include <WebCore/AXObjectCache.h>
 #include <WebCore/ArchiveResource.h>
+#include <WebCore/BackForwardCache.h>
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/ContainerNodeInlines.h>
@@ -332,8 +334,7 @@ std::optional<FrameTreeNodeData> WebFrame::frameTreeData() const
         return std::nullopt;
     }
 
-    Vector<FrameTreeNodeData> children;
-    children.reserveInitialCapacity(m_coreFrame->tree().childCount());
+    Vector<FrameTreeNodeData> children(ReserveCapacityTag { }, m_coreFrame->tree().childCount());
     for (RefPtr child = m_coreFrame->tree().firstChild(); child; child = child->tree().nextSibling()) {
         RefPtr childWebFrame = WebFrame::fromCoreFrame(*child);
         if (!childWebFrame) {
@@ -417,18 +418,18 @@ bool WebFrame::newerNavigationOwnsDownloadAttributePolicyCheckLoad(const PolicyC
     return !localFrame || localFrame->loader().policyDocumentLoader() != policyCheck.downloadAttributePolicyDocumentLoader.get();
 }
 
-void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier)
+DidCacheOutgoingDocument WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier, std::optional<BackForwardItemIdentifiers>&& cacheIdentifiers)
 {
     RefPtr localFrame = coreLocalFrame();
     if (!localFrame) {
         ASSERT_NOT_REACHED();
-        return;
+        return DidCacheOutgoingDocument::No;
     }
 
     RefPtr corePage = localFrame->page();
     if (!corePage) {
         ASSERT_NOT_REACHED();
-        return;
+        return DidCacheOutgoingDocument::No;
     }
 
     RefPtr parent = localFrame->tree().parent();
@@ -437,6 +438,18 @@ void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingP
     // loadDidCommitInAnotherProcess implies the new frame is cross-origin to the current frame.
     // Cross-origin navigation doesn't trigger view transitions, and does not provide any activation information.
     protect(localFrame->document())->dispatchPageswapEvent(CanTriggerCrossDocumentViewTransition::No, nullptr);
+
+    // Must precede setMainFrame() because CachedPage captures the page's current main frame.
+    bool didCache = false;
+    if (!parent) {
+        if (cacheIdentifiers)
+            didCache = BackForwardCache::singleton().addIfCacheable(cacheIdentifiers->mainFrameItemID, *corePage, cacheIdentifiers->itemID);
+        if (!didCache) {
+            // Tearing down the uncached document detaches this frame from the page, so pages cached
+            // earlier in it can no longer be restored.
+            BackForwardCache::singleton().removeAllItemsForMainFrame(*localFrame);
+        }
+    }
 
     RefPtr ownerRenderer = localFrame->ownerRenderer();
 
@@ -465,7 +478,7 @@ void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingP
     if (parent)
         parent->tree().replaceChild(*localFrame, newFrame);
     else {
-        localFrame->loader().detachFromParent();
+        localFrame->willBeReplacedByRemoteFrame();
         corePage->setMainFrame(newFrame.copyRef());
         if (RefPtr page = m_page.get())
             page->updateRemoteMainFrameViewDelegatedScrolling();
@@ -487,6 +500,8 @@ void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingP
 
     if (ownerElement)
         ownerElement->scheduleInvalidateStyleAndLayerComposition();
+
+    return didCache ? DidCacheOutgoingDocument::Yes : DidCacheOutgoingDocument::No;
 }
 
 void WebFrame::createProvisionalFrame(ProvisionalFrameCreationParameters&& parameters)
@@ -566,6 +581,15 @@ void WebFrame::updateSandboxFlags(SandboxFlags sandboxFlags)
         provisionalFrame->updateSandboxFlags(sandboxFlags, Frame::NotifyUIProcess::No);
 }
 
+static bool shouldClearWindowNameOnReplacement(const WebCore::RemoteFrame& remoteFrame, const WebCore::LocalFrame& localFrame)
+{
+    if (!remoteFrame.isMainFrame() || remoteFrame.opener())
+        return false;
+
+    RefPtr document = localFrame.document();
+    return !document || !protect(document->securityOrigin())->isSameOriginAs(protect(remoteFrame.frameDocumentSecurityOriginOrOpaque()));
+}
+
 void WebFrame::commitProvisionalFrame()
 {
     RefPtr localFrame = std::exchange(m_provisionalFrame, nullptr);
@@ -602,7 +626,8 @@ void WebFrame::commitProvisionalFrame()
 
     m_coreFrame = localFrame.get();
     remoteFrame->setView(nullptr);
-    localFrame->tree().setSpecifiedName(remoteFrame->tree().specifiedName());
+    if (!shouldClearWindowNameOnReplacement(*remoteFrame, *localFrame))
+        localFrame->tree().setSpecifiedName(remoteFrame->tree().specifiedName());
 
     if (ownerRenderer)
         ownerRenderer->setWidget(localFrame->view());
@@ -765,7 +790,8 @@ void WebFrame::didReceivePolicyDecision(PolicyListenerIdentifier listenerID, Pol
                 provisionalDocumentLoader->setAgentClusterAssignment(policyDecision.agentClusterAssignment);
                 if (forNavigationAction)
                     provisionalDocumentLoader->setUnpartitionedStorageSite(WTF::move(policyDecision.unpartitionedStorageSite));
-            }
+            } else if (forNavigationAction && policyDecision.policyAction == PolicyAction::Use && loader.isWaitingForDelegatedBackForwardLoad())
+                loader.setDelegatedBackForwardLoadDecision({ policyDecision.navigationID, policyDecision.agentClusterAssignment, WTF::move(policyDecision.unpartitionedStorageSite) });
         }
     }
 
@@ -1028,8 +1054,7 @@ Ref<API::Array> WebFrame::childFrames()
     if (!size)
         return API::Array::create();
 
-    Vector<RefPtr<API::Object>> vector;
-    vector.reserveInitialCapacity(size);
+    Vector<RefPtr<API::Object>> vector(ReserveCapacityTag { }, size);
 
     for (RefPtr child = m_coreFrame->tree().firstChild(); child; child = child->tree().nextSibling()) {
         RefPtr webFrame = WebFrame::fromCoreFrame(*child);
@@ -1563,7 +1588,7 @@ std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> WebFrame::originat
 }
 
 #if ENABLE(CONTEXT_MENU_EVENT)
-static bool LEGACY_NODELETE isContextClick(const PlatformMouseEvent& event)
+NODELETE static bool isContextClick(const PlatformMouseEvent& event)
 {
 #if USE(APPKIT)
     return event.isContextMenuEvent();

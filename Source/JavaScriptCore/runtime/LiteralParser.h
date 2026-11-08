@@ -136,7 +136,7 @@ template<typename CharacterType> struct LiteralParserToken {
 };
 
 template <typename CharType>
-ALWAYS_INLINE void LEGACY_NODELETE setParserTokenString(LiteralParserToken<CharType>&, const CharType* string);
+NODELETE ALWAYS_INLINE void setParserTokenString(LiteralParserToken<CharType>&, const CharType* string);
 
 // CharType is Latin1Character or char16_t for the characters of a string, and char8_t for UTF-8 bytes. Each string in UTF-8
 // bytes is decoded by itself, with U+FFFD in place of an invalid sequence: the bytes are never converted as a whole. That form
@@ -229,6 +229,7 @@ private:
         TokenType next();
         TokenType nextMaybeIdentifier();
         TokenType nextAfterValue();
+        TokenType nextValueStart();
         bool consumeColon();
         CharType peek() const { return m_ptr < m_end ? *m_ptr : CharType { }; }
         TokenType nextString();
@@ -303,8 +304,8 @@ private:
         const CharType* positionAfterLastToken() const { return m_positionAfterLastToken; }
         void advanceTo(const CharType* p) { m_ptr = p; }
 #endif
-        inline const CharType* LEGACY_NODELETE currentTokenStart() const;
-        inline const CharType* LEGACY_NODELETE currentTokenEnd() const;
+        NODELETE inline const CharType* currentTokenStart() const;
+        NODELETE inline const CharType* currentTokenEnd() const;
         
     private:
         template<JSONIdentifierHint>
@@ -320,6 +321,7 @@ private:
         ALWAYS_INLINE TokenType decodeString(LiteralParserToken<CharType>&, std::span<const char8_t>) requires isUTF8;
         TokenType lexStringSlow(LiteralParserToken<CharType>&, const CharType* runStart, CharType terminator);
         ALWAYS_INLINE TokenType lexNumber(LiteralParserToken<CharType>&);
+        TokenType lexDouble(LiteralParserToken<CharType>&, const CharType* initial, const CharType* start, uint64_t integer);
         TokenType lexNumberError(LiteralParserToken<CharType>&);
 
         ALWAYS_INLINE ParserMode mode() const { return isUTF8 ? StrictJSON : m_mode; }

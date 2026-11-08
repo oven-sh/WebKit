@@ -1503,6 +1503,19 @@ bool ValidateSurfaceBadAccess(const ValidationContext *val,
     return true;
 }
 
+bool ValidateSurfaceCanBeCurrent(const ValidationContext *val, const Surface *surface)
+{
+    // Pbuffers created from multiplanar YUV client buffers, such as NV12 IOSurfaces, have no
+    // renderable color buffer. They can only be bound to textures.
+    if (gl::IsYuvFormat(surface->getBindTexImageFormat().info->sizedInternalFormat))
+    {
+        val->setError(EGL_BAD_MATCH, "<surface> with a YUV format cannot be made current");
+        return false;
+    }
+
+    return true;
+}
+
 bool ValidateSyncAttribute(const ValidationContext *val,
                            const ThreadSafeDisplay *display,
                            EGLAttrib attribute)
@@ -2935,6 +2948,14 @@ ScopedSyncRef GetSyncIfValid(const ThreadSafeDisplay *display, SyncID syncID)
     return ValidateDisplay(nullptr, display) ? display->getSync(syncID) : ScopedSyncRef();
 }
 
+ScopedSyncDestroy RemoveSyncIfValid(ThreadSafeDisplay *display, SyncID syncID)
+{
+    // display->removeSync() - validates syncID
+    return ValidateDisplay(nullptr, display)
+               ? ScopedSyncDestroy(display, display->removeSync(syncID))
+               : ScopedSyncDestroy();
+}
+
 const LabeledObject *GetLabeledObjectIfValid(Thread *thread,
                                              const Display *display,
                                              ObjectType objectType,
@@ -3454,6 +3475,62 @@ bool ValidateCreatePbufferFromClientBuffer(const ValidationContext *val,
                 }
                 break;
 
+            case EGL_YUV_COLOR_SPACE_HINT_EXT:
+                if (buftype != EGL_IOSURFACE_ANGLE)
+                {
+                    val->setError(EGL_BAD_ATTRIBUTE,
+                                  "<buftype> doesn't support YUV color space hint");
+                    return false;
+                }
+                switch (value)
+                {
+                    case EGL_ITU_REC601_EXT:
+                    case EGL_ITU_REC709_EXT:
+                    case EGL_ITU_REC2020_EXT:
+                    case EGL_SMPTE_240M_ANGLE:
+                        break;
+                    default:
+                        val->setError(EGL_BAD_ATTRIBUTE,
+                                      "Invalid value for EGL_YUV_COLOR_SPACE_HINT_EXT.");
+                        return false;
+                }
+                break;
+
+            case EGL_SAMPLE_RANGE_HINT_EXT:
+                if (buftype != EGL_IOSURFACE_ANGLE)
+                {
+                    val->setError(EGL_BAD_ATTRIBUTE, "<buftype> doesn't support sample range hint");
+                    return false;
+                }
+                switch (value)
+                {
+                    case EGL_YUV_FULL_RANGE_EXT:
+                    case EGL_YUV_NARROW_RANGE_EXT:
+                        break;
+                    default:
+                        val->setError(EGL_BAD_ATTRIBUTE,
+                                      "Invalid value for EGL_SAMPLE_RANGE_HINT_EXT.");
+                        return false;
+                }
+                break;
+
+            case EGL_IOSURFACE_ORIENTATION_ANGLE:
+                if (buftype != EGL_IOSURFACE_ANGLE)
+                {
+                    val->setError(EGL_BAD_ATTRIBUTE,
+                                  "<buftype> doesn't support EGL_IOSURFACE_ORIENTATION_ANGLE");
+                    return false;
+                }
+                if ((value & ~(EGL_IOSURFACE_ORIENTATION_INVERT_X_ANGLE |
+                               EGL_IOSURFACE_ORIENTATION_INVERT_Y_ANGLE |
+                               EGL_IOSURFACE_ORIENTATION_SWAP_XY_ANGLE)) != 0)
+                {
+                    val->setError(EGL_BAD_ATTRIBUTE,
+                                  "Invalid value for EGL_IOSURFACE_ORIENTATION_ANGLE.");
+                    return false;
+                }
+                break;
+
             default:
                 val->setError(EGL_BAD_ATTRIBUTE, "Invalid pbuffer attribute");
                 return false;
@@ -3747,6 +3824,7 @@ bool ValidateMakeCurrent(const ValidationContext *val,
     if (!noRead)
     {
         ANGLE_VALIDATION_TRY(ValidateSurface(val, display, readSurface));
+        ANGLE_VALIDATION_TRY(ValidateSurfaceCanBeCurrent(val, readSurface));
         ANGLE_VALIDATION_TRY(ValidateCompatibleSurface(val, display, context, readSurface));
         ANGLE_VALIDATION_TRY(ValidateSurfaceBadAccess(val, previousContext, readSurface));
     }
@@ -3754,6 +3832,7 @@ bool ValidateMakeCurrent(const ValidationContext *val,
     if (drawSurface != readSurface && !noDraw)
     {
         ANGLE_VALIDATION_TRY(ValidateSurface(val, display, drawSurface));
+        ANGLE_VALIDATION_TRY(ValidateSurfaceCanBeCurrent(val, drawSurface));
         ANGLE_VALIDATION_TRY(ValidateCompatibleSurface(val, display, context, drawSurface));
         ANGLE_VALIDATION_TRY(ValidateSurfaceBadAccess(val, previousContext, drawSurface));
     }
@@ -3770,6 +3849,13 @@ bool ValidateCreateImage(const ValidationContext *val,
     const gl::Context *context = GetContextIfValid(display, contextID);
 
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
+
+    // context can not be current on other thread.
+    if (context != nullptr && context->isReferenced() && context != val->eglThread->getContext())
+    {
+        val->setError(EGL_BAD_ACCESS, "Context can only be current on one thread");
+        return false;
+    }
 
     attributes.initializeWithoutValidation();
 
@@ -4665,7 +4751,12 @@ bool ValidateDestroySync(const ValidationContext *val,
                          const ThreadSafeDisplay *display,
                          const Sync *sync)
 {
-    ANGLE_VALIDATION_TRY(ValidateSync(val, display, sync));
+    if (sync == nullptr)
+    {
+        ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
+        val->setError(EGL_BAD_PARAMETER, "sync object is not valid.");
+        return false;
+    }
     return true;
 }
 

@@ -28,10 +28,15 @@
 #if ENABLE(GPU_PROCESS)
 #include "RemoteSnapshot.h"
 
+#include "DisplayListData.h"
 #include "WebImage.h"
 #include <wtf/Borrow.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
+
+#if PLATFORM(COCOA)
+#include <WebCore/PDFDocumentBuffer.h>
+#endif
 
 #if HAVE(IOSURFACE)
 #include "ImageBufferShareableMappedIOSurfaceBackend.h"
@@ -249,19 +254,32 @@ RemoteSnapshot::DisplayListAndReleaseDispatcher::~DisplayListAndReleaseDispatche
 std::optional<RefPtr<SharedBuffer>> RemoteSnapshot::drawToPDF(const FloatSize& size, FrameIdentifier rootIdentifier)
 {
     ASSERT(isComplete());
-    RefPtr buffer = ImageBuffer::create(size, RenderingMode::PDFDocument, RenderingPurpose::Snapshot, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto buffer = PDFDocumentBuffer::create(size);
     if (!buffer)
         return nullptr;
 
-    auto& context = buffer->context();
-
-    if (!applyFrame(rootIdentifier, context))
+    if (!applyFrame(rootIdentifier, buffer->context()))
         return std::nullopt;
 
-    return ImageBuffer::sinkIntoPDFDocument(WTF::move(buffer));
+    return buffer->takeData();
 }
 
 #endif
+
+std::optional<DisplayListData> RemoteSnapshot::createDisplayListData(FrameIdentifier rootFrameIdentifier) const
+{
+    ASSERT(isComplete());
+    RefPtr<const DisplayList::DisplayList> displayList;
+    {
+        Locker locker(m_lock);
+        auto iterator = m_frames.find(rootFrameIdentifier);
+        if (iterator != m_frames.end() && iterator->value.displayList)
+            displayList = iterator->value.displayList->displayList();
+    }
+    if (!displayList)
+        return std::nullopt;
+    return DisplayListData::create(*displayList);
+}
 
 std::optional<ShareableBitmap::Handle> RemoteSnapshot::drawToBitmap(const FloatSize& size, FrameIdentifier rootFrameIdentifier)
 {

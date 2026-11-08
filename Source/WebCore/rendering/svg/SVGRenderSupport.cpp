@@ -270,7 +270,7 @@ static inline void invalidateResourcesOfChildren(RenderElement& renderer)
         invalidateResourcesOfChildren(child);
 }
 
-static inline bool LEGACY_NODELETE layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
+NODELETE static inline bool layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
 {
     for (auto* start = &renderer; start; start = start->parent()) {
         if (auto* svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(*start))
@@ -749,7 +749,7 @@ FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderEl
         ASSERT(renderer.hasNonScalingStroke());
 
         auto strokeBoundingBox = fillBoundingBox;
-        auto nonScalingTransform = renderer.nonScalingStrokeTransform();
+        auto nonScalingTransform = renderer.computeNonScalingStrokeTransform();
         if (auto inverse = nonScalingTransform.inverse()) {
             auto* usePath = renderer.nonScalingStrokePath(&renderer.path(), nonScalingTransform);
             auto strokeBoundingRect = calculateApproximateScalingStrokeBoundingBox(renderer, usePath->fastBoundingRect());

@@ -73,16 +73,16 @@ class BlockDirectory {
 public:
     BlockDirectory(size_t cellSize);
     ~BlockDirectory();
-    void LEGACY_NODELETE setSubspace(Subspace*);
+    NODELETE void setSubspace(Subspace*);
     void lastChanceToFinalize();
     void prepareForAllocation();
     void stopAllocating();
     void stopAllocatingForGood();
     void resumeAllocating();
-    void LEGACY_NODELETE beginMarkingForFullCollection();
+    NODELETE void beginMarkingForFullCollection();
     void endMarking();
-    void LEGACY_NODELETE snapshotUnsweptForEdenCollection();
-    void LEGACY_NODELETE snapshotUnsweptForFullCollection();
+    NODELETE void snapshotUnsweptForEdenCollection();
+    NODELETE void snapshotUnsweptForFullCollection();
     void sweepAll();
     void shrink();
     void assertNoUnswept();
@@ -105,9 +105,9 @@ public:
     void removeBlock(MarkedBlock::Handle*, WillDeleteBlock = WillDeleteBlock::No);
 
 #if ASSERT_ENABLED
-    JS_EXPORT_PRIVATE void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock);
+    JS_EXPORT_PRIVATE void assertMayAccessBitsUnlocked() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock);
 #else
-    ALWAYS_INLINE void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock) { }
+    ALWAYS_INLINE void assertMayAccessBitsUnlocked() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock) { }
 #endif
     MutateGrowLock& bitvectorLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_bitvectorLock) { return m_bitvectorLock; }
 
@@ -213,13 +213,13 @@ public:
     MarkedBlock::Handle* findBlockToSweep(unsigned& unsweptCursor);
 
     // FIXME: rdar://139998916
-    MarkedBlock::Handle* LEGACY_NODELETE findMarkedBlockHandleDebug(MarkedBlock*);
+    NODELETE MarkedBlock::Handle* findMarkedBlockHandleDebug(MarkedBlock*);
 
     void didFinishUsingBlock(MarkedBlock::Handle*);
     void didFinishUsingBlock(AbstractLocker&, MarkedBlock::Handle*) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock);
 
     Subspace* subspace() const { return m_subspace; }
-    MarkedSpace& LEGACY_NODELETE markedSpace() const;
+    NODELETE MarkedSpace& markedSpace() const;
     
     void dump(PrintStream&) const;
     void dumpBits(PrintStream& = WTF::dataFile()) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock);
@@ -256,11 +256,12 @@ private:
     //   (assertWorldIsStopped()).
     // - Exception: notifyNeedsDestruction() may set a block's destructible bit without holding inUse;
     //   see assertMayNotifyNeedsDestruction().
-    // - Exception: growth only happens on the mutator, so the mutator, or anyone while the world is
-    //   stopped, may read the bits without mutate(); see assertIsMutatorOrMutatorIsStopped().
+    // - Exception: growth only happens on the thread with access (addBlock() and removeBlock() assert it),
+    //   and one thread at a time has access, so that thread, or the conductor and its marking helpers while
+    //   the world is stopped, may read and write single bits without mutate(); see assertMayAccessBitsUnlocked().
     BlockDirectoryBits m_bits WTF_GUARDED_BY_LOCK(m_bitvectorLock); // Don't access this directly use one of the accessors above.
     MutateGrowLock m_bitvectorLock;
-    [[no_unique_address]] BlockOwnership m_blockOwnership;
+    NO_UNIQUE_ADDRESS BlockOwnership m_blockOwnership;
     Lock m_localAllocatorsLock;
     CellAttributes m_attributes;
 

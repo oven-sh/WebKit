@@ -41,7 +41,7 @@ class RenderTreeBuilder;
 class RenderTreeBuilder::Table {
     WTF_MAKE_TZONE_ALLOCATED(Table);
 public:
-    Table(RenderTreeBuilder&);
+    NODELETE Table(RenderTreeBuilder&);
 
     RenderElement& findOrCreateParentForChild(RenderTableRow& parent, const RenderObject& child, RenderObject*& beforeChild);
     RenderElement& findOrCreateParentForChild(RenderTableSection& parent, const RenderObject& child, RenderObject*& beforeChild);
@@ -51,7 +51,7 @@ public:
     void attach(RenderTableSection& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
     void attach(RenderTableRow& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
 
-    bool LEGACY_NODELETE childRequiresTable(const RenderElement& parent, const RenderObject& child);
+    NODELETE bool childRequiresTable(const RenderElement& parent, const RenderObject& child);
 
     void collapseAndDestroyAnonymousSiblingCells(const RenderTableCell& willBeDestroyed);
     void collapseAndDestroyAnonymousSiblingRows(const RenderTableRow& willBeDestroyed);

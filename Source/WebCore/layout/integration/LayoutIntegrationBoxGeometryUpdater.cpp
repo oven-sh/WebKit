@@ -85,14 +85,14 @@ static inline void adjustBorderForTable(const RenderBoxModelObject& renderer, Re
         borderWidths = tableCell->borderWidths();
 }
 
-static inline LayoutUnit LEGACY_NODELETE intrinsicBorder(const RenderBoxModelObject& renderer)
+NODELETE static inline LayoutUnit intrinsicBorder(const RenderBoxModelObject& renderer)
 {
     if (auto* block = dynamicDowncast<RenderBlock>(renderer); block && renderer.isFieldset())
         return block->intrinsicBorderForFieldset();
     return { };
 }
 
-static inline Layout::BoxGeometry::VerticalEdges LEGACY_NODELETE intrinsicPaddingForTableCell(const RenderBox& renderer)
+NODELETE static inline Layout::BoxGeometry::VerticalEdges intrinsicPaddingForTableCell(const RenderBox& renderer)
 {
     if (auto* tableCell = dynamicDowncast<RenderTableCell>(renderer))
         return { tableCell->intrinsicPaddingBefore(), tableCell->intrinsicPaddingAfter() };
@@ -521,8 +521,9 @@ static std::optional<LayoutUnit> baselineForBox(const RenderBox& renderBox)
     return { };
 }
 
-static inline void setIntegrationBaseline(const RenderBox& renderBox)
+static inline void setIntegrationBaseline(const RenderBox& renderBox, Layout::BoxGeometry& boxGeometry)
 {
+    boxGeometry.setBaseline({ });
     if (renderBox.isFloatingOrOutOfFlowPositioned())
         return;
 
@@ -584,7 +585,7 @@ static inline void setIntegrationBaseline(const RenderBox& renderBox)
 
             return rootWritingMode.prefersCentralBaseline() && !isWritingModeRoot ? marginBoxLogicalHeight / 2 : marginBoxLogicalHeight;
         };
-        const_cast<Layout::ElementBox&>(renderBox.layoutBox()).setBaselineForIntegration(baselinePosition());
+        boxGeometry.setBaseline(baselinePosition());
     }
 }
 
@@ -756,13 +757,12 @@ void BoxGeometryUpdater::updateBoxGeometryAfterIntegrationLayout(const Layout::E
 
     auto integrationAdjustments = [&] {
         // FIXME: These should eventually be all absorbed by LFC layout.
-        setIntegrationBaseline(*renderBox);
+        setIntegrationBaseline(*renderBox, boxGeometry);
 
         if (CheckedPtr renderListMarker = dynamicDowncast<RenderListOutsideMarker>(*renderBox)) {
             CheckedRef style = layoutBox.parent().style();
             boxGeometry.setHorizontalMargin(horizontalLogicalMargin(*renderListMarker, { }, style->writingMode()));
             setListMarkerOffsetForMarkerOutside(*renderListMarker);
-            const_cast<Layout::ElementBox&>(layoutBox).setListMarkerLayoutBounds(renderListMarker->layoutBounds());
         }
 
         if (is<RenderTable>(*renderBox)) {

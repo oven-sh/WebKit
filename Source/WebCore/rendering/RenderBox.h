@@ -46,10 +46,6 @@ class PositionedLayoutConstraints;
 struct PaintInfo;
 struct RenderBoxOverridingSizes;
 
-enum class AvailableLogicalHeightType : bool { ExcludeMarginBorderPadding, IncludeMarginBorderPadding };
-
-
-enum class StretchingMode { Normal, Explicit };
 
 enum class IsComputingIntrinsicSize : bool { No, Yes };
 
@@ -104,17 +100,17 @@ public:
     inline LayoutRect contentBoxRect() const;
     inline LayoutRect paddingBoxRectIncludingScrollbar() const;
 
-    inline LayoutSize contentBoxSize() const;
-    inline LayoutUnit contentBoxWidth() const;
-    inline LayoutUnit contentBoxHeight() const;
+    inline LayoutSize contentBoxSize() const final;
+    inline LayoutUnit contentBoxWidth() const final;
+    inline LayoutUnit contentBoxHeight() const final;
     inline LayoutSize contentBoxLogicalSize() const;
-    inline LayoutUnit contentBoxLogicalWidth() const;
+    inline LayoutUnit contentBoxLogicalWidth() const final;
     inline LayoutUnit contentBoxLogicalWidth(LayoutUnit overridingBorderBoxWidth) const;
-    inline LayoutUnit contentBoxLogicalHeight() const;
+    inline LayoutUnit contentBoxLogicalHeight() const final;
     inline LayoutUnit contentBoxLogicalHeight(LayoutUnit overridingBorderBoxHeight) const;
 
-    inline LayoutUnit paddingBoxWidth() const;
-    inline LayoutUnit paddingBoxHeight() const;
+    inline LayoutUnit paddingBoxWidth() const final;
+    inline LayoutUnit paddingBoxHeight() const final;
     LayoutUnit paddingBoxLogicalWidth() const final;
     LayoutUnit paddingBoxLogicalHeight() const final;
     inline LayoutUnit paddingBoxLogicalBottom() const;
@@ -253,7 +249,7 @@ public:
 
     ScrollPosition scrollPosition() const;
     ScrollPosition constrainedScrollPosition() const;
-    LayoutSize LEGACY_NODELETE cachedSizeForOverflowClip() const;
+    NODELETE LayoutSize cachedSizeForOverflowClip() const;
 
     WEBCORE_EXPORT virtual int verticalScrollbarWidth() const;
     WEBCORE_EXPORT virtual int horizontalScrollbarHeight() const;
@@ -341,7 +337,7 @@ public:
     // pass runs again afterwards. May lay out the box, hence non-const.
     LayoutUnit computeIntrinsicLogicalHeight();
 
-    LayoutUnit constrainLogicalWidthByMinMax(LayoutUnit, LayoutUnit, const RenderBlock&, AllowIntrinsic = AllowIntrinsic::Yes) const;
+    LayoutUnit constrainLogicalWidthByMinMax(LayoutUnit, LayoutUnit, const RenderBoxModelObject& containingBlock, AllowIntrinsic = AllowIntrinsic::Yes) const;
     LayoutUnit constrainLogicalHeightByMinMax(LayoutUnit logicalHeight, std::optional<LayoutUnit> intrinsicContentHeight, IsComputingIntrinsicSize = IsComputingIntrinsicSize::No) const;
     LayoutUnit constrainContentBoxLogicalHeightByMinMax(LayoutUnit logicalHeight, std::optional<LayoutUnit> intrinsicContentHeight) const;
 
@@ -366,10 +362,10 @@ public:
 
     LayoutUnit shrinkLogicalWidthToAvoidFloats(LayoutUnit childMarginStart, LayoutUnit childMarginEnd, const RenderBlock& containingBlock, std::optional<LayoutUnit> logicalHeight = { }) const;
 
-    LayoutUnit computeLogicalWidthUsing(const Style::PreferredSize& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBlock& containingBlock) const;
-    LayoutUnit computeLogicalWidthUsing(const Style::MinimumSize& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBlock& containingBlock) const;
-    LayoutUnit computeLogicalWidthUsing(const Style::MaximumSize& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBlock& containingBlock) const;
-    LayoutUnit computeLogicalWidthUsing(const Style::FlexBasis& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBlock& containingBlock) const;
+    LayoutUnit computeLogicalWidthUsing(const Style::PreferredSize& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBoxModelObject& containingBlock) const;
+    LayoutUnit computeLogicalWidthUsing(const Style::MinimumSize& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBoxModelObject& containingBlock) const;
+    LayoutUnit computeLogicalWidthUsing(const Style::MaximumSize& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBoxModelObject& containingBlock) const;
+    LayoutUnit computeLogicalWidthUsing(const Style::FlexBasis& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBoxModelObject& containingBlock) const;
 
     LayoutUnit resolveCalcSizeLogicalWidth(const Style::UnevaluatedCalcSize&, LayoutUnit keywordContentLogicalWidth, LayoutUnit percentResolutionLogicalWidth) const;
     LayoutUnit resolveCalcSizeLogicalHeight(const Style::UnevaluatedCalcSize&, LayoutUnit keywordContentLogicalHeight, LayoutUnit percentageBaseLogicalHeight) const;
@@ -393,7 +389,7 @@ public:
     std::optional<LayoutUnit> computePercentageLogicalHeight(const Style::UnevaluatedCalcSize& logicalHeight, UpdatePercentageHeightDescendants = UpdatePercentageHeightDescendants::Yes) const;
     bool hasAutoHeightOrContainingBlockWithAutoHeight(UpdatePercentageHeightDescendants = UpdatePercentageHeightDescendants::Yes) const;
 
-    virtual LayoutUnit availableLogicalHeight(AvailableLogicalHeightType) const;
+    LayoutUnit availableLogicalHeight(AvailableLogicalHeightType) const override;
     LayoutUnit availableLogicalHeightUsing(const Style::PreferredSize&, AvailableLogicalHeightType) const;
 
     LayoutUnit computeSizingKeywordLogicalWidthUsing(CSS::Keyword::Stretch, LayoutUnit availableLogicalWidth, LayoutUnit borderAndPadding) const;
@@ -417,41 +413,41 @@ public:
     virtual LayoutUnit adjustContentBoxLogicalHeightForBoxSizing(std::optional<LayoutUnit> height) const;
     virtual LayoutUnit adjustIntrinsicLogicalHeightForBoxSizing(LayoutUnit height) const;
 
-    std::optional<LayoutUnit> LEGACY_NODELETE overridingBorderBoxLogicalWidth() const;
-    std::optional<LayoutUnit> LEGACY_NODELETE overridingBorderBoxLogicalHeight() const;
+    NODELETE std::optional<LayoutUnit> overridingBorderBoxLogicalWidth() const;
+    NODELETE std::optional<LayoutUnit> overridingBorderBoxLogicalHeight() const;
     void setOverridingBorderBoxLogicalHeight(LayoutUnit);
     void setOverridingBorderBoxLogicalWidth(LayoutUnit);
-    void LEGACY_NODELETE clearOverridingBorderBoxLogicalHeight();
-    void LEGACY_NODELETE clearOverridingBorderBoxLogicalWidth();
-    void LEGACY_NODELETE clearOverridingSize();
+    NODELETE void clearOverridingBorderBoxLogicalHeight();
+    NODELETE void clearOverridingBorderBoxLogicalWidth();
+    NODELETE void clearOverridingSize();
 
     // Grid item's containing block is not the grid container, but the grid area, for which we don't have a renderer.
     using GridAreaSize = std::optional<LayoutUnit>;
-    std::optional<GridAreaSize> LEGACY_NODELETE gridAreaContentWidth(WritingMode) const;
-    std::optional<GridAreaSize> LEGACY_NODELETE gridAreaContentHeight(WritingMode) const;
-    std::optional<GridAreaSize> LEGACY_NODELETE gridAreaContentLogicalWidth() const;
-    std::optional<GridAreaSize> LEGACY_NODELETE gridAreaContentLogicalHeight() const;
+    NODELETE std::optional<GridAreaSize> gridAreaContentWidth(WritingMode) const;
+    NODELETE std::optional<GridAreaSize> gridAreaContentHeight(WritingMode) const;
+    NODELETE std::optional<GridAreaSize> gridAreaContentLogicalWidth() const;
+    NODELETE std::optional<GridAreaSize> gridAreaContentLogicalHeight() const;
     void setGridAreaContentLogicalWidth(GridAreaSize);
     void setGridAreaContentLogicalHeight(GridAreaSize);
-    void LEGACY_NODELETE clearGridAreaContentSize();
-    void LEGACY_NODELETE clearGridAreaContentLogicalHeight();
+    NODELETE void clearGridAreaContentSize();
+    NODELETE void clearGridAreaContentLogicalHeight();
 
     // These are currently only used by Flexbox code. In some cases we must layout flex items with a different main size
     // (the size in the main direction) than the one specified by the item in order to compute the value of flex basis, i.e.,
     // the initial main size of the flex item before the free space is distributed.
-    std::optional<Style::PreferredSize> LEGACY_NODELETE overridingLogicalHeightForFlexBasisComputation() const;
-    std::optional<Style::PreferredSize> LEGACY_NODELETE overridingLogicalWidthForFlexBasisComputation() const;
+    NODELETE std::optional<Style::PreferredSize> overridingLogicalHeightForFlexBasisComputation() const;
+    NODELETE std::optional<Style::PreferredSize> overridingLogicalWidthForFlexBasisComputation() const;
     void setOverridingBorderBoxLogicalHeightForFlexBasisComputation(const Style::PreferredSize&);
     void setOverridingBorderBoxLogicalWidthForFlexBasisComputation(const Style::PreferredSize&);
-    void LEGACY_NODELETE clearOverridingLogicalHeightForFlexBasisComputation();
-    void LEGACY_NODELETE clearOverridingLogicalWidthForFlexBasisComputation();
+    NODELETE void clearOverridingLogicalHeightForFlexBasisComputation();
+    NODELETE void clearOverridingLogicalWidthForFlexBasisComputation();
 
     bool percentageLogicalHeightIsResolvable() const;
     bool logicalHeightBehavesAsAuto() const;
     bool shouldComputeLogicalHeightFromAspectRatio() const;
     bool shouldComputeLogicalWidthFromAspectRatio() const;
-    bool LEGACY_NODELETE hasFullyConstrainedLogicalHeight() const;
-    bool LEGACY_NODELETE shouldIgnoreLogicalMinMaxHeightSizes() const;
+    NODELETE bool hasFullyConstrainedLogicalHeight() const;
+    NODELETE bool shouldIgnoreLogicalMinMaxHeightSizes() const;
 
     // The explicit intrinsic inner size of contain-intrinsic-size
     std::optional<LayoutUnit> explicitIntrinsicInnerWidth() const;
@@ -467,9 +463,9 @@ public:
 
     virtual bool shouldInvalidateContentWidths() const;
 
-    virtual bool LEGACY_NODELETE hasRelativeDimensions() const;
-    virtual bool LEGACY_NODELETE hasRelativeLogicalHeight() const;
-    virtual bool LEGACY_NODELETE hasRelativeLogicalWidth() const;
+    NODELETE virtual bool hasRelativeDimensions() const;
+    NODELETE virtual bool hasRelativeLogicalHeight() const;
+    NODELETE virtual bool hasRelativeLogicalWidth() const;
 
     virtual LayoutRect overflowClipRect(const LayoutPoint& location, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize, PaintPhase = PaintPhase::BlockBackground) const;
     virtual LayoutRect overflowClipRectForChildLayers(const LayoutPoint& location, OverlayScrollbarSizeRelevancy relevancy) const { return overflowClipRect(location, relevancy); }
@@ -497,7 +493,7 @@ public:
     // The query rect is given in local coordinate system.
     virtual bool backgroundIsKnownToBeOpaqueInRect(const LayoutRect&) const;
     inline bool backgroundIsKnownToBeObscured(const LayoutPoint& paintOffset);
-    void LEGACY_NODELETE invalidateAncestorBackgroundObscurationStatus();
+    NODELETE void invalidateAncestorBackgroundObscurationStatus();
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& accumulatedOffset, HitTestAction) override;
     bool hitTestVisualOverflow(const HitTestLocation&, const LayoutPoint& accumulatedOffset) const;
@@ -510,15 +506,15 @@ public:
     LayoutSize offsetFromContainer(const RenderElement&, const LayoutPoint&, bool* offsetDependsOnPoint = nullptr) const override;
     LayoutRect firstFragmentBorderBoxRect() const override;
 
-    LayoutPoint LEGACY_NODELETE flipForWritingModeForChild(const RenderBox& child, const LayoutPoint&) const;
-    LayoutUnit LEGACY_NODELETE flipForWritingMode(LayoutUnit position) const; // The offset is in the block direction (y for horizontal writing modes, x for vertical writing modes).
-    LayoutPoint LEGACY_NODELETE flipForWritingMode(const LayoutPoint&) const;
-    LayoutSize LEGACY_NODELETE flipForWritingMode(const LayoutSize&) const;
-    FloatPoint LEGACY_NODELETE flipForWritingMode(const FloatPoint&) const;
+    NODELETE LayoutPoint flipForWritingModeForChild(const RenderBox& child, const LayoutPoint&) const;
+    NODELETE LayoutUnit flipForWritingMode(LayoutUnit position) const; // The offset is in the block direction (y for horizontal writing modes, x for vertical writing modes).
+    NODELETE LayoutPoint flipForWritingMode(const LayoutPoint&) const;
+    NODELETE LayoutSize flipForWritingMode(const LayoutSize&) const;
+    NODELETE FloatPoint flipForWritingMode(const FloatPoint&) const;
 
-    void LEGACY_NODELETE flipForWritingMode(LayoutRect&) const;
-    void LEGACY_NODELETE flipForWritingMode(FloatRect&) const;
-    void LEGACY_NODELETE flipForWritingMode(RepaintRects&) const;
+    NODELETE void flipForWritingMode(LayoutRect&) const;
+    NODELETE void flipForWritingMode(FloatRect&) const;
+    NODELETE void flipForWritingMode(RepaintRects&) const;
 
     // These represent your location relative to your container as a physical offset.
     // In layout related methods you almost always want the logical location (e.g. x() and y()).
@@ -526,7 +522,7 @@ public:
     LayoutSize topLeftLocationOffset() const; // Defined in RenderBoxInlines.h
 
     LayoutRect applyPaintGeometryTransformToRect(LayoutRect) const;
-    LayoutRect LEGACY_NODELETE convertRectToParentWritingMode(LayoutRect, const WritingMode parentWritingMode) const;
+    NODELETE LayoutRect convertRectToParentWritingMode(LayoutRect, const WritingMode parentWritingMode) const;
 
     // Bounds of the outline box in absolute coords. Respects transforms
     LayoutRect outlineBoundsForRepaint(const RenderLayerModelObject* /*repaintContainer*/, const RenderGeometryMap* = nullptr) const final;
@@ -553,7 +549,7 @@ public:
     RenderFragmentContainer* clampToStartAndEndFragments(RenderFragmentContainer*) const;
     bool hasFragmentRangeInFragmentedFlow() const;
     virtual LayoutUnit offsetFromLogicalTopOfFirstPage() const;
-    RenderBoxFragmentInfo* LEGACY_NODELETE renderBoxFragmentInfo(RenderFragmentContainer*, RenderBoxFragmentInfoFlags = RenderBoxFragmentInfoFlags::CacheRenderBoxFragmentInfo) const;
+    NODELETE RenderBoxFragmentInfo* renderBoxFragmentInfo(RenderFragmentContainer*, RenderBoxFragmentInfoFlags = RenderBoxFragmentInfoFlags::CacheRenderBoxFragmentInfo) const;
 
     // True if this box can have a range in an outside fragmentation context.
     bool canHaveOutsideFragmentRange() const { return !isRenderFragmentedFlow(); }
@@ -597,14 +593,14 @@ public:
     inline bool isColumnSpanner() const;
 
     void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const override;
-    bool LEGACY_NODELETE computeHasTransformRelatedProperty(const Style::ComputedStyle&) const;
+    NODELETE bool computeHasTransformRelatedProperty(const Style::ComputedStyle&) const;
 
     void updateFloatPainterAfterSelfPaintingLayerChange();
 
     ShapeOutsideInfo* shapeOutsideInfo() const LIFETIME_BOUND;
 
     bool requiresLayer() const override;
-    bool LEGACY_NODELETE requiresLayerWithScrollableArea() const;
+    NODELETE bool requiresLayerWithScrollableArea() const;
 
 protected:
     RenderBox(Type, Element&, Style::ComputedStyle&&, OptionSet<TypeFlag> = { }, TypeSpecificFlags = { });
@@ -616,8 +612,8 @@ protected:
 
     void willBeDestroyed() override;
 
-    virtual bool LEGACY_NODELETE shouldResetLogicalHeightBeforeLayout() const;
-    void LEGACY_NODELETE resetLogicalHeightBeforeLayoutIfNeeded();
+    NODELETE virtual bool shouldResetLogicalHeightBeforeLayout() const;
+    NODELETE void resetLogicalHeightBeforeLayoutIfNeeded();
 
     // Returns false if it could not cheaply compute the extent (e.g. fixed background), in which case the returned rect may be incorrect.
     bool getBackgroundPaintedExtent(const LayoutPoint& paintOffset, LayoutRect&) const;
@@ -645,8 +641,8 @@ protected:
 
     bool skipContainingBlockForPercentHeightCalculation(const RenderBox& containingBlock, bool isPerpendicularWritingMode) const;
 
-    void LEGACY_NODELETE incrementVisuallyNonEmptyPixelCountIfNeeded(const IntSize&);
-    bool LEGACY_NODELETE shouldIgnoreAspectRatio() const;
+    NODELETE void incrementVisuallyNonEmptyPixelCountIfNeeded(const IntSize&);
+    NODELETE bool shouldIgnoreAspectRatio() const;
     // -webkit-fill-available always resolves through the containing-block chain (walking up to the
     // viewport if needed), so it is considered resolvable regardless of whether the immediate CB has
     // a definite block size. Only the spec stretch keyword is gated on `isBlockSizeResolvableForStretch`.
@@ -703,7 +699,7 @@ private:
 
     template<typename Keyword> std::pair<LayoutUnit, LayoutUnit> computeIntrinsicKeywordLogicalWidths(Keyword, LayoutUnit borderAndPadding) const;
 
-    template<typename SizeType> LayoutUnit computeLogicalWidthUsingGeneric(const SizeType& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBlock& containingBlock) const;
+    template<typename SizeType> LayoutUnit computeLogicalWidthUsingGeneric(const SizeType& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBoxModelObject& containingBlock) const;
     template<typename SizeType> LayoutUnit computeCalcSizeOnAutoLogicalWidth(const SizeType& logicalWidth, LayoutUnit autoLogicalWidth, LayoutUnit availableLogicalWidth) const;
     template<typename SizeType> LayoutUnit computeSizingKeywordLogicalWidthUsingGeneric(const SizeType& logicalWidth, LayoutUnit availableLogicalWidth, LayoutUnit borderAndPadding) const;
 
