@@ -45,12 +45,19 @@ public:
     void leaveForAnother()
     {
         gcSafeZeroMemory(reinterpret_cast<JSValue*>(entries()), (static_cast<size_t>(m_mask) + 1) * sizeof(Entry));
+#if ASSERT_ENABLED
+        WTF::storeStoreFence();
+        m_isLeftForAnother = true;
+#endif
     }
 
 private:
     PySetStorage(VM&, Structure*, size_t size);
 
     uint32_t m_mask;
+#if ASSERT_ENABLED
+    bool m_isLeftForAnother { false };
+#endif
 };
 
 // set and frozenset. The table is probed, and so iterated, exactly as CPython's: programs should not depend on the order

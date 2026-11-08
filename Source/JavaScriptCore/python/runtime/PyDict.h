@@ -87,6 +87,10 @@ public:
     void leaveForAnother()
     {
         gcSafeZeroMemory(reinterpret_cast<JSValue*>(entries()), m_entryCount * sizeof(Entry));
+#if ASSERT_ENABLED
+        WTF::storeStoreFence();
+        m_isLeftForAnother = true;
+#endif
     }
 
     int32_t indexAt(uint32_t slot)
@@ -114,6 +118,9 @@ private:
     int64_t* wideHashes() { return reinterpret_cast<int64_t*>(entries() + m_capacity); }
 
     bool m_hasWideHashes;
+#if ASSERT_ENABLED
+    bool m_isLeftForAnother { false }; // Nobody writes into it from then on: visitChildren() looks.
+#endif
     unsigned m_log2Size;
     unsigned m_capacity;
     unsigned m_entryCount { 0 }; // Including the deleted ones.

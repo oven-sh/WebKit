@@ -55,6 +55,13 @@ void PySetStorage::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<PySetStorage>(cell);
     Base::visitChildren(thisObject, visitor);
     Entry* table = thisObject->entries();
+#if ASSERT_ENABLED
+    if (thisObject->m_isLeftForAnother) {
+        WTF::loadLoadFence();
+        for (size_t i = 0; i <= thisObject->m_mask; ++i)
+            ASSERT(!table[i].key);
+    }
+#endif
     for (size_t i = 0; i <= thisObject->m_mask; ++i)
         visitor.append(table[i].key);
 }

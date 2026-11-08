@@ -13,7 +13,6 @@
 #include "PyException.h"
 #include "PyFunction.h"
 #include "PyGenerator.h"
-#include "PySet.h"
 #include "PyTuple.h"
 #include "SlotVisitorInlines.h"
 #include <wtf/HashMap.h>

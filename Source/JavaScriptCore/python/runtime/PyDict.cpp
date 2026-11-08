@@ -64,6 +64,13 @@ void PyDictStorage::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<PyDictStorage>(cell);
     Base::visitChildren(thisObject, visitor);
+#if ASSERT_ENABLED
+    if (thisObject->m_isLeftForAnother) {
+        WTF::loadLoadFence();
+        for (unsigned i = 0; i < thisObject->m_capacity; ++i)
+            ASSERT(!thisObject->entries()[i].key && !thisObject->entries()[i].value);
+    }
+#endif
     // All of them, used or not: the count may be changing.
     visitor.appendValues(&thisObject->entries()->key, thisObject->m_capacity * 2);
 }
