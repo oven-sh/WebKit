@@ -80,6 +80,53 @@ struct FieldOfTypedAccess {
     bool severalReceiversListIt { false };
 };
 
+class WordsListedOnce {
+public:
+    template<size_t inlineCapacity>
+    ALWAYS_INLINE void appendUnlessListed(Vector<MemberConditionRecord, inlineCapacity>& list, const MemberConditionRecord& condition)
+    {
+        appendUnlessListed(list, condition, [](const MemberConditionRecord& listed) {
+            static_assert(numberOfEnumerators<MemberConditionKind> <= 8);
+            return static_cast<uint64_t>(listed.key.bits()) << 32 | static_cast<uint64_t>(listed.layout.index()) << 4 | static_cast<uint64_t>(listed.kind) << 1 | static_cast<uint64_t>(listed.side);
+        });
+    }
+
+    template<size_t inlineCapacity>
+    ALWAYS_INLINE void appendUnlessListed(Vector<LayoutID, inlineCapacity>& list, LayoutID layout)
+    {
+        appendUnlessListed(list, layout, [](LayoutID listed) {
+            return static_cast<uint64_t>(listed.index());
+        });
+    }
+
+private:
+    template<typename T, size_t inlineCapacity>
+    ALWAYS_INLINE void appendUnlessListed(Vector<T, inlineCapacity>& list, const T& entry, const Invocable<uint64_t(const T&)> auto& wordOf)
+    {
+        constexpr size_t fewEnoughToCompare = 8;
+        if (list.size() < fewEnoughToCompare) [[likely]] {
+            if (!list.contains(entry))
+                list.append(entry);
+            return;
+        }
+        appendUnlessWordIsListed(list, entry, wordOf);
+    }
+
+    template<typename T, size_t inlineCapacity>
+    NEVER_INLINE void appendUnlessWordIsListed(Vector<T, inlineCapacity>& list, const T& entry, const Invocable<uint64_t(const T&)> auto& wordOf)
+    {
+        for (; m_numberOfEntriesTaken < list.size(); ++m_numberOfEntriesTaken)
+            m_words.add(wordOf(list[m_numberOfEntriesTaken]));
+        if (!m_words.add(wordOf(entry)).isNewEntry)
+            return;
+        list.append(entry);
+        ++m_numberOfEntriesTaken;
+    }
+
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_words;
+    size_t m_numberOfEntriesTaken { 0 };
+};
+
 struct KeptByTypedAccesses final : Walker::KeptForBuild {
     Vector<std::optional<std::optional<ReceiversOfTypedAccess>>> receiversOfFamilies;
     HashMap<std::pair<uint64_t, uint32_t>, FieldOfTypedAccess> fieldsOfFamilies;
@@ -1604,11 +1651,12 @@ static bool lookupPassesAboveReceiversForTypedAccess(const Walker& walker, const
     }
     auto askEachMember = [&] {
         KeptByTypedAccesses::AnswersAbove answers;
+        WordsListedOnce classesListed;
         answers.somebodyAnswersForEveryMember = std::ranges::all_of(receivers.members, [&](LayoutID member) {
             LayoutID classLayout;
             WhoAnswersForWhatStandsAbove who = whoAnswersForWhatStandsAboveObjectsOf(walker, member, key, lookup, classLayout);
-            if (who == WhoAnswersForWhatStandsAbove::GuardOfClass && !answers.classesWhoseGuardsAnswer.contains(classLayout))
-                answers.classesWhoseGuardsAnswer.append(classLayout);
+            if (who == WhoAnswersForWhatStandsAbove::GuardOfClass)
+                classesListed.appendUnlessListed(answers.classesWhoseGuardsAnswer, classLayout);
             return who != WhoAnswersForWhatStandsAbove::Nobody;
         });
         return answers;
@@ -1646,6 +1694,7 @@ static void askAgainGuardsAboveReceiversForTypedAccess(Walker& walker, const Rec
         return;
     bool asksWhatReadLeansOn = !stores && walker.checksProofs() && receivers.possibleChanges.contains(LayoutChange::ChangesPrototype);
     Vector<MemberConditionRecord, 8> remembered;
+    WordsListedOnce rememberedListed;
     for (LayoutID member : receivers.members) {
         LayoutID classLayout;
         if (whoAnswersForWhatStandsAboveObjectsOf(walker, member, key, stores ? LookupAbove::OfStore : LookupAbove::OfRead, classLayout) != WhoAnswersForWhatStandsAbove::GuardOfClass)
@@ -1653,8 +1702,7 @@ static void askAgainGuardsAboveReceiversForTypedAccess(Walker& walker, const Rec
         if (!asksWhatReadLeansOn && !(stores ? walker.state().storesPassAbove(classLayout, key) : walker.state().guardOfReadsHolds(classLayout, key)))
             continue;
         MemberConditionRecord condition { stores ? MemberConditionKind::MemberPassedByStores : MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Prototype, key };
-        if (!remembered.contains(condition))
-            remembered.append(condition);
+        rememberedListed.appendUnlessListed(remembered, condition);
     }
     if (remembered.isEmpty())
         return;
@@ -2819,14 +2867,14 @@ static void lookAtGuardsInFrontOfReadsOffConstructorFunction(Walker& walker, std
 {
     const BodyIndex& index = walker.currentBodyIndex();
     Vector<MemberConditionRecord, 4> conditions;
+    WordsListedOnce conditionsListed;
     bool someGuardIsNotKnownToHold = false;
     for (ValueID id : reads) {
         BodyValue read = walker.asWalked(index.value(id));
         if (std::optional<MethodReadOffPrototypeOfClass> off = findMethodReadOffPrototypeOfClass(walker, read, walker.typeOf(object)); off && off->readOfPrototype == id) {
             someGuardIsNotKnownToHold |= !guardsOfMethodReadOffPrototypeOfClassHold(walker, *off);
             for (const MemberConditionRecord& condition : off->conditions) {
-                if (!conditions.contains(condition))
-                    conditions.append(condition);
+                conditionsListed.appendUnlessListed(conditions, condition);
             }
             continue;
         }
@@ -2835,8 +2883,7 @@ static void lookAtGuardsInFrontOfReadsOffConstructorFunction(Walker& walker, std
             continue;
         someGuardIsNotKnownToHold |= !walker.state().guardOfReadsHolds(found->classLayout, read.key(), ClassSide::Static);
         MemberConditionRecord condition { MemberConditionKind::MemberUnchanged, found->classLayout, ClassSide::Static, read.key() };
-        if (!conditions.contains(condition))
-            conditions.append(condition);
+        conditionsListed.appendUnlessListed(conditions, condition);
     }
     if (!someGuardIsNotKnownToHold || walker.isUnreachable())
         return;
@@ -3070,14 +3117,14 @@ static void lookAtStructureInFrontOfAccessesToHeirOfBuiltin(Walker& walker, std:
             walker.state().noteCheckedName(loaded, number);
     }
     Vector<MemberConditionRecord, 4> conditions;
+    WordsListedOnce conditionsListed;
     for (ValueID id : accesses) {
         BodyValue read = walker.asWalked(index.value(id));
         std::optional<FoundOffHeirOfBuiltin> found = findWhatReadFindsOffHeirOfBuiltin(walker, read, walker.typeOf(object));
         if (!found || !found->standsAboveObject() || conditionOnWhatStandsAboveHeirOfBuiltinIsKnownToHold(walker, *found, read.key()))
             continue;
         MemberConditionRecord condition = conditionOnWhatStandsAboveHeirOfBuiltin(walker, *found, read.key());
-        if (!conditions.contains(condition))
-            conditions.append(condition);
+        conditionsListed.appendUnlessListed(conditions, condition);
     }
     if (conditions.isEmpty() || walker.isUnreachable())
         return;
@@ -3786,14 +3833,14 @@ bool askCellAndGuardsWhetherNoMemberIsFound(Walker& walker, const BodyValue& que
     if (!asked || !asked->containsOnly({ FactOfCell::NoExtraProperties, FactOfCell::NoFieldOutsideSlot, FactOfCell::HasLayoutPrototype }))
         return false;
     Vector<MemberConditionRecord, 8> conditions;
+    WordsListedOnce conditionsListed;
     if (receivers->possibleChanges.contains(LayoutChange::ChangesPrototype)) {
         for (LayoutID member : receivers->members) {
             LayoutID classLayout;
             if (whoAnswersForWhatStandsAboveObjectsOf(walker, member, key, LookupAbove::OfRead, classLayout) != WhoAnswersForWhatStandsAbove::GuardOfClass || walker.state().guardOfReadsHolds(classLayout, key))
                 continue;
             MemberConditionRecord condition { MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Prototype, key };
-            if (!conditions.contains(condition))
-                conditions.append(condition);
+            conditionsListed.appendUnlessListed(conditions, condition);
         }
     }
     OptionSet<FactOfCell> left = *asked - factsOfCellForLookupUnderKey(walker, object, key);
@@ -3830,14 +3877,14 @@ Reference buildReadThatTestsShapeAndCell(Walker& walker, const BodyValue& read, 
     if (!asked || !asked->containsOnly({ FactOfCell::NoFieldOutsideSlot, FactOfCell::HasLayoutPrototype }))
         return { };
     Vector<MemberConditionRecord, 8> conditions;
+    WordsListedOnce conditionsListed;
     if (asked->contains(FactOfCell::HasLayoutPrototype)) {
         for (LayoutID member : receivers->members) {
             LayoutID classLayout;
             if (whoAnswersForWhatStandsAboveObjectsOf(walker, member, key, LookupAbove::OfRead, classLayout) != WhoAnswersForWhatStandsAbove::GuardOfClass || walker.state().guardOfReadsHolds(classLayout, key))
                 continue;
             MemberConditionRecord condition { MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Prototype, key };
-            if (!conditions.contains(condition))
-                conditions.append(condition);
+            conditionsListed.appendUnlessListed(conditions, condition);
         }
     }
     Draft draft = draftOfSlotOperationForTypedAccess(walker, read, Opcode::GetSlotOrUndefined, object, *receivers, key);
@@ -3887,6 +3934,7 @@ bool buildStoreThatTestsForItself(Walker& walker, const BodyValue& store, Refere
     if (!ahead.askedOfCell.containsOnly({ FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::HasLayoutPrototype }))
         return false;
     Vector<MemberConditionRecord, 8> conditions;
+    WordsListedOnce conditionsListed;
     if (ahead.creates) {
         Reference root = object.isValue() ? Reference::value(rootOfCellInSweptCode(walker.code(), object.id())) : object;
         if (isBeingMadeByBodyBeingReadInTypedAccess(walker, store.objectOperand()) || walker.state().factsOfCell(root).containsAny({ FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed }))
@@ -3900,8 +3948,7 @@ bool buildStoreThatTestsForItself(Walker& walker, const BodyValue& store, Refere
                 if (whoAnswersForWhatStandsAboveObjectsOf(walker, member, key, LookupAbove::OfStore, classLayout) != WhoAnswersForWhatStandsAbove::GuardOfClass || walker.takesGuardsAndFactsToHold() || walker.state().storesPassAbove(classLayout, key))
                     continue;
                 MemberConditionRecord condition { MemberConditionKind::MemberPassedByStores, classLayout, ClassSide::Prototype, key };
-                if (!conditions.contains(condition))
-                    conditions.append(condition);
+                conditionsListed.appendUnlessListed(conditions, condition);
             }
         }
     }
@@ -3973,6 +4020,7 @@ void lookAtCellInFrontOfStores(Walker& walker, std::span<const ValueID> stores, 
 
     OptionSet<FactOfCell> asked;
     Vector<MemberConditionRecord, 8> conditions;
+    WordsListedOnce conditionsListed;
     Vector<std::pair<ValueID, FunctionID>, 2> methodsReadOffHolder;
     bool someStoreCreates = false;
     PropertyKeyID firstKeyCreated;
@@ -3984,8 +4032,7 @@ void lookAtCellInFrontOfStores(Walker& walker, std::span<const ValueID> stores, 
             if (lookup == LookupAbove::OfRead ? walker.state().guardOfReadsHolds(classLayout, key) : walker.state().storesPassAbove(classLayout, key))
                 continue;
             MemberConditionRecord condition { lookup == LookupAbove::OfRead ? MemberConditionKind::MemberUnchanged : MemberConditionKind::MemberPassedByStores, classLayout, ClassSide::Prototype, key };
-            if (!conditions.contains(condition))
-                conditions.append(condition);
+            conditionsListed.appendUnlessListed(conditions, condition);
         }
     };
     auto askLooksForAccessorAbove = [&](const BodyValue& access, PropertyKeyID key) {
@@ -4000,8 +4047,7 @@ void lookAtCellInFrontOfStores(Walker& walker, std::span<const ValueID> stores, 
             if (!findAccessorDeclaredAboveObjectsOf(walker, member, key, classLayout, getter, setter) || walker.state().guardOfReadsHolds(classLayout, key))
                 continue;
             MemberConditionRecord condition { MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Prototype, key };
-            if (!conditions.contains(condition))
-                conditions.append(condition);
+            conditionsListed.appendUnlessListed(conditions, condition);
         }
         return true;
     };
@@ -4034,8 +4080,7 @@ void lookAtCellInFrontOfStores(Walker& walker, std::span<const ValueID> stores, 
                 if (!findMethodDeclaredAboveObjectsOf(walker, member, key, classLayout) || conditionOnMethodAboveObjectsIsKnownToHold(walker, walker.state(), classLayout, key))
                     continue;
                 MemberConditionRecord condition = conditionOnMethodAboveObjectsOf(walker, classLayout, key);
-                if (!conditions.contains(condition))
-                    conditions.append(condition);
+                conditionsListed.appendUnlessListed(conditions, condition);
             }
             continue;
         }
@@ -4961,8 +5006,10 @@ static void checkWordsBehindCopyForTypedAccess(Walker& walker, Origin origin, Re
         Draft read(Opcode::GetSlot, origin);
         fillSlotOperationForTypedAccess(read, made, *receivers, walker.program().at(layout).fields[field].key);
         Reference copied = walker.build(WTF::move(read));
-        if (!copied || walker.hasFailed() || walker.isUnreachable())
+        if (walker.hasFailed() || walker.isUnreachable())
             return;
+        if (!copied)
+            continue;
         Representation form = walker.representationOf(copied);
         if (form == Representation::JSValue || form == Representation::Cell || form == Representation::Cell32)
             walker.checkThatSlotTakes(copied, plan.slot(layout, field).typeThatStoresAreHeldTo(), origin);

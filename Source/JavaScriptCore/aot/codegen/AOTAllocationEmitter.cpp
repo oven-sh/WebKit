@@ -466,7 +466,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES Operand AllocationEmitter::takeForSlot(const Init
     return isNarrowedWhereStored(field) ? Operand(compress(in<CellPointer>(field.value))) : get(field.value);
 }
 
-ALWAYS_INLINE void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
+ALWAYS_INLINE_INTO_OTHER_FILES void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
     struct WordStoredOften {

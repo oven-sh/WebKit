@@ -187,7 +187,7 @@ static bool mayBeInt32InCountersOfLoops(const Walker& walker, Reference value)
     return type.isJavaScriptValue() && type.primitives & Primitive::Integer && !type.isInteger();
 }
 
-static bool isNumberCarriedBesideTextOrBigIntInCountersOfLoops(const Walker& walker, Reference enters, TypeID carried)
+bool isNumberCarriedBesideTextOrBigInt(const Walker& walker, Reference enters, TypeID carried)
 {
     if (!enters || !enters.isRecord() || !carried || isNeverType(carried))
         return false;
@@ -953,6 +953,29 @@ static void appendNumbersThatDivisionsBringRoundInCountersOfLoops(Walker& walker
     }
 }
 
+BitVector namesOfCountersAskedForInt32InFrontOfLoop(Walker& walker, BlockID inputHead, std::span<const Reference> entering)
+{
+    BitVector found;
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers) || !index.holdsAnyOf(stepsByOneOfCountersOfLoops | stepsByNumberOfCountersOfLoops))
+        return found;
+    std::optional<UsersOfValuesInCountersOfLoops> users;
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    uint32_t numberOfParameters = index.block(inputHead).numberOfParameters();
+    for (uint32_t position = 0; position < numberOfParameters && position < entering.size(); ++position) {
+        if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, entering[position]) || std::ranges::find(entering.first(position), entering[position]) != entering.first(position).end())
+            continue;
+        if (!users)
+            users.emplace(walker, index, inputHead);
+        NamesOfCounterOfLoop names;
+        if (!isSteppedAllRoundInCountersOfLoops(walker, index, *users, inputHead, position, names))
+            continue;
+        for (ValueID name : names)
+            found.set(name.index() - firstValueOfLoop);
+    }
+    return found;
+}
+
 Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
 {
     Vector<CounterTestedInFrontOfLoop, 2> counters;
@@ -1061,7 +1084,7 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
         guessAddendsOfSumsCutToInt32InCountersOfLoops(walker, index, inputHead, entering, guesses);
     for (uint32_t position = 0; !walker.sumsAreNotAskedInRow() && position < numberOfParameters && position < entering.size() && position < preview.typesOfParameters.size(); ++position) {
         Reference enters = entering[position];
-        if (!isNumberCarriedBesideTextOrBigIntInCountersOfLoops(walker, enters, preview.typesOfParameters[position]))
+        if (!isNumberCarriedBesideTextOrBigInt(walker, enters, preview.typesOfParameters[position]))
             continue;
         bool isTestedAlready = std::ranges::find(entering.first(position), enters) != entering.first(position).end()
             || counters.containsIf([&](const CounterTestedInFrontOfLoop& counter) { return counter.position == position; })

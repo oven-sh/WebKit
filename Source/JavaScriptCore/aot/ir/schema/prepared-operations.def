@@ -81,6 +81,7 @@ operation GetTypedArrayElement (view: Object/inspects, position: Number/inspects
 operation PutTypedArrayElement (view: Object/inspects+writesContents, position: Number/inspects, value: Any/inspects, vector?: ViewVector/inspects, length...: Integer/inspects, typedArrayType: TypedArrayType, mode: ECMAMode, level: KnowledgeLevel) [keyIsIntegral isInsideView] -> none ; reads(TypedArrayStorage) writes(TypedArrayElements) ; relies = InBounds ; replaces = ElemSet ; accessClass = Slot ; form = Open
 operation GetEnumeratorIndexedLength (enumerator: Enumerator/inspects) -> natural(uint32) ; none ; form = Open
 operation IsElementInStorage (object: Any/inspects, position: Number/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; branches = May ; form = Open
+operation GetElementInStorageOrAbsent (object: Any/inspects, position: Number/inspects, valueType: Type) -> declared(valueType) ; reads(ArrayStorage, ArrayLengths, Elements) ; replaces = ElemGet ; form = Open
 operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read ; hasKnownValueRule = true ; form = Open
 operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read ; hasOwnFoldingRule = true ; form = Closed
 

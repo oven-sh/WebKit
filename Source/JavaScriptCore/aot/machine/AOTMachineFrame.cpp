@@ -1049,13 +1049,40 @@ void Allocator::settleFramedPart()
         }
         whatSetsSaved.append(m_arena, SavedByEveryHeadOfSet { beginOfSaved, static_cast<uint32_t>(savedByEveryHeadOfSets.size()) });
     }
+    ArenaVector<uint8_t> saveIsRead;
+    saveIsRead.fill(m_arena, m_allocation.m_steps.size() - begin, 0);
+    ArenaVector<uint8_t> whatSetSavedIsRead;
+    whatSetSavedIsRead.fill(m_arena, savedByEveryHeadOfSets.size(), 0);
+    auto noteReadOfWhatHeadSaved = [&](const Allocation::HeadOfFramedPart& head, Location location) {
+        for (uint32_t index = head.beginOfSteps; index < head.endOfSteps; ++index) {
+            if (m_allocation.m_steps[index].destination == location)
+                saveIsRead[index - begin] = 1;
+        }
+    };
+    auto noteReadOfWhatSetSaved = [&](uint32_t set, Location location) {
+        for (; set != UINT32_MAX; set = m_allocation.m_setsOfHeads[set].rest) {
+            uint32_t index = whatSetsSaved[set].begin;
+            while (savedByEveryHeadOfSets[index] != location)
+                ++index;
+            if (whatSetSavedIsRead[index])
+                return;
+            whatSetSavedIsRead[index] = 1;
+            noteReadOfWhatHeadSaved(m_allocation.m_headsOfFramedPart[m_allocation.m_setsOfHeads[set].head], location);
+        }
+    };
     auto isSavedAbove = [&](const Block* block, Location location) {
         if (!isStoredAtHead(location))
             return true;
         const Allocation::HeadOfFramedPart& head = m_allocation.headOfFramedPartAbove(block);
         for (uint32_t index = head.beginOfSteps; index < head.endOfSteps; ++index) {
-            if (m_allocation.m_steps[index].destination == location)
-                return isSavedByEveryHeadOf(m_allocation.furtherHeadsOfFramedPartAbove(block), location);
+            if (m_allocation.m_steps[index].destination != location)
+                continue;
+            const uint32_t furtherHeads = m_allocation.furtherHeadsOfFramedPartAbove(block);
+            if (!isSavedByEveryHeadOf(furtherHeads, location))
+                return false;
+            saveIsRead[index - begin] = 1;
+            noteReadOfWhatSetSaved(furtherHeads, location);
+            return true;
         }
         return false;
     };
@@ -1089,6 +1116,21 @@ void Allocator::settleFramedPart()
         setUpFrameAtEntryAfterAll();
         return;
     }
+
+    uint32_t endOfSavesThatAreRead = begin;
+    for (Allocation::HeadOfFramedPart& head : m_allocation.m_headsOfFramedPart) {
+        const uint32_t beginOfSavesThatAreRead = endOfSavesThatAreRead;
+        for (uint32_t index = head.beginOfSteps; index < head.endOfSteps; ++index) {
+            if (!saveIsRead[index - begin] && !isReadByMoreThanSteps(spills[m_allocation.m_steps[index].destination.spillIndex()]))
+                continue;
+            if (endOfSavesThatAreRead != index)
+                m_allocation.m_steps[endOfSavesThatAreRead] = m_allocation.m_steps[index];
+            ++endOfSavesThatAreRead;
+        }
+        head.beginOfSteps = beginOfSavesThatAreRead;
+        head.endOfSteps = endOfSavesThatAreRead;
+    }
+    m_allocation.m_steps.shrink(endOfSavesThatAreRead);
 }
 
 Position Allocator::endOfWhatWaysLeadToFromSafepointsOfRareRegion() const

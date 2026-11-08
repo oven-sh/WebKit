@@ -1182,6 +1182,8 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         printer.print(read.site);
         printer.out().print(" expects getter "_s);
         printer.print(read.getter);
+        if (read.isHeardInLoopsAlone)
+            printer.out().print(" in-loops-alone"_s);
         printer.out().println();
     }
 }

@@ -184,6 +184,8 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::OrderBlocksAgain:
     case Wire::TestingSwitch::WalksUnitsBy:
     case Wire::TestingSwitch::CutWalksOfLoopsShort:
+    case Wire::TestingSwitch::NobodyWakesSleepersOfSharedCalls:
+    case Wire::TestingSwitch::SleepersOfSharedCallsAreNotAskedAtRest:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -137,6 +137,8 @@ void generateSetArrayLength(StubAssembler& jit)
     jit.sub32(TrustedImm32(ArrayWithUndecided), kind);
     callsOperation.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ArrayWithContiguous - ArrayWithUndecided)));
     callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(IsArray)));
+    loadStructure(jit, jit.operand(0), butterfly);
+    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(butterfly, Structure::bitFieldOffset()), TrustedImm32(Structure::s_anyImmutablePropertiesBits)));
     jit.loadPtr(Address(jit.operand(0), JSObject::butterflyOffset()), butterfly);
     jit.load32(publicLength, length);
     Jump isShorterOrLonger = jit.branch32(CCallHelpers::NotEqual, length, jit.operand(1));

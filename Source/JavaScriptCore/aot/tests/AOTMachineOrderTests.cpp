@@ -1138,6 +1138,7 @@ static void testMachineThreadingOfTestOfWordInMemory()
         patch->appendSomeRegister(out.constInt64(8));
         patch->effects = Effects::none();
         patch->setRunsWithoutFrame(true);
+        patch->setShowsRegistersToCollector(true);
         patch->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
             jit.store64(params[1].gpr(), CCallHelpers::Address(params[0].gpr(), OrderTestKey * sizeof(int64_t)));
         });

@@ -10,6 +10,7 @@
 
 #include "AOTAssignmentPlans.h"
 #include "AOTFieldMoves.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTKeyOrderTable.h"
 #include "AOTMappedCopyInlines.h"
 #include "AOTObjectInternal.h"
@@ -72,7 +73,7 @@ static bool tryMakeClosuresForCopyOfWords(VM& vm, Object& source)
     return true;
 }
 
-ALWAYS_INLINE Object* Object::createCopyOfWords(VM& vm, const Object& source, Structure* structure)
+ALWAYS_INLINE_INTO_OTHER_FILES Object* Object::createCopyOfWords(VM& vm, const Object& source, Structure* structure)
 {
     const LayoutData& layout = source.layout();
     Object* copy = new (NotNull, allocateCell<Object>(vm, layout.size)) Object(vm, structure);
@@ -265,7 +266,7 @@ static ALWAYS_INLINE bool holdsKeyOrderFor(const CompiledStructure& ordered, con
         && ordered.hasOtherPrototype() == unordered.hasOtherPrototype() && ordered.storedPrototype() == unordered.storedPrototype() && ordered.realm() == unordered.realm();
 }
 
-ALWAYS_INLINE bool Object::tryCopyWordsOfSameLayout(VM& vm, const Object& source)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Object::tryCopyWordsOfSameLayout(VM& vm, const Object& source)
 {
     if (shapeWord() != source.shapeWord() || this == &source || orderWord() != unorderedOrderWord)
         return false;

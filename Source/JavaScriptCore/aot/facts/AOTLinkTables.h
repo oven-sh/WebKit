@@ -240,6 +240,7 @@ struct LinkedGetterAtRead {
     FunctionID function;
     ValueID site;
     FunctionID getter;
+    bool isHeardInLoopsAlone { false };
 
     friend constexpr auto operator<=>(const LinkedGetterAtRead&, const LinkedGetterAtRead&) = default;
 };

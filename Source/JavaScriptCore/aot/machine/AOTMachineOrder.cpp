@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineTarget.h"
 #include "AOTSort.h"
 #include <algorithm>
@@ -1192,7 +1193,7 @@ void BlockOrderBuilder::takeRareBlocksOutOfOrder()
     m_entriesOfRareRegions = std::span<const EntryOfRareRegion>(entries, static_cast<size_t>(endOfEntries - entries));
 }
 
-ALWAYS_INLINE uint32_t BlockOrderBuilder::representativeOf(BlockState* states, uint32_t block)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t BlockOrderBuilder::representativeOf(BlockState* states, uint32_t block)
 {
     uint32_t link = states[block].regionLink;
     if (states[link].regionLink == link) [[likely]]

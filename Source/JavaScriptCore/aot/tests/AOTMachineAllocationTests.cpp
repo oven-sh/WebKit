@@ -226,6 +226,7 @@ static void allocatorSplitsEdgeThatGetsMoves()
     exchange->append(second, ValueRep::reg(first->argumentReg()));
     exchange->appendSomeRegister(buffer);
     exchange->setRunsWithoutFrame(true);
+    exchange->setShowsRegistersToCollector(true);
     exchange->setGenerator([](CCallHelpers& jit, const PatchParameters& parameters) {
         jit.store64(parameters[0].gpr(), CCallHelpers::Address(parameters[2].gpr()));
         jit.store64(parameters[1].gpr(), CCallHelpers::Address(parameters[2].gpr(), sizeof(uint64_t)));
@@ -969,6 +970,54 @@ static void allocatorDefinesArmThatDiesInSelectWhereResultIsWanted()
         AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(isOdd, words.data()) == isOdd);
         AOT_ALLOCATION_TEST_CHECK(test, noted == words[isOdd ? 0 : 1]);
     }
+}
+
+static void allocatorLeavesRegisterThatSelectInLoopWantsToArmMadeInLoop()
+{
+    uint64_t noted = 0;
+    TestProcedure test;
+    Output& out = test.out();
+    LValue turns = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LValue madeAhead = out.load64(allocationTestWordAt(test, buffer, 0));
+    LBasicBlock head = out.newBlock();
+    LBasicBlock end = out.newBlock();
+    ValueFromBlock firstTurns = out.anchor(turns);
+    out.jump(head);
+
+    out.appendTo(head);
+    LValue turnsLeft = out.phi(Int64, firstTurns);
+    LValue madeInLoop = out.load64(allocationTestWordAt(test, buffer, 1));
+    LValue chosen = out.select(out.testNonZero64(turnsLeft, 1), madeAhead, madeInLoop);
+    PatchOperation* reader = out.patch(Void);
+    reader->append(chosen, ValueRep::reg(GPRInfo::argumentGPR5));
+    reader->setGenerator([place = &noted](CCallHelpers& jit, const PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        AOT_TEST_CHECK(params.size() == 1 && params[0] == ValueRep::reg(GPRInfo::argumentGPR5));
+        GPRReg address = jit.scratchRegister();
+        jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+        jit.store64(GPRInfo::argumentGPR5, CCallHelpers::Address(address));
+    });
+    LValue nextTurnsLeft = out.sub(turnsLeft, out.constInt64(1));
+    out.addIncomingToPhi(turnsLeft, out.anchor(nextTurnsLeft));
+    out.branch(out.notZero64(nextTurnsLeft), normalEdge(head), normalEdge(end));
+
+    out.appendTo(end);
+    out.ret(nextTurnsLeft);
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    const Reg wanted = Reg(GPRInfo::argumentGPR5);
+    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().order().of(head).loop != noLoop && test.procedure().order().of(madeAhead->owner()).loop == noLoop);
+    AOT_ALLOCATION_TEST_CHECK(test, chosen->opcode() == Select && allocation.registerAtDefinitionOf(chosen) == wanted && !text.count("move"_s, chosen));
+    if (isX86_64())
+        AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(madeAhead) != wanted && allocation.registerAtDefinitionOf(madeInLoop) == wanted);
+
+    std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+    AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(uint64_t { 4 }, words.data()) && noted == words[0]);
+    words[0] = ~words[0];
+    AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(uint64_t { 3 }, words.data()) && noted == words[0]);
 }
 
 static void allocatorLeavesPhiWhereCallInItsBlockTakesIt()
@@ -3880,6 +3929,7 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/sum-comes-round-in-its-register-past-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/value-for-a-phi-is-made-in-the-register-of-the-phi"_s, Machine::allocatorDefinesValueInRegisterOfPhiWhoseHeadIsFixed },
         { "machine-allocation/an-arm-that-dies-in-a-select-is-made-where-the-result-is-wanted"_s, Machine::allocatorDefinesArmThatDiesInSelectWhereResultIsWanted },
+        { "machine-allocation/the-register-that-a-select-in-a-loop-wants-is-left-to-the-arm-made-in-the-loop"_s, Machine::allocatorLeavesRegisterThatSelectInLoopWantsToArmMadeInLoop },
         { "machine-allocation/a-phi-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesPhiWhereCallInItsBlockTakesIt },
         { "machine-allocation/an-argument-that-lives-across-a-call-takes-its-home-where-it-is-defined"_s, Machine::allocatorGivesArgumentThatLivesAcrossCallItsHomeWhereItIsDefined },
         { "machine-allocation/an-argument-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesArgumentWhereCallInItsBlockTakesIt },

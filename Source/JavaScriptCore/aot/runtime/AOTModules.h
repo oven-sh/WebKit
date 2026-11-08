@@ -190,6 +190,7 @@ public:
     void didBeginTestFile()
     {
         m_filesThatRanBeforeTestFile = filesThatHaveRun();
+        m_dataFilesThatRanBeforeTestFile = dataFilesThatHaveRun();
         if (!std::exchange(m_hasBegunTestFile, true))
             m_filesThatRanInPreload = m_filesThatRanBeforeTestFile;
         for (BitVector* letGo : { &m_modulesThatLoaderLetGo, &m_importersOfMockThatEnded }) {
@@ -206,6 +207,9 @@ public:
         m_linksOfLoadsThatMayFail.clear();
     }
     BitVector filesThatHaveRun();
+    BitVector dataFilesThatHaveRun();
+    bool wasLoadedAheadOfThisTestFile(ModuleID);
+    void didLeaveLoaderInThisTestFile(ModuleID module) { m_dataFilesThatRanBeforeTestFile.clear(module.index()); }
     void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
     bool isMocked(ModuleID module) const { return m_mocks && m_mocks->modules.get(module.index()); }
     bool hasMockThatWaitsOrRuns(ModuleID file) const { return m_modulesWithMockThatWaited.get(file.index()) && !m_modulesWithMockInPlace.get(file.index()); }
@@ -279,6 +283,7 @@ public:
     void forgetAnswersThatName(ModuleRecord*);
     JSPromise* evaluationOfRecordSetAside(ModuleID);
     bool bodySetAsideWaitsForItsMock(ModuleID, std::optional<ModuleID> loadThatCalledFactory);
+    void noteImportThatBodySetAsideMayAwait(ModuleID imported, std::optional<int64_t> orderOfCaller, JSPromise*);
     struct ImportCalledByBodySetAside {
         ModuleID imported;
         std::optional<int64_t> orderOfCaller;
@@ -758,6 +763,7 @@ public:
     bool refusesOriginalsBesideMocks() const { return m_refusesOriginalsBesideMocks; }
     void refuseToShowExportsOf(ModuleID);
     void refuseToHandOutExportOf(ModuleID, StringView name);
+    std::optional<std::pair<ModuleID, unsigned>> exportThatStaysInBehindIndirectEntries(ModuleID, unsigned index);
     enum class OriginalIsAskedBy : uint8_t { Statement, CallOfImport };
     bool importsOriginalBesideMock(ModuleID mocked, ModuleID importer, OriginalIsAskedBy = OriginalIsAskedBy::Statement) const;
     bool statementsHoldOriginalBehindEndOfMock(ModuleID mocked, ModuleID importer) const;
@@ -807,6 +813,7 @@ public:
 
     JSPromise* evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* = nullptr, bool isLinked = false);
     void evaluateSynchronously(ModuleID, SynchronousEvaluationReason);
+    void leaveStepsOfLoaderToJobs();
     void innerModuleEvaluation(ModuleID root, EvaluationContext&);
     void gatherAsynchronousTransitiveDependencies(ModuleID, OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen);
     bool readyForSyncExecution(ModuleID, VisitedModuleRecords& seen);
@@ -1024,6 +1031,7 @@ public:
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
+    JSPromise* behindStepsOfImportThatWaitsFor(JSPromise* evaluation, ModuleID);
     void noteChangeOfMockUnderCallsOfImport(ModuleID);
     void noteCallOfImportUnderMock(JSPromise*, ModuleID);
     void didTakeFirstStepOfCallOfImportSlow(JSPromise*);
@@ -1808,6 +1816,7 @@ private:
     BitVector m_filesLoadedByRequire;
     BitVector m_filesThatRanInPreload;
     BitVector m_filesThatRanBeforeTestFile;
+    BitVector m_dataFilesThatRanBeforeTestFile;
     BitVector m_filesWithKnownLoad;
     BitVector m_filesLoadedSynchronously;
     BitVector m_filesWhoseNextLoadIsFirst;
@@ -1880,6 +1889,7 @@ private:
     BitVector m_modulesLoadedBesideGroups;
     Vector<uint32_t> m_momentsOfLoads;
     BitVector m_loadedInPreload;
+    BitVector m_modulesLoadedAsMocksAlone;
     BitVector m_libraryModulesAskedForInPreload;
     bool m_hasBegunTestFile { false };
     struct MockOverModuleThatHasRun {
@@ -1970,7 +1980,7 @@ private:
     };
     static const MomentSomeModuleMayLookAt* firstBetween(std::span<const MomentSomeModuleMayLookAt> sorted, uint32_t from, uint32_t until);
     Vector<MomentSomeModuleMayLookAt, 16> momentsAtWhichSomeModuleMayLook(uint32_t since) const;
-    void letGoOfEndedMocksNobodySees(ModuleID fileOrModule);
+    void letGoOfEndedMocksNobodySees();
     struct MomentMockWasLaid {
         uint32_t moment { 0 };
         uint32_t momentOfTestFile { 0 };
@@ -2078,6 +2088,7 @@ private:
     Vector<RequireThatGaveUp> m_requiresThatGaveUp;
     BitVector m_modulesLoadedBeforeMockThatWaited;
     BitVector m_filesThatRanAheadOfMock;
+    BitVector m_modulesAskedForOwnNames;
     BitVector m_filesUnderKeyOfOriginal;
     BitVector m_filesWhoseOriginalCameBackUnderOwnKey;
     uint32_t m_stepsOfLoader { 0 };

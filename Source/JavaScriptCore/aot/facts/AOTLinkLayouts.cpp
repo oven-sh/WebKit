@@ -357,7 +357,7 @@ static NodesStoredInLinkLayouts nodesStoredUnderInLinkLayouts(LinkFlow& flow, co
 
 static void addChangesInLinkLayouts(LinkFlow& flow, LayoutID layout, OptionSet<LayoutChange> changes)
 {
-    if (!flow.possibleChanges[layout.index()].containsAll(changes))
+    if (!flow.changesByMoreThanStoresInSight[layout.index()].containsAll(changes))
         flow.note(LinkFlow::Note::ChangeOfLayout, layout.index(), changes.toRaw());
 }
 
@@ -4531,7 +4531,9 @@ void WriterOfLinkLayouts::writeFields()
                 && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration);
             cell.isFilledByAccessorsAlone = isRecord && record.form.isEmpty() && hasKnownAccessor.quickGet(cellOf(reference))
                 && !m_fieldsGivenValues.quickGet(cellOf(reference)) && !m_fieldsGivenValues.quickGet(declaration);
-            if (uint32_t forms = cell.isFilledByAccessorsAlone ? m_formsLaidInListedFields.get(cellOf(reference)) | m_formsLaidInListedFields.get(declaration) : 0; hasOneBitSet(forms) && forms != formNobodyKnows)
+            bool isGivenValuesByDefinitionsAlone = isRecord && record.form.isEmpty() && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration) && cell.everyWriterIsKnown && !cell.isOfBirth
+                && m_flow.fieldsNotOfBirth.get(cellOf(reference)) && !m_fieldsWrittenWithoutDefinition.get(cellOf(reference)) && !m_fieldsWrittenWithoutDefinition.get(declaration);
+            if (uint32_t forms = cell.isFilledByAccessorsAlone || isGivenValuesByDefinitionsAlone ? m_formsLaidInListedFields.get(cellOf(reference)) | m_formsLaidInListedFields.get(declaration) : 0; hasOneBitSet(forms) && forms != formNobodyKnows)
                 cell.formThatDefinitionsCreate = OptionSet<FieldForm>::fromRaw(static_cast<uint8_t>(WTF::ctz(forms)));
             cell.holdsAccessorFromBirth = cell.isFilledByAccessorsAlone && keepsWhatLiesBesideAccessors && m_flow.reading() == WhatUnseenCodeDoes::Anything && isAllocated
                 && !m_flow.fieldsThatMayBeEmpty.get(cellOf(reference)) && !m_fieldsReadInFrontOfDefinition.quickGet(cellOf(reference))

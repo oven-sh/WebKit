@@ -202,7 +202,7 @@ private:
 
     void noteChange(LayoutID layout, LayoutChange change)
     {
-        if (!m_flow.possibleChanges[layout.index()].contains(change))
+        if (!m_flow.changesByMoreThanStoresInSight[layout.index()].contains(change))
             m_flow.note(LinkFlow::Note::ChangeOfLayout, layout.index(), static_cast<uint32_t>(change));
     }
     void noteWrittenAfterConstruction(FieldReference reference)

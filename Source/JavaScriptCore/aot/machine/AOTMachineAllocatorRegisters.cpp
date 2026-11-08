@@ -311,7 +311,7 @@ SpillIndex Allocator::markSpilled(Operation* value)
 {
     if (m_isAheadOfFramedPart && isStoredAtHeadsOfFramedPart(value)) {
         const ValueFacts& factsOfValue = m_valueFacts[value->index()];
-        if (isInRareRegion() || factsOfValue.has(ValueFlag::IsKeptForCollector) || factsOfValue.has(ValueFlag::LivesIntoLandingPad) || factsOfValue.has(ValueFlag::LivesAcrossSuspension)) {
+        if (isInRareRegion() || isReadByMoreThanSteps(factsOfValue)) {
             m_allocation.m_needsFrameAheadOfFramedPart = true;
             m_allocation.m_needsFrameOutsideRareRegions = true;
         }

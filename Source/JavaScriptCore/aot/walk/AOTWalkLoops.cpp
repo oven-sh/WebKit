@@ -396,7 +396,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
     macro(m_state) macro(m_block) macro(m_origin) macro(m_opensGuesses) macro(m_closedArmKeepsSites) macro(m_firstFreeOpenEdge) macro(m_pendingBlocks) macro(m_numberOfClosedArms) \
     macro(m_numberOfIterationsInFrontOfTheirLoops) macro(m_isLeadingHandlerEdge) \
     macro(m_numberOfLoopsThatMayBeLeft) macro(m_numberOfScopesWhereProofsHoldEverywhere) \
-    macro(m_loopsOverGenerators) macro(m_environmentCellsOfUnit) macro(m_operationsCopiedAtWrittenCall) macro(m_closuresThatAllocationAloneTakes) macro(m_valuesDefinedBehindBirth) macro(m_valuesWrittenBehindBirth) macro(m_layoutOfBirthThatListsWhatIsBehind) macro(m_numberOfCopiesBuiltForSize) macro(m_walksCopyWhereHolderIsNoBuiltin) macro(m_otherCopiesInsideTypedCopies) \
+    macro(m_loopsOverGenerators) macro(m_environmentCellsOfUnit) macro(m_operationsCopiedAtWrittenCall) macro(m_closuresThatAllocationAloneTakes) macro(m_valuesDefinedBehindBirth) macro(m_valuesWrittenBehindBirth) macro(m_layoutOfBirthThatListsWhatIsBehind) macro(m_numberOfCopiesBuiltForSize) macro(m_walksCopyWhereHolderIsNoBuiltin) macro(m_walksCopyForWhatIsNoBuiltin) macro(m_holderThatIsNoBuiltin) macro(m_otherCopiesInsideTypedCopies) \
     macro(m_isWalkingAccess) macro(m_pollInFrontOfLoopBeingEntered) macro(m_edgeOfCodeBeingLed) macro(m_callCopiedByLinkOfChain) \
     macro(m_numberOfFramesAtCallCopiedByLinkOfChain) macro(m_callIsAccountedFor) macro(m_calleeAccountedFor) \
     macro(m_holdsReadsOfVariablesAsConstants) macro(m_countsOfUnit) macro(m_numberOfGuessesOpened) macro(m_numberOfListsAskedInFrontOfTypedCopies) macro(m_numberOfElementsAskedInFrontOfTypedCopies) macro(m_numberOfNumbersReadInFrontOfTypedCopies) macro(m_mechanisms) \
@@ -427,7 +427,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
 #define FOR_EACH_FIELD_OF_WALKER_THAT_ITS_WRITER_PUTS_BACK(macro) \
     macro(m_valuesStoodInFor) macro(m_whereListsAreMadeBehindEntry) macro(m_makerOfListsBehindEntry) macro(m_accessWhoseKeyIsTested) macro(m_depthOfCopiesAroundThatAccess) macro(m_accessWhoseKeyArmHolds) macro(m_depthOfCopiesAroundKeyHeldByArm) macro(m_staticFieldSeenInVariableByArm) macro(m_isMakingObjectsOfConstant) \
     macro(m_numberOfMarksOfTries) macro(m_nestingDepth) macro(m_serialOfNewestMark) macro(m_loopsBeingBought) macro(m_sizesOfLogsWhereFramesWentOnTop) macro(m_buysTwoBuilds) \
-    macro(m_numberOfFormsHeardAsArms) macro(m_operationsThatRanOtherCodeOfRow) macro(m_guardsOfStoresAskedOfRow) macro(m_previewOutOfRow) macro(m_listsAreStruckInRow) macro(m_otherCodeStaysInTypedBuildOfRow) macro(m_otherCodeIsKeptOutOfFirstCopyInVainOfRow) macro(m_otherCodeStayedInVainOfRow) macro(m_readsAskSitesThoughCallStaysOfRow) macro(m_sumsAreNotAskedInRow) macro(m_headOfTypedBuildOverListsTestedInFront) \
+    macro(m_numberOfFormsHeardAsArms) macro(m_operationsThatRanOtherCodeOfRow) macro(m_guardsOfStoresAskedOfRow) macro(m_previewOutOfRow) macro(m_listsAreStruckInRow) macro(m_otherCodeStaysInTypedBuildOfRow) macro(m_otherCodeIsKeptOutOfFirstCopyInVainOfRow) macro(m_otherCodeStayedInVainOfRow) macro(m_readsAskSitesThoughCallStaysOfRow) macro(m_sumsAreNotAskedInRow) macro(m_keysAreReadOffLookInRow) macro(m_keyWasTakenForCounterAskedInFront) macro(m_headOfTypedBuildOverListsTestedInFront) \
     macro(m_frameOfTypedBuildOverListsTestedInFront) macro(m_listsMadeHereOfTypedBuildOverListsTestedInFront) macro(m_headOfRowHandedOn) macro(m_frameOfRowHandedOn) macro(m_enteredOfRowHandedOn) macro(m_typesOfRowHandedOn) \
     macro(m_rungsOfRowHandedOn) macro(m_parametersThatRareWaysWidenedHandedOn) macro(m_parametersThatElementsOutsideViewsWidenedHandedOn) macro(m_firstOtherCodeRanInCopyOfRow) macro(m_someCallStaysInTurnOfRow) macro(m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces) macro(m_rowSaysTurnsAreQuietOutsideArms) macro(m_effectsOutsideArmsOfRow) \
     macro(m_testsSeenOfRow) macro(m_asksOnlyWhetherLoopMayBeBuiltTwice) macro(m_operatorsMadeInFrontOfLoops) macro(m_ordinalOfCopyOfLoop) macro(m_walksCopyWithoutGuessesOfSomeTurns) macro(m_walksCopyWithoutQuestionsOfEveryTurn) macro(m_walksCopyForAnotherKindOfStorage) macro(m_frontsSharedWithTypedBuilds) macro(m_inputHeadAskedAboutTypedCopy) \
@@ -467,7 +467,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
 #define FOR_EACH_FIELD_OF_WALKER_THAT_TRIES_LEARN(macro) \
     macro(m_rowsWalkedAgainForCheck) macro(m_rowsAsWalkedLastInBuilds) macro(m_answersOfLoops) macro(m_placesOfAnswersOfLoops) macro(m_triesOfLoops) macro(m_numberOfTryWhoseWalkIsCutShort) \
     macro(m_typedBuildEndedListsTestedInFront) macro(m_effectsOfLoopKeptLast) macro(m_guardsOfStoresAskedInLoopKeptLast) macro(m_typedBuildAsksGuardsThatItWasBoughtFor) macro(m_mentionsThatLeaveHandedOn) macro(m_storesIntoScopesHandedOn) macro(m_everyTurnOfTypedBuildLeaves) macro(m_readWasKeptFromItsSiteBecauseCallStays) \
-    macro(m_turnOfTypedBuildLeavesWithoutTest) macro(m_typedBuildTestsNothing) macro(m_typedBuildIsLeftAtOtherCodeOnUsualWay) macro(m_sumOfTypedBuildComesRoundUnproven) macro(m_rowsWhoseSumsAreNotAsked) macro(m_effectsSeededForNextRow) macro(m_loopsWhoseTextsStayOutOfBuilders) macro(m_walkOfLoopBeganTexts) \
+    macro(m_turnOfTypedBuildLeavesWithoutTest) macro(m_typedBuildTestsNothing) macro(m_typedBuildIsLeftAtOtherCodeOnUsualWay) macro(m_sumOfTypedBuildComesRoundUnproven) macro(m_rowsWhoseSumsAreNotAsked) macro(m_rowsWhoseKeysAreReadOffLook) macro(m_effectsSeededForNextRow) macro(m_loopsWhoseTextsStayOutOfBuilders) macro(m_walkOfLoopBeganTexts) \
     macro(m_frontOfLoopLeftOpen) macro(m_leavesFrontOfLoopOpenBehindWalk) macro(m_otherCopyOpensItsGuessesAsAsked) macro(m_reportOfTypedBuildMadeLast) macro(m_walkOfLoopWasKept) \
     macro(m_headOfLoopKeptLast) macro(m_frameOfLoopKeptLast) macro(m_typedBuildAskedNoListThatItWasBoughtFor)
 
@@ -2152,6 +2152,8 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
     bool hasUndoneWhatFits = false;
     bool hasAskedForTwoBuilds = false;
     SetForScope sumsAreNotAsked(m_sumsAreNotAskedInRow, m_rowsWhoseSumsAreNotAsked.contains(key));
+    SetForScope keysAreReadOffLook(m_keysAreReadOffLookInRow, m_rowsWhoseKeysAreReadOffLook.contains(key));
+    SetForScope keyWasTakenForCounter(m_keyWasTakenForCounterAskedInFront, false);
 
     Vector<Reference, 8> enteringKept;
     enteringKept.append(entering);
@@ -2315,9 +2317,14 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
         bool listsAreStruck = m_answersOfLoops[place].listsAreStruck;
         bool otherCodeStays = m_answersOfLoops[place].otherCodeStaysInTypedBuild;
         bool readsAskSites = m_answersOfLoops[place].readsAskSitesThoughCallStays;
+        bool otherCodeStayedInVain = m_answersOfLoops[place].otherCodeStayedInVain;
+        bool otherCodeIsKeptOutInVain = m_answersOfLoops[place].otherCodeIsKeptOutOfFirstCopyInVain;
         bool comesRoundUnprovenAround = m_sumOfTypedBuildComesRoundUnproven;
+        m_keyWasTakenForCounterAskedInFront = false;
         bool isBuilt = makeBuildsAsRowSays(learned, entered, numberOfEdgesThatCameRound, standInFrontAgain);
-        if (!std::exchange(m_sumOfTypedBuildComesRoundUnproven, comesRoundUnprovenAround) || !isBuilt || m_sumsAreNotAskedInRow || m_hasFailed || m_numberOfTryWhoseWalkIsCutShort)
+        bool sumWasAskedInVain = std::exchange(m_sumOfTypedBuildComesRoundUnproven, comesRoundUnprovenAround) && isBuilt && !m_sumsAreNotAskedInRow;
+        bool keyWasTakenInVain = m_keyWasTakenForCounterAskedInFront && !isBuilt && !m_keysAreReadOffLookInRow;
+        if ((!sumWasAskedInVain && !keyWasTakenInVain) || m_hasFailed || m_numberOfTryWhoseWalkIsCutShort)
             return isBuilt;
         m_answersOfLoops.shrink(numberOfRowsInFront);
         m_placesOfAnswersOfLoops.removeIf([&](const auto& row) {
@@ -2326,6 +2333,13 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
         m_answersOfLoops[place].listsAreStruck = listsAreStruck;
         m_answersOfLoops[place].otherCodeStaysInTypedBuild = otherCodeStays;
         m_answersOfLoops[place].readsAskSitesThoughCallStays = readsAskSites;
+        if (keyWasTakenInVain) {
+            m_answersOfLoops[place].otherCodeStayedInVain = otherCodeStayedInVain;
+            m_answersOfLoops[place].otherCodeIsKeptOutOfFirstCopyInVain = otherCodeIsKeptOutInVain;
+            m_rowsWhoseKeysAreReadOffLook.add(key, 0);
+            m_keysAreReadOffLookInRow = true;
+            return false;
+        }
         m_rowsWhoseSumsAreNotAsked.add(key, 0);
         m_sumsAreNotAskedInRow = true;
         return false;
@@ -2984,6 +2998,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                     && !findRowThatHeadReadsOffListInFront(*this, inputHead, learned);
                 bool isBuilt;
                 bool sumsWereAsked = !m_sumsAreNotAskedInRow;
+                bool keysWereTakenForCounters = !m_keysAreReadOffLookInRow;
                 bool textsStayedOutOfBuilders = textsOfLoopStayOutOfBuilders(inputHead);
                 if (keepsPlainWalk)
                     isBuilt = makeTypedBuildBesidePlainWalk(learned, tried);
@@ -3021,7 +3036,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                         noteRowAsWalkedLast(place, isWalkedInBuild, tried.rowAsAssumed);
                     return true;
                 }
-                if (sumsWereAsked && m_sumsAreNotAskedInRow) {
+                if ((sumsWereAsked && m_sumsAreNotAskedInRow) || (keysWereTakenForCounters && m_keysAreReadOffLookInRow)) {
                     hasAskedForTwoBuilds = false;
                     undoPlainWalk();
                     continue;

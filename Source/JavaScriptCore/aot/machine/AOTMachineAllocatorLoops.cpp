@@ -174,8 +174,7 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
     auto mayBeSpilledAheadOfLoop = [&](const Operation* value) {
         bool wouldBeStoredOutsideRareRegion = loopIsRare && isDefinedOutsideRareRegion(value) && !spillHoldsValueAtHeadOf(head, value);
         const ValueFacts& facts = m_liveness.of(value);
-        bool isReadByMoreThanSteps = facts.has(ValueFlag::IsKeptForCollector) || facts.has(ValueFlag::LivesIntoLandingPad) || facts.has(ValueFlag::LivesAcrossSuspension);
-        bool spillWouldHoldNothing = isReadByMoreThanSteps && headIsAheadOfFramedPart(head) && isStoredAtHeadsOfFramedPart(value);
+        bool spillWouldHoldNothing = isReadByMoreThanSteps(facts) && headIsAheadOfFramedPart(head) && isStoredAtHeadsOfFramedPart(value);
         return value->type().isNumeric() && !isDefinedOnEdgeIntoLoop(m_block, value) && !wouldBeStoredOutsideRareRegion && !spillWouldHoldNothing;
     };
 

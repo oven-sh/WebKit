@@ -963,12 +963,12 @@ static std::optional<uint32_t> endOfLastReturnSiteOfDescribedUnit(const Compiled
         end = end ? std::max(*end, returnOffset) : returnOffset;
     };
     std::span<const ReturnSite> returnSites = code.body.returnSites.span();
+    std::span<const PrologueCheck> prologueChecks = code.frame.prologueChecks.span();
     for (size_t index = returnSites.size(); index--;) {
         uint32_t returnOffset = returnSites[index].offset;
-        bool returnsToPrologueCheck = code.frame.prologueChecks.containsIf([&](const PrologueCheck& check) {
-            return check.callOffset + sizeOfNearCall == returnOffset;
-        });
-        if (returnsToPrologueCheck)
+        while (!prologueChecks.empty() && prologueChecks.back().callOffset + sizeOfNearCall > returnOffset)
+            prologueChecks = prologueChecks.first(prologueChecks.size() - 1);
+        if (!prologueChecks.empty() && prologueChecks.back().callOffset + sizeOfNearCall == returnOffset)
             continue;
         add(returnOffset);
         break;

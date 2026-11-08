@@ -1329,7 +1329,8 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
     if (!tested || !tested->isWritable || (!goesByKind && (!holdsOnlyNumbers(tested->storage) || tested->admitsInt32Storage)))
         return false;
 
-    bool isInside = !access.isOnlyAskedAbout && positionIsKnownToLieInsideList(walker, access.base, access.key);
+    std::optional<PassedTest> inside = access.isOnlyAskedAbout ? std::nullopt : walker.findWhatHoldsPositionInsideList(access.base, access.key);
+    bool isInside = !!inside;
     if (!isInside && !isArrayIndexInTypedElements(access.typeOfKey) && (!rowAsksForWritableList || keyIsLengthOfListItselfInTypedElements(access)))
         return false;
     bool fits = canStoreWithoutConversion(types, goesByKind ? ArrayStorage::Double : tested->storage, access.typeOfStored);
@@ -1425,6 +1426,8 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
     put.setArrayOperand(access.base);
     put.setPositionOperand(access.key);
     put.setValueOperand(stored);
+    if (isInside)
+        put.setIsInBounds(*inside);
     if (goesByKind)
         put.setGoesByKindOfStorage(true);
     if (heldInFrontOfStore && walker.storeIntoElementCanBePutBack())
@@ -2417,6 +2420,8 @@ bool buildReadByIndexOffAnyBaseOfItsOpcodes(Walker& walker, const BodyValue& val
 {
     if (!walker.has(Mechanism::TypedOperations))
         return false;
+    if (walker.textNamesHolderThatIsNoBuiltin(value.objectOperand()) && readAtSiteOrBeginTurnAgain(walker, value))
+        return true;
     Reference object = walker.referenceOf(value.objectOperand());
     Reference key = walker.referenceOf(value.propertyOperand());
     if (!object || !key)

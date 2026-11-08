@@ -19,6 +19,7 @@
 #include "AOTFieldTable.h"
 #include "AOTGuardEmitter.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTNameClass.h"
 #include "AOTOperatorEmitter.h"
 #include "AOTPropertyCachesFront.h"
@@ -489,7 +490,7 @@ void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
             verifyFastPathAnswer(value, Boxed(object.value()), key, getter, StubThatAnswers::CachedGetterByName, slowPathReadCount());
         return getter;
     };
-    if (std::optional<NumberedImmediate> answers = answersOf(value, key, SiteUse::Read)) {
+    if (std::optional<NumberedImmediate> answers = answersOf(value, key, SiteUse::Call)) {
         define(value, verified(Boxed(callStub(value, getterAtSite(), { object.value() }, { .numberedImmediate = *answers }).first)));
         return;
     }
@@ -716,7 +717,7 @@ void AccessEmitter::generateGetValueAtSiteOrAbsent(const ValueContext& value)
         return;
     }
     PropertyKeyID key = value->key();
-    bool hasNoAnswers = m_program.nameClassOf(key) == NameClass::Length || isSymbolOfRealm(key) || m_code.at(value.block()).frequency == BlockFrequency::Rare;
+    bool hasNoAnswers = isSymbolOfRealm(key) || m_code.at(value.block()).frequency == BlockFrequency::Rare;
     std::optional<NumberedImmediate> answers = hasNoAnswers ? std::nullopt : answersAtSite(value, key, SiteUse::Read);
     if (!answers) {
         define(value, boxedConstant(JSValue()));
@@ -1068,7 +1069,7 @@ void AccessEmitter::generatePropGet(const ValueContext& value)
     define(value, getNamedProperty(value));
 }
 
-ALWAYS_INLINE std::optional<Boxed> AccessEmitter::lookWhetherReceiverIsAsMadeInPlaceOfRead(const ValueContext& read)
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<Boxed> AccessEmitter::lookWhetherReceiverIsAsMadeInPlaceOfRead(const ValueContext& read)
 {
     ValueID onlyUser = m_code.onlyUserOf(read.id());
     PropertyKeyID key = read->key();

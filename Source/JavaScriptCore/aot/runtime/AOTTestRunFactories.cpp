@@ -301,7 +301,7 @@ JSPromise* Modules::evaluationUnderWay(ModuleID module, bool hasWaitedForTurn)
         return nullptr;
     if (status(module) == ModuleStatus::EvaluatingAsync) {
         JSPromise* evaluation = evaluate(module, std::nullopt, nullptr, nullptr, true);
-        return evaluation && evaluation->status() == JSPromise::Status::Pending ? evaluation : nullptr;
+        return evaluation && evaluation->status() == JSPromise::Status::Pending ? behindStepsOfImportThatWaitsFor(evaluation, module) : nullptr;
     }
     if (hasWaitedForTurn || status(module) != ModuleStatus::Linked || !isImportedByGraphUnderEvaluation(module))
         return nullptr;
@@ -703,6 +703,8 @@ void Modules::forgetImportFailedUnderMock(ModuleID root)
 
 void Modules::settleImportsThatFailedUnder(ModuleID mocked, FailedImports failedImports)
 {
+    if (failedImports == FailedImports::LoseEntryThatEvictsThem && (m_modulesWithMockThatAsksAgain.get(mocked.index()) || m_modulesWithMockThatAsksAgain.get(fileOf(mocked).index())))
+        return;
     if (failedImports == FailedImports::LoseEntryThatEvictsThem) {
         dropErrorOfMockKeptByLoader(mocked);
         m_mocksWhoseEntryProgramDeleted.set(mocked.index());
@@ -1484,6 +1486,12 @@ void runBodyOfRequiredFileAheadOfMock(JSGlobalObject* realm, ModuleID module)
         return;
     MockDoor door(modules, module, "runBodyOfRequiredFileAheadOfMock"_s);
     modules->runBodyOfRequiredFileAheadOfMock(module);
+}
+
+AbstractModuleRecord* recordOfModuleItself(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->ensureRecordSetAside(module) : nullptr;
 }
 
 JSObject* packageItselfBesideMock(JSGlobalObject* realm, ModuleID module)

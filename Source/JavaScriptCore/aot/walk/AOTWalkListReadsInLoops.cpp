@@ -21,6 +21,7 @@
 #include "AOTTypeArena.h"
 #include "AOTTypedArrayKinds.h"
 #include "AOTWalkBlocksThatEveryTurnPasses.h"
+#include "AOTWalkCountersOfLoops.h"
 #include "AOTWalkKnown.h"
 #include "AOTWalkStrings.h"
 #include "AOTWalkTextBuilders.h"
@@ -767,7 +768,8 @@ static bool storeIntoVectorAskedInFrontOfTypedCopy(Walker& walker, const BodyVal
     ArrayStorage kindAsked = goesByKind ? ArrayStorage::Other : ArrayStorage::Contiguous;
     if (!list || !list.isValue() || !position || !stored || !walker.standsInFrontOfTypedCopy(list, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(list, turn))
         return staysTyped();
-    if (!walker.findWhatHoldsPositionInsideList(list, position))
+    std::optional<PassedTest> inside = walker.findWhatHoldsPositionInsideList(list, position);
+    if (!inside)
         return staysTyped();
     Origin origin = written.origin();
     origin.isTailCall = false;
@@ -813,6 +815,7 @@ static bool storeIntoVectorAskedInFrontOfTypedCopy(Walker& walker, const BodyVal
     store.setArrayOperand(list);
     store.setPositionOperand(position);
     store.setValueOperand(stored);
+    store.setIsInBounds(*inside);
     if (goesByKind) {
         store.setGoesByKindOfStorage(true);
         walker.count(StatisticID::NumbersStoredByKindOfStorageInCopiedRuns);
@@ -982,7 +985,10 @@ static ALWAYS_INLINE bool readsRowOfNumbersThatTurnFindsInListedList(Walker& wal
     if (!part || part->builtinClass != BuiltinClasses::Array)
         return false;
     TypeID rows = part->expectedContentsAt(walker.program().builtins(), ContentsSlot::Element).predicted();
-    return rows && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(rows)));
+    if (rows && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(rows))))
+        return true;
+    TypeID expected = expectedOfRowThatIsNotBuiltInListReadsInLoops(walker, row);
+    return expected && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(expected)));
 }
 
 bool turnsReadRowsOfNumbersThatTheyFind(Walker& walker, BlockID inputHead, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses)
@@ -1818,6 +1824,18 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
         return input.index() >= preview.firstValue && place < preview.typesOfValues.size() ? preview.typesOfValues[place] : TypeID();
     };
 
+    std::optional<BitVector> namesOfCountersAskedInFront;
+    auto typeOfKeyInLook = [&](ValueID key) -> TypeID {
+        TypeID seen = typeInLook(key);
+        if (!seen || types.at(seen).isInteger() || !(types.at(seen).primitives & Primitive::Integer) || key.index() < firstValueOfLoop || walker.keysAreReadOffLookInRow())
+            return seen;
+        if (!namesOfCountersAskedInFront)
+            namesOfCountersAskedInFront = namesOfCountersAskedForInt32InFrontOfLoop(walker, inputHead, entering);
+        if (!namesOfCountersAskedInFront->get(key.index() - firstValueOfLoop))
+            return seen;
+        walker.noteKeyTakenForCounterAskedInFront();
+        return TypeTable::int32;
+    };
     BitVector numbersBehindListsFound;
     auto isNumberBehindListsFound = [&](ValueID value) {
         TypeID seen = typeInLook(value);
@@ -1897,11 +1915,15 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
     Vector<Reference, 2> listsOfUnknownContents;
     Vector<Reference, 2> listsAskedForOneStorage;
     Vector<Reference, 2> listsThatTakeMoreThanInt32s;
+    Vector<Reference, 2> listsThatCopiesOfCalleesStoreIntoUncounted;
+    Vector<Reference, 2> listsTakenUnderCountersAskedInFront;
     auto entersLoopAsNumber = [&](ValueID value) {
         ValueID made = index.valueBehindCasts(value);
         std::optional<uint32_t> place = made ? index.block(inputHead).indexOfParameter(made) : std::nullopt;
         TypeID entered = place && *place < entering.size() && entering[*place] ? ownTypeInListReadsInLoops(walker, entering[*place]) : TypeID();
-        return entered && types.at(entered).isNumber();
+        if (!entered || types.at(entered).isNumber())
+            return !!entered;
+        return !walker.sumsAreNotAskedInRow() && *place < preview.typesOfParameters.size() && isNumberCarriedBesideTextOrBigInt(walker, entering[*place], preview.typesOfParameters[*place]);
     };
     auto expectNumbersWhereElementIsTakenForNumber = [&](const BodyValue& operation) {
         static constexpr OpcodeSet operatorsThatTakeNumbers = operatorsThatMakeNumbers | allBitwiseOperators;
@@ -2056,7 +2078,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                 forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(walker, copied, operation.as<Opcode::Call>().argumentsOperands(), 2, Opcode::ElemGet, [&](ValueID argument, ValueID key, FunctionID reader, ValueID read) {
                     ValueID input = valueThatEntersLoopInListReadsInLoops(index, argument, firstValueOfLoop);
                     Reference name = input.index() < firstValueOfLoop ? walker.referenceOf(input) : nameThatEntersLoopInListReadsInLoops(walker, index, input, firstValueOfLoop);
-                    if (!name || !name.isValue() || isFreshInListReadsInLoops(walker, name) || isNotedForReadByKey(name))
+                    if (!name || !name.isValue() || isFreshInListReadsInLoops(walker, name) || isNotedForReadByKey(name) || listsThatCopiesOfCalleesStoreIntoUncounted.contains(name))
                         return;
                     TypeID proven = ownTypeInListReadsInLoops(walker, name);
                     for (const GuessInFrontOfLoop& guess : guesses) {
@@ -2064,7 +2086,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                             proven = types.intersectionOf(proven, guess.tested);
                     }
                     TypeID list = types.withoutNullish(proven);
-                    if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeInLook(key))))
+                    if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeOfKeyInLook(key))))
                         return;
                     if (isListedForReadByKey(name))
                         return;
@@ -2083,6 +2105,8 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                     if (written == ArrayStorage::Other)
                         return;
                     bool holdsNumbers = holdsOnlyNumbers(written);
+                    if (!holdsNumbers && key && typeOfKeyInLook(key) != typeInLook(key))
+                        return;
                     found.lists.append(ListTestedInFrontOfLoop { name, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers });
                     if (readerHasLoops)
                         walker.count(StatisticID::ListsReadInLoopsOfCopiesAskedInFrontOfLoops);
@@ -2092,10 +2116,17 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                 forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(walker, copied, operation.as<Opcode::Call>().argumentsOperands(), 2, Opcode::ElemSet, [&](ValueID argument, ValueID key, FunctionID writer, ValueID store) {
                     ValueID input = valueThatEntersLoopInListReadsInLoops(index, argument, firstValueOfLoop);
                     Reference name = input.index() < firstValueOfLoop ? walker.referenceOf(input) : nameThatEntersLoopInListReadsInLoops(walker, index, input, firstValueOfLoop);
-                    if (!name || !name.isValue() || isFreshInListReadsInLoops(walker, name) || !storesNumberInCopyOfCalleeInListReadsInLoops(walker, writer, walker.facts().bodies().at(writer).value(store).valueOperand(), 3))
+                    if (!name || !name.isValue() || isFreshInListReadsInLoops(walker, name))
                         return;
+                    if (!storesNumberInCopyOfCalleeInListReadsInLoops(walker, writer, walker.facts().bodies().at(writer).value(store).valueOperand(), 3)) {
+                        if (!listsThatCopiesOfCalleesStoreIntoUncounted.contains(name))
+                            listsThatCopiesOfCalleesStoreIntoUncounted.append(name);
+                        if (found.lists.removeAllMatching([&](const ListTestedInFrontOfLoop& listed) { return listed.name == name && !listed.isWritable; }))
+                            walker.count(StatisticID::ListsNotListedThatCopiesOfCalleesStoreInto);
+                        return;
+                    }
                     TypeID list = types.withoutNullish(ownTypeInListReadsInLoops(walker, name));
-                    if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeInLook(key))))
+                    if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeOfKeyInLook(key))))
                         return;
                     size_t place = found.lists.findIf([&](const ListTestedInFrontOfLoop& listed) {
                         return listed.name == name;
@@ -2176,6 +2207,8 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
             if (isListed && operation.opcode() == Opcode::ElemGet && listsOfUnknownContents.contains(name))
                 readsOffListsOfUnknownContents.append({ operation.id(), name });
             if (isListed) {
+                if (TypeID ownKey = operation.opcode() == Opcode::ElemGet ? typeInLook(operation.propertyOperand()) : TypeID(); ownKey && types.at(ownKey).isInteger())
+                    listsTakenUnderCountersAskedInFront.removeAll(name);
                 found.lists[placeInList].isAskedForItsStorageAlone &= !readsLength;
                 if (readsLength)
                     noteThatComesOfLengthOrRemainder(operation);
@@ -2213,7 +2246,8 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                 continue;
             }
             TypeID list = types.withoutNullish(proven);
-            TypeID keyInLook = typeInLook(asksPlainVector ? operation.positionOperand() : operation.propertyOperand());
+            TypeID keyInLook = asksPlainVector ? typeInLook(operation.positionOperand()) : typeOfKeyInLook(operation.propertyOperand());
+            bool keyIsCounterAskedInFront = !asksPlainVector && keyInLook != typeInLook(operation.propertyOperand());
             if (!asksPlainVector && keyInLook && !types.at(keyInLook).isNumber() && isWholeNumberBehindListsFound(operation.propertyOperand()))
                 keyInLook = TypeTable::int32;
             bool keyIsNoted = operation.opcode() == Opcode::ElemGet && !(keyInLook && types.at(keyInLook).isInteger()) && (nothingElseIsGuessedInFront ? isWholeNumberThatKeyOfReadTakes(operation.propertyOperand()) : comesOfLengthOrRemainder(operation.propertyOperand()));
@@ -2230,6 +2264,10 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                 continue;
             if ((asksPlainVector ? !!findNoteInListReadsInLoops(walker, name) : isNotedForReadByKey(name)) && !walker.isAskedAtHeadOfTypedCopyAround(name))
                 continue;
+            if (listsThatCopiesOfCalleesStoreIntoUncounted.contains(name)) {
+                walker.count(StatisticID::ListsNotListedThatCopiesOfCalleesStoreInto);
+                continue;
+            }
             someListIsTakenForNotedKey |= keyTakesNote;
 
             if (isStore) {
@@ -2267,7 +2305,13 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
             }
             TypeID seenByLink = walker.facts().linked().resultOfReadByKey(walker.currentFunction(), operation.id());
             written = kindWrittenOrSeenByLinkInListReadsInLoops(types, written, seenByLink);
+            if (ValueID user = written == ArrayStorage::Other && operation.opcode() == Opcode::ElemGet ? index.onlyUsingValue(operation.id()) : ValueID(); user && index.opcodeOf(user) == Opcode::ElemGet && index.value(user).objectOperand() == operation.id())
+                written = ArrayStorage::Contiguous;
             bool holdsNumbers = holdsOnlyNumbers(written);
+            if (keyIsCounterAskedInFront && !holdsNumbers && written != ArrayStorage::Other)
+                continue;
+            if (keyIsCounterAskedInFront && !listsTakenUnderCountersAskedInFront.contains(name))
+                listsTakenUnderCountersAskedInFront.append(name);
             bool wholeNumbersAreOnlyStoredOn = seenByLink && types.at(types.withoutNullish(seenByLink)).isNumberWithoutFraction() && onlyUserStoresWhatIsReadIntoListInListReadsInLoops(index, operation);
             bool holdsInt32sByLink = seenByLink && (types.at(seenByLink).isInt32OrNullish() || holdsKeysOfLoopInListReadsInLoops(walker, operation.id(), seenByLink));
             if (holdsInt32sByLink || (wholeNumbersAreOnlyStoredOn && !walker.walksCopyForAnotherKindOfStorage())) {
@@ -2289,6 +2333,21 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
     }
     if (someListIsTakenForNotedKey && !rowFindsListsLeftAsTheyAreInListReadsInLoops(walker, inputHead, found.lists.span(), guesses.span(), { }))
         return findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, false, someReadHasNotedKey);
+    found.lists.removeAllMatching([&](const ListTestedInFrontOfLoop& list) {
+        return !holdsOnlyNumbers(list.storage) && listsTakenUnderCountersAskedInFront.contains(list.name);
+    });
+    bool someListIsTakenUnderCounter = found.lists.containsIf([&](const ListTestedInFrontOfLoop& list) {
+        return listsTakenUnderCountersAskedInFront.contains(list.name);
+    });
+    if (someListIsTakenUnderCounter && !rowFindsListsLeftAsTheyAreInListReadsInLoops(walker, inputHead, found.lists.span(), guesses.span(), { })) {
+        found.lists.removeAllMatching([&](const ListTestedInFrontOfLoop& list) {
+            return listsTakenUnderCountersAskedInFront.contains(list.name);
+        });
+    }
+    for (Reference name : listsTakenUnderCountersAskedInFront) {
+        if (found.lists.containsIf([&](const ListTestedInFrontOfLoop& list) { return list.name == name; }))
+            walker.count(StatisticID::ListsTakenUnderCountersAskedInFrontOfLoops);
+    }
     bool turnsStoreIntoLists = found.lists.containsIf([](const ListTestedInFrontOfLoop& list) {
         return list.isWritable;
     });

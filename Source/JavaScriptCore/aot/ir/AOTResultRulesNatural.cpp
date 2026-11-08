@@ -565,7 +565,7 @@ TypeID numberResultOf(TypeArena& types, Opcode opcode, OperandTypes operandTypes
     return numberResultOf(types, opcode, operands.span());
 }
 
-ALWAYS_INLINE TypeID typeAfterStepOfOne(TypeArena& types, Opcode opcode, std::span<const TypeID> operandTypes)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID typeAfterStepOfOne(TypeArena& types, Opcode opcode, std::span<const TypeID> operandTypes)
 {
     auto stepIn = [](TypeID type) -> int64_t {
         if (!isIntegerType(type))

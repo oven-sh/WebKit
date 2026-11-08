@@ -10,6 +10,7 @@
 
 #include "AOTCallSiteTable.h"
 #include "AOTCodeRecords.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSavedFrameEmitter.h"
 #include "AOTSort.h"
@@ -262,7 +263,7 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, Machine
         m_out.appendToContinuation(continuation);
 }
 
-ALWAYS_INLINE const ExceptionEmitter::LandingPad& ExceptionEmitter::landingPadFor(BlockID block, const Edge& handler)
+ALWAYS_INLINE_INTO_OTHER_FILES const ExceptionEmitter::LandingPad& ExceptionEmitter::landingPadFor(BlockID block, const Edge& handler)
 {
     uint32_t& indexPlusOne = m_landingPadsOfBlocks[block.index()];
     if (!indexPlusOne)

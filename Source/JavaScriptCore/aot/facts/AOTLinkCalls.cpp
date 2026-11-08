@@ -176,6 +176,7 @@ struct SharedCallInLinkCalls {
     FlowNodeID result;
     FlowNodeID thrown;
     bool someMembersSleep { false };
+    bool someMemberIsLost { false };
     Vector<LayoutID> membersAwakeFromTheStart;
 };
 
@@ -531,6 +532,7 @@ public:
     HashMap<std::pair<uint64_t, uint32_t>, uint32_t, DefaultHash<std::pair<uint64_t, uint32_t>>, WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> indexesOfSharedCalls;
     Vector<std::unique_ptr<SharedCallInLinkCalls>> sharedCalls;
     Vector<MemberOfSharedCallInLinkCalls> membersOfSharedCalls;
+    HashMap<uint32_t, Vector<FlowObserver, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keepersOfSleepersByFamily;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> observedByMembers;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> listedBySharedCalls;
     Vector<uint8_t> callsOfUnseen;
@@ -750,6 +752,7 @@ public:
     void resolve();
     void resolveMemberOfSharedCall(uint32_t member);
     void wakeMembersOnceSomethingMayBeFoundBesideFields();
+    void wakeEverySleeper();
     void takeStepOfInspection(uint32_t step, const LinkType& now);
     void showPrivateFieldsOf(LayoutID, uint32_t inspection);
     static QuestionsInLinkCalls questionsOfComparisonOfPrivateFields();
@@ -2159,18 +2162,32 @@ void CallInLinkCalls::resolveMemberOfSharedCall(uint32_t member)
 
 void CallInLinkCalls::wakeMembersOnceSomethingMayBeFoundBesideFields()
 {
-    if (!m_shared->someMembersSleep)
+    if (!m_shared->someMembersSleep || AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::NobodyWakesSleepersOfSharedCalls))
         return;
     FlowNodeID besideFields = m_flow.foundBesideFieldsOfMembersOf(m_shared->family);
-    FlowNodeID underName = m_flow.foundBesideFieldsUnder(m_call.key);
     watch(besideFields, 1);
-    watch(underName, 1);
-    if (heldAt(besideFields).isNothing() && heldAt(underName).isNothing())
+    bool somethingMayBeFound = m_shared->someMemberIsLost || !heldAt(besideFields).isNothing();
+    FlowObserver keeper { FlowObserver::Kind::MemberOfSharedCall, m_caller, m_memberThatWatches };
+    {
+        LinkFlow::LockerOfWhatIsShared locker(m_flow);
+        auto& keepers = m_state.keepersOfSleepersByFamily.add(m_shared->family.index(), Vector<FlowObserver, 1>()).iterator->value;
+        if (!keepers.contains(keeper))
+            keepers.append(keeper);
+    }
+    for (FlowNodeID born : m_flow.letKeeperHearOfFieldsBornUnder(m_shared->family, m_call.key, keeper)) {
+        watch(born, 1);
+        somethingMayBeFound |= !heldAt(born).isNothing();
+    }
+    if (!somethingMayBeFound)
         return;
+    m_flow.build.statistics().count(StatisticID::SharedCallsWhoseSleepersWereWoken);
+    wakeEverySleeper();
+}
 
+void CallInLinkCalls::wakeEverySleeper()
+{
     LinkFlow::LockerOfWhatIsShared locker(m_flow);
     m_shared->someMembersSleep = false;
-    m_flow.build.statistics().count(StatisticID::SharedCallsWhoseSleepersWereWoken);
     uint32_t firstMember = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
     forEachLayoutOf(m_shared->family, [&](LayoutID member) {
         if (!std::ranges::binary_search(m_shared->membersAwakeFromTheStart, member))
@@ -6786,6 +6803,64 @@ static bool namesSameObjectsAndFunctionsInLinkCalls(LinkType first, LinkType sec
         type->builtin = { };
     }
     return first == second;
+}
+
+void LinkFlow::wakeEverySleeperToSeeThatNothingGrows()
+{
+    if (!m_stateOfLinkCalls)
+        return;
+    StateOfLinkCalls& state = *m_stateOfLinkCalls;
+    for (size_t index = 0; index < state.sharedCalls.size(); ++index) {
+        SharedCallInLinkCalls& shared = *state.sharedCalls[index];
+        if (!shared.someMembersSleep)
+            continue;
+        CodeAtWork codeAtWork(*this, shared.firstCaller);
+        CallInLinkCalls(*this, state, shared).wakeEverySleeper();
+    }
+}
+
+String LinkFlow::describeSleeperThatMayFindSomething()
+{
+    if (!m_stateOfLinkCalls || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::SleepersOfSharedCallsAreNotAskedAtRest))
+        return { };
+    StateOfLinkCalls& state = *m_stateOfLinkCalls;
+    HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> familiesAsked;
+    for (const auto& shared : state.sharedCalls) {
+        if (!shared->someMembersSleep)
+            continue;
+        auto asked = familiesAsked.find(shared->family.index());
+        if (asked == familiesAsked.end())
+            asked = familiesAsked.add(shared->family.index(), someInstanceOfClassIsLostOrFindsSomethingBesideItsFields(shared->family)).iterator;
+        if (asked->value || someFieldBornInFamilyHoldsSomething(shared->family, shared->call.key))
+            return makeString("members of the shared call "_s, shared->index, " still sleep, and one of its family may find something under the called name"_s);
+    }
+    return { };
+}
+
+void LinkFlow::letKeeperWatch(const FlowObserver& keeper, FlowNodeID node)
+{
+    if (stateOfLinkCalls().observedByMembers.add(static_cast<uint64_t>(keeper.record) << 32 | node.index()).isNewEntry)
+        observe(node, keeper);
+}
+
+bool LinkFlow::wakeKeepersOfSleepersIn(FamilyID family)
+{
+    if (!m_stateOfLinkCalls)
+        return false;
+    StateOfLinkCalls& state = *m_stateOfLinkCalls;
+    auto keepers = state.keepersOfSleepersByFamily.find(family.index());
+    if (keepers == state.keepersOfSleepersByFamily.end())
+        return false;
+    bool hasToldSome = false;
+    for (const FlowObserver& keeper : keepers->value) {
+        SharedCallInLinkCalls& shared = *state.sharedCalls[state.membersOfSharedCalls[keeper.record].sharedCall];
+        if (!shared.someMembersSleep || std::exchange(shared.someMemberIsLost, true))
+            continue;
+        hasToldSome = true;
+        if (!state.membersToResolve.set(keeper.record))
+            state.membersObservedToResolve.append(keeper);
+    }
+    return hasToldSome;
 }
 
 void LinkFlow::callObserved(const FlowObserver& observer, const LinkType& told)

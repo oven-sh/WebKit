@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTMachineOrder.h"
+#include "AOTInliningAcrossFiles.h"
 
 #if ENABLE(AOT)
 
@@ -81,7 +82,7 @@ ALWAYS_INLINE uint64_t MachineBlockMerger::mix(uint64_t hash, uint64_t word)
     return hash ^ hash >> 32;
 }
 
-ALWAYS_INLINE uint64_t MachineBlockMerger::signatureOf(const Operation* operation)
+ALWAYS_INLINE_INTO_OTHER_FILES uint64_t MachineBlockMerger::signatureOf(const Operation* operation)
 {
     uint64_t flags = 0;
     for (OperationFlag flag : { OperationFlag::Traps, OperationFlag::IsNarrowReference, OperationFlag::IsInnerPointer, OperationFlag::IsChill, OperationFlag::ReadsImmutableHeap, OperationFlag::NamesPermanentCell, OperationFlag::IsIntegerAddedTo, OperationFlag::ExtendsWordThatIsNotNegative }) {
@@ -92,7 +93,7 @@ ALWAYS_INLINE uint64_t MachineBlockMerger::signatureOf(const Operation* operatio
     return static_cast<uint64_t>(operation->opcode()) | flags << 8 | static_cast<uint64_t>(type.kind()) << 24 | static_cast<uint64_t>(type.tupleIndex()) << 32;
 }
 
-ALWAYS_INLINE uint64_t MachineBlockMerger::payloadOf(const Operation* operation)
+ALWAYS_INLINE_INTO_OTHER_FILES uint64_t MachineBlockMerger::payloadOf(const Operation* operation)
 {
     switch (operation->opcode()) {
     case Load8Z:

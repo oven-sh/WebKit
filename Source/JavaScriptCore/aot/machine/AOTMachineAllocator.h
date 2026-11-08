@@ -432,6 +432,8 @@ public:
     RegisterMask registersWhereCallInBlockTakesWhatLiesThere(const Block*) const;
     unsigned numberOfReadsThatWordWouldReload(const Operation*, Position end) const;
     void findFramedPart();
+    static bool isReadByMoreThanSteps(const ValueFacts& facts) { return facts.has(ValueFlag::LivesIntoLandingPad) || facts.has(ValueFlag::LivesAcrossSuspension) || facts.has(ValueFlag::IsKeptForCollector); }
+    bool isReadByMoreThanSteps(const SpillFacts&) const;
     void findSpillsThatNoStepReads();
     ALWAYS_INLINE Location placeToReadIn(SpillIndex spill) const
     {
@@ -549,6 +551,7 @@ public:
     void letEdgesWritePhi(Operation* phi, SpillIndex, const BlockPlace& placeOfHead);
     ArenaVector<Reg> m_hints;
     ArenaVector<Position> m_knownReadsOutsideRareRegions;
+    mutable ArenaVector<uint8_t> m_whetherValuesThatRareRegionsReadAreWorthCalleeSaveNotYetSaved;
     struct WhetherHeadAroundHolds {
         uint32_t loopWhoseHeadHolds { noLoop };
         uint32_t loopFromWhichNoHeadHolds { noLoop };

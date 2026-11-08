@@ -2889,6 +2889,66 @@ static PatchOperation* appendFrameTestCallThatLooksForWordAsCollectorDoes(TestPr
     return call;
 }
 
+static void testMachineFrameSecondHeadSavesOwnerThatStepsReadUnderFirstAlone()
+{
+    std::array<uint64_t, 3> elements { 11, 22, 33 };
+    std::array<const uint64_t*, 1> ownerInMemory { elements.data() };
+    uint64_t numberOfTimesFound = 0;
+
+    ProcedureTraits traits;
+    traits.chargesForCalleeSaves = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    const unsigned numberKeptByCalls = numberOfFrameTestRegisters(registerFileOfFrameTest(test).calleeSavedIn(Bank::GP));
+    AbstractHeap storageOfOwner(test.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::HoldsInnerPointer });
+    Operation* owner = out.opaque(test.argumentGPR(0));
+    Operation* selector = test.argumentGPR(1);
+    Operation* storage = out.loadPtr(out.address(storageOfOwner, owner));
+    Block* first = out.newBlock();
+    Block* other = out.newBlock();
+    Block* second = out.newBlock();
+    Block* leaving = out.newBlock();
+    Vector<Operation*> readMore;
+    for (unsigned index = 0; index < numberKeptByCalls; ++index)
+        readMore.append(out.opaque(out.add(selector, 2 + index)));
+    out.branch(out.testNonZero64(selector, 1), normalEdge(first), normalEdge(other));
+    out.appendTo(other);
+    out.branch(out.testNonZero64(selector, 2), normalEdge(second), normalEdge(leaving));
+    for (Block* head : { first, second }) {
+        out.appendTo(head);
+        appendFrameTestCallThatLooksForWordAsCollectorDoes(test, reinterpret_cast<uint64_t>(ownerInMemory.data()), &numberOfTimesFound);
+        Operation* sum = out.load64(out.address(test.heaps().argumentBuffer, storage, 2 * sizeof(uint64_t)));
+        if (head == first)
+            sum = out.add(sum, out.load64(out.address(test.heaps().argumentBuffer, out.loadPtr(out.address(test.heaps().argumentBuffer, owner)), sizeof(uint64_t))));
+        for (Operation* value : readMore)
+            sum = out.add(out.add(sum, value), out.opaque(value));
+        out.ret(sum);
+    }
+    out.appendTo(leaving);
+    out.ret(out.add(selector, 100));
+
+    compileOrFail(test);
+    const Allocation& allocation = proc.allocation();
+    AOT_FRAME_TEST_CHECK(test, storage->has(OperationFlag::IsInnerPointer) && proc.liveness().of(owner).has(ValueFlag::IsKeptForCollector));
+    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && allocation.isHeadOfFramedPart(first) && allocation.isHeadOfFramedPart(second) && !proc.frame().holdsStepsOf(leaving) && allocation.isSpilled(owner));
+    for (Block* head : { first, second }) {
+        const Allocation::HeadOfFramedPart& steps = allocation.headOfFramedPartAbove(head);
+        bool savesOwner = false;
+        for (uint32_t index = steps.beginOfSteps; index < steps.endOfSteps; ++index)
+            savesOwner |= allocation.step(index).destination == Location::spill(allocation.spillOf(owner));
+        AOT_FRAME_TEST_CHECK(test, savesOwner);
+    }
+    auto expected = [&](uint64_t chosen, uint64_t read) {
+        for (unsigned index = 0; index < numberKeptByCalls; ++index)
+            read += 2 * (chosen + 2 + index);
+        return read;
+    };
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(ownerInMemory.data(), uint64_t { 1 }) == expected(1, 33 + 22) && numberOfTimesFound == 1);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(ownerInMemory.data(), uint64_t { 2 }) == expected(2, 33) && numberOfTimesFound == 2);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(ownerInMemory.data(), uint64_t { 4 }) == 104 && numberOfTimesFound == 2);
+}
+
 static void testMachineFrameHeadSavesOwnerThatCollectorAloneReads()
 {
     std::array<uint64_t, 3> elements { 11, 22, 33 };
@@ -2943,6 +3003,7 @@ static PatchOperation* appendFrameTestPollThatLooksForWordAsCollectorDoes(TestPr
     poll->clobberLate(clobbered);
     poll->effects.mayCollect = true;
     poll->setRunsWithoutFrame(true);
+    poll->setShowsRegistersToCollector(true);
     poll->setGenerator([looked, word, numberOfTimesFound](CCallHelpers& jit, const PatchParameters& params) {
         jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(word)), wanted);
         CCallHelpers::JumpList found;
@@ -3101,6 +3162,11 @@ static bool checkOwnerIsHeldAtPollBehindTwoHeads(unsigned numberOfSums, bool kee
     AOT_FRAME_TEST_CHECK(test, storage->has(OperationFlag::IsInnerPointer) && proc.liveness().of(owner).has(ValueFlag::IsKeptForCollector));
     if (keepsFramedPart)
         AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && allocation.isHeadOfFramedPart(first) && allocation.isHeadOfFramedPart(second) && !allocation.isInFramedPart(behind) && allocation.isSpilled(owner));
+    if (keepsFramedPart) {
+        AOT_FRAME_TEST_CHECK(test, std::ranges::any_of(allocation.registersAtHeadOf(behind), [&](const RegisterBinding& binding) {
+            return binding.value == owner;
+        }));
+    }
     auto expectedOf = [&](uint64_t chosen, uint64_t element) {
         uint64_t sum = 2 * element;
         for (unsigned index = 0; index + 1 < numberKeptByCalls; ++index)
@@ -3137,6 +3203,56 @@ static void testMachineFrameOwnerThatPartSpilledIsHeldThoughNoRegisterIsFreeWher
 static void testMachineFrameOwnerThatPartSpilledIsLoadedBackWhereWayLeavesPartIntoRareBlock()
 {
     checkOwnerIsHeldAtPollBehindTwoHeads(0, true, WhereTwoHeadsMeet::InRareBlock);
+}
+
+static void testMachineFrameHeadSavesOnlyWhatIsReadUnderIt()
+{
+    constexpr uint64_t word = 0x1000;
+    ProcedureTraits traits;
+    traits.chargesForCalleeSaves = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    const unsigned numberKeptByCalls = numberOfFrameTestRegisters(registerFileOfFrameTest(test).calleeSavedIn(Bank::GP));
+    Operation* a = test.argumentGPR(0);
+    Block* first = out.newBlock();
+    Block* choosing = out.newBlock();
+    Block* second = out.newBlock();
+    Block* leaving = out.newBlock();
+    Operation* readLeast = out.opaque(out.add(a, 1));
+    Vector<Operation*> readMore;
+    for (unsigned index = 0; index < numberKeptByCalls; ++index)
+        readMore.append(out.opaque(out.add(a, 2 + index)));
+    out.branch(out.testNonZero64(a, 1), normalEdge(first), normalEdge(choosing));
+    out.appendTo(first);
+    appendFrameTestCall(test);
+    Operation* sum = readLeast;
+    for (Operation* value : readMore)
+        sum = out.add(out.add(sum, value), out.opaque(value));
+    out.ret(sum);
+    out.appendTo(choosing);
+    out.branch(out.testNonZero64(a, 2), normalEdge(second), normalEdge(leaving));
+    out.appendTo(second);
+    appendFrameTestCall(test);
+    Operation* betweenCalls = out.opaque(readLeast);
+    appendFrameTestCall(test);
+    out.ret(out.add(out.add(betweenCalls, readLeast), out.opaque(readLeast)));
+    out.appendTo(leaving);
+    out.ret(out.add(a, 100));
+
+    compileOrFail(test);
+    const Allocation& allocation = proc.allocation();
+    uint64_t expectedOfFirst = word + 2;
+    for (unsigned index = 0; index < numberKeptByCalls; ++index)
+        expectedOfFirst += 2 * (word + 1 + 2 + index);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 1) == expectedOfFirst);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 2) == 3 * (word + 3));
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word) == word + 100);
+    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && allocation.isHeadOfFramedPart(first) && allocation.isHeadOfFramedPart(second) && allocation.isSpilled(readLeast));
+    const Allocation::HeadOfFramedPart& headOfFirst = allocation.headOfFramedPartAbove(first);
+    const Allocation::HeadOfFramedPart& headOfSecond = allocation.headOfFramedPartAbove(second);
+    AOT_FRAME_TEST_CHECK(test, headOfFirst.endOfSteps - headOfFirst.beginOfSteps == 1 && allocation.step(headOfFirst.beginOfSteps).operation == readLeast);
+    AOT_FRAME_TEST_CHECK(test, headOfSecond.endOfSteps == headOfSecond.beginOfSteps);
 }
 
 static void testMachineFrameIsSetUpForArmThatRunsOutOfRegisters()
@@ -3611,10 +3727,12 @@ std::span<const NativeTest> machineFrameTests()
     static constexpr NativeTest tests[] = {
         { "machine/frame/rare-blocks-with-calls-have-frames-of-their-own"_s, Machine::testMachineFrameCoversRareBlocksAlone },
         { "machine/frame/a-head-saves-the-owner-that-the-collector-alone-reads"_s, Machine::testMachineFrameHeadSavesOwnerThatCollectorAloneReads },
+        { "machine/frame/a-second-head-saves-the-owner-that-steps-read-under-the-first-alone"_s, Machine::testMachineFrameSecondHeadSavesOwnerThatStepsReadUnderFirstAlone },
         { "machine/frame/the-owner-is-held-at-the-poll-of-a-loop-outside-the-part-that-spilled-it"_s, Machine::testMachineFrameOwnerIsHeldAtPollOfLoopOutsidePartThatSpilledIt },
         { "machine/frame/an-owner-that-the-part-spilled-is-loaded-back-where-the-way-leaves-the-part"_s, Machine::testMachineFrameOwnerThatPartSpilledIsLoadedBackWhereWayLeavesPart },
         { "machine/frame/an-owner-that-the-part-spilled-is-loaded-back-where-the-way-leaves-the-part-into-a-rare-block"_s, Machine::testMachineFrameOwnerThatPartSpilledIsLoadedBackWhereWayLeavesPartIntoRareBlock },
         { "machine/frame/an-owner-that-the-part-spilled-is-held-though-no-register-is-free-where-the-way-leaves-the-part"_s, Machine::testMachineFrameOwnerThatPartSpilledIsHeldThoughNoRegisterIsFreeWhereWayLeavesPart },
+        { "machine/frame/a-head-saves-only-what-is-read-under-it"_s, Machine::testMachineFrameHeadSavesOnlyWhatIsReadUnderIt },
         { "machine/frame/a-stretch-that-binds-few-values-has-no-frame-though-an-unlikely-way-later-in-the-order-reads-more"_s, Machine::testMachineFrameStretchThatBindsFewValuesHasNoFrameThoughUnlikelyWayLaterInOrderReadsMore },
         { "machine/frame/patch-that-tests-the-stack-itself-stands-ahead-of-the-framed-part"_s, Machine::testMachineFramePatchThatTestsStackItselfStandsAheadOfFramedPart },
         { "machine/frame/patch-that-tests-the-stack-itself-gets-a-frame-where-nothing-else-needs-one"_s, Machine::testMachineFramePatchThatTestsStackItselfGetsFrameWhereNothingElseNeedsOne },

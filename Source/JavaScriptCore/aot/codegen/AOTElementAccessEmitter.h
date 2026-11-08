@@ -58,6 +58,7 @@ public:
     void generatePutTypedArrayElement(const ValueContext&);
     void generateGetEnumeratorIndexedLength(const ValueContext&);
     void generateIsElementInStorage(const ValueContext&);
+    void generateGetElementInStorageOrAbsent(const ValueContext&);
     void generateGetStringLength(const ValueContext&);
     void generateGetStringCodeUnit(const ValueContext&);
 

@@ -845,6 +845,11 @@ public:
         const Frame& frame = m_frames.last();
         return frame.index && frame.block && loopDepthInCodeOf(frame.block) > (frame.standsInFrontOfHead ? 1u : 0u);
     }
+    bool walksCopyForWhatIsNoBuiltin() const { return m_walksCopyForWhatIsNoBuiltin; }
+    bool textNamesHolderThatIsNoBuiltin(ValueID written) const { return m_walksCopyForWhatIsNoBuiltin && textNamesHolderOfCopyAtWork(written); }
+    bool isHolderThatIsNoBuiltin(Reference value) const { return m_walksCopyForWhatIsNoBuiltin && isHolderOfCopyAtWork(value); }
+    bool textNamesHolderOfCopyAtWork(ValueID written) const;
+    bool isHolderOfCopyAtWork(Reference) const;
     bool isBeingWalked(FunctionID) const;
     bool bodyAtWorkCallsItself() const;
     TypeID typeThatCounterIsHeldTo(BlockID inputHead, uint32_t parameter) const;
@@ -1112,6 +1117,7 @@ public:
     std::optional<PassedTest> showElementPresentBehindTest(Reference list, Reference position, const std::optional<PassedTest>&);
     std::optional<PassedTest> showPositionInside(const GroundsOfPosition&);
     std::optional<PassedTest> showPositionInsideBehindTests(Reference view, Reference position, Reference length, const PassedTest& fromZeroUp, const PassedTest& below);
+    std::optional<PassedTest> showPositionInsideBehindTestOfSum(Reference list, Reference position, Reference length);
     void switchOn(Reference subject, std::span<const int64_t> cases, std::span<const BlockID> targets, BlockID otherwise);
     Reference tryCallInline(TerminatorDraft&&, BlockID done, BlockID miss, const Effects* foundByCaller = nullptr);
     void continueIn(BlockID);
@@ -1287,6 +1293,9 @@ public:
     uint32_t numberOfWalksOfLoopsUndone() const { return m_numberOfWalksOfLoopsUndone; }
     bool sumsAreNotAskedInRow() const { return m_sumsAreNotAskedInRow; }
     uint32_t numberOfRowsWhoseSumsAreNotAsked() const { return m_rowsWhoseSumsAreNotAsked.size(); }
+    bool keysAreReadOffLookInRow() const { return m_keysAreReadOffLookInRow; }
+    void noteKeyTakenForCounterAskedInFront() { m_keyWasTakenForCounterAskedInFront = true; }
+    uint32_t numberOfRowsWhoseKeysAreReadOffLook() const { return m_rowsWhoseKeysAreReadOffLook.size(); }
     uint32_t numberOfWalksOfLoopsCutShort() const { return m_numberOfWalksOfLoopsCutShort; }
     uint32_t numberOfFirstTriesOfLoopsThatStartFromTheirOwnText() const { return m_numberOfFirstTriesOfLoopsThatStartFromTheirOwnText; }
     uint32_t numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted() const { return m_numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted; }
@@ -2517,6 +2526,7 @@ private:
     decltype(m_placesOfAnswersOfLoops) m_rowsWalkedAgainForCheck;
     Vector<std::shared_ptr<const AnswerOfLoop>> m_rowsAsWalkedLastInBuilds;
     decltype(m_placesOfAnswersOfLoops) m_rowsWhoseSumsAreNotAsked;
+    decltype(m_placesOfAnswersOfLoops) m_rowsWhoseKeysAreReadOffLook;
     Vector<TryOfLoop, 4>& m_triesOfLoops;
     Vector<ArrivalHeld> m_arrivalsHeld;
     uint32_t m_numberOfMarksOfTries { 0 };
@@ -2609,6 +2619,8 @@ private:
     bool m_otherCodeStayedInVainOfRow { false };
     bool m_readsAskSitesThoughCallStaysOfRow { false };
     bool m_sumsAreNotAskedInRow { false };
+    bool m_keysAreReadOffLookInRow { false };
+    bool m_keyWasTakenForCounterAskedInFront { false };
     bool m_typedBuildEndedListsTestedInFront { false };
     BlockID m_headOfTypedBuildOverListsTestedInFront;
     size_t m_frameOfTypedBuildOverListsTestedInFront { 0 };
@@ -3552,6 +3564,14 @@ private:
     Vector<Reference, 8> m_closuresThatAllocationAloneTakes;
     uint32_t m_numberOfCopiesBuiltForSize { 0 };
     bool m_walksCopyWhereHolderIsNoBuiltin { false };
+    bool m_walksCopyForWhatIsNoBuiltin { false };
+    struct HolderThatIsNoBuiltin {
+        std::span<const ValueID> names;
+        Reference value;
+        size_t frameIndex { 0 };
+        ValueID readOfVariableInLoop;
+    };
+    HolderThatIsNoBuiltin m_holderThatIsNoBuiltin;
     Vector<std::pair<size_t, BlockID>, 2> m_otherCopiesInsideTypedCopies;
     bool m_isWalkingAccess { false };
     bool m_operationWritesWhatTurnHasMade { false };

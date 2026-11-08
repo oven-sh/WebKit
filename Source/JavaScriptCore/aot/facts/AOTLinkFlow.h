@@ -697,6 +697,7 @@ public:
 
     FlowNodeID foundBesideFieldsOf(LayoutID);
     FlowNodeID storedBesideFieldsOf(LayoutID);
+    FlowNodeID storedUnderUnknownNamesOf(LayoutID);
     Vector<FlowNodeID, 8> nodesWithOwnValuesOf(LayoutID);
     Vector<FlowNodeID, 4> cellsOfWrittenPrivateNamesOf(LayoutID);
     bool isInspectedByComparisonOfPrivateFields(FlowNodeID) const;
@@ -710,6 +711,13 @@ public:
     BitVector layoutsWhoseOwnFieldsListAccessor;
     FlowNodeID foundBesideFieldsUnder(PropertyKeyID);
     bool listMembersThatMayAnswerUnder(FamilyID, PropertyKeyID, Vector<LayoutID>&);
+    Vector<FlowNodeID> letKeeperHearOfFieldsBornUnder(FamilyID, PropertyKeyID, const FlowObserver& keeper);
+    void letKeeperWatch(const FlowObserver& keeper, FlowNodeID);
+    bool wakeKeepersOfSleepersIn(FamilyID);
+    void wakeEverySleeperToSeeThatNothingGrows();
+    String describeSleeperThatMayFindSomething();
+    bool someInstanceOfClassIsLostOrFindsSomethingBesideItsFields(FamilyID);
+    bool someFieldBornInFamilyHoldsSomething(FamilyID, PropertyKeyID);
     FlowNodeID foundBesideFieldsOfMembersOf(FamilyID);
     FlowNodeID appendedField(LayoutID, PropertyKeyID);
     FlowNodeID appendedFieldAsStoredThroughItsLayout(LayoutID, PropertyKeyID);
@@ -1451,6 +1459,8 @@ public:
     void enter(FunctionID caller, uint32_t callInSummary, FunctionID callee);
 
     Vector<OptionSet<LayoutChange>> possibleChanges;
+    Vector<OptionSet<LayoutChange>> changesByMoreThanStoresInSight;
+    static constexpr uint32_t changeIsByStoreInSight = 1u << 8;
     Vector<AccessorLaidInField> accessorsLaidInFields;
     BitVector layoutsWithKnownAccessors;
     BitVector layoutsDefinedOnUnderWrittenKeys;
@@ -1683,6 +1693,7 @@ private:
     void receiveWithoutMarksThatAreUsed(FlowNodeID, const LinkType&, PropertyKeyID symbol);
     void arriveAtOnce(FlowNodeID, const LinkType&, PropertyKeyID symbol);
     void wakeAccessorsThatWaitAt(Lane&, FlowNodeID);
+    bool isAskedByMoreThanAccessorsThatWait(Lane&, FlowNodeID);
     void putObserverThatWaitsUntilNodeIsAsked(Lane&, FlowNodeID, const FlowObserver&);
     bool isAskedForTheFirstTime(Lane&, FlowNodeID);
     bool hasListsToItself(FlowNodeID node) const { return node.index() < m_listsOfNodes.size() && (!m_severalThreadsTell || s_laneAtWork == m_lanes[laneIndexOf(node)].get()); }
@@ -1958,6 +1969,7 @@ private:
     void addContents(uint32_t family, SlotOfContents, FlowNodeID);
     void listContents(uint32_t site, SlotOfContents, FlowNodeID);
     bool openLayoutsThatChanged();
+    bool tieStoresUnderUnknownNames();
     bool letMembersOfLostEscape();
     bool tieAppendedFieldsOfLostLayouts();
     void noteLostLayoutsGainingProperties();
@@ -2135,11 +2147,13 @@ private:
 
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodesOnDemand;
     Vector<uint32_t> m_nodesBesideFields;
+    Vector<uint32_t> m_nodesStoredUnderUnknownNames;
     Vector<Vector<OwnValue>> m_ownValuesOfLayouts;
     BitVector m_layoutsWithListedFieldWithoutKey;
     BitVector m_layoutsWhoseOwnValuesAreListed;
     Vector<OwnValue, 8> listOwnValuesOf(LayoutID);
     Vector<LayoutID> m_layoutsWithNodesBesideFields;
+    Vector<std::pair<uint32_t, uint32_t>> m_storesUnderUnknownNamesToTie;
     struct alignas(128) PartOfNodesThatDefinitionsWatch {
         std::atomic<bool> isLocked { false };
         HashSet<std::pair<uint64_t, uint64_t>> watched;
@@ -2194,6 +2208,7 @@ private:
         FlowNodeID node;
     };
     HashMap<uint32_t, Vector<FieldBornBesideFields, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBornBelowClassesByKey;
+    HashMap<uint64_t, Vector<FlowObserver, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_keepersOfSleepersByName;
     FlowNodeID findNodeOnDemand(NodeOnDemand, uint32_t number, PropertyKeyID) const;
     HashMap<uint32_t, std::unique_ptr<SortedMembersOfFamily>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_sortedMembersOfFamilies;
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_placesOfAppendedFields;

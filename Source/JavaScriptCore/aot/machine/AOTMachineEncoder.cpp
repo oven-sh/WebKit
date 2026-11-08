@@ -1015,7 +1015,7 @@ void Encoder::encodeExecute(const Step& step)
     encodeExecuteInline(step);
 }
 
-ALWAYS_INLINE void Encoder::encodeExecuteInline(const Step& step)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeExecuteInline(const Step& step)
 {
     ASSERT(step.kind == StepKind::Execute);
     Operation* operation = step.operation;

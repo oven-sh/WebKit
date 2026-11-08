@@ -312,7 +312,7 @@ uint32_t AnswersOfWalk::addKey(std::span<const uint32_t> words, uint32_t hash)
     return m_keys.size();
 }
 
-ALWAYS_INLINE uint32_t AnswersOfWalk::numberConversion(Reference value, Representation wanted, Reference converted)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t AnswersOfWalk::numberConversion(Reference value, Representation wanted, Reference converted)
 {
     uint32_t number = m_conversions.size();
     uint32_t older = std::exchange(rowOf(value.id().index()).newestConversion, number + 1);
@@ -519,7 +519,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<bool> KnownAnswers::outcomeOf(Refer
     return m_held->outcomes.contains(ifTrue - 1) ? std::optional<bool>(false) : std::nullopt;
 }
 
-ALWAYS_INLINE void KnownAnswers::noteConversion(Reference value, Representation wanted, Reference converted, bool endsAtSuspension)
+ALWAYS_INLINE_INTO_OTHER_FILES void KnownAnswers::noteConversion(Reference value, Representation wanted, Reference converted, bool endsAtSuspension)
 {
     if (!m_table)
         return;

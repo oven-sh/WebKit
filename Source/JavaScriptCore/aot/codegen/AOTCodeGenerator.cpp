@@ -205,7 +205,7 @@ GenerationResult CodeGenerator::run()
     return m_hasFailed ? GenerationResult::Failed : GenerationResult::Generated;
 }
 
-ALWAYS_INLINE bool CodeGenerator::leavesOutBlockThatNothingLeadsTo(BlockID id)
+ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::leavesOutBlockThatNothingLeadsTo(BlockID id)
 {
     if (m_nextBlockGoesOnHere)
         return false;
@@ -615,7 +615,7 @@ void CodeGenerator::numberDominatorTree()
     }
 }
 
-ALWAYS_INLINE bool CodeGenerator::dominates(BlockID home, BlockID user)
+ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::dominates(BlockID home, BlockID user)
 {
     if (m_dominatorsByPlace.empty()) {
         BlockID above = user;
@@ -646,7 +646,7 @@ ALWAYS_INLINE bool CodeGenerator::dominates(BlockID home, BlockID user)
     return m_subtreesByPlace[placeOfUser].first - subtreeOfHome.first < subtreeOfHome.size;
 }
 
-ALWAYS_INLINE bool CodeGenerator::goesOnBehindJump(size_t positionInOrder) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::goesOnBehindJump(size_t positionInOrder) const
 {
     if (!positionInOrder)
         return false;
@@ -836,7 +836,7 @@ void CodeGenerator::followNumbersOutOfBytes()
     }
 }
 
-ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Terminator& terminator) const
+ALWAYS_INLINE_INTO_OTHER_FILES ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Terminator& terminator) const
 {
     if (terminator.kind != TerminatorKind::Branch)
         return { };
@@ -849,7 +849,7 @@ ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Ter
     return condition;
 }
 
-ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchBehindJumpAlone(BlockID id, const Block& block) const
+ALWAYS_INLINE_INTO_OTHER_FILES ValueID CodeGenerator::testReadByBranchBehindJumpAlone(BlockID id, const Block& block) const
 {
     if (block.terminator.kind != TerminatorKind::Jump)
         return { };
@@ -859,7 +859,7 @@ ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchBehindJumpAlone(BlockID id,
     return testReadByBranchAlone(id, code().at(behind).terminator);
 }
 
-ALWAYS_INLINE bool CodeGenerator::isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const
 {
     if ((call.opcode != Opcode::Call && call.opcode != Opcode::CallDirect) || index + 1 == valuesOfBlock.size())
         return false;
@@ -937,7 +937,7 @@ NEVER_INLINE void CodeGenerator::dispatchWatched(const ValueContext& context)
         m_records.formsSaid.leave(siteOfUser, m_proc.numberOfOperations());
 }
 
-ALWAYS_INLINE void CodeGenerator::generate(const ValueContext& context)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generate(const ValueContext& context)
 {
     const OperationContext* user = std::exchange(m_operation, &context);
     Machine::Origin originOfUser = m_out.origin();
@@ -984,7 +984,7 @@ ALWAYS_INLINE void CodeGenerator::generate(const ValueContext& context)
     RELEASE_ASSERT(hasResults(index));
 }
 
-ALWAYS_INLINE void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& operation, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& operation, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind)
 {
     if (!m_sumsOfIntegers.isEmpty() && addToSumOfIntegers(id)) [[unlikely]]
         return;
@@ -1039,7 +1039,7 @@ LValue CodeGenerator::bearLiteralAsWritten(BlockID block, ValueID literal)
     return m_values[literal.index()];
 }
 
-ALWAYS_INLINE void CodeGenerator::generateTerminator(BlockID id, const Block& block, bool generatesCondition)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateTerminator(BlockID id, const Block& block, bool generatesCondition)
 {
     RELEASE_ASSERT(block.hasEnded() && !m_operation);
     const Terminator& terminator = block.terminator;
@@ -1486,6 +1486,8 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
             if (operation.opcode == Opcode::ToNumber && (operation.form() == OperatorForm::Generic || !typeOf(operation.valueOperand()).isNumberOrNullish()))
                 return false;
             if (operation.opcode == Opcode::CheckProof && operation.isLeftToTestBehind())
+                continue;
+            if (operation.opcode == Opcode::CallInline && (operation.inlineBuiltin() == InlineBuiltin::MathImul || operation.inlineBuiltin() == InlineBuiltin::MathClz32) && traits.isPure())
                 continue;
             if (!operationsOfTurnsLaidOut.contains(operation.opcode) || traits.mayWriteWhatIsSeen())
                 return false;
@@ -2768,7 +2770,7 @@ NEVER_INLINE void CodeGenerator::failToPassArgument(ValueID parameter, Represent
         fail(ValueContext(code().blockOf(parameter), parameter, code().at(parameter), nullptr), InternalErrorKind::UnsupportedConversion, forms);
 }
 
-ALWAYS_INLINE void CodeGenerator::passArgument(ValueID parameter, Operand argument)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::passArgument(ValueID parameter, Operand argument)
 {
     Representation representationOfParameter = isCarriedBoxed(parameter) ? Representation::JSValue : representationOf(parameter);
     if (!isSameWord(argument.representation, representationOfParameter)) [[unlikely]] {

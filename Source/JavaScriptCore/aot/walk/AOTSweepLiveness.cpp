@@ -490,7 +490,7 @@ void Sweep::noteValueHeldByCopiedBody(ValueID value)
     m_holdsHintsBehindCopiedBodies = true;
 }
 
-ALWAYS_INLINE void Sweep::noteReadForLiveness(ValueID read, BlockID block, ValueID reader)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::noteReadForLiveness(ValueID read, BlockID block, ValueID reader)
 {
     const Code& code = *m_code;
     for (ValueID value = read; value; value = ownerOfSweptPointer(code, value)) {

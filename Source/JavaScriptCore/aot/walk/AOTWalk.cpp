@@ -878,6 +878,7 @@ bool Walker::walkLastWalksOfLoopsAlone(Walker& first)
     m_rowsWalkedAgainForCheck = WTF::move(first.m_rowsWalkedAgainForCheck);
     m_rowsAsWalkedLastInBuilds = WTF::move(first.m_rowsAsWalkedLastInBuilds);
     m_rowsWhoseSumsAreNotAsked = WTF::move(first.m_rowsWhoseSumsAreNotAsked);
+    m_rowsWhoseKeysAreReadOffLook = WTF::move(first.m_rowsWhoseKeysAreReadOffLook);
     m_loopsWhoseTextsStayOutOfBuilders = WTF::move(first.m_loopsWhoseTextsStayOutOfBuilders);
     for (AnswerOfLoop& answer : m_answersOfLoops) {
         if (std::shared_ptr<const AnswerOfLoop> walked = answer.asWalkedLast)
@@ -2155,7 +2156,7 @@ void Walker::forEachValueThatTypeShownLeansOn(ValueID id, NOESCAPE const Invocab
     }
 }
 
-ALWAYS_INLINE TypeID Walker::computeTypeShown(ValueID id)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID Walker::computeTypeShown(ValueID id)
 {
     const Operation& record = m_code.at(id);
     auto shown = [&](ValueID value) {
@@ -3017,7 +3018,7 @@ Reference Walker::Frame::narrowestNameInLongList(Reference reference) const
     return reference;
 }
 
-ALWAYS_INLINE Reference Walker::narrowestNameOf(Reference reference) const
+ALWAYS_INLINE_INTO_OTHER_FILES Reference Walker::narrowestNameOf(Reference reference) const
 {
     const Frame& frame = m_frames.last();
     if (!(frame.narrowedValues & Frame::bitOfNarrowedValue(reference)))
@@ -3179,7 +3180,7 @@ TypeID Walker::typeOfNarrowedDraft(const Draft& draft)
     return type;
 }
 
-ALWAYS_INLINE TypeID Walker::resultTypeByStepsOf(const TypingContext& context, const Draft& draft, uint32_t steps, bool& listsOwnTypes)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID Walker::resultTypeByStepsOf(const TypingContext& context, const Draft& draft, uint32_t steps, bool& listsOwnTypes)
 {
     listsOwnTypes = false;
     if (steps & StepOfBuildInWalk::givesNoResult)
@@ -5103,7 +5104,7 @@ bool Walker::letArmsMeet(const StretchInArms& stretch, const ArmsThatMeet& arms,
     return true;
 }
 
-ALWAYS_INLINE uint32_t Walker::addOpenEdge(InputBlock& target)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t Walker::addOpenEdge(InputBlock& target)
 {
     if (target.isEntered) {
         fail("an edge leads back to a block that is no head of a loop"_s);
@@ -6189,7 +6190,7 @@ static ALWAYS_INLINE bool isValueProvenBooleanInWalk(const Walker& walker, Refer
     return type && isBooleanType(type);
 }
 
-ALWAYS_INLINE void Walker::nameBooleansAskedByBranch(BlockID from, const BodyTerminator& terminator, uint32_t targetIndex, BlockID to)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::nameBooleansAskedByBranch(BlockID from, const BodyTerminator& terminator, uint32_t targetIndex, BlockID to)
 {
     if (!has(Mechanism::Folding) || terminator.kind() != TerminatorKind::Branch)
         return;
@@ -6677,7 +6678,7 @@ void Walker::leadHandlerEdge()
         m_frames[frameIndex].valuesBuiltTwice->nameOtherwiseOn(open.names, value, name);
 }
 
-ALWAYS_INLINE void Walker::standIn(Frame& frame, const BodyBlock& block, InputBlock& record)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::standIn(Frame& frame, const BodyBlock& block, InputBlock& record)
 {
     frame.block = block.id();
     frame.endOfValues = block.endOfValues().index();
@@ -6705,7 +6706,7 @@ void Walker::standInOtherBlock(BlockID inputBlock)
     standIn(frame, frame.index->block(inputBlock), this->inputBlock(frame, inputBlock));
 }
 
-ALWAYS_INLINE void Walker::enterJoin(BlockID inputBlock, InputBlock& record, const BodyBlock& input)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::enterJoin(BlockID inputBlock, InputBlock& record, const BodyBlock& input)
 {
     uint32_t only = record.firstOpenEdge;
     OpenEdge& edge = m_openEdges[only];
@@ -7407,7 +7408,7 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
     return false;
 }
 
-ALWAYS_INLINE Walker::ChainOfOpcode Walker::chainOf(Opcode opcode)
+ALWAYS_INLINE_INTO_OTHER_FILES Walker::ChainOfOpcode Walker::chainOf(Opcode opcode)
 {
     static constexpr auto chains = []<size_t... opcodes>(std::index_sequence<opcodes...>) {
         return std::array<ChainOfOpcode, sizeof...(opcodes)> { &Walker::walkThroughChainOf<static_cast<Opcode>(opcodes)>... };
@@ -7415,7 +7416,7 @@ ALWAYS_INLINE Walker::ChainOfOpcode Walker::chainOf(Opcode opcode)
     return chains[static_cast<size_t>(opcode)];
 }
 
-ALWAYS_INLINE bool Walker::walkThroughChain(const BodyValue& written)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::walkThroughChain(const BodyValue& written)
 {
     if (accessesUnderComputedKeys.contains(written.opcode()) || !m_waysIntoClosedCopies.isEmpty()) [[unlikely]]
         return walkThroughChainAfterPreparing(written);
@@ -7896,7 +7897,7 @@ void Walker::walkOperation(const BodyValue& value)
         static constexpr OpcodeSet marksOfNetOnEffects { Opcode::TurnBeginsAgain, Opcode::CopyLeavesForCall, Opcode::TurnWasQuiet };
         for (uint32_t index = numberOfRecordsInFront; index < m_code.numberOfValues(); ++index) {
             const Operation& built = m_code.at(ValueID(index));
-            holdsReadThatIsAskedWhole |= built.opcode == Opcode::PropGet || built.opcode == Opcode::ElemGet || built.opcode == Opcode::GetValueAtSiteOrAbsent || built.opcode == Opcode::GetOwnValueUnderKeyOrAbsent || ((built.opcode == Opcode::GetSlot || built.opcode == Opcode::GetSlotOrUndefined) && built.level() != KnowledgeLevel::Proven);
+            holdsReadThatIsAskedWhole |= built.opcode == Opcode::PropGet || built.opcode == Opcode::ElemGet || built.opcode == Opcode::GetValueAtSiteOrAbsent || built.opcode == Opcode::GetOwnValueUnderKeyOrAbsent || built.opcode == Opcode::GetElementInStorageOrAbsent || ((built.opcode == Opcode::GetSlot || built.opcode == Opcode::GetSlotOrUndefined) && built.level() != KnowledgeLevel::Proven);
             hasDoneMoreThanLook |= (built.opcode == Opcode::AskObjectAgain && built.functionIsGetter()) || (!marksOfNetOnEffects.contains(built.opcode) && (built.traits().mayWriteWhatIsSeen() || built.traits().mayRunOtherCode()));
         }
         if (!holdsReadThatIsAskedWhole && !hasDoneMoreThanLook)
@@ -7936,7 +7937,7 @@ void Walker::walkOperation(const BodyValue& value)
     leaveAnythingAt(callee);
 }
 
-ALWAYS_INLINE void Walker::walkJump(const BodyTerminator& terminator)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::walkJump(const BodyTerminator& terminator)
 {
     BodyTarget target = terminator.next();
     if (BlockID head = inputBlock(m_frames.last(), target.block()).head; head && target.proofs().empty()) {

@@ -515,21 +515,7 @@ void ElementAccessEmitter::generateSetArrayLength(const ValueContext& value)
     Integer length = integerOf(value->lengthOperand());
     StubKey stub = setArrayLength(value->mode() == ECMAMode::Sloppy);
     build().statistics().count(StatisticID::LengthsStoredIntoProvenLists);
-    if (!generator().paysForCodeInLine(value.block())) {
-        callStub(value, stub, { array.value(), length.value() });
-        return;
-    }
-    LBasicBlock otherwise = newBlock();
-    LBasicBlock done = newBlock();
-    branchUnless(belowOrEqual(sub(indexingMode(array, IndexingShapeAndWritabilityMask), ArrayWithUndecided), ArrayWithContiguous - ArrayWithUndecided), otherwise);
-    branchUnless(equal(publicLength(elementsOf(array)), length), otherwise);
-    m_out.jump(done);
-
-    m_out.appendTo(otherwise);
-    callStub(value, stub, { array.value(), length.value() }, { .isOnRarePath = true });
-    m_out.jump(done);
-
-    m_out.appendTo(done);
+    callStub(value, stub, { array.value(), length.value() });
 }
 
 bool ElementAccessEmitter::testsEveryPosition()
@@ -1234,6 +1220,42 @@ void ElementAccessEmitter::generateIsElementInStorage(const ValueContext& value)
         Integer hole = select(equal(shape, word32(DoubleShape)), integer(arrayStorageFormOf(ArrayStorage::Double).hole), integer(arrayStorageFormOf(ArrayStorage::Contiguous).hole));
         branch(notEqual(Integer(loadBoxedElement(elements, test.indexInside).value()), hole), targets);
     });
+}
+
+void ElementAccessEmitter::generateGetElementInStorageOrAbsent(const ValueContext& value)
+{
+    LBasicBlock isAbsent = newBlock();
+    LBasicBlock holdsDoubles = newBlock();
+    LBasicBlock holdsValues = newBlock();
+    Join<Boxed> join(m_out);
+    Integer position = indexOrElse(value->positionOperand(), false, isAbsent);
+    Operand operand = get(value->objectOperand());
+    if (!operand.is<CellPointer>()) {
+        branchUnless(isCell(operand.as<Boxed>()), isAbsent);
+        if (typeOf(value->objectOperand()).primitives & Primitive::Absent)
+            branchUnless(isNotEmpty(operand.as<Boxed>()), isAbsent);
+    }
+    CellPointer object = operand.is<CellPointer>() ? operand.as<CellPointer>() : unboxCell(operand.as<Boxed>());
+    static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape && !(IndexingShapeMask & 1));
+    Word32 shape = indexingMode(object, IndexingShapeMask);
+    branchUnless(belowOrEqual(sub(shape, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), isAbsent);
+    ArrayElements elements = elementsOf(object);
+    LengthTest test = testLength(position, elements);
+    branchUnless(test.isInside, isAbsent);
+    m_out.branch(equal(shape, word32(DoubleShape)).value(), normalEdge(holdsDoubles), normalEdge(holdsValues));
+
+    m_out.appendTo(holdsValues);
+    join.add(loadBoxedElement(elements, test.indexInside));
+
+    m_out.appendTo(holdsDoubles);
+    const ArrayStorageForm& doubles = arrayStorageFormOf(ArrayStorage::Double);
+    Operand number = loadRawElement(doubles, elements, test.indexInside);
+    branchUnless(logicalNot(isHole(doubles, number)), isAbsent);
+    join.add(boxRawElement(doubles, number));
+
+    m_out.appendTo(isAbsent);
+    join.add(boxedConstant(JSValue()));
+    define(value, join.finish());
 }
 
 void ElementAccessEmitter::generateGetStringLength(const ValueContext& value)

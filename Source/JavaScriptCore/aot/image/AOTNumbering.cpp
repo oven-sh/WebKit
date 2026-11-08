@@ -13,6 +13,7 @@
 #include "AOTCurrentWork.h"
 #include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstanceLayout.h"
 #include "AOTObjectWords.h"
 #include "AOTOperationData.h"
@@ -245,7 +246,7 @@ ImageNumbers::ImageNumbers()
 
 ImageNumbers::~ImageNumbers() = default;
 
-ALWAYS_INLINE std::optional<uint32_t> ImageNumbers::numberOfInLine(NumberSpace space, std::span<const uint32_t> key) const
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInLine(NumberSpace space, std::span<const uint32_t> key) const
 {
     if (key.empty() || (hasOneIDAsKey(space) && key.size() != 1))
         return std::nullopt;

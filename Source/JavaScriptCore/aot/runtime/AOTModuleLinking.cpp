@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTable.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTModuleLinkWalk.h"
 #include "AOTModuleNamespace.h"
@@ -187,6 +188,27 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
             continue;
         for (const RequiredNameData& requiredName : m_table.requiredNames(module)) {
             ModuleID exporter = requiredName.exporterModule();
+            if (m_mocks && (isCommonJSFileOrFace(exporter) || (data(exporter).isESModuleOfProgram() && data(exporter).hasDynamicStarExport())) && !m_modulesThatHadRunWhenMocked.get(fileOf(exporter).index()) && (mockInPlace(exporter) ? !seesMockOf(exporter, module) : isMocked(fileOf(exporter)) && importsOriginalBesideMock(exporter, module))) [[unlikely]] {
+                if (ModuleID file = fileOf(exporter); mockInPlace(file) && !isLeftAloneByMock(file) && moduleWithExportsOf(file) != file) {
+                    runFileBesideMock(file);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
+                if (m_modulesAskedForOwnNames.get(exporter.index()))
+                    continue;
+                m_modulesAskedForOwnNames.set(exporter.index());
+                JSObject* own = namespaceOfModuleItself(exporter);
+                m_modulesAskedForOwnNames.clear(exporter.index());
+                RETURN_IF_EXCEPTION(scope, void());
+                bool isExported = own->hasProperty(m_instance.globalObject, identifier(requiredName.name));
+                RETURN_IF_EXCEPTION(scope, void());
+                if (isExported || isAskedForByStar(requiredName))
+                    continue;
+                StarExportResolution::Type resolution = resolveRequiredName(exporter, identifier(requiredName.name));
+                RETURN_IF_EXCEPTION(scope, void());
+                if (resolution != StarExportResolution::Type::Ambiguous && dropExportThatFindsNothing(module, requiredName))
+                    continue;
+                RELEASE_AND_RETURN(scope, resolution == StarExportResolution::Type::Ambiguous ? throwExportAmbiguous(requiredName) : throwExportNotFound(requiredName));
+            }
             if ((mockInPlace(exporter) && mayGetNameFromMock(exporter, module)) || (asked == ModulesAsked::ThoseLoadedAnew && isMocked(exporter) && !wasLoadedInThisTestFile(exporter))) [[unlikely]] {
                 bool patchesFileThatHasRun = mockInPlace(exporter) && isLeftAloneByMock(exporter) && !isSetAsideByMock(fileOf(exporter));
                 if (requiredName.mayBeAbsent || !patchesFileThatHasRun || !m_table.isAmbiguousExport(exporter, identifier(requiredName.name).string()))
@@ -269,7 +291,7 @@ static bool hasUnvisitedRequests(AbstractModuleRecord* record, const VisitedModu
     return cyclic && cyclic->status() == CyclicModuleRecord::Status::Unlinked && !visited.contains(record);
 }
 
-ALWAYS_INLINE void ModuleLinkWalk::append(ModuleID module, StepKind kind, bool resolvesNames)
+ALWAYS_INLINE_INTO_OTHER_FILES void ModuleLinkWalk::append(ModuleID module, StepKind kind, bool resolvesNames)
 {
     if (m_steps.size() == m_steps.capacity()) [[unlikely]]
         m_steps.reserveCapacity(m_steps.capacity() * 2);
@@ -442,7 +464,7 @@ void Modules::willMock(ModuleID mocked)
             setStatus(mocked, ModuleStatus::Evaluated);
     } else if (LoadedModule* loaded = m_modulesThatRanBesideMockAlone.get(mocked.index()) ? loadedIfExists(mocked) : nullptr)
         loaded->errorOfModuleThatRanBesideMock.set(*this, JSValue());
-    m_modulesThatHadRunWhenMocked.set(mocked.index(), status(mocked) == ModuleStatus::Evaluated);
+    m_modulesThatHadRunWhenMocked.set(mocked.index(), status(mocked) == ModuleStatus::Evaluated && (!mockInPlace(mocked) || hasRunItself(mocked)));
     momentOfFirstMockInTestFile(mocked);
     ++m_timesMocked.add(mocked, 0u).iterator->value;
     BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());

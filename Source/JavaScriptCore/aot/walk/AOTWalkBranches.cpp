@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEffectsOfOperations.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTOpcodeSets.h"
 #include "AOTRepresentationRules.h"
 #include "AOTWalkTextBuilders.h"
@@ -339,7 +340,7 @@ bool comeToSamePlace(const BodyIndex& index, const WayBehindTerminator& left, co
     return true;
 }
 
-ALWAYS_INLINE std::optional<uint32_t> Walker::onlyTargetWhereAllComeToOnePlace(const BodyTerminator& terminator) const
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> Walker::onlyTargetWhereAllComeToOnePlace(const BodyTerminator& terminator) const
 {
     if (terminator.kind() != TerminatorKind::Branch || terminator.numberOfTargets() != 2)
         return std::nullopt;

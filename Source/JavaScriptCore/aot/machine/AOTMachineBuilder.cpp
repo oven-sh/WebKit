@@ -388,13 +388,13 @@ Builder::Builder(Procedure& procedure)
 {
 }
 
-ALWAYS_INLINE bool Builder::hasRoomToCreate(size_t bytes) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Builder::hasRoomToCreate(size_t bytes) const
 {
     const Procedure& procedure = m_proc;
     return procedure.m_operations.size() != procedure.m_operations.capacity() && procedure.m_arena.hasRoomFor(bytes);
 }
 
-ALWAYS_INLINE bool Builder::hasRoomToAppendTo(const Block* block, size_t bytes) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Builder::hasRoomToAppendTo(const Block* block, size_t bytes) const
 {
     return block->m_operations.size() != block->m_operations.capacity() && hasRoomToCreate(bytes);
 }
@@ -466,42 +466,42 @@ ALWAYS_INLINE Operation* Builder::appendNewWithChildren(Opcode opcode, Type type
     return result;
 }
 
-ALWAYS_INLINE Operation* Builder::appendNew(Opcode opcode, Type type)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNew(Opcode opcode, Type type)
 {
     return appendNewWithChildren<0, KindOfAppendedOperation::Any, false>(opcode, type, nullptr, nullptr, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNew(Opcode opcode, Type type, Operation* child)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNew(Opcode opcode, Type type, Operation* child)
 {
     return appendNewWithChildren<1, KindOfAppendedOperation::Any, false>(opcode, type, child, nullptr, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNew(Opcode opcode, Type type, Operation* first, Operation* second)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNew(Opcode opcode, Type type, Operation* first, Operation* second)
 {
     return appendNewWithChildren<2, KindOfAppendedOperation::Any, false>(opcode, type, first, second, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* child)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* child)
 {
     return appendNewWithChildren<1, KindOfAppendedOperation::MemoryAccess, false>(opcode, type, child, nullptr, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* first, Operation* second)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* first, Operation* second)
 {
     return appendNewWithChildren<2, KindOfAppendedOperation::MemoryAccess, false>(opcode, type, first, second, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* child)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* child)
 {
     return appendNewWithChildren<1, KindOfAppendedOperation::Computation, false>(opcode, type, child, nullptr, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second)
 {
     return appendNewWithChildren<2, KindOfAppendedOperation::Computation, false>(opcode, type, first, second, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second, Operation* third)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second, Operation* third)
 {
     return appendNewWithChildren<3, KindOfAppendedOperation::Computation, false>(opcode, type, first, second, third);
 }
@@ -526,7 +526,7 @@ NEVER_INLINE Operation* Builder::createNewWithoutPositionWhereRoomMayLack(Opcode
     return createNewWithoutPosition<false>(opcode, type, payload, hash);
 }
 
-ALWAYS_INLINE Operation* Builder::createWithoutPosition(Opcode opcode, Type type, uint64_t payload)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::createWithoutPosition(Opcode opcode, Type type, uint64_t payload)
 {
     uint32_t hash = Numbering::hashWithoutPosition(opcode, payload);
     if (Operation* existing = m_numbering.findWithoutPosition(opcode, payload, hash))
@@ -547,24 +547,24 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Builder::noteInheritedFind(const Operation* 
     m_hasInheritedFindsInEpoch = true;
 }
 
-ALWAYS_INLINE Operation* Builder::noteIfInherited(const Numbering::Found& found)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::noteIfInherited(const Numbering::Found& found)
 {
     if (found.isInherited) [[unlikely]]
         noteInheritedFind(found.operation);
     return found.operation;
 }
 
-ALWAYS_INLINE Operation* Builder::findNumbered(const NumberingKey& key, uint32_t hash)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::findNumbered(const NumberingKey& key, uint32_t hash)
 {
     return noteIfInherited(m_numbering.lookUp(key, hash, m_isDuplicating ? Numbering::Reach::OwnEntries : Numbering::Reach::WholeScope));
 }
 
-ALWAYS_INLINE Operation* Builder::findNumberedLoad(const NumberingKey& key, uint32_t hash)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::findNumberedLoad(const NumberingKey& key, uint32_t hash)
 {
     return noteIfInherited(m_numbering.lookUpLoad(key, hash, m_isDuplicating ? Numbering::Reach::OwnEntries : Numbering::Reach::WholeScope));
 }
 
-ALWAYS_INLINE Type Builder::typeOfResult(Opcode opcode, Operation* first)
+ALWAYS_INLINE_INTO_OTHER_FILES Type Builder::typeOfResult(Opcode opcode, Operation* first)
 {
     TypeKind kind = machineBuilderRulesOfOpcodes[opcode].kindOfResult;
     RELEASE_ASSERT(kind != machineBuilderKindThatOpcodeDoesNotSay);

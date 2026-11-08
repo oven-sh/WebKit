@@ -2734,14 +2734,14 @@ static bool isListThatFrontEndGuessedByNamesAloneForGuesses(Walker& walker, Valu
     return element.hasObjects() && (element.primitives & Primitive::Number) && (element.primitives & Primitive::AnyString) && (element.primitives & Primitive::BigInt);
 }
 
-static void leaveLayoutsThatStayWithCompiledCodeOutOfElementForGuesses(Walker& walker, ValueID list, ValueID element, ValueID readThatIsHeld, ExpectationForGuesses& expectation)
+static TypeID typeOfElementWithoutLayoutsThatStayWithCompiledCodeForGuesses(Walker& walker, ValueID list, ValueID element, ValueID readThatIsHeld, TypeID expected)
 {
-    if (!expectation.type || !isListThatFrontEndGuessedByNamesAloneForGuesses(walker, list))
-        return;
-    TypeID expected = expectation.type;
-    expectation.type = withoutLayoutsThatStayWithCompiledCodeForGuesses(walker, element, element, expected, [&] { return walker.facts().held().resultOfReadByKey(walker.currentFunction(), readThatIsHeld); });
-    if (expectation.type != expected)
+    if (!expected || !isListThatFrontEndGuessedByNamesAloneForGuesses(walker, list))
+        return expected;
+    TypeID left = withoutLayoutsThatStayWithCompiledCodeForGuesses(walker, element, element, expected, [&] { return walker.facts().held().resultOfReadByKey(walker.currentFunction(), readThatIsHeld); });
+    if (left != expected)
         walker.count(StatisticID::ElementsOfListsGuessedByNamesNotAskedForLayoutsThatStayWithCompiledCode);
+    return left;
 }
 
 static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, ValueID input)
@@ -2872,7 +2872,7 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
             }
         }
         if (opcode == Opcode::ElemGet)
-            leaveLayoutsThatStayWithCompiledCodeOutOfElementForGuesses(walker, definition.operand(OperandIndex::ElemGet::object), input, input, expectation);
+            expectation.type = typeOfElementWithoutLayoutsThatStayWithCompiledCodeForGuesses(walker, definition.operand(OperandIndex::ElemGet::object), input, input, expectation.type);
         if (opcode == Opcode::ElemGet && saysNothingForGuesses(types, expectation.type))
             expectation = { walker.facts().held().resultOfReadByKey(walker.currentFunction(), input), true, true };
     } else if (opcode == Opcode::ResultAt) {
@@ -2885,7 +2885,7 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
                     expectation = { TypeTable::string, ofIterable.isDeclared, ofIterable.isHeld };
                 else
                     expectation = { pairs ? pairs : typeOfContentsRead(expecting, iterated, ContentsSlot::Element), ofIterable.isDeclared, ofIterable.isHeld };
-                leaveLayoutsThatStayWithCompiledCodeOutOfElementForGuesses(walker, iterable, input, definition.operand(0), expectation);
+                expectation.type = typeOfElementWithoutLayoutsThatStayWithCompiledCodeForGuesses(walker, iterable, input, definition.operand(0), expectation.type);
             }
             if (saysNothingForGuesses(types, expectation.type))
                 expectation = { walker.facts().held().resultOfReadByKey(walker.currentFunction(), definition.operand(0)), true, true };
@@ -3724,6 +3724,8 @@ static std::optional<TestOfGuess> chooseTestOfGuess(Walker& walker, Reference va
     if (!ofType)
         return std::nullopt;
     TestOfGuess chosen = *ofType;
+    if (walker.isHolderThatIsNoBuiltin(value) && types.saysNothing(walker.typeOf(value)) && types.at(chosen.tested).isObject() && types.at(chosen.tested).hasOnlyClassObjects())
+        return std::nullopt;
 
     bool namesClosures = !holdsOnlyPrimitives(chosen.tested) && types.recordOf(chosen.tested).traitsOfNamed.contains(ObjectTrait::IsClosure);
     if (namesClosures && walker.withoutFunctionsThatMayNotBeMentioned(chosen.tested) != chosen.tested)
@@ -4310,7 +4312,7 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         }
     };
     auto goByTablesWhereMuchIsFound = [&] {
-        if (slotsStoredInStretch.size() + readsAnsweredByLooks.size() + stretch.firstAccessesToSlots.size() > 24) [[unlikely]]
+        if (slotsStoredInStretch.size() + readsAnsweredByLooks.size() + stretch.firstAccessesToSlots.size() > 192) [[unlikely]]
             goByTables();
     };
     ValueID callAwaited;
@@ -7607,13 +7609,13 @@ bool siteMayAnswerReadWithoutOtherCode(const Walker& walker, const BodyValue& re
     if (read.opcode() == Opcode::ElemGet) {
         const BodyIndex& index = walker.currentBodyIndex();
         ValueID user = index.onlyUsingValue(read.id());
-        return isFoundFromInFrontOfLoopOfReadForGuesses(index, read.id(), read.propertyOperand()) && isFoundFromInFrontOfLoopOfReadForGuesses(index, read.id(), read.objectOperand()) && (!user || !callsOfValuesForGuesses.contains(index.opcodeOf(user)));
+        return (walker.textNamesHolderThatIsNoBuiltin(read.objectOperand()) || isFoundFromInFrontOfLoopOfReadForGuesses(index, read.id(), read.propertyOperand())) && isFoundFromInFrontOfLoopOfReadForGuesses(index, read.id(), read.objectOperand()) && (!user || !callsOfValuesForGuesses.contains(index.opcodeOf(user)));
     }
     if (read.opcode() != Opcode::PropGet || read.isFreeName())
         return false;
     const Program& program = walker.program();
     PropertyKeyID key = read.key();
-    if (!key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::Text || program.nameClassOf(key) != NameClass::Ordinary)
+    if (!key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::Text || (program.nameClassOf(key) != NameClass::Ordinary && !(program.nameClassOf(key) == NameClass::Length && walker.textNamesHolderThatIsNoBuiltin(read.objectOperand()))))
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID user = index.onlyUsingValue(read.id());
@@ -7738,6 +7740,8 @@ bool readAtSiteOrBeginTurnAgainOfItsOpcodes(Walker& walker, const BodyValue& rea
     }
     bool isByKey = read.opcode() == Opcode::ElemGet;
     Reference key = isByKey ? walker.referenceOf(read.propertyOperand()) : Reference();
+    bool isByIndex = isByKey && key && walker.textNamesHolderThatIsNoBuiltin(read.objectOperand()) && walker.types().at(walker.typeOf(key)).isInteger();
+    isByKey &= !isByIndex;
     if (isByKey && (!key || !key.isValue() || !(walker.types().at(walker.typeOf(key)).primitives & Primitive::String) || !walker.types().saysNothing(walker.typeOf(object))))
         return false;
     bool isFoundUnderKeyInFront = isByKey && walker.standsInFrontOfTypedCopy(object, Walker::TurnOfTypedCopy::HasRunNoOtherCode) && walker.standsInFrontOfTypedCopy(key, Walker::TurnOfTypedCopy::HasRunNoOtherCode) && walker.everyTurnOfTypedCopyFindsTheSameUnderEveryName();
@@ -7761,7 +7765,7 @@ bool readAtSiteOrBeginTurnAgainOfItsOpcodes(Walker& walker, const BodyValue& rea
     bool goesOnWhereItHolds = asksForNumber || asksForList;
     if (object.isConstant() && !goesOnWhereItHolds && !(walker.types().at(walker.typeOf(object)).isObject() && walker.types().at(walker.typeOf(object)).hasOnlyClosures()))
         return false;
-    if (!isByKey && !walker.standsInFrontOfTypedCopy(object, Walker::TurnOfTypedCopy::HasRunNoOtherCode)) {
+    if (!isByKey && !isByIndex && !walker.standsInFrontOfTypedCopy(object, Walker::TurnOfTypedCopy::HasRunNoOtherCode)) {
         const Code& code = walker.code();
         ValueID holder = object.id();
         while (!code.isConstant(holder)) {
@@ -7776,14 +7780,17 @@ bool readAtSiteOrBeginTurnAgainOfItsOpcodes(Walker& walker, const BodyValue& rea
         if (holder != object.id() && walker.standsInFrontOfTypedCopy(Reference::value(holder), Walker::TurnOfTypedCopy::HasRunNoOtherCode))
             object = Reference::value(holder);
     }
-    bool isReadInFront = isByKey ? isFoundUnderKeyInFront : (walker.standsInFrontOfTypedCopy(object, Walker::TurnOfTypedCopy::HasRunNoOtherCode) && walker.everyTurnOfTypedCopyFindsTheSameUnderName(read.key()));
+    bool isReadInFront = isByIndex ? false : isByKey ? isFoundUnderKeyInFront : (walker.standsInFrontOfTypedCopy(object, Walker::TurnOfTypedCopy::HasRunNoOtherCode) && walker.everyTurnOfTypedCopyFindsTheSameUnderName(read.key()));
     Reference found;
     Reference test;
     {
         Walker::InFrontOfTypedCopy inFront(walker, isReadInFront, Walker::TurnOfTypedCopy::HasRunNoOtherCode);
-        Draft lookup(isByKey ? Opcode::GetOwnValueUnderKeyOrAbsent : Opcode::GetValueAtSiteOrAbsent, origin);
+        Draft lookup(isByIndex ? Opcode::GetElementInStorageOrAbsent : isByKey ? Opcode::GetOwnValueUnderKeyOrAbsent : Opcode::GetValueAtSiteOrAbsent, origin);
         lookup.setObjectOperand(object);
-        if (isByKey)
+        if (isByIndex) {
+            lookup.setPositionOperand(key);
+            walker.count(StatisticID::ElementsReadInPlainStorageOfWhatIsNoList);
+        } else if (isByKey)
             lookup.setPropertyOperand(key);
         else
             lookup.setKey(read.key());

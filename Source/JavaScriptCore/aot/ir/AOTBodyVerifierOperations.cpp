@@ -339,7 +339,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::GetArrayRoom: case Opcode::ExtendArrayLength: case Opcode::SetArrayLength:
     case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::AppendValuesOfMap:
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
-    case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
+    case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::GetElementInStorageOrAbsent: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
     case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest:
     case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
     case Opcode::CallBuiltin: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ReciprocalOfDivisor: case Opcode::RemainderByReciprocal: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewSetFromData: case Opcode::NewMapFromData:

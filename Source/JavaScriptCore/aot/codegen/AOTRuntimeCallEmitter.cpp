@@ -14,6 +14,7 @@
 #include "AOTEffectsNet.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTHeaps.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPureOperations.h"
 #include "AOTSavedFrameEmitter.h"
 #include "AOTStaticsEmitter.h"
@@ -860,7 +861,7 @@ PatchEffectsMemo& RuntimeCallEmitter::patchEffectsMemo()
     return *m_patchEffectsMemo;
 }
 
-ALWAYS_INLINE void RuntimeCallEmitter::fillRequest(CallRequest& request, StubKey key, std::span<const LValue> operands, const CallOptions& options, std::optional<BranchTargets> targets, std::optional<Origin> firstRead) const
+ALWAYS_INLINE_INTO_OTHER_FILES void RuntimeCallEmitter::fillRequest(CallRequest& request, StubKey key, std::span<const LValue> operands, const CallOptions& options, std::optional<BranchTargets> targets, std::optional<Origin> firstRead) const
 {
     const StubCatalog& catalog = inputs().stubCatalog;
     uint32_t traits = (targets ? 0 : StubCallTraits::returns)
@@ -990,6 +991,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     patchpoint->setNeedsFrameRecord(shape->needsFrameRecord);
     patchpoint->setFindsOperandsInFrameWithoutRecord(true);
     patchpoint->setRunsWithoutFrame(!hasSite && !neverReturns && shape->leavesCallerWithoutFrame);
+    RELEASE_ASSERT(!patchpoint->runsWithoutFrame() || !calleeMayCollect);
 
     bool receiverIsInAnyRegister = shape->receiverIsInAnyRegister;
     bool resultIsInAnyRegister = shape->resultIsInAnyRegister;

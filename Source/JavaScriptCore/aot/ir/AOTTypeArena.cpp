@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include <algorithm>
@@ -672,7 +673,7 @@ NEVER_INLINE void TypeArena::addWhatNamedObjectsBring(Type& type) const
     type.traitsOfNamed = summary.traits;
 }
 
-ALWAYS_INLINE void TypeArena::completeInPlace(Type& type) const
+ALWAYS_INLINE_INTO_OTHER_FILES void TypeArena::completeInPlace(Type& type) const
 {
     type.layouts = type.unnamedLayouts;
     type.classes = type.unnamedClasses;

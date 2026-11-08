@@ -1684,7 +1684,7 @@ bool callGetterExpectedAtRead(Walker& walker, const BodyValue& read)
     if (!object || !object.isValue() || !walker.types().at(walker.typeOf(object)).isObject())
         return false;
     auto listed = std::ranges::lower_bound(expected.reads, read.id(), { }, &LinkedGetterAtRead::site);
-    FunctionID getter = listed != expected.reads.end() && listed->site == read.id() ? listed->getter : FunctionID();
+    FunctionID getter = listed != expected.reads.end() && listed->site == read.id() && (!listed->isHeardInLoopsAlone || walker.isInLoop()) ? listed->getter : FunctionID();
     if (!getter || !bodyRunsWhenCalledInWalkCalls(walker.program().at(getter).kind))
         return false;
     TypeID closures = walker.types().forFunction(getter);

@@ -636,6 +636,8 @@ public:
 
     void setRunsWithoutFrame(bool value) { setBit(RunsWithoutFrame, value); }
     bool runsWithoutFrame() const { return bit(RunsWithoutFrame); }
+    void setShowsRegistersToCollector(bool value) { setBit(ShowsRegistersToCollector, value); }
+    bool showsRegistersToCollector() const { return bit(ShowsRegistersToCollector); }
     void setFollowsFrameSetup(bool value) { setBit(FollowsFrameSetup, value); }
     bool followsFrameSetup() const { return bit(FollowsFrameSetup); }
     void setTestsStackAheadOfFramedPart(bool value) { setBit(TestsStackAheadOfFramedPart, value); }
@@ -698,6 +700,7 @@ private:
         LeavesMoveOutOfResultToCallee = 1 << 9,
         TestsStackAheadOfFramedPart = 1 << 10,
         FailsWhenPredicateIsZero = 1 << 11,
+        ShowsRegistersToCollector = 1 << 12,
     };
 
     struct SuccessorClobber {

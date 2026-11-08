@@ -20,6 +20,7 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
 #include "AOTImage.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTInterpreterSlowPaths.h"
 #include "AOTModuleNamespace.h"
@@ -558,7 +559,7 @@ ALWAYS_INLINE void StructureTable::visitUsualStructures(Appender& appender, size
     });
 }
 
-ALWAYS_INLINE bool StructureTable::livesWhilePrototypeLives(const AllocationSiteRecord& record) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool StructureTable::livesWhilePrototypeLives(const AllocationSiteRecord& record) const
 {
     uint32_t shape = shapeOf(shapeWordWithoutMark(static_cast<uint32_t>(record.orderAndShapeWords >> 32)));
     return shape < m_tables.firstEnvironmentShape && m_shapesThatLiveWhilePrototypesLive.quickGet(shape);
@@ -705,14 +706,14 @@ Structure* StructureTable::structure(VM& vm, uint32_t shape)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ALWAYS_INLINE CompiledStructure* StructureTable::usualStructureIfExists(uint32_t shape) const
+ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::usualStructureIfExists(uint32_t shape) const
 {
     RELEASE_ASSERT(shape < m_tables.firstEnvironmentShape);
     uint32_t known = m_structures[shape];
     return known ? VariantMaps::decode(std::bit_cast<StructureID>(known)) : nullptr;
 }
 
-ALWAYS_INLINE StructureTable::Variant StructureTable::usualVariantOf(VM& vm, const LayoutData& layout)
+ALWAYS_INLINE_INTO_OTHER_FILES StructureTable::Variant StructureTable::usualVariantOf(VM& vm, const LayoutData& layout)
 {
     JSGlobalObject* realm = m_state.instance.globalObject;
     Variant usual { .realm = realm, .prototype = realm->objectPrototype(), .layout = &layout };
@@ -736,7 +737,7 @@ ALWAYS_INLINE StructureTable::Variant StructureTable::usualVariantOf(VM& vm, con
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ALWAYS_INLINE CompiledStructure* StructureTable::create(VM& vm, const LayoutData& layout, const Variant& variant)
+ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::create(VM& vm, const LayoutData& layout, const Variant& variant)
 {
     JSGlobalObject* realm = m_state.instance.globalObject;
     CompiledStructure*& templateStructure = m_templateStructures[variant.hasOtherPrototype];
@@ -757,7 +758,7 @@ ALWAYS_INLINE CompiledStructure* StructureTable::create(VM& vm, const LayoutData
     return CompiledStructure::createForObject(vm, *templateStructure, parameters);
 }
 
-ALWAYS_INLINE CompiledStructure* StructureTable::createUsual(VM& vm, const LayoutData& layout, const Variant& usual)
+ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::createUsual(VM& vm, const LayoutData& layout, const Variant& usual)
 {
     CompiledStructure* created = create(vm, layout, usual);
     uint32_t& known = m_structures[layout.shape];
@@ -776,7 +777,7 @@ ALWAYS_INLINE CompiledStructure* StructureTable::createUsual(VM& vm, const Layou
     return created;
 }
 
-ALWAYS_INLINE CompiledStructure* StructureTable::usualStructure(VM& vm, uint32_t shape)
+ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::usualStructure(VM& vm, uint32_t shape)
 {
     if (CompiledStructure* known = usualStructureIfExists(shape))
         return known;
@@ -1061,7 +1062,7 @@ AllocationSiteRecord* StructureTable::recordOfSameAllocation(uint32_t number) co
     return nullptr;
 }
 
-ALWAYS_INLINE AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number, uint32_t shape)
+ALWAYS_INLINE_INTO_OTHER_FILES AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number, uint32_t shape)
 {
     ObjectWords& words = m_state.instance.objects;
     if (AllocationSiteRecord* record = words.allocationSite(number))
@@ -1168,7 +1169,7 @@ static Structure* structureOf(const AllocationSiteRecord& record)
     return std::bit_cast<StructureID>(static_cast<uint32_t>(record.header)).decode();
 }
 
-ALWAYS_INLINE AllocationSiteRecord& StructureTable::filledRecord(VM& vm, uint32_t number)
+ALWAYS_INLINE_INTO_OTHER_FILES AllocationSiteRecord& StructureTable::filledRecord(VM& vm, uint32_t number)
 {
     AllocationSiteRecord* record = m_state.instance.objects.allocationSite(number);
     if (record && record->header) [[likely]]

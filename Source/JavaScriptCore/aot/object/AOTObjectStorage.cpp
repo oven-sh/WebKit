@@ -12,6 +12,7 @@
 #include "AOTCompiledFrame.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTModuleHost.h"
 #include "AOTObjectInternal.h"
@@ -130,7 +131,7 @@ bool Object::store(VM& vm, const FieldData& field, AcceptedValue accepted)
     return store(vm, field, accepted.value());
 }
 
-ALWAYS_INLINE void Object::willStoreMarker(const FieldData& field)
+ALWAYS_INLINE_INTO_OTHER_FILES void Object::willStoreMarker(const FieldData& field)
 {
     if (field.holdsRawValueFromBirth)
         setBearsMark(true);

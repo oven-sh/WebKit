@@ -6870,8 +6870,8 @@ void ScanOfBody::layDescriptorsInSight()
                 m_summary.accesses[definition.access].laysTextNumberOrBooleanThatIsWritten = isTextNumberOrBoolean;
         }
         bool valueIsInSight = definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName && !isAccessor && std::ranges::count(held, valueKey, &Held::key) == 1 && isEnumerable && isConfigurable && isWritable
-            && heldUnderValue->field != noSummaryNode && m_firstLeft[root] == definition.position && m_lastLeft[root] == definition.position;
-        bool definitionBringsValue = valueIsInSight && *isWritable;
+            && m_firstLeft[root] == definition.position && m_lastLeft[root] == definition.position;
+        bool definitionBringsValue = valueIsInSight;
         m_summary.changes[definition.change].laysValueInSight = definitionBringsValue;
         for (const Held& member : held) {
             if (member.key != get && member.key != set && member.key != valueKey)

@@ -546,7 +546,7 @@ TypeID CodeTypeVerifier::typeByResultRule(ValueID id, const Operation& operation
 }
 
 static constexpr OpcodeSet opcodesWhosePayloadIsHeldByTypeVerifier {
-    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::GetValueAtSiteOrAbsent, Opcode::GetOwnValueUnderKeyOrAbsent, Opcode::GetWatchedBuiltinValueOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
+    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::GetValueAtSiteOrAbsent, Opcode::GetOwnValueUnderKeyOrAbsent, Opcode::GetElementInStorageOrAbsent, Opcode::GetWatchedBuiltinValueOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
 };
 static_assert([]() consteval {
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -566,6 +566,7 @@ void CodeTypeVerifier::verifyTypeReadFromPayload(BlockID block, ValueID id, cons
     case Opcode::GetStaticFieldOrAbsent:
     case Opcode::GetValueAtSiteOrAbsent:
     case Opcode::GetOwnValueUnderKeyOrAbsent:
+    case Opcode::GetElementInStorageOrAbsent:
     case Opcode::GetWatchedBuiltinValueOrAbsent:
         if (!m_types.isSubset(m_types.withPrimitives(TypeTable::anything, Primitive::Absent), stated))
             fail(block, id, "the payload says more of what a lookup finds than that it is a value or absent"_s);

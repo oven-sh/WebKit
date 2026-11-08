@@ -66,10 +66,10 @@ public:
 #endif
     }
 
-    Word operandBorrowedOfOtherAnswer() const { return word(OBJECT_OFFSETOF(SiteAnswers, first) + OBJECT_OFFSETOF(SiteAnswers::Answer, operand)); }
+    Word operandBorrowedOfOtherAnswer() const { return word(OBJECT_OFFSETOF(SiteAnswers, second) + OBJECT_OFFSETOF(SiteAnswers::Answer, operand)); }
 
 private:
-    static constexpr ptrdiff_t offsetOfAnswer = OBJECT_OFFSETOF(SiteAnswers, second);
+    static constexpr ptrdiff_t offsetOfAnswer = OBJECT_OFFSETOF(SiteAnswers, first);
 
     GPRReg m_place;
 };
@@ -118,7 +118,7 @@ static void fillAnswersOfPlaceOfGetter(StubAssembler& jit, GPRReg object, GPRReg
         jit.move(name, A2);
         jit.move(object, A1);
         jit.move(instanceGPR, A0);
-        jit.move(TrustedImm32(static_cast<int32_t>(SiteUse::Read)), A4);
+        jit.move(TrustedImm32(static_cast<int32_t>(SiteUse::Call)), A4);
         jit.callOperation(Entry::operationAOTFillSiteAnswers, jit.reuseScratch(StubRegister::Operation));
     });
 }
@@ -136,7 +136,7 @@ StubSignature signatureOfGetterAtSite(StubKey)
 
 void generateGetterAtSite(StubAssembler& jit)
 {
-    constexpr SiteUse use = SiteUse::Read;
+    constexpr SiteUse use = SiteUse::Call;
     using Form = SiteAnswers::Form;
     const GPRReg object = jit.operand(0);
     const GPRReg result = jit.result();
@@ -193,8 +193,29 @@ void generateGetterAtSite(StubAssembler& jit)
     returnGetterOf(key);
 
     isNotInStorageOfHolder.link(&jit);
-    Jump isNoGetter = branchUnlessForm(Form::OwnGetterInCell);
+    Jump isNotInCell = branchUnlessForm(Form::OwnGetterInCell);
     jit.loadPtr(BaseIndex(object, operand, CCallHelpers::TimesOne), key);
+    returnGetterOf(key);
+
+    auto loadExtraProperties = [&] {
+        jit.zeroExtend8To32(operand, key);
+        jit.load32(BaseIndex(object, key, CCallHelpers::TimesFour), key);
+        isNoPair.append(jit.branchTest32(CCallHelpers::Zero, key));
+        jit.rshift32(TrustedImm32(SiteAnswers::indexShiftInOperandOfExtraValue), operand);
+    };
+    isNotInCell.link(&jit);
+    Jump isNotExtraInCell = branchUnlessForm(Form::ExtraGetterInCellAtCall);
+    loadExtraProperties();
+    jit.add32(operand, key);
+    jit.loadPtr(BaseIndex(cellCageBaseGPR, key, CCallHelpers::TimesEight), key);
+    returnGetterOf(key);
+
+    isNotExtraInCell.link(&jit);
+    Jump isNoGetter = branchUnlessForm(Form::ExtraGetterInStorageAtCall);
+    loadExtraProperties();
+    jit.loadPtr(BaseIndex(cellCageBaseGPR, key, CCallHelpers::TimesEight, JSObject::butterflyOffset()), key);
+    jit.signExtend32ToPtr(operand, operand);
+    jit.loadPtr(BaseIndex(key, operand, CCallHelpers::TimesEight), key);
     returnGetterOf(key);
 
     isNoGetter.link(&jit);

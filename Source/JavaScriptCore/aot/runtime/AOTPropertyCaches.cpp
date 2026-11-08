@@ -18,6 +18,7 @@
 #include "AOTEmptyPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
@@ -806,7 +807,7 @@ NEVER_INLINE void HashedSlotTable::forgetOrdinaryConstructorsWith(StructureID st
         instance->propertyCaches.headersOfPrototypeSlotsOfOrdinaryConstructors[PlaceOfOrdinaryConstructor::indexFor(structureID.bits())] = 0;
 }
 
-ALWAYS_INLINE void HashedSlotTable::forgetPlacesCopiedFrom(const HashedSlot& filed)
+ALWAYS_INLINE_INTO_OTHER_FILES void HashedSlotTable::forgetPlacesCopiedFrom(const HashedSlot& filed)
 {
     if (filed.access() == SlotAccess::Store) [[unlikely]]
         forgetPlacesCopiedFromSlotForStores(filed.slot);
@@ -2967,6 +2968,10 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
         && !(compiledObjectStructureOrNull(structure) && uncheckedDowncast<Object>(base)->fieldNamed(m_state, name.uid));
     if (slot && (slot->kind == Slot::Kind::ExtraProperty || slot->kind == Slot::Kind::ExtraGetter) && belongsToOneObject(structure))
         slot = std::nullopt;
+    if (slot && (slot->kind == Slot::Kind::ExtraProperty || slot->kind == Slot::Kind::ExtraGetter)) {
+        JSObject* extraProperties = uncheckedDowncast<Object>(base)->extraProperties();
+        RELEASE_ASSERT(extraProperties && extraProperties->structureID() == compiledObjectStructureOrNull(structure)->extraPropertiesStructureID());
+    }
     bool placeMayNotCallGetter = slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure);
     std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !placeMayNotCallGetter ? answerOfSlot(use, *slot, m_vm.heap.cage().base(), m_state.instance.options().useWideReferences(), m_state.objectThatHoldsUndefined) : std::nullopt;
     if (!answer && rowAnswers && !m_answersAtSites.holdsAnotherStructure(place, use, id)) {

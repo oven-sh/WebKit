@@ -121,8 +121,10 @@ auto Modules::momentsAtWhichSomeModuleMayLook(uint32_t since) const -> Vector<Mo
                 take(moment->moment);
         }
     };
-    for (uint32_t moment : m_momentsOfLoads)
-        take(moment);
+    for (uint32_t module = 0; module < m_momentsOfLoads.size(); ++module) {
+        if (!m_modulesLoadedAsMocksAlone.get(module))
+            take(m_momentsOfLoads[module]);
+    }
     for (const MomentLoadedAnew& anew : m_momentsLoadedAnew.values())
         take(anew.moment);
     for (uint32_t moment : m_momentsLinkedInRefusedLoads.values())
@@ -160,36 +162,41 @@ void Modules::didGiveUpLinksBeforeLoad(const LinksBeforeLoad& before)
     }
 }
 
-void Modules::letGoOfEndedMocksNobodySees(ModuleID fileOrModule)
+void Modules::letGoOfEndedMocksNobodySees()
 {
-    Vector<unsigned, 2> places = m_endedMocksToAskAbout.take(fileOrModule);
-    if (places.isEmpty())
+    if (m_endedMocksToAskAbout.isEmpty())
         return;
-    Vector<EndedMock, 2>& records = m_endedMocks.find(fileOrModule)->value;
+    auto asked = std::exchange(m_endedMocksToAskAbout, { });
     auto mayBeLetGo = [](const EndedMock& ended) {
         return ended.momentEnded != ended.momentLaid && !ended.wasLaidInPreload && !ended.isKeptWhereImporterIsAskedForAgain;
     };
     uint32_t since = std::numeric_limits<uint32_t>::max();
-    for (unsigned place : places) {
-        if (mayBeLetGo(records[place]))
-            since = std::min(since, records[place].momentLaid);
+    for (auto& [fileOrModule, places] : asked) {
+        const Vector<EndedMock, 2>& records = m_endedMocks.find(fileOrModule)->value;
+        for (unsigned place : places) {
+            if (mayBeLetGo(records[place]))
+                since = std::min(since, records[place].momentLaid);
+        }
     }
     if (since == std::numeric_limits<uint32_t>::max())
         return;
     Vector<MomentSomeModuleMayLookAt, 16> moments = momentsAtWhichSomeModuleMayLook(since);
-    LoadedModule& held = ensureLoaded(fileOrModule);
-    for (unsigned index : places) {
-        EndedMock& ended = records[index];
-        if (!mayBeLetGo(ended))
-            continue;
-        if (auto* seenAt = firstBetween(moments.span(), ended.momentLaid, ended.momentEnded)) {
-            m_endedMocksSeenByMomentLinked.add(seenAt->momentLinked, Vector<std::pair<ModuleID, unsigned>, 1>()).iterator->value.append({ fileOrModule, index });
-            continue;
-        }
-        ended.momentEnded = ended.momentLaid;
-        for (JSObject* table : { held.endedMocks.get(), held.namespacesOfEndedMocks.get() }) {
-            if (table)
-                removeValue(m_instance.globalObject, table, index);
+    for (auto& [fileOrModule, places] : asked) {
+        Vector<EndedMock, 2>& records = m_endedMocks.find(fileOrModule)->value;
+        LoadedModule& held = ensureLoaded(fileOrModule);
+        for (unsigned index : places) {
+            EndedMock& ended = records[index];
+            if (!mayBeLetGo(ended))
+                continue;
+            if (auto* seenAt = firstBetween(moments.span(), ended.momentLaid, ended.momentEnded)) {
+                m_endedMocksSeenByMomentLinked.add(seenAt->momentLinked, Vector<std::pair<ModuleID, unsigned>, 1>()).iterator->value.append({ fileOrModule, index });
+                continue;
+            }
+            ended.momentEnded = ended.momentLaid;
+            for (JSObject* table : { held.endedMocks.get(), held.namespacesOfEndedMocks.get() }) {
+                if (table)
+                    removeValue(m_instance.globalObject, table, index);
+            }
         }
     }
 }
@@ -201,7 +208,7 @@ std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* 
     VMState& state = m_instance.vm->aotState();
     if (!momentEnded)
         momentEnded = ++state.momentOfLoads;
-    letGoOfEndedMocksNobodySees(fileOrModule);
+    letGoOfEndedMocksNobodySees();
     Vector<EndedMock, 2>& ended = m_endedMocks.add(fileOrModule, Vector<EndedMock, 2>()).iterator->value;
     if (!ended.isEmpty() && ended.last().momentLaid == laid.moment) {
         if (!endedMock(fileOrModule, ended.size() - 1))
@@ -572,6 +579,7 @@ void Modules::letLinksOfLoadStand(ModuleID root)
             didGiveUpLinksBeforeLoad(links.before);
         return links.isHeldBy(root);
     });
+    letGoOfEndedMocksNobodySees();
 }
 
 void Modules::bringBackLinksOfLoadThatFailed(ModuleID root)

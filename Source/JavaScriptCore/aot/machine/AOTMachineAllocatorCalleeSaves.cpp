@@ -14,6 +14,30 @@ namespace JSC { namespace AOT { namespace Machine {
 
 static constexpr unsigned costOfCalleeSaveNotYetSaved = 2;
 
+static NEVER_INLINE bool isWorthCalleeSaveNotYetSavedThoughRareRegionsReadIt(const Allocator& allocator, const Operation* value, uint32_t firstReadInRareRegion, unsigned worth)
+{
+    enum : uint8_t { IsNotAskedYet, IsWorthIt, IsNotWorthIt };
+    ArenaVector<uint8_t>& answers = allocator.m_whetherValuesThatRareRegionsReadAreWorthCalleeSaveNotYetSaved;
+    if (answers.isEmpty())
+        answers.fill(allocator.m_arena, allocator.m_order.mostOperations(), IsNotAskedYet);
+    uint8_t& answer = answers[value->index()];
+    if (answer != IsNotAskedYet)
+        return answer == IsWorthIt;
+
+    const Liveness& liveness = allocator.m_liveness;
+    const ValueFacts& facts = liveness.of(value);
+    Position lastRead = 0;
+    for (uint32_t use = firstReadInRareRegion; use; use = liveness.use(use).next) {
+        lastRead = liveness.use(use).position;
+        if (!liveness.isUseInRareRegion(use) && ++worth > costOfCalleeSaveNotYetSaved) {
+            answer = IsWorthIt;
+            return true;
+        }
+    }
+    answer = facts.lastUse != noPosition && facts.lastUse > lastRead ? IsWorthIt : IsNotWorthIt;
+    return answer == IsWorthIt;
+}
+
 static bool isWorthCalleeSaveNotYetSaved(const Allocator& allocator, const Operation* value, const Block* block)
 {
     if (allocator.m_order.of(block).loop != noLoop)
@@ -24,8 +48,10 @@ static bool isWorthCalleeSaveNotYetSaved(const Allocator& allocator, const Opera
     unsigned worth = 1;
     Position lastRead = 0;
     for (uint32_t use = facts.firstUse; use; use = liveness.use(use).next) {
+        if (liveness.isUseInRareRegion(use)) [[unlikely]]
+            return isWorthCalleeSaveNotYetSavedThoughRareRegionsReadIt(allocator, value, use, worth);
         lastRead = liveness.use(use).position;
-        if (!liveness.isUseInRareRegion(use) && ++worth > costOfCalleeSaveNotYetSaved)
+        if (++worth > costOfCalleeSaveNotYetSaved)
             return true;
     }
     return facts.lastUse != noPosition && facts.lastUse > lastRead;

@@ -796,6 +796,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WayOfWalking way)
     counters.count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
     counters.count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
     counters.count(StatisticID::LoopsWalkedAgainWithoutAskingSums, m_walker->numberOfRowsWhoseSumsAreNotAsked());
+    counters.count(StatisticID::LoopsWalkedAgainWithKeysReadOffLook, m_walker->numberOfRowsWhoseKeysAreReadOffLook());
     counters.count(StatisticID::WalksOfLoopsCutShort, m_walker->numberOfWalksOfLoopsCutShort());
     counters.count(StatisticID::FirstTriesOfLoopsThatStartFromTheirOwnText, m_walker->numberOfFirstTriesOfLoopsThatStartFromTheirOwnText());
     counters.count(StatisticID::FirstTriesOfLoopsWhoseOwnTextWasRefuted, m_walker->numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted());

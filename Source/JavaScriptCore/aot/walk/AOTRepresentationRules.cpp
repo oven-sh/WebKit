@@ -62,7 +62,7 @@ using RepresentationRuleSet = EnumeratorBitSet<RepresentationRule, static_cast<u
 } // anonymous namespace
 
 static constexpr OpcodeSet readsAtPositionThatIsAnyNumber {
-    Opcode::IsElementInStorage
+    Opcode::IsElementInStorage, Opcode::GetElementInStorageOrAbsent
 };
 
 static constexpr RepresentationRule representationRuleOf(Opcode opcode)
@@ -187,7 +187,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::IsLinkedBelow: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy: case Opcode::AreLoaderFunctionsStored: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure:
     case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::CountExecution:
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField:
-    case Opcode::GetCachedGetter: case Opcode::ElemGetOrOwnAccessor: case Opcode::GetGetterOfAccessorOrUndefined: case Opcode::GetValueAtSiteOrAbsent: case Opcode::GetOwnValueUnderKeyOrAbsent: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
+    case Opcode::GetCachedGetter: case Opcode::ElemGetOrOwnAccessor: case Opcode::GetGetterOfAccessorOrUndefined: case Opcode::GetValueAtSiteOrAbsent: case Opcode::GetOwnValueUnderKeyOrAbsent: case Opcode::GetElementInStorageOrAbsent: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
     case Opcode::RegExpMatchLiteralInParts: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
     case Opcode::BoundsOfStringSplit: case Opcode::NewStringSplitArray:
     case Opcode::GetArrayRoom: case Opcode::ExtendArrayLength: case Opcode::SetArrayLength:

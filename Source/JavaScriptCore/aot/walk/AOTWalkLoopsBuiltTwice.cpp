@@ -1133,6 +1133,45 @@ bool Walker::looksCountOnTurnsThatBeginAgain(BlockID inputHead)
     return !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().looksCountOnTurnsThatBeginAgain && m_waysIntoClosedCopies.last().frameIndex == m_frames.size() - 1 && m_waysIntoClosedCopies.last().inputHead == inputHead;
 }
 
+bool Walker::textNamesHolderOfCopyAtWork(ValueID written) const
+{
+    if (m_holderThatIsNoBuiltin.frameIndex != m_frames.size() - 1 || !written)
+        return false;
+    ValueID behindCasts = currentBodyIndex().valueBehindCasts(written);
+    if (std::ranges::contains(m_holderThatIsNoBuiltin.names, written) || std::ranges::contains(m_holderThatIsNoBuiltin.names, behindCasts))
+        return true;
+    const BodyIndex& index = currentBodyIndex();
+    if (ValueID variable = m_holderThatIsNoBuiltin.readOfVariableInLoop; variable && behindCasts && !index.isParameter(behindCasts)) {
+        BodyValue read = index.value(behindCasts);
+        if (ValueID checked = read.opcode() == Opcode::CheckInitialized ? index.valueBehindCasts(read.operand(0)) : ValueID(); checked && !index.isParameter(checked))
+            read = index.value(checked);
+        BodyValue ofHolder = index.value(variable);
+        if (read.opcode() == ofHolder.opcode())
+            return ofHolder.opcode() == Opcode::GetModuleVariable ? read.variable() == ofHolder.variable() : read.environmentOperand() == ofHolder.environmentOperand() && read.layout() == ofHolder.layout() && read.field() == ofHolder.field();
+    }
+    return isHolderOfCopyAtWork(referenceBoundTo(behindCasts ? behindCasts : written));
+}
+
+bool Walker::isHolderOfCopyAtWork(Reference value) const
+{
+    if (!value || !value.isValue())
+        return false;
+    ValueID root = rootOfCellInSweptCode(m_code, value.id());
+    if (m_holderThatIsNoBuiltin.value && m_holderThatIsNoBuiltin.value.isValue()) {
+        ValueID rootOfHolder = rootOfCellInSweptCode(m_code, m_holderThatIsNoBuiltin.value.id());
+        if (rootOfHolder == root)
+            return true;
+        if (m_holderThatIsNoBuiltin.readOfVariableInLoop && !m_code.isConstant(root) && !m_code.isConstant(rootOfHolder) && m_code.at(root).opcode == Opcode::GetModuleVariable && m_code.at(rootOfHolder).opcode == Opcode::GetModuleVariable && m_code.at(root).variable() == m_code.at(rootOfHolder).variable())
+            return true;
+    }
+    if (m_holderThatIsNoBuiltin.frameIndex >= m_frames.size())
+        return false;
+    return std::ranges::any_of(m_holderThatIsNoBuiltin.names, [&](ValueID name) {
+        Reference bound = referenceBoundIn(m_frames[m_holderThatIsNoBuiltin.frameIndex], name);
+        return bound && bound.isValue() && rootOfCellInSweptCode(m_code, bound.id()) == root;
+    });
+}
+
 bool Walker::standsInTurnThatLooksCountOn() const
 {
     if (m_looksTakeFormsBehindLooksAsBuilt)
@@ -2133,12 +2172,34 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
             index.block(member).terminator().forEachOperand(mentions);
         }
     }
-    if ((((tellsListFromBytes || asksForListAlone) && members[0].nothingWasExpected) || isReadInSomeTurnsOnly || members[0].restIsWalkedAsWithoutGuess) && !isUnreachable()) {
+    BlockID startForWhatIsNoBuiltin;
+    WalkState atEndOfTests;
+    bool hasRest = (((tellsListFromBytes || asksForListAlone) && members[0].nothingWasExpected) || isReadInSomeTurnsOnly || members[0].restIsWalkedAsWithoutGuess) && !isUnreachable();
+    auto onlyOperatorsAndSuchReadsRanOtherCode = [&] {
+        SetForScope asInThatCopy(m_walksCopyForWhatIsNoBuiltin, true);
+        SetForScope ofThisHolder(m_holderThatIsNoBuiltin, HolderThatIsNoBuiltin { members[0].names.span(), members[0].value, frameIndex, members[0].readOfVariableInLoop });
+        return !m_operationsThatRanOtherCodeOfRow.isEmpty() && std::ranges::all_of(m_operationsThatRanOtherCodeOfRow, [&](ValueID ran) {
+            if (!ran || !index.isInLoop(index.blockOf(ran), loop))
+                return false;
+            BodyValue operation = index.value(ran);
+            return effectRuleOf(operation.opcode()) == EffectRule::Operator || siteMayAnswerReadWithoutOtherCode(*this, operation);
+        });
+    };
+    if (tellsListFromBytes && !isUnreachable() && onlyOperatorsAndSuchReadsRanOtherCode()) {
+        startForWhatIsNoBuiltin = addBlock(BlockFrequency::Rare);
+        atEndOfTests = m_state;
+        jumpTo(startForWhatIsNoBuiltin, { });
+        starts.append(StartOfCopy { startForWhatIsNoBuiltin, m_state, { } });
+    }
+    if (hasRest) {
         startOfRest = addBlock();
-        jumpTo(startOfRest, { });
-        continueIn(closedStart);
+        if (!startForWhatIsNoBuiltin)
+            jumpTo(startOfRest, { });
         starts.append(StartOfCopy { startOfRest, { }, { } });
-    } else
+    }
+    if (startForWhatIsNoBuiltin || startOfRest)
+        continueIn(closedStart);
+    else
         jumpTo(closedStart, { });
     if (whereHolderOfSlotFails && !m_hasFailed) {
         continueIn(whereHolderOfSlotFails);
@@ -2147,6 +2208,8 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
     if (m_hasFailed)
         return true;
     m_block = closedStart;
+    if (startForWhatIsNoBuiltin && !whereHolderOfSlotFails)
+        m_state = WTF::move(atEndOfTests);
     BlockID entryOfClosedCopy = addBlock(BlockFrequency::Rare);
     m_entriesOfClosedCopies.add(entryOfClosedCopy.index());
     Vector<Reference, 8> enteringClosedCopy;
@@ -2183,15 +2246,26 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         if (m_frames[frameIndex].loopLookedAt != loop)
             m_frames[frameIndex].typesOfLooks = settledAroundCopies;
         bool isRest = startOfRest && start.block == startOfRest;
+        bool isForWhatIsNoBuiltin = startForWhatIsNoBuiltin && start.block == startForWhatIsNoBuiltin;
         if (isRest) {
             m_block = { };
             m_state.clear();
             continueIn(startOfRest);
+            if (isUnreachable())
+                continue;
         } else {
             m_block = start.block;
             m_state = WTF::move(start.state);
         }
-        BlockID whereFrontFails = start.asksOtherHoldersForLists || start.expectsOtherHoldersOfItsClass || start.expectsTablesToBeViews ? (&start + 1)->block : startOfRest && !isRest ? startOfRest : closedStart;
+        WalkState atEndOfTestsForCopy;
+        BlockID firstBlockOfCopyForWhatIsNoBuiltin;
+        uint32_t firstValueOfCopyForWhatIsNoBuiltin = m_code.numberOfValues();
+        if (isForWhatIsNoBuiltin) {
+            atEndOfTestsForCopy = m_state;
+            firstBlockOfCopyForWhatIsNoBuiltin = addBlock(BlockFrequency::Rare);
+            m_block = firstBlockOfCopyForWhatIsNoBuiltin;
+        }
+        BlockID whereFrontFails = start.asksOtherHoldersForLists || start.expectsOtherHoldersOfItsClass || start.expectsTablesToBeViews ? (&start + 1)->block : startOfRest && !isRest && !isForWhatIsNoBuiltin ? startOfRest : closedStart;
         m_closedCopiesShared.last().start = whereFrontFails;
         m_closedCopiesShared.last().otherHoldersAreAskedForLists = start.asksOtherHoldersForLists;
         if (whereFrontFails == startOfRest)
@@ -2322,7 +2396,9 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         for (auto [place, number] : start.elementsThatEnterAsNumbers)
             enteringCopy[place] = number;
         m_everyTurnOfTypedBuildLeaves = false;
-        SetForScope holderIsNoBuiltin(m_walksCopyWhereHolderIsNoBuiltin, m_walksCopyWhereHolderIsNoBuiltin || (isRest && tellsListFromBytes));
+        SetForScope holderIsNoBuiltin(m_walksCopyWhereHolderIsNoBuiltin, m_walksCopyWhereHolderIsNoBuiltin || ((isRest || isForWhatIsNoBuiltin) && tellsListFromBytes));
+        SetForScope isNoBuiltin(m_walksCopyForWhatIsNoBuiltin, isForWhatIsNoBuiltin);
+        SetForScope whichIsNoBuiltin(m_holderThatIsNoBuiltin, isForWhatIsNoBuiltin ? HolderThatIsNoBuiltin { members[0].names.span(), members[0].value, frameIndex, members[0].readOfVariableInLoop } : HolderThatIsNoBuiltin { });
         walkCopyOfLoop(inputHead, enteringCopy.span());
         turnsOfSomeCopyComeRound |= !std::exchange(m_everyTurnOfTypedBuildLeaves, false);
         dropWayIntoClosedCopy();
@@ -2332,6 +2408,17 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         for (auto& [other, before] : expectedBefore)
             rememberedExpectationOf(other) = before;
         forgetValuesOfLoop(inputHead);
+        if (isForWhatIsNoBuiltin && !m_hasFailed) {
+            bool readsPlainStorage = false;
+            for (uint32_t value = firstValueOfCopyForWhatIsNoBuiltin; value < m_code.numberOfValues() && !readsPlainStorage; ++value)
+                readsPlainStorage = m_code.at(ValueID(value)).opcode == Opcode::GetElementInStorageOrAbsent;
+            m_block = start.block;
+            m_state = WTF::move(atEndOfTestsForCopy);
+            jumpTo(readsPlainStorage ? firstBlockOfCopyForWhatIsNoBuiltin : closedStart, { });
+            count(readsPlainStorage ? StatisticID::LoopsWithCopyForWhatIsNeitherListNorView : StatisticID::CopiesForWhatIsNeitherListNorViewWalkedAndDropped);
+            m_block = { };
+            m_state.clear();
+        }
     }
     putBackIterationsSteppedAt(steppedAtHead);
     m_everyTurnOfTypedBuildLeaves = !turnsOfSomeCopyComeRound;
@@ -2552,8 +2639,17 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         findGrowingTexts(*this, inputHead, preview, texts);
         closedCopyTakesWhatComesRound = texts.isEmpty();
     }
-    if (!closedCopyTakesWhatComesRound)
-        counters.removeAllMatching(isHeldWhereItComesRound);
+    bool sumsAreAskedInFrontAlone = false;
+    if (!closedCopyTakesWhatComesRound) {
+        bool sumsMayStay = closedCopyHasEntry && !steppedAtHead.asTheyEntered.isEmpty();
+        counters.removeAllMatching([&](const CounterTestedInFrontOfLoop& counter) {
+            return counter.isHeldWhereItComesRound && !(sumsMayStay && counter.isSum && entering[counter.position] && !m_types.isSubset(typeOf(entering[counter.position]), counter.tested));
+        });
+        for (CounterTestedInFrontOfLoop& counter : counters) {
+            sumsAreAskedInFrontAlone |= counter.isHeldWhereItComesRound;
+            counter.isHeldWhereItComesRound = false;
+        }
+    }
     auto isNoSum = [](const CounterTestedInFrontOfLoop& counter) { return !counter.isSum; };
     bool hasTestInFront = !guesses.isEmpty() || !listsRead.lists.isEmpty() || counters.containsIf(isNoSum) || asksAtHead;
     bool storesIntoListsTestedInFront = listsRead.lists.containsIf([](const ListTestedInFrontOfLoop& list) {
@@ -2824,7 +2920,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         return seen.operand.index() >= preview.firstValue && seen.expected && m_types.at(seen.expected).hasObjects() && m_types.saysNothing(typeInRow(seen.operand));
     });
     bool leavesTypedCopyAtOddValues = someReadAsksItsSite || countsOnShapeOfWhatTurnMakes || turnsReadRowsOfNumbersThatTheyFind(*this, inputHead, listsRead.lists.span(), guesses.span());
-    otherCopyOpensItsGuesses &= guessesOnlyAtListsTestedInFront || (leavesTypedCopyAtOddValues && guessesAtNothingButListsTestedInFront) || std::ranges::all_of(guesses, asksWhetherBoundOfHeadIsNumber);
+    otherCopyOpensItsGuesses &= guessesOnlyAtListsTestedInFront || ((leavesTypedCopyAtOddValues || sumsAreAskedInFrontAlone) && guessesAtNothingButListsTestedInFront) || std::ranges::all_of(guesses, asksWhetherBoundOfHeadIsNumber);
     auto readOfBoundOfRelation = [&] {
         FieldOfScope read;
         read.variable = relationOfHeadOnNumber.variable;

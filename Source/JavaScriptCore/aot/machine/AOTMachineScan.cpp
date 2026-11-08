@@ -840,6 +840,7 @@ static ALWAYS_INLINE void noteScannedCall(BackwardScan& scan, const PatchOperati
         }
     }
     if (patch->effects.mayCollect) {
+        RELEASE_ASSERT(!patch->runsWithoutFrame() || patch->effects.terminal || patch->showsRegistersToCollector());
         scan.m_nextSafepoint = late;
         isEvent = true;
     }
@@ -942,7 +943,8 @@ static NEVER_INLINE void readChildrenOfScannedSelect(BackwardScan& scan, Operati
             readLeavesBelowScannedOperation(scan, select, below, select, early);
             continue;
         }
-        bool diesHere = factsBelow.lastUse == noPosition || factsBelow.lastUse == early;
+        bool isMadeAheadOfLoop = scan.m_placeOfReads.loop != noLoop && below->owner() && scan.m_places[below->owner()->index()].head < scan.m_placeOfReads.beginOfLoop;
+        bool diesHere = !isMadeAheadOfLoop && (factsBelow.lastUse == noPosition || factsBelow.lastUse == early);
         readLeafOfScannedOperation<regionsHaveKinds>(scan, select, index, below, factsBelow, early, index && diesHere ? hintOfArms : noHintOfScannedRead, true);
     }
 }

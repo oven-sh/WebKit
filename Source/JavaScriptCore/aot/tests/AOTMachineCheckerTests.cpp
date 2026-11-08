@@ -562,6 +562,7 @@ static void checkerRefusesPatchWithoutTheFrameItNeeds()
     Output& out = test.out();
     PatchOperation* patch = appendPatchForCheckerTest(out, Int64, { test.argumentGPR(0) });
     patch->setRunsWithoutFrame(true);
+    patch->setShowsRegistersToCollector(true);
     out.ret(patch);
     prepareForCheckerTest(test);
     AOT_CHECKER_TEST_CHECK(test, !test.procedure().frame().hasFrame());

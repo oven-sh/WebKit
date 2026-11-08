@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineFolding.h"
 #include "AOTMachineTestsOfPhis.h"
 #include <algorithm>
@@ -303,7 +304,7 @@ void JumpThreader::findLoopHeads()
     m_arena.letGoOfArray(path, numberOfBlocks);
 }
 
-ALWAYS_INLINE bool JumpThreader::isLoopHead(const Block* block)
+ALWAYS_INLINE_INTO_OTHER_FILES bool JumpThreader::isLoopHead(const Block* block)
 {
     if (!m_hasFoundLoopHeads) [[unlikely]] {
         m_hasFoundLoopHeads = true;

@@ -97,6 +97,7 @@ struct ModuleHost {
     uint64_t (*stampOfFile)(std::span<const char> path);
     bool (*givesOriginalBesideMock)(JSGlobalObject*, const String& path, const String& importer, bool isImport);
     bool (*staysLinkedToFileAheadOfMock)(JSGlobalObject*, const String& path, const String& importer);
+    bool (*isLeftToItselfByMock)(JSGlobalObject*, const String& path, const String& requirer);
     JSPromise* (*factoryThatWaits)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isAskedAbout, FactoryAskedForBy, JSValue& state);
     std::optional<bool> (*isInPreload)(JSGlobalObject*);
     bool (*layMocksAgain)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isReached);
@@ -268,6 +269,8 @@ JS_EXPORT_PRIVATE bool hasImportBegunToLoad(JSGlobalObject*, ModuleID fileOrFace
 JS_EXPORT_PRIVATE bool wasLoadedByImport(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModuleWhoseBodyRuns(VM&, CallFrame*, const ScopedLambda<void(ModuleID)>&);
 JS_EXPORT_PRIVATE bool isBeingEvaluated(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool wasLoadedAheadOfThisTestFile(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void didLeaveLoaderInThisTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
 enum class AfterFailure : bool { KeepsError, AsksAgain };
@@ -321,6 +324,7 @@ JS_EXPORT_PRIVATE LoadedBy whoLoadedMockInPlaceAnew(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isKeyOfMockInPlaceEmpty(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* namespaceOfFileThatRanAheadOfMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject*, ModuleID, std::optional<ModuleID> loadThatCalledFactory);
+JS_EXPORT_PRIVATE void didCallImportOfHost(JSGlobalObject*, ModuleID imported, JSPromise*);
 JS_EXPORT_PRIVATE JSValue errorThrownByBodyOfMockedModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool runMocksBelow(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
@@ -329,6 +333,7 @@ JS_EXPORT_PRIVATE bool willLeaveModuleAlone(JSGlobalObject*, ModuleID, bool only
 JS_EXPORT_PRIVATE bool isLeftAloneByMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didSetAsideModuleLeftAlone(JSGlobalObject*, ModuleID, bool whoeverLoadedIt);
 JS_EXPORT_PRIVATE bool isSetAsideByMock(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE AbstractModuleRecord* recordOfModuleItself(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasMockInPlace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isStandingMockImportedByModuleYetToRun(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);

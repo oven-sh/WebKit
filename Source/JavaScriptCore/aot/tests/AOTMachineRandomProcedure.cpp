@@ -2145,6 +2145,7 @@ private:
         patch->numGPScratchRegisters = record.numberOfGPScratchRegisters;
         patch->numFPScratchRegisters = record.numberOfFPScratchRegisters;
         patch->setRunsWithoutFrame(record.runsWithoutFrame);
+        patch->setShowsRegistersToCollector(record.runsWithoutFrame);
         patch->setBringsOperandsToTheirRegisters(!(shape->number % 2));
         patch->setGenerator([shape](CCallHelpers& jit, const PatchParameters& params) {
             generateRandomPatch(jit, params, *shape);

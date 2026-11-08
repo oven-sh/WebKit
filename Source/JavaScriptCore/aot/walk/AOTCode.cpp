@@ -12,6 +12,7 @@
 #include "AOTDiagnostics.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLimits.h"
 #include "AOTOpcodeSets.h"
 #include "AOTTypedArrayKinds.h"
@@ -141,7 +142,7 @@ static ALWAYS_INLINE ValueID appendRecordToCode(StableArray<Operation, 14>& oper
     return ValueID(operations.append(operation));
 }
 
-ALWAYS_INLINE void Code::fill(Instruction& instruction, const DraftWords& draft)
+ALWAYS_INLINE_INTO_OTHER_FILES void Code::fill(Instruction& instruction, const DraftWords& draft)
 {
     std::span<const Reference> operands = draft.operands();
     std::span<const uint32_t> payload = draft.payload();
@@ -878,7 +879,7 @@ void Code::endWithBranch(BlockID blockID, ValueID condition, Origin origin)
     setTerminator(blockID, block, terminator);
 }
 
-ALWAYS_INLINE void Code::appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments)
+ALWAYS_INLINE_INTO_OTHER_FILES void Code::appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments)
 {
     Block& entered = m_blocks[checkedIndexInCode(to, m_blocks.size())];
     RELEASE_ASSERT(!entered.isSealed);

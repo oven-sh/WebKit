@@ -70,6 +70,7 @@ struct NumberingTestFixture {
     {
         PatchOperation* patch = out.patch(Void);
         patch->setRunsWithoutFrame(true);
+        patch->setShowsRegistersToCollector(true);
         patch->setGenerator([](CCallHelpers&, const PatchParameters&) { });
         return patch;
     }

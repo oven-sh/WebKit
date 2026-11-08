@@ -483,7 +483,7 @@ NEVER_INLINE auto WalkState::Held::findRecordOfHolderThatHasNotEndedInTable(Refe
     return found && !found->hasEnded ? found : nullptr;
 }
 
-ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfHolder(Reference object) const
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findRecordOfHolder(Reference object) const
 {
     if (!mayHaveRecordOf(object))
         return none;
@@ -496,13 +496,13 @@ ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfHolder(Reference object) con
     return none;
 }
 
-ALWAYS_INLINE uint32_t WalkState::Held::findHolder(Reference object) const
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findHolder(Reference object) const
 {
     uint32_t position = findRecordOfHolder(object);
     return position != none && !m_holders[position].hasEnded ? position : none;
 }
 
-ALWAYS_INLINE auto WalkState::Held::findRecordOfHolderThatHasNotEnded(Reference object) const -> const Holder*
+ALWAYS_INLINE_INTO_OTHER_FILES auto WalkState::Held::findRecordOfHolderThatHasNotEnded(Reference object) const -> const Holder*
 {
     if (!m_tableOfHolders.isEmpty())
         return findRecordOfHolderThatHasNotEndedInTable(object);
@@ -567,7 +567,7 @@ NEVER_INLINE uint32_t WalkState::Held::findRecordOfPlaceInTable(uint32_t holder,
     });
 }
 
-ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findRecordOfPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
 {
     if (!m_tableOfPlaces.isEmpty())
         return findRecordOfPlaceInTable(holder, kind, first, second);
@@ -579,7 +579,7 @@ ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfPlace(uint32_t holder, Place
     return none;
 }
 
-ALWAYS_INLINE uint32_t WalkState::Held::findPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
 {
     uint32_t position = findRecordOfPlace(holder, kind, first, second);
     return position != none && m_places[position].value ? position : none;

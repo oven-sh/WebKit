@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTModuleGraph.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTModules.h"
 
 #if ENABLE(AOT)
@@ -2013,7 +2014,9 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
         uint32_t module = found.takeLast();
         didGiveUpMomentLinked(std::exchange(m_momentsOfLoads[module], moment));
         m_loadedInPreload.quickSet(module, isAheadOfTestFiles);
-        if (standsForWholeModule(ModuleID(module)))
+        bool isMockAlone = standsForWholeModule(ModuleID(module));
+        m_modulesLoadedAsMocksAlone.set(module, isMockAlone);
+        if (isMockAlone)
             continue;
         for (const ModuleRequestData& request : m_table.requests(ModuleID(module))) {
             if (request.isRequire || request.isHoisted)
@@ -2033,23 +2036,23 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
     }
 }
 
-ALWAYS_INLINE bool Modules::isLeftAsLoaded(ModuleID module) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Modules::isLeftAsLoaded(ModuleID module) const
 {
     ModuleRecord* record = isCommonJSFileOrFace(module) ? nullptr : recordIfExists(module);
     return record && record->status() == CyclicModuleRecord::Status::Unlinked && !data(module).capturesExports();
 }
 
-ALWAYS_INLINE bool Modules::isModuleWithoutRecord(const ModuleData& moduleData, StoredModuleStatus stored) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Modules::isModuleWithoutRecord(const ModuleData& moduleData, StoredModuleStatus stored) const
 {
     return moduleData.kind == ModuleKind::SourceText && stored != StoredModuleStatus::InRecord && !moduleData.isFaceOfFile();
 }
 
-ALWAYS_INLINE bool Modules::isFoundWithoutRecord(ModuleID module, const ModuleData& moduleData, StoredModuleStatus stored)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Modules::isFoundWithoutRecord(ModuleID module, const ModuleData& moduleData, StoredModuleStatus stored)
 {
     return stored == StoredModuleStatus::Unlinked && !moduleData.isOfLibrary() && isNotLoadedWithoutStatus(module, moduleData);
 }
 
-ALWAYS_INLINE bool Modules::isNeitherOfProgramNorData(const ModuleData& moduleData, StoredModuleStatus stored) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Modules::isNeitherOfProgramNorData(const ModuleData& moduleData, StoredModuleStatus stored) const
 {
     return stored != StoredModuleStatus::InRecord && !moduleData.hasExportTable() && moduleData.kind != ModuleKind::CommonJs;
 }
@@ -2940,6 +2943,14 @@ void Modules::captureExportsOfFilesBeingEvaluated(ModuleID root)
     }
 }
 
+void Modules::leaveStepsOfLoaderToJobs()
+{
+    auto& steps = m_instance.vm->m_synchronousModuleQueue->tasks;
+    for (const VM::SynchronousModuleTask& step : steps)
+        m_instance.globalObject->queueMicrotask(*m_instance.vm, step.task, step.payload, step.arg0, step.arg1, step.arg2, step.arg3);
+    steps.shrink(0);
+}
+
 void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason reason)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -3042,8 +3053,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
             m_stepsThatWaitForLoader = nullptr;
             m_fileWhoseJobsWaitForLoader = std::nullopt;
         }
-        for (const VM::SynchronousModuleTask& step : steps->tasks)
-            realm->queueMicrotask(*m_instance.vm, step.task, step.payload, step.arg0, step.arg1, step.arg2, step.arg3);
+        leaveStepsOfLoaderToJobs();
         queue.reset();
     };
     auto didLeaveLoad = makeScopeExit(leaveLoad);
@@ -3323,7 +3333,10 @@ bool Modules::isHeldForImport(ModuleID target) const
         return true;
     uint32_t momentMockInItsPlaceEnded = m_momentsMocksInPlaceOfLibraryModulesEnded.get(target);
     return std::ranges::any_of(m_table.importsOfHeldFile(target), [&](const ImportOfHeldFileData& import) {
-        return wasImporterLoaded(ModuleID(import.importer)) && momentLinked(ModuleID(import.importer)) >= momentMockInItsPlaceEnded;
+        ModuleID importer(import.importer);
+        if (mockInPlace(importer) && !hasRunItself(importer))
+            return false;
+        return wasImporterLoaded(importer) && momentLinked(importer) >= momentMockInItsPlaceEnded;
     });
 }
 
@@ -3510,6 +3523,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     bool someFactoryHasNotSettled = tellHostOfRequire(target);
     if (isAskedForByOwnFactory(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
+    if (m_mocks && referrer && isMocked(target) && targetData.isESModuleOfProgram() && !targetData.isFaceOfFile() && isOfPackage(referrer) && host().isLeftToItselfByMock && host().isLeftToItselfByMock(m_instance.globalObject, m_table.pathText(target), m_table.pathText(referrer))) [[unlikely]]
+        RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
     if (m_mocks && targetData.kind == ModuleKind::CommonJs && isMocked(target) && !targetData.isOfLibrary() && status(target) == ModuleStatus::Linked && !mockInPlace(target) && (m_modulesWhoseFactoryRuns.get(target.index()) || (!m_modulesWithMockToRun.get(target.index()) && host().isCalledFromFactoryThatWaits && host().isCalledFromFactoryThatWaits(m_instance.globalObject, target)))) [[unlikely]] {
         m_filesWhoseOriginalRuns.set(target.index());
         evaluateCommonJS(target);
@@ -3531,7 +3546,15 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     if (!targetData.isOfLibrary() || isRequiredByProgram) {
         SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
         SetForScope moduleThatRequireAsksFor(m_moduleThatRequireAsksFor, target);
+        std::optional<VM::SynchronousModuleQueueScope> loadsOfFactories;
+        if (m_mocks && targetData.kind == ModuleKind::SourceText && !isMocked(target) && !vm.m_synchronousModuleQueue) [[unlikely]]
+            loadsOfFactories.emplace(vm);
         bool factoryHasNotSettled = runMocksBelow(target);
+        if (loadsOfFactories) [[unlikely]] {
+            if (!scope.exception())
+                JSModuleLoader::drainSynchronousModuleQueue(m_instance.globalObject);
+            leaveStepsOfLoaderToJobs();
+        }
         RETURN_IF_EXCEPTION(scope, { });
         if (factoryHasNotSettled) [[unlikely]] {
             noteThatRequireGaveUpOn(target);

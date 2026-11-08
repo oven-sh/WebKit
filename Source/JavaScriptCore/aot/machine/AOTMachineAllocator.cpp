@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineCallsOnWays.h"
 #include "AOTSort.h"
 #include <algorithm>
@@ -596,6 +597,13 @@ void Allocator::run()
     findGapsAheadOfLandingPads();
 }
 
+bool Allocator::isReadByMoreThanSteps(const SpillFacts& facts) const
+{
+    if (facts.isSaveInRareRegion || facts.isPointerBesideNarrowReference || facts.livesAcrossSuspension || facts.isSharedByPhis)
+        return true;
+    return isReadByMoreThanSteps(m_valueFacts[facts.value->index()]);
+}
+
 void Allocator::findSpillsThatNoStepReads()
 {
     ArenaVector<SpillFacts>& spills = m_allocation.m_spills;
@@ -603,14 +611,13 @@ void Allocator::findSpillsThatNoStepReads()
         return;
     for (SpillIndex index = 0; index < spills.size(); ++index) {
         SpillFacts& facts = spills[index];
-        if (facts.isRead || !facts.value || facts.isSaveInRareRegion || facts.isPointerBesideNarrowReference || facts.livesAcrossSuspension || facts.isSharedByPhis)
+        if (facts.isRead || !facts.value)
             continue;
-        const ValueFacts& value = m_valueFacts[facts.value->index()];
-        facts.isReadByNoStep = !value.has(ValueFlag::LivesIntoLandingPad) && !value.has(ValueFlag::LivesAcrossSuspension) && !value.has(ValueFlag::IsKeptForCollector);
+        facts.isReadByNoStep = !isReadByMoreThanSteps(facts);
     }
 }
 
-ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
+ALWAYS_INLINE_INTO_OTHER_FILES void Allocator::allocateBlock(Block* block)
 {
     Allocation& allocation = m_allocation;
     const BlockPlace& place = m_order.places()[block->index()];
@@ -947,7 +954,7 @@ NEVER_INLINE void Allocator::passReadOfOwnerOfInnerPointer(const Operation* inne
     passUse(owner, position);
 }
 
-ALWAYS_INLINE Location Allocator::defineResultWithFacts(Operation* operation, const ValueFacts& facts, RegisterMask allowed, RegisterMask avoided, Reg preferred)
+ALWAYS_INLINE_INTO_OTHER_FILES Location Allocator::defineResultWithFacts(Operation* operation, const ValueFacts& facts, RegisterMask allowed, RegisterMask avoided, Reg preferred)
 {
     Bank bank = bankOf(operation->type());
     RegisterMask candidates = allowed & ~avoided & m_file.allocatableIn(bank);
@@ -1135,7 +1142,7 @@ static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, 
     return true;
 }
 
-ALWAYS_INLINE bool Allocator::defineResultBehindLeaves(Operation* operation, unsigned traits, unsigned fusedChildren, RegisterMask operandRegisters, Location& firstSource, Location secondSource, Position position, Location& destination)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operation* operation, unsigned traits, unsigned fusedChildren, RegisterMask operandRegisters, Location& firstSource, Location secondSource, Position position, Location& destination)
 {
     const Type type = operation->type();
     if (type == Void)
