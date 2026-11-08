@@ -938,8 +938,10 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                     // A compiled module already has the record for each of its requests, so there is nothing to fetch.
                     auto* compiled = record && !moduleRequest.m_attributes ? dynamicDowncast<AOT::ModuleRecord>(record) : nullptr;
                     AbstractModuleRecord* requested = compiled ? compiled->recordOfRequestBeingFetched(resolved) : nullptr;
-                    RETURN_IF_EXCEPTION(scope, nullptr);
-                    if (requested)
+                    if (Exception* exception = scope.exception()) [[unlikely]] {
+                        TRY_CLEAR_EXCEPTION(scope, nullptr);
+                        fetchPromise->rejectPromise(vm, exception->value());
+                    } else if (requested)
                         fetchPromise->fulfillPromise(vm, requested);
                     else
 #endif
