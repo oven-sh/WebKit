@@ -6799,11 +6799,14 @@ JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject* realm, ModuleID m
     return modules && !modules->bodySetAsideWaitsForItsMock(module) ? modules->evaluationOfRecordSetAside(module) : nullptr;
 }
 
-JSValue errorOfModuleThatMockLeftAlone(JSGlobalObject* realm, ModuleID module)
+JSValue errorThrownByBodyOfMockedModule(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
-    ModuleRecord* record = modules ? modules->recordSetAside(module) : nullptr;
-    return record ? record->evaluationError() : JSValue();
+    if (!modules)
+        return { };
+    if (ModuleRecord* record = modules->recordSetAside(module); record && record->evaluationError())
+        return record->evaluationError();
+    return modules->errorOfModuleThatRanBesideMock(module);
 }
 
 bool runMocksBelow(JSGlobalObject* realm, ModuleID module)

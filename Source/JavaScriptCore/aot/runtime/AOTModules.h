@@ -508,6 +508,11 @@ public:
     void dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& isMocked);
     void dropErrorsOfLoadsEndedByMocks();
     void takeFailedLoadsOutOfLoader(const ScopedLambda<bool(ModuleID)>& isMocked);
+    JSValue errorOfModuleThatRanBesideMock(ModuleID module) const
+    {
+        const LoadedModule* loaded = loadedIfExists(module);
+        return loaded ? loaded->errorOfModuleThatRanBesideMock.get() : JSValue();
+    }
     JSValue errorOfLoadEndedByMock(ModuleID module) const { return m_modulesWithLoadEndedByMock.get(module.index()) ? loadedIfExists(module)->errorKeptByLoader.get() : JSValue(); }
     bool mockFailedBehindImportStatement(ModuleID);
     void willFetchBehindTurn(ModuleID);

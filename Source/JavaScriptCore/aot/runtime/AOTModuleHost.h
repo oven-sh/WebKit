@@ -309,7 +309,7 @@ JS_EXPORT_PRIVATE LoadedBy whoLoadedMockInPlaceAnew(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isKeyOfMockInPlaceEmpty(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* namespaceOfFileThatRanAheadOfMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE JSValue errorOfModuleThatMockLeftAlone(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE JSValue errorThrownByBodyOfMockedModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool runMocksBelow(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
