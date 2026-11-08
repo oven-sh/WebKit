@@ -131,6 +131,14 @@ JSPromise* ModuleRegistryEntry::ensureFetchPromise(JSGlobalObject* globalObject)
 
 JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject, JSValue asyncContext)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // The first load that asks says under which async context the record is made, until it is made. Not for a loader
+    // that has an async context of its own: the host runs the body of its modules in that one.
+    if (asyncContext && !m_asyncContext && !m_record && m_status <= Status::Fetching && !m_loader->asyncContext())
+        m_asyncContext.set(globalObject->vm(), this, asyncContext);
+#else
+    UNUSED_PARAM(asyncContext);
+#endif
     if (m_modulePromise)
         return m_modulePromise.get();
 
@@ -149,13 +157,6 @@ JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject
 #endif
 
     JSPromise* fetchPromise = ensureFetchPromise(globalObject);
-#if USE(BUN_JSC_ADDITIONS)
-    // Not for a loader that has an async context of its own: the host runs the body of its modules in that one.
-    if (asyncContext && !asyncContext.isUndefined() && !m_loader->asyncContext())
-        m_asyncContext.set(vm, this, asyncContext);
-#else
-    UNUSED_PARAM(asyncContext);
-#endif
     fetchPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryFetchSettled, modulePromise, this);
 
     return modulePromise;
@@ -214,9 +215,6 @@ void ModuleRegistryEntry::setFetchError(JSGlobalObject* globalObject, JSValue er
     if (m_status == Status::New && m_fetchPromise)
         m_fetchPromise->reject(vm, error);
     setStatus(Status::FetchFailed);
-#if USE(BUN_JSC_ADDITIONS)
-    m_asyncContext.clear();
-#endif
 }
 
 void ModuleRegistryEntry::setInstantiationError(JSGlobalObject* globalObject, JSValue error)
@@ -227,9 +225,6 @@ void ModuleRegistryEntry::setInstantiationError(JSGlobalObject* globalObject, JS
     VM& vm = globalObject->vm();
     m_error.set(vm, this, error);
     setStatus(Status::InstantiationFailed);
-#if USE(BUN_JSC_ADDITIONS)
-    m_asyncContext.clear();
-#endif
 }
 
 void ModuleRegistryEntry::setEvaluationError(JSGlobalObject* globalObject, JSValue error)
@@ -240,14 +235,16 @@ void ModuleRegistryEntry::setEvaluationError(JSGlobalObject* globalObject, JSVal
     VM& vm = globalObject->vm();
     m_error.set(vm, this, error);
     setStatus(Status::EvaluationFailed);
-#if USE(BUN_JSC_ADDITIONS)
-    m_asyncContext.clear();
-#endif
 }
 
 void ModuleRegistryEntry::setStatus(Status status)
 {
     m_status = status;
+#if USE(BUN_JSC_ADDITIONS)
+    // A settled entry keeps no async context: see takeAsyncContext().
+    if (status > Status::Fetching)
+        m_asyncContext.clear();
+#endif
 }
 
 void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, SourceCode&& sourceCode)
@@ -276,7 +273,7 @@ void ModuleRegistryEntry::provideModule(VM& vm, AbstractModuleRecord* record)
     ASSERT(!m_record);
     ASSERT(m_status == Status::New || m_status == Status::Fetching);
     m_record.set(vm, this, record);
-    m_status = Status::Fetched;
+    setStatus(Status::Fetched);
     // Promises some in-flight load already created for this entry are settled now (with the record standing in for
     // the source: moduleLoadTopSettled has nothing to provide for it); their pending reactions see the settled module
     // promise and bail.
@@ -310,7 +307,7 @@ void ModuleRegistryEntry::replaceRecord(JSGlobalObject* globalObject, AbstractMo
         return;
     VM& vm = globalObject->vm();
     m_record.set(vm, this, record);
-    m_status = Status::Fetched;
+    setStatus(Status::Fetched);
     JSPromise* modulePromise = JSPromise::create(vm, globalObject->promiseStructure());
     modulePromise->markAsHandled();
     modulePromise->fulfill(vm, record);
@@ -327,10 +324,7 @@ void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractMo
     VM& vm = globalObject->vm();
     ASSERT(m_status == Status::Fetching);
     m_record.set(vm, this, record);
-    m_status = Status::Fetched;
-#if USE(BUN_JSC_ADDITIONS)
-    m_asyncContext.clear();
-#endif
+    setStatus(Status::Fetched);
 }
 
 } // namespace JSC

@@ -1564,9 +1564,17 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
-    // The scope of the job of the module loader that evaluates modules now. CyclicModuleRecord::executeAsync() asks it
-    // for the async context of the modules that wait for a top-level await.
+    // The scope of whoever evaluates modules now: a job of the module loader, or a host function for the script that
+    // calls it. CyclicModuleRecord::executeAsync() asks it for the async context of the modules that wait for a
+    // top-level await.
     ModuleEvaluationAsyncContextScope* m_moduleEvaluationAsyncContextScope { nullptr };
+    // For the host: what no load of a module may keep of the async context of its caller. It is given what is current
+    // where a load begins, and returns what the load keeps (JSModuleLoader::asyncContextForLoad()). Bun.ModuleGraph
+    // has the context of a graph in the slot, beside the stores of AsyncLocalStorage, and what runs in the context of a
+    // graph ends with the graph: a hook of the host, or a module of another loader, must not. So Bun lets a load that
+    // begins in the context of a graph keep nothing. One filter for every loader of the VM, node:vm contexts included:
+    // they share the slot.
+    JSValue (*asyncContextOfLoadFilter)(JSGlobalObject*, JSValue asyncContext) { nullptr };
 #if ENABLE(AOT)
     // While the innermost queue is this one, reactions go to the microtask queue. It stays in the chain, where the collector finds it.
     SynchronousModuleQueue* m_synchronousModuleQueueSetAside { nullptr };

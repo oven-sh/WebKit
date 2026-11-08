@@ -74,15 +74,18 @@ public:
     ScriptFetchParameters::Type moduleType() const;
     AbstractModuleRecord* record() const;
     JSPromise* ensureFetchPromise(JSGlobalObject*);
-    // asyncContext: of the load that asks. The first load that asks has the record made: ModuleRegistryFetchSettled makes
-    // it, which runs the body of a CommonJS module, under that context where it is a store (ModuleLoaderAsyncContextScope:
-    // not in the drain of a synchronous load). An entry of a loader that has an async context of its own
-    // (JSModuleLoader::asyncContext()) keeps none: the host runs the body of its modules in the loader's.
+    // asyncContext: of the load that asks. The first load that asks while the record is yet to be made says under which
+    // async context it is made. ModuleRegistryFetchSettled makes the record, which runs the body of a CommonJS module,
+    // under that context where it is a store (ModuleLoaderAsyncContextScope: not in the drain of a synchronous load).
+    // Undefined is an answer: none. Empty is no answer. That is a caller that is no load and only wants the promise, and
+    // a synchronous load: it makes the record inside its drain, and where it fails, the load that still waits says it.
+    // An entry of a loader that has an async context of its own (JSModuleLoader::asyncContext()) keeps none: the host
+    // runs the body of its modules in the loader's.
     JSPromise* ensureModulePromise(JSGlobalObject*, JSValue asyncContext = { });
 #if USE(BUN_JSC_ADDITIONS)
-    // For the job that makes the record. The entry does not keep the context behind it: where the entry is settled
-    // without that job (the AOT run time makes the record of a file that it ran itself), fetchComplete() and the
-    // setters of an error drop it.
+    // For the job that makes the record. The entry does not keep the context behind its record: setStatus() drops it
+    // where the entry is settled, by that job or without it (the AOT run time makes the record of a file that it ran
+    // itself).
     JSValue takeAsyncContext()
     {
         JSValue asyncContext = m_asyncContext.get();

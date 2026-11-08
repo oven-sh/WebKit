@@ -102,16 +102,12 @@ public:
     // that the load makes takes it from there, not from what is current where the request is made.
     static JSValue asyncContextOfLoad(JSCell* payload);
 
-    // What a load that begins here keeps of the async context of its caller. The host can set a filter for what no
-    // load may keep. Bun.ModuleGraph has the context of a graph in the slot, beside the stores of AsyncLocalStorage, and
-    // what runs in the context of a graph ends with the graph: a hook of the host, or a module of another loader, must
-    // not. So Bun lets a load that begins in the context of a graph keep nothing.
-    using AsyncContextOfLoadFilter = JSValue (*)(JSGlobalObject*, JSValue asyncContext);
-    void setAsyncContextOfLoadFilter(AsyncContextOfLoadFilter filter) { m_asyncContextOfLoadFilter = filter; }
-    JS_EXPORT_PRIVATE JSValue asyncContextForLoad(VM&, JSGlobalObject*) const;
+    // What a load that begins here keeps of the async context of its caller: what is current, less what the host's
+    // filter takes away (VM::asyncContextOfLoadFilter).
+    JS_EXPORT_PRIVATE static JSValue asyncContextForLoad(VM&, JSGlobalObject*);
     // For CyclicModuleRecord::executeAsync(): the async context of the job that runs the modules that wait for a
-    // top-level await. See ModuleEvaluationAsyncContextScope. Empty where no job of the loader evaluates.
-    JSValue asyncContextOfModulesThatWait(VM&, JSGlobalObject*) const;
+    // top-level await. See ModuleEvaluationAsyncContextScope. Empty where there is no such scope.
+    static JSValue asyncContextOfModulesThatWait(VM&, JSGlobalObject*);
 #endif
 
     DECLARE_INFO;
@@ -344,7 +340,6 @@ private:
     WriteBarrier<JSScope> m_moduleScope;
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<Unknown> m_asyncContext;
-    AsyncContextOfLoadFilter m_asyncContextOfLoadFilter { nullptr };
 #endif
     ModuleMap<WriteBarrier<ModuleRegistryEntry>> m_moduleMap;
 
