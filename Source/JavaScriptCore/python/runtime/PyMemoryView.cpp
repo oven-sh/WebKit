@@ -291,6 +291,13 @@ static void bufferCallPythonRelease(JSGlobalObject* globalObject, JSValue object
         reportUnraisable(globalObject, makeString("Exception ignored in __release_buffer__ of "_s, typeName(globalObject, object)), { });
 }
 
+static JSValue memoryViewRaiseHasExports(JSGlobalObject* globalObject, PyMemoryView* view)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return raiseBufferError(globalObject, scope, "memoryview has "_s, view->exports, " exported buffer"_s, view->exports == 1 ? ""_s : "s"_s);
+}
+
 static ALWAYS_INLINE void memoryViewAddExport(PyMemoryView* view)
 {
     ++view->exports;
@@ -351,7 +358,7 @@ void releaseBuffer(JSGlobalObject* globalObject, Buffer& buffer)
         return;
     }
     if (JSValue method = bufferPythonReleaseMethod(object)) {
-        // It is lent a view of the memory, which is taken back as soon as it returns.
+        // It is lent a view of the memory, which is taken back as soon as it returns; unless it has handed the view to another thread, which is using it.
         VM& vm = getVM(globalObject);
         ExceptionSetAside suspended(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -361,6 +368,11 @@ void releaseBuffer(JSGlobalObject* globalObject, Buffer& buffer)
         scope.assertNoException();
         view->isRestricted = true;
         bufferCallPythonRelease(globalObject, object, method, view);
+        if (view->exports) [[unlikely]] {
+            memoryViewRaiseHasExports(globalObject, view);
+            if (scope.exception())
+                reportUnraisable(globalObject, makeString("Exception ignored in bf_releasebuffer of "_s, typeName(globalObject, object)), { });
+        }
         view->release(globalObject);
     }
     if (buffer.release)
@@ -795,9 +807,9 @@ DEFINE_VISIT_CHILDREN(PyMemoryView);
 
 void PyMemoryView::release(JSGlobalObject* globalObject)
 {
-    ASSERT(!exports);
+    ASSERT(!exports || !isInternal);
     PyManagedBuffer* managedBuffer = m_managedBuffer.get();
-    if (!managedBuffer)
+    if (!managedBuffer || exports)
         return;
     m_managedBuffer.clear();
     ASSERT(managedBuffer->viewCount);
@@ -1128,6 +1140,7 @@ static bool bufferGetFromNativeMethod(JSGlobalObject* globalObject, JSValue obje
     buffer.object = object;
     buffer.view = view;
     // Nothing but the buffer refers to the view.
+    view->isInternal = true;
     memoryViewAddExport(view);
     return true;
 }
@@ -1349,6 +1362,7 @@ static JSValue memoryViewTakingOver(JSGlobalObject* globalObject, Buffer& buffer
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue view = std::exchange(buffer.view, JSValue())) {
         memoryViewReleaseExport(globalObject, view);
+        PyMemoryView::from(view)->isInternal = false; // It was the buffer's.
         buffer.object = JSValue();
         return view;
     }
@@ -1413,6 +1427,7 @@ JSValue memoryForHost(JSGlobalObject* globalObject, JSValue object)
     JSValue exporter = view->managedBuffer()->object();
     if (!exporter || isPyObject(exporter)) {
         view->isForHost = true;
+        view->isInternal = true;
         return view;
     }
 
@@ -1840,7 +1855,7 @@ static JSValue memoryViewRelease(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
     if (view->exports)
-        return raiseBufferError(globalObject, scope, "memoryview has "_s, view->exports, " exported buffer"_s, view->exports == 1 ? ""_s : "s"_s);
+        RELEASE_AND_RETURN(scope, memoryViewRaiseHasExports(globalObject, view));
     view->release(globalObject);
     return jsUndefined();
 }
@@ -2186,6 +2201,7 @@ static JSValue memoryViewSubscript(JSGlobalObject* globalObject, JSValue self, J
         if (failed(scope, memoryViewCheckRestricted(globalObject, scope, view)))
             return { };
         PyMemoryView* result = memoryViewCopy(globalObject, view);
+        result->isInternal = true; // The __index__() of a bound is code of the program.
         PySlice::Indices indices;
         if (failed(scope, slice->indices(globalObject, result->shape()[0], indices))) {
             ExceptionSetAside suspended(globalObject);
@@ -2197,6 +2213,7 @@ static JSValue memoryViewSubscript(JSGlobalObject* globalObject, JSValue self, J
         result->strides()[0] *= indices.step;
         result->updateLength();
         result->updateContiguity();
+        result->isInternal = false;
         return result;
     }
     if (memoryViewIsMultiIndex(globalObject, key)) {
@@ -2898,6 +2915,7 @@ static JSValue pickleBufferNew(JSGlobalObject* globalObject, JSValue, const Call
         return raiseTypeError(globalObject, scope, "PickleBuffer() takes exactly 1 positional argument (0 given)"_s);
     JSValue view = memoryViewOfBuffer(globalObject, args[0], BufferFullRO);
     RETURN_IF_EXCEPTION(scope, { });
+    PyMemoryView::from(view)->isInternal = true;
     PyRecord* result = PyRecord::create(globalObject, rt.typeFor(pickleBufferTypeDef), PickleBufferFieldCount);
     result->set(vm, PickleBufferView, view);
     return result;

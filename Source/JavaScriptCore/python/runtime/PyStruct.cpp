@@ -578,6 +578,7 @@ static JSValue structIterUnpackImpl(JSGlobalObject* globalObject, JSValue self, 
     JSValue viewValue = makeMemoryView(globalObject, buffer, BufferSimple);
     RETURN_IF_EXCEPTION(scope, { });
     auto* view = PyMemoryView::from(viewValue);
+    view->isInternal = true;
     if (view->length % size) {
         view->release(globalObject);
         RELEASE_AND_RETURN(scope, structRaise(globalObject, "iterative unpacking requires a buffer of a multiple of "_s, size, " bytes"_s));
@@ -616,6 +617,9 @@ static JSValue structIteratorNext(JSGlobalObject* globalObject, JSValue self)
         view->release(globalObject);
         return raiseStopIteration(globalObject, scope);
     }
+    // (Not the view itself, which nothing else has: the export, by way of its managedbuffer, which the module gc gives out.)
+    if (view->isReleased())
+        return raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
     const uint8_t* data = view->data(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     const uint8_t* address = data + iterator->number;

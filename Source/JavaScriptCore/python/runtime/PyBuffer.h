@@ -282,7 +282,8 @@ public:
     PyManagedBuffer* managedBuffer() const { return m_managedBuffer.get(); }
     bool isReleased() const { return !m_managedBuffer || m_managedBuffer->isReleased(); }
     bool wasReleasedItself() const { return !m_managedBuffer; }
-    // There must be no exports.
+    // A view that has exports stays as it is, and goes when the collector finds that nothing refers to it. (Who asks on behalf of the program has
+    // looked before. The view that __release_buffer__() is lent may have been handed to another thread, which is using it.)
     void release(JSGlobalObject*);
     // For who keeps addresses of the memory for as long as he keeps the view (ctypes). An export holds memory of Python's. Memory of
     // JS is held by a pin, which a view does not have: from now on this one pins it, until it is collected, released or not.
@@ -319,6 +320,9 @@ public:
     bool isReadOnly { true };
     bool isRestricted { false }; // Lent to __release_buffer__(): nothing may hold on to the memory.
     bool isForHost { false }; // Made by memoryForHost().
+    // Code written in C++ has made it for itself, or is not through with making it, and counts on it that nothing of the program's has it. So the
+    // module gc, which finds what nothing refers to, does not hand it out (PyGC.cpp).
+    bool isInternal { false };
     bool isCContiguous { true };
     bool isFContiguous { true };
 

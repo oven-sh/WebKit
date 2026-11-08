@@ -158,6 +158,7 @@ static JSValue typeFromBuffer(JSGlobalObject* globalObject, JSValue self, JSValu
     JSValue viewValue = makeMemoryView(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
     auto* view = PyMemoryView::from(viewValue);
+    view->isInternal = true; // Until it is in _objects. The audit hooks are code of the program.
     auto fail = [&](JSValue) -> JSValue {
         ExceptionSetAside suspended(globalObject);
         view->release(globalObject);
@@ -178,6 +179,7 @@ static JSValue typeFromBuffer(JSGlobalObject* globalObject, JSValue self, JSValu
     PyCData* data = dataInView(globalObject, PyType::from(self), view, offset);
     if (scope.exception())
         return fail({ });
+    view->isInternal = false;
     keepAlive(globalObject, data, -1, view);
     RETURN_IF_EXCEPTION(scope, { });
     // What is made of the instance from now on, pointers and the arguments of foreign functions, are addresses of the memory.

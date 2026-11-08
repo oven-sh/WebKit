@@ -15,6 +15,7 @@
 #include "MarkedSpaceInlines.h"
 #include "PreventCollectionScope.h"
 #include "PyAbstract.h"
+#include "PyBuffer.h"
 #include "PyDescriptors.h"
 #include "PyErrors.h"
 #include "PyException.h"
@@ -45,7 +46,8 @@ namespace Python {
 // get_objects(), get_referrers() and get_referents() find objects by looking at the heap, and the heap is full of what is not for
 // a program to see. The rule is the same for the three, but for its third point. A cell is handed out if
 //  - it is an object of Python, of this global object, of a kind that programs get to see (isObjectOfPython(), TypeFlag::Internal). Of a type that programs do not get to see, nothing is given that
-//    leads to it: not its instances, not the methods and descriptors of its namespace (__objclass__), not the tuples of its bases and its MRO;
+//    leads to it: not its instances, not the methods and descriptors of its namespace (__objclass__), not the tuples of its bases and its MRO. Nor a weak reference or a memoryview that code
+//    written in C++ has made for itself (isInternal): that counts on it that nothing else releases the view, takes a buffer of it, or sees it before it is whole;
 //  - it is whole: a tuple has all its items, a frame object knows its caller (isWhole());
 //  - it is not, and does not lead to, what is left of an exception that nobody has seen (HeapView::findWhatIsOutOfReach(): get_objects() and get_referrers(), which find what nothing of the
 //    program's refers to; get_referents() begins at what the program has);
@@ -74,6 +76,8 @@ static bool isObjectOfPython(JSCell* cell, JSGlobalObject* globalObject)
         if (isInternalObject(cell))
             return false;
         if (auto* weakRef = PyWeakRef::tryFrom(cell); weakRef && weakRef->isInternal())
+            return false;
+        if (auto* view = PyMemoryView::tryFrom(cell); view && view->isInternal)
             return false;
         if (auto* descriptor = PyGetSetDescriptor::tryFrom(cell); descriptor && descriptor->owner()->has(TypeFlag::Internal))
             return false;
@@ -1040,6 +1044,12 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
             }
             if (cell->isString() || cell->isHeapBigInt() || (cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)))
                 result.append(cell);
+            else if (auto* view = PyMemoryView::tryFrom(cell); view && view->isInternal && !view->isReleased()) {
+                // It stands for a Py_buffer of CPython's: who has that refers to the object whose memory it is.
+                JSValue exporter = view->managedBuffer()->object();
+                if (exporter && exporter.isCell() && isObjectOfPython(exporter.asCell(), globalObject) && !collector.cells.contains(exporter.asCell()))
+                    result.append(exporter);
+            }
         }
         if (auto* generator = PyGenerator::tryFrom(object); generator && generator->isRunning()) {
             forEachVariableOfRunningGenerators(rt.vm(), [&](PyGenerator* running, JSValue value) {

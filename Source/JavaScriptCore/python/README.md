@@ -1023,7 +1023,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   and has them marked for one collection. A full collection of the engine's own that was under way when `gc.collect()` was called used to be taken for the one asked for; that one followed, freed
   the cells, and with `DEBUG_SAVEALL` their addresses went to `gc.garbage`.
 - **What the module `gc` hands out** (`get_objects`, `get_referrers`, `get_referents`, `garbage`) is decided in one place, at the top
-  of `PyGC.cpp`: a cell is given to the program if it is an object of Python of this realm, of a kind that programs see, whole (no
+  of `PyGC.cpp`: a cell is given to the program if it is an object of Python of this realm, of a kind that programs see (no memoryview that a function
+  written in C++ has made for itself, `PyMemoryView::isInternal`: in CPython that is a `Py_buffer`, which is no object), whole (no
   tuple that is still being filled, no frame object that lacks its caller), and not a part of something else (the table of a dict, the namespace of a class, the values
   of a frame, the memory of a deque (`TypeFlag::OwnsContainers`), what a module written in C++ keeps under a hidden key or in a slot
   of the runtime). A reference held by a part counts as held by its owner. A generator or coroutine that is running refers to its

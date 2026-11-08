@@ -217,7 +217,9 @@ JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint
         isValid = HeapUtil::isPointerGCObjectJSCell(vm.heap, vm.heap.objectSpace().blocks().filter(), value.asCell());
         if (isValid) {
             JSCell* cell = value.asCell();
-            if (isPyObject(cell))
+            if (auto* view = PyMemoryView::tryFrom(cell); view && view->isInternal)
+                isValid = false;
+            else if (isPyObject(cell))
                 isValid = cell->type() != PyKwNamesType && !uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::Internal);
             else if (auto* type = PyType::tryFrom(cell))
                 isValid = !type->has(TypeFlag::Internal);

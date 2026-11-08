@@ -1079,16 +1079,18 @@ static JSValue srePatternScanner(JSGlobalObject* globalObject, JSValue thisValue
     SreRun run(globalObject);
     if (failed(scope, sreBegin(globalObject, run, pattern, string, start, end)))
         return { };
+    JSValue kept = run.text.wide;
+    if (!kept && run.text.isBytes && typeOf(globalObject, string) != runtime(globalObject).bytesType()) {
+        // Before there is a scanner: the __buffer__() of the string may be code of the program, which is not to find one that is half made.
+        kept = makeMemoryView(globalObject, string, BufferSimple);
+        RETURN_IF_EXCEPTION(scope, { });
+        PyMemoryView::from(kept)->isInternal = true;
+    }
     PyRecord* scanner = PyRecord::create(globalObject, sreScannerType(globalObject), SreScanner::FieldCount);
     scanner->set(vm, SreScanner::Pattern, pattern);
     scanner->set(vm, SreScanner::String, string);
-    if (run.text.wide)
-        scanner->set(vm, SreScanner::Kept, run.text.wide);
-    else if (run.text.isBytes && typeOf(globalObject, string) != runtime(globalObject).bytesType()) {
-        JSValue view = makeMemoryView(globalObject, string, BufferSimple);
-        RETURN_IF_EXCEPTION(scope, { });
-        scanner->set(vm, SreScanner::Kept, view);
-    }
+    if (kept)
+        scanner->set(vm, SreScanner::Kept, kept);
     scanner->number = run.text.length;
     scanner->set(vm, SreScanner::CharacterSize, jsNumber(run.text.characterSize));
     scanner->set(vm, SreScanner::Pos, jsNumber(run.pos));
