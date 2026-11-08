@@ -4,7 +4,9 @@
 //@ runDefault("--useRegExpJIT=0")
 //@ runDefault("--useRegExpJIT=0", "--validateRegExpFlatProgram=1")
 
-// Every mix of literal characters and single-character classes in a run whose fifth position is a class, in 8-bit and 16-bit strings.
+// Mixes of literal characters and single-character classes in a run whose fifth position is a class, in 8-bit and 16-bit strings.
+// Every seventh mix is tried, and at length 12 without flags also every mix that used to be matched wrongly in 16-bit strings.
+// The native test regexp-image/every-shape-of-run-matches-wide-subjects tries all of them.
 // In image mode a process has room for 64 MB of compiled patterns, at least 8 KB each, and falls back to the interpreter after that.
 // So keep this to fewer than 8,000 patterns, and keep \w, \s and \b out of the loop.
 
@@ -22,10 +24,17 @@ function patternOfShape(shape, length) {
     return source;
 }
 
+// A class at the fifth and eighth positions, a literal at the sixth and the last.
+function usedToBeMatchedWrongly(shape) {
+    return (shape & 0b10001011000) === 0b00001001000;
+}
+
 for (const [length, flags] of [[7, ""], [12, ""], [12, "i"], [12, "u"], [12, "v"], [13, ""]]) {
     const text = letters.slice(0, length);
     for (let shape = 0; shape < 1 << (length - 1); ++shape) {
         if (length > 11 && !(shape & 1 << 3))
+            continue;
+        if (shape % 7 && !(length === 12 && !flags && usedToBeMatchedWrongly(shape)))
             continue;
         const pattern = new RegExp(patternOfShape(shape, length), flags);
         shouldBe(pattern, text, true);
