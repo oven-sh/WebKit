@@ -75,12 +75,12 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::Parameter:
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
         return RepresentationRule::OwnForm;
-    case Opcode::Narrowed: case Opcode::AssumeType:
+    case Opcode::Narrowed:
         return RepresentationRule::Narrowed;
     case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::FinishObject: case Opcode::FinishClass:
     case Opcode::Convert: case Opcode::Check: case Opcode::Expect: case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::NarrowByTest:
         return RepresentationRule::Forwarding;
-    case Opcode::TypeTest: case Opcode::ReleaseHint: case Opcode::EndLifeOfCell: case Opcode::CheckProof:
+    case Opcode::TypeTest: case Opcode::ReleaseHint: case Opcode::EndLifeOfCell: case Opcode::CheckProof: case Opcode::AskObjectAgain: case Opcode::TurnBeginsAgain: case Opcode::CopyLeavesForCall: case Opcode::TurnWasQuiet:
         return RepresentationRule::AsItIs;
     case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::Negate: case Opcode::Increment: case Opcode::Decrement:
     case Opcode::BitAnd: case Opcode::BitOr: case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::BitNot:
@@ -100,7 +100,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
         return RepresentationRule::Concatenation;
     case Opcode::StringBuilderAppendNumber: case Opcode::StackStringBuilderAppendNumber:
         return RepresentationRule::AppendedNumber;
-    case Opcode::ShapeTest: case Opcode::IsPristine: case Opcode::IsClosureOf:
+    case Opcode::ShapeTest: case Opcode::IsPristine: case Opcode::HasStructureOfClass: case Opcode::IsClosureOf:
         return RepresentationRule::TestOfCellOrValue;
     case Opcode::CallBuiltin: case Opcode::CallInline:
         return RepresentationRule::BuiltinCall;
@@ -135,16 +135,16 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
 
     case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::NewTemplateObject: case Opcode::Data:
     case Opcode::DirectEval: case Opcode::ScopeHasBinding: case Opcode::NewDictionary: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::AppendHole:
-    case Opcode::HasLayoutPrototype: case Opcode::IsNotFrozen: case Opcode::HasNoExtraProperties: case Opcode::IsSlotFilled: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::IsHolderWithoutAddedNames: case Opcode::BeginMemberGuards:
+    case Opcode::HasLayoutPrototype: case Opcode::IsNotFrozen: case Opcode::HasNoExtraProperties: case Opcode::IsSlotFilled: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::HasNumberOfBoundArguments: case Opcode::GetWordOfBoundFunction: case Opcode::IsHolderWithoutAddedNames: case Opcode::BeginMemberGuards:
     case Opcode::HasKeyOrder: case Opcode::AreHeldFieldsFilled: case Opcode::HasNoFieldOutsideSlot:
     case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding:
     case Opcode::PropHas: case Opcode::ElemHas: case Opcode::PropHasOwn: case Opcode::PropDelete: case Opcode::ElemDelete: case Opcode::ElemGetByKeyParts:
     case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype: case Opcode::ElemDefine:
-    case Opcode::ToObject: case Opcode::ToThis: case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::HasArrayStorage: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ToIntegerOrInfinity:
+    case Opcode::ToObject: case Opcode::ToThis: case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::HasArrayStorage: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ReciprocalOfDivisor: case Opcode::RemainderByReciprocal: case Opcode::ToIntegerOrInfinity:
     case Opcode::IntegerBound: case Opcode::StringOrder: case Opcode::StringOrderToCharacter: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::LogicalNot:
     case Opcode::NumberOrNaN:
     case Opcode::TypeOf: case Opcode::InstanceOf: case Opcode::HasInPrototypeChain: case Opcode::ToPropertyKey:
-    case Opcode::Call: case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::Construct: case Opcode::GetConstructPrototype: case Opcode::CallList: case Opcode::ConstructList: case Opcode::NewArgumentList:
+    case Opcode::Call: case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::Construct: case Opcode::GetConstructPrototype: case Opcode::CallList: case Opcode::ConstructList: case Opcode::NewArgumentList: case Opcode::NewArrayOfGiven:
     case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::GetMappedArgument: case Opcode::SetMappedArgument: case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest:
     case Opcode::CatchValue: case Opcode::CatchException: case Opcode::NewRuntimeError: case Opcode::NewSuppressedError: case Opcode::LoopHint:
     case Opcode::ResolveHeritage: case Opcode::NewClass: case Opcode::GetClassPrototype: case Opcode::DefineMethod: case Opcode::NewClassToken:
@@ -153,21 +153,22 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
 
     case Opcode::InitializeBuiltin: case Opcode::NativeBinding: case Opcode::LinkTimeConstant: case Opcode::RequireBuiltinModule:
     case Opcode::IsConstructor: case Opcode::ReadsIteratorOfListUnseen: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ToLength:
-    case Opcode::HasJSType: case Opcode::FindsDeclaredMember: case Opcode::FindsNoMember: case Opcode::IsPlainInstanceOf: case Opcode::IsPlainHeirOf: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::ThrowNewError:
+    case Opcode::HasJSType: case Opcode::FindsDeclaredMember: case Opcode::FindsNoMember: case Opcode::IsPlainInstanceOf: case Opcode::IsPlainHeirOf: case Opcode::IsAsBorn: case Opcode::IsAsBornExceptForAddedNames: case Opcode::IsPrototypeChainPlain: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::ThrowNewError:
     case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
     case Opcode::GetOwnContiguousIndex: case Opcode::GetOwnDoubleIndex: case Opcode::GetOwnInt32Index: case Opcode::PutOwnContiguousIndex: case Opcode::PutOwnDoubleIndex: case Opcode::PutOwnInt32Index:
     case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray:
-    case Opcode::NewContiguousArray: case Opcode::NewArrayLike: case Opcode::TruncateNewArray: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::ReserveArrayRoom:
+    case Opcode::NewContiguousArray: case Opcode::NewArrayLike: case Opcode::TruncateNewArray: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::AppendValuesOfMap: case Opcode::ReserveArrayRoom: case Opcode::ConvertToDoubleStorage:
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::RequireAttachedTypedArray: case Opcode::RequireLengthFitsList: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit: case Opcode::Substring: case Opcode::FlattenString: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
     case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
-    case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt: case Opcode::GuessFailsUnasked:
+    case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt: case Opcode::GuessFailsUnasked: case Opcode::BeginsWhatMayRunAgain:
+    case Opcode::FindStringRangeInMap: case Opcode::FindKeyInMap: case Opcode::GetValueAtPlaceInMap: case Opcode::MovesOfEntriesInCollections: case Opcode::TryPutValueAtPlaceInMap:
     case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish:
     case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack:
     case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange:
-    case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
+    case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendCodeUnit: case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
     case Opcode::StackStringBuilderBegin: case Opcode::StackStringBuilderStart: case Opcode::StackStringBuilderCursor: case Opcode::StackStringBuilderLength: case Opcode::StackStringBuilderToString: case Opcode::StackStringBuilderFinish: case Opcode::StackStringBuilderDiscard:
     case Opcode::StackStringBuilderAppendConstant: case Opcode::StackStringBuilderAppendInteger: case Opcode::StackStringBuilderAppendString: case Opcode::StackStringBuilderAppendStringRange:
-    case Opcode::StackStringBuilderAppendBoolean: case Opcode::StackStringBuilderAppendStringOrNullish: case Opcode::StackStringBuilderAppendValue:
+    case Opcode::StackStringBuilderAppendBoolean: case Opcode::StackStringBuilderAppendCodeUnit: case Opcode::StackStringBuilderAppendStringOrNullish: case Opcode::StackStringBuilderAppendValue:
     case Opcode::NewRegExp: case Opcode::SharedRegExpLiteral:
     case Opcode::CollectionTable: case Opcode::CollectionIteratorClosedMark: case Opcode::GetCollectionIteratorTable: case Opcode::PutCollectionIteratorTable: case Opcode::IsCollectionIteratorClosedMark:
     case Opcode::MapNext: case Opcode::SetNext: case Opcode::NewSetFromData: case Opcode::NewMapFromData:
@@ -175,7 +176,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::CopyDataProperties: case Opcode::CopyObject: case Opcode::CopyObjectAndDefine: case Opcode::CopyTwoObjects: case Opcode::TryCopyFields: case Opcode::ForInOpen: case Opcode::ForInOpenCountingNames: case Opcode::ForInStep: case Opcode::IsEnumeratorCurrent: case Opcode::EnumeratorGetByVal: case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage:
     case Opcode::IteratorOpen: case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable: case Opcode::DestructureIterable: case Opcode::AppendIterable: case Opcode::AppendSpread:
     case Opcode::CreateIteratorResult: case Opcode::StepArrayIterator: case Opcode::StepMapIterator: case Opcode::StepSetIterator:
-    case Opcode::Yield: case Opcode::InitialYield: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::NewGenerator: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype:
+    case Opcode::Yield: case Opcode::InitialYield: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::NewGenerator: case Opcode::NewGeneratorOfLibrary: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype:
     case Opcode::ResumeGenerator: case Opcode::StepGenerator: case Opcode::StepAsyncGenerator: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator:
     case Opcode::Await: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame: case Opcode::ReadScope:
     case Opcode::NewPromise: case Opcode::CreatePromise: case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::FulfillFreshPromise: case Opcode::IsNotThenable: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements:
@@ -186,7 +187,9 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy: case Opcode::AreLoaderFunctionsStored: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure:
     case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::CountExecution:
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField:
-    case Opcode::GetCachedGetter:
+    case Opcode::GetCachedGetter: case Opcode::GetValueAtSiteOrAbsent: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
+    case Opcode::RegExpMatchLiteralInParts: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
+    case Opcode::BoundsOfStringSplit: case Opcode::NewStringSplitArray:
         return RepresentationRule::BySchema;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -389,7 +392,7 @@ private:
     static_assert(opcodesThatMayHaveSeveralResults.contains(Opcode::CallDirect));
 
     static constexpr uint32_t forwardedOperand = 0;
-    static_assert(OperandIndex::Narrowed::value == forwardedOperand && OperandIndex::AssumeType::value == forwardedOperand && OperandIndex::CheckInitialized::value == forwardedOperand && OperandIndex::RequireObjectCoercible::value == forwardedOperand);
+    static_assert(OperandIndex::Narrowed::value == forwardedOperand && OperandIndex::CheckInitialized::value == forwardedOperand && OperandIndex::RequireObjectCoercible::value == forwardedOperand);
     static_assert(OperandIndex::RequireObject::value == forwardedOperand && OperandIndex::FinishObject::object == forwardedOperand && OperandIndex::FinishClass::classObject == forwardedOperand);
 
     static constexpr uint32_t receiverOfBuiltinCall = 0;
@@ -495,7 +498,7 @@ private:
 
     bool takesNumberAsItIs(uint32_t operandIndex) const
     {
-        return allRelations.contains(opcode()) || isEqualityOfNumbers() || (opcode() == Opcode::ToBoolean && typeAt(operandIndex).isNumber());
+        return allRelations.contains(opcode()) || isEqualityOfNumbers() || (opcode() == Opcode::ToBoolean && typeAt(operandIndex).isNumberOrNullish());
     }
 
     bool isSumOfBoxedNumbers() const
@@ -522,12 +525,24 @@ private:
         });
     }
 
+    bool comparesBoxesThatHoldNumbersOrNothing() const
+    {
+        if (opcode() != Opcode::StrictEq || m_subject.form() != OperatorForm::Numbers)
+            return false;
+        return everyOperand([&](uint32_t operandIndex) {
+            Type type = typeAt(operandIndex);
+            return heldFormAt(operandIndex) == Representation::JSValue && type.isNumberOrNullish() && !type.isNumber();
+        });
+    }
+
     Representation wantedByNumbers(uint32_t operandIndex) const
     {
         Type type = typeAt(operandIndex);
         Representation held = heldFormAt(operandIndex);
         if (comparesIntegersThatMayBeNullish())
             return Representation::OptionalInt64;
+        if (comparesBoxesThatHoldNumbersOrNothing())
+            return Representation::Unchosen;
         if (allBitwiseOperators.contains(opcode()) && opcode() != Opcode::BitNot) {
             if (type.isInteger())
                 return integerFormOf(type);
@@ -654,11 +669,16 @@ private:
         Type type = typeAt(operandIndex);
         if (opcode != Opcode::TryPutByValDirect && OperandPosition::position(opcode) == operandIndex)
             return unboxedNumberFormOf(type);
-        if (OperandPosition::value(opcode) != operandIndex)
+        if (OperandPosition::value(opcode) != operandIndex) {
+            if ((opcode == Opcode::GetTypedArrayElement || opcode == Opcode::PutTypedArrayElement) && variadicIndexOf(operandIndex))
+                return Representation::Int64;
             return wantedByKind(operandIndex);
+        }
         if (opcode == Opcode::PutTypedArrayElement)
             return unboxedNumberOrJSValue(type);
         Representation element = representationOfArrayElement(m_subject.arrayStorage());
+        if (opcode == Opcode::TryPutByValDirect && m_subject.arrayStorage() == ArrayStorage::Int32 && type.isNumber() && !type.isInt32())
+            return unboxedNumberFormOf(type);
         return isLegalRepresentation(type, element) ? element : Representation::JSValue;
     }
 
@@ -802,13 +822,17 @@ private:
                 Representation stored = storedFormForKey(m_subject.key(), operandIndex);
                 return stored == Representation::Unchosen ? Representation::JSValue : stored;
             }
-            bool isRawKeyOfProvenList = opcode == Opcode::GetArrayElement && operandIndex == OperandIndex::GetArrayElement::position && heldFormAt(operandIndex) == Representation::Double
-                && typeAt(operandIndex).isNumberWithoutFraction() && isProvenToBeList(m_context.types, typeIDAt(OperandIndex::GetArrayElement::array));
-            if (isRawKeyOfProvenList)
+            static_assert(OperandIndex::GetArrayElement::position == OperandIndex::PutArrayElement::position && OperandIndex::GetArrayElement::array == OperandIndex::PutArrayElement::array);
+            bool isKeyOfProvenList = (opcode == Opcode::GetArrayElement || opcode == Opcode::PutArrayElement) && operandIndex == OperandIndex::GetArrayElement::position && isProvenToBeList(m_context.types, typeIDAt(OperandIndex::GetArrayElement::array));
+            if (isKeyOfProvenList && heldFormAt(operandIndex) == Representation::Double && typeAt(operandIndex).isNumber())
                 return Representation::Double;
+            if (isKeyOfProvenList && !isIndexOfProvenList && heldFormAt(operandIndex) == Representation::OptionalDouble && typeAt(operandIndex).isNumberOrNullish())
+                return Representation::OptionalDouble;
             return isIndexOfProvenList ? integerFormOf(typeAt(operandIndex)) : Representation::JSValue;
         }
 
+        if (opcode == Opcode::PutContiguousIndex && operandIndex == OperandIndex::PutContiguousIndex::value && m_subject.goesByKindOfStorage())
+            return heldFormAt(operandIndex) == Representation::Int64 ? Representation::Unchosen : wantedByNewElement(operandIndex);
         switch (representationRuleInTable(opcode)) {
         case RepresentationRule::BySchema:
         case RepresentationRule::BoxedResult:
@@ -893,6 +917,8 @@ private:
         case TerminatorKind::Switch:
             if (type.isNumber() && !type.isInteger() && held == Representation::JSValue)
                 return Representation::Unchosen;
+            if (held == Representation::OptionalDouble)
+                return Representation::Unchosen;
             return unboxedNumberOrJSValue(type);
         case TerminatorKind::SwitchString:
             return naturalFormAt(operandIndex) == Representation::Cell ? Representation::Cell : Representation::JSValue;
@@ -937,6 +963,8 @@ private:
         Opcode opcode = this->opcode();
         if (testsItsOwnGuess(m_subject))
             return resultRuleInTable(opcode) == ResultRule::None ? Representation::Void : Representation::JSValue;
+        if (opcode == Opcode::GetTypedArrayLength)
+            return Representation::Int64;
 
         switch (representationRuleInTable(opcode)) {
         case RepresentationRule::BySchema:
@@ -963,7 +991,7 @@ private:
             if (opcode == Opcode::GetArrayElement)
                 return legalOrByType(representationOfArrayElement(m_subject.arrayStorage()));
             if (opcode == Opcode::GetTypedArrayElement)
-                return legalOrByType(representationOf(m_context.types, elementTypeOf(m_subject.typedArrayType())));
+                return legalOrByType(m_subject.typedArrayType() == NotTypedArray ? Representation::Double : representationOf(m_context.types, elementTypeOf(m_subject.typedArrayType())));
             return resultBySchema(resultIndex);
         case RepresentationRule::BuiltinCall:
             if (returnsUnboxedNumber())
@@ -1167,6 +1195,8 @@ constinit const std::array<Representation, numberOfOpcodes> formsOfResultsByOpco
                 form = Representation::JSValue;
             else if (rule == RepresentationRule::AccessorRead)
                 form = Representation::Cell;
+            else if (opcode == Opcode::GetTypedArrayLength)
+                form = Representation::Int64;
         }
         forms[static_cast<unsigned>(opcode)] = form;
     }
@@ -1200,7 +1230,7 @@ constinit const OpcodeSet opcodesWhoseResultsHaveFormsOfTheirTypes = []() conste
     for (Opcode opcode : allMembersOf<Opcode>) {
         ResultRule rule = resultRuleOf(opcode);
         bool goesByType = rule == ResultRule::Constant || rule == ResultRule::Natural || rule == ResultRule::Allocation;
-        if (goesByType && rulesThatGoBySchema.contains(representationRuleOf(opcode)) && !opcodesThatMayHaveSeveralResults.contains(opcode) && !genericOperationOf(opcode))
+        if (goesByType && opcode != Opcode::GetTypedArrayLength && rulesThatGoBySchema.contains(representationRuleOf(opcode)) && !opcodesThatMayHaveSeveralResults.contains(opcode) && !genericOperationOf(opcode))
             opcodes.add(opcode);
     }
     return opcodes;

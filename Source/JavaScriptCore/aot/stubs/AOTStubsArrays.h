@@ -70,14 +70,19 @@ inline constexpr StubRegister arrayStorageRegister = StubRegister::T12;
 inline constexpr int64_t arraySliceToEnd = 1ll << 32;
 
 constexpr StubKey arrayLiteral(unsigned count) { return StubKey(StubFamily::ArrayLiteral).withCount(count); }
+constexpr StubKey arrayLiteralWithInt32(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithInt32).withCount(count); }
 constexpr StubKey arrayLiteralWithDouble(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithDouble).withCount(count); }
 constexpr StubKey arrayLiteralWithDoubleSlow() { return StubKey(StubFamily::ArrayLiteralWithDoubleSlow); }
 constexpr StubKey newCopyOnWriteArray(ArrayElementKind kind, SharedElements elements) { return StubKey(StubFamily::NewCopyOnWriteArray).withForm(static_cast<uint8_t>(kind) + 3 * static_cast<uint8_t>(elements)); }
 constexpr StubKey newEmptyArray(EmptyArray array) { return StubKey(StubFamily::NewEmptyArray).withForm(static_cast<uint8_t>(array)); }
 constexpr StubKey newEmptyArrayWithCapacity() { return StubKey(StubFamily::NewEmptyArrayWithCapacity); }
+constexpr StubKey newArrayFromBuffer() { return StubKey(StubFamily::NewArrayFromBuffer); }
 constexpr StubKey newArrayWithLength(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayWithLength).withForm(static_cast<uint8_t>(kind)); }
 constexpr StubKey newArrayOfHolesSlow() { return StubKey(StubFamily::NewArrayOfHolesSlow); }
+constexpr StubKey newArrayOfLength(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayOfLength).withForm(static_cast<uint8_t>(kind)); }
+constexpr StubKey newArrayOfGiven() { return StubKey(StubFamily::NewArrayOfGiven); }
 constexpr StubKey newEmptyArrayAtSite(ArrayElementKind seed) { return StubKey(StubFamily::NewEmptyArrayAtSite).withForm(static_cast<uint8_t>(seed)); }
+constexpr StubKey newArrayWithLengthAtSite(ArrayElementKind seed) { return StubKey(StubFamily::NewArrayWithLengthAtSite).withForm(static_cast<uint8_t>(seed)); }
 constexpr StubKey arraySlice(bool withPropertyRoom = false) { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(withPropertyRoom ? ArraySliceRange::BoundedWithPropertyRoom : ArraySliceRange::Bounded)); }
 constexpr StubKey arrayCopy(bool withPropertyRoom = false) { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(withPropertyRoom ? ArraySliceRange::WholeWithPropertyRoom : ArraySliceRange::Whole)); }
 constexpr StubKey arraySliceAsDoubles() { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(ArraySliceRange::BoundedAsDoubles)); }
@@ -88,6 +93,7 @@ constexpr StubKey arrayPush() { return StubKey(StubFamily::ArrayPush); }
 constexpr StubKey arrayPushOfKnownKind() { return StubKey(StubFamily::ArrayPushOfKnownKind); }
 constexpr StubKey appendElements() { return StubKey(StubFamily::AppendElements); }
 constexpr StubKey appendMembers() { return StubKey(StubFamily::AppendMembers); }
+constexpr StubKey appendValuesOfMap() { return StubKey(StubFamily::AppendValuesOfMap); }
 constexpr StubKey appendIterable() { return StubKey(StubFamily::AppendIterable); }
 constexpr StubKey destructureIterable() { return StubKey(StubFamily::DestructureIterable); }
 constexpr StubKey arrayPutAtIndex(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtIndex).withForm(static_cast<uint8_t>(stored)); }
@@ -115,6 +121,8 @@ static_assert(exists(arrayLiteral(0)) && exists(arrayLiteral(maxArrayElementsInR
 static_assert(exists(arrayLiteralWithDouble(1)) && !exists(arrayLiteralWithDouble(1).withCount(0)) && exists(arrayLiteralWithDoubleSlow()));
 static_assert(exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite)) && !exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite).withForm(6)));
 static_assert(exists(newEmptyArray(EmptyArray::Int32Capacity3)) && !exists(newEmptyArray(EmptyArray::Int32Capacity3).withForm(8)));
+static_assert(exists(newArrayWithLengthAtSite(ArrayElementKind::Double)) && !exists(newArrayWithLengthAtSite(ArrayElementKind::Contiguous)));
+static_assert(exists(newArrayOfLength(ArrayElementKind::Contiguous)) && exists(newArrayOfGiven()));
 static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists(newEmptyArrayAtSite(ArrayElementKind::Contiguous)) && exists(newEmptyArrayWithCapacity()) && exists(newArrayOfHolesSlow()));
 static_assert(exists(arraySlice(true)) && exists(arrayCopy(true)) && exists(arraySliceAsDoubles()) && exists(arrayCopyAsDoubles()) && !exists(arrayCopyAsDoubles().withForm(6)));
 static_assert(exists(arrayIndexOfString(SearchedElements::Values)) && exists(arrayIndexOfString(SearchedElements::ValuesFromStart)) && !exists(arrayIndexOfString(SearchedElements::Values).withForm(2)));

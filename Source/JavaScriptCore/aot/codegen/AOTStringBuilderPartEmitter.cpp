@@ -235,6 +235,26 @@ void StringBuilderPartEmitter::generateStringBuilderAppendBoolean(const ValueCon
     });
 }
 
+void StringBuilderPartEmitter::generateStringBuilderAppendCodeUnit(const ValueContext& value)
+{
+    CellPointer builder = in<CellPointer>(value->builderOperand());
+    Word32 codeUnit = emitter<StringEmitter>().word32Of(value->valueOperand());
+    LBasicBlock byCall = newBlock();
+    LBasicBlock done = newBlock();
+
+    branchUnless(belowOrEqual(codeUnit, word32(maxSingleCharacterString)), byCall);
+    Pointer cursor = builders().tryReserve(builder, word32(1), byCall);
+    m_out.store32As8(codeUnit.value(), builders().bytesAt(cursor));
+    builders().commit(builder, offsetBy(cursor, 1));
+    m_out.jump(done);
+
+    m_out.appendTo(byCall);
+    appendString(value, builder, emitter<StringEmitter>().stringFromCodeUnit(value, codeUnit));
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+}
+
 void StringBuilderPartEmitter::generateStringBuilderAppendStringOrNullish(const ValueContext& value)
 {
     if (!typeOf(value->valueOperand()).hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull)) {
@@ -407,6 +427,18 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendBoolean(const Val
     m_out.store32As8(lastByteOfFalse, builders().bytesAt(place.cursor, 4));
     Pointer endOfFalse = offsetBy(place.cursor, 5);
     builders().defineCursorBehindPart(value, place.record, builders().advance(value, place.record, Pointer(m_out.sub(endOfFalse.value(), zeroExtended(isTrue).value()))));
+}
+
+void StringBuilderPartEmitter::generateStackStringBuilderAppendCodeUnit(const ValueContext& value)
+{
+    PlaceInFrame place = placeInFrameOf(value);
+    Word32 codeUnit = emitter<StringEmitter>().word32Of(value->valueOperand());
+    builders().defineCursorBehindPart(value, place.record, emitArmsOfStackStringBuilderPart(m_out, belowOrEqual(codeUnit, word32(maxSingleCharacterString)), Machine::EdgeClass::Unlikely, [&] {
+        m_out.store32As8(codeUnit.value(), builders().bytesAt(place.cursor));
+        return builders().advance(value, place.record, offsetBy(place.cursor, 1));
+    }, [&] {
+        return appendString(value, place, callOperation<CellPointer>(value, RuntimeOperation::CharToString, { codeUnit }));
+    }));
 }
 
 void StringBuilderPartEmitter::generateStackStringBuilderAppendStringOrNullish(const ValueContext& value)

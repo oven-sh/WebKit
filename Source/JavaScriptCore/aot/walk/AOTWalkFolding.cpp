@@ -16,6 +16,7 @@
 #include "AOTStringTable.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTTypeRelations.h"
+#include "AOTWalkResultsInParts.h"
 #include "AOTWalkStringFolds.h"
 #include "AOTWalkKnown.h"
 #include "AOTWalkListReadsInLoops.h"
@@ -31,7 +32,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr size_t maxBytesOfTextMadeByFolding = 65536;
+static constexpr size_t maxBytesOfTextMadeByFolding = mostBytesOfTextMadeByStringFolds;
 
 static constexpr OpcodeSet testsThatTypesDecideInFolding = opcodesWhere([](Opcode opcode) {
     Proof proof = provesOf(opcode);
@@ -774,14 +775,14 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
         return { };
     Reference object = walker.referenceOf(read.objectOperand());
     if (!walker.state().mayHoldPlaceOf(object))
-        return { };
+        return propertyOfResultTakenInParts(walker, object, read.key());
     TypeID type = typeToJudgeByInFolding(walker, object);
     if (!type)
         return { };
     TypeArena& types = walker.types();
     LayoutID layout = singleLayoutOf(types, types.at(type));
     if (!layout)
-        return { };
+        return propertyOfResultTakenInParts(walker, object, read.key());
     std::optional<FieldReference> field = findField(walker.program(), layout, read.key());
     if (!field || holdsAccessorInFolding(walker, *field))
         return { };
@@ -796,6 +797,8 @@ static Reference elementAnsweredByStateInFolding(Walker& walker, const BodyValue
     TypeID typeOfIndex = typeToJudgeByInFolding(walker, index);
     if (!typeOfIndex || !walker.types().at(typeOfIndex).isNumber())
         return { };
+    if (Reference part = partOfListThatIsOnlyTakenApart(walker, walker.referenceOf(read.objectOperand()), index))
+        return part;
     Reference held = unlessAbsentInFolding(walker, walker.state().element(walker.referenceOf(read.objectOperand()), index));
     if (held && (walker.types().at(typeToJudgeByInFolding(walker, held)).primitives & Primitive::Undefined) && readLeavesTurnAtHoleBehindRow(walker, value))
         return { };
@@ -825,7 +828,7 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
         FieldReference field { read.layout(), read.field() };
         Reference environment = walker.referenceOf(read.environmentOperand());
         if (Reference held = walker.state().environmentField(environment, field))
-            return walker.typeAnswerOfStateAsRead(value, environment, field, held);
+            return held;
         return valueOfStableBinding(walker, value);
     }
     case Opcode::PropGet:

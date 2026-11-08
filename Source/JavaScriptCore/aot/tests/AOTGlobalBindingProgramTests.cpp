@@ -169,11 +169,17 @@ function f2 name="storeAll" parameters=[{type=anything}] results=[{type=anything
     return ASCIICString(byteCast<char>(text.toString().utf8().span()));
 }
 
-#define HELPERS R"JS(
+#define HELPERS COUNTED_CALLS(R"("GetGlobalBinding", "GetGlobalObjectBinding", "SetGlobalBinding", "SetGlobalBindingSloppy", "SetGlobalObjectBinding", "SetGlobalObjectBindingSloppy", "GetFreeName", "GetFreeNameForTypeOf", "SetFreeName", "SetFreeNameSloppy")") R"JS(
 const repeat = (what, access) => {
     let result;
     for (let i = 0; i < 100; i++) result = access();
     print(what + ": " + result);
+};
+const measure = (what, access) => {
+    const before = countedCalls();
+    let result;
+    for (let i = 0; i < 100; i++) result = access();
+    print(what + ": " + result + servedBy(before, 100, 2));
 };
 const describeError = (what, action) => {
     try {
@@ -185,23 +191,25 @@ const describeError = (what, action) => {
 };
 )JS"
 
-#define CHECK_IN_EVERY_BUILD(programText, STATEMENTS, OUTPUT) \
-    checkOutputOfProgramInShell(programText, OUTPUT ""_s, { }, HELPERS STATEMENTS ""_s)
+#define CHECK_IN_EVERY_BUILD(programText, STATEMENTS, OUTPUT, LETTERS) do { \
+        checkOutputOfProgramInShell(programText, OUTPUT ""_s, { }, HELPERS STATEMENTS ""_s); \
+        checkServicesInShell(__FILE__, __LINE__, programText, OUTPUT ""_s, HELPERS STATEMENTS ""_s, wordsOfCaches, LETTERS); \
+    } while (false)
 
 #define STATEMENTS_THAT_STORE_AFTER_A_CONSTANT R"JS(
 globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGlobalObject) => {
     globalThis.shared = 7;
-    repeat("first value", read);
-    repeat("first value, of the global object", readOfGlobalObject);
+    measure("first value", read);
+    measure("first value, of the global object", readOfGlobalObject);
     globalThis.shared = 8;
-    repeat("stored by other code", read);
-    repeat("stored by other code, of the global object", readOfGlobalObject);
+    measure("stored by other code", read);
+    measure("stored by other code, of the global object", readOfGlobalObject);
     store(9);
-    repeat("stored through the binding", read);
-    repeat("stores through the binding", () => { store(10); return read(); });
-    repeat("sloppy stores", () => { storeSloppy(11); return read(); });
-    repeat("stores to the global object", () => { storeToGlobalObject(12); return readOfGlobalObject(); });
-    repeat("seen as a free name", read);
+    measure("stored through the binding", read);
+    measure("stores through the binding", () => { store(10); return read(); });
+    measure("sloppy stores", () => { storeSloppy(11); return read(); });
+    measure("stores to the global object", () => { storeToGlobalObject(12); return readOfGlobalObject(); });
+    measure("seen as a free name", read);
 };
 )JS"
 
@@ -218,14 +226,14 @@ globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGloba
 
 static void testStoreAfterConstantIsSeen()
 {
-    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_STORE_AFTER_A_CONSTANT, OUTPUT_OF_STORES_AFTER_A_CONSTANT);
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_STORE_AFTER_A_CONSTANT, OUTPUT_OF_STORES_AFTER_A_CONSTANT, "ccccccccc"_s);
 }
 
 #define STATEMENTS_THAT_DELETE R"JS(
 globalThis.publish = (read, store, storeSloppy, readOfGlobalObject) => {
     globalThis.shared = 7;
-    repeat("before", read);
-    repeat("before, of the global object", readOfGlobalObject);
+    measure("before", read);
+    measure("before, of the global object", readOfGlobalObject);
     delete globalThis.shared;
     describeError("read after the delete", read);
     print("of the global object: " + readOfGlobalObject());
@@ -250,20 +258,20 @@ globalThis.publish = (read, store, storeSloppy, readOfGlobalObject) => {
 
 static void testDeleteThenReadThrows()
 {
-    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_DELETE, OUTPUT_OF_DELETES);
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_DELETE, OUTPUT_OF_DELETES, "cc......"_s);
 }
 
 #define STATEMENTS_THAT_DEFINE_ACCESSORS R"JS(
 globalThis.publish = (read, store, storeSloppy, readOfGlobalObject) => {
     globalThis.shared = 7;
-    repeat("value", read);
+    measure("value", read);
     let reads = 0;
     Object.defineProperty(globalThis, "shared", { get() { return ++reads; }, configurable: true });
-    repeat("getter", read);
-    repeat("getter, of the global object", readOfGlobalObject);
+    measure("getter", read);
+    measure("getter, of the global object", readOfGlobalObject);
     let stored = 0;
     Object.defineProperty(globalThis, "shared", { get() { return stored; }, set(value) { stored = value * 2; }, configurable: true });
-    repeat("setter", () => { store(4); return read(); });
+    measure("setter", () => { store(4); return read(); });
     Object.defineProperty(globalThis, "shared", { value: 5, writable: true, configurable: true });
     repeat("value again", read);
     Object.defineProperty(globalThis, "shared", { get() { Object.defineProperty(globalThis, "shared", { value: 10, writable: true, configurable: true }); return -10; }, configurable: true });
@@ -285,21 +293,22 @@ static void testRedefinedAsGetterRuns()
 {
     String output = outputOfProgramInShell(accessesOfOneName, { }, HELPERS STATEMENTS_THAT_DEFINE_ACCESSORS ""_s, { });
     AOT_TEST_CHECK(output == OUTPUT_OF_ACCESSORS ""_s);
+    checkServicesInShell(__FILE__, __LINE__, accessesOfOneName, OUTPUT_OF_ACCESSORS ""_s, HELPERS STATEMENTS_THAT_DEFINE_ACCESSORS ""_s, wordsOfCaches, "cnnn..."_s);
 }
 
 #define STATEMENTS_WITH_A_LET_OF_A_SCRIPT R"JS(
 globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGlobalObject) => {
     globalThis.shared = 7;
-    repeat("property", read);
-    repeat("property, of the global object", readOfGlobalObject);
+    measure("property", read);
+    measure("property, of the global object", readOfGlobalObject);
     loadString("let shared = 11;");
-    repeat("let of a script", read);
-    repeat("of the global object", readOfGlobalObject);
-    repeat("stores to the let", () => { store(12); return read(); });
+    measure("let of a script", read);
+    measure("of the global object", readOfGlobalObject);
+    measure("stores to the let", () => { store(12); return read(); });
     print("the property keeps its value: " + globalThis.shared);
     storeToGlobalObject(13);
-    repeat("the let after a store to the global object", read);
-    repeat("the property after it", readOfGlobalObject);
+    measure("the let after a store to the global object", read);
+    measure("the property after it", readOfGlobalObject);
 };
 )JS"
 
@@ -315,13 +324,13 @@ globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGloba
 
 static void testScriptLetShadowsBoundGlobal()
 {
-    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_WITH_A_LET_OF_A_SCRIPT, OUTPUT_WITH_A_LET_OF_A_SCRIPT);
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_WITH_A_LET_OF_A_SCRIPT, OUTPUT_WITH_A_LET_OF_A_SCRIPT, "ccccn.cc"_s);
 }
 
 #define STATEMENTS_IN_THE_DEAD_ZONE R"JS(
 globalThis.publish = (read, store) => {
     globalThis.shared = 7;
-    repeat("property", read);
+    measure("property", read);
     globalThis.readShared = read;
     globalThis.storeShared = store;
     loadString(`
@@ -329,7 +338,7 @@ globalThis.publish = (read, store) => {
         describeError("store in the dead zone", () => storeShared(1));
         let shared = 11;
     `);
-    repeat("after the dead zone", read);
+    measure("after the dead zone", read);
 };
 )JS"
 
@@ -341,20 +350,20 @@ globalThis.publish = (read, store) => {
 
 static void testDeadZoneOfScriptLetThrows()
 {
-    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_IN_THE_DEAD_ZONE, OUTPUT_IN_THE_DEAD_ZONE);
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_IN_THE_DEAD_ZONE, OUTPUT_IN_THE_DEAD_ZONE, "c..c"_s);
 }
 
 #define STATEMENTS_WITH_A_CONST_OF_A_SCRIPT R"JS(
 globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGlobalObject) => {
     loadString("const shared = 21;");
-    repeat("const of a script", read);
+    measure("const of a script", read);
     describeError("strict store to the const", () => store(1));
     describeError("sloppy store to the const", () => storeSloppy(1));
-    repeat("after the refused stores", read);
+    measure("after the refused stores", read);
     print("of the global object: " + readOfGlobalObject());
     storeToGlobalObject(22);
-    repeat("the const over a property of its name", read);
-    repeat("the property", readOfGlobalObject);
+    measure("the const over a property of its name", read);
+    measure("the property", readOfGlobalObject);
 };
 )JS"
 
@@ -369,29 +378,29 @@ globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGloba
 
 static void testConstOfScriptIsConstant()
 {
-    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_WITH_A_CONST_OF_A_SCRIPT, OUTPUT_WITH_A_CONST_OF_A_SCRIPT);
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_WITH_A_CONST_OF_A_SCRIPT, OUTPUT_WITH_A_CONST_OF_A_SCRIPT, "c..c.cc"_s);
 }
 
 #define STATEMENTS_ABOUT_AN_ABSENT_NAME R"JS(
 globalThis.publish = (typeOfName, read, readOfGlobalObject, storeSloppy) => {
-    repeat("absent", typeOfName);
-    repeat("absent, of the global object", readOfGlobalObject);
+    measure("absent", typeOfName);
+    measure("absent, of the global object", readOfGlobalObject);
     describeError("read of the absent name", read);
     globalThis.shared = 7;
-    repeat("defined by other code", typeOfName);
-    repeat("defined by other code, of the global object", readOfGlobalObject);
+    measure("defined by other code", typeOfName);
+    measure("defined by other code, of the global object", readOfGlobalObject);
     delete globalThis.shared;
-    repeat("deleted", typeOfName);
-    repeat("deleted, of the global object", readOfGlobalObject);
+    measure("deleted", typeOfName);
+    measure("deleted, of the global object", readOfGlobalObject);
     describeError("read of the deleted name", read);
     storeSloppy("text");
-    repeat("created by a sloppy store", typeOfName);
+    measure("created by a sloppy store", typeOfName);
     delete globalThis.shared;
-    repeat("deleted again", typeOfName);
+    measure("deleted again", typeOfName);
     Object.defineProperty(globalThis, "shared", { get() { return 1n; }, configurable: true });
     repeat("defined as a getter", typeOfName);
     delete globalThis.shared;
-    repeat("absent at the end", typeOfName);
+    measure("absent at the end", typeOfName);
 };
 )JS"
 
@@ -412,18 +421,19 @@ globalThis.publish = (typeOfName, read, readOfGlobalObject, storeSloppy) => {
 static void testTypeOfAbsentNameFollowsTheGlobalObject()
 {
     checkOutputOfProgramInShell(questionsAboutOneName, OUTPUT_ABOUT_AN_ABSENT_NAME ""_s, { "admit=Inspector"_s }, HELPERS STATEMENTS_ABOUT_AN_ABSENT_NAME ""_s);
+    checkServicesInShell(__FILE__, __LINE__, questionsAboutOneName, OUTPUT_ABOUT_AN_ABSENT_NAME ""_s, HELPERS STATEMENTS_ABOUT_AN_ABSENT_NAME ""_s, wordsOfCaches, "cc.cccc.cc.c"_s, { "admit=Inspector"_s });
 }
 
 #define STATEMENTS_ABOUT_AN_ABSENT_NAME_AND_A_SCRIPT R"JS(
 globalThis.publish = (typeOfName, read, readOfGlobalObject) => {
-    repeat("absent", typeOfName);
+    measure("absent", typeOfName);
     globalThis.typeOfShared = typeOfName;
     loadString(`
         describeError("typeof in the dead zone", typeOfShared);
         let shared = true;
     `);
-    repeat("let of a script", typeOfName);
-    repeat("the global object has no such property", readOfGlobalObject);
+    measure("let of a script", typeOfName);
+    measure("the global object has no such property", readOfGlobalObject);
 };
 )JS"
 
@@ -435,7 +445,7 @@ globalThis.publish = (typeOfName, read, readOfGlobalObject) => {
 
 static void testTypeOfAbsentNameSeesLetOfScript()
 {
-    CHECK_IN_EVERY_BUILD(questionsAboutOneName, STATEMENTS_ABOUT_AN_ABSENT_NAME_AND_A_SCRIPT, OUTPUT_ABOUT_AN_ABSENT_NAME_AND_A_SCRIPT);
+    CHECK_IN_EVERY_BUILD(questionsAboutOneName, STATEMENTS_ABOUT_AN_ABSENT_NAME_AND_A_SCRIPT, OUTPUT_ABOUT_AN_ABSENT_NAME_AND_A_SCRIPT, "c.cc"_s);
 }
 
 #define STATEMENTS_THAT_GROW_THE_STORAGE R"JS(
@@ -443,7 +453,7 @@ globalThis.publish = (read, store) => {
     globalThis.shared = 1;
     read();
     globalThis.shared = 2;
-    repeat("before the growth", read);
+    measure("before the growth", read);
     store(3);
     for (let i = 0; i < 300; i++) globalThis["filler" + i] = i;
     repeat("after the growth", read);
@@ -462,13 +472,13 @@ globalThis.publish = (read, store) => {
 
 static void testStorageGrowthKeepsLocation()
 {
-    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_GROW_THE_STORAGE, OUTPUT_WHILE_THE_STORAGE_GROWS);
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_GROW_THE_STORAGE, OUTPUT_WHILE_THE_STORAGE_GROWS, "c...."_s);
 }
 
 #define STATEMENTS_WITH_A_LAZY_GLOBAL R"JS(
 globalThis.publish = readLazy => {
     const first = readLazy();
-    repeat("created once", () => readLazy() === first);
+    measure("created once", () => readLazy() === first);
     print("the same for other code: " + (globalThis.Intl === first));
     print("what it holds: " + typeof first.DateTimeFormat);
 };
@@ -481,7 +491,7 @@ globalThis.publish = readLazy => {
 
 static void testLazyGlobalIsCreatedOnce()
 {
-    CHECK_IN_EVERY_BUILD(accessesOfLazyGlobal, STATEMENTS_WITH_A_LAZY_GLOBAL, OUTPUT_WITH_A_LAZY_GLOBAL);
+    CHECK_IN_EVERY_BUILD(accessesOfLazyGlobal, STATEMENTS_WITH_A_LAZY_GLOBAL, OUTPUT_WITH_A_LAZY_GLOBAL, "c.."_s);
 }
 
 #define STATEMENTS_THAT_READ_WHAT_A_BINDING_STORED R"JS(
@@ -524,7 +534,7 @@ globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGloba
 
 static void testStoreThroughBindingThenNativeRead()
 {
-    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_READ_WHAT_A_BINDING_STORED, OUTPUT_OF_READS_OF_WHAT_A_BINDING_STORED);
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_READ_WHAT_A_BINDING_STORED, OUTPUT_OF_READS_OF_WHAT_A_BINDING_STORED, ".........."_s);
 }
 
 static_assert(numberOfNamesOfLargeProgram == 1500, "The statements and their output spell the number.");
@@ -558,7 +568,7 @@ globalThis.publish = (readAll, storeAll) => {
 static void testManyNamesHaveTheirOwnRecords()
 {
     ASCIICString programText = accessesOfManyNames();
-    CHECK_IN_EVERY_BUILD(ASCIILiteral::fromLiteralUnsafe(programText.data()), STATEMENTS_THAT_USE_MANY_NAMES, OUTPUT_OF_MANY_NAMES);
+    CHECK_IN_EVERY_BUILD(ASCIILiteral::fromLiteralUnsafe(programText.data()), STATEMENTS_THAT_USE_MANY_NAMES, OUTPUT_OF_MANY_NAMES, "...."_s);
 }
 
 static constexpr ASCIILiteral roomForRecordsTest = "global-bindings/instance-has-room-for-every-record"_s;

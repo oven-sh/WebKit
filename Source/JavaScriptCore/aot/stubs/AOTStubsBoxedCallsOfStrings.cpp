@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTStubAssembler.h"
@@ -44,8 +45,12 @@ static void checkRealmOfCalleeOfString(StubAssembler& jit, GPRReg scratch, JumpL
     StubFamily family = jit.key().family();
     if (family == StubFamily::CallMethodOfBuiltinClass || family == StubFamily::TryCallMethodOfBuiltinClass || family == StubFamily::CallMethodOfBuiltinClassWithSharedPattern || family == StubFamily::CallMethodThatMayBeUnread)
         return;
+    JumpList isOfThisInstance;
+    if (jit.key().family() == StubFamily::CallBoxedBuiltin)
+        isOfThisInstance.append(jit.branch64(CCallHelpers::Below, calleeGPR, TrustedImm32(limitOfNumbersOfBuiltinCells)));
     jit.loadPtr(Address(calleeGPR, JSCallee::offsetOfScopeChain()), scratch);
     callsHostFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+    isOfThisInstance.link(&jit);
 }
 
 void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
@@ -62,14 +67,31 @@ void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
 
     callsHostFunction.append(jit.branchIfNotInt32(argumentGPR(0)));
     jit.loadPtr(Address(thisGPR, JSString::offsetOfValue()), impl);
-    callsHostFunction.append(jit.branchIfRopeStringImpl(impl));
-    Jump isOutside = jit.branch32(CCallHelpers::AboveOrEqual, argumentGPR(0), Address(impl, StringImpl::lengthMemoryOffset()));
+    Jump isRope = jit.branchIfRopeStringImpl(impl);
+    JumpList isOutside;
+    isOutside.append(jit.branch32(CCallHelpers::AboveOrEqual, argumentGPR(0), Address(impl, StringImpl::lengthMemoryOffset())));
     jit.zeroExtend32ToWord(argumentGPR(0), unit);
     Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
     jit.loadPtr(Address(impl, StringImpl::dataOffset()), impl);
     jit.load8(BaseIndex(impl, unit, CCallHelpers::TimesOne), unit);
+    Label boxesUnit = jit.label();
     boxInt32(jit, unit, jit.result());
     jit.returnToCaller();
+
+    isRope.link(&jit);
+    loadSubstringCharacters(jit, thisGPR, impl, trail, unit, callsHostFunction);
+    isOutside.append(jit.branch32(CCallHelpers::AboveOrEqual, argumentGPR(0), unit));
+    jit.zeroExtend32ToWord(argumentGPR(0), unit);
+    Jump pieceIs16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    jit.load8(BaseIndex(trail, unit, CCallHelpers::TimesOne), unit);
+    jit.jump().linkTo(boxesUnit, &jit);
+    pieceIs16Bit.link(&jit);
+    if (readsCodePoint)
+        callsHostFunction.append(jit.jump());
+    else {
+        jit.load16(BaseIndex(trail, unit, CCallHelpers::TimesTwo), unit);
+        jit.jump().linkTo(boxesUnit, &jit);
+    }
 
     isOutside.link(&jit);
     jit.move(TrustedImm64(readsCodePoint ? JSValue::ValueUndefined : JSValue::encode(jsNaN())), jit.result());

@@ -1,5 +1,5 @@
 # Two types are each written as the other, layouts are written as each of them, and types stand above the ring. What converts to one of the two is a member of both and of all above.
-# A tag turns a member away from the type that says another tag, and so from what it would have come to through that type alone. Two classes that extend each other compile too.
+# A tag turns a member away from the type that says another tag, and so from what it would have come to through that type alone. Two classes that each may stand above the other are members of each other too; that neither is WRITTEN as the base of the other is the verifier's rule (verifier/a-row-of-bases-that-comes-round.ir).
 # RUN: members
 # CHECK: L0: members [L0, L1, L2, L3, L4]
 # CHECK-NEXT: L1: members [L0, L1, L2, L3, L4]
@@ -29,8 +29,8 @@ layout L5 name="AboveWithoutTag" module=m0 supertypes=[L7]
 layout L6 name="AboveTheTag" module=m0
 layout L7 name="Top" module=m0
 layout L8 name="Apart" module=m0
-layout L9 kind=Instance name="Head" module=m0 base=L10 supertypes=[L10] flags=[HasHeritage]
-layout L10 kind=Instance name="Tail" module=m0 base=L9 supertypes=[L9] flags=[HasHeritage]
-layout L11 kind=Instance name="BelowTheRing" module=m0 base=L9 supertypes=[L9] flags=[HasHeritage]
+layout L9 kind=Instance name="Head" module=m0 supertypes=[L10] flags=[HasHeritage]
+layout L10 kind=Instance name="Tail" module=m0 supertypes=[L9] flags=[HasHeritage]
+layout L11 kind=Instance name="BelowTheRing" module=m0 supertypes=[L9] flags=[HasHeritage]
 function f0 name="types" role=Signature parameters=[{type=L0}, {type=L2}, {type=L6}, {type=L7}, {type=L9}] results=[{type=undefined}]
 entry module=m0

@@ -200,7 +200,7 @@ function payloadAccessors(name: string, field: PayloadField, isOptional: boolean
   };
 }
 
-const flagsThatRestOnPassedTests = new Set(["isInsideView"]);
+const flagsThatRestOnPassedTests = new Set(["isInsideView", "isInBounds", "isPresent"]);
 
 function flagAccessors(name: string, tag: string): Accessors {
   const mask = `declaredPosition(FlagMask::${name}(${tag}))`;

@@ -383,6 +383,7 @@ export class DependencyClosure {
   readonly #foundOnInstances = new Map<string, RuntimeDependencies>();
   readonly #handedOut = new Map<ModelBuiltin, HandedOutValues>();
   readonly #reachable = new Map<string, RuntimeDependencies>();
+  readonly #dependencies = new Map<ModelBuiltin, RuntimeDependencies>();
 
   constructor(model: TableModel) {
     const classesOf = (origin: ModelClass["origin"]): ModelClass[] =>
@@ -435,6 +436,15 @@ export class DependencyClosure {
   }
 
   dependenciesOf(builtin: ModelBuiltin): RuntimeDependencies {
+    let dependencies = this.#dependencies.get(builtin);
+    if (dependencies === undefined) {
+      dependencies = this.#computeDependencies(builtin);
+      this.#dependencies.set(builtin, dependencies);
+    }
+    return dependencies;
+  }
+
+  #computeDependencies(builtin: ModelBuiltin): RuntimeDependencies {
     const dependencies = createDependencies();
     this.#addOwnDependencies(dependencies, builtin, null);
     mergeDependencies(dependencies, this.#reachableFrom(this.#handedOutBy(builtin)));
@@ -728,4 +738,15 @@ export class DependencyClosure {
     for (const builtin of reached) this.#addOwnDependencies(dependencies, builtin, visited);
     return dependencies;
   }
+}
+
+const closures = new WeakMap<TableModel, DependencyClosure>();
+
+export function closureOf(model: TableModel): DependencyClosure {
+  let closure = closures.get(model);
+  if (closure === undefined) {
+    closure = new DependencyClosure(model);
+    closures.set(model, closure);
+  }
+  return closure;
 }

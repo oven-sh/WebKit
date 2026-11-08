@@ -156,6 +156,7 @@ private:
 };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
+void didReplaceValueOnChainObject(VM&, JSObject* changed, UniquedStringImpl*);
 enum class StoredName : bool { MayBeSpelledByProgram, IsNotSpelledByProgram };
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, StoredName = StoredName::MayBeSpelledByProgram);
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, ChainDependents& ofOwner, const ChainDependent&);

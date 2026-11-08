@@ -21,7 +21,12 @@ class Facts;
 class Program;
 struct SlotPlanParts;
 
-Vector<LayoutID> findEnvironmentsHandedBack(const Program&, const Facts&, BuildContext&);
+struct EnvironmentsHandedBack {
+    Vector<LayoutID> all;
+    Vector<LayoutID> takenByClosuresMadeForCallsAlone;
+};
+
+EnvironmentsHandedBack findEnvironmentsHandedBack(const Program&, const Facts&, BuildContext&);
 void layEnvironmentsHandedBack(BuildContext&, std::span<const LayoutID>, SlotPlanParts&);
 
 } } } // namespace JSC::AOT::Typed

@@ -68,6 +68,7 @@ static void testEachOfManyMembersIsFoundByItsKey()
         LayoutID wide(0u);
         LinkTables tables = conservativeLinkTables(*program);
         tables.layouts[wide.index()].listsEveryMemberAbove = true;
+        tables.layouts[wide.index()].namesAreDefinedPastLists = { };
 
         auto keyOf = [&](uint32_t number) {
             return PropertyKeyID(static_cast<uint32_t>(static_cast<uint64_t>(number) * step % numberOfKeys));
@@ -111,7 +112,7 @@ static void testEachOfManyMembersIsFoundByItsKey()
             }
             AOT_TEST_CHECK(tables.membersUnder(wide, ClassSide::Static, keyOf(number)).empty());
         }
-        AOT_TEST_CHECK(tables.findMember(*program, wide, ClassSide::Prototype, keyOf(0)).kind == MemberFound::Kind::Nothing);
+        AOT_TEST_CHECK(tables.findsNothing(*program, wide, ClassSide::Prototype, keyOf(0), Of::HolderAndAbove).has_value());
     });
 }
 
@@ -140,6 +141,7 @@ static std::optional<uint64_t> instructionsOfLookupsFromFootOfRowForGrowthTests(
         for (uint32_t number = 0; number < numberOfClasses; ++number) {
             tables.layouts[number].listsEveryMemberAbove = true;
             tables.layouts[number].hasConstructorFunctionInRow = false;
+            tables.layouts[number].namesAreDefinedPastLists = { };
             LinkedMember member;
             member.classLayout = LayoutID(number);
             member.key = keys[number];
@@ -153,9 +155,11 @@ static std::optional<uint64_t> instructionsOfLookupsFromFootOfRowForGrowthTests(
             for (uint32_t number = 0; number < numberOfClasses; ++number) {
                 MemberFound found = tables.findMember(*program, foot, ClassSide::Prototype, keys[number]);
                 AOT_TEST_CHECK(found.kind == MemberFound::Kind::Method && found.method == FunctionID(number + 1));
-                AOT_TEST_CHECK(tables.findMember(*program, LayoutID(number), ClassSide::Prototype, keys[numberOfClasses - 1]).kind == (number + 1 == numberOfClasses ? MemberFound::Kind::Method : MemberFound::Kind::Nothing));
+                bool isDeclaredHere = number + 1 == numberOfClasses;
+                AOT_TEST_CHECK(tables.findMember(*program, LayoutID(number), ClassSide::Prototype, keys[numberOfClasses - 1]).kind == (isDeclaredHere ? MemberFound::Kind::Method : MemberFound::Kind::Unknown));
+                AOT_TEST_CHECK(tables.findsNothing(*program, LayoutID(number), ClassSide::Prototype, keys[numberOfClasses - 1], Of::HolderAndAbove).has_value() == !isDeclaredHere);
             }
-            AOT_TEST_CHECK(tables.findMember(*program, foot, ClassSide::Prototype, keys[numberOfClasses]).kind == MemberFound::Kind::Nothing);
+            AOT_TEST_CHECK(tables.findsNothing(*program, foot, ClassSide::Prototype, keys[numberOfClasses], Of::HolderAndAbove).has_value());
         });
     });
     return instructions;
@@ -167,6 +171,47 @@ static void testMembersOfClassesFarAboveAreFoundByTheirKeys()
     InstructionCounts::begin();
     std::optional<uint64_t> smaller = instructionsOfLookupsFromFootOfRowForGrowthTests(numberOfClasses);
     std::optional<uint64_t> large = instructionsOfLookupsFromFootOfRowForGrowthTests(4 * numberOfClasses);
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
+static std::optional<uint64_t> instructionsOfAskingEachClassObjectOfRowForGrowthTests(unsigned numberOfClasses)
+{
+    StringBuilder text;
+    text.append("layout L0 kind=Instance name=\"C0\" module=m0\n"_s);
+    for (unsigned number = 1; number < numberOfClasses; ++number)
+        text.append("layout L"_s, number, " kind=Instance name=\"C"_s, number, "\" module=m0 base=L"_s, number - 1, " supertypes=[L"_s, number - 1, "] flags=[HasHeritage]\n"_s);
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"asked\"\n    Return v1\n}\n"_s);
+
+    std::optional<uint64_t> instructions;
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        std::unique_ptr<Program> program = parseProgram(withStandInLibrary(text.toString()), build);
+        AOT_TEST_CHECK(program);
+        LinkTables tables = conservativeLinkTables(*program);
+        StringID name = program->strings.find(encodeProgramString(String("asked"_s)).span());
+        PropertyKeyID asked = program->types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = name }).value_or(PropertyKeyID());
+        AOT_TEST_CHECK(asked);
+        for (uint32_t number = 0; number < numberOfClasses; ++number) {
+            tables.layouts[number].listsEveryStaticMember = true;
+            tables.layouts[number].namesAreDefinedPastLists = { };
+            tables.layouts[number].hasConstructorFunctionInRow = false;
+        }
+        tables.indexMembersByKey(*program);
+        instructions = instructionsOfCurrentThreadIn([&] {
+            for (uint32_t number = 0; number < numberOfClasses; ++number)
+                AOT_TEST_CHECK(tables.findsNothing(*program, LayoutID(number), ClassSide::Static, asked, Of::HolderAndAbove).has_value());
+        });
+    });
+    return instructions;
+}
+
+static void testAskingEachClassObjectOfRowWhatLookupDoesNotFindGrowsAsRowDoes()
+{
+    constexpr unsigned numberOfClasses = 1000;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfAskingEachClassObjectOfRowForGrowthTests(numberOfClasses);
+    std::optional<uint64_t> large = instructionsOfAskingEachClassObjectOfRowForGrowthTests(4 * numberOfClasses);
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
@@ -210,6 +255,7 @@ static void testMemberAboveLongRowIsTheOneThatWalkUpRowFinds()
             tables.layouts[number].listsEveryMemberAbove = true;
             tables.layouts[number].listsEveryStaticMember = true;
             tables.layouts[number].hasConstructorFunctionInRow = false;
+            tables.layouts[number].namesAreDefinedPastLists = { };
         }
         auto append = [&](unsigned classLayout, ClassSide side, MethodKind kind, unsigned key) {
             LinkedMember member;
@@ -242,8 +288,8 @@ static void testMemberAboveLongRowIsTheOneThatWalkUpRowFinds()
         tables.indexMembersByKey(*program);
 
         auto walkUpRow = [&](LayoutID layout, ClassSide side, PropertyKeyID key) {
-            MemberFound found { MemberFound::Kind::Nothing, { }, { }, { } };
-            for (LayoutID current = layout; current && found.kind == MemberFound::Kind::Nothing; current = program->at(current).base) {
+            MemberFound found;
+            for (LayoutID current = layout; current && found.kind == MemberFound::Kind::Unknown; current = program->at(current).base) {
                 for (const LinkedMember& member : tables.members) {
                     if (member.classLayout != current || member.side != side || member.key != key)
                         continue;
@@ -259,9 +305,158 @@ static void testMemberAboveLongRowIsTheOneThatWalkUpRowFinds()
                     MemberFound found = tables.findMember(*program, LayoutID(number), side, key);
                     MemberFound expected = walkUpRow(LayoutID(number), side, key);
                     AOT_TEST_CHECK(found.kind == expected.kind && found.method == expected.method && found.getter == expected.getter && found.setter == expected.setter);
+                    AOT_TEST_CHECK(tables.findsNothing(*program, LayoutID(number), side, key, Of::HolderAndAbove).has_value() == (expected.kind == MemberFound::Kind::Unknown));
                 }
             }
         }
+    });
+}
+
+static void testEachQuestionInsideWhatLookupDidNotFindAnswersForItself()
+{
+    StringBuilder text;
+    text.append("layout L0 kind=Instance name=\"Root\" module=m0\n"_s);
+    text.append("layout L1 kind=Instance name=\"Base\" module=m0 base=L0 supertypes=[L0] flags=[HasHeritage]\n"_s);
+    text.append("layout L2 kind=Instance name=\"Heir\" module=m0 base=L1 fields=[{key=\"own\" declared={type=anything}}] supertypes=[L1] flags=[HasHeritage]\n"_s);
+    text.append("layout L3 kind=Instance name=\"Maker\" module=m0\n"_s);
+    text.append("layout L4 kind=Instance name=\"Below\" module=m0 base=L3 supertypes=[L3] flags=[HasHeritage]\n"_s);
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n"_s);
+    text.append("    v1 = PropGet v0 key=\"asked\"\n    v2 = PropGet v0 key=\"own\"\n    v3 = PropGet v0 key=\"constructor\"\n    v4 = PropGet v0 key=\"name\"\n    v5 = PropGet v0 key=\"arguments\"\n    Return v1\n}\n"_s);
+
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        std::unique_ptr<Program> program = parseProgram(withStandInLibrary(text.toString()), build);
+        AOT_TEST_CHECK(program);
+        LayoutID root(0u);
+        LayoutID base(1u);
+        LayoutID heir(2u);
+        LayoutID maker(3u);
+        LayoutID below(4u);
+        FunctionID functionOfMaker(0u);
+        program->layouts[maker.index()].flags.add(LayoutFlags::IsConstructorFunction);
+        program->layouts[maker.index()].constructor = functionOfMaker;
+        auto keyNamed = [&](ASCIILiteral name) {
+            StringID found = program->strings.find(encodeProgramString(String(name)).span());
+            return program->types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = found }).value_or(PropertyKeyID());
+        };
+        PropertyKeyID asked = keyNamed("asked"_s);
+        AOT_TEST_CHECK(asked);
+
+        auto tablesThatSayNoNowhere = [&] {
+            LinkTables tables = conservativeLinkTables(*program);
+            for (LayoutID layout : { root, base, heir, maker, below }) {
+                LinkedLayout& linked = tables.layouts[layout.index()];
+                linked.possibleChanges = { };
+                linked.listsEveryMemberAbove = true;
+                linked.listsEveryStaticMember = true;
+                linked.namesAreDefinedPastLists = { };
+                linked.hasConstructorFunctionInRow = layout == maker || layout == below;
+            }
+            tables.functions[functionOfMaker.index()].closuresGetOnlyNamesThatAreListed = true;
+            tables.indexMembersByKey(*program);
+            return tables;
+        };
+        auto finds = [&](const LinkTables& tables, LayoutID layout, ClassSide side, Of of, PropertyKeyID key) {
+            return tables.findsNothing(*program, layout, side, key, of).has_value();
+        };
+        auto findsBehind = [&](const auto& change, LayoutID layout, ClassSide side, Of of) {
+            LinkTables tables = tablesThatSayNoNowhere();
+            change(tables);
+            tables.indexMembersByKey(*program);
+            return finds(tables, layout, side, of, asked);
+        };
+        auto findsBesideStaticFieldOf = [&](LayoutID holder, LayoutID layout, ClassSide side, Of of) {
+            Layout& written = program->layouts[holder.index()];
+            StaticField field;
+            field.key = asked;
+            written.staticFields.append(field);
+            written.indexFields();
+            bool answer = finds(tablesThatSayNoNowhere(), layout, side, of, asked);
+            written.staticFields.removeLast();
+            written.indexFields();
+            return answer;
+        };
+        auto memberOf = [&](LayoutID classLayout, ClassSide side) {
+            return [=](LinkTables& tables) {
+                LinkedMember member;
+                member.classLayout = classLayout;
+                member.side = side;
+                member.key = asked;
+                member.function = FunctionID(1u);
+                member.everyWriterIsKnown = true;
+                tables.members.append(member);
+            };
+        };
+        auto nameOnPrototypeOfMaker = [&](PropertyKeyID key) {
+            return [=](LinkTables& tables) {
+                LinkedNameOnPrototype name;
+                name.layout = maker;
+                name.key = key;
+                tables.namesOnPrototypes.append(name);
+            };
+        };
+
+        LinkTables clear = tablesThatSayNoNowhere();
+        AOT_TEST_CHECK(finds(clear, heir, ClassSide::Prototype, Of::ObjectItself, asked));
+        for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
+            AOT_TEST_CHECK(finds(clear, heir, side, Of::HolderItself, asked));
+            AOT_TEST_CHECK(finds(clear, heir, side, Of::HolderAndAbove, asked));
+        }
+        AOT_TEST_CHECK(finds(clear, maker, ClassSide::Static, Of::HolderItself, asked));
+        AOT_TEST_CHECK(finds(clear, maker, ClassSide::Prototype, Of::HolderItself, asked));
+        AOT_TEST_CHECK(finds(clear, below, ClassSide::Prototype, Of::HolderAndAbove, asked));
+
+        AOT_TEST_CHECK(!finds(clear, heir, ClassSide::Prototype, Of::ObjectItself, keyNamed("own"_s)));
+        AOT_TEST_CHECK(!findsBehind([&](LinkTables& tables) {
+            tables.firstAppendedFieldOfLayout.fill(0, program->layouts.size() + 1);
+            for (size_t layout = heir.index() + 1; layout < tables.firstAppendedFieldOfLayout.size(); ++layout)
+                tables.firstAppendedFieldOfLayout[layout] = 1;
+            tables.appendedKeys.append(asked);
+        }, heir, ClassSide::Prototype, Of::ObjectItself));
+        AOT_TEST_CHECK(!findsBehind([&](LinkTables& tables) { tables.layouts[heir.index()].possibleChanges = { LayoutChange::GainsProperty }; }, heir, ClassSide::Prototype, Of::ObjectItself));
+        AOT_TEST_CHECK(!findsBehind([&](LinkTables& tables) { tables.layouts[heir.index()].possibleChanges = { LayoutChange::GetsAccessor }; }, heir, ClassSide::Prototype, Of::ObjectItself));
+        AOT_TEST_CHECK(!findsBehind([&](LinkTables& tables) { tables.layouts[heir.index()].isFilledUnderComputedKeys = true; }, heir, ClassSide::Prototype, Of::ObjectItself));
+
+        for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
+            ClassSide otherSide = side == ClassSide::Prototype ? ClassSide::Static : ClassSide::Prototype;
+            AOT_TEST_CHECK(!findsBehind(memberOf(heir, side), heir, side, Of::HolderItself));
+            AOT_TEST_CHECK(!findsBehind(memberOf(heir, side), heir, side, Of::HolderAndAbove));
+            AOT_TEST_CHECK(findsBehind(memberOf(heir, side), heir, otherSide, Of::HolderAndAbove));
+            AOT_TEST_CHECK(!findsBehind(memberOf(base, side), heir, side, Of::HolderAndAbove));
+            AOT_TEST_CHECK(!findsBehind(memberOf(root, side), heir, side, Of::HolderAndAbove));
+            AOT_TEST_CHECK(findsBehind(memberOf(root, side), heir, side, Of::HolderItself));
+
+            auto bitOfHeir = [&](LinkTables& tables) { tables.layouts[heir.index()].namesAreDefinedPastLists[static_cast<size_t>(side)] = true; };
+            AOT_TEST_CHECK(!findsBehind(bitOfHeir, heir, side, Of::HolderItself));
+            AOT_TEST_CHECK(!findsBehind(bitOfHeir, heir, side, Of::HolderAndAbove));
+            AOT_TEST_CHECK(findsBehind(bitOfHeir, heir, otherSide, Of::HolderAndAbove));
+
+            auto listsOfHeirAreNotWhole = [&](LinkTables& tables) { (side == ClassSide::Prototype ? tables.layouts[heir.index()].listsEveryMemberAbove : tables.layouts[heir.index()].listsEveryStaticMember) = false; };
+            AOT_TEST_CHECK(!findsBehind(listsOfHeirAreNotWhole, heir, side, Of::HolderAndAbove));
+            AOT_TEST_CHECK(findsBehind(listsOfHeirAreNotWhole, heir, otherSide, Of::HolderAndAbove));
+        }
+
+        AOT_TEST_CHECK(!findsBesideStaticFieldOf(heir, heir, ClassSide::Static, Of::HolderItself));
+        AOT_TEST_CHECK(!findsBesideStaticFieldOf(heir, heir, ClassSide::Static, Of::HolderAndAbove));
+        AOT_TEST_CHECK(!findsBesideStaticFieldOf(base, heir, ClassSide::Static, Of::HolderAndAbove));
+        AOT_TEST_CHECK(!findsBesideStaticFieldOf(root, heir, ClassSide::Static, Of::HolderAndAbove));
+        AOT_TEST_CHECK(findsBesideStaticFieldOf(root, heir, ClassSide::Static, Of::HolderItself));
+        AOT_TEST_CHECK(findsBesideStaticFieldOf(heir, heir, ClassSide::Prototype, Of::HolderAndAbove));
+
+        AOT_TEST_CHECK(!findsBehind([&](LinkTables& tables) { tables.functions[functionOfMaker.index()].closuresGetOnlyNamesThatAreListed = false; }, maker, ClassSide::Static, Of::HolderItself));
+        AOT_TEST_CHECK(!findsBehind([&](LinkTables& tables) { tables.namesOnFunctions.append(LinkedNameOnFunction { functionOfMaker, asked, FunctionID() }); }, maker, ClassSide::Static, Of::HolderItself));
+        AOT_TEST_CHECK(!finds(clear, maker, ClassSide::Static, Of::HolderItself, keyNamed("arguments"_s)));
+        AOT_TEST_CHECK(!finds(clear, below, ClassSide::Static, Of::HolderAndAbove, asked));
+
+        AOT_TEST_CHECK(!findsBehind(nameOnPrototypeOfMaker(asked), maker, ClassSide::Prototype, Of::HolderItself));
+        AOT_TEST_CHECK(!findsBehind(nameOnPrototypeOfMaker(asked), below, ClassSide::Prototype, Of::HolderAndAbove));
+        AOT_TEST_CHECK(!findsBehind(nameOnPrototypeOfMaker({ }), below, ClassSide::Prototype, Of::HolderAndAbove));
+        AOT_TEST_CHECK(findsBehind(nameOnPrototypeOfMaker(asked), below, ClassSide::Prototype, Of::HolderItself));
+
+        AOT_TEST_CHECK(!finds(clear, heir, ClassSide::Prototype, Of::HolderItself, keyNamed("constructor"_s)));
+        AOT_TEST_CHECK(!finds(clear, heir, ClassSide::Static, Of::HolderItself, keyNamed("name"_s)));
+        AOT_TEST_CHECK(!finds(clear, heir, ClassSide::Prototype, Of::HolderItself, PropertyKeyID()));
     });
 }
 
@@ -534,6 +729,54 @@ static void testWalkGrowsAsLoopsInRowDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
+static String birthsThatEachLeaveIntoOneMeetingForGrowthTests(unsigned numberOfBirths)
+{
+    StringBuilder text;
+    text.append("layout L0 name=\"Point\" module=m0 fields=[{key=\"x\" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1\nmodule m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 length=3 thisType={type=anything} parameters=[{type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {\n  b0(v0: number, v1: boolean, v2: anything):\n    Switch v0 cases=["_s);
+    for (unsigned birth = 0; birth < numberOfBirths; ++birth)
+        text.append(birth ? ", "_s : ""_s, birth);
+    text.append("] -> "_s);
+    for (unsigned birth = 0; birth < numberOfBirths; ++birth)
+        text.append("case b"_s, 2 * birth + 1, "(), "_s);
+    unsigned meeting = 2 * numberOfBirths + 1;
+    text.append("otherwise b"_s, meeting, "()\n"_s);
+    for (unsigned birth = 0; birth < numberOfBirths; ++birth) {
+        unsigned made = 3 * birth + 3;
+        text.append("  b"_s, 2 * birth + 1, "():\n    v"_s, made, " = NewObject -, v2 layout=L0 fields=[0]\n    v"_s, made + 1, " = FinishObject v"_s, made, "\n    Branch v1 -> taken b"_s, 2 * birth + 2, "(), notTaken b"_s, meeting, "()\n"_s);
+        text.append("  b"_s, 2 * birth + 2, "():\n    v"_s, made + 2, " = Call v2, -, v"_s, made + 1, "\n    Return v"_s, made + 2, "\n"_s);
+    }
+    text.append("  b"_s, meeting, "():\n    Return v2\n}\n"_s);
+    return text.toString();
+}
+
+static std::optional<uint64_t> instructionsOfWalkThatMovesBirthsForGrowthTests(unsigned numberOfBirths)
+{
+    std::optional<uint64_t> instructions;
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        std::unique_ptr<Program> parsed = parseProgram(withStandInLibrary(birthsThatEachLeaveIntoOneMeetingForGrowthTests(numberOfBirths)), build);
+        AOT_TEST_CHECK(parsed);
+        StagedBuild stages(WTF::move(parsed), build);
+        AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
+        AOT_TEST_CHECK(build.statistics().values()[static_cast<unsigned>(StatisticID::BirthsLaidWhereCellsAreNeeded)] >= numberOfBirths);
+        instructions = instructionsOfAllThreadsIn([&] {
+            AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
+        });
+    });
+    return instructions;
+}
+
+static void testSweepGrowsAsBirthsThatEachLeaveIntoOneMeetingDo()
+{
+    constexpr unsigned numberOfBirths = 4000;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfWalkThatMovesBirthsForGrowthTests(numberOfBirths);
+    std::optional<uint64_t> large = instructionsOfWalkThatMovesBirthsForGrowthTests(4 * numberOfBirths);
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
 static String loopsInRowThatHandSumOnInsideLoopForGrowthTests(unsigned numberOfLoops)
 {
     StringBuilder text;
@@ -558,6 +801,175 @@ static void testWalkGrowsAsLoopsInRowThatHandSumOnInsideLoopDo()
     InstructionCounts::begin();
     std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(loopsInRowThatHandSumOnInsideLoopForGrowthTests(numberOfLoops), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(loopsInRowThatHandSumOnInsideLoopForGrowthTests(4 * numberOfLoops), FunctionID(1u));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
+enum class ReckoningInLoopForGrowthTests : uint8_t {
+    OneLongSumOfProducts,
+    ManyShortSums,
+    OneLongSumIntoNoNumber,
+};
+
+static String unknownValuesReckonedWithInLoopForGrowthTests(ReckoningInLoopForGrowthTests kind, unsigned numberOfValues)
+{
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {\n  b0(v0: anything, v1: anything):\n"_s);
+    constexpr unsigned firstValue = 2;
+    for (unsigned value = 0; value < numberOfValues; ++value)
+        text.append("    v"_s, firstValue + value, " = PropGet v0 key=\"p"_s, value, "\"\n"_s);
+    unsigned next = firstValue + numberOfValues;
+    text.append("    v"_s, next, " = Integer\n    v"_s, next + 1, " = Convert v"_s, next, " declared={type=number flags=[IsExpected]}\n    v"_s, next + 2, " = Undefined\n"_s);
+    text.append("    v"_s, next + 3, " = Integer\n    v"_s, next + 4, " = Convert v"_s, next + 3, " declared={type=number flags=[IsExpected]}\n    Jump -> next b1(v"_s, next + 1, ", v"_s, next + 2, ", v"_s, next + 4, ")\n"_s);
+    unsigned sum = next + 5;
+    unsigned other = next + 6;
+    unsigned counter = next + 7;
+    text.append("  b1(v"_s, sum, ", v"_s, other, ", v"_s, counter, "):\n    LoopHint\n    v"_s, next + 9, " = Less v"_s, counter, ", v1\n    Branch v"_s, next + 9, " -> taken b2(), notTaken b3()\n  b2():\n"_s);
+    next += 10;
+    unsigned sumOfTurn = sum;
+    unsigned otherOfTurn = other;
+    auto addToSum = [&](unsigned addend) {
+        text.append("    v"_s, next, " = Add v"_s, sumOfTurn, ", v"_s, addend, "\n    v"_s, next + 1, " = Convert v"_s, next, " declared={type=number flags=[IsExpected]}\n"_s);
+        sumOfTurn = next + 1;
+        next += 2;
+    };
+    unsigned chain = 0;
+    for (unsigned value = 0; value < numberOfValues; ++value) {
+        unsigned term = firstValue + value;
+        if (kind != ReckoningInLoopForGrowthTests::OneLongSumIntoNoNumber) {
+            text.append("    v"_s, next, " = Mul v"_s, term, ", v"_s, term, "\n"_s);
+            term = next++;
+        }
+        if (kind == ReckoningInLoopForGrowthTests::ManyShortSums) {
+            addToSum(term);
+            continue;
+        }
+        if (value) {
+            text.append("    v"_s, next, " = Add v"_s, chain, ", v"_s, term, "\n"_s);
+            term = next++;
+        }
+        chain = term;
+    }
+    if (kind == ReckoningInLoopForGrowthTests::OneLongSumOfProducts)
+        addToSum(chain);
+    if (kind == ReckoningInLoopForGrowthTests::OneLongSumIntoNoNumber)
+        otherOfTurn = chain;
+    text.append("    v"_s, next, " = Increment v"_s, counter, "\n    v"_s, next + 1, " = Convert v"_s, next, " declared={type=number flags=[IsExpected]}\n    Jump -> next b1(v"_s, sumOfTurn, ", v"_s, otherOfTurn, ", v"_s, next + 1, ")\n"_s);
+    text.append("  b3():\n    v"_s, next + 2, " = NewArray v"_s, sum, ", v"_s, other, " contents=anything\n    Return v"_s, next + 2, "\n}\n"_s);
+    return text.toString();
+}
+
+static void testWalkGrowsAsUnknownValuesReckonedWithInLoopDo()
+{
+    InstructionCounts::begin();
+    for (auto [kind, numberOfValues] : { std::pair { ReckoningInLoopForGrowthTests::OneLongSumOfProducts, 1000u }, std::pair { ReckoningInLoopForGrowthTests::ManyShortSums, 4000u }, std::pair { ReckoningInLoopForGrowthTests::OneLongSumIntoNoNumber, 1000u } }) {
+        std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(unknownValuesReckonedWithInLoopForGrowthTests(kind, numberOfValues), FunctionID(1u));
+        std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(unknownValuesReckonedWithInLoopForGrowthTests(kind, 4 * numberOfValues), FunctionID(1u));
+        AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+    }
+}
+
+enum class NamesOfLoopForGrowthTests : uint8_t {
+    OfOneKind,
+    EachOfItsOwnKind,
+};
+
+static String namesOfLoopThatEachTakeWhatManyOthersMeetInForGrowthTests(NamesOfLoopForGrowthTests kinds, unsigned numberOfNames)
+{
+    bool eachOfItsOwnKind = kinds == NamesOfLoopForGrowthTests::EachOfItsOwnKind;
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=anything}] {\n  b0(v0: boolean):\n    v1 = Integer\n    v2 = Convert v1 declared={type=number}\n"_s);
+    unsigned firstMade = 3;
+    unsigned met = firstMade + (eachOfItsOwnKind ? numberOfNames : 0);
+    unsigned firstGiver = met + 2;
+    unsigned firstMeeting = firstGiver + 2 * numberOfNames + 1;
+    for (unsigned name = 0; eachOfItsOwnKind && name < numberOfNames; ++name)
+        text.append("    v"_s, firstMade + name, " = NewClosure function=f"_s, name + 2, "\n"_s);
+    text.append("    Jump -> next b1(v2, v2"_s);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append(", v"_s, eachOfItsOwnKind ? firstMade + name : 2);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append(", v2"_s);
+    text.append(")\n  b1(v"_s, met, ": anything, v"_s, met + 1, ": anything"_s);
+    for (unsigned name = 0; name < 2 * numberOfNames; ++name)
+        text.append(", v"_s, firstGiver + name, ": anything"_s);
+    text.append("):\n    LoopHint\n    Branch v0 -> taken b2(), notTaken b"_s, 2 * numberOfNames + 3, "()\n  b2():\n"_s);
+    for (unsigned name = 0; name < numberOfNames; ++name) {
+        text.append("    Branch v0 -> taken b"_s, 2 * name + 3, "(), notTaken b"_s, 2 * name + 4, "(v"_s, name ? firstMeeting + name - 1 : met, ")\n"_s);
+        text.append("  b"_s, 2 * name + 3, "():\n    Jump -> next b"_s, 2 * name + 4, "(v"_s, firstGiver + name, ")\n  b"_s, 2 * name + 4, "(v"_s, firstMeeting + name, ": anything):\n"_s);
+    }
+    unsigned last = firstMeeting + numberOfNames - 1;
+    text.append("    Jump -> next b1(v"_s, last, ", v0"_s);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append(", v"_s, firstGiver + name);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append(", v"_s, last);
+    text.append(")\n  b"_s, 2 * numberOfNames + 3, "():\n    Return v"_s, met, "\n}\n"_s);
+    for (unsigned name = 0; eachOfItsOwnKind && name < numberOfNames; ++name)
+        text.append("function f"_s, name + 2, " module=m0 thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Integer\n    Return v0\n}\n"_s);
+    return text.toString();
+}
+
+static void testWalkGrowsAsNamesOfLoopThatEachTakeWhatManyOthersMeetInDo()
+{
+    constexpr unsigned numberOfNames = 500;
+    InstructionCounts::begin();
+    for (NamesOfLoopForGrowthTests kinds : { NamesOfLoopForGrowthTests::OfOneKind, NamesOfLoopForGrowthTests::EachOfItsOwnKind }) {
+        std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(namesOfLoopThatEachTakeWhatManyOthersMeetInForGrowthTests(kinds, numberOfNames), FunctionID(1u));
+        std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(namesOfLoopThatEachTakeWhatManyOthersMeetInForGrowthTests(kinds, 4 * numberOfNames), FunctionID(1u));
+        AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+    }
+}
+
+static String namesOfLoopThatMayEachTakeFromBothNeighborsForGrowthTests(unsigned numberOfNames)
+{
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=anything}] {\n  b0(v0: boolean):\n    v1 = Integer\n    v2 = Convert v1 declared={type=number}\n"_s);
+    unsigned firstMade = 3;
+    unsigned firstName = firstMade + numberOfNames + 1;
+    unsigned firstTakenFromAbove = firstName + numberOfNames + 1;
+    unsigned firstTakenFromBelow = firstTakenFromAbove + numberOfNames - 1;
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append("    v"_s, firstMade + name, " = NewClosure function=f"_s, name + 2, "\n"_s);
+    text.append("    Jump -> next b1(v2"_s);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append(", v"_s, firstMade + name);
+    text.append(")\n  b1(v"_s, firstName - 1, ": anything"_s);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append(", v"_s, firstName + name, ": anything"_s);
+    text.append("):\n    LoopHint\n    Branch v0 -> taken b2(), notTaken b"_s, 4 * numberOfNames - 1, "()\n  b2():\n"_s);
+    unsigned block = 3;
+    auto mayTake = [&](unsigned held, unsigned taken, unsigned met) {
+        text.append("    Branch v0 -> taken b"_s, block, "(), notTaken b"_s, block + 1, "(v"_s, held, ")\n  b"_s, block, "():\n    Jump -> next b"_s, block + 1, "(v"_s, taken, ")\n  b"_s, block + 1, "(v"_s, met, ": anything):\n"_s);
+        block += 2;
+    };
+    for (unsigned name = 0; name + 1 < numberOfNames; ++name)
+        mayTake(firstName + name, firstName + name + 1, firstTakenFromAbove + name);
+    for (unsigned name = numberOfNames - 1; name; --name)
+        mayTake(name + 1 < numberOfNames ? firstTakenFromAbove + name : firstName + name, firstTakenFromAbove + name - 1, firstTakenFromBelow + numberOfNames - 1 - name);
+    text.append("    Jump -> next b1(v0, v"_s, firstTakenFromAbove);
+    for (unsigned name = 1; name < numberOfNames; ++name)
+        text.append(", v"_s, firstTakenFromBelow + numberOfNames - 1 - name);
+    text.append(")\n  b"_s, 4 * numberOfNames - 1, "():\n    Return v"_s, firstName - 1, "\n}\n"_s);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append("function f"_s, name + 2, " module=m0 thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Integer\n    Return v0\n}\n"_s);
+    return text.toString();
+}
+
+static void testWalkGrowsAsNamesOfLoopThatMayEachTakeFromBothNeighborsDo()
+{
+    constexpr unsigned numberOfNames = 500;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(namesOfLoopThatMayEachTakeFromBothNeighborsForGrowthTests(numberOfNames), FunctionID(1u));
+    std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(namesOfLoopThatMayEachTakeFromBothNeighborsForGrowthTests(4 * numberOfNames), FunctionID(1u));
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
@@ -626,7 +1038,8 @@ static void testNestOfLoopsIsWalkedAlikeWhateverRoomStackHas()
 
 static void testNestDeeperThanTriesGoIsWalkedLittleMoreThanOneThatIsNot()
 {
-    AOT_TEST_CHECK(walksOfLoopsForGrowthTests(loopsInsideOneAnotherRoundSumForGrowthTests(1200), 0) <= 2 * walksOfLoopsForGrowthTests(loopsInsideOneAnotherRoundSumForGrowthTests(1000), 0));
+    AOT_TEST_CHECK(walksOfLoopsForGrowthTests(loopsInsideOneAnotherRoundSumForGrowthTests(1000), 0) <= 4 * 1000);
+    AOT_TEST_CHECK(walksOfLoopsForGrowthTests(loopsInsideOneAnotherRoundSumForGrowthTests(1200), 0) <= 4 * 1200);
 }
 
 static void testScratchRealmHasItsRoomWhereverQuestionStands()
@@ -696,6 +1109,7 @@ static void testWalkGrowsAsIterationsInRowDo()
 enum class LoopsOverGeneratorsForGrowthTests : uint8_t {
     YieldsAndStatements,
     InsideOneAnother,
+    InsideOneAnotherOverLists,
     OneBehindAnother,
     GeneratorsOverOneAnother,
 };
@@ -789,6 +1203,7 @@ static String loopsOverGeneratorsForGrowthTests(LoopsOverGeneratorsForGrowthTest
         appendGeneratorOfYieldsInRowForGrowthTests(text, 2, 2);
         break;
     }
+    case LoopsOverGeneratorsForGrowthTests::InsideOneAnotherOverLists:
     case LoopsOverGeneratorsForGrowthTests::InsideOneAnother: {
         auto cleanupOf = [&](unsigned level) {
             return 3 * size + 1 + (size - 1 - level);
@@ -799,7 +1214,10 @@ static String loopsOverGeneratorsForGrowthTests(LoopsOverGeneratorsForGrowthTest
         };
         unsigned value = 1;
         for (unsigned level = 0; level < size; ++level, value += 8) {
-            text.append("    v"_s, value, " = GetModuleVariable variable=g"_s, level, "\n    v"_s, value + 1, " = Call v"_s, value, ", -, v0\n    v"_s, value + 2, " = IteratorOpen v"_s, value + 1, '\n');
+            if (kind == LoopsOverGeneratorsForGrowthTests::InsideOneAnotherOverLists)
+                text.append("    v"_s, value, " = Integer integer=1\n    v"_s, value + 1, " = NewArray v"_s, value, ", v"_s, value, " contents=anything\n    v"_s, value + 2, " = IteratorOpen v"_s, value + 1, '\n');
+            else
+                text.append("    v"_s, value, " = GetModuleVariable variable=g"_s, level, "\n    v"_s, value + 1, " = Call v"_s, value, ", -, v0\n    v"_s, value + 2, " = IteratorOpen v"_s, value + 1, '\n');
             text.append("    Jump -> next b"_s, 3 * level + 1, "(v"_s, level ? value - 5 : 0, ")\n  b"_s, 3 * level + 1, "(v"_s, value + 3, ": number)"_s);
             appendHandlerAround(level);
             text.append(":\n    LoopHint\n    v"_s, value + 5, " = IteratorResume v"_s, value + 2, "\n    v"_s, value + 6, " = ResultAt v"_s, value + 5, "\n    v"_s, value + 7, " = ResultAt v"_s, value + 5, " index=1\n"_s);
@@ -1251,12 +1669,87 @@ static void testResumptionCostsWhatWasKeptHoweverLargeFrameIs()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
+enum class NamesReadOffJoinsForGrowthTests : uint8_t {
+    TwoBehindLastJoin,
+    OneOfItsOwnInFrontOfEachJoin,
+};
+
+static String joinsInRowThatNamesAreReadOffForGrowthTests(NamesReadOffJoinsForGrowthTests kind, unsigned numberOfJoins)
+{
+    bool eachJoinHasName = kind == NamesReadOffJoinsForGrowthTests::OneOfItsOwnInFrontOfEachJoin;
+    unsigned numberOfNames = eachJoinHasName ? numberOfJoins : 2;
+    StringBuilder text;
+    text.append("layout L0 kind=Instance name=\"Shape\" module=m0 constructor=f2 fields=["_s);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append(name ? ", "_s : ""_s, "{key=\"a"_s, name, "\" declared={type=anything} flags=[IsRequired]}"_s);
+    text.append("] ownFieldCount="_s, numberOfNames, '\n');
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0 namespaceLayout=L(m0)\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = NewClosure function=f1\n    v1 = NewClosure function=f2\n"_s);
+    text.append("    v2 = NewClass v1 layout=L0\n    v3 = FinishClass v2 layout=L0\n    v4 = Integer integer=1\n    v5 = Construct v3, -, v4\n"_s);
+    text.append("    v6 = Builtin builtin=JSON\n    v7 = PropGet v6 key=\"parse\"\n    v8 = String string=\"[]\"\n    v9 = Call v7, v6, v8 calleeKey=\"parse\"\n    v10 = Call v7, v6, v8 calleeKey=\"parse\"\n"_s);
+    text.append("    v11 = Call v0, -, v9, v10\n    Return v11\n}\n"_s);
+    text.append("function f1 name=\"pick\" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {\n"_s);
+    text.append("  b0(v0: anything, v1: anything):\n    v2 = Integer\n    v3 = ElemGet v1, v2\n    Jump -> next b1(v3)\n"_s);
+    unsigned value = 4;
+    unsigned block = 1;
+    for (unsigned join = 0; join < numberOfJoins; ++join) {
+        unsigned joined = value++;
+        text.append("  b"_s, block, "(v"_s, joined, ": anything):\n"_s);
+        if (eachJoinHasName)
+            text.append("    v"_s, value++, " = PropGet v"_s, joined, " key=\"a"_s, join, "\"\n"_s);
+        text.append("    v"_s, value, " = Integer integer="_s, join + 1, "\n    v"_s, value + 1, " = ElemGet v0, v"_s, value, "\n    v"_s, value + 2, " = ToBoolean v"_s, value + 1, '\n');
+        text.append("    Branch v"_s, value + 2, " -> taken b"_s, block + 1, "(), notTaken b"_s, block + 2, "(v"_s, joined, ")\n"_s);
+        text.append("  b"_s, block + 1, "():\n    v"_s, value + 3, " = ElemGet v1, v"_s, value, "\n    Jump -> next b"_s, block + 2, "(v"_s, value + 3, ")\n"_s);
+        value += 4;
+        block += 2;
+    }
+    text.append("  b"_s, block, "(v"_s, value, ": anything):\n"_s);
+    if (eachJoinHasName)
+        text.append("    Return v"_s, value, "\n}\n"_s);
+    else {
+        text.append("    v"_s, value + 1, " = PropGet v"_s, value, " key=\"a0\"\n    v"_s, value + 2, " = PropGet v"_s, value, " key=\"a1\"\n"_s);
+        text.append("    v"_s, value + 3, " = Add v"_s, value + 1, ", v"_s, value + 2, "\n    Return v"_s, value + 3, "\n}\n"_s);
+    }
+    text.append("function f2 name=\"Shape\" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {\n"_s);
+    text.append("  b0(v0: anything, v1: anything):\n    v2 = GetConstructPrototype v0 layout=L0\n    v3 = NewObject v2 layout=L0\n"_s);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append("    PropSet v3, v1 key=\"a"_s, name, "\"\n"_s);
+    text.append("    Return v3\n}\n"_s);
+    return text.toString();
+}
+
+static std::optional<uint64_t> instructionsUpToFirstWalkForGrowthTests(const String& text, FunctionID function)
+{
+    std::optional<uint64_t> instructions;
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        std::unique_ptr<Program> parsed = parseProgram(withStandInLibrary(text), build);
+        AOT_TEST_CHECK(parsed);
+        StagedBuild stages(WTF::move(parsed), build);
+        instructions = instructionsOfAllThreadsIn([&] {
+            AOT_TEST_CHECK(stages.code(CodeUnit { function, CodeRole::Body }));
+        });
+    });
+    return instructions;
+}
+
+template<NamesReadOffJoinsForGrowthTests kind, unsigned numberOfJoins>
+static void testFirstWalkGrowsAsJoinsThatNamesAreReadOffDo()
+{
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsUpToFirstWalkForGrowthTests(joinsInRowThatNamesAreReadOffForGrowthTests(kind, numberOfJoins), FunctionID(1u));
+    std::optional<uint64_t> large = instructionsUpToFirstWalkForGrowthTests(joinsInRowThatNamesAreReadOffForGrowthTests(kind, 4 * numberOfJoins), FunctionID(1u));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
 std::span<const NativeTest> growthOfWorkTests()
 {
     static constexpr NativeTest tests[] {
         { "growth-of-work/each-of-many-members-of-a-class-is-found-by-its-key"_s, testEachOfManyMembersIsFoundByItsKey },
         { "growth-of-work/members-of-classes-far-above-are-found-by-their-keys"_s, testMembersOfClassesFarAboveAreFoundByTheirKeys },
+        { "growth-of-work/asking-each-class-object-of-a-row-what-a-lookup-does-not-find-grows-as-the-row-does"_s, testAskingEachClassObjectOfRowWhatLookupDoesNotFindGrowsAsRowDoes },
         { "growth-of-work/a-member-above-a-long-row-is-the-one-that-a-walk-up-the-row-finds"_s, testMemberAboveLongRowIsTheOneThatWalkUpRowFinds },
+        { "growth-of-work/each-question-inside-what-a-lookup-did-not-find-answers-for-itself"_s, testEachQuestionInsideWhatLookupDidNotFindAnswersForItself },
         { "growth-of-work/each-of-many-effects-is-kept-once-and-stays-where-it-lies"_s, testEachOfManyEffectsIsKeptOnceAndStaysWhereItLies },
         { "growth-of-work/the-plan-grows-as-the-members-of-a-class-do"_s, testPlanGrowsAsMembersOfClassDo },
         { "growth-of-work/the-plan-grows-as-the-classes-in-a-row-of-which-the-foot-is-constructed-do"_s, testPlanGrowsAsClassesInRowDo },
@@ -1265,6 +1758,9 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/the-facts-grow-as-the-objects-created-below-one-literal-do"_s, testFactsGrowAsObjectsCreatedBelowOneLiteralDo },
         { "growth-of-work/the-walk-grows-as-the-loops-in-a-row-do"_s, testWalkGrowsAsLoopsInRowDo },
         { "growth-of-work/the-walk-grows-as-the-loops-in-a-row-that-hand-a-sum-on-inside-a-loop-do"_s, testWalkGrowsAsLoopsInRowThatHandSumOnInsideLoopDo },
+        { "growth-of-work/the-walk-grows-as-the-values-that-nobody-knows-and-a-loop-reckons-with-do"_s, testWalkGrowsAsUnknownValuesReckonedWithInLoopDo },
+        { "growth-of-work/the-walk-grows-as-the-names-of-a-loop-that-each-take-what-many-others-meet-in-do"_s, testWalkGrowsAsNamesOfLoopThatEachTakeWhatManyOthersMeetInDo },
+        { "growth-of-work/the-walk-grows-as-the-names-of-a-loop-that-may-each-take-from-both-neighbors-do"_s, testWalkGrowsAsNamesOfLoopThatMayEachTakeFromBothNeighborsDo },
         { "growth-of-work/the-walk-grows-as-the-loops-up-to-one-bound-do"_s, testWalkGrowsAsLoopsUpToOneBoundDo },
         { "growth-of-work/a-nest-of-loops-is-walked-alike-whatever-room-its-stack-has"_s, testNestOfLoopsIsWalkedAlikeWhateverRoomStackHas },
         { "growth-of-work/a-nest-round-a-sum-that-is-deeper-than-tries-go-is-walked-little-more-than-one-that-is-not"_s, testNestDeeperThanTriesGoIsWalkedLittleMoreThanOneThatIsNot },
@@ -1275,14 +1771,19 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/the-liveness-of-a-body-grows-as-the-loops-that-values-live-across-do"_s, testLivenessGrowsAsValuesReadAtEndDo<StatementInRowForGrowthTests::Loop> },
         { "growth-of-work/the-liveness-of-a-body-grows-as-the-blocks-under-one-handler-do"_s, testLivenessGrowsAsValuesReadAtEndDo<StatementInRowForGrowthTests::UnderOneHandler> },
         { "growth-of-work/the-walk-grows-as-the-iterations-in-a-row-do"_s, testWalkGrowsAsIterationsInRowDo },
+        { "growth-of-work/the-first-walk-of-a-body-grows-as-the-joins-in-a-row-behind-which-two-names-are-read-do"_s, testFirstWalkGrowsAsJoinsThatNamesAreReadOffDo<NamesReadOffJoinsForGrowthTests::TwoBehindLastJoin, 500> },
+        { "growth-of-work/the-first-walk-of-a-body-grows-as-the-joins-in-a-row-that-each-have-a-name-of-their-own-read-in-front-do"_s, testFirstWalkGrowsAsJoinsThatNamesAreReadOffDo<NamesReadOffJoinsForGrowthTests::OneOfItsOwnInFrontOfEachJoin, 100> },
         { "growth-of-work/the-walk-grows-as-the-yields-and-the-statements-of-the-loop-that-takes-them-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::YieldsAndStatements, 100> },
         { "growth-of-work/the-walk-grows-as-the-loops-over-generators-inside-one-another-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::InsideOneAnother, 3> },
+        { "growth-of-work/the-walk-grows-as-the-loops-over-lists-inside-one-another-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::InsideOneAnotherOverLists, 5> },
+        { "growth-of-work/the-walk-grows-as-the-loops-over-lists-inside-one-another-do-from-twenty-on"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::InsideOneAnotherOverLists, 20> },
         { "growth-of-work/the-walk-grows-as-the-loops-over-generators-one-behind-another-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::OneBehindAnother, 250> },
         { "growth-of-work/the-walk-grows-as-the-generators-that-loop-over-one-another-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::GeneratorsOverOneAnother, 4> },
         { "growth-of-work/a-chain-of-joined-texts-costs-what-its-last-text-holds"_s, testChainOfJoinedTextsCostsWhatItsLastTextHolds },
         { "growth-of-work/texts-that-add-to-one-another-and-are-each-read-cost-what-the-last-one-holds"_s, testTextsThatAddToOneAnotherAndAreEachReadCostWhatLastOneHolds },
         { "growth-of-work/the-walk-grows-as-the-terms-of-a-sum-of-texts-do"_s, testWalkGrowsAsTermsOfSumOfTextsDo },
         { "growth-of-work/the-walk-grows-as-the-terms-of-a-sum-of-texts-do-past-the-longest-text-that-is-made"_s, testWalkGrowsAsTermsOfSumOfTextsDoPastLongestTextThatIsMade },
+        { "growth-of-work/the-sweep-grows-as-the-births-that-each-leave-into-one-meeting-do"_s, testSweepGrowsAsBirthsThatEachLeaveIntoOneMeetingDo },
         { "growth-of-work/a-run-grows-as-the-graphs-asked-for-in-one-job-do"_s, testRunGrowsAsGraphsAskedForInOneJobDo },
         { "growth-of-work/a-run-grows-as-the-graphs-of-several-levels-asked-for-in-one-job-do"_s, testRunGrowsAsGraphsOfSeveralLevelsAskedForInOneJobDo },
         { "growth-of-work/a-run-grows-as-the-awaits-behind-a-long-list-do"_s, testRunGrowsAsAwaitsBehindLongListDo },

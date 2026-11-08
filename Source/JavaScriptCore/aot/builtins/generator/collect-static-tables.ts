@@ -283,6 +283,7 @@ function memberOf(
       platforms: entry.platforms,
       ...symbolColumnsOf(entry),
       ...(entry.attributes.includes(constructableWord) ? { constructable: true } : {}),
+      canBeListed: !entry.attributes.includes("DontEnum"),
       ...(meanings.some(meaning => meaning.isAddedAtFirstRead === true)
         ? { addedAtFirstRead: true, ...(entry.attributes.includes("DontEnum") ? {} : { addedAsEnumerable: true }) }
         : {}),

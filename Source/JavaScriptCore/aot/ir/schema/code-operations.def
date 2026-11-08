@@ -1,10 +1,14 @@
 family Cast Placed..Placed
 engine operation Narrowed (value: Convertible/returns, test?: Convertible/inspects, operandIndex: UInt32, caseIndex?: UInt32) [| engine isOnTakenEdge narrowsHolderOfOperand narrowsOtherResultOfOperand] -> natural(same(value)) ; none ; handsOn = NarrowerType ; form = Open
 
-enum ProofSource { | engine EntryParameter ResultOfCall Field Variable Capture SlotOfScope Contents ResultOfOtherCall OtherOperation Test WhatIsRemembered Lifetime }
-engine operation CheckProof (value: Convertible/inspects, checkedType: Type, typeWithoutProof: Type, source: ProofSource) [| engine isLeftToTestBehind] -> none ; none ; form = Open
-engine operation AssumeType (value: Convertible/returns, provenType: Type, source: ProofSource) -> declared(provenType) ; none ; handsOn = NarrowerType ; form = Open
+enum ProofSource { | engine EntryParameter ResultOfCall Field Variable Capture SlotOfScope Contents ResultOfOtherCall OtherOperation Test WhatIsRemembered CallMadeInFront Lifetime }
+engine operation CheckProof (value: Convertible/inspects, checkedType: Type, typeWithoutProof: Type, source: ProofSource) [| engine isLeftToTestBehind goesWithItsValue] -> none ; none ; form = Open
 
 family Hint Placed..Placed
 engine operation EndLifeOfCell (cell: Convertible/inspects) -> none ; writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements) ; form = Open
 engine operation GuessFailsUnasked () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState) ; form = Open
+engine operation BeginsWhatMayRunAgain () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState) ; form = Open
+engine operation TurnBeginsAgain (beginning: Convertible/inspects) -> none ; writes(ExternalState) ; form = Open
+engine operation CopyLeavesForCall (beginning: Convertible/inspects) -> none ; writes(ExternalState) ; form = Open
+engine operation TurnWasQuiet (beginning: Convertible/inspects) -> none ; writes(ExternalState) ; form = Open
+engine operation AskObjectAgain (object: Convertible/inspects, answered?: Convertible/inspects, onlyWhere?: Convertible/inspects, key: PropertyKey, function?: Function(Closure)) [| engine answerIsMethod functionIsGetter asksChainAbovePrototype] -> none ; reads(ShapeWords, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) writes(RuntimeState) ; form = Open

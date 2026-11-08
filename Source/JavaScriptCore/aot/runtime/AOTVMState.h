@@ -24,6 +24,7 @@ namespace JSC {
 class CallFrame;
 class JSGlobalObject;
 class JSObject;
+class JSString;
 class Structure;
 class VM;
 
@@ -87,6 +88,8 @@ public:
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
     static constexpr ptrdiff_t offsetOfEntriesWithSeveralInstances() { return OBJECT_OFFSETOF(VMState, entriesWithSeveralInstances); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
+    static constexpr ptrdiff_t offsetOfParentOfSuperCall() { return OBJECT_OFFSETOF(VMState, parentOfSuperCall); }
+    static constexpr ptrdiff_t offsetOfNewTargetOfSuperCall() { return OBJECT_OFFSETOF(VMState, newTargetOfSuperCall); }
     static constexpr unsigned maxGroupsInRegExpMatchOutput = 15;
 
     struct PolledInstances {
@@ -108,8 +111,14 @@ public:
     BitVector filesWithKnownFirstLoad;
     BitVector filesFirstLoadedSynchronously;
     BitVector filesWhoseTextHostKeeps;
+    BitVector filesWhoseKeptTextWasCompiled;
+    BitVector filesWhoseKeptTextWasReadBelowVitest;
+    BitVector filesStartedByHost;
+    BitVector filesWhoseTextHostHoldsItself;
     BitVector builtinMembersWrittenInSomeRealm;
     BitVector builtinHoldersWithNamesAddedInSomeRealm;
+    JSCell* parentOfSuperCall { nullptr };
+    JSCell* newTargetOfSuperCall { nullptr };
     bool hasCompiledCode { false };
     bool nativeTestChangesObjectsUnseen { false };
     bool didFinishCollection { false };
@@ -124,6 +133,7 @@ public:
     uintptr_t structureIDBase { 0 };
     Instance* onlyInstance { nullptr };
     uint64_t entriesWithSeveralInstances { 0 };
+    uint64_t movesOfEntriesInCollections { 0 };
     struct InstanceOfRun {
         uint64_t entries { 0 };
         void* entryFrame { nullptr };
@@ -142,7 +152,13 @@ public:
     bool requireRunsMocks { false };
     std::unique_ptr<ProgramIdentifiers> identifiers;
     CountedFiles countedFiles;
+    struct KeysComparedLastWithLongNames {
+        UncheckedKeyHashMap<const UniquedStringImpl*, const JSString*> byName;
+        uint64_t versionOfHeap { 0 };
+    };
+    KeysComparedLastWithLongNames keysComparedLastWithLongNames;
     UniqueArray<int> regExpMatchOutput;
+    size_t sizeOfRegExpMatchOutput { 0 };
     WriteBarrier<Structure> moduleRecordStructure;
     WriteBarrier<Structure> stringBuilderStorageStructure;
     WriteBarrier<Structure> poisonedCellStructure;

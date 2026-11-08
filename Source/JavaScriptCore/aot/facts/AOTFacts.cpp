@@ -837,6 +837,8 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, BuildConte
 {
     const ParallelLoops& loops = build.parallelLoops();
     endStableNumbersOfKeysForFacts(program, loops);
+    program.types.keepAddressesOfPropertyKeys();
+    program.types.keepAddressesOfTypes();
     std::unique_ptr<BodyIndexTable> bodies = indexBodiesForFacts(program, loops, { });
     if (build.diagnostics().hasErrors())
         return;
@@ -925,7 +927,11 @@ TypeID Facts::typeBelievedOfEntryParameter(TypeArena& types, FunctionID id, unsi
     }));
     if (entryMayNotAsk)
         asked = types.unionOf(types.withoutObjects(asked), types.at(asked).hasOnlyClosures() ? TypeTable::function : TypeTable::object);
-    if (asked == both || !declared || !declared->isEstablished())
+    if (declared && !declared->isEstablished()) {
+        TypeID written = declared->written();
+        return written && types.at(written).isJavaScriptValue() && types.isSubset(asked, written) ? types.intersectionOf(asked, written) : asked;
+    }
+    if (asked == both || !declared)
         return asked;
     return types.intersectionOf(type, asked);
 }
@@ -983,7 +989,7 @@ static void indexLayoutsByNamesForFacts(const Program& program, BuildContext& bu
 {
     StepTimes steps(build, "facts"_s);
     if (parts.mechanisms.contains(Mechanism::Guesses))
-        parts.layoutsByNames = LayoutsByNames(program, parts.linked);
+        parts.layoutsByNames = LayoutsByNames(program, *parts.summaries, parts.linked);
     steps.didFinish("layouts by names"_s);
 }
 
@@ -1022,6 +1028,8 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
             stepsOfLane.didFinish("mocks, indexes of bodies"_s);
         },
     });
+    program.types.keepAddressesOfPropertyKeys();
+    program.types.keepAddressesOfTypes();
     steps.didFinish("keys of texts beside mocks and indexes of bodies"_s);
     if (hasFailed())
         return nullptr;
@@ -1109,6 +1117,19 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     if (hasFailed())
         return nullptr;
 
+    bool expectsByNamesAsked = parts.mechanisms.contains(Mechanism::Guesses) && turns.provingFlow;
+    NamesAskedOfContentsOfFields namesAsked;
+    runLanes(loops, {
+        [&] { indexLayoutsByNamesForFacts(program, build, parts); },
+        [&] {
+            if (expectsByNamesAsked)
+                namesAsked = gatherNamesAskedOfContentsOfFields(program, *turns.provingFlow, parts.held);
+        },
+    });
+    if (expectsByNamesAsked)
+        expectContentsOfFieldsByNamesAsked(program, *turns.provingFlow, namesAsked, parts.layoutsByNames, parts.held);
+    steps.didFinish("layouts by names beside the names asked of what lies in fields"_s);
+
     runLanes(loops, {
         [&] {
             StepTimes stepsOfLane(build, "facts"_s);
@@ -1122,7 +1143,6 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
         [&] { fillTablesOfProgramForFacts(program, looks, build, parts); },
         [&] { orderFunctionsByReferrersForFacts(program, build.parallelLoops(), build, parts); },
         [&] { fillTablesOfLayoutsAndClassesForFacts(program, build, parts); },
-        [&] { indexLayoutsByNamesForFacts(program, build, parts); },
         [&] { fillTablesOfFunctionsForFacts(program, request, build, parts); },
     });
     for (size_t layout = 0; layout < parts.linked.layouts.size() && layout < parts.tables.classes.size(); ++layout) {

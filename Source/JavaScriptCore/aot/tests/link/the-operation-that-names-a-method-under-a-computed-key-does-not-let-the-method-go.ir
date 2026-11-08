@@ -1,0 +1,61 @@
+# class A { m() { return "m"; }  idle() { return "idle"; }  [Symbol.asyncDispose]() { return true; } }  function askM(x) { return x.m(); }  askM(new A());
+# A method under a computed key is named by an operation of the engine's own: `SetFunctionName closure, key`. It lays a text under `name` on a function that was made a moment ago, and runs no code.
+# The scan wrote it down as a definition by a descriptor that nobody has read, and Link hands the subject of such a definition to code that nobody sees:
+# so every method under a computed key was reached the moment its class was evaluated, whoever called it: eight of class FileHandle in node:fs/promises.
+# RUN: summary f0
+# CHECK: member L0 Prototype 2 Method @@asyncDispose = Closure f3
+# RUN(LINK): link functions members mechanisms=all
+# LINK: function f3 unreached
+# LINK: function f5 unreached
+# LINK: member L0 Prototype 2 Method @@asyncDispose function=f3
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SymbolAsyncDispose
+    v1 = ToPropertyKey v0
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 key="m"
+    v6 = NewClosure function=f5
+    DefineMethod v3, v6 layout=L0 index=1 key="idle"
+    v8 = NewClosure function=f3
+    SetFunctionName v8, v1
+    DefineMethod v3, v8, v1 layout=L0 index=2
+    v11 = FinishClass v3 layout=L0
+    v12 = Construct v11
+    v13 = NewClosure function=f4
+    v14 = Call v13, -, v12 calleeName="askM"
+    v15 = Undefined
+    Return v15
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="m"
+    Return v0
+}
+function f3 name="[Symbol.asyncDispose]" module=m0 kind=Method thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}
+function f4 name="askM" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}
+function f5 name="idle" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="idle"
+    Return v0
+}

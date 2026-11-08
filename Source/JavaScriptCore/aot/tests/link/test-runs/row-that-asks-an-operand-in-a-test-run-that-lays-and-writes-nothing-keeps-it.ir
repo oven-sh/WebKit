@@ -8,7 +8,7 @@
 # FIELDS: field L0.0 "tag" proven=string writers-known written-at-construction-alone filled
 # FIELDS: field L1.0 "tag" proven=string writers-known written-at-construction-alone filled
 # RUN(LIST): link accesses mechanisms=all
-# LIST: read f0 v19 proven=undefined|i32
+# LIST: read f0 v19 proven=undefined|int[0, 2147483647]
 # LIST: receiver-as-made f0 v19
 
 layout L0 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]

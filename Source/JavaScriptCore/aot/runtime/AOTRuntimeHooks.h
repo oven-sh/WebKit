@@ -15,6 +15,7 @@ namespace JSC {
 class InlineWatchpointSet;
 class JSArray;
 class JSCell;
+class JSFunction;
 class ObjectPropertyCondition;
 class PropertyName;
 
@@ -52,6 +53,7 @@ void installDeferredWatchpoints(JSGlobalObject*);
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
 bool becomesDictionaryByAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
 void didMakeStructureForAddition(VM&, Structure* made);
+Structure* addBrandForSuperCall(VM&, JSFunction* newTarget, Structure*);
 void finishFillingObjects(VM&);
 void runFilesThatWaitInLoader(VM&);
 void didStartWatchingReplacements(VM&);

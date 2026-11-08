@@ -202,7 +202,7 @@ function resultRulesInlines(schema: Schema): string[] {
   const terminatorCases = schema.terminators.map(entry => ({ label: entry.name, body: terminatorBody(schema, entry) }));
   const definitions = [
     operationTemplateHead,
-    "typename Rules::Result applyResultRule(Rules& rules, const Operation& operation, uint32_t resultIndex, ResultSide side)",
+    "ALWAYS_INLINE typename Rules::Result applyResultRule(Rules& rules, const Operation& operation, uint32_t resultIndex, ResultSide side)",
     "{",
     "    UNUSED_PARAM(resultIndex);",
     "    bool isProven = side == ResultSide::Proven;",

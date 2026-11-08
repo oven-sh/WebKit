@@ -676,6 +676,7 @@ public:
     BodyValue operationAt(uint32_t wordOffset, ValueID id) const { return BodyValue::operation(m_words + wordOffset, m_unit, id); }
     BodyValue parameterAt(uint32_t wordOffset, ValueID id) const { return BodyValue::parameter(m_words + wordOffset, m_unit, id); }
     BodyBlock blockAt(uint32_t wordOffset, uint32_t wordOffsetOfTerminator, BlockID id, ValueID firstParameter) const { return { m_words + wordOffset, m_words + wordOffsetOfTerminator, m_unit, id, firstParameter }; }
+    BodyTerminator terminatorAt(uint32_t wordOffsetOfTerminator, BlockID id) const { return { m_words + wordOffsetOfTerminator, m_unit, id }; }
 
     template<typename Functor>
     void forEachBlock(const Functor& functor) const

@@ -1,0 +1,6 @@
+# where the code of what is called lies was asked in front of the loop: each turn calls that address at the site. It was: a call of a stub that held one jump through the register, so that one jump served every such call of a program.
+# RUN: bytes f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Call Stub ResolveCallValue
+# CHECK-NOT: Call Stub CallResolvedValue
+# PROGRAM-OF: target-of-a-call-of-a-value-from-in-front-is-resolved-once.ir

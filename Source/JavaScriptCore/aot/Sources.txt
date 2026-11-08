@@ -480,6 +480,7 @@ aot/walk/AOTOperatorForms.cpp
 aot/walk/AOTRepresentationConversions.cpp
 aot/walk/AOTRepresentationRules.cpp
 aot/walk/AOTRepresentationRulesOfPositions.cpp
+aot/walk/AOTSumOverRecords.cpp
 aot/walk/AOTSweep.cpp
 aot/walk/AOTSweepClosuresLent.cpp
 aot/walk/AOTSweepHandlers.cpp
@@ -520,6 +521,7 @@ aot/walk/AOTWalkGeneratorStepsByHand.cpp
 aot/walk/AOTWalkGeneratorsInLoops.cpp
 aot/walk/AOTWalkGuesses.cpp
 aot/walk/AOTWalkHandlers.cpp
+aot/walk/AOTWalkHeirsOfBuiltins.cpp
 aot/walk/AOTWalkInlining.cpp
 aot/walk/AOTWalkInt32Promises.cpp
 aot/walk/AOTWalkIteration.cpp
@@ -560,6 +562,7 @@ aot/walk/AOTWalkPromotedEnvironments.cpp
 aot/walk/AOTWalkRegExps.cpp
 aot/walk/AOTWalkReplacements.cpp
 aot/walk/AOTWalkResolvedCalls.cpp
+aot/walk/AOTWalkResultsInParts.cpp
 aot/walk/AOTWalkSlicesInSight.cpp
 aot/walk/AOTWalkStableBindings.cpp
 aot/walk/AOTWalkStackTests.cpp

@@ -50,6 +50,8 @@ struct FunctionKindData {
 };
 static_assert(sizeof(FunctionKindData) == 2 && isImageRecord<FunctionKindData>);
 
+constexpr unsigned closureStructureOfGeneratorFunctions(bool isAsync) { return FunctionKindData { .isAsync = isAsync, .isGenerator = true }.closureStructureOfKind(); }
+
 struct FunctionTraceData {
     uint16_t visibilityBits : 2;
     uint16_t builtinKindBits : 2;
@@ -135,8 +137,12 @@ struct FunctionTexts {
     uint32_t numberOfEntries;
     uint32_t entriesOffset;
     uint32_t textOffset;
+    uint32_t numberOfBlocks;
+    uint32_t endsOfBlocksOffset;
+    uint32_t sizeOfText;
 };
-static_assert(sizeof(FunctionTexts) == 12 && isImageRecord<FunctionTexts>);
+static_assert(sizeof(FunctionTexts) == 24 && isImageRecord<FunctionTexts>);
+static constexpr uint32_t sizeOfBlockOfText = 64 * 1024;
 
 struct FunctionTextEntry {
     Number24 function;
@@ -177,10 +183,12 @@ static_assert(sizeof(FunctionWithLargeCountsData) == 7 && isImageRecord<Function
 struct NamedCaptureData {
     Number24 closureNumber;
     uint8_t slot;
-    uint32_t name;
+    uint32_t name : 31;
+    uint32_t isVariableOfModule : 1;
 };
 static_assert(sizeof(NamedCaptureData) == 8 && isImageRecord<NamedCaptureData>);
 
+static constexpr uint32_t namedCaptureIsVariableOfModule = UINT8_MAX + 1;
 using NamedCaptureList = Vector<std::pair<uint32_t, uint32_t>, 8>;
 
 class RecentNamedCaptureLists {
@@ -243,7 +251,7 @@ public:
             return;
         }
         m_recent.add(list);
-        if (list.last().first < 62) {
+        if (std::ranges::all_of(list, [](const auto& capture) { return capture.first < 62; })) {
             uint64_t slots = 0;
             for (auto [slot, name] : list)
                 slots |= 1ull << slot;
@@ -274,7 +282,7 @@ inline Vector<uint8_t> encodeNamedCaptures(std::span<const NamedCaptureData> row
         NamedCaptureList list;
         size_t end = first;
         for (; end < rows.size() && rows[end].closureNumber == rows[first].closureNumber; ++end)
-            list.append({ rows[end].slot, rows[end].name });
+            list.append({ rows[end].slot | (rows[end].isVariableOfModule ? namedCaptureIsVariableOfModule : 0), rows[end].name });
         writer.append(rows[first].closureNumber, list);
         first = end;
     }
@@ -289,7 +297,7 @@ bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
     uint64_t closureNumber = 0;
     auto visitAll = [&](const NamedCaptureList& list) {
         for (auto [slot, name] : list)
-            visit(NamedCaptureData { Number24(static_cast<uint32_t>(closureNumber)), static_cast<uint8_t>(slot), name });
+            visit(NamedCaptureData { Number24(static_cast<uint32_t>(closureNumber)), static_cast<uint8_t>(slot), name, !!(slot & namedCaptureIsVariableOfModule) });
     };
     while (cursor < end) {
         closureNumber += readVarint(cursor);
@@ -319,7 +327,7 @@ bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
                 if (cursor >= end)
                     return false;
                 uint64_t slot = readVarint(cursor);
-                if (cursor >= end || slot > UINT8_MAX)
+                if (cursor >= end || slot > (UINT8_MAX | namedCaptureIsVariableOfModule))
                     return false;
                 list.append({ static_cast<uint32_t>(slot), static_cast<uint32_t>(readVarint(cursor)) });
             }
@@ -350,6 +358,7 @@ bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
     v(quotedTextGroups, QuotedTextGroupData) \
     v(quotedTextRows, uint8_t) \
     v(textOfQuotes, uint8_t) \
+    v(blocksOfTextOfQuotes, uint32_t) \
     v(constructors, ConstructorData) \
     v(constructEntrypoints, ConstructEntrypointData)
 

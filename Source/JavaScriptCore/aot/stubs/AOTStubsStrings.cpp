@@ -457,7 +457,8 @@ void branchUnlessTextStandsAtPlace(StubAssembler& jit, const TextSoughtAtOnePlac
         break;
     }
     needsOperation.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
-    load8BitCharactersInPlace(jit, string, characters, word, needsOperation);
+    JumpList hasNoCharactersInPlace;
+    load8BitCharactersInPlace(jit, string, characters, word, where == PlaceOfSoughtText::IsEnd ? hasNoCharactersInPlace : needsOperation);
     if (where != PlaceOfSoughtText::IsStart)
         jit.addPtr(place, characters);
     jit.and32(TrustedImm32(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), soughtCharacters, word);
@@ -483,6 +484,32 @@ void branchUnlessTextStandsAtPlace(StubAssembler& jit, const TextSoughtAtOnePlac
     jit.urshift64(TrustedImm32(JSRopeString::CompactFibers::shiftOfFiber2InUpperWord), part);
     standsThere.append(jit.branchTestPtr(CCallHelpers::Zero, part));
     comparePart();
+    if (where == PlaceOfSoughtText::IsEnd) {
+        standsThere.append(jit.jump());
+        hasNoCharactersInPlace.link(&jit);
+        jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
+        needsOperation.append(jit.branchIfNotRopeStringImpl(characters));
+        needsOperation.append(jit.branchTestPtr(CCallHelpers::NonZero, characters, TrustedImm32(JSRopeString::isSubstringInPointer)));
+        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, length));
+        needsOperation.append(jit.branchIfRopeStringImpl(soughtCharacters));
+        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(soughtCharacters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        const GPRReg lastPart = characters;
+        loadSubstringBaseAndOffset(jit, string, lastPart, word);
+        Jump hasTwoParts = jit.branchTestPtr(CCallHelpers::Zero, word);
+        jit.move(word, lastPart);
+        hasTwoParts.link(&jit);
+        jit.loadPtr(Address(lastPart, JSString::offsetOfValue()), lastPart);
+        needsOperation.append(jit.branchIfRopeStringImpl(lastPart));
+        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(lastPart, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        jit.load32(Address(lastPart, StringImpl::lengthMemoryOffset()), word);
+        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, word));
+        jit.loadPtr(Address(lastPart, StringImpl::dataOffset()), lastPart);
+        jit.load8(BaseIndex(lastPart, word, CCallHelpers::TimesOne, -1), lastPart);
+        jit.loadPtr(Address(soughtCharacters, StringImpl::dataOffset()), word);
+        jit.load8(BaseIndex(word, length, CCallHelpers::TimesOne, -1), word);
+        isNotThere.append(jit.branch32(CCallHelpers::NotEqual, lastPart, word));
+        needsOperation.append(jit.jump());
+    }
     standsThere.link(&jit);
 }
 

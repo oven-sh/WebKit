@@ -70,7 +70,7 @@ constexpr std::array<E, numberOfEnumerators<E>> makeAllMembers()
 {
     std::array<E, numberOfEnumerators<E>> members { };
     for (unsigned i = 0; i < numberOfEnumerators<E>; ++i)
-        members[i] = static_cast<E>(isFlagWord<E> ? 1u << i : i);
+        members[i] = static_cast<E>(isFlagWord<E> ? 1ull << i : i);
     return members;
 }
 
@@ -97,7 +97,7 @@ struct EnumeratorNames {
 template<typename E, size_t count, size_t numberOfCharacters>
 static ASCIILiteral nameAt(const EnumeratorNames<count, numberOfCharacters>& names, E value)
 {
-    auto number = static_cast<uint32_t>(value);
+    auto number = static_cast<uint64_t>(value);
     if constexpr (isFlagWord<E>) {
         RELEASE_ASSERT(hasOneBitSet(number));
         number = WTF::ctz(number);
@@ -108,7 +108,7 @@ static ASCIILiteral nameAt(const EnumeratorNames<count, numberOfCharacters>& nam
 
 function enumLines(type: SchemaEnum): string[] {
   const underlying = underlyingTypeOf(type);
-  const one = underlying === "uint32_t" ? "1u" : "1";
+  const one = underlying === "uint64_t" ? "1ull" : underlying === "uint32_t" ? "1u" : "1";
   const itemOf = (member: Member) => (type.isFlags ? `${member.name} = ${one} << ${member.number}` : member.name);
   return braced(`enum class ${type.name} : ${underlying}`, type.members.map(itemOf));
 }

@@ -40,7 +40,6 @@ public:
     virtual TypeID readByNameOffObjectsOf(TypeLevel, LayoutID, PropertyKeyID) const { return { }; }
     virtual LayoutID classAbove(LayoutID) const { return { }; }
     virtual TypeID property(TypeLevel, ObjectID, PropertyKeyID) const = 0;
-    virtual TypeID contents(TypeLevel, ObjectID, ContentsSlot) const = 0;
     virtual TypeID result(TypeLevel, FunctionID, uint32_t resultIndex) const = 0;
     virtual TypeID resultOfBodyThatNeverSuspends(TypeLevel, FunctionID) const { return { }; }
     virtual TypeID entryParameter(TypeLevel, FunctionID, uint32_t entryParameterIndex) const = 0;
@@ -149,7 +148,7 @@ ALWAYS_INLINE std::optional<uint32_t> numberOfResultsOf(const Program& program, 
 TypeID naturalTypeFrom(TypeArena&, const NaturalType&);
 TypeID widestPrimitiveResultOf(Opcode);
 TypeID widestPrimitiveResultOf(TypeArena&, Opcode producer, uint32_t resultIndex);
-inline constexpr OpcodeSet recordsTypedByWhatIsProvenOfContents { Opcode::ResultAt, Opcode::CallInline, Opcode::CallBuiltin };
+inline constexpr OpcodeSet recordsTypedByWhatIsProvenOfContents { Opcode::ResultAt, Opcode::CallInline, Opcode::CallBuiltin, Opcode::GetValueAtPlaceInMap };
 inline constexpr OpcodeSet readsTypedByWhatIsProvenOfInput { Opcode::ElemGet, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex };
 
 constexpr UnknownSeed seedOfUnknownResultByRowOf(Opcode opcode)

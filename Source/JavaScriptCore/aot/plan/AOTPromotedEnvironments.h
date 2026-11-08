@@ -50,6 +50,7 @@ struct StoreOfCapturedValue {
 };
 
 struct PromotedEnvironments {
+    uint32_t numberOfCapturesOfClassesStoredForGood { 0 };
     uint32_t numberOfRemovedCapturesOf(FunctionID function) const { return function.index() < numbersOfRemovedCaptures.size() ? numbersOfRemovedCaptures[function.index()] : 0; }
     const PromotedVariable* find(VariableID id) const LIFETIME_BOUND
     {
@@ -104,7 +105,7 @@ struct PromotedEnvironments {
     BitVector makers;
 };
 
-PromotedEnvironments planPromotedEnvironments(const Program&, const Facts&, const SlotPlanParts&);
+PromotedEnvironments planPromotedEnvironments(const Program&, const Facts&, const SlotPlanParts&, std::span<const LayoutID> scopesTakenByClosuresMadeForCallsAlone);
 void appendPromotedVariables(const PromotedEnvironments&, SlotPlanParts&);
 
 } } } // namespace JSC::AOT::Typed

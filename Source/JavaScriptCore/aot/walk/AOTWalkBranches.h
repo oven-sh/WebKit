@@ -26,7 +26,7 @@ struct WayBehindTerminator {
 };
 WayBehindTerminator wayBehindTarget(const Walker&, BlockID from, uint32_t targetIndex, BodyTarget);
 
-bool comeToSamePlace(const BodyIndex&, const WayBehindTerminator&, const WayBehindTerminator&);
+bool comeToSamePlace(const BodyIndex&, const WayBehindTerminator&, const WayBehindTerminator&, ValueID falseOnFirstWay = { }, ValueID falseOnSecondWay = { });
 
 bool readsNothingOfWhatItCatches(const BodyIndex&, BodyBlock handler);
 

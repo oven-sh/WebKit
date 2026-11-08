@@ -446,8 +446,14 @@ void generateCreateConstant(StubAssembler& jit)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-StubSignature signatureOfBuiltinCell(StubKey)
+StubSignature signatureOfBuiltinCell(StubKey key)
 {
+#if CPU(X86_64)
+    if (key.immediate())
+        return signatureOfConstant().fillingKeptRegisterInFront(X86Registers::ecx);
+#else
+    UNUSED_PARAM(key);
+#endif
     return signatureOfConstant();
 }
 

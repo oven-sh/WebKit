@@ -371,8 +371,9 @@ void FunctionTablesByRange::collectNamesOfCaptures(uint32_t index, CodeUnit unit
     size_t first = named.size();
     forEachCaptureShownByName(m_encoder.inputs, unit.function, [&](unsigned capture, StringID name) {
         unsigned slot = Typed::closureCaptureSlotOf(m_encoder.program, conventions, unit.function, capture);
+        RELEASE_ASSERT(m_encoder.stringNumber(name) < VariableData::isVariableOfModuleFlag);
         if (slot <= UINT8_MAX)
-            named.append({ Number24(m_encoder.numbers.functions().closureNumberOf(FunctionID(index))), static_cast<uint8_t>(slot), m_encoder.stringNumber(name) });
+            named.append({ Number24(m_encoder.numbers.functions().closureNumberOf(FunctionID(index))), static_cast<uint8_t>(slot), m_encoder.stringNumber(name), m_encoder.program.at(unit.function).captures[capture].has(Typed::PositionFlags::IsVariableOfModule) });
     });
     AOT::sort(named.mutableSpan().subspan(first), { }, &NamedCaptureData::slot);
 }

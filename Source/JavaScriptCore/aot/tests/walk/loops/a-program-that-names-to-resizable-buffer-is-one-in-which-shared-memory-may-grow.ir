@@ -1,0 +1,38 @@
+# function size(view: Uint8Array) { return view.length; }     sink(size); WebAssembly.Memory.prototype.toResizableBuffer;
+# The instruction memory.grow of a WebAssembly module names no grow(), and it grows what toResizableBuffer() gave, in whichever thread it runs.
+# So a program that names toResizableBuffer is one in which some thread may grow shared memory: the test in front of typed code asks besides the names that the view lies over no shared memory that grows.
+# A view over such memory goes by the name, and one over a buffer that its own thread alone resizes goes through the typed code.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}} builtinClass=Uint8Array aspects=[Storage, Names]
+# CHECK: = GetTypedArrayLength
+# RUN(MACHINE): emit f1:Body mechanisms=all
+# MACHINE-LABEL: unit f1:Body
+# MACHINE: = Load8Z({{*}}JSCell_typeInfoFlags
+# MACHINE: = Load8Z({{*}}JSArrayBufferView_sharingOfMemory
+# RUN(SHELL): run-in-shell globalThis.sink = (size) => { const own = new ArrayBuffer(4, { maxByteLength: 16 }), shared = new SharedArrayBuffer(4, { maxByteLength: 16 }); const views = [new Uint8Array(3), new Uint8Array(own), new Uint8Array(own, 1, 2), new Uint8Array(shared), new Uint8Array(shared, 1)]; let said = ""; for (let i = 0; i < 3; i++) { for (const view of views) said += size(view) + " "; own.resize(own.byteLength === 4 ? 9 : 2); shared.grow(shared.byteLength + 2); } print(said); };
+# SHELL: 3 4 2 4 3 3 9 2 6 5 3 2 0 8 7
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="WebAssembly" [isFreeName]
+    v6 = Convert v5 declared={type=builtin(WebAssembly) flags=[IsExpected]}
+    v7 = PropGet v6 key="Memory"
+    v8 = Convert v7 declared={type=builtin(WebAssemblyMemory) flags=[IsExpected]}
+    v9 = PropGet v8 key="prototype"
+    v10 = PropGet v9 key="toResizableBuffer"
+    Return v3
+}
+function f1 name="size" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}

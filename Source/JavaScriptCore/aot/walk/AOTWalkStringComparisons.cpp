@@ -65,6 +65,15 @@ static Reference compareCharCodeForStringComparisons(Walker& walker, Opcode opco
     return compareInOrderForStringComparisons(walker, isEquality ? Opcode::StrictEq : opcode, codeUnit, other, numberIsOnLeft, origin);
 }
 
+static std::optional<int64_t> onlyPairOfTextForStringComparisons(Walker& walker, StringID text)
+{
+    Vector<char16_t> buffer;
+    StringView view = walker.types().viewOf(text, buffer);
+    if (view.length() != 2 || !U16_IS_LEAD(view[0]) || !U16_IS_TRAIL(view[1]))
+        return std::nullopt;
+    return static_cast<int64_t>(U16_GET_SUPPLEMENTARY(view[0], view[1]));
+}
+
 static Reference compareCharacterWithTextForStringComparisons(Walker& walker, Opcode opcode, Reference character, Reference codeUnit, StringID text, bool characterIsOnLeft, Origin origin)
 {
     bool mayBeUndefined = walker.types().at(walker.typeOf(rootForStrings(walker, character))).primitives & Primitive::Undefined;
@@ -72,11 +81,15 @@ static Reference compareCharacterWithTextForStringComparisons(Walker& walker, Op
     if (allEqualities.contains(opcode)) {
         if (unit)
             return buildOperatorForStrings(walker, Opcode::StrictEq, codeUnit, integerForStrings(walker, *unit), origin);
+        if (std::optional<int64_t> pair = onlyPairOfTextForStringComparisons(walker, text))
+            return buildOperatorForStrings(walker, Opcode::StrictEq, codeUnit, integerForStrings(walker, *pair), origin);
         if (!lengthOfTextForStrings(walker, text) && !mayBeUndefined)
             return buildOperatorForStrings(walker, Opcode::StrictEq, codeUnit, integerForStrings(walker, -1), origin);
         return booleanForStringComparisons(walker, false);
     }
     if (!unit)
+        return { };
+    if (*unit >= 0xD800 && walker.types().at(walker.typeOf(codeUnit)).integers.maximum > 0xFFFF)
         return { };
     bool holdsOfMinusOne = asksForGreaterOnLeftForStringComparisons(opcode) != characterIsOnLeft;
     if (holdsOfMinusOne && mayBeUndefined)
@@ -94,7 +107,7 @@ static Reference compareByCodeUnitForStringComparisons(Walker& walker, Opcode op
                 return answer;
             continue;
         }
-        Reference codeUnit = codeUnitOfCharacterInSight(walker, subject);
+        Reference codeUnit = codePointOfCharacterInSight(walker, subject);
         if (!codeUnit)
             continue;
         PrimitiveKnownToFolding known = primitiveKnownForStrings(walker, other);
@@ -108,8 +121,8 @@ static Reference compareByCodeUnitForStringComparisons(Walker& walker, Opcode op
 
 static Reference compareCharactersForStringComparisons(Walker& walker, Reference left, Reference right, Origin origin)
 {
-    Reference leftUnit = codeUnitOfCharacterInSight(walker, left);
-    Reference rightUnit = leftUnit ? codeUnitOfCharacterInSight(walker, right) : Reference();
+    Reference leftUnit = codePointOfCharacterInSight(walker, left);
+    Reference rightUnit = leftUnit ? codePointOfCharacterInSight(walker, right) : Reference();
     if (!rightUnit)
         return { };
     TypeArena& types = walker.types();
@@ -247,8 +260,9 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
     Type type = types.at(walker.typeOf(subject));
     bool narrowsNothing = narrowed && !*narrowed;
 
-    if (narrowsNothing && isProvenString(walker, walker.typeOf(subject))) {
-        if (std::optional<PieceOfString> piece = pieceInSight(walker, subject)) {
+    bool subjectIsString = isProvenString(walker, walker.typeOf(subject));
+    if (narrowsNothing && (subjectIsString || (value.opcode() == Opcode::StrictEq && lengthOfTextForStrings(walker, text)))) {
+        if (std::optional<PieceOfString> piece = pieceInSight(walker, subject, !subjectIsString)) {
             if (Reference answer = comparePieceWithTextForStringComparisons(walker, *piece, text, origin)) {
                 walker.bind(value.id(), answer);
                 return true;

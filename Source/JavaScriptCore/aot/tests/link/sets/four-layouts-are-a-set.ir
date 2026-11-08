@@ -1,7 +1,7 @@
 # If a set held two layouts and no more, the third stranger at a parameter would lose all three. A set names up to four, and a read through it gives what the four hold under the name and nothing else
 # function take(o) { return o.x; }  take({ x: 1, p: 1 });  take({ x: "a", q: 1 });  take({ x: true, r: 1 });  take({ x: null, s: 1 });
 # RUN: link functions layouts mechanisms=all
-# CHECK: function f1 callers-known one-callee {{*}}result=null|true|i32|string returns=
+# CHECK: function f1 callers-known one-callee {{*}}result=null|true|int[0, 2147483647]|string returns=
 # CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3
 # CHECK: layout L0 changes=[] stays-with-compiled-code
 # CHECK: layout L1 changes=[] stays-with-compiled-code

@@ -1,5 +1,5 @@
 # `o.x` with x?: outside of a loop, in a function of a file that the checker has checked: the looks at the cell, then the slot, which reads as undefined where it is empty.
-# The same function in a file that nobody has checked keeps its closed reads: property-that-objects-leave-out-opens-nothing.ir
+# The same function in a file that nobody has checked is built the same way: what it takes is written. Where nothing is written the reads stay closed: property-that-objects-leave-out-opens-nothing.ir
 # function list(o: Options) { return [o.x, o.y, o.x]; }
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses
 # CHECK-LABEL: code f1:Body
@@ -12,8 +12,10 @@
 # SLOTS-NOT: IsSlotFilled
 # RUN(UNCHECKED): walk f2 mechanisms=none+TypedOperations+Guesses
 # UNCHECKED-LABEL: code f2:Body
-# UNCHECKED-NOT: Test
-# UNCHECKED-COUNT-3: = PropGet
+# UNCHECKED: = ShapeTest {{*}}layouts=[L0]
+# UNCHECKED: = HasLayoutPrototype {{*}}hasNoFieldOutsideSlot
+# UNCHECKED: = GetSlotOrUndefined {{*}}key="x"
+# UNCHECKED: = GetSlotOrUndefined {{*}}key="y"
 # How a body is built goes by its own text, not by who leads to it: a function that names itself and one that a call in a loop enters are built as the first is
 # RUN(RING): walk f3 mechanisms=none+TypedOperations+Guesses
 # RING-LABEL: code f3:Body

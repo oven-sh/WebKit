@@ -63,9 +63,115 @@ static bool isOnlyReadAndHandedOutLastInKnownLeaving(const BodyIndex& index, con
     return !mentionsLeft;
 }
 
+static bool collectNamesOfListOnlyReadInKnownLeaving(const BodyIndex& index, PropertyKeyID length, ValueID name, Vector<ValueID, 8>& names, Vector<ValueID, 4>& takers)
+{
+    uint32_t mentionsLeft = index.useCount(name);
+    if (mentionsLeft == BodyIndex::maxCountedUses)
+        return false;
+    bool isListItself = names.isEmpty();
+    names.append(name);
+    for (uint32_t next = 0; mentionsLeft && next < index.numberOfValues(); ++next) {
+        if (index.isParameter(ValueID(next)))
+            continue;
+        BodyValue user = index.value(ValueID(next));
+        uint32_t mentions = 0;
+        user.forEachOperand([&](ValueID operand, uint32_t) {
+            mentions += operand == name;
+        });
+        if (!mentions)
+            continue;
+        mentionsLeft -= mentions;
+        Opcode opcode = user.opcode();
+        if (opcode == Opcode::ReleaseHint || (opcode == Opcode::PropGet && !user.isFreeName() && user.key() == length) || (opcode == Opcode::ElemGet && user.propertyOperand() != name))
+            continue;
+        if (inputOperationsThatHandOn.contains(opcode) && mentions == 1 && user.operand(0) == name) {
+            if (!collectNamesOfListOnlyReadInKnownLeaving(index, length, user.id(), names, takers))
+                return false;
+            continue;
+        }
+        if (!isListItself || !opcodesThatMayTakeArgumentsLast.contains(opcode) || index.loopOf(index.blockOf(user.id())))
+            return false;
+        takers.append(user.id());
+    }
+    return !mentionsLeft;
+}
+
+static bool restListIsOnlyReadAndHandedOutLastInKnownLeaving(const BodyIndex& index, const BodyLiveness& liveness, PropertyKeyID length, ValueID list)
+{
+    Vector<ValueID, 8> names;
+    Vector<ValueID, 4> takers;
+    if (!collectNamesOfListOnlyReadInKnownLeaving(index, length, list, names, takers))
+        return false;
+    return std::ranges::all_of(takers, [&](ValueID taker) {
+        return std::ranges::none_of(names, [&](ValueID name) {
+            return isNamedBehindInKnownLeaving(index, liveness, name, taker);
+        });
+    });
+}
+
+bool restListMayFallAwayInCopy(const Walker& walker, FunctionID callee)
+{
+    const Function& function = walker.program().at(callee);
+    const BodyIndex* body = function.has(FunctionFlags::HasRestParameter) ? walker.facts().bodies().find(callee) : nullptr;
+    if (!body)
+        return false;
+    BodyLiveness liveness;
+    liveness.compute(*body);
+    ValueID list = body->block(entryBlock).parameter(function.firstParameterIndex() + function.numberOfPositionalParameters());
+    return restListIsOnlyReadAndHandedOutLastInKnownLeaving(*body, liveness, walker.program().keyOf(BuiltinNames::length), list);
+}
+
+void ArgumentsMadeWhereTheyLeave::makeRestListOfCopyWhereItLeaves(const BodyValue& call)
+{
+    Walker& walker = m_walker;
+    const BodyIndex& index = walker.currentBodyIndex();
+    const Function& function = walker.program().at(walker.currentFunction());
+    if (!walker.depthOfCopies() || !function.has(FunctionFlags::HasRestParameter) || walker.isUnreachable() || walker.standsUnderHandler())
+        return;
+    ValueID name = index.block(entryBlock).parameter(function.firstParameterIndex() + function.numberOfPositionalParameters());
+    uint32_t mentions = 0;
+    call.forEachOperand([&](ValueID operand, uint32_t) {
+        mentions += operand == name;
+    });
+    Reference bound = mentions == 1 ? walker.referenceBoundTo(name) : Reference();
+    if (!bound || !bound.isValue())
+        return;
+    const Code& code = walker.code();
+    ValueID cell = rootOfCellInSweptCode(code, bound.id());
+    if (code.isConstant(cell) || code.at(cell).opcode != Opcode::NewArray || code.at(cell).block() == walker.currentBlock() || !walker.state().isFresh(Reference::value(cell)))
+        return;
+    std::optional<Vector<Reference, 8>> elements = elementsOfFreshList(walker, bound);
+    if (!elements)
+        return;
+    if (!walker.m_liveness.isComputedFor(index))
+        walker.m_liveness.compute(index);
+    if (!restListIsOnlyReadAndHandedOutLastInKnownLeaving(index, walker.m_liveness, walker.program().keyOf(BuiltinNames::length), name))
+        return;
+
+    Origin origin = walker.originOf(call);
+    origin.isTailCall = false;
+    walker.checkWhatIsInSightOfList(bound, origin);
+    Draft again(Opcode::NewArray, origin);
+    walker.chooseConservativeFields(again);
+    again.standsForNoValueOfInput = true;
+    again.setContents(TypeTable::anything);
+    again.setVariadicOperands(elements->span());
+    Reference made = walker.build(WTF::move(again));
+    if (!made)
+        return;
+    noteFreshList(walker, made);
+    walker.count(StatisticID::RestListsMadeWhereTheyLeave);
+    m_name = name;
+    m_boundBefore = bound;
+    walker.bind(name, made);
+}
+
 ArgumentsMadeWhereTheyLeave::ArgumentsMadeWhereTheyLeave(Walker& walker, const BodyValue& call)
     : m_walker(walker)
 {
+    makeRestListOfCopyWhereItLeaves(call);
+    if (m_name)
+        return;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID name;
     call.forEachOperand([&](ValueID operand, uint32_t) {

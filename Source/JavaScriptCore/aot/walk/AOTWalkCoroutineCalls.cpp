@@ -67,6 +67,8 @@ bool buildSettlementOfCoroutineCalls(Walker& walker, Opcode opcode, Reference pr
     Draft settlement = draftOfCoroutineCalls(walker, opcode, origin);
     settlement.setPromiseOperand(promise);
     settlement.setValueOperand(value);
+    if (opcode == Opcode::ResolvePromise)
+        settlement.setValueHasFailedTestForNoThen(true);
     walker.build(WTF::move(settlement));
     return !walker.isUnreachable();
 }

@@ -59,6 +59,7 @@ JSValue getWithoutCaches(Instance* instance, JSValue base, const Identifier& ide
 JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instance, EncodedJSValue base, uint32_t name))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetById);
+    ++instance->propertyCaches.slowPathReadCount;
     JSValue value = JSValue::decode(base);
     if (value.isUndefinedOrNull()) [[unlikely]] {
         throwException(globalObject, scope, createNotAnObjectError(globalObject, value, identifierAt(instance, name)));
@@ -100,6 +101,29 @@ bool tryReplaceGlobalProperty(Instance* instance, VM& vm, JSValue base, UniquedS
     return true;
 }
 
+static bool tryReplaceValueThatIsNoCellOnObjectOfSomeChain(VM& vm, JSValue base, UniquedStringImpl* uid, JSValue value)
+{
+    if (value.isCell() || !base.isObject())
+        return false;
+    JSObject* object = asObject(base);
+    Structure* structure = object->structure();
+    if (!structure->mayBePrototype() || structure->isCompiledStructure())
+        return false;
+    auto put = structure->classInfoForCells()->methodTable.put;
+    if (put != JSObject::info()->methodTable.put && put != InternalFunction::info()->methodTable.put)
+        return false;
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, uid, attributes);
+    if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(uid) || isWriteJudgedByWriter(structure, uid))
+        return false;
+    if (object->getDirect(offset).isCell())
+        return false;
+    structure->didReplaceProperty(offset);
+    object->putDirectOffset(vm, offset, value);
+    didReplaceValueOnChainObject(vm, object, uid);
+    return true;
+}
+
 static void putById(Instance* instance, JSValue base, uint32_t name, JSValue value, PutMode mode)
 {
     JSGlobalObject* globalObject = instance->globalObject;
@@ -123,6 +147,8 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
         return;
     }
     if (tryReplaceGlobalProperty(instance, vm, base, identifier.impl(), value))
+        return;
+    if (tryReplaceValueThatIsNoCellOnObjectOfSomeChain(vm, base, identifier.impl(), value))
         return;
     scope.release();
     LookByName look(vm, base, identifier.impl());
@@ -522,10 +548,15 @@ static const FieldData* tryStepToFieldInHeldKeyOrder(Object* object, uint32_t sl
     return &field;
 }
 
-static const FieldData& listCreatedField(State& state, Object* object, uint32_t slotKey)
+static void listCreatedField(State& state, Object* object, uint32_t slotKey)
 {
-    if (const FieldData* next = tryStepToFieldInHeldKeyOrder(object, slotKey))
-        return *next;
+    if (tryStepToFieldInHeldKeyOrder(object, slotKey))
+        return;
+    bool stepIsOfOrderAlone = !object->structure()->mayBePrototype() && !object->layout().isClass() && !object->hasFlagsInOrderWord() && !object->hasKeyOrderOfItsOwn();
+    if (stepIsOfOrderAlone && object->tryRepeatCreationAtSlot(state, slotKey))
+        return;
+    StructureID structureBefore = object->structureID();
+    uint32_t orderAndCountBefore = object->orderWord() & orderAndCountMask;
     const FieldData* created = state.objects->keyOrders.fieldAt(object->layout(), slotKey);
     RELEASE_ASSERT(created);
     const FieldData& field = *created;
@@ -540,7 +571,8 @@ static const FieldData& listCreatedField(State& state, Object* object, uint32_t 
         uint32_t orderAndCount = object->orderWord() & orderAndCountMask;
         state.objects->keyOrders.publishTransition(object->layout(), orderAndCount, field, orderAndCount, *numberOfExtraKeys);
     }
-    return field;
+    if (stepIsOfOrderAlone)
+        object->rememberCreationAtSlot(state, structureBefore, orderAndCountBefore, slotKey);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateField, void, (Instance* instance, JSCell* cell, uint32_t key))

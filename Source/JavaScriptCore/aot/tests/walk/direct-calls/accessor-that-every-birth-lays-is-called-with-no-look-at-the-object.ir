@@ -27,7 +27,7 @@
 # RUN(CLOSURE): walk f7 mechanisms=all-PromotedEnvironments
 # CLOSURE-LABEL: code f7:Body
 # CLOSURE-NOT: TypeTest
-# CLOSURE: : i32 {{*}} = PropGet {{*}}key="held"
+# CLOSURE: : int[0, 2147483647] {{*}} = PropGet {{*}}key="held"
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

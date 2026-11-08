@@ -5,7 +5,7 @@
 # RUN: bytes f1:Body mechanisms=all
 # CHECK-LABEL: unit f1:Body
 # CHECK: Stub TryCallMethodOfBuiltinClass.MapGet count 1
-# CHECK: Stub CallValue.InTailPosition count 1
+# CHECK: Stub CallValueCell.InTailPosition count 1
 # The read stands between the two, as a call of the stub or of a thunk that names it.
 # RUN(READ): bytes f1:Body mechanisms=all
 # READ: GetById

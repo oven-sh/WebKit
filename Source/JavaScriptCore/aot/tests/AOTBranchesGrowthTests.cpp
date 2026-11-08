@@ -120,6 +120,41 @@ static String freshCellsThatLiveOverJoinsForBranchesGrowthTests(unsigned numberO
     return text.toString();
 }
 
+static String branchesWhoseWaysHandOnWhatNextTurnReadsForBranchesGrowthTests(unsigned numberOfBranches)
+{
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"turns\" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {\n  b0(v0: anything, v1: anything):\n    Jump -> next b1("_s);
+    for (unsigned branch = 0; branch < numberOfBranches; ++branch)
+        text.append(branch ? ", v0"_s : "v0"_s);
+    text.append(")\n  b1("_s);
+    unsigned firstWord = 2;
+    for (unsigned branch = 0; branch < numberOfBranches; ++branch)
+        text.append(branch ? ", "_s : ""_s, "v"_s, firstWord + branch, ": anything"_s);
+    unsigned value = firstWord + numberOfBranches + 1;
+    unsigned firstAnswer = value;
+    text.append("):\n    LoopHint\n"_s);
+    for (unsigned branch = 0; branch < numberOfBranches; ++branch)
+        text.append("    v"_s, value++, " = Call v0, -, v"_s, firstWord + branch, "\n"_s);
+    text.append("    v"_s, value, " = ToBoolean v"_s, firstAnswer, "\n    Branch v"_s, value, " -> taken b2(), notTaken b"_s, 3 + 3 * numberOfBranches, "()\n  b2():\n"_s);
+    ++value;
+    unsigned firstArrival = value + 1;
+    for (unsigned branch = 0; branch < numberOfBranches; ++branch) {
+        unsigned block = 3 + 3 * branch;
+        text.append("    v"_s, value, " = ToBoolean v"_s, firstAnswer + branch, "\n    Branch v"_s, value, " -> taken b"_s, block, "(), notTaken b"_s, block + 1, "()\n"_s);
+        text.append("  b"_s, block, "():\n    Jump -> next b"_s, block + 2, "(v0)\n  b"_s, block + 1, "():\n    Jump -> next b"_s, block + 2, "(v1)\n"_s);
+        text.append("  b"_s, block + 2, "(v"_s, value + 1, ": anything):\n"_s);
+        value += 2;
+    }
+    text.append("    Jump -> next b1("_s);
+    for (unsigned branch = 0; branch < numberOfBranches; ++branch)
+        text.append(branch ? ", "_s : ""_s, "v"_s, firstArrival + 2 * branch);
+    text.append(")\n  b"_s, 3 + 3 * numberOfBranches, "():\n    Return v0\n}\n"_s);
+    return text.toString();
+}
+
 static std::optional<uint64_t> instructionsOfWalkForBranchesGrowthTests(const String& text, FunctionID function, Wire::CompileOptions options = makeOptionsOfTestedProgram())
 {
     std::optional<uint64_t> instructions;
@@ -165,12 +200,22 @@ static void testWalkThatEndsLivesGrowsAsFreshCellsThatLiveOverJoinsDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
+static void testWalkGrowsAsBranchesWhoseWaysHandOnWhatNextTurnReadsDo()
+{
+    constexpr unsigned numberOfBranches = 100;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfWalkForBranchesGrowthTests(branchesWhoseWaysHandOnWhatNextTurnReadsForBranchesGrowthTests(numberOfBranches), FunctionID(1u));
+    std::optional<uint64_t> large = instructionsOfWalkForBranchesGrowthTests(branchesWhoseWaysHandOnWhatNextTurnReadsForBranchesGrowthTests(4 * numberOfBranches), FunctionID(1u));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
 std::span<const NativeTest> branchesGrowthTests()
 {
     static constexpr NativeTest tests[] {
         { "branches-growth/the-walk-grows-as-the-cases-of-a-switch-do"_s, testWalkGrowsAsCasesOfSwitchDo },
         { "branches-growth/the-walk-grows-as-the-words-handed-on-round-a-loop-with-two-ways-round-do"_s, testWalkGrowsAsWordsHandedOnRoundLoopWithTwoWaysRoundDo },
         { "branches-growth/the-walk-that-ends-lives-grows-as-the-fresh-cells-that-live-over-joins-do"_s, testWalkThatEndsLivesGrowsAsFreshCellsThatLiveOverJoinsDo },
+        { "branches-growth/the-walk-grows-as-the-branches-whose-ways-hand-on-what-the-next-turn-reads-do"_s, testWalkGrowsAsBranchesWhoseWaysHandOnWhatNextTurnReadsDo },
     };
     return tests;
 }

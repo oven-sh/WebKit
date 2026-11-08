@@ -36,7 +36,7 @@ function f3 name="hasInArray" parameters=[{type=Array}, {type=number}] results=[
 }
 )IR"_s;
 
-static constexpr ASCIILiteral statementsBeforeProgram = R"JS(
+static constexpr ASCIILiteral statementsBeforeProgram = COUNTED_CALLS(R"("GetByVal", "GetByValAndCache", "GetByValGeneric", "InByValAndCache", "InByValGeneric")") R"JS(
 const first = 100000;
 const step = 7;
 const count = 300;
@@ -49,6 +49,7 @@ const measure = (what, access) => {
     let sum = 0;
     let others = "";
     const ask = isAsked => {
+        const before = countedCalls();
         for (let index = first - 1; index <= first + count * step; index++) {
             if (!isAsked(index))
                 continue;
@@ -59,11 +60,12 @@ const measure = (what, access) => {
             } else if (answer !== undefined && answer !== false)
                 others += ", " + index + " " + answer;
         }
+        return countedCalls() - before <= 3 ? "no calls" : "calls";
     };
     const isPlace = index => index >= first && !((index - first) % step);
-    ask(isPlace);
-    ask(index => !isPlace(index));
-    print(what + ": " + held + " held, sum " + sum + others);
+    const atPlaces = ask(isPlace);
+    const between = ask(index => !isPlace(index));
+    print(what + ": " + held + " held, sum " + sum + others + (countsCalls ? ", " + atPlaces + " at the places, " + between + " between them" : ""));
 };
 globalThis.publish = (read, readOfArray, hasInArray) => {
     const measureAll = (what, array) => {
@@ -124,15 +126,24 @@ static constexpr ASCIILiteral expectedOutput =
     "below an element, an array: 300 held, sum 44850, 100001 inherited\n"
     "below an element, in an array: 301 held, sum 301\n"_s;
 
+static constexpr WordOfService wordsOfPlaces[] { { 'c', ", no calls at the places, no calls between them"_s }, { 'b', ", no calls at the places, calls between them"_s }, { 'a', ", calls at the places, calls between them"_s } };
+
 static void testElementsInMapAreRead()
 {
     checkOutputOfProgramInShell(programText, expectedOutput, { }, statementsBeforeProgram);
+    checkServicesInShell(__FILE__, __LINE__, programText, expectedOutput, statementsBeforeProgram, wordsOfPlaces, "ccaccacca......bbabbbabba"_s);
+}
+
+static void testElementsInMapAreServedAsTheyWere()
+{
+    checkServicesInShell(__FILE__, __LINE__, programText, expectedOutput, statementsBeforeProgram, wordsOfPlaces, "ccccccccc......bbabbbabba"_s);
 }
 
 std::span<const NativeTest> sparseElementProgramTests()
 {
     static constexpr NativeTest tests[] = {
         { "sparse-elements/programs/elements-in-a-map-are-read"_s, testElementsInMapAreRead },
+        { "sparse-elements/programs/elements-in-a-map-are-served-as-they-were"_s, testElementsInMapAreServedAsTheyWere, "reads by key: `in` of a list whose elements lie in a map enters the run time at every question; the compiler before this one walked the map in the stub"_s },
     };
     return tests;
 }

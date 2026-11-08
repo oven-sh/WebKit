@@ -1,15 +1,15 @@
 # const kept = { m: 1 };   function storeField(object, value) { object.m = value; }   function storeOther(object, value) { object.n = value; }
-# A layout lists `m`: the store under it asks the table of fields first, as PutById does, and its site behind that. No layout lists `n`: the store under it asks its site and never the table.
+# A store by name at a site asks the table of fields first, as PutById does, and its site behind that, whether a layout of the program lists the name (`m`) or none does (`n`): one stub for both.
 # The shell fills both sites with objects of its own, and then hands in the compiled object: its field is stored into, what it has no field for is added, and a frozen one refuses both.
 # LIBRARY: own
 # RUN: bytes f1:Body
 # CHECK-LABEL: unit f1:Body
 # CHECK: InstanceWord SiteCache "main.js" 20 "m"
-# CHECK: PutByIdAtSite.Strict count 1
+# CHECK: PutByIdAtSite.Strict
 # RUN(OTHER): bytes f2:Body
 # OTHER-LABEL: unit f2:Body
 # OTHER: InstanceWord SiteCache "main.js" 30 "n"
-# OTHER: PutByIdAtSite.Strict count 2
+# OTHER: PutByIdAtSite.Strict
 # RUN(SHELL): run-in-shell globalThis.publish = (kept, storeField, storeOther) => { const out = []; const attempt = (store, object, value) => { try { store(object, value); return Object.keys(object).join("") + object.m + object.n; } catch (error) { return error.constructor.name; } }; for (let i = 0; i < 300; i++) { attempt(storeField, { }, i); attempt(storeOther, { }, i); } out.push(attempt(storeField, { }, 1), attempt(storeField, kept, 2), attempt(storeOther, kept, 3), attempt(storeField, { }, 4), attempt(storeField, kept, 5), attempt(storeOther, kept, 6)); Object.freeze(kept); out.push(attempt(storeField, kept, 7), attempt(storeOther, kept, 8), kept.m, kept.n); print(out.join()); };
 # SHELL: m1undefined,m2undefined,mn23,m4undefined,mn53,mn56,TypeError,TypeError,5,6
 # SHELL-NEXT: exited with 0

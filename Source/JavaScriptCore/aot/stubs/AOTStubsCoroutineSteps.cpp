@@ -58,7 +58,7 @@ static Jump branchIfRealmWatchpointSetIsNotWatched(StubAssembler& jit, ptrdiff_t
     return branchIfWatchpointSetIsNotWatched(jit, Address(scratch, static_cast<int32_t>(offsetInGlobalObject)), scratch);
 }
 
-StubSignature signatureOfStepAsyncGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T9) }); }
+StubSignature signatureOfStepAsyncGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T13), gprOf(StubRegister::T9) }); }
 
 StubSignature signatureOfRunAsyncGeneratorStep(StubKey)
 {
@@ -73,31 +73,30 @@ StubSignature signatureOfStepAsyncIteratorInEngine(StubKey)
 void generateStepAsyncGenerator(StubAssembler& jit)
 {
     using ResumeModeOfRequest = JSAsyncGenerator::AsyncGeneratorResumeMode;
-    const auto form = static_cast<StepConsumer>(jit.key().form());
-    const bool awaitsCall = form == StepConsumer::AsyncFunctionAwaitingCall || form == StepConsumer::AsyncGeneratorAwaitingCall;
-    const StepConsumer consumerKind = form == StepConsumer::AsyncFunction || form == StepConsumer::AsyncFunctionAwaitingCall ? StepConsumer::AsyncFunction : StepConsumer::AsyncGenerator;
+    const auto consumerKind = static_cast<StepConsumer>(jit.key().form());
     const GPRReg iterator = jit.operand(0);
     const GPRReg driver = jit.clobberOperand(1);
     const GPRReg value = jit.clobberOperand(2);
-    const GPRReg siteWord = jit.operand(3);
+    const GPRReg consumer = jit.clobberOperand(3);
+    const GPRReg siteWord = jit.operand(4);
     const GPRReg saved = jit.allocateScratch(StubRegister::A3);
     const GPRReg word = jit.allocateScratch(StubRegister::A4);
     const GPRReg other = jit.allocateScratch(StubRegister::A5);
-    const GPRReg consumer = jit.allocateScratch(StubRegister::T13);
     RELEASE_ASSERT(noOverlap(iterator, driver, value, siteWord, saved, word, other, consumer, instanceGPR));
 
     JumpList mayNotContinue;
-    jit.move(TrustedImm32((consumerKind == StepConsumer::AsyncGenerator ? consumerIsAsyncGenerator : 0) | (awaitsCall ? consumerOfStepAwaitsCall : 0)), consumer);
+    if (consumerKind == StepConsumer::AsyncGenerator)
+        jit.or32(TrustedImm32(consumerIsAsyncGenerator), consumer);
     emitBranchUnlessFrameMayContinue(jit, { InvalidGPRReg, InvalidGPRReg, word, other }, mayNotContinue);
     jit.or32(TrustedImm32(bodyMayContinue | consumerMayContinue), consumer);
     mayNotContinue.link(&jit);
 
     JumpList stepsInEngine;
-    if (awaitsCall) {
-        Jump keepsNoAsyncContext = emitBranchIfTracksNoAsyncContext(jit, word);
-        jit.and32(TrustedImm32(~bodyMayContinue), consumer);
-        keepsNoAsyncContext.link(&jit);
-    }
+    Jump goesByDriver = jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerOfStepAwaitsCall));
+    Jump keepsNoAsyncContext = emitBranchIfTracksNoAsyncContext(jit, word);
+    jit.and32(TrustedImm32(~bodyMayContinue), consumer);
+    keepsNoAsyncContext.link(&jit);
+    goesByDriver.link(&jit);
     std::optional<AssemblyHelpers::FreeListRefill> refill;
     JumpList isNotAllocatedHere;
     if (consumerKind == StepConsumer::AsyncFunction) {
@@ -493,7 +492,7 @@ void generateNewHeapFrame(StubAssembler& jit)
     jit.store64(scratch, Address(frame));
     jit.store64(TrustedImm32(0), Address(frame, JSObject::butterflyOffset()));
     jit.store64(numberOfWords, Address(frame, SavedFrame::offsetOfNumberOfWords()));
-    jit.move(TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::isHeapFrameFlag) << 56)), scratch);
+    jit.move(TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::liesOnHeapBit) << 48 | static_cast<uint64_t>(SavedFrame::isSuspendedAtYieldFlag) << 56)), scratch);
     jit.store64(scratch, Address(frame, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
     jit.store64(resumeAddress, Address(frame, SavedFrame::offsetOfResumeAddress()));
     jit.store64(frame, Address(frame, SavedFrame::offsetOfPromiseOrWaiter()));
@@ -531,15 +530,23 @@ void generateNewAsyncGenerator(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(closure, generator, allocator, structure, scratch, instanceGPR));
 
     JumpList slowCases;
-    jit.loadPtr(Address(closure, JSFunction::offsetOfExecutableOrRareData()), structure);
-    Jump remembersNothing = jit.branchTestPtr(CCallHelpers::Zero, structure, TrustedImm32(rareDataTag));
-    jit.load32(Address(structure, offsetOfStructureID - rareDataTag), structure);
-    slowCases.append(jit.branchTest32(CCallHelpers::Zero, structure));
-    decodeStructureID(jit, structure);
-    jit.loadRuntimePointer(Entry::AsyncGeneratorClassInfo, scratch);
-    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::classInfoOffset())));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), scratch);
-    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::realmOffset())));
+    if (static_cast<GeneratorFunctionOrigin>(jit.key().form()) == GeneratorFunctionOrigin::Library) {
+        jit.load32(Address(closure, JSCell::structureIDOffset()), structure);
+        slowCases.append(jit.branch32(CCallHelpers::NotEqual, structure, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders) + closureStructureOfGeneratorFunctions(true) * sizeof(uint64_t))));
+        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.structureIDsOfGeneratorsOfLibrary) + sizeof(uint32_t)), structure);
+        slowCases.append(jit.branchTest32(CCallHelpers::Zero, structure));
+        decodeStructureID(jit, structure);
+    } else {
+        jit.loadPtr(Address(closure, JSFunction::offsetOfExecutableOrRareData()), structure);
+        slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, structure, TrustedImm32(rareDataTag)));
+        jit.load32(Address(structure, offsetOfStructureID - rareDataTag), structure);
+        slowCases.append(jit.branchTest32(CCallHelpers::Zero, structure));
+        decodeStructureID(jit, structure);
+        jit.loadRuntimePointer(Entry::AsyncGeneratorClassInfo, scratch);
+        slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::classInfoOffset())));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), scratch);
+        slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::realmOffset())));
+    }
 
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.asyncGeneratorAllocator)), allocator);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
@@ -560,15 +567,8 @@ void generateNewAsyncGenerator(StubAssembler& jit)
 
     emitLateRefill(jit, refill, slowCases);
 
-    remembersNothing.link(&jit);
     slowCases.link(&jit);
-    OperationCall call {
-        .returns = OperationCall::Returns::Value,
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .checksException = false,
-    };
-    call.constantArguments[0] = OperationCall::ConstantArgument { operationArgumentGPR(2), static_cast<uint32_t>(NewGeneratorKind::Async) };
-    jit.callOperationAndReturn(Entry::operationAOTNewGenerator, call);
+    jit.callOperationAndReturn(Entry::operationAOTNewAsyncGenerator, { .returns = OperationCall::Returns::Value, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
 } } // namespace JSC::AOT

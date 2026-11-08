@@ -215,6 +215,9 @@ struct State {
     FieldUnderDeclaredName* fieldsUnderDeclaredNames { nullptr };
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsEnteredThatRunOnce;
     std::array<uint64_t, 8> writesCountedForEffectsNet { };
+    EncodedJSValue receiverOfPendingRead { 0 };
+    uint32_t keyOfPendingRead { 0 };
+    uint32_t slowPathReadCountAtPendingRead { 0 };
     void countWriteForEffectsNet(Typed::CountInEffectsNet count) { ++writesCountedForEffectsNet[static_cast<size_t>(count)]; }
 
 private:

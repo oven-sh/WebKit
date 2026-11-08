@@ -61,11 +61,29 @@ struct ArrayLiteralShape {
     unsigned count { 0 };
     std::optional<unsigned> emptyCapacity { };
     bool areDoubles { false };
+    bool areInt32 { false };
 };
+
+static void emitStoreBoxedInt32(StubAssembler& jit, unsigned count, GPRReg base, size_t offset, GPRReg scratch)
+{
+    constexpr int32_t tag = static_cast<int32_t>(JSValue::NumberTag >> 32);
+    auto at = [&](unsigned i) { return static_cast<int32_t>(offset + i * sizeof(EncodedJSValue)); };
+#if CPU(ARM64)
+    jit.move(TrustedImm32(tag), scratch);
+    for (unsigned i = 0; i < count; ++i)
+        jit.storePair32(jit.operand(i), scratch, base, TrustedImm32(at(i)));
+#else
+    UNUSED_PARAM(scratch);
+    for (unsigned i = 0; i < count; ++i) {
+        jit.store32(jit.operand(i), Address(base, at(i)));
+        jit.store32(TrustedImm32(tag), Address(base, at(i) + static_cast<int32_t>(sizeof(int32_t))));
+    }
+#endif
+}
 
 static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
 {
-    const auto [count, emptyCapacity, areDoubles] = shape;
+    const auto [count, emptyCapacity, areDoubles, areInt32] = shape;
     auto number = [&](unsigned i) { return jit.operandFPR(1 + i); };
     static_assert(maxArrayElementsInRegisters == 4);
     RELEASE_ASSERT(count <= maxArrayElementsInRegisters);
@@ -93,10 +111,13 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
             jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), scratch);
         for (unsigned i = count; i < vectorLength; ++i)
             jit.store64(scratch, Address(storage, sizeof(IndexingHeader) + i * sizeof(double)));
+    } else if (areInt32) {
+        emitStoreBoxedInt32(jit, count, storage, sizeof(IndexingHeader), scratch);
+        emitStoreValuesAndClear(jit, 1, 0, vectorLength - count, storage, sizeof(IndexingHeader) + count * sizeof(EncodedJSValue));
     } else
         emitStoreValuesAndClear(jit, 1, count, vectorLength, storage, sizeof(IndexingHeader));
     jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
-    jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(areDoubles ? ArrayWithDouble : ArrayWithContiguous)), scratch);
+    jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(areDoubles ? ArrayWithDouble : areInt32 ? ArrayWithInt32 : ArrayWithContiguous)), scratch);
     jit.storePair64(scratch, storage, array, TrustedImm32(0));
     fenceAfterAllocation(jit);
     jit.returnToCaller();
@@ -110,7 +131,7 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
     jit.callOperationAndReturn(Entry::operationAOTNewArray, {
         .returns = OperationCall::Returns::Value,
         .saves = OperationCall::Saves::CallerSavedRegisters,
-        .spilledArguments = OperationCall::SpilledArguments { count, countAndCapacity },
+        .spilledArguments = OperationCall::SpilledArguments { count, countAndCapacity | (areInt32 ? int32ValuesInArrayLiteralCount : 0) },
     });
 }
 
@@ -123,6 +144,8 @@ StubSignature signatureOfArrayLiteral(StubKey key)
 }
 
 void generateArrayLiteral(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count() }); }
+StubSignature signatureOfArrayLiteralWithInt32(StubKey key) { return signatureOfArrayLiteral(arrayLiteral(key.count())); }
+void generateArrayLiteralWithInt32(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count(), .areInt32 = true }); }
 
 static StubSignature signatureTakingDoubles(unsigned count)
 {

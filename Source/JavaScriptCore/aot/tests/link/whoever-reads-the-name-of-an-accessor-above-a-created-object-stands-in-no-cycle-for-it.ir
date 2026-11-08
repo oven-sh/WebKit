@@ -1,0 +1,54 @@
+# The literal that holds an accessor makes its function object, so the accessor is compiled whoever reads the name: it is in the queue from the start, and a read of the name brings nothing.
+# If every function that reads `code` named the getter, `stranger` led to the getter, the getter to `tell` and `tell` to `stranger`: one cycle, in which nothing is ordered, and neither took what its one caller leaves.
+# In a program with an accessor `length` above a created object every function that reads a length stood in that cycle.
+# function stranger(x) { return x.code; }  function tell() { return stranger(source()); }  const made = Object.create({ get code() { return tell(); } });  made.code;  sink(made);
+# `stranger` reads the name off a value that nobody knows.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}} in-queue-from-start
+# CHECK: referrers f0
+# CHECK: function f2 callers-known one-callee {{*}} takes-arrivals
+# CHECK: referrers f1
+# CHECK: function f3 callers-known one-callee {{*}} takes-arrivals
+# CHECK: referrers f2
+# RUN(MEMBERS): link members mechanisms=all
+# MEMBERS: above-created L1 Getter "code" function=f1
+
+layout L0 module=m0 fields=[{key="code" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance module=m0 flags=[IsOfCreatedObject]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    DefineGetter v0, v1 key="code"
+    v3 = FinishObject v0
+    v4 = NewObject layout=L1
+    SetLiteralPrototype v4, v3 [refusesOtherValues]
+    v6 = FinishObject v4
+    v7 = PropGet v6 key="code"
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="sink" [isFreeName]
+    v10 = Call v9, -, v6
+    Return v10
+}
+function f1 name="code" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = Call v1, - calleeName="tell" [isNeverInlined]
+    Return v2
+}
+function f2 name="tell" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = Call v1, -
+    v3 = NewClosure function=f3
+    v4 = Call v3, -, v2 calleeName="stranger" [isNeverInlined]
+    Return v4
+}
+function f3 name="stranger" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="code"
+    Return v1
+}

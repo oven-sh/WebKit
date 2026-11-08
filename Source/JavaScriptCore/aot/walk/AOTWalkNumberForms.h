@@ -20,6 +20,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool hasMechanismsOfNumberForms(const Walker&);
 PrimitiveKnownToFolding primitiveKnownInNumberForms(const Walker&, Reference);
+PrimitiveKnownToFolding primitiveKnownInNumberForms(const Walker&, Reference, const Type&);
 std::optional<int64_t> integerKnownInNumberForms(const Walker&, Reference);
 Reference integerInNumberForms(Walker&, int64_t);
 Reference booleanInNumberForms(Walker&, bool);
@@ -67,12 +68,13 @@ std::optional<PrimitiveKnownToFolding> foldExactly(Walker&, const CallByOneRow&)
 
 Reference buildCharCode(Walker&, const CallByOneRow&);
 Reference codeUnitBesideCharCode(Walker&, Reference number);
-Reference codeUnitBesideCharacter(Walker&, Reference character);
+Reference codePointBesideCharacter(Walker&, Reference character);
 Reference integerThatCharCodeIsKnownToBe(Walker&, Reference number);
 Reference integerThatCharCodeIsKnownToBe(Walker&, const BodyValue& user, ValueID number);
 bool buildComparisonByCodeUnit(Walker&, const BodyValue& comparison, const InputsOfTypedOperation&);
 
 bool buildElementAccessUnderNumber(Walker&, const BodyValue&, const InputsOfTypedOperation&);
+bool tellsNumberFromUndefinedInKeyOfView(Walker&, const BodyValue&, const TypesOfInputs&);
 
 struct SwitchOnNumbers {
     Reference subject;

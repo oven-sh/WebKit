@@ -1,9 +1,10 @@
 # type Row = { line: string };  function kind(r: Row) { return typeof r.line; }  report(kind({ line: "a" }));  const p: Row = JSON.parse('{"line":5}');  report(kind(p));
-# The record of the call lists the layout of the written type, and nothing in the engine builds with it: what the parse answers is an ordinary object. So the layout does not escape because a call is written under it,
-# every writer of its field is known, and the field holds a text. The reader still takes what the parse answers, which holds a number under the name
+# The record of the call lists the layout of the written type, and the parser of the run time builds with it wherever every value fits its slot. So Link gives the layout up from the start: nothing is proven of its field,
+# every change may befall it, and parsers may make it. Here the number does not fit the slot of a text: what the parse answers is an ordinary object, and the reader takes it
 # RUN(LINK): link fields layouts mechanisms=all
-# LINK: field L0.0 "line" proven=string writers-known
-# LINK: layout L0 changes=[]
+# LINK-NOT: field L0.0 "line" proven=
+# LINK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# LINK: parsers-may-make L0
 # RUN: run-in-shell globalThis.report = value => print(String(value));
 # CHECK: string
 # CHECK-NEXT: number
@@ -13,7 +14,7 @@
 # NONE-NEXT: number
 # NONE-NEXT: exited with 0
 
-expectedresult x0 type=undefined|null|L0 layouts=[L0]
+expectedresult x0 type=undefined|null|L0 layouts=[L0] flags=[IsMadeByParser]
 layout L0 module=m0 fields=[{key="line" declared={type=string} flags=[IsRequired]}] ownFieldCount=1
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

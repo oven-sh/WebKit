@@ -6,7 +6,7 @@
 # -- end of source
 # A pattern whose steps stand in a row is one operation wherever it stands, and no test for a list stands in front of it. In a loop the code of the operation reads a list as lists are made in line,
 # where it holds boxed values and as many of them as are taken: the cell says what it is, that it is as made and what kind of storage it has, the length is compared once, and each element is loaded and looked at for a hole.
-# Whatever else comes goes to the stub, which is all there is outside a loop.
+# Whatever else comes goes to the stub, which is all there is outside a loop. The loop is built twice, for a list of lists and for whatever else comes: the second copy is rare, and its pattern takes the stub as well.
 # OPTIONS: report=Flow
 # RUN: walk f1 mechanisms=all
 # REQUIRES: entries-of-bun
@@ -20,7 +20,7 @@
 # ALONE-NOT: level=Proven
 # RUN(FORMS): bytes-by-form mechanisms=all
 # REQUIRES(FORMS): entries-of-bun
-# FORMS: DestructureIterable Always Anywhere Runtime 1
+# FORMS: DestructureIterable Always Anywhere Runtime 2
 # FORMS: DestructureIterable Always Loop Open 1
 # RUN(ONCE): emit f2:Body mechanisms=all
 # REQUIRES(ONCE): entries-of-bun

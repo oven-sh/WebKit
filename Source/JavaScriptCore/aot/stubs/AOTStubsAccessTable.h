@@ -14,7 +14,7 @@
 
 namespace JSC { namespace AOT {
 
-enum class PartOfAccessTable : uint8_t { Reads, Stores, Calls };
+enum class PartOfAccessTable : uint8_t { Reads, Calls };
 
 struct AccessTableRegisters {
     GPRReg cell;
@@ -33,8 +33,8 @@ struct AccessTableRead {
     bool waysOnwardAreCalls { false };
 };
 
-void returnValueByAccessTable(StubAssembler&, const AccessTableRead&, JumpList& isNotAnswered, JumpList& isAnsweredByFieldTable);
-void readByFormOfAnswerInAccessTable(StubAssembler&, GPRReg cell, GPRReg answer, GPRReg scratch, GPRReg result, JumpList& isAnsweredByFieldTable, JumpList& findsGetterInOwnStorage, const ScopedLambda<void()>& finish);
+void returnValueByAccessTable(StubAssembler&, const AccessTableRead&, JumpList& isNotAnswered);
+void readByFormOfAnswerInAccessTable(StubAssembler&, GPRReg cell, GPRReg answer, GPRReg scratch, GPRReg result, JumpList& findsGetterInOwnStorage, const ScopedLambda<void()>& finish);
 void loadValueInOwnStorageByAnswer(StubAssembler&, GPRReg cell, GPRReg answer, GPRReg scratch, GPRReg result);
 void loadValueInStorageOfHolderByAnswer(StubAssembler&, GPRReg answer, GPRReg scratch, GPRReg result);
 
@@ -53,7 +53,6 @@ void makeAnswerOfGetterInOwnStorage(StubAssembler&, GPRReg wordIndexAndAnswer);
 void makeAnswerInStorageOfHolder(StubAssembler&, GPRReg frontCell, GPRReg answer);
 
 void fileOwnValueInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg offsetInCell);
-void fileAnswerOfFieldTableInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg answer);
 void fileOwnValueOfOrdinaryCellInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg offsetInCell);
 void fileOwnValueInStorageInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg answer);
 void fileValueAboveInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg slot);
@@ -61,7 +60,6 @@ void fileValueInStorageOfHolderInAccessTable(StubAssembler&, const AccessTableRe
 void fileAbsenceInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg answer);
 void fileValueAboveFieldLeftOutInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg holder, GPRReg answer);
 void fileAbsenceAboveFieldLeftOutInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg answer);
-void fileStoreToFieldInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg answer, uint32_t orderWordBitsThatForbid);
 void fileCallInAccessTable(StubAssembler&, const AccessTableRegisters&, unsigned numberOfArguments, GPRReg callee, GPRReg closureWord);
 
 } } // namespace JSC::AOT

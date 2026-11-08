@@ -395,6 +395,7 @@ static ALWAYS_INLINE void visitInstanceStructuresOfEngine(JSGlobalObject* realm,
     AOT_VISIT_INSTANCE_STRUCTURE(ArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default))
     AOT_VISIT_INSTANCE_STRUCTURE(SharedArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared))
     AOT_VISIT_INSTANCE_STRUCTURE(DataView, realm->typedArrayStructureConcurrently(TypeDataView, false))
+    AOT_VISIT_INSTANCE_STRUCTURE(DataView, realm->typedArrayStructureConcurrently(TypeDataView, true))
     AOT_VISIT_INSTANCE_STRUCTURE(RegExp, realm->regExpStructure())
     AOT_VISIT_INSTANCE_STRUCTURE(Promise, realm->promiseStructure())
     AOT_VISIT_INSTANCE_STRUCTURE(String, realm->stringObjectStructure())
@@ -402,7 +403,9 @@ static ALWAYS_INLINE void visitInstanceStructuresOfEngine(JSGlobalObject* realm,
     AOT_VISIT_INSTANCE_STRUCTURE(Date, realm->dateStructureConcurrently())
     AOT_VISIT_INSTANCE_STRUCTURE(IntlDateTimeFormat, realm->m_dateTimeFormatStructure.getConcurrently())
     AOT_VISIT_INSTANCE_STRUCTURE(IntlNumberFormat, realm->m_numberFormatStructure.getConcurrently())
-#define AOT_VISIT_TYPED_ARRAY_STRUCTURE(name) AOT_VISIT_INSTANCE_STRUCTURE(name##Array, realm->typedArrayStructureConcurrently(Type##name, false))
+#define AOT_VISIT_TYPED_ARRAY_STRUCTURE(name) \
+    AOT_VISIT_INSTANCE_STRUCTURE(name##Array, realm->typedArrayStructureConcurrently(Type##name, false)) \
+    AOT_VISIT_INSTANCE_STRUCTURE(name##Array, realm->typedArrayStructureConcurrently(Type##name, true))
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_VISIT_TYPED_ARRAY_STRUCTURE)
 #undef AOT_VISIT_TYPED_ARRAY_STRUCTURE
     AOT_VISIT_INSTANCE_STRUCTURE(ArrayIterator, realm->arrayIteratorStructure())
@@ -676,7 +679,7 @@ static CellLookup checkFound(const BuiltinTable& table, BuiltinCellKey key, JSVa
         if (isOverloadOfKey(key.kind(), overload.mode) && !hasExpectedCallee(overload.callee, value))
             return makeUnexpected(BuiltinLookupFailure::HasOtherCallee);
     }
-    if (key.kind() == BuiltinCellKey::Kind::Object && table.isHostFunctionOfEngine(id)) {
+    if (key.kind() == BuiltinCellKey::Kind::Object && (table.isHostFunctionOfEngine(id) || table.isNativeFunctionOfHost(id))) {
         Structure* structure = value.asCell()->structure();
         if (structure->globalObject()->hostFunctionStructure()->mayHaveImmutableProperties() && !structure->mayHaveImmutableProperties())
             return makeUnexpected(BuiltinLookupFailure::HasOtherCallee);
@@ -957,11 +960,16 @@ public:
 
     void willWrite(UniquedStringImpl* uid) const final
     {
-        if (!m_writes || m_vm.allowLazyMaterializationOfImmutablePropertiesCount)
+        if (m_vm.allowLazyMaterializationOfImmutablePropertiesCount || m_membersWrittenBefore.contains(uid))
             return;
         const BuiltinTable& table = BuiltinTable::singleton();
         BuiltinName name = table.nameOf(m_vm, uid);
-        if (BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID())
+        BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID();
+        if (member && !refusalDependsOnWriter(uid))
+            m_membersWrittenBefore.add(uid);
+        if (!m_writes)
+            return;
+        if (member)
             m_writes->willWrite(member, uid);
         else
             m_writes->willAddNameTo(m_holder);
@@ -969,6 +977,8 @@ public:
 
     bool contains(UniquedStringImpl* uid) const final
     {
+        if (m_membersWrittenBefore.contains(uid))
+            return false;
         const BuiltinTable& table = BuiltinTable::singleton();
         BuiltinName name = table.nameOf(m_vm, uid);
         if (table.at(m_holder).flags.contains(BuiltinFlag::IsLockedObject)) {
@@ -982,7 +992,7 @@ public:
         return m_namesTakenForAbsent && !uid->isSymbol() && !m_openedTexts.contains(uid) && !(name && table.findOwnMember(m_holder, name)) && isTakenForAbsent(uid);
     }
 
-    bool refusesWrite(UniquedStringImpl* uid) const final { return contains(uid) || (refusalDependsOnWriter(uid) && isWrittenByFileOfProduct(m_vm)); }
+    bool refusesWrite(UniquedStringImpl* uid) const final { return !m_membersWrittenBefore.contains(uid) && (contains(uid) || (refusalDependsOnWriter(uid) && isWrittenByFileOfProduct(m_vm))); }
 
     bool refusalDependsOnWriter(UniquedStringImpl* uid) const final
     {
@@ -1045,6 +1055,7 @@ private:
     WritesToBuiltinMembers* m_writes;
     std::optional<std::span<const uint32_t>> m_namesTakenForAbsent;
     IdentifierSet m_openedTexts;
+    mutable IdentifierSet m_membersWrittenBefore;
 };
 
 } // anonymous namespace

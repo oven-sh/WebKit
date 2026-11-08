@@ -238,6 +238,12 @@ TypedPointer ModuleEmitter::statusOf(ModuleID module)
     return m_out.address(m_heaps.entire(AbstractHeap::ExternalState), statuses.value(), module.index());
 }
 
+Condition ModuleEmitter::hasBegun(ModuleID module)
+{
+    static_assert(StoredModuleStatus::InRecord < StoredModuleStatus::Evaluated && StoredModuleStatus::Evaluated < StoredModuleStatus::Evaluating);
+    return above(Word32(m_out.load8ZeroExt32(statusOf(module))), word32(static_cast<int32_t>(StoredModuleStatus::InRecord)));
+}
+
 void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
 {
     static_assert(StoredModuleStatus::Unlinked < StoredModuleStatus::InRecord && StoredModuleStatus::Linked < StoredModuleStatus::InRecord);

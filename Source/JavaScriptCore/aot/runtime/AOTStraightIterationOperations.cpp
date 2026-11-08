@@ -7,6 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
+#include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTErrorMessages.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
@@ -15,16 +18,23 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSavedFrame.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTState.h"
 #include "IteratorOperations.h"
+#include "JSArrayIterator.h"
+#include "JSArrayIteratorInlines.h"
 #include "JSCInlines.h"
+#include "JSMapIterator.h"
 #include "JSPropertyNameEnumerator.h"
+#include "JSSetIterator.h"
+#include "JSStringIteratorInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-enum class WordOfStraightIteration : uint32_t { Iterator, Next, IsDone };
-static constexpr size_t numberOfWordsOfStraightIteration = 3;
+enum class WordOfStraightIteration : uint32_t { Iterator, Next, IsDone, Stepper };
+static constexpr size_t numberOfWordsOfStraightIteration = 4;
+enum class StepperOfStraightIteration : uint8_t { Protocol, List, Map, Set, Text };
 enum class WordOfStraightEnumeration : uint32_t { Enumerator, Position };
 static constexpr size_t numberOfWordsOfStraightEnumeration = 2;
 
@@ -84,6 +94,48 @@ static void closeStraightIterationUnlessDone(JSGlobalObject* globalObject, Saved
         throwException(globalObject, scope, createRuntimeError(globalObject, Typed::RuntimeErrorKind::IteratorResultNotObject, nullptr));
 }
 
+static StepperOfStraightIteration stepperOfStraightIteration(Instance& instance, JSObject* iterator, JSValue next)
+{
+    auto steppedByItsOwn = [&](BuiltinID method, StepperOfStraightIteration stepper) {
+        return next.isCell() && next.asCell() == instance.state->builtinCells->findObject(method) ? stepper : StepperOfStraightIteration::Protocol;
+    };
+    switch (iterator->type()) {
+    case JSArrayIteratorType:
+        return isJSArray(uncheckedDowncast<JSArrayIterator>(iterator)->iteratedObject()) ? steppedByItsOwn(Builtins::ArrayIteratorPrototypeNext, StepperOfStraightIteration::List) : StepperOfStraightIteration::Protocol;
+    case JSMapIteratorType:
+        return steppedByItsOwn(Builtins::MapIteratorPrototypeNext, StepperOfStraightIteration::Map);
+    case JSSetIteratorType:
+        return steppedByItsOwn(Builtins::SetIteratorPrototypeNext, StepperOfStraightIteration::Set);
+    case JSStringIteratorType:
+        return steppedByItsOwn(Builtins::StringIteratorPrototypeNext, StepperOfStraightIteration::Text);
+    default:
+        return StepperOfStraightIteration::Protocol;
+    }
+}
+
+static bool stepIteratorOfEngine(JSGlobalObject* globalObject, StepperOfStraightIteration stepper, JSCell* iterator, JSValue& value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    switch (stepper) {
+    case StepperOfStraightIteration::List:
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSArrayIterator>(iterator)->next(globalObject, value));
+    case StepperOfStraightIteration::Map:
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSMapIterator>(iterator)->next(globalObject, value));
+    case StepperOfStraightIteration::Set:
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSSetIterator>(iterator)->next(globalObject, value));
+    case StepperOfStraightIteration::Text: {
+        JSString* piece = uncheckedDowncast<JSStringIterator>(iterator)->nextWithAdvance(globalObject, vm);
+        RETURN_IF_EXCEPTION(scope, false);
+        value = piece;
+        return piece;
+    }
+    case StepperOfStraightIteration::Protocol:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTOpenIteration, JSCell*, (Instance* instance, EncodedJSValue encodedIterable))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTOpenIteration);
@@ -106,9 +158,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTOpenIteration, JSCell*, (Instance* instance
     }
     JSValue next = asObject(iterator)->get(globalObject, vm.propertyNames->next);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    StepperOfStraightIteration stepper = stepperOfStraightIteration(*instance, asObject(iterator), next);
     SavedFrame* state = SavedFrame::createHeapFrame(vm, *instance, numberOfWordsOfStraightIteration, nullptr);
     storeWordOfStraightState(state, WordOfStraightIteration::Iterator, iterator);
     storeWordOfStraightState(state, WordOfStraightIteration::Next, next);
+    storeWordOfStraightState(state, WordOfStraightIteration::Stepper, jsNumber(static_cast<int32_t>(stepper)));
     storeWordOfStraightState(state, WordOfStraightIteration::IsDone, jsBoolean(false));
     vm.mutatorFence();
     OPERATION_RETURN(scope, state);
@@ -123,17 +177,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStepIteration, UGPRPair, (Instance* instanc
         OPERATION_RETURN(scope, resultOfStraightStep(true, jsUndefined()));
     storeWordOfStraightState(state, WordOfStraightIteration::IsDone, jsBoolean(true));
     JSValue iterator = readWordOfStraightState(state, WordOfStraightIteration::Iterator);
-    JSValue result = callMethodOfStraightIteration(globalObject, readWordOfStraightState(state, WordOfStraightIteration::Next), iterator);
-    OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
-    if (!result.isObject()) [[unlikely]] {
-        throwException(globalObject, scope, createRuntimeError(globalObject, Typed::RuntimeErrorKind::IteratorResultNotObject, nullptr));
-        OPERATION_RETURN(scope, makeUGPRPair(0, 0));
+    auto stepper = static_cast<StepperOfStraightIteration>(readWordOfStraightState(state, WordOfStraightIteration::Stepper).asInt32());
+    JSValue value;
+    if (stepper != StepperOfStraightIteration::Protocol) {
+        bool hasValue = stepIteratorOfEngine(globalObject, stepper, iterator.asCell(), value);
+        OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+        if (!hasValue)
+            OPERATION_RETURN(scope, resultOfStraightStep(true, jsUndefined()));
+    } else {
+        JSValue result = callMethodOfStraightIteration(globalObject, readWordOfStraightState(state, WordOfStraightIteration::Next), iterator);
+        OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+        if (!result.isObject()) [[unlikely]] {
+            throwException(globalObject, scope, createRuntimeError(globalObject, Typed::RuntimeErrorKind::IteratorResultNotObject, nullptr));
+            OPERATION_RETURN(scope, makeUGPRPair(0, 0));
+        }
+        JSValue done = asObject(result)->get(globalObject, vm.propertyNames->done);
+        OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+        if (done.toBoolean(globalObject))
+            OPERATION_RETURN(scope, resultOfStraightStep(true, jsUndefined()));
+        value = asObject(result)->get(globalObject, vm.propertyNames->value);
     }
-    JSValue done = asObject(result)->get(globalObject, vm.propertyNames->done);
-    OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
-    if (done.toBoolean(globalObject))
-        OPERATION_RETURN(scope, resultOfStraightStep(true, jsUndefined()));
-    JSValue value = asObject(result)->get(globalObject, vm.propertyNames->value);
     OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
     storeWordOfStraightState(state, WordOfStraightIteration::IsDone, jsBoolean(false));
     OPERATION_RETURN(scope, resultOfStraightStep(false, value));

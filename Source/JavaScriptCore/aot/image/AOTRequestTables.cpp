@@ -279,8 +279,9 @@ static void encodeEvalBindingOfRequest(const TableEncoder& encoder, const Typed:
     data.kind = static_cast<uint32_t>(binding.kind);
     data.depth = checkedEvalBindingAmount(encoder, LimitID::MaxEvalBindingDepth, binding.depth, binding.layout);
     data.operand = EvalBindingData::noOperand;
-    data.function = operandOfDirectEvalRequest(binding.function);
-    data.setter = operandOfDirectEvalRequest(binding.setter);
+    bool namesBindings = binding.kind == EvalBindingKind::PrivateMethod || binding.kind == EvalBindingKind::PrivateAccessor;
+    data.function = namesBindings ? binding.function.value_or(EvalBindingData::noOperand) : operandOfDirectEvalRequest(binding.function);
+    data.setter = namesBindings ? binding.setter.value_or(EvalBindingData::noOperand) : operandOfDirectEvalRequest(binding.setter);
     data.privateKey = 0;
     data.slot = SlotData::create(0, SlotRepresentation::JSValue);
     if (!evalBindingHasCompleteLocation(encoder.program, binding)) {
@@ -349,6 +350,8 @@ static uint32_t sharedStorageOfDataRequest(const TableEncoder& encoder, DataID d
         return DataRequest::noSharedStorage;
     case Typed::DataEncoding::ReadOnlyTree:
         return DataRequest::noSharedStorage;
+    case Typed::DataEncoding::TreeWithOwnStorage:
+        return DataRequest::rootHasOwnStorage;
     case Typed::DataEncoding::CopyOnWriteArray: {
         const auto* array = encoder.program.at(data).root.tryAs<Typed::DataNode::Array>();
         if (!array) {

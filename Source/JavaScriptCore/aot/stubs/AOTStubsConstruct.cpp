@@ -12,6 +12,7 @@
 #include "AOTInstance.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTVMState.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
 #include "InternalFunctionAllocationProfile.h"
@@ -88,8 +89,18 @@ static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GP
     return overflowsStack;
 }
 
+static constexpr ptrdiff_t offsetOfParentOfSuperCall = VM::offsetOfAOTState() + VMState::offsetOfParentOfSuperCall();
+static constexpr ptrdiff_t offsetOfNewTargetOfSuperCall = VM::offsetOfAOTState() + VMState::offsetOfNewTargetOfSuperCall();
+
 static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax, const HostCallFrame& frame, GPRReg function, GPRReg globalObject)
 {
+    if (syntax == ConstructSyntax::SuperCall) {
+        const GPRReg vm = jit.reuseScratch(StubRegister::T11);
+        RELEASE_ASSERT(noOverlap(vm, frame.callee, frame.thisValue, function, globalObject));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+        jit.storePtr(frame.callee, Address(vm, offsetOfParentOfSuperCall));
+        jit.storePtr(frame.thisValue, Address(vm, offsetOfNewTargetOfSuperCall));
+    }
     emitHostCallFrame(jit, frame);
     const GPRReg globalObjectArgument = jit.reuseScratch(StubRegister::A0);
     const GPRReg callFrameArgument = jit.reuseScratch(StubRegister::A1);
@@ -102,6 +113,8 @@ static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax,
     jit.storePtr(callFrameArgument, Address(scratch, VM::offsetOfTopCallFrame()));
     jit.call(function, HostFunctionPtrTag);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
+    if (syntax == ConstructSyntax::SuperCall)
+        jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), Address(exception, offsetOfNewTargetOfSuperCall));
     jit.loadPtr(Address(exception, VM::exceptionOffset()), exception);
     JumpList madeNoObject;
     if (syntax == ConstructSyntax::SuperCall) {

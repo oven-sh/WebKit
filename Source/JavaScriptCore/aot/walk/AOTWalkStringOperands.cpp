@@ -120,7 +120,7 @@ static bool openGuessAtOperandForStringOperands(Walker& walker, const BodyValue&
     return true;
 }
 
-bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call)
+bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call, OperandsTestedAtBuiltinCall tested)
 {
     if (call.opcode() != Opcode::Call || !walker.opensGuesses() || !walker.has(Mechanism::Guesses) || walker.isUnreachable())
         return false;
@@ -138,7 +138,7 @@ bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call)
         return false;
     builtin = walker.program().builtins().canonicalID(builtin);
 
-    if (ValueID receiver = call.thisValueOperand(); receiver && walker.isInLoop()) {
+    if (ValueID receiver = call.thisValueOperand(); receiver && walker.isInLoop() && tested == OperandsTestedAtBuiltinCall::All) {
         Reference value = walker.referenceOf(receiver);
         TypeID proven = value && value.isValue() ? walker.typeOf(value) : TypeID();
         if (proven && !isNeverType(proven) && types.at(proven).isObject() && singleBuiltinClassOf(types, types.at(proven)) && !isListAsMade(walker, value) && goesByOneRowOnOperandAsMade(walker, call, builtin, value, proven)) {
@@ -151,7 +151,7 @@ bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call)
             return true;
         }
     }
-    if (ValueID receiver = call.thisValueOperand(); receiver && openGuessAtOperandForStringOperands(walker, call, builtin, receiver, BuiltinOperand::receiver()))
+    if (ValueID receiver = call.thisValueOperand(); receiver && tested == OperandsTestedAtBuiltinCall::All && openGuessAtOperandForStringOperands(walker, call, builtin, receiver, BuiltinOperand::receiver()))
         return true;
     unsigned position = 0;
     for (ValueID argument : call.argumentsOperands()) {
@@ -247,7 +247,12 @@ static BuiltinID builtinExpectedToBeCalledForStringOperands(Walker& walker, cons
     if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet || index.value(read).isFreeName())
         return { };
     TypeID object = typeProvenOrExpectedForStringOperands(walker, index.value(read).objectOperand(), call.id());
-    return object ? findConstantMemberReadOff(static_cast<const Walker&>(walker), object, index.value(read).key()) : BuiltinID();
+    if (!object)
+        return { };
+    if (BuiltinID member = findConstantMemberReadOff(static_cast<const Walker&>(walker), object, index.value(read).key()))
+        return member;
+    Type type = types.at(object);
+    return type.isObject() && singleFunctionOf(types, type) ? findConstantMemberOnceForBuild(walker, Builtins::FunctionPrototype, index.value(read).key()) : BuiltinID();
 }
 
 static BuiltinClassID classHandedOutByRampForStringOperands(const Function& function)

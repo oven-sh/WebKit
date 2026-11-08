@@ -37,13 +37,23 @@ void AllocationEmitter::generateAppendHole(const ValueContext& value)
 void GuardEmitter::generateHasArrayStorage(const ValueContext& value)
 {
     ArrayStorage kind = value->arrayStorage();
-    if (!hasArrayStorageForm(kind)) {
+    if (kind == ArrayStorage::Other && value->isWritable()) {
+        defineTest(value, emitter<ElementAccessEmitter>().takesNumbersByKindOfStorage(in<CellPointer>(value->arrayOperand()), value->admitsInt32Storage()));
+        return;
+    }
+    if (!accessToElementsHasCode(Opcode::HasArrayStorage, kind, value->admitsInt32Storage(), value->isWritable())) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         defineTest(value, boolean(false));
         return;
     }
+    if (value->data()) {
+        Pointer written(m_out.add(loadImmutablePointer(AOT_INSTANCE_OFFSET(image.data)).value(), m_out.zeroExtPtr(numberOf(m_mentions.add(NumberSpace::DataElements, value->data())).value())));
+        defineTest(value, equal(emitter<ElementAccessEmitter>().storageOfList(in<CellPointer>(value->arrayOperand())), written));
+        return;
+    }
     if (value->admitsInt32Storage()) {
-        defineTest(value, emitter<ElementAccessEmitter>().hasDoubleOrInt32Storage(in<CellPointer>(value->arrayOperand())));
+        CellPointer list = in<CellPointer>(value->arrayOperand());
+        defineTest(value, kind == ArrayStorage::Contiguous ? emitter<ElementAccessEmitter>().holdsBoxedElements(list) : emitter<ElementAccessEmitter>().hasDoubleOrInt32Storage(list));
         return;
     }
     defineTest(value, emitter<ElementAccessEmitter>().hasArrayStorage(in<CellPointer>(value->arrayOperand()), kind, value->isWritable()));
@@ -51,6 +61,11 @@ void GuardEmitter::generateHasArrayStorage(const ValueContext& value)
 
 void GuardEmitter::generateIsElementPresent(const ValueContext& value)
 {
+    if (!accessToElementsHasCode(Opcode::IsElementPresent, value->arrayStorage(), value->admitsInt32Storage(), false)) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        defineTest(value, boolean(false));
+        return;
+    }
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
     emitter<ElementAccessEmitter>().holdKindOfList(value);
     defineTestByBranching(value, [&](BranchTargets targets) {

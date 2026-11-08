@@ -10,6 +10,7 @@
 
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
+#include "AOTJSONTextWriter.h"
 #include "AOTState.h"
 #include "JSCInlines.h"
 #include "NumberPrototype.h"
@@ -135,11 +136,11 @@ JSString* StringKeyCache::textOfInt32(VM& vm, int32_t integer)
     }
     if (JSString* text = tryFindIntegerKey(static_cast<uint32_t>(integer)))
         return text;
-    std::array<Latin1Character, maxIndexLength> buffer;
-    std::span digits = std::span { buffer }.first(lengthOfIntegerAsString(integer));
-    writeIntegerToBuffer(integer, digits);
+    std::array<Latin1Character, maxJSONIntegerLength> buffer;
+    const Latin1Character* end = appendJSONInteger(buffer.data(), integer);
+    std::span<const Latin1Character> digits { buffer.data(), static_cast<size_t>(end - buffer.data()) };
     unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(digits);
-    JSString* text = jsNontrivialString(vm, String(StringImpl::create(std::span<const Latin1Character> { digits }, hash)));
+    JSString* text = jsNontrivialString(vm, String(StringImpl::create(digits, hash)));
     if (!cacheIntegerKey(static_cast<uint32_t>(integer), text)) [[unlikely]]
         vm.numericStrings.setJSString(integer, text->tryGetValue(), text);
     return text;
