@@ -339,7 +339,7 @@ void PyFunction::setCode(VM& vm, PyCode* code)
     };
     Vector<CodeBlock*> reliant;
     vm.heap.forEachCodeBlock([&](CodeBlock* codeBlock) {
-        // A block that has been thrown away may still be in a frame, and what it refers to weakly may be gone.
+        // (A block that has been thrown away may still be in a frame. It has been invalidated, and nothing enters it.)
         if (!JITCode::isOptimizingJIT(codeBlock->jitType()) || codeBlock->isJettisoned())
             return;
         for (auto& reference : codeBlock->jitCode()->dfgCommon()->m_weakReferences) {
