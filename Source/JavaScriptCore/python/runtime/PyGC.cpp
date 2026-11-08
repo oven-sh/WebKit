@@ -94,6 +94,14 @@ static bool isObjectOfPython(JSCell* cell, JSGlobalObject* globalObject)
     return true;
 }
 
+// A cell of one of Python's kinds, of this global object, that programs do not get to see. (What is JavaScript's is the program's, wherever the program has put it.)
+static bool isOfTheRuntimeAlone(JSCell* cell, JSGlobalObject* globalObject)
+{
+    JSType type = cell->type();
+    bool isOfPython = isPyObjectType(type) || (type == JSFunctionType && PyFunction::is(cell)) || (type == InternalFunctionType && (PyType::is(cell) || PyNativeFunction::is(cell)));
+    return isOfPython && cell->structure()->realm() == globalObject && !isObjectOfPython(cell, globalObject);
+}
+
 static bool isWhole(JSCell* cell)
 {
     // Only what is left of an exception that nobody has seen leads to such a frame object (PyFrame::backIs()). Whoever has a HeapView gives none of that: this is for those that look without one.
@@ -1048,11 +1056,12 @@ UncheckedKeyHashSet<JSCell*> cellsReachedFrom(VM& vm, std::span<JSCell* const> r
 static void appendReferents(JSGlobalObject* globalObject, JSCell* object, MarkedArgumentBuffer& result, unsigned depth = 0)
 {
     Runtime& rt = runtime(globalObject);
-    // What the program has put into a container of its own is the program's. A container that is a part of something else is the runtime's, and may hold what is the runtime's too.
+    // A container that is a part of something else is the runtime's, and may hold whatever is the runtime's. What the program has put into a container of its own is the program's, an object of JavaScript's too. But a
+    // container that the program can come to may be the runtime's all the same (a dict of weak references that ctypes has made for itself): what is the runtime's alone is not given out of any.
     auto give = [&](JSValue value) {
-        if (depth && value.isCell()) {
+        if (value.isCell()) {
             JSCell* cell = value.asCell();
-            if (!cell->isString() && !cell->isHeapBigInt() && !(cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)))
+            if (depth ? !cell->isString() && !cell->isHeapBigInt() && !(cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)) : cell->isObject() && isOfTheRuntimeAlone(cell, globalObject))
                 return;
         }
         result.append(value);
