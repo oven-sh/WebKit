@@ -505,7 +505,8 @@ static bool bufferForEachCellInFrames(VM& vm, const Function& function)
     };
     auto visitFrame = [&](StackVisitor& visitor) {
         CodeBlock* codeBlock = visitor->codeBlock();
-        if (!visitor->isNativeFrame() && (!codeBlock || JITCode::isOptimizingJIT(codeBlock->jitType()))) {
+        // (Of a function that was inlined the visitor has the code as it was before, and the frame of the function that it was inlined in.)
+        if (!visitor->isNativeFrame() && (!codeBlock || visitor->isInlinedDFGFrame() || JITCode::isOptimizingJIT(codeBlock->jitType()))) {
             isComplete = false;
             return IterationStatus::Done;
         }
