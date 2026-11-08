@@ -250,6 +250,9 @@ inline bool JSFunction::canAssumeNameAndLengthAreOriginal(VM&)
     // This must be synced with JSBoundFunction::canSkipNameAndLengthMaterialization().
     if (this->inherits<JSBoundFunction>())
         return false;
+    // A class that answers for its properties itself may say anything, at any time, and FunctionRareData is not told.
+    if (structure()->typeInfo().prohibitsPropertyCaching())
+        return false;
     FunctionRareData* rareData = this->rareData();
     if (!rareData)
         return true;

@@ -185,6 +185,20 @@ static bool jsViewSymbolProperty(JSGlobalObject* globalObject, JSObject* object,
 }
 
 // What JS looks for in an object that can do what this one can.
+// To JS a function written in Python has one name, its __name__, and as `length` the number of parameters of what it runs now. Nothing is stored in the function, as JSC does when
+// one of the two is first asked for: it would have another Structure then, and a place in Python code that has seen several callees would take the slow path for it.
+static bool jsViewNameOrLengthOfFunction(VM& vm, JSObject* object, PropertyName propertyName, PropertySlot& slot)
+{
+    if (!PyFunction::is(object))
+        return false;
+    constexpr unsigned attributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+    auto* function = uncheckedDowncast<PyFunction>(object);
+    if (propertyName == vm.propertyNames->length)
+        return jsViewFound(object, slot, jsNumber(function->originalLength(vm)), attributes);
+    // (Of an instance of a class derived from str, the string.)
+    return propertyName == vm.propertyNames->name && jsViewFound(object, slot, strValue(function->name()), attributes);
+}
+
 static bool jsViewAdaptorProperty(JSGlobalObject* globalObject, JSObject* object, PyType* type, PropertyName propertyName, PropertySlot& slot)
 {
     Runtime& rt = runtime(globalObject);
@@ -199,6 +213,8 @@ static bool jsViewAdaptorProperty(JSGlobalObject* globalObject, JSObject* object
         return jsViewHas(type, Special::Next) && jsViewFound(object, slot, rt.jsViewObject(JSViewObject::Next), hidden);
     if (propertyName == names.returnKeyword)
         return jsViewHas(type, Special::Next) && jsViewFound(object, slot, rt.jsViewObject(JSViewObject::Return), hidden);
+    if (jsViewNameOrLengthOfFunction(vm, object, propertyName, slot))
+        return true;
     if (propertyName == names.length) {
         if (!jsViewHas(type, Special::Len))
             return false;
@@ -215,7 +231,7 @@ static bool jsViewAdaptorProperty(JSGlobalObject* globalObject, JSObject* object
             auto* pyType = PyType::tryFrom(object);
             return pyType && jsViewFound(object, slot, prototypeForJS(globalObject, pyType), hidden);
         }
-        // A PyFunction has the name of any function of JS.
+        // One object seen from two sides: it has one name. (A PyFunction: jsViewNameOrLengthOfFunction().)
         if (propertyName != names.name || object->type() != InternalFunctionType)
             return false;
         JSValue name = getAttrIfPresent(globalObject, object, rt.names.dName());
@@ -291,6 +307,9 @@ bool JSView::getOwnPropertySlot(JSObject* object, PropertyName propertyName, Pro
 
     slot.disableCaching();
     if (slot.isVMInquiry()) {
+        // (It takes no code to tell, and the base class, asked next, would store them.)
+        if (jsViewNameOrLengthOfFunction(vm, object, propertyName, slot))
+            return true;
         slot.setIsTaintedByOpaqueObject();
         return false;
     }

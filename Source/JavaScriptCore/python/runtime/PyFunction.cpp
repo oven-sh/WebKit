@@ -278,8 +278,8 @@ DEFINE_VISIT_CHILDREN(PyFunction);
 // - a MicrotaskCall is found by the executable that the function has when the microtask runs;
 // - a CallData says what the function ran when it was asked for, and a loop of the engine's may ask once for all its calls
 //   (JSON.stringify(o, f), `new Map(iterable)` for map.set). Such a loop goes on in the old code, as a call in progress does;
-// - `length` and `name` are properties of the function's own from when JS first asks for them: they are made anew. (Those of f.bind(...) are
-//   made when they are first asked for, from what the function has then.)
+// - `length` and `name` would be properties of the function's own from when JS first asks for them. They are not stored: jsViewAdaptorProperty() says what the function has when it
+//   is asked, the number of parameters of its code and its __name__. (f.bind(...) asks as it binds: JSFunction::canAssumeNameAndLengthAreOriginal().)
 // So what is about a call is asked of the code that has been entered, from its first instruction on, and before: the interpreter's prologue counts the
 // entrances of the CodeBlock in the frame (entry_osr_function_for_call).
 // A call in progress goes on in the old code, which its frame keeps: see executableOf(). So do the generators there are.
@@ -302,15 +302,6 @@ void PyFunction::setCode(VM& vm, PyCode* code)
     ASSERT(functionExecutable() == next);
     m_info = next->unlinkedExecutable()->pythonCodeInfo();
     m_generatorBody.clear();
-    // (Nothing of the program's reaches these properties: what JS defines, deletes or freezes goes to the attributes of Python's.)
-    if (FunctionRareData* rareData = this->rareData()) {
-        constexpr unsigned attributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        if (rareData->hasReifiedLength())
-            putDirect(vm, vm.propertyNames->length, jsNumber(originalLength(vm)), attributes);
-        if (rareData->hasReifiedName())
-            putDirect(vm, vm.propertyNames->name, jsString(vm, next->ecmaName().string()), attributes);
-    }
-
     if (CodeBlock* codeBlock = previous->codeBlockForCall())
         codeBlock->unlinkOrUpgradeIncomingCalls(vm, nullptr);
 #if ENABLE(DFG_JIT)
