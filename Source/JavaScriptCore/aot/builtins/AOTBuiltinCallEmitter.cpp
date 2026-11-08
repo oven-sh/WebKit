@@ -25,6 +25,7 @@
 #include "AOTRegExpFlags.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallHost.h"
 #include "AOTStubsPrimitiveFastPaths.h"
