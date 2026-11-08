@@ -581,6 +581,12 @@ public:
     ApproximateTime currentGCStartApproximateTime() const { return m_currentGCStartApproximateTime; }
     // The collection in progress was requested by the embedder because the application went idle (GCRequest::isIdle).
     bool isIdleCollection() const;
+    // About the last collection that ended, for an embedder that reports collections: a GC completion callback reads
+    // them for the collection that it is told of. The pause is the time for which the collection had the mutator
+    // stopped, summed over its stops. lastFullGCLength() and lastEdenGCLength() are the length of the whole cycle, and a
+    // concurrent collection lets the mutator run in most of it. Forced: the request had GCRequest::isForced.
+    Seconds lastCollectionPause() const { return m_lastCollectionPause; }
+    bool lastCollectionWasForced() const { return m_lastCollectionWasForced; }
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -1011,6 +1017,10 @@ private:
 #else
     Seconds m_lastFullGCLength { 10_ms };
     Seconds m_lastEdenGCLength { 10_ms };
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    Seconds m_lastCollectionPause;
+    bool m_lastCollectionWasForced { false };
 #endif
 
     DoublyLinkedList<WeakBlock> m_detachedWeakBlocks;

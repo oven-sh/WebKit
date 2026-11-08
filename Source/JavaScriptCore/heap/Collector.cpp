@@ -442,6 +442,9 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
     dataLogIf(Options::logGC(), "[GC<", *this, ">: START ", gcConductorShortName(conn), " ", capacity() / 1024, "kb ");
 
     m_beforeGC = MonotonicTime::now();
+#if USE(BUN_JSC_ADDITIONS)
+    m_pauseBeforeLastStop = Seconds();
+#endif
     CollectionScope scope = decideCollectionScope();
 
     beginSignpost(scope, conn);
@@ -673,6 +676,9 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 
     m_scheduler->willResume();
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_pauseBeforeLastStop += MonotonicTime::now() - m_stopTime;
+#endif
     if (Options::logGC()) [[unlikely]] {
         double thisPauseMS = (MonotonicTime::now() - m_stopTime).milliseconds();
         dataLog("p=", thisPauseMS, "ms (max ", maxPauseMS(thisPauseMS), ")...]\n");
@@ -795,6 +801,11 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
     forEachHeap([&](Heap& heap) {
         heap.setNeedCollectionEpilogue();
         heap.recordCollectionTime(m_afterGC - m_beforeGC);
+#if USE(BUN_JSC_ADDITIONS)
+        // The last stop ends where the cycle does, as the pause that logGC prints above.
+        heap.m_lastCollectionPause = m_pauseBeforeLastStop + (m_afterGC - m_stopTime);
+        heap.m_lastCollectionWasForced = m_currentRequest.isForced;
+#endif
     });
     return changePhase(conn, CollectorPhase::NotRunning);
 }
