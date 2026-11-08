@@ -343,7 +343,7 @@ static PropertyAnswer classifyFieldRead(const ReadQuery& query, Object& object, 
         return uncacheableOnce(SlotAccess::Read);
     if (mayExistWithoutStorage) {
         bool findsPlainValue = walk.result == ChainWalkResult::Found && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && isValidOffset(walk.offset);
-        if (walk.firstObjectWithEmptySlot || (walk.result != ChainWalkResult::Absent && !findsPlainValue))
+        if (isAccessor || walk.firstObjectWithEmptySlot || (walk.result != ChainWalkResult::Absent && !findsPlainValue))
             return answer;
         nameInheritedProperty(answer, walk);
         answer.emptySlotMayBeUndefined = true;
