@@ -314,11 +314,11 @@ static JSValue operatorCompareDigest(JSGlobalObject* globalObject, JSValue a, JS
     }
     if (!isBytesLike(a) && !isBytesLike(b))
         return raiseTypeError(globalObject, scope, "unsupported operand types(s) or combination of types: '"_s, typeName(globalObject, a), "' and '"_s, typeName(globalObject, b), '\'');
-    std::span<const uint8_t> left;
-    std::span<const uint8_t> right;
-    if (failed(scope, getBytesLike(globalObject, a, left)) || failed(scope, getBytesLike(globalObject, b, right)))
+    BytesHolder right(globalObject);
+    BytesHolder left(globalObject);
+    if (failed(scope, left.get(a)) || failed(scope, right.getLast(b)))
         return { };
-    return jsBoolean(operatorCompareInConstantTime(left, right));
+    return jsBoolean(operatorCompareInConstantTime(left.span(), right.span()));
 }
 
 // ---- What itemgetter, attrgetter and methodcaller have in common ----

@@ -5,8 +5,10 @@
 
 #pragma once
 
+#include "PyBuffer.h"
 #include "PyHash.h"
 #include "PyObject.h"
+#include "PyType.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -93,11 +95,23 @@ public:
     void append(JSGlobalObject*, std::span<const uint8_t>);
     // How many bytes there is room for, counting the NUL that is kept after the last. 0: nothing is allocated.
     size_t capacity() const { return m_storage ? m_storage->capacity() - m_start : 0; }
-    PyByteStorage* storage() const { return m_storage.get(); }
 
-    unsigned exportCount() const { return m_exports; }
     void addExport() { ++m_exports; }
     void removeExport() { --m_exports; }
+    // An export that a function written in C++ has for as long as it runs, and that nothing takes over. A view that the program has dropped goes on counting until a
+    // collection finds it (isStillExported() in PyBuffer.h); these are not worth asking the collector about.
+    void addHold()
+    {
+        ++m_exports;
+        ++m_holds;
+    }
+    void removeHold()
+    {
+        --m_exports;
+        --m_holds;
+    }
+    // Whether it cannot be resized. May collect.
+    bool isStillExported(JSGlobalObject*);
 
 private:
     PyByteArray(VM&, Structure*, PyType*);
@@ -106,19 +120,70 @@ private:
     size_t m_start { 0 }; // Where in the storage the first byte is.
     size_t m_length { 0 };
     unsigned m_exports { 0 };
+    unsigned m_holds { 0 }; // How many of them are holds.
 };
 
-// The bytes of anything that has them to show: bytes, bytearray, memoryview, array.array, whatever has __buffer__...
-// They stay put only as long as nothing else runs, and the object has to be kept alive. To hold on to them, or to write, use
-// getBuffer() in PyBuffer.h.
+// Whether it has bytes to show: bytes, bytearray, memoryview, array.array, whatever has __buffer__...
 bool isBytesLike(JSValue);
-// False: a TypeError, "a bytes-like object is required, not 'x'"; or, though it is bytes-like, a ValueError (a memoryview
-// that was released), a BufferError (one whose items do not follow one another), or what __buffer__() raised. That may run
-// code, so the bytes of a bytearray taken earlier are not to be relied on.
-bool getBytesLike(JSGlobalObject*, JSValue, std::span<const uint8_t>&);
-// The same for int() and float(), which read bytes and a bytearray where they are: a class derived from them is not asked for its __buffer__().
-// False, and no exception but a termination: the object would not give them, whatever it raised. To the two it is then no text.
-bool getBytesOfNumber(JSGlobalObject*, JSValue, std::span<const uint8_t>&);
+
+// For a function that reads the bytes of an argument, which may be anything that has bytes to show: bytes, a bytearray, a memoryview, an
+// array.array, a typed array of JS, whatever has __buffer__(). They are held for as long as this lives, as by a Buffer, whatever runs: the
+// conversion of the next argument, its __buffer__(), the __release_buffer__() of this one, which is called when this goes.
+// Of memory that another thread of JS can write to, a SharedArrayBuffer, this has a copy, so that the bytes are not seen to change. (The buffer is then released as soon as the
+// copy is made.) That is not to be counted on, though: an mmap of a file that another process writes to is read where it is.
+// Mostly the argument is a bytes. That neither changes nor moves, so there is nothing to hold and nothing is done. Something has
+// to keep it alive, as an argument is kept.
+// CPython releases the buffers of a call in the order of the arguments, and C++ lets go first of what was declared last: the holder of the last argument is declared first.
+class BytesHolder {
+    WTF_MAKE_NONCOPYABLE(BytesHolder);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    explicit BytesHolder(JSGlobalObject* globalObject)
+        : m_globalObject(globalObject)
+    {
+    }
+    ~BytesHolder()
+    {
+        if (m_held) [[unlikely]]
+            release();
+    }
+
+    // One of these, once. False: a TypeError, "a bytes-like object is required, not 'x'"; or, though it is bytes-like, a ValueError (a memoryview
+    // that was released), a BufferError (one whose items do not follow one another), or what __buffer__() raised.
+    ALWAYS_INLINE bool get(JSValue value) { return getPlainBytes(value) || getSlow(value, false); }
+    // For when nothing of the program's runs from here until the bytes have been read for the last time. All the difference is in memory of WebAssembly, which moves when code
+    // makes it grow, and cannot be held where it is: get() makes a copy of it, as of shared memory, which this saves.
+    ALWAYS_INLINE bool getLast(JSValue value) { return getPlainBytes(value) || getSlow(value, true); }
+    // As getLast(), for int(), float() and compile(), which read bytes and a bytearray where they are: a class derived from them is not asked for its __buffer__().
+    // False, and no exception but a termination: the object would not give them, whatever it raised. To the three it is then no text.
+    bool getText(JSValue);
+
+    std::span<const uint8_t> span() const { return m_span; }
+
+private:
+    ALWAYS_INLINE bool getPlainBytes(JSValue value)
+    {
+        if (!value || !value.isCell() || value.asCell()->type() != PyBytesType)
+            return false;
+        // A class derived from bytes may have a __buffer__() of its own.
+        auto* bytes = uncheckedDowncast<PyBytes>(value.asCell());
+        if (bytes->type()->has(TypeFlag::Heap)) [[unlikely]]
+            return false;
+        m_span = bytes->span();
+        return true;
+    }
+    bool getSlow(JSValue, bool isLast);
+    void hold(PyByteArray*);
+    void release();
+
+    std::span<const uint8_t> m_span;
+    // What is left of a Buffer once the bytes are known: see bufferReduce() in PyMemoryView.cpp. (A Buffer has sixteen words to set up, which shows in b.find(x).) Or the copy.
+    JSCell* m_held { nullptr };
+    void (*m_release)(JSGlobalObject*, JSValue held) { nullptr };
+    ArrayBuffer* m_pinned { nullptr };
+    JSGlobalObject* m_globalObject;
+};
+
 // bytes.hex()
 JSValue hexOfBytes(JSGlobalObject*, JSValue bytesOrByteArray, JSValue separator, JSValue bytesPerSeparator);
 

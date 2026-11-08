@@ -1969,10 +1969,10 @@ static JSValue unicodeErrorInitCommon(JSGlobalObject* globalObject, JSValue obje
     RETURN_IF_EXCEPTION(scope, { });
     if (isDecoding && !PyBytes::is(target)) {
         // What could change is copied.
-        std::span<const uint8_t> bytes;
-        if (failed(scope, getBytesLike(globalObject, target, bytes)))
+        BytesHolder bytes(globalObject);
+        if (failed(scope, bytes.getLast(target)))
             return { };
-        target = PyBytes::create(globalObject, bytes);
+        target = PyBytes::create(globalObject, bytes.span());
     }
     PyException* exception = self(object);
     exception->setField(vm, ExceptionField::unicodeErrorEncoding, encoding);

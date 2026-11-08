@@ -492,10 +492,10 @@ static JSValue impSourceHash(JSGlobalObject* globalObject, JSValue key, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t seed = toInt64(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
-    std::span<const uint8_t> bytes;
-    if (failed(scope, getBytesLike(globalObject, source, bytes)))
+    BytesHolder bytes(globalObject);
+    if (failed(scope, bytes.getLast(source)))
         return { };
-    uint64_t hash = hashOfSource(static_cast<uint64_t>(seed), bytes);
+    uint64_t hash = hashOfSource(static_cast<uint64_t>(seed), bytes.span());
     uint8_t result[8];
     for (unsigned i = 0; i < 8; ++i)
         result[i] = static_cast<uint8_t>(hash >> (8 * i));

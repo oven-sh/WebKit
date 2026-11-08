@@ -453,7 +453,6 @@ public:
         RaisedBySignalHandler, // While one of the calls that are owed was running. See runPendingCalls().
         ThrownException, // What generator.throw() is throwing,
         ThrowArguments, // and the tuple of arguments it was made from. Null: it is raised where the generator waits, whomever it waits for.
-        RecentBufferOwners, // See getBytesLike().
         InstanceDictDescriptor, // The __dict__ and the __weakref__ in the dict of every class that adds them.
         InstanceWeakrefDescriptor,
         MemberKeys, // dict: see PyMemberDescriptor::create().

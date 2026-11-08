@@ -871,7 +871,7 @@ static JSValue rawIOBaseRead(JSGlobalObject* globalObject, JSValue self, JSValue
     if (filled < 0 || filled > size)
         return raiseValueError(globalObject, scope, "readinto returned "_s, filled, " outside buffer size "_s, size);
     // CPython turns the bytearray into the result, which it cannot do while readinto() holds on to its memory.
-    if (isStillExported(globalObject, buffer, [&] { return buffer->exportCount(); }))
+    if (buffer->isStillExported(globalObject))
         return raise(globalObject, scope, rt.BufferError(), "Existing exports of data: object cannot be re-sized"_s);
     RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, buffer->span().first(std::min<size_t>(filled, buffer->length()))));
 }

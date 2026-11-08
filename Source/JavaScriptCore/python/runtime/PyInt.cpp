@@ -1012,18 +1012,18 @@ static JSValue intFromBytes(JSGlobalObject* globalObject, JSValue cls, JSValue b
     bool littleEndian;
     if (failed(scope, parseByteOrder(globalObject, byteOrder, littleEndian)))
         return { };
-    JSValue bytesObject;
-    std::span<const uint8_t> bytes;
+    JSValue result;
     if (isBytesLike(bytesValue)) {
-        if (failed(scope, getBytesLike(globalObject, bytesValue, bytes)))
+        BytesHolder bytes(globalObject);
+        if (failed(scope, bytes.getLast(bytesValue)))
             return { };
+        result = intFromByteSpan(globalObject, bytes.span(), littleEndian, isSigned);
     } else {
-        bytesObject = bytesFromObject(globalObject, bytesValue);
+        JSValue bytes = bytesFromObject(globalObject, bytesValue);
         RETURN_IF_EXCEPTION(scope, { });
-        bytes = PyBytes::from(bytesObject)->span();
+        result = intFromByteSpan(globalObject, PyBytes::from(bytes)->span(), littleEndian, isSigned);
+        ensureStillAliveHere(bytes);
     }
-    JSValue result = intFromByteSpan(globalObject, bytes, littleEndian, isSigned);
-    ensureStillAliveHere(bytesObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (cls.asCell() == runtime(globalObject).intType())
         return result;
@@ -1180,11 +1180,12 @@ static JSValue intFromTextObject(JSGlobalObject* globalObject, JSValue source, i
         text = strValue(source)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
     } else {
-        std::span<const uint8_t> bytes;
-        bool isText = getBytesOfNumber(globalObject, source, bytes);
+        BytesHolder holder(globalObject);
+        bool isText = holder.getText(source);
         RETURN_IF_EXCEPTION(scope, { });
         if (!isText)
             RELEASE_AND_RETURN(scope, toInt(globalObject, source));
+        auto bytes = holder.span();
         if (bytes.size() > String::MaxLength) [[unlikely]]
             return raiseMemoryError(globalObject, scope, String());
         text = String(byteCast<Latin1Character>(bytes));

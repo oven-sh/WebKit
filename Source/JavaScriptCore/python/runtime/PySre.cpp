@@ -980,9 +980,10 @@ static JSValue sreSubstitute(JSGlobalObject* globalObject, JSValue thisValue, JS
             RETURN_IF_EXCEPTION(scope, { });
             isLiteral = view->find('\\') == notFound;
         } else if (isBytesLike(replacement)) {
-            std::span<const uint8_t> bytes;
-            getBytesLike(globalObject, replacement, bytes);
+            BytesHolder holder(globalObject);
+            holder.getLast(replacement);
             RETURN_IF_EXCEPTION(scope, { });
+            auto bytes = holder.span();
             isLiteral = !bytes.size() || !memchr(bytes.data(), '\\', bytes.size());
         }
         if (isLiteral)

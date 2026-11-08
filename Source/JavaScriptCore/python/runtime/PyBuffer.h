@@ -100,7 +100,8 @@ bool hasBuffer(JSValue);
 // an exporter, and may call anything. For a PickleBuffer: whether to get the buffer of its object does. To ask runs nothing.
 JS_EXPORT_PRIVATE bool getBufferRunsCode(JSValue);
 // Whether two buffers got from it one after the other, with nothing done between them, are of the same bytes: to get them runs no code, and it is not memory of JS that
-// another thread can make longer, a SharedArrayBuffer that can grow, seen through something that follows its length.
+// another thread can write to or make longer, a SharedArrayBuffer. (What ctypes has made of such memory with from_buffer() is not told from other instances: its length does not
+// change, and a BytesHolder copies it each time.)
 bool canGetBufferTwice(JSValue);
 // False: a TypeError ("a bytes-like object is required, not 'x'"), a BufferError, or whatever __buffer__() raised.
 // With BufferSimple, the memory is `length` bytes from `data`. Until the buffer is released, a bytearray, an array and the like
@@ -115,9 +116,6 @@ bool refreshBuffer(JSGlobalObject*, Buffer&);
 bool locateMemory(JSGlobalObject*, JSCell* owner, size_t offset, size_t length, uint8_t*& data);
 // Copies the items, `length` bytes in all, in the order of C ('C', or 'A' unless they are in that of Fortran) or Fortran ('F').
 void copyBufferToContiguous(uint8_t* destination, const Buffer&, char order);
-
-// All of getBytesLike() but the common case.
-bool getBytesLikeSlow(JSGlobalObject*, JSValue, std::span<const uint8_t>&);
 
 class BufferHolder {
     WTF_MAKE_NONCOPYABLE(BufferHolder);

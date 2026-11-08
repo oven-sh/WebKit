@@ -2440,10 +2440,10 @@ private:
         VM& vm = getVM(m_globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!PyBytes::is(data)) {
-            std::span<const uint8_t> span;
-            if (failed(scope, getBytesLike(m_globalObject, data, span)))
+            BytesHolder holder(m_globalObject);
+            if (failed(scope, holder.getLast(data)))
                 return -1;
-            data = PyBytes::create(m_globalObject, span);
+            data = PyBytes::create(m_globalObject, holder.span());
         }
         m_inputOwner = data;
         setInput(PyBytes::from(data)->span());
@@ -2479,13 +2479,15 @@ private:
         RETURN_IF_EXCEPTION(scope, -1);
         if (size == count)
             RELEASE_AND_RETURN(scope, setFileInput(data));
-        std::span<const uint8_t> first;
-        if (failed(scope, getBytesLike(m_globalObject, data, first)))
-            return -1;
-        if (static_cast<int64_t>(first.size()) < size)
-            RELEASE_AND_RETURN(scope, setFileInput(data));
         ByteBuilder all;
-        all.append(first.first(size));
+        {
+            BytesHolder first(m_globalObject);
+            if (failed(scope, first.getLast(data)))
+                return -1;
+            if (static_cast<int64_t>(first.span().size()) < size)
+                RELEASE_AND_RETURN(scope, setFileInput(data));
+            all.append(first.span().first(size));
+        }
         while (size < count) {
             int64_t more = std::min(size, count - size);
             size += more;

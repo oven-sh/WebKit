@@ -1552,7 +1552,9 @@ up before it waits for events while a collection that it has asked for is under 
   whatever Python frames other threads are parked in.
 - A `Buffer` that C++ holds of memory of JS pins the `ArrayBuffer` (`runtime/PyBuffer.h`), with other threads or without: JS, which may
   run while the thread is in a system call, and in a callback or the handler of a signal in the thread itself, cannot detach or shrink it.
-  Not so memory of WebAssembly, which cannot be pinned: the thread keeps the GIL instead (DEFERRED.md).
+  Not so memory of WebAssembly, which cannot be pinned: the thread keeps the GIL instead (DEFERRED.md). A function that only reads the
+  bytes of an argument (`BytesHolder` in `runtime/PyBytes.h`) holds them likewise, but of such memory it has a copy where code of the program
+  may run before it has read them, and of a `SharedArrayBuffer` always.
 - A thread that waits for others for more than 50 ms, having allocated since it last did so, collects and runs finalizers: the
   others may be waiting for what a dropped object holds open, and in CPython it would have been closed when it was dropped.
 - A wait without a time limit while there is no other thread can be ended by a finalizer, so the thread collects at once, or by a

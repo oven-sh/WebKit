@@ -343,6 +343,13 @@ static void bufferWrapperRelease(JSGlobalObject* globalObject, JSValue object)
         view->release(globalObject);
 }
 
+// Of a buffer for which alone a view was made.
+static void bufferReleaseWithView(JSGlobalObject* globalObject, JSValue view)
+{
+    memoryViewReleaseExport(globalObject, view);
+    PyMemoryView::from(view)->release(globalObject);
+}
+
 void releaseBuffer(JSGlobalObject* globalObject, Buffer& buffer)
 {
     JSValue object = std::exchange(buffer.object, JSValue());
@@ -353,8 +360,7 @@ void releaseBuffer(JSGlobalObject* globalObject, Buffer& buffer)
     if (std::exchange(buffer.keepsGIL, false))
         --runtime(globalObject).buffersThatKeepGIL;
     if (JSValue view = std::exchange(buffer.view, JSValue())) {
-        memoryViewReleaseExport(globalObject, view);
-        PyMemoryView::from(view)->release(globalObject);
+        bufferReleaseWithView(globalObject, view);
         return;
     }
     if (JSValue method = bufferPythonReleaseMethod(object)) {
@@ -1207,12 +1213,17 @@ static bool bufferGet(JSGlobalObject* globalObject, JSValue object, Buffer& buff
     return false;
 }
 
-// See PyBuffer.h. Null: it is memory of WebAssembly, which may move when it grows, pinned or not.
-static ArrayBuffer* bufferPinMemoryOfJS(JSCell* owner)
+static ArrayBuffer* bufferArrayBufferOf(JSCell* owner)
 {
     // A typed array has one since bufferGetFromJS(). To give it one now would move the memory away from under the address that is known.
     RELEASE_ASSERT(owner->type() == ArrayBufferType || uncheckedDowncast<JSArrayBufferView>(owner)->hasArrayBuffer());
-    ArrayBuffer* memory = owner->type() == ArrayBufferType ? uncheckedDowncast<JSArrayBuffer>(owner)->impl() : uncheckedDowncast<JSArrayBufferView>(owner)->possiblySharedBuffer();
+    return owner->type() == ArrayBufferType ? uncheckedDowncast<JSArrayBuffer>(owner)->impl() : uncheckedDowncast<JSArrayBufferView>(owner)->possiblySharedBuffer();
+}
+
+// See PyBuffer.h. Null: it is memory of WebAssembly, which may move when it grows, pinned or not.
+static ArrayBuffer* bufferPinMemoryOfJS(JSCell* owner)
+{
+    ArrayBuffer* memory = bufferArrayBufferOf(owner);
     if (memory->isWasmMemory())
         return nullptr;
     memory->pin();
@@ -1282,9 +1293,11 @@ bool getBuffer(JSGlobalObject* globalObject, JSValue object, Buffer& buffer, uns
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool ok = bufferGet(globalObject, object, buffer, flags);
-    RETURN_IF_EXCEPTION(scope, false);
-    ASSERT_UNUSED(ok, ok);
+    if (failed(scope, bufferGet(globalObject, object, buffer, flags))) {
+        // It may have got as far as an export.
+        releaseBuffer(globalObject, buffer);
+        return false;
+    }
     if (!buffer.owner || !bufferIsJSExporter(buffer.owner)) [[likely]]
         return true;
     buffer.pinned = bufferPinMemoryOfJS(buffer.owner);
@@ -1298,24 +1311,33 @@ bool getBuffer(JSGlobalObject* globalObject, JSValue object, Buffer& buffer, uns
 static JSValue pickleBufferBuffer(JSGlobalObject*, JSValue self, JSValue flags);
 static PyMemoryView* pickleBufferViewIfAny(JSValue);
 
-template<bool orAnotherThreadMakesItLonger>
+template<bool orAnotherThreadChangesIt>
 static bool bufferRunsCode(JSValue object)
 {
     if (!object || !object.isCell())
         return false;
     JSCell* cell = object.asCell();
     if (!isPyObject(cell)) {
-        if (!orAnotherThreadMakesItLonger)
+        if (!orAnotherThreadChangesIt)
             return false;
-        // A SharedArrayBuffer that can grow does so in whatever thread has it, and what has no length of its own follows.
+        // A SharedArrayBuffer that can grow does so in whatever thread has it, and what has no length of its own follows. And of any that is shared a BytesHolder makes a copy
+        // each time it is asked.
         if (cell->type() == ArrayBufferType)
-            return uncheckedDowncast<JSArrayBuffer>(cell)->impl()->isGrowableShared();
-        return isTypedArrayTypeIncludingDataView(cell->type()) && uncheckedDowncast<JSArrayBufferView>(cell)->isGrowableShared() && uncheckedDowncast<JSArrayBufferView>(cell)->isAutoLength();
+            return uncheckedDowncast<JSArrayBuffer>(cell)->impl()->isShared();
+        return isTypedArrayTypeIncludingDataView(cell->type()) && uncheckedDowncast<JSArrayBufferView>(cell)->isShared();
     }
     // As bufferGet() goes.
     PyType* type = uncheckedDowncast<PyObject>(cell)->type();
-    if (!type->has(TypeFlag::Heap) && bufferIsCoreExporter(cell))
+    if (!type->has(TypeFlag::Heap) && bufferIsCoreExporter(cell)) {
+        if constexpr (orAnotherThreadChangesIt) {
+            // By whose the memory is, as BytesHolder goes.
+            if (auto* view = PyMemoryView::tryFrom(cell); view && !view->isReleased()) {
+                JSCell* owner = view->managedBuffer()->owner();
+                return owner && bufferIsJSExporter(owner) && bufferArrayBufferOf(owner)->isShared();
+            }
+        }
         return false;
+    }
     JSValue method = bufferLookup(type, Special::Buffer);
     if ((method && !bufferIsMethodOfNativeExporter(method)) || bufferPythonReleaseMethod(object))
         return true;
@@ -1323,7 +1345,7 @@ static bool bufferRunsCode(JSValue object)
     if (!isNative(method, pickleBufferBuffer) || uncheckedDowncast<PyNativeFunction>(method.asCell())->owner() != type)
         return false;
     PyMemoryView* view = pickleBufferViewIfAny(object);
-    return view && !view->isReleased() && bufferRunsCode<orAnotherThreadMakesItLonger>(view->managedBuffer()->object());
+    return view && !view->isReleased() && bufferRunsCode<orAnotherThreadChangesIt>(view->managedBuffer()->object());
 }
 
 bool getBufferRunsCode(JSValue object)
@@ -1336,42 +1358,130 @@ bool canGetBufferTwice(JSValue object)
     return !bufferRunsCode<true>(object);
 }
 
-// getBytesLike() has nothing to release, so the memory is not held. It is kept from being freed, though, for a while: what
-// __buffer__() returned may be all that refers to it, and the __buffer__() of the next argument may resize the bytearray that
-// this one is. A function takes the bytes of a few objects at most before it uses them.
-static void bufferKeepMemoryForNow(JSGlobalObject* globalObject, JSCell* owner)
+// ---- BytesHolder ----
+
+static void bufferReleaseByteArrayHold(JSGlobalObject*, JSValue object)
 {
-    static constexpr unsigned ringSize = 16;
-    Runtime& rt = runtime(globalObject);
-    if (owner && owner->type() == PyByteArrayType)
-        owner = uncheckedDowncast<PyByteArray>(owner)->storage();
-    if (!owner)
-        return;
-    PyRecord* ring = PyRecord::tryFrom(rt.slot(Runtime::Slot::RecentBufferOwners), rt.objectType());
-    if (!ring) {
-        ring = PyRecord::create(globalObject, rt.objectType(), ringSize);
-        rt.setSlot(Runtime::Slot::RecentBufferOwners, ring);
-    }
-    ring->set(rt.vm(), ring->number++ % ringSize, owner);
+    PyByteArray::from(object)->removeHold();
 }
 
-bool getBytesLikeSlow(JSGlobalObject* globalObject, JSValue value, std::span<const uint8_t>& result)
+// Of a buffer of an instance of a class derived from bytes or bytearray. The class may have a __release_buffer__() written in Python, or be given one meanwhile. That is lent a
+// view, which takes a Buffer to make.
+static void bufferReleaseOfDerivedClass(JSGlobalObject* globalObject, JSValue object)
 {
-    VM& vm = getVM(globalObject);
+    if (auto* array = PyByteArray::tryFrom(object))
+        array->removeHold();
+    if (!bufferPythonReleaseMethod(object)) [[likely]]
+        return;
+    ExceptionSetAside suspended(globalObject);
+    Buffer buffer;
+    bool ok = bufferGetFromCoreExporter(globalObject, object.asCell(), buffer, BufferSimple);
+    ASSERT_UNUSED(ok, ok);
+    releaseBuffer(globalObject, buffer);
+}
+
+// What it takes to release a buffer, once it is known where the bytes are: a cell, which refers to all that the buffer refers to; a function to call with it, which may run code
+// of the program; and the pin. This goes with releaseBuffer(), and does in advance what that decides by what the buffer has.
+static void bufferReduce(Buffer& buffer, JSCell*& held, void (*&release)(JSGlobalObject*, JSValue), ArrayBuffer*& pinned)
+{
+    ASSERT(buffer.object && !buffer.keepsGIL);
+    held = buffer.object.asCell();
+    release = buffer.release;
+    pinned = buffer.pinned;
+    if (buffer.view) {
+        held = buffer.view.asCell();
+        release = bufferReleaseWithView;
+    } else {
+        // Only an instance of a class derived from bytes or bytearray exports its own memory without a view and is of a type that can be given a __release_buffer__(). Those do not
+        // come here (BytesHolder::getSlow()).
+        RELEASE_ASSERT(!isPyObject(held) || !bufferTypeCanBeGivenMethods(uncheckedDowncast<PyObject>(held)->type()));
+    }
+    buffer.object = JSValue();
+}
+
+bool BytesHolder::getSlow(JSValue value, bool isLast)
+{
+    Runtime& rt = runtime(m_globalObject);
+    VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_ASSERT(!m_held);
     if (auto* array = PyByteArray::tryFrom(value); array && !array->type()->has(TypeFlag::Heap)) {
-        result = array->span();
-        bufferKeepMemoryForNow(globalObject, array);
+        hold(array);
         return true;
     }
-    result = { };
+    // An instance of a class derived from bytes or bytearray whose __buffer__() is one written in C++, as bufferGet() tells. It needs no Buffer, and bufferReduce() does not know it.
+    if ((PyBytes::is(value) || PyByteArray::is(value))
+        && bufferIsMethodOfNativeExporter(bufferLookup(uncheckedDowncast<PyObject>(value.asCell())->type(), Special::Buffer))) {
+        if (auto* array = PyByteArray::tryFrom(value))
+            hold(array);
+        else {
+            m_held = value.asCell();
+            m_span = PyBytes::from(value)->span();
+        }
+        m_release = bufferReleaseOfDerivedClass;
+        return true;
+    }
     Buffer buffer;
-    if (failed(scope, bufferGet(globalObject, value, buffer, BufferSimple)))
+    if (failed(scope, getBuffer(m_globalObject, value, buffer)))
         return false;
-    result = buffer.span();
-    bufferKeepMemoryForNow(globalObject, buffer.owner);
-    releaseBuffer(globalObject, buffer);
+    if (buffer.owner && bufferIsJSExporter(buffer.owner)) {
+        if ((buffer.keepsGIL && !isLast) || bufferArrayBufferOf(buffer.owner)->isShared()) {
+            PyBytes* copy = PyBytes::tryCreateUninitialized(vm, rt.structure<PyBytes>(), rt.bytesType(), buffer.length);
+            if (copy && buffer.length)
+                memcpy(copy->mutableData(), buffer.data, buffer.length);
+            releaseBuffer(m_globalObject, buffer);
+            if (!copy) {
+                raiseMemoryError(m_globalObject, scope, String());
+                return false;
+            }
+            m_held = copy;
+            m_span = copy->span();
+            return true;
+        }
+        // No thread has to be kept out: none is let in before the bytes have been read.
+        if (std::exchange(buffer.keepsGIL, false))
+            --rt.buffersThatKeepGIL;
+    }
+    m_span = buffer.span();
+    bufferReduce(buffer, m_held, m_release, m_pinned);
     return true;
+}
+
+void BytesHolder::hold(PyByteArray* array)
+{
+    array->addHold();
+    m_held = array;
+    m_release = bufferReleaseByteArrayHold;
+    m_span = array->span();
+}
+
+bool BytesHolder::getText(JSValue value)
+{
+    RELEASE_ASSERT(!m_held);
+    if (auto* bytes = PyBytes::tryFrom(value)) {
+        m_span = bytes->span();
+        return true;
+    }
+    if (auto* array = PyByteArray::tryFrom(value)) {
+        hold(array);
+        return true;
+    }
+    VM& vm = getVM(m_globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    getSlow(value, true);
+    if (!scope.exception())
+        return true;
+    takePendingException(m_globalObject);
+    return false;
+}
+
+void BytesHolder::release()
+{
+    JSCell* held = std::exchange(m_held, nullptr);
+    if (m_pinned)
+        m_pinned->unpin();
+    if (m_release)
+        m_release(m_globalObject, held);
 }
 
 // A view of all of the buffer, which is released with the last view of it.

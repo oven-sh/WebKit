@@ -300,9 +300,8 @@ static JSValue builtinOrd(JSGlobalObject* globalObject, JSValue value)
         return jsNumber(static_cast<uint32_t>(view.at(0)));
     }
     if (PyBytes::is(value) || PyByteArray::is(value)) {
-        std::span<const uint8_t> bytes;
-        if (failed(scope, getBytesLike(globalObject, value, bytes)))
-            return { };
+        // Read where they are, whatever the class makes of __buffer__.
+        auto bytes = PyBytes::is(value) ? PyBytes::from(value)->span() : PyByteArray::from(value)->span();
         if (bytes.size() != 1)
             return raiseTypeError(globalObject, scope, "ord() expected a character, but string of length "_s, bytes.size(), " found"_s);
         return jsNumber(bytes[0]);
@@ -961,18 +960,20 @@ bool sourceBytes(JSGlobalObject* globalObject, JSValue source, ASCIILiteral func
         bytes.grow(*length);
         writeUTF8(text, bytes.mutableSpan());
         flags |= CompileIgnoreCookie;
-    } else if (isBytesLike(source)) {
-        std::span<const uint8_t> span;
-        if (failed(scope, getBytesLike(globalObject, source, span)))
+    } else {
+        BytesHolder holder(globalObject);
+        bool isText = isBytesLike(source) && holder.getText(source);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isText) {
+            raiseTypeError(globalObject, scope, function, "() arg 1 must be a "_s, what, " object"_s);
             return false;
+        }
+        auto span = holder.span();
         if (span.size() > SourceText::maxLength) [[unlikely]] {
             raiseMemoryError(globalObject, scope, String());
             return false;
         }
         bytes.append(span);
-    } else {
-        raiseTypeError(globalObject, scope, function, "() arg 1 must be a "_s, what, " object"_s);
-        return false;
     }
     if (bytes.contains(0)) {
         raise(globalObject, scope, rt.SyntaxError(), "source code string cannot contain null bytes"_s);

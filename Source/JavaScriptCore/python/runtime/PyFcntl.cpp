@@ -38,16 +38,15 @@ static bool fcntlToBytes(JSGlobalObject* globalObject, JSValue value, Vector<uin
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    std::span<const uint8_t> bytes;
     if (isStr(value)) {
         JSValue encoded = strEncode(globalObject, strValue(value), nullptr, nullptr);
         RETURN_IF_EXCEPTION(scope, false);
-        bytes = PyBytes::from(encoded)->span();
-        result.append(bytes);
+        result.append(PyBytes::from(encoded)->span());
     } else {
-        if (failed(scope, getBytesLike(globalObject, value, bytes)))
+        BytesHolder bytes(globalObject);
+        if (failed(scope, bytes.getLast(value)))
             return false;
-        result.append(bytes);
+        result.append(bytes.span());
     }
     result.append(std::span<const uint8_t> { fcntlGuard });
     return true;
