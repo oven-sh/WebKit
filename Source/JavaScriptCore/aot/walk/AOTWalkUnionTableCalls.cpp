@@ -310,6 +310,7 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
     }
 
     Walker::ArmsThatMeet arms;
+    bool isReadBehind = !index.isUnused(call.id());
     BlockID meeting;
     BlockID withoutRow;
     Reference passes;
@@ -381,14 +382,14 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         walker.bind(written.thisValueOperand(), boundBefore);
         if (walker.hasFailed())
             return true;
-        if (Reference byName = walker.isUnreachable() ? Reference() : walker.referenceOf(call.id()))
-            arms.append({ walker.currentBlock(), { byName } });
+        if (!walker.isUnreachable())
+            arms.append({ walker.currentBlock(), { isReadBehind ? walker.referenceOf(call.id()) : Reference() } });
     }
     if (walker.hasFailed())
         return true;
     walker.bind(read.id(), Reference());
     Reference met;
-    if (walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(&met, 1)))
+    if (walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(&met, 1).first(isReadBehind)))
         walker.bind(call.id(), met);
     return true;
 }
