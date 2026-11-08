@@ -537,6 +537,14 @@ static JSValue moduleObjectFromPointer(JSGlobalObject* globalObject, JSValue val
     return object;
 }
 
+static int64_t countOfHeld(JSValue entry)
+{
+    auto* tuple = entry ? PyTuple::tryFrom(entry) : nullptr;
+    if (!tuple || tuple->length() != 2 || !isInt(tuple->at(1)))
+        return 0;
+    return tryInt64(intValue(tuple->at(1))).value_or(0);
+}
+
 // There are no reference counts. What a count above what the program can see means is that the object stays alive.
 bool holdObject(JSGlobalObject* globalObject, JSValue object)
 {
@@ -548,7 +556,7 @@ bool holdObject(JSGlobalObject* globalObject, JSValue object)
     JSValue key = makeInt(globalObject, static_cast<uint64_t>(JSValue::encode(object)));
     JSValue entry = held->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
-    int64_t count = entry ? smallIntValue(PyTuple::from(entry)->at(1)) : 0;
+    int64_t count = std::clamp<int64_t>(countOfHeld(entry), 0, std::numeric_limits<int32_t>::max());
     held->set(globalObject, key, PyTuple::create(globalObject, { object, makeInt(globalObject, count + 1) }));
     return !scope.exception();
 }
@@ -582,7 +590,7 @@ static JSValue moduleDecRef(JSGlobalObject* globalObject, JSValue, JSValue objec
     RETURN_IF_EXCEPTION(scope, { });
     if (!entry)
         return object;
-    int64_t count = smallIntValue(PyTuple::from(entry)->at(1));
+    int64_t count = countOfHeld(entry);
     if (count <= 1)
         held->remove(globalObject, key);
     else

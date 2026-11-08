@@ -436,9 +436,10 @@ public:
     // Null: there has been none yet.
     WriteBarrier<JSWeakMap> records;
 
+    // Two dicts, and gc.get_objects() hands every dict to the program, which may put anything there: what is read from them is looked at before it is believed.
     WriteBarrier<PyDict> arrayTypes; // (type of the items, length) -> a weak reference to the array type
     unsigned arrayTypesSweepAt { 64 };
-    WriteBarrier<PyDict> heldObjects; // id -> [object, count]: what Py_INCREF() has been called on
+    WriteBarrier<PyDict> heldObjects; // id -> (object, count): what Py_INCREF() has been called on
     WriteBarrier<Unknown> unpickle; // _ctypes._unpickle
 
 #define DECLARE_NAME(id, text) WriteBarrier<JSString> id##Name;

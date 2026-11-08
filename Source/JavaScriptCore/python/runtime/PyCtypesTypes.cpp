@@ -741,6 +741,12 @@ static constexpr NativeDef arrayMetaMethods[] = {
 
 const TypeDef arrayMetaDef { "_ctypes.PyCArrayType"_s, { TypeFlag::Base, TypeFlag::Immutable }, arrayMetaMethods, { }, "metatype for the Array Objects"_s };
 
+// Null: it is no weak reference, or what it referred to is gone.
+static PyType* typeReferredToBy(JSValue cached)
+{
+    return PyWeakRef::is(cached) ? PyType::tryFrom(weakRefGet(cached)) : nullptr;
+}
+
 JSValue arrayTypeFor(JSGlobalObject* globalObject, JSValue itemType, int64_t length)
 {
     VM& vm = getVM(globalObject);
@@ -751,8 +757,8 @@ JSValue arrayTypeFor(JSGlobalObject* globalObject, JSValue itemType, int64_t len
     JSValue key = PyTuple::create(globalObject, { itemType, lengthValue });
     JSValue cached = cache->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
-    if (cached) {
-        if (JSValue type = weakRefGet(cached); type && !isNone(type))
+    if (PyType* type = cached ? typeReferredToBy(cached) : nullptr) {
+        if (PyCTypeInfo* info = infoOf(globalObject, type); info && info->kind == TypeKind::Array && info->length == length && info->proto.get() == itemType)
             return type;
     }
     PyType* item = PyType::tryFrom(itemType);
@@ -771,7 +777,7 @@ JSValue arrayTypeFor(JSGlobalObject* globalObject, JSValue itemType, int64_t len
         JSValue entryKey;
         JSValue entryValue;
         for (unsigned position = 0; cache->next(position, entryKey, entryValue);) {
-            if (JSValue type = weakRefGet(entryValue); !type || isNone(type))
+            if (!typeReferredToBy(entryValue))
                 dead.append(entryKey);
         }
         for (unsigned i = 0; i < dead.size(); ++i) {
