@@ -455,10 +455,12 @@ static bool isOfUntrackedType(PyType* type)
 
 // gc.is_tracked(). It allocates no cell, and the object may be one that the collector has just found dead.
 // `isYoung`: it has not come through a collection of CPython's.
-static bool isTracked(Runtime& rt, JSValue value, bool isYoung = false);
+// `memory`: for whoever asks about many objects: what has been found out about the tuples that have tuples among their items.
+using TrackedTuples = UncheckedKeyHashMap<PyTuple*, bool>;
+static bool isTracked(Runtime& rt, JSValue value, bool isYoung = false, TrackedTuples* memory = nullptr);
 bool isTrackedByCollector(Runtime& rt, JSValue value) { return isTracked(rt, value); }
 
-static bool isTracked(Runtime& rt, JSValue value, bool isYoung)
+static bool isTracked(Runtime& rt, JSValue value, bool isYoung, TrackedTuples* memory)
 {
     if (!value.isCell() || !value.asCell()->isObject())
         return false;
@@ -476,11 +478,59 @@ static bool isTracked(Runtime& rt, JSValue value, bool isYoung)
         return true;
     // A tuple is kept track of if any of its items is of a type whose instances may be, until a collection finds that none is.
     if (cell->type() == PyTupleType && type == rt.tupleType()) {
+        auto asSuchATuple = [&](JSValue item) -> PyTuple* {
+            if (item.asCell()->type() != PyTupleType || rt.typeOf(item) != rt.tupleType())
+                return nullptr;
+            return uncheckedDowncast<PyTuple>(item.asCell());
+        };
+        // Most have no tuple among their items.
+        bool hasTuples = false;
         for (JSValue item : uncheckedDowncast<PyTuple>(cell)->span()) {
             if (!item || !item.isCell() || !item.asCell()->isObject())
                 continue;
-            if (isYoung ? !isOfUntrackedType(rt.typeOf(item)) : isTracked(rt, item))
+            if (!isYoung && asSuchATuple(item))
+                hasTuples = true;
+            else if (isYoung ? !isOfUntrackedType(rt.typeOf(item)) : isTracked(rt, item))
                 return true;
+        }
+        if (!hasTuples)
+            return false;
+        // An item that is a tuple is asked the same. Tuples in tuples may be a million deep, and one tuple may be an item of many, at every level: so there is no recursion, and each is asked once. (In CPython the
+        // answer is a bit of the tuple, which its collector takes away.) While a tuple is being asked it counts as one that is not kept track of.
+        TrackedTuples ownMemory;
+        if (!memory)
+            memory = &ownMemory;
+        struct Frame {
+            PyTuple* tuple;
+            unsigned next;
+        };
+        Vector<Frame, 16> frames;
+        // What is known of it. Nothing: it is asked next.
+        auto enter = [&](PyTuple* tuple) -> std::optional<bool> {
+            auto result = memory->add(tuple, false);
+            if (!result.isNewEntry)
+                return result.iterator->value;
+            frames.append({ tuple, 0 });
+            return std::nullopt;
+        };
+        if (auto known = enter(uncheckedDowncast<PyTuple>(cell)))
+            return *known;
+        while (!frames.isEmpty()) {
+            auto& frame = frames.last();
+            if (frame.next == frame.tuple->length()) {
+                frames.removeLast();
+                continue;
+            }
+            JSValue item = frame.tuple->at(frame.next++);
+            if (!item || !item.isCell() || !item.asCell()->isObject())
+                continue;
+            PyTuple* tuple = asSuchATuple(item);
+            std::optional<bool> isItemTracked = tuple ? enter(tuple) : isTracked(rt, item);
+            if (isItemTracked.value_or(false)) {
+                for (auto& holder : frames)
+                    memory->set(holder.tuple, true);
+                return true;
+            }
         }
         return false;
     }
@@ -837,8 +887,9 @@ static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
     MarkedArgumentBuffer objects;
     {
         HeapView view(globalObject, gone);
+        TrackedTuples memory;
         for (JSCell* cell : view.objects()) {
-            if (view.mayBeGiven(cell) && isTracked(rt, cell)) {
+            if (view.mayBeGiven(cell) && isTracked(rt, cell, false, &memory)) {
                 assertIsComplete(cell);
                 objects.append(cell);
             }
