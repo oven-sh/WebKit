@@ -1384,6 +1384,11 @@ private:
     std::optional<CollectionNotice> m_collectionBeingToldOf WTF_GUARDED_BY_LOCK(m_finalizationLock); // None: that thread is in gc.collect().
     MonotonicTime m_collectionBegan;
     Vector<PyWeakRef*> weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor&);
+    // In a round that takes parents and children at once: the weak references to an object with a finalizer that die in that round themselves die when the finalizer has been called, as with reference counts, and
+    // not when a later collection finds the object dead: that would come behind the finalizers of all that the object held. Until then they are here, by their referents, and are kept like what is queued.
+    UncheckedKeyHashMap<JSCell*, Vector<PyWeakRef*>> m_weakRefsThatDieBehindFinalizer WTF_GUARDED_BY_LOCK(m_finalizationLock);
+    void letWeakRefsDieBehindFinalizers(SlotVisitor&, std::span<JSCell* const> referents) WTF_REQUIRES_LOCK(m_finalizationLock);
+    void didCallFinalizerBehindWhichWeakRefsDie(JSCell*);
     UncheckedKeyHashSet<JSCell*> whatOtherThreadsHold();
     bool m_hasEnded { false };
     bool m_isPuttingFinalizersInOrder { false }; // In keepUnreachableObjectsToFinalize(), with m_finalizationLock.

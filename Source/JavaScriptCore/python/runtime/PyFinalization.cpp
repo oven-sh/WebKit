@@ -659,6 +659,12 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
                 keep(call.cell);
             });
         }
+        if (step == StepOfKeeping::OtherQueues) {
+            for (auto& weakRefs : m_weakRefsThatDieBehindFinalizer.values()) {
+                for (PyWeakRef* weakRef : weakRefs)
+                    keep(weakRef);
+            }
+        }
         return keptSomething;
     }
     // All of them are found before any is marked.
@@ -820,6 +826,12 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
         entry.clear();
         didTakeOffList(cell, true);
     }
+    if (order.takesAllLevels && order.freedByReferenceCounts) {
+        Vector<JSCell*> freedByReferenceCounts(order.freedByReferenceCounts, [&](size_t n) {
+            return candidates[order.now[n]];
+        });
+        letWeakRefsDieBehindFinalizers(visitor, freedByReferenceCounts.span());
+    }
     // The others are kept alive by those. They come up again, in this order, in the collection that finds those gone: they go to the
     // end of the list. With reference counts the thread that finalizes an object frees what it alone refers to: what waits for
     // another goes to the thread of that one.
@@ -935,6 +947,9 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
             ASSERT(visitor.isMarked(generator) && generator->isRunning());
     };
     assertAreMarked(m_runningGenerator);
+    // It is in a queue, or on the stack of the thread that is calling its finalizer.
+    for (JSCell* referent : m_weakRefsThatDieBehindFinalizer.keys())
+        ASSERT(visitor.isMarked(referent));
     threads().forEachStateSetAsideOf(*this, [&](ThreadState&, ThreadLocalState& state) {
         assertAreMarked(state.runningGenerator);
     });
@@ -1110,6 +1125,39 @@ void Runtime::letWeakRefsDie(SlotVisitor& visitor, std::span<JSCell* const> refe
     }
 }
 
+// With reference counts an object goes like this: its finalizer; the weak references to it die, all of them, and their callbacks are called, the latest reference's first; what it held is let go of. Level by level
+// that comes by itself: the collection that finds the object dead, and lets the references die, is the one that finds what it held. In a round that takes all levels no collection comes in between, and the
+// finalizer of a child would be given its parent, finalized, by a weak reference. (It asks for it to take itself off its list, say.) So there references to these objects are noted, and die behind the
+// finalizer of their referent: didCallFinalizerBehindWhichWeakRefsDie().
+// ONLY THOSE THAT DIE IN THIS ROUND THEMSELVES: that nothing which lives on holds (`child.parent = weakref.ref(parent)`). Nobody knows, when a finalizer returns, whether it has brought its object back, or an
+// earlier one something that holds it: it takes a collection to know. A reference that is left alive wrongly is put right by that collection. One that has died wrongly stays dead: a registry of the program's
+// would have forgotten an object that lives, the function of a weakref.finalize would have run. So what the program can still ask when the round is over waits for the collection, as in any other round.
+// The referents are what reference counts would have freed, and all have finalizers. Not what they hold that has none: a plain object's references die when a collection finds it dead. See DEFERRED.md.
+void Runtime::letWeakRefsDieBehindFinalizers(SlotVisitor& visitor, std::span<JSCell* const> referents)
+{
+    UncheckedKeyHashSet<JSCell*> set;
+    set.addAll(referents);
+    Vector<PyWeakRef*> weakRefs; // (Nothing is marked while the heap is gone through.)
+    forEachWeakRefDeadOrAlive(m_vm, [&](PyWeakRef* weakRef) {
+        // (Those of another realm are that runtime's: they die when the referent does.)
+        if (!weakRef->isInternal() && weakRef->referent() && !visitor.isMarked(weakRef) && set.contains(weakRef->referent()) && weakRef->structure()->realm() == m_globalObject)
+            weakRefs.append(weakRef);
+    });
+    for (PyWeakRef* weakRef : weakRefs) {
+        // It is not told, whichever of the two goes first: nothing here says which. (DEFERRED.md, "A weak reference that dies with its referent".) But it may be asked: until then it is kept.
+        weakRef->clearCallback();
+        visitor.appendUnbarriered(weakRef);
+        m_weakRefsThatDieBehindFinalizer.add(weakRef->referent(), Vector<PyWeakRef*>()).iterator->value.append(weakRef);
+    }
+}
+
+NEVER_INLINE void Runtime::didCallFinalizerBehindWhichWeakRefsDie(JSCell* object)
+{
+    Locker locker { m_finalizationLock };
+    for (PyWeakRef* weakRef : m_weakRefsThatDieBehindFinalizer.take(object))
+        weakRef->setReferent(nullptr);
+}
+
 template<typename Visitor>
 void Runtime::visitPendingCalls(Visitor& visitor)
 {
@@ -1123,6 +1171,10 @@ void Runtime::visitPendingCalls(Visitor& visitor)
             visitor.appendUnbarriered(call.cell);
         });
         for (PyWeakRef* weakRef : owed->callbacksOfThisCollection)
+            visitor.appendUnbarriered(weakRef);
+    }
+    for (auto& weakRefs : m_weakRefsThatDieBehindFinalizer.values()) {
+        for (PyWeakRef* weakRef : weakRefs)
             visitor.appendUnbarriered(weakRef);
     }
 }
@@ -1482,6 +1534,7 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
         // Once out of the queue, only the stack holds it.
         JSCell* object = nullptr;
         PyWeakRef* weakRef = nullptr;
+        bool weakRefsDieBehindIt = false;
         bool isDone = false;
         bool collectionStarts = false;
         bool collectionIsOver = false;
@@ -1499,6 +1552,7 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
                 else {
                     object = next.cell;
                     m_justFinalized.append(object);
+                    weakRefsDieBehindIt = !m_weakRefsThatDieBehindFinalizer.isEmpty() && m_weakRefsThatDieBehindFinalizer.contains(object);
                 }
             } else if (m_threadBetweenStartAndStop == m_currentThread && m_collectionBeingToldOf) {
                 collection = *m_collectionBeingToldOf;
@@ -1529,8 +1583,11 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
                 if (scope.exception() && !m_vm.hasPendingTerminationException())
                     reportUnraisable(globalObject, makeString("Exception ignored while calling weakref callback "_s, reprForMessage(globalObject, callback)), { });
             }
-        } else
+        } else {
             finalizeObject(globalObject, object);
+            if (weakRefsDieBehindIt) [[unlikely]]
+                didCallFinalizerBehindWhichWeakRefsDie(object);
+        }
         ensureStillAliveHere(object);
         ensureStillAliveHere(weakRef);
         if (m_threadWhereSignalHandlerRaised == m_currentThread) [[unlikely]] {

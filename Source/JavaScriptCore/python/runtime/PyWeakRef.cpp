@@ -116,7 +116,7 @@ static PyWeakRef* newWeakRef(JSGlobalObject* globalObject, PyType* type, JSValue
         setHiddenField(globalObject, object, sharedWeakRefsField, toRef);
     }
     PyWeakRef* holder = isProxy ? PyWeakRef::from(toRef->callback()) : toRef;
-    // (One that has died before its referent is of no use: see Runtime::letWeakRefsDie().)
+    // (One that has died before its referent is of no use: see Runtime::letWeakRefsDie(), and letWeakRefsDieBehindFinalizers() for an object that its finalizer has brought back.)
     if (JSCell* existing = holder->referent(); existing && uncheckedDowncast<PyWeakRef>(existing)->type() == type && uncheckedDowncast<PyWeakRef>(existing)->referent())
         return uncheckedDowncast<PyWeakRef>(existing);
     PyWeakRef* weakRef = PyWeakRef::create(vm, rt.weakRefStructure(), type, object.asCell(), { });
@@ -632,7 +632,8 @@ static JSArray* weakRefsTo(JSGlobalObject* globalObject, JSValue object)
 JSValue firstWeakRefTo(JSGlobalObject* globalObject, JSValue object)
 {
     if (PyWeakRef* shared = sharedWeakRefs(globalObject, object)) {
-        if (JSCell* weakRef = shared->referent())
+        // (As in newWeakRef().)
+        if (JSCell* weakRef = shared->referent(); weakRef && uncheckedDowncast<PyWeakRef>(weakRef)->referent())
             return weakRef;
     }
     JSArray* all = weakRefsTo(globalObject, object);

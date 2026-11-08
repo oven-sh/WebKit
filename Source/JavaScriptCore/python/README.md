@@ -791,6 +791,14 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   way round, and so it is here: the weak references *with callbacks* are cleared before the finalizers run, and stay dead
   if a finalizer brings the object back; those without are cleared afterwards. A callback is called only if the weak reference
   is itself reachable.
+  - In a round that takes parents and children at once (a structure more than three levels deep has died; the modules have gone) no collection comes between the finalizer of an object and those of what it held. There
+    the weak references to an object with a finalizer that reference counts would have freed, IF THEY DIE IN THAT ROUND THEMSELVES (nothing that lives on holds them: `child.parent = weakref.ref(parent)`), are noted by the
+    collection (`Runtime::letWeakRefsDieBehindFinalizers`: one more pass over the weak references, in such rounds only, when the order is known), kept like what is queued, and die when the finalizer has returned, before
+    any other code of the program runs (`didCallFinalizerBehindWhichWeakRefsDie`). (They used to live until the next collection, behind the whole round. The finalizer of a child that asked for its parent, to take itself
+    off a list, was given it, finalized: at the end of a program without a function or a class of its own the writer of an unclosed `GzipFile` went on into a file that was closed.)
+    Not the references that live on. Whether a finalizer has brought its object back, or an earlier one something that holds it, only the next collection knows. A reference that is left alive wrongly is put right by
+    that collection; one that has died wrongly stays dead, and its callback has been called. (Tried with all references: of 420 generated programs with finalizers that bring things back 33 changed, none for the better:
+    31 objects that lived on had lost their references, 11 that were brought back and 20 that those held; 19 callbacks came for objects that were alive.) What is left by that: DEFERRED.md, "When the weak references to an object die".
 - **Which thread runs a finalizer.** With reference counts it is the thread that drops the last reference, at once. Nobody knows here
   who that was, but programs count on it: a `__del__` that calls JS, closes an event loop or a connection of sqlite3 has to run in the thread that
   made the object. So every call that is owed is owed by one thread, and only that thread makes it (`Runtime::CallsOwed`, one queue
