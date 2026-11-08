@@ -487,10 +487,25 @@ void Unit::matchStatement(Match* node, const Last& isLast)
     Reg subject = newTemporary();
     line(node->subject->range);
     expr(node->subject, subject.get());
+    matchCases(node, 0, subject, isLast);
+}
+
+void Unit::matchCases(Match* node, unsigned first, const Reg& subject, const Last& isLast)
+{
     Ref<Label> end = g.newLabel();
 
     unsigned count = node->cases.size();
-    for (unsigned i = 0; i < count; ++i) {
+    for (unsigned i = first; i < count; ++i) {
+        // Behind a case that always matches, `case x if 1:`, nothing can be reached: see deadStatements().
+        if (i > first && !m_cannotBeReached && cannotGetHere()) {
+            if (!m_sameLineDepth)
+                noLine();
+            SameLine sameLine(*this);
+            SetForScope cannotBeReached(m_cannotBeReached, true);
+            matchCases(node, i, subject, notLast);
+            g.emitUnreachable();
+            break;
+        }
         MatchCase* matchCase = node->cases[i];
         Ref<Label> next = g.newLabel();
         Ref<Label> nextWithMoreToDrop = g.newLabel();

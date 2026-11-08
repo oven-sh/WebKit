@@ -532,6 +532,7 @@ private:
     void importStatement(AST::Import*);
     void importFrom(AST::ImportFrom*);
     void matchStatement(AST::Match*, const Last&);
+    void matchCases(AST::Match*, unsigned first, const Reg& subject, const Last&);
     ImportMode importMode(bool isLazy, bool isStar);
 
     // ---- Blocks ----
