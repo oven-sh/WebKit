@@ -634,12 +634,14 @@ private:
         if (!from && PyManagedBuffer::is(to))
             return;
         Locker locker { m_lock };
-        if (!from)
+        if (!from) {
             m_worklist.append(to);
-        else if (to->type() == StructureType)
+            return;
+        }
+        if (to->type() == StructureType)
             m_visited.append(from); // The first thing any cell reports.
-        else
-            m_edges.append(Edge { from, to });
+        // An edge like any other: the prototype is reached through the structure.
+        m_edges.append(Edge { from, to });
     }
 
     VM& m_vm;
