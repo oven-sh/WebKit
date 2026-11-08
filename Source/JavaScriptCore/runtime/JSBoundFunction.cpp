@@ -448,6 +448,8 @@ bool JSBoundFunction::canSkipNameAndLengthMaterialization(JSGlobalObject* global
     // This must be synced with JSFunction::canAssumeNameAndLengthAreOriginal().
     if (structure->classInfoForCells()->isSubClassOf(JSBoundFunction::info()))
         return false;
+    if (structure->typeInfo().prohibitsPropertyCaching())
+        return false;
 
     if (structure == globalObject->arrowFunctionStructure(true) || structure == globalObject->arrowFunctionStructure(false))
         return true;
