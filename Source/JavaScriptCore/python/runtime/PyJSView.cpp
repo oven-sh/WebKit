@@ -896,12 +896,22 @@ static JSPromise* jsViewPromiseOfAwaitable(JSGlobalObject* globalObject, JSValue
     }));
 }
 
+// A promise that is rejected with the exception that is propagating.
+static JSPromise* jsViewRejectedPromise(JSGlobalObject* globalObject)
+{
+    return jsViewPromiseOf(globalObject, [] { return JSValue(); });
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsViewThen, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSPromise* promise = jsViewPromiseOfAwaitable(globalObject, jsViewThis(callFrame));
-    RETURN_IF_EXCEPTION(scope, { });
+    // then() of a promise does not throw.
+    if (scope.exception()) [[unlikely]] {
+        promise = jsViewRejectedPromise(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return JSValue::encode(thenOfPromise(globalObject, promise, callFrame->argument(0), callFrame->argument(1)));
 }
 
@@ -930,12 +940,6 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncEnd, (JSGlobalObject* globalObject, CallFram
         RELEASE_AND_RETURN(scope, JSValue::encode(createIteratorResultObject(globalObject, jsUndefined(), true)));
     throwException(globalObject, scope, thrown);
     return { };
-}
-
-// A promise that is rejected with the exception that is propagating.
-static JSPromise* jsViewRejectedPromise(JSGlobalObject* globalObject)
-{
-    return jsViewPromiseOf(globalObject, [] { return JSValue(); });
 }
 
 // An asynchronous generator of JS's takes requests while it runs, and serves them in the order in which they came. One of Python's
