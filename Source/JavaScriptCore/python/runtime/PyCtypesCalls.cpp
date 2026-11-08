@@ -263,7 +263,8 @@ static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue sourc
     if (!isPointerType)
         return raiseTypeError(globalObject, scope, "cast() argument 2 must be a pointer type, not "_s, PyType::is(type) ? PyType::from(type)->nameInMessages() : typeName(globalObject, type));
 
-    // What the source is, its class says, not what it has kept so far: the class that it has now, when the address has just been taken. (The call below runs code of the program.)
+    // What the source is, its class says, not what it has kept so far. (In front of the call below, which runs code of the program. So have the conversions of the arguments, behind the
+    // taking of the address: this is for what `_objects` looks like. What has to be kept does not go by it, see below.)
     PyCData* data = PyCData::tryFrom(source);
     Kept kept = Kept::ForWhole;
     if (data) {
@@ -279,8 +280,10 @@ static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue sourc
         return raiseTypeError(globalObject, scope, "expected a ctypes instance, got "_s, typeName(globalObject, resultValue));
 
     // The result keeps alive what the source does, and the source. (Not the source if that is of a simple type and keeps something: then the result points where the value of the source
-    // points, into what it keeps, and `_objects` is that, as in CPython.)
+    // points, into what it keeps, and `_objects` is that, as in CPython.) A result that points into the source itself keeps it, whatever class the source has had at which moment.
     if (data) {
+        if (liesInMemoryOf(globalObject, data, pointer))
+            kept = Kept::ForPart;
         keptObjects(globalObject, data, kept);
         if (!data->objects || isNone(data->objects.get()))
             data->objects.set(vm, data, PyDict::create(globalObject));
