@@ -241,7 +241,7 @@ bool Runtime::isLeftToOneThatServes(const CallOwed& call) const
         // (One that serves leaves nothing to another.)
         if (server->m_thread->number() == m_currentThread)
             return false;
-        isLeft = isLeft || server->m_callsOf == CallsOf::AllThreads || isOfEarlierEra(call.cell, call.era, call.isWeakRef);
+        isLeft = isLeft || server->callsOf() == CallsOf::AllThreads || isOfEarlierEra(call.cell, call.era, call.isWeakRef);
     }
     return isLeft;
 }
@@ -469,7 +469,7 @@ bool Runtime::giveBackWhatIsTaken()
 
 Runtime::ServesOtherThreads::ServesOtherThreads(Runtime& runtime, CallsOf callsOf)
     : m_runtime(runtime)
-    , m_callsOf(callsOf)
+    , m_callsOf(static_cast<uintptr_t>(callsOf))
 {
     if (callsOf == CallsOf::ThisThread)
         return;
@@ -522,7 +522,7 @@ bool Runtime::ServesOtherThreads::keepWhatIsTaken()
         while (!owed->taken.isEmpty()) {
             CallOwed call = owed->taken.takeFirst();
             if (!call.continuesGroup)
-                isKept = m_callsOf == CallsOf::AllThreads || m_runtime.isOfEarlierEra(call.cell, call.era, call.isWeakRef);
+                isKept = callsOf() == CallsOf::AllThreads || m_runtime.isOfEarlierEra(call.cell, call.era, call.isWeakRef);
             (isKept ? kept : left).append(call);
         }
         owed->taken = WTF::move(left);
@@ -538,7 +538,7 @@ bool Runtime::ServesOtherThreads::keepWhatIsTaken()
 
 void Runtime::ServesOtherThreads::willCollectAgain()
 {
-    if (m_callsOf != CallsOf::OfEarlierEras)
+    if (callsOf() != CallsOf::OfEarlierEras)
         return;
     Locker locker { m_runtime.m_finalizationLock };
     takeWhatIsOwed();
@@ -546,7 +546,7 @@ void Runtime::ServesOtherThreads::willCollectAgain()
 
 Runtime::ServesOtherThreads::~ServesOtherThreads()
 {
-    if (m_callsOf == CallsOf::ThisThread)
+    if (callsOf() == CallsOf::ThisThread)
         return;
     m_runtime.threads().didCeaseToServeOthers();
     Locker locker { m_runtime.m_finalizationLock };
@@ -555,7 +555,7 @@ Runtime::ServesOtherThreads::~ServesOtherThreads()
     if (keepWhatIsTaken())
         m_runtime.didQueueCallsFor(m_runtime.m_currentThread);
     m_runtime.m_thoseThatServeOthers.removeFirst(this);
-    if (m_callsOf == CallsOf::OfEarlierEras)
+    if (callsOf() == CallsOf::OfEarlierEras)
         m_runtime.m_eraThatIsServed = 0;
     m_runtime.assertNothingIsTakenUnlessSomebodyServes();
     m_runtime.tellThoseThatOwe();

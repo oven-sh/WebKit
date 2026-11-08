@@ -831,10 +831,14 @@ public:
         friend class Runtime;
         void takeWhatIsOwed() WTF_REQUIRES_LOCK(m_runtime.m_finalizationLock);
         bool keepWhatIsTaken() WTF_REQUIRES_LOCK(m_runtime.m_finalizationLock);
+        CallsOf callsOf() const { return static_cast<CallsOf>(m_callsOf); }
         Runtime& m_runtime;
-        CallsOf m_callsOf;
+        // A CallsOf, as wide as a word. This lies in the frame from which the collector is called, and in memory as it is declared, because others know its address. A byte here would leave the other seven of its
+        // word as they were: if the address of a cell lay there, it would still be an address inside that cell or a neighbour, which is a reference to the collector. See wipeStackBelow().
+        uintptr_t m_callsOf;
         ThreadState* m_thread { nullptr };
     };
+    static_assert(sizeof(ServesOtherThreads) == 3 * sizeof(uintptr_t)); // Nothing in it that its constructor does not write.
     // For Threads::waitUntil(), at a standstill. Whether this thread, which is about to go to sleep, has got something to do by that.
     bool giveBackWhatIsTaken();
     // For when the interpreter exits, before the program is told (atexit): what is unreachable by then and reference
