@@ -79,6 +79,13 @@ void writeObfuscatedSiteSection(const Typed::Program&, const BuiltImage&, BuildC
 
 void writeExplainSections(const Typed::Program&, std::span<const Typed::WalkNotes>, BuildContext&, CompileOutput&);
 
+struct CauseOfWalkNote {
+    Wire::UnprovenCause cause { Wire::UnprovenCause::Unknown };
+    Wire::IllTypedCause illTypedCause { Wire::IllTypedCause::None };
+};
+// The cause that the reports name for a note: what the note itself shows, and Unknown where it shows none.
+JS_EXPORT_PRIVATE CauseOfWalkNote causeOfWalkNote(const Typed::WalkNote&);
+
 void writeCodeReportSections(const Typed::Program&, const BuiltImage&, BuildContext&, CompileOutput&);
 
 } } // namespace JSC::AOT

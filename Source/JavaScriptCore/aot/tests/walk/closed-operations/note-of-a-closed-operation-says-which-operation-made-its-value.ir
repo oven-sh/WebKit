@@ -1,0 +1,167 @@
+# a note of an operation that stays closed says which operation of the finished code made the value it hangs on, where the type of that value is not proven: the entry of the function, a call by value, a call of a function that is known, a read of a variable. A value that is read out of another value by a read that stays closed is no more proven than that value, so the note says what made that one: `holder.inner.a` and `value.a + 1` hang on the parameter. The cause that a report names comes from that, and from the kind of the operation for a call by value alone
+# OPTIONS: report=Flow
+# RUN: notes f2 f3 f4 f5 mechanisms=all
+# CHECK: notes of f2:Body
+# CHECK-NEXT: GenericOperation @86 in f2 from=EntryOfFunction cause=UnprovenEntryValue
+# CHECK: notes of f3:Body
+# CHECK-NEXT: GenericOperation @135 in f3 from=NotSaid cause=UnknownCallee
+# CHECK-NEXT: GenericOperation @140 in f3 from=ResultOfCallByValue cause=ResultOfUnknownCallee
+# CHECK: notes of f4:Body
+# CHECK-NEXT: GenericOperation @189 in f4 from=EntryOfFunction cause=UnprovenEntryValue
+# CHECK-NEXT: GenericOperation @196 in f4 from=EntryOfFunction cause=UnprovenEntryValue
+# CHECK: notes of f5:Body
+# CHECK-NEXT: GenericOperation @243 in f5 from=EntryOfFunction cause=UnprovenEntryValue
+# CHECK-NEXT: GenericOperation @253 in f5 from=EntryOfFunction cause=UnprovenEntryValue
+# where a join brings values of two kinds together, the result of a call and what a property held, the note says nothing of the value, and the report has no cause to name
+# RUN(JOIN): notes f6 mechanisms=all
+# JOIN: notes of f6:Body
+# JOIN: GenericOperation @364 in f6 from=NotSaid cause=Unknown
+# `countDown` calls itself, so no copy of it stands in line: what it gives to `ofCall` is the result of a call of a function that is known
+# RUN(CALL): notes f7 mechanisms=all
+# CALL: notes of f7:Body
+# CALL-NEXT: GenericOperation @529 in f7 from=ResultOfDirectCall cause=UnprovenResultOfCall
+# the variable of the loop is a join of what the entry brings and of what is read out of the variable itself. The edge that comes back to the join says nothing of its own, so the join says what the entry says
+# RUN(LOOP): notes f8 mechanisms=all
+# LOOP: notes of f8:Body
+# LOOP-NEXT: GenericOperation @583 in f8 from=EntryOfFunction cause=UnprovenEntryValue
+# LOOP-NEXT: GenericOperation @603 in f8 from=EntryOfFunction cause=UnprovenEntryValue
+# a read of a variable is a resolved one: what it gives is what the variable holds, and nothing proves the type of that
+# RUN(VARIABLE): notes f9 mechanisms=all
+# VARIABLE: notes of f9:Body
+# VARIABLE-NEXT: GenericOperation @664 in f9 from=PropertyOrVariable cause=UnprovenStoredValue
+# the store into `globalThis.keep` asks an object without a layout for a property by its name: the types of its operands are proven
+# RUN(BUILTIN): notes f0 mechanisms=all
+# BUILTIN: GenericOperation @676 in f0 from=NotSaid asks=PropertyOfObjectWithoutLayout cause=NonLayoutObject
+# let saved: any = (globalThis as any).saved;
+# function ofParameter(value: any) { return value.a; }
+# function ofResult(make: any) { return make().a; }
+# function ofProperty(holder: any) { return holder.inner.a; }
+# function ofSum(value: any) { return value.a + 1; }
+# function ofEither(flag: any, make: any, holder: any) { const value = flag ? make() : holder.inner; return value.a; }
+# function countDown(value: any, n: number): any { return n > 0 ? countDown(value, n - 1) : value; }
+# function ofCall(value: any) { return countDown(value, 2).a; }
+# function ofLoop(node: any) { let n = 0; while (node.next) { node = node.next; n++; } return n; }
+# function ofVariable() { return saved.a; }
+# (globalThis as any).keep = [ofParameter, ofResult, ofProperty, ofSum, ofEither, countDown, ofCall, ofLoop, ofVariable];
+
+module m0 path="sources.ts" displayPath="sources.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="countDown" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="saved" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f8 @0
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f9 @0
+    v15 = Convert v14 declared={type=f9 flags=[IsFromCompiler]} @0
+    v16 = Builtin builtin=GlobalThis @18
+    v17 = PropGet v16 key="globalThis" [isFreeName] @18
+    v18 = Convert v17 declared={type=builtin(GlobalThis) flags=[IsExpected]} @18
+    v19 = PropGet v18 key="saved" @18
+    PutModuleVariable v19 variable=g1 @4
+    v21 = Builtin builtin=GlobalThis @676
+    v22 = PropGet v21 key="globalThis" [isFreeName] @676
+    v23 = Convert v22 declared={type=builtin(GlobalThis) flags=[IsExpected]} @676
+    v24 = GetModuleVariable variable=g0 @755
+    v25 = NewArray v1, v3, v5, v7, v9, v24, v11, v13, v15 contents=anything @702
+    PropSet v23, v25 key="keep" @676
+    v27 = Undefined @676
+    Return v27 @676
+}
+function f1 name="countDown" module=m0 position=375 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = Integer @435
+    v3 = Greater v1, v2 @435
+    Branch v3 -> taken b1(), notTaken b2() @435
+  b1():
+    v4 = GetModuleVariable variable=g0 @439
+    v5 = Integer integer=1 @460
+    v6 = Sub v1, v5 @460
+    v7 = Call v4, -, v0, v6 calleeName="countDown" @439
+    ReturnCall v7 @439
+  b2():
+    Return v0 @465
+}
+function f2 name="ofParameter" module=m0 position=44 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a" @86
+    Return v1 @86
+}
+function f3 name="ofResult" module=m0 position=97 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Call v0 calleeName="make" @135
+    v2 = PropGet v1 key="a" @140
+    Return v2 @135
+}
+function f4 name="ofProperty" module=m0 position=147 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner" @189
+    v2 = PropGet v1 key="a" @196
+    Return v2 @189
+}
+function f5 name="ofSum" module=m0 position=207 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a" @243
+    v2 = Integer integer=1 @253
+    v3 = Add v1, v2 @253
+    Return v3 @253
+}
+function f6 name="ofEither" module=m0 position=258 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToBoolean v0 @327
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0) @327
+  b1(v4):
+    v5 = Call v1 calleeName="make" @334
+    Jump -> next b3(v5) @334
+  b2(v6):
+    v7 = PropGet v2 key="inner" @343
+    Jump -> next b3(v7) @343
+  b3(v8):
+    v9 = PropGet v8 key="a" @364
+    Return v9 @364
+}
+function f7 name="ofCall" module=m0 position=474 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @511
+    v2 = Integer integer=2 @528
+    v3 = Call v1, -, v0, v2 calleeName="countDown" @511
+    v4 = PropGet v3 key="a" @529
+    Return v4 @511
+}
+function f8 name="ofLoop" module=m0 position=536 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @573
+    v2 = Convert v1 declared={type=number} @573
+    Jump -> next b1(v0, v2) @576
+  b1(v3, v4: number):
+    LoopHint @576
+    v6 = PropGet v3 key="next" @583
+    v7 = ToBoolean v6 @583
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0) @583
+  b2(v8):
+    v9 = PropGet v3 key="next" @603
+    v10 = Increment v4 @614
+    v11 = Convert v10 declared={type=number} @614
+    Jump -> next b1(v9, v11) @614
+  b3(v12):
+    Return v4 @628
+}
+function f9 name="ofVariable" module=m0 position=633 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1 @664
+    v1 = CheckInitialized v0 name="saved" @664
+    v2 = PropGet v1 key="a" @664
+    Return v2 @664
+}

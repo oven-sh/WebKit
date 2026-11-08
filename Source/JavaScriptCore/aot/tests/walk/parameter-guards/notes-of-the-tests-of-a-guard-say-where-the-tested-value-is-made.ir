@@ -1,0 +1,11 @@
+# a build that asks for causes notes where the value is made that a test of a guard looks at: the entry of `area` for the guard itself, and the entry of the caller for the tests that stand in front of the copy in `unknownCaller`. The guards report shows that place
+# OPTIONS: report=Flow
+# RUN: notes f1:ParameterGuard mechanisms=all
+# CHECK: notes of f1:ParameterGuard
+# CHECK-NEXT: TestThatLeaves @34 in f1 layout=L0 from=EntryOfFunction made=@34 in f1 cause=UnprovenEntryValue
+# CHECK-NEXT: TestThatLeaves @34 in f1 from=EntryOfFunction made=@34 in f1 cause=UnprovenEntryValue
+# RUN(COPIED): notes f3 mechanisms=all
+# COPIED: notes of f3:Body
+# COPIED: TestThatLeaves @34 in f1 layout=L0 from=EntryOfFunction made=@276 in f3 cause=UnprovenEntryValue
+# COPIED-NEXT: TestThatLeaves @34 in f1 from=EntryOfFunction made=@276 in f3 cause=UnprovenEntryValue
+# PROGRAM-OF: tests-of-a-guard-are-notes-of-tests-that-leave.ir

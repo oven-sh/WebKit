@@ -499,7 +499,10 @@ every unit that the build compiles: entries and units of the library too.
   unit follows.
 - `notes unit..` walks and sweeps each unit as a build does that takes notes for `--explain`, and prints `notes of f1:Body`, then a line for
   each note: its kind (`walk/AOTWalkNotes.h`), `@<position>`, `in f<n>` for the function in whose text the position lies, and `layout=L<n>`
-  where the note has a layout.
+  where the note has a layout. With `# OPTIONS: report=Flow`, the build that names causes, a note of an operation or a test goes on with
+  `from=<SourceOfNotedValue>` (which operation made the value it hangs on, `NotSaid` where the code does not show one), `made=@<position> in f<n>`
+  for a test whose value has a place, `asks=<AskedOfNotedValue>` where the types are proven and the note says what the operation asks where it
+  runs, `cause=<UnprovenCause>` as the reports name it (`causeOfWalkNote()`), and `why=<IllTypedCause>` where there is one.
 
 The other three take the section `code` and no argument.
 

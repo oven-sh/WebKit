@@ -166,7 +166,7 @@ struct CompileInputs {
     CodeGenerationInputs generation;
 };
 
-WalkNotes notesOfSweptCode(TypeReader, const Code&, bool notesResolvedOperations);
+WalkNotes notesOfSweptCode(TypeReader, const Code&, bool notesResolvedOperations, bool looksForSources);
 
 class CompileWorker {
     WTF_MAKE_NONCOPYABLE(CompileWorker);

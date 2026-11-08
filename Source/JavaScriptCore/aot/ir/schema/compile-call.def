@@ -10,6 +10,8 @@ enum UnprovenCause (family: UnprovenCauseFamily) {
     UndescribedNativeResult(UnknownCode) UnseenCode(UnknownCode) UncheckedConversionOfUntracked(UnprovenType) DataFromOutside(UnknownCode) ThrownByRunTime(UnknownCode)
     ParameterOfEscapedFunction(UnknownCode) ContentsOfEscapedObject(UnknownCode) ResultOfUnknownCallee(UnknownCode) ObjectWithoutLayout(UnprovenType)
     Untracked(UnprovenType) LayoutOutsideFamily(UnprovenType)
+    UnprovenEntryValue(UnprovenType) UnprovenStoredValue(UnprovenType) UnprovenResultOfCall(UnprovenType) UnprovenState(UnprovenType)
+    PlaceOfElement(UnprovenType) IndexMayBeUndefined(UnprovenType)
 }
 enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode FlowResultDisabled RunsMachineCode LoadsCodeByName }
 flags BuiltinUse { Tested Read Called Constructed Written Escaped StoredByName NamedAtRunTime }

@@ -653,7 +653,8 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
         m_build.statistics().count(StatisticID::DoorsThatCanNeverPass, doors);
 
     if (inputs.options.takesNotes && notesAreTakenOfCompileUnit(unit.role)) {
-        WalkNotes notes = notesOfSweptCode(m_types, code, AOT::hasFlag(m_build.options().reports, Wire::ReportSet::AccessCounts));
+        Wire::ReportSet reports = m_build.options().reports;
+        WalkNotes notes = notesOfSweptCode(m_types, code, AOT::hasFlag(reports, Wire::ReportSet::AccessCounts), AOT::hasFlag(reports, Wire::ReportSet::Flow));
         if (unit.role != CodeRole::ParameterGuard)
             m_build.statistics().count(StatisticID::ValuesInDouble, notes.numberOfValuesInDouble);
         if (!notes.notes.isEmpty())

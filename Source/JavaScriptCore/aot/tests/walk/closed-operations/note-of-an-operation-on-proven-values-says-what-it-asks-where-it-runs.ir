@@ -1,0 +1,158 @@
+# where the types of the values that an operation uses are proven, its note says what the operation asks where it runs. `counts[ids[i]]` runs by name where the test of the type of its index fails, and the index is `undefined` there: a read of `ids` gives that where the list has a hole. The increment hangs on what that access reads, so it says the same
+# OPTIONS: report=Flow
+# RUN: notes f1 mechanisms=all
+# CHECK: notes of f1:Body
+# CHECK-NEXT: GenericOperation @127 in f1 from=NotSaid asks=IndexThatMayBeUndefined cause=IndexMayBeUndefined
+# CHECK-NEXT: GenericOperation @127 in f1 from=NotSaid asks=IndexThatMayBeUndefined cause=IndexMayBeUndefined
+# CHECK-NEXT: GenericOperation @127 in f1 from=NotSaid asks=IndexThatMayBeUndefined cause=IndexMayBeUndefined
+# `rows[order[i]]` tests its own place, and its element may be absent. What it gives is no more proven than that, so the read of `length` off it and the sum say the same, and no note says that the list holds values of other types
+# RUN(ELEMENT): notes f2 mechanisms=all
+# ELEMENT: notes of f2:Body
+# ELEMENT-NEXT: TestThatRejoins @290 in f2 from=NotSaid made=@167 in f2 asks=ElementThatMayBeAbsent cause=PlaceOfElement why=ElementMayBeAbsent
+# ELEMENT-NEXT: GenericOperation @301 in f2 from=NotSaid asks=ElementThatMayBeAbsent cause=PlaceOfElement why=ElementMayBeAbsent
+# ELEMENT-NEXT: GenericOperation @290 in f2 from=NotSaid asks=ElementThatMayBeAbsent cause=PlaceOfElement why=ElementMayBeAbsent
+# ELEMENT-NEXT: GenericOperation @290 in f2 from=NotSaid asks=ElementThatMayBeAbsent cause=PlaceOfElement why=ElementMayBeAbsent
+# ELEMENT-NOT: cause=UnprovenContents
+# behind the call of `make`, which nobody knows, the list is tested for being as it was built. That is no question of a type: the list is made in the function and its type is proven
+# RUN(STATE): notes f3 mechanisms=all
+# STATE: notes of f3:Body
+# STATE: TestThatRejoins @461 in f3 from=NotSaid made=@410 in f3 asks=StateOfObject cause=UnprovenState
+# STATE: GenericOperation @474 in f3 from=NotSaid cause=UnknownCallee
+# STATE: TestThatRejoins @469 in f3 from=NotSaid made=@410 in f3 asks=StateOfObject cause=UnprovenState
+# function count(n: number, ids: number[]): number {
+#   const counts = new Uint32Array(n);
+#   for (let i = 0; i < ids.length; i++) counts[ids[i]]++;
+#   return counts[0];
+# }
+# function total(rows: number[][], order: number[]): number {
+#   let sum = 0;
+#   for (let i = 0; i < order.length; i++) sum += rows[order[i]].length;
+#   return sum;
+# }
+# function collect(make: any, limit: number): number {
+#   const results: number[] = [];
+#   for (let i = 0; results.length < limit; i++) results.push(make(i));
+#   return results.length;
+# }
+# (globalThis as any).keep = [count(4, [0, 1, 1, 3]), total([[1], [2, 3]], [0, 1, 1]), collect((globalThis as any).make, 3)];
+
+module m0 path="asked.ts" displayPath="asked.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=1}, Number{value=3}]} module=m0
+data d1 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{value=1}]}, Array{contents=number elements=[Number{value=2}, Number{value=3}]}]} module=m0
+data d2 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=1}]} module=m0
+data d3 root=Array{contents=number} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=GlobalThis @512
+    v7 = PropGet v6 key="globalThis" [isFreeName] @512
+    v8 = Convert v7 declared={type=builtin(GlobalThis) flags=[IsExpected]} @512
+    v9 = Integer integer=4 @545
+    v10 = Data data=d0 @548
+    v11 = Call v1, -, v9, v10 calleeName="count" @539
+    v12 = Data data=d1 @569
+    v13 = Data data=d2 @584
+    v14 = Call v3, -, v12, v13 calleeName="total" @563
+    v15 = Builtin builtin=GlobalThis @605
+    v16 = PropGet v15 key="globalThis" [isFreeName] @605
+    v17 = Convert v16 declared={type=builtin(GlobalThis) flags=[IsExpected]} @605
+    v18 = PropGet v17 key="make" @605
+    v19 = Integer integer=3 @630
+    v20 = Call v5, -, v18, v19 calleeName="collect" @596
+    v21 = NewArray v11, v14, v20 contents=anything @538
+    PropSet v8, v21 key="keep" @512
+    v23 = Undefined @512
+    Return v23 @512
+}
+function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|Array<number>):
+    v2 = Builtin builtin=Uint32Array @72
+    v3 = Construct v2, -, v0 calleeName="Uint32Array" @72
+    v4 = Convert v3 declared={type=undefined|null|Uint32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @68
+    v5 = Integer @103
+    v6 = Convert v5 declared={type=number} @103
+    Jump -> next b1(v6) @99
+  b1(v7: number):
+    LoopHint @99
+    v9 = PropGet v1 key="length" @110
+    v10 = Less v7, v9 @110
+    Branch v10 -> taken b2(), notTaken b6() @110
+  b2():
+    v11 = ElemGet v1, v7 @134
+    v12 = RequireObjectCoercible v4 nullishAccess=Update @127
+    v13 = TypeTest v11 testedType=object @127
+    Branch v13 -> taken b3(| 0), notTaken b4(| 0) @127
+  b3(v14):
+    v15 = ToPropertyKey v14 @127
+    Jump -> next b5(v15) @127
+  b4(v16):
+    Jump -> next b5(v16) @127
+  b5(v17):
+    v18 = ElemGet v4, v17 @127
+    v19 = Increment v18 @127
+    ElemSet v4, v17, v19 @127
+    v21 = Increment v7 @122
+    v22 = Convert v21 declared={type=number} @122
+    Jump -> next b1(v22) @122
+  b6():
+    v23 = Integer @154
+    v24 = ElemGet v4, v23 @154
+    v25 = Convert v24 declared={type=number} @154
+    Return v25 @154
+}
+function f2 name="total" module=m0 position=167 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array<number>>, v1: undefined|null|Array<number>):
+    v2 = Integer @239
+    v3 = Convert v2 declared={type=number} @239
+    v4 = Integer @257
+    v5 = Convert v4 declared={type=number} @257
+    Jump -> next b1(v3, v5) @253
+  b1(v6: number, v7: number):
+    LoopHint @253
+    v9 = PropGet v1 key="length" @264
+    v10 = Less v7, v9 @264
+    Branch v10 -> taken b2(), notTaken b3() @264
+  b2():
+    v11 = ElemGet v1, v7 @295
+    v12 = ElemGet v0, v11 @290
+    v13 = PropGet v12 key="length" @301
+    v14 = Add v6, v13 @290
+    v15 = Convert v14 declared={type=number} @283
+    v16 = Increment v7 @278
+    v17 = Convert v16 declared={type=number} @278
+    Jump -> next b1(v15, v17) @278
+  b3():
+    v18 = Convert v6 declared={type=number} @322
+    Return v18 @322
+}
+function f3 name="collect" module=m0 position=329 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = Data data=d3 @410
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @410
+    v4 = Integer @429
+    v5 = Convert v4 declared={type=number} @429
+    Jump -> next b1(v5) @425
+  b1(v6: number):
+    LoopHint @425
+    v8 = PropGet v3 key="length" @432
+    v9 = Less v8, v1 @449
+    Branch v9 -> taken b2(), notTaken b3() @449
+  b2():
+    v10 = PropGet v3 key="push" @461
+    v11 = Call v0, -, v6 calleeName="make" @474
+    v12 = Call v10, v3, v11 calleeKey="push" calleeName="results.push" @469
+    v13 = Convert v12 declared={type=number} illTypedCause=DeclarationWithoutBody @461
+    v14 = Increment v6 @456
+    v15 = Convert v14 declared={type=number} @456
+    Jump -> next b1(v15) @456
+  b3():
+    v16 = PropGet v3 key="length" @493
+    v17 = Convert v16 declared={type=number} @493
+    Return v17 @493
+}

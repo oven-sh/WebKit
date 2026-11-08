@@ -253,6 +253,34 @@ static ASCIILiteral nameOfWalkNoteKind(WalkNoteKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static void printCauseOfNote(PrintStream& out, const WalkNote& note)
+{
+    switch (note.kind) {
+    case WalkNoteKind::GenericOperation:
+    case WalkNoteKind::TestThatRejoins:
+    case WalkNoteKind::TestThatLeaves:
+    case WalkNoteKind::TestThatThrows:
+        break;
+    case WalkNoteKind::ResolvedOperation:
+    case WalkNoteKind::CallNotInlined:
+    case WalkNoteKind::ObjectBuilt:
+    case WalkNoteKind::ObjectNotInFrame:
+    case WalkNoteKind::ObjectStayedVirtual:
+    case WalkNoteKind::LoopWalkedAgain:
+    case WalkNoteKind::WayEnds:
+        return;
+    }
+    out.print(" from="_s, nameOf(note.source));
+    if (note.kind != WalkNoteKind::GenericOperation && note.neededIn)
+        out.print(" made=@"_s, note.neededAt.position, " in f"_s, note.neededIn.index());
+    if (note.asked != AskedOfNotedValue::NotSaid)
+        out.print(" asks="_s, nameOf(note.asked));
+    CauseOfWalkNote named = causeOfWalkNote(note);
+    out.print(" cause="_s, nameOf(named.cause));
+    if (named.illTypedCause != Wire::IllTypedCause::None)
+        out.print(" why="_s, nameOf(named.illTypedCause));
+}
+
 static void runNotesCommand(TestCommandContext& context)
 {
     std::optional<Vector<CodeUnit>> units = unitsInOrderOfWords(*context.program, context.arguments, context.out);
@@ -264,6 +292,7 @@ static void runNotesCommand(TestCommandContext& context)
         return;
     CompileInputs inputs(*stage.prepared()->compileInputs);
     inputs.walk.options.takesNotes = true;
+    bool asksForCauses = AOT::hasFlag(context.build.options().reports, Wire::ReportSet::Flow);
     CompileWorker worker(inputs, context.build, stage.program().types);
     for (CodeUnit unit : *units) {
         size_t numberOfUnitsWithNotes = worker.notes().size();
@@ -282,6 +311,8 @@ static void runNotesCommand(TestCommandContext& context)
             context.out.print(nameOfWalkNoteKind(note.kind), " @"_s, note.origin.position, " in f"_s, note.writtenIn.index());
             if (note.layout)
                 context.out.print(" layout=L"_s, note.layout.index());
+            if (asksForCauses)
+                printCauseOfNote(context.out, note);
             context.out.println();
         }
     }
