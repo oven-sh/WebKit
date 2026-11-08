@@ -846,14 +846,10 @@ static void posixDidChangeVariable(JSGlobalObject* globalObject, const PosixByte
     posixDidChangeEnvironment(globalObject, singleElementSpan(copy));
 }
 
-// posix.environ, which os.environ keeps its variables in. The program cannot put another in its place here. Null: nothing has imported posix.
+// The dict that the module was given as posix.environ, which os.environ keeps its variables in. The program cannot put another in its place here. Null: nothing has imported posix.
 static PyDict* posixEnviron(JSGlobalObject* globalObject)
 {
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    JSValue namespaces = rt.slot(Runtime::Slot::NativeModules);
-    JSValue ownNamespace = namespaces ? PyDict::from(namespaces)->get(internString(vm, "posix"_s)) : JSValue();
-    JSValue dict = ownNamespace ? PyDict::from(ownNamespace)->get(internString(vm, "environ"_s)) : JSValue();
+    JSValue dict = posixState(globalObject)->get(internString(getVM(globalObject), "environ"_s));
     return dict ? PyDict::from(dict) : nullptr;
 }
 
@@ -1446,6 +1442,7 @@ void initializePosixModule(JSGlobalObject* globalObject, PyModule* module)
     JSValue dict = posixCreateEnviron(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "environ"_s, dict);
+    posixState(globalObject)->set(vm, internString(vm, "environ"_s), dict);
     posixTakeEnvironmentOfHost(globalObject, PyDict::from(dict));
     RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "error"_s, rt.OSError());
