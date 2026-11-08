@@ -341,6 +341,9 @@ public:
     const void* symbolForC() const { return m_symbolForC; }
     void setSymbolForC(const void* symbol) { m_symbolForC = symbol; }
 
+    // Whether __bases__ leads from this type to the other, by whichever of them. (The MRO says so too, unless it is of a metaclass's own making, or out of date.)
+    bool hasAmongBases(const PyType* other);
+
     // The classes derived directly from this one. It does not keep them alive.
     enum class SubclassOrder : bool { OldestFirst, NewestFirst };
     void appendSubclassesTo(MarkedArgumentBuffer&, SubclassOrder = SubclassOrder::OldestFirst) const;
@@ -401,7 +404,7 @@ private:
     OptionSet<TypeFlag> m_flags;
     uint32_t m_version { 0 };
     uint16_t m_versionsLeft { 1000 };
-    bool m_isBeingToldOfChange { false };
+    bool m_isInWalk { false }; // Of didChange() and hasAmongBases(), in which no code runs.
     bool m_hasInstancesAmongAttributes { false };
     // __getattr__ was looked for and not found. Then it is not looked for again, whatever else changes, as in CPython, where what
     // reads the attributes of the instances is replaced by something simpler. It shows where a key that is no str raised when it

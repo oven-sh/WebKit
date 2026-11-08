@@ -529,7 +529,7 @@ static PyType* subclassInEntry(JSValue entry)
 uint32_t PyType::takeVersion()
 {
     static std::atomic<uint32_t> last;
-    if (!m_versionsLeft || m_isBeingToldOfChange)
+    if (!m_versionsLeft || m_isInWalk)
         return 0;
     uint32_t version = last.load(std::memory_order_relaxed);
     do {
@@ -624,7 +624,7 @@ void PyType::didChange(VM&, Change change)
     AssertNoGC assertNoGC;
     Vector<PyType*, 16> told;
     told.append(this);
-    m_isBeingToldOfChange = true;
+    m_isInWalk = true;
     for (size_t next = 0; next < told.size(); ++next) {
         JSValue subclasses = told[next]->m_subclasses.get();
         if (!subclasses)
@@ -632,15 +632,38 @@ void PyType::didChange(VM&, Change change)
         JSArray* list = asList(subclasses);
         for (unsigned i = 0; i < listLength(list); ++i) {
             PyType* subclass = subclassInEntry(listGet(list, i));
-            if (!subclass || subclass->m_isBeingToldOfChange)
+            if (!subclass || subclass->m_isInWalk)
                 continue;
-            subclass->m_isBeingToldOfChange = true;
+            subclass->m_isInWalk = true;
             subclass->forgetWhatIsRemembered(change);
             told.append(subclass);
         }
     }
     for (PyType* type : told)
-        type->m_isBeingToldOfChange = false;
+        type->m_isInWalk = false;
+}
+
+bool PyType::hasAmongBases(const PyType* other)
+{
+    AssertNoGC assertNoGC;
+    Vector<PyType*, 16> reached;
+    reached.append(this);
+    m_isInWalk = true;
+    bool isFound = false;
+    for (size_t next = 0; !isFound && next < reached.size(); ++next) {
+        isFound = reached[next] == other;
+        PyTuple* bases = reached[next]->bases();
+        for (unsigned i = 0; bases && i < bases->length(); ++i) {
+            PyType* base = PyType::from(bases->at(i));
+            if (base->m_isInWalk)
+                continue;
+            base->m_isInWalk = true;
+            reached.append(base);
+        }
+    }
+    for (PyType* type : reached)
+        type->m_isInWalk = false;
+    return isFound;
 }
 
 void PyType::appendSubclassesTo(MarkedArgumentBuffer& result, SubclassOrder order) const

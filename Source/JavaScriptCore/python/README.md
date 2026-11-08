@@ -283,6 +283,12 @@ gets the classes that it came to along `__base__`, and no others, whatever the d
 The `mro()` of a metaclass may name any class: that is why a type written in C++ whose instances have anything of their own needs `TypeFlag::OwnLayout`: without it, its methods can be
 handed an instance of a class that merely names it.
 
+**`__bases__` leads from no class to itself**, at any moment at which code of the program can run. The loops along `__base__` end at null only, and C3 and every walk up rest on it as well.
+The MROs do not say it: a metaclass writes there what it likes, and in the middle of another assignment they are out of date. So `PyType::hasAmongBases()` goes through the bases. A new type is safe, since
+nothing leads to it. `typeSetBases()` writes twice, the new bases and, if an `mro()` raised, the old ones again, and asks before each; between a question and its write nothing runs code
+(a lookup would: keys are asked). If an `mro()` that ran has put one of the old bases under the class, nothing is taken back: the class keeps the new bases, the classes whose turn had come keep their new MROs,
+all is done that follows an assignment, and the exception goes on. The layouts were found to agree before the first write, so whichever MRO a class is left with, what it promises of the cell holds.
+
 ## Code
 
 The compiler emits ordinary JSC bytecode where the semantics agree (moves, jumps, calls, exception handlers, generators through

@@ -1199,6 +1199,46 @@ enum class MROResult : uint8_t {
     Set,
 };
 
+// What is remembered of the attributes of a type depends on every class in its MRO, so each of them has to tell it when it changes. Those that a base has in its MRO do, by way of
+// the base. The others are there because an mro() has named them, or because __bases__ has been assigned somewhere since the MRO was worked out.
+static void beToldByAllInMRO(JSGlobalObject* globalObject, PyType* type)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    PyTuple* mro = type->mro();
+    PyTuple* bases = type->bases();
+    for (unsigned i = 0; mro && i < mro->length(); ++i) {
+        PyType* entry = PyType::from(mro->at(i));
+        bool isAncestor = entry == type;
+        for (unsigned j = 0; !isAncestor && j < bases->length(); ++j)
+            isAncestor = PyType::from(bases->at(j))->isSubtypeOf(entry);
+        if (!isAncestor) {
+            entry->addDependent(globalObject, type);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+}
+
+// The same for all that derive from it, each once.
+static void beToldBelow(JSGlobalObject* globalObject, PyType* root)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    MarkedArgumentBuffer types;
+    types.append(root);
+    UncheckedKeyHashSet<PyType*> seen;
+    seen.add(root);
+    for (unsigned i = 0; i < types.size(); ++i) {
+        PyType* type = PyType::from(types.at(i));
+        beToldByAllInMRO(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, void());
+        MarkedArgumentBuffer subclasses;
+        type->appendSubclassesTo(subclasses);
+        for (unsigned j = 0; j < subclasses.size(); ++j) {
+            if (seen.add(PyType::from(subclasses.at(j))).isNewEntry)
+                types.append(subclasses.at(j));
+        }
+    }
+}
+
 // Sets the MRO of the type, by the mro() of its metaclass.
 static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
 {
@@ -1243,20 +1283,10 @@ static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
         return MROResult::Superseded;
     type->setMRO(vm, mro);
     type->didChange(vm, PyType::Change::HowAttributesAreRead);
-    // An mro() may name a class that the type does not derive from. What is remembered of the type's attributes depends on that
-    // class all the same.
+    // An mro() may name a class that the type does not derive from.
     if (type->type() != rt.typeType()) {
-        PyTuple* bases = type->bases();
-        for (unsigned i = 0; i < mro->length(); ++i) {
-            PyType* entry = PyType::from(mro->at(i));
-            bool isAncestor = entry == type;
-            for (unsigned j = 0; !isAncestor && j < bases->length(); ++j)
-                isAncestor = PyType::from(bases->at(j))->isSubtypeOf(entry);
-            if (!isAncestor) {
-                entry->addDependent(globalObject, type);
-                RETURN_IF_EXCEPTION(scope, MROResult::Raised);
-            }
-        }
+        beToldByAllInMRO(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, MROResult::Raised);
     }
     return MROResult::Set;
 }
@@ -1863,19 +1893,24 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
         raiseTypeError(globalObject, scope, "can only assign non-empty tuple to "_s, type->name(), ".__bases__, not ()"_s);
         return;
     }
+    // Nothing runs code between the questions below and the writing of the bases. So no key is asked here: if one would have said that it is '__del__', the instances are looked for in vain.
+    bool hadFinalizer = !!type->lookup(Special::Del, PyType::AsksKeys::No);
     for (unsigned i = 0; i < bases->length(); ++i) {
         PyType* base = PyType::tryFrom(bases->at(i));
         if (!base) {
             raiseTypeError(globalObject, scope, type->name(), ".__bases__ must be tuple of classes, not '"_s, typeName(globalObject, bases->at(i)), '\'');
             return;
         }
-        // The MRO of the base may be out of date, if this is called by the mro() of a metaclass that another assignment to
-        // __bases__ is calling. Its base is not.
-        bool derives = base->isSubtypeOf(type);
-        for (PyType* ancestor = base; !derives && ancestor; ancestor = ancestor->base())
-            derives = ancestor == type;
-        if (derives) {
+        if (base->isSubtypeOf(type)) {
             raiseTypeError(globalObject, scope, "a __bases__ item causes an inheritance cycle"_s);
+            return;
+        }
+        if (base->hasAmongBases(type)) {
+            // (A class that is being made, which its own mro() has handed out: CPython lets it through here and says this when it works out the MRO.)
+            if (!base->mro())
+                raiseTypeError(globalObject, scope, "Cannot extend an incomplete type '"_s, base->name(), '\'');
+            else
+                raiseTypeError(globalObject, scope, "a __bases__ item causes an inheritance cycle"_s);
             return;
         }
     }
@@ -1888,7 +1923,6 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
 
     PyTuple* oldBases = type->bases();
     PyType* oldBase = type->base();
-    bool hadFinalizer = !!type->lookup(Special::Del);
     type->setBases(vm, bases);
     type->setBase(vm, base);
     updateSolidBases(vm, type);
@@ -1896,7 +1930,34 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     bool succeeded = updateMROs(globalObject, type, changes);
     // An mro() that ran may itself have assigned to __bases__. Then what it assigned stays, and has been seen to.
     bool isCurrent = type->bases() == bases;
+    auto settleUnderNewBases = [&] {
+        for (unsigned i = 0; i < oldBases->length(); ++i) {
+            PyType::from(oldBases->at(i))->removeSubclass(globalObject, type);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        for (unsigned i = 0; i < bases->length(); ++i) {
+            PyType::from(bases->at(i))->addSubclass(globalObject, type);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        type->didChange(vm, PyType::Change::HowAttributesAreRead);
+        type->updateMakers();
+        if (!hadFinalizer && type->lookup(Special::Del)) [[unlikely]]
+            registerInstancesForFinalization(globalObject, type);
+    };
     if (failed(scope, succeeded)) {
+        // An mro() that ran may have put one of the old bases under this class. Then they are not given back, for they would lead from the class to itself: all stays as far as it
+        // has come. The class keeps the new bases, and the classes whose turn had come the MROs that go with those. (As above: nothing runs code between the question and the writing.)
+        bool canGoBack = true;
+        for (unsigned i = 0; isCurrent && canGoBack && i < oldBases->length(); ++i)
+            canGoBack = !PyType::from(oldBases->at(i))->hasAmongBases(type);
+        if (!canGoBack) [[unlikely]] {
+            ExceptionSetAside suspended(globalObject);
+            settleUnderNewBases();
+            RETURN_IF_EXCEPTION(scope, void());
+            // Those whose turn had not come have the old bases in their MROs still.
+            beToldBelow(globalObject, type);
+            return;
+        }
         for (unsigned i = changes.size(); i; i -= 3) {
             PyType* changed = PyType::from(changes.at(i - 3));
             if (changed->mro() != changes.at(i - 2).asCell())
@@ -1904,28 +1965,17 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
             changed->setMRO(vm, PyTuple::tryFrom(changes.at(i - 1)));
             changed->didChange(vm);
         }
-        if (isCurrent) {
-            type->setBases(vm, oldBases);
-            type->setBase(vm, oldBase);
-            updateSolidBases(vm, type);
-            type->didChange(vm);
-        }
+        if (!isCurrent)
+            return;
+        type->setBases(vm, oldBases);
+        type->setBase(vm, oldBase);
+        updateSolidBases(vm, type);
+        type->didChange(vm);
         return;
     }
     if (!isCurrent)
         return;
-    for (unsigned i = 0; i < oldBases->length(); ++i) {
-        PyType::from(oldBases->at(i))->removeSubclass(globalObject, type);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
-    for (unsigned i = 0; i < bases->length(); ++i) {
-        PyType::from(bases->at(i))->addSubclass(globalObject, type);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
-    type->didChange(vm, PyType::Change::HowAttributesAreRead);
-    type->updateMakers();
-    if (!hadFinalizer && type->lookup(Special::Del)) [[unlikely]]
-        registerInstancesForFinalization(globalObject, type);
+    settleUnderNewBases();
 }
 
 static JSValue typeGetDict(JSGlobalObject* globalObject, JSValue self)
