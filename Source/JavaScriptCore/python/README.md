@@ -1640,7 +1640,7 @@ What that rests on, each kept at one place:
 
 **`py_object`.** The eight bytes are a `PyObject*` as the C API has it (see there): what `id()` returns, for every object but a str, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
 what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs
-see (`objectFromBits()`). `Py_INCREF` and `Py_DECREF` count as C's do (see "The C API"). `ctypes.pythonapi` would be the
+see, or, since the `id()` of a str is where its characters are, that a live str has its characters there (`objectFromBits()`). `Py_INCREF` and `Py_DECREF` count as C's do (see "The C API"). `ctypes.pythonapi` would be the
 program itself, which has little of the C API yet. Bun takes the name away when `ctypes` is imported, as it is absent on PyPy: that is how programs find out.
 
 **`cast`, `string_at`, `wstring_at`, `memoryview_at`, `memmove`, `memset`** are, in `Lib/ctypes`, function pointers made from addresses

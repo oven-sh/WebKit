@@ -289,7 +289,9 @@ static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue sourc
             data->objects.set(vm, data, PyDict::create(globalObject));
         result->objects.set(vm, result, data->objects.get());
         if (auto* dict = PyDict::tryFrom(result->objects.get()); dict && dict->type() == rt.dictType()) {
-            dict->set(globalObject, identityOf(globalObject, source), source);
+            JSValue identity = identityOf(globalObject, source);
+            RETURN_IF_EXCEPTION(scope, { });
+            dict->set(globalObject, identity, source);
             RETURN_IF_EXCEPTION(scope, { });
         }
     }

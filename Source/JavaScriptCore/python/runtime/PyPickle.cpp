@@ -2129,7 +2129,9 @@ static JSValue picklerMemoProxyCopy(JSGlobalObject* globalObject, JSValue self)
     PyDict* result = PyDict::create(globalObject);
     for (unsigned i = 0; i < listLength(keys); ++i) {
         JSValue object = listGet(keys, i);
-        result->set(globalObject, identityOf(globalObject, object), PyTuple::create(globalObject, { map->get(object.asCell()), object }));
+        JSValue identity = identityOf(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, { });
+        result->set(globalObject, identity, PyTuple::create(globalObject, { map->get(object.asCell()), object }));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return result;

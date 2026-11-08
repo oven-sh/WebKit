@@ -93,7 +93,12 @@ bool checkPositional(JSGlobalObject* globalObject, ASCIILiteral function, const 
 JSValue identityOf(JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isString()) {
-        // See isIdentical().
+        // It is where the characters are: see isIdentical(). A str that has been put together and not read yet has them nowhere.
+        if (asString(value)->isRope()) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+            asString(value)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         if (const StringImpl* impl = asString(value)->tryGetValueImpl())
             return makeInt(globalObject, static_cast<uint64_t>(std::bit_cast<uintptr_t>(impl)));
     }
