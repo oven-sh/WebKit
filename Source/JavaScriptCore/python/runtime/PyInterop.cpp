@@ -11,6 +11,7 @@
 #include "BuiltinNames.h"
 #include "FunctionPrototype.h"
 #include "IteratorOperations.h"
+#include "JSAsyncFromSyncIterator.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSGlobalProxy.h"
@@ -1298,6 +1299,18 @@ JSPromise* thenOfPromise(JSGlobalObject* globalObject, JSPromise* promise, JSVal
     return result;
 }
 
+// What stands between `for await` and an iterator that is not asynchronous is the engine's own, and JS never gets to see it: whoever drives it there asks for one step at a time. So it has
+// room for one: the promise that the step under way is to settle. Python does get to see it: aiter(), and anext() twice with no `await` between; a step that is cancelled, and aclose(); a
+// next() that asks for a step itself. All that it knows beside that promise is in the iterator behind it. So each step gets one of its own: each call goes to the iterator at once and
+// settles its own promise, as %AsyncFromSyncIteratorPrototype%.next() is specified.
+static JSValue jsAsyncIteratorForStep(JSGlobalObject* globalObject, JSValue iterator)
+{
+    auto* fromSync = dynamicDowncast<JSAsyncFromSyncIterator>(iterator);
+    if (!fromSync)
+        return iterator;
+    return JSAsyncFromSyncIterator::create(getVM(globalObject), fromSync->structure(), fromSync->syncIterator(), fromSync->nextMethod(), fromSync->iterationMode());
+}
+
 static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
 {
     if (!ensureMainThreadForJS(globalObject))
@@ -1310,7 +1323,7 @@ static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
     auto callData = JSC::getCallData(nextMethod);
     if (callData.type == CallData::Type::None)
         return throwTypeError(globalObject, scope, "iterator.next is not a function"_s), JSValue();
-    JSValue result = JSC::call(globalObject, nextMethod, callData, record->get(JSIteratorObject), noArguments);
+    JSValue result = JSC::call(globalObject, nextMethod, callData, jsAsyncIteratorForStep(globalObject, record->get(JSIteratorObject)), noArguments);
     RETURN_IF_EXCEPTION(scope, { });
     JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1324,7 +1337,7 @@ static JSValue jsAsyncIteratorClose(JSGlobalObject* globalObject, JSValue self)
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue iterator = uncheckedDowncast<PyRecord>(self.asCell())->get(JSIteratorObject);
+    JSValue iterator = jsAsyncIteratorForStep(globalObject, uncheckedDowncast<PyRecord>(self.asCell())->get(JSIteratorObject));
     JSValue returnMethod = iterator.get(globalObject, vm.propertyNames->returnKeyword);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue result = jsUndefined();
