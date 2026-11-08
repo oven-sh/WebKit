@@ -10790,7 +10790,16 @@ static std::optional<FieldReference> fieldReadBehindShapeForGuesses(Walker& walk
     TypeArena& types = walker.types();
     if (!types.at(tested).hasOnlyLayouts() || !holdsOneMember(types.at(tested).layouts))
         return std::nullopt;
-    return findField(walker.program(), membersOf(types, types.at(tested))[0], keyOfAccessToSlot(walker.program(), read));
+    std::optional<FieldReference> field = findField(walker.program(), membersOf(types, types.at(tested))[0], keyOfAccessToSlot(walker.program(), read));
+    if (!field)
+        return std::nullopt;
+    FieldFacts facts = walker.facts().field(*field);
+    const PlacedSlot& slot = walker.plan().slot(field->layout, field->field);
+    if (!slot.hasStorage() || slot.holdsAccessor || slot.deferredFunction || slot.representation == SlotRepresentation::DeferredClosure)
+        return std::nullopt;
+    if (fieldAt(walker.program(), *field).form.contains(FieldForm::IsAccessor) || facts.formOfValue.contains(FieldForm::IsAccessor) || facts.facts.contains(FieldFact::IsAccessor))
+        return std::nullopt;
+    return field;
 }
 
 std::optional<GuessInFrontOfLoop> guessAtShapeOfHolderReadByName(Walker& walker, const BodyValue& read)
