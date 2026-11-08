@@ -99,6 +99,21 @@ void PyCData::setMemoryOf(VM& vm, const PyCData* other, int64_t offset)
 
 // ---- Making instances ----
 
+// Whether the instances have a __del__. To ask may run code of the program: a key in the dict of a class that is no str is asked whether it is '__del__'. So it is asked first. From then
+// on nothing runs until the instance has its memory: where that is and how far it goes is looked at, then the instance is made, and registered (didMakeData()) last of all. So
+// nobody finds an instance that has no memory, and none is finalized that was refused.
+static bool hasFinalizer(PyType* type)
+{
+    return type->isHeapType() && type->lookup(Special::Del);
+}
+
+static ALWAYS_INLINE PyCData* didMakeData(JSGlobalObject* globalObject, PyCData* data, bool isFinalized)
+{
+    if (isFinalized) [[unlikely]]
+        runtime(globalObject).registerFinalizable(data);
+    return data;
+}
+
 static PyCData* allocateData(JSGlobalObject* globalObject, PyType* type, PyCTypeInfo* info)
 {
     VM& vm = getVM(globalObject);
@@ -114,13 +129,10 @@ static PyCData* allocateData(JSGlobalObject* globalObject, PyType* type, PyCType
     PyCData* data = layout == state.functionType.get() ? PyCFuncPtr::create(vm, state.functionStructure.get(), type) : PyCData::create(vm, state.dataStructure.get(), type);
     data->length = info->length;
     data->size = info->size;
-    // (This may run code of the program: a key in the dict of a class that is no str is asked whether it is '__del__'.)
-    if (type->isHeapType() && type->lookup(Special::Del)) [[unlikely]]
-        runtime(globalObject).registerFinalizable(data);
     return data;
 }
 
-bool allocateMemory(JSGlobalObject* globalObject, PyCData* data, int64_t size, int64_t room)
+static PyByteStorage* newMemory(JSGlobalObject* globalObject, int64_t size, int64_t room = 0)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -140,12 +152,25 @@ bool allocateMemory(JSGlobalObject* globalObject, PyCData* data, int64_t size, i
         storage = tryWith(size);
     if (!storage) {
         raiseMemoryError(globalObject, scope, String());
-        return false;
+        return nullptr;
     }
     memset(storage->data(), 0, storage->capacity());
+    return storage;
+}
+
+static ALWAYS_INLINE void giveMemory(VM& vm, PyCData* data, PyByteStorage* storage, int64_t size)
+{
     data->setStorage(vm, storage, 0);
     data->size = size;
     data->ownsMemory = true;
+}
+
+bool allocateMemory(JSGlobalObject* globalObject, PyCData* data, int64_t size, int64_t room)
+{
+    PyByteStorage* storage = newMemory(globalObject, size, room);
+    if (!storage)
+        return false;
+    giveMemory(getVM(globalObject), data, storage, size);
     return true;
 }
 
@@ -166,11 +191,13 @@ PyCData* newData(JSGlobalObject* globalObject, PyType* type)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    bool isFinalized = hasFinalizer(type);
+    PyByteStorage* storage = newMemory(globalObject, info->size);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     PyCData* data = allocateData(globalObject, type, info);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (failed(scope, allocateMemory(globalObject, data, info->size)))
-        return nullptr;
-    return data;
+    giveMemory(vm, data, storage, info->size);
+    return didMakeData(globalObject, data, isFinalized);
 }
 
 // What a pointer points to is, as a rule, the memory of an instance that the pointer keeps alive. Then it is known how far that
@@ -384,37 +411,34 @@ PyCData* dataAt(JSGlobalObject* globalObject, PyType* type, const Place& place, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    auto fits = [&](int64_t size) {
-        if (place.offset >= 0 && place.offset <= place.object->size && size <= place.object->size - place.offset)
-            return true;
-        raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
-        return false;
-    };
-    // So that, as a rule, no instance is made in vain.
-    if (uint8_t* target; place.isThroughPointer ? failed(scope, pointerTarget(globalObject, place.object, target)) : !fits(info->size))
-        return nullptr;
-    // To make one may run code of the program (allocateData()): where the memory is, and how far it goes, is looked at behind that.
+    bool isFinalized = hasFinalizer(type);
+    if (!place.isThroughPointer) {
+        if (place.offset < 0 || place.offset > place.object->size || info->size > place.object->size - place.offset) {
+            raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
+            return nullptr;
+        }
+        PyCData* data = allocateData(globalObject, type, info);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        data->base.set(vm, data, place.object);
+        data->index = index;
+        data->setMemoryOf(vm, place.object, place.offset);
+        return didMakeData(globalObject, data, isFinalized);
+    }
+    // The pointer may be made to point elsewhere while this instance is in use: it holds on to the memory itself.
+    Provenance provenance;
+    uint8_t* address = lookThroughPointer(globalObject, place.object, place.offset, info->size, provenance);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     PyCData* data = allocateData(globalObject, type, info);
     RETURN_IF_EXCEPTION(scope, nullptr);
     data->base.set(vm, data, place.object);
     data->index = index;
-    if (!place.isThroughPointer) {
-        if (!fits(data->size))
-            return nullptr;
-        data->setMemoryOf(vm, place.object, place.offset);
-        return data;
-    }
-    // The pointer may be made to point elsewhere while this instance is in use: it holds on to the memory itself.
-    Provenance provenance;
-    uint8_t* address = lookThroughPointer(globalObject, place.object, place.offset, data->size, provenance);
-    RETURN_IF_EXCEPTION(scope, nullptr);
     if (!provenance.owner)
         data->setAddress(address);
     else if (auto* view = dynamicDowncast<PyMemoryView>(provenance.owner))
         data->setView(vm, view, address - provenance.begin, address);
     else
         data->setStorage(vm, uncheckedDowncast<PyByteStorage>(provenance.owner), address - provenance.begin);
-    return data;
+    return didMakeData(globalObject, data, isFinalized);
 }
 
 PyCData* dataAtAddress(JSGlobalObject* globalObject, PyType* type, const void* address)
@@ -426,10 +450,11 @@ PyCData* dataAtAddress(JSGlobalObject* globalObject, PyType* type, const void* a
     ASSERT_UNUSED(ok, ok);
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    bool isFinalized = hasFinalizer(type);
     PyCData* data = allocateData(globalObject, type, info);
     RETURN_IF_EXCEPTION(scope, nullptr);
     data->setAddress(address);
-    return data;
+    return didMakeData(globalObject, data, isFinalized);
 }
 
 bool checkRoomFor(JSGlobalObject* globalObject, PyCTypeInfo* info, int64_t length, int64_t offset)
@@ -461,19 +486,16 @@ PyCData* dataInView(JSGlobalObject* globalObject, PyType* type, PyMemoryView* vi
     ASSERT_UNUSED(ok, ok);
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    bool isFinalized = hasFinalizer(type);
+    // The caller has looked, but the hooks have run since, and the class may have been given its fields by one.
     if (failed(scope, checkRoomFor(globalObject, info, view->length, offset)))
         return nullptr;
-    PyCData* data = allocateData(globalObject, type, info);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    // The caller has looked, but the hooks have run since, and the class may have been given its fields by one.
-    if (data->size > view->length - offset) {
-        raiseValueError(globalObject, scope, "Buffer size too small ("_s, view->length, " instead of at least "_s, data->size + offset, " bytes)"_s);
-        return nullptr;
-    }
     memory = located();
     RETURN_IF_EXCEPTION(scope, nullptr);
+    PyCData* data = allocateData(globalObject, type, info);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     data->setView(vm, view, offset, memory + offset);
-    return data;
+    return didMakeData(globalObject, data, isFinalized);
 }
 
 PyCData* dataFromCopy(JSGlobalObject* globalObject, PyType* type, std::span<const uint8_t> source)
@@ -776,6 +798,8 @@ JSValue dataBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
     } else {
         // Nothing is known about the memory. A buffer wants an owner: an ArrayBuffer that frees nothing.
         uint8_t* memory = data->memory(globalObject);
+        if (!memory && data->size)
+            return raiseValueError(globalObject, scope, "NULL pointer access"_s);
         if (static_cast<uint64_t>(data->size) > MAX_ARRAY_BUFFER_SIZE)
             return raiseBufferError(globalObject, scope, "the memory is too large to be exported"_s);
         auto arrayBuffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { memory, static_cast<size_t>(data->size) }, createSharedTask<void(void*)>([](void*) { }));
