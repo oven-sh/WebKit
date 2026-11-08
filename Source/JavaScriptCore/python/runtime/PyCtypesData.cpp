@@ -675,10 +675,23 @@ static JSValue entryForCopy(JSGlobalObject* globalObject, PyCData* holder, const
 
 static ALWAYS_INLINE bool isAddress(Code code)
 {
-    return code == Code::CharPointer || code == Code::WCharPointer || code == Code::VoidPointer;
+    return code == Code::CharPointer || code == Code::WCharPointer || code == Code::VoidPointer || code == Code::Object;
 }
 
-// An address has been stored there as a value (c_char_p, c_wchar_p, c_void_p).
+// What the eight bytes of a py_object are believed to stand for.
+static JSValue hintForObject(JSGlobalObject* globalObject, const Home& home, std::span<const uint8_t> memory, PyCData* holder, int64_t index)
+{
+    uint64_t bits;
+    // (The place may have been written as a pointer: what is written down then can be memory, which is no object.)
+    if (JSValue entry = entryAt(globalObject, home); entry && memory.size() == sizeof(bits) && (entry.isObject() || entry.isString() || entry.isHeapBigInt())) {
+        memcpy(&bits, memory.data(), sizeof(bits));
+        if (identityBits(entry) == bits) [[likely]]
+            return entry;
+    }
+    return keptFor(globalObject, holder, index);
+}
+
+// An address has been stored there as a value (c_char_p, c_wchar_p, c_void_p, py_object).
 static void didStoreAddress(JSGlobalObject* globalObject, const Home& home, const Packed& packed)
 {
     if (packed.owner) {
@@ -1059,9 +1072,10 @@ JSValue getData(JSGlobalObject* globalObject, PyType* type, Accessor accessor, c
     }
     if (!accessor)
         RELEASE_AND_RETURN(scope, dataAt(globalObject, type, place, index));
-    auto memory = place.resolve(globalObject, size);
+    Home home;
+    auto memory = place.resolve(globalObject, size, accessor.code == Code::Object ? &home : nullptr);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue hint = accessor.code == Code::Object ? keptFor(globalObject, place.object, index) : JSValue();
+    JSValue hint = accessor.code == Code::Object ? hintForObject(globalObject, home, memory, place.object, index) : JSValue();
     RELEASE_AND_RETURN(scope, load(globalObject, accessor, memory, bits, hint));
 }
 
@@ -1389,9 +1403,10 @@ static JSValue simpleGetValue(JSGlobalObject* globalObject, JSValue self)
     PyCTypeInfo* info = infoOfInstance(globalObject, self);
     if (!info || !info->accessor)
         return raiseTypeError(globalObject, scope, "abstract class"_s);
-    auto memory = Place { data }.resolve(globalObject, info->size);
+    Home home;
+    auto memory = Place { data }.resolve(globalObject, info->size, info->accessor.code == Code::Object ? &home : nullptr);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue hint = info->accessor.code == Code::Object ? keptFor(globalObject, data, 0) : JSValue();
+    JSValue hint = info->accessor.code == Code::Object ? hintForObject(globalObject, home, memory, data, 0) : JSValue();
     RELEASE_AND_RETURN(scope, load(globalObject, info->accessor, memory, { }, hint));
 }
 

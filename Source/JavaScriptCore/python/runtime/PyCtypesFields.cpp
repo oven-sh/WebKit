@@ -495,6 +495,7 @@ bool pack(JSGlobalObject* globalObject, Accessor accessor, JSValue value, int64_
     case Code::Object:
         packAs(result, identityBits(value));
         result.keep = value;
+        result.owner = value.isCell() ? value.asCell() : nullptr;
         return true;
     case Code::CharArray: {
         auto* bytes = PyBytes::tryFrom(value);

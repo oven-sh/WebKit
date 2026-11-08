@@ -100,7 +100,7 @@ const CodeDescription* describeCode(StringView);
 struct Packed {
     alignas(16) uint8_t bytes[32];
     JSValue keep; // What the bytes point into, which has to live while they are in use. None: nothing.
-    JSCell* owner { nullptr }; // The bytes are an address in the memory of this: the entry for where they are stored (entryAt()). Null: nothing is known to own it.
+    JSCell* owner { nullptr }; // The bytes are an address in the memory of this, or stand for this object: the entry for where they are stored (entryAt()). Null: nothing is known to own it.
     std::span<const uint8_t> text; // CharArray and WCharArray: what to copy.
     JSCell* holder { nullptr }; // Whose memory `text` is: store() keeps it alive until it has copied.
 };
@@ -597,7 +597,7 @@ struct Place {
 // _objects cannot do it alone: it is CPython's to the letter, the program can write to it, instances share it by reference, and its keys are places in an instance, which collide.
 //
 // An entry: the PyByteStorage or the bytes object that the address lies in; where the memory is seen through a view, an instance that sees it, which knows where in the view it is and where the view was.
-// For the address of the code of a callback: its PyCThunk. That says nothing about how far anything goes: it is there to be kept alive, and goes along when the address is copied.
+// For the address of the code of a callback: its PyCThunk. For a py_object: the object. These say nothing about how far anything goes: they are there to be kept alive, and go along when the eight bytes are copied.
 // A place: eight bytes at a multiple of eight. Others (in a packed structure) have no entry.
 //
 // The bytes of a cell that has them in itself, so that they stay where they are for as long as it lives: a PyByteStorage; a bytes object, with the NUL at its end. Of any other cell: none.
