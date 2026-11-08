@@ -31,6 +31,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/Atomics.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
 
@@ -320,7 +321,7 @@ static bool trySortStrings(JSGlobalObject* globalObject, State& state, JSArray* 
             SortedStorage::ensure(state).remember(shared, shared);
         return true;
     }
-    if (JSCellButterfly* made = shared ? JSCellButterfly::tryCreate(vm, shared->structure(), length) : nullptr) {
+    if (JSCellButterfly* made = shared ? JSCellButterfly::tryCreate(vm, WTF::opaque(shared->structure()), length) : nullptr) {
         for (unsigned i = 0; i < length; ++i)
             made->setIndex(vm, i, JSValue::decode(sorted[i]));
         array->setButterfly(vm, made->toButterfly());
