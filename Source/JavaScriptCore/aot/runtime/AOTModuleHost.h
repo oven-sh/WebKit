@@ -102,7 +102,7 @@ struct ModuleHost {
     std::optional<bool> (*isInPreload)(JSGlobalObject*);
     bool (*layMocksAgain)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isReached);
     void (*callInLaterTurn)(JSGlobalObject*);
-    void (*didStartImport)(JSGlobalObject*, JSPromise*, const String& path);
+    void (*didStartImport)(JSGlobalObject*, JSPromise*, const String& path, const ScopedLambda<bool(ModuleID)>& isReached);
     bool (*holdsTextsOfProgram)(JSGlobalObject*);
     bool (*isCalledFromFactoryThatWaits)(JSGlobalObject*, ModuleID);
     bool (*keepsTexts)(JSGlobalObject*);
@@ -284,6 +284,7 @@ JS_EXPORT_PRIVATE bool isRootOfImportThatFailed(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLoadedAheadOfThisTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didLeaveLoaderInThisTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void noteThatKeyIsOfThisTestFile(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void noteThatMockHasEmptiedKey(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isKeyOfThisTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
@@ -307,6 +308,7 @@ JS_EXPORT_PRIVATE bool importsByStatements(JSGlobalObject*, ModuleID importer, M
 JS_EXPORT_PRIVATE void layMocksAgainAtNextLoad(JSGlobalObject*, ModuleID, bool waits = true);
 JS_EXPORT_PRIVATE bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID, bool displacesEarlierMock, bool setsModuleAside);
 JS_EXPORT_PRIVATE JSPromise* evaluationUnderWay(JSGlobalObject*, ModuleID, bool hasWaitedForTurn);
+JS_EXPORT_PRIVATE JSPromise* evaluationUnderWayBelow(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE void countMockCall(JSGlobalObject*, std::optional<ModuleID>, ASCIILiteral otherwise, ASCIILiteral call, ASCIILiteral factory);
 JS_EXPORT_PRIVATE void runBodyOfRequiredFileAheadOfMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool runBodyOfImportedModuleAheadOfMock(JSGlobalObject*, ModuleID);

@@ -48,6 +48,7 @@ ASCIILiteral nameOf(const DiagnosticName&);
 
 struct ExpectedDiagnostic {
     DiagnosticName kind;
+    std::optional<FunctionID> function;
     std::optional<unsigned> count;
     unsigned line;
 };

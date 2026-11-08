@@ -1286,8 +1286,10 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
             noteWrittenAfterConstruction(*field);
         return;
     }
-    if (findsAccessor && !isDefinition && !goesOnAboveClasses)
+    if (findsAccessor && !isDefinition && !goesOnAboveClasses) {
+        storeInto(m_flow.storedWhereAccessorStandsAbove(id));
         return;
+    }
     if (findsAccessor && isDefinition)
         m_flow.escape(id);
     storeBesideFieldsOf(id);

@@ -815,8 +815,8 @@ void TestFileParser::parseJSCOptions(const DirectiveLine& directive)
 void TestFileParser::parseDiagnostic(const DirectiveLine& directive)
 {
     auto words = splitWords(directive.value);
-    if (words.isEmpty() || words.size() > 2) {
-        addError(directive.line, "DIAGNOSTIC is written <DiagnosticKind> [ <count> ]"_s);
+    if (words.isEmpty() || words.size() > 3) {
+        addError(directive.line, "DIAGNOSTIC is written <DiagnosticKind> [ f<n> ] [ <count> ]"_s);
         return;
     }
 
@@ -826,9 +826,25 @@ void TestFileParser::parseDiagnostic(const DirectiveLine& directive)
         return;
     }
 
+    std::optional<FunctionID> function;
+    size_t placeOfCount = 1;
+    if (words.size() > 1 && words[1].startsWith('f')) {
+        std::optional<uint32_t> number = parseDecimal<uint32_t>(words[1].substring(1));
+        if (!number || *number > FunctionID::largestIndex) {
+            addError(directive.line, "the function of a DIAGNOSTIC is written f<n>"_s);
+            return;
+        }
+        function = FunctionID(*number);
+        placeOfCount = 2;
+    }
+    if (words.size() > placeOfCount + 1) {
+        addError(directive.line, "DIAGNOSTIC is written <DiagnosticKind> [ f<n> ] [ <count> ]"_s);
+        return;
+    }
+
     std::optional<unsigned> count;
-    if (words.size() == 2) {
-        count = parseDecimal<unsigned>(words[1]);
+    if (words.size() > placeOfCount) {
+        count = parseDecimal<unsigned>(words[placeOfCount]);
         if (!count || !*count) {
             addError(directive.line, "the count must be above 0"_s);
             return;
@@ -836,13 +852,13 @@ void TestFileParser::parseDiagnostic(const DirectiveLine& directive)
     }
 
     bool isListed = m_file.diagnostics.containsIf([&](const ExpectedDiagnostic& expected) {
-        return expected.kind == *kind;
+        return expected.kind == *kind && expected.function == function;
     });
     if (isListed) {
         addError(directive.line, words[0], " is listed twice"_s);
         return;
     }
-    m_file.diagnostics.append(ExpectedDiagnostic { *kind, count, directive.line });
+    m_file.diagnostics.append(ExpectedDiagnostic { *kind, function, count, directive.line });
 }
 
 void TestFileParser::parseStatistic(const DirectiveLine& directive)

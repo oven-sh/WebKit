@@ -947,6 +947,7 @@ struct ProcedureTraits {
     bool leavesOutSavesThatPatchesAloneRead { false };
     bool takesSpillsThatStepsReadToBeReadByNone { false };
     bool takesValuesKeptForCollectorToBeReadByStepsAlone { false };
+    bool takesWaysOnToReadNothing { false };
     bool notesRangesOfOrigins { false };
     CPUFeatureSet features;
 
@@ -1012,6 +1013,7 @@ enum class FailureKind : uint8_t {
     FrameAddressAcrossSuspension,
     NarrowReferenceWithoutPointer,
     InnerPointerWithoutOwner,
+    ReleasedValueIsReadOnWayOn,
     NeedsFrameWhereNoneIsSetUp,
 };
 

@@ -538,6 +538,7 @@ void LinkFlow::makeTablesThatNeedNoNodes()
     m_nodesStoredUnderUnknownNames.fill(noNodeInLinkFlow, numberOfLayouts);
     m_nodesStoredUnderNumbers.fill(noNodeInLinkFlow, numberOfLayouts);
     m_nodesFoundUnderNamesThatNoNumberSpells.fill(noNodeInLinkFlow, numberOfLayouts);
+    m_nodesStoredWhereAccessorStandsAbove.fill(noNodeInLinkFlow, numberOfLayouts);
     m_newestAppendedFieldOfLayout.fill(UINT32_MAX, numberOfLayouts);
 
     for (BitVector* byLayout : { &layoutsMetInFamilies, &m_layoutsToldLost, &m_layoutsToldToEscape, &m_layoutsAtUnseen, &m_prototypesAtUnseen, &m_openLayouts, &m_lostLayoutsWhoseAppendedFieldsAreTied })
@@ -5204,6 +5205,22 @@ FlowNodeID LinkFlow::storedUnderUnknownNamesOf(LayoutID layout, bool keyIsNumber
         addEdge(FlowNodeID(node), foundBesideFieldsOf(layout));
         if (!keyIsNumber)
             addEdge(FlowNodeID(node), foundUnderNamesThatNoNumberSpells(layout));
+        if (uint32_t whereAccessorStands = m_nodesStoredWhereAccessorStandsAbove[layout.index()]; whereAccessorStands != noNodeInLinkFlow)
+            addEdge(FlowNodeID(whereAccessorStands), FlowNodeID(node));
+    }
+    return FlowNodeID(node);
+}
+
+FlowNodeID LinkFlow::storedWhereAccessorStandsAbove(LayoutID layout)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    uint32_t& node = m_nodesStoredWhereAccessorStandsAbove[layout.index()];
+    if (node == noNodeInLinkFlow) {
+        node = makeNode().index();
+        for (uint32_t stored : { m_nodesStoredUnderUnknownNames[layout.index()], m_nodesStoredUnderNumbers[layout.index()] }) {
+            if (stored != noNodeInLinkFlow)
+                addEdge(FlowNodeID(node), FlowNodeID(stored));
+        }
     }
     return FlowNodeID(node);
 }

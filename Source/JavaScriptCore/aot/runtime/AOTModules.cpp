@@ -2264,8 +2264,15 @@ JSValue Modules::askForExportsBehindEntryOfProgram(ModuleID file)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     JSValue kept = exportsBehindEntryOfProgram(file);
-    if (!kept || data(file).kind == ModuleKind::CommonJs || wasLoadedInThisTestFile(file))
+    if (!kept || wasLoadedInThisTestFile(file))
         return kept;
+    if (data(file).kind == ModuleKind::CommonJs) {
+        for (const ModuleRequestData& request : m_table.requests(file)) {
+            if (m_modulesOwedToImportersThatRan.get(request.target()) || m_modulesWithMockToLetGo.get(request.target()))
+                return { };
+        }
+        return kept;
+    }
     evaluateModulesOwedBelowOriginal(file);
     RETURN_IF_EXCEPTION(scope, { });
     return kept;
@@ -3416,6 +3423,10 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     bool hasComeToItsJob = std::exchange(m_importOfMockedModuleHasComeToItsJob, false);
     endMocksThatStoodForLoadsInFlight();
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    if (standsForLoadsInFlight(module) && m_modulesWithMockToRun.get(module.index()) && !isEvaluatedByLoader(module) && haveLoadsInFlightTakenAnswerThatStandsOn(module)) [[unlikely]] {
+        endMockThatStandsForLoadsInFlight(module);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    }
     if (!hasComeToItsJob && (m_modulesWithMockToRun.get(module.index()) || m_modulesWithMockToRun.get(fileOf(module).index())) && !m_modulesWithMockThatAsksAgain.get(module.index()) && !m_modulesWithMockThatAsksAgain.get(fileOf(module).index()) && options.isUndefined() && !m_instance.vm->synchronousModuleQueue()) [[unlikely]] {
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
         MarkedArgumentBuffer call;
@@ -3463,7 +3474,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         if (referrer && !m_mocksOverModulesThatHaveRun.isEmpty()) [[unlikely]]
             noteImportThatBodySetAsideMayAwait(started, asyncEvaluationOrder(referrer), promise);
         scope.release();
-        tellHostOfImport(promise, data(file).mayBeMocked() ? keyWithoutForm(file).string() : String());
+        tellHostOfImport(promise, data(file).mayBeMocked() ? keyWithoutForm(file).string() : String(), file);
         return promise;
     };
 
@@ -4163,6 +4174,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     bool hadWaited = !!stateOfWait;
     if (m_goesModuleByModule) [[unlikely]]
         m_rootsOfCallsOfImport.set(module.index());
+    if (m_mocks) [[unlikely]]
+        noteAskForKey(module);
     if (text == TextOfImport::MayComeLater && isHeldBySweepUnderWay(module)) [[unlikely]]
         return startImportInLaterTurn(module, referrerAsyncOrder);
     runDataFileAgainForImport(module, caller == ImportCaller::Host ? ImportAnsweredBy::Loader : ImportAnsweredBy::Build);
@@ -5954,6 +5967,10 @@ void Modules::forEachFileThatFailed(const WTF::Function<void(ModuleID)>& functor
         if (mayBeEvicted(file) && !isEvicted(file))
             functor(file);
     }
+    for (ModuleID module : m_mocksOverModulesThatHaveRun.keys()) {
+        if (errorOfModuleThatRanBesideMock(module) && mayBeEvicted(module) && !isEvicted(module))
+            functor(module);
+    }
 }
 
 void takeOutFilesThatFailed(JSGlobalObject* realm)
@@ -7223,6 +7240,12 @@ void noteThatKeyIsOfThisTestFile(JSGlobalObject* realm, ModuleID module)
         modules->noteThatKeyIsOfThisTestFile(module);
 }
 
+void noteThatMockHasEmptiedKey(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->noteThatMockHasEmptiedKey(module);
+}
+
 bool isKeyOfThisTestFile(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -7442,6 +7465,7 @@ void didEndMock(JSGlobalObject* realm, ModuleID module, OriginalBehindEntryOfPro
     if (!modules)
         return;
     MockDoor door(modules, module, "didEndMock"_s);
+    modules->noteThatKeyIsFilledAgain(module);
     modules->letLoadsThatRequiresLeftAboveKeepNoError(module);
     modules->noteDeedOnMockUnderCallsOfImport(module, Modules::DeedOnMock::Ends);
     modules->forgetLinksInRefusedLoadsThatCameTo(module);

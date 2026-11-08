@@ -307,7 +307,6 @@ struct PropertyCacheWords {
     uint32_t slowPathReadCount;
     const void* infoOfClassPrototypes;
     SiteCacheState* siteCacheStates;
-    uint8_t* missesOfPlacesByDistance;
     uint8_t missesOfEmptySites;
     uint8_t missesOfPlacesOfPairs;
     uint8_t hitsOfFurtherAnswers;

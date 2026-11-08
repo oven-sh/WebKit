@@ -38,10 +38,17 @@ static void settleAsLoaderDoesInImportTurns(JSGlobalObject* realm, JSPromise* pr
         promiseOfProgram->resolve(realm, vm, loaded);
 }
 
-void Modules::tellHostOfImport(JSPromise* promise, const String& path)
+void Modules::tellHostOfImport(JSPromise* promise, const String& path, std::optional<ModuleID> file)
 {
-    if (auto* didStartImport = host().didStartImport; didStartImport && promise->status() == JSPromise::Status::Pending)
-        didStartImport(m_instance.globalObject, promise, path);
+    auto* didStartImport = host().didStartImport;
+    if (!didStartImport || promise->status() != JSPromise::Status::Pending)
+        return;
+    std::optional<BitVector> reached;
+    didStartImport(m_instance.globalObject, promise, path, [&](ModuleID module) {
+        if (file && !reached)
+            reached = modulesThatLoadLeadsTo(*file);
+        return reached && reached->quickGet(module.index());
+    });
 }
 
 bool Modules::isTextReadOnOtherThread(ModuleID file)

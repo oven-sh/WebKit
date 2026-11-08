@@ -699,6 +699,7 @@ public:
     FlowNodeID storedBesideFieldsOf(LayoutID);
     FlowNodeID storedUnderUnknownNamesOf(LayoutID, bool keyIsNumber);
     FlowNodeID foundUnderNamesThatNoNumberSpells(LayoutID);
+    FlowNodeID storedWhereAccessorStandsAbove(LayoutID);
     FlowNodeID foundBesideFieldsFor(LayoutID layout, PropertyKeyID key) { return mayBeNamedByNumber(key) ? foundBesideFieldsOf(layout) : foundUnderNamesThatNoNumberSpells(layout); }
     bool isFilledUnderUnknownNames(LayoutID layout) const { return m_nodesStoredUnderUnknownNames[layout.index()] != UINT32_MAX || m_nodesStoredUnderNumbers[layout.index()] != UINT32_MAX; }
     Vector<FlowNodeID, 8> nodesWithOwnValuesOf(LayoutID);
@@ -2181,6 +2182,7 @@ private:
     Vector<uint32_t> m_nodesStoredUnderUnknownNames;
     Vector<uint32_t> m_nodesStoredUnderNumbers;
     Vector<uint32_t> m_nodesFoundUnderNamesThatNoNumberSpells;
+    Vector<uint32_t> m_nodesStoredWhereAccessorStandsAbove;
     Vector<Vector<OwnValue>> m_ownValuesOfLayouts;
     BitVector m_layoutsWithListedFieldWithoutKey;
     BitVector m_layoutsWhoseOwnValuesAreListed;

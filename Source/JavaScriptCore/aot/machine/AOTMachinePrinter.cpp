@@ -217,6 +217,8 @@ ASCIILiteral MachinePrinter::nameOf(FailureKind kind)
         return "NarrowReferenceWithoutPointer"_s;
     case FailureKind::InnerPointerWithoutOwner:
         return "InnerPointerWithoutOwner"_s;
+    case FailureKind::ReleasedValueIsReadOnWayOn:
+        return "ReleasedValueIsReadOnWayOn"_s;
     case FailureKind::NeedsFrameWhereNoneIsSetUp:
         return "NeedsFrameWhereNoneIsSetUp"_s;
     }

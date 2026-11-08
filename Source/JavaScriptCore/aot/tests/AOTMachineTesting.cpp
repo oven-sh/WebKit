@@ -85,6 +85,7 @@ struct TestProcedure::Storage {
         case FailureKind::SpillSlotLacksItsValue:
         case FailureKind::FrameAddressAcrossSuspension:
         case FailureKind::NarrowReferenceWithoutPointer:
+        case FailureKind::ReleasedValueIsReadOnWayOn:
             return TestProcedureStage::Allocated;
         case FailureKind::NeedsFrameWhereNoneIsSetUp:
             return TestProcedureStage::Framed;

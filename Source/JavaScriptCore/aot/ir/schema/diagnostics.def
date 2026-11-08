@@ -187,6 +187,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     FrameAddressAcrossSuspension(GenerateCode, "{function}: the frame address {value} is live across a suspension")
     NarrowReferenceWithoutPointer(GenerateCode, "{function}: only the 32-bit reference {value} names its cell where an operation can run the collector")
     InnerPointerWithoutOwner(GenerateCode, "{function}: {value} points into what a cell owns and is read behind an operation that can run the collector, and the cell is not")
+    ReleasedValueIsReadOnWayOn(GenerateCode, "{function}: a hint let {value} go, and a step on a way on from the hint reads it")
     DisplacedNarrowReference(GenerateCode, "{function}: the 32-bit reference {value} is live, moved by a constant, where operation {count} can run the collector")
     MalformedMachineProcedure(GenerateCode, "{function}: the machine operations that the emitters appended do not hold together")
     OutOfRegisters(GenerateCode, "{function}: one patch operation asks for more registers than there are")

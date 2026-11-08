@@ -317,6 +317,20 @@ JSPromise* Modules::evaluationUnderWay(ModuleID module, bool hasWaitedForTurn)
     return turn;
 }
 
+JSPromise* Modules::evaluationUnderWayBelow(ModuleID file)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (const ModuleRequestData& request : m_table.imports(file)) {
+        if (request.isDeferred)
+            continue;
+        JSPromise* evaluation = evaluationUnderWay(moduleLoadedBy(request), true);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (evaluation)
+            return evaluation;
+    }
+    return nullptr;
+}
+
 bool Modules::runBodyOfImportedModuleAheadOfMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -570,7 +584,7 @@ bool Modules::haveLoadsInFlightTakenAnswerThatStandsOn(ModuleID mocked) const
     return !m_rootsOfImportsBehindFactories.containsIf([&](ModuleID root) {
         if (fileOf(root) == fileOf(mocked))
             return !namespaceIfCreated(root, ModulePhase::Evaluation);
-        return status(root) < ModuleStatus::Evaluated && modulesThatLoadLeadsTo(root).get(mocked.index());
+        return status(root) < ModuleStatus::EvaluatingAsync && modulesThatLoadLeadsTo(root).get(mocked.index());
     });
 }
 
@@ -1390,6 +1404,7 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
     bool walksInFrontOfMocks = rootOfLoad == RootOfLoad::BeginsLoad && m_modulesWhoseFactoryRuns.isEmpty() && !m_evaluatesSynchronously && !m_rootWhoseLoadIsSwept && !vm.aotState().requireRunsMocks && !vm.synchronousModuleQueue();
     bool hasCalledOrdinaryFactories = !walksInFrontOfMocks;
     bool hasPutMockAside = false;
+    bool someFactoryHasNotSettled = false;
     BitVector reached(m_table.size());
     Vector<ModuleID, 32> work { root };
     while (!work.isEmpty() || std::exchange(hasPutMockAside, false)) {
@@ -1445,8 +1460,11 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
                 }
                 return false;
             }
-            if (factoryHasNotSettled)
-                return true;
+            if (factoryHasNotSettled) {
+                if (!m_walkGoesOnPastFactoriesThatHaveNotSettled)
+                    return true;
+                someFactoryHasNotSettled = true;
+            }
         }
         if (isMocked(module) && !isPutAside && (module != root || !mocks.rootRunsBesideItsMock()))
             continue;
@@ -1455,7 +1473,7 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
                 work.append(moduleLoadedBy(request));
         }
     }
-    return false;
+    return someFactoryHasNotSettled;
 }
 
 bool Modules::leadsToWhatIsImported(ModuleID imported, ModuleID importer) const
@@ -1560,6 +1578,12 @@ JSPromise* evaluationUnderWay(JSGlobalObject* realm, ModuleID module, bool hasWa
 {
     Modules* modules = modulesOf(realm);
     return modules ? modules->evaluationUnderWay(module, hasWaitedForTurn) : nullptr;
+}
+
+JSPromise* evaluationUnderWayBelow(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->evaluationUnderWayBelow(file) : nullptr;
 }
 
 bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module, bool displacesEarlierMock, bool setsModuleAside)

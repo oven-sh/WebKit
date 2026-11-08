@@ -955,6 +955,8 @@ std::optional<Walker::IsItselfMentioned> Walker::isOtherThanRestOf(const Objects
     ValueID root = rootOfCellInSweptCode(m_code, other.id());
     if (!m_code.isConstant(root) && makesNewCell(m_code.at(root)))
         return std::ranges::binary_search(mentioned, root.index()) ? IsItselfMentioned::Yes : IsItselfMentioned::No;
+    if (m_inputs.options.takesValuesThatComeLaterForOthersThanWhatIsMadeHere) [[unlikely]]
+        return IsItselfMentioned::No;
     return mentioned.isEmpty() || root.index() < mentioned.first() ? std::optional(IsItselfMentioned::No) : std::nullopt;
 }
 
@@ -2257,13 +2259,18 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
     forgetValuesOfLoop(inputHead);
 
     m_closedCopiesShared.append(ClosedCopyShared { frameIndex, inputHead, closedStart, entryOfClosedCopy, false });
+    LoopID loopLookedAtAroundCopies = m_frames[frameIndex].loopLookedAt;
+    uint32_t firstValueLookedAtAroundCopies = m_frames[frameIndex].firstValueLookedAt;
     std::shared_ptr<TypesOfValuesOfLoop> settledAroundCopies = m_frames[frameIndex].typesOfLooks;
     bool turnsOfSomeCopyComeRound = false;
     for (StartOfCopy& start : starts) {
         if (m_hasFailed)
             break;
-        if (m_frames[frameIndex].loopLookedAt != loop)
+        if (m_frames[frameIndex].loopLookedAt != loop) {
+            m_frames[frameIndex].loopLookedAt = loopLookedAtAroundCopies;
+            m_frames[frameIndex].firstValueLookedAt = firstValueLookedAtAroundCopies;
             m_frames[frameIndex].typesOfLooks = settledAroundCopies;
+        }
         bool isRest = startOfRest && start.block == startOfRest;
         bool isForWhatIsNoBuiltin = startForWhatIsNoBuiltin && start.block == startForWhatIsNoBuiltin;
         if (isRest) {
@@ -2496,7 +2503,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     ClosedCopyShared* shared = !m_closedCopiesShared.isEmpty() && m_closedCopiesShared.last().frameIndex == frameIndex && m_closedCopiesShared.last().inputHead == inputHead && (m_asksOnlyWhetherLoopMayBeBuiltTwice ? m_closedCopiesShared.last().isAboutToBeTaken : std::exchange(m_closedCopiesShared.last().isAboutToBeTaken, false)) ? &m_closedCopiesShared.last() : nullptr;
     if (!shared && m_frames[frameIndex].loopsBeingBuiltTwice.contains(loop))
         return false;
-    bool frontIsEnteredOutOfTurns = shared && m_walksCopyThatAsksCountersAlone;
+    bool frontIsEnteredOutOfTurns = shared && shared->isEnteredOutOfTurns;
     BlockID sharedStart = shared && !frontIsEnteredOutOfTurns ? shared->start : BlockID();
     BlockID sharedEntry = shared ? shared->entry : BlockID();
     bool sharedCopyIsPlainWalk = shared && shared->isPlainWalk;
@@ -3568,6 +3575,8 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     SetForScope ordinalOfCopy(m_ordinalOfCopyOfLoop, m_ordinalOfCopyOfLoop * 16 + 1);
     BlockID typedStart = isUnreachable() ? BlockID() : m_block;
     WalkState stateWhereTestsPassed = m_state;
+    if (frontIsEnteredOutOfTurns && !closedStart)
+        closedStart = addBlock(BlockFrequency::Rare);
     if (!sharedEntry) {
         if (closedStart && !frontLeadsOnAsItDid)
             continueIn(closedStart);
@@ -3611,14 +3620,20 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             bool firstPurchaseIsListed = !m_loopsBeingBought.isEmpty() && m_loopsBeingBought.last() == boughtFirst;
             if (firstPurchaseIsListed)
                 m_loopsBeingBought.removeLast();
-            if (closedCopyIsSharedBehindOtherCopy)
+            bool wayAroundBeginsLoop = !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().frameIndex == frameIndex && m_waysIntoClosedCopies.last().inputHead == inputHead;
+            BlockID startOfWayAround = wayAroundBeginsLoop ? std::exchange(m_waysIntoClosedCopies.last().startFromInFront, BlockID()) : BlockID();
+            if (closedCopyIsSharedBehindOtherCopy) {
                 m_closedCopiesShared.last().isAboutToBeTaken = true;
-            else
+                m_closedCopiesShared.last().isEnteredOutOfTurns = true;
+            } else
                 m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
             walkCopyOfLoop(inputHead, enteringClosedCopy.span());
-            if (closedCopyIsSharedBehindOtherCopy)
+            if (wayAroundBeginsLoop)
+                m_waysIntoClosedCopies.last().startFromInFront = startOfWayAround;
+            if (closedCopyIsSharedBehindOtherCopy) {
                 m_closedCopiesShared.last().isAboutToBeTaken = false;
-            else
+                m_closedCopiesShared.last().isEnteredOutOfTurns = false;
+            } else
                 m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
             if (firstPurchaseIsListed)
                 m_loopsBeingBought.append(boughtFirst);

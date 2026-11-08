@@ -97,11 +97,56 @@ struct ValuesInLinkCalls {
 struct PassedInLinkCalls {
     PassedInLinkCalls() { }
 
+    PassedInLinkCalls withoutReceiver() const
+    {
+        PassedInLinkCalls passed;
+        passed.arguments = arguments;
+        passed.list = list;
+        passed.isConstruction = isConstruction;
+        passed.newTarget = newTarget;
+        return passed;
+    }
+
     std::optional<ValuesInLinkCalls> receiver;
-    Vector<ValuesInLinkCalls, 4> arguments;
-    std::optional<ValuesInLinkCalls> list;
+    std::span<const ValuesInLinkCalls> arguments;
+    const ValuesInLinkCalls* list { nullptr };
     bool isConstruction { false };
-    std::optional<ValuesInLinkCalls> newTarget;
+    const ValuesInLinkCalls* newTarget { nullptr };
+};
+
+struct PassedMadeInLinkCalls : PassedInLinkCalls {
+    WTF_MAKE_NONCOPYABLE(PassedMadeInLinkCalls);
+    WTF_MAKE_NONMOVABLE(PassedMadeInLinkCalls);
+public:
+    PassedMadeInLinkCalls() { }
+
+    void appendArgument(ValuesInLinkCalls&& values)
+    {
+        m_arguments.append(WTF::move(values));
+        arguments = m_arguments.span();
+    }
+    void appendArgument(const ValuesInLinkCalls& values)
+    {
+        m_arguments.append(values);
+        arguments = m_arguments.span();
+    }
+    ValuesInLinkCalls& ensureList()
+    {
+        if (!m_list)
+            m_list = ValuesInLinkCalls();
+        list = &*m_list;
+        return *m_list;
+    }
+    void setNewTarget(ValuesInLinkCalls&& values)
+    {
+        m_newTarget = WTF::move(values);
+        newTarget = &*m_newTarget;
+    }
+
+private:
+    Vector<ValuesInLinkCalls, 4> m_arguments;
+    std::optional<ValuesInLinkCalls> m_list;
+    std::optional<ValuesInLinkCalls> m_newTarget;
 };
 
 struct ValuesAtOperandInLinkCalls {
@@ -1137,7 +1182,7 @@ private:
     bool m_hasLookedForResults { false };
     std::optional<uint32_t> m_stepThatWatches;
     Vector<FlowNodeID, 4> m_operandsOnlyLookedAt;
-    std::optional<Passed> m_passed;
+    std::optional<PassedMadeInLinkCalls> m_passed;
     std::optional<MembersUnderKey> m_membersUnderKey;
     bool m_throwsError { false };
     bool m_throwsAnything { false };
@@ -1193,17 +1238,17 @@ const PassedInLinkCalls& CallInLinkCalls::passedByCall()
     if (m_passed)
         return *m_passed;
 
-    Passed& passed = m_passed.emplace();
+    PassedMadeInLinkCalls& passed = m_passed.emplace();
     if (m_shared) {
         if (m_call.receiver != noSummaryNode)
             passed.receiver = valuesAtNode(m_call.receiver);
         for (uint32_t argument = 0; argument + m_shared->hasList < m_call.numberOfArguments; ++argument)
-            passed.arguments.append(valuesAtNode(m_summary.arguments[argument]));
+            passed.appendArgument(valuesAtNode(m_summary.arguments[argument]));
         if (m_shared->hasList)
-            passed.list = valuesAtNode(m_summary.arguments.last());
+            passed.ensureList() = valuesAtNode(m_summary.arguments.last());
         passed.isConstruction = m_call.isConstruction;
         if (m_call.newTarget != noSummaryNode)
-            passed.newTarget = valuesAtNode(m_call.newTarget);
+            passed.setNewTarget(valuesAtNode(m_call.newTarget));
         return passed;
     }
     if (m_call.receiver != noSummaryNode)
@@ -1211,24 +1256,22 @@ const PassedInLinkCalls& CallInLinkCalls::passedByCall()
     for (uint32_t argument = 0; argument < m_call.numberOfArguments; ++argument) {
         Values values = valuesAtNode(m_summary.arguments[m_call.firstArgument + argument]);
         if (!m_call.passesList) {
-            passed.arguments.append(WTF::move(values));
+            passed.appendArgument(WTF::move(values));
             continue;
         }
-        if (!passed.list)
-            passed.list = Values();
-        add(*passed.list, values);
+        add(passed.ensureList(), values);
     }
-    if (m_call.passesList && !passed.list)
-        passed.list = Values();
+    if (m_call.passesList)
+        passed.ensureList();
     passed.isConstruction = m_call.isConstruction;
     if (m_call.newTarget != noSummaryNode)
-        passed.newTarget = valuesAtNode(m_call.newTarget);
+        passed.setNewTarget(valuesAtNode(m_call.newTarget));
     return passed;
 }
 
 PassedInLinkCalls CallInLinkCalls::passedWithReceiver(const LinkType& receiver)
 {
-    Passed passed = passedByCall();
+    Passed passed = passedByCall().withoutReceiver();
     passed.receiver = valuesOf(receiver);
     return passed;
 }
@@ -1655,7 +1698,7 @@ void CallInLinkCalls::notePreparationRegisteredBy(BuiltinID builtin, const Passe
 {
     if (!m_builtins.has(BuiltinMark::RegistersPreparationOfHolders, m_builtins.canonicalID(builtin)))
         return;
-    bool isKnown = !passed.arguments.isEmpty() && passed.arguments[0].made.isNothing() && !passed.arguments[0].sources.isEmpty();
+    bool isKnown = !passed.arguments.empty() && passed.arguments[0].made.isNothing() && !passed.arguments[0].sources.isEmpty();
     for (size_t source = 0; isKnown && source < passed.arguments[0].sources.size(); ++source)
         isKnown = !passed.arguments[0].sources[source].distance;
     isKnown = isKnown && passed.arguments.size() > 1 && passed.arguments[1].made.isNothing() && !passed.arguments[1].sources.isEmpty();
@@ -1815,7 +1858,7 @@ bool CallInLinkCalls::callBuiltinFunctionBoundAt(const LinkType& callee, const P
     if (isSettledButForOwnCallees())
         return true;
     BuiltinID bound = heldAt(target).builtin;
-    Passed toTarget = passed;
+    Passed toTarget = passed.withoutReceiver();
     toTarget.receiver = valuesOf(m_builtins.ignoresReceiver(bound) ? primitivesForLinkCalls(Primitive::Undefined) : LinkType::anything());
     callees().add(m_builtins.canonicalID(bound));
     give(callBuiltin(bound, toTarget, false));
@@ -1986,9 +2029,7 @@ ALWAYS_INLINE void CallInLinkCalls::callName()
     if (receiver.builtin && (m_shared || (!isServedByLightForm && (m_call.receiver == noSummaryNode || !m_flow.isSpelledInBody(m_caller, m_call.receiver)))))
         m_flow.note(LinkFlow::Note::BuiltinUsedWhereFlowBroughtIt, m_builtins.canonicalID(receiver.builtin).index());
     if (isServedByLightForm) {
-        Passed passed = passedByCall();
-        passed.receiver = std::nullopt;
-        give(passToUnseen(passed));
+        give(passToUnseen(passedByCall().withoutReceiver()));
     } else if (receiver.builtin && !isSettledButForOwnCallees())
         callMemberOfTable(findAbove(receiver.builtin), valuesOf(builtinForLinkCalls(receiver.builtin)), WhenAbsent::MayHaveBeenAdded);
     if (receiver.holdsUnseen) {
@@ -2585,7 +2626,7 @@ void CallInLinkCalls::callMemberOfTable(MemberOfTable found, Values receiver, Wh
     case Lookup::FoundWhereProgramMayWrite:
         RELEASE_ASSERT_NOT_REACHED();
     }
-    Passed passed = passedByCall();
+    Passed passed = passedByCall().withoutReceiver();
     passed.receiver = WTF::move(receiver);
     callees().add(found.member);
     if (!m_shared)
@@ -3249,7 +3290,7 @@ ValuesInLinkCalls CallInLinkCalls::callBuiltin(BuiltinID builtin, const Passed& 
         m_flow.note(LinkFlow::Note::BuiltinCalledAtSite, isCalledByBuiltin ? UINT32_MAX : m_number, call.builtin.index() | static_cast<uint32_t>(passed.isConstruction) << 23);
     notePreparationRegisteredBy(call.builtin, passed);
     noteOptionThatRunsCodeAmong(call);
-    if (m_flow.testRuns().isTestRun() && m_builtins.has(BuiltinMark::IsSpy, call.builtin) && !passed.arguments.isEmpty()) {
+    if (m_flow.testRuns().isTestRun() && m_builtins.has(BuiltinMark::IsSpy, call.builtin) && !passed.arguments.empty()) {
         forEachType(passed.arguments[0], [&](const LinkType& holder, const Source*) {
             m_flow.testRuns().noteHolderOfSpy(holder, { }, m_caller, m_call.site);
         });
@@ -3343,8 +3384,7 @@ ValuesInLinkCalls CallInLinkCalls::callBuiltin(BuiltinID builtin, const Passed& 
             add(call.result, callOutOfSight(call));
             return WTF::move(call.result);
         }
-        Passed handed = passed;
-        handed.receiver = std::nullopt;
+        Passed handed = passed.withoutReceiver();
         RowCall withoutReceiver { call.builtin, call.mode, handed, call.isSeenByScan, call.isCalledByBuiltin };
         add(call.result, callOutOfSight(withoutReceiver));
         return WTF::move(call.result);
@@ -4165,24 +4205,22 @@ void CallInLinkCalls::applyParameter(RowCall& call, const BuiltinParameter& para
 
 void CallInLinkCalls::applyCallback(RowCall& call, const BuiltinCallback& callback)
 {
-    Passed passed;
+    PassedMadeInLinkCalls passed;
     passed.isConstruction = callback.constructs;
     if (callback.constructs) {
         if (callback.newTarget.kind != BuiltinPlaceKind::None)
-            passed.newTarget = valuesAtPlace(call, callback.newTarget);
+            passed.setNewTarget(valuesAtPlace(call, callback.newTarget));
     } else if (callback.thisValue.kind != BuiltinPlaceKind::None)
         passed.receiver = valuesAtPlace(call, callback.thisValue);
 
     auto addToList = [&](const Values& values) {
-        if (!passed.list)
-            passed.list = Values();
-        add(*passed.list, values);
+        add(passed.ensureList(), values);
     };
     for (const BuiltinPlace& argument : callback.arguments) {
         bool isRestOfArguments = argument.kind == BuiltinPlaceKind::Operand && !argument.isSettled && argument.operand->kind() == BuiltinOperand::Kind::ArgumentsFrom;
         if (isRestOfArguments && !passed.list) {
             for (uint32_t index = argument.operand->argumentIndex(); index < call.passed.arguments.size(); ++index)
-                passed.arguments.append(call.passed.arguments[index]);
+                passed.appendArgument(call.passed.arguments[index]);
             if (call.passed.list)
                 addToList(*call.passed.list);
             continue;
@@ -4194,7 +4232,7 @@ void CallInLinkCalls::applyCallback(RowCall& call, const BuiltinCallback& callba
         }
         if (mayBeMissingAt(call, argument))
             add(values, primitivesForLinkCalls(Primitive::Undefined));
-        passed.arguments.append(WTF::move(values));
+        passed.appendArgument(WTF::move(values));
     }
     if (callback.spreadArguments.kind == BuiltinPlaceKind::OwnValues && !callback.spreadArguments.isSettled) {
         Values spread = contentsOf(valuesAt(call, *callback.spreadArguments.operand), NamesRead::ThoseThatMayBeIndexes);
@@ -4820,14 +4858,14 @@ void CallInLinkCalls::letGoOfMember(RowCall& call, const MemberWrittenInLinkCall
 
 void CallInLinkCalls::callHandlers(RowCall& call, const BuiltinHandlerCall& handlerCall, const Values& handlers)
 {
-    Passed passed;
+    PassedMadeInLinkCalls passed;
     if (handlerCall.thisValue.kind != BuiltinPlaceKind::None)
         passed.receiver = valuesAtPlace(call, handlerCall.thisValue);
     for (const BuiltinPlace& argument : handlerCall.arguments) {
         Values values = valuesAtPlace(call, argument);
         if (mayBeMissingAt(call, argument))
             add(values, primitivesForLinkCalls(Primitive::Undefined));
-        passed.arguments.append(WTF::move(values));
+        passed.appendArgument(WTF::move(values));
     }
     auto holdsWhatNobodyFollows = [](const Values& values) { return values.made.holdsUnseen; };
     if ((passed.receiver && holdsWhatNobodyFollows(*passed.receiver)) || std::ranges::any_of(passed.arguments, holdsWhatNobodyFollows))
@@ -5345,9 +5383,9 @@ ValuesAtOperandInLinkCalls CallInLinkCalls::valuesAt(const RowCall& call, Builti
     ValuesAtOperandInLinkCalls values;
     switch (operand.kind()) {
     case BuiltinOperand::Kind::Receiver: {
-        const std::optional<Values>& written = call.mode == BuiltinCallMode::Construct ? passed.newTarget : passed.receiver;
+        const Values* written = call.mode == BuiltinCallMode::Construct ? passed.newTarget : passed.receiver ? &*passed.receiver : nullptr;
         if (written)
-            values.standing = &*written;
+            values.standing = written;
         else
             values.made = valuesOf(call.mode == BuiltinCallMode::Construct ? builtinForLinkCalls(call.builtin) : primitivesForLinkCalls(Primitive::Undefined));
         return values;

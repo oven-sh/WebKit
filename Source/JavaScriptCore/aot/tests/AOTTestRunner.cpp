@@ -83,12 +83,15 @@ static void appendFailure(Vector<TestFailure>& failures, const RunDirective& run
     failures.append(TestFailure { line, makeString(run.command, ": "_s, sentence...) });
 }
 
-static size_t countOf(const Diagnostics& diagnostics, const DiagnosticName& name)
+static size_t countOf(const Diagnostics& diagnostics, const DiagnosticName& name, std::optional<FunctionID> function)
 {
+    auto isCounted = [&](const auto& reported, auto kind) {
+        return reported.kind == kind && (!function || reported.function == *function);
+    };
     return WTF::switchOn(name, [&](UserDiagnosticKind kind) -> size_t {
-        return std::ranges::count(diagnostics.userDiagnostics(), kind, &UserDiagnostic::kind);
+        return std::ranges::count_if(diagnostics.userDiagnostics(), [&](const UserDiagnostic& reported) { return isCounted(reported, kind); });
     }, [&](InternalErrorKind kind) -> size_t {
-        return std::ranges::count(diagnostics.internalErrors(), kind, &InternalError::kind);
+        return std::ranges::count_if(diagnostics.internalErrors(), [&](const InternalError& reported) { return isCounted(reported, kind); });
     });
 }
 
@@ -114,11 +117,12 @@ struct UnexpectedDiagnostics {
 static void compareDiagnostics(const TestFile& file, const RunDirective& run, const Diagnostics& diagnostics, Vector<TestFailure>& failures)
 {
     for (const ExpectedDiagnostic& expected : file.diagnostics) {
-        size_t count = countOf(diagnostics, expected.kind);
+        size_t count = countOf(diagnostics, expected.kind, expected.function);
+        String place = expected.function ? makeString(" of f"_s, expected.function->index()) : emptyString();
         if (!count)
-            appendFailure(failures, run, expected.line, "expected diagnostic "_s, nameOf(expected.kind), ", none was reported"_s);
+            appendFailure(failures, run, expected.line, "expected diagnostic "_s, nameOf(expected.kind), place, ", none was reported"_s);
         else if (expected.count && *expected.count != count)
-            appendFailure(failures, run, expected.line, "expected "_s, *expected.count, " of "_s, nameOf(expected.kind), ", got "_s, count);
+            appendFailure(failures, run, expected.line, "expected "_s, *expected.count, " of "_s, nameOf(expected.kind), place, ", got "_s, count);
     }
 
     UnexpectedDiagnostics unexpected { file, run, failures };

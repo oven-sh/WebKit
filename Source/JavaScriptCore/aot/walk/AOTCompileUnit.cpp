@@ -92,6 +92,8 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .periodOfUnitsWalkedThatWay = options.periodOfUnitsWalkedThatWay,
         .periodOfHearingsThatCutWalks = options.periodOfHearingsThatCutWalks,
         .phaseOfHearingsThatCutWalks = options.phaseOfHearingsThatCutWalks,
+        .takesValuesThatComeLaterForOthersThanWhatIsMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere),
+        .takesReceiversOfMethodsOfListsToBeMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ReceiversOfMethodsOfListsAreTakenToBeMadeHere),
     };
 }
 

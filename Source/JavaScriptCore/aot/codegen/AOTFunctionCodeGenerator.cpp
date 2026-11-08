@@ -64,6 +64,7 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
         .leavesOutSavesThatPatchesAloneRead = hasFlag(build.options().testing, Wire::TestingSwitch::SavesAtHeadsThatPatchesAloneReadAreLeftOut),
         .takesSpillsThatStepsReadToBeReadByNone = hasFlag(build.options().testing, Wire::TestingSwitch::SpillsThatStepsReadAreTakenToBeReadByNone),
         .takesValuesKeptForCollectorToBeReadByStepsAlone = hasFlag(build.options().lies, Wire::TestingLie::ValuesKeptForTheCollectorAreTakenToBeReadByStepsAlone),
+        .takesWaysOnToReadNothing = hasFlag(build.options().lies, Wire::TestingLie::WaysOnAreTakenToReadNothing),
         .notesRangesOfOrigins = hasFlag(build.options().reports, ReportSet::Flow) || !build.options().logging.mapFilePath.isNull(),
         .features = build.targetFeatures(),
     };
@@ -116,6 +117,8 @@ static InternalErrorKind internalErrorKindOfMachineFailure(Machine::FailureKind 
         return InternalErrorKind::NarrowReferenceWithoutPointer;
     case Machine::FailureKind::InnerPointerWithoutOwner:
         return InternalErrorKind::InnerPointerWithoutOwner;
+    case Machine::FailureKind::ReleasedValueIsReadOnWayOn:
+        return InternalErrorKind::ReleasedValueIsReadOnWayOn;
     case Machine::FailureKind::NeedsFrameWhereNoneIsSetUp:
         return InternalErrorKind::FrameNeededWhereNoneIsSetUp;
     }

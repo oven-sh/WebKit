@@ -117,7 +117,7 @@ struct LandedCall {
 struct StubEnvironment {
     static StubEnvironment& of(Instance* instance) { return *reinterpret_cast<StubEnvironment*>(reinterpret_cast<uint8_t*>(instance) - OBJECT_OFFSETOF(StubEnvironment, instance)); }
 
-    static constexpr size_t bytesBelowInstance = WTF::roundUpToMultipleOf<InstanceLayout::granuleBelowInstance>(static_cast<size_t>(std::max({ static_cast<ptrdiff_t>(sizeof(InstancePrefix)), -InstanceLayout::offsetOfKeyedValuePlaces, -Instance::offsetOfBoxedCalls() })));
+    static constexpr size_t bytesBelowInstance = WTF::roundUpToMultipleOf<InstanceLayout::granuleBelowInstance>(static_cast<size_t>(std::max({ static_cast<ptrdiff_t>(sizeof(InstancePrefix)), -InstanceLayout::offsetOfKeyedValuePlaces, -InstanceLayout::offsetOfMissesOfPlaces, -Instance::offsetOfBoxedCalls() })));
 
     std::array<uint8_t, bytesBelowInstance - sizeof(InstancePrefix)> tablesAndUnusedBelowPrefix;
     InstancePrefix prefix;

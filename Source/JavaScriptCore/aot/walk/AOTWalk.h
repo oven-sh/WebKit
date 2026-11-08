@@ -326,6 +326,7 @@ AOT_LINK_OF_WALK(leaveReadOfMethodToTableCall, opcodesThatLeaveReadOfMethodToTab
 AOT_LINK_OF_WALK(callMethodThroughTable, opcodesThatCallMethodThroughTableTakes)
 AOT_LINK_OF_WALK(callMethodsBehindTestsOfShape, opcodesThatCallMethodsBehindTestsOfShapeTakes)
 bool callMethodsOfExpectedReceiversBehindTestsOfShape(Walker&, const BodyValue& read);
+bool callThroughSuperBehindGuards(Walker&, const BodyValue& superBase);
 inline constexpr OpcodeSet opcodesThatReadBehindTestsOfShapeTakes { Opcode::PropGet };
 AOT_LINK_OF_WALK(readBehindTestsOfShape, opcodesThatReadBehindTestsOfShapeTakes)
 bool askGuardsAboutDeclaredMember(Walker&, const BodyValue&);
@@ -1559,12 +1560,12 @@ public:
     Reference buildInFrontOfOpenLoop(uint32_t indexOfLoop, Draft&&, const Effects* foundByCaller = nullptr);
     std::optional<uint32_t> outermostLoopToMakeTextInFrontOf(std::span<const Reference> operands, const Effects& ofText) const;
     Reference askInFrontOfOpenLoopWhetherItsFirstTurnBegins(uint32_t indexOfLoop);
-    bool firstTurnOfOpenLoopIsKnownToBegin(uint32_t indexOfLoop) const;
     bool goOnInFrontOfTypedCopyWhereItsFirstTurnBegins();
     bool isInSightWhereWalkBuilds(Reference) const;
     bool everyTurnOfTypedCopyThatComesRoundPassesHere() const;
     std::optional<uint32_t> outermostLoopToLookUpInFrontOf(std::span<const Reference> operands, const Effects& ofLookup) const;
     void holdLookupInFrontAgainstLookupInTurn(Reference believed, Draft&& lookedUpAgain, const Effects& ofLookup, ProofSource = ProofSource::WhatIsRemembered);
+    void holdValueRememberedAgainstValueAtSite(Reference believed, Draft&& readAgain);
 
     void noteFormAskedAhead(Opcode opcode, KnowledgeLevel level, FunctionID function = { }) { m_formAskedAhead = { opcode, level, function }; }
     FormAskedAhead takeFormAskedAhead() { return std::exchange(m_formAskedAhead, { }); }
@@ -1692,7 +1693,6 @@ public:
     void keepStateBehindStoreToPutBack(uint32_t store) { m_statesBehindStoresToPutBack.append({ store, m_state }); }
     enum class TurnOfTypedCopy : uint8_t { HasDoneNothing, HasRunNoOtherCode, HasRunNoOtherCodeThoughCopiesBegan };
     bool standsInFrontOfTypedCopy(Reference, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing) const;
-    bool isWhereArmsMetInFrontOfTypedCopy(Reference) const;
     TurnOfTypedCopy turnInWhichListsAreAskedInFront() const { return turnOfTypedCopyHasDoneNothing() ? TurnOfTypedCopy::HasDoneNothing : TurnOfTypedCopy::HasRunNoOtherCode; }
     bool wasAskedForStorageOfNumbersInVain(Reference list) const { return list && list == m_listAskedForStorageOfNumbersInVain; }
     ArrayStorage storageAskedOfLiteralBeingBorn() const { return m_storageAskedOfLiteralBeingBorn; }
@@ -1717,6 +1717,7 @@ public:
     std::optional<PassedTest> goOnInTypedCopyWhereTestInFrontPasses(Reference test, bool passesWithYes, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing);
     bool turnsOfTypedCopyLeaveListsAsTheyAre(Reference list, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing);
     bool textOfLoopReckonsWithWhatItReads(BlockID inputHead) { return loopReckonsWithWhatItReads(inputHead); }
+    bool takesReceiversOfMethodsOfListsToBeMadeHere() const { return m_inputs.options.takesReceiversOfMethodsOfListsToBeMadeHere; }
     std::optional<BlockID> headOfInnermostTryInFrameOnTop() const { return !m_triesOfLoops.isEmpty() && m_triesOfLoops.last().frameIndex == m_frames.size() - 1 ? std::optional(m_triesOfLoops.last().inputHead) : std::nullopt; }
     using ObjectsMadeHereThatLoopMentions = Vector<uint32_t, 4>;
     ObjectsMadeHereThatLoopMentions objectsMadeHereThatLoopMentions(BlockID inputHead);
@@ -2313,20 +2314,6 @@ private:
     void stopUnlessValueIsOf(Reference value, TypeID tested, ProofSource);
     ValueID m_accessWhoseKeyIsTested;
     ValueID m_questionOfTruthLeftToItsOwnTests;
-    struct RelationThatBeginsFirstTurn {
-        ValueID written;
-        Reference left;
-        Reference right;
-    };
-    std::optional<RelationThatBeginsFirstTurn> relationThatBeginsFirstTurnOfOpenLoop(uint32_t indexOfLoop) const;
-    struct ArmsWalkedInFrontOfLoop {
-        BlockID inputJoin;
-        uint32_t placeOfLoop { 0 };
-        BlockID blockOfTurn;
-    };
-    std::optional<ArmsWalkedInFrontOfLoop> m_armsWalkedInFrontOfLoop;
-    void leaveTurnForArmsThatOnlyMakeConstants(const BodyTerminator& branch, Reference condition);
-    void standInFrontOfLoopWithArms(BlockID inputBlock);
     ValueID m_questionOfTruthAnsweredOnWays;
     bool m_answerOfThatQuestionOnWays { false };
     size_t m_frameOfThatQuestionOnWays { 0 };
@@ -2985,6 +2972,7 @@ private:
         bool isPlainWalk { false };
         bool otherHoldersAreAskedForLists { false };
         bool boundIsAskedForText { false };
+        bool isEnteredOutOfTurns { false };
     };
     Vector<ClosedCopyShared, 2> m_closedCopiesShared;
     Reference m_listAskedForStorageOfNumbersInVain;

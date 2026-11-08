@@ -760,6 +760,7 @@ static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& in
         return key == readersOfCharacters[0] || key == readersOfCharacters[1] || key == readersOfCharacters[2];
     };
     static constexpr OpcodeSet operationsThatSpeakWhereNoLoopStands = inputOperationsThatHandOn | operatorsThatMakeNumbers | allBitwiseOperators | OpcodeSet { Opcode::PropGet, Opcode::PropSet, Opcode::Call, Opcode::Convert, Opcode::Add };
+    static constexpr OpcodeSet operationsThatSpeakWhereLoopsStand = operationsThatSpeakWhereNoLoopStands | OpcodeSet { Opcode::ElemSet, Opcode::NewObject, Opcode::Data, Opcode::NewArray, Opcode::ElemGet, Opcode::StrictEq, Opcode::Eq, Opcode::ResultAt };
     static constexpr OpcodeSet readsOfPlaces { Opcode::PropGet, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::PrivateGet };
     const bool hasLoops = index.hasLoops();
     bool asksElementOfReadInLoop = false;
@@ -837,7 +838,7 @@ static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& in
         uint32_t firstValue = block.firstValue().index();
         for (uint32_t place = 0; place < block.numberOfValues(); ++place) {
             Opcode opcode = index.opcodeOf(ValueID(firstValue + place));
-            if (!hasLoops && !operationsThatSpeakWhereNoLoopStands.contains(opcode))
+            if (!(hasLoops ? operationsThatSpeakWhereLoopsStand : operationsThatSpeakWhereNoLoopStands).contains(opcode))
                 continue;
             BodyValue operation = index.value(ValueID(firstValue + place));
             switch (opcode) {
@@ -7276,7 +7277,7 @@ bool askBaseInFrontOfTypedCopyForList(Walker& walker, const BodyValue& access)
     if ((access.opcode() != Opcode::ElemGet && !readsLength) || !walker.standsInTurnThatLooksCountOn() || !walker.mayBeginTurnAgainInClosedCopy() || !walker.otherCopyOfTypedCopyOpensItsGuesses() || !walker.everyTurnOfTypedCopyThatComesRoundPassesHere())
         return false;
     Reference base = walker.referenceOf(access.objectOperand());
-    if (!base || !base.isValue() || !walker.types().saysNothing(walker.typeOf(base)) || !walker.standsInFrontOfTypedCopy(base) || walker.isWhereArmsMetInFrontOfTypedCopy(base) || findExpectationForGuesses(walker, access.objectOperand()).type || otherNamesAreReadOffPlaceOfForGuesses(keptWithBodyForGuesses(walker.currentBodyIndex()), access.objectOperand()))
+    if (!base || !base.isValue() || !walker.types().saysNothing(walker.typeOf(base)) || !walker.standsInFrontOfTypedCopy(base) || findExpectationForGuesses(walker, access.objectOperand()).type || otherNamesAreReadOffPlaceOfForGuesses(keptWithBodyForGuesses(walker.currentBodyIndex()), access.objectOperand()))
         return false;
     if (!readsLength && !walker.types().at(provenTypeOfInputForGuesses(walker, access.propertyOperand())).isNumber())
         return false;
@@ -7947,6 +7948,7 @@ bool readAtSiteOrBeginTurnAgainOfItsOpcodes(Walker& walker, const BodyValue& rea
     bool isReadInFront = isByIndex ? false : isByKey ? isFoundUnderKeyInFront : (walker.standsInFrontOfTypedCopy(object, Walker::TurnOfTypedCopy::HasRunNoOtherCode) && walker.everyTurnOfTypedCopyFindsTheSameUnderName(read.key()));
     Reference found;
     Reference test;
+    std::optional<Draft> readAgain;
     {
         Walker::InFrontOfTypedCopy inFront(walker, isReadInFront, Walker::TurnOfTypedCopy::HasRunNoOtherCode);
         Draft lookup(isByIndex ? Opcode::GetElementInStorageOrAbsent : isByKey ? Opcode::GetOwnValueUnderKeyOrAbsent : Opcode::GetValueAtSiteOrAbsent, origin);
@@ -7961,9 +7963,14 @@ bool readAtSiteOrBeginTurnAgainOfItsOpcodes(Walker& walker, const BodyValue& rea
             lookup.setReceiverIsNoObjectOfCompiledCode(isShapedLikeLayoutsThatItCanNeverBe(walker, read.objectOperand()));
         }
         lookup.setValueType(TypeTable::anythingOrAbsent);
+        if (!isByIndex && !isByKey && !isReadInFront && walker.checksProofsOf(ProofSource::WhatIsRemembered))
+            readAgain = lookup;
+        uint32_t numberOfRecordsInFront = walker.code().numberOfValues();
         found = walker.build(WTF::move(lookup));
         if (!found || walker.hasFailed())
             return true;
+        if (walker.isBuiltWhereItStandsSince(numberOfRecordsInFront, found))
+            readAgain = std::nullopt;
         Draft question(Opcode::TypeTest, origin);
         question.setValueOperand(found);
         question.setTestedType(asksForNumber ? TypeID(TypeTable::number) : asksForList ? walker.types().builtinClass(BuiltinClasses::Array) : TypeArena::fromPrimitives(Primitive::Absent));
@@ -7995,7 +8002,10 @@ bool readAtSiteOrBeginTurnAgainOfItsOpcodes(Walker& walker, const BodyValue& rea
     proof.setTestOperand(test);
     proof.setOperandIndex(OperandIndex::TypeTest::value);
     proof.setIsOnTakenEdge(goesOnWhereItHolds);
-    walker.bind(read.id(), walker.build(WTF::move(proof)));
+    Reference answer = walker.build(WTF::move(proof));
+    walker.bind(read.id(), answer);
+    if (readAgain)
+        walker.holdValueRememberedAgainstValueAtSite(answer, WTF::move(*readAgain));
     return true;
 }
 
@@ -9872,6 +9882,29 @@ bool TextOfLoopForGuesses::multipliesElementsOf(ValueID holder)
         auto isMadeBy = [&](ValueID value, const OpcodeSet& opcodes) {
             return !m_index.isParameter(value) && opcodes.contains(m_index.opcodeOf(value));
         };
+        auto noteHoldersWhereSumOfElementsOrFunctionOfMathIsStored = [&](const BodyValue& store) {
+            ValueID stored = m_index.valueBehindCasts(store.valueOperand());
+            if (m_index.isParameter(stored))
+                return;
+            BodyValue made = m_index.value(stored);
+            ValueID receiver = made.opcode() == Opcode::Call ? made.as<Opcode::Call>().thisValueOperand() : ValueID();
+            bool isFunctionOfMath = receiver && !m_index.isParameter(receiver) && m_index.opcodeOf(receiver) == Opcode::Builtin && m_index.value(receiver).as<Opcode::Builtin>().builtin() == Builtins::Math;
+            bool isSum = made.opcode() == Opcode::Add || made.opcode() == Opcode::Sub;
+            if (!isFunctionOfMath && !isSum)
+                return;
+            unsigned numberOfElements = 0;
+            made.forEachOperand([&](ValueID operand, uint32_t) {
+                numberOfElements += isMadeBy(m_index.valueBehindCasts(operand), OpcodeSet { Opcode::ElemGet });
+            });
+            if (numberOfElements < (isSum ? 2u : 1u))
+                return;
+            made.forEachOperand([&](ValueID operand, uint32_t) {
+                ValueID element = m_index.valueBehindCasts(operand);
+                if (isMadeBy(element, OpcodeSet { Opcode::ElemGet }))
+                    noteHolderOf(m_index.value(element));
+            });
+            noteHolderOf(store);
+        };
         auto noteElementsHeldAgainstElementsBy = [&](const BodyValue& comparison) {
             if (!allEqualities.contains(comparison.opcode()) && !allRelations.contains(comparison.opcode()))
                 return;
@@ -9888,6 +9921,8 @@ bool TextOfLoopForGuesses::multipliesElementsOf(ValueID holder)
         };
         for (BlockID member : m_index.membersOf(m_loop)) {
             for (BodyValue operation : m_index.block(member).values()) {
+                if (operation.opcode() == Opcode::ElemSet)
+                    noteHoldersWhereSumOfElementsOrFunctionOfMathIsStored(operation);
                 if (operation.opcode() == Opcode::ElemSet && isMadeBy(m_index.valueBehindCasts(operation.valueOperand()), multiplicativeOperators))
                     noteHolderOf(operation);
                 noteElementsHeldAgainstElementsBy(operation);

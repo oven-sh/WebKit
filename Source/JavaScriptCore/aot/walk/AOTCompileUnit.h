@@ -129,6 +129,8 @@ struct WalkOptions {
     uint32_t periodOfUnitsWalkedThatWay { 0 };
     uint32_t periodOfHearingsThatCutWalks { 0 };
     uint32_t phaseOfHearingsThatCutWalks { 0 };
+    bool takesValuesThatComeLaterForOthersThanWhatIsMadeHere { false };
+    bool takesReceiversOfMethodsOfListsToBeMadeHere { false };
     PrintStream* explainsClosedAccessesTo { nullptr };
 };
 

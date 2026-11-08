@@ -193,6 +193,7 @@ public:
         m_filesThatRanBeforeTestFile = filesThatHaveRun();
         m_dataFilesThatRanBeforeTestFile = dataFilesThatHaveRun();
         m_filesWhoseKeyIsOfThisTestFile.clearAll();
+        m_filesWhoseKeyMockHasEmptied.clearAll();
         if (!std::exchange(m_hasBegunTestFile, true))
             m_filesThatRanInPreload = m_filesThatRanBeforeTestFile;
         for (BitVector* letGo : { &m_modulesThatLoaderLetGo, &m_importersOfMockThatEnded }) {
@@ -219,6 +220,13 @@ public:
     void didLeaveLoaderInThisTestFile(ModuleID module) { m_dataFilesThatRanBeforeTestFile.clear(module.index()); }
     void noteThatKeyIsOfThisTestFile(ModuleID module) { m_filesWhoseKeyIsOfThisTestFile.set(module.index()); }
     bool isKeyOfThisTestFile(ModuleID module) const { return m_filesWhoseKeyIsOfThisTestFile.get(module.index()); }
+    void noteThatMockHasEmptiedKey(ModuleID file) { m_filesWhoseKeyMockHasEmptied.set(file.index()); }
+    void noteThatKeyIsFilledAgain(ModuleID file) { m_filesWhoseKeyMockHasEmptied.clear(file.index()); }
+    void noteAskForKey(ModuleID fileOrFace)
+    {
+        if (ModuleID file = fileOf(fileOrFace); m_filesWhoseKeyMockHasEmptied.get(file.index()))
+            noteThatKeyIsOfThisTestFile(file);
+    }
     void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
     bool isMocked(ModuleID module) const { return m_mocks && m_mocks->modules.get(module.index()); }
     bool hasMockThatWaitsOrRuns(ModuleID file) const { return m_modulesWithMockThatWaited.get(file.index()) && !m_modulesWithMockInPlace.get(file.index()); }
@@ -594,6 +602,7 @@ public:
     bool importsModuleWhoseMockWaits(ModuleID root);
     bool runBodyOfLinkedModuleAheadOfMock(ModuleID);
     JSPromise* evaluationUnderWay(ModuleID, bool hasWaitedForTurn);
+    JSPromise* evaluationUnderWayBelow(ModuleID file);
     bool isImportedByGraphUnderEvaluation(ModuleID);
     void forgetLoadsRefusedByCheckOfNames(ModuleID mocked);
     bool wasPulledInByLoadThatFailed(ModuleID) const;
@@ -607,6 +616,9 @@ public:
     bool isImportedByModuleThatRequireAnswered(ModuleID) const;
     void keepErrorOfLoad(ModuleID root, JSValue error, const ScopedLambda<bool(ModuleID)>& endedLoad);
     void keepErrorOfFactoryThatRequireLeft(ModuleID required, JSValue error);
+    void didSettleFactoryThatRequireLeft(unsigned number);
+    void didFailFactoryThatRequireLeft(unsigned number, JSValue error);
+    unsigned hearFactoriesBelowLoadThatRequireLeft(ModuleID required, unsigned number);
     bool isWaitThatRequireLeftKept(ModuleID required) const { return m_waitsThatRequiresLeft.containsIf([&](const auto& left) { return left.required == required && left.keepsError; }); }
     void dropErrorOfLoadEndedByMock(ModuleID);
     void dropErrorOfMockKeptByLoader(ModuleID);
@@ -1091,7 +1103,7 @@ public:
     std::optional<uint32_t> turnOfFirstTextThatWaits() const { return m_textsThatWait.isEmpty() ? std::nullopt : std::optional(m_textsThatWait[m_numberOfTextsThatHaveCome].turnOfCall); }
     bool deliverFirstTextThatWaits();
     bool deliverFirstTextInLine();
-    void tellHostOfImport(JSPromise*, const String& path);
+    void tellHostOfImport(JSPromise*, const String& path, std::optional<ModuleID> file = std::nullopt);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&, JSValue stateOfWait = { });
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
@@ -1907,6 +1919,7 @@ private:
     BitVector m_filesThatRanBeforeTestFile;
     BitVector m_dataFilesThatRanBeforeTestFile;
     BitVector m_filesWhoseKeyIsOfThisTestFile;
+    BitVector m_filesWhoseKeyMockHasEmptied;
     BitVector m_filesWithKnownLoad;
     BitVector m_filesLoadedSynchronously;
     BitVector m_filesWhoseNextLoadIsFirst;
@@ -2170,6 +2183,7 @@ private:
     BitVector m_modulesThatLayMocksAgain;
     BitVector m_modulesWithLoadEndedByMock;
     ModuleID m_moduleThatRequireAsksFor;
+    bool m_walkGoesOnPastFactoriesThatHaveNotSettled { false };
     bool m_letsGoOfMocksAtLinkFromSource { false };
     ModuleID m_moduleThatRequires;
     ModuleID m_moduleThatImportAsksFor;
@@ -2195,8 +2209,11 @@ private:
         ModuleID required;
         Strong<JSPromise> wait;
         bool keepsError;
+        unsigned number;
+        unsigned factoriesYetToSettle;
     };
     Vector<WaitThatRequireLeft> m_waitsThatRequiresLeft;
+    unsigned m_numberOfWaitsThatRequiresHaveLeft { 0 };
     BitVector m_modulesLoadedBeforeMockThatWaited;
     BitVector m_filesThatRanAheadOfMock;
     BitVector m_filesThatRanBesideMockThatOnlyWaited;

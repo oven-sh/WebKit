@@ -2235,7 +2235,8 @@ public:
     {
         *reinterpret_cast<uint16_t*>(m_instance + distance) = index;
         runner.instance().propertyCaches.firstWordOfWideAnswers = UINT32_MAX;
-        runner.instance().propertyCaches.missesOfPlacesByDistance = reinterpret_cast<uint8_t*>(&m_misses) - distance;
+        misses() = 0;
+        misses(1) = 0;
         answers() = SiteAnswers::forPlacesWithout();
     }
 
@@ -2243,11 +2244,10 @@ public:
     WideSiteAnswers& wideAnswers() { return *reinterpret_cast<WideSiteAnswers*>(m_instance + offsetOfAnswers); }
     static_assert(-offsetOfAnswers >= static_cast<ptrdiff_t>(sizeof(InstancePrefix) + sizeof(WideSiteAnswers)) && !(offsetOfAnswers % static_cast<ptrdiff_t>(alignof(WideSiteAnswers))));
 
-    uint8_t& misses() { return *reinterpret_cast<uint8_t*>(&m_misses); }
+    uint8_t& misses(unsigned byte = 0) { return m_instance[InstanceLayout::offsetOfMissesOfPlaces + static_cast<ptrdiff_t>(distance % InstanceLayout::bytesReservedForMissesOfPlaces + byte)]; }
 
 private:
     uint8_t* m_instance;
-    uint16_t m_misses { 0 };
 };
 
 struct OrdinaryObjectWithTwoValues : FakeObject<32> {

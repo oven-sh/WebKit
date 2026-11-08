@@ -7175,11 +7175,8 @@ void Walker::walkBlock(BlockID inputBlock)
     if (inputBlock != entryBlock) {
         m_block = { };
         uint32_t firstOpenEdge = record.firstOpenEdge;
-        if (firstOpenEdge == noOpenEdge) {
-            if (m_armsWalkedInFrontOfLoop && m_armsWalkedInFrontOfLoop->inputJoin == inputBlock) [[unlikely]]
-                fail("no way leads to where the arms walked in front of a loop meet"_s);
+        if (firstOpenEdge == noOpenEdge)
             return;
-        }
         std::span<const BlockID> passedOverByScan = facts().summaries().at(frame.function).blocksNeverEntered.span();
         if (!passedOverByScan.empty() && std::ranges::binary_search(passedOverByScan, inputBlock)) {
             fail("an edge leads into a block that the scan has passed over"_s);
@@ -7199,7 +7196,7 @@ void Walker::walkBlock(BlockID inputBlock)
             enterHandlerBlock(inputBlock);
         else if (!isHeadOfTurnsWrittenOut && !liesBehindHeadCopied && index.isLoopHead(inputBlock))
             enterLoopHead(inputBlock);
-        else if (!isHeadOfTurnsWrittenOut && !liesBehindHeadCopied && severalEdgesEnter && !m_armsWalkedInFrontOfLoop && !(m_makerOfListsBehindEntry && frame.isOfUnit && inputBlock == m_whereListsAreMadeBehindEntry) && walkBlockApart(inputBlock))
+        else if (!isHeadOfTurnsWrittenOut && !liesBehindHeadCopied && severalEdgesEnter && !(m_makerOfListsBehindEntry && frame.isOfUnit && inputBlock == m_whereListsAreMadeBehindEntry) && walkBlockApart(inputBlock))
             return;
         else {
             enterJoin(inputBlock, record, block);
@@ -7218,8 +7215,6 @@ void Walker::walkBlock(BlockID inputBlock)
         m_block = { };
         return;
     }
-    if (m_armsWalkedInFrontOfLoop) [[unlikely]]
-        standInFrontOfLoopWithArms(inputBlock);
     if (block.frequency() == BlockFrequency::Unlikely)
         m_code.makeBlockUnlikely(m_block);
     if (const BitVector* head = m_frames[frameIndex].blocksOfHead; head && !head->get(inputBlock.index()) && leaveCopyOfHeadForCall())
@@ -7413,6 +7408,8 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         if (!isBuilt && (value.opcode() == Opcode::FindsDeclaredMember || value.opcode() == Opcode::FindsNoMember))
             ++m_numberOfQuestionsByNameLeftAsWritten;
     }
+    if (!isBuilt && value.opcode() == Opcode::GetSuperBase && has(Mechanism::Guesses) && m_opensGuesses && callThroughSuperBehindGuards(*this, value))
+        return true;
     if (!isBuilt && has(Mechanism::Guesses) && askWhetherHolderOfStoreInClosedArmOfLoopIsList(*this, value))
         return true;
     if (!isBuilt && value.opcode() == Opcode::PropGet && has(Mechanism::TypedOperations))
@@ -8173,7 +8170,6 @@ void Walker::walkTerminator(const BodyTerminator& terminator)
 
     if (isBranch && !onlyTarget && isAsBranchTakesItInWalk(*this, condition)) {
         RELEASE_ASSERT(terminator.numberOfTargets() == 2);
-        leaveTurnForArmsThatOnlyMakeConstants(terminator, condition);
         BlockID from = m_block;
         m_code.endWithBranch(from, condition.id(), m_origin);
         m_block = { };

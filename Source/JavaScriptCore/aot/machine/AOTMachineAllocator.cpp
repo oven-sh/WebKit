@@ -593,6 +593,9 @@ void Allocator::run()
     m_isAheadOfFramedPart = false;
     if (m_allocation.usedCalleeSaves())
         noteFrameUse();
+    checkThatNoWayOnReadsWhatHintsReleased();
+    if (m_proc.failure())
+        return;
     findSpillsThatNoStepReads();
     settleFramedPart();
     findGapsAheadOfLandingPads();

@@ -1527,11 +1527,13 @@ void Allocator::allocatePatch(PatchOperation* patch)
     }
 
     bool releasesItsChild = false;
-    if ((bits & PatchOperation::ReleasesDeadValues) && !endsBlock && numberOfChildren == firstChild + 1) {
+    if ((bits & PatchOperation::ReleasesDeadValues) && !endsBlock && !numberOfResults && numberOfChildren == firstChild + 1) {
         Operation* child = children[firstChild];
         bool isReadBehindByPosition = isLiveBehind(child, late) || m_liveness.of(child).lastUse > early;
         if (!child->hasNoPosition() && (!isReadBehindByPosition || (!isReadOnSomeWayOn(child, early + 1) && !isHeldAtHeadThatWayLeadsBackTo(child)))) {
             releasesItsChild = true;
+            if (isReadBehindByPosition)
+                m_releasesByWaysOn.append(m_arena, ReleaseByWaysOn { child, patch });
             patch->m_registersToRelease = stateOf(child).registers & m_file.allocatableIn(Bank::GP);
         }
     }
@@ -1729,8 +1731,10 @@ RegisterMask Allocator::takeScratchRegisters(Bank bank, unsigned count, Register
 
 static void clearMemoryOfReleasedValue(Allocator& allocator, Operation* value)
 {
+    std::span<PatchOperation* const> suspensions = allocator.m_allocation.suspensions();
+    const Position lastSuspension = suspensions.empty() ? 0 : allocator.m_order.latePositionOf(suspensions.back());
     auto clear = [&](SpillIndex spill) {
-        if (spill == noSpill)
+        if (spill == noSpill || allocator.m_allocation.spills()[spill].end < lastSuspension)
             return;
         Step& step = allocator.appendStep(StepKind::ClearSpill, value);
         step.width = allocator.m_allocation.spills()[spill].width;
@@ -1817,14 +1821,90 @@ bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
 {
     if (m_order.of(m_block).isRare() || m_liveness.of(value).has(ValueFlag::IsKeptForCollector))
         return true;
-    uint32_t nextRead = findReadFrom(value, position);
-    if (nextRead && m_liveness.use(nextRead).position < m_order.endOf(m_block))
+    const bool takesWaysOnToReadNothing = m_proc.traits().takesWaysOnToReadNothing;
+    uint32_t nextRead = findReadFromInList(value, position);
+    if (!takesWaysOnToReadNothing && nextRead && m_liveness.use(nextRead).position < m_order.endOf(m_block))
         return true;
 
     findBlocksThatLeadToReadsOf(value, firstBlockOnWaysFrom(m_block, value));
-    return std::ranges::any_of(m_block->successors(), [&](const Edge& successor) {
+    return !takesWaysOnToReadNothing && std::ranges::any_of(m_block->successors(), [&](const Edge& successor) {
         return m_lastSearchThatReachedBlock[successor.block()->index()] == m_numberOfSearchesForWays;
     });
+}
+
+void Allocator::checkThatNoWayOnReadsWhatHintsReleased()
+{
+    if (m_releasesByWaysOn.isEmpty())
+        return;
+    std::sort(m_releasesByWaysOn.begin(), m_releasesByWaysOn.end(), [](const ReleaseByWaysOn& left, const ReleaseByWaysOn& right) {
+        return left.value->index() < right.value->index();
+    });
+
+    const Step* const steps = m_allocation.m_steps.begin();
+    ArenaVector<uint32_t> lastWalkThatEnteredBlock;
+    lastWalkThatEnteredBlock.fill(m_arena, m_order.mostBlocks(), 0);
+    ArenaVector<const Block*> entered;
+    uint32_t walk = 0;
+    for (uint32_t next = 0; next < m_releasesByWaysOn.size();) {
+        const Operation* value = m_releasesByWaysOn[next].value;
+        const Position lastReadByPosition = m_liveness.of(value).lastUse;
+        ++walk;
+        entered.clear();
+
+        auto reads = [&](const Step& step) {
+            if (step.kind == StepKind::KeepPointer)
+                return step.operation == value || step.other == value;
+            if (step.kind != StepKind::Execute)
+                return false;
+            bool isAmongLeaves = false;
+            forEachLeaf(m_liveness, step.operation, [&](const Operation*, unsigned, const Operation* leaf) {
+                isAmongLeaves |= leaf == value;
+            });
+            return isAmongLeaves;
+        };
+        auto someStepReadsFrom = [&](const Block* block, uint32_t first) {
+            const BlockSteps& range = m_allocation.stepsOf(block);
+            for (uint32_t index = first; index < range.end; ++index) {
+                if (reads(steps[index]))
+                    return true;
+            }
+            for (const Operation* upsilon : block->upsilons()) {
+                if (upsilon->child(0) == value && !m_valueFacts[upsilon->phi()->index()].has(ValueFlag::IsDropped))
+                    return true;
+            }
+            return range.terminator != UINT32_MAX && range.terminator >= first && reads(steps[range.terminator]);
+        };
+        auto enterSuccessorsOf = [&](const Block* block) {
+            for (const Edge& successor : block->successors()) {
+                const Block* target = successor.block();
+                uint32_t& last = lastWalkThatEnteredBlock[target->index()];
+                if (target == value->owner() || last == walk || m_order.headOf(target) > lastReadByPosition)
+                    continue;
+                last = walk;
+                entered.append(m_arena, target);
+            }
+        };
+
+        bool isRead = false;
+        for (; next < m_releasesByWaysOn.size() && m_releasesByWaysOn[next].value == value; ++next) {
+            const PatchOperation* hint = m_releasesByWaysOn[next].hint;
+            const Block* block = hint->owner();
+            const BlockSteps& range = m_allocation.stepsOf(block);
+            uint32_t behindHint = range.begin;
+            while (behindHint < range.end && !(steps[behindHint].kind == StepKind::Execute && steps[behindHint].operation == hint))
+                ++behindHint;
+            isRead |= someStepReadsFrom(block, behindHint + 1);
+            enterSuccessorsOf(block);
+        }
+        for (uint32_t index = 0; index < entered.size() && !isRead; ++index) {
+            isRead = someStepReadsFrom(entered[index], m_allocation.stepsOf(entered[index]).begin);
+            enterSuccessorsOf(entered[index]);
+        }
+        if (isRead) {
+            m_proc.fail(FailureKind::ReleasedValueIsReadOnWayOn, value);
+            return;
+        }
+    }
 }
 
 bool Allocator::isReadOnSomeWayFromHeadOf(const Operation* value, const Block* block)

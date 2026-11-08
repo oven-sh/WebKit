@@ -416,6 +416,7 @@ public:
     bool dominatesSomeReadBelowDefinitionOf(const Block*, const Operation* value);
     bool isHeldAtHeadThatWayLeadsBackTo(const Operation* value) const;
     bool isReadOnSomeWayOn(const Operation* value, Position);
+    void checkThatNoWayOnReadsWhatHintsReleased();
     RegisterMask registersWhereReleasedValueMayHaveWaited() const;
 
     void enterRareRegion(uint32_t region);
@@ -551,6 +552,11 @@ public:
     void letEdgesWritePhi(Operation* phi, SpillIndex, const BlockPlace& placeOfHead);
     ArenaVector<Reg> m_hints;
     ArenaVector<Position> m_knownReadsOutsideRareRegions;
+    struct ReleaseByWaysOn {
+        const Operation* value;
+        const PatchOperation* hint;
+    };
+    ArenaVector<ReleaseByWaysOn> m_releasesByWaysOn;
     mutable ArenaVector<uint8_t> m_whetherValuesThatRareRegionsReadAreWorthCalleeSaveNotYetSaved;
     struct WhetherHeadAroundHolds {
         uint32_t loopWhoseHeadHolds { noLoop };

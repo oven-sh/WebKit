@@ -2870,6 +2870,80 @@ static TypedForm buildReadsOfMethodOffPrototypeOfClassForTypedAccess(Walker& wal
     return bindClosureThatClosureTableHoldsForTypedAccess(walker, value, found->method, origin);
 }
 
+bool callThroughSuperBehindGuards(Walker& walker, const BodyValue& superBase)
+{
+    if (!walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::TypedOperations) || walker.isNestedTooDeeply() || walker.isUnreachable() || !(walker.isInLoop() || walker.bodyAtWorkCallsItself()))
+        return false;
+    const Program& program = walker.program();
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto written = superBase.as<Opcode::GetSuperBase>();
+    BlockID inputBlock = index.blockOf(superBase.id());
+    ValueID read = index.onlyUsingValue(superBase.id());
+    if (written.homeKind() != HomeObjectKind::ClassPrototype || !read || index.opcodeOf(read) != Opcode::SuperGet || index.blockOf(read) != inputBlock)
+        return false;
+    auto lookup = index.value(read).as<Opcode::SuperGet>();
+    ValueID call = index.onlyUsingValue(read);
+    if (!lookup.key() || lookup.baseOperand() != superBase.id() || !call || index.opcodeOf(call) != Opcode::Call || index.blockOf(call) != inputBlock || index.value(call).as<Opcode::Call>().calleeOperand() != read)
+        return false;
+    uint32_t first = index.block(inputBlock).firstValue().index();
+    uint32_t begin = superBase.id().index() - first;
+    uint32_t placeOfRead = read.index() - first;
+    uint32_t end = call.index() - first + 1;
+    Reference home = walker.referenceOf(written.homeOperand());
+    if (end > walker.endOfStretchBeingWalked() || !home)
+        return false;
+
+    Type type = walker.types().at(walker.typeOf(home));
+    FunctionID constructor = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
+    LayoutID classLayout = constructor ? classOfClassObject(program, constructor) : LayoutID();
+    if (!classLayout || program.at(classLayout).kind != LayoutKind::Instance || declaredLayoutOf(program, classLayout) != classLayout || !walker.plan().hasClassRecord(classLayout) || !walker.facts().isEvaluatedAtMostOnce(classLayout))
+        return false;
+    LayoutID parent;
+    if (!findParentNamedByClassRecordForTypedAccess(walker, classLayout, parent) || !parent)
+        return false;
+    LayoutID classOfObjects;
+    FunctionID method = findMethodDeclaredAboveObjectsOf(walker, parent, lookup.key(), classOfObjects);
+    if (!method || !closureTableHoldsMethodForTypedAccess(walker, method) || !walker.facts().linked().mayBeMentionedBy(walker.unit(), method))
+        return false;
+
+    const MemberConditionRecord conditions[] {
+        { MemberConditionKind::PrototypeLinkUnchanged, classLayout, ClassSide::Prototype, { } },
+        conditionOnMethodAboveObjectsOf(walker, classOfObjects, lookup.key()),
+    };
+    Origin origin = walker.originOf(superBase);
+    Walker::StretchInArms stretch = walker.stretchInArms(inputBlock, begin, end);
+    Walker::ArmsThatMeet built;
+    BlockID meeting = walker.addBlock();
+    BlockID closed = walker.addBlock(BlockFrequency::Rare);
+    walker.noteGuessOpened();
+    walker.count(StatisticID::CallsThroughSuperMadeBehindGuards);
+    for (const MemberConditionRecord& condition : conditions) {
+        Draft look(Opcode::AreMembersUnchanged, origin);
+        look.setConditions(singleElementSpan(condition));
+        Reference holds = walker.build(WTF::move(look));
+        if (!holds)
+            return true;
+        BlockID whereItHolds = walker.addBlock();
+        walker.branch(holds, whereItHolds, closed);
+        walker.continueIn(whereItHolds);
+        noteGuardsShownByTest(walker, singleElementSpan(condition), holds);
+    }
+    for (uint32_t place = begin; place < end; ++place)
+        walker.bind(ValueID(first + place), Reference());
+    walker.walkStretch(inputBlock, begin + 1, placeOfRead);
+    if (!walker.hasFailed() && !walker.isUnreachable()) {
+        bindClosureThatClosureTableHoldsForTypedAccess(walker, index.value(read), method, origin);
+        walker.walkStretch(inputBlock, placeOfRead + 1, end);
+    }
+    if (walker.hasFailed())
+        return true;
+    walker.listArm(stretch, built);
+    walker.walkClosedArm(closed, stretch, built);
+    if (!walker.hasFailed())
+        walker.letArmsMeet(stretch, built, meeting);
+    return true;
+}
+
 static void lookAtGuardsInFrontOfReadsOffConstructorFunction(Walker& walker, std::span<const ValueID> reads, Reference object, NOESCAPE const ScopedLambda<void(Reference test)>& goOnWhereTestPasses)
 {
     const BodyIndex& index = walker.currentBodyIndex();

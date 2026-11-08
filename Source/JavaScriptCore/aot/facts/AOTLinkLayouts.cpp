@@ -2142,7 +2142,6 @@ private:
     static constexpr uint8_t everyFieldIsGivenValues = 1 << 1;
     static constexpr uint8_t everyFieldIsWrittenWithoutDefinition = 1 << 3;
     static constexpr uint8_t everyFieldIsWrittenLate = 1 << 2;
-    static constexpr uint8_t descriptorsMayLayAccessorsInEveryField = 1 << 4;
     Vector<uint8_t> m_whatIsNotedOfEveryField;
     struct SaidByEdges {
         BitVector fieldsGivenValues;
@@ -3396,11 +3395,6 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
             noted |= everyFieldIsWrittenWithoutDefinition;
             for (uint32_t cell = firstCell; cell < endOfCells; ++cell)
                 m_fieldsWrittenWithoutDefinition.quickSet(cell);
-        }
-        if (comesFromDefinition && !(noted & descriptorsMayLayAccessorsInEveryField)) {
-            noted |= descriptorsMayLayAccessorsInEveryField;
-            for (uint32_t cell = firstCell; cell < endOfCells; ++cell)
-                m_fieldsInWhichDescriptorsMayLayAccessors.quickSet(cell);
         }
         if (traits.contains(Trait::MayGiveValue) && !(noted & everyFieldIsGivenValues)) {
             noted |= everyFieldIsGivenValues;

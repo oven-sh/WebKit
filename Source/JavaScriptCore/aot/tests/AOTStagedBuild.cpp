@@ -253,6 +253,8 @@ static InternalErrorKind errorKindOfStagedMachineFailure(Machine::FailureKind ki
         return InternalErrorKind::NarrowReferenceWithoutPointer;
     case Machine::FailureKind::InnerPointerWithoutOwner:
         return InternalErrorKind::InnerPointerWithoutOwner;
+    case Machine::FailureKind::ReleasedValueIsReadOnWayOn:
+        return InternalErrorKind::ReleasedValueIsReadOnWayOn;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

@@ -176,7 +176,7 @@ TYPES: f<n>
 <P>-NOT: p
 <P>-LABEL: p
 <P>-COUNT-<n>: p
-DIAGNOSTIC: <UserDiagnosticKind or InternalErrorKind> [ <count> ]
+DIAGNOSTIC: <UserDiagnosticKind or InternalErrorKind> [ f<n> ] [ <count> ]
 STATISTIC: <StatisticID> ( = | >= | <= ) <n>
 LIBRARY: own
 TODO: <owner>: <what is lost>
@@ -269,7 +269,8 @@ With or without an architecture, it takes these words:
   parameter) is no pin of a build under a testing word, which may ask more.
 
 **`DIAGNOSTIC`.** A run must report exactly the diagnostic kinds listed. Kinds are compared by name, never by message, and warnings and notes
-count too. A kind listed without a count must be reported at least once. With no `DIAGNOSTIC` line, the run must report no
+count too. A kind listed without a count must be reported at least once. With `f<n>` only what is reported of that function is counted:
+a diagnostic of the kind in another function does not satisfy the line. With no `DIAGNOSTIC` line, the run must report no
 diagnostic. A program that does not parse or verify is not a failure by itself: the command does not run, and the `DIAGNOSTIC`
 lines alone decide. `# RUN: verify` with `# DIAGNOSTIC: <InternalErrorKind>` is how to test the verifier.
 

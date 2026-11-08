@@ -99,22 +99,24 @@ void countMissOfPlace(StubAssembler& jit, GPRReg distance, GPRReg scratch, JumpL
 {
     constexpr int32_t step = SiteCacheState::sampleStep;
     RELEASE_ASSERT(noOverlap(distance, scratch, instanceGPR));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.missesOfPlacesByDistance)), scratch);
+    static_assert(InstanceLayout::bytesReservedForMissesOfPlaces == size_t { 1 } << 16);
+    jit.zeroExtend16To32(distance, scratch);
 #if CPU(ARM64)
     const OwnedScratchRegister ownedScratch(jit);
     const GPRReg misses = ownedScratch;
-    jit.addPtr(distance, scratch);
+    jit.addPtr(instanceGPR, scratch);
+    jit.addPtr(TrustedImm32(static_cast<int32_t>(InstanceLayout::offsetOfMissesOfPlaces)), scratch);
     jit.load8(Address(scratch), misses);
     jit.add32(TrustedImm32(step), misses);
     jit.store8(misses, Address(scratch));
     isSample.append(jit.branchTest32(CCallHelpers::NonZero, misses, TrustedImm32(UINT8_MAX + 1)));
 #else
-    jit.m_assembler.addb_im(step, 0, scratch, distance, 0);
+    jit.m_assembler.addb_im(step, static_cast<int32_t>(InstanceLayout::offsetOfMissesOfPlaces), instanceGPR, scratch, 0);
     isSample.append(Jump(jit.m_assembler.jCC(X86Assembler::ConditionC)));
 #endif
 }
 
-void goOnWhileSamplesOfPlaceAreLeftOut(StubAssembler& jit, [[maybe_unused]] GPRReg distance, GPRReg scratchOfCount, CCallHelpers::Label isCounted)
+void goOnWhileSamplesOfPlaceAreLeftOut(StubAssembler& jit, GPRReg scratchOfCount, CCallHelpers::Label isCounted)
 {
 #if CPU(ARM64)
     const OwnedScratchRegister ownedScratch(jit);
@@ -126,7 +128,7 @@ void goOnWhileSamplesOfPlaceAreLeftOut(StubAssembler& jit, [[maybe_unused]] GPRR
     jit.jump().linkTo(isCounted, &jit);
     isDue.link(&jit);
 #else
-    jit.m_assembler.subb_im(1, 1, scratchOfCount, distance, 0);
+    jit.m_assembler.subb_im(1, static_cast<int32_t>(InstanceLayout::offsetOfMissesOfPlaces) + 1, instanceGPR, scratchOfCount, 0);
     Jump(jit.m_assembler.jCC(X86Assembler::ConditionNC)).linkTo(isCounted, &jit);
 #endif
 }
@@ -765,7 +767,7 @@ static void countMissAtSite(StubAssembler& jit, GPRReg receiver, GPRReg distance
     Label isCounted = jit.label();
     jit.addOutOfLinePart([=](StubAssembler& jit) mutable {
         isSample.link(&jit);
-        goOnWhileSamplesOfPlaceAreLeftOut(jit, distance, scratch, isCounted);
+        goOnWhileSamplesOfPlaceAreLeftOut(jit, scratch, isCounted);
         loadNameOfSite(jit, distance, name, scratch);
         fillAnswersAtSite(jit, receiver, name, distance, use, whatStubDoes);
         jit.jump().linkTo(isCounted, &jit);

@@ -502,6 +502,8 @@ static std::optional<Vector<uint32_t, 2>> objectsMadeHereInKnownWriters(Walker& 
 
 static std::optional<Vector<uint32_t, 2>> listMadeHereThatLoopOnlyFillsInKnownWriters(Walker& walker, Reference receiver)
 {
+    if (walker.takesReceiversOfMethodsOfListsToBeMadeHere()) [[unlikely]]
+        return Vector<uint32_t, 2> { };
     std::optional<BlockID> head = walker.headOfInnermostTryInFrameOnTop();
     std::optional<Vector<uint32_t, 2>> made = head ? objectsMadeHereInKnownWriters(walker, ObjectsWrittenAloneInKnownWriters { receiver }) : std::nullopt;
     if (!made || !textOfLoopOnlyFillsListAndReadsAnother(walker, *head, ValueID(made->first())) || !walker.textOfLoopReckonsWithWhatItReads(*head))

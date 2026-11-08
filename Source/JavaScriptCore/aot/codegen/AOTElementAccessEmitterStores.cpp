@@ -96,7 +96,7 @@ ArrayStorageFormList ElementAccessEmitter::candidateFormsFor(ValueID stored, Arr
 
 ArrayStorageFormList ElementAccessEmitter::formsOfListOfNumbersFor(ValueID stored, bool hasArmForEveryKind)
 {
-    bool isWhole = representationOf(stored) == Representation::Int32 || representationOf(stored) == Representation::Int64 || typeOf(stored).isNumberWithoutFraction();
+    bool isWhole = representationOf(stored) == Representation::Int32 || representationOf(stored) == Representation::Int64 || typeOf(stored).hasOnlyPrimitives(Primitive::NumberWithoutFraction | Primitive::UndefinedOrNull);
     ArrayStorageFormList forms = candidateFormsFor(stored, isWhole ? ArrayStorage::Int32 : ArrayStorage::Double);
     size_t placeOfAnyValue = forms.findIf([](const ArrayStorageForm* form) {
         return form->holdsCells;
@@ -112,7 +112,8 @@ ArrayStorageFormList ElementAccessEmitter::formsOfListOfNumbersFor(ValueID store
 
 bool ElementAccessEmitter::goesByKindOfListOfNumbers(ValueID list, ValueID stored)
 {
-    return typeOf(stored).isNumber() && isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(list));
+    const Type& type = typeOf(stored);
+    return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull) && isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(list));
 }
 
 ArrayStorageFormList ElementAccessEmitter::formsThatMayHold(ValueID list, ValueID stored)

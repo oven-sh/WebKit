@@ -233,7 +233,8 @@ private:
     static_assert(indexOfAnswersThatHoldNothing == indexOfSiteAnswersThatHoldNothing);
     static constexpr uint32_t wordsInWideAnswers = sizeof(WideSiteAnswers) / sizeof(uint64_t);
 
-    uint8_t& samplesLeftOutAt(uint32_t place) { return reinterpret_cast<uint8_t*>(&m_missesOfPlaces[place])[1]; }
+    uint8_t* missesAndSamplesLeftOutAt(uint32_t place);
+    uint8_t& samplesLeftOutAt(uint32_t place) { return missesAndSamplesLeftOutAt(place)[1]; }
     void waitLongerForNextFill(uint32_t place);
     const void* keyOfState(uint32_t place) const { return std::bit_cast<const void*>(SiteCacheState::keyOfPlaceOfAnswers(place)); }
     SiteAnswers* ensureAnswersOf(uint32_t place, SiteUse);
@@ -257,7 +258,6 @@ private:
     Vector<uint32_t> m_placesOfWideAnswers;
     Vector<uint16_t> m_numbersOfWideAnswersGivenBack;
     uint32_t m_nextStructureToForget { 0 };
-    uint16_t* m_missesOfPlaces { nullptr };
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_visitorsPutOut;
     static constexpr uint8_t requestsThatOpenPage = 3;
     unsigned m_placesInPageShift { 0 };

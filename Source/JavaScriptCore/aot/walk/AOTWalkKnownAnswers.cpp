@@ -1023,7 +1023,7 @@ void noteOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Ef
     KnownAnswer answer;
     answer.family = KnownAnswer::Family::Operation;
     answer.noted = built.bits();
-    if (restsOn.containsAny(perObjectHeaps) && draft.numberOfOperands())
+    if (restsOn.containsAny(perObjectHeaps) && draft.numberOfOperands() && opcode != Opcode::GetValueAtSiteOrAbsent)
         answer.holder = rootInKnownAnswers(code, draft.operand(0));
     answer.endsAtSuspension = valuesNumberedInKnownAnswers.contains(opcode) && frameMayBeSavedInKnownAnswers(walker);
     answers.note(words.span(), isKeyAskedLast ? table->placeOfKeyAskedLast() : table->placeOfKey(words.span()), answer, restsOn, false, answer.holder && walker.state().isFresh(answer.holder));

@@ -429,7 +429,7 @@ static bool isNumberCutByWrittenMaskInTypedElements(Walker& walker, ValueID key,
     bool restIsNumber = true;
     index.value(written).forEachOperand([&](ValueID operand, uint32_t) {
         ValueID cut = index.valueBehindCasts(operand);
-        if (cut && !index.isParameter(cut) && index.opcodeOf(cut) == Opcode::Integer && index.value(cut).integer() >= 0) {
+        if (cut && !index.isParameter(cut) && index.opcodeOf(cut) == Opcode::Integer && index.value(cut).integer() >= 0 && index.value(cut).integer() <= INT32_MAX) {
             hasMask = true;
             return;
         }
@@ -446,7 +446,7 @@ static bool comesOffListOfNumbersTestedInFrontInTypedElements(Walker& walker, co
     if (later.propertyOperand().index() >= firstValueNotBuilt.index()) {
         const BodyIndex& index = walker.currentBodyIndex();
         ValueID written = index.valueBehindCasts(later.propertyOperand());
-        bool isWrittenPosition = written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::Integer && index.value(written).integer() >= 0;
+        bool isWrittenPosition = written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::Integer && index.value(written).integer() >= 0 && index.value(written).integer() < UINT32_MAX;
         if (!isWrittenPosition && !isNumberCutByWrittenMaskInTypedElements(walker, later.propertyOperand(), firstValueNotBuilt))
             return false;
     } else if (Reference key = walker.referenceOf(later.propertyOperand()); !key || !isArrayIndexInTypedElements(walker.types().at(walker.typeOf(key))))
@@ -486,8 +486,17 @@ static bool userTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyVa
     };
     if (other.index() < read.id().index())
         return built && isNumberOrNothing(walker.typeOf(built));
-    if (operation.opcode() == Opcode::Add || !written || index.isParameter(written) || index.opcodeOf(written) != Opcode::ElemGet)
+    if (!written || index.isParameter(written) || index.opcodeOf(written) != Opcode::ElemGet)
         return false;
+    if (operation.opcode() == Opcode::Add) {
+        if (index.blockOf(written) != index.blockOf(read.id()))
+            return false;
+        for (uint32_t between = read.id().index() + 1; between < written.index(); ++between) {
+            if (!primitiveConstants.contains(index.opcodeOf(ValueID(between))) && !opcodesThatStateTypes.contains(index.opcodeOf(ValueID(between))))
+                return false;
+        }
+        return (!readGivesUpItsHole || !elementIsReadAgainInLoopInTypedElements(index, read, ReadersOfElement::ThoseThatDoMoreThanReckon)) && comesOffListOfNumbersTestedInFrontInTypedElements(walker, index.value(written), read.id());
+    }
     TypeID seenByLink = walker.facts().linked().resultOfReadByKey(walker.currentFunction(), written);
     return (seenByLink && isNumberOrNothing(seenByLink)) || ((!readGivesUpItsHole || !elementIsReadAgainInLoopInTypedElements(index, read, ReadersOfElement::ThoseThatDoMoreThanReckon)) && comesOffListOfNumbersTestedInFrontInTypedElements(walker, index.value(written), read.id()));
 }

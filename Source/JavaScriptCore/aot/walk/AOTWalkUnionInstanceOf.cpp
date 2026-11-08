@@ -68,6 +68,7 @@ struct FormOfInstanceOf {
 using NumbersOfClassesForInstanceOf = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
 struct KinInFamilyForInstanceOf {
+    Vector<LayoutID> candidates;
     Vector<LayoutID> layouts;
     Vector<uint32_t> placesOfClasses;
     Vector<uint32_t> endsOfPlacesBelowClasses;
@@ -77,6 +78,7 @@ struct KinInFamilyForInstanceOf {
 
 struct KeptByInstanceOf final : Walker::KeptForBuild {
     UncheckedKeyHashMap<uint32_t, std::unique_ptr<KinInFamilyForInstanceOf>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> kinInFamilies;
+    UncheckedKeyHashMap<uint32_t, Vector<std::unique_ptr<KinInFamilyForInstanceOf>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> kinAmongListsOfLayouts;
 };
 
 struct BuiltinTestedByInstanceOf {
@@ -443,7 +445,7 @@ static KeptByInstanceOf& keptByInstanceOf(const Walker& walker)
     return static_cast<KeptByInstanceOf&>(*kept);
 }
 
-static void findKinInFamilyForInstanceOf(const Walker& walker, FamilyID family, KinInFamilyForInstanceOf& kin)
+static void findKinAmongLayoutsForInstanceOf(const Walker& walker, LayoutSetID candidates, KinInFamilyForInstanceOf& kin)
 {
     const Program& program = walker.program();
     constexpr uint32_t unknown = std::numeric_limits<uint32_t>::max();
@@ -479,7 +481,7 @@ static void findKinInFamilyForInstanceOf(const Walker& walker, FamilyID family, 
     };
 
     Vector<uint32_t> topmostClasses;
-    for (LayoutID member : membersOf(walker.types(), walker.facts().families().layoutsOf(family))) {
+    for (LayoutID member : membersOf(walker.types(), candidates)) {
         if (program.at(member).kind != LayoutKind::Instance || program.at(member).has(LayoutFlags::IsOfCreatedObject) || !walker.plan().isInUse(member) || !isTestableByShapeForInstanceOf(walker, singleElementSpan(member)))
             continue;
         LayoutID classLayout = declaredLayoutOf(program, member);
@@ -535,19 +537,56 @@ static void findKinInFamilyForInstanceOf(const Walker& walker, FamilyID family, 
     }
 }
 
-static const KinInFamilyForInstanceOf* findKinOfClassForInstanceOf(const Walker& walker, LayoutID tested)
+static const KinInFamilyForInstanceOf* findKinOfClassForInstanceOf(const Walker& walker, LayoutID tested, TypeID expectedOfValue)
 {
     const Families& families = walker.facts().families();
+    TypeArena& types = walker.types();
+    LayoutSetID candidates;
     FamilyID nearest = families.nearestFamilyOf(tested);
-    if (!nearest)
-        return nullptr;
-    FamilyID family = families.topmostFamilyAtOrAbove(nearest);
-    const KinInFamilyForInstanceOf& kin = *keptByInstanceOf(walker).kinInFamilies.ensure(family.index(), [&] {
+    if (nearest)
+        candidates = families.layoutsOf(families.topmostFamilyAtOrAbove(nearest));
+    LayoutSetID expected = expectedOfValue ? types.at(expectedOfValue).layouts : LayoutSetID();
+    bool familyHoldsAllExpected = !expected || (candidates && std::ranges::all_of(membersOf(types, expected), [&](LayoutID layout) {
+        return std::ranges::binary_search(membersOf(types, candidates), layout);
+    }));
+    KeptByInstanceOf& kept = keptByInstanceOf(walker);
+    auto holdsTested = [&](const KinInFamilyForInstanceOf& kin) {
+        return kin.placesAtOrBelow.contains(tested.index()) ? &kin : nullptr;
+    };
+    if (!familyHoldsAllExpected) {
+        Vector<LayoutID, 16> all { tested };
+        if (candidates)
+            all.append(membersOf(types, candidates));
+        for (LayoutID layout : membersOf(types, expected)) {
+            all.append(layout);
+            if (FamilyID around = families.nearestFamilyOf(layout))
+                all.append(membersOf(types, families.layoutsOf(families.topmostFamilyAtOrAbove(around))));
+        }
+        std::ranges::sort(all);
+        all.shrink(std::ranges::unique(all).begin() - all.begin());
+        uint32_t hash = 0;
+        for (LayoutID layout : all)
+            hash = pairIntHash(hash, layout.index());
+        auto& keptUnderHash = kept.kinAmongListsOfLayouts.ensure(hash, [] {
+            return Vector<std::unique_ptr<KinInFamilyForInstanceOf>, 1> { };
+        }).iterator->value;
+        for (const auto& kin : keptUnderHash) {
+            if (std::ranges::equal(kin->candidates, all))
+                return holdsTested(*kin);
+        }
         auto found = makeUniqueWithoutFastMallocCheck<KinInFamilyForInstanceOf>();
-        findKinInFamilyForInstanceOf(walker, family, *found);
+        found->candidates.append(all.span());
+        findKinAmongLayoutsForInstanceOf(walker, types.layoutSets().ofSorted(all.span()), *found);
+        keptUnderHash.append(WTF::move(found));
+        return holdsTested(*keptUnderHash.last());
+    }
+    if (!candidates)
+        return nullptr;
+    return holdsTested(*kept.kinInFamilies.ensure(families.topmostFamilyAtOrAbove(nearest).index(), [&] {
+        auto found = makeUniqueWithoutFastMallocCheck<KinInFamilyForInstanceOf>();
+        findKinAmongLayoutsForInstanceOf(walker, candidates, *found);
         return found;
-    }).iterator->value;
-    return kin.placesAtOrBelow.contains(tested.index()) ? &kin : nullptr;
+    }).iterator->value);
 }
 
 static bool programMakesNoProxyForInstanceOf(const Walker& walker)
@@ -568,7 +607,7 @@ static bool isTestableByShapeForInstanceOf(const Walker& walker, std::span<const
     });
 }
 
-static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker, TypeID typeOfValue, TypeID typeOfConstructor, bool valueStandsWhereMade)
+static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker, TypeID typeOfValue, TypeID typeOfConstructor, bool valueStandsWhereMade, TypeID expectedOfValue)
 {
     if (!walker.plan().hasOneInstance())
         return std::nullopt;
@@ -600,11 +639,11 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
     const KinInFamilyForInstanceOf* kin = nullptr;
     bool kinMayAnswer = maySpendBytesForTimeInInstanceOf(walker) && mayBuildArmsForInstanceOf(walker) && (!tested->isConstructorFunction || (walker.plan().hasClassRecord(tested->layout) && hasOneClassObjectForInstanceOf(walker, tested->layout)));
     if ((!areAllConsidered || chains.hasUndecidedLayouts) && kinMayAnswer && (!chains.instances.isEmpty() || areAllConsidered))
-        kin = findKinOfClassForInstanceOf(walker, tested->layout);
+        kin = findKinOfClassForInstanceOf(walker, tested->layout, expectedOfValue);
     bool kinHoldStrangers = false;
     bool kinDecideEveryShape = false;
     if (areAllConsidered && chains.hasUndecidedLayouts && valueStandsWhereMade && value.isObject() && kinMayAnswer) {
-        const KinInFamilyForInstanceOf* found = findKinOfClassForInstanceOf(walker, tested->layout);
+        const KinInFamilyForInstanceOf* found = findKinOfClassForInstanceOf(walker, tested->layout, typeOfValue);
         kinDecideEveryShape = found && std::ranges::all_of(considered, [&](LayoutID layout) {
             return std::ranges::binary_search(found->layouts, layout);
         });
@@ -693,7 +732,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     if (!typeOfValue || !typeOfConstructor)
         return false;
     bool valueStandsWhereMade = !inputs.areOnlyTypes() && factsOfCellAsPlannerTakesThem(walker, walker.referenceOf(test.valueOperand())).contains(FactOfCell::HasLayoutPrototype);
-    std::optional<FormOfInstanceOf> form = planFormOfInstanceOf(walker, typeOfValue, typeOfConstructor, valueStandsWhereMade);
+    TypeID expectedOfValue = !inputs.areOnlyTypes() && maySpendBytesForTimeInInstanceOf(walker) ? findExpectation(walker, test.valueOperand()).type : TypeID();
+    std::optional<FormOfInstanceOf> form = planFormOfInstanceOf(walker, typeOfValue, typeOfConstructor, valueStandsWhereMade, expectedOfValue);
     if (!form)
         return false;
 

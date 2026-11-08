@@ -2318,6 +2318,11 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                 listsAskedForOneStorage.append(name);
             ArrayStorage kindStoredInto = ArrayStorage::Other;
             if (isStore) {
+                TypeID keyOfStore = typeInLook(operation.propertyOperand());
+                ValueID written = index.valueBehindCasts(operation.objectOperand());
+                bool isWrittenInFront = written && !index.isParameter(written) && written.index() < firstValueOfLoop && index.opcodeOf(written) == Opcode::NewArray && !index.value(written).as<Opcode::NewArray>().elementsOperands().empty();
+                if (isWrittenInFront && index.isParameter(index.valueBehindCasts(operation.valueOperand())) && keyOfStore && types.at(keyOfStore).isInteger() && types.at(keyOfStore).integers.minimum >= static_cast<int64_t>(index.value(written).as<Opcode::NewArray>().elementsOperands().size()))
+                    continue;
                 TypeID stored = typeInLook(operation.valueOperand());
                 stored = stored ? types.withoutPrimitives(stored, Primitive::Undefined) : TypeID();
                 if ((!stored || isNeverType(stored) || !types.at(stored).isNumber()) && isNumberBehindListsFound(operation.valueOperand()))

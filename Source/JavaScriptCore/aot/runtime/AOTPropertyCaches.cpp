@@ -1426,7 +1426,6 @@ void initializePropertyCacheWords(Instance& instance)
     words.booleanStructureID = (booleanStructure ? booleanStructure : structureOfNoReceiver)->id().bits();
     uintptr_t wordsToUndefined = (std::bit_cast<uintptr_t>(instance.state->objectThatHoldsUndefined->inlineStorage()) - vm.heap.cage().base()) / sizeof(EncodedJSValue);
     words.wordOfCageThatHoldsUndefined = wordsToUndefined <= UINT32_MAX ? static_cast<uint32_t>(wordsToUndefined) : 0;
-    words.missesOfPlacesByDistance = reinterpret_cast<uint8_t*>(instance.state->tableArena.allocate<uint16_t>(instance.indicesOfSiteAnswers().size())) - InstanceLayout::offsetOfIndicesOfSiteAnswers(instance.tables().instanceSizes);
     words.hasInstanceUID = vm.propertyNames->hasInstanceSymbol.impl();
     words.prototypeUID = vm.propertyNames->prototype.impl();
     words.lengthUID = vm.propertyNames->length.impl();
@@ -2110,7 +2109,6 @@ AnswersAtSites::AnswersAtSites(State& state, SiteCaches& states)
     , m_indices(state.instance.indicesOfSiteAnswers())
     , m_answers(state.instance.siteAnswers())
     , m_endOfWideAnswers(reinterpret_cast<WideSiteAnswers*>(state.instance.siteAnswers().data() + state.instance.siteAnswers().size()))
-    , m_missesOfPlaces(reinterpret_cast<uint16_t*>(state.instance.propertyCaches.missesOfPlacesByDistance + InstanceLayout::offsetOfIndicesOfSiteAnswers(state.instance.tables().instanceSizes)))
     , m_placesInPageShift(WTF::fastLog2(static_cast<unsigned>(pageSize() / sizeof(uint16_t))))
     , m_requestsOfPages(state.tableArena.allocate<uint8_t>((m_indices.size() >> m_placesInPageShift) + 1))
     , m_ownerID(state.chainDependents->addOwner(*this))
@@ -2128,10 +2126,17 @@ uint32_t AnswersAtSites::placeAtDistanceFromInstance(uint32_t distance) const
     return static_cast<uint32_t>(offset / sizeof(uint16_t));
 }
 
+uint8_t* AnswersAtSites::missesAndSamplesLeftOutAt(uint32_t place)
+{
+    uint8_t* instance = reinterpret_cast<uint8_t*>(&m_state.instance);
+    size_t distance = reinterpret_cast<uint8_t*>(&m_indices[place]) - instance;
+    return instance + InstanceLayout::offsetOfMissesOfPlaces + distance % InstanceLayout::bytesReservedForMissesOfPlaces;
+}
+
 void AnswersAtSites::beginPeriodOfAnotherLength(uint32_t place)
 {
     static constexpr std::array<uint8_t, 8> missesLeftOut { 0, 5, 2, 7, 1, 4, 6, 3 };
-    uint8_t& misses = *reinterpret_cast<uint8_t*>(&m_missesOfPlaces[place]);
+    uint8_t& misses = *missesAndSamplesLeftOutAt(place);
     uint8_t turn = (misses + 1) & 7;
     misses = static_cast<uint8_t>(SiteCacheState::sampleStep * missesLeftOut[turn] | turn);
     samplesLeftOutAt(place) = 0;
