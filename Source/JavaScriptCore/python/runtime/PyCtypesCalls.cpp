@@ -648,7 +648,7 @@ static NEVER_INLINE bool convertArguments(JSGlobalObject* globalObject, void* fu
 // The function may wait for as long as it likes, and what earlier frames left in room of this frame that nothing is written to is under the eyes of
 // the collector until it returns. So the room for the arguments is written whether there are so many or not, and what comes before and after
 // the call has frames of its own.
-JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* arguments, unsigned flags, JSValue convertersValue, JSValue resultType, JSValue checker, ResultOfCall resultOfCall)
+JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* arguments, unsigned flags, JSValue convertersValue, JSValue resultType, JSValue checker, ResultOfCall resultOfCall, JSValue owner)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -657,6 +657,10 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
     RoomForArguments<Argument> roomForConverted;
     std::span<Argument> converted;
     MarkedArgumentBuffer keeps;
+    // What is called is what the function pointer held when the call began, as in CPython. The conversion of an argument may store another function there: but for this, the callback that was there
+    // would be gone then, and its code somebody else's.
+    if (owner)
+        keeps.append(owner);
     if (failed(scope, convertArguments(globalObject, function, arguments, converters, roomForConverted, converted, keeps)))
         return { };
     unsigned count = converted.size();
@@ -1211,11 +1215,13 @@ static JSValue functionCall(JSGlobalObject* globalObject, JSValue self, const Ca
     JSValue errorCheck = function->errorCheck.get();
 
     void* address;
+    Home home;
     {
-        auto memory = Place { function }.resolve(globalObject, sizeof(void*));
+        auto memory = Place { function }.resolve(globalObject, sizeof(void*), &home);
         RETURN_IF_EXCEPTION(scope, { });
         memcpy(&address, memory.data(), sizeof(void*));
     }
+    JSValue owner = entryAt(globalObject, home);
 
     OutputArguments outputs;
     PyTuple* arguments = buildCallArguments(globalObject, function, argTypes, args, outputs);
@@ -1231,7 +1237,7 @@ static JSValue functionCall(JSGlobalObject* globalObject, JSValue self, const Ca
     }
     // The value of a call with out parameters is theirs (buildCallResult()). Then only these two see what the function returned.
     bool resultIsDropped = outputs.count && !checker && !errorCheck;
-    JSValue result = callFunction(globalObject, address, arguments, info->flags, converters, resultType, checker, resultIsDropped ? ResultOfCall::Dropped : ResultOfCall::GivenOn);
+    JSValue result = callFunction(globalObject, address, arguments, info->flags, converters, resultType, checker, resultIsDropped ? ResultOfCall::Dropped : ResultOfCall::GivenOn, owner);
     RETURN_IF_EXCEPTION(scope, { });
     if (errorCheck) {
         JSValue checked = call(globalObject, errorCheck, result, self, arguments);

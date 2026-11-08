@@ -698,7 +698,8 @@ JSValue makeReference(JSGlobalObject*, JSValue object, int64_t offset);
 // (As wide as a word. Under these functions a thread waits for as long as C likes, or runs code of the program. An argument that does not fit into the registers is passed on the stack, and one narrower than a word is stored
 // there as it is: the rest of the word keeps what lay there, which the collector's look at the stack may take for the address of a cell. See Buffer in PyBuffer.h.)
 enum class ResultOfCall : uintptr_t { GivenOn, Dropped };
-JSValue callFunction(JSGlobalObject*, void* function, PyTuple* arguments, unsigned flags, JSValue converters, JSValue resultType, JSValue checker, ResultOfCall = ResultOfCall::GivenOn);
+// `owner`: the entry for the place that the address of the function has been read from, if there is one: it is kept until the call is over.
+JSValue callFunction(JSGlobalObject*, void* function, PyTuple* arguments, unsigned flags, JSValue converters, JSValue resultType, JSValue checker, ResultOfCall = ResultOfCall::GivenOn, JSValue owner = { });
 
 // The functions of C that Lib/ctypes calls through function pointers: their addresses are real, and a call to one runs
 // here, without a foreign call.
