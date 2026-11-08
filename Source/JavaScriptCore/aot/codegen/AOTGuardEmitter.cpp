@@ -18,6 +18,7 @@
 #include "AOTCompiledStructure.h"
 #include "AOTConstantEmitter.h"
 #include "AOTFunctionData.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMemberLookup.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
@@ -74,7 +75,7 @@ Condition GuardEmitter::isPresentCell(Boxed value, const Type& type)
     return isCell(value);
 }
 
-CellPointer GuardEmitter::untestedCell(const OperationContext& context, ValueID id)
+ALWAYS_INLINE_INTO_OTHER_FILES CellPointer GuardEmitter::untestedCell(const OperationContext& context, ValueID id)
 {
     switch (representationOf(id)) {
     case Representation::Cell:

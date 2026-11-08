@@ -947,6 +947,10 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 #endif
                         fetchSynchronously(globalObject, fetchPromise, resolved, moduleReferrer(referrerKey), RefPtr { moduleRequest.m_attributes }, scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
+#if ENABLE(AOT)
+                // Compiled code has begun the file ahead of this load, and the file still runs: this is the step in which it runs, which ends when the file does.
+                } else if (vm.hasCompiledCode() && AOT::ModuleRecord::isFileBeingHandedToLoader(globalObject, resolved)) {
+#endif
                 } else if (fetchPromise->status() == JSPromise::Status::Fulfilled) {
                     // fetchPromise already settled but its
                     // ModuleRegistryFetchSettled reaction is sitting on the
@@ -1060,8 +1064,12 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     modulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
 
-    if (!deferredPromise || !mapEntry->loadPromise())
+    if (!deferredPromise || !mapEntry->loadPromise()) {
         mapEntry->setLoadPromise(vm, loadPromise);
+#if ENABLE(AOT)
+        mapEntry->setIsLoadPromiseOfSynchronousLoad(vm.synchronousModuleQueue());
+#endif
+    }
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) {
@@ -1715,7 +1723,7 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
                 // Not where a graph has asked for the root: `bun run` reads the files of a graph on other threads and has taken that step by the time a file of the graph runs.
                 if (!load && context->entry() == entry)
                     return false;
-                if (load && load->containsVisited(entry->record()))
+                if (load && entry->isLoadPromiseOfSynchronousLoad() && load->containsVisited(entry->record()))
                     return false;
             }
         }

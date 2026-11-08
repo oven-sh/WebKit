@@ -201,6 +201,7 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const Valu
     Word32 end = strings.word32Of(value->endOperand());
     Word32 length = sub(end, start);
     CharacterView view = strings.viewOf(value, value->stringOperand());
+    strings.holdRangeInside(value, start, end);
     LBasicBlock byCall = newBlock();
     LBasicBlock done = newBlock();
 
@@ -402,6 +403,7 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendStringRange(const
     Word32 end = strings.word32Of(value->endOperand());
     Word32 length = sub(end, start);
     CharacterView view = strings.viewOf(value, value->stringOperand());
+    strings.holdRangeInside(value, start, end);
     LBasicBlock byCall = newBlock();
     Join<Pointer> cursor(m_out);
 

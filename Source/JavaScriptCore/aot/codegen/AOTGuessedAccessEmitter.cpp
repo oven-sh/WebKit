@@ -252,6 +252,8 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     } else if (value.opcode() == Opcode::GetSlot && value->holdsDeclaredType()) {
         if (!value->isFilledWhereShapeFits() || !receiverBearsNoMark)
             continueGuessedAccessIf(m_out, slots.holdsDeclaredType(base, slot, location, extensionWord), rareEdge(failure));
+        else if (asksWhatSlotsHold)
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, slots.holdsDeclaredType(base, slot, location, extensionWord), std::nullopt, ProofSource::Field);
         Type loaded = types().at(slot.type ? slot.type : widestTypeOf(Typed::representationOf(slot.representation)));
         loaded.primitives &= ~(Primitive::UndefinedOrNull | Primitive::Absent);
         if (ways) {
@@ -262,14 +264,20 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     } else {
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
         bool asksWhetherSlotIsFilled = value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark;
+        LBasicBlock slotIsEmptyWhereItIsToldFilled = !asksWhetherSlotIsFilled && asksWhatSlotsHold ? newBlock() : nullptr;
         Operand loaded = asksWhetherSlotIsFilled
             ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure))
+            : slotIsEmptyWhereItIsToldFilled ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, rareEdge(slotIsEmptyWhereItIsToldFilled))
             : slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
         if (ways)
             branch(emitter<TruthinessEmitter>().isTruthy(value, loaded, held), ways->targets);
         else
             join->add(foundInSlot(conversions.box(value, loaded, types().at(widestTypeOf(loaded.representation)))));
 
+        if (slotIsEmptyWhereItIsToldFilled) {
+            m_out.appendTo(slotIsEmptyWhereItIsToldFilled);
+            emitter<ThrowEmitter>().stopAtFalseProof(value, std::nullopt, ProofSource::Field);
+        }
         if (slotIsEmpty) {
             m_out.appendTo(slotIsEmpty);
             branchUnless(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit | JSC::IsPristine), failure);

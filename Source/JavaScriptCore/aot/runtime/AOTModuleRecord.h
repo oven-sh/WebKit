@@ -82,6 +82,7 @@ public:
     static void didFailToLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
     static std::optional<ModuleID> fileToWaitFor(JSGlobalObject*, const Identifier& key);
+    static bool isFileBeingHandedToLoader(JSGlobalObject*, const Identifier& key);
     static JSPromise* deferRequest(JSGlobalObject*, ModuleID file, ModuleLoadingContext*, bool useImportMap);
     static void didRequestModule(JSGlobalObject*, const Identifier& key, JSCell* payload);
     static void didSettleLoad(JSGlobalObject*, const ModuleGraphLoadingState&);

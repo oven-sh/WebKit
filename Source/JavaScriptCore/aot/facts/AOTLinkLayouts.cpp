@@ -1052,16 +1052,29 @@ static bool isListedOnBothSidesInLinkLayouts(LinkFlow& flow, const LinkType& sub
     return isListed;
 }
 
-static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, const LinkType& subject, const LinkType& other, bool definesWhatItCopies, bool appendsNames, KeysOfCopyInLinkLayouts& keys)
+static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, FunctionID function, const LinkType& subject, const LinkType& other, bool definesWhatItCopies, bool appendsNames, KeysOfCopyInLinkLayouts& keys)
 {
     if (subject.objects == LinkType::Objects::None || other.objects == LinkType::Objects::None)
         return true;
     if (!isListedOnBothSidesInLinkLayouts(flow, subject, other))
         return false;
 
+    static constexpr size_t numberOfOwnValuesBesideFields = 2;
+    auto& layoutsTied = flow.copiesObservedIn(function).layoutsTiedByCopies[definesWhatItCopies << 1 | appendsNames];
+    bool keepsTies = subject.objects == LinkType::Objects::Layout && !flow.tellsObserversOnceMore();
     NodesStoredInLinkLayouts underAnyKey = nodesLaidUnderAnyKeyByCopyInLinkLayouts(flow, subject, definesWhatItCopies);
     forEachLayoutNamedInLinkLayouts(flow, other, [&](LayoutID layout) {
-        for (const LinkFlow::OwnValue& value : flow.ownValuesOf(layout)) {
+        std::span<const LinkFlow::OwnValue> values = flow.ownValuesOf(layout);
+        uint64_t pair = static_cast<uint64_t>(layout.index()) << 32 | subject.layout.index();
+        bool foundFieldsInTargetBefore = keys.findFieldsInTarget;
+        keys.findFieldsInTarget = true;
+        auto tied = keepsTies ? layoutsTied.find(pair) : layoutsTied.end();
+        bool laysTie = keepsTies && tied == layoutsTied.end() && std::ranges::all_of(values.first(values.size() - numberOfOwnValuesBesideFields), [](const LinkFlow::OwnValue& value) { return !!value.key; });
+        if (tied != layoutsTied.end()) {
+            keys.findFieldsInTarget = tied->value;
+            values = values.last(numberOfOwnValuesBesideFields);
+        }
+        for (const LinkFlow::OwnValue& value : values) {
             if (definesWhatItCopies && !value.key) {
                 const LinkType& held = flow.typeAt(value.node);
                 keys.somethingLiesBesideFields |= !held.isNothing();
@@ -1087,6 +1100,9 @@ static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, const LinkType& subjec
             for (FlowNodeID stored : value.key ? nodesStoredUnderInLinkLayouts(flow, subject, value.key, definesWhatItCopies ? LinkFlow::Lays::Defines : LinkFlow::Lays::Assigns) : underAnyKey)
                 copyInto(stored);
         }
+        if (laysTie)
+            layoutsTied.add(pair, keys.findFieldsInTarget);
+        keys.findFieldsInTarget &= foundFieldsInTargetBefore;
     });
     return true;
 }
@@ -1169,7 +1185,7 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
         && isListedOnBothSidesInLinkLayouts(flow, subject, other) && !mayHaveOwnValueUnderPrototypeLinkInLinkLayouts(flow, other);
     bool definesWhatItCopies = change.definesWhatItCopies || assignmentFindsNoSetter;
     KeysOfCopyInLinkLayouts keys;
-    bool isListedOnBothSides = change.otherNode && copyFieldByFieldInLinkLayouts(flow, subject, other, definesWhatItCopies, change.isSpelledByLoop, keys);
+    bool isListedOnBothSides = change.otherNode && copyFieldByFieldInLinkLayouts(flow, change.function, subject, other, definesWhatItCopies, change.isSpelledByLoop, keys);
     for (FlowNodeID field : keys.fieldsCopiedOntoThemselves)
         flow.observe(field, FlowObserver { FlowObserver::Kind::FieldIsOnlyAsked, change.function, change.record });
     bool copiesFieldByField = isListedOnBothSides && landsOnObjectsOfProgramAlone;
@@ -4599,7 +4615,7 @@ void WriterOfLinkLayouts::writeMembers()
     auto repeated = std::ranges::unique(m_members, { }, placeOf);
     m_members.shrink(repeated.begin() - m_members.begin());
     m_tables.members = WTF::move(m_members);
-    m_tables.indexMembersByKey(m_program);
+    m_tables.indexMembersByKey(m_program, m_flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls ? LinkTables::AskedByKey::ByLongRowsAlone : LinkTables::AskedByKey::ByWalkToo);
 
     for (auto [laid, taken] : m_namesLaidOutOfMaps) {
         auto name = m_namesWrittenOnPrototypes.find(laid);

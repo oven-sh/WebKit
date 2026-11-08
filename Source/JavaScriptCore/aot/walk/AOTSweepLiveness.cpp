@@ -10,6 +10,7 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTHeldOperands.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPlan.h"
 #include "AOTRepresentation.h"
 #include "AOTSort.h"
@@ -403,7 +404,7 @@ void Sweep::beginFollowingLiveness()
     m_liveness->operationsThatSuspend.ensureSize(numberOfValues);
 }
 
-ALWAYS_INLINE void Sweep::followIfEnvironmentIsHandedBack(ValueID id)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::followIfEnvironmentIsHandedBack(ValueID id)
 {
     const Code& code = *m_code;
     LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(id).type);
@@ -424,7 +425,7 @@ static bool holdsEnvironmentsWithoutMarkingThemInSweptCode(const Operation& hold
     return mayLieInFrame || holder.opcode == Opcode::Results;
 }
 
-ALWAYS_INLINE void Sweep::noteIfMayHoldEnvironmentInFrame(ValueID id)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::noteIfMayHoldEnvironmentInFrame(ValueID id)
 {
     const Code& code = *m_code;
     if (holdsEnvironmentsWithoutMarkingThemInSweptCode(code.at(rootOfCellInSweptCode(code, id))))

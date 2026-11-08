@@ -195,7 +195,7 @@ static X86ComparedOperand x86ComparedOperandReadByFusedLoad(Encoder& encoder, co
     return X86ComparedOperand::inRegister(scratchFPR);
 }
 
-static X86Comparison x86ComparisonOfTest(Encoder& encoder, const Test& test)
+static ALWAYS_INLINE X86Comparison x86ComparisonOfTest(Encoder& encoder, const Test& test)
 {
     RELEASE_ASSERT(!test.left.isImmediate());
     X86ComparedOperand left = test.loadOnLeft ? x86ComparedOperandReadByFusedLoad(encoder, test.loadOnLeft, test.addressOnLeft) : x86ComparedOperandAt(encoder, test.left, 0);
@@ -260,7 +260,7 @@ static void bringX86ComparedIntegerIntoScratch(CCallHelpers& jit, Width width, X
     operand = X86ComparedOperand::inRegister(scratchGPR);
 }
 
-static MacroAssembler::RelationalCondition unsignedFormOfX86Condition(MacroAssembler::RelationalCondition condition)
+static ALWAYS_INLINE MacroAssembler::RelationalCondition unsignedFormOfX86Condition(MacroAssembler::RelationalCondition condition)
 {
     switch (condition) {
     case MacroAssembler::LessThan:
@@ -282,7 +282,7 @@ static MacroAssembler::RelationalCondition unsignedFormOfX86Condition(MacroAssem
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordInMemory(CCallHelpers& jit, Test::Kind kind, const X86ComparedOperand& word, int64_t constant, Width width, MacroAssembler::RelationalCondition condition)
+static ALWAYS_INLINE std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordInMemory(CCallHelpers& jit, Test::Kind kind, const X86ComparedOperand& word, int64_t constant, Width width, MacroAssembler::RelationalCondition condition)
 {
     ASSERT(word.isInMemory());
     X86Assembler& assembler = jit.m_assembler;
@@ -788,7 +788,7 @@ static ALWAYS_INLINE std::optional<MacroAssembler::RelationalCondition> tryEmitF
     return tryEmitFlagsOfX86WordInMemory(encoder.m_jit, testsBits ? Test::TestBits : Test::CompareIntegers, X86ComparedOperand::readBy(load->opcode(), address), constant, width, *condition);
 }
 
-static MacroAssembler::RelationalCondition emitFlagsOfX86WordReadByFusedLoad(Encoder& encoder, bool testsBits, Opcode relation, const Operation* load, const AddressForm& address, Location right, int64_t constant)
+static ALWAYS_INLINE MacroAssembler::RelationalCondition emitFlagsOfX86WordReadByFusedLoad(Encoder& encoder, bool testsBits, Opcode relation, const Operation* load, const AddressForm& address, Location right, int64_t constant)
 {
     if (address.kind == AddressForm::InstanceSymbol) {
         if (std::optional<MacroAssembler::RelationalCondition> condition = tryEmitFlagsOfX86InstanceWord(encoder, testsBits, relation, widthOf(load->type()), load, address.symbol, right, constant))

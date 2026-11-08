@@ -22,6 +22,7 @@
 #include "AOTEntryEmitter.h"
 #include "AOTHintEmitter.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPrimitiveEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -2862,7 +2863,7 @@ void CodeGenerator::verifyThatKeptValueIsNamedInThisStretch(ValueID id)
         fail(*m_operation, InternalErrorKind::InvalidSuspension, makeString('v', id.index(), " ("_s, nameOf(opcodeOf(id)), ") has a word in the machine frame and is read as another stretch named it"_s));
 }
 
-ALWAYS_INLINE void CodeGenerator::verifyThatDefinitionDominates(ValueID id, BlockID home, BlockID user)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::verifyThatDefinitionDominates(ValueID id, BlockID home, BlockID user)
 {
     if (dominates(home, user)) [[likely]] {
         if (m_userOfHomesProven != user) {
@@ -2946,7 +2947,7 @@ Operand CodeGenerator::makeInWantedForm(ValueID id, const Operation& operation, 
     return emitter<ConstantEmitter>().zeroOf(wanted);
 }
 
-ALWAYS_INLINE Operand CodeGenerator::makeConstant(ValueID id, const Operation& constant)
+ALWAYS_INLINE_INTO_OTHER_FILES Operand CodeGenerator::makeConstant(ValueID id, const Operation& constant)
 {
     static constexpr OpcodeSet constantsWithoutCode { Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double };
 

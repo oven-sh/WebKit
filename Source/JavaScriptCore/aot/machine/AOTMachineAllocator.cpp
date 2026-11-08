@@ -492,6 +492,7 @@ Allocator::Allocator(Procedure& proc, Allocation& allocation)
 void Allocator::run()
 {
     findFramedPart();
+    m_allocation.m_recordsWhatCheckersRead = m_proc.checksAllocation() || (m_allocation.hasFramedPart() && m_proc.numberOfInnerPointersAcrossSafepoints());
     const std::optional<Failure>& failure = m_proc.failure();
     for (Block* block : m_order.blocksInOrder()) {
         allocateBlock(block);
@@ -691,6 +692,9 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
         for (Operation* operation : sunk)
             passUsesOf(operation, head + 1);
     }
+
+    if (!block->upsilons().empty())
+        hintKeptRegistersToValuesThatBlockHandsOn(block);
 
     constexpr uint16_t absent = bitOf(ValueFlag::IsDropped) | bitOf(ValueFlag::IsFused) | bitOf(ValueFlag::IsSunk);
     const ValueFacts* facts = m_valueFacts;
@@ -1659,16 +1663,34 @@ Location Allocator::defineResult(Operation* operation, RegisterMask allowed, Reg
     return defineResultWithFacts(operation, m_valueFacts[operation->index()], allowed, avoided, preferred);
 }
 
-void Allocator::enterFramedPart()
+void Allocator::keepPointersThatWait(Position endOfWhatWaysLeadTo)
 {
     auto everyWayHasDefined = [&](const Operation* reference) {
         return dominates(reference->endsBlock() ? reference->owner()->successor(0).block() : reference->owner(), m_block);
     };
     for (ReferenceWhosePointerWaits& waiting : m_referencesWhosePointersWaitForFramedPart) {
         Operation* reference = waiting.reference;
-        if (stateOf(reference).registers || (m_allocation.isSpilled(reference) && isLiveBehind(reference, m_position) && !isDeadOnEveryPathFrom(reference, m_block, m_headOfBlock) && everyWayHasDefined(reference)))
+        if (!isLiveBehind(reference, m_position))
+            continue;
+        const ValueFacts& facts = m_liveness.of(reference);
+        if (endOfWhatWaysLeadTo != noPosition && !facts.has(ValueFlag::IsKeptForCollector)) {
+            bool isReadOnSomeWay = false;
+            for (uint32_t use = facts.firstUse; use && !isReadOnSomeWay; use = m_liveness.use(use).next) {
+                Position read = m_liveness.use(use).position;
+                isReadOnSomeWay = read > m_position && read < endOfWhatWaysLeadTo;
+            }
+            if (!isReadOnSomeWay)
+                continue;
+        }
+        bool liesInMemory = m_allocation.isSpilled(reference) || (stateOf(reference).saveInRareRegion != noSpill && wayHasSavedInRareRegion(m_block, reference));
+        if (stateOf(reference).registers || (liesInMemory && !isDeadOnEveryPathFrom(reference, m_block, m_headOfBlock) && everyWayHasDefined(reference)))
             waiting.pointer = keepPointerBesideAllocatedReference(*this, reference, waiting.pointer);
     }
+}
+
+void Allocator::enterFramedPart()
+{
+    keepPointersThatWait(noPosition);
 
     if (m_order.of(m_block).isRare())
         return;

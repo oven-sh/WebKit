@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineFolding.h"
 #include "AOTMachineTarget.h"
 #include <algorithm>
@@ -535,7 +536,7 @@ ALWAYS_INLINE Operation* Builder::createWithoutPosition(Opcode opcode, Type type
     return createNewWithoutPosition<true>(opcode, type, payload, hash);
 }
 
-void Builder::noteInheritedFind(const Operation* operation)
+ALWAYS_INLINE_INTO_OTHER_FILES void Builder::noteInheritedFind(const Operation* operation)
 {
     uint32_t index = operation->index();
     if (index >= m_epochOfLastInheritedFind.size()) {
@@ -1347,6 +1348,14 @@ void Builder::recordPurePatch(PatchOperation* patch)
     RELEASE_ASSERT(patch->opcode() == Patch && patch->pureFunction && !patch->effects.terminal);
     ASSERT(patch->owner() == m_block);
     m_numbering.addPurePatch(machineBuilderKeyOfPurePatch(*patch->pureFunction, patch->type(), patch->operands()), patch);
+}
+
+void Builder::recordInPlaceOfReadOfMemory(const PureFunction& function, Operation* phi, Operation* operand, const AbstractHeap& heap)
+{
+    sealPendingPatch();
+    RELEASE_ASSERT(function.dependsOnChildren && function.dependsOnMemory && phi->opcode() == Phi && phi->owner() == m_block);
+    Operation* operands[] { operand };
+    m_numbering.addInPlaceOfReadOfMemory(machineBuilderKeyOfPurePatch(function, phi->type(), operands), phi, heap.index());
 }
 
 void Builder::recordInPlaceOfPurePatch(const PureFunction& function, Operation* phi)

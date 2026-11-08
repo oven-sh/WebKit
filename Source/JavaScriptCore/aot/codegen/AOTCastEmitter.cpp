@@ -13,6 +13,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsNet.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTOpcodeSets.h"
 #include "AOTStubsClosures.h"
 #include "AOTStubsValues.h"
@@ -68,7 +69,7 @@ void CastEmitter::generateRequireObject(const ValueContext& value)
     defineNarrowed(value, operand);
 }
 
-ValueID CastEmitter::unboxingBehindTestForInt32(const ValueContext& test)
+ALWAYS_INLINE_INTO_OTHER_FILES ValueID CastEmitter::unboxingBehindTestForInt32(const ValueContext& test)
 {
     const Terminator& end = m_code.at(test.block()).terminator;
     if (test->testedType() != TypeTable::int32 || end.kind != TerminatorKind::Branch || end.conditionOperand() != test.id())
@@ -87,7 +88,7 @@ ValueID CastEmitter::unboxingBehindTestForInt32(const ValueContext& test)
     return { };
 }
 
-bool CastEmitter::tryBranchOnInt32AndHandItOn(const ValueContext& test, Operand operand)
+ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnInt32AndHandItOn(const ValueContext& test, Operand operand)
 {
     if (!operand.is<Boxed>())
         return false;
@@ -125,7 +126,7 @@ bool CastEmitter::tryBranchOnInt32AndHandItOn(const ValueContext& test, Operand 
     return true;
 }
 
-ValueID CastEmitter::unboxingToDoubleBehindTestForNumber(const ValueContext& test)
+ALWAYS_INLINE_INTO_OTHER_FILES ValueID CastEmitter::unboxingToDoubleBehindTestForNumber(const ValueContext& test)
 {
     const Terminator& end = m_code.at(test.block()).terminator;
     if (test->testedType() != TypeTable::number || end.kind != TerminatorKind::Branch || end.conditionOperand() != test.id())
@@ -154,7 +155,7 @@ ValueID CastEmitter::unboxingToDoubleBehindTestForNumber(const ValueContext& tes
     return { };
 }
 
-bool CastEmitter::tryBranchOnNumberAndHandItOn(const ValueContext& test, Operand operand)
+ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnNumberAndHandItOn(const ValueContext& test, Operand operand)
 {
     if (!operand.is<Boxed>() || !(typeOf(test->valueOperand()).primitives & Primitive::Integer))
         return false;
@@ -275,6 +276,17 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     if (numberRepresentations.contains(source.representation) || optionalRepresentations.contains(source.representation)) {
         emitter<ThrowEmitter>().checkOrStopAtFalseProof(value, hasType(source, typeTestPlanFor(value->typeWithoutProof(), source.representation, value->checkedType())), value->source());
         return;
+    }
+    if (source.representation == Representation::Cell32) {
+        NarrowReference word = source.as<NarrowReference>();
+        const Type& checked = types().at(value->checkedType());
+        Condition isWordOfCheckedType = checked.hasCells() ? isCellReferenceAmongAllWords(word) : boolean(false);
+        for (auto [primitive, marker] : { std::pair { Primitive::Undefined, undefinedCell32 }, std::pair { Primitive::Null, nullCell32 }, std::pair { Primitive::Absent, absentCell32 } }) {
+            if (checked.primitives & primitive)
+                isWordOfCheckedType = logicalOr(isWordOfCheckedType, equal(Word32(word.value()), word32(static_cast<int32_t>(marker))));
+        }
+        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, isWordOfCheckedType, std::nullopt, value->source());
+        source = emitter<ConversionEmitter>().decode(word, types().at(TypeTable::cellOrMarker), Representation::JSValue);
     }
     bool isAnswerOfTest = source.representation == Representation::Boolean;
     Boxed found(isAnswerOfTest ? m_out.constInt64(JSValue::encode(JSValue())) : source.value);

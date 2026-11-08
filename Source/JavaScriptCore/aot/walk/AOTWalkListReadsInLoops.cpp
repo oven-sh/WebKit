@@ -115,16 +115,23 @@ static bool holdsBoxedValuesOfEitherKind(const ListTestedInFrontOfLoop& tested)
     return tested.storage == ArrayStorage::Contiguous && tested.admitsInt32Storage;
 }
 
-bool leavesListsTestedInFrontOfLoopAsTheyAre(const Effects& effects)
+static bool writesWhatLiesUnderListsReadInLoops(const Walker& walker, const Effects& effects)
 {
-    return !effects.mayRunOtherCode() && !effects.writes.containsAny(heapsUnderListsReadInLoops);
+    if (walker.takesStorageAndLengthsToBeAsInFront())
+        return effects.writes.containsAny(heapsUnderListsReadInLoops - AbstractHeapSet { AbstractHeap::ArrayStorage });
+    return effects.writes.containsAny(heapsUnderListsReadInLoops);
+}
+
+bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker& walker, const Effects& effects)
+{
+    return !effects.mayRunOtherCode() && !writesWhatLiesUnderListsReadInLoops(walker, effects);
 }
 
 bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker& walker, const Effects& effects, std::span<const ListTestedInFrontOfLoop> lists, const Walker::ObjectsMadeHereThatLoopMentions& mentioned)
 {
     if (effects.mayRunOtherCode())
         return false;
-    if (!effects.writes.containsAny(heapsUnderListsReadInLoops))
+    if (!writesWhatLiesUnderListsReadInLoops(walker, effects))
         return true;
     return effects.writesObjectsMadeHereAlone && std::ranges::all_of(lists, [&](const ListTestedInFrontOfLoop& list) {
         std::optional<Walker::IsItselfMentioned> other = walker.isOtherThanRestOf(mentioned, list.name);
@@ -134,7 +141,7 @@ bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker& walker, const Effects
 
 bool leavesListsTestedInFrontOfLoopAsTheyAre(Walker& walker, const Effects& effects, std::span<const ListTestedInFrontOfLoop> lists, BlockID inputHead)
 {
-    if (leavesListsTestedInFrontOfLoopAsTheyAre(effects))
+    if (leavesListsTestedInFrontOfLoopAsTheyAre(walker, effects))
         return true;
     return !effects.mayRunOtherCode() && effects.writesObjectsMadeHereAlone && leavesListsTestedInFrontOfLoopAsTheyAre(walker, effects, lists, walker.objectsMadeHereThatLoopMentions(inputHead));
 }
@@ -1708,7 +1715,7 @@ static bool surelyEndsWhatIsShownOfListsInListReadsInLoops(Walker& walker, const
         if (known && countsOnTurnsThatBeginAgain && lookReadsCopyOfCalleeInListReadsInLoops(walker, operation, known))
             return false;
         if (FunctionID callee = known)
-            return !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnReturn()) || !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnThrow());
+            return !leavesListsTestedInFrontOfLoopAsTheyAre(walker, linked.function(callee).effectsOnReturn()) || !leavesListsTestedInFrontOfLoopAsTheyAre(walker, linked.function(callee).effectsOnThrow());
         TypeID callee = typeInLook(operation.as<Opcode::Call>().calleeOperand());
         return !callee || !singleBuiltinOf(types, types.at(callee));
     }

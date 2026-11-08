@@ -336,7 +336,7 @@ static bool registersMatterBehindPatch(const PatchOperation* patch)
 
 static bool isReadOnlyByFixedPatchOperands(const Allocator& allocator, const PatchOperation* patch, const Operation* value, Position late)
 {
-    if (patch->opcode() == Check || allocator.isLiveBehind(value, late))
+    if (patch->opcode() == Check || (registersMatterBehindPatch(patch) && allocator.isLiveBehind(value, late)))
         return false;
     std::span<Operation* const> operands = patch->operands();
     for (unsigned child = 0; child < operands.size(); ++child) {
@@ -888,6 +888,9 @@ static NEVER_INLINE bool childrenKeptAliveArePlacedAsConstrained(const PatchOper
 
 void Allocator::allocatePatch(PatchOperation* patch)
 {
+    if (m_isAheadOfFramedPart && isInRareRegion() && patch->effects.mayCollect) [[unlikely]]
+        keepPointersThatWait(endOfWhatWaysLeadToFromSafepointsOfRareRegion());
+
     auto allocatePlainPatch = [&]<bool patchEndsBlock, bool someOperandMayBeBrought>() ALWAYS_INLINE_LAMBDA -> bool {
         ASSERT(someOperandMayBeBrought || patch->m_registersToBringOperandsTo.isEmpty());
         const uint16_t bits = patch->m_bits;

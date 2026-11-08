@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineDescription.h"
 #include "AOTMachineEncoderPairsOfLoads.h"
 #include "AOTMachineFrameForms.h"
@@ -1186,7 +1187,7 @@ void Encoder::storeToSpill(const Operation* value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& place)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& place)
 {
     for (Operation* phi : block->phis()) {
         if (m_allocation.isSpilled(phi) && !m_liveness.isDropped(phi))
@@ -1203,7 +1204,7 @@ void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& pl
     storeToSpill(last);
 }
 
-void Encoder::setUpFrame(const Block* block)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::setUpFrame(const Block* block)
 {
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::FrameSetup));

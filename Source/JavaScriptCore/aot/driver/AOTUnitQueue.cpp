@@ -11,6 +11,7 @@
 #include "AOTArrivals.h"
 #include "AOTCallingConventions.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTSort.h"
 #include <algorithm>
@@ -219,7 +220,7 @@ bool UnitQueue::isSeedThatWaitsForNobody(Typed::CodeUnit unit) const
     return !m_isSeed.isEmpty() && (m_isSeed[index / bitsInWordOfUnitQueue] >> (index % bitsInWordOfUnitQueue) & 1) && !m_arrivals->takesWhatWasLeft(unit.function);
 }
 
-ALWAYS_INLINE void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) const
+ALWAYS_INLINE_INTO_OTHER_FILES void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) const
 {
     if (m_isTakingSeeds)
         return;

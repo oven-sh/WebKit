@@ -626,6 +626,67 @@ static void checkerRefusesNarrowReferenceWithoutPointer()
     }
 }
 
+enum class DamageToPointerKeptInRareBlock : uint8_t {
+    IsNotKept,
+    IsKeptBehindSafepoint,
+    IsKeptInBlockInFrontAlone,
+};
+
+static void checkerRefusesRareSafepointOutsideFramedPartWithoutPointerKeptAheadOfItInItsBlock()
+{
+    for (DamageToPointerKeptInRareBlock damage : { DamageToPointerKeptInRareBlock::IsNotKept, DamageToPointerKeptInRareBlock::IsKeptBehindSafepoint, DamageToPointerKeptInRareBlock::IsKeptInBlockInFrontAlone }) {
+        TestProcedure test;
+        Output& out = test.out();
+        RegisterMask callerSaved = registerFileFor(test.procedure().traits()).allocatableIn(Bank::GP) & ~registerFileFor(test.procedure().traits()).calleeSaved;
+        Operation* argument = test.argumentGPR(0);
+        Operation* reference = out.opaque(out.castToInt32(argument));
+        reference->markAsNarrowReference();
+        Block* slow = out.newBlock();
+        Block* slowOn = out.newBlock();
+        Block* guard = out.newBlock();
+        Block* returning = out.newBlock();
+        Block* calling = out.newBlock();
+        out.branch(out.testNonZero64(argument, 2), rareEdge(slow), normalEdge(guard));
+        out.appendTo(slow);
+        PatchOperation* first = appendPatchForCheckerTest(out, Void, { }, callerSaved);
+        out.branch(out.testNonZero64(out.zeroExtPtr(reference), 8), normalEdge(slowOn), normalEdge(guard));
+        out.appendTo(slowOn);
+        PatchOperation* second = appendPatchForCheckerTest(out, Void, { }, callerSaved);
+        out.jump(guard);
+        out.appendTo(guard);
+        out.branch(out.testNonZero64(out.zeroExtPtr(reference), 1), normalEdge(returning), normalEdge(calling));
+        out.appendTo(returning);
+        out.ret(out.constInt64(5));
+        out.appendTo(calling);
+        appendPatchForCheckerTest(out, Void, { }, callerSaved);
+        out.ret(out.zeroExtPtr(reference));
+        prepareForCheckerTest(test);
+
+        Procedure& procedure = test.procedure();
+        const Allocation& allocation = procedure.allocation();
+        AOT_CHECKER_TEST_CHECK(test, first->effects.mayCollect && procedure.frame().coverage() == FrameCoverage::FramedPart && procedure.order().of(slow).isRare() && procedure.order().of(slowOn).isRare());
+        AOT_CHECKER_TEST_CHECK(test, !allocation.isInFramedPart(slow) && !allocation.isInFramedPart(slowOn));
+        const Block* damaged = damage == DamageToPointerKeptInRareBlock::IsKeptInBlockInFrontAlone ? slowOn : slow;
+        const PatchOperation* safepoint = damaged == slow ? first : second;
+        std::span<Step> steps = procedure.allocationForTesting().stepsForTesting();
+        const BlockSteps& range = allocation.stepsOf(damaged);
+        uint32_t keeps = range.end;
+        uint32_t executes = range.end;
+        for (uint32_t index = range.begin; index < range.end; ++index) {
+            if (steps[index].kind == StepKind::KeepPointer && steps[index].operation == reference)
+                keeps = index;
+            if (steps[index].kind == StepKind::Execute && steps[index].operation == safepoint)
+                executes = index;
+        }
+        AOT_CHECKER_TEST_CHECK(test, keeps < executes && executes < range.end);
+        if (damage == DamageToPointerKeptInRareBlock::IsKeptBehindSafepoint)
+            std::swap(steps[keeps], steps[executes]);
+        else
+            steps[keeps].operation = nullptr;
+        expectCheckerRefusal(test, checkReferences, FailureKind::NarrowReferenceWithoutPointer, { reference });
+    }
+}
+
 static void checkerRefusesFrameAddressReadLateBySuspension()
 {
     ProcedureTraits traits;
@@ -745,6 +806,7 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/patch-without-the-frame-it-needs"_s, Machine::checkerRefusesPatchWithoutTheFrameItNeeds },
         { "machine-checker/owner-of-storage-that-a-landing-pad-reads"_s, Machine::checkerFindsOwnerOfStorageThatLandingPadReads },
         { "machine-checker/narrow-reference-without-its-pointer"_s, Machine::checkerRefusesNarrowReferenceWithoutPointer },
+        { "machine-checker/rare-safepoint-outside-the-framed-part-without-the-pointer-kept-ahead-of-it-in-its-block"_s, Machine::checkerRefusesRareSafepointOutsideFramedPartWithoutPointerKeptAheadOfItInItsBlock },
         { "machine-checker/shifted-narrow-reference-without-its-pointer"_s, Machine::checkerRefusesShiftedNarrowReferenceWithoutPointer },
         { "machine-checker/frame-address-read-late-by-a-suspension"_s, Machine::checkerRefusesFrameAddressReadLateBySuspension },
         { "machine-checker/operand-that-is-not-taken-back"_s, Machine::checkerRefusesOperandThatIsNotTakenBack },

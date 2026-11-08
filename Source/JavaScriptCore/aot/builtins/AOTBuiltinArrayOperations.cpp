@@ -554,6 +554,8 @@ static JSArray* tryInsertItemFast(JSGlobalObject* globalObject, VM& vm, JSArray*
     if (length >= butterfly->vectorLength())
         return nullptr;
     unsigned from = start.asInt32() < 0 ? static_cast<unsigned>(std::max<int64_t>(static_cast<int64_t>(length) + start.asInt32(), 0)) : std::min<unsigned>(start.asInt32(), length);
+    if (length - from > MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        return nullptr;
     WriteBarrier<Unknown>* elements = butterfly->contiguous().data();
     for (unsigned index = array->isPristine() ? length : from; index < length; ++index) {
         if (!elements[index]) [[unlikely]]

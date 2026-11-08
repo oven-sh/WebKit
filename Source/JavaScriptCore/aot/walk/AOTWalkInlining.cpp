@@ -1537,11 +1537,20 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
             noteGuessOpened();
         else {
             BlockID whereTestPasses = addBlock();
-            bool leavesCopyAround = mayLeaveCopyForCall();
+            auto holdsEveryOperationInEntryBlock = [&] {
+                const BodyIndex& body = facts().bodies().at(callee);
+                for (uint32_t number = 1; number < body.numberOfBlocks(); ++number) {
+                    if (body.block(BlockID(number)).numberOfValues())
+                        return false;
+                }
+                return true;
+            };
+            bool mayWalkFailingSideInLine = isInLoop() && !mayBeginTurnAgainInClosedCopy() && !blocksOfHead && !site.isTailCall && !site.resultIsReturnedAtOnce && holdsEveryOperationInEntryBlock();
+            bool leavesCopyAround = !mayWalkFailingSideInLine && !whereGuardFails && mayLeaveCopyForCall();
             if (leavesCopyAround)
                 noteGuessOpened();
             else if (!whereGuardFails) {
-                failingSideIsWalkedInLine = isInLoop() && !mayBeginTurnAgainInClosedCopy() && !blocksOfHead && !isConstructionOfCopy && !site.isTailCall && !site.resultIsReturnedAtOnce && facts().bodies().at(callee).numberOfBlocks() == 1;
+                failingSideIsWalkedInLine = mayWalkFailingSideInLine;
                 whereGuardFails = addBlock(failingSideIsWalkedInLine ? BlockFrequency::Normal : BlockFrequency::Rare);
                 noteGuessOpened();
                 argumentsAsTheyCame = entryArguments;

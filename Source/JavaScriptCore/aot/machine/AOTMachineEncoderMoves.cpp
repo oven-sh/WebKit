@@ -148,7 +148,7 @@ static void materializeBitsInFPR(Encoder& encoder, uint64_t bits, Width width, F
     jit.loadDouble(MacroAssembler::Address(address), destination);
 }
 
-static void materializeInGPR(Encoder& encoder, const Operation* operation, GPRReg destination)
+static ALWAYS_INLINE void materializeInGPR(Encoder& encoder, const Operation* operation, GPRReg destination)
 {
     switch (operation->opcode()) {
     case FramePointer:

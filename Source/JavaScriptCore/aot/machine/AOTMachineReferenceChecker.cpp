@@ -114,6 +114,8 @@ private:
         const Block* head;
     };
     ArenaVector<PointerKeptAtHead> m_pointersKeptAtHeads;
+    ArenaVector<uint32_t> m_pointersKeptInRareBlock;
+    const Block* m_rareBlockThatKeepsPointers { nullptr };
     ArenaVector<Read> m_reads;
     ArenaVector<LiveRange> m_liveRanges;
     ArenaVector<const Block*> m_blocksToEnter;
@@ -431,6 +433,14 @@ void CollectorRulesChecker::pass(const Step& step)
             m_watched[watched].pointerIsKeptInFramedPartAlone = isKeptInFramedPartAlone;
             if (isKeptInFramedPartAlone)
                 m_pointersKeptAtHeads.append(m_arena, PointerKeptAtHead { watched, m_block });
+        } else if (m_order.of(m_block).isRare() && m_allocation.hasFramedPart() && !m_allocation.isInFramedPart(m_block) && !m_allocation.isInFramedPart(m_watched[watched].block)) {
+            if (m_rareBlockThatKeepsPointers != m_block) {
+                m_rareBlockThatKeepsPointers = m_block;
+                m_pointersKeptInRareBlock.shrink(0);
+            }
+            m_pointersKeptInRareBlock.append(m_arena, watched);
+            m_watched[watched].pointerBeside = step.destination.spillIndex();
+            m_watched[watched].pointerIsKeptInFramedPartAlone = true;
         }
         return;
     }
@@ -524,7 +534,7 @@ bool CollectorRulesChecker::checkAcross(const Operation* value, const Safepoint&
     if (needsPointerBeside(keeper)) {
         uint32_t watched = m_watchedOf[keeper->index()];
         bool hasPointer = watched != none && spillHolds(m_watched[watched].pointerBeside, keeper, true, safepoint)
-            && (!m_watched[watched].pointerIsKeptInFramedPartAlone || (m_allocation.isInFramedPart(m_block) && m_allocation.everyHeadOfFramedPartAbove(m_block, [&](const Allocation::HeadOfFramedPart& head) {
+            && (!m_watched[watched].pointerIsKeptInFramedPartAlone || (m_rareBlockThatKeepsPointers == m_block && std::ranges::find(m_pointersKeptInRareBlock, watched) != m_pointersKeptInRareBlock.end()) || (m_allocation.isInFramedPart(m_block) && m_allocation.everyHeadOfFramedPartAbove(m_block, [&](const Allocation::HeadOfFramedPart& head) {
                 return std::ranges::any_of(m_pointersKeptAtHeads, [&](const PointerKeptAtHead& kept) {
                     return kept.watched == watched && kept.head == head.block;
                 });
@@ -544,6 +554,17 @@ bool CollectorRulesChecker::spillHolds(SpillIndex spill, const Operation* value,
     const SpillFacts& facts = m_spills[spill];
     if (facts.value != value || facts.isPointerBesideNarrowReference != holdsPointer || facts.begin > safepoint.late || safepoint.late > facts.end)
         return false;
+    if (facts.isStoredAtHeadOfFramedPart) {
+        bool everyHeadAboveSavesIt = m_allocation.isInFramedPart(m_block) && m_allocation.everyHeadOfFramedPartAbove(m_block, [&](const Allocation::HeadOfFramedPart& head) {
+            for (uint32_t index = head.beginOfSteps; index < head.endOfSteps; ++index) {
+                if (m_allocation.step(index).destination == Location::spill(spill))
+                    return true;
+            }
+            return false;
+        });
+        if (!everyHeadAboveSavesIt)
+            return false;
+    }
     if (!safepoint.patch->isSuspension())
         return true;
     std::span<PatchOperation* const> suspensions = m_allocation.suspensions();

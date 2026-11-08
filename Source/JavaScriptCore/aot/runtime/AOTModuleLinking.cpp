@@ -55,6 +55,13 @@ void Modules::storeValue(JSGlobalObject* realm, JSObject* table, unsigned number
     scope.assertNoExceptionExceptTermination();
 }
 
+void Modules::removeValue(JSGlobalObject* realm, JSObject* table, unsigned number)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(realm->vm());
+    JSObject::deletePropertyByIndex(table, realm, number);
+    scope.assertNoExceptionExceptTermination();
+}
+
 void Modules::forEachCapturedExport(ModuleID module, const ScopedLambda<void(const Identifier&, JSValue)>& functor)
 {
     VM& vm = *m_instance.vm;
@@ -422,7 +429,7 @@ static Box<MockedModules> createMockedModules(const ModuleTable& table, BitVecto
 
 void Modules::willMock(ModuleID mocked)
 {
-    forgetLoadsRefusedByCheckOfNames();
+    forgetLoadsRefusedByCheckOfNames(mocked);
     if (isMocked(mocked))
         return;
     goModuleByModuleFromNowOn();
@@ -1861,6 +1868,8 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                     RETURN_IF_EXCEPTION(scope, { });
                     if (beingMade != m_namespacesBeingMade.end())
                         m_outermostNamespaceReadWhileBeingMade = std::min<size_t>(m_outermostNamespaceReadWhileBeingMade, beingMade - m_namespacesBeingMade.begin());
+                    else if (auto lacking = std::ranges::find(m_namespacesThatLackNames, own, &NamespaceThatLacksNames::object); lacking != m_namespacesThatLackNames.end())
+                        m_outermostNamespaceReadWhileBeingMade = std::min(m_outermostNamespaceReadWhileBeingMade, lacking->outermostRead);
                     std::span<const Identifier> names = namesAskedOf(own, DontEnumPropertiesMode::Include);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, names, own);

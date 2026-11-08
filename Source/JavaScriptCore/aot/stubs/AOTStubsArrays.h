@@ -100,6 +100,7 @@ constexpr StubKey destructureIterable() { return StubKey(StubFamily::Destructure
 constexpr StubKey arrayPutAtIndex(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtIndex).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey arrayPutAtNumber(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtNumber).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey reserveArrayRoom() { return StubKey(StubFamily::ReserveArrayRoom); }
+constexpr StubKey setArrayLength(bool isInSloppyCode) { return StubKey(StubFamily::SetArrayLength).withForm(isInSloppyCode); }
 constexpr StubKey arrayGetAtIndex(ArrayRead read = ArrayRead::OfListAsMade) { return StubKey(StubFamily::ArrayGetAtIndex).withForm(static_cast<uint8_t>(read)); }
 constexpr StubKey arrayGetAtNumber() { return StubKey(StubFamily::ArrayGetAtNumber); }
 constexpr StubKey arrayIndexOfString(SearchedElements elements) { return StubKey(StubFamily::ArrayIndexOfString).withForm(static_cast<uint8_t>(elements)); }

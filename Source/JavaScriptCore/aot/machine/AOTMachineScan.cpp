@@ -71,6 +71,7 @@ enum TraitOfScannedOpcode : uint8_t {
     ScannedOpcodeIsReadTheLongWayWhereFused = 1 << 4,
     ScannedOpcodeIsJumpOrStore = 1 << 5,
     ScannedOpcodeIsMemoryAccess = 1 << 6,
+    ScannedOpcodeHandsHintOnToArms = 1 << 7,
 };
 
 struct TraitsOfScannedOpcodes {
@@ -96,6 +97,8 @@ static constexpr TraitsOfScannedOpcodes traitsOfScannedOpcodes = [] {
             bits |= ScannedOpcodeIsJumpOrStore;
         if (isMemoryAccess(opcode))
             bits |= ScannedOpcodeIsMemoryAccess;
+        if (opcode == Select && resultPrefersRegisterOfFirstChild())
+            bits |= ScannedOpcodeHandsHintOnToArms;
         traits.of[index] = static_cast<uint8_t>(bits);
     }
     return traits;
@@ -1064,13 +1067,17 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
     }
     ASSERT(operation->type().isNumeric() || !own.hint);
     unsigned hintOfFirstChild = (traits & ScannedOpcodeHandsHintOnToFirstChild) ? own.hint.index() : noHintOfScannedRead;
+    unsigned hintOfArms = (traits & ScannedOpcodeHandsHintOnToArms) ? own.hint.index() : noHintOfScannedRead;
     bool readsUpperHalf = opcode != Trunc;
     for (unsigned index = 0; index < numberOfChildren; ++index) {
         Operation* below = child[index];
         ValueFacts& factsBelow = facts[below->index()];
         uint16_t flagsBelow = factsBelow.flags;
         if (!(flagsBelow & scanBitOf(ValueFlag::IsFused))) {
-            readLeafOfScannedOperation<regionsHaveKinds>(scan, operation, index, below, factsBelow, early, index ? noHintOfScannedRead : hintOfFirstChild, readsUpperHalf);
+            unsigned hintOfChild = hintOfFirstChild;
+            if (index)
+                hintOfChild = factsBelow.lastUse == noPosition || factsBelow.lastUse == early ? hintOfArms : noHintOfScannedRead;
+            readLeafOfScannedOperation<regionsHaveKinds>(scan, operation, index, below, factsBelow, early, hintOfChild, readsUpperHalf);
             continue;
         }
         Opcode opcodeBelow = below->opcode();

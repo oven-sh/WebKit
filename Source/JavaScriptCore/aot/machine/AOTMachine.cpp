@@ -349,7 +349,8 @@ static uint32_t machineCoreHashOfConstantData(std::span<const uint8_t> bytes, ui
     for (; bytesLeft; --bytesLeft, ++cursor)
         hash = (hash ^ *cursor) * 16777619u;
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    return static_cast<uint32_t>(hash >> 32) ^ static_cast<uint32_t>(hash);
+    hash = (hash ^ hash >> 32) * 0x9E3779B97F4A7C15ull;
+    return static_cast<uint32_t>(hash >> 32);
 }
 
 // The encoder calls this wherever it materializes a double, so the cost of a call must not grow with the number of constants.

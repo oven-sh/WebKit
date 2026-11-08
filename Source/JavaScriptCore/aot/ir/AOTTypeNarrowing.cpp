@@ -11,6 +11,7 @@
 #include "AOTBody.h"
 #include "AOTCode.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTSort.h"
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
@@ -252,7 +253,7 @@ static TypeID describeLooselyFittingObjectsByShape(TypeArena& types, TypeID pass
     return described;
 }
 
-ALWAYS_INLINE TypeID withUndescribedObjectsInside(TypeArena& types, TypeID passing, TypeID holder)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID withUndescribedObjectsInside(TypeArena& types, TypeID passing, TypeID holder)
 {
     if (holdsOnlyPrimitives(passing) || holdsOnlyPrimitives(holder))
         return passing;

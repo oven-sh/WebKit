@@ -116,7 +116,6 @@ struct StoreInScan {
     bool storesObjectMadeForIt { false };
     bool isIntoObjectKnownByRead { false };
     bool storesSurelyIndex { false };
-    bool valueIsTakenOutOfField { false };
 };
 
 struct AccessorLaidInScan {
@@ -6744,7 +6743,6 @@ void ScanOfBody::layDescriptorsInSight()
         PropertyKeyID key;
         ListInScan list;
         uint32_t field { noSummaryNode };
-        uint32_t store { UINT32_MAX };
     };
     Vector<Held, 6> held;
     auto isOpened = [&](BuiltinName name) {
@@ -6783,13 +6781,7 @@ void ScanOfBody::layDescriptorsInSight()
                 if (store.site.index() >= definition.position)
                     continue;
                 isInSight = isInSight && !!store.key && (store.block == m_blocks[root] || store.block == m_blocks[definition.position]);
-                uint32_t field = noSummaryNode;
-                if (store.key == valueKey && made.opcode() == Opcode::NewObject) {
-                    LayoutID layout = made.as<Opcode::NewObject>().layout();
-                    if (std::optional<uint32_t> found = m_program.at(layout).findField(valueKey); found && m_program.at(layout).fields[*found].form.isEmpty())
-                        field = fieldNode(layout, *found);
-                }
-                held.append({ store.key, store.value, field, index });
+                held.append({ store.key, store.value });
             }
         }
         auto isNamedOnceAtMost = [&](PropertyKeyID key) {
@@ -6857,9 +6849,7 @@ void ScanOfBody::layDescriptorsInSight()
             if (member.key != get && member.key != set && member.key != valueKey)
                 continue;
             if (valueIsInSight) {
-                if (member.store != UINT32_MAX)
-                    m_stores[member.store].valueIsTakenOutOfField = true;
-                for (SinkInScan& sink : member.store == UINT32_MAX ? m_sinks.mutableSpan() : std::span<SinkInScan> { }) {
+                for (SinkInScan& sink : m_sinks) {
                     if (sink.kind != SinkKindInScan::Edge || sink.target != member.field || sink.value.first != member.list.first || sink.value.count != member.list.count)
                         continue;
                     sink.value.count = 0;
@@ -7303,10 +7293,7 @@ void ScanOfBody::applyStore(const StoreInScan& store)
     }
 
     if (everyFieldIsKnown) {
-        if (store.valueIsTakenOutOfField)
-            m_expanded.shrink(0);
-        else
-            expand(store.value);
+        expand(store.value);
         for (const OriginInScan& origin : m_expanded) {
             for (uint32_t field : m_fieldsStoredInto)
                 addEdge(origin.node, field, origin.passes);

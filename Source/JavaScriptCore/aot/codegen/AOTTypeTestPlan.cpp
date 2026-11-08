@@ -321,7 +321,7 @@ static bool cellTestComesEarlier(TypeReader reader, const CellTest& a, const Cel
     return subjectOfCellTest(a) < subjectOfCellTest(b);
 }
 
-static void settleVerdictOfTypeTest(TypeTestPlan& plan)
+static ALWAYS_INLINE void settleVerdictOfTypeTest(TypeTestPlan& plan)
 {
     bool everyObjectPasses = plan.objects == ObjectsVerdict::DoNotOccur || plan.objects == ObjectsVerdict::AllPass;
     if (!plan.passingPrimitives && plan.cellTests.isEmpty() && plan.objects != ObjectsVerdict::AllPass)

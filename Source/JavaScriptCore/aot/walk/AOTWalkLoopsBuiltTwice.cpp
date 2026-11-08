@@ -977,11 +977,11 @@ bool Walker::turnsOfTypedCopyLeaveListsAsTheyAre(Reference list, TurnOfTypedCopy
     if (!loop)
         return false;
     if (m_triesOfLoops.isEmpty() || !m_triesOfLoops.last().othersAreSparedAtHead)
-        return leavesListsTestedInFrontOfLoopAsTheyAre(m_openLoops[*loop].effects);
+        return leavesListsTestedInFrontOfLoopAsTheyAre(*this, m_openLoops[*loop].effects);
     const TryOfLoop& tried = m_triesOfLoops.last();
     std::optional<IsItselfMentioned> other = isOtherThanRestOf(*tried.othersAreSparedAtHead, list);
     if (!other || (*other == IsItselfMentioned::Yes && !tried.listsMadeHereThatAreSparedAtHead.contains(rootOfCellInSweptCode(m_code, list.id()).index())))
-        return leavesListsTestedInFrontOfLoopAsTheyAre(m_openLoops[*loop].effects);
+        return leavesListsTestedInFrontOfLoopAsTheyAre(*this, m_openLoops[*loop].effects);
     ListTestedInFrontOfLoop asked { list, ArrayStorage::Other, false };
     return leavesListsTestedInFrontOfLoopAsTheyAre(*this, m_openLoops[*loop].effects, { &asked, 1 }, *tried.othersAreSparedAtHead);
 }
@@ -3664,7 +3664,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             m_reportOfTypedBuildMadeLast = ReportOfTypedBuild { m_effectsOfLoopKeptLast, otherCopyOpensItsGuesses, !failingInFrontIsNoRarity && !likelyWayLeadsToClosedStart && (rareWayLeadsToClosedStart || !testsOfListsLeadToClosedStart) };
         if (listsRead.areTested && !m_hasFailed && m_walkOfLoopWasKept && !leavesListsTestedInFrontOfLoopAsTheyAre(*this, m_effectsOfLoopKeptLast, listsRead.lists.span(), inputHead))
             m_typedBuildEndedListsTestedInFront = true;
-        else if (listsRead.areTested && !m_hasFailed && m_walkOfLoopWasKept && !leavesListsTestedInFrontOfLoopAsTheyAre(m_effectsOfLoopKeptLast))
+        else if (listsRead.areTested && !m_hasFailed && m_walkOfLoopWasKept && !leavesListsTestedInFrontOfLoopAsTheyAre(*this, m_effectsOfLoopKeptLast))
             count(StatisticID::LoopsOverTestedListsThatFillWhatIsMadeHere);
         if (!m_hasFailed && m_walkOfLoopWasKept && m_numberOfElementsAskedInFrontOfTypedCopies != elementsAskedInFront && (m_effectsOfLoopKeptLast.writes.maskOf(AbstractHeap::Elements) & markOfElementsOfArraysNotStoredAsRawDoubles))
             m_typedBuildEndedListsTestedInFront = true;

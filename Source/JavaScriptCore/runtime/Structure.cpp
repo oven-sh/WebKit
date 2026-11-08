@@ -683,7 +683,7 @@ static bool isLockedPrototype(const Structure* structure)
 
 static bool mayShadowPrototypeChain(VM& vm, Structure* structure, PropertyName propertyName)
 {
-    if (propertyName.isSymbol() || propertyName == vm.propertyNames->toJSON || propertyName == vm.propertyNames->then)
+    if ((propertyName.isSymbol() && !Structure::isSymbolThatNothingProbes(propertyName.uid())) || propertyName == vm.propertyNames->toJSON || propertyName == vm.propertyNames->then)
         return true;
     JSObject* prototype = structure->storedPrototypeObject();
     while (prototype) {

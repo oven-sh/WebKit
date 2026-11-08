@@ -193,6 +193,8 @@ public:
         m_allocation.m_needsFrameAheadOfFramedPart |= m_isAheadOfFramedPart;
     }
     void enterFramedPart();
+    void keepPointersThatWait(Position endOfWhatWaysLeadTo);
+    Position endOfWhatWaysLeadToFromSafepointsOfRareRegion() const;
     Position position() const { return m_position; }
     bool isInRareRegion() const { return m_rareRegion != noRareRegion; }
 
@@ -369,11 +371,12 @@ public:
     Block* splitEdge(Block* from, unsigned successorIndex, const Snapshot& endOfFrom);
     Position findFirstReadFromHeadOf(const Block*, const Operation* value);
     bool firstCallBehindHeadReadsValueElsewhere(const Block* target, Reg, const Operation* value);
-    bool listsRegistersAtHeadOf(const Block* block) const { return m_proc.checksAllocation() || m_order.of(block).isRare() || m_allocation.isHeadOfFramedPart(block); }
+    bool listsRegistersAtHeadOf(const Block* block) const { return m_allocation.recordsWhatCheckersRead() || m_order.of(block).isRare() || m_allocation.isHeadOfFramedPart(block); }
     ArenaVector<std::span<const RegisterBinding>>& registersAtHeads() { return m_allocation.m_registersAtHead; }
     Snapshot takeSnapshot();
     void restore(const Snapshot&);
     void noteHintsOfHead(const Block* target);
+    void hintKeptRegistersToValuesThatBlockHandsOn(const Block*);
     bool hasBackEdgeOutsideRareRegions(const Loop&) const;
     const Block* immediateDominatorOf(const Block*);
     bool dominates(const Block* above, const Block* below);
@@ -530,6 +533,7 @@ public:
         Position first;
         Position last;
         Position until;
+        uint32_t rareRegion;
     };
     ArenaVector<SafepointsAheadOfFramedPart> m_safepointsAheadOfFramedPart;
     struct ReferenceWhosePointerWaits {

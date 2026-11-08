@@ -13,6 +13,7 @@
 #include "AOTEffectsOfOperations.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkStrings.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
@@ -166,7 +167,7 @@ static TypeID provenTypeOfInputForGuesses(const Walker& walker, ValueID input)
     return built ? walker.typeOf(built) : TypeID(TypeTable::anything);
 }
 
-ALWAYS_INLINE TypeID Walker::closuresThatCopiedCallHandsByItsText(uint32_t entryParameter) const
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID Walker::closuresThatCopiedCallHandsByItsText(uint32_t entryParameter) const
 {
     if (m_frames.size() < 2 || !m_frames.last().callCopied)
         return { };
@@ -4775,7 +4776,8 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     bool takesInCallReturnedAtOnce = size && isReturnedAtOnceForGuesses(index, ValueID(first + size - 1));
     bool failingWayBeginsTurnAgain = chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && walker.mayBeginTurnAgainInClosedCopy();
     bool asksInFrontBehindStores = !failingWayBeginsTurnAgain && chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && walker.standsInTurnOfTypedCopy();
-    Walker::TurnOfTypedCopy turnThatAsksInFront = asksInFrontBehindStores ? Walker::TurnOfTypedCopy::HasRunNoOtherCode : Walker::TurnOfTypedCopy::HasDoneNothing;
+    bool asksKindOfValueAndNothingElse = !chosen.layouts && !chosen.knownByStructure && !chosen.isPassedAlready && stretch.firstAccessesToSlots.isEmpty() && !stretch.looksWhetherValueIsAsMade && stretch.storesThatLookAtCell.isEmpty() && stretch.testsOfStoredValues.isEmpty() && !stretch.orderWordAskedFor && stretch.membersAskedByTheirBytes.isEmpty() && !stretch.someMemberRestsOnByteOfClass;
+    Walker::TurnOfTypedCopy turnThatAsksInFront = !asksInFrontBehindStores ? Walker::TurnOfTypedCopy::HasDoneNothing : asksKindOfValueAndNothingElse ? Walker::TurnOfTypedCopy::HasRunNoOtherCodeThoughCopiesBegan : Walker::TurnOfTypedCopy::HasRunNoOtherCode;
     Reference valueTested = chosen.isPassedAlready ? Reference() : value;
     bool takesInBranch = !failingWayBeginsTurnAgain && (armsOfGuessTakeBranch(walker, inputBlock, begin, end, valueTested, stretch.placesThatTypedRunKnowsBetter, branchAskedAbout) || (stretch.typedRunDecidesBranch && walker.armsMayTakeBranchOf(inputBlock, end, valueTested)));
     bool failingWayLeavesCopy = !failingWayBeginsTurnAgain && !(takesInBranch && walker.isInLoop()) && chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && !chosen.failingSideIsAsLikely && walker.mayLeaveCopyForCall();
@@ -4837,12 +4839,15 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         lastTest = passesWithYes ? test : Reference();
         ++numberOfTests;
         lastTestIsAskedInFront = (failingWayBeginsTurnAgain || asksInFrontBehindStores) && walker.branchInFrontOfTypedCopy(test, passesWithYes, turnThatAsksInFront, Walker::TurnsThatAsk::SomeBesideCopyWithoutGuess);
-        if (lastTestIsAskedInFront)
+        if (lastTestIsAskedInFront) {
+            if (asksInFrontBehindStores && !walker.standsInFrontOfTypedCopy(test, Walker::TurnOfTypedCopy::HasRunNoOtherCode))
+                walker.count(StatisticID::GuessesInCopiesAskedInFrontBehindStoresOfTurns);
             return;
+        }
         BlockID passed = walker.addBlock();
         if (!closedBlock) {
             closedBlock = chosen.failingSideIsAsLikely || closedArmIsWalkedHereForWhatMayBeExpected || (chosen.failingSideAsksForNothing && !walker.isInLoop()) ? walker.addBlock() : walker.addBlock(BlockFrequency::Rare);
-            bool isRecordOfWhichNothingIsKnown = !chosen.failingSideKeepsSites && walker.isInLoop() && testsForRecordWhereNothingIsKnown();
+            bool isRecordOfWhichNothingIsKnown = !chosen.failingSideKeepsSites && walker.code().at(closedBlock).frequency == BlockFrequency::Rare && walker.isInLoop() && testsForRecordWhereNothingIsKnown();
             if (isRecordOfWhichNothingIsKnown)
                 walker.count(StatisticID::FailingSidesOfGuessesAtRecordsThatKeepSites);
             if (chosen.failingSideKeepsSites || isRecordOfWhichNothingIsKnown || (walker.isInLoop() && readsNameThatNoTestedLayoutAnswers()))
@@ -6833,6 +6838,8 @@ bool askRowOnceWhereStretchStoresIntoItOfItsOpcodes(Walker& walker, const BodyVa
 constinit const OpcodeSet opcodesThatOpenGuessAtTakes = operationsThatOpenGuesses;
 static_assert(opcodesThatOpenGuessAtTakesInChains == operationsThatOpenGuesses);
 
+static constexpr OpcodeSet operatorsOnBitsForGuesses { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift, Opcode::BitNot };
+
 static GuessOpened openGuessAtOperationForGuesses(Walker&, const BodyValue&, bool expectsOnlyProvenHolderOfName);
 
 GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
@@ -7250,6 +7257,11 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
                 chosen->failingSideIsAsLikely = true;
                 walker.count(StatisticID::GuessesAtListsWhoseFailingSideAsksForViews);
             }
+        }
+        if (isInLoop && operatorsOnBitsForGuesses.contains(opcode) && !chosen->failingSideAsksFor && !chosen->isPassedAlready && !chosen->layouts && walker.types().at(chosen->tested).isInteger()
+            && walker.mayLeaveCopyForCall() && !walker.mayBeginTurnAgainInClosedCopy() && !walker.standsInTurnOfTypedCopy()) {
+            chosen->failingSideAsksFor = TypeTable::number;
+            walker.count(StatisticID::GuessesAtInt32sOfOperatorsOnBitsWhoseFailingSideAsksForNumbers);
         }
         if (isInLoop && opcode == Opcode::PropGet && operand == object && !chosen->failingSideAsksFor && !chosen->isPassedAlready && !chosen->layouts && hasKind(walker.types(), chosen->tested, OperandKind::Array)
             && !walker.mayBeginTurnAgainInClosedCopy() && !walker.mayLeaveCopyForCall() && listBesideTextInWrittenWordForGuesses(walker, operand))
@@ -8440,7 +8452,7 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
     Vector<GuessInFrontOfLoop, 4> guesses;
     Vector<ValueID, 16> mentioned;
     auto mention = [&](ValueID operand) {
-        if (operand && operand.index() < firstValueOfLoop && !mentioned.contains(operand))
+        if (operand && operand.index() < firstValueOfLoop)
             mentioned.append(operand);
     };
     std::optional<bool> someTurnAccessesElements;
@@ -8601,11 +8613,20 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
         }
     }
     }
-    for (GuessInFrontOfLoop& guess : guesses) {
-        for (ValueID name : mentioned) {
-            if (walker.referenceOf(name) == guess.value)
-                guess.names.append(name);
-        }
+    if (guesses.isEmpty())
+        return guesses;
+    Vector<std::pair<uint32_t, uint32_t>, 4> guessesByValue;
+    for (uint32_t number = 0; number < guesses.size(); ++number)
+        guessesByValue.append({ guesses[number].value.bits(), number });
+    std::ranges::sort(guessesByValue);
+    for (ValueID name : mentioned) {
+        uint32_t value = walker.referenceOf(name).bits();
+        auto found = std::ranges::lower_bound(guessesByValue, std::pair<uint32_t, uint32_t> { value, 0 });
+        if (found == guessesByValue.end() || found->first != value)
+            continue;
+        Vector<ValueID, 2>& names = guesses[found->second].names;
+        if (!names.contains(name))
+            names.append(name);
     }
     return guesses;
 }

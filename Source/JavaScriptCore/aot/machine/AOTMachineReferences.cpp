@@ -21,7 +21,7 @@ enum class CollectorRuleForm : uint8_t {
     Other,
 };
 
-static constexpr CollectorRuleForm collectorRuleFormOf(Opcode opcode)
+static ALWAYS_INLINE constexpr CollectorRuleForm collectorRuleFormOf(Opcode opcode)
 {
     switch (opcode) {
     case Load8Z:

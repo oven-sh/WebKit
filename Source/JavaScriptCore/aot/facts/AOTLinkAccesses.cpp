@@ -18,6 +18,7 @@
 #include "AOTEffectsOfOperations.h"
 #include "AOTFactRecords.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkStrings.h"
 #include "AOTLinkExceptions.h"
 #include "AOTNameClass.h"
@@ -3058,7 +3059,7 @@ PropertyKeyID LinkFlow::keyHeldAt(FunctionID function, uint32_t keyNode) const
     return symbol;
 }
 
-ALWAYS_INLINE PropertyKeyID LinkFlow::keySeenOf(FunctionID function, const SummaryAccess& access) const
+ALWAYS_INLINE_INTO_OTHER_FILES PropertyKeyID LinkFlow::keySeenOf(FunctionID function, const SummaryAccess& access) const
 {
     if (access.key || access.keyNode == noSummaryNode || access.isToContents())
         return { };

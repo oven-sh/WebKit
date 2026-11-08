@@ -1075,6 +1075,9 @@ enum class OrderTestWordAskedTwice : uint8_t {
     IsReadOffWhatJoinBrings,
     IsReadOffStorage,
     IsReadBelowToo,
+    StandsBehindKeeper,
+    StandsBehindShiftByVariable,
+    IsFilledOnceInClosedArm,
 };
 
 template<OrderTestWordAskedTwice kind>
@@ -1082,7 +1085,7 @@ static void testMachineThreadingOfTestOfWordInMemory()
 {
     using enum OrderTestWordAskedTwice;
     constexpr bool asksTheSame = kind != IsHeldAgainstAnotherConstant && kind != IsReadOffAnotherCell && kind != IsAnotherWordOfCell && kind != IsReadOffWhatJoinBrings && kind != IsReadOffStorage && kind != IsReadBelowToo;
-    constexpr bool usualWayPasses = kind == IsWrittenNowhere || kind == IsStoredInClosedArm;
+    constexpr bool usualWayPasses = kind == IsWrittenNowhere || kind == IsStoredInClosedArm || kind == StandsBehindKeeper || kind == IsFilledOnceInClosedArm || (kind == StandsBehindShiftByVariable && !isX86_64());
     constexpr bool closedWayPasses = asksTheSame && kind != IsStoredInClosedArm && kind != IsStoredBetweenFirstLoadAndFirstTest && kind != IsStoredBetweenBlocksOfFirstLoadAndFirstTest;
     OrderTest test;
     Output& out = test.out;
@@ -1105,7 +1108,11 @@ static void testMachineThreadingOfTestOfWordInMemory()
         AbstractHeap storageOfOwner(test.testProcedure.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::HoldsInnerPointer });
         storage = out.load64(out.address(storageOfOwner, test.first, OrderTestChild * sizeof(int64_t)));
     }
-    LValue key = out.load64(orderTestWordOf(test, storage ? storage : test.first, OrderTestKey));
+    AbstractHeap filledOnce(test.testProcedure.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::Immutable, HeapTrait::IsFilledOnce });
+    auto wordAsked = [&](LValue object, OrderTestWordOfObject word) {
+        return kind == IsFilledOnceInClosedArm ? out.address(filledOnce, object, word * sizeof(int64_t)) : orderTestWordOf(test, object, word);
+    };
+    LValue key = out.load64(wordAsked(storage ? storage : test.first, OrderTestKey));
     if (kind == IsStoredBetweenFirstLoadAndFirstTest)
         storeKey(8);
     if (kind == IsStoredBetweenBlocksOfFirstLoadAndFirstTest) {
@@ -1142,9 +1149,21 @@ static void testMachineThreadingOfTestOfWordInMemory()
         else
             patch->effects.writesLocalState = true;
     }
+    if (kind == StandsBehindKeeper) {
+        PatchOperation* keeper = out.patch(Void);
+        keeper->append(test.first, ValueRep::ColdAny);
+        keeper->effects = Effects::none();
+        keeper->effects.writesLocalState = true;
+        keeper->effects.reads = HeapSet::top();
+        keeper->setRunsWithoutFrame(true);
+        keeper->onlyKeepsChildrenAlive = true;
+        keeper->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+    }
     if (brought)
         out.upsilon(test.first, brought);
-    if (kind == IsWrittenByPatchThatIsDeclaredPure) {
+    if (kind == StandsBehindShiftByVariable)
+        out.branch(out.equal(out.shl(test.third, out.castToInt32(test.third)), out.constInt64(3 << 3)), normalEdge(hit), normalEdge(again));
+    else if (kind == IsWrittenByPatchThatIsDeclaredPure) {
         PatchOperation* patch = out.patch(Int64);
         patch->appendSomeRegister(test.first);
         patch->appendSomeRegister(out.constInt64(8));
@@ -1160,14 +1179,14 @@ static void testMachineThreadingOfTestOfWordInMemory()
     } else
         leaveFor(3, again);
     out.appendTo(slow);
-    if (kind == IsStoredInClosedArm)
+    if (kind == IsStoredInClosedArm || kind == IsFilledOnceInClosedArm)
         storeKey(7);
     if (brought)
         out.upsilon(test.second, brought);
     leaveFor(2, again);
     out.appendTo(again);
     LValue cell = kind == IsReadOffAnotherCell ? test.second : brought ? brought : storage ? storage : test.first;
-    LValue readAgain = out.load64(orderTestWordOf(test, cell, kind == IsAnotherWordOfCell ? OrderTestNumber : OrderTestKey));
+    LValue readAgain = out.load64(wordAsked(cell, kind == IsAnotherWordOfCell ? OrderTestNumber : OrderTestKey));
     out.branch(out.equal(readAgain, out.constInt64(kind == IsHeldAgainstAnotherConstant ? 8 : 7)), normalEdge(usualAgain), rareEdge(slowAgain));
     out.appendTo(usualAgain);
     out.ret(kind == IsReadBelowToo ? out.add(readAgain, out.constInt64(3)) : out.constInt64(10));
@@ -1201,6 +1220,46 @@ static void testMachineThreadingOfTestOfWordInMemory()
                 }
                 AOT_ORDER_TEST_CHECK(test, test.run(reinterpret_cast<int64_t>(first), reinterpret_cast<int64_t>(second), third) == expected);
             }
+        }
+    }
+}
+
+template<bool isStoredBetween>
+static void testMachineThreadingOfBitsOfByteInMemory()
+{
+    OrderTest test;
+    Output& out = test.out;
+    LBasicBlock usual = out.newBlock();
+    LBasicBlock slow = out.newBlock();
+    LBasicBlock again = out.newBlock();
+    LBasicBlock hit = out.newBlock();
+    LBasicBlock usualAgain = out.newBlock();
+    LBasicBlock slowAgain = out.newBlock();
+    auto bitIsSet = [&] {
+        return out.testNonZero32(out.load8ZeroExt32(orderTestWordOf(test, test.first, OrderTestKey)), out.constInt32(4));
+    };
+    out.branch(bitIsSet(), normalEdge(usual), rareEdge(slow));
+    out.appendTo(usual);
+    if (isStoredBetween)
+        out.store64(out.constInt64(3), orderTestWordOf(test, test.first, OrderTestKey));
+    out.branch(out.equal(test.third, out.constInt64(3)), normalEdge(hit), normalEdge(again));
+    out.appendTo(slow);
+    out.branch(out.equal(test.third, out.constInt64(2)), normalEdge(hit), normalEdge(again));
+    out.appendTo(again);
+    out.branch(bitIsSet(), normalEdge(usualAgain), rareEdge(slowAgain));
+    test.returnConstant(usualAgain, 10);
+    test.returnConstant(slowAgain, 20);
+    test.returnConstant(hit, 30);
+    const Order& order = test.compile();
+
+    AOT_ORDER_TEST_CHECK(test, orderTestTargetOf(usual, 1) == (isStoredBetween ? again : usualAgain) && orderTestTargetOf(slow, 1) == slowAgain);
+    AOT_ORDER_TEST_CHECK(test, order.of(again).isReached() == isStoredBetween);
+    for (int64_t key : { 4, 7, 3, 0, 0x104 }) {
+        for (int64_t third : { 0, 2, 3 }) {
+            int64_t words[] { key, 0, 0 };
+            bool passesFirst = key & 4;
+            int64_t expected = third == (passesFirst ? 3 : 2) ? 30 : passesFirst && !isStoredBetween ? 10 : 20;
+            AOT_ORDER_TEST_CHECK(test, test.run(reinterpret_cast<int64_t>(words), 0, third) == expected);
         }
     }
 }
@@ -1765,6 +1824,11 @@ std::span<const NativeTest> machineOrderTests()
         { "machine-order/the-word-of-a-cell-that-the-join-brings-is-asked"_s, Machine::testMachineThreadingOfTestOfWordInMemory<OrderTestWordAskedTwice::IsReadOffWhatJoinBrings> },
         { "machine-order/a-word-out-of-a-storage-is-asked-again"_s, Machine::testMachineThreadingOfTestOfWordInMemory<OrderTestWordAskedTwice::IsReadOffStorage> },
         { "machine-order/a-word-whose-second-load-is-read-below-is-asked-again"_s, Machine::testMachineThreadingOfTestOfWordInMemory<OrderTestWordAskedTwice::IsReadBelowToo> },
+        { "machine-order/a-word-is-not-asked-again-behind-a-patch-that-only-keeps-its-children-alive"_s, Machine::testMachineThreadingOfTestOfWordInMemory<OrderTestWordAskedTwice::StandsBehindKeeper> },
+        { "machine-order/a-word-is-asked-again-behind-a-shift-by-a-variable-on-x86-64-alone"_s, Machine::testMachineThreadingOfTestOfWordInMemory<OrderTestWordAskedTwice::StandsBehindShiftByVariable> },
+        { "machine-order/a-word-filled-once-is-not-asked-again-behind-the-arm-that-fills-it"_s, Machine::testMachineThreadingOfTestOfWordInMemory<OrderTestWordAskedTwice::IsFilledOnceInClosedArm> },
+        { "machine-order/bits-of-a-byte-that-nothing-has-written-since-are-not-asked-again"_s, Machine::testMachineThreadingOfBitsOfByteInMemory<false> },
+        { "machine-order/bits-of-a-byte-are-asked-again-behind-a-store-over-its-word"_s, Machine::testMachineThreadingOfBitsOfByteInMemory<true> },
         { "machine-order/what-is-known-of-a-word-ends-at-the-head-of-a-loop"_s, Machine::testMachineThreadingForgetsWordAtHeadOfLoop },
         { "machine-order/work-grows-as-the-decided-tests-in-a-row-do"_s, Machine::testMachineThreadingGrowsAsTestsInRowDo<true> },
         { "machine-order/work-grows-as-the-undecided-tests-in-a-row-do"_s, Machine::testMachineThreadingGrowsAsTestsInRowDo<false> },

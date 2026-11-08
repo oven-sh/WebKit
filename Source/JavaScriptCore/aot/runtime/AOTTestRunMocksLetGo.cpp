@@ -183,15 +183,24 @@ void Modules::listImportersAndRequirers()
         return;
     m_importersByStatement.grow(m_table.size());
     m_requirers.grow(m_table.size());
+    m_takersOfNames.grow(m_table.size());
     for (uint32_t importer = 0; importer < m_table.size(); ++importer) {
         for (const ModuleRequestData& request : m_table.requests(ModuleID(importer))) {
             if (!request.isHoisted && !request.isDeferred)
                 (request.isRequire ? m_requirers : m_importersByStatement)[moduleLoadedBy(request).index()].append(importer);
         }
+        for (ModuleRequestData star : m_table.dynamicStars(ModuleID(importer)))
+            m_takersOfNames[moduleLoadedBy(star).index()].append(importer);
+        if (!data(ModuleID(importer)).hasExportTable())
+            continue;
+        for (const ModuleExportData& entry : m_table.exports(ModuleID(importer))) {
+            if (entry.kind() == ModuleExportKind::Indirect)
+                m_takersOfNames[m_table.indirectExport(entry).targetModule().index()].append(importer);
+        }
     }
 }
 
-BitVector Modules::modulesThatReach(std::span<const ModuleID> files)
+BitVector Modules::modulesThatTakeNamesOf(std::span<const ModuleID> files)
 {
     listImportersAndRequirers();
     BitVector reaching(m_table.size());
@@ -206,10 +215,8 @@ BitVector Modules::modulesThatReach(std::span<const ModuleID> files)
         enter(file);
     while (!work.isEmpty()) {
         uint32_t reached = work.takeLast();
-        for (uint32_t importer : m_importersByStatement[reached])
-            enter(ModuleID(importer));
-        for (uint32_t requirer : m_requirers[reached])
-            enter(ModuleID(requirer));
+        for (uint32_t taker : m_takersOfNames[reached])
+            enter(ModuleID(taker));
     }
     return reaching;
 }

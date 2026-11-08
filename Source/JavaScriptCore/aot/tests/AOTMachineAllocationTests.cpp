@@ -935,6 +935,89 @@ static void allocatorKeepsValuesAcrossCallInCalleeSavedRegisters()
     }
 }
 
+static void allocatorDefinesValueInKeptRegisterWherePhiItBecomesLivesAcrossCall()
+{
+    uint64_t numberOfCalls = 0;
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    LValue argument = test.argumentGPR(0);
+    LBasicBlock odd = out.newBlock();
+    LBasicBlock even = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    out.branch(out.testNonZero64(argument, 1), normalEdge(odd), normalEdge(even));
+
+    out.appendTo(odd);
+    LValue forOdd = out.add(argument, out.constInt64(3));
+    ValueFromBlock fromOdd = out.anchor(forOdd);
+    out.jump(join);
+
+    out.appendTo(even);
+    LValue forEven = out.add(argument, out.constInt64(5));
+    ValueFromBlock fromEven = out.anchor(forEven);
+    out.jump(join);
+
+    out.appendTo(join);
+    LValue parameter = out.phi(Int64, fromOdd, fromEven);
+    PatchOperation* call = out.patch(Void);
+    call->clobberLate((file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP)) & ~file.calleeSaved);
+    call->setGenerator([place = &numberOfCalls](CCallHelpers& jit, const PatchParameters&) {
+        jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), GPRInfo::argumentGPR1);
+        jit.load64(CCallHelpers::Address(GPRInfo::argumentGPR1), GPRInfo::argumentGPR2);
+        jit.add64(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR2);
+        jit.store64(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR1));
+    });
+    out.ret(out.add(out.add(parameter, out.constInt64(1)), parameter));
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    Reg home = allocation.registerAtDefinitionOf(parameter);
+    AOT_ALLOCATION_TEST_CHECK(test, parameter->opcode() == Phi && test.procedure().liveness().of(parameter).has(ValueFlag::LivesAcrossCall));
+    AOT_ALLOCATION_TEST_CHECK(test, home && (maskOf(home) & file.calleeSaved) && !allocation.isSpilled(parameter));
+    AOT_ALLOCATION_TEST_CHECK(test, !test.procedure().liveness().of(forOdd).has(ValueFlag::LivesAcrossCall) && !test.procedure().liveness().of(forEven).has(ValueFlag::LivesAcrossCall));
+    AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(forOdd) == home && allocation.registerAtDefinitionOf(forEven) == home);
+    AOT_ALLOCATION_TEST_CHECK(test, !text.count("move"_s, forOdd) && !text.count("move"_s, forEven) && !text.count("move"_s, parameter));
+    AOT_ALLOCATION_TEST_CHECK(test, allocationTestCountOf(allocation.usedCalleeSaves()) == 1);
+    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 41 }) == 89 && test.call<uint64_t>(uint64_t { 40 }) == 91 && numberOfCalls == 2);
+}
+
+static void allocatorDefinesArmThatDiesInSelectWhereResultIsWanted()
+{
+    uint64_t noted = 0;
+    TestProcedure test;
+    Output& out = test.out();
+    LValue selector = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LValue whenOdd = out.load64(allocationTestWordAt(test, buffer, 0));
+    LValue otherwise = out.load64(allocationTestWordAt(test, buffer, 1));
+    LValue chosen = out.select(out.testNonZero64(selector, 1), whenOdd, otherwise);
+    PatchOperation* reader = out.patch(Void);
+    reader->append(chosen, ValueRep::reg(GPRInfo::argumentGPR5));
+    reader->setGenerator([place = &noted](CCallHelpers& jit, const PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        AOT_TEST_CHECK(params.size() == 1 && params[0] == ValueRep::reg(GPRInfo::argumentGPR5));
+        GPRReg address = jit.scratchRegister();
+        jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+        jit.store64(GPRInfo::argumentGPR5, CCallHelpers::Address(address));
+    });
+    out.ret(selector);
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    const Reg wanted = Reg(GPRInfo::argumentGPR5);
+    AOT_ALLOCATION_TEST_CHECK(test, chosen->opcode() == Select && allocation.registerAtDefinitionOf(chosen) == wanted && !text.count("move"_s, chosen));
+    if (isX86_64())
+        AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(whenOdd) == wanted || allocation.registerAtDefinitionOf(otherwise) == wanted);
+
+    for (uint64_t isOdd : { 0u, 1u }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(isOdd, words.data()) == isOdd);
+        AOT_ALLOCATION_TEST_CHECK(test, noted == words[isOdd ? 0 : 1]);
+    }
+}
+
 static void allocatorLeavesPhiWhereCallInItsBlockTakesIt()
 {
     uint64_t noted = 0;
@@ -3843,6 +3926,8 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/each-loop-around-a-block-is-asked-in-turn"_s, Machine::allocatorAsksEachLoopAroundBlockInTurn },
         { "machine-allocation/sum-comes-round-in-its-register-past-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/value-for-a-phi-is-made-in-the-register-of-the-phi"_s, Machine::allocatorDefinesValueInRegisterOfPhiWhoseHeadIsFixed },
+        { "machine-allocation/what-becomes-a-phi-that-lives-across-a-call-is-made-in-a-register-that-callees-keep"_s, Machine::allocatorDefinesValueInKeptRegisterWherePhiItBecomesLivesAcrossCall },
+        { "machine-allocation/an-arm-that-dies-in-a-select-is-made-where-the-result-is-wanted"_s, Machine::allocatorDefinesArmThatDiesInSelectWhereResultIsWanted },
         { "machine-allocation/a-phi-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesPhiWhereCallInItsBlockTakesIt },
         { "machine-allocation/an-argument-that-lives-across-a-call-takes-its-home-where-it-is-defined"_s, Machine::allocatorGivesArgumentThatLivesAcrossCallItsHomeWhereItIsDefined },
         { "machine-allocation/an-argument-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesArgumentWhereCallInItsBlockTakesIt },

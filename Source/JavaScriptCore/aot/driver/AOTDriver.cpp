@@ -536,13 +536,19 @@ std::unique_ptr<CompileOutput> compileBytesWithBuildDriver(std::span<const uint8
     MonotonicTime entered = MonotonicTime::now();
     auto output = makeUnique<CompileOutput>();
     runOnBuildThread([&] {
-        BuildContext context(options, hostPool);
-        context.setFunctionTexts(owner.functionTexts);
-        BuildDriver driver(context, *output, owner);
-        driver.setMechanisms(withoutMechanismsThatOptionsWithhold(mechanisms, options.testing));
-        logTimeToEnterEngine(context, entered);
-        driver.read(program);
-        driver.run();
+        RefPtr<BackgroundJobs> jobs;
+        {
+            BuildContext context(options, hostPool);
+            jobs = &context.backgroundJobs();
+            context.setFunctionTexts(owner.functionTexts);
+            BuildDriver driver(context, *output, owner);
+            driver.setMechanisms(withoutMechanismsThatOptionsWithhold(mechanisms, options.testing));
+            logTimeToEnterEngine(context, entered);
+            driver.read(program);
+            driver.run();
+        }
+        if constexpr (ASAN_ENABLED)
+            jobs->waitUntilAllHaveRun();
     });
     return output;
 }

@@ -289,6 +289,8 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatChangeArrays, ArraySpeciesCreate) \
     v(OperationsThatChangeArrays, ArraySplice) \
     v(OperationsThatChangeArrays, ArrayUnshift) \
+    v(OperationsThatChangeArrays, SetArrayLength) \
+    v(OperationsThatChangeArrays, SetArrayLengthInSloppyCode) \
     v(OperationsThatSearchArrays, ArrayIndexOfDouble) \
     v(OperationsThatSearchArrays, ArrayIndexOfInt32) \
     v(OperationsThatSearchArrays, ArrayIndexOfString) \

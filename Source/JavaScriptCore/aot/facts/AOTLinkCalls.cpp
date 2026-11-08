@@ -1082,6 +1082,7 @@ private:
     void inspectAt(FlowNodeID, uint32_t inspection);
     void inspectType(const LinkType&, uint32_t inspection);
     void tellWhatFormatterIsHanded(const LinkType&, const Questions&);
+    void tellWhichMembersAreCalledOffUnseenObjects(const LinkType&, const Questions&);
     void tellFormatterLosesSight(const Questions&);
     bool mayBePrintedWholeWhereItIsRefused(const LinkType&, bool isLiteralMadeForCall);
     bool isLiteralMadeForCall(const RowCall&, BuiltinOperand) const;
@@ -4001,6 +4002,11 @@ void CallInLinkCalls::applyParameter(RowCall& call, const BuiltinParameter& para
             tellWhatIterationCalls(type);
         });
     }
+    if (escapes && !isPrinted && saidByTable.questions.callMembers) {
+        forEachType(values, [&](const LinkType& type, const Source*) {
+            tellWhichMembersAreCalledOffUnseenObjects(type, saidByTable.questions);
+        });
+    }
     if (escapes)
         tellFormatterIsHandedWhateverObjectsThereAre();
     if (escapesWhole)
@@ -5124,6 +5130,14 @@ void CallInLinkCalls::tellWhatIterationCalls(const LinkType& iterable)
         if (PropertyKeyID key = name ? m_program.keyOf(name) : PropertyKeyID())
             m_flow.note(LinkFlow::Note::NameCalled, key.bits());
     }
+}
+
+void CallInLinkCalls::tellWhichMembersAreCalledOffUnseenObjects(const LinkType& subject, const Questions& questions)
+{
+    if (!questions.callMembers || questions.areAskedByFormatter || (!subject.holdsUnseen && !subject.holdsLostBuiltins))
+        return;
+    for (PropertyKeyID key : questions.keys)
+        m_flow.note(LinkFlow::Note::NameCalled, key.bits());
 }
 
 ALWAYS_INLINE void CallInLinkCalls::addResult(RowCall& call)
@@ -6291,6 +6305,7 @@ bool CallInLinkCalls::ask(const Values& subjects, const Questions& questions)
         if (isDataDescriptorInSight(source))
             return;
         tellWhatFormatterIsHanded(type, questions);
+        tellWhichMembersAreCalledOffUnseenObjects(type, questions);
         if (questions.describeObjects && mayBePrintedWholeWhereItIsRefused(type, questions.describesLiteralMadeForCall))
             m_flow.note(LinkFlow::Note::ObjectHandedToFormatter, LinkFlow::walkedByFormatter);
         if (questions.iterate)
@@ -6502,6 +6517,7 @@ void CallInLinkCalls::inspectType(const LinkType& type, uint32_t inspection)
         m_flow.noteLossOf(m_builtins.canonicalID(type.builtin));
     }
     tellWhatFormatterIsHanded(type, m_state.inspections[inspection].questions);
+    tellWhichMembersAreCalledOffUnseenObjects(type, m_state.inspections[inspection].questions);
     if (m_state.inspections[inspection].questions.iterate)
         tellWhatIterationCalls(type);
 

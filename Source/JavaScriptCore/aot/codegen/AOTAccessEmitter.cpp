@@ -865,11 +865,16 @@ void AccessEmitter::returnWhatMethodOfBuiltinClassGives(const ValueContext& read
             return;
     }
     Vector<LValue, 8> arguments;
+    auto isMadeAlready = [&](ValueID id) {
+        return !operationAt(id).block() || representationOf(id) == Representation::Void || generator().wordOf(id);
+    };
     for (ValueID argument : call.argumentsOperands()) {
         ValueID made = inFrontOfBox(argument);
-        if ((std::ranges::contains(behind, made) && made != pattern) || made == read.id())
+        if (made != pattern && (std::ranges::contains(behind, made) || made == read.id() || !isMadeAlready(made)))
             return;
     }
+    if (!isMadeAlready(inFrontOfBox(read->objectOperand())))
+        return;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     auto boxed = [&](ValueID id) {
         ValueID made = inFrontOfBox(id);

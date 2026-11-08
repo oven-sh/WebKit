@@ -215,6 +215,24 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayRoom, void, (Instance*
         array->butterfly()->setPublicLength(publicLength);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTSetArrayLength, void, (Instance* instance, JSCell* cell, uint32_t length))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetArrayLength);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTSetArrayLength);
+    PutPropertySlot slot(array, true);
+    array->methodTable()->put(array, globalObject, vm.propertyNames->length, jsNumber(length), slot);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetArrayLengthInSloppyCode, void, (Instance* instance, JSCell* cell, uint32_t length))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetArrayLengthInSloppyCode);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTSetArrayLengthInSloppyCode);
+    PutPropertySlot slot(array, false);
+    array->methodTable()->put(array, globalObject, vm.propertyNames->length, jsNumber(length), slot);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendElements);

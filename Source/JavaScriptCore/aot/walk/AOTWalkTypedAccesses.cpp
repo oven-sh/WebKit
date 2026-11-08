@@ -98,8 +98,22 @@ struct KeptByTypedAccesses final : Walker::KeptForBuild {
     HashMap<std::pair<uint64_t, uint64_t>, FieldOfTypedAccess> fieldsOfSets;
     HashMap<std::pair<uint64_t, uint64_t>, AnswersAbove> answersAboveSets;
     HashMap<uint64_t, bool> whetherNothingAnswersAbove;
+    struct RowsAboveReceivers {
+        enum class Kind : uint8_t { NotLookedAtYet, EveryMemberListsWhatStandsAbove, SomeMemberSaysNoUnderEveryKey, AreAskedOneByOne };
+        Kind kind { Kind::NotLookedAtYet };
+        size_t membersAskedOneByOne { 0 };
+        Vector<LinkTables::StretchOfRows> stretchesOfInstancesInRows;
+    };
+    HashMap<uint32_t, RowsAboveReceivers, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> rowsAboveReceivers;
+    HashMap<uint64_t, bool> whetherEveryMemberMayBeAskedWhetherReadFindsNothing;
     HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> whetherEveryReceiverIsRecord;
     HashMap<uint64_t, bool> whetherNoMemberHasNameOrFindsItLaidAbove;
+    struct NamesLaidOnPrototypes {
+        BitVector keys;
+        bool someLieUnderKeysNobodyKnows { false };
+    };
+    std::optional<NamesLaidOnPrototypes> namesLaidOnPrototypes;
+    HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> whetherSomeRowOfBasesIsNotNamed;
     BitVector classesClimbedForQuestion;
     Vector<uint32_t> classesToForgetBehindQuestion;
     HashMap<uint64_t, MemberFound> membersFoundAbove;
@@ -638,9 +652,56 @@ static bool nothingAnswersAboveReceiversForTypedAccess(const Walker& walker, con
         asked = *asked >> 32 << 32;
     auto& kept = keptByTypedAccesses(const_cast<Walker&>(walker)).whetherNothingAnswersAbove;
     auto known = kept.find(*asked);
-    if (known == kept.end())
-        known = kept.add(*asked, askEachMember()).iterator;
-    return known->value;
+    if (known != kept.end())
+        return known->value;
+
+    using RowsAboveReceivers = KeptByTypedAccesses::RowsAboveReceivers;
+    RowsAboveReceivers& rows = keptByTypedAccesses(const_cast<Walker&>(walker)).rowsAboveReceivers.add(static_cast<uint32_t>(*asked >> 32), RowsAboveReceivers()).iterator->value;
+    if (rows.kind == RowsAboveReceivers::Kind::NotLookedAtYet && rows.membersAskedOneByOne >= receivers.members.size()) {
+        rows.kind = RowsAboveReceivers::Kind::EveryMemberListsWhatStandsAbove;
+        Vector<std::pair<uint32_t, LayoutID>> places;
+        for (LayoutID member : receivers.members) {
+            const Layout& layout = program.at(member);
+            if (layout.kind == LayoutKind::Record && !layout.has(LayoutFlags::IsOfCreatedObject) && !layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction))
+                continue;
+            if (layout.kind == LayoutKind::Record || layout.has(LayoutFlags::IsOfCreatedObject) || member.index() >= link.layouts.size() || !link.layouts[member.index()].listsEveryMemberAbove || link.layouts[member.index()].namesAreDefinedPastLists[static_cast<size_t>(ClassSide::Prototype)]) {
+                rows.kind = RowsAboveReceivers::Kind::SomeMemberSaysNoUnderEveryKey;
+                break;
+            }
+            if (link.layouts[member.index()].hasConstructorFunctionInRow)
+                rows.kind = RowsAboveReceivers::Kind::AreAskedOneByOne;
+            places.append({ link.placesOfLayoutsInRows[member.index()], member });
+        }
+        if (rows.kind == RowsAboveReceivers::Kind::EveryMemberListsWhatStandsAbove) {
+            std::ranges::sort(places);
+            for (auto [place, member] : places) {
+                if (!rows.stretchesOfInstancesInRows.isEmpty() && rows.stretchesOfInstancesInRows.last().end == place)
+                    ++rows.stretchesOfInstancesInRows.last().end;
+                else
+                    rows.stretchesOfInstancesInRows.append({ place, place + 1, member });
+            }
+        }
+    }
+    bool nothingAnswers = false;
+    switch (rows.kind) {
+    case RowsAboveReceivers::Kind::SomeMemberSaysNoUnderEveryKey:
+        break;
+    case RowsAboveReceivers::Kind::NotLookedAtYet:
+        nothingAnswers = std::ranges::all_of(receivers.members, [&](LayoutID member) {
+            ++rows.membersAskedOneByOne;
+            return nothingAnswersBelowObjectPrototypeForTypedAccess(program, link, member, key);
+        });
+        break;
+    case RowsAboveReceivers::Kind::AreAskedOneByOne:
+        nothingAnswers = askEachMember();
+        break;
+    case RowsAboveReceivers::Kind::EveryMemberListsWhatStandsAbove:
+        nothingAnswers = rows.stretchesOfInstancesInRows.isEmpty() || (!classHolderIsMadeWithName(program, ClassSide::Prototype, key) && !link.someClassAtOrAboveDeclares(program, rows.stretchesOfInstancesInRows.span(), ClassSide::Prototype, key));
+        if (walker.checksWalk())
+            RELEASE_ASSERT(nothingAnswers == askEachMember());
+        break;
+    }
+    return keptByTypedAccesses(const_cast<Walker&>(walker)).whetherNothingAnswersAbove.add(*asked, nothingAnswers).iterator->value;
 }
 
 static TypeID typeLaidAboveObjectsOfForTypedAccess(const Program& program, const LinkTables& link, TypeArena& types, LayoutID id, PropertyKeyID key)
@@ -1699,20 +1760,59 @@ static bool findsNothingBehindLooksInTypedRead(const Walker& walker, const Recei
     if (possibleChangesForbid(receivers.possibleChanges, TypedAccess::FindsNoProperty, knownOfCell))
         return false;
     const SlotPlan& slots = walker.plan().slots();
-    auto askEachMember = [&] {
+    bool guardOfNameAnswersForUnknownKeys = receivers.possibleChanges.contains(LayoutChange::ChangesPrototype);
+    std::optional<uint64_t> asked = questionKeptAboutReceiversForTypedAccess(walker, receivers, key);
+    auto someMemberHasField = [&] {
+        Vector<uint32_t, 16> places;
+        if (!listMembersThatMayHaveKeyForTypedAccess(const_cast<Walker&>(walker), receivers, key, places)) {
+            return std::ranges::any_of(receivers.members, [&](LayoutID member) {
+                return !!slots.findField(program, member, key);
+            });
+        }
+        return std::ranges::any_of(places, [&](uint32_t place) {
+            return !!slots.findField(program, receivers.members[place], key);
+        });
+    };
+    auto someMemberFindsNameLaidAbove = [&] {
         KeptByTypedAccesses* climbed = receivers.members.size() > 1 ? &keptByTypedAccesses(const_cast<Walker&>(walker)) : nullptr;
-        bool noneAnswers = std::ranges::none_of(receivers.members, [&](LayoutID member) {
-            return slots.findField(program, member, key) || statementsLayNameAboveObjectsOfForTypedAccess(walker, member, key, receivers.possibleChanges.contains(LayoutChange::ChangesPrototype), climbed);
+        bool someFinds = std::ranges::any_of(receivers.members, [&](LayoutID member) {
+            return statementsLayNameAboveObjectsOfForTypedAccess(walker, member, key, guardOfNameAnswersForUnknownKeys, climbed);
         });
         if (climbed) {
             for (uint32_t index : climbed->classesToForgetBehindQuestion)
                 climbed->classesClimbedForQuestion.clear(index);
             climbed->classesToForgetBehindQuestion.shrink(0);
         }
-        return noneAnswers;
+        return someFinds;
+    };
+    auto askEachMember = [&] {
+        if (someMemberHasField())
+            return false;
+        if (!asked)
+            return !someMemberFindsNameLaidAbove();
+        KeptByTypedAccesses& kept = keptByTypedAccesses(const_cast<Walker&>(walker));
+        if (!kept.namesLaidOnPrototypes) {
+            KeptByTypedAccesses::NamesLaidOnPrototypes laid;
+            for (const LinkedNameOnPrototype& name : walker.facts().held().namesOnPrototypes) {
+                if (name.key)
+                    laid.keys.set(positionOf(name.key));
+                else
+                    laid.someLieUnderKeysNobodyKnows = true;
+            }
+            kept.namesLaidOnPrototypes = WTF::move(laid);
+        }
+        if (kept.namesLaidOnPrototypes->keys.get(positionOf(key)) || (kept.namesLaidOnPrototypes->someLieUnderKeysNobodyKnows && !guardOfNameAnswersForUnknownKeys))
+            return !someMemberFindsNameLaidAbove();
+        uint32_t wordOfReceivers = static_cast<uint32_t>(*asked >> 32);
+        auto known = kept.whetherSomeRowOfBasesIsNotNamed.find(wordOfReceivers);
+        if (known == kept.whetherSomeRowOfBasesIsNotNamed.end()) {
+            bool someIsNotNamed = someMemberFindsNameLaidAbove();
+            known = kept.whetherSomeRowOfBasesIsNotNamed.add(wordOfReceivers, someIsNotNamed).iterator;
+        }
+        return !known->value;
     };
     bool noMemberHasNameOrFindsItLaidAbove;
-    if (std::optional<uint64_t> asked = questionKeptAboutReceiversForTypedAccess(walker, receivers, key)) {
+    if (asked) {
         auto& kept = keptByTypedAccesses(const_cast<Walker&>(walker)).whetherNoMemberHasNameOrFindsItLaidAbove;
         auto known = kept.find(*asked);
         if (known == kept.end())
@@ -1786,11 +1886,23 @@ static bool paysToLookAtCellWhereReadFindsNothing(const Walker& walker, const Bo
 static bool looksAtCellShowThatReadFindsNothing(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, PropertyKeyID key)
 {
     const LinkTables& held = walker.facts().held();
-    bool everyMemberMayBeAsked = std::ranges::none_of(receivers.members, [&](LayoutID member) {
-        if (walker.program().at(member).kind == LayoutKind::Instance && (member.index() >= held.layouts.size() || !held.layout(member).listsEveryMemberAbove))
-            return true;
-        return !walker.weighsWhatIsWritten() && possibleChangesForbid(possibleChangesForTypedAccess(held, member), TypedAccess::FindsNoProperty);
-    });
+    auto askEachMember = [&] {
+        return std::ranges::none_of(receivers.members, [&](LayoutID member) {
+            if (walker.program().at(member).kind == LayoutKind::Instance && (member.index() >= held.layouts.size() || !held.layout(member).listsEveryMemberAbove))
+                return true;
+            return !walker.weighsWhatIsWritten() && possibleChangesForbid(possibleChangesForTypedAccess(held, member), TypedAccess::FindsNoProperty);
+        });
+    };
+    bool everyMemberMayBeAsked;
+    if (std::optional<uint64_t> asked = questionKeptAboutReceiversForTypedAccess(walker, receivers, key)) {
+        auto& kept = keptByTypedAccesses(const_cast<Walker&>(walker)).whetherEveryMemberMayBeAskedWhetherReadFindsNothing;
+        uint64_t word = *asked >> 32 << 1 | static_cast<uint64_t>(walker.weighsWhatIsWritten());
+        auto known = kept.find(word + 1);
+        if (known == kept.end())
+            known = kept.add(word + 1, askEachMember()).iterator;
+        everyMemberMayBeAsked = known->value;
+    } else
+        everyMemberMayBeAsked = askEachMember();
     return everyMemberMayBeAsked && askAheadAboutReadThatFindsNothing(walker, receivers, field, key);
 }
 
@@ -2186,7 +2298,8 @@ void Walker::checkFactsRememberedOfCell(Reference object, Origin origin, OptionS
         test.setLayouts(m_types.at(proven).layouts);
         test.setRefusesMarkedObjects(true);
         check(WTF::move(test));
-    }
+    } else if (remembered.contains(FactOfCell::BearsNoMark))
+        ++m_numberOfProofsThatNoTestTells;
     if (remembered.contains(FactOfCell::HasLayoutPrototype)) {
         Draft test(Opcode::HasLayoutPrototype, origin);
         test.setObjectOperand(object);

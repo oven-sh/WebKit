@@ -111,7 +111,12 @@ std::optional<RegExpWrittenForCall> findRegExpWrittenForCall(Walker& walker, con
     if (code.isConstant(cell) || !walker.state().isFresh(Reference::value(cell)))
         return std::nullopt;
     const Operation& made = code.at(cell);
-    if (made.opcode != Opcode::NewRegExp || !isMentionedByCallAloneInWalkRegExps(walker.currentBodyIndex(), call, operand))
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID written = index.valueBehindCasts(operand);
+    if (made.opcode != Opcode::NewRegExp || index.isParameter(written) || !isMentionedByCallAloneInWalkRegExps(index, call, operand))
+        return std::nullopt;
+    Origin whereOperandIsWritten = walker.originOf(index.value(written));
+    if (made.origin().position != whereOperandIsWritten.position || made.origin().inlineFrame != whereOperandIsWritten.inlineFrame)
         return std::nullopt;
     return RegExpWrittenForCall { built, made.pattern(), made.regExpFlags(), made.origin() };
 }

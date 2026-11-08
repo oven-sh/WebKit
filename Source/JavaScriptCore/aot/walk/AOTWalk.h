@@ -220,8 +220,6 @@ class AccessUnderProvenKey {
 public:
     AccessUnderProvenKey(const BodyValue& written, PropertyKeyID);
 
-    ValueID id() const { return m_id; }
-    PropertyKeyID key() const { return PropertyKeyID::fromBits(m_entryOfKey - 1); }
     BodyValue value() const LIFETIME_BOUND { return BodyValue::operation(m_words.data(), &m_unit, m_id); }
 
 private:
@@ -1258,6 +1256,8 @@ public:
     bool sumsAreNotAskedInRow() const { return m_sumsAreNotAskedInRow; }
     uint32_t numberOfRowsWhoseSumsAreNotAsked() const { return m_rowsWhoseSumsAreNotAsked.size(); }
     uint32_t numberOfWalksOfLoopsCutShort() const { return m_numberOfWalksOfLoopsCutShort; }
+    uint32_t numberOfFirstTriesOfLoopsThatStartFromTheirOwnText() const { return m_numberOfFirstTriesOfLoopsThatStartFromTheirOwnText; }
+    uint32_t numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted() const { return m_numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted; }
     uint32_t numberOfPurchasesOfLoopsThatFailed() const { return m_numberOfPurchasesOfLoopsThatFailed; }
     uint32_t numberOfAssignmentsWrittenOut() const { return m_numberOfAssignmentsWrittenOut; }
     void noteAssignmentWrittenOut() { ++m_numberOfAssignmentsWrittenOut; }
@@ -1358,6 +1358,7 @@ public:
     bool takesPositionsToLieInside() const { return m_inputs.options.takesPositionsToLieInside; }
     bool leavesOutReadsBehindTestsOfLengths() const { return m_inputs.options.leavesOutReadsBehindTestsOfLengths; }
     bool takesVariablesThatBoundToBeAsInFront() const { return m_inputs.options.takesVariablesThatBoundToBeAsInFront; }
+    bool takesStorageAndLengthsToBeAsInFront() const { return m_inputs.options.takesStorageAndLengthsToBeAsInFront; }
     bool namesOperandsOfRowsByWhatTheirVariablesHoldNow() const { return m_inputs.options.namesOperandsOfRowsByWhatTheirVariablesHoldNow; }
     bool takesDividendsOfReciprocalsToFit32Bits() const { return m_inputs.options.takesDividendsOfReciprocalsToFit32Bits; }
     bool roundsBoundsOfCountersTheOtherWay() const { return m_inputs.options.roundsBoundsOfCountersTheOtherWay; }
@@ -2134,7 +2135,7 @@ private:
         StateOfHandler* findStateOfHandler(BlockID handler);
         void addStateOfHandler(BlockID handler, WalkState&&);
         bool takeStateOfHandler(BlockID handler, WalkState&);
-        Vector<std::unique_ptr<AccessUnderProvenKey>> accessesUnderProvenKeys;
+        HashMap<uint64_t, std::unique_ptr<AccessUnderProvenKey>> accessesUnderProvenKeys;
         BlockID blockOfNamesForHandler;
         Vector<std::pair<ValueID, Reference>> namesForHandler;
     };
@@ -2345,6 +2346,8 @@ private:
     };
     struct StoresIntoScopes {
         bool areKnown { false };
+        bool everyFieldIsTakenForStored { false };
+        bool everyFieldWasTakenForStored { false };
         Vector<FieldReference, 4> fields;
         Vector<FieldReference, 4> fieldsThatCallsStore;
     };
@@ -2383,6 +2386,7 @@ private:
         bool readsAskSitesThoughCallStays { false };
         bool counterWasSteppedDown { false };
         bool effectsAreGuessed { false };
+        bool effectsAreGuessedByTextOfLoop { false };
         bool hasFailedWhereItMisfitted { false };
         uint8_t whatTurnsShowed { 0 };
         LocationMasks placesThatQuietTurnsWrite;
@@ -2677,7 +2681,7 @@ private:
     void handBackScopesThatBuildLetsLeave(std::span<const ValueID> mentionsThatLeave);
     bool mentionMayOnlyBorrowScopes(const BodyValue&, uint32_t operandIndex);
     void keepScopesAtMentions(Vector<ValueID, 4>& mentions, std::span<const ValueID> mentionsThatLeave, Vector<FreshObjectKeptAtHead, 2>& kept);
-    void handScopesKeptAtHeadToPreview(const StoresIntoScopes&, std::span<const FreshObjectKeptAtHead>, LoopPreview&);
+    void handScopesKeptAtHeadToPreview(const BodyIndex&, BlockID inputHead, const StoresIntoScopes&, std::span<const FreshObjectKeptAtHead>, LoopPreview&);
     bool learnWhatTurnsStoreIntoScopes(AnswerOfLoop&, const TryOfLoop&, bool walkIsWhole);
     bool wordCutsWalkAtThisHearing();
     ALWAYS_INLINE bool walkIsCutShortHere()
@@ -2836,6 +2840,7 @@ private:
     bool leavesOutWordThatVariableIsBornWith(const Draft&, TypeID proven) const;
     bool holdsListOrWordThatVariableIsBornWith(const Draft&, TypeID proven) const;
     Reference askVariableInFrontOfTypedCopy(const Draft&, uint32_t outermostLoopThatMayBeLeft);
+    Reference askFieldOfScopeInFrontOfTypedCopy(const Draft&, const Effects&, TypeID proven);
     std::optional<uint32_t> findLoopThatReaderVouchesFor(const Draft&, uint32_t outermostLoopThatMayBeLeft) const;
     struct HoistPoint {
         size_t frameIndex;
@@ -3253,6 +3258,8 @@ private:
     uint32_t m_numberOfWalksOfLoops { 0 };
     uint32_t m_numberOfWalksOfLoopsUndone { 0 };
     uint32_t m_numberOfWalksOfLoopsCutShort { 0 };
+    uint32_t m_numberOfFirstTriesOfLoopsThatStartFromTheirOwnText { 0 };
+    uint32_t m_numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted { 0 };
     uint32_t m_numberOfHearingsUnderQuietTries { 0 };
     uint32_t m_numberOfPurchasesOfLoopsThatFailed { 0 };
     uint32_t m_numberOfAssignmentsWrittenOut { 0 };

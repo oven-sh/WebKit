@@ -139,8 +139,6 @@ Pointer CellAllocationEmitter::allocationSiteRecord(const MentionedAllocation& a
     return offsetBy(Pointer(m_out.add(distances.value(), signExtended(distance).value())), -static_cast<ptrdiff_t>(sizeof(AllocationSiteRecord)));
 }
 
-static constexpr size_t maxBytesZeroedInLine = 256;
-
 ZeroedBy CellAllocationEmitter::whoZeroesBody(const OperationContext& context, const MentionedAllocation& allocation, unsigned storesOfZero, unsigned storesOfOtherPatterns) const
 {
     size_t size = allocation.placed.size;
@@ -266,6 +264,28 @@ void CellAllocationEmitter::copyFieldWords(CellPointer source, CellPointer cell,
     m_out.jump(copyLoop);
 
     m_out.appendTo(copied);
+}
+
+void CellAllocationEmitter::storeWordInLoop(CellPointer cell, const Layout& layout, unsigned begin, unsigned end, int64_t word)
+{
+    RELEASE_ASSERT(begin < end && !((end - begin) % bytesStoredInTurnOfLoop));
+    const Machine::AbstractHeap& fields = m_heaps.entire(layout.isEnvironment() ? AbstractHeap::EnvironmentFields : AbstractHeap::ObjectFields);
+    LBasicBlock storeWords = newBlock();
+    LBasicBlock stored = newBlock();
+    LValue bits = m_out.opaque(m_out.constInt64(word));
+    ValueFromBlock start = m_out.anchor(m_out.constIntPtr(begin));
+    m_out.jump(storeWords);
+
+    m_out.appendTo(storeWords);
+    LValue offset = m_out.phi(Machine::pointerType(), start);
+    LValue to = m_out.add(cell.value(), offset);
+    for (unsigned place = 0; place < bytesStoredInTurnOfLoop; place += sizeof(uint64_t))
+        m_out.store64(bits, m_out.address(fields, to, place));
+    LValue next = m_out.add(offset, bytesStoredInTurnOfLoop);
+    m_out.addIncomingToPhi(offset, m_out.anchor(next));
+    m_out.branch(m_out.below(next, m_out.constIntPtr(end)), normalEdge(storeWords), normalEdge(stored));
+
+    m_out.appendTo(stored);
 }
 
 CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, const MentionedAllocation& allocation, CellPointer source, unsigned fieldBytes)

@@ -12,6 +12,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkUnions.h"
 #include "AOTNameClass.h"
 #include "AOTPhaseTimes.h"
@@ -2377,7 +2378,7 @@ NEVER_INLINE void LinkFlow::arriveAtOnce(FlowNodeID node, const LinkType& type, 
     settle();
 }
 
-ALWAYS_INLINE bool LinkFlow::layEdge(Lane& lane, FlowNodeID from, FlowNodeID to, TypeID passes)
+ALWAYS_INLINE_INTO_OTHER_FILES bool LinkFlow::layEdge(Lane& lane, FlowNodeID from, FlowNodeID to, TypeID passes)
 {
     uint32_t head = m_listsOfNodes[from.index()].firstEdge;
     uint32_t numberLookedThrough = 0;
@@ -5362,6 +5363,8 @@ FlowNodeID LinkFlow::appendedField(LayoutID layout, PropertyKeyID key)
         m_appendedFields.append(AppendedField { key, node, std::exchange(m_newestAppendedFieldOfLayout[layout.index()], static_cast<uint32_t>(m_appendedFields.size())) });
         if (mayHaveAppendedFieldsInLinkFlow(program.at(layout))) {
             bool waitsForRead = hasNothingAbove(layout);
+            if (!waitsForRead)
+                m_fieldsBornBelowClassesByKey.add(key.bits(), Vector<FieldBornBesideFields, 1>()).iterator->value.append(FieldBornBesideFields { layout, node });
             families.forEachFamilyOf(layout, [&](FamilyID family) {
                 if (FlowNodeID read = findNodeOnDemand(NodeOnDemand::ReadThroughFamily, family.index(), key))
                     addEdge(node, read);
@@ -5869,7 +5872,15 @@ LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
     Vector<LayoutID> withNothingAbove;
     for (LayoutID id : program.types.listOf(families.layoutsOf(family))) {
         if (!hasNothingAbove(id)) {
-            sorted->tiedOneByOne.append(id);
+            if (keepsValuesInFieldsInLinkFlow(program.at(id).kind) && !m_layoutsBelowConstructorFunctions.get(id.index())) {
+                sorted->instancesOfClasses.append(id);
+                sorted->someInstanceOfClassMayHaveAppendedFields |= mayHaveAppendedFieldsInLinkFlow(program.at(id));
+                if (const Layout& layout = program.at(id); layout.has(LayoutFlags::IsNeverAllocated) || layout.has(LayoutFlags::IsWrittenUnderDictionaryType) || layout.writtenBuiltinBase || layout.kind == LayoutKind::BuiltinResult)
+                    sorted->instancesOfClassesThatIndexOfNamesLeavesOut.append(id);
+                if (LayoutID base = program.at(id).base; !base || !isMemberOf(family, base))
+                    sorted->topmostInstancesOfClasses.append(id);
+            } else
+                sorted->tiedOneByOne.append(id);
             if (mayHaveAppendedFieldsInLinkFlow(program.at(id)) && m_lostLayoutsWhoseAppendedFieldsAreTied.get(id.index()))
                 ++sorted->numberLost;
             continue;
@@ -5885,11 +5896,13 @@ LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
             ++sorted->numberLost;
     }
     sorted->numberWithNothingAbove = static_cast<uint32_t>(withNothingAbove.size());
-    if (!withNothingAbove.isEmpty() || !sorted->tiedOneByOne.isEmpty()) {
+    if (!withNothingAbove.isEmpty() || !sorted->tiedOneByOne.isEmpty() || !sorted->instancesOfClasses.isEmpty()) {
         sorted->foundBesideTheirFields = makeNode();
         for (LayoutID id : withNothingAbove)
             addEdge(foundBesideFieldsOf(id), sorted->foundBesideTheirFields);
         for (LayoutID id : sorted->tiedOneByOne)
+            addEdge(foundBesideFieldsOf(id), sorted->foundBesideTheirFields);
+        for (LayoutID id : sorted->instancesOfClasses)
             addEdge(foundBesideFieldsOf(id), sorted->foundBesideTheirFields);
     }
     return *m_sortedMembersOfFamilies.add(family.index(), WTF::move(sorted)).iterator->value;
@@ -5910,13 +5923,76 @@ bool LinkFlow::noteLostMemberWithNothingAbove(FamilyID family, LayoutID lost)
     });
 }
 
+bool LinkFlow::isMemberOf(FamilyID family, LayoutID layout) const
+{
+    bool isMember = false;
+    families.forEachFamilyOf(layout, [&](FamilyID holding) {
+        isMember |= holding == family;
+    });
+    return isMember;
+}
+
+std::span<const LinkFlow::DeclarerOfMember> LinkFlow::classesThatDeclareOnPrototype(PropertyKeyID key)
+{
+    if (!std::exchange(m_hasListedDeclarersOnPrototypes, true)) {
+        for (const MemberOfClass& member : m_membersOfClasses) {
+            if (member.side == ClassSide::Prototype)
+                m_declarersOnPrototypesByKey.append(DeclarerOfMember { member.key.bits(), member.classLayout, member.kind });
+        }
+        std::ranges::stable_sort(m_declarersOnPrototypesByKey, { }, &DeclarerOfMember::key);
+    }
+    auto found = std::ranges::equal_range(m_declarersOnPrototypesByKey, key.bits(), { }, &DeclarerOfMember::key);
+    return { found.begin(), found.end() };
+}
+
+bool LinkFlow::tieReadThroughClassesThatDeclare(const SortedMembersOfFamily& sorted, FlowNodeID aggregate, FamilyID family, PropertyKeyID key)
+{
+    if (classHolderIsMadeWithName(program, ClassSide::Prototype, key))
+        return false;
+    std::span<const DeclarerOfMember> declarers = classesThatDeclareOnPrototype(key);
+    if (program.layoutsWithName(key).size() + declarers.size() > sorted.instancesOfClasses.size())
+        return false;
+    for (LayoutID listing : program.layoutsWithName(key)) {
+        if (isMemberOf(family, listing))
+            return false;
+    }
+    for (LayoutID leftOut : sorted.instancesOfClassesThatIndexOfNamesLeavesOut) {
+        if (findField(program, leftOut, key))
+            return false;
+    }
+    for (const DeclarerOfMember& declarer : declarers) {
+        if (declarer.kind != MethodKind::Method && isMemberOf(family, declarer.classLayout))
+            return false;
+    }
+    for (LayoutID topmost : sorted.topmostInstancesOfClasses) {
+        if (findField(program, topmost, key) || std::ranges::any_of(membersFoundUnder(topmost, ClassSide::Prototype, key), [](const MemberOfClass& found) { return found.kind != MethodKind::Method; }))
+            return false;
+    }
+
+    build.statistics().count(StatisticID::ReadsThroughFamiliesTiedByClassesThatDeclare);
+    for (LayoutID topmost : sorted.topmostInstancesOfClasses)
+        tieRead(aggregate, topmost, key);
+    LayoutID last;
+    for (const DeclarerOfMember& declarer : declarers) {
+        if (declarer.classLayout != std::exchange(last, declarer.classLayout) && isMemberOf(family, declarer.classLayout) && !m_layoutsBelowConstructorFunctions.get(declarer.classLayout.index()))
+            tieRead(aggregate, declarer.classLayout, key);
+    }
+    if (auto born = m_fieldsBornBelowClassesByKey.find(key.bits()); born != m_fieldsBornBelowClassesByKey.end()) {
+        for (const FieldBornBesideFields& field : born->value) {
+            if (isMemberOf(family, field.layout))
+                addEdge(field.node, aggregate);
+        }
+    }
+    return true;
+}
+
 void LinkFlow::tieReadThroughSortedMembers(FlowNodeID aggregate, FamilyID family, PropertyKeyID key)
 {
     SortedMembersOfFamily& sorted = sortedMembersOf(family);
     bool someMayHoldItBesideTheirFields = false;
     uint32_t numberThatList = 0;
     uint32_t numberLostThatList = 0;
-    for (LayoutID layout : sorted.tiedOneByOne) {
+    auto tieOne = [&](LayoutID layout) {
         bool mayHaveAppendedFields = mayHaveAppendedFieldsInLinkFlow(program.at(layout));
         if (FlowNodeID born = mayHaveAppendedFields ? findAppendedField(layout, key) : FlowNodeID())
             addEdge(born, aggregate);
@@ -5924,6 +6000,14 @@ void LinkFlow::tieReadThroughSortedMembers(FlowNodeID aggregate, FamilyID family
             numberLostThatList += mayHaveAppendedFields && m_lostLayoutsWhoseAppendedFieldsAreTied.get(layout.index());
         else
             someMayHoldItBesideTheirFields |= mayHaveAppendedFields;
+    };
+    for (LayoutID layout : sorted.tiedOneByOne)
+        tieOne(layout);
+    if (!sorted.instancesOfClasses.isEmpty() && tieReadThroughClassesThatDeclare(sorted, aggregate, family, key))
+        someMayHoldItBesideTheirFields |= sorted.someInstanceOfClassMayHaveAppendedFields;
+    else {
+        for (LayoutID layout : sorted.instancesOfClasses)
+            tieOne(layout);
     }
     for (FlowNodeID appended : m_appendedFieldsThatWaitForRead.take(static_cast<uint64_t>(family.index()) << 32 | key.bits()))
         addEdge(appended, aggregate);

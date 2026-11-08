@@ -69,7 +69,7 @@ private:
     bool isNarrowedWhereStored(const InitialField&) const;
     Operand takeForSlot(const InitialField&);
     void storeInitialFields(CellPointer, LayoutID, const InitialFields&);
-    void storeEmptySlots(CellPointer, LayoutID, std::span<const FieldIndex> emptySlots, ZeroedBy);
+    void storeEmptySlots(CellPointer, LayoutID, std::span<const FieldIndex> emptySlots, ZeroedBy, BlockID);
     void storeFieldsInExtension(const ValueContext&, CellPointer, LayoutID, const InitialFields&);
     void storePrototype(const ValueContext&, CellPointer, ValueID prototype);
     bool looksAtPrototypeBeforeAllocating(const ValueContext&);

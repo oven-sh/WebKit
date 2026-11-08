@@ -149,7 +149,8 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
     SetForScope wordIsAskedForMark(m_wordIsAskedForMark, marked != MarkedObjects::Pass && marked != MarkedObjects::AreAskedAgain && mayBearMark(tested));
     m_lastTestRefusesMarkedObjects = marked != MarkedObjects::Pass;
     m_lastTestIsHeldAgainstEveryShape = true;
-    WordOfTest word = m_lastTestRefusesMarkedObjects || !mayBearMark(tested) ? WordOfTest::AsItLies : WordOfTest::WithoutMark;
+    bool passesOverMark = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::MarkedObjectsAreTakenToBearNoMark);
+    WordOfTest word = (m_lastTestRefusesMarkedObjects && !passesOverMark) || !mayBearMark(tested) ? WordOfTest::AsItLies : WordOfTest::WithoutMark;
     if (marked == MarkedObjects::AreRefused || marked == MarkedObjects::AreAskedAgain || !known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return passes(cell, tested, testOf(tested), word);
     const ShapeTable& shapes = m_plan.shapes();
@@ -240,7 +241,8 @@ Word32 ShapeTestEmitter::distanceOfUnmarkedObjectFromShape(CellPointer cell, Lay
 {
     SetForScope wordIsAskedForMark(m_wordIsAskedForMark, mayBearMark(tested));
     m_lastTestRefusesMarkedObjects = true;
-    return add(shapeWordWithMarkOf(cell), shape);
+    bool passesOverMark = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::MarkedObjectsAreTakenToBearNoMark);
+    return add(passesOverMark && mayBearMark(tested) ? shapeWordOf(cell) : shapeWordWithMarkOf(cell), shape);
 }
 
 void ShapeTestEmitter::branchOnShapeAmongReceivers(const ValueContext& access, CellPointer cell, LayoutSetID tested, BranchTargets targets)

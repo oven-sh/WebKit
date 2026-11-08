@@ -32,9 +32,9 @@ private:
     };
 
     ByteOrder byteOrderOf(const InlineCall&, unsigned argumentIndex, unsigned size);
-    bool mayBeNegative(ValueID);
+    void continueWhereIsNotNegative(const InlineCall&, ValueID, Integer position, LBasicBlock otherwise);
     Pointer vectorHoldingElement(CellPointer view, Integer index, LBasicBlock otherwise);
-    Pointer findBytes(CellPointer view, Integer offset, bool mayBeNegative, unsigned size, LBasicBlock otherwise);
+    Pointer findBytes(CellPointer view, Integer offset, unsigned size, LBasicBlock otherwise);
     LValue byteSwapped(LValue bits, unsigned size);
     LValue inByteOrder(LValue bits, unsigned size, const ByteOrder&);
     Operand loadBytes(const OperationContext&, Pointer, TypedArrayType, const ByteOrder&);

@@ -509,6 +509,28 @@ void ElementAccessEmitter::generateExtendArrayLength(const ValueContext& value)
     setPublicLength(elements, add(position, integer(1)));
 }
 
+void ElementAccessEmitter::generateSetArrayLength(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    Integer length = integerOf(value->lengthOperand());
+    StubKey stub = setArrayLength(value->mode() == ECMAMode::Sloppy);
+    if (!generator().paysForCodeInLine(value.block())) {
+        callStub(value, stub, { array.value(), length.value() });
+        return;
+    }
+    LBasicBlock otherwise = newBlock();
+    LBasicBlock done = newBlock();
+    branchUnless(belowOrEqual(sub(indexingMode(array, IndexingShapeAndWritabilityMask), ArrayWithUndecided), ArrayWithContiguous - ArrayWithUndecided), otherwise);
+    branchUnless(equal(publicLength(elementsOf(array)), length), otherwise);
+    m_out.jump(done);
+
+    m_out.appendTo(otherwise);
+    callStub(value, stub, { array.value(), length.value() }, { .isOnRarePath = true });
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+}
+
 bool ElementAccessEmitter::testsEveryPosition()
 {
     return testsEveryPositionUnder(build().options().testing) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition);

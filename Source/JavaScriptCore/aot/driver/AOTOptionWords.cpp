@@ -155,6 +155,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::PositionsAreTakenToLieInside:
     case Wire::TestingSwitch::ReadsBehindTestsOfLengthsAreLeftOut:
     case Wire::TestingSwitch::VariablesThatBoundAreTakenToBeAsInFront:
+    case Wire::TestingSwitch::StorageAndLengthsAreTakenToBeAsInFront:
     case Wire::TestingSwitch::GuardsAndFactsAreTakenToHold:
     case Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake:
     case Wire::TestingSwitch::NothingIsDoneToFreshLists:
@@ -162,6 +163,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::DividendsOfReciprocalsAreTakenToFit32Bits:
     case Wire::TestingSwitch::BoundsOfCountersAreRoundedTheOtherWay:
     case Wire::TestingSwitch::EqualIntegersAreTakenToBeLess:
+    case Wire::TestingSwitch::MarkedObjectsAreTakenToBearNoMark:
     case Wire::TestingSwitch::Int32sGoIntoListsInTheBoxesTheyCameIn:
     case Wire::TestingSwitch::SweepTurnsBranchThatDecidesIntoJump:
     case Wire::TestingSwitch::SweepLetsGoEdgeThatIsTaken:

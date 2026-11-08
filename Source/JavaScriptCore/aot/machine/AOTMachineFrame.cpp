@@ -891,7 +891,7 @@ void Allocator::findFramedPart()
             last = facts.lastSafepoint;
         } while (++end < numberOfBlocksInOrder && place.isRare() && placeOf(blocks[end]).rareRegion == place.rareRegion);
         if (first != noPosition)
-            m_safepointsAheadOfFramedPart.append(m_arena, SafepointsAheadOfFramedPart { first, last, comesBack ? endOfWhatWaysLeadToFromSafepoints : m_order.endOf(blocks[end - 1]) });
+            m_safepointsAheadOfFramedPart.append(m_arena, SafepointsAheadOfFramedPart { first, last, comesBack ? endOfWhatWaysLeadToFromSafepoints : m_order.endOf(blocks[end - 1]), place.rareRegion });
         index = end;
     }
 
@@ -1091,13 +1091,22 @@ void Allocator::settleFramedPart()
     }
 }
 
+Position Allocator::endOfWhatWaysLeadToFromSafepointsOfRareRegion() const
+{
+    for (const SafepointsAheadOfFramedPart& safepoints : m_safepointsAheadOfFramedPart) {
+        if (safepoints.rareRegion == m_rareRegion)
+            return safepoints.until;
+    }
+    return noPosition;
+}
+
 bool Allocator::pointerWaitsForFramedPart(Operation* reference)
 {
     if (!leavesValuesAcrossCallsToFramedPart())
         return false;
     const ValueFacts& facts = m_liveness.of(reference);
     for (const SafepointsAheadOfFramedPart& safepoints : m_safepointsAheadOfFramedPart) {
-        if (facts.definition >= safepoints.last)
+        if (safepoints.rareRegion != noRareRegion || facts.definition >= safepoints.last)
             continue;
         if (safepoints.until == noPosition || facts.has(ValueFlag::IsKeptForCollector)) {
             if (facts.lastUse != noPosition && facts.lastUse > safepoints.first)

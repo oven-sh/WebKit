@@ -187,6 +187,8 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
         Operand leftInteger = m_generator.getIn(left, width);
         Operand rightInteger = m_generator.getIn(right, width);
         result = withIntegerOperands(leftInteger, rightInteger, [&](auto x, auto y) {
+            if (areBothNonNegative && emittersCheckProofs())
+                emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, greaterThanOrEqual(bitOr(x, y), 0), std::nullopt, ProofSource::OtherOperation);
             return areBothNonNegative ? compareNonNegative(m_out, relation, x.value(), y.value()) : compare(relation, x, y);
         });
         break;

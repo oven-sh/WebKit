@@ -19,6 +19,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTGuessedAccessEmitter.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMemoryLocation.h"
 #include "AOTObjectWords.h"
 #include "AOTShapeTestEmitter.h"
@@ -73,7 +74,7 @@ static Operand noteIntegerAddedToInSlot(Output& out, Operand read, const Type& p
     return read;
 }
 
-static const PlacedSlot& slotOfMemberWithField(const Program& program, const Plan& plan, LayoutID member, PropertyKeyID key)
+static ALWAYS_INLINE const PlacedSlot& slotOfMemberWithField(const Program& program, const Plan& plan, LayoutID member, PropertyKeyID key)
 {
     std::optional<FieldIndex> field = plan.slots().findField(program, member, key);
     RELEASE_ASSERT(field);
@@ -424,7 +425,10 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
             return readIfMemberHasField(value, cell, access, load);
         if (mayBeAbsent) {
             return readIfMemberHasField(value, cell, access, [&] {
-                return inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
+                CellPointer base = baseOfSlot(cell, access);
+                if (sourcesOfProofsCheckedUnder(build().options().testing) & bitOfSourceOfProofs(ProofSource::Field))
+                    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, emitter<SlotEmitter>().holdsValue(base, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access)), std::nullopt, ProofSource::Field);
+                return inResultRepresentation(value, loadFilledSlot(value, base, access));
             });
         }
         return inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
@@ -434,7 +438,7 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void SlotAccessEmitter::askObjectAgainWhatReadAnswered(const ValueContext& value, CellPointer object, Operand read, bool readsEmptySlotAsUndefined)
+ALWAYS_INLINE_INTO_OTHER_FILES void SlotAccessEmitter::askObjectAgainWhatReadAnswered(const ValueContext& value, CellPointer object, Operand read, bool readsEmptySlotAsUndefined)
 {
     PropertyKeyID key = value->key();
     bool standsInLaneOfTurnsLaidOut = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition) && generator().isLayingOutTurns();

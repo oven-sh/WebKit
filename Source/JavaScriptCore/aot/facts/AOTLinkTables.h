@@ -511,7 +511,7 @@ struct LinkTables {
     Vector<LinkedMember> membersAboveCreatedLayouts;
     Vector<uint32_t> membersByKey;
     Vector<uint32_t> firstMemberByKeyOfSide;
-    Vector<uint32_t> membersOfLongRowsByKey;
+    Vector<uint32_t> membersByKeyAlongRows;
     Vector<uint32_t> placesOfLayoutsInRows;
     Vector<uint32_t> endsOfLayoutsBelowInRows;
     Vector<uint32_t> numbersOfClassesAbove;
@@ -754,7 +754,8 @@ struct LinkTables {
     bool iterableStaysAsMadeAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(iterablesThatStayAsMade, LinkedReceiverAsMade { function, site }); }
     const LinkedAccessorsOfField* findAccessorsExpectedIn(FieldReference) const LIFETIME_BOUND;
     TypeID caughtAt(FunctionID, BlockID handler) const;
-    void indexMembersByKey(const Program&);
+    enum class AskedByKey : bool { ByLongRowsAlone, ByWalkToo };
+    void indexMembersByKey(const Program&, AskedByKey = AskedByKey::ByLongRowsAlone);
     std::span<const uint32_t> membersUnder(LayoutID classLayout, ClassSide, PropertyKeyID) const LIFETIME_BOUND;
     MemberFound findMember(const Program&, LayoutID, ClassSide, PropertyKeyID) const;
     bool findFunctionsLaidAbove(const Program&, LayoutID, PropertyKeyID, Vector<FunctionID, 4>&) const;
@@ -762,6 +763,12 @@ struct LinkTables {
     bool holderIsChangedInSightAlone(const Program&, LayoutID classLayout, ClassSide) const;
     bool memberHoldsOneFunction(const Program&, LayoutID classLayout, ClassSide, PropertyKeyID, FunctionID written) const;
     std::optional<FindsNothing> findsNothing(const Program&, LayoutID, ClassSide, PropertyKeyID, Of) const;
+    struct StretchOfRows {
+        uint32_t first;
+        uint32_t end;
+        LayoutID layoutAtFirst;
+    };
+    bool someClassAtOrAboveDeclares(const Program&, std::span<const StretchOfRows>, ClassSide, PropertyKeyID) const;
     Vector<LinkedNameOnFunction> namesOnFunctions;
     const LinkedNameOnFunction* findNameOnFunction(FunctionID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool closuresLackName(FunctionID, PropertyKeyID) const;

@@ -179,7 +179,7 @@ static void numberLayoutsAlongRowsInLinkTables(const Program& program, LinkTable
     }
 }
 
-void LinkTables::indexMembersByKey(const Program& program)
+void LinkTables::indexMembersByKey(const Program& program, AskedByKey whoAsksByKey)
 {
     membersByKey.resize(members.size());
     std::iota(membersByKey.begin(), membersByKey.end(), 0);
@@ -206,20 +206,23 @@ void LinkTables::indexMembersByKey(const Program& program)
         firstMemberByKeyOfSide[side] += firstMemberByKeyOfSide[side - 1];
 
     countClassesAboveInLinkTables(program, *this);
-    membersOfLongRowsByKey.shrink(0);
-    if (std::ranges::none_of(numbersOfClassesAbove, [](uint32_t number) { return number >= fewestClassesAboveAskedByKeyInLinkTables; }))
+    membersByKeyAlongRows.shrink(0);
+    if (whoAsksByKey == AskedByKey::ByLongRowsAlone && std::ranges::none_of(numbersOfClassesAbove, [](uint32_t number) { return number >= fewestClassesAboveAskedByKeyInLinkTables; }))
         return;
     numberLayoutsAlongRowsInLinkTables(program, *this);
-    membersOfLongRowsByKey = membersByKey;
-    std::ranges::sort(membersOfLongRowsByKey, { }, [&](uint32_t place) {
+    Vector<std::pair<uint64_t, uint32_t>> words(members.size(), [&](size_t place) {
         const LinkedMember& member = members[place];
-        return std::tuple { member.side, member.key, placesOfLayoutsInRows[member.classLayout.index()] };
+        return std::pair { static_cast<uint64_t>(member.side) << 63 | static_cast<uint64_t>(member.key.bits()) << 31 | placesOfLayoutsInRows[member.classLayout.index()], static_cast<uint32_t>(place) };
+    });
+    std::ranges::sort(words);
+    membersByKeyAlongRows = words.map([](const std::pair<uint64_t, uint32_t>& word) {
+        return word.second;
     });
 }
 
 static LayoutID nearestClassWithMemberUnderInLinkTables(const LinkTables& tables, LayoutID layout, ClassSide side, PropertyKeyID key, bool& isKnown)
 {
-    auto underKey = std::ranges::equal_range(tables.membersOfLongRowsByKey, std::pair { side, key }, { }, [&](uint32_t place) {
+    auto underKey = std::ranges::equal_range(tables.membersByKeyAlongRows, std::pair { side, key }, { }, [&](uint32_t place) {
         const LinkedMember& member = tables.members[place];
         return std::pair { member.side, member.key };
     });
@@ -238,6 +241,25 @@ static LayoutID nearestClassWithMemberUnderInLinkTables(const LinkTables& tables
         }
     }
     return { };
+}
+
+bool LinkTables::someClassAtOrAboveDeclares(const Program& program, std::span<const StretchOfRows> stretches, ClassSide side, PropertyKeyID key) const
+{
+    auto underKey = std::ranges::equal_range(membersByKeyAlongRows, std::pair { side, key }, { }, [&](uint32_t place) {
+        const LinkedMember& member = members[place];
+        return std::pair { member.side, member.key };
+    });
+    if (underKey.empty())
+        return false;
+    auto placeOfDeclarer = [&](uint32_t place) {
+        return placesOfLayoutsInRows[members[place].classLayout.index()];
+    };
+    return std::ranges::any_of(stretches, [&](const StretchOfRows& stretch) {
+        auto firstInStretch = std::ranges::lower_bound(underKey, stretch.first, { }, placeOfDeclarer);
+        if (firstInStretch != underKey.end() && placeOfDeclarer(*firstInStretch) < stretch.end)
+            return true;
+        return !findsNothing(program, stretch.layoutAtFirst, side, key, Of::HolderAndAbove);
+    });
 }
 
 std::span<const uint32_t> LinkTables::membersUnder(LayoutID classLayout, ClassSide side, PropertyKeyID key) const

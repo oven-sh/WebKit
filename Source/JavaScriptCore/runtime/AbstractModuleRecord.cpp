@@ -730,7 +730,7 @@ static NEVER_INLINE bool isSettledByMock(VM& vm, bool someRecordHasLiveExports, 
 {
     auto isOfMock = [&](const AbstractModuleRecord::Resolution& found) {
         auto* compiled = dynamicDowncast<AOT::ModuleRecord>(found.moduleRecord);
-        return (compiled && compiled->standsForMock()) || (someRecordHasLiveExports && found.isLiveExport(vm));
+        return (compiled && compiled->standsForMock() && found.localName != vm.propertyNames->starNamespacePrivateName) || (someRecordHasLiveExports && found.isLiveExport(vm));
     };
     bool isOfEndedMock = (first.isOfEndedMock || second.isOfEndedMock) && !first.cameThroughEntryFromStar && !second.cameThroughEntryFromStar;
     return (isOfEndedMock || isOfMock(first) || isOfMock(second)) && !first.isSameBinding(second);

@@ -43,6 +43,7 @@ public:
     void generateGetArrayStorage(const ValueContext&);
     void generateGetArrayRoom(const ValueContext&);
     void generateExtendArrayLength(const ValueContext&);
+    void generateSetArrayLength(const ValueContext&);
     void generateGetArrayElement(const ValueContext&);
     void generatePutArrayElement(const ValueContext&);
     void generateHasArrayElement(const ValueContext&);

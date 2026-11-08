@@ -255,6 +255,22 @@ static void testStageResultsAreDestroyedInBackground()
     AOT_TEST_CHECK(equalSpans(output->section(Wire::ResultSection::Image), image.span()));
 }
 
+static void testWhoeverWaitsForBackgroundJobsSeesThemAllRun()
+{
+    static constexpr unsigned numberOfJobs = 8;
+    ParallelLoops loops(4, &poolOfNewThreads);
+    Ref<BackgroundJobs> jobs = BackgroundJobs::create(loops);
+    std::atomic<unsigned> numberRun { 0 };
+    for (unsigned index = 0; index < numberOfJobs; ++index) {
+        jobs->add([&](const ParallelLoops&) {
+            WTF::sleep(5_ms);
+            numberRun.fetch_add(1);
+        });
+    }
+    jobs->waitUntilAllHaveRun();
+    AOT_TEST_CHECK(numberRun.load() == numberOfJobs && !jobs->numberOfJobsWaiting());
+}
+
 static void testNestedLoopInHelperOfLaneKeepsItsNumber()
 {
     BuildContext build(optionsWith({ "threads=4"_s }), &poolOfNewThreads);
@@ -633,6 +649,7 @@ std::span<const NativeTest> supportTests()
         { "option-words/refused-word-changes-nothing"_s, testRefusedOptionWordChangesNothing },
         { "statistics/many-threads"_s, testStatisticsFromManyThreads },
         { "threads/stage-results-are-destroyed-in-background"_s, testStageResultsAreDestroyedInBackground },
+        { "threads/whoever-waits-for-background-jobs-sees-them-all-run"_s, testWhoeverWaitsForBackgroundJobsSeesThemAllRun },
         { "threads/lanes-nested-loop-in-helper-keeps-its-number"_s, testNestedLoopInHelperOfLaneKeepsItsNumber },
         { "threads/lanes-leave-image-as-it-is"_s, testLanesLeaveImageAsItIs },
         { "threads/plan-that-fails-its-check-in-front-of-compile-reaches-no-walk"_s, testPlanThatFailsItsCheckInFrontOfCompileReachesNoWalk },

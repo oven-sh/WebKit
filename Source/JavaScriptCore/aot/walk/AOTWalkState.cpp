@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTSlotPlan.h"
 #include <bit>
 #include <optional>
@@ -432,7 +433,7 @@ PropertyKeyID WalkState::Held::keyOfSlot(const ProgramOfState& program, FieldRef
     return program.slots ? program.slots->keyOf(*program.program, field) : PropertyKeyID();
 }
 
-ALWAYS_INLINE uint8_t WalkState::Held::bitOfSlot(const ProgramOfState& program, FieldReference field)
+ALWAYS_INLINE_INTO_OTHER_FILES uint8_t WalkState::Held::bitOfSlot(const ProgramOfState& program, FieldReference field)
 {
     PropertyKeyID key = keyOfSlot(program, field);
     return key ? bitOf(program, MemoryLocation::objectField(key)) : Place::entireHeap;
@@ -525,7 +526,7 @@ void WalkState::Held::fillTableOfPlaces()
     }
 }
 
-ALWAYS_INLINE uint32_t WalkState::Held::findOrAddHolder(Reference object)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findOrAddHolder(Reference object)
 {
     uint32_t position = findRecordOfHolder(object);
     if (position != none) {
@@ -769,6 +770,7 @@ void WalkState::Held::letLeave(uint32_t holder)
     countAmongReachedByEffects(m_holders[holder]);
     if (m_lists) [[unlikely]]
         listWhatHangsOn(holder);
+    endHolderIfNothingHangsOn(holder);
 }
 
 void WalkState::Held::countAmongReachedByEffects(const Holder& holder)
@@ -790,14 +792,14 @@ void WalkState::Held::countNoLongerAmongReachedByEffects(const Holder& holder)
     m_numberOfElementsReachedByEffects -= holder.numberOfElements;
 }
 
-ALWAYS_INLINE void WalkState::Held::listAsReachedByEffects(uint32_t holder)
+ALWAYS_INLINE_INTO_OTHER_FILES void WalkState::Held::listAsReachedByEffects(uint32_t holder)
 {
     ASSERT(m_holders[holder].placeAmongReachedByEffects == none);
     m_holders.mutableAt(holder).placeAmongReachedByEffects = m_holdersReachedByEffects.size();
     m_holdersReachedByEffects.append(holder);
 }
 
-ALWAYS_INLINE void WalkState::Held::takeOffListOfReachedByEffects(uint32_t holder)
+ALWAYS_INLINE_INTO_OTHER_FILES void WalkState::Held::takeOffListOfReachedByEffects(uint32_t holder)
 {
     uint32_t place = std::exchange(m_holders.mutableAt(holder).placeAmongReachedByEffects, none);
     uint32_t numberLeft = m_holdersReachedByEffects.size() - 1;

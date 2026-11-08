@@ -67,6 +67,7 @@ private:
     Integer divide(Integer dividend, Range dividends, Integer divisor, Range divisors);
     Integer roundedQuotient(QuotientRounding, Integer dividend, Range dividends, Integer divisor, Range divisors);
     Integer remainderByConstant(Integer dividend, Range dividends, int64_t magnitudeOfDivisor);
+    void holdOperandsOfDivisionToToldRanges(const ValueContext&, Integer dividend, Range dividends, Integer divisor, Range divisors);
     struct LowHalfOfRemainder {
         LValue reciprocal { nullptr };
         LValue base { nullptr };

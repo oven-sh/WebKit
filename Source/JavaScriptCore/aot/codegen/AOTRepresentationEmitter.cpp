@@ -30,6 +30,12 @@ Integer RepresentationEmitter::heldToWhatConversionGives(const OperationContext&
     return integer;
 }
 
+void RepresentationEmitter::holdWideIntegerToldInsideInt32(const OperationContext& context, Integer wide, Range told)
+{
+    if (emittersCheckProofs() && !told.isEmpty() && told.isSubsetOf(Range::int32()))
+        emitter<ThrowEmitter>().requireOrStopAtFalseProof(context, equal(signExtended(low32(wide)), wide), std::nullopt, ProofSource::OtherOperation);
+}
+
 Operand RepresentationEmitter::convert(const OperationContext& context, Opcode conversion, Operand source, const Type& type, Representation to)
 {
     using enum Representation;
@@ -38,6 +44,8 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
 
     switch (conversion) {
     case Opcode::Box:
+        if (to == JSValue && from == Int64)
+            holdWideIntegerToldInsideInt32(context, source.as<Integer>(), type.integers);
         if (to == JSValue && RepresentationSet { Void, Boolean, Int32, Int64, Double, OptionalInt64, OptionalDouble, Cell }.contains(from))
             return conversions.box(context, source, type);
         if ((to == OptionalInt64 && RepresentationSet { Void, Int32, Int64 }.contains(from)) || (to == OptionalDouble && RepresentationSet { Void, Double, OptionalInt64 }.contains(from)))
@@ -59,8 +67,10 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
     case Opcode::IntegerToNumber:
         if (from == Int32 && to == Double)
             return toNumber(source.as<Word32>());
-        if (from == Int64 && to == Double)
+        if (from == Int64 && to == Double) {
+            holdWideIntegerToldInsideInt32(context, source.as<Integer>(), type.integers);
             return conversions.toNumber(source.as<Integer>(), type.integers);
+        }
         break;
     case Opcode::NumberToInteger:
         if (from == Double && to == Int32)
@@ -69,12 +79,17 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
             return heldToWhatConversionGives(context, source.as<Number>(), conversions.toInteger(source.as<Number>(), type.integers, context.block() && generator().isInLoop(context.block())));
         break;
     case Opcode::WidenInteger:
-        if (from == Int32 && to == Int64)
+        if (from == Int32 && to == Int64) {
+            if (emittersCheckProofs() && type.integers.minimum >= 0)
+                emitter<ThrowEmitter>().requireOrStopAtFalseProof(context, greaterThanOrEqual(source.as<Word32>(), word32(0)), std::nullopt, ProofSource::OtherOperation);
             return conversions.widen(source.as<Word32>(), type.integers);
+        }
         break;
     case Opcode::NarrowInteger:
-        if (from == Int64 && to == Int32)
+        if (from == Int64 && to == Int32) {
+            holdWideIntegerToldInsideInt32(context, source.as<Integer>(), Range::int32());
             return conversions.narrow(source.as<Integer>());
+        }
         break;
     case Opcode::Decode:
         if (from == Cell32 && (to == Cell || to == JSValue))

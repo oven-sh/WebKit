@@ -119,7 +119,7 @@ bool Modules::isImportedByGraphUnderEvaluation(ModuleID module)
     return false;
 }
 
-void Modules::forgetLoadsRefusedByCheckOfNames()
+void Modules::forgetLoadsRefusedByCheckOfNames(ModuleID mocked)
 {
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID root(index);
@@ -136,6 +136,8 @@ void Modules::forgetLoadsRefusedByCheckOfNames()
             }
         }
     }
+    if (!hasBegunToLoad(mocked) || status(mocked) == ModuleStatus::Evaluated)
+        return;
     JSObject* kept = std::exchange(m_errorsOfExportsThatBuildFoundAbsent, nullptr);
     if (!kept)
         return;
@@ -162,7 +164,7 @@ void Modules::forgetLoadsRefusedByCheckOfNames()
 bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    forgetLoadsRefusedByCheckOfNames();
+    forgetLoadsRefusedByCheckOfNames(module);
     auto hasYetToRun = [&](ModuleID each) {
         ModuleStatus current = status(each);
         return current == ModuleStatus::Unlinked || current == ModuleStatus::Linked;
@@ -471,6 +473,7 @@ bool Modules::runMockThatWaitsSlow(ModuleID module)
     m_modulesWithMockToRun.clear(module.index());
     m_modulesWhoseFactoryWasCalled.set(module.index());
     bool ranAlready = m_modulesWhoseFactoryRuns.set(module.index());
+    SetForScope moduleThatImportAskedForWhenFactoryBegan(m_moduleThatImportAskedForWhenFactoryBegan, m_moduleThatImportAsksFor);
     bool factoryHasNotSettled = host().runMock(m_instance.globalObject, module);
     if (!ranAlready)
         m_modulesWhoseFactoryRuns.clear(module.index());
@@ -1159,14 +1162,15 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (m_linksOfLoadThatMayFail && !isWalkedForLoadThatMayFail(root) && (status(m_linksOfLoadThatMayFail->root) < ModuleStatus::Evaluating || reachesWhatLoadThatMayFailLinkedAnew(root))) [[unlikely]]
-        m_linksOfLoadThatMayFail = std::nullopt;
+    if (!m_linksOfLoadsThatMayFail.isEmpty()) [[unlikely]]
+        meetLinksOfLoadsThatMayFail(root);
     auto bringsBackWhereLoadFails = makeScopeExit([&] {
         if (scope.exception()) [[unlikely]]
             bringBackLinksOfLoadThatFailed(root);
     });
     {
         LinksBeforeLoad before;
+        before.outer = m_linksBeforeLoadInFlight;
         SetForScope keepsLinksBefore(m_linksBeforeLoadInFlight, &before);
         if (mocksWaitToBeLaidAgain() || !m_modulesOwedToImportersThatRan.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || !m_modulesThatLoaderLetGo.isEmpty()) [[unlikely]] {
             evaluateModulesOwedBelow(root);
@@ -1185,12 +1189,17 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
             }
         }
         if (!before.moments.isEmpty()) [[unlikely]] {
-            if (!isWalkedForLoadThatMayFail(root))
-                m_linksOfLoadThatMayFail = LinksOfLoadThatMayFail { root, { } };
-            m_linksOfLoadThatMayFail->before.moments.appendVector(before.moments);
-            m_linksOfLoadThatMayFail->before.modulesThatLoaderLetGo.merge(before.modulesThatLoaderLetGo);
-            m_linksOfLoadThatMayFail->before.importersOfMockThatEnded.merge(before.importersOfMockThatEnded);
+            LinksOfLoadThatMayFail* links = linksOfLoadWalkedFor(root);
+            if (!links) {
+                m_linksOfLoadsThatMayFail.append(LinksOfLoadThatMayFail { root, { }, { { root, status(root) == ModuleStatus::Evaluated } } });
+                links = &m_linksOfLoadsThatMayFail.last();
+            }
+            links->before.moments.appendVector(before.moments);
+            links->before.modulesThatLoaderLetGo.merge(before.modulesThatLoaderLetGo);
+            links->before.importersOfMockThatEnded.merge(before.importersOfMockThatEnded);
         }
+        if (!m_linksOfLoadsThatMayFail.isEmpty()) [[unlikely]]
+            meetLinksOfLoadsThatMayFail(root);
     }
     if (m_modulesWithMockToRun.isEmpty()) [[likely]]
         return false;

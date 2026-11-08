@@ -71,7 +71,7 @@ bool holeLeavesTurnBehindRow(Walker&, const BodyValue& read, const ListTestedInF
 enum class WhatStandsBesideRead : uint8_t { Number, NumberOrNothing };
 bool onlyUserTakesUndefinedForNaNInTypedElements(Walker&, const BodyValue& read, WhatStandsBesideRead = WhatStandsBesideRead::Number);
 bool readLeavesTurnAtHoleBehindRow(Walker&, const BodyValue& read);
-bool leavesListsTestedInFrontOfLoopAsTheyAre(const Effects&);
+bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker&, const Effects&);
 bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker&, const Effects&, std::span<const ListTestedInFrontOfLoop>, const Walker::ObjectsMadeHereThatLoopMentions&);
 bool leavesListsTestedInFrontOfLoopAsTheyAre(Walker&, const Effects&, std::span<const ListTestedInFrontOfLoop>, BlockID inputHead);
 Vector<ValueID, 2> namesInFrontThatLoopMentions(const Walker&, const BodyIndex&, LoopID, uint32_t firstValueOfLoop, Reference value);

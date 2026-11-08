@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineCallsOnWays.h"
 #include <algorithm>
 #include <bit>
@@ -615,7 +616,7 @@ static ALWAYS_INLINE bool isListedAtHead(const Allocator& allocator, const HeadT
     return isPhiAtHeadOf(head.block, value) || (head.isAheadOfFramedPart && allocator.isStoredAtHeadsOfFramedPart(value));
 }
 
-static std::span<const RegisterBinding> listRegistersAtHead(Allocator& allocator, const HeadThatListsRegisters& head)
+static ALWAYS_INLINE std::span<const RegisterBinding> listRegistersAtHead(Allocator& allocator, const HeadThatListsRegisters& head)
 {
     RegisterMask bound = allocator.m_bound;
     if (!bound)
@@ -715,6 +716,36 @@ static void hintRegisterFromValueDown(Allocator& allocator, Operation* value, Re
     }
 }
 
+void Allocator::hintKeptRegistersToValuesThatBlockHandsOn(const Block* block)
+{
+    if (isInRareRegion() || leavesValuesAcrossCallsToFramedPart())
+        return;
+    const Block* blocksInLine[8];
+    ArenaVector<const Block*> blocksOfHintedPhis;
+    blocksOfHintedPhis.adoptStorage(blocksInLine, 8);
+    RegisterMask promised = 0;
+    for (const Operation* upsilon : block->upsilons()) {
+        const Operation* phi = upsilon->phi();
+        if (!phi || !m_valueFacts[phi->index()].has(ValueFlag::LivesAcrossCall) || m_valueFacts[upsilon->index()].has(ValueFlag::IsDropped))
+            continue;
+        const Block* target = phi->owner();
+        if (m_valueFacts[phi->index()].has(ValueFlag::IsDropped) || m_heads[target->index()].isSet() || m_order.of(target).isRare() || !phi->type().isNumeric())
+            continue;
+        Operation* value = upsilon->valueHandedOn();
+        if (value->owner() != block || value->opcode() == Phi || m_hints[value->index()] || m_valueFacts[value->index()].lastUse + 2 != m_endOfBlock)
+            continue;
+        Bank bank = bankOf(phi->type());
+        RegisterMask freeRegisters = calleeSavesWorthTakingFor(phi, bank, target) & calleeSavesThatMayBeTaken() & m_file.allocatableIn(bank) & ~m_bound & ~promised;
+        if (!freeRegisters || !callStandsOnWayFromPhiToRead(*this, phi, target))
+            continue;
+        if (RegisterMask savedAlready = freeRegisters & m_allocation.usedCalleeSaves())
+            freeRegisters = savedAlready;
+        Reg reg = lowestRegisterAtEdge(freeRegisters);
+        promised |= maskOf(reg);
+        hintRegisterFromValueDown(*this, value, reg, false, blocksOfHintedPhis);
+    }
+}
+
 static NEVER_INLINE void passOnHintsOfPhisOfHead(Allocator& allocator, const Block* target, uint32_t placeOfWalk)
 {
     const BlockPlace* const places = allocator.m_order.places();
@@ -748,7 +779,7 @@ static ALWAYS_INLINE void noteHintOfValueThatHeadHolds(Reg* hints, const Block* 
         hints[value->index()] = reg;
 }
 
-static bool rareRegionsAloneReadBehindHead(Allocator& allocator, const Operation* value, Position head)
+static ALWAYS_INLINE bool rareRegionsAloneReadBehindHead(Allocator& allocator, const Operation* value, Position head)
 {
     const Liveness& liveness = allocator.m_liveness;
     if (allocator.m_knownReadsOutsideRareRegions.isEmpty())
@@ -1122,7 +1153,7 @@ bool Allocator::passThroughBlockThatOnlyJumps(Block* blockAsked)
         bool changesRareRegion = m_rareRegion != place.rareRegion;
         if (changesRareRegion && isInRareRegion())
             leaveRareRegionBetweenBlocks(*this);
-        if (place.entersRareRegion || m_proc.checksAllocation())
+        if (place.entersRareRegion || m_allocation.recordsWhatCheckersRead())
             registersAtHeads[block->index()] = listBindingsAtHead(*this, HeadThatListsRegisters { block, m_allocation.spillsOfValues(), headIsAheadOfFramedPart(block) }, end.bindings());
         if (changesRareRegion && place.isRare())
             enterRareRegionBetweenBlocks(*this, place.rareRegion);
@@ -1225,7 +1256,7 @@ static NEVER_INLINE void listRegistersAtHeadBeingEntered(Allocator& allocator, c
     if (RegisterMask registersToNote = calleeSavesToNoteAtHeadBeingEntered(allocator, registersHeld)) [[unlikely]]
         noteCalleeSavesAtHeadBeingEntered(allocator, registersToNote);
 
-    if (edgeHasFixedHead || place.entersRareRegion || allocator.m_proc.checksAllocation()) {
+    if (edgeHasFixedHead || place.entersRareRegion || allocator.m_allocation.recordsWhatCheckersRead()) {
         const HeadThatListsRegisters headThatLists { block, allocator.m_allocation.spillsOfValues(), false };
         const RegisterBinding* const first = taken.bindings().data();
         const RegisterBinding* const limit = first + taken.bindings().size();
@@ -1247,7 +1278,7 @@ static ALWAYS_INLINE void finishEnteringPlainBlock(Allocator& allocator, const B
     else if (RegisterMask others = allocator.m_bound & ~registersHeld)
         unbindRegistersBetweenBlocks(allocator, others);
 
-    if (blockIsRare || allocator.m_proc.checksAllocation())
+    if (blockIsRare || allocator.m_allocation.recordsWhatCheckersRead())
         return listRegistersAtHeadBeingEntered<edgeHasFixedHead>(allocator, block, place, taken, registersHeld);
     ASSERT(!allocator.m_isAheadOfFramedPart && !allocator.isInRareRegion());
     if (RegisterMask registersToNote = registersHeld & allocator.m_file.calleeSaved & ~allocator.m_calleeSavesTakenOutsideRareRegions) [[unlikely]]
@@ -2305,7 +2336,7 @@ static NEVER_INLINE Location findPlaceOutsideRegistersAtEndOf(Allocator& allocat
     return allocator.placeToReadIn(spill);
 }
 
-void Allocator::appendEdgeMoves(Block* blockOfEdge, unsigned indexOfEdge, const Snapshot& endOfBlockOfEdge)
+ALWAYS_INLINE_INTO_OTHER_FILES void Allocator::appendEdgeMoves(Block* blockOfEdge, unsigned indexOfEdge, const Snapshot& endOfBlockOfEdge)
 {
     Block* targetOfEdge = blockOfEdge->successor(indexOfEdge).block();
     const bool registersAreEndOfBlockOfEdge = !endOfBlockOfEdge.isSet();
@@ -2447,7 +2478,7 @@ void Allocator::appendEdgeMoves(Block* blockOfEdge, unsigned indexOfEdge, const 
     appendTheLongWay.operator()<false>(blockOfEdge, indexOfEdge, endOfBlockOfEdge, targetOfEdge, edgeBringsEverything, m_allocation.m_blocks, m_allocation.m_steps);
 }
 
-bool Allocator::frameMayChangeOnEdge(const Block* from, const Block* target)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::frameMayChangeOnEdge(const Block* from, const Block* target)
 {
     if (!m_allocation.hasFramedPart())
         return false;

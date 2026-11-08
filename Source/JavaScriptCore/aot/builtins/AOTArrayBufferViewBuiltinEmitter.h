@@ -26,6 +26,7 @@ public:
     Integer byteOffsetOf(CellPointer view);
     Pointer vectorOf(CellPointer view);
     Condition haveFixedLength(CellPointer first, CellPointer second);
+    CellPointer askedAnewWherePositionsAreTested(CellPointer view);
     void moveBytes(const OperationContext&, CellPointer target, Integer targetOffset, CellPointer source, Integer sourceOffset, Integer count);
 };
 

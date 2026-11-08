@@ -59,6 +59,7 @@ private:
     enum class AbsentReadsAs : uint8_t { Absent, Undefined };
 
     Operand loadOutOfLine(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord, bool absentReadsAsUndefined = false);
+    Operand wordOutOfLine(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord);
     bool readsExtensionByCall(const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord) const;
     LValue readFieldInExtension(CellPointer, const PlacedSlot&, const MemoryLocation&);
     Operand operandOfBits(LValue bits, SlotRepresentation);

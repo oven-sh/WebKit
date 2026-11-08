@@ -28,7 +28,7 @@ namespace JSC { namespace AOT { namespace Typed {
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
-static constexpr OpcodeSet opcodesOfTypedElements { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::PropGet };
+static constexpr OpcodeSet opcodesOfTypedElements { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::PropGet, Opcode::PropSet };
 
 static constexpr Range arrayIndexesOfTypedElements { 0, static_cast<int64_t>(UINT32_MAX) - 1 };
 
@@ -2252,6 +2252,32 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
     return false;
 }
 
+static bool buildStoreOfLengthOfTypedElements(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+{
+    if (value.isFreeName() || value.key() != walker.program().keyOf(BuiltinNames::length))
+        return false;
+    TypeArena& types = walker.types();
+    if (!hasKind(types, inputs.typeOf(value.objectOperand()), OperandKind::Array))
+        return false;
+    Type stored = types.at(inputs.typeOf(value.valueOperand()));
+    if (!stored.isInteger() || stored.integers.minimum < 0 || stored.integers.maximum > std::numeric_limits<uint32_t>::max())
+        return false;
+    if (inputs.areOnlyTypes()) {
+        walker.noteFormAskedAhead(Opcode::SetArrayLength, KnowledgeLevel::Proven);
+        return true;
+    }
+    Reference list = walker.referenceOf(value.objectOperand());
+    if (lengthOfFreshList(walker, list) || lengthOfListMadeInSight(walker, list))
+        return false;
+    ECMAMode mode = value.mode();
+    Draft store = draftOfTypedElements(walker, value, Opcode::SetArrayLength);
+    store.setArrayOperand(list);
+    store.setLengthOperand(walker.referenceOf(value.valueOperand()));
+    store.setMode(mode);
+    walker.bind(value.id(), walker.build(WTF::move(store)));
+    return true;
+}
+
 bool buildTypedElementAccess(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (buildElementAccessUnderNumber(walker, value, inputs))
@@ -2261,6 +2287,8 @@ bool buildTypedElementAccess(Walker& walker, const BodyValue& value, const Input
         return false;
     if (opcode == Opcode::PropGet)
         return buildLengthOfTypedElements(walker, value, inputs);
+    if (opcode == Opcode::PropSet)
+        return buildStoreOfLengthOfTypedElements(walker, value, inputs);
 
     Type typeOfKey = walker.types().at(inputs.typeOf(value.propertyOperand()));
     if (!typeOfKey.isNumber() && opcode == Opcode::ElemHas)

@@ -115,14 +115,20 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArrayWithLength(const InlineCal
     finish(call, CellPointer(view.first));
 }
 
+CellPointer ArrayBufferViewBuiltinEmitter::askedAnewWherePositionsAreTested(CellPointer view)
+{
+    ElementAccessEmitter& accesses = emitter<ElementAccessEmitter>();
+    return accesses.testsEveryPosition() ? accesses.askedAnew(view) : view;
+}
+
 void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call)
 {
     BuiltinTypeContext typeContext { m_program, types() };
     TypedArrayType type = typedArrayTypeOf(typeContext, typeIDOf(call.receiver()));
     RELEASE_ASSERT(isTypedView(type) && typedArrayTypeOf(typeContext, typeIDOf(call.argument(0))) == type);
     unsigned shift = logElementSize(type);
-    CellPointer target = cellOperand(call.receiver());
-    CellPointer source = cellOperand(call.argument(0));
+    CellPointer target = askedAnewWherePositionsAreTested(cellOperand(call.receiver()));
+    CellPointer source = askedAnewWherePositionsAreTested(cellOperand(call.argument(0)));
     ValueID offset = call.argumentOrNull(1);
     Integer position = !offset ? integer(0) : typeOf(offset).isInteger() ? integerOperand(offset) : emitter<ConversionEmitter>().toInteger(numberOperand(offset));
     missUnless(call, haveFixedLength(target, source));

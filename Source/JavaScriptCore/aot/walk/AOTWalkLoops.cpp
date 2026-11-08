@@ -13,6 +13,7 @@
 #include "AOTFamilies.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
@@ -108,6 +109,24 @@ static bool isComparedByTestOfHeadInLoops(const BodyIndex& index, BlockID inputH
     BodyValue relation = index.value(asked);
     ValueID parameter = head.parameter(position);
     return index.valueBehindCasts(relation.operand(0)) == parameter || index.valueBehindCasts(relation.operand(1)) == parameter;
+}
+
+static Effects effectsOfMembersAsWrittenInLoops(const TypingContext& context, const BodyIndex& index, BlockID inputHead)
+{
+    Effects effects = Effects::none();
+    for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
+        if (!index.isReachable(member))
+            continue;
+        for (BodyValue operation : index.block(member).values()) {
+            effects.merge(effectsOf(context, operation, OperandTypes { }, TypeID()));
+            if (effects.mayRunOtherCode())
+                return effects;
+        }
+        effects.merge(effectsOfTerminator(context, index.terminator(member), OperandTypes { }));
+        if (effects.mayRunOtherCode())
+            return effects;
+    }
+    return effects;
 }
 
 static TypeID widenedInLoops(TypeArena& types, TypeID assumed, TypeID united)
@@ -453,7 +472,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
     macro(m_headOfLoopKeptLast) macro(m_frameOfLoopKeptLast) macro(m_typedBuildAskedNoListThatItWasBoughtFor)
 
 #define FOR_EACH_FIELD_OF_WALKER_THAT_ONLY_REPORTS(macro) \
-    macro(m_numberOfWalksOfLoops) macro(m_numberOfWalksOfLoopsUndone) macro(m_numberOfWalksOfLoopsCutShort) macro(m_numberOfPurchasesOfLoopsThatFailed) macro(m_numberOfValuesWalked) macro(m_functionOfFailure) \
+    macro(m_numberOfWalksOfLoops) macro(m_numberOfWalksOfLoopsUndone) macro(m_numberOfWalksOfLoopsCutShort) macro(m_numberOfFirstTriesOfLoopsThatStartFromTheirOwnText) macro(m_numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted) macro(m_numberOfPurchasesOfLoopsThatFailed) macro(m_numberOfValuesWalked) macro(m_functionOfFailure) \
     macro(m_failureIsSaid) macro(m_whatJudgeOfOperandsRefused)
 
 #define FOR_EACH_FIELD_OF_WALKER_WRITTEN_IN_FRONT_OF_EVERY_READ(macro) \
@@ -1025,6 +1044,15 @@ LoopPreview Walker::previewOutOfTries(BlockID inputHead, std::span<const TypeID>
             answer.effectsAreGuessed = true;
         }
     }
+    if (!answer.knowsEffects && preview.effects.mayRunOtherCode() && !preview.effects.maySuspend) {
+        Effects written = effectsOfMembersAsWrittenInLoops(typing(), index, inputHead);
+        if (!written.mayRunOtherCode() && !written.maySuspend) {
+            preview.effects = written;
+            answer.effectsAreGuessed = true;
+            answer.effectsAreGuessedByTextOfLoop = true;
+            ++m_numberOfFirstTriesOfLoopsThatStartFromTheirOwnText;
+        }
+    }
     m_triesOfLoops.last().entered.shrink(0);
     m_triesOfLoops.last().entered.append(entryTypes);
     bool rowIsHandedOn = m_headOfRowHandedOn == inputHead && m_frameOfRowHandedOn == m_frames.size() - 1;
@@ -1110,7 +1138,7 @@ LoopPreview Walker::previewOutOfTries(BlockID inputHead, std::span<const TypeID>
         handBackScopesThatBuildLetsLeave(answer.mentionsThatLeave.span());
     m_triesOfLoops.last().freshObjectsKept.shrink(0);
     letMentionsOfLoopLeave(inputHead, answer.mentionsThatLeave.span(), &m_triesOfLoops.last().freshObjectsKept);
-    handScopesKeptAtHeadToPreview(answer.storesIntoScopes, m_triesOfLoops.last().freshObjectsKept.span(), preview);
+    handScopesKeptAtHeadToPreview(index, inputHead, answer.storesIntoScopes, m_triesOfLoops.last().freshObjectsKept.span(), preview);
     preview.hasLetMentionsLeave = true;
     if (!answer.typesOfValues.isEmpty()) {
         preview.typesOfValues = answer.typesOfValues;
@@ -1358,7 +1386,7 @@ Vector<bool, 8> Walker::findParametersSteppedOnDoubles(BlockID inputHead, const 
     return isStepped;
 }
 
-ALWAYS_INLINE ValueID Walker::headParameterBehind(Reference value) const
+ALWAYS_INLINE_INTO_OTHER_FILES ValueID Walker::headParameterBehind(Reference value) const
 {
     if (!value || !value.isValue())
         return { };
@@ -1919,7 +1947,7 @@ bool Walker::noteWhatCameRoundInTry(BlockID head, size_t parameter, TypeID assum
     return false;
 }
 
-ALWAYS_INLINE void Walker::noteOwnParametersThatMeetInValue(TryOfLoop& tried, size_t parameter, ValueID value, BlockID head)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::noteOwnParametersThatMeetInValue(TryOfLoop& tried, size_t parameter, ValueID value, BlockID head)
 {
     constexpr OpcodeSet arithmeticWhoseKindFollowsItsOperands { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Increment, Opcode::Decrement };
     auto behindConversions = [&](ValueID id) {
@@ -2194,7 +2222,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                 letLeave(m_state, argument);
             Vector<FreshObjectKeptAtHead, 2> keptInFrontOfBuilds;
             letMentionsOfLoopLeave(inputHead, m_answersOfLoops[place].mentionsThatLeave.span(), &keptInFrontOfBuilds, m_answersOfLoops[place].storesIntoScopes.areKnown);
-            handScopesKeptAtHeadToPreview(m_answersOfLoops[place].storesIntoScopes, keptInFrontOfBuilds.span(), learned);
+            handScopesKeptAtHeadToPreview(index, inputHead, m_answersOfLoops[place].storesIntoScopes, keptInFrontOfBuilds.span(), learned);
         };
         prepareFrontOfBuilds();
         bool isBuilt;
@@ -2511,6 +2539,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
             if (m_numberOfTryWhoseWalkIsCutShort <= m_triesOfLoops.size()) {
                 AnswerOfLoop& passedBy = m_answersOfLoops[place];
                 passedBy.effectsAreGuessed = false;
+                passedBy.effectsAreGuessedByTextOfLoop = false;
                 passedBy.knowsEffects = true;
                 passedBy.effects.merge(tried.done);
                 bool maySuspend = passedBy.effects.maySuspend;
@@ -2547,6 +2576,8 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
             : !tried.done.mayRunOtherCode() && tried.done.writes.without(heapsNotHeldAgainstRowsOfLoops).isSubsetOf(assumed.writes)
                 && (!assumed.writesObjectsMadeHereAlone || tried.done.writesObjectsMadeHereAlone || !tried.done.writes.containsAny(perObjectHeaps));
         bool effectsWereGuessed = std::exchange(answer.effectsAreGuessed, false);
+        if (std::exchange(answer.effectsAreGuessedByTextOfLoop, false) && !effectsFit)
+            ++m_numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted;
         if (effectsWereGuessed && effectsFit && !isCutShort)
             answer.effects = tried.done;
         else

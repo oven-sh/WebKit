@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTModuleNamespace.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "JSCInlines.h"
@@ -212,32 +213,49 @@ void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)
 
 void Modules::noteChangeOfMockUnderCallsOfImport(ModuleID module)
 {
-    bool isChangedByImport = !!m_moduleThatImportAsksFor;
-    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks) {
+    bool isChangedByImport = m_moduleThatImportAsksFor && (m_modulesWhoseFactoryRuns.isEmpty() || m_modulesWhoseFactoryRuns.get(module.index()) || m_moduleThatImportAsksFor != m_moduleThatImportAskedForWhenFactoryBegan);
+    if (m_numberOfCallsOfImportWithNamespaceKept == (isChangedByImport ? m_callsOfImportUnderMocks.size() : 0))
+        return;
+    ModuleNamespace* viewOfTheirOwn = nullptr;
+    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks.values()) {
         if (call.module != module)
             continue;
-        if (!isChangedByImport)
+        if (!isChangedByImport) {
+            if (call.namespaceBeforeImportChangedMock)
+                --m_numberOfCallsOfImportWithNamespaceKept;
             call.namespaceBeforeImportChangedMock.clear();
-        else if (!call.namespaceBeforeImportChangedMock) {
-            if (JSObject* namespaceObject = namespaceIfCreated(module, ModulePhase::Evaluation))
+        } else if (!call.namespaceBeforeImportChangedMock) {
+            JSObject* mock = mockInPlace(module);
+            if (mock && !viewOfTheirOwn) {
+                viewOfTheirOwn = ModuleNamespace::create(*m_instance.vm, namespaceStructure(true), module, ModulePhase::Evaluation, { });
+                viewOfTheirOwn->setMockOfView(*m_instance.vm, mock);
+            }
+            if (JSObject* namespaceObject = viewOfTheirOwn) {
+                ++m_numberOfCallsOfImportWithNamespaceKept;
                 call.namespaceBeforeImportChangedMock.set(*m_instance.vm, namespaceObject);
+            }
         }
     }
 }
 
 void Modules::forgetNamespacesKeptForCallsOfImport()
 {
-    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks)
+    if (!m_numberOfCallsOfImportWithNamespaceKept)
+        return;
+    m_numberOfCallsOfImportWithNamespaceKept = 0;
+    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks.values())
         call.namespaceBeforeImportChangedMock.clear();
 }
 
 JSObject* Modules::takeNamespaceKeptForCallOfImport(JSPromise* importPromise)
 {
-    size_t index = m_callsOfImportUnderMocks.findIf([&](const CallOfImportUnderMock& call) { return call.promise.get() == importPromise; });
-    if (index == notFound)
+    auto call = m_callsOfImportUnderMocks.find(importPromise);
+    if (call == m_callsOfImportUnderMocks.end())
         return nullptr;
-    JSObject* namespaceObject = m_callsOfImportUnderMocks[index].namespaceBeforeImportChangedMock.get();
-    m_callsOfImportUnderMocks.removeAt(index);
+    JSObject* namespaceObject = call->value.namespaceBeforeImportChangedMock.get();
+    if (namespaceObject)
+        --m_numberOfCallsOfImportWithNamespaceKept;
+    m_callsOfImportUnderMocks.remove(call);
     return namespaceObject;
 }
 

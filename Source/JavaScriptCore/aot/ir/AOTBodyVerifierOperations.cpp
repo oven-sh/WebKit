@@ -11,6 +11,7 @@
 #include "AOTDeclaredFunctionsInScopes.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLayout.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaResultRules.h"
@@ -335,7 +336,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
     case Opcode::ElemGetByKeyParts:
     case Opcode::ReserveArrayRoom: case Opcode::ConvertToDoubleStorage:
-    case Opcode::GetArrayRoom: case Opcode::ExtendArrayLength:
+    case Opcode::GetArrayRoom: case Opcode::ExtendArrayLength: case Opcode::SetArrayLength:
     case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::AppendValuesOfMap:
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
     case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
@@ -477,7 +478,7 @@ void BodyVerifier::verifyOperandDefinitionsOneByOne(const BodyBlock& block, cons
     });
 }
 
-ALWAYS_INLINE void BodyVerifier::verifyNumberOfVariadicOperands(const BodyBlock& block, const BodyValue& value)
+ALWAYS_INLINE_INTO_OTHER_FILES void BodyVerifier::verifyNumberOfVariadicOperands(const BodyBlock& block, const BodyValue& value)
 {
     size_t expectedNumber = 0;
     if (value.opcode() == Opcode::NewObject)

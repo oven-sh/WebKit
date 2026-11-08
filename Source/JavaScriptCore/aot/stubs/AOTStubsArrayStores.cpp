@@ -116,6 +116,49 @@ void generateArrayPutAtIndex(StubAssembler& jit)
     jit.callOperationAndReturn(operation, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
+StubSignature signatureOfSetArrayLength(StubKey)
+{
+    return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
+}
+
+void generateSetArrayLength(StubAssembler& jit)
+{
+    static_assert(ArrayWithUndecided + 2 == ArrayWithInt32 && ArrayWithInt32 + 2 == ArrayWithDouble && ArrayWithDouble + 2 == ArrayWithContiguous, "an array has no mode between these, and in each its length can be written: one that cannot has a sparse map, or elements frozen in storage that is copied on write");
+    static constexpr int32_t mostElementsEmptiedInStub = 64;
+    const GPRReg kind = jit.allocateScratch(StubRegister::T9);
+    const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
+    const GPRReg length = jit.allocateScratch(StubRegister::T11);
+    const GPRReg hole = jit.allocateScratch(StubRegister::T12);
+    const Address publicLength(butterfly, Butterfly::offsetOfPublicLength());
+    JumpList callsOperation;
+
+    jit.load8(Address(jit.operand(0), JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.sub32(TrustedImm32(ArrayWithUndecided), kind);
+    callsOperation.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ArrayWithContiguous - ArrayWithUndecided)));
+    jit.loadPtr(Address(jit.operand(0), JSObject::butterflyOffset()), butterfly);
+    jit.load32(publicLength, length);
+    Jump isShorterOrLonger = jit.branch32(CCallHelpers::NotEqual, length, jit.operand(1));
+    jit.returnToCaller();
+
+    isShorterOrLonger.link(&jit);
+    callsOperation.append(jit.branch32(CCallHelpers::Below, length, jit.operand(1)));
+    jit.sub32(length, jit.operand(1), hole);
+    callsOperation.append(jit.branch32(CCallHelpers::Above, hole, TrustedImm32(mostElementsEmptiedInStub)));
+    jit.move(TrustedImm64(0), hole);
+    Jump holeIsEmptyValue = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(ArrayWithDouble - ArrayWithUndecided));
+    jit.move(TrustedImm64(static_cast<int64_t>(PNaNAsBits)), hole);
+    holeIsEmptyValue.link(&jit);
+    Label emptyNext = jit.label();
+    jit.sub32(TrustedImm32(1), length);
+    jit.store64(hole, BaseIndex(butterfly, length, CCallHelpers::TimesEight));
+    jit.branch32(CCallHelpers::Above, length, jit.operand(1)).linkTo(emptyNext, &jit);
+    jit.store32(jit.operand(1), publicLength);
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    jit.callOperationAndReturn(jit.key().form() ? Entry::operationAOTSetArrayLengthInSloppyCode : Entry::operationAOTSetArrayLength, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
+}
+
 StubSignature signatureOfArrayPutAtNumber(StubKey)
 {
     return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), FPRInfo::argumentFPR0 });

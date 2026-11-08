@@ -71,6 +71,7 @@ runtime ArrayPush : EncodedJSValue (JSCell* array, EncodedJSValue value) ; unkno
 runtime ArraySlice : EncodedJSValue (JSCell* array, int64_t from, int64_t to) ; unknownCode
 runtime ArrayCopy : EncodedJSValue (JSCell* array) ; unknownCode
 runtime AppendElements : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray
+runtime SetArrayLength, SetArrayLengthInSloppyCode : void (JSCell* array, uint32_t length) ; RuntimeGrowsArray writes(ShapeWords)
 runtime AppendMembers : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
 runtime AppendValuesOfMap : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray

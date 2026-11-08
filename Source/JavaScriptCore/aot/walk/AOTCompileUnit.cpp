@@ -56,6 +56,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .showsPositionsTakenToLieInsideToVerifier = build.validates() && !sourcesOfProofsCheckedUnder(options.testing) && !testsEveryPositionUnder(options.testing),
         .leavesOutReadsBehindTestsOfLengths = AOT::hasFlag(options.testing, Wire::TestingSwitch::ReadsBehindTestsOfLengthsAreLeftOut),
         .takesVariablesThatBoundToBeAsInFront = AOT::hasFlag(options.testing, Wire::TestingSwitch::VariablesThatBoundAreTakenToBeAsInFront),
+        .takesStorageAndLengthsToBeAsInFront = AOT::hasFlag(options.testing, Wire::TestingSwitch::StorageAndLengthsAreTakenToBeAsInFront),
         .namesOperandsOfRowsByWhatTheirVariablesHoldNow = AOT::hasFlag(options.testing, Wire::TestingSwitch::OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow),
         .takesDividendsOfReciprocalsToFit32Bits = AOT::hasFlag(options.testing, Wire::TestingSwitch::DividendsOfReciprocalsAreTakenToFit32Bits),
         .roundsBoundsOfCountersTheOtherWay = AOT::hasFlag(options.testing, Wire::TestingSwitch::BoundsOfCountersAreRoundedTheOtherWay),
@@ -251,7 +252,7 @@ static bool isAllocationOfUnitForEffectsAgainstLink(const Code& code, ValueID va
     if (parametersAsked.contains(value))
         return true;
     parametersAsked.append(value);
-    size_t place = std::ranges::find(block.parameters(), value) - block.parameters().begin();
+    size_t place = block.placeOfParameter(value);
     for (EdgeID edge = block.firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
         std::span<const ValueID> arguments = code.at(edge).arguments();
         if (place >= arguments.size() || !isAllocationOfUnitForEffectsAgainstLink(code, arguments[place], parametersAsked))
@@ -315,7 +316,7 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
         const Operation& operation = code.at(value);
         if (operation.opcode != Opcode::Parameter || !operation.block() || !code.at(operation.block()).isEntry)
             return false;
-        size_t place = std::ranges::find(code.at(operation.block()).parameters(), value) - code.at(operation.block()).parameters().begin();
+        size_t place = code.at(operation.block()).placeOfParameter(value);
         return place < 32 && (parametersCalled >> place & 1);
     };
     for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
@@ -493,9 +494,17 @@ private:
         }
         if (conversionsOfForm.contains(record.opcode))
             return liesWithin(record.operand(0), bound, call);
+        if (record.opcode == Opcode::Narrowed && !record.narrowsHolderOfOperand() && !record.narrowsOtherResultOfOperand()) {
+            ValueID behind = record.operand(0);
+            TypeID ofValueBehind = behind && !m_code.isConstant(behind) ? m_code.at(behind).type : TypeID();
+            if (!ofValueBehind || !m_types.at(ofValueBehind).isJavaScriptValue())
+                return false;
+            TypeID takenAway = m_types.differenceOf(ofValueBehind, record.type);
+            return isNeverType(m_types.intersectionOf(takenAway, record.type)) && liesWithin(behind, m_types.unionOf(bound, takenAway), call);
+        }
         if (record.opcode != Opcode::Parameter || m_code.at(record.block()).isEntry || m_code.at(record.block()).isHandlerBlock())
             return false;
-        if (!m_parametersBeingAsked.add(value.index()).isNewEntry)
+        if (!m_parametersBeingAsked.add(static_cast<uint64_t>(value.index()) << 32 | bound.index()).isNewEntry)
             return true;
         std::span<const ValueID> parameters = m_code.at(record.block()).parameters();
         size_t place = std::ranges::find(parameters, value) - parameters.begin();
@@ -577,7 +586,7 @@ private:
     const Code& m_code;
     std::span<const Walker::ArrivalHeld> m_held;
     const PositionTypes* m_whatFunctionsHandBack;
-    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parametersBeingAsked;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_parametersBeingAsked;
 };
 
 } // anonymous namespace
@@ -788,6 +797,8 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WayOfWalking way)
     counters.count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
     counters.count(StatisticID::LoopsWalkedAgainWithoutAskingSums, m_walker->numberOfRowsWhoseSumsAreNotAsked());
     counters.count(StatisticID::WalksOfLoopsCutShort, m_walker->numberOfWalksOfLoopsCutShort());
+    counters.count(StatisticID::FirstTriesOfLoopsThatStartFromTheirOwnText, m_walker->numberOfFirstTriesOfLoopsThatStartFromTheirOwnText());
+    counters.count(StatisticID::FirstTriesOfLoopsWhoseOwnTextWasRefuted, m_walker->numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted());
     counters.count(StatisticID::PurchasesOfLoopsThatFailed, m_walker->numberOfPurchasesOfLoopsThatFailed());
     counters.count(StatisticID::OperationsBuilt, code.numberOfValues());
     counters.count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);

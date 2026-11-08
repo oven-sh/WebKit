@@ -21,6 +21,7 @@
 #include "AOTFamilies.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTModuleEvaluationPlan.h"
 #include "AOTOpcodeSets.h"
@@ -1360,7 +1361,7 @@ void Walker::holdWhatIsFoundInPlace(Reference found, TypeID held, ProofSource so
     ++m_numbersOfProofsChecked[static_cast<unsigned>(source)];
 }
 
-ALWAYS_INLINE void Walker::holdVariableOfAnotherFileStoredFirst(VariableID variable)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::holdVariableOfAnotherFileStoredFirst(VariableID variable)
 {
     if (program().at(variable).module == program().at(currentFunction()).module || !facts().linked().variables[variable.index()].isFilled)
         return;
@@ -1945,7 +1946,7 @@ TypeID Walker::typeThatCallByValueIsShownToGive(const auto& call, std::span<cons
     return entersBuiltin ? m_types.wholeKindsAndBuiltinClassesOf(given) : given;
 }
 
-ALWAYS_INLINE void Walker::askWhatCallByValueGives(ValueID call, const Draft& draft, TypeID proven)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::askWhatCallByValueGives(ValueID call, const Draft& draft, TypeID proven)
 {
     if (m_types.saysNothing(proven) || unitReturnsAtOnce(draft))
         return;
@@ -1963,7 +1964,7 @@ ALWAYS_INLINE void Walker::askWhatCallByValueGives(ValueID call, const Draft& dr
         buildCheckOfProof(callee, TypeTable::never, TypeTable::anything, ProofSource::ResultOfOtherCall, draft.origin());
 }
 
-ALWAYS_INLINE bool Walker::isTypedByWhatLinkSaysOfContents(const Draft& draft) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::isTypedByWhatLinkSaysOfContents(const Draft& draft) const
 {
     return m_positions == m_positionsOfBuild.get()
         && ((m_resultOfReadBeingTyped && readsTypedByWhatIsProvenOfInput.contains(draft.opcode)) || (m_contentsBeingTyped && recordsTypedByWhatIsProvenOfContents.contains(draft.opcode)));
@@ -1978,7 +1979,7 @@ void Walker::checkProofOfRecord(ValueID record, const Draft& draft, TypeID prove
 {
     if (draft.opcode == Opcode::Narrowed) {
         Representation form = m_code.at(record).representation;
-        bool hasBox = form == Representation::JSValue || form == Representation::Cell;
+        bool hasBox = form == Representation::JSValue || form == Representation::Cell || (form == Representation::Cell32 && checksProofs());
         if (Reference narrowed = draft.valueOperand(); narrowed && narrowed.isValue() && (hasBox || checksWalk()))
             checkProof(Reference::value(record), TypeWithoutProof::restingOnBelief(typeAsBuilt(narrowed)), ProofSource::Test, draft.origin());
         return;
@@ -2028,16 +2029,16 @@ static bool codeGoesByTypesOfOperandsInWalk(const Operation& record)
     return familyOf(record.opcode) == OperationFamily::Operator && !(PayloadWord::form(record.opcode) && record.form() == OperatorForm::Generic);
 }
 
-ALWAYS_INLINE bool Walker::entryParameterIsCapture(const Block& entry, ValueID parameter) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::entryParameterIsCapture(const Block& entry, ValueID parameter) const
 {
     if (namesOnlyUnitsOfItsFunction(unit().role))
         return false;
     const Function& function = program().at(unit().function);
-    size_t index = std::ranges::find(entry.parameters(), parameter) - entry.parameters().begin();
+    size_t index = entry.placeOfParameter(parameter);
     return index < function.numberOfEntryParameters() && function.entryParameterKind(static_cast<unsigned>(index)) == EntryParameter::Capture;
 }
 
-ALWAYS_INLINE bool Walker::entryParameterIsShown(const Block& entry, ValueID parameter) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::entryParameterIsShown(const Block& entry, ValueID parameter) const
 {
     switch (unit().role) {
     case CodeRole::Body:
@@ -2129,7 +2130,7 @@ void Walker::forEachValueThatTypeShownLeansOn(ValueID id, NOESCAPE const Invocab
     const Operation& record = m_code.at(id);
     if (record.opcode == Opcode::Parameter) {
         const Block& block = m_code.at(record.block());
-        size_t index = std::ranges::find(block.parameters(), id) - block.parameters().begin();
+        size_t index = block.placeOfParameter(id);
         m_code.seal(record.block()).forEach([&](const Edge& edge) {
             if (index < edge.arguments().size())
                 functor(edge.arguments()[index]);
@@ -2164,7 +2165,7 @@ ALWAYS_INLINE TypeID Walker::computeTypeShown(ValueID id)
         return typeThatUnitMayTestFor(m_types.testablePartOf(record.type), true, true);
     if (record.opcode == Opcode::Parameter) {
         const Block& block = m_code.at(record.block());
-        size_t index = std::ranges::find(block.parameters(), id) - block.parameters().begin();
+        size_t index = block.placeOfParameter(id);
         TypeID joined;
         bool everyEdgeHandsOverEachParameter = true;
         m_code.seal(record.block()).forEach([&](const Edge& edge) {
@@ -2307,7 +2308,7 @@ void Walker::checkThatReadGivesValue(Reference value, ProofSource source, Origin
         return;
     TypeID claimed = typeAsBuilt(value);
     Representation representation = representationOf(value);
-    if (!claimed || isNeverType(claimed) || !m_types.at(claimed).isJavaScriptValue() || (representation != Representation::JSValue && representation != Representation::Cell))
+    if (!claimed || isNeverType(claimed) || !m_types.at(claimed).isJavaScriptValue() || (representation != Representation::JSValue && representation != Representation::Cell && (representation != Representation::Cell32 || !checksProofs())))
         return;
     TypeID anyWord = m_types.withPrimitives(TypeTable::anything, Primitive::Absent);
     origin.isTailCall = false;
@@ -2351,7 +2352,7 @@ void Walker::checkProof(Reference value, TypeWithoutProof withoutProof, ProofSou
     TypeID proven = typeAsBuilt(value);
     Representation representation = representationOf(value);
     bool liesRaw = numberRepresentations.contains(representation) || optionalRepresentations.contains(representation) || representation == Representation::Boolean;
-    if (!proven || isNeverType(proven) || (!liesRaw && representation != Representation::JSValue && representation != Representation::Cell))
+    if (!proven || isNeverType(proven) || (!liesRaw && representation != Representation::JSValue && representation != Representation::Cell && (representation != Representation::Cell32 || !checksProofs())))
         return;
     if (liesRaw && m_types.at(withoutProof.type()).isJavaScriptValue())
         withoutProof = withoutProof.metWithWhatFormTells(m_types, representation);
@@ -2367,7 +2368,7 @@ void Walker::checkProofOfCopy(Reference value, TypeID proven, ProofSource source
     Representation representation = representationOf(value);
     TypeID own = typeAsBuilt(value);
     bool liesRaw = numberRepresentations.contains(representation) || optionalRepresentations.contains(representation) || representation == Representation::Boolean;
-    if (!own || isNeverType(own) || (!liesRaw && representation != Representation::JSValue && representation != Representation::Cell))
+    if (!own || isNeverType(own) || (!liesRaw && representation != Representation::JSValue && representation != Representation::Cell && (representation != Representation::Cell32 || !checksProofs())))
         return;
     if (!m_types.at(proven).isJavaScriptValue() || !m_types.at(own).isJavaScriptValue() || m_types.isSubset(own, proven))
         return;
@@ -2769,7 +2770,8 @@ void Walker::buildCheckOfProof(Reference value, TypeID proven, TypeWithoutProof 
             saidWhereNothingPasses = said;
         }
     }
-    if (!isAnswerOfTest && !isAskedInRawForm && form != Representation::JSValue && form != Representation::Cell) {
+    bool isAskedAsNarrowReference = hasBox && form == Representation::Cell32 && checksProofs() && checksProofsOf(source);
+    if (!isAnswerOfTest && !isAskedInRawForm && !isAskedAsNarrowReference && form != Representation::JSValue && form != Representation::Cell) {
         value = convert(value, Representation::JSValue, origin);
         if (!value || !value.isRecord() || isUnreachable())
             return;
@@ -2941,7 +2943,7 @@ void Walker::Frame::bringTablesOfNarrowerNamesTo(uint32_t first) const
     listInTables = first;
 }
 
-ALWAYS_INLINE void Walker::Frame::addNarrowerName(uint32_t& first, Reference value, Reference name)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::Frame::addNarrowerName(uint32_t& first, Reference value, Reference name)
 {
     ASSERT(value && name);
     PlaceOfNarrowerName place;
@@ -3857,6 +3859,46 @@ bool Walker::holdsListOrWordThatVariableIsBornWith(const Draft& draft, TypeID pr
     return word && (m_types.at(proven).primitives & word) && hasKind(m_types, m_types.withoutPrimitives(proven, word), OperandKind::Array);
 }
 
+Reference Walker::askFieldOfScopeInFrontOfTypedCopy(const Draft& draft, const Effects& effects, TypeID proven)
+{
+    constexpr TurnOfTypedCopy turn = TurnOfTypedCopy::HasRunNoOtherCodeThoughCopiesBegan;
+    std::optional<uint32_t> loop = openLoopOfTypedCopy(turn);
+    if (!loop)
+        return { };
+    Draft read(draft);
+    read.setFollowsItsStore(false);
+    std::optional<uint32_t> outermostThatMayBeLeft = findLoopToBuildInFrontOf(read, effects, proven);
+    if (!outermostThatMayBeLeft || *outermostThatMayBeLeft > *loop)
+        return { };
+    Reference found;
+    Reference isEmpty;
+    {
+        InFrontOfTypedCopy inFront(*this, true, turn);
+        found = build(WTF::move(read));
+        if (!found || !found.isValue() || isUnreachable())
+            return { };
+        if (!(m_types.at(typeOf(found)).primitives & Primitive::Absent)) {
+            count(StatisticID::FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies);
+            return found;
+        }
+        Draft test(Opcode::TypeTest, draft.origin());
+        test.setValueOperand(found);
+        test.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
+        isEmpty = build(WTF::move(test));
+    }
+    if (!isEmpty || !isEmpty.isValue() || !branchInFrontOfTypedCopy(isEmpty, false, turn, TurnsThatAsk::All))
+        return { };
+    noteGuessOpened();
+    count(StatisticID::FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies);
+    InFrontOfTypedCopy inFront(*this, true, turn);
+    Draft narrowed(Opcode::Narrowed, draft.origin());
+    narrowed.setValueOperand(found);
+    narrowed.setTestOperand(isEmpty);
+    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+    narrowed.setIsOnTakenEdge(false);
+    return build(WTF::move(narrowed));
+}
+
 Reference Walker::askVariableInFrontOfTypedCopy(const Draft& draft, uint32_t outermostLoopThatMayBeLeft)
 {
     constexpr TurnOfTypedCopy turn = TurnOfTypedCopy::HasRunNoOtherCode;
@@ -4098,6 +4140,12 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
     }
     if (!m_openLoops.isEmpty()) {
         if (!m_openLoops.isEmpty() && proven && !isNeverType(proven)) {
+            if (draft.opcode == Opcode::GetEnvironmentField && draft.followsItsStore()) {
+                if (Reference asked = askFieldOfScopeInFrontOfTypedCopy(draft, effects, proven))
+                    return asked;
+                if (m_hasFailed || isUnreachable())
+                    return { };
+            }
             std::optional<uint32_t> loop = findLoopToBuildInFrontOf(draft, effects, proven);
             if (loop && leavesOutWordThatVariableIsBornWith(draft, proven)) {
                 std::optional<uint32_t> ofOwnFrame = findLoopThatReaderVouchesFor(draft, *loop);
@@ -4340,7 +4388,7 @@ Reference Walker::cellThatRunTimeKeeps(Draft& draft)
     return Reference::constant(added);
 }
 
-ALWAYS_INLINE Reference Walker::readVariableWhereItIsTaken(Reference constant, Origin origin)
+ALWAYS_INLINE_INTO_OTHER_FILES Reference Walker::readVariableWhereItIsTaken(Reference constant, Origin origin)
 {
     if (m_code.at(constant.id()).opcode != Opcode::GetModuleVariable)
         return constant;
@@ -4383,7 +4431,7 @@ ValueID Walker::findCopyOfConstant(ValueID constant, Representation form) const
     return { };
 }
 
-ALWAYS_INLINE void Walker::noteCopyOfConstant(ValueID constant, Representation form, ValueID copy)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::noteCopyOfConstant(ValueID constant, Representation form, ValueID copy)
 {
     if (constant.index() >= 1u << (32 - bitsOfFormOfCopyInWalk))
         return;
@@ -5088,7 +5136,7 @@ Vector<uint32_t, 4> Walker::takeOpenEdges(BlockID block)
     return edges;
 }
 
-ALWAYS_INLINE void Walker::releaseOpenEdge(uint32_t place)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::releaseOpenEdge(uint32_t place)
 {
     OpenEdge& edge = m_openEdges[place];
     edge.edge = { };
@@ -6096,7 +6144,7 @@ static ALWAYS_INLINE ValueID valueWhoseTruthIsToldInWalk(const Code& code, Value
     return value;
 }
 
-ALWAYS_INLINE Reference Walker::booleanAskedByBranchOnEdge(BlockID from, uint32_t targetIndex, Reference value)
+ALWAYS_INLINE_INTO_OTHER_FILES Reference Walker::booleanAskedByBranchOnEdge(BlockID from, uint32_t targetIndex, Reference value)
 {
     if (!has(Mechanism::Folding) || !value || !value.isValue())
         return { };
@@ -6160,7 +6208,7 @@ ALWAYS_INLINE void Walker::nameBooleansAskedByBranch(BlockID from, const BodyTer
     }
 }
 
-ALWAYS_INLINE Reference Walker::narrowOnEdge(BlockID from, uint32_t targetIndex, const BodyEdgeResult& result)
+ALWAYS_INLINE_INTO_OTHER_FILES Reference Walker::narrowOnEdge(BlockID from, uint32_t targetIndex, const BodyEdgeResult& result)
 {
     Reference subject = referenceOf(result.subject);
     if (!checksProofs() && m_frames.last().index->isUnused(result.parameter))
@@ -8264,7 +8312,7 @@ bool Walker::staysTailCall(Reference call) const
     return returned == conventions.resultRepresentation(unit()) && record.representation == returned;
 }
 
-ALWAYS_INLINE void Walker::walkReturn(const BodyTerminator& terminator)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::walkReturn(const BodyTerminator& terminator)
 {
     Reference returned;
     if (ValueID value = terminator.operand(0)) {

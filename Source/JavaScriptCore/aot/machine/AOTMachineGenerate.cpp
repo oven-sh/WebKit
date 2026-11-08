@@ -73,7 +73,7 @@ void prepareForGeneration(Procedure& procedure)
         return;
     if (runsChecks && !runCheckBeforeGeneration(procedure, checkAllocation))
         return;
-    if (runsChecks && !runCheckBeforeGeneration(procedure, checkReferences))
+    if (procedure.allocation().recordsWhatCheckersRead() && !runCheckBeforeGeneration(procedure, checkReferences))
         return;
 
     procedure.m_slots = assignSlots(procedure);

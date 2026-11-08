@@ -27,7 +27,7 @@ bool buildTypedOperator(Walker&, const BodyValue&, const InputsOfTypedOperation&
 static constexpr OpcodeSet accessesThatThrowOffNullishInWalkTyped { Opcode::PropGet, Opcode::PropSet, Opcode::ElemGet, Opcode::ElemSet };
 static constexpr OpcodeSet accessesByNameInWalkTyped { Opcode::PropGet, Opcode::PropSet };
 static constexpr OpcodeSet storesInWalkTyped { Opcode::PropSet, Opcode::ElemSet };
-static constexpr OpcodeSet opcodesOfTypedElementsInWalkTyped { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::PropGet };
+static constexpr OpcodeSet opcodesOfTypedElementsInWalkTyped { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::PropGet, Opcode::PropSet };
 
 static ALWAYS_INLINE bool readsUnderKeyInWalkTyped(const BodyValue& read, PropertyKeyID key)
 {
@@ -147,7 +147,10 @@ template<Opcode opcode> static bool buildTypedOperationOf(Walker& walker, const 
         return true;
     if (accessFamiliesOfWalkTyped.contains(opcode) && buildTypedAccess(walker, value))
         return true;
-    if (elementFamiliesOfWalkTyped.contains(opcode) && opcodesOfTypedElementsInWalkTyped.contains(opcode) && mayReadLength && buildTypedElementAccess(walker, value, InputsOfTypedOperation(walker, nullptr)))
+    bool mayStoreLength = true;
+    if constexpr (opcode == Opcode::PropSet)
+        mayStoreLength = value.key() == walker.program().keyOf(BuiltinNames::length);
+    if (elementFamiliesOfWalkTyped.contains(opcode) && opcodesOfTypedElementsInWalkTyped.contains(opcode) && mayReadLength && mayStoreLength && buildTypedElementAccess(walker, value, InputsOfTypedOperation(walker, nullptr)))
         return true;
     if (buildFormOnShapes(walker, value, InputsOfTypedOperation(walker, nullptr)))
         return true;
@@ -205,7 +208,7 @@ static ALWAYS_INLINE TypedForm typedFormAsReceiverStands(Walker& walker, const B
             return form;
     }
     InputsOfTypedOperation inputs(walker, &types);
-    if (elementFamiliesOfWalkTyped.contains(opcode) && opcodesOfTypedElementsInWalkTyped.contains(opcode) && (opcode != Opcode::PropGet || readsUnderKeyInWalkTyped(value, walker.program().keyOf(BuiltinNames::length))) && buildTypedElementAccess(walker, value, inputs))
+    if (elementFamiliesOfWalkTyped.contains(opcode) && opcodesOfTypedElementsInWalkTyped.contains(opcode) && (opcode != Opcode::PropGet || readsUnderKeyInWalkTyped(value, walker.program().keyOf(BuiltinNames::length))) && (opcode != Opcode::PropSet || value.key() == walker.program().keyOf(BuiltinNames::length)) && buildTypedElementAccess(walker, value, inputs))
         return TypedForm::Built;
     if (buildFormOnShapes(walker, value, inputs))
         return TypedForm::Built;

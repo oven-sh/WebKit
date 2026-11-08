@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStubAssembler.h"
@@ -399,7 +400,7 @@ const StubCatalog::Node& StubCatalog::nodeOf(StubKey body) const
     return closedNodeAt(findIndexInStubCatalog(m_nodeOfBody, body));
 }
 
-ALWAYS_INLINE const StubCatalog::Answer* StubCatalog::tryFindOwnAnswer(StubKey key) const
+ALWAYS_INLINE_INTO_OTHER_FILES const StubCatalog::Answer* StubCatalog::tryFindOwnAnswer(StubKey key) const
 {
     if (!key.immediate()) {
         auto place = m_answerOfKeyWithoutImmediate.find(key.bits());

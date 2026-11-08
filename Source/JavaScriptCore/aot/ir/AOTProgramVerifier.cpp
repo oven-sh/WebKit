@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLayout.h"
 #include "AOTNameClass.h"
 #include "AOTOperationData.h"
@@ -618,7 +619,7 @@ std::optional<InternalError> findFieldError(const Program& program, LayoutID id,
 
 } // anonymous namespace
 
-ALWAYS_INLINE bool isValidPropertyKey(const PropertyKey& key)
+ALWAYS_INLINE_INTO_OTHER_FILES bool isValidPropertyKey(const PropertyKey& key)
 {
     bool hasCreationSite = key.module || key.callNumber;
     switch (key.kind) {

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCode.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -86,7 +87,7 @@ static bool describesPrimitivesAlone(const NaturalType& natural)
     return !natural.isObject && !natural.isFunction && !natural.opaque && !natural.builtinClass;
 }
 
-ALWAYS_INLINE TypeID naturalTypeFrom(TypeArena& types, const NaturalType& natural)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID naturalTypeFrom(TypeArena& types, const NaturalType& natural)
 {
     if (describesPrimitivesAlone(natural)) {
         NaturalPrimitives written = primitivesOf(natural);

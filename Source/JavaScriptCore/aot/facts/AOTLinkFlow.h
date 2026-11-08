@@ -1184,8 +1184,10 @@ public:
         HashMap<uint64_t, CopyLookedAt, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> lookedAt;
         HashSet<std::pair<uint64_t, uint32_t>> toldOfWhatLiesBesideFields;
         HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> accessorsThatWait;
+        std::array<HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>, 4> layoutsTiedByCopies;
     };
     CopiesObserved& copiesObservedIn(FunctionID);
+    bool tellsObserversOnceMore() const { return m_breachesOfClosure; }
 
     void noteAccessorLaid(LayoutID, const AccessorLaidInField&);
     BitVector escapedFunctions;
@@ -2148,6 +2150,10 @@ private:
     };
     struct SortedMembersOfFamily {
         Vector<LayoutID> tiedOneByOne;
+        Vector<LayoutID> instancesOfClasses;
+        Vector<LayoutID> topmostInstancesOfClasses;
+        Vector<LayoutID> instancesOfClassesThatIndexOfNamesLeavesOut;
+        bool someInstanceOfClassMayHaveAppendedFields { false };
         HashMap<uint32_t, Vector<LayoutID, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersWithNothingAboveByKey;
         uint32_t numberWithNothingAbove { 0 };
         FlowNodeID foundBesideTheirFields;
@@ -2161,6 +2167,21 @@ private:
     SortedMembersOfFamily& sortedMembersOf(FamilyID);
     bool noteLostMemberWithNothingAbove(FamilyID, LayoutID);
     void tieReadThroughSortedMembers(FlowNodeID aggregate, FamilyID, PropertyKeyID);
+    bool tieReadThroughClassesThatDeclare(const SortedMembersOfFamily&, FlowNodeID aggregate, FamilyID, PropertyKeyID);
+    bool isMemberOf(FamilyID, LayoutID) const;
+    struct DeclarerOfMember {
+        uint32_t key { 0 };
+        LayoutID classLayout;
+        MethodKind kind { MethodKind::Method };
+    };
+    std::span<const DeclarerOfMember> classesThatDeclareOnPrototype(PropertyKeyID) LIFETIME_BOUND;
+    Vector<DeclarerOfMember> m_declarersOnPrototypesByKey;
+    bool m_hasListedDeclarersOnPrototypes { false };
+    struct FieldBornBesideFields {
+        LayoutID layout;
+        FlowNodeID node;
+    };
+    HashMap<uint32_t, Vector<FieldBornBesideFields, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBornBelowClassesByKey;
     FlowNodeID findNodeOnDemand(NodeOnDemand, uint32_t number, PropertyKeyID) const;
     HashMap<uint32_t, std::unique_ptr<SortedMembersOfFamily>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_sortedMembersOfFamilies;
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_placesOfAppendedFields;

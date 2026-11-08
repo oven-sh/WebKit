@@ -14,6 +14,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTEnvironmentEmitter.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
 #include "AOTShapeTestEmitter.h"
@@ -430,7 +431,7 @@ bool AllocationEmitter::isNarrowedWhereStored(const InitialField& field) const
     return representationOf(field.value) == Representation::Cell && representationWantedBy(field) == Representation::Cell32;
 }
 
-Operand AllocationEmitter::takeForSlot(const InitialField& field)
+ALWAYS_INLINE_INTO_OTHER_FILES Operand AllocationEmitter::takeForSlot(const InitialField& field)
 {
     return isNarrowedWhereStored(field) ? Operand(compress(in<CellPointer>(field.value))) : get(field.value);
 }
@@ -545,15 +546,56 @@ Vector<uint8_t, 64> AllocationEmitter::bodyOfEmptyCell(const MentionedAllocation
     return body;
 }
 
-void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, std::span<const FieldIndex> emptySlots, ZeroedBy zeroedBy)
+void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, std::span<const FieldIndex> emptySlots, ZeroedBy zeroedBy, BlockID block)
 {
     if (zeroedBy == ZeroedBy::StubFromTemplate)
         return;
     SlotEmitter& slots = emitter<SlotEmitter>();
     const PlannedLayout& planned = m_plan.layout(layout);
+    auto isStored = [&](const PlacedSlot& slot) {
+        return zeroedBy == ZeroedBy::Nobody || !isZeroWhileEmpty(slot.representation);
+    };
+    auto fillsWord = [&](const PlacedSlot& slot) {
+        return isStored(slot) && widthOf(slot.representation) == sizeof(uint64_t) && !(slot.offset % sizeof(uint64_t));
+    };
+    BitVector isStoredInLoop;
+    bool storesWordsInLoop = false;
+    auto fillMoreWordsThanAreStoredInLine = [&] {
+        size_t numberOfWords = std::ranges::count_if(emptySlots, [&](FieldIndex field) { return fillsWord(planned.slots[field]); });
+        return numberOfWords * sizeof(uint64_t) > CellAllocationEmitter::maxBytesZeroedInLine;
+    };
+    if (emptySlots.size() * sizeof(uint64_t) > CellAllocationEmitter::maxBytesZeroedInLine && !generator().isInLoop(block) && fillMoreWordsThanAreStoredInLine()) {
+        size_t numberOfWords = planned.size / sizeof(uint64_t);
+        Vector<int64_t, 64> wordsWhileEmpty(FillWith { }, numberOfWords, 0);
+        BitVector isEmptyWord(numberOfWords);
+        for (FieldIndex field : emptySlots) {
+            const PlacedSlot& slot = planned.slots[field];
+            if (!fillsWord(slot))
+                continue;
+            SlotTraits traits = traitsOf(slot.representation);
+            wordsWhileEmpty[slot.offset / sizeof(uint64_t)] = traits.hasAbsent ? static_cast<int64_t>(traits.absentBits) : 0;
+            isEmptyWord.quickSet(slot.offset / sizeof(uint64_t));
+        }
+        isStoredInLoop.ensureSize(numberOfWords);
+        for (size_t begin = 0, end = 0; begin < numberOfWords; begin = end) {
+            end = begin + 1;
+            if (!isEmptyWord.quickGet(begin))
+                continue;
+            while (end < numberOfWords && isEmptyWord.quickGet(end) && wordsWhileEmpty[end] == wordsWhileEmpty[begin])
+                ++end;
+            constexpr size_t wordsInTurn = CellAllocationEmitter::bytesStoredInTurnOfLoop / sizeof(uint64_t);
+            size_t wordsInChunks = (end - begin) / wordsInTurn * wordsInTurn;
+            if ((end - begin) * sizeof(uint64_t) <= CellAllocationEmitter::maxBytesZeroedInLine)
+                continue;
+            emitter<CellAllocationEmitter>().storeWordInLoop(cell, m_program.at(layout), static_cast<unsigned>(begin * sizeof(uint64_t)), static_cast<unsigned>((begin + wordsInChunks) * sizeof(uint64_t)), wordsWhileEmpty[begin]);
+            for (size_t word = begin; word < begin + wordsInChunks; ++word)
+                isStoredInLoop.quickSet(word);
+            storesWordsInLoop = true;
+        }
+    }
     for (FieldIndex field : emptySlots) {
         const PlacedSlot& slot = planned.slots[field];
-        if (zeroedBy != ZeroedBy::Nobody && isZeroWhileEmpty(slot.representation))
+        if (!isStored(slot) || (storesWordsInLoop && fillsWord(slot) && isStoredInLoop.get(slot.offset / sizeof(uint64_t))))
             continue;
         TypedPointer address = slots.addressOf(cell, slot, locationOfField(m_program, m_plan.slots(), layout, field));
         SlotTraits traits = traitsOf(slot.representation);
@@ -623,7 +665,7 @@ CellPointer AllocationEmitter::allocateInstance(const ValueContext& value, const
         {
             CodeGenerator::InitializationScope scope(generator());
             initializeHiddenFields(cell, layout, AllocationStorage::Heap, ZeroedBy::Stub, false);
-            storeEmptySlots(cell, layout, collectEmptySlots(layout, BitVector(m_plan.layout(layout).numberOfFields())).span(), ZeroedBy::Stub);
+            storeEmptySlots(cell, layout, collectEmptySlots(layout, BitVector(m_plan.layout(layout).numberOfFields())).span(), ZeroedBy::Stub, value.block());
         }
         m_out.jump(isWhole);
         m_out.appendTo(isWhole);
@@ -697,7 +739,7 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, con
         CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(storage == AllocationStorage::Heap));
         initializeHiddenFields(cell, layoutID, storage, zeroedBy, storage != AllocationStorage::Heap && initializesFrameObjectInStub(value, layoutID));
         storeInitialFields(cell, layoutID, initialFields);
-        storeEmptySlots(cell, layoutID, emptySlots.span(), zeroedBy);
+        storeEmptySlots(cell, layoutID, emptySlots.span(), zeroedBy, value.block());
     }
     // A cell that was handed back is an old one: the collector may have marked it.
     bool mayHaveStoredCellInOldCell = storage == AllocationStorage::Heap && layout.cellsAreHandedBack && std::ranges::any_of(initialFields, [](const InitialField& field) {

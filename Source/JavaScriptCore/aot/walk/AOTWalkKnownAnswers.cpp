@@ -10,6 +10,7 @@
 
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTOpcodeSets.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
@@ -198,7 +199,7 @@ void ListOfAnswersUntilEnded::keepMembersOfListWithMembers(const ListOfAnswersUn
     dropEndedPlacesIfMany();
 }
 
-ALWAYS_INLINE void ListOfAnswersUntilEnded::keepMembersOfEither(const ListOfAnswersUntilEnded& other, const ListOfAnswersUntilEnded& beside, Vector<uint32_t, 8>& gone)
+ALWAYS_INLINE_INTO_OTHER_FILES void ListOfAnswersUntilEnded::keepMembersOfEither(const ListOfAnswersUntilEnded& other, const ListOfAnswersUntilEnded& beside, Vector<uint32_t, 8>& gone)
 {
     if (!m_numberHeld)
         return;
@@ -506,7 +507,7 @@ void KnownAnswers::note(std::span<const uint32_t> wordsOfKey, AnswersOfWalk::Pla
     m_held->restsOn.merge(restsOn);
 }
 
-ALWAYS_INLINE std::optional<bool> KnownAnswers::outcomeOf(Reference condition) const
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<bool> KnownAnswers::outcomeOf(Reference condition) const
 {
     if (!m_held || m_held->outcomes.isEmpty())
         return std::nullopt;

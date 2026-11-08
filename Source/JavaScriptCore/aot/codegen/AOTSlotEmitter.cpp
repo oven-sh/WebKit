@@ -19,6 +19,7 @@
 #include "AOTStubCatalog.h"
 #include "AOTStubsAllocation.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTThrowEmitter.h"
 #include "AOTTypeArena.h"
 #include <bit>
 #include <optional>
@@ -436,16 +437,39 @@ Operand SlotEmitter::loadOutOfLine(CellPointer cell, const PlacedSlot& slot, con
         Operand read = operandOfBits(readFieldInExtension(cell, slot, location), slot.representation);
         return absentReadsAsUndefined ? absentAsUndefined(read, slot.representation) : read;
     }
+    Operand word = wordOutOfLine(cell, slot, location, extensionWord);
+    return absentReadsAsUndefined ? absentAsUndefined(word, slot.representation) : word;
+}
+
+Operand SlotEmitter::wordOutOfLine(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot& extensionWord)
+{
     Representation representation = Typed::representationOf(slot.representation);
-    LBasicBlock hasNoStorage = newBlock();
-    OperandJoin join(m_out, representation);
-    auto [extension, fork] = branchUnlessExtensionHolds(cell, extensionWord, granuleBitOf(slot.offset), normalEdge(hasNoStorage), slot.isLeftOutByMakers);
-    Operand loaded = load(addressInExtension(m_heaps.at(m_program, location), extension, slot.offset), slot.representation);
-    keepOwnerOfExtensionAlive(cell);
-    join.add(absentReadsAsUndefined ? absentAsUndefined(loaded, slot.representation) : loaded);
-    m_out.appendToJoin(hasNoStorage, fork);
-    join.add(Operand(representation, constantWithBits(machineTypeOf(representation), absentReadsAsUndefined ? traitsOfLoaded(slot.representation).undefinedBits : traitsOf(slot.representation).absentBits)));
-    return join.finishBehind(fork);
+    const Machine::AbstractHeap& heap = m_heaps.at(m_program, location);
+    static_assert(maxExtensionSize <= 1u << 10 && 10 + 8 * sizeof(Machine::HeapIndex) <= 32);
+    Machine::PureFunction function = functionOfMemory(PureOperation::ReadFieldInExtensionInLine, slot.offset | static_cast<uint32_t>(heap.index()) << 10);
+    LValue owner = cell.value();
+    auto read = [&] {
+        LBasicBlock hasNoStorage = newBlock();
+        OperandJoin join(m_out, representation);
+        auto [extension, fork] = branchUnlessExtensionHolds(cell, extensionWord, granuleBitOf(slot.offset), normalEdge(hasNoStorage), slot.isLeftOutByMakers);
+        Operand loaded = load(addressInExtension(heap, extension, slot.offset), slot.representation);
+        keepOwnerOfExtensionAlive(cell);
+        join.add(loaded);
+        m_out.appendToJoin(hasNoStorage, fork);
+        join.add(Operand(representation, constantWithBits(machineTypeOf(representation), traitsOf(slot.representation).absentBits)));
+        return join.finishBehind(fork);
+    };
+    if (LValue known = m_out.findPurePatch(function, machineTypeOf(representation), singleElementSpan(owner))) {
+        const OperationContext* context = generator().contextBeingGenerated();
+        if (emittersCheckProofs() && context)
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(*context, Condition(m_out.equal(known, read().value)), std::nullopt, ProofSource::OtherOperation);
+        return Operand(representation, known);
+    }
+
+    Operand word = read();
+    if (word.value->opcode() == Machine::Phi)
+        m_out.recordInPlaceOfReadOfMemory(function, word.value, owner, heap);
+    return word;
 }
 
 Operand SlotEmitter::loadSlot(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot* extensionWord)

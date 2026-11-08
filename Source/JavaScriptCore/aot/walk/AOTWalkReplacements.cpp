@@ -965,13 +965,10 @@ BodyValue Walker::accessAsWalked(const BodyValue& written, PropertyKeyID* chosen
 
 BodyValue Walker::accessByName(const BodyValue& written, PropertyKeyID key)
 {
-    auto& known = m_frames.last().accessesUnderProvenKeys;
-    for (const std::unique_ptr<AccessUnderProvenKey>& access : known) {
-        if (access->id() == written.id() && access->key() == key)
-            return access->value();
-    }
-    known.append(makeUnique<AccessUnderProvenKey>(written, key));
-    return known.last()->value();
+    uint64_t asked = static_cast<uint64_t>(written.id().index() + 1) << 32 | key.bits();
+    return m_frames.last().accessesUnderProvenKeys.ensure(asked, [&] {
+        return makeUnique<AccessUnderProvenKey>(written, key);
+    }).iterator->value->value();
 }
 
 Walker::KeyOfAccess Walker::compareKeyOfAccessWithSymbol(const BodyValue& written, PropertyKeyID chosen)
