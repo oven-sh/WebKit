@@ -238,14 +238,14 @@ bool PyType::updateMaker()
     return true;
 }
 
-void PyType::updateMakers()
+JSValue PyType::updateMakers()
 {
     // What is left to do is in a list, not on the stack: classes derive from one another to any depth. The last is next: all that derives from a class comes
     // before the class beside it, as in CPython. Each is seen to once, however many ways lead to it, unless a key has been asked. (Not those that only have this
     // one in an MRO of their own making.)
     updateMaker();
     if (!m_subclasses)
-        return;
+        return { };
     MarkedArgumentBuffer left;
     appendSubclassesTo(left, SubclassOrder::NewestFirst);
     UncheckedKeyHashSet<PyType*> seen;
@@ -262,11 +262,12 @@ void PyType::updateMakers()
         keptAlive.append(type);
         PyDict* dict = type->dict();
         bool hasRaised = false;
-        JSValue own = dict->hasOnlyStringKeys() ? dict->get(name) : type->getAskingKeys(dict, name, hasRaised);
+        JSValue raised;
+        JSValue own = dict->hasOnlyStringKeys() ? dict->get(name) : type->getAskingKeys(dict, name, hasRaised, &raised);
         // A key of its dict raises when it is asked whether it is the name: there CPython gives up (and leaves the exception for whoever comes next). That class,
         // and all whose turn has not come, stay as they were.
         if (hasRaised) [[unlikely]]
-            return;
+            return raised;
         if (own) {
             // A key may have said so.
             if (!dict->hasOnlyStringKeys()) [[unlikely]]
@@ -278,6 +279,7 @@ void PyType::updateMakers()
         if (isFirstTime)
             type->appendSubclassesTo(left, SubclassOrder::NewestFirst);
     }
+    return { };
 }
 
 void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef> methods)
@@ -385,7 +387,7 @@ void PyType::takeNewLookupKey()
 }
 
 // type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost.
-JSValue PyType::getAskingKeys(PyDict* dict, JSString* name, bool& hasRaised)
+JSValue PyType::getAskingKeys(PyDict* dict, JSString* name, bool& hasRaised, JSValue* raised)
 {
     VM& vm = this->vm();
     hasRaised = true;
@@ -407,8 +409,8 @@ JSValue PyType::getAskingKeys(PyDict* dict, JSString* name, bool& hasRaised)
             wasTerminated = vm.isTerminationException(exception);
             if (wasTerminated)
                 scope.clearException();
-            else
-                takePendingException(globalObject);
+            else if (JSValue taken = takePendingException(globalObject); raised)
+                *raised = taken;
         }
     }
     // In place of whatever was on its way.

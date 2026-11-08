@@ -294,8 +294,9 @@ public:
         m_looksUpNew = false;
         m_construction = Construction::Unknown;
     }
-    // __new__ has been set or deleted here, and didChange() called: of this type, and of those derived from it as far as they get to see that.
-    void updateMakers();
+    // __new__ has been set or deleted here, and didChange() called: of this type, and of those derived from it as far as they get to see that. If a key of one of their dicts
+    // raises when it is asked, that is the end of it, and the result is what it raised.
+    JSValue updateMakers();
 
     // An instance of this very class is an attribute of it, or of a class derived from it, and something is remembered about that.
     bool hasInstancesAmongAttributes() const { return m_hasInstancesAmongAttributes; }
@@ -378,7 +379,7 @@ private:
     void forgetWhatIsRemembered(Change);
 
     JSValue lookupSlow(JSString* name, AsksKeys = AsksKeys::Yes, bool* hasRaised = nullptr);
-    JSValue getAskingKeys(PyDict*, JSString* name, bool& hasRaised);
+    JSValue getAskingKeys(PyDict*, JSString* name, bool& hasRaised, JSValue* raised = nullptr);
     static std::atomic<uint64_t> s_timesLookupRanCode;
     JSValue lookupSpecialSlow(Special, AsksKeys);
     Structure* createInstanceStructure(VM&);

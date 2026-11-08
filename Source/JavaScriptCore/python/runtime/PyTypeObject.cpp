@@ -801,6 +801,20 @@ JSValue typeGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nam
     RELEASE_AND_RETURN(scope, typeGetAttr(globalObject, PyType::from(self), string));
 }
 
+// The assignment has taken place, and a key has raised where the classes derived from that one were seen to. CPython leaves the exception set, and the next call whose result is
+// checked makes this of it. It has to come out: a key that assigns again whenever it is asked ends with the stack only if what that raises ends the assignments it is called from.
+static void raiseWhatKeyRaised(JSGlobalObject* globalObject, ThrowScope& scope, JSValue raised, ASCIILiteral method = "__setattr__"_s)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    PyException* error = newException(globalObject, rt.SystemError(), makeString("<slot wrapper '"_s, method, "' of 'type' objects> returned a result with an exception set"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    raiseException(globalObject, scope, error);
+    error->setCause(vm, raised);
+    error->setSuppressContext(true);
+    error->setContext(vm, raised);
+}
+
 static void typeSetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString* name, JSValue value)
 {
     Runtime& rt = runtime(globalObject);
@@ -837,8 +851,13 @@ static void typeSetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString
     StringImpl* impl = name->tryGetValueImpl();
     bool isHook = impl == rt.name(Special::GetAttr)->tryGetValueImpl() || impl == rt.name(Special::GetAttribute)->tryGetValueImpl();
     type->didChange(vm, isHook ? PyType::Change::HowAttributesAreRead : PyType::Change::Any);
-    if (impl == rt.name(Special::New)->tryGetValueImpl()) [[unlikely]]
-        type->updateMakers();
+    if (impl == rt.name(Special::New)->tryGetValueImpl()) [[unlikely]] {
+        JSValue raised = type->updateMakers();
+        RETURN_IF_EXCEPTION(scope, void());
+        if (raised) [[unlikely]]
+            raiseWhatKeyRaised(globalObject, scope, raised, value ? "__setattr__"_s : "__delattr__"_s);
+        return;
+    }
     if (getsFinalizer) [[unlikely]]
         registerInstancesForFinalization(globalObject, type);
 }
@@ -1986,24 +2005,27 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     bool succeeded = updateMROs(globalObject, type, changes, tellsAnew);
     // An mro() that ran may itself have assigned to __bases__. Then what it assigned stays, and has been seen to.
     bool isCurrent = type->bases() == bases;
-    auto settleUnderNewBases = [&] {
+    // The result: what a key raised, see updateMakers().
+    auto settleUnderNewBases = [&]() -> JSValue {
         for (unsigned i = 0; i < oldBases->length(); ++i) {
             PyType::from(oldBases->at(i))->removeSubclass(globalObject, type);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, { });
         }
         enterUnderBases(globalObject, type, bases, MayBeThere::Yes);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, { });
         // An mro() that ran may have assigned to the __bases__ of another class. That one's walk comes to the classes that are in the lists then, and this class is in those of its old
         // bases until now. So an MRO may be left that names a class which leads here no longer, as in CPython (which remembers nothing of a class whose metaclass has an mro()).
         // Before what has been remembered is forgotten, and before a key is asked: to be entered in a list forgets nothing.
         if (tellsAnew) {
             beToldBelow(globalObject, type);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, { });
         }
         type->didChange(vm, PyType::Change::HowAttributesAreRead);
-        type->updateMakers();
+        JSValue raised = type->updateMakers();
+        RETURN_IF_EXCEPTION(scope, { });
         if (!hadFinalizer && type->lookup(Special::Del)) [[unlikely]]
             registerInstancesForFinalization(globalObject, type);
+        return raised;
     };
     if (failed(scope, succeeded)) {
         // An mro() that ran may have put one of the old bases under this class. Then they are not given back, for they would lead from the class to itself: all stays as far as it
@@ -2037,8 +2059,13 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
         }
         return;
     }
-    if (isCurrent)
-        RELEASE_AND_RETURN(scope, settleUnderNewBases());
+    if (isCurrent) {
+        JSValue raised = settleUnderNewBases();
+        RETURN_IF_EXCEPTION(scope, void());
+        if (raised) [[unlikely]]
+            raiseWhatKeyRaised(globalObject, scope, raised);
+        return;
+    }
     if (tellsAnew)
         RELEASE_AND_RETURN(scope, beToldBelow(globalObject, type));
 }
