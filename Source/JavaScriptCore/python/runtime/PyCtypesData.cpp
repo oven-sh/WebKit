@@ -165,7 +165,7 @@ static PyByteStorage* newMemory(JSGlobalObject* globalObject, const PyCTypeInfo*
         if (bytes > std::numeric_limits<int64_t>::max() - granule)
             return nullptr;
         size_t capacity = std::max<size_t>(roundUpToMultipleOf<granule>(static_cast<size_t>(bytes)), granule);
-        if (info->flags & (IsPointer | HasPointer))
+        if (info->flags & (IsAddress | HasAddress))
             return PyCStorage::tryCreate(vm, info->state->storageStructure.get(), capacity);
         return PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), capacity);
     };
@@ -678,11 +678,6 @@ static JSValue entryForCopy(JSGlobalObject* globalObject, PyCData* holder, const
     return entryAt(globalObject, home);
 }
 
-static ALWAYS_INLINE bool isAddress(Code code)
-{
-    return code == Code::CharPointer || code == Code::WCharPointer || code == Code::VoidPointer || code == Code::Object;
-}
-
 // What the eight bytes of a py_object are believed to stand for.
 static JSValue hintForObject(JSGlobalObject* globalObject, const Home& home, std::span<const uint8_t> memory, PyCData* holder, int64_t index)
 {
@@ -1173,11 +1168,11 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
             if (size == sizeof(void*))
                 memcpy(&target, to.data(), sizeof(void*));
         }
-        if (PyCTypeInfo* info = infoOf(globalObject, type); info && info->flags & IsPointer && size == sizeof(void*)) {
+        if (PyCTypeInfo* info = infoOf(globalObject, type); info && info->flags & IsAddress && size == sizeof(void*)) {
             // Also where only the search knows what it points into: what the search goes by is not handed on in a way that lasts.
             setEntry(globalObject, home, entryForCopy(globalObject, source, homeOfSource, target));
             RETURN_IF_EXCEPTION(scope, { });
-        } else if (info && info->flags & HasPointer) {
+        } else if (info && info->flags & HasAddress) {
             copyEntries(globalObject, homeOfSource, home, size);
             RETURN_IF_EXCEPTION(scope, { });
         }

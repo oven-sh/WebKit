@@ -105,6 +105,11 @@ struct Packed {
     JSCell* holder { nullptr }; // Whose memory `text` is: store() keeps it alive until it has copied.
 };
 
+ALWAYS_INLINE bool isAddress(Code code)
+{
+    return code == Code::CharPointer || code == Code::WCharPointer || code == Code::VoidPointer || code == Code::Object;
+}
+
 // Which bits of the integer, for a bit field.
 struct Bits {
     uint8_t size { 0 }; // 0: all of it.
@@ -158,6 +163,10 @@ enum TypeInfoFlag : unsigned {
     HasPointer = 0x200,
     HasUnion = 0x400,
     HasBitField = 0x800,
+    // The four above are CPython's, with its quirks, for what a program can tell by them (what can be pickled): a class derived from c_char_p is no pointer, and a structure with a field of such a class has none.
+    // These two say what is so: an instance is eight bytes that are an address or stand for an object; it has such bytes somewhere in it. They decide what is written down for its memory (entryAt()).
+    IsAddress = 0x10000,
+    HasAddress = 0x20000,
 };
 
 // It is the hidden field 0 of the type. A type of one of the metaclasses that has none is abstract: _SimpleCData, Structure,
@@ -521,7 +530,7 @@ private:
 using Granted = std::span<uint8_t>;
 #endif
 
-// The memory of an instance of a type that holds pointers. Behind the bytes lies a reference to the record of what the addresses in them point into: see entryAt().
+// The memory of an instance of a type that holds addresses (IsAddress, HasAddress). Behind the bytes lies a reference to the record of what the addresses in them point into: see entryAt().
 class PyCStorage final : public PyByteStorage {
 public:
     using Base = PyByteStorage;

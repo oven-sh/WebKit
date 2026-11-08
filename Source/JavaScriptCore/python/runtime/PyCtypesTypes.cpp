@@ -478,6 +478,8 @@ static bool updateStructInfo(JSGlobalObject* globalObject, PyType* type, JSValue
         ASSERT(fieldInfo);
         if (fieldInfo->flags & (IsPointer | HasPointer))
             info->flags |= HasPointer;
+        if (fieldInfo->flags & (IsAddress | HasAddress))
+            info->flags |= HasAddress;
         if (fieldInfo->kind == TypeKind::Union || (fieldInfo->flags & HasUnion))
             info->flags |= HasUnion;
         if (field->bits.size || (fieldInfo->flags & HasBitField))
@@ -486,6 +488,9 @@ static bool updateStructInfo(JSGlobalObject* globalObject, PyType* type, JSValue
         setAttr(globalObject, type, field->name.get(), field);
         RETURN_IF_EXCEPTION(scope, false);
     }
+    // (CPython's flags go by the new fields alone.)
+    if (baseInfo && baseInfo->flags & HasAddress)
+        info->flags |= HasAddress;
     info->fields.set(vm, info, allFields);
     info->size = totalSize;
     info->alignment = totalAlignment;
@@ -612,7 +617,7 @@ static JSValue pointerMetaInit(JSGlobalObject* globalObject, JSValue self, const
     info->size = sizeof(void*);
     info->alignment = alignof(void*);
     info->length = 1;
-    info->flags |= IsPointer;
+    info->flags |= IsPointer | IsAddress;
     if (JSValue proto = type->dict()->get(state.typeName.get())) {
         if (failed(scope, setPointerProto(globalObject, type, info, proto)))
             return { };
@@ -717,6 +722,8 @@ static JSValue arrayMetaInit(JSGlobalObject* globalObject, JSValue self, const C
         return raiseOverflowError(globalObject, scope, "array too large"_s);
     if (itemInfo->flags & (IsPointer | HasPointer))
         info->flags |= HasPointer;
+    if (itemInfo->flags & (IsAddress | HasAddress))
+        info->flags |= HasAddress;
     info->size = itemInfo->size * *length;
     info->alignment = itemInfo->alignment;
     info->length = *length;
@@ -948,6 +955,8 @@ static JSValue simpleMetaInit(JSGlobalObject* globalObject, JSValue self, const 
     PyCTypeInfo* info = createInfo(globalObject, type);
     RETURN_IF_EXCEPTION(scope, { });
     fillSimpleInfo(vm, info, *description, proto, false);
+    if (isAddress(description->code))
+        info->flags |= IsAddress;
 
     // The pointer types themselves, not what is derived from them, take more kinds of arguments.
     if (type->base() == state.simpleType.get()) {
@@ -1093,7 +1102,7 @@ static JSValue functionMetaInit(JSGlobalObject* globalObject, JSValue self, cons
     JSValue flags = dict->get(state.flagsName.get());
     if (!flags || !isInt(flags))
         return raiseTypeError(globalObject, scope, "class must define _flags_ which must be an integer"_s);
-    info->flags = static_cast<unsigned>(lowBitsOfInt(intValue(flags))) | IsPointer;
+    info->flags = static_cast<unsigned>(lowBitsOfInt(intValue(flags))) | IsPointer | IsAddress;
     if (JSValue argTypes = dict->get(state.argtypesName.get())) {
         JSValue converters = convertersFor(globalObject, argTypes);
         RETURN_IF_EXCEPTION(scope, { });
