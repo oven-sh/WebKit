@@ -20,7 +20,7 @@ OpcodeSet StraightEmitter::opcodesOfModules()
 {
     return {
         Opcode::ModuleNamespace, Opcode::ImportModule, Opcode::RequireModule, Opcode::EvaluateModule, Opcode::RecordRequire,
-        Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::MockSeenBy, Opcode::NamespaceSeenBy, Opcode::AreLoaderFunctionsStored, Opcode::CountExecution,
+        Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::IsLinkedBelow, Opcode::MockSeenBy, Opcode::NamespaceSeenBy, Opcode::AreLoaderFunctionsStored, Opcode::CountExecution,
         Opcode::ResolveModule, Opcode::ThrowModuleFailure, Opcode::ImportDynamic, Opcode::RequireDynamic, Opcode::ResolveDynamic
     };
 }
@@ -208,15 +208,19 @@ void StraightEmitter::generateModule(const BodyValue& value)
         defineBoolean(value);
         return;
     case Opcode::SeesMockOf:
-        callOperation(value, RuntimeOperation::SeesMockOf, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()) });
+        callOperation(value, RuntimeOperation::SeesMockOf, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), moduleIndexInStraightForm(value.reader()) });
+        defineBoolean(value);
+        return;
+    case Opcode::IsLinkedBelow:
+        callOperation(value, RuntimeOperation::IsLinkedBelow, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()) });
         defineBoolean(value);
         return;
     case Opcode::MockSeenBy:
-        callOperation(value, RuntimeOperation::MockSeenBy, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()) });
+        callOperation(value, RuntimeOperation::MockSeenBy, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), moduleIndexInStraightForm(value.reader()) });
         define(value);
         return;
     case Opcode::NamespaceSeenBy:
-        callOperation(value, RuntimeOperation::NamespaceSeenBy, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()) });
+        callOperation(value, RuntimeOperation::NamespaceSeenBy, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), moduleIndexInStraightForm(value.reader()) });
         define(value);
         return;
     case Opcode::AreLoaderFunctionsStored:

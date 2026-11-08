@@ -344,7 +344,7 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
 
         m_out.appendTo(hasShape);
         Word32 orderWord = shapeTests.orderWordOf(source);
-        Condition hasNoOtherBits = hasNoBits(orderWord, ~orderAndCountMask);
+        Condition hasNoOtherBits = hasNoBits(orderWord, ~(orderAndCountMask | orderWordIntegrityBits));
         branch(logicalAnd(hasNoOtherBits, notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine)), { normalEdge(copies), rareEdge(fills) });
     }
 
@@ -397,7 +397,7 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     };
     defineTest(value, either<Condition>(isGeneralShape(shapeTests.shapeWordWithMarkOf(source)), [&] {
         Word32 orderWord = shapeTests.orderWordOf(source);
-        Condition hasNoOtherBits = hasNoBits(orderWord, ~orderAndCountMask);
+        Condition hasNoOtherBits = hasNoBits(orderWord, ~(orderAndCountMask | orderWordIntegrityBits));
         Condition hasOnlyFields = logicalAnd(hasNoOtherBits, notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine));
         if (const PlacedSlot& extensionWord = m_plan.slots().extensionWord(layout); extensionWord.hasStorage()) {
             TypedPointer address = m_out.address(fields, source.value(), extensionWord.offset);
@@ -413,10 +413,12 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
         return either<Condition>(hasOnlyFields, [&] {
             if (planned.size > offsetOfFirstField)
                 emitter<CellAllocationEmitter>().copyFieldWords(source, target, static_cast<unsigned>(WTF::roundUpToMultipleOf<copyChunkBytes>(planned.size)) - offsetOfFirstField);
-            LValue orderWordOfTarget = orderWord.value();
+            LValue orderWordOfTarget = bitAnd(orderWord, static_cast<int32_t>(orderAndCountMask)).value();
             if (shapesOfLayout.count > 1)
                 orderWordOfTarget = m_out.select(isGeneralShape(shapeTests.shapeWordOf(target)).value(), orderWordOfTarget, m_out.constInt32(unorderedOrderWord));
             m_out.store32(orderWordOfTarget, m_out.address(m_heaps.AOTObject_orderWord, target.value(), offsetOfOrderWord));
+            if (planned.mayBearMark)
+                shapeTests.clearMark(target);
             if (mayCopyCell)
                 emitter<BarrierEmitter>().barrier(value, target);
             return boolean(true);

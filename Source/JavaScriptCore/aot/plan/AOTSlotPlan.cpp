@@ -1471,14 +1471,19 @@ KeyOrders computeKeyOrders(const Program&, const LinkTables&, const ThinSummarie
 
 StorageOfLayouts chooseStorageOfLayouts(const Program&, const Facts&, const ParallelLoops&);
 SlotPlanParts computeSlotPlanParts(Program&, const Facts&, BuildContext&, const StorageOfLayouts&, KeyOrders&, PromotedEnvironments&);
-static void dropTypesOfNumbersLeftBoxedInSlotPlan(const Program& program, BuildContext& build, SlotPlanParts& parts)
+static bool holdsNumbersThatMayBeFractionsInSlotPlan(const Type& held)
+{
+    return held.isNumberOrNullish() && !held.isInt32OrNullish();
+}
+
+static void dropTypesOfFractionsLeftBoxedInSlotPlan(const Program& program, BuildContext& build, SlotPlanParts& parts)
 {
     std::atomic<uint64_t> numberOfFieldsOutOfLine { 0 };
     forEachRangeOfIndicesInParallel(build.parallelLoops(), parts.layouts.size(), [&](size_t first, size_t end) {
         uint64_t numberOutOfLineInRange = 0;
         for (PlannedLayout& layout : parts.layouts.mutableSpan().subspan(first, end - first)) {
             for (PlacedSlot& slot : layout.slots) {
-                if (slot.type && slot.representation == SlotRepresentation::JSValue && program.types.at(slot.type).isNumberOrNullish())
+                if (slot.type && slot.representation == SlotRepresentation::JSValue && holdsNumbersThatMayBeFractionsInSlotPlan(program.types.at(slot.type)))
                     slot.type = { };
                 numberOutOfLineInRange += slot.isOutOfLine();
             }
@@ -1519,6 +1524,13 @@ void holdDoorsToProofsInSlotPlan(Program& program, const Facts& facts, const Par
     }
 
     TypeArena types(program.types, ArenaKeeps::InProgram);
+    for (const LinkedAccessorsOfField& laid : facts.linked().accessorsExpectedInFields) {
+        PlannedLayout& planned = parts.layouts[laid.field.layout.index()];
+        if (!laid.getterIsProven || laid.field.field >= planned.numberOfFields())
+            continue;
+        if (PlacedSlot& slot = planned.slots[laid.field.field]; slot.holdsAccessor && slot.indexInLayoutRecord && slot.hasStorage())
+            slot.type = types.forFunction(laid.getter);
+    }
     std::array<HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>, 2> askedOfProvenInSlot;
     for (const Vector<FieldReference>& fieldsWithDoors : fieldsWithDoorsInRanges) {
         for (FieldReference reference : fieldsWithDoors) {
@@ -1679,7 +1691,7 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
             });
             layEnvironmentsHandedBack(build, environmentsHandedBack.all.span(), parts);
             chooseStorageOfFields(program, facts, build, parts, layoutsBelowTheirBases, WTF::move(groupsForFields), WTF::move(unitsOfFields));
-            dropTypesOfNumbersLeftBoxedInSlotPlan(program, build, parts);
+            dropTypesOfFractionsLeftBoxedInSlotPlan(program, build, parts);
             std::optional<LayoutsByNames> writersAlone;
             if (!facts.mechanisms().contains(Mechanism::Guesses))
                 writersAlone = LayoutsByNames::thatListsWritersAlone(program, facts.summaries());

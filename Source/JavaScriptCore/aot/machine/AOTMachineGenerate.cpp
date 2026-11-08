@@ -36,6 +36,12 @@ void prepareForGeneration(Procedure& procedure)
         return;
     }
 
+    if (procedure.keepsStoresToLookAtAgain()) [[unlikely]] {
+        procedure.stopAtStoresThatWayLeadsToAfterAll();
+        if (procedure.failure())
+            return;
+    }
+
     bool runsChecks = procedure.traits().checksAllocation;
     if (runsChecks && !runCheckBeforeGeneration(procedure, validate))
         return;

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinNameSlots.h"
+#include "AOTCheckedSpan.h"
 #include "AOTRemovableFeature.h"
 #include "AOTVector.h"
 #include "CommonIdentifiers.h"
@@ -74,13 +75,6 @@ const BuiltinTable& BuiltinTable::singleton()
     letArrayLeaveWithCompiler<&builtinTableClassesByMemberName>();
     static constinit const BuiltinTable table(builtinTableData);
     return table;
-}
-
-template<typename T>
-static const T& checkedAt(std::span<const T> list, size_t index)
-{
-    RELEASE_ASSERT(index < list.size());
-    return list[index];
 }
 
 template<typename Record, typename Key>
@@ -347,6 +341,13 @@ BuiltinMemberLookup BuiltinTable::findMember(BuiltinID holder, BuiltinName name)
 
 bool BuiltinTable::hasLockedPrototypeChain(BuiltinClassID builtinClass) const
 {
+    if (std::optional<bool> kept = answerKeptAbout(builtinClass, AnswerAboutBuiltinClass::HasLockedPrototypeChain))
+        return *kept;
+    return everyLinkOfPrototypeChainIsLocked(builtinClass);
+}
+
+bool BuiltinTable::everyLinkOfPrototypeChainIsLocked(BuiltinClassID builtinClass) const
+{
     if (!at(builtinClass).prototype)
         return false;
     BuiltinID holder = canonicalID(at(builtinClass).prototype);
@@ -374,6 +375,8 @@ bool BuiltinTable::mayHavePristineInstances(BuiltinClassID builtinClass) const
 
 bool BuiltinTable::isRedefinedBelow(BuiltinClassID builtinClass, BuiltinName name) const
 {
+    if (!answerKeptAbout(builtinClass, AnswerAboutBuiltinClass::HasClassBelowThatMayHavePristineInstances).value_or(true))
+        return false;
     return std::ranges::any_of(classesWithInstanceMember(name), [&](BuiltinClassID other) {
         return other != builtinClass && isSameOrSubclassOf(other, builtinClass) && mayHavePristineInstances(other);
     });
@@ -480,6 +483,15 @@ bool BuiltinTable::isSameOrSubclassOf(BuiltinClassID builtinClass, BuiltinClassI
             return true;
     }
     return false;
+}
+
+bool BuiltinTable::hasClassBelow(BuiltinClassID builtinClass) const
+{
+    if (std::optional<bool> kept = answerKeptAbout(builtinClass, AnswerAboutBuiltinClass::HasClassBelow))
+        return *kept;
+    return std::ranges::any_of(m_data.classes, [&](const BuiltinClass& other) {
+        return other.parent && isSameOrSubclassOf(other.parent, builtinClass);
+    });
 }
 
 TypedArrayType BuiltinTable::typedArrayTypeOf(BuiltinClassID builtinClass) const

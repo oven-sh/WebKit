@@ -54,18 +54,68 @@ void LinkTables::listCyclesNamed()
         for (uint32_t awaited : cyclesAwaitedBy(cycle))
             cyclesNamed[nextPlaceOfCycle[awaited]++] = cycle;
     }
+
+    constexpr uint32_t none = UINT32_MAX;
+    auto onlyReferrerOf = [&](uint32_t cycle) {
+        std::span<const uint32_t> awaited = cyclesAwaitedBy(cycle);
+        return awaited.size() == 1 && awaited[0] < cycle ? awaited[0] : none;
+    };
+    placesBelowOnlyReferrers.fill({ }, numberOfCycles);
+    for (uint32_t cycle = static_cast<uint32_t>(numberOfCycles); cycle--;) {
+        uint32_t numberBelow = ++placesBelowOnlyReferrers[cycle].end;
+        if (uint32_t above = onlyReferrerOf(cycle); above != none)
+            placesBelowOnlyReferrers[above].end += numberBelow;
+    }
+    uint32_t nextPlaceOfTop = 0;
+    for (uint32_t cycle = 0; cycle < numberOfCycles; ++cycle) {
+        PlaceBelowOnlyReferrers& place = placesBelowOnlyReferrers[cycle];
+        uint32_t above = onlyReferrerOf(cycle);
+        uint32_t& nextPlace = above != none ? nextPlaceOfCycle[above] : nextPlaceOfTop;
+        place.top = above != none ? placesBelowOnlyReferrers[above].top : cycle;
+        place.first = nextPlace;
+        nextPlace += place.end;
+        place.end += place.first;
+        nextPlaceOfCycle[cycle] = place.first + 1;
+    }
+    for (uint32_t cycle = 0; cycle < numberOfCycles; ++cycle) {
+        std::span<uint32_t> awaited = cyclesAwaited.mutableSpan().subspan(firstCycleAwaited[cycle], firstCycleAwaited[cycle + 1] - firstCycleAwaited[cycle]);
+        if (awaited.size() > 1)
+            std::ranges::sort(awaited, { }, [&](uint32_t other) { return placesBelowOnlyReferrers[other].first; });
+    }
+}
+
+bool LinkTables::isNamedBelow(uint32_t above, uint32_t named) const
+{
+    std::span<const uint32_t> awaited = cyclesAwaitedBy(named);
+    auto placeOf = [&](uint32_t cycle) { return placesBelowOnlyReferrers[cycle].first; };
+    auto found = std::ranges::lower_bound(awaited, placeOf(above), { }, placeOf);
+    return found != awaited.end() && placeOf(*found) < placesBelowOnlyReferrers[above].end;
 }
 
 bool LinkTables::cycleLeadsTo(uint32_t referrer, uint32_t named) const
 {
-    if (referrer == named)
+    if (referrer == named || hangsBelow(referrer, named))
         return true;
+    named = placesBelowOnlyReferrers[named].top;
     uint32_t lowestRank = rankOfCycle[referrer];
     uint32_t highestRank = rankOfCycle[named];
     if (lowestRank >= highestRank)
         return false;
-    if (std::ranges::binary_search(cyclesNamedBy(referrer), named))
+    if (isNamedBelow(referrer, named))
         return true;
+    std::span<const uint32_t> namedByReferrer = cyclesNamedBy(referrer);
+    std::span<const uint32_t> awaitedByNamed = cyclesAwaitedBy(named);
+    if (namedByReferrer.size() <= awaitedByNamed.size()) {
+        for (uint32_t between : namedByReferrer) {
+            if (isNamedBelow(between, named))
+                return true;
+        }
+    } else {
+        for (uint32_t between : awaitedByNamed) {
+            if (std::ranges::binary_search(namedByReferrer, placesBelowOnlyReferrers[between].top))
+                return true;
+        }
+    }
 
     constexpr unsigned down = 0;
     constexpr unsigned up = 1;
@@ -85,17 +135,25 @@ bool LinkTables::cycleLeadsTo(uint32_t referrer, uint32_t named) const
             numberOfSteps += stepsFrom(end, cycle).size();
         return numberOfSteps;
     };
+    size_t numbersOfStepsTaken[2] = { 0, 0 };
     while (!fronts[down].isEmpty() && !fronts[up].isEmpty()) {
-        unsigned end = numberOfStepsFrom(down) <= numberOfStepsFrom(up) ? down : up;
+        size_t numbersOfStepsBehindNext[2] = { numbersOfStepsTaken[down] + numberOfStepsFrom(down), numbersOfStepsTaken[up] + numberOfStepsFrom(up) };
+        unsigned end = numbersOfStepsBehindNext[down] <= numbersOfStepsBehindNext[up] ? down : up;
+        numbersOfStepsTaken[end] = numbersOfStepsBehindNext[end];
         nextFront.shrink(0);
         for (uint32_t cycle : fronts[end]) {
             for (uint32_t next : stepsFrom(end, cycle)) {
+                if (end == up)
+                    next = placesBelowOnlyReferrers[next].top;
                 if (seen[end ^ 1].contains(next))
                     return true;
                 if (rankOfCycle[next] <= lowestRank || rankOfCycle[next] >= highestRank)
                     continue;
-                if (seen[end].add(next).isNewEntry)
-                    nextFront.append(next);
+                if (!seen[end].add(next).isNewEntry)
+                    continue;
+                if (end == up && isNamedBelow(referrer, next))
+                    return true;
+                nextFront.append(next);
             }
         }
         std::swap(fronts[end], nextFront);
@@ -644,7 +702,37 @@ private:
     FunctionID addGroup(LinkedGroup::Kind, uint32_t subject = 0);
     void forEachNodeArrivingAt(FlowNodeID, const Invocable<void(FunctionID)> auto&) const;
     void forEachFunctionOfType(TypeID, const Invocable<void(FunctionID)> auto&) const;
-    void forEachNodeNamedBy(FunctionID referrer, const Invocable<void(FunctionID)> auto&) const;
+    template<typename Row>
+    class RowsOfRisingFunctions {
+    public:
+        RowsOfRisingFunctions(std::span<const Row> rows, FunctionID first)
+            : m_rows(rows.subspan(std::ranges::lower_bound(rows, first, { }, &Row::function) - rows.begin()))
+        {
+        }
+
+        std::span<const Row> takeRowsOf(FunctionID function)
+        {
+            size_t first = 0;
+            while (first < m_rows.size() && m_rows[first].function < function)
+                ++first;
+            size_t end = first;
+            while (end < m_rows.size() && m_rows[end].function == function)
+                ++end;
+            std::span<const Row> taken = m_rows.subspan(first, end - first);
+            m_rows = m_rows.subspan(end);
+            return taken;
+        }
+
+    private:
+        std::span<const Row> m_rows;
+    };
+    struct TablesReadInOrderOfFunctions {
+        RowsOfRisingFunctions<LinkedCatch> catches;
+        RowsOfRisingFunctions<LinkedGetterAtRead> gettersExpectedAtReads;
+        RowsOfRisingFunctions<LinkedResultOfRead> resultsOfReadsByKey;
+        RowsOfRisingFunctions<LinkedContentsAtOperation> contentsAtOperations;
+    };
+    void forEachNodeNamedBy(FunctionID referrer, TablesReadInOrderOfFunctions&, const Invocable<void(FunctionID)> auto&) const;
     void forEachRecordReadUnderUnknownKeyBy(FunctionID reader, const Invocable<void(LayoutID)> auto&) const;
     void forEachFunctionInFieldsOf(LayoutID record, const Invocable<void(FunctionID)> auto&) const;
     void forEachFunctionListedWhateverCameFirst(const LinkFlow::CalleesOfCall&, const Invocable<void(FunctionID)> auto&) const;
@@ -1060,7 +1148,7 @@ bool WriterOfLink::mayFindUnlistedNames(const LinkType& receiver) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call, const LinkFlow::CalleesOfCall& callees) const
+ALWAYS_INLINE FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call, const LinkFlow::CalleesOfCall& callees) const
 {
     if (!callees.builtins().isEmpty() || callees.mayEnterLost || (callees.mayEnterUnseen && !writesWhatIsExpected()))
         return { };
@@ -1334,6 +1422,9 @@ public:
         else
             m_someKeyIsUnknown = true;
         uint32_t laid = getter ? getter.index() : several;
+        auto underAnyKey = m_underAnyKey.add(holder, laid);
+        if (!underAnyKey.isNewEntry && underAnyKey.iterator->value != laid)
+            underAnyKey.iterator->value = several;
         auto added = m_getters.add(placeOf(holder, key), laid);
         if (!added.isNewEntry && added.iterator->value != laid)
             added.iterator->value = several;
@@ -1341,6 +1432,12 @@ public:
 
     bool isEmpty() const { return m_getters.isEmpty(); }
     bool mayAnswer(PropertyKeyID key) const { return m_someKeyIsUnknown || m_keys.get(key.index()); }
+
+    FunctionID findUnderAnyKey(uint32_t holder) const
+    {
+        auto found = m_underAnyKey.find(holder);
+        return found == m_underAnyKey.end() || found->value == several ? FunctionID() : FunctionID(found->value);
+    }
 
     FunctionID find(uint32_t holder, PropertyKeyID key) const
     {
@@ -1356,6 +1453,7 @@ private:
 
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_getters;
     BitVector m_keys;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_underAnyKey;
     bool m_someKeyIsUnknown { false };
 };
 
@@ -1387,6 +1485,12 @@ void WriterOfLink::writeGettersExpectedAtReads()
         FunctionID function(index);
         size_t first = reads.size();
         for (const SummaryAccess& access : m_flow.summaries.at(function).accesses) {
+            if (access.kind == SummaryAccess::Kind::Read && !access.key && access.site && access.keyNode != noSummaryNode && !access.keyIsSurelyIndex && access.receiver == noSummaryNode) {
+                std::optional<uint32_t> holder = GettersLaidInLink::holderOf(m_flow, m_flow.typeAt(m_flow.nodeOf(function, access.subject)));
+                if (FunctionID getter = holder ? laid.findUnderAnyKey(*holder) : FunctionID(); getter && !std::ranges::contains(reads.span().subspan(first), access.site, &LinkedGetterAtRead::site))
+                    reads.append(LinkedGetterAtRead { function, access.site, getter });
+                continue;
+            }
             if (access.kind != SummaryAccess::Kind::Read || !access.key || !access.site || access.isToContents() || access.receiver != noSummaryNode || liesInThread(access.key) || !laid.mayAnswer(access.key))
                 continue;
             std::optional<uint32_t> holder = GettersLaidInLink::holderOf(m_flow, m_flow.typeAt(m_flow.nodeOf(function, access.subject)));
@@ -1639,7 +1743,15 @@ void WriterOfLink::writeContentsAtOperations()
                 continue;
             const LinkType& receiver = m_flow.typeAt(node);
             bool mayMakeIteratorOverList = receiver.builtinClass == BuiltinClasses::Array && !call.numberOfArguments;
-            if (receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || (!isMapOrWeakMap(receiver) && !mayMakeIteratorOverList && receiver.builtinClass != BuiltinClasses::Set))
+            bool mayRunOverList = false;
+            if (receiver.builtinClass == BuiltinClasses::Array && call.numberOfArguments && !writesWhatIsExpected()) {
+                uint32_t first = m_flow.summaries.at(function).arguments[call.firstArgument];
+                if (first != noSummaryNode && first) {
+                    const LinkType& handed = m_flow.typeAt(m_flow.nodeOf(function, first));
+                    mayRunOverList = handed.functions == LinkType::Functions::Closure && handed.objects == LinkType::Objects::None && handed.classes == LinkType::Classes::None && !handed.primitives;
+                }
+            }
+            if (receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || (!isMapOrWeakMap(receiver) && !mayMakeIteratorOverList && !mayRunOverList && receiver.builtinClass != BuiltinClasses::Set))
                 continue;
             if ((receiver.primitives & ~Primitive::UndefinedOrNull) || (!writesWhatIsExpected() && (receiver.holdsUnseen || receiver.holdsLostBuiltins || m_flow.hasEscaped(receiver.site))))
                 continue;
@@ -1660,7 +1772,7 @@ void WriterOfLink::writeContentsAtOperations()
             if (!m_flow.holdsInstancesOfOneSiteAt(node))
                 continue;
             const LinkType& list = m_flow.typeAt(node);
-            if (list.classes != LinkType::Classes::Site || list.objects != LinkType::Objects::None || list.functions != LinkType::Functions::None || list.builtinClass != BuiltinClasses::Array || list.primitives || m_flow.hasEscaped(list.site))
+            if (list.classes != LinkType::Classes::Site || list.objects != LinkType::Objects::None || list.functions != LinkType::Functions::None || list.builtinClass != BuiltinClasses::Array || list.primitives || m_flow.hasEscaped(list.site) || list.holdsUnseen || list.holdsLostBuiltins || list.builtin)
                 continue;
             operationsOfChunk.append(Operation { function, call.site, node });
         }
@@ -1827,7 +1939,7 @@ void WriterOfLink::writeFunctions()
     });
 }
 
-void WriterOfLink::writeFunction(FunctionID id)
+ALWAYS_INLINE void WriterOfLink::writeFunction(FunctionID id)
 {
     uint32_t index = id.index();
     LinkedFunction& linked = m_tables.functions[index];
@@ -2007,12 +2119,13 @@ void WriterOfLink::findRingsOfTailCalls()
         m_tables.functions[index].ringsOfTailCallsAreListed = m_flow.reached.get(index) && !ringsEnteredByValue.quickGet(rings.componentOf[index]);
 }
 
-void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
+ALWAYS_INLINE void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
 {
     const Function& function = m_program.at(id);
     std::span<LinkedParameter> parameters = m_tables.parameters.mutableSpan().subspan(linked.firstParameter, linked.numberOfParameters);
     RELEASE_ASSERT(parameters.size() == function.numberOfEntryParameters());
     uint32_t restParameter = function.has(FunctionFlags::HasRestParameter) ? function.firstParameterIndex() + function.numberOfPositionalParameters() : none;
+    std::span<const LinkedParameter> inProvingReading = m_proving ? m_proving->parametersOf(id) : std::span<const LinkedParameter>();
 
     for (uint32_t index = 0; index < parameters.size(); ++index) {
         LinkedParameter& parameter = parameters[index];
@@ -2035,17 +2148,26 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
         switch (function.entryParameterKind(index)) {
         case EntryParameter::Capture:
             prove(typeIDOfCapture(id, index));
-            parameter.written = declared && !declared->isEstablished() ? unlessAnything(widened(declared->written())) : TypeID();
+            if (m_proving)
+                parameter.written = inProvingReading[index].written;
+            else
+                parameter.written = declared && !declared->isEstablished() ? unlessAnything(widened(declared->written())) : TypeID();
             break;
         case EntryParameter::This:
         case EntryParameter::Parameter: {
             prove(index == restParameter ? TypeID() : typeIDOf(arrived));
             parameter.staysAsItsClassMakesIt = !writesWhatIsExpected() && linked.everyCallerIsKnown && index != restParameter && holdsOnlyInstancesThatStayAsMade(arrived);
-            TypeID written = declared && !declared->isEstablished() ? unlessAnything(widened(declared->written())) : TypeID();
-            if (!written)
-                written = unlessAnything(widened(typeExpectedByLibraryFunction(m_program, typesAtHand(), id, index)));
-            if (!written && function.entryParameterKind(index) == EntryParameter::This)
-                written = typeOfLiteralAndWhatIsCreatedBelow(id);
+            bool isThis = function.entryParameterKind(index) == EntryParameter::This;
+            TypeID written;
+            if (m_proving && !isThis)
+                written = inProvingReading[index].written;
+            else {
+                written = declared && !declared->isEstablished() ? unlessAnything(widened(declared->written())) : TypeID();
+                if (!written)
+                    written = unlessAnything(widened(typeExpectedByLibraryFunction(m_program, typesAtHand(), id, index)));
+                if (!written && isThis)
+                    written = typeOfLiteralAndWhatIsCreatedBelow(id);
+            }
             LinkType seen = held;
             seen.holdsUnseen = false;
             seen.holdsLostBuiltins = false;
@@ -2054,7 +2176,7 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
                 seen = m_flow.typeAt(heirs);
             TypeID seenToArrive = typeIDOf(seen);
             parameter.written = written;
-            parameter.seenToArrive = written || typesAtHand().saysNothing(seenToArrive) ? TypeID() : seenToArrive;
+            parameter.seenToArrive = typesAtHand().saysNothing(seenToArrive) ? TypeID() : seenToArrive;
             break;
         }
         case EntryParameter::Callee:
@@ -2414,14 +2536,17 @@ void WriterOfLink::forEachFunctionInFieldsOf(LayoutID record, const Invocable<vo
         forEachFunctionOfType(m_tables.field({ record, field }).proven, name);
 }
 
-void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(FunctionID)> auto& name) const
+void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, TablesReadInOrderOfFunctions& tables, const Invocable<void(FunctionID)> auto& name) const
 {
     const Function& function = m_program.at(referrer);
 
     if (LayoutID constructed = function.constructedClass; constructed && m_program.at(constructed).constructor == referrer) {
         for (const FunctionOfClass& member : std::ranges::equal_range(m_functionsOfClasses, constructed, { }, &FunctionOfClass::classLayout))
             name(member.function);
-        if (LayoutID base = writtenBaseOf(m_program.at(constructed)))
+        LayoutID base = writtenBaseOf(m_program.at(constructed));
+        if (!base && constructed.index() < m_tables.layouts.size())
+            base = m_tables.layouts[constructed.index()].heritage;
+        if (base)
             name(m_program.at(base).constructor);
     }
 
@@ -2474,7 +2599,7 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(
     nameFunctionsOf(linked.result, [&] {
         return proving->function(referrer).result;
     });
-    for (const LinkedCatch& row : std::ranges::equal_range(m_tables.catches, referrer, { }, &LinkedCatch::function))
+    for (const LinkedCatch& row : tables.catches.takeRowsOf(referrer))
         forEachFunctionOfType(row.caught, name);
 
     for (const LinkedCall& call : m_tables.callsOf(referrer))
@@ -2494,15 +2619,15 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(
             name(m_groupOfSharedCall[shared]);
     }
 
-    forEachFunctionNamedByCoroutinesCalledBy(m_tables, TypeReader(m_program), referrer, scopedLambda<void(FunctionID)>([&](FunctionID named) {
+    forEachFunctionNamedByCoroutinesCalledBy(m_program, m_tables, referrer, scopedLambda<void(FunctionID)>([&](FunctionID named) {
         name(named);
     }));
 
-    for (const LinkedGetterAtRead& read : std::ranges::equal_range(m_tables.gettersExpectedAtReads, referrer, { }, &LinkedGetterAtRead::function))
+    for (const LinkedGetterAtRead& read : tables.gettersExpectedAtReads.takeRowsOf(referrer))
         name(read.getter);
-    for (const LinkedResultOfRead& read : std::ranges::equal_range(m_tables.resultsOfReadsByKey, referrer, { }, &LinkedResultOfRead::function))
+    for (const LinkedResultOfRead& read : tables.resultsOfReadsByKey.takeRowsOf(referrer))
         forEachFunctionOfType(read.proven, name);
-    for (const LinkedContentsAtOperation& contents : std::ranges::equal_range(m_tables.contentsAtOperations, referrer, { }, &LinkedContentsAtOperation::function)) {
+    for (const LinkedContentsAtOperation& contents : tables.contentsAtOperations.takeRowsOf(referrer)) {
         forEachFunctionOfType(contents.key, name);
         forEachFunctionOfType(contents.value, name);
     }
@@ -2608,6 +2733,13 @@ void WriterOfLink::writeReferrers()
     forEachIndexInParallel(loops, division.size(), [&](unsigned chunk) {
         Vector<uint64_t>& namings = namingsOfChunks[chunk];
         Vector<uint32_t, 64> namedByOne;
+        FunctionID firstOfChunk(division.firstIndexOf[chunk]);
+        TablesReadInOrderOfFunctions tables {
+            { m_tables.catches.span(), firstOfChunk },
+            { m_tables.gettersExpectedAtReads.span(), firstOfChunk },
+            { m_tables.resultsOfReadsByKey.span(), firstOfChunk },
+            { m_tables.contentsAtOperations.span(), firstOfChunk },
+        };
         for (uint32_t index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
             namedByOne.shrink(0);
             auto name = [&](FunctionID named) {
@@ -2617,7 +2749,7 @@ void WriterOfLink::writeReferrers()
             if (FunctionID referrer(index); m_tables.isGroup(referrer))
                 forEachMemberOf(m_tables.group(referrer), name);
             else
-                forEachNodeNamedBy(referrer, name);
+                forEachNodeNamedBy(referrer, tables, name);
             std::ranges::sort(namedByOne);
             uint32_t last = none;
             for (uint32_t named : namedByOne) {
@@ -3367,6 +3499,12 @@ NamesAskedOfContentsOfFields gatherNamesAskedOfContentsOfFields(const Program& p
         const Type& type = types.recordOf(proven);
         return type.hasUnboundedUnknown() || (!type.hasObjects() && (type.primitives & Primitive::All) == Primitive::All);
     };
+    auto holdsSeveralClasses = [&](TypeID proven) {
+        if (!proven || isNeverType(proven) || holdsOnlyPrimitives(proven))
+            return false;
+        const Type& type = types.recordOf(proven);
+        return type.layouts && !holdsOneMember(type.layouts);
+    };
     auto addName = [](Vector<uint64_t>& names, uint32_t name) {
         while (name / 64 >= names.size())
             names.append(0);
@@ -3380,7 +3518,7 @@ NamesAskedOfContentsOfFields gatherNamesAskedOfContentsOfFields(const Program& p
     for (uint32_t layout = 0; layout + 1 < held.firstAppendedFieldOfLayout.size(); ++layout) {
         std::span<const PropertyKeyID> appended = held.appendedKeysOf(LayoutID(layout));
         for (size_t place = 0; place < appended.size(); ++place) {
-            if (!liesInThread(appended[place]) && saysNothing(held.appendedFields[held.firstAppendedFieldOfLayout[layout] + place].proven))
+            if (!liesInThread(appended[place]) && (saysNothing(held.appendedFields[held.firstAppendedFieldOfLayout[layout] + place].proven) || holdsSeveralClasses(held.appendedFields[held.firstAppendedFieldOfLayout[layout] + place].proven)))
                 addName(namesOfCellsThatSayNothing, appended[place].bits());
         }
     }
@@ -3542,9 +3680,10 @@ void expectContentsOfFieldsByNamesAsked(Program& program, const LinkFlow& flow, 
             std::span<const PropertyKeyID> appended = held.appendedKeysOf(layout);
             auto place = std::ranges::find(appended, PropertyKeyID::fromBits(static_cast<uint32_t>(asked.cells[member->second])));
             LinkedCell& cell = held.appendedFields[held.firstAppendedFieldOfLayout[layout.index()] + (place - appended.begin())];
-            if (cell.proven && !types.saysNothing(cell.proven))
+            TypeID chosen = types.forLayout(only);
+            if (cell.proven && !types.saysNothing(cell.proven) && (types.withoutNullish(cell.proven) == chosen || !types.isSubset(chosen, cell.proven)))
                 continue;
-            cell.proven = types.forLayout(only);
+            cell.proven = chosen;
             cell.everyWriterIsKnown = true;
             cell.leavesOutWhatArrives = false;
             ++held.numberOfCellsExpectedByNamesAsked;

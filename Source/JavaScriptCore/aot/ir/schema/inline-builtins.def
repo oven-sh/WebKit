@@ -16,7 +16,7 @@ inline ArrayJoin ArrayConcat ArrayShift ArrayPop ArraySlice ArraySplice ArrayUns
 inline ArrayIterator(IterationKind) ; Allocates ; family ArrayBuiltin ; optionalSlowPath
 inline ArrayPush ; GrowsArray ; family ArrayStorageBuiltin
 inline ArrayIsArray ; none ; family ArrayStorageBuiltin
-inline ArrayLength ; reads(ArrayStorage) ; family ArrayStorageBuiltin ; optionalSlowPath
+inline ArrayLength ; reads(ArrayStorage, ArrayLengths) ; family ArrayStorageBuiltin ; optionalSlowPath
 inline TypedArrayLength TypedArrayByteLength TypedArrayByteOffset ; reads(TypedArrayStorage) ; family ArrayBufferViewBuiltin
 inline TypedArrayWithLength ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
 inline TypedArraySet ; reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) ; family ArrayBufferViewBuiltin

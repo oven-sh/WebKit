@@ -185,6 +185,8 @@ public:
     bool holdsParametersReadByReleaseHintsAlone() const { return !m_parametersReadByReleaseHintsAlone.empty(); }
     BlockID blockOf(ValueID id) const
     {
+        if (m_blocks.size() < 2 || id.index() < m_blocks[1].firstParameter)
+            return BlockID(0u);
         auto next = std::ranges::upper_bound(m_blocks, id.index(), { }, &BlockPlace::firstParameter);
         return BlockID(static_cast<uint32_t>(next - m_blocks.begin()) - 1);
     }
@@ -277,7 +279,38 @@ public:
     bool hasIrreducibleFlow() const { return m_hasIrreducibleFlow; }
 
     JS_EXPORT_PRIVATE std::optional<BodyEdgeResult> edgeResult(BlockID from, uint32_t targetIndex, uint32_t proofIndex) const;
-    JS_EXPORT_PRIVATE std::optional<BodyEdgeResult> edgeResult(const BodyTerminator&, uint32_t targetIndex, BodyTarget, uint32_t proofIndex) const;
+    ALWAYS_INLINE std::optional<BodyEdgeResult> edgeResult(const BodyTerminator& terminator, uint32_t targetIndex, BodyTarget target, uint32_t proofIndex) const
+    {
+        if (!terminator.isConditionalBranch()) [[unlikely]]
+            return edgeResultOfAnyTerminator(terminator, targetIndex, target, proofIndex);
+        constexpr TerminatorKind kind = TerminatorKind::Branch;
+        static_assert(numberOfFixedTargetsOf(kind));
+        if (targetIndex >= terminator.numberOfTargets() || targetIndex >= *numberOfFixedTargetsOf(kind) || !(targetsTakingProofsOf(kind) >> targetIndex & 1))
+            return std::nullopt;
+        std::span<const uint32_t> proofs = target.proofs();
+        if (proofIndex >= proofs.size())
+            return std::nullopt;
+        BodyValue test = value(terminator.as<TerminatorKind::Branch>().conditionOperand());
+        Proof proof = provesOf(test.opcode());
+        if (proof == Proof::None)
+            return std::nullopt;
+        uint32_t operandIndex = proofs[proofIndex];
+        ValueID subject = test ? test.operand(operandIndex) : terminator.operand(operandIndex);
+        if (!subject)
+            return std::nullopt;
+        BodyEdgeResult result;
+        result.proof = proof;
+        result.subject = subject;
+        result.operandIndex = operandIndex;
+        if (test) {
+            result.test = test.id();
+            result.isOnTakenEdge = !targetIndex;
+        } else
+            result.caseIndex = targetIndex;
+        result.parameter = ValueID(m_blocks[target.block().index()].firstParameter + static_cast<uint32_t>(target.arguments().size()) + proofIndex);
+        return result;
+    }
+    JS_EXPORT_PRIVATE std::optional<BodyEdgeResult> edgeResultOfAnyTerminator(const BodyTerminator&, uint32_t targetIndex, BodyTarget, uint32_t proofIndex) const;
     std::optional<BodyEdgeResult> edgeResult(BlockID from, uint32_t targetIndex, BodyTarget target, uint32_t proofIndex) const { return edgeResult(terminator(from), targetIndex, target, proofIndex); }
     template<typename Functor>
     void forEachEdgeResult(BlockID from, const Functor& functor) const
@@ -380,6 +413,7 @@ public:
     const BodyIndex* find(FunctionID id) const { return m_indexes[id.index()]; }
 
     JS_EXPORT_PRIVATE const BodyIndex& build(FunctionID, const Function&, unsigned worker);
+    void adopt(FunctionID, const BodyIndex&);
     void addFunctionsWithoutBodies(uint32_t numberOfFunctions)
     {
         while (m_indexes.size() < numberOfFunctions)

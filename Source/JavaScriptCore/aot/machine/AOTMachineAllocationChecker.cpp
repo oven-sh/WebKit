@@ -53,9 +53,9 @@ private:
         Interval at;
     };
 
-    bool fail(FailureKind kind, const Operation* operation)
+    bool fail(FailureKind kind, const Operation* operation, PlaceOfCheck check = PlaceOfCheck::here())
     {
-        m_proc.fail(kind, operation);
+        m_proc.fail(kind, operation, check);
         m_failed = true;
         return false;
     }

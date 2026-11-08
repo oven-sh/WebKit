@@ -31,7 +31,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v5 = NewObject -, v4, v1 layout=L1 fields=[0, 1]
     v6 = FinishObject v5
     v7 = NewArray v3, v6 contents=anything
-    v8 = Integer integer=0
+    v8 = Double number=0.5
     v9 = ElemGet v7, v8
     v10 = NewClosure function=f1
     v11 = Call v10, -, v9 calleeName="take"

@@ -150,7 +150,7 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     return placed;
 }
 
-void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params)
+ALWAYS_INLINE void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params)
 {
     RegisterSet released = params.value()->registersToRelease();
     if (released.isEmpty())

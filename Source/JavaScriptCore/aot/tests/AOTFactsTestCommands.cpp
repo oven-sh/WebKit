@@ -925,6 +925,8 @@ static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell, bool isL
         printer.out().print(" accessor-from-birth"_s);
     if (cell.isOnlyGivenUndefinedByMakers)
         printer.out().print(" only-given-undefined"_s);
+    if (cell.liesBesideWhatDescriptorsDefine)
+        printer.out().print(" beside-what-descriptors-define"_s);
     if (!cell.formThatDefinitionsCreate.isEmpty()) {
         printer.out().print(" form="_s);
         for (auto [flag, word] : { std::pair { FieldForm::IsReadOnly, "read-only"_s }, std::pair { FieldForm::IsNotEnumerable, "not-enumerable"_s }, std::pair { FieldForm::IsNotConfigurable, "not-configurable"_s }, std::pair { FieldForm::IsAccessor, "accessor"_s } }) {
@@ -1153,6 +1155,8 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
             printer.print(expected.getter);
             if (expected.getterIsProven)
                 printer.out().print(" proven"_s);
+            if (expected.getterMayNotBeLaidYet)
+                printer.out().print(" once-laid"_s);
         }
         if (expected.setter) {
             printer.out().print(" setter="_s);

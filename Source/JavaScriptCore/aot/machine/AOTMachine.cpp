@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <limits>
+#include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Vector.h>
 
@@ -231,14 +232,14 @@ Procedure::Procedure(Arena& arena, const HeapTree& heapTree, const ProcedureTrai
     m_operations.reserve(arena, 64);
 }
 
-void Procedure::fail(FailureKind kind, const Operation* operation)
+void Procedure::fail(FailureKind kind, const Operation* operation, PlaceOfCheck check)
 {
     if (m_failure)
         return;
     if (operation)
-        m_failure = Failure { kind, operation->origin(), operation->index() };
+        m_failure = Failure { kind, operation->origin(), operation->index(), check };
     else
-        m_failure = Failure { kind, Origin(), UINT32_MAX };
+        m_failure = Failure { kind, Origin(), UINT32_MAX, check };
 }
 
 void Procedure::noteRoomThatBuildingLeaves(ListThatBuildingLeaves list, void* room, size_t bytes)
@@ -258,6 +259,49 @@ void Procedure::letGoOfWhatBuildingLeaves()
 NEVER_INLINE Block* Procedure::addBlock()
 {
     return addBlockInline();
+}
+
+NEVER_INLINE Block* Procedure::addBlockThatOnlyJumps()
+{
+    return addBlockWithRoomForOperations<1>();
+}
+
+static bool wayLeadsFromEntrypointInto(const Procedure& procedure, const Block* asked)
+{
+    BitVector isReached(procedure.numberOfBlocks());
+    Vector<const Block*, 16> toLookAt;
+    auto reach = [&](const Block* block) {
+        if (!isReached.set(block->index()))
+            toLookAt.append(block);
+    };
+    for (const Entrypoint& entrypoint : procedure.entrypoints())
+        reach(entrypoint.block);
+    while (!toLookAt.isEmpty()) {
+        const Block* block = toLookAt.takeLast();
+        if (block == asked)
+            return true;
+        for (const Edge& edge : block->successors())
+            reach(edge.block());
+    }
+    return false;
+}
+
+void Procedure::stopAtStoreOverLoadThatStands(const Operation* store)
+{
+    if (wayLeadsFromEntrypointInto(*this, store->owner()))
+        fail(FailureKind::MalformedProcedure, store);
+    else
+        m_storesOverLoadsWhereNoWayLed.append(m_arena, store);
+}
+
+void Procedure::stopAtStoresThatWayLeadsToAfterAll()
+{
+    for (const Operation* store : m_storesOverLoadsWhereNoWayLed) {
+        if (wayLeadsFromEntrypointInto(*this, store->owner())) {
+            fail(FailureKind::MalformedProcedure, store);
+            return;
+        }
+    }
 }
 
 Block* Procedure::addEntrypoint(uint16_t id)

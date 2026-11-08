@@ -163,7 +163,7 @@ static bool fieldIsPlainPropertyInChoices(const Walker& walker, FieldReference f
 static PropertyKeyID keyDefinedBehindAllocationInChoices(const Walker& walker, FieldReference field)
 {
     const Program& program = walker.program();
-    bool onlyFactsSayAccessor = walker.facts().field(field).facts.contains(FieldFact::IsAccessor) && walker.facts().field(field).formOfValue.isEmpty()
+    bool onlyFactsSayAccessor = walker.facts().field(field).facts.contains(FieldFact::IsAccessor)
         && field.field < program.at(field.layout).fields.size() && fieldAt(program, declarationOf(program, field)).form.isEmpty();
     if (!onlyFactsSayAccessor && !fieldIsPlainPropertyInChoices(walker, field))
         return { };
@@ -658,6 +658,17 @@ static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
     bool holdsNumbersAsWritten = list.contents() && holdsOnlyNumbers(arrayStorageHolding(walker.types(), list.contents()));
     if (list.contents() && !walker.types().at(list.contents()).isAnything() && !holdsNumbersAsWritten)
         return;
+    if (ArrayStorage asked = walker.storageAskedOfLiteralBeingBorn(); holdsOnlyNumbers(asked)) {
+        bool everyElementFits = std::ranges::all_of(list.variadicOperands(), [&](Reference element) {
+            TypeID proven = walker.typeOf(element);
+            return proven && walker.types().at(proven).isNumber() && (asked != ArrayStorage::Int32 || walker.types().at(proven).isInt32());
+        });
+        if (everyElementFits) {
+            list.setArrayStorage(asked);
+            walker.count(StatisticID::LiteralsOfNumbersBornForWhatLoopStores);
+            return;
+        }
+    }
     bool numbersAreWritten = holdsNumbersAsWritten && walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked);
     bool isOnlyHandedOn = list.inputValueGiven && walker.currentBodyIndex().hasOneUse(list.inputValueGiven);
     if (!numbersAreWritten && !isOnlyHandedOn)

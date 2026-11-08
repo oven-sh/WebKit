@@ -549,12 +549,15 @@ static ALWAYS_INLINE void copyDataPropertiesAsBeforeOrByAnyWay(Instance* instanc
         RETURN_IF_EXCEPTION(scope, void());
     }
     scope.release();
+    countEvent(vm, RuntimeCounterID::CopiesNotRepeated);
     copyDataPropertiesByAnyWay(instance, globalObject, vm, object, JSValue::decode(source), excluded);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyDataProperties);
+    if (Object* from = compiledObjectOrNull(JSValue::decode(source)); from && from->bearsMark() && !(from->orderWord() & orderWordHasFieldOutsideSlot)) [[unlikely]]
+        from->tryFinishBirth();
     scope.release();
     copyDataPropertiesAsBeforeOrByAnyWay(instance, globalObject, vm, target, source, excludedRun, count, excludedKeys);
     OPERATION_RETURN(scope);

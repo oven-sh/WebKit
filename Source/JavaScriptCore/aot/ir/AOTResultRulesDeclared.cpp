@@ -103,7 +103,7 @@ TypeID tryTypeWrittenAbove(const TypingContext& context, LayoutID layout, Proper
     const Program& program = context.program;
     FieldReadUnion written { context };
     bool isWritten = false;
-    auto add = [&](LayoutID view, uint32_t field) {
+    auto add = [&](LayoutID view, uint32_t field) ALWAYS_INLINE_LAMBDA {
         const Field& record = program.at(view).fields[field];
         if (record.form.contains(FieldForm::IsAccessor) || record.flags.contains(FieldFlags::IsMethod))
             return false;
@@ -189,7 +189,7 @@ TypeID tryTypeOfProvenHalfInSlot(const TypingContext& context, LayoutSetID recei
     if (!receivers || !holdsOneMember(receivers))
         return { };
     for (LayoutID receiver : membersOf(context.types, receivers)) {
-        if (std::optional<FieldReference> field = findField(context.program, receiver, key))
+        if (std::optional<FieldReference> field = findFieldOfSlotAccess(context, receiver, key))
             return context.positions.halfOfAccessorOfField(context.level, field->layout, field->field, isSetter);
     }
     return { };

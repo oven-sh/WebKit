@@ -202,17 +202,21 @@ static bool hasValidPlacesOfStars(const Module& module)
     BitVector isTaken(numberOfPlaces);
     std::optional<uint32_t> last;
     bool isInOrder = true;
+    bool everyStarIsFollowed = true;
+    bool someStarIsFollowed = false;
     for (const ModuleRequest& request : module.requests) {
-        if (request.isDynamicStarExport != request.starPlace.has_value())
+        if (request.isDynamicStarExport && !request.starPlace)
             return false;
         if (!request.starPlace)
             continue;
-        if (*request.starPlace >= numberOfPlaces || isTaken.quickSet(*request.starPlace))
+        if (request.kind != ModuleRequestKind::Import || request.isHoisted || *request.starPlace >= numberOfPlaces || isTaken.quickSet(*request.starPlace))
             return false;
         isInOrder &= !last || *last < *request.starPlace;
         last = request.starPlace;
+        everyStarIsFollowed &= request.isDynamicStarExport;
+        someStarIsFollowed |= request.isDynamicStarExport;
     }
-    return !isInOrder;
+    return someStarIsFollowed && (!isInOrder || !everyStarIsFollowed);
 }
 
 static bool isValidRequest(const ModuleRequest& request)
@@ -231,6 +235,11 @@ static bool isValidRequest(const ModuleRequest& request)
 static bool isFileOfProgram(const Module& module)
 {
     return (module.kind == ModuleKind::SourceText || module.kind == ModuleKind::CommonJs) && !module.flags.contains(ModuleFlags::IsLibrary);
+}
+
+static bool fillsItsVariablesWhenItLoads(const Module& module)
+{
+    return isFileOfProgram(module) || module.exportRule == SyntheticExportRule::RuntimeModule;
 }
 
 static bool hasValidExportsVariable(const Program& program, const Module& module)
@@ -440,9 +449,13 @@ static Vector<uint32_t> findUnreachedNames(const ParallelLoops& loops, unsigned 
         };
         for (size_t rank = firstRank; rank < endRank; ++rank)
             wordOf(componentOf[namedModules[rank]], rank) |= 1ull << (rank % 64);
+        std::span<uint64_t> words = reachedNames.mutableSpan();
         for (EdgeBetweenComponents edge : edgesInOrderOfComponents) {
+            std::array<uint64_t, wordsPerSlice> brought;
+            std::ranges::copy(words.subspan(edge.to * wordsPerSlice).template first<wordsPerSlice>(), brought.begin());
+            std::span<uint64_t, wordsPerSlice> joined = words.subspan(edge.from * wordsPerSlice).template first<wordsPerSlice>();
             for (size_t word = 0; word < wordsPerSlice; ++word)
-                reachedNames[edge.from * wordsPerSlice + word] |= reachedNames[edge.to * wordsPerSlice + word];
+                joined[word] |= brought[word];
         }
         for (const NameFurtherOff& name : namesFurtherOff) {
             size_t rank = rankOfModule[name.named.index()];
@@ -508,7 +521,7 @@ static Vector<MentionInCode> findMentionsInCode(const Program& program, const Pa
                     if constexpr (std::is_same_v<Reference, VariableID>) {
                         if (reference.index() >= program.variables.size())
                             return;
-                        if (ModuleID owner = program.at(reference).module; owner && isFileOfProgram(program.at(owner)))
+                        if (ModuleID owner = program.at(reference).module; owner && fillsItsVariablesWhenItLoads(program.at(owner)))
                             add(MentionInCode::Kind::NamesVariable, owner);
                     } else if constexpr (std::is_same_v<Reference, ModuleID>) {
                         if (isTarget(role...))

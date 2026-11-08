@@ -17,6 +17,7 @@
 #include "AOTCallSiteCache.h"
 #include "AOTCellFormat.h"
 #include "AOTChainDependents.h"
+#include "AOTCheckedSpan.h"
 #include "AOTClassGuards.h"
 #include "AOTClosure.h"
 #include "AOTCompactTable.h"
@@ -1636,7 +1637,7 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
         }, [&](const VariableData& variable) {
             m_namedVariables.append(variable);
         }, [&](uint32_t first, uint32_t length) {
-            std::ranges::fill(m_placesOfModulesOfClosureNumbers.mutableSpan().subspan(first, length), static_cast<uint32_t>(m_modulesInHeapSnapshots.size() - 1));
+            std::ranges::fill(checkedSubspan(m_placesOfModulesOfClosureNumbers.mutableSpan(), first, length), static_cast<uint32_t>(m_modulesInHeapSnapshots.size() - 1));
         });
         RELEASE_ASSERT(endsWhereModuleEnds);
         m_firstNamedVariablesOfModules.append(static_cast<uint32_t>(m_namedVariables.size()));

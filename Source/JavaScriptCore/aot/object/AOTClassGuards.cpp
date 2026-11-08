@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTChainDependents.h"
+#include "AOTCheckedSpan.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
@@ -176,11 +177,12 @@ static void repointMethodTableEntries(State& state, Dependents&& dependents, boo
     ClassTable::MethodTableUpdate update(state.objects->classes);
     for (const MethodTableDependentData& dependent : dependents) {
         size_t index = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(&state.instance) + static_cast<int32_t>(dependent.distanceToEntry)) - table.data();
-        uint32_t entry = guardHolds ? compiled[index] : lookups[dependent.selector];
-        if (table[index] == entry)
+        uint32_t entry = guardHolds ? checkedAt(compiled, index) : checkedAt(lookups, dependent.selector);
+        uint32_t& stored = checkedAt(table, index);
+        if (stored == entry)
             continue;
         update.willStoreEntry(index);
-        table[index] = entry;
+        stored = entry;
         state.countWriteForEffectsNet(countOfChangeOfClassGuard(guardHolds));
     }
 }
@@ -571,7 +573,7 @@ static StateOfClassHolder stateOfCompiledClassHolder(VM& vm, State& state, const
                 return true;
             }
             namesThatDiffer.add(key);
-            namesThatDiffer.someSeesAccesses |= ClassTable::seesAccesses(entry.attributes());
+            namesThatDiffer.someSeesAccesses |= ClassTable::seesAccesses(vm, entry.key(), entry.attributes());
             return true;
         });
     }
@@ -630,7 +632,7 @@ static StateOfClassHolder stateOfClassHolder(VM& vm, State& state, const LayoutD
             declaredNamesFound.append(*key);
             if (holdsMemberOfClassRecord(state, value, entry.attributes(), member))
                 return true;
-            namesThatDiffer.someSeesAccesses |= ClassTable::seesAccesses(entry.attributes());
+            namesThatDiffer.someSeesAccesses |= ClassTable::seesAccesses(vm, entry.key(), entry.attributes());
             if (mayBeDefinedLater)
                 isUnfinished = true;
             else
@@ -638,7 +640,7 @@ static StateOfClassHolder stateOfClassHolder(VM& vm, State& state, const LayoutD
             return true;
         }
         if (isImplicitMemberOfClassHolder(vm, side, entry.key())) {
-            namesThatDiffer.someSeesAccesses |= side == ClassSide::Prototype && ClassTable::seesAccesses(entry.attributes());
+            namesThatDiffer.someSeesAccesses |= side == ClassSide::Prototype && ClassTable::seesAccesses(vm, entry.key(), entry.attributes());
             return true;
         }
         if (key && std::ranges::binary_search(namesOfStaticFields, *key))
@@ -648,7 +650,7 @@ static StateOfClassHolder stateOfClassHolder(VM& vm, State& state, const LayoutD
         if (numberOfMembers)
             return true;
         constexpr unsigned attributesThatTakeStores = PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue;
-        namesThatDiffer.someSeesAccesses |= ClassTable::seesAccesses(entry.attributes());
+        namesThatDiffer.someSeesAccesses |= ClassTable::seesAccesses(vm, entry.key(), entry.attributes());
         if (key && !(entry.attributes() & attributesThatTakeStores))
             namesThatDiffer.numbersOfPlainValues.append(*key);
         else
@@ -1274,9 +1276,9 @@ void ClassTable::didFreezeHolder(VM& vm, const LayoutData& layout, ClassSide sid
     });
 }
 
-bool ClassTable::seesAccesses(unsigned attributes)
+bool ClassTable::seesAccesses(VM& vm, UniquedStringImpl* uid, unsigned attributes)
 {
-    return attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue;
+    return (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue) || uid == vm.propertyNames->underscoreProto.impl();
 }
 
 bool ClassTable::holdsMemberOfRecordUnder(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid) const
@@ -1302,20 +1304,22 @@ static std::optional<uint32_t> numberOfWordOnWhatSeesAccesses(VM& vm, State& sta
     return identifiersOf(state.instance).numberOf(word.impl());
 }
 
-static bool someFunctionOfRowIsNotMadeYet(State& state, const LayoutData& layout)
+static FunctionID functionOfRowThatIsNotMadeYet(State& state, const LayoutData& layout)
 {
     const ClassTable& classes = state.objects->classes;
     for (const LayoutData* current = &layout; current && !classes.isDefinedByClass(*current) && !ClassTable::isClassOfCreatedObjects(*current) && !classes.classPrototypeIfExists(*current); current = classes.assumedBaseOf(*current)) {
+        FunctionID constructor(current->classData().classConstructor);
+        ASSERT(!state.tables.kindOfFunction(constructor.index()).isSlim);
         bool statementsSetItUp = !methodsInClassRecord(*current, ClassSide::Prototype).empty() || classes.assumedBaseOf(*current);
-        if (statementsSetItUp && classes.hasOneClassObject(*current) && !state.objects->closures.closureIfCreated(FunctionID(current->classData().classConstructor)))
-            return true;
+        if (statementsSetItUp && classes.hasOneClassObject(*current) && !state.objects->closures.closureIfCreated(constructor))
+            return constructor;
     }
-    return false;
+    return { };
 }
 
-void ClassTable::letGuardsBeAskedForAgain()
+void ClassTable::letGuardsBeAskedForAgain(FunctionID made)
 {
-    for (const LayoutData* layout : std::exchange(m_classesThatWaitForFunctions, { })) {
+    for (const LayoutData* layout : m_classesThatWaitForFunctions.take(made.index())) {
         if (BitOfClassGuard guardOfPrototypeSide = bitOfClassGuard(m_state, *layout, ClassSide::Prototype); guardOfPrototypeSide.byte)
             *guardOfPrototypeSide.byte &= static_cast<uint8_t>(~maskOfClassGuardsBegun);
     }
@@ -1323,14 +1327,17 @@ void ClassTable::letGuardsBeAskedForAgain()
 
 void ClassTable::beginGuardsAheadOfFirstObject(VM& vm, const LayoutData& layout)
 {
-    if (someFunctionOfRowIsNotMadeYet(m_state, layout)) {
+    BitOfClassGuard guardOfPrototypeSide = bitOfClassGuard(m_state, layout, ClassSide::Prototype);
+    if (FunctionID awaited = functionOfRowThatIsNotMadeYet(m_state, layout)) {
         SetForScope beginsGuardsOfFunctionsNotMadeYet(m_beginsGuardsOfFunctionsNotMadeYet, true);
         beginGuards(layout);
-        if (!m_classesThatWaitForFunctions.contains(&layout))
-            m_classesThatWaitForFunctions.append(&layout);
+        if (!guardOfPrototypeSide.byte || m_tables.kindOfFunction(FunctionID(layout.classData().classConstructor).index()).isInRuntimeModule)
+            return;
+        if (!(*guardOfPrototypeSide.byte & maskOfClassGuardsBegun))
+            m_classesThatWaitForFunctions.add(awaited.index(), Vector<const LayoutData*, 1> { }).iterator->value.append(&layout);
     } else
         classPrototypeOfInstances(vm, layout);
-    if (BitOfClassGuard guardOfPrototypeSide = bitOfClassGuard(m_state, layout, ClassSide::Prototype); guardOfPrototypeSide.byte)
+    if (guardOfPrototypeSide.byte)
         *guardOfPrototypeSide.byte |= maskOfClassGuardsBegun;
 }
 

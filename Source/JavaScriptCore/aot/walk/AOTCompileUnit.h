@@ -91,6 +91,7 @@ struct WalkOptions {
     bool showsPositionsTakenToLieInsideToVerifier { false };
     bool leavesOutReadsBehindTestsOfLengths { false };
     bool takesVariablesThatBoundToBeAsInFront { false };
+    bool namesOperandsOfRowsByWhatTheirVariablesHoldNow { false };
     bool takesDividendsOfReciprocalsToFit32Bits { false };
     bool roundsBoundsOfCountersTheOtherWay { false };
     bool takesGuardsAndFactsToHold { false };
@@ -118,6 +119,7 @@ struct WalkOptions {
     bool shufflesExpectedTypes { false };
     bool failsGuesses { false };
     bool turnsForgetWhatWasDone { false };
+    bool notesRowsOfLoopsThatSayLess { false };
     bool netOfEffectsWatchesTurns { false };
     bool shufflesChoices { false };
     bool judgesInt32Promises { true };

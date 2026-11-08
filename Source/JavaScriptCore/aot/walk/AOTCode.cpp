@@ -437,11 +437,11 @@ void Code::makeBlocksRare(uint32_t first, uint32_t end)
     }
 }
 
-void Code::makeBlockUnlikely(BlockID id)
+void Code::makeBlockUnlikely(BlockID id, bool thoughRare)
 {
     RELEASE_ASSERT(!m_isSwept);
     Block& block = m_blocks[checkedIndexInCode(id, m_blocks.size())];
-    if (block.frequency == BlockFrequency::Normal && !block.isEntry) {
+    if ((block.frequency == BlockFrequency::Normal || (thoughRare && block.frequency == BlockFrequency::Rare)) && !block.isEntry) {
         keepMarksOfOlderBlock(id.index());
         block.frequency = frequencyTakenFor(id.index(), BlockFrequency::Unlikely);
     }
@@ -468,6 +468,12 @@ void Code::noteBeliefAheadOfEdges(BlockID blockID, BeliefAheadOfEdges belief)
 {
     RELEASE_ASSERT(!m_isSwept);
     m_blocks[checkedIndexInCode(blockID, m_blocks.size())].beliefAheadOfEdges = belief;
+}
+
+void Code::markRareBlockThatKeepsSites(BlockID blockID)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    m_blocks[checkedIndexInCode(blockID, m_blocks.size())].keepsSitesThoughRare = true;
 }
 
 void Code::markMeetingOfStepWrittenByHand(BlockID blockID)
@@ -1137,7 +1143,7 @@ uint32_t Code::addInlineFrame(const InlineFrame& frame)
         m_inlineFrames[0].callee = m_unit.function;
         return 0;
     }
-    RELEASE_ASSERT(!namesFunctionItself || !walksInputBody(m_unit.role));
+    RELEASE_ASSERT(frame.callee || frame.calledBuiltin || !walksInputBody(m_unit.role));
     RELEASE_ASSERT(frame.parent < m_inlineFrames.size());
     RELEASE_ASSERT(m_inlineFrames.size() < mostInlineFramesInCode);
     m_inlineFrames.append(frame);

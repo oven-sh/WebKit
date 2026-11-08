@@ -547,6 +547,10 @@ public:
     }
     void noteRecordsAreMadeAt(SiteID, BuiltinLayoutID);
     void noteLengthIsWritten(SiteID, uint32_t length);
+    void noteListIsWritten(SiteID, FunctionID, uint32_t firstPlace, uint32_t numberOfPlaces);
+    FlowNodeID whatIsWrittenAt(SiteID, uint32_t place);
+    uint32_t numberOfPlacesWrittenOf(SiteID) const;
+    void tellWrittenListIsChanged(const LinkType&);
     uint32_t writtenLengthOf(SiteID site) const { return m_sites[m_familiesOfSites.representativeWithoutShortening(site.index())].writtenLength; }
     uint32_t leastLengthOfViewsIn(const LinkType&) const;
     void noteReadsOffViewMadeAtSite(FunctionID function)
@@ -913,6 +917,7 @@ public:
     void arriveFromSource(FlowNodeID, LayoutID);
     void arriveFromSource(FlowNodeID, FamilyID);
     void arriveFromSource(FlowNodeID, const LinkType&);
+    void arriveObjectsFromSource(FlowNodeID, const LinkType&);
     void arriveFromSource(FlowNodeID, TypeID);
     void noteAllocated(LayoutID);
     void noteAllocatedWithRowAbove(LayoutID);
@@ -1018,7 +1023,7 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutGivenAccessorByDescriptorInSight, LayoutRedefinedByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, LayoutGetsNullAbove, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedWhereFlowBroughtIt, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutDefinedOnUnderKeyThatIsNotWritten, LayoutGivenAccessorByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, LayoutGetsNullAbove, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedWhereFlowBroughtIt, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead };
     void note(Note, uint32_t number, uint32_t more = 0);
     void noteFieldGivenAccessorByDescriptorInSight(FieldReference);
     void takeOverCallsWhoseRowsLinkTells();
@@ -1212,6 +1217,9 @@ public:
     bool isPlainClosureMadeWith(FunctionID, PropertyKeyID) const;
     bool isClassObjectMadeWith(FunctionID, PropertyKeyID) const;
     bool isWatchedForFirstTime(FlowNodeID, const FlowObserver&);
+    bool typesMoveOnlyBehindTelling() const { return m_holdsBack; }
+    bool arrivalOfUnseenObjectsInSightBringsNothingTo(FlowNodeID node) const { return m_holdsBack && node != unseen() && typeAt(node).holdsUnseenInSight(); }
+    bool arrivalOfAnythingInSightBringsNothingTo(FlowNodeID) const;
     bool descriptorsInSightLayValuesAlone(const LinkType& descriptors, const FlowObserver* toldAgain, Vector<FlowNodeID, 4>& values);
     bool isPlainClosureOrConstructorFunction(FunctionID) const;
     void operatorObserved(const FlowObserver&, const LinkType&);
@@ -1437,8 +1445,8 @@ public:
     Vector<AccessorLaidInField> accessorsLaidInFields;
     BitVector layoutsWithKnownAccessors;
     BitVector layoutsDefinedOnUnderWrittenKeys;
+    BitVector layoutsDefinedOnUnderKeysThatAreNotWritten;
     BitVector layoutsGivenAccessorsByDescriptorsInSight;
-    BitVector layoutsRedefinedByDescriptorsInSight;
     BitVector layoutsThatGetNullAbove;
     BitVector layoutsWhoseInstancesAreLaidAsPrototypes;
     BitVector functionsThatReadPrototypeObjects;
@@ -1844,6 +1852,12 @@ private:
             return;
         if (into.objects == other.objects && into.layout == other.layout && into.family == other.family)
             return;
+        if (into.objects == LinkType::Objects::None) {
+            into.objects = other.objects;
+            into.layout = other.layout;
+            into.family = other.family;
+            return;
+        }
         joinObjectsSlowCase(into, other);
     }
     void joinFunctions(LinkType& into, const LinkType&) const;
@@ -1857,7 +1871,9 @@ private:
     LinkType passedBySlowCase(const LinkType&, TypeID test) const;
     LinkType passedByTestOfEdgeSlowCase(const LinkType&, TypeID test);
     void joinObjectsSlowCase(LinkType& into, const LinkType&) const;
+    void joinObjectsOfOtherKinds(LinkType& into, const LinkType&) const;
     void joinClassesSlowCase(LinkType& into, const LinkType&) const;
+    void joinClassesThatDifferOrLieAtOtherSites(LinkType& into, const LinkType&) const;
     bool standsOutsideFamilies(const LinkType&) const;
     bool namesOnlyLayoutsOfSet(const LinkType&, const LinkType& set) const;
     void deferLoss(LayoutID) const;
@@ -2113,12 +2129,6 @@ private:
     Vector<OwnValue, 8> listOwnValuesOf(LayoutID);
     Vector<LayoutID> m_layoutsWithNodesBesideFields;
     HashSet<std::pair<uint64_t, uint64_t>> m_nodesOfDescriptorsThatDefinitionsWatch;
-    struct WatchSeen {
-        uint64_t watcher { 0 };
-        uint64_t watched { 0 };
-    };
-    static constexpr unsigned mostLanes = 32;
-    std::array<Vector<WatchSeen>, mostLanes> m_watchesSeenByLane;
     BitVector m_openLayouts;
     struct AppendedField {
         PropertyKeyID key;
@@ -2223,6 +2233,19 @@ private:
         std::atomic<bool> m_blockIsLaidOut { false };
     };
     mutable ListOfSites m_sites;
+    struct WrittenList {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WrittenList);
+        FunctionID function;
+        uint32_t firstPlace { 0 };
+        uint32_t numberOfPlaces { 0 };
+        WrittenList* next { nullptr };
+        WrittenList* lastOfChain { nullptr };
+        uint32_t numberOfPlacesOfFamily { 0 };
+    };
+    Vector<std::unique_ptr<WrittenList>> m_writtenLists;
+    HashMap<uint32_t, WrittenList*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_writtenListsOfFamilies;
+    void layWhatIsWrittenAt(const WrittenList&, uint32_t place, FlowNodeID);
+    void layWhatListsFromWriteAt(const WrittenList* first, SlotOfContents, FlowNodeID);
     UnitedFamilies m_familiesOfSites;
     struct PartOfContentsOfSites {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PartOfContentsOfSites);

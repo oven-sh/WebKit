@@ -49,7 +49,6 @@ static ALWAYS_INLINE bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::
     case NumberSpace::StringCell:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
-    case NumberSpace::AtomOfComparedText:
         return key.size() == 1 && !!StringID::fromBits(key[0]);
     case NumberSpace::Name:
     case NumberSpace::NameOfText:
@@ -307,7 +306,6 @@ static constexpr bool mentionKeyBeginsWithText(NumberSpace space)
     case NumberSpace::StringCell:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
-    case NumberSpace::AtomOfComparedText:
     case NumberSpace::RegExp:
         return true;
     default:
@@ -714,7 +712,6 @@ void forEachUnitBehindSlowCase(const Mention& mention, std::span<const uint32_t>
     case NumberSpace::ClassGuard:
     case NumberSpace::HeirLookedAt:
     case NumberSpace::PropertyRun:
-    case NumberSpace::AtomOfComparedText:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
     case NumberSpace::Type:

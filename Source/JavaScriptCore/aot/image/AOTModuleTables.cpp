@@ -152,9 +152,11 @@ static Vector<StarAsWrittenData> listStarsAsWritten(const Typed::Program& progra
         size_t first = stars.size();
         for (const Typed::ModuleRequest& request : program.modules[index].requests) {
             if (request.starPlace && !answers.ofModules[request.target.index()].containsAll({ AnswerAboutModule::IsNotWorthVisiting, AnswerAboutModule::IsNeverEvaluated }))
-                stars.append({ index, request.target.index(), *request.starPlace });
+                stars.append({ index, request.target.index(), *request.starPlace, request.isDynamicStarExport });
         }
-        AOT::sort(stars.mutableSpan().subspan(first), { }, &StarAsWrittenData::place);
+        AOT::sort(stars.mutableSpan().subspan(first), [](const StarAsWrittenData& a, const StarAsWrittenData& b) {
+            return a.place < b.place;
+        });
     }
     return stars;
 }
@@ -584,6 +586,7 @@ void encodeModuleTables(TableEncoder& encoder)
     Vector<ModuleFailureData> moduleFailures = listFailuresForModuleTables(program, numberOfString);
     Vector<NameOfStatementData> namesOfStatements = listNamesOfStatements(program, numberOfString);
     Vector<StarAsWrittenData> starsAsWritten = listStarsAsWritten(program, answers);
+    Vector<WriterOfExportData> writersOfExports = listWritersOfExports(encoder.inputs);
     Vector<UncompiledModuleData> modulesOfUncompiledCode = listModulesOfUncompiledCode(program, answers, numberOfString);
     Vector<uint32_t> modulesThatLoadCompiledFilesAlone = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatLoadCompiledFilesAlone);
     Vector<uint32_t> modulesThatFindBuiltinsReadOnly = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatFindBuiltinsReadOnly);
@@ -608,7 +611,7 @@ void encodeModuleTables(TableEncoder& encoder)
         lists.exports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
         moduleFailures, modulesOfUncompiledCode, modulesThatLoadCompiledFilesAlone, modulesThatFindBuiltinsReadOnly, modulesReachedUnderOtherNames, modulesThatDependOnMoreThanSource, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait,
         byPath.modulesByPath, byPath.modulesByHashOfPath, byPath.firstModulesByHashOfPath, byPath.directoriesOfModulesByPath, compiledRuntimeModules, compiledRuntimeFunctions, stateOfLibraryModules,
-        startsOfModules.firstSteps, startsOfModules.steps, namesOfStatements, starsAsWritten));
+        startsOfModules.firstSteps, startsOfModules.steps, namesOfStatements, starsAsWritten, writersOfExports));
     part.setTable(ProgramTableIndex::modules, lists.modules);
     part.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     part.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);
@@ -627,6 +630,7 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::moduleFailures, moduleFailures);
     part.setTable(ProgramTableIndex::namesOfStatements, namesOfStatements);
     part.setTable(ProgramTableIndex::starsAsWritten, starsAsWritten);
+    part.setTable(ProgramTableIndex::writersOfExports, writersOfExports);
     part.setTable(ProgramTableIndex::modulesOfUncompiledCode, modulesOfUncompiledCode);
     part.setTable(ProgramTableIndex::modulesThatLoadCompiledFilesAlone, modulesThatLoadCompiledFilesAlone);
     part.setTable(ProgramTableIndex::modulesThatFindBuiltinsReadOnly, modulesThatFindBuiltinsReadOnly);

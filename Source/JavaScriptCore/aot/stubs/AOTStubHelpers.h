@@ -59,7 +59,10 @@ class PureDoubleBits {
 public:
     GPRReg gpr() const { return m_gpr; }
 
+    static constexpr uint64_t infinityDoubled = 0xffe0000000000000ull;
+
     static PureDoubleBits branchIfNotFinite(StubAssembler&, GPRReg bits, GPRReg scratch, JumpList& isNotFinite);
+    static PureDoubleBits branchIfNaN(StubAssembler&, GPRReg bits, GPRReg scratch, GPRReg holdsInfinityDoubled, Jump& isNaN);
 
 private:
     explicit PureDoubleBits(GPRReg gpr)

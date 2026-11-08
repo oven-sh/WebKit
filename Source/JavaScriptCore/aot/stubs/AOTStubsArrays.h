@@ -77,6 +77,7 @@ constexpr StubKey newCopyOnWriteArray(ArrayElementKind kind, SharedElements elem
 constexpr StubKey newEmptyArray(EmptyArray array) { return StubKey(StubFamily::NewEmptyArray).withForm(static_cast<uint8_t>(array)); }
 constexpr StubKey newEmptyArrayWithCapacity() { return StubKey(StubFamily::NewEmptyArrayWithCapacity); }
 constexpr StubKey newArrayFromBuffer() { return StubKey(StubFamily::NewArrayFromBuffer); }
+constexpr StubKey newArrayOfList(bool isContiguous) { return StubKey(StubFamily::NewArrayOfList).withForm(isContiguous); }
 constexpr StubKey newArrayWithLength(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayWithLength).withForm(static_cast<uint8_t>(kind)); }
 constexpr StubKey newArrayOfHolesSlow() { return StubKey(StubFamily::NewArrayOfHolesSlow); }
 constexpr StubKey newArrayOfLength(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayOfLength).withForm(static_cast<uint8_t>(kind)); }

@@ -2297,6 +2297,200 @@ static void testMachineFrameKeepsPointerAtHeadBehindPartsThatSpilledReference()
 }
 static void testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart() { runFrameTestOfNarrowReferenceAheadOfGuard(true); }
 
+static void testMachineFrameReferenceKeptForInnerPointerReadBehindRareSafepointAheadOfFramedPartHasItsPointerThere()
+{
+    std::array<uint64_t, 2> elements { 11, 22 };
+    std::array<const uint64_t*, 1> ownerInMemory { elements.data() };
+
+    TestProcedure test;
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    RegisterMask clobbered = callerSavedRegistersOfFrameTest(test);
+    Operation* argument = test.argumentGPR(0);
+    Operation* destination = test.argumentGPR(1);
+    Operation* base = test.argumentGPR(2);
+    Operation* reference = out.opaque(out.castToInt32(argument));
+    reference->markAsNarrowReference();
+    AbstractHeap storageOfOwner(test.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::HoldsInnerPointer });
+    Operation* storage = out.loadPtr(out.address(storageOfOwner, out.add(base, out.shl(out.zeroExtPtr(reference), out.constInt32(cell32Shift)))));
+    Block* first = out.newBlock();
+    Block* slow = out.newBlock();
+    Block* on = out.newBlock();
+    Block* second = out.newBlock();
+    auto appendSafepointThatWritesPointerDown = [&] {
+        PatchOperation* safepoint = out.patch(Void);
+        safepoint->effects.mayCollect = true;
+        safepoint->appendSomeRegister(destination);
+        safepoint->clobberLate(clobbered);
+        safepoint->setGenerator([clobbered, reference](CCallHelpers& jit, const PatchParameters& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg pointer = params[0].gpr() == GPRInfo::argumentGPR0 ? GPRInfo::argumentGPR1 : GPRInfo::argumentGPR0;
+            SpillIndex spill = findFrameTestPointerBeside(params.proc().allocation(), reference);
+            AOT_TEST_CHECK(params.frameIsSetUp() && spill != noSpill);
+            jit.load64(CCallHelpers::Address(CCallHelpers::framePointerRegister, params.frame().offsetFromFPOf(spill)), pointer);
+            jit.store64(pointer, CCallHelpers::Address(params[0].gpr()));
+            emitFrameTestPoison(jit, clobbered);
+        });
+    };
+    out.branch(out.testNonZero64(argument, 1), unlikelyEdge(second), normalEdge(first));
+    out.appendTo(first);
+    out.branch(out.testNonZero64(argument, 2), rareEdge(slow), normalEdge(on));
+    out.appendTo(slow);
+    appendSafepointThatWritesPointerDown();
+    out.jump(on);
+    out.appendTo(on);
+    out.ret(out.load64(out.address(test.heaps().argumentBuffer, storage, 0)));
+    out.appendTo(second);
+    appendSafepointThatWritesPointerDown();
+    out.ret(out.load64(out.address(test.heaps().argumentBuffer, storage, sizeof(uint64_t))));
+
+    compileOrFail(test);
+    const ValueFacts& facts = proc.liveness().of(reference);
+    AOT_FRAME_TEST_CHECK(test, storage->has(OperationFlag::IsInnerPointer) && facts.has(ValueFlag::IsKeptForCollector) && facts.has(ValueFlag::NeedsPointerBesideIt));
+    AOT_FRAME_TEST_CHECK(test, proc.order().of(slow).isRare() && !proc.order().of(second).isRare() && proc.order().of(second).orderIndex > proc.order().of(on).orderIndex);
+    AOT_FRAME_TEST_CHECK(test, findFrameTestPointerBeside(proc.allocation(), reference) != noSpill);
+
+    for (uint64_t low : { 0x80000100u, 0x80000101u, 0x80000102u, 0x80000103u }) {
+        uint64_t word = (uint64_t { 7 } << 32) + low;
+        uint64_t found = 0;
+        bool takesSecondWay = word & 1;
+        bool passesSafepoint = takesSecondWay || (word & 2);
+        uint64_t baseOfOwner = reinterpret_cast<uint64_t>(ownerInMemory.data()) - (low << cell32Shift);
+        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word, &found, baseOfOwner) == (takesSecondWay ? uint64_t { 22 } : uint64_t { 11 }));
+        AOT_FRAME_TEST_CHECK(test, found == (passesSafepoint ? low << cell32Shift : uint64_t { 0 }));
+    }
+}
+
+static void runFrameTestOfNarrowReferenceBesideRareSafepointAheadOfFramedPart(bool isReadBehindRareSafepoint)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    RegisterMask clobbered = callerSavedRegistersOfFrameTest(test);
+    Operation* argument = test.argumentGPR(0);
+    Operation* destination = test.argumentGPR(1);
+    Operation* reference = out.opaque(out.castToInt32(argument));
+    reference->markAsNarrowReference();
+    Block* stretch = out.newBlock();
+    Block* slow = out.newBlock();
+    Block* on = out.newBlock();
+    Block* other = out.newBlock();
+    auto appendSafepointThatWritesPointerDown = [&] {
+        PatchOperation* safepoint = out.patch(Void);
+        safepoint->effects.mayCollect = true;
+        safepoint->appendSomeRegister(destination);
+        safepoint->clobberLate(clobbered);
+        safepoint->setGenerator([clobbered, reference](CCallHelpers& jit, const PatchParameters& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg pointer = params[0].gpr() == GPRInfo::argumentGPR0 ? GPRInfo::argumentGPR1 : GPRInfo::argumentGPR0;
+            SpillIndex spill = findFrameTestPointerBeside(params.proc().allocation(), reference);
+            AOT_TEST_CHECK(params.frameIsSetUp() && spill != noSpill);
+            jit.load64(CCallHelpers::Address(CCallHelpers::framePointerRegister, params.frame().offsetFromFPOf(spill)), pointer);
+            jit.store64(pointer, CCallHelpers::Address(params[0].gpr()));
+            emitFrameTestPoison(jit, clobbered);
+        });
+    };
+    out.branch(out.testNonZero64(argument, 1), unlikelyEdge(other), normalEdge(stretch));
+    out.appendTo(stretch);
+    out.branch(out.testNonZero64(argument, 2), rareEdge(slow), normalEdge(on));
+    out.appendTo(slow);
+    if (isReadBehindRareSafepoint)
+        appendSafepointThatWritesPointerDown();
+    else
+        appendFrameTestCall(test)->effects.mayCollect = true;
+    out.jump(on);
+    out.appendTo(on);
+    out.ret(isReadBehindRareSafepoint ? out.zeroExtPtr(reference) : out.constInt64(5));
+    out.appendTo(other);
+    appendSafepointThatWritesPointerDown();
+    out.ret(out.zeroExtPtr(reference));
+
+    compileOrFail(test);
+    const Allocation& allocation = proc.allocation();
+    AOT_FRAME_TEST_CHECK(test, proc.liveness().of(reference).has(ValueFlag::NeedsPointerBesideIt) && proc.order().of(slow).isRare() && !proc.order().of(other).isRare());
+    AOT_FRAME_TEST_CHECK(test, proc.order().of(other).orderIndex > proc.order().of(on).orderIndex);
+    AOT_FRAME_TEST_CHECK(test, findFrameTestPointerBeside(allocation, reference) != noSpill);
+
+    for (uint64_t low : { 0x80000100u, 0x80000101u, 0x80000102u, 0x80000103u }) {
+        uint64_t word = (uint64_t { 7 } << 32) + low;
+        uint64_t found = 0;
+        bool takesOtherWay = word & 1;
+        bool passesRareSafepoint = !takesOtherWay && (word & 2);
+        bool writesPointerDown = takesOtherWay || (passesRareSafepoint && isReadBehindRareSafepoint);
+        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word, &found) == (takesOtherWay || isReadBehindRareSafepoint ? low : uint64_t { 5 }));
+        AOT_FRAME_TEST_CHECK(test, found == (writesPointerDown ? low << cell32Shift : uint64_t { 0 }));
+    }
+    if (isReadBehindRareSafepoint)
+        return;
+
+    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && allocation.onlyHeadOfFramedPart() == other && !allocation.needsFrameAheadOfFramedPart());
+    AOT_FRAME_TEST_CHECK(test, !proc.frame().holdsStepsOf(stretch) && !proc.frame().holdsStepsOf(on));
+    const BlockSteps& stepsOfKeeper = allocation.stepsOf(other);
+    unsigned numberOfStores = 0;
+    for (uint32_t index = 0; index < allocation.steps().size(); ++index) {
+        if (allocation.step(index).kind != StepKind::KeepPointer)
+            continue;
+        ++numberOfStores;
+        AOT_FRAME_TEST_CHECK(test, stepsOfKeeper.begin <= index && index < stepsOfKeeper.end);
+    }
+    AOT_FRAME_TEST_CHECK(test, numberOfStores == 1);
+}
+
+static void testMachineFrameReferenceDeadAtRareSafepointAheadOfFramedPartWaitsForHeadWithItsPointer() { runFrameTestOfNarrowReferenceBesideRareSafepointAheadOfFramedPart(false); }
+static void testMachineFrameReferenceReadBehindRareSafepointAheadOfFramedPartHasItsPointerThere() { runFrameTestOfNarrowReferenceBesideRareSafepointAheadOfFramedPart(true); }
+
+static void testMachineFrameStretchThatBindsFewValuesHasNoFrameThoughUnlikelyWayLaterInOrderReadsMore()
+{
+    constexpr uint64_t word = 0x1000;
+    TestProcedure test;
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    const RegisterFile file = registerFileOfFrameTest(test);
+    unsigned half = numberOfFrameTestRegisters(file.allocatableIn(Bank::GP) & ~file.calleeSaved) - 2;
+    Operation* a = test.argumentGPR(0);
+    Operation* b = test.argumentGPR(1);
+    Block* slow = out.newBlock();
+    Block* choosing = out.newBlock();
+    Block* calling = out.newBlock();
+    Block* stretch = out.newBlock();
+    Vector<Operation*> readOnUnlikelyWayAlone;
+    for (unsigned index = 0; index < half; ++index)
+        readOnUnlikelyWayAlone.append(out.opaque(out.add(b, 2 * index)));
+    out.branch(out.testNonZero64(a, 1), unlikelyEdge(slow), normalEdge(choosing));
+    out.appendTo(choosing);
+    out.branch(out.testNonZero64(a, 2), normalEdge(calling), normalEdge(stretch));
+    out.appendTo(calling);
+    appendFrameTestCall(test);
+    out.ret(out.add(a, 100));
+    out.appendTo(stretch);
+    Vector<Operation*> readOnStretch;
+    for (unsigned index = 0; index < half; ++index)
+        readOnStretch.append(out.opaque(out.add(a, 4 * index)));
+    Operation* sumOnStretch = out.int64Zero;
+    for (Operation* value : readOnStretch)
+        sumOnStretch = out.add(sumOnStretch, value);
+    out.ret(sumOnStretch);
+    out.appendTo(slow);
+    appendFrameTestCall(test);
+    Operation* sumOnUnlikelyWay = out.int64Zero;
+    for (Operation* value : readOnUnlikelyWayAlone)
+        sumOnUnlikelyWay = out.add(sumOnUnlikelyWay, value);
+    out.ret(sumOnUnlikelyWay);
+
+    compileOrFail(test);
+    uint64_t expectedOnStretch = 0;
+    uint64_t expectedOnUnlikelyWay = 0;
+    for (unsigned index = 0; index < half; ++index) {
+        expectedOnStretch += word + 4 * index;
+        expectedOnUnlikelyWay += 7 + 2 * index;
+    }
+    AOT_FRAME_TEST_CHECK(test, !proc.order().of(slow).isRare() && proc.order().of(slow).orderIndex > proc.order().of(stretch).orderIndex);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word, uint64_t { 7 }) == expectedOnStretch);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 1, uint64_t { 7 }) == expectedOnUnlikelyWay);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 2, uint64_t { 7 }) == word + 102);
+    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && !proc.frame().holdsStepsOf(stretch));
+}
+
 static void testMachineFrameIsSetUpForArmThatRunsOutOfRegisters()
 {
     constexpr uint64_t word = 0x1000;
@@ -2497,6 +2691,65 @@ static void testMachineFrameOfRareRegionAheadOfFramedPartIsItsOwn()
     }
 }
 
+static void testMachineFrameRareWayThatComesBackInBehindHeadJoinsFramedPart()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    FrameTestSetupsThatCount setups;
+    proc.setStackCheckGenerator(noteAndCountFrameTestSetup, &setups);
+    Operation* a = test.argumentGPR(0);
+    Operation* b = test.argumentGPR(1);
+    Block* returning = out.newBlock();
+    Block* guard = out.newBlock();
+    Block* slow = out.newBlock();
+    Block* head = out.newBlock();
+    Block* meeting = out.newBlock();
+
+    out.branch(out.testNonZero64(a, 2), rareEdge(slow), normalEdge(guard));
+    out.appendTo(guard);
+    out.branch(out.testNonZero64(a, 1), normalEdge(returning), normalEdge(head));
+    out.appendTo(returning);
+    out.ret(b);
+    out.appendTo(head);
+    appendFrameTestCall(test);
+    ValueFromBlock fromHead = out.anchor(out.int64Zero);
+    out.jump(meeting);
+    out.appendTo(slow);
+    appendFrameTestCall(test);
+    ValueFromBlock fromRareWay = out.anchor(out.constInt64(1000));
+    out.jump(meeting);
+    out.appendTo(meeting);
+    Operation* extra = out.phi(Int64, fromHead, fromRareWay);
+    appendFrameTestCall(test);
+    out.ret(out.add(out.add(a, b), extra));
+
+    compileOrFail(test);
+    const Frame& frame = proc.frame();
+    const Allocation& allocation = proc.allocation();
+    AOT_FRAME_TEST_CHECK(test, frame.coverage() == FrameCoverage::FramedPart && proc.order().of(slow).isRare());
+    AOT_FRAME_TEST_CHECK(test, allocation.isHeadOfFramedPart(head) && allocation.isHeadOfFramedPart(slow) && allocation.isInFramedPart(meeting) && !allocation.isHeadOfFramedPart(meeting));
+    AOT_FRAME_TEST_CHECK(test, frame.isSetUpAtHeadOf(head) && frame.isSetUpAtHeadOf(slow) && !frame.isSetUpAtHeadOf(meeting) && !frame.isTornDownAtEndOf(head) && !frame.isTornDownAtEndOf(slow));
+    unsigned numberOfHeadsAboveMeeting = 0;
+    allocation.everyHeadOfFramedPartAbove(meeting, [&](const Allocation::HeadOfFramedPart& above) {
+        AOT_FRAME_TEST_CHECK(test, above.block == head || above.block == slow);
+        ++numberOfHeadsAboveMeeting;
+        return true;
+    });
+    AOT_FRAME_TEST_CHECK(test, numberOfHeadsAboveMeeting == 2);
+    checkFrameTestRanges(test);
+    checkFrameTestLayout(test);
+    struct Case {
+        uint64_t a;
+        uint64_t expected;
+        uint64_t numberOfSetups;
+    };
+    for (Case testCase : { Case { 1, 10, 0 }, Case { 4, 14, 1 }, Case { 6, 1016, 1 } }) {
+        setups.numberRun = 0;
+        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(testCase.a, uint64_t { 10 }) == testCase.expected && setups.numberRun == testCase.numberOfSetups);
+    }
+}
+
 static void runFrameTestOfWaysThatMeet(bool hasStackSlot)
 {
     TestProcedure test;
@@ -2589,6 +2842,7 @@ std::span<const NativeTest> machineFrameTests()
 {
     static constexpr NativeTest tests[] = {
         { "machine/frame/rare-blocks-with-calls-have-frames-of-their-own"_s, Machine::testMachineFrameCoversRareBlocksAlone },
+        { "machine/frame/a-stretch-that-binds-few-values-has-no-frame-though-an-unlikely-way-later-in-the-order-reads-more"_s, Machine::testMachineFrameStretchThatBindsFewValuesHasNoFrameThoughUnlikelyWayLaterInOrderReadsMore },
         { "machine/frame/patch-that-tests-the-stack-itself-stands-ahead-of-the-framed-part"_s, Machine::testMachineFramePatchThatTestsStackItselfStandsAheadOfFramedPart },
         { "machine/frame/patch-that-tests-the-stack-itself-gets-a-frame-where-nothing-else-needs-one"_s, Machine::testMachineFramePatchThatTestsStackItselfGetsFrameWhereNothingElseNeedsOne },
         { "machine/frame/small-rare-region-stands-among-the-other-code"_s, Machine::testMachineSmallRareRegionStandsAmongOtherCode },
@@ -2621,10 +2875,14 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/no-pointer-is-kept-where-a-way-past-a-later-block-has-not-defined-the-reference"_s, Machine::testMachineFrameKeepsNoPointerWhereWayPastLaterBlockHasNotDefinedReference },
         { "machine/frame/no-pointer-is-kept-behind-the-other-successor-of-the-patch-that-defines-the-reference"_s, Machine::testMachineFrameKeepsNoPointerBehindOtherSuccessorOfPatchThatDefinesReference },
         { "machine/frame/the-pointer-is-kept-at-a-head-behind-parts-that-spilled-the-reference"_s, Machine::testMachineFrameKeepsPointerAtHeadBehindPartsThatSpilledReference },
+        { "machine/frame/a-reference-kept-for-an-inner-pointer-that-is-read-behind-a-rare-safepoint-ahead-of-the-framed-part-has-its-pointer-there"_s, Machine::testMachineFrameReferenceKeptForInnerPointerReadBehindRareSafepointAheadOfFramedPartHasItsPointerThere },
+        { "machine/frame/a-reference-that-is-dead-at-a-rare-safepoint-ahead-of-the-framed-part-waits-for-a-head-with-its-pointer"_s, Machine::testMachineFrameReferenceDeadAtRareSafepointAheadOfFramedPartWaitsForHeadWithItsPointer },
+        { "machine/frame/a-reference-that-is-read-behind-a-rare-safepoint-ahead-of-the-framed-part-has-its-pointer-there"_s, Machine::testMachineFrameReferenceReadBehindRareSafepointAheadOfFramedPartHasItsPointerThere },
         { "machine/frame/the-whole-function-is-covered-where-a-store-at-the-head-of-a-declined-framed-part-is-its-only-use-outside-rare-regions"_s, Machine::testMachineFrameCoversWholeFunctionWhereStoreAtHeadOfDeclinedFramedPartIsItsOnlyUseOutsideRareRegions },
         { "machine/frame/safepoint-ahead-of-it-finds-the-pointer-kept"_s, Machine::testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart },
         { "machine/frame/arm-that-runs-out-of-registers-is-framed-by-itself"_s, Machine::testMachineFrameIsSetUpForArmThatRunsOutOfRegisters },
         { "machine/frame/rare-region-ahead-of-it-has-a-frame-of-its-own"_s, Machine::testMachineFrameOfRareRegionAheadOfFramedPartIsItsOwn },
+        { "machine/frame/a-rare-way-that-comes-back-in-behind-the-head-joins-the-framed-part"_s, Machine::testMachineFrameRareWayThatComesBackInBehindHeadJoinsFramedPart },
         { "machine/frame/block-of-a-rare-region-does-not-read-what-its-sibling-saved"_s, Machine::testMachineFrameBlockOfRareRegionDoesNotReadWhatItsSiblingSaved },
         { "machine/frame/head-stands-where-every-way-on-calls"_s, Machine::testMachineFrameHeadStandsWhereEveryWayOnCalls },
         { "machine/frame/way-that-leaves-it-tears-it-down"_s, Machine::testMachineFrameIsTornDownWhereWayLeavesFramedPart },

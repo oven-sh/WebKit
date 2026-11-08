@@ -43,6 +43,13 @@ enum class KnownNote : uint8_t {
     ElementReadOffFreshList,
     StructureOfClassIsSeen,
     ValueOfFieldOfHeir,
+    LoopFillsLiteralFromItsEnd,
+    ListEndsWhereCounterEntersLoop,
+    LengthThatLoopFillsLiteralTo,
+    PushFillsLiteralFromItsEnd,
+    RoomOfListHoldsEveryTurn,
+    ClassesThatInstanceOfDenied,
+    AnswerOfReadOfSlotThatMayBeEmpty,
 };
 void noteKnown(Walker&, KnownNote, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension = false);
 std::optional<uint64_t> findKnown(const Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
@@ -104,6 +111,7 @@ std::optional<uint32_t> onlyTargetDecidedOnWay(Walker&, const BodyTerminator&);
 bool isKnownToLieBelow(Walker&, Reference value, Reference bound);
 bool isKnownToLieInside(Walker&, Reference position, Reference length);
 void noteStorageOfListMade(Walker&, Reference list);
+void noteLengthThatListIsBornWith(Walker&, Reference list);
 struct WrittenListOfVariable {
     explicit operator bool() const { return !!data; }
 

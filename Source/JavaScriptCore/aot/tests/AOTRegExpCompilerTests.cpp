@@ -229,7 +229,7 @@ static bool searchesForOneOfAClass(ASCIILiteral patternString)
     CompiledRegExp regExp = compileToCode({ patternString, { } });
     return std::ranges::any_of(regExp.code[1]->symbols, [](const RegExpSymbol& symbol) {
         auto* routine = std::get_if<Yarr::SharedRoutine>(&symbol);
-        return routine && routine->kind() == Yarr::SharedRoutine::Kind::FindFirstOfClass;
+        return routine && (routine->kind() == Yarr::SharedRoutine::Kind::FindFirstOfClass || routine->kind() == Yarr::SharedRoutine::Kind::FindFirstOfTwoUnits);
     });
 }
 
@@ -239,6 +239,43 @@ static void testOnlyARareFirstCharacterIsSearchedFor()
     AOT_TEST_CHECK(searchesForOneOfAClass("\\b[0-9]+"_s));
     AOT_TEST_CHECK(!searchesForOneOfAClass("[a-z]+"_s));
     AOT_TEST_CHECK(!searchesForOneOfAClass("\\b[a-z0-9-]+"_s));
+    AOT_TEST_CHECK(searchesForOneOfAClass("\\u001b\\[[0-9;]*m"_s));
+    AOT_TEST_CHECK(searchesForOneOfAClass("~~[a-z]+"_s));
+    AOT_TEST_CHECK(!searchesForOneOfAClass("needle[0-9]"_s));
+    AOT_TEST_CHECK(!searchesForOneOfAClass("//+"_s));
+}
+
+static std::optional<Yarr::SharedRoutine::FindFirstPairOfUnits> pairSearchedFor(ASCIILiteral patternString, OptionSet<Yarr::Flags> flags, size_t width)
+{
+    CompiledRegExp regExp = compileToCode({ patternString, flags });
+    for (const RegExpSymbol& symbol : regExp.code[width]->symbols) {
+        auto* routine = std::get_if<Yarr::SharedRoutine>(&symbol);
+        if (routine && routine->kind() == Yarr::SharedRoutine::Kind::FindFirstPairOfUnits)
+            return std::get<Yarr::SharedRoutine::FindFirstPairOfUnits>(routine->payload);
+    }
+    return std::nullopt;
+}
+
+static void testTwoPlacesOfOneUnitEachAreSearchedForAtOnce()
+{
+    using Pair = Yarr::SharedRoutine::FindFirstPairOfUnits;
+    AOT_TEST_CHECK((pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 6, false, false }));
+    AOT_TEST_CHECK((pairSearchedFor("ab+c"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 1, false, false }));
+    AOT_TEST_CHECK((pairSearchedFor("k[0-9]s[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 1) == Pair { Yarr::CharSize::Char16, 2, true, true }));
+    AOT_TEST_CHECK((pairSearchedFor("x-[a-z]{2}:[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 1) == Pair { Yarr::CharSize::Char16, 3, false, false }));
+#if CPU(X86_64)
+    AOT_TEST_CHECK((pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { }, 0) == Pair { Yarr::CharSize::Char8, 6, false, false }));
+    AOT_TEST_CHECK((pairSearchedFor("k[0-9]s[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 0) == Pair { Yarr::CharSize::Char8, 2, true, true }));
+#endif
+    AOT_TEST_CHECK((!pairSearchedFor("[a-z]bz?.7"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("[a-z]:#?[^=]+"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("\\w(?:@|.)=[0-9]"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("[a-z]#=|[a-z].="_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("[a-z](?:#|[\\u0100-\\u0fff])="_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("[ab][cd]+e"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("aaa+[bc]"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { Yarr::Flags::Unicode }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { Yarr::Flags::Sticky }, 1)));
 }
 
 static void testUnicodePropertyLookup()
@@ -304,6 +341,7 @@ std::span<const NativeTest> regExpCompilerTests()
         { "regexp-compiler/compilation-is-thread-independent"_s, testCompilationIsThreadIndependent },
         { "regexp-compiler/one-pattern-serves-both-widths-and-retries"_s, testOnePatternServesBothWidthsAndRetries },
         { "regexp-compiler/only-a-rare-first-character-is-searched-for"_s, testOnlyARareFirstCharacterIsSearchedFor },
+        { "regexp-compiler/two-places-of-one-unit-each-are-searched-for-at-once"_s, testTwoPlacesOfOneUnitEachAreSearchedForAtOnce },
         { "regexp-compiler/unicode-property-lookup"_s, testUnicodePropertyLookup },
         { "regexp-compiler/class-table-limits-are-counted"_s, testClassTableLimitsAreCounted },
     };

@@ -1214,6 +1214,13 @@ void CodeVerifier::verifyNarrowed(BlockID block, ValueID id, const Operation& na
         tested = valueBeforeConversions(tested);
     if (tested && narrowed.narrowsHolderOfOperand())
         tested = holderOfSlotRead(tested);
+    if (tested && narrowed.narrowsTermOfOperand()) {
+        const Operation& sum = m_code.at(tested);
+        bool isTerm = sum.opcode == Opcode::Add && !narrowed.narrowsHolderOfOperand() && (valueBeforeConversions(sum.operand(0)) == value) != (valueBeforeConversions(sum.operand(1)) == value);
+        if (!isTerm)
+            return fail(block, id, "the value of a Narrowed is no term of the sum that its test has looked at"_s, test);
+        return;
+    }
     if (tested != value)
         return fail(block, id, "the value of a Narrowed is not what its test has looked at"_s, test);
 }
@@ -1814,7 +1821,7 @@ void CodeVerifier::verifyMakerOfClosure(BlockID block, ValueID id, const Operati
         return;
     if (made.closureForm() != ClosureForm::Slim && made.closureForm() != ClosureForm::Full)
         return fail(block, id, "a closure of the frame has a form that has no cell of its own"_s);
-    if (m_program.at(made.function()).calleeParameterIndex())
+    if (!closuresOfFunctionMayBeLent(m_program, made.function()))
         return fail(block, id, "a closure that its own function names lies in the frame"_s);
     bool isCoroutine = m_program.at(m_code.function()).isCoroutine();
     if (isBodyOfCoroutine(m_code.role(), isCoroutine) || (isCoroutine && walksInputBody(m_code.role())))

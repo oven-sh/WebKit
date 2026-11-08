@@ -81,7 +81,14 @@ inline void ScanOfBody::noteEdgeForEnvironments(uint32_t from, uint32_t to, Kind
         return;
     }
     uint32_t source = kind == KindOfEdgeInScan::ToHandler ? m_blocksAbove[from] : from;
-    m_blocksAbove[to] = m_numberOfEdgesInto[to] ? nearestBlockAboveBothForEnvironments(m_blocksAbove[to], source) : source;
+    uint32_t& above = m_blocksAbove[to];
+    if (!m_numberOfEdgesInto[to]) {
+        above = source;
+        return;
+    }
+    bool standsAboveSource = above != noDefinition && from == m_blockBeingRead && m_isAboveBlockBeingRead[above] && (above != from || kind != KindOfEdgeInScan::ToHandler);
+    if (!standsAboveSource)
+        above = nearestBlockAboveBothForEnvironments(above, source);
 }
 
 inline void ScanOfBody::enterBlockForEnvironments(uint32_t block)

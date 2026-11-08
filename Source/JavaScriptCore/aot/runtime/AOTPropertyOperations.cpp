@@ -138,6 +138,8 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
         RELEASE_AND_RETURN(scope, putAndCache({ instance, identifier, name }, base.asCell(), value, mode));
     PutPropertySlot slot(base, mode == PutMode::Strict, PutPropertySlot::PutById);
     if (Object* object = compiledObjectOrNull(base)) {
+        if (const FieldReturn* back = instance->state->propertyCaches->findFieldReturn(object->structureID(), name); back && object->tryRepeat(vm, *back, value))
+            return;
         const FieldData* field = object->fieldNamed(*instance->state, identifier);
         if (field && object->hasExtraProperties() && !object->read(*field))
             object->ensureStructureForExtraProperties(vm);

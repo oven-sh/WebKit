@@ -913,7 +913,7 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
     return true;
 }
 
-static Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
+static ALWAYS_INLINE Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
     if (readsOfFolding.contains(opcode))
@@ -948,17 +948,27 @@ static Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
 constinit const OpcodeSet opcodesThatFoldOperationTakes = opcodesOfFolding;
 static_assert(opcodesThatFoldOperationTakesInChains == opcodesOfFolding);
 
+static NEVER_INLINE bool buildWhereNoAnswerIsKnownToFolding(Walker& walker, const BodyValue& value)
+{
+    if (value.opcode() == Opcode::CheckInitialized)
+        return buildCheckOfCellInFolding(walker, value);
+    return !walker.has(Mechanism::TypedOperations) && buildTypedAccess(walker, value);
+}
+
+static NEVER_INLINE bool bindAnswerKnownToFolding(Walker& walker, const BodyValue& value, Reference answer)
+{
+    walker.bind(value.id(), answer);
+    return true;
+}
+
 bool foldOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
-    Opcode opcode = value.opcode();
-    ASSERT(opcodesOfFolding.contains(opcode));
-    if (Reference answer = storesThatStateFollowsForFolding.contains(opcode) ? Reference() : answerKnownToFolding(walker, value)) {
-        walker.bind(value.id(), answer);
-        return true;
-    }
-    if (opcode == Opcode::CheckInitialized)
-        return buildCheckOfCellInFolding(walker, value);
-    return placesThatStateFollowsForFolding.contains(opcode) && !walker.has(Mechanism::TypedOperations) && buildTypedAccess(walker, value);
+    ASSERT(opcodesOfFolding.contains(value.opcode()));
+    if (Reference answer = storesThatStateFollowsForFolding.contains(value.opcode()) ? Reference() : answerKnownToFolding(walker, value))
+        return bindAnswerKnownToFolding(walker, value, answer);
+    if (value.opcode() != Opcode::CheckInitialized && !placesThatStateFollowsForFolding.contains(value.opcode()))
+        return false;
+    return buildWhereNoAnswerIsKnownToFolding(walker, value);
 }
 
 } } } // namespace JSC::AOT::Typed

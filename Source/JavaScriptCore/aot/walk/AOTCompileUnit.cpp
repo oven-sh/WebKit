@@ -56,6 +56,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .showsPositionsTakenToLieInsideToVerifier = build.validates() && !sourcesOfProofsCheckedUnder(options.testing) && !testsEveryPositionUnder(options.testing),
         .leavesOutReadsBehindTestsOfLengths = AOT::hasFlag(options.testing, Wire::TestingSwitch::ReadsBehindTestsOfLengthsAreLeftOut),
         .takesVariablesThatBoundToBeAsInFront = AOT::hasFlag(options.testing, Wire::TestingSwitch::VariablesThatBoundAreTakenToBeAsInFront),
+        .namesOperandsOfRowsByWhatTheirVariablesHoldNow = AOT::hasFlag(options.testing, Wire::TestingSwitch::OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow),
         .takesDividendsOfReciprocalsToFit32Bits = AOT::hasFlag(options.testing, Wire::TestingSwitch::DividendsOfReciprocalsAreTakenToFit32Bits),
         .roundsBoundsOfCountersTheOtherWay = AOT::hasFlag(options.testing, Wire::TestingSwitch::BoundsOfCountersAreRoundedTheOtherWay),
         .takesGuardsAndFactsToHold = AOT::hasFlag(options.testing, Wire::TestingSwitch::GuardsAndFactsAreTakenToHold),
@@ -81,6 +82,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .shufflesExpectedTypes = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleExpectedTypes),
         .failsGuesses = AOT::hasFlag(options.testing, Wire::TestingSwitch::FailGuesses),
         .turnsForgetWhatWasDone = RowThatSaysLess::decode(options.rowThatSaysLess).kind == KindOfEffectsRow::MarkOfTurns,
+        .notesRowsOfLoopsThatSayLess = RowThatSaysLess::decode(options.rowThatSaysLess).kind == KindOfEffectsRow::RowOfLoop,
         .netOfEffectsWatchesTurns = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime) || RowThatSaysLess::decode(options.rowThatSaysLess).kind == KindOfEffectsRow::MarkOfTurns,
         .shufflesChoices = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleChoices),
         .judgesInt32Promises = !AOT::hasFlag(options.testing, Wire::TestingSwitch::IgnoreExpectedTypes) && !AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleExpectedTypes) && !AOT::hasFlag(options.testing, Wire::TestingSwitch::GiveLinkMore),
@@ -130,7 +132,6 @@ static std::span<const uint32_t> arenaIDsInUnitMentionKey(NumberSpace space, std
     case NumberSpace::ClosureCell:
     case NumberSpace::Allocation:
     case NumberSpace::Request:
-    case NumberSpace::AtomOfComparedText:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
     case NumberSpace::MethodSelector:
@@ -586,12 +587,12 @@ String findCallThatHandsOverWhatItsUnitHasNotLeft(const WalkInputs& inputs, Type
     return JudgeOfCalls(inputs, types, code, arrivalsHeld, whatFunctionsHandBack).run();
 }
 
-static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code& code)
+static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, TypeArena& types, const Code& code)
 {
     CodeUnit unit = code.unit();
     if (!walksInputBody(unit.role) || !(code.opcodesOfValues().contains(Opcode::PutModuleVariable) || code.opcodesOfValues().contains(Opcode::PutEnvironmentField)))
         return { };
-    if (inputs.options.takesCalleesToKeepNothing)
+    if (inputs.options.takesCalleesToKeepNothing && (inputs.options.sourcesOfProofsChecked & bitOfSourceOfProofs(ProofSource::Lifetime)))
         return { };
     const LinkTables& tables = inputs.facts.linked();
     for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
@@ -601,6 +602,8 @@ static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code&
         ValueID stored = rootOfCellInSweptCode(code, operation.valueOperand());
         const Operation& made = code.at(stored);
         if (made.opcode != Opcode::Parameter || !code.at(made.block()).isEntry)
+            continue;
+        if (FunctionID function = singleFunctionOf(types, types.at(code.at(operation.valueOperand()).type)); function && !closuresOfFunctionMayBeLent(inputs.program, function))
             continue;
         std::span<const ValueID> parameters = code.at(made.block()).parameters();
         size_t entryParameter = std::ranges::find(parameters, stored) - parameters.begin();
@@ -626,7 +629,7 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
     }
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::OpcodeNotInForm;
-        brokenRule = findStoreOfWhatCallerMayLend(inputs, code);
+        brokenRule = findStoreOfWhatCallerMayLend(inputs, types, code);
     }
     if (brokenRule.isNull())
         return true;
@@ -1019,7 +1022,7 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputOperationsThatHandOn | OpcodeSet {
         Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::BigInt, Opcode::Builtin, Opcode::NativeBinding,
-        Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::TypeTest, Opcode::ThrowModuleFailure, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::RequireModule,
+        Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::TypeTest, Opcode::IsLinkedBelow, Opcode::ThrowModuleFailure, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::RequireModule,
         Opcode::NewClosure, Opcode::NewRegExp, Opcode::NewClass, Opcode::NewClassToken, Opcode::ResolveHeritage, Opcode::DefineMethod, Opcode::FinishClass,
     };
     if ((unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body) || (inputs.facts.isTakenToRunOnce(unit.function) && !isBodyWrittenInAnotherFile(inputs.program, unit.function)))
@@ -1033,7 +1036,7 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
     if (hasReadsVerifiedAtRunTime(inputs, index))
         return false;
     if (unit.role != CodeRole::Body)
-        return !index.opcodes().contains(Opcode::Builtin) && !looksUnderKeyThatHasPreparation(inputs, unit.function, index);
+        return !someLoopGivesSlowVersionSomethingToReckon(index) && !index.opcodes().contains(Opcode::Builtin) && !looksUnderKeyThatHasPreparation(inputs, unit.function, index);
     if (!inputs.program.at(unit.function).isModuleBody())
         return false;
     return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper;

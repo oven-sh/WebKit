@@ -49,9 +49,9 @@ private:
         Position late;
     };
 
-    bool fail(FailureKind kind, const Operation* operation)
+    bool fail(FailureKind kind, const Operation* operation, PlaceOfCheck check = PlaceOfCheck::here())
     {
-        m_proc.fail(kind, operation);
+        m_proc.fail(kind, operation, check);
         m_failed = true;
         return false;
     }
@@ -524,8 +524,10 @@ bool CollectorRulesChecker::checkAcross(const Operation* value, const Safepoint&
     if (needsPointerBeside(keeper)) {
         uint32_t watched = m_watchedOf[keeper->index()];
         bool hasPointer = watched != none && spillHolds(m_watched[watched].pointerBeside, keeper, true, safepoint)
-            && (!m_watched[watched].pointerIsKeptInFramedPartAlone || (m_allocation.isInFramedPart(m_block) && std::ranges::any_of(m_pointersKeptAtHeads, [&](const PointerKeptAtHead& kept) {
-                return kept.watched == watched && kept.head == m_allocation.headOfFramedPartAbove(m_block).block;
+            && (!m_watched[watched].pointerIsKeptInFramedPartAlone || (m_allocation.isInFramedPart(m_block) && m_allocation.everyHeadOfFramedPartAbove(m_block, [&](const Allocation::HeadOfFramedPart& head) {
+                return std::ranges::any_of(m_pointersKeptAtHeads, [&](const PointerKeptAtHead& kept) {
+                    return kept.watched == watched && kept.head == head.block;
+                });
             })));
         isKept = (hasPointer || !safepoint.patch->effects.mayCollect) && (!isSuspension || isRootOf(safepoint.patch, keeper));
     } else

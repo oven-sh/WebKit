@@ -117,6 +117,45 @@ Reference buildProofOfNumber(Walker& walker, Reference value, Reference test, Or
     return walker.build(WTF::move(narrowed));
 }
 
+bool holdOperandBesideNumberToNumberOrBeginTurnAgain(Walker& walker, Draft& draft, ValueID written)
+{
+    if (effectRuleOf(draft.opcode) != EffectRule::Operator || draft.numberOfNamedOperands() != 2)
+        return false;
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.mayBeginTurnAgainInClosedCopy() || !walker.standsInTurnThatLooksCountOn() || !walker.turnsOfTypedCopyStoreAtPositionOfList())
+        return false;
+    TypeArena& types = walker.types();
+    uint32_t asked = types.at(walker.typeOf(draft.operand(0))).isNumber() ? 1 : 0;
+    Reference operand = draft.operand(asked);
+    TypeID type = walker.typeOf(operand);
+    if (!operand.isValue() || !types.at(walker.typeOf(draft.operand(1 - asked))).isNumber() || !types.overlap(type, TypeTable::number) || !types.overlap(type, TypeTable::object))
+        return false;
+    TypeID expected = findExpectation(walker, walker.currentBodyIndex().value(written).operand(asked)).type;
+    if (!expected || !types.at(expected).isNumber())
+        return false;
+    Origin origin = draft.origin();
+    origin.isTailCall = false;
+    Reference isNumber = buildTestOfNumber(walker, operand, TypeTable::number, origin);
+    if (!isNumber)
+        return false;
+    BlockID passed = walker.addBlock();
+    BlockID failed = walker.addBlock(BlockFrequency::Rare);
+    walker.letGuessFailUnasked(failed, origin);
+    walker.branch(isNumber, passed, failed);
+    walker.continueIn(failed);
+    if (!walker.isUnreachable())
+        walker.beginTurnAgainInClosedCopy();
+    walker.continueIn(passed);
+    walker.noteGuessOpened();
+    if (walker.isUnreachable() || walker.hasFailed())
+        return false;
+    Reference number = buildProofOfNumber(walker, operand, isNumber, origin);
+    if (!number)
+        return false;
+    walker.count(StatisticID::OperandsAskedForNumberInQuietTurns);
+    draft.setOperand(asked, number);
+    return true;
+}
+
 static bool isReturnedAtOnceInNumberArms(const BodyIndex& index, BlockID block, ValueID value)
 {
     BodyTerminator end = index.terminator(block);

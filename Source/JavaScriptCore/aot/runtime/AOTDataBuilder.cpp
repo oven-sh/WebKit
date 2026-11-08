@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedSpan.h"
 #include "AOTCompactTable.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
@@ -371,7 +372,7 @@ static NEVER_INLINE JSObject* buildObject(Builder& builder, uint32_t first)
     Object* object = uncheckedDowncast<Object>(objects.structures.allocate(vm, header.operand));
     std::span<const FieldData> fields = object->layout().fields();
     for (uint32_t index = 0; index < count; ++index) {
-        bool isStored = object->store(vm, fields[fieldIndices[index]], AcceptedValue::provenAtBuildTime(builder.roots.at(firstRoot + index)));
+        bool isStored = object->store(vm, checkedAt(fields, fieldIndices[index]), AcceptedValue::provenAtBuildTime(builder.roots.at(firstRoot + index)));
         RELEASE_ASSERT(isStored);
     }
     if (!otherMembers.values.empty()) {

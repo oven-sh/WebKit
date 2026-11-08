@@ -262,7 +262,7 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, Machine
         m_out.appendToContinuation(continuation);
 }
 
-const ExceptionEmitter::LandingPad& ExceptionEmitter::landingPadFor(BlockID block, const Edge& handler)
+ALWAYS_INLINE const ExceptionEmitter::LandingPad& ExceptionEmitter::landingPadFor(BlockID block, const Edge& handler)
 {
     uint32_t& indexPlusOne = m_landingPadsOfBlocks[block.index()];
     if (!indexPlusOne)

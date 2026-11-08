@@ -29,10 +29,19 @@ public:
     };
 
     struct Snapshot {
-        bool isSet { false };
-        std::span<const RegisterBinding> bindings;
+        bool isSet() const { return first; }
+        std::span<const RegisterBinding> bindings() const { return { first, static_cast<size_t>(std::popcount(registers)) }; }
+        void set(const RegisterBinding* bindingsInOrderOfRegisters, RegisterMask registersBound)
+        {
+            ASSERT(bindingsInOrderOfRegisters);
+            first = bindingsInOrderOfRegisters;
+            registers = registersBound;
+        }
+
+        const RegisterBinding* first { nullptr };
         RegisterMask registers { 0 };
     };
+    static_assert(sizeof(Snapshot) == 16);
 
     void allocateBlock(Block*);
     void allocateOperation(Operation*);
@@ -399,7 +408,8 @@ public:
     void releaseDeadValue(PatchOperation*);
     void releaseChildrenLetGoByCallee(PatchOperation*, std::span<const Location> locationsOfOperands, Position early, RegisterMask locked);
     RegisterMask clearPlacesOfValuesHandedTo(Operation* released, Position);
-    void findBlocksThatLeadToReadsOf(const Operation* value);
+    void findBlocksThatLeadToReadsOf(const Operation* value, uint32_t firstBlock);
+    uint32_t firstBlockOnWaysFrom(const Block*, const Operation* value);
     bool isReadOnSomeWayFromHeadOf(const Operation* value, const Block*);
     bool dominatesSomeReadBelowDefinitionOf(const Block*, const Operation* value);
     bool isHeldAtHeadThatWayLeadsBackTo(const Operation* value) const;
@@ -555,9 +565,12 @@ public:
     mutable ArenaVector<uint32_t> m_numbersOfListsOfReads;
     mutable ArenaVector<std::span<const uint32_t>> m_listsOfReads;
     ArenaVector<uint32_t> m_lastSearchThatReachedBlock;
+    ArenaVector<const Block*> m_blocksReachedBySearchForWays;
     uint32_t m_numberOfSearchesForWays { 0 };
     size_t m_numberOfBlocksReachedBySearchesForWays { 0 };
     const Operation* m_valueOfLastSearchForWays { nullptr };
+    uint32_t m_firstBlockOfLastSearchForWays { 0 };
+    std::optional<bool> m_someLoopHasSideEntrance;
     ArenaVector<uint32_t> m_firstLoopsWhoseHeadsAreNotJudged;
     Position m_positionOfLastQuestionForLoopNotJudged { noPosition };
     Position m_beginOfFirstLoopNotJudged { noPosition };

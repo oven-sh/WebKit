@@ -356,6 +356,14 @@ void generateStoreSlot(StubAssembler& jit)
             arm.uncached.append(exits.wasAbsentAndIsNotAccepted);
             arm.uncached.append(hasNoStorage);
         }
+        if (origin == SlotOrigin::ByVal && !createsField && accessOf(traits.operation) == SlotAccess::Store) {
+            JumpList isNotRepeated;
+            exits.cannot.link(&jit);
+            exits.cannot.clear();
+            isNotRepeated.append(slot.branchIfFlag(jit, Slot::isOutOfLine));
+            repeatFieldExitFoundBySlotAndReturn(jit, { .object = receiver, .value = value, .addressOfSlot = r.field.address, .exit = r.scratch, .scratch = r.type, .extra = r.secondScratch }, isNotRepeated);
+            exits.cannot.append(isNotRepeated);
+        }
         linkToSlotCannot(jit, exits.cannot, table, createsField ? SlotFinisher::CreateField : SlotFinisher::StoreField, slot);
         linkToUncachedExit(arm);
         break;

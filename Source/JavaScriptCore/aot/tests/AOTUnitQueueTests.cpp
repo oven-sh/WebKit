@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <wtf/Threading.h>
+#include <wtf/WeakRandom.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {
@@ -291,6 +292,37 @@ static void testSeedIsMentionedByWhoeverDoesNotLeadToIt()
     });
 }
 
+static void testWhetherACycleLeadsToAnotherIsWhatFollowingEveryEdgeFinds()
+{
+    constexpr uint32_t numberOfCycles = 60;
+    WeakRandom random(1);
+    for (unsigned round = 0; round < 400; ++round) {
+        Typed::LinkTables tables;
+        Vector<uint64_t> cyclesThatLeadTo;
+        tables.rankOfCycle.fill(0, numberOfCycles);
+        for (uint32_t cycle = 0; cycle < numberOfCycles; ++cycle) {
+            size_t firstAwaited = tables.cyclesAwaited.size();
+            tables.firstCycleAwaited.append(static_cast<uint32_t>(firstAwaited));
+            uint64_t leadHere = 1ull << cycle;
+            for (uint32_t left = cycle ? random.getUint32(round % 4 + 2) : 0; left; --left) {
+                uint32_t referrer = random.getUint32(round % 3 + 1) ? cycle - 1 - random.getUint32(std::min(cycle, 3u)) : random.getUint32(cycle);
+                if (std::ranges::contains(tables.cyclesAwaited.span().subspan(firstAwaited), referrer))
+                    continue;
+                tables.cyclesAwaited.append(referrer);
+                tables.rankOfCycle[cycle] = std::max(tables.rankOfCycle[cycle], tables.rankOfCycle[referrer] + 1);
+                leadHere |= cyclesThatLeadTo[referrer];
+            }
+            cyclesThatLeadTo.append(leadHere);
+        }
+        tables.firstCycleAwaited.append(static_cast<uint32_t>(tables.cyclesAwaited.size()));
+        tables.listCyclesNamed();
+        for (uint32_t referrer = 0; referrer < numberOfCycles; ++referrer) {
+            for (uint32_t named = 0; named < numberOfCycles; ++named)
+                AOT_TEST_CHECK(tables.cycleLeadsTo(referrer, named) == !!(cyclesThatLeadTo[named] >> referrer & 1));
+        }
+    }
+}
+
 std::span<const NativeTest> unitQueueTests()
 {
     static constexpr NativeTest tests[] {
@@ -298,6 +330,7 @@ std::span<const NativeTest> unitQueueTests()
         { "unit-queue/readers-of-a-table-under-unknown-keys-name-one-group"_s, testReadersOfATableUnderUnknownKeysNameOneGroup },
         { "unit-queue/a-slow-version-comes-behind-the-other-units-of-its-cycle"_s, testSlowVersionComesBehindTheOtherUnitsOfItsCycle },
         { "unit-queue/a-seed-is-mentioned-by-whoever-does-not-lead-to-it"_s, testSeedIsMentionedByWhoeverDoesNotLeadToIt },
+        { "unit-queue/whether-a-cycle-leads-to-another-is-what-following-every-edge-finds"_s, testWhetherACycleLeadsToAnotherIsWhatFollowingEveryEdgeFinds },
     };
     return tests;
 }

@@ -18,6 +18,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr AbstractHeapSet heapsUnderElementsInWalkState { AbstractHeap::Elements, AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage };
+static constexpr AbstractHeapSet heapsUnderElementsOutsideViewsInWalkState { AbstractHeap::Elements, AbstractHeap::ArrayStorage };
 static constexpr AbstractHeapSet heapsUnderPlacesInWalkState = heapsUnderElementsInWalkState | AbstractHeapSet { AbstractHeap::ObjectFields, AbstractHeap::EnvironmentFields, AbstractHeap::ModuleVariables, AbstractHeap::MemberGuards };
 static constexpr AbstractHeapSet heapsUnderElementsOutsideObjectsInWalkState = heapsUnderElementsInWalkState - perObjectHeaps;
 static_assert(perObjectHeaps.containsAll(heapsUnderPlacesInWalkState - heapsUnderElementsOutsideObjectsInWalkState - AbstractHeapSet { AbstractHeap::ModuleVariables, AbstractHeap::MemberGuards }));
@@ -363,7 +364,7 @@ NEVER_INLINE void WalkState::takeMarksOfStateWithoutWholeProgram(WalkState& othe
 
 void WalkState::dropWhatIsHeld()
 {
-    m_marks.kinds &= programIsWhole;
+    m_marks.kinds &= keptWhereNothingIsHeld;
     if (m_held->numberOfOwners == 1) {
         m_held->clear();
         return;
@@ -535,6 +536,7 @@ uint32_t WalkState::Held::findOrAddHolder(Reference object)
             record.layoutsOfSlots = LayoutsOfSlots::None;
             record.kindsOfPlaces = 0;
             record.maskOfPlaces = 0;
+            record.elementsLieOutsideViews = false;
             ++m_numberOfHolders;
             listAsReachedByEffects(position);
         }
@@ -1137,6 +1139,13 @@ void WalkState::Held::noteElementWithNaNForHole(Reference object, Reference inde
     dropEndedRecordsIfMany();
 }
 
+void WalkState::Held::noteElementsLieOutsideViews(Reference object)
+{
+    uint32_t holder = findHolder(object);
+    if (holder != none && !m_holders[holder].elementsLieOutsideViews)
+        m_holders.mutableAt(holder).elementsLieOutsideViews = true;
+}
+
 void WalkState::Held::noteStoresPassAbove(LayoutID classLayout, PropertyKeyID key, Reference test)
 {
     notePlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits(), test, [] {
@@ -1408,12 +1417,17 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
         });
     }
     if (ends.elements && !writer) {
-        goThroughHolders(Lists::listOfElements, [](const Holder& record) {
-            return !!record.numberOfElements;
-        }, [&](uint32_t holder) {
+        m_lists->goThroughHolders(Lists::listOfElements, [&](uint32_t holder) {
+            const Holder& record = m_holders[holder];
+            if (record.hasEnded || record.isFresh || !record.numberOfElements)
+                return false;
+            if (!isWritten(holder) || (ends.sparesElementsOutsideViews && record.elementsLieOutsideViews))
+                return true;
             endPlacesOf(holder, ListOfPlaces::Elements, [](const Place&) {
                 return true;
             });
+            holdersThatLostSomething.append(holder);
+            return false;
         });
     }
     for (uint32_t holder : holdersThatLostSomething)
@@ -1622,7 +1636,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
                 written |= writtenOfKind(kind);
         }
         bool endsPlacesOfHolder = written & record.maskOfPlaces;
-        bool endsElementsOfHolder = endsElements && record.firstElement != none;
+        bool endsElementsOfHolder = endsElements && record.firstElement != none && (!record.elementsLieOutsideViews || writes.containsAny(heapsUnderElementsOutsideViewsInWalkState));
         bool endsFactsOfHolder = record.factsOfCell.containsAny(factsEnded);
         uint32_t numberOfPlaces = record.numberOfPlaces;
         if (endsShapes && record.shape)
@@ -1649,7 +1663,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     };
     if (reachesSomething && goesByLists()) [[unlikely]] {
         bool namesOneVariable = writtenAlone && writtenAlone->heap() == AbstractHeap::ModuleVariables && variablesWritten == Typed::maskOf(*program.program, *writtenAlone);
-        endByLists({ .shapes = endsShapes, .elements = endsElements, .facts = factsEnded, .slots = slotsWritten, .variables = variablesWritten,
+        endByLists({ .shapes = endsShapes, .elements = endsElements, .sparesElementsOutsideViews = !writes.containsAny(heapsUnderElementsOutsideViewsInWalkState), .facts = factsEnded, .slots = slotsWritten, .variables = variablesWritten,
             .environmentFields = environmentFieldsWritten, .guards = guardsWritten, .variableWrittenAlone = namesOneVariable ? writtenAlone->variable() : VariableID() });
     } else if (reachesSomething)
         forEachHolderReachedByEffects(endWhatHangsOn);
@@ -1766,8 +1780,9 @@ void WalkState::meetWith(const WalkState& other, RecordsLastMet* last)
     if (&other == this)
         return;
     m_answers.meetWith(other.m_answers);
-    if (m_marks.turnInWhichNothingWasDone != other.m_marks.turnInWhichNothingWasDone) {
-        bool storesOfBothCanBePutBack = !((m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone) & placesWereWrittenInTurn) && newestStoreToPutBack() == other.newestStoreToPutBack();
+    if (uint32_t newest = newestStoreToPutBack(); m_marks.turnInWhichNothingWasDone != other.m_marks.turnInWhichNothingWasDone || newest != other.newestStoreToPutBack()) {
+        bool storesOfBothCanBePutBack = !((m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone) & placesWereWrittenInTurn) && newest == other.newestStoreToPutBack();
+        m_marks.kinds = (m_marks.kinds & ~placeOfNewestStoreToPutBack) | newest << shiftOfPlaceOfNewestStoreToPutBack;
         m_marks.turnInWhichNothingWasDone = turnOfMark(m_marks.turnInWhichNothingWasDone) != turnOfMark(other.m_marks.turnInWhichNothingWasDone) ? 0
             : storesOfBothCanBePutBack ? m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone
             : turnOfMark(m_marks.turnInWhichNothingWasDone) | placesWereWrittenInTurn;
@@ -1872,6 +1887,8 @@ void WalkState::Held::meetWith(const Held& other, RecordsLastMet* last)
             if (record.shape != same.shape)
                 endShape(holder);
             endFactsOfCell(holder, factsKnownHereAlone);
+            if (record.elementsLieOutsideViews && !same.elementsLieOutsideViews)
+                m_holders.mutableAt(holder).elementsLieOutsideViews = false;
             if (leaves)
                 letLeave(holder);
         }

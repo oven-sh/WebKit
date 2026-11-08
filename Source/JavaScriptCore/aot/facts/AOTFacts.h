@@ -311,7 +311,6 @@ private:
     FactTables m_tables;
 };
 
-BuiltinID builtinParentNamedByClassRecord(const Program&, const Facts&, LayoutID);
 
 struct InputsOfProgramFacts {
     const Program& program;

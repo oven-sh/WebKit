@@ -139,6 +139,9 @@ struct StubEnvironment {
     uint64_t resultOfRecordedOperation;
     CallRegisterValues call;
     LandedCall landedCall;
+    uint64_t resultOfNextLanding;
+    uint64_t calleeOfEarlierLanding;
+    uint64_t thisValueOfEarlierLanding;
     uint64_t wordsNobodyWrote;
     std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
     std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
@@ -184,6 +187,9 @@ public:
     void countCallsOf(Entry entry) { install(entry, countOperationCall); }
     void recordCallsOf(Entry entry) { install(entry, recordOperationCall); }
     void setResultOfRecordedOperation(uint64_t result) { m_environment->resultOfRecordedOperation = result; }
+    void setResultOfNextLanding(uint64_t result) { m_environment->resultOfNextLanding = result; }
+    uint64_t calleeOfEarlierLanding() const { return m_environment->calleeOfEarlierLanding; }
+    uint64_t thisValueOfEarlierLanding() const { return m_environment->thisValueOfEarlierLanding; }
     void countWordsNobodyWroteAtCallsOf(Entry entry) { install(entry, std::bit_cast<UGPRPair (SYSV_ABI *)(Instance*)>(m_landingThatCountsWordsNobodyWrote)); }
     void countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry entry)
     {
@@ -424,6 +430,12 @@ inline MacroAssemblerCodeRef<JSEntryPtrTag> StubRunner::compileStubCaller(const 
 
 inline void StubRunner::emitLandingInCompiledFunction(CCallHelpers& jit)
 {
+    jit.pushToSave(GPRInfo::returnValueGPR);
+    jit.load64(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.values.callee)), GPRInfo::returnValueGPR);
+    jit.store64(GPRInfo::returnValueGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, calleeOfEarlierLanding)));
+    jit.load64(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.values.thisValue)), GPRInfo::returnValueGPR);
+    jit.store64(GPRInfo::returnValueGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, thisValueOfEarlierLanding)));
+    jit.popToRestore(GPRInfo::returnValueGPR);
     jit.store64(CCallHelpers::TrustedImm32(static_cast<int32_t>(LandedCall::Place::CompiledFunction)), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.place)));
     jit.store64(countGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.count)));
     jit.store64(calleeGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.calleeInRegister)));
@@ -431,7 +443,12 @@ inline void StubRunner::emitLandingInCompiledFunction(CCallHelpers& jit)
     jit.store64(thisGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.values.thisValue)));
     for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
         jit.store64(argumentGPR(i), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.values.arguments), i));
-    jit.move(CCallHelpers::TrustedImm64(resultOfCompiledFunction), GPRInfo::returnValueGPR);
+    jit.move(CCallHelpers::TrustedImm64(wordThatNobodyWrote), calleeGPR);
+    jit.move(calleeGPR, thisGPR);
+    for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
+        jit.move(calleeGPR, argumentGPR(i));
+    jit.load64(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, resultOfNextLanding)), GPRInfo::returnValueGPR);
+    jit.store64(CCallHelpers::TrustedImm32(static_cast<int32_t>(resultOfCompiledFunction)), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, resultOfNextLanding)));
     jit.ret();
 }
 
@@ -538,6 +555,7 @@ inline StubRunner::StubRunner(const StubOptions& options, std::span<const StubKe
 {
     AOT_TEST_CHECK(m_blob.code.relocations.isEmpty());
     m_environment->runtimeTable.fill(operationPointer(countOperationCall));
+    m_environment->resultOfNextLanding = resultOfCompiledFunction;
     Instance& instance = m_environment->instance;
     instance.runtimeTable = m_environment->runtimeTable.data();
     instance.vm = &m_environment->vm.get();
@@ -597,6 +615,8 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
     environment.numberOfRecordedCalls = 0;
     environment.recordedArguments = { };
     environment.landedCall = { };
+    environment.calleeOfEarlierLanding = 0;
+    environment.thisValueOfEarlierLanding = 0;
     environment.wordsNobodyWrote = 0;
     environment.numbers = markers;
     std::ranges::copy(operands, environment.operands.begin());

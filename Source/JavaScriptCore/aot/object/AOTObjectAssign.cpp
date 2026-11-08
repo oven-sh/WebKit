@@ -52,6 +52,8 @@ void Object::copyFieldsOfSameLayout(VM& vm, const Object& source)
     gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
     if (source.bearsMark())
         setBearsMark(true);
+    else
+        setIsInBirth(false);
     if (layout.hasExtension())
         setExtension(vm, extension);
     setOrderAndCount(source.orderWord() & orderAndCountMask);
@@ -286,6 +288,8 @@ ALWAYS_INLINE bool Object::tryCopyWordsOfSameLayout(VM& vm, const Object& source
     gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
     if (source.bearsMark())
         setBearsMark(true);
+    else
+        setIsInBirth(false);
     if (extension) {
         if (extensionSlot->representation() == SlotRepresentation::Cell)
             at<Extension*>(extensionSlot->offset) = extension;
@@ -312,14 +316,22 @@ bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
         return true;
     if (this == &source || &source.state() != &state() || layout().kind() != LayoutKind::Record || hasFlagsInOrderWord())
         return false;
-    if (hasOutOfLineKeyOrder() || source.hasOutOfLineKeyOrder() || source.hasExtraProperties())
+    if (hasOutOfLineKeyOrder() || source.hasOutOfLineKeyOrder())
+        return false;
+    bool mayCopyWords = shapeWord() == source.shapeWord() && !countOf(orderWord());
+    bool copiesExtraProperties = source.hasExtraProperties();
+    if (copiesExtraProperties && (!mayCopyWords || !layout().extraPropertiesSlot() || source.orderWord() & orderWordHasFieldOutsideSlot || source.compiledStructure().hasOtherPrototype() || compiledStructure().mayBePrototype()))
         return false;
     DeferGC deferGC(vm);
-    bool mayCopyWords = shapeWord() == source.shapeWord() && !countOf(orderWord());
     if (mayCopyWords && !compiledStructure().hasOnlyPlainSlots()) [[unlikely]]
         mayCopyWords = tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source));
+    JSObject* extraProperties = mayCopyWords && copiesExtraProperties ? tryCopyPlainExtraProperties(vm, source.extraProperties()) : nullptr;
+    if (copiesExtraProperties && !extraProperties)
+        return false;
     if (mayCopyWords) {
         copyFieldsOfSameLayout(vm, source);
+        if (extraProperties)
+            setExtraProperties(vm, extraProperties, state().objects->structures.withExtraProperties(vm, compiledStructure(), structureToName(extraProperties)));
         if (countOf(orderWord()))
             didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, nullptr);
         return true;
@@ -1230,16 +1242,43 @@ static ALWAYS_INLINE RepeatedCopy tryRunPlanAsBefore(VM& vm, State& state, Objec
 
 static RepeatedCopy runPlanAsBeforeAndOfferCopy(VM&, State&, Object& to, AssignmentPlan&, const AssignmentSource&, uint32_t excludedRunNumberPlusOne);
 
+static NEVER_INLINE RepeatedCopy tryRunPlanMadeBefore(VM& vm, State& state, Object& to, const AssignmentSource& source)
+{
+    if (to.orderWord() & orderWordIntegrityBits)
+        return RepeatedCopy::IsNotDone;
+    AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
+    JSObject* extra = to.extraProperties();
+    AssignmentPlan* plan = plans.planMadeFor(to.structureID(), extra ? extra->structureID() : StructureID(), source);
+    if (!plan || !plan->isUsable || plan->orderWordBeforeRun != to.orderWord())
+        return RepeatedCopy::IsNotDone;
+    DeferGC deferGC(vm);
+    FieldStoreRun run(vm, to, state, *plan, extra);
+    if (!run.tryRunAsBefore(source))
+        return RepeatedCopy::IsNotDone;
+    plans.didRunAsBefore(*plan);
+    didChangeOwnProperties(vm, to, VM::StructureChainIntegrityEvent::Add, nullptr);
+    return RepeatedCopy::AsThePlanDidBefore;
+}
+
+static ALWAYS_INLINE RepeatedCopy tryRunRecentPlanOrPlanMadeBefore(VM& vm, State& state, Object& to, AssignmentPlan* recentOrNull, const AssignmentSource& source, uint32_t excludedRunNumberPlusOne)
+{
+    if (recentOrNull) [[likely]] {
+        RepeatedCopy way = recentOrNull->mayCopyWithoutFrame ? runPlanAsBeforeAndOfferCopy(vm, state, to, *recentOrNull, source, excludedRunNumberPlusOne) : tryRunPlanAsBefore(vm, state, to, *recentOrNull, source, excludedRunNumberPlusOne);
+        if (way != RepeatedCopy::IsNotDone || recentOrNull->runsAsBeforeOn(to, source, excludedRunNumberPlusOne)) [[likely]]
+            return way;
+    }
+    return excludedRunNumberPlusOne ? RepeatedCopy::IsNotDone : tryRunPlanMadeBefore(vm, state, to, source);
+}
+
 static NEVER_INLINE RepeatedCopy tryRepeatAssignmentByRecentPlan(VM& vm, State& state, Object& to, const Object& from, uint32_t excludedRunNumberPlusOne)
 {
-    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(to.structureID(), from.structureID(), from.orderWord(), excludedRunNumberPlusOne);
-    if (!plan || &to == &from)
+    if (&to == &from)
         return RepeatedCopy::IsNotDone;
-    if (!plan->fillsEmptySlotsOf(to, from, excludedRunNumberPlusOne)) {
-        AssignmentSource source { const_cast<Object*>(&from), &from, from.extraProperties(), from.orderWord(), { }, true, from.extension(), &from.instance() };
-        if (plan->mayCopyWithoutFrame) [[unlikely]]
-            return runPlanAsBeforeAndOfferCopy(vm, state, to, *plan, source, excludedRunNumberPlusOne);
-        return tryRunPlanAsBefore(vm, state, to, *plan, source, excludedRunNumberPlusOne);
+    JSObject* extraPropertiesOfSource = from.extraProperties();
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(to.structureID(), from.structureID(), extraPropertiesOfSource ? extraPropertiesOfSource->structureID() : StructureID(), from.orderWord(), excludedRunNumberPlusOne);
+    if (!plan || !plan->fillsEmptySlotsOf(to, from, excludedRunNumberPlusOne)) {
+        AssignmentSource source { const_cast<Object*>(&from), &from, extraPropertiesOfSource, from.orderWord(), { }, true, from.extension(), &from.instance() };
+        return tryRunRecentPlanOrPlanMadeBefore(vm, state, to, plan, source, excludedRunNumberPlusOne);
     }
     DeferGC deferGC(vm);
     if (!tryFillEmptySlotsAsBefore(vm, to, state, *plan, from))
@@ -1595,12 +1634,8 @@ static NEVER_INLINE RepeatedCopy tryRepeatAssignmentFromOrdinaryObject(VM& vm, S
     JSObject* from = asObject(source.asCell());
     if (from->canHaveExistingOwnIndexedProperties())
         return RepeatedCopy::IsNotDone;
-    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(to.structureID(), from->structureID(), 0, excludedRunNumberPlusOne);
-    if (!plan)
-        return RepeatedCopy::IsNotDone;
-    if (plan->mayCopyWithoutFrame) [[unlikely]]
-        return runPlanAsBeforeAndOfferCopy(vm, state, to, *plan, { from, nullptr, from, 0, { }, true }, excludedRunNumberPlusOne);
-    return tryRunPlanAsBefore(vm, state, to, *plan, { from, nullptr, from, 0, { }, true }, excludedRunNumberPlusOne);
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(to.structureID(), from->structureID(), from->structureID(), 0, excludedRunNumberPlusOne);
+    return tryRunRecentPlanOrPlanMadeBefore(vm, state, to, plan, { from, nullptr, from, 0, { }, true }, excludedRunNumberPlusOne);
 }
 
 RepeatedCopy tryRepeatAssignment(VM& vm, State& state, JSObject* target, JSValue source, uint32_t excludedRunNumberPlusOne)
@@ -1687,7 +1722,7 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     JSObject* extra = target.extraProperties();
     State& state = target.state();
     AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
-    AssignmentPlan* plan = extra || !excludedNames.empty() ? nullptr : plans.recentPlan(target.structureID(), source->structureID(), assignmentSource->orderWord, 0);
+    AssignmentPlan* plan = extra || !excludedNames.empty() ? nullptr : plans.recentPlan(target.structureID(), source->structureID(), assignmentSource->propertyStorageStructureID(), assignmentSource->orderWord, 0);
     if (!plan || !plan->isFor(target.structureID(), StructureID(), *assignmentSource))
         plan = plans.planFor(vm, &target, extra, *assignmentSource);
     if (!defines && plan->isUsable && plan->storesNameBehindSymbol) {
@@ -1705,7 +1740,7 @@ bool tryAssignOrdinaryObjectAsBefore(VM& vm, State& state, Object& target, JSObj
 {
     if (source->type() != FinalObjectType || source->canHaveExistingOwnIndexedProperties())
         return false;
-    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(target.structureID(), source->structureID(), 0, 0);
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(target.structureID(), source->structureID(), source->structureID(), 0, 0);
     if (!plan)
         return false;
     StructureID ofSource = source->structureID();

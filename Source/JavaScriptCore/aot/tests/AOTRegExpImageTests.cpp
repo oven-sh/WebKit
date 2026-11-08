@@ -586,7 +586,7 @@ static void testOnlyCodeIsPlaced()
     AOT_TEST_CHECK(section.entries.size() == 2 && section.entries[0] == section.entries[1]);
     AOT_TEST_CHECK(section.items.size() == 1 && section.items[0].kind == Kind::Routine);
 
-    std::array<CompiledRegExp, 3> mixed { compile({ "abc"_s, { } }), compileToCode({ "ab+c"_s, { } }), CompiledRegExp { } };
+    std::array<CompiledRegExp, 3> mixed { compile({ "abc"_s, { } }), compileToCode({ "[ab][cd]+e"_s, { } }), CompiledRegExp { } };
     section = layOutSection(mixed);
     AOT_TEST_CHECK(countItems(section, Kind::Body) == 2 && countItems(section, Kind::Routine) == 1);
     AOT_TEST_CHECK(section.entries[0] == section.entries[2]);

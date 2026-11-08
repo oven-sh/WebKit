@@ -437,7 +437,8 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
 void SlotAccessEmitter::askObjectAgainWhatReadAnswered(const ValueContext& value, CellPointer object, Operand read, bool readsEmptySlotAsUndefined)
 {
     PropertyKeyID key = value->key();
-    if (!emitter<AccessEmitter>().verifiesFastPathAnswers(key) || value.representation() == Representation::Void || m_program.at(key).kind == PropertyKeyKind::PrivateName)
+    bool standsInLaneOfTurnsLaidOut = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition) && generator().isLayingOutTurns();
+    if ((!emitter<AccessEmitter>().verifiesFastPathAnswers(key) && !standsInLaneOfTurnsLaidOut) || value.representation() == Representation::Void || m_program.at(key).kind == PropertyKeyKind::PrivateName)
         return;
     const Type& type = typeOf(value.id());
     if (type.primitives & (Primitive::Absent | Primitive::Unspecified))
@@ -769,7 +770,7 @@ bool SlotAccessEmitter::nextStoreWritesOrderWordAtOnce(const ValueContext& value
     if (next.opcode != Opcode::PutSlotOrAdd || next.objectOperand() != value->objectOperand() || !next.orderWordAfter() || next.level() == KnowledgeLevel::Expected)
         return false;
     FieldAccess access = fieldAccessFor(next.key(), next.receivers(), true);
-    return slotAccessFindsSlotInEveryReceiver(access) && mayCreateListedField(access) && !access.slot.isOutOfLine();
+    return slotAccessFindsSlotInEveryReceiver(access) && mayCreateListedField(access) && (!access.slot.isOutOfLine() || !needsStorageFor(access.slot, typeOf(next.valueOperand())));
 }
 
 void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
@@ -817,7 +818,10 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     if (std::optional<OrderWord> orderWordAfter = value->orderWordAfter()) {
         if (!nextStoreWritesOrderWordAtOnce(value))
             storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(orderWordAfter->value())));
-        store();
+        if (needsStorage || !access.slot.isLeftOutByMakers)
+            store();
+        else if (emittersCheckProofs())
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalNot(slots.holdsValue(baseOfSlot(cell, access), access.slot, location, extensionWordOfSlotAccess(access))), std::nullopt, ProofSource::WhatIsRemembered);
         return;
     }
 

@@ -32,6 +32,153 @@ static constexpr size_t mostNamesOfCounterOfLoop = 16;
 
 using NamesOfCounterOfLoop = Vector<ValueID, mostNamesOfCounterOfLoop>;
 
+class UsersOfValuesInCountersOfLoops {
+public:
+    static constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
+
+    struct Use {
+        ValueID user;
+        uint32_t next;
+    };
+
+    UsersOfValuesInCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead)
+    {
+        std::span<const BlockID> members = index.membersOf(index.loopOf(inputHead));
+        ASSERT(std::ranges::is_sorted(members, { }, &BlockID::index));
+        ASSERT(members.front() == inputHead);
+        uint32_t numberOfPlaces = 0;
+        for (BlockID member : members) {
+            BodyBlock block = index.block(member);
+            uint32_t firstValue = block.firstParameter().index();
+            uint32_t endOfValues = block.endOfValues().index();
+            if (!m_runs.isEmpty() && m_runs.last().endOfValues == firstValue)
+                m_runs.last().endOfValues = endOfValues;
+            else
+                m_runs.append({ firstValue, endOfValues, numberOfPlaces });
+            numberOfPlaces += endOfValues - firstValue;
+        }
+        m_ends.fill({ none, none }, numberOfPlaces);
+        for (BlockID member : members) {
+            BodyBlock block = index.block(member);
+            if (member != inputHead && !index.isEnteredByHandlerEdge(member)) {
+                std::span<const BodyIncomingEdge> incoming = walker.incomingEdgesOf(index, member);
+                for (uint32_t place = 0; place < block.numberOfParameters(); ++place) {
+                    ValueID parameter = block.parameter(place);
+                    if (ValueID narrowed = index.valueNarrowedInto(parameter)) {
+                        note(narrowed, parameter);
+                        continue;
+                    }
+                    for (const BodyIncomingEdge& edge : incoming) {
+                        std::span<const ValueID> arguments = edge.target.arguments();
+                        if (place < arguments.size())
+                            note(arguments[place], parameter);
+                    }
+                }
+            }
+            for (BodyValue operation : block.values()) {
+                operation.forEachOperand([&](ValueID operand, uint32_t) {
+                    note(operand, operation.id());
+                });
+            }
+        }
+    }
+
+    uint32_t firstUseOf(ValueID value) const
+    {
+        uint32_t place = placeOf(value);
+        return place != none ? m_ends[place].first : none;
+    }
+    const Use& at(uint32_t use) const { return m_uses[use]; }
+
+private:
+    struct Ends {
+        uint32_t first;
+        uint32_t last;
+    };
+
+    struct RunOfMembers {
+        uint32_t firstValue;
+        uint32_t endOfValues;
+        uint32_t firstPlace;
+    };
+
+    uint32_t placeOf(ValueID value) const
+    {
+        auto behind = std::ranges::upper_bound(m_runs, value.index(), { }, &RunOfMembers::firstValue);
+        if (behind == m_runs.begin())
+            return none;
+        const RunOfMembers& run = *std::prev(behind);
+        return value.index() < run.endOfValues ? run.firstPlace + (value.index() - run.firstValue) : none;
+    }
+
+    void note(ValueID used, ValueID user)
+    {
+        uint32_t place = used ? placeOf(used) : none;
+        if (place == none)
+            return;
+        Ends& ends = m_ends[place];
+        if (ends.last != none && m_uses[ends.last].user == user)
+            return;
+        uint32_t use = m_uses.size();
+        m_uses.append({ user, none });
+        (ends.last == none ? ends.first : m_uses[ends.last].next) = use;
+        ends.last = use;
+    }
+
+    Vector<RunOfMembers, 4> m_runs;
+    Vector<Ends, 64> m_ends;
+    Vector<Use, 128> m_uses;
+};
+
+class UsersOfNamesInCountersOfLoops {
+public:
+    explicit UsersOfNamesInCountersOfLoops(const UsersOfValuesInCountersOfLoops& users)
+        : m_users(users)
+    {
+    }
+
+    UsersOfNamesInCountersOfLoops(const UsersOfValuesInCountersOfLoops& users, const NamesOfCounterOfLoop& names)
+        : m_users(users)
+    {
+        for (ValueID name : names) {
+            if (uint32_t use = users.firstUseOf(name); use != UsersOfValuesInCountersOfLoops::none)
+                m_next.append(use);
+        }
+    }
+
+    void takeUsersBehind(ValueID name)
+    {
+        uint32_t use = m_users.firstUseOf(name);
+        while (use != UsersOfValuesInCountersOfLoops::none && m_users.at(use).user.index() <= name.index())
+            use = m_users.at(use).next;
+        if (use != UsersOfValuesInCountersOfLoops::none)
+            m_next.append(use);
+    }
+
+    ValueID next()
+    {
+        ValueID least;
+        for (uint32_t use : m_next) {
+            ValueID user = m_users.at(use).user;
+            if (!least || user.index() < least.index())
+                least = user;
+        }
+        size_t kept = 0;
+        for (uint32_t use : m_next) {
+            if (m_users.at(use).user == least)
+                use = m_users.at(use).next;
+            if (use != UsersOfValuesInCountersOfLoops::none)
+                m_next[kept++] = use;
+        }
+        m_next.shrink(kept);
+        return least;
+    }
+
+private:
+    const UsersOfValuesInCountersOfLoops& m_users;
+    Vector<uint32_t, mostNamesOfCounterOfLoop> m_next;
+};
+
 static bool mayBeInt32InCountersOfLoops(const Walker& walker, Reference value)
 {
     if (!value || !value.isValue())
@@ -108,71 +255,71 @@ static bool isIntegerInFrontOfLoopInCountersOfLoops(Walker& walker, const BodyIn
     return held && walker.types().at(walker.typeOf(held)).isInteger();
 }
 
-static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t position, NamesOfCounterOfLoop& names, const LoopPreview* typesOfSteps = nullptr, Vector<ValueID, 2>* stepsAskedInFront = nullptr, bool admitsWhatCallsGive = false)
+static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, BlockID inputHead, uint32_t position, NamesOfCounterOfLoop& names, const LoopPreview* typesOfSteps = nullptr, Vector<ValueID, 2>* stepsAskedInFront = nullptr, bool admitsWhatCallsGive = false)
 {
     LoopID loop = index.loopOf(inputHead);
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
     bool isStepped = false;
     NamesOfCounterOfLoop namesBehindSteps;
+    UsersOfNamesInCountersOfLoops usersLeft(users);
     auto add = [&](ValueID name, bool standsBehindStep) {
         if (names.size() >= mostNamesOfCounterOfLoop)
             return;
         names.append(name);
+        usersLeft.takeUsersBehind(name);
         if (standsBehindStep)
             namesBehindSteps.append(name);
     };
-    names.append(index.block(inputHead).parameter(position));
-    for (BlockID member : index.membersOf(loop)) {
-        BodyBlock block = index.block(member);
-        if (member != inputHead && !index.isEnteredByHandlerEdge(member)) {
-            std::span<const BodyIncomingEdge> incoming = walker.incomingEdgesOf(index, member);
-            for (uint32_t place = 0; place < block.numberOfParameters(); ++place) {
-                ValueID parameter = block.parameter(place);
-                if (ValueID narrowed = index.valueNarrowedInto(parameter)) {
-                    if (names.contains(narrowed))
-                        add(parameter, namesBehindSteps.contains(narrowed));
-                    continue;
-                }
-                bool joinsNamesAlone = !incoming.empty() && std::ranges::all_of(incoming, [&](const BodyIncomingEdge& edge) {
-                    std::span<const ValueID> arguments = edge.target.arguments();
-                    return place < arguments.size() && names.contains(arguments[place]);
-                });
-                if (joinsNamesAlone) {
-                    add(parameter, std::ranges::any_of(incoming, [&](const BodyIncomingEdge& edge) {
-                        return namesBehindSteps.contains(edge.target.arguments()[place]);
-                    }));
-                }
-            }
-        }
-        for (BodyValue operation : block.values()) {
-            Opcode opcode = operation.opcode();
-            if (opcodesThatStateTypes.contains(opcode) || opcode == Opcode::ToNumeric) {
-                if (names.contains(operation.operand(0)))
-                    add(operation.id(), namesBehindSteps.contains(operation.operand(0)));
+    add(index.block(inputHead).parameter(position), false);
+    while (ValueID user = usersLeft.next()) {
+        if (index.isParameter(user)) {
+            if (ValueID narrowed = index.valueNarrowedInto(user)) {
+                if (names.contains(narrowed))
+                    add(user, namesBehindSteps.contains(narrowed));
                 continue;
             }
-            bool steps = false;
-            if (stepsByOneOfCountersOfLoops.contains(opcode))
-                steps = names.contains(operation.operand(0));
-            else if ((typesOfSteps ? stepsByNumberOrFactorOfCountersOfLoops : stepsByNumberOfCountersOfLoops).contains(opcode)) {
-                auto isStep = [&](ValueID other) {
-                    if (isWholeNumberAsWrittenInCountersOfLoops(index, other) || (typesOfSteps && hasNoFractionByLookInCountersOfLoops(walker, index, *typesOfSteps, other)))
-                        return true;
-                    if (isIntegerInFrontOfLoopInCountersOfLoops(walker, index, firstValueOfLoop, other))
-                        return true;
-                    ValueID written = stepsAskedInFront ? index.valueBehindCasts(other) : ValueID();
-                    if (!written || written.index() >= firstValueOfLoop || !isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, walker.referenceOf(written)))
-                        return false;
-                    if (!stepsAskedInFront->contains(written))
-                        stepsAskedInFront->append(written);
+            BlockID member = index.blockOf(user);
+            uint32_t place = user.index() - index.block(member).firstParameter().index();
+            std::span<const BodyIncomingEdge> incoming = walker.incomingEdgesOf(index, member);
+            bool joinsNamesAlone = !incoming.empty() && std::ranges::all_of(incoming, [&](const BodyIncomingEdge& edge) {
+                std::span<const ValueID> arguments = edge.target.arguments();
+                return place < arguments.size() && names.contains(arguments[place]);
+            });
+            if (joinsNamesAlone) {
+                add(user, std::ranges::any_of(incoming, [&](const BodyIncomingEdge& edge) {
+                    return namesBehindSteps.contains(edge.target.arguments()[place]);
+                }));
+            }
+            continue;
+        }
+        BodyValue operation = index.value(user);
+        Opcode opcode = operation.opcode();
+        if (opcodesThatStateTypes.contains(opcode) || opcode == Opcode::ToNumeric) {
+            if (names.contains(operation.operand(0)))
+                add(operation.id(), namesBehindSteps.contains(operation.operand(0)));
+            continue;
+        }
+        bool steps = false;
+        if (stepsByOneOfCountersOfLoops.contains(opcode))
+            steps = names.contains(operation.operand(0));
+        else if ((typesOfSteps ? stepsByNumberOrFactorOfCountersOfLoops : stepsByNumberOfCountersOfLoops).contains(opcode)) {
+            auto isStep = [&](ValueID other) {
+                if (isWholeNumberAsWrittenInCountersOfLoops(index, other) || (typesOfSteps && hasNoFractionByLookInCountersOfLoops(walker, index, *typesOfSteps, other)))
                     return true;
-                };
-                steps = (names.contains(operation.operand(0)) && isStep(operation.operand(1))) || (opcode != Opcode::Sub && names.contains(operation.operand(1)) && isStep(operation.operand(0)));
-            }
-            if (steps) {
-                add(operation.id(), true);
-                isStepped = true;
-            }
+                if (isIntegerInFrontOfLoopInCountersOfLoops(walker, index, firstValueOfLoop, other))
+                    return true;
+                ValueID written = stepsAskedInFront ? index.valueBehindCasts(other) : ValueID();
+                if (!written || written.index() >= firstValueOfLoop || !isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, walker.referenceOf(written)))
+                    return false;
+                if (!stepsAskedInFront->contains(written))
+                    stepsAskedInFront->append(written);
+                return true;
+            };
+            steps = (names.contains(operation.operand(0)) && isStep(operation.operand(1))) || (opcode != Opcode::Sub && names.contains(operation.operand(1)) && isStep(operation.operand(0)));
+        }
+        if (steps) {
+            add(operation.id(), true);
+            isStepped = true;
         }
     }
     if (!isStepped)
@@ -195,7 +342,7 @@ static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& 
     return someWayBringsStep;
 }
 
-static bool turnsTakeCounterAsIntegerInCountersOfLoops(const BodyIndex& index, LoopID loop, const NamesOfCounterOfLoop& names)
+static bool turnsTakeCounterAsIntegerInCountersOfLoops(const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, const NamesOfCounterOfLoop& names)
 {
     static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
     static constexpr OpcodeSet calls { Opcode::Call, Opcode::CallDirect, Opcode::Construct };
@@ -203,18 +350,20 @@ static bool turnsTakeCounterAsIntegerInCountersOfLoops(const BodyIndex& index, L
     auto isName = [&](ValueID operand) {
         return names.contains(operand);
     };
-    for (BlockID member : index.membersOf(loop)) {
-        for (BodyValue operation : index.block(member).values()) {
-            Opcode opcode = operation.opcode();
-            if (accessesByKey.contains(opcode) && isName(operation.propertyOperand()))
-                return true;
-            if (calls.contains(opcode) && std::ranges::any_of(operation.argumentsOperands(), isName))
-                return true;
-            if (operatorsOnBitsOfCountersOfLoops.contains(opcode) && (isName(operation.operand(0)) || (opcode != Opcode::BitNot && isName(operation.operand(1)))))
-                return true;
-            if (sumsAndProducts.contains(opcode) && !isName(operation.id()) && (isName(operation.operand(0)) || isName(operation.operand(1))))
-                return true;
-        }
+    UsersOfNamesInCountersOfLoops usersLeft(users, names);
+    while (ValueID user = usersLeft.next()) {
+        if (index.isParameter(user))
+            continue;
+        BodyValue operation = index.value(user);
+        Opcode opcode = operation.opcode();
+        if (accessesByKey.contains(opcode) && isName(operation.propertyOperand()))
+            return true;
+        if (calls.contains(opcode) && std::ranges::any_of(operation.argumentsOperands(), isName))
+            return true;
+        if (operatorsOnBitsOfCountersOfLoops.contains(opcode) && (isName(operation.operand(0)) || (opcode != Opcode::BitNot && isName(operation.operand(1)))))
+            return true;
+        if (sumsAndProducts.contains(opcode) && !isName(operation.id()) && (isName(operation.operand(0)) || isName(operation.operand(1))))
+            return true;
     }
     return false;
 }
@@ -257,31 +406,31 @@ static bool comesRoundAsInt32InCountersOfLoops(Walker& walker, const BodyIndex& 
     return comesRound;
 }
 
-static void guessBoundsInCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead, const NamesOfCounterOfLoop& names, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
+static void guessBoundsInCountersOfLoops(Walker& walker, const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, BlockID inputHead, const NamesOfCounterOfLoop& names, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
 {
     LoopID loop = index.loopOf(inputHead);
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
-    for (BlockID member : index.membersOf(loop)) {
-        for (BodyValue operation : index.block(member).values()) {
-            if (!allRelations.contains(operation.opcode()))
+    UsersOfNamesInCountersOfLoops usersLeft(users, names);
+    while (ValueID user = usersLeft.next()) {
+        if (index.isParameter(user) || !allRelations.contains(index.opcodeOf(user)))
+            continue;
+        BodyValue operation = index.value(user);
+        for (uint32_t place : { 0u, 1u }) {
+            if (!names.contains(operation.operand(place)))
                 continue;
-            for (uint32_t place : { 0u, 1u }) {
-                if (!names.contains(operation.operand(place)))
-                    continue;
-                ValueID bound = index.valueBehindCasts(operation.operand(1 - place));
-                if (!bound || bound.index() >= firstValueOfLoop)
-                    continue;
-                Reference value = walker.referenceOf(bound);
-                if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end())
-                    continue;
-                size_t listed = guesses.findIf([&](const GuessInFrontOfLoop& guess) {
-                    return guess.value == value;
-                });
-                if (listed == notFound)
-                    guesses.append(GuessInFrontOfLoop { value, TypeTable::int32, { }, namesInFrontThatLoopMentions(walker, index, loop, firstValueOfLoop, value) });
-                else if (walker.types().at(guesses[listed].tested).isNumber())
-                    guesses[listed].tested = TypeTable::int32;
-            }
+            ValueID bound = index.valueBehindCasts(operation.operand(1 - place));
+            if (!bound || bound.index() >= firstValueOfLoop)
+                continue;
+            Reference value = walker.referenceOf(bound);
+            if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end())
+                continue;
+            size_t listed = guesses.findIf([&](const GuessInFrontOfLoop& guess) {
+                return guess.value == value;
+            });
+            if (listed == notFound)
+                guesses.append(GuessInFrontOfLoop { value, TypeTable::int32, { }, namesInFrontThatLoopMentions(walker, index, loop, firstValueOfLoop, value) });
+            else if (walker.types().at(guesses[listed].tested).isNumber())
+                guesses[listed].tested = TypeTable::int32;
         }
     }
 }
@@ -329,32 +478,32 @@ static Reference makeAddendThatNoTurnChangesInCountersOfLoops(Walker& walker, co
     return made;
 }
 
-static void guessAddendsOfKeysInCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead, const NamesOfCounterOfLoop& names, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
+static void guessAddendsOfKeysInCountersOfLoops(Walker& walker, const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, BlockID inputHead, const NamesOfCounterOfLoop& names, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
 {
     LoopID loop = index.loopOf(inputHead);
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
-    for (BlockID member : index.membersOf(loop)) {
-        for (BodyValue operation : index.block(member).values()) {
-            if (!stepsByNumberOfCountersOfLoops.contains(operation.opcode()) || !isKeyOfElementInCountersOfLoops(index, operation.id()))
+    UsersOfNamesInCountersOfLoops usersLeft(users, names);
+    while (ValueID user = usersLeft.next()) {
+        if (index.isParameter(user) || !stepsByNumberOfCountersOfLoops.contains(index.opcodeOf(user)) || !isKeyOfElementInCountersOfLoops(index, user))
+            continue;
+        BodyValue operation = index.value(user);
+        for (uint32_t place : { 0u, 1u }) {
+            if (!names.contains(operation.operand(place)))
                 continue;
-            for (uint32_t place : { 0u, 1u }) {
-                if (!names.contains(operation.operand(place)))
-                    continue;
-                ValueID addend = index.valueBehindCasts(operation.operand(1 - place));
-                if (!addend)
-                    continue;
-                Reference value = addend.index() < firstValueOfLoop ? walker.referenceOf(addend) : makeAddendThatNoTurnChangesInCountersOfLoops(walker, index, firstValueOfLoop, addend);
-                if (!value)
-                    continue;
-                if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end())
-                    continue;
-                if (guesses.containsIf([&](const GuessInFrontOfLoop& guess) { return guess.value == value; }))
-                    continue;
-                guesses.append(GuessInFrontOfLoop { value, TypeTable::int32, { }, namesInFrontThatLoopMentions(walker, index, loop, firstValueOfLoop, value) });
-                if (addend.index() >= firstValueOfLoop)
-                    guesses.last().names.append(addend);
-                walker.count(StatisticID::NumbersBesideCountersAskedInFrontOfLoops);
-            }
+            ValueID addend = index.valueBehindCasts(operation.operand(1 - place));
+            if (!addend)
+                continue;
+            Reference value = addend.index() < firstValueOfLoop ? walker.referenceOf(addend) : makeAddendThatNoTurnChangesInCountersOfLoops(walker, index, firstValueOfLoop, addend);
+            if (!value)
+                continue;
+            if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end())
+                continue;
+            if (guesses.containsIf([&](const GuessInFrontOfLoop& guess) { return guess.value == value; }))
+                continue;
+            guesses.append(GuessInFrontOfLoop { value, TypeTable::int32, { }, namesInFrontThatLoopMentions(walker, index, loop, firstValueOfLoop, value) });
+            if (addend.index() >= firstValueOfLoop)
+                guesses.last().names.append(addend);
+            walker.count(StatisticID::NumbersBesideCountersAskedInFrontOfLoops);
         }
     }
 }
@@ -789,20 +938,26 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
     uint32_t numberOfParameters = index.block(inputHead).numberOfParameters();
     Vector<WhatComesRoundInCountersOfLoops, 8> whatComesRound;
     whatComesRound.fill(WhatComesRoundInCountersOfLoops::NotAsked, numberOfParameters);
+    std::optional<UsersOfValuesInCountersOfLoops> usersOnceAsked;
+    auto users = [&]() -> const UsersOfValuesInCountersOfLoops& {
+        if (!usersOnceAsked)
+            usersOnceAsked.emplace(walker, index, inputHead);
+        return *usersOnceAsked;
+    };
     for (uint32_t position = 0; position < numberOfParameters && position < entering.size(); ++position) {
         Reference enters = entering[position];
         if (enters && walker.types().at(walker.typeOf(enters)).isInt32() && (!guesses.isEmpty() || holdsAccessesUnderKeys)) {
             NamesOfCounterOfLoop names;
-            if (isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names)) {
+            if (isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names)) {
                 if (holdsAccessesUnderKeys)
-                    guessAddendsOfKeysInCountersOfLoops(walker, index, inputHead, names, entering, guesses);
+                    guessAddendsOfKeysInCountersOfLoops(walker, index, users(), inputHead, names, entering, guesses);
                 if (!guesses.isEmpty())
-                    guessBoundsInCountersOfLoops(walker, index, inputHead, names, entering, guesses);
+                    guessBoundsInCountersOfLoops(walker, index, users(), inputHead, names, entering, guesses);
             }
             TypeID byLook = position < preview.typesOfParameters.size() ? preview.typesOfParameters[position] : TypeID();
             if (byLook && !isNeverType(byLook) && !walker.types().at(byLook).isInteger() && walker.types().at(byLook).isNumberWithoutFraction()) {
                 names.shrink(0);
-                if (isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names, &preview) && turnsTakeCounterAsIntegerInCountersOfLoops(index, index.loopOf(inputHead), names))
+                if (isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names, &preview) && turnsTakeCounterAsIntegerInCountersOfLoops(index, users(), names))
                     counters.append({ position, TypeTable::int32, true });
             }
             continue;
@@ -834,21 +989,21 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
         NamesOfCounterOfLoop names;
         if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, enters))
             continue;
-        bool isHeldWhereItComesRound = !isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names);
+        bool isHeldWhereItComesRound = !isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names);
         Vector<ValueID, 2> stepsAskedInFront;
         if (isHeldWhereItComesRound) {
             names.shrink(0);
-            if (!isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names, &preview)) {
+            if (!isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names, &preview)) {
                 names.shrink(0);
-                if (!holdsAccessesUnderKeys || !isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names, &preview, &stepsAskedInFront)) {
+                if (!holdsAccessesUnderKeys || !isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names, &preview, &stepsAskedInFront)) {
                     names.shrink(0);
                     stepsAskedInFront.shrink(0);
-                    if (!isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names, &preview, nullptr, true))
+                    if (!isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names, &preview, nullptr, true))
                         continue;
                 }
             }
         }
-        if ((isHeldWhereItComesRound || walker.types().at(walker.typeOf(enters)).isNumber()) && !turnsTakeCounterAsIntegerInCountersOfLoops(index, index.loopOf(inputHead), names))
+        if ((isHeldWhereItComesRound || walker.types().at(walker.typeOf(enters)).isNumber()) && !turnsTakeCounterAsIntegerInCountersOfLoops(index, users(), names))
             continue;
         bool stepEnters = std::ranges::any_of(stepsAskedInFront, [&](ValueID step) {
             return std::ranges::find(entering, walker.referenceOf(step)) != entering.end();
@@ -863,9 +1018,9 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
             guesses.append(GuessInFrontOfLoop { value, TypeTable::int32, { }, namesInFrontThatLoopMentions(walker, index, index.loopOf(inputHead), index.block(inputHead).firstParameter().index(), value) });
             walker.count(StatisticID::NumbersBesideCountersAskedInFrontOfLoops);
         }
-        guessBoundsInCountersOfLoops(walker, index, inputHead, names, entering, guesses);
+        guessBoundsInCountersOfLoops(walker, index, users(), inputHead, names, entering, guesses);
         if (holdsAccessesUnderKeys)
-            guessAddendsOfKeysInCountersOfLoops(walker, index, inputHead, names, entering, guesses);
+            guessAddendsOfKeysInCountersOfLoops(walker, index, users(), inputHead, names, entering, guesses);
     }
     if (index.holdsAnyOf(divisionsOfCountersOfLoops))
         appendNumbersThatDivisionsBringRoundInCountersOfLoops(walker, index, inputHead, preview, entering, guesses, counters);
@@ -930,6 +1085,48 @@ void guessDivisorsOfIntegersInFrontOfLoop(Walker& walker, BlockID inputHead, con
     }
 }
 
+static Reference makeBoundOutOfNumberFromInFrontInCountersOfLoops(Walker& walker, const BodyIndex& index, const BodyBlock& head, ValueID bound)
+{
+    static constexpr OpcodeSet operators { Opcode::Add, Opcode::Sub };
+    if (Reference made = walker.nameOfOperatorMadeInFrontOfLoop(bound))
+        return made;
+    if (index.isParameter(bound) || !head.holds(bound) || !operators.contains(index.opcodeOf(bound)))
+        return { };
+    uint32_t firstValueOfLoop = head.firstParameter().index();
+    BodyValue written = index.value(bound);
+    ValueID writtenInteger;
+    for (uint32_t place : { 0u, 1u }) {
+        ValueID operand = written.operand(place);
+        if (!operand)
+            return { };
+        if (operand.index() >= firstValueOfLoop) {
+            if (writtenInteger || index.isParameter(operand) || index.opcodeOf(operand) != Opcode::Integer)
+                return { };
+            writtenInteger = operand;
+            continue;
+        }
+        Reference value = walker.referenceOf(operand);
+        if (!value || !walker.types().isSubset(walker.typeOf(value), TypeTable::number))
+            return { };
+    }
+    if (!writtenInteger)
+        return { };
+    if (walker.asksOnlyWhetherLoopMayBeBuiltTwice())
+        return walker.referenceOf(bound);
+    Reference made;
+    {
+        Walker::ClosedArm takesNameBack(walker);
+        Draft integer(Opcode::Integer, walker.originOf(index.value(writtenInteger)));
+        integer.setInteger(index.value(writtenInteger).as<Opcode::Integer>().integer());
+        walker.bind(writtenInteger, walker.constant(WTF::move(integer)));
+        if (buildTypedOperator(walker, written) && !walker.hasFailed())
+            made = walker.referenceOf(bound);
+    }
+    if (made)
+        walker.noteOperatorMadeInFrontOfLoop(bound, made);
+    return made;
+}
+
 RelationOfHeadOnNumber findRelationOfHeadBetweenCounterThatEntersAsInt32AndNumber(Walker& walker, BlockID inputHead, const Effects& ofTurns, std::span<const Reference> entering, std::span<const CounterTestedInFrontOfLoop> askedInFront)
 {
     static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq };
@@ -956,7 +1153,8 @@ RelationOfHeadOnNumber findRelationOfHeadBetweenCounterThatEntersAsInt32AndNumbe
     if (!counter || !number)
         return { };
     VariableID variable = number.index() >= firstValueOfLoop ? findNumberInVariableThatNoTurnWritesInCountersOfLoops(walker, index, ofTurns, number) : VariableID();
-    if (number.index() >= firstValueOfLoop && !variable)
+    Reference madeInFront = number.index() >= firstValueOfLoop && !variable ? makeBoundOutOfNumberFromInFrontInCountersOfLoops(walker, index, head, number) : Reference();
+    if (number.index() >= firstValueOfLoop && !variable && !madeInFront)
         return { };
     uint32_t position = counter.index() - firstValueOfLoop;
     Reference enters = position < entering.size() ? entering[position] : Reference();
@@ -965,11 +1163,12 @@ RelationOfHeadOnNumber findRelationOfHeadBetweenCounterThatEntersAsInt32AndNumbe
     });
     if (!enters || !enters.isRecord() || (!isAskedForInt32 && !walker.types().at(walker.typeOf(enters)).isInteger()))
         return { };
-    Reference value = variable ? Reference() : walker.referenceOf(number);
+    Reference value = variable ? Reference() : madeInFront ? madeInFront : walker.referenceOf(number);
     if (!variable && (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end()))
         return { };
     NamesOfCounterOfLoop names;
-    if (!isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names) || !turnsTakeCounterAsIntegerInCountersOfLoops(index, loop, names))
+    UsersOfValuesInCountersOfLoops users(walker, index, inputHead);
+    if (!isSteppedAllRoundInCountersOfLoops(walker, index, users, inputHead, position, names) || !turnsTakeCounterAsIntegerInCountersOfLoops(index, users, names))
         return { };
     return { asked, number, variable };
 }

@@ -218,7 +218,7 @@ inline SweepValueSets::Set SweepValueSets::withLeaf(Set set, uint32_t prefix, ui
     return withChangeBelow(set, forks, numberOfForks, prefix, changed, mayChangeInPlace);
 }
 
-inline SweepValueSets::Set SweepValueSets::withoutBit(Set set, uint32_t prefix, uint64_t bit)
+ALWAYS_INLINE SweepValueSets::Set SweepValueSets::withoutBit(Set set, uint32_t prefix, uint64_t bit)
 {
     if (!set)
         return empty;

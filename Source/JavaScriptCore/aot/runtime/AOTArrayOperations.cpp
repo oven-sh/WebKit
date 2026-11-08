@@ -268,6 +268,54 @@ JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned public
     return std::bit_cast<JSArray*>(cell);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfList, JSCell*, (Instance* instance, JSCell* cell, uint32_t capacityAndKind))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfList);
+    JSArray* list = cellArgument<JSArray>(cell, Entry::operationAOTNewArrayOfList);
+    unsigned capacity = capacityAndKind >> 1;
+    IndexingType kindOfList = list->indexingType();
+    if (hasDouble(kindOfList)) {
+        size_t count = list->butterfly()->publicLength();
+        bool holdsValues = capacityAndKind & 1 || std::ranges::any_of(std::span { list->butterfly()->contiguousDouble().data(), count }, [](double fraction) {
+            return fraction != fraction;
+        });
+        Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(holdsValues ? ArrayWithContiguous : ArrayWithDouble);
+        if (capacity < count || capacity > maxHoleArrayCapacity || (holdsValues ? !hasContiguous(structure->indexingType()) : !hasDouble(structure->indexingType())) || structure->outOfLineCapacity())
+            OPERATION_RETURN(scope, nullptr);
+        JSArray* array = tryCreateArrayWithStorage(vm, structure, count, capacity);
+        if (!array)
+            OPERATION_RETURN(scope, nullptr);
+        for (size_t index = 0; index < count; ++index) {
+            double fraction = list->butterfly()->contiguousDouble().atUnsafe(index);
+            if (!holdsValues)
+                array->butterfly()->contiguousDouble().atUnsafe(index) = fraction;
+            else
+                array->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(fraction != fraction ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, fraction));
+        }
+        vm.mutatorFence();
+        OPERATION_RETURN(scope, array);
+    }
+    if (!hasInt32(kindOfList) && !hasContiguous(kindOfList))
+        OPERATION_RETURN(scope, nullptr);
+    std::span<const WriteBarrier<Unknown>> elements { list->butterfly()->contiguous().data(), list->butterfly()->publicLength() };
+    if (capacity < elements.size() || capacity > maxHoleArrayCapacity)
+        OPERATION_RETURN(scope, nullptr);
+    bool isContiguous = capacityAndKind & 1 || std::ranges::any_of(elements, [](const WriteBarrier<Unknown>& element) {
+        return !element || !element.get().isInt32();
+    });
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(isContiguous ? ArrayWithContiguous : ArrayWithInt32);
+    if ((isContiguous ? !hasContiguous(structure->indexingType()) : !hasInt32(structure->indexingType())) || structure->outOfLineCapacity())
+        OPERATION_RETURN(scope, nullptr);
+    JSArray* array = tryCreateArrayWithStorage(vm, structure, elements.size(), capacity);
+    if (!array)
+        OPERATION_RETURN(scope, nullptr);
+    elements = { list->butterfly()->contiguous().data(), elements.size() };
+    for (size_t index = 0; index < elements.size(); ++index)
+        array->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(elements[index] ? elements[index].get() : jsUndefined());
+    vm.mutatorFence();
+    OPERATION_RETURN(scope, array);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArray);

@@ -323,20 +323,24 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
     }
     if (!passedInEveryTurn)
         return;
+    using PlaceRead = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
+    Vector<PlaceRead> placesReadInEveryTurn;
+    bool placesReadInEveryTurnAreListed = false;
     auto isReadInEveryTurn = [&](ValueID holder, FieldReference place, VariableID variable) {
-        for (BlockID member : index.membersOf(loop)) {
-            if (!index.isReachable(member) || !index.dominates(member, passedInEveryTurn))
-                continue;
-            for (BodyValue operation : index.block(member).values()) {
-                if (variable && operation.opcode() == Opcode::GetModuleVariable && operation.variable() == variable)
-                    return true;
-                if (variable)
+        if (!std::exchange(placesReadInEveryTurnAreListed, true)) {
+            for (BlockID member : index.membersOf(loop)) {
+                if (!index.isReachable(member) || !index.dominates(member, passedInEveryTurn))
                     continue;
-                if (operation.opcode() == Opcode::GetEnvironmentField && index.valueBehindCasts(operation.environmentOperand()) == holder && operation.layout() == place.layout && operation.field() == place.field)
-                    return true;
+                for (BodyValue operation : index.block(member).values()) {
+                    if (operation.opcode() == Opcode::GetModuleVariable)
+                        placesReadInEveryTurn.append(PlaceRead { 1, operation.variable().index(), 0, 0 });
+                    else if (operation.opcode() == Opcode::GetEnvironmentField)
+                        placesReadInEveryTurn.append(PlaceRead { 0, index.valueBehindCasts(operation.environmentOperand()).index(), operation.layout().index(), operation.field() });
+                }
             }
+            std::ranges::sort(placesReadInEveryTurn);
         }
-        return false;
+        return std::ranges::binary_search(placesReadInEveryTurn, variable ? PlaceRead { 1, variable.index(), 0, 0 } : PlaceRead { 0, holder.index(), place.layout.index(), place.field });
     };
     for (BlockID member : index.membersOf(loop)) {
         for (BodyValue operation : index.block(member).values()) {

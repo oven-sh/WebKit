@@ -667,7 +667,7 @@ static LayoutsThatMeetTypesByNames findLayoutsThatMeetWireTypesByNames(const Bui
     auto numberOfNamesOf = [&](uint32_t group) {
         return requiredOfInstances.of(typesByNames[firstOfGroup[group]]).size();
     };
-    std::ranges::stable_sort(groupsMetThroughOthers, { }, numberOfNamesOf);
+    AOT::stableSort(groupsMetThroughOthers, { }, numberOfNamesOf);
     for (uint32_t group : groupsMetThroughOthers) {
         uint32_t other = groupThatRequiresAllButRarestName[group];
         std::span<const LayoutID> without = result.withoutTellingFields[other].span();
@@ -957,7 +957,7 @@ static void removeFamilyMembersThatLackRequiredNames(const ParallelLoops& loops,
         if (groupThatRequiresAllButOneName[group].group != noGroup)
             groupsHeldThroughOthers.append(group);
     }
-    std::ranges::stable_sort(groupsHeldThroughOthers, { }, [&](uint32_t group) {
+    AOT::stableSort(groupsHeldThroughOthers, { }, [&](uint32_t group) {
         return names.required.of(types[firstOfGroup[group]]).size();
     });
     for (uint32_t group : groupsHeldThroughOthers)

@@ -339,7 +339,7 @@ bool comeToSamePlace(const BodyIndex& index, const WayBehindTerminator& left, co
     return true;
 }
 
-std::optional<uint32_t> Walker::onlyTargetWhereAllComeToOnePlace(const BodyTerminator& terminator) const
+ALWAYS_INLINE std::optional<uint32_t> Walker::onlyTargetWhereAllComeToOnePlace(const BodyTerminator& terminator) const
 {
     if (terminator.kind() != TerminatorKind::Branch || terminator.numberOfTargets() != 2)
         return std::nullopt;

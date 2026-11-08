@@ -204,6 +204,7 @@ private:
         Vector<LayoutID> layoutsWithName;
         Vector<uint32_t> firstViewAbove;
         Vector<LayoutID> viewsAbove;
+        Vector<uint32_t> rowOfFieldsWrittenAbove;
         Vector<uint32_t> firstFieldWrittenAbove;
         Vector<FieldWrittenAbove> fieldsWrittenAbove;
         Vector<PropertyKeyID> builtinNameKeys;

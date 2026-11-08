@@ -23,6 +23,8 @@ public:
     const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array);
 
     CellPointer newLiteral(const ValueContext&);
+    bool isLeftToSpreadRightBehind(BlockID, ValueID literal, const Operation&, std::span<const ValueID> behind);
+    void bearLiteralHoldingList(const ValueContext& spread, LValue iterable, StubKey appendsAsWritten);
     CellPointer newArrayOf(const OperationContext&, std::span<const ValueID> elements, const Type& array);
     CellPointer newArrayOfNumbers(const OperationContext&, std::span<const Number>);
     CellPointer newArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, BuiltinID calledBuiltin);
@@ -42,6 +44,14 @@ private:
     using RawElements = Vector<Operand, 16>;
 
     CellPointer newLiteralWithHoles(const ValueContext&);
+    std::optional<Integer> takeRoomAskedRightBehind(const ValueContext&);
+    ArrayStorage storageThatLiteralNames(ValueID literal, const Operation&);
+    struct AppendedBehindSpread {
+        uint32_t room { 0 };
+        bool holdsWhatIsNoNumber { false };
+    };
+    std::optional<AppendedBehindSpread> findWhatIsAppendedBehindSpread(BlockID, ValueID literal, ValueID spread);
+    CellPointer newLiteralWithRoom(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&, Integer room);
     CellPointer newLiteralAtSite(const ValueContext&, const ArrayStorageForm& seed, std::span<const uint32_t> site);
     CellPointer newArrayInForm(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);

@@ -16,6 +16,7 @@
 #include "AOTLinkUnions.h"
 #include "AOTOpcodeSets.h"
 #include "AOTRowsOfLayouts.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include <algorithm>
 #include <optional>
@@ -660,7 +661,7 @@ void CalleeSummarizerForLinkEffects::indexHolders()
         if (key && mayHoldFunction(field))
             m_keysOfFieldsThatMayHoldFunctions.quickSet(key.index());
     });
-    std::ranges::stable_sort(m_accessors, { }, &AccessorUnderKey::key);
+    AOT::stableSort(m_accessors, { }, &AccessorUnderKey::key);
 
     forEachRangeOfIndicesInParallel(m_flow.loops, numberOfKeys, [&](size_t first, size_t end) {
         for (size_t key = first; key < end; ++key)
@@ -1340,7 +1341,6 @@ void rankReferrersFirst(LinkTables& tables)
                 cyclesAwaited.append(cycleOfReferrer);
             }
         }
-        std::ranges::sort(cyclesAwaited.mutableSpan().subspan(firstAwaited));
         rankOfCycle[cycle] = rank;
 
         for (uint32_t member : members) {

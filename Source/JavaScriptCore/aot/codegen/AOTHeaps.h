@@ -96,6 +96,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(DateInstance_internalNumber, DateInstance::offsetOfInternalNumber(), Mutable, InternalFields) \
     v(DateInstance_cachedGregorianDateTime, DateInstance::offsetOfCachedGregorianDateTime(), Mutable, InternalFields) \
     v(DateInstance_cachedGregorianDateTimeUTC, DateInstance::offsetOfCachedGregorianDateTimeUTC(), Mutable, InternalFields) \
+    v(GetterSetter_getter, GetterSetter::offsetOfGetter(), Mutable, RuntimeState) \
     v(InlineWatchpointSet_data, InlineWatchpointSet::offsetOfData(), Mutable, RuntimeState) \
     v(JSArrayBufferView_byteOffset, JSArrayBufferView::offsetOfByteOffset(), Mutable, TypedArrayStorage) \
     v(JSArrayBufferView_length, JSArrayBufferView::offsetOfLength(), Mutable, TypedArrayStorage) \

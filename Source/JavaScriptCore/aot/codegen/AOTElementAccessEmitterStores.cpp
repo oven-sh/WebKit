@@ -129,6 +129,16 @@ ArrayStorageFormList ElementAccessEmitter::formExpectedToHold(ValueID list, Valu
     return forms;
 }
 
+ValueID ElementAccessEmitter::int32ThatArmOfValuesStoresInEitherKind(ValueID stored, const ArrayStorageFormList& forms)
+{
+    if (forms.size() != 1 || forms[0]->kind != ArrayStorage::Contiguous || !typeOf(stored).isInt32())
+        return { };
+    if (representationOf(stored) != Representation::JSValue && representationOf(stored) != Representation::Int32)
+        return { };
+    build().statistics().count(StatisticID::StoresOfInt32ThatAdmitTwoKindsOfStorage);
+    return stored;
+}
+
 bool ElementAccessEmitter::hasOnlyExpectedArmInLine(const ValueContext& store)
 {
     if (store.opcode() != Opcode::PutArrayElement)
@@ -136,13 +146,25 @@ bool ElementAccessEmitter::hasOnlyExpectedArmInLine(const ValueContext& store)
     return !generator().takesFormOfLoops(store);
 }
 
-void ElementAccessEmitter::forEachFormByShape(Word32 mode, ShapeTest hasShapeOf, const ArrayStorageFormList& forms, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>& emitArm, FirstForm firstForm)
+void ElementAccessEmitter::forEachFormByShape(Word32 mode, ShapeTest hasShapeOf, const ArrayStorageFormList& forms, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>& emitArm, FirstForm firstForm, ValueID int32StoredInEitherKind)
 {
     for (const ArrayStorageForm* form : forms) {
         LBasicBlock hasForm = newBlock();
         LBasicBlock hasOtherForm = newBlock();
         bool othersAreRare = form == forms.last() || (firstForm == FirstForm::IsExpected && form == forms.first());
-        m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
+        if (int32StoredInEitherKind && form->kind == ArrayStorage::Contiguous) {
+            LBasicBlock holdsNoValues = newBlock();
+            m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), normalEdge(holdsNoValues));
+            m_out.appendTo(holdsNoValues);
+            bool tagIsAsked = representationOf(int32StoredInEitherKind) == Representation::JSValue;
+            LBasicBlock holdsInt32 = tagIsAsked ? newBlock() : hasForm;
+            m_out.branch((this->*hasShapeOf)(mode, arrayStorageFormOf(ArrayStorage::Int32)).value(), normalEdge(holdsInt32), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
+            if (tagIsAsked) {
+                m_out.appendTo(holdsInt32);
+                m_out.branch(isInt32(in<Boxed>(int32StoredInEitherKind)).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
+            }
+        } else
+            m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
         m_out.appendTo(hasForm);
         emitArm(*form);
         m_out.appendTo(hasOtherForm);
@@ -298,11 +320,12 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
     } else {
         Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
         ArrayElements elements = elementsOf(array);
-        forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, formExpectedToHold(value->arrayOperand(), stored), slowPath, [&](const ArrayStorageForm& form) {
+        ArrayStorageFormList forms = formExpectedToHold(value->arrayOperand(), stored);
+        forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, slowPath, [&](const ArrayStorageForm& form) {
             Operand rawElement = *rawElementToStore(form, stored, slowPath);
             storeInVector(value, form, elements, index, rawElement, slowPath);
             m_out.jump(continuation);
-        });
+        }, FirstForm::IsExpected, int32ThatArmOfValuesStoresInEitherKind(stored, forms));
     }
 
     m_out.appendTo(slowPath);
@@ -345,7 +368,7 @@ void ElementAccessEmitter::storeInProvenList(const ValueContext& value, const Ar
             emitter<BarrierEmitter>().elementBarrierAfterStore(value, list, singleElementSpan(storedElement));
         }
         m_out.jump(continuation);
-    }, FirstForm::IsLikeTheOthers);
+    }, FirstForm::IsLikeTheOthers, int32ThatArmOfValuesStoresInEitherKind(stored, forms));
 
     m_out.appendTo(outOfLine);
     storeOutOfLine(value, list, NumberBoxing::ByStub);
@@ -539,6 +562,10 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
 
 void ElementAccessEmitter::generateAppendElements(const ValueContext& value)
 {
+    if (generator().m_literalLeftToSpreadRightBehind == value->arrayOperand()) [[unlikely]] {
+        ArrayAllocationEmitter(generator()).bearLiteralHoldingList(value, in<CellPointer>(value->sourceOperand()).value(), appendElements());
+        return;
+    }
     CellPointer array = in<CellPointer>(value->arrayOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
     callStub(value, appendElements(), { array.value(), source.value() });

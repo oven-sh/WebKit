@@ -41,8 +41,8 @@ private:
         unsigned nextSuccessor;
     };
 
-    bool fail(const Operation* = nullptr);
-    bool failAtEndOf(const Block*);
+    bool fail(const Operation* = nullptr, PlaceOfCheck = PlaceOfCheck::here());
+    bool failAtEndOf(const Block*, PlaceOfCheck = PlaceOfCheck::here());
 
     bool isInProcedure(const Operation*) const;
     bool isInProcedure(const Block*) const;
@@ -129,15 +129,15 @@ bool MachineValidator::findWhatIsLeft()
     return true;
 }
 
-bool MachineValidator::fail(const Operation* operation)
+bool MachineValidator::fail(const Operation* operation, PlaceOfCheck check)
 {
-    m_proc.fail(FailureKind::MalformedProcedure, operation);
+    m_proc.fail(FailureKind::MalformedProcedure, operation, check);
     return false;
 }
 
-bool MachineValidator::failAtEndOf(const Block* block)
+bool MachineValidator::failAtEndOf(const Block* block, PlaceOfCheck check)
 {
-    return fail(block->isEmpty() ? nullptr : block->last());
+    return fail(block->isEmpty() ? nullptr : block->last(), check);
 }
 
 bool MachineValidator::isInProcedure(const Operation* operation) const

@@ -656,6 +656,7 @@ struct Block {
     bool isLoopHead { false };
     bool isEntry { false };
     bool meetsStepWrittenByHand { false };
+    bool keepsSitesThoughRare { false };
     bool isSealed { false };
     BeliefAheadOfEdges beliefAheadOfEdges { BeliefAheadOfEdges::NoEdgeIsAwaited };
 
@@ -1094,10 +1095,11 @@ public:
     BlockID addBlock(BlockRole = BlockRole::Ordinary, BlockFrequency = BlockFrequency::Normal);
     BlockID addBlockBehindEdge(EdgeID, BlockFrequency, bool isInLoop);
     void setLoopMarks(BlockID, bool isInLoop, bool isLoopHead);
+    void markRareBlockThatKeepsSites(BlockID);
     void noteBeliefAheadOfEdges(BlockID, BeliefAheadOfEdges);
     void makeBlocksRare(uint32_t first, uint32_t end);
     void makeBlockRare(BlockID);
-    void makeBlockUnlikely(BlockID);
+    void makeBlockUnlikely(BlockID, bool thoughRare = false);
     void setSubject(BlockID, ValueID);
     void markMeetingOfStepWrittenByHand(BlockID);
     void setParameters(BlockID, std::span<const ValueID>);

@@ -200,6 +200,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnReExports, TryDefineLiveBinding) \
     v(OperationsOnReExports, TryReExportFields) \
     v(OperationsOnModulesThatFail, AbandonModuleEvaluation) \
+    v(OperationsOnModulesThatFail, IsLinkedBelow) \
     v(OperationsOnModulesThatFail, RecordRequire) \
     v(OperationsOnModulesThatFail, SeesMockOf) \
     v(OperationsOnModulesThatFail, StopLoadingBehindFile) \
@@ -309,6 +310,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatMakeArrays, NewArrayIterator) \
     v(OperationsThatMakeArrays, NewArrayOfGiven) \
     v(OperationsThatMakeArrays, NewArrayOfHoles) \
+    v(OperationsThatMakeArrays, NewArrayOfList) \
     v(OperationsThatMakeArrays, NewArrayWithHoles) \
     v(OperationsThatMakeArrays, NewArrayWithHolesAtSite) \
     v(OperationsThatMakeArrays, NewArrayWithLengthAtReviewedSite) \

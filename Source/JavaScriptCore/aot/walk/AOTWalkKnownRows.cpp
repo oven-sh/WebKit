@@ -312,8 +312,12 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     }
     TypeID resultByRows = loopReadsOffResultFirstForKnownRows(walker, call.id()) ? findTypeOfResultOfRowsReachedBy(walker, call) : TypeID();
     FunctionID reached = enteredByValue && mayCopy == MayCopyFunctionCalledDirectly::Yes ? findLibraryFunctionOfRowsReachedBy(walker, call) : FunctionID();
-    walker.noteThatCopyMakesNewList(reached && reached != function ? function : FunctionID(), written.thisValueOperand());
-    bool isBuilt = callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), mayCopy);
+    bool makesNewList = reached && reached != function;
+    FunctionID calledWhereNoCopyIsMade;
+    if (const BodyIndex* ofRows = makesNewList ? walker.facts().bodies().find(reached) : nullptr; ofRows && ofRows->opcodes().contains(Opcode::HasContiguousIndex))
+        calledWhereNoCopyIsMade = std::exchange(function, reached);
+    walker.noteThatCopyMakesNewList(makesNewList ? function : FunctionID(), written.thisValueOperand());
+    bool isBuilt = callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), mayCopy, calledWhereNoCopyIsMade);
     walker.noteThatCopyMakesNewList({ }, { });
     if (isBuilt) {
         walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);

@@ -1443,6 +1443,23 @@ static void testFieldsFoundInFieldTable()
     });
 }
 
+static void testInstructionsOfStoreUnderNameThatLayoutLacks()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    constexpr uint32_t budget = 139;
+    PropertyStores stores;
+    FieldTable table(stores);
+    stores.clearCaches();
+    stores.runner.setCountsInstructions(true);
+    FakeObjectWithShape withoutRow(FieldTable::shapeWithoutTheNames, bitsOf(jsNumber(1)));
+    StubRun run = stores.store(StoreCase { PutMode::Strict, FiledIn::Front }, withoutRow.address(), bitsOf(jsNumber(42)));
+    AOT_TEST_CHECK(run.calledOperation && run.instructionsInStubs && withoutRow.field() == bitsOf(jsNumber(1)));
+    if (*run.instructionsInStubs != budget)
+        dataLogLn("a store under a name that the layout lacks, found in no table: ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+    AOT_TEST_CHECK(*run.instructionsInStubs <= budget);
+#endif
+}
+
 static void testStoresGoByTablesAlone()
 {
     PropertyStores stores;
@@ -1812,6 +1829,7 @@ std::span<const NativeTest> stubPropertyStoreTests()
         { "stubs/put-by-id/exits"_s, ImageTests::whenExecutable<testExits> },
         { "stubs/put-by-id/barriers"_s, ImageTests::whenExecutable<testBarriers> },
         { "stubs/write-barrier/remembers-owner-without-operation"_s, ImageTests::whenExecutable<testBarrierRemembersOwnerWithoutOperation> },
+        { "stubs/put-by-id/instructions/a-name-that-the-layout-lacks"_s, ImageTests::whenExecutable<testInstructionsOfStoreUnderNameThatLayoutLacks> },
         { "stubs/put-by-id/typed-fields"_s, ImageTests::whenExecutable<testTypedFields> },
         { "stubs/put-by-id/fields-that-leave-the-stub"_s, ImageTests::whenExecutable<testFieldsThatLeaveTheStub> },
         { "stubs/put-by-id/created-fields"_s, ImageTests::whenExecutable<testCreatedFields> },

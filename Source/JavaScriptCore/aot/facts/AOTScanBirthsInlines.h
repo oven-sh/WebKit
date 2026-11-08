@@ -7,6 +7,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 inline bool ScanOfBody::hasFilledInFrontOfEveryLeaving(uint32_t root, PropertyKeyID key)
@@ -95,7 +97,7 @@ inline void ScanOfBody::listBirths()
             if (object.kind == ObjectBeingMadeKindInScan::OfOneLayout && object.hasLeft)
                 objectsByLayout.append({ layoutOfAllocation(definitionOf(object.root)), place });
         }
-        std::ranges::stable_sort(objectsByLayout, { }, &ObjectOfLayout::layout);
+        AOT::stableSort(objectsByLayout, { }, &ObjectOfLayout::layout);
         m_summary.fieldsFilledAtEndAlone.removeAllMatching([&](FieldReference field) {
             PropertyKeyID key = m_program.at(field.layout).fields[field.field].key;
             return std::ranges::any_of(std::ranges::equal_range(objectsByLayout, field.layout, { }, &ObjectOfLayout::layout), [&](const ObjectOfLayout& listed) {

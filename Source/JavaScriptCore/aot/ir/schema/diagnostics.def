@@ -131,6 +131,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     GuessOpensAgain(Optimize, "the stretch of a guess opens the same guess at the same operation again")
     WordInFrontOfTypedBuildIsStale(Optimize, "the head of a loop uses a word that was read in front of it, and its turns may write what that word rests on")
     HandlerEdgeHandsOnStandIn(Optimize, "an edge to a handler hands on another value than the one that the head of its block named")
+    LastWalkOfLoopMisfitsRow(Optimize, "a walk of a loop does not fit the row that its kept walk was walked under")
     OperationMakesTwoCells(Optimize, "one operation of the body makes two cells on one way in one walk of its block, and both are used")
     IntrinsicOutsideLibraryCode(ReadAndVerify, "an intrinsic is used outside library code")
     ExpectedTypeAfterSelection(Select, "an expected type is left after selection")

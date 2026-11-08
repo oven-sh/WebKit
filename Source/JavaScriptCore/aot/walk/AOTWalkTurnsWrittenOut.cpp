@@ -172,10 +172,10 @@ static std::optional<uint32_t> foreseeTurnsByText(const IntegersByText& integers
     return stays;
 }
 
-static bool textAdmitsTurnsWrittenOut(const BodyIndex& index, BodyLiveness& liveness, LoopID loop, bool isCopy, NOESCAPE const Invocable<std::span<const uint32_t>()> auto& numbersOfHandlersThatRead, ValueID openSteppedByIndex = { })
+static bool textAdmitsTurnsWrittenOut(const BodyIndex& index, BodyLiveness& liveness, LoopID loop, bool isCopy, NOESCAPE const Invocable<std::span<const uint32_t>()> auto& numbersOfHandlersThatRead, ValueID openSteppedByIndex = { }, bool loopsWithinAreWrittenOut = false)
 {
     BlockID head = index.loop(loop).head;
-    if (index.hasIrreducibleFlow() || index.isEnteredByHandlerEdge(head) || index.holdsParametersReadByReleaseHintsAlone() || index.loop(loop).numberOfLoopsWithin != 1)
+    if (index.hasIrreducibleFlow() || index.isEnteredByHandlerEdge(head) || index.holdsParametersReadByReleaseHintsAlone() || (index.loop(loop).numberOfLoopsWithin != 1 && !loopsWithinAreWrittenOut))
         return false;
     for (BlockID member : index.membersOf(loop)) {
         BodyBlock block = index.block(member);
@@ -430,6 +430,45 @@ static uint32_t numberOfOperationsOfCopiesInTurnWrittenOut(const Walker& walker,
     }
     return numberOfOperations;
 }
+static std::optional<uint32_t> numberOfOperationsOfLoopsWrittenOut(const Walker& walker, const IntegersByText& integers, LoopID loop, uint32_t stays, bool countsCopies)
+{
+    const BodyIndex& index = integers.index;
+    auto walkedOnce = [&](LoopID walked) {
+        return numberOfOperationsOfLoopWrittenOut(index, walked) + (countsCopies ? numberOfOperationsOfCopiesInTurnWrittenOut(walker, index, walked) : 0);
+    };
+    uint32_t numberOfOperationsOfTurn = walkedOnce(loop);
+    uint32_t numberOfLoopsLeft = index.loop(loop).numberOfLoopsWithin - 1;
+    for (uint32_t number = loop.index() + 1; numberOfLoopsLeft && number < index.numberOfLoops(); ++number) {
+        LoopID within(number);
+        if (index.loop(within).parent != loop)
+            continue;
+        numberOfLoopsLeft -= index.loop(within).numberOfLoopsWithin;
+        WTF::Function<std::optional<int64_t>(uint32_t)> whatEnters = [&](uint32_t position) -> std::optional<int64_t> {
+            std::optional<int64_t> entering;
+            for (BlockID member : index.membersOf(loop)) {
+                if (index.isInLoop(member, within))
+                    continue;
+                for (BodyTarget target : index.terminator(member).targets()) {
+                    if (target.block() != index.loop(within).head)
+                        continue;
+                    std::optional<int64_t> brought = position < target.arguments().size() ? integers.at(target.arguments()[position]) : std::nullopt;
+                    if (!brought || (entering && *entering != *brought))
+                        return std::nullopt;
+                    entering = brought;
+                }
+            }
+            return entering;
+        };
+        std::optional<uint32_t> staysWithin = foreseeTurnsByText(integers, within, whatEnters);
+        std::optional<uint32_t> ofLoopWithin = staysWithin ? numberOfOperationsOfLoopsWrittenOut(walker, integers, within, *staysWithin, countsCopies) : std::nullopt;
+        if (!ofLoopWithin)
+            return std::nullopt;
+        numberOfOperationsOfTurn += *ofLoopWithin - walkedOnce(within);
+    }
+    uint32_t numberOfOperations = stays * numberOfOperationsOfTurn + index.block(index.loop(loop).head).numberOfValues() + 1;
+    return numberOfOperations > mostOperationsWalkedForTurnsWrittenOut ? std::nullopt : std::optional(numberOfOperations);
+}
+
 bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> entering)
 {
     size_t frameIndex = m_frames.size() - 1;
@@ -461,11 +500,18 @@ bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> e
     WTF::Function<std::optional<int64_t>(uint32_t)> whatEnters = [&](uint32_t position) -> std::optional<int64_t> {
         return position < entering.size() ? integerBuiltForTurnsWrittenOut(*this, entering[position]) : std::nullopt;
     };
-    std::optional<uint32_t> stays = foreseeTurnsByText(IntegersByText { index, keyOfLength, leaf, lengthOf }, loop, whatEnters);
+    IntegersByText integers { index, keyOfLength, leaf, lengthOf };
+    std::optional<uint32_t> stays = foreseeTurnsByText(integers, loop, whatEnters);
     if (!stays)
         return false;
+    bool holdsLoops = index.loop(loop).numberOfLoopsWithin != 1;
+    bool standsInLoop = m_frames[frameIndex].loopDepthAtCall || index.loopDepthOf(inputHead) >= 2;
+    if (holdsLoops && (!standsInLoop || !numberOfOperationsOfLoopsWrittenOut(*this, integers, loop, *stays, !frameIndex)))
+        return false;
     uint32_t numberOfOperationsOfTurn = numberOfOperationsOfLoopWrittenOut(index, loop) + (frameIndex ? 0 : numberOfOperationsOfCopiesInTurnWrittenOut(*this, index, loop));
-    if (numberOfOperationsOfTurn * (*stays + 1) > mostOperationsWalkedForTurnsWrittenOut)
+    BlockID headAround = m_frames[frameIndex].headOfTurnsWrittenOut;
+    bool isReckonedWithNest = !holdsLoops && headAround && index.loop(loop).parent == index.loopOf(headAround) && numberOfOperationsOfTurn * (*stays + 1) > mostOperationsWalkedForTurnsWrittenOut;
+    if (!holdsLoops && !isReckonedWithNest && numberOfOperationsOfTurn * (*stays + 1) > mostOperationsWalkedForTurnsWrittenOut)
         return false;
     if (!m_frames[frameIndex].loopDepthAtCall && index.loopDepthOf(inputHead) < 2) {
         for (BlockID member : index.membersOf(loop)) {
@@ -486,12 +532,16 @@ bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> e
         }
     }
 
-    if (!textAdmitsTurnsWrittenOut(index, m_liveness, loop, frameIndex && !m_frames[frameIndex].returnsInPlaceOfUnit, [&] { return numbersOfHandlersThatRead(m_frames.last()); }))
+    if (!textAdmitsTurnsWrittenOut(index, m_liveness, loop, frameIndex && !m_frames[frameIndex].returnsInPlaceOfUnit, [&] { return numbersOfHandlersThatRead(m_frames.last()); }, { }, holdsLoops))
         return false;
 
     beginTurnsWrittenOut(inputHead);
     if (frameIndex)
         count(StatisticID::LoopsOfCopiesWrittenOut);
+    if (holdsLoops)
+        count(StatisticID::LoopsThatHoldLoopsWrittenOut);
+    if (isReckonedWithNest)
+        count(StatisticID::LoopsWrittenOutByTheReckoningOfTheirNest);
     walkTurnsWrittenOut(inputHead, entering, *stays + 1, nullptr);
     return true;
 }
@@ -603,11 +653,11 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
             return;
         auto& typesLeft = m_triesOfLoops[placeOfTryAround].typesLeftByTurnsWrittenOut;
         auto ofTheseTurns = typesLeft.mutableSpan().subspan(firstTypeLeft);
-        auto found = std::ranges::lower_bound(ofTheseTurns, value, { }, &TryOfLoop::TypeLeftByTurnsWrittenOut::value);
-        if (found != ofTheseTurns.end() && found->value == value)
+        auto found = std::ranges::find(ofTheseTurns, value, &TryOfLoop::TypeLeftByTurnsWrittenOut::value);
+        if (found != ofTheseTurns.end())
             found->type = m_types.unionOf(found->type, type);
         else
-            typesLeft.insert(firstTypeLeft + (found - ofTheseTurns.begin()), TryOfLoop::TypeLeftByTurnsWrittenOut { value, type });
+            typesLeft.append(TryOfLoop::TypeLeftByTurnsWrittenOut { value, type });
     };
     auto beginWalkOfLoop = [&] {
         uint32_t cameRound = inputBlock(frameIndex, inputHead).firstOpenEdge;

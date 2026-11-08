@@ -55,6 +55,7 @@ public:
     bool takesWriteOnBuiltin(BuiltinID holder, PropertyKeyID, FunctionID writer);
     void noteWriteOfNewName(BuiltinID canonicalHolder, PropertyKeyID);
     FlowNodeID nodeOfNameAdded(PropertyKeyID key) { return m_isTestRun ? makeNodeOfNameAdded(key) : FlowNodeID(); }
+    FlowNodeID nodeOfSomeNameAdded();
     bool isNameAdded(FlowNodeID nodeOfNameAdded) const;
     BuiltinID prototypeAboveClosuresOf(FunctionID) const;
 
@@ -103,6 +104,7 @@ private:
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfNamesAdded;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesListed;
     Vector<NameAddedByTests> m_namesAdded;
+    FlowNodeID m_nodeOfSomeNameAdded;
     Vector<VariableID> m_exportsSpiedOn;
 };
 

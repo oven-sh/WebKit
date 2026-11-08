@@ -1,0 +1,32 @@
+# $findsDeclaredMember(Object.prototype, "__proto__") ? $getPrototypeOf(made) : made.__proto__   in a run whose tests are seen to replace Math.floor and nothing else
+# The accessor is locked there as in an executable: the answer is a yes at the build.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN(LOCKED): walk f1 mechanisms=all
+# LOCKED-LABEL: code f1:Body
+# LOCKED-NOT: FindsDeclaredMember
+# LOCKED-NOT: IsMemberAsBuilt
+# LOCKED-NOT: PropGet
+# LOCKED: Return
+
+replaceablebuiltin member=MathFloor
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    Return v1
+}
+function f1 name="asksAccessorOfLink" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = FindsDeclaredMember v0 key="__proto__"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Boolean boolean=true
+    Return v2
+  b2():
+    v3 = PropGet v0 key="__proto__"
+    Return v3
+}

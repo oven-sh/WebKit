@@ -18,8 +18,10 @@
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
 #include "AOTLinkTables.h"
+#include "AOTStubsPropertyKeys.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
+#include "AOTWalkKnown.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -169,6 +171,41 @@ static Reference buildWalkOfChainForInstanceOf(Walker& walker, Reference value, 
     return walker.build(WTF::move(chainWalk));
 }
 
+static Reference buildWalkOfChainThatGivesWayForInstanceOf(Walker& walker, Reference value, Reference prototype, Origin origin)
+{
+    if (!prototype)
+        return { };
+    Draft chainWalk(Opcode::FindInPrototypeChainUnlessTrapped, origin);
+    walker.chooseConservativeFields(chainWalk);
+    chainWalk.setValueOperand(value);
+    chainWalk.setPrototypeOperand(prototype);
+    Reference found = walker.build(WTF::move(chainWalk));
+    if (!found)
+        return { };
+    walker.count(StatisticID::MissesOfInstanceOfThatStayInTheTurn);
+    auto isAnswer = [&](int32_t answer) {
+        Draft asked(Opcode::Integer);
+        asked.setInteger(answer);
+        Draft comparison(Opcode::StrictEq, origin);
+        walker.chooseConservativeFields(comparison);
+        comparison.setLeftOperand(found);
+        comparison.setRightOperand(walker.constant(WTF::move(asked)));
+        comparison.setForm(OperatorForm::Integers);
+        return walker.build(WTF::move(comparison));
+    };
+    Reference isTrapped = isAnswer(answerOfChainWalkAtTrap);
+    if (!isTrapped)
+        return { };
+    BlockID givesWay = walker.addBlock(BlockFrequency::Rare);
+    BlockID isAnswered = walker.addBlock();
+    walker.branch(isTrapped, givesWay, isAnswered);
+    walker.continueIn(givesWay);
+    if (!walker.isUnreachable())
+        walker.beginTurnAgainInClosedCopy();
+    walker.continueIn(isAnswered);
+    return isAnswer(1);
+}
+
 static bool hasOneClassObjectForInstanceOf(const Walker& walker, LayoutID classLayout)
 {
     if (!walker.facts().isEvaluatedAtMostOnce(classLayout))
@@ -264,6 +301,26 @@ bool findConditionsOfOrdinaryInstanceOf(const Walker& walker, TypeID typeOfConst
     for (const MemberConditionRecord& condition : tested->conditions)
         conditions.append(condition);
     return true;
+}
+
+void noteWhatInstanceOfDenied(Walker& walker, const BodyValue& test)
+{
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || walker.isUnreachable())
+        return;
+    Reference value = walker.referenceOf(test.valueOperand());
+    Reference constructor = walker.referenceOf(test.constructorOperand());
+    if (!value || !value.isValue() || !constructor)
+        return;
+    std::optional<ClassTestedByInstanceOf> tested = describeClassTestedByInstanceOf(walker, walker.typeOf(constructor));
+    if (!tested)
+        return;
+    TypeArena& types = walker.types();
+    Vector<LayoutID, 8> layouts { tested->layout };
+    layouts.append(walker.program().layoutsExpectedBelow(tested->layout));
+    TypeID denied = types.forLayouts(layouts.span());
+    if (std::optional<uint64_t> before = findKnown(walker, KnownNote::ClassesThatInstanceOfDenied, value))
+        denied = types.unionOf(denied, types.forLayoutSet(LayoutSetID::fromBits(static_cast<uint32_t>(*before))));
+    noteKnown(walker, KnownNote::ClassesThatInstanceOfDenied, value, { }, 0, LocationMasks(), types.at(denied).layouts.bits());
 }
 
 static ChainEndForInstanceOf followChainForInstanceOf(const Walker& walker, LayoutID layout, LayoutID tested)
@@ -464,17 +521,28 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     bool hasArms = false;
     BlockID asWritten;
     if (!form->conditions.isEmpty()) {
-        Draft guards(Opcode::AreMembersUnchanged, origin);
-        guards.setConditions(form->conditions.span());
-        Reference areUnchanged = walker.isUnreachable() ? Reference() : walker.build(WTF::move(guards));
+        bool asksInFront = prototypeObjectIsInTable && !hasOneClosedArm && walker.mayBeginTurnAgainInClosedCopy() && walker.turnsOfTypedCopyWriteNoMemberGuards();
+        Reference areUnchanged;
+        {
+            Walker::InFrontOfTypedCopy inFront(walker, asksInFront);
+            Draft guards(Opcode::AreMembersUnchanged, origin);
+            guards.setConditions(form->conditions.span());
+            areUnchanged = walker.isUnreachable() ? Reference() : walker.build(WTF::move(guards));
+        }
         if (!areUnchanged)
             return true;
-        BlockID unchanged = walker.addBlock();
-        asWritten = walker.addBlock(BlockFrequency::Rare);
-        walker.branch(areUnchanged, unchanged, asWritten);
         walker.noteGuessOpened();
-        hasArms = true;
-        walker.continueIn(unchanged);
+        if (asksInFront && walker.branchInFrontOfTypedCopy(areUnchanged, true, Walker::TurnOfTypedCopy::HasDoneNothing, Walker::TurnsThatAsk::SomeBesideCopyWithoutGuess))
+            walker.count(StatisticID::GuardsOfInstanceOfAskedInFrontOfTypedCopies);
+        else {
+            if (asksInFront)
+                walker.count(StatisticID::GuardsOfInstanceOfRefusedInFrontOfTypedCopies);
+            BlockID unchanged = walker.addBlock();
+            asWritten = walker.addBlock(BlockFrequency::Rare);
+            walker.branch(areUnchanged, unchanged, asWritten);
+            hasArms = true;
+            walker.continueIn(unchanged);
+        }
     }
 
     auto buildAnswerOfMiss = [&]() -> Reference {
@@ -486,7 +554,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         walker.chooseConservativeFields(read);
         read.setClassObjectOperand(constructor);
         read.setLayout(form->tested);
-        return buildWalkOfChainForInstanceOf(walker, value, walker.build(WTF::move(read)), origin);
+        Reference prototype = walker.build(WTF::move(read));
+        return walker.mayBeginTurnAgainInClosedCopy() ? buildWalkOfChainThatGivesWayForInstanceOf(walker, value, prototype, origin) : buildWalkOfChainForInstanceOf(walker, value, prototype, origin);
     };
 
     bool testsPrototype = form->testsPrototypeOfInstance && !factsOfCellAsPlannerTakesThem(walker, value).contains(FactOfCell::HasLayoutPrototype);
@@ -509,7 +578,7 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
 
         BlockID hasShape = walker.addBlock();
         bool missIsAskedAsWritten = asWritten && (hasOneClosedArm || !prototypeObjectIsInTable);
-        BlockID walksChain = missIsAskedAsWritten ? asWritten : walker.addBlock(BlockFrequency::Rare);
+        BlockID walksChain = missIsAskedAsWritten ? asWritten : walker.addBlock(walker.mayBeginTurnAgainInClosedCopy() ? BlockFrequency::Normal : BlockFrequency::Rare);
         bool asksWhetherMissIsObject = hasOneClosedArm && !form->missMeansFalse && !form->valueIsSurelyObject;
         BlockID hasOtherShape = form->missMeansFalse || asksWhetherMissIsObject ? walker.addBlock() : walksChain;
         walker.branch(isInstance, hasShape, hasOtherShape);
@@ -562,7 +631,10 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         answers.arrive(answer);
         if (asWritten) {
             walker.continueIn(asWritten);
-            answers.arrive(buildInstanceOfAsWritten(walker, test));
+            if (prototypeObjectIsInTable && !hasOneClosedArm && !walker.isUnreachable() && walker.mayBeginTurnAgainInClosedCopy())
+                walker.beginTurnAgainInClosedCopy();
+            else
+                answers.arrive(buildInstanceOfAsWritten(walker, test));
         }
         answer = answers.meet();
     }

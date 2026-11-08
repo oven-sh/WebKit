@@ -124,11 +124,7 @@ static void reportFailureOfMachineProcedure(BuildContext& build, const Program& 
     const Machine::Failure& failure = *procedure.failure();
 
     StringPrintStream text;
-    text.print(failure.kind);
-    if (failure.operation < procedure.numberOfOperations()) {
-        text.print(": ");
-        Machine::printOperation(text, procedure, procedure.operationAt(failure.operation));
-    }
+    Machine::printFailure(text, procedure);
 
     InternalError error {
         .kind = internalErrorKindOfMachineFailure(failure.kind),

@@ -34,10 +34,10 @@ static const NameOfGrowingText* findNameInTextBuilders(const GrowingText& web, V
 template<typename Functor>
 static void forEachNameLiveAtHeadInTextBuilders(const BodyLiveness& liveness, const GrowingText& web, BlockID block, const Functor& functor)
 {
-    liveness.forEachLiveAtHead(block, web.names.first().value, ValueID(web.names.last().value.index() + 1), [&](ValueID value) {
-        if (const NameOfGrowingText* name = findNameInTextBuilders(web, value))
-            functor(*name);
-    });
+    for (const NameOfGrowingText& name : web.names) {
+        if (liveness.isLiveAtHead(name.value, block))
+            functor(name);
+    }
 }
 
 static bool belongsToFrameOnTopInTextBuilders(const Walker& walker, const TextInStringBuilder& text)
@@ -56,14 +56,6 @@ static bool belongsToFrameOnTopInTextBuilders(const Walker& walker, const TextIn
 bool mayKeepTextsInStringBuilders(const Walker& walker)
 {
     return walker.has(Mechanism::TypedOperations) && walker.has(Mechanism::LoopInvariants) && walker.unit().role != CodeRole::SlowBody && walker.opensGuesses();
-}
-
-bool isTextInStringBuilder(const Walker& walker, Reference reference)
-{
-    if (!reference.isValue())
-        return false;
-    TypeID type = walker.code().at(reference.id()).type;
-    return type && !holdsOnlyPrimitives(type) && walker.types().at(type).isOpaque(OpaqueKind::StringBuilder);
 }
 
 TextInStringBuilder* findTextNamedBy(Walker& walker, ValueID input)
@@ -160,32 +152,53 @@ static bool passesQuestionsInTextBuilders(Walker& walker, BlockID inputHead, con
     return !web.standsUnderHandlers || mayKeepTextUnderHandlers(walker, inputHead, web);
 }
 
-static void bindNamesReadBehindLoopAnewInTextBuilders(Walker& walker, const BodyIndex& index, const GrowingText& web)
-{
+struct WaysOutOfLoopInTextBuilders {
+    struct Way {
+        BlockID block;
+        ValueID returned;
+    };
+
+    WaysOutOfLoopInTextBuilders(const BodyIndex& index, BlockID loopHead)
+    {
+        liveness.compute(index);
+        LoopID loop = index.loopOf(loopHead);
+        auto list = [&](BlockID block) {
+            if (!index.isInLoop(block, loop))
+                ways.append({ block, { } });
+        };
+        for (BlockID member : index.membersOf(loop)) {
+            BodyBlock block = index.block(member);
+            BodyTerminator terminator = block.terminator();
+            for (BodyTarget target : terminator.targets())
+                list(target.block());
+            if (block.hasHandler())
+                list(block.handler().block());
+            if (ValueID returned = terminator.kind() == TerminatorKind::Return ? terminator.operand(0) : ValueID())
+                ways.append({ { }, returned });
+        }
+    }
+
     BodyLiveness liveness;
-    liveness.compute(index);
-    LoopID loop = index.loopOf(web.loopHead);
-    auto bindNamesLiveAtHeadOf = [&](BlockID block) {
-        if (index.isInLoop(block, loop))
-            return;
-        forEachNameLiveAtHeadInTextBuilders(liveness, web, block, [&](const NameOfGrowingText& name) {
+    Vector<Way, 4> ways;
+};
+
+static void bindNamesReadBehindLoopAnewInTextBuilders(Walker& walker, const BodyIndex& index, std::optional<WaysOutOfLoopInTextBuilders>& waysOut, const GrowingText& web)
+{
+    if (!waysOut)
+        waysOut.emplace(index, web.loopHead);
+    for (const WaysOutOfLoopInTextBuilders::Way& way : waysOut->ways) {
+        if (way.returned) {
+            if (findNameInTextBuilders(web, way.returned))
+                walker.bindAnewAtEveryBlock(way.returned);
+            continue;
+        }
+        forEachNameLiveAtHeadInTextBuilders(waysOut->liveness, web, way.block, [&](const NameOfGrowingText& name) {
             walker.bindAnewAtEveryBlock(name.value);
         });
-    };
-    for (BlockID member : index.membersOf(loop)) {
-        BodyBlock block = index.block(member);
-        BodyTerminator terminator = block.terminator();
-        for (BodyTarget target : terminator.targets())
-            bindNamesLiveAtHeadOf(target.block());
-        if (block.hasHandler())
-            bindNamesLiveAtHeadOf(block.handler().block());
-        ValueID returned = terminator.kind() == TerminatorKind::Return ? terminator.operand(0) : ValueID();
-        if (returned && findNameInTextBuilders(web, returned))
-            walker.bindAnewAtEveryBlock(returned);
     }
 }
 
-static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIndex& index, BlockID inputHead, GrowingText&& web, Reference enters, Origin origin)
+static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIndex& index, BlockID inputHead, std::optional<WaysOutOfLoopInTextBuilders>& waysOut, GrowingText&& web, Reference enters, Origin origin)
 {
     TextInStringBuilder text;
     text.web = WTF::move(web);
@@ -216,7 +229,7 @@ static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIn
         if (walker.isUnreachable())
             return nullptr;
     }
-    bindNamesReadBehindLoopAnewInTextBuilders(walker, index, begun.web);
+    bindNamesReadBehindLoopAnewInTextBuilders(walker, index, waysOut, begun.web);
     return &begun;
 }
 
@@ -249,11 +262,14 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
         someTextMayGrow = true;
     };
 
+    ASSERT(std::ranges::is_sorted(webs, { }, &GrowingText::parameterIndex));
+    std::optional<WaysOutOfLoopInTextBuilders> waysOut;
+    size_t nextWeb = 0;
     for (uint32_t parameterIndex = 0; parameterIndex < numberOfParameters; ++parameterIndex) {
         Reference enters = entering[parameterIndex];
-        size_t placeOfWeb = webs.findIf([&](const GrowingText& candidate) {
-            return candidate.parameterIndex == parameterIndex;
-        });
+        while (nextWeb < webs.size() && webs[nextWeb].parameterIndex < parameterIndex)
+            ++nextWeb;
+        size_t placeOfWeb = nextWeb < webs.size() && webs[nextWeb].parameterIndex == parameterIndex ? nextWeb : notFound;
         GrowingText* web = placeOfWeb != notFound && passesQuestionsInTextBuilders(walker, inputHead, webs[placeOfWeb]) ? &webs[placeOfWeb] : nullptr;
 
         if (isTextInStringBuilder(walker, enters)) {
@@ -276,7 +292,7 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
                 text.beganAsText = before->beganAsText;
                 text.liesInFrame = before->liesInFrame;
                 walker.textsInStringBuilders().append(WTF::move(text));
-                bindNamesReadBehindLoopAnewInTextBuilders(walker, index, walker.textsInStringBuilders().last().web);
+                bindNamesReadBehindLoopAnewInTextBuilders(walker, index, waysOut, walker.textsInStringBuilders().last().web);
                 letEnterInBuilder(parameterIndex, enters);
                 continue;
             }
@@ -296,7 +312,7 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
             continue;
         if (web->beginsAnewOnSomeEdge && (!walker.loopIsBeingTried(inputHead) || !textBegunHereMayLieInFrame(walker, inputHead, *web)))
             continue;
-        TextInStringBuilder* begun = beginTextInTextBuilders(walker, index, inputHead, WTF::move(*web), enters, origin);
+        TextInStringBuilder* begun = beginTextInTextBuilders(walker, index, inputHead, waysOut, WTF::move(*web), enters, origin);
         if (!begun)
             return;
         letEnterInBuilder(parameterIndex, begun->builder);
@@ -500,15 +516,14 @@ static void forEachTextLeftOnEdgeInTextBuilders(Walker& walker, BlockID from, Bl
 {
     const BodyIndex& index = walker.currentBodyIndex();
     auto& texts = walker.textsInStringBuilders();
-    Vector<ValueID, 4> parametersOfHeadsSeen;
+    BitVector parametersOfHeadsSeen;
     for (uint32_t place : walker.placesOfTextsInStringBuildersLeftOnEdge(from, to)) {
         TextInStringBuilder& text = texts[place];
         if (!belongsToFrameOnTopInTextBuilders(walker, text))
             continue;
         LoopID loop = index.loopOf(text.web.loopHead);
-        if (!index.isInLoop(from, loop) || index.isInLoop(to, loop) || parametersOfHeadsSeen.contains(text.web.names.first().value))
+        if (!index.isInLoop(from, loop) || index.isInLoop(to, loop) || parametersOfHeadsSeen.set(text.web.names.first().value.index()))
             continue;
-        parametersOfHeadsSeen.append(text.web.names.first().value);
         if (functor(text) == IterationStatus::Done)
             return;
     }
@@ -588,7 +603,7 @@ static void forEachTextHandedToReaderOnEdgeInTextBuilders(Walker& walker, BlockI
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock entered = index.block(to);
     for (uint32_t place = 0; place < arguments.size() && place < entered.numberOfParameters(); ++place) {
-        if (!arguments[place] || !isTextInStringBuilder(walker, arguments[place]))
+        if (!arguments[place] || !walker.someScanFoundParameterToReadText(entered.parameter(place)) || !isTextInStringBuilder(walker, arguments[place]))
             continue;
         TextInStringBuilder* text = findTextByRecordInTextBuilders(walker, arguments[place]);
         if (text && text->web.parametersThatReadText.contains(entered.parameter(place)))

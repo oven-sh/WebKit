@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBodyIndex.h"
+#include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
@@ -217,6 +218,7 @@ private:
     bool resolveOnWhatStandsAbove(FlowNodeID above, unsigned stepsLeft);
     bool mayStoreIntoPrototypeLink() const { return m_access.kind == Kind::Store && m_keyMayNamePrototypeLink; }
     FlowNodeID findValueThatWrittenDescriptorLays() const;
+    bool changeLaysAccessorInSight() const;
     bool changeLaysWhatDescriptorsInSightHold();
     bool namesOnlyElements() const { return !isNamed() && m_keyIsOnlyNumbers && indexesAreAbsentFrom(Builtins::ObjectPrototype); }
     bool namesNothingOnPlainClosures() const;
@@ -267,6 +269,7 @@ private:
     BuiltinID memberThatTableLocksFrom(BuiltinID start, PropertyKeyID) const;
     void handOn(const LinkType&);
     void resolveOnBuiltin(BuiltinID);
+    bool testsMayHaveLaidNameFrom(BuiltinID start);
     BuiltinID prototypeOfInstancesOf(BuiltinClassID) const;
     bool indexesAreAbsentFrom(BuiltinID start) const;
     std::optional<uint32_t> indexWrittenAtAccess() const;
@@ -508,8 +511,11 @@ void AccessInLinkAccesses::mayThrow()
 {
     m_wasAskedToThrow = true;
     if (!std::exchange(m_hasThrown, true)) {
+        FlowNodeID thrown = thrownNode();
+        if (m_flow.arrivalOfAnythingInSightBringsNothingTo(thrown))
+            return;
         LinkFlow::UnknownByEscapeAlone unknownInSight(false);
-        m_flow.arrive(thrownNode(), LinkType::anything());
+        m_flow.arrive(thrown, LinkType::anything());
     }
 }
 
@@ -903,10 +909,20 @@ FlowNodeID AccessInLinkAccesses::findValueThatWrittenDescriptorLays() const
     if (m_shared || m_access.kind != Kind::Define || !m_access.isByDescriptor || !m_access.key || m_value != m_flow.unseen())
         return { };
     for (const SummaryChange& change : m_flow.summaries.at(m_function).changes) {
-        if (change.site == m_access.site && change.kind == SummaryChange::Kind::DefinesByDescriptor && change.descriptorIsInSight && change.descriptorLaysNoAccessor && change.valueInSight != noSummaryNode)
+        if (change.site == m_access.site && change.key == m_access.key && change.kind == SummaryChange::Kind::DefinesByDescriptor && change.descriptorIsInSight && change.descriptorLaysNoAccessor && change.valueInSight != noSummaryNode)
             return m_flow.nodeOf(m_function, change.valueInSight);
     }
     return { };
+}
+
+bool AccessInLinkAccesses::changeLaysAccessorInSight() const
+{
+    if (m_shared || m_access.kind != Kind::Define || !m_access.isByDescriptor || !m_access.key || m_value != m_flow.unseen())
+        return false;
+    return std::ranges::any_of(m_flow.summaries.at(m_function).changes, [&](const SummaryChange& change) {
+        return change.site == m_access.site && change.key == m_access.key && change.kind == SummaryChange::Kind::DefinesByDescriptor && change.lays == SummaryChange::Lays::WhatDescriptorSays
+            && change.descriptorIsInSight && !change.descriptorLaysNoAccessor;
+    });
 }
 
 void AccessInLinkAccesses::resolve()
@@ -988,7 +1004,7 @@ void AccessInLinkAccesses::resolve()
         if (m_access.kind == Kind::Define && (subject.objects == LinkType::Objects::Layout || subject.objects == LinkType::Objects::Set || subject.objects == LinkType::Objects::Family)) {
             if (FlowNodeID laid = findValueThatWrittenDescriptorLays())
                 valueThatDescriptorLays.emplace(m_value, laid);
-            else if (changeLaysWhatDescriptorsInSightHold())
+            else if (changeLaysAccessorInSight() || changeLaysWhatDescriptorsInSightHold())
                 valueThatDescriptorLays.emplace(m_value, FlowNodeID());
         }
         switch (subject.objects) {
@@ -2219,6 +2235,21 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
         return;
     }
 
+    std::optional<uint32_t> placeRead = isElement && instances.classes == LinkType::Classes::Site && builtinClass == BuiltinClasses::Array ? indexWrittenAtAccess() : std::nullopt;
+    BuiltinID prototypeOfListRead = placeRead && *placeRead < m_flow.numberOfPlacesWrittenOf(instances.site) && SlotOfContents::hasSlotAt(*placeRead) ? prototypeOfInstancesOf(builtinClass) : BuiltinID();
+    auto isChangedAsFarAsIsSeen = [&] {
+        FlowNodeID isChanged = m_flow.contentsOf(instances, SlotOfContents::isChanged());
+        FlowObserver observer { FlowObserver::Kind::MemberOfAccess, m_function, m_record };
+        if (laysWatchAt(isChanged, observer))
+            m_flow.observe(isChanged, observer);
+        return !m_flow.typeAt(isChanged).isNothing();
+    };
+    if (prototypeOfListRead && indexesAreAbsentFrom(prototypeOfListRead) && !isChangedAsFarAsIsSeen()) {
+        giveWhatIsHeldAt(m_flow.whatIsWrittenAt(instances.site, *placeRead));
+        m_flow.build.statistics().count(StatisticID::ReadsUnderWrittenIndexesGivenWhatIsWrittenAtThePlace);
+        return;
+    }
+
     bool hasElements = false;
     forEachListOfElements(instances, [&](FlowNodeID elements) {
         hasElements = true;
@@ -2442,6 +2473,8 @@ void AccessInLinkAccesses::resolveContentsOfInstances(const LinkType& instances)
         FlowNodeID held = m_flow.contentsOf(instances, slot);
         giveFrom(held);
         storeInto(held);
+        if (!isRead() && slot == SlotOfContents(ContentsSlot::Element))
+            m_flow.tellWrittenListIsChanged(instances);
     }
     if (!settles)
         return;
@@ -2465,10 +2498,45 @@ void AccessInLinkAccesses::resolveContentsOfInstances(const LinkType& instances)
     }
 }
 
+bool AccessInLinkAccesses::testsMayHaveLaidNameFrom(BuiltinID start)
+{
+    if (!m_flow.testRuns().isTestRun() || (!isNamed() && (isRead() || m_keyIsOnlyNumbers)))
+        return false;
+    if (FlowNodeID added = isNamed() ? m_flow.testRuns().nodeOfNameAdded(m_access.key) : m_flow.testRuns().nodeOfSomeNameAdded()) {
+        tellAgainOnceClimbs(added);
+        if (m_flow.testRuns().isNameAdded(added))
+            return true;
+    }
+    StringID name;
+    if (isNamed()) {
+        const PropertyKey& record = m_program.at(m_access.key);
+        if (record.kind != PropertyKeyKind::Text || !m_program.isOpenedSomewhere(record.text))
+            return false;
+        name = record.text;
+    }
+    BuiltinID holder = m_table.canonicalID(start);
+    while (true) {
+        if (name ? m_program.isOpened(holder, name) : m_program.isSomeNameOpenedOn(holder))
+            return true;
+        const Builtin& object = m_table.at(holder);
+        switch (object.prototypeLink) {
+        case BuiltinPrototypeLink::Unknown:
+            return true;
+        case BuiltinPrototypeLink::Null:
+            return false;
+        case BuiltinPrototypeLink::Builtin:
+            holder = m_table.canonicalID(object.inheritsFrom);
+            break;
+        }
+    }
+}
+
 void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
 {
     if (m_access.kind != Kind::Define && lookupPassesHolderLinkedAnew(m_program, builtin, m_access.key))
         m_flow.handToAccessorsLaidAbove(m_receiver);
+    if (m_access.kind != Kind::Define && testsMayHaveLaidNameFrom(builtin))
+        m_flow.addEdge(m_receiver, m_flow.unseen());
     if (isRead() && isNamed()) {
         if (m_nameClass == NameClass::Proto && !m_table.isObjectOfClass(builtin) && m_table.at(builtin).prototypeLink == BuiltinPrototypeLink::Builtin && !m_flow.codeAtWorkIsOfLibrary())
             m_flow.noteLossOf(m_table.canonicalID(m_table.at(builtin).inheritsFrom));
@@ -2723,7 +2791,8 @@ bool AccessInLinkAccesses::tellsWhatMayAnswerUnderAnyNameBelow(BuiltinClassID bu
     if (!isRead() || !builtinClass || m_flow.testRuns().isTestRun() || m_keySpellsNoMemberOfTable || m_access.answerIsOnlyCalled || m_access.keyIsNameThatLoopOverSubjectGave)
         return false;
     Vector<BuiltinID, 8> holders;
-    for (unsigned index = 0; index < m_table.classCount(); ++index) {
+    bool hasClassBelow = m_table.hasClassBelow(builtinClass);
+    for (unsigned index = hasClassBelow ? 0 : builtinClass.index(); index < (hasClassBelow ? m_table.classCount() : builtinClass.index() + 1); ++index) {
         BuiltinClassID below(index);
         if (!below || !m_table.isSameOrSubclassOf(below, builtinClass))
             continue;
@@ -3166,7 +3235,7 @@ void LinkFlow::accessObserved(const FlowObserver& observer, const LinkType&)
         AccessInLinkAccesses(*this, parts, shared, observer.record, false).resolveMemberOfSharedAccess();
         return;
     }
-    AccessInLinkAccesses(*this, parts, observer).resolve();
+    [[clang::always_inline]] AccessInLinkAccesses(*this, parts, observer).resolve();
     if (PropertyKeyID symbol = keySeenOf(observer.function, summaries.at(observer.function).accesses[observer.record])) {
         AccessInLinkAccesses underSymbol(*this, parts, observer);
         underSymbol.goByKey(symbol);

@@ -23,22 +23,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet allocationsOfEscapeAnalysis = opcodesWhere([](Opcode opcode) {
-    if (opcode == Opcode::NewClosure || opcode == Opcode::Data)
-        return true;
-    if (resultRuleOf(opcode) != ResultRule::Allocation || effectRuleOf(opcode) != EffectRule::Declared || boundToOf(opcode) == BoundTo::Site)
-        return false;
-    Effects bound = declaredBoundOf(opcode);
-    return bound.writes.containsOnly(heapsWhoseWritesNobodySees) && !bound.mayRunOtherCode();
-});
-static_assert(allocationsOfEscapeAnalysis.contains(Opcode::NewObject) && allocationsOfEscapeAnalysis.contains(Opcode::NewArray) && allocationsOfEscapeAnalysis.contains(Opcode::CreateIteratorResult));
-static_assert(!allocationsOfEscapeAnalysis.contains(Opcode::NewTemplateObject) && !allocationsOfEscapeAnalysis.contains(Opcode::TruncateNewArray));
-
-static constexpr OpcodeSet namesOfOperandInEscapeAnalysis = opcodesThatHandOn({ HandedOn::PassedCheck, HandedOn::Mark });
-static constexpr OpcodeSet argumentsObjectsOfEscapeAnalysis { Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments };
-static_assert(allocationsOfEscapeAnalysis.contains(Opcode::CreateUnmappedArguments) && allocationsOfEscapeAnalysis.contains(Opcode::CreateMappedArguments));
-static constexpr OpcodeSet opcodesOfEscapeAnalysis = allocationsOfEscapeAnalysis | namesOfOperandInEscapeAnalysis | OpcodeSet { Opcode::StrictEq, Opcode::GetMappedArgument };
-
 static constexpr OperandUses usesThatKeepFreshObjectHere {
     OperandUse::Inspects,
     OperandUse::ReadsContents,
@@ -680,7 +664,65 @@ static bool foldIdentityOfFreshObject(Walker& walker, const BodyValue& compariso
     return true;
 }
 
-constinit const OpcodeSet opcodesThatBuildFreshObjectTakes = opcodesOfEscapeAnalysis;
+static std::optional<FieldReference> fieldThatDeleteClearsInFreshObject(Walker& walker, Reference object, PropertyKeyID key)
+{
+    LayoutID layout = walker.code().at(object.id()).layout();
+    std::optional<FieldReference> field = findField(walker.program(), layout, key);
+    if (!field || field->layout != layout)
+        return std::nullopt;
+    const PlacedSlot& slot = walker.plan().slot(layout, field->field);
+    if (!slot.hasStorage() || slot.isOutOfLine() || slot.holdsAccessor || slot.representation == SlotRepresentation::DeferredClosure || !canLeaveSlot(slot.representation))
+        return std::nullopt;
+    return field;
+}
+
+static Reference freshRecordThatHoldsNothingButFields(Walker& walker, Reference name)
+{
+    Reference object = freshObjectNamedBy(walker, name);
+    WalkState& state = walker.state();
+    if (!object || !state.shapeOf(object) || !state.orderWordOf(object) || !state.element(object, keyOfPropertiesAsListed()))
+        return { };
+    const Operation& made = walker.code().at(object.id());
+    if (made.opcode != Opcode::NewObject || walker.program().at(made.layout()).kind != LayoutKind::Record || !walker.plan().slots().layout(made.layout()).appendedKeys.isEmpty())
+        return { };
+    if (!orderWordTellsOwnKeysOf(walker, made.layout()))
+        return { };
+    return state.factsOfCell(object).containsAll({ FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot }) ? object : Reference();
+}
+
+static bool followDeleteOffFreshObject(Walker& walker, const BodyValue& removal)
+{
+    if (removal.isFreeName())
+        return false;
+    Reference object = freshRecordThatHoldsNothingButFields(walker, walker.referenceOf(removal.objectOperand()));
+    if (!object)
+        return false;
+
+    std::optional<FieldReference> named = findField(walker.program(), walker.code().at(object.id()).layout(), removal.key());
+    bool isHeld = !!named;
+    if (named) {
+        Reference held = walker.state().slot(object, *named);
+        TypeID type = held && !isClosureLeftUnmade(walker, held) ? walker.typeOf(held) : TypeID();
+        if (!type || (walker.types().at(type).primitives & Primitive::Absent))
+            return false;
+    }
+    if (isHeld) {
+        if (!fieldThatDeleteClearsInFreshObject(walker, object, removal.key()))
+            return false;
+        Draft closed = walker.draftOf(removal);
+        walker.chooseConservativeFields(closed);
+        Effects effects = Effects::ofReadByNameThatRunsNoCode();
+        effects.writes = LocationMasks::top().restrictedTo(perObjectHeaps | heapsWhoseWritesNobodySees);
+        if (!walker.build(WTF::move(closed), &effects) || walker.isUnreachable())
+            return true;
+    }
+    walker.count(isHeld ? StatisticID::DeletesFollowedIntoFreshObjects : StatisticID::DeletesOfNamesThatFreshObjectsDoNotHold);
+    Draft yes = walker.draftOf(removal);
+    yes.become(Opcode::Boolean);
+    yes.setBoolean(true);
+    walker.bind(removal.id(), walker.constant(WTF::move(yes)));
+    return true;
+}
 
 bool buildFreshObjectOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
@@ -688,6 +730,8 @@ bool buildFreshObjectOfItsOpcodes(Walker& walker, const BodyValue& value)
     if (!opcodesOfEscapeAnalysis.contains(opcode))
         return false;
 
+    if (opcode == Opcode::PropDelete)
+        return walker.state().holdsFreshObjects() && followDeleteOffFreshObject(walker, value);
     if (opcode == Opcode::StrictEq)
         return walker.state().holdsFreshObjects() && foldIdentityOfFreshObject(walker, value);
     if (opcode == Opcode::GetMappedArgument)
@@ -775,6 +819,18 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
         return followStoreUnderKnownIndexIntoFreshList(walker, store, written);
     if (opcode == Opcode::SetMappedArgument)
         return followStoreToMappedArgument(walker, store, written);
+    if (opcode == Opcode::PropDelete) {
+        if (written.operandIndex != OperandIndex::PropDelete::object || walker.code().at(written.object.id()).opcode != Opcode::NewObject)
+            return false;
+        std::optional<FieldReference> cleared = fieldThatDeleteClearsInFreshObject(walker, written.object, store.key());
+        if (!cleared)
+            return false;
+        WalkState& state = walker.state();
+        state.noteSlot(written.object, *cleared, Reference());
+        state.noteOrderWord(written.object, std::nullopt);
+        state.noteElement(written.object, keyOfPropertiesAsListed(), Reference());
+        return true;
+    }
     bool storesIntoEnvironment = opcode == Opcode::PutEnvironmentField;
     bool storesIntoSlot = accessClassOf(opcode) == AccessClass::Slot && accessOf(opcode) == Access::Store;
     if (!storesIntoEnvironment && !storesIntoSlot)

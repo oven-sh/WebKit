@@ -404,11 +404,45 @@ static void testBinaryOperationsOnNumbers()
     }
 
     const uint64_t seven = encoded(jsNumber(7));
-    for (uint64_t value : { encoded(jsUndefined()), encoded(jsBoolean(true)), string.address() }) {
-        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { value, seven });
-        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { seven, value });
-        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, false), Entry::operationAOTValueMul, { value, seven });
-        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, true), Entry::operationAOTValueMul, { value, seven });
+    for (uint64_t other : { seven, encoded(jsNumber(2.5)), encoded(jsBoolean(true)), encoded(jsUndefined()) }) {
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { string.address(), other });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { other, string.address() });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, false), Entry::operationAOTValueMul, { string.address(), other });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, true), Entry::operationAOTValueMul, { other, string.address() });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Div, false), Entry::operationAOTValueDiv, { string.address(), other });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Div, false), Entry::operationAOTValueDiv, { other, string.address() });
+        const std::pair<BinaryOperator, Entry> operatorsOfTwoForms[] = { { BinaryOperator::Add, Entry::operationAOTValueAdd }, { BinaryOperator::Sub, Entry::operationAOTValueSub }, { BinaryOperator::Less, Entry::operationAOTCompareLess }, { BinaryOperator::LessEq, Entry::operationAOTCompareLessEq }, { BinaryOperator::Greater, Entry::operationAOTCompareGreater }, { BinaryOperator::GreaterEq, Entry::operationAOTCompareGreaterEq } };
+        for (auto [operation, entry] : operatorsOfTwoForms) {
+            for (bool isAfterInt32Check : { false, true }) {
+                checkLeftToOperation(runner, binaryOperation(operation, isAfterInt32Check), entry, { string.address(), other });
+                checkLeftToOperation(runner, binaryOperation(operation, isAfterInt32Check), entry, { other, string.address() });
+            }
+        }
+    }
+
+    constexpr double notANumber = std::numeric_limits<double>::quiet_NaN();
+    const std::pair<uint64_t, double> valuesThatAreNoCells[] = { { encoded(jsUndefined()), notANumber }, { encoded(jsNull()), 0 }, { encoded(jsBoolean(true)), 1 }, { encoded(jsBoolean(false)), 0 }, { encoded(jsNumber(2.5)), 2.5 }, { encoded(jsNumber(-0.0)), -0.0 }, { encoded(jsNaN()), notANumber }, { encoded(jsNumber(-1)), -1 }, { encoded(jsNumber(7)), 7 } };
+    for (auto [left, leftAsNumber] : valuesThatAreNoCells) {
+        for (auto [right, rightAsNumber] : valuesThatAreNoCells) {
+            const std::pair<BinaryOperator, double> arithmetic[] = { { BinaryOperator::Add, leftAsNumber + rightAsNumber }, { BinaryOperator::Sub, leftAsNumber - rightAsNumber }, { BinaryOperator::Mul, leftAsNumber * rightAsNumber }, { BinaryOperator::Div, leftAsNumber / rightAsNumber }, { BinaryOperator::Mod, std::fmod(leftAsNumber, rightAsNumber) } };
+            for (auto [operation, expected] : arithmetic) {
+                for (bool isAfterInt32Check : { false, true }) {
+                    if (isAfterInt32Check && !hasFormAfterInt32Check(operation))
+                        continue;
+                    StubRun run = runner.run(binaryOperation(operation, isAfterInt32Check), { left, right });
+                    AOT_TEST_CHECK(!run.calledOperation && (std::isnan(expected) ? isNumberInCanonicalForm(run.result, expected) : isNumberInCanonicalFormWithSign(run.result, expected)));
+                }
+            }
+            const std::pair<BinaryOperator, bool> relations[] = { { BinaryOperator::Less, leftAsNumber < rightAsNumber }, { BinaryOperator::LessEq, leftAsNumber <= rightAsNumber }, { BinaryOperator::Greater, leftAsNumber > rightAsNumber }, { BinaryOperator::GreaterEq, leftAsNumber >= rightAsNumber } };
+            for (auto [operation, expected] : relations) {
+                for (bool isAfterInt32Check : { false, true }) {
+                    if (isAfterInt32Check && !hasFormAfterInt32Check(operation))
+                        continue;
+                    StubRun run = runner.run(binaryOperation(operation, isAfterInt32Check), { left, right });
+                    AOT_TEST_CHECK(!run.calledOperation && static_cast<uint32_t>(run.result) == static_cast<uint32_t>(expected));
+                }
+            }
+        }
     }
 }
 
@@ -438,7 +472,9 @@ static void testBinaryOperationsWithDouble()
 {
     constexpr double number = 6.5;
     constexpr uint64_t bitsOfNumber = std::bit_cast<uint64_t>(number);
-    const uint64_t undefined = encoded(jsUndefined());
+    FakeString string("7"_s, CharacterWidth::Is8Bit);
+    const uint64_t cell = string.address();
+    const std::pair<uint64_t, double> valuesThatAreNoCells[] = { { encoded(jsNull()), 0 }, { encoded(jsBoolean(true)), 1 }, { encoded(jsBoolean(false)), 0 } };
 
     StubRunner runner;
     for (const OperatorWithDouble& operatorWithDouble : operatorsWithDouble) {
@@ -451,11 +487,19 @@ static void testBinaryOperationsWithDouble()
                 AOT_TEST_CHECK(!run.calledOperation && run.result == std::bit_cast<uint64_t>(expected));
             }
 
+            for (auto [other, otherAsNumber] : valuesThatAreNoCells) {
+                double expected = numberIsOnRight ? operatorWithDouble.apply(otherAsNumber, number) : operatorWithDouble.apply(number, otherAsNumber);
+                StubRun run = runner.run(key, { bitsOfNumber, other, side });
+                AOT_TEST_CHECK(!run.calledOperation && run.result == std::bit_cast<uint64_t>(expected));
+            }
+            StubRun ofUndefined = runner.run(key, { bitsOfNumber, encoded(jsUndefined()), side });
+            AOT_TEST_CHECK(!ofUndefined.calledOperation && std::isnan(std::bit_cast<double>(ofUndefined.result)));
+
             runner.recordCallsOf(operatorWithDouble.entry);
-            StubRun run = runner.run(key, { bitsOfNumber, undefined, side });
-            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == undefined && static_cast<uint32_t>(run.recordedArguments[1]) == side);
+            StubRun run = runner.run(key, { bitsOfNumber, cell, side });
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == cell && static_cast<uint32_t>(run.recordedArguments[1]) == side);
             runner.install(operatorWithDouble.entry, negateNumberBesideValue);
-            AOT_TEST_CHECK(runner.run(key, { bitsOfNumber, undefined, side }).result == std::bit_cast<uint64_t>(-number));
+            AOT_TEST_CHECK(runner.run(key, { bitsOfNumber, cell, side }).result == std::bit_cast<uint64_t>(-number));
             runner.countCallsOf(operatorWithDouble.entry);
         }
     }

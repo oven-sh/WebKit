@@ -668,6 +668,44 @@ static std::optional<uint64_t> allocationTestInstructionsForEdgesWithMovesIntoOn
     return instructions;
 }
 
+static std::optional<uint64_t> allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(unsigned number)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue selector = test.argumentGPR(0);
+    LValue base = test.argumentGPR(1);
+    Vector<LValue> readBehindEveryOtherBlock;
+    for (unsigned index = 0; index < 12; ++index)
+        readBehindEveryOtherBlock.append(out.opaque(out.add(base, out.constInt64(index))));
+    Vector<LBasicBlock> blocks = allocationTestAppendSwitch(test, selector, number + 1);
+    for (unsigned index = 0; index < number; ++index) {
+        out.appendTo(blocks[index]);
+        LValue value = out.opaque(out.add(selector, out.constInt64(index)));
+        LBasicBlock returns = out.newBlock();
+        out.jump(returns);
+        out.appendTo(returns);
+        out.ret(value);
+    }
+    out.appendTo(blocks[number]);
+    LValue sum = out.int64Zero;
+    for (LValue value : readBehindEveryOtherBlock)
+        sum = out.add(sum, value);
+    out.ret(sum);
+    return instructionsOfCurrentThreadIn([&] {
+        prepareOrFail(test);
+    });
+}
+
+static void allocatorWorkGrowsAsValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWaysDo()
+{
+    constexpr unsigned number = 2000;
+    std::optional<uint64_t> small = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(number);
+    std::optional<uint64_t> middle = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(4 * number);
+    std::optional<uint64_t> large = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(16 * number);
+    AOT_TEST_CHECK(growsAsSizeDoes(small, middle));
+    AOT_TEST_CHECK(growsAsSizeDoes(middle, large));
+}
+
 static void allocatorWorkGrowsAsEdgesWithMovesIntoOneBlockDo()
 {
     constexpr unsigned numberOfEdges = 10000;
@@ -708,6 +746,55 @@ static void allocatorWorkGrowsAsGuardsAheadOfFramedPartDo()
     constexpr unsigned numberOfGuards = 5000;
     std::optional<uint64_t> smaller = allocationTestInstructionsForGuardsAheadOfFramedPart(numberOfGuards);
     std::optional<uint64_t> large = allocationTestInstructionsForGuardsAheadOfFramedPart(4 * numberOfGuards);
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
+static std::optional<uint64_t> allocationTestInstructionsForRareWaysBackInBehindHeadOfFramedPart(unsigned numberOfGuards)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue selector = test.argumentGPR(0);
+    LValue value = test.argumentGPR(1);
+    LBasicBlock head = out.newBlock();
+    Vector<LBasicBlock> rareWays;
+    Vector<LBasicBlock> meetings;
+    for (unsigned number = 0; number < numberOfGuards; ++number) {
+        rareWays.append(out.newBlock());
+        meetings.append(out.newBlock());
+    }
+    Vector<LBasicBlock> guards = allocationTestAppendSwitch(test, selector, numberOfGuards);
+    for (unsigned number = 0; number < numberOfGuards; ++number) {
+        out.appendTo(guards[number]);
+        out.branch(out.testNonZero64(value, number + 1), rareEdge(rareWays[number]), normalEdge(head));
+    }
+    out.appendTo(head);
+    allocationTestAppendCall(test, nullptr);
+    out.jump(normalEdge(meetings[0]));
+    for (unsigned number = 0; number < numberOfGuards; ++number) {
+        out.appendTo(meetings[number]);
+        allocationTestAppendCall(test, nullptr);
+        if (number + 1 < numberOfGuards)
+            out.jump(normalEdge(meetings[number + 1]));
+        else
+            out.ret(selector);
+        out.appendTo(rareWays[number]);
+        allocationTestAppendCall(test, nullptr);
+        out.jump(normalEdge(meetings[number]));
+    }
+    std::optional<uint64_t> instructions = instructionsOfCurrentThreadIn([&] {
+        prepareOrFail(test);
+    });
+    AOT_TEST_CHECK(test.procedure().order().of(meetings.last()).predecessors.size() == 2);
+    if (isX86_64())
+        dataLogLn("rare ways back in: ", numberOfGuards, " guards: heads ", test.procedure().allocation().headsOfFramedPart().size(), " coverage ", static_cast<unsigned>(test.procedure().frame().coverage()), " instructions ", instructions.value_or(0));
+    return instructions;
+}
+
+static void allocatorWorkGrowsAsRareWaysBackInBehindHeadOfFramedPartDo()
+{
+    constexpr unsigned numberOfGuards = 2000;
+    std::optional<uint64_t> smaller = allocationTestInstructionsForRareWaysBackInBehindHeadOfFramedPart(numberOfGuards);
+    std::optional<uint64_t> large = allocationTestInstructionsForRareWaysBackInBehindHeadOfFramedPart(4 * numberOfGuards);
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
@@ -3736,7 +3823,9 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/edge-that-gets-moves-is-split"_s, Machine::allocatorSplitsEdgeThatGetsMoves },
         { "machine-allocation/operands-of-a-rare-patch-stay-where-they-lie"_s, Machine::allocatorLeavesOperandsOfRarePatchWhereTheyLie },
         { "machine-allocation/work-grows-as-the-edges-with-moves-into-one-block-do"_s, Machine::allocatorWorkGrowsAsEdgesWithMovesIntoOneBlockDo },
+        { "machine-allocation/work-grows-as-the-values-that-outlive-their-block-and-the-blocks-that-ask-what-lives-on-their-ways-do"_s, Machine::allocatorWorkGrowsAsValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWaysDo },
         { "machine-allocation/work-grows-as-the-guards-ahead-of-the-framed-part-do"_s, Machine::allocatorWorkGrowsAsGuardsAheadOfFramedPartDo },
+        { "machine-allocation/work-grows-as-the-rare-ways-back-in-behind-the-head-of-the-framed-part-do"_s, Machine::allocatorWorkGrowsAsRareWaysBackInBehindHeadOfFramedPartDo },
         { "machine-allocation/work-grows-as-the-edges-of-a-switch-that-get-moves-do"_s, Machine::allocatorWorkGrowsAsEdgesOfSwitchThatGetMovesDo },
         { "machine-allocation/operands-of-a-patch-that-ends-the-function-stay-where-they-lie"_s, Machine::allocatorLeavesOperandsOfPatchThatEndsFunctionWhereTheyLie },
         { "machine-allocation/nothing-is-kept-where-the-generator-makes-a-constant"_s, Machine::allocatorKeepsNothingWhereGeneratorMakesConstant },

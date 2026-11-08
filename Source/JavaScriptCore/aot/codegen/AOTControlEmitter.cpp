@@ -34,9 +34,12 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
         Number number = representationOf(subject) == Representation::Double ? in<Number>(subject) : Number(in<OptionalNumber>(subject).value());
         Integer truncated = emitter<ConversionEmitter>().toInteger(number);
         LBasicBlock isIntegral = newBlock();
-        branch(equal(toNumber(truncated), number), { normalEdge(isIntegral), otherwise });
+        LBasicBlock isNoInteger = newBlock();
+        branch(equal(toNumber(truncated), number), { normalEdge(isIntegral), BlockEdge(isNoInteger, otherwise.edgeClass()) });
         m_out.appendTo(isIntegral);
-        switchOnInteger(terminator, truncated.value(), Machine::Int64, otherwise);
+        BlockEdge rest = switchOnInteger(terminator, truncated.value(), Machine::Int64, otherwise);
+        m_out.appendTo(isNoInteger);
+        m_out.jump(rest);
         return;
     }
     case Representation::JSValue:
@@ -56,7 +59,7 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& terminator, LValue subject, LType type, BlockEdge otherwise)
+bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& terminator, LValue subject, LType type, BlockEdge otherwise, SwitchesBehindSwitch& takenIn)
 {
     PayloadListView<int64_t> cases = terminator->cases();
     if (cases.size() < Machine::minCasesForJumpTable)
@@ -65,7 +68,32 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
     const Code& code = generator().code();
     bool someEdgeBringsValues = false;
     UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placesBehindEmptyBlocks;
+    UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> blocksBehindAnswers;
     Vector<BlockID, 8> passedBy;
+    auto blockBehindAnswerBroughtBy = [&](const Edge& bringing) {
+        if (bringing.arguments().size() != 1 || !code.isConstant(bringing.arguments()[0]) || code.at(bringing.arguments()[0]).opcode != Opcode::Boolean)
+            return BlockID();
+        bool answer = code.at(bringing.arguments()[0]).boolean();
+        return blocksBehindAnswers.ensure(bringing.to.index() * 2 + answer, [&] {
+            std::span<const ValueID> parameters = code.at(bringing.to).parameters();
+            if (parameters.size() != 1 || code.useCountOf(parameters[0]) != 1)
+                return BlockID();
+            BlockID block = bringing.to;
+            for (uint32_t numberPassed = 0; numberPassed < code.numberOfBlocks(); ++numberPassed) {
+                const Block& passed = code.at(block);
+                if (!code.valuesOf(block).empty() || (numberPassed && !passed.parameters().empty()))
+                    break;
+                if (passed.terminator.kind == TerminatorKind::Branch) {
+                    const Edge& chosen = code.at(answer ? passed.terminator.taken() : passed.terminator.notTaken());
+                    return passed.terminator.conditionOperand() == parameters[0] && chosen.arguments().empty() ? chosen.to : BlockID();
+                }
+                if (passed.terminator.kind != TerminatorKind::Jump || !code.at(passed.terminator.next()).arguments().empty())
+                    break;
+                block = code.at(passed.terminator.next()).to;
+            }
+            return BlockID();
+        }).iterator->value;
+    };
     auto placeBehind = [&](EdgeID id) {
         const Edge& edge = code.at(id);
         someEdgeBringsValues |= !edge.arguments().empty();
@@ -79,10 +107,11 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
             if (!passed.parameters().empty() || !code.valuesOf(block).empty() || passed.terminator.kind != TerminatorKind::Jump)
                 break;
             const Edge& next = code.at(passed.terminator.next());
-            if (!next.arguments().empty())
+            BlockID behind = next.arguments().empty() ? next.to : blockBehindAnswerBroughtBy(next);
+            if (!behind)
                 break;
             passedBy.append(block);
-            block = next.to;
+            block = behind;
         }
         for (BlockID passed : passedBy)
             placesBehindEmptyBlocks.set(passed.index(), block);
@@ -101,8 +130,10 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
         if (type == Machine::Int32 && caseValue != static_cast<int32_t>(caseValue))
             continue;
         BlockID behind = placeBehind(terminator->caseEdge(index));
-        if (behind == rest)
+        if (behind == rest) {
+            takenIn.casesOfFirstThatLeadOn.set(index);
             continue;
+        }
         if (!place) {
             place = behind;
             firstCaseOfPlace = index;
@@ -112,6 +143,43 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
         least = std::min(least, caseValue);
         greatest = std::max(greatest, caseValue);
         ++numberOfListedCases;
+    }
+    while (place && !someEdgeBringsValues && !generator().isTakenIntoSwitchInFront(terminator.block()) && takenIn.casesThatLeadToPlace.size() < code.numberOfEdges()) {
+        const Block& behindOtherwise = code.at(rest);
+        const Terminator& next = behindOtherwise.terminator;
+        if (!behindOtherwise.parameters().empty() || !code.valuesOf(rest).empty() || next.kind != TerminatorKind::Switch || next.subjectOperand() != terminator->subjectOperand() || &next == &terminator.terminator())
+            break;
+        std::optional<BlockEdge> otherwiseOfNext = generator().edgeThatBringsNothing(next.otherwise());
+        if (!otherwiseOfNext)
+            break;
+        BlockID restOfNext = placeBehind(next.otherwise());
+        PayloadListView<int64_t> casesOfNext = next.cases();
+        size_t numberTakenInBefore = takenIn.casesThatLeadToPlace.size();
+        for (uint32_t index = 0; index < casesOfNext.size() && !someEdgeBringsValues; ++index) {
+            BlockID behind = placeBehind(next.caseEdge(index));
+            if (behind == restOfNext || (type == Machine::Int32 && casesOfNext[index] != static_cast<int32_t>(casesOfNext[index])))
+                continue;
+            someEdgeBringsValues |= behind != place;
+            takenIn.casesThatLeadToPlace.append(casesOfNext[index]);
+        }
+        if (someEdgeBringsValues) {
+            someEdgeBringsValues = false;
+            takenIn.casesThatLeadToPlace.shrink(numberTakenInBefore);
+            break;
+        }
+        takenIn.otherwise = otherwiseOfNext;
+        generator().noteSwitchTakenIntoSwitchInFront(rest);
+        rest = restOfNext;
+        build().statistics().count(StatisticID::SwitchesTakenIntoSwitchInFront);
+    }
+    if (takenIn.otherwise) {
+        takenIn.firstCaseOfPlace = firstCaseOfPlace;
+        otherwise = *takenIn.otherwise;
+        for (int64_t caseValue : takenIn.casesThatLeadToPlace) {
+            least = std::min(least, caseValue);
+            greatest = std::max(greatest, caseValue);
+            ++numberOfListedCases;
+        }
     }
     if (someEdgeBringsValues || numberOfListedCases < Machine::minCasesForJumpTable)
         return false;
@@ -131,6 +199,8 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
         RELEASE_ASSERT(!entry);
         entry = placeBehind(terminator->caseEdge(index)) == place ? leadsToPlace : leadsToRest;
     }
+    for (int64_t caseValue : takenIn.casesThatLeadToPlace)
+        isListed[static_cast<size_t>(static_cast<uint64_t>(caseValue) - static_cast<uint64_t>(least))] |= leadsToPlace;
     for (uint8_t& entry : isListed)
         entry &= leadsToPlace;
     uint32_t constant = m_out.addConstantData(isListed.span(), ConstantKind::Unlabeled);
@@ -148,25 +218,38 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
     return true;
 }
 
-void ControlEmitter::switchOnInteger(const TerminatorContext& terminator, LValue subject, LType type, BlockEdge otherwise)
+BlockEdge ControlEmitter::switchOnInteger(const TerminatorContext& terminator, LValue subject, LType type, BlockEdge otherwise)
 {
     RELEASE_ASSERT(subject->type() == type && (type == Machine::Int32 || type == Machine::Int64));
-    if (testByteOfTableInPlaceOfSwitch(terminator, subject, type, otherwise))
-        return;
+    SwitchesBehindSwitch takenIn;
+    if (testByteOfTableInPlaceOfSwitch(terminator, subject, type, otherwise, takenIn))
+        return takenIn.otherwise.value_or(otherwise);
     PayloadListView<int64_t> cases = terminator->cases();
     Vector<SwitchTarget, 8> targets;
-    targets.reserveInitialCapacity(cases.size());
+    targets.reserveInitialCapacity(cases.size() + takenIn.casesThatLeadToPlace.size());
     for (uint32_t index = 0; index < cases.size(); ++index) {
         int64_t caseValue = cases[index];
-        if (type == Machine::Int32 && caseValue != static_cast<int32_t>(caseValue))
+        if ((type == Machine::Int32 && caseValue != static_cast<int32_t>(caseValue)) || (takenIn.otherwise && takenIn.casesOfFirstThatLeadOn.get(index)))
             continue;
         targets.append(SwitchTarget { caseValue, generator().edgeTo(terminator, index) });
     }
+    if (takenIn.otherwise) {
+        otherwise = *takenIn.otherwise;
+        Vector<int64_t, 16> listed(targets.size(), [&](size_t index) { return targets[index].caseValue; });
+        std::ranges::sort(listed);
+        std::ranges::sort(takenIn.casesThatLeadToPlace);
+        takenIn.casesThatLeadToPlace.shrink(std::ranges::unique(takenIn.casesThatLeadToPlace).begin() - takenIn.casesThatLeadToPlace.begin());
+        for (int64_t caseValue : takenIn.casesThatLeadToPlace) {
+            if (!std::ranges::binary_search(listed, caseValue))
+                targets.append(SwitchTarget { caseValue, generator().edgeTo(terminator, takenIn.firstCaseOfPlace) });
+        }
+    }
     if (targets.isEmpty()) {
         m_out.jump(otherwise);
-        return;
+        return otherwise;
     }
     m_out.switchOn(subject, targets.span(), otherwise);
+    return otherwise;
 }
 
 void ControlEmitter::switchOnBoxedInteger(const TerminatorContext& terminator, Boxed subject, BlockEdge otherwise)
@@ -186,14 +269,20 @@ void ControlEmitter::switchOnBoxedInteger(const TerminatorContext& terminator, B
     join.add(signExtended(unboxInt32(subject)));
 
     m_out.appendTo(isOtherSubject);
+    LBasicBlock isNoNumber = nullptr;
     if (!subjectType.isNumber()) {
         LBasicBlock isDoubleSubject = newBlock();
-        branch(isNumber(subject), { normalEdge(isDoubleSubject), otherwise });
+        isNoNumber = newBlock();
+        branch(isNumber(subject), { normalEdge(isDoubleSubject), BlockEdge(isNoNumber, otherwise.edgeClass()) });
         m_out.appendTo(isDoubleSubject);
     }
     join.add(callLeaf<Integer>(RuntimeOperation::TryConvertToInteger, { subject }));
 
-    switchOnInteger(terminator, join.finish().value(), Machine::Int64, otherwise);
+    BlockEdge rest = switchOnInteger(terminator, join.finish().value(), Machine::Int64, otherwise);
+    if (isNoNumber) {
+        m_out.appendTo(isNoNumber);
+        m_out.jump(rest);
+    }
 }
 
 void ControlEmitter::generateSwitchOnShape(const TerminatorContext& terminator)

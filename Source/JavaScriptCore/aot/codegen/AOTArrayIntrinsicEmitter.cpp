@@ -153,7 +153,8 @@ void ArrayIntrinsicEmitter::generateGetContiguousIndex(const ValueContext& value
 
 Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext& value, const ArrayElements& storage, const ArrayStorageForm& form, AccessVouchedFor access)
 {
-    Integer index = integerOperand(value->positionOperand());
+    Operand position = get(value->positionOperand());
+    Integer index = position.representation == Representation::Int32 ? Integer(m_out.extendWordThatIsNotNegative(position.as<Word32>().value())) : integerOperand(value->positionOperand());
     if (elements().testsEveryPosition()) {
         bool writes = access == AccessVouchedFor::Writes;
         Word32 mode = elements().indexingMode(elements().askedAnew(storage.array), writes ? IndexingShapeAndWritabilityMask : arrayStorageTestMask);
@@ -443,6 +444,38 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
         m_out.appendTo(holdsNoIntegers);
         branchUnless(elements().hasWritableShape(mode, doubles), otherwise);
         storeInForm(doubles);
+
+        m_out.appendTo(otherwise);
+        isStored.add(boolean(false));
+        define(value, isStored.finish());
+        return;
+    }
+    if (!formOfList && get(stored).is<Boxed>() && (typeOf(stored).primitives & Primitive::Integer) && !typeOf(stored).isNumber()) {
+        LBasicBlock holdsAnything = newBlock();
+        LBasicBlock holdsNoCells = newBlock();
+        Join<Condition> isStored(m_out);
+        Boxed word = get(stored).as<Boxed>();
+        Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+        branch(elements().hasWritableShape(mode, contiguous), { normalEdge(holdsAnything), normalEdge(holdsNoCells) });
+
+        m_out.appendTo(holdsAnything);
+        {
+            ArrayElements found = elements().elementsOf(array);
+            branchUnless(below(index, elements().publicLength(found)), otherwise);
+            elements().storeRawElement(contiguous, found, index, Operand(word));
+            barrierAfterStore(value, array, typeOf(stored));
+            isStored.add(boolean(true));
+        }
+
+        m_out.appendTo(holdsNoCells);
+        {
+            branchUnless(elements().hasWritableShape(mode, int32s), otherwise);
+            branchUnless(isInt32(word), otherwise);
+            ArrayElements found = elements().elementsOf(array);
+            branchUnless(below(index, elements().publicLength(found)), otherwise);
+            elements().storeRawElement(int32s, found, index, Operand(word));
+            isStored.add(boolean(true));
+        }
 
         m_out.appendTo(otherwise);
         isStored.add(boolean(false));

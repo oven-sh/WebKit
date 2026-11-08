@@ -32,10 +32,9 @@ static TypeID typeByConstructionOfEntryParameter(const TypingContext& context, c
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-TypeID declaredEntryTypeOf(const TypingContext& context, FunctionID callee, unsigned entryParameterIndex)
+static TypeID findDeclaredEntryType(const TypingContext& context, FunctionID callee, unsigned entryParameterIndex, TypeID known)
 {
     TypeID byConstruction = typeByConstructionOfEntryParameter(context, context.program.at(callee), entryParameterIndex);
-    TypeID known = context.positions.entryParameter(context.level, callee, entryParameterIndex);
     if (!byConstruction || !known)
         return byConstruction ? byConstruction : known;
 
@@ -47,6 +46,19 @@ TypeID declaredEntryTypeOf(const TypingContext& context, FunctionID callee, unsi
 
     TypeID both = context.types.intersectionOf(byConstruction, known);
     return isNeverType(both) ? byConstruction : both;
+}
+
+TypeID declaredEntryTypeOf(const TypingContext& context, FunctionID callee, unsigned entryParameterIndex)
+{
+    TypeID known = context.positions.entryParameter(context.level, callee, entryParameterIndex);
+    if (context.level != TypeLevel::Proven || !context.believesWhatFrontEndHasEstablished)
+        return findDeclaredEntryType(context, callee, entryParameterIndex, known);
+    TypeArena::TypeTakenAtEntry& last = context.types.typeTakenLastAtEntry(callee.index(), entryParameterIndex);
+    if (last.function == callee.index() && last.entryParameter == entryParameterIndex && last.known == known.bits() && last.epoch == context.types.epoch())
+        return last.taken;
+    TypeID taken = findDeclaredEntryType(context, callee, entryParameterIndex, known);
+    last = { callee.index(), entryParameterIndex, known.bits(), context.types.epoch(), taken };
+    return taken;
 }
 
 static TypeID requiredTypeOfEstablishedPosition(const TypingContext& context, const DeclaredType& declared)

@@ -435,7 +435,7 @@ Operand AllocationEmitter::takeForSlot(const InitialField& field)
     return isNarrowedWhereStored(field) ? Operand(compress(in<CellPointer>(field.value))) : get(field.value);
 }
 
-void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
+ALWAYS_INLINE void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
     struct WordStoredOften {

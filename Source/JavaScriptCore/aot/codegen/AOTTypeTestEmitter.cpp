@@ -340,6 +340,11 @@ void TypeTestEmitter::testBoxed(Boxed value, const TypeTestPlan& plan, BlockEdge
                 testNonCell(value, plan, failure);
                 return;
             }
+            if (generator().wordWhoseHoleIsLeftToTestAtWork() == value.value() && !(present.passingPrimitives & ~cellPrimitives)) {
+                leaveUnless(isCellAndNotEmpty(value), failure);
+                testCell(unboxCell(value), present, failure);
+                return;
+            }
             leaveUnless(isNotEmpty(value), failure);
             testBoxed(value, present, failure);
             return;

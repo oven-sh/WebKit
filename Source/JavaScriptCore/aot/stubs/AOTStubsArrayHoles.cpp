@@ -369,6 +369,151 @@ void generateNewArrayFromBuffer(StubAssembler& jit)
     });
 }
 
+StubSignature signatureOfNewArrayOfList(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+
+void generateNewArrayOfList(StubAssembler& jit)
+{
+    static_assert(Int32Shape + 4 == ContiguousShape && AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) == AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header) + 16);
+    static_assert(Int32Shape + 2 == DoubleShape && AOT_INSTANCE_PREFIX_OFFSET(newArrayWithDoubleHeader) == AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header) + 8);
+    static_assert(std::is_same_v<decltype(&operationAOTNewArrayOfList), JSCell* (JIT_OPERATION_ATTRIBUTES *)(Instance*, JSCell*, uint32_t)>);
+    const bool isContiguous = jit.key().form();
+    const GPRReg iterable = jit.operand(0);
+    const GPRReg capacity = jit.clobberOperand(1);
+    const GPRReg array = jit.result();
+    const GPRReg relativeShape = jit.allocateScratch(StubRegister::T9);
+    const GPRReg source = jit.allocateScratch(StubRegister::T10);
+    const GPRReg count = jit.allocateScratch(StubRegister::T11);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
+    const GPRReg element = jit.allocateScratch(StubRegister::T13);
+    const GPRReg position = jit.allocateScratch(StubRegister::T14);
+    const GPRReg allocator = position;
+    RELEASE_ASSERT(noOverlap(iterable, capacity, array, relativeShape, source, count, storage, element, position));
+
+    JumpList isNotServed;
+    isNotServed.append(jit.branchIfNotCell(iterable));
+    isNotServed.append(jit.branch8(CCallHelpers::NotEqual, Address(iterable, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType)));
+    loadPristineArrayKind(jit, iterable, relativeShape, IndexingShapeMask);
+    jit.sub32(TrustedImm32(Int32Shape), relativeShape);
+    isNotServed.append(jit.branch32(CCallHelpers::Above, relativeShape, TrustedImm32(ContiguousShape - Int32Shape)));
+    jit.loadPtr(Address(iterable, JSObject::butterflyOffset()), source);
+    jit.load32(Address(source, Butterfly::offsetOfPublicLength()), count);
+    isNotServed.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(maxHoleArrayCapacity)));
+    jit.add32(count, capacity);
+    jit.or32(TrustedImm32(1), capacity);
+    isNotServed.append(jit.branch32(CCallHelpers::Above, capacity, TrustedImm32(maxHoleArrayCapacity)));
+    isNotServed.append(branchIfHavingABadTime(jit));
+    JumpList callsOperation;
+    emitLoadAllocatorForCapacity(jit, capacity, element, allocator);
+    callsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, array, allocator, element, callsOperation);
+
+    jit.addPtr(TrustedImm32(sizeof(JSArray)), array, storage);
+    jit.store32(count, Address(storage, 0));
+    jit.store32(capacity, Address(storage, sizeof(uint32_t)));
+    jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
+    Jump holdsFractions = jit.branch32(CCallHelpers::Equal, relativeShape, TrustedImm32(DoubleShape - Int32Shape));
+    Label clear = jit.label();
+    jit.sub32(TrustedImm32(1), capacity);
+    jit.store64(TrustedImm32(0), BaseIndex(storage, capacity, CCallHelpers::TimesEight));
+    jit.branch32(CCallHelpers::Above, capacity, count).linkTo(clear, &jit);
+    jit.move(TrustedImm32(isContiguous ? ContiguousShape - Int32Shape : 0), relativeShape);
+    JumpList isFilled;
+    isFilled.append(jit.branchTest32(CCallHelpers::Zero, count));
+    jit.move(TrustedImm32(0), position);
+    if (!isContiguous) {
+        Label copyWholeNumber = jit.label();
+        jit.load64(BaseIndex(source, position, CCallHelpers::TimesEight), element);
+        Jump isNoWholeNumber = jit.branchIfNotInt32(element);
+        jit.store64(element, BaseIndex(storage, position, CCallHelpers::TimesEight));
+        jit.add32(TrustedImm32(1), position);
+        jit.branch32(CCallHelpers::Below, position, count).linkTo(copyWholeNumber, &jit);
+        isFilled.append(jit.jump());
+        isNoWholeNumber.link(&jit);
+        jit.move(TrustedImm32(ContiguousShape - Int32Shape), relativeShape);
+    }
+    Label copy = jit.label();
+    jit.load64(BaseIndex(source, position, CCallHelpers::TimesEight), element);
+    Jump isHole = jit.branchTest64(CCallHelpers::Zero, element);
+    Label behindHole = jit.label();
+    jit.store64(element, BaseIndex(storage, position, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), position);
+    jit.branch32(CCallHelpers::Below, position, count).linkTo(copy, &jit);
+    Label isFilledHere = jit.label();
+    isFilled.link(&jit);
+    jit.load64(BaseIndex(instanceGPR, relativeShape, CCallHelpers::TimesFour, AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header)), element);
+    jit.storePair64(element, storage, array, TrustedImm32(0));
+    fenceAfterAllocation(jit);
+    jit.returnToCaller();
+
+    isHole.link(&jit);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), element);
+    jit.jump().linkTo(behindHole, &jit);
+
+    const GPRReg doubled = relativeShape;
+    const GPRReg infinityDoubled = capacity;
+    holdsFractions.link(&jit);
+    if (!isContiguous) {
+        jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), element);
+        Label clearFractions = jit.label();
+        jit.sub32(TrustedImm32(1), capacity);
+        jit.store64(element, BaseIndex(storage, capacity, CCallHelpers::TimesEight));
+        jit.branch32(CCallHelpers::Above, capacity, count).linkTo(clearFractions, &jit);
+        jit.branchTest32(CCallHelpers::Zero, count).linkTo(isFilledHere, &jit);
+        jit.move(TrustedImm64(static_cast<int64_t>(PureDoubleBits::infinityDoubled)), infinityDoubled);
+        jit.move(TrustedImm32(0), position);
+        Label copyFraction = jit.label();
+        jit.load64(BaseIndex(source, position, CCallHelpers::TimesEight), element);
+        Jump isHoleAmongFractions;
+        PureDoubleBits::branchIfNaN(jit, element, doubled, infinityDoubled, isHoleAmongFractions);
+        jit.store64(element, BaseIndex(storage, position, CCallHelpers::TimesEight));
+        jit.add32(TrustedImm32(1), position);
+        jit.branch32(CCallHelpers::Below, position, count).linkTo(copyFraction, &jit);
+        jit.move(TrustedImm32(DoubleShape - Int32Shape), relativeShape);
+        jit.jump().linkTo(isFilledHere, &jit);
+
+        isHoleAmongFractions.link(&jit);
+        jit.load32(Address(storage, -static_cast<int32_t>(sizeof(uint32_t))), capacity);
+    }
+    Label clearValues = jit.label();
+    jit.sub32(TrustedImm32(1), capacity);
+    jit.store64(TrustedImm32(0), BaseIndex(storage, capacity, CCallHelpers::TimesEight));
+    jit.branch32(CCallHelpers::Above, capacity, count).linkTo(clearValues, &jit);
+    jit.move(TrustedImm32(ContiguousShape - Int32Shape), relativeShape);
+    jit.branchTest32(CCallHelpers::Zero, count).linkTo(isFilledHere, &jit);
+    jit.move(TrustedImm64(static_cast<int64_t>(PureDoubleBits::infinityDoubled)), infinityDoubled);
+    jit.move(TrustedImm32(0), position);
+    Label boxFraction = jit.label();
+    jit.load64(BaseIndex(source, position, CCallHelpers::TimesEight), element);
+    Jump isHoleToBox;
+    boxDoubleBits(jit, PureDoubleBits::branchIfNaN(jit, element, doubled, infinityDoubled, isHoleToBox));
+    Label behindHoleToBox = jit.label();
+    jit.store64(element, BaseIndex(storage, position, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), position);
+    jit.branch32(CCallHelpers::Below, position, count).linkTo(boxFraction, &jit);
+    jit.move(TrustedImm32(ContiguousShape - Int32Shape), relativeShape);
+    jit.jump().linkTo(isFilledHere, &jit);
+
+    isHoleToBox.link(&jit);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), element);
+    jit.jump().linkTo(behindHoleToBox, &jit);
+
+    isNotServed.link(&jit);
+    jit.move(TrustedImm32(0), array);
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    jit.lshift32(TrustedImm32(1), capacity);
+    if (isContiguous)
+        jit.or32(TrustedImm32(1), capacity);
+    jit.callOperationAndReturn(Entry::operationAOTNewArrayOfList, {
+        .returns = OperationCall::Returns::Value,
+        .saves = OperationCall::Saves::CallerSavedRegisters,
+        .checksException = false,
+        .secondArgumentIn = iterable,
+        .thirdArgumentIn = capacity,
+    });
+}
+
 void emitEmptyArrayOfHoles(StubAssembler& jit, EmptyArray form)
 {
     switch (form) {

@@ -82,7 +82,7 @@ static void runInProcessWithCompiledCodeOptions()
     }
 
     ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--numberOfGCMarkers=4"_s };
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--numberOfGCMarkers=4"_s, "--minimumGCPauseMS=10000"_s, "--gcPauseScale=10000"_s };
     ChildProcessResult result = launcher.run(arguments.span());
     if (!result.exitedWith(0)) {
         dataLogLn(result.output);
@@ -201,7 +201,8 @@ static void checkSmallHeapStartsNoHelper()
     for (unsigned index = 0; index < 10; ++index)
         holder->putDirectIndex(realm, index, constructEmptyObject(realm));
     test.heap().collectSync(CollectionScope::Eden);
-    AOT_TEST_CHECK(!test.heap().didSkipMarkingInLastCollection() && !test.heap().collector().hasStartedHelpers());
+    AOT_TEST_CHECK(!test.heap().didSkipMarkingInLastCollection());
+    AOT_TEST_CHECK(!test.heap().collector().hasStartedHelpers());
     AOT_TEST_CHECK(heapHelperPool().numberOfThreads() == 1);
     ensureStillAliveHere(holder);
 }

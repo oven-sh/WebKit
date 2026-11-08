@@ -867,7 +867,10 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
     if (classLayout && object->getPrototypeDirect() != prototype)
         closure->state().objects->classes.didChangePrototypeLink(*classLayout, ClassSide::Static);
     JSValue prototypeBefore = object->getPrototypeDirect();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool result = Base::setPrototype(object, globalObject, prototype, shouldThrow);
+    if (Exception* exception = scope.exception(); exception && !vm.isTerminationException(exception)) [[unlikely]]
+        return false;
     if (object->getPrototypeDirect() != prototypeBefore)
         holdClosureToItsPrototype(vm, closure);
     if (classLayout)

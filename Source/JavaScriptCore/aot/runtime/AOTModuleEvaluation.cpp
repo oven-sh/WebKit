@@ -19,11 +19,13 @@
 #include "AOTProgramStatics.h"
 #include "AOTRuntimeHooks.h"
 #include "AOTRuntimeReporter.h"
+#include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubEntrypoints.h"
 #include "AOTVMState.h"
 #include "ExceptionHelpers.h"
+#include "FrameTracers.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
@@ -640,20 +642,71 @@ void Modules::forgetTemplateObjects(ModuleID file)
     });
 }
 
+void Modules::leaveModuleObjectToRunThatThrew(ModuleID file)
+{
+    SuspendExceptionScope errorStillThrown(*m_instance.vm);
+    DeferTerminationForAWhile noTerminationArrives(*m_instance.vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+    JSObject* objectOfRun = objectThatStandsForModuleIfMade(file);
+    for (const FirstRequire& first : m_firstRequires) {
+        if (first.requirer != file || firstRequirerOf(first.required) != file || ensureLoaded(first.required).firstRequirerOutsideImage)
+            continue;
+        if (!objectOfRun) {
+            objectOfRun = objectThatStandsForModule(file);
+            if (scope.exception()) [[unlikely]]
+                return;
+        }
+        ensureLoaded(first.required).firstRequirerOutsideImage.set(*this, objectOfRun);
+    }
+    if (objectOfRun && !keepsModuleObjectToItself(file) && host().didForgetRunOfModuleObject) {
+        host().didForgetRunOfModuleObject(m_instance.globalObject, objectOfRun, false);
+        ensureLoaded(file).moduleObjectOfRunThatThrew.set(*this, objectOfRun);
+    }
+    static_cast<void>(scope.exception());
+}
+
+void Modules::unbindModuleObjectOfRunThatThrew(ModuleID file)
+{
+    LoadedModule* loaded = loadedIfExists(file);
+    if (!loaded || !loaded->moduleObjectOfRunThatThrew) [[likely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    JSObject* objectOfRun = loaded->moduleObjectOfRunThatThrew;
+    loaded->moduleObjectOfRunThatThrew.set(*this, nullptr);
+    for (const FirstRequire& first : m_firstRequires) {
+        if (first.requirer == file && firstRequirerOf(first.required) == file && !ensureLoaded(first.required).firstRequirerOutsideImage)
+            ensureLoaded(first.required).firstRequirerOutsideImage.set(*this, objectOfRun);
+    }
+    host().didForgetRunOfModuleObject(m_instance.globalObject, objectOfRun, true);
+    RETURN_IF_EXCEPTION(scope, void());
+    forgetWhatFileRequired(file);
+}
+
+void Modules::forgetWhatFileRequired(ModuleID file)
+{
+    if (WaysToModule* ways = waysToIfRecorded(file)) {
+        ways->requiredModules.clear();
+        ways->numberOfChildrenShown = 0;
+    }
+    m_recordedRequires.removeIf([&](const auto& recorded) {
+        return recorded.key >> 32 == static_cast<uint64_t>(file.index()) + 1;
+    });
+}
+
 void Modules::forgetRunThatThrew(ModuleID file)
 {
+    leaveModuleObjectToRunThatThrew(file);
     letGoOfModuleObject(file);
     forgetTemplateObjects(file);
     if (LoadedModule* loaded = loadedIfExists(file)) {
         loaded->requiredValue.set(*this, JSValue());
         loaded->firstRequirerOutsideImage.set(*this, nullptr);
         loaded->synchronousLoadCountAtStart = std::nullopt;
+        loaded->hasFirstRequireOfRunThatThrew = true;
     }
-    if (WaysToModule* ways = waysToIfRecorded(file)) {
-        ways->requiredModules.clear();
-        ways->numberOfChildrenShown = 0;
+    forgetWhatFileRequired(file);
+    if (WaysToModule* ways = waysToIfRecorded(file))
         ways->firstRequirer = std::nullopt;
-    }
     m_recordedRequires.removeIf([&](const auto& recorded) {
         return static_cast<uint32_t>(recorded.key) == file.index();
     });
@@ -1270,7 +1323,7 @@ Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID r
         }
     }
     Vector<uint32_t, 16> inOrder = places;
-    std::ranges::stable_sort(inOrder, { }, [&](uint32_t place) {
+    AOT::stableSort(inOrder, { }, [&](uint32_t place) {
         return ranks.get(requests[place].target());
     });
     return inOrder;
@@ -1953,6 +2006,8 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
             ModuleID imported = request.targetModule();
             if (data(imported).isUncompiledCode()) [[unlikely]]
                 imported = moduleLoadedBy(request);
+            if (isAheadOfTestFiles && data(imported).isOfLibrary())
+                m_libraryModulesAskedForInPreload.set(imported.index());
             if (!data(imported).isESModuleOfProgram())
                 continue;
             if (mockInPlace(imported))
@@ -3613,6 +3668,8 @@ void Modules::evaluateCommonJS(ModuleID module)
     if (moduleStatus == ModuleStatus::Failed)
         RELEASE_AND_RETURN(scope, throwEvaluationError(module));
     RELEASE_ASSERT(moduleStatus == ModuleStatus::Unlinked || moduleStatus == ModuleStatus::Linked);
+    unbindModuleObjectOfRunThatThrew(module);
+    RETURN_IF_EXCEPTION(scope, void());
     if (moduleStatus == ModuleStatus::Unlinked) {
         link(module);
         RETURN_IF_EXCEPTION(scope, void());
@@ -3747,6 +3804,7 @@ void Modules::takeModuleObject(ModuleID module, const ModuleObjects& objects)
 {
     LoadedModule& loaded = ensureLoaded(module);
     RELEASE_ASSERT(!loaded.requirer && objects.module);
+    notePrototypeOfModuleObjects(objects.module);
     loaded.requirer.set(*this, objects.module);
     loaded.requireFunction.set(*this, objects.require);
 }
@@ -3788,6 +3846,12 @@ JSObject* Modules::moduleObject(ModuleID module)
     LoadedModule& loaded = ensureLoaded(module);
     if (loaded.requirer)
         return loaded.requirer;
+    if (loaded.moduleObjectOfRunThatThrew) [[unlikely]] {
+        if (status(module) <= ModuleStatus::Linked)
+            return loaded.moduleObjectOfRunThatThrew;
+        unbindModuleObjectOfRunThatThrew(module);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
 
     ModuleObjects objects;
     if (data(module).kind == ModuleKind::CommonJs) {
@@ -3798,6 +3862,7 @@ JSObject* Modules::moduleObject(ModuleID module)
         host().createRequirer(realm, meta, module, objects);
     }
     RETURN_IF_EXCEPTION(scope, nullptr);
+    notePrototypeOfModuleObjects(objects.module);
     loaded.requirer.set(*this, objects.module);
     if (data(module).kind == ModuleKind::CommonJs) {
         loaded.moduleObjectOverExportsVariable.set(*this, objects.module);
@@ -3824,10 +3889,121 @@ JSObject* Modules::moduleObjectMadeByRequire(ModuleID module)
     ModuleObjects objects;
     host().createModuleObject(m_instance.globalObject, pathString(module), module, traits, objects);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    notePrototypeOfModuleObjects(objects.module);
     objects.module->putDirect(vm, vm.propertyNames->exports, answered);
     ensureLoaded(module).objectMadeByRequire.set(*this, objects.module);
     ensureLoaded(module).exportsGivenToObjectMadeByRequire.set(*this, answered);
     return objects.module;
+}
+
+namespace {
+
+class StandInForModuleObject final : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | OverridesGetPrototype | ProhibitsPropertyCaching;
+
+    template<typename CellType, SubspaceAccess>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(StandInForModuleObject, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    static StandInForModuleObject* create(VM& vm, JSGlobalObject* realm, const String& messageOfRefusal)
+    {
+        Structure* structure = Structure::create(vm, realm, jsNull(), TypeInfo(ObjectType, StructureFlags), info());
+        auto* standIn = new (NotNull, allocateCell<StandInForModuleObject>(vm)) StandInForModuleObject(vm, structure);
+        standIn->finishCreation(vm);
+        standIn->putDirect(vm, vm.propertyNames->message, jsString(vm, messageOfRefusal));
+        return standIn;
+    }
+
+    DECLARE_INFO;
+
+    static bool getOwnPropertySlot(JSObject* object, JSGlobalObject* realm, PropertyName name, PropertySlot& slot)
+    {
+        if (slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry)
+            return Base::getOwnPropertySlot(object, realm, name, slot);
+        return isAnsweredByModuleObject(object, realm, name) && refuse(object);
+    }
+    static void getOwnPropertyNames(JSObject* object, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode) { refuse(object); }
+    static bool put(JSCell* cell, JSGlobalObject* realm, PropertyName name, JSValue value, PutPropertySlot& slot)
+    {
+        if (slot.thisValue() != JSValue(cell) && !isAnsweredByModuleObject(asObject(cell), realm, name))
+            return Base::put(cell, realm, name, value, slot);
+        return refuse(cell);
+    }
+    static bool putByIndex(JSCell* cell, JSGlobalObject*, unsigned, JSValue, bool) { return refuse(cell); }
+    static bool deleteProperty(JSCell* cell, JSGlobalObject* realm, PropertyName name, DeletePropertySlot&) { return !isAnsweredByModuleObject(asObject(cell), realm, name) || refuse(cell); }
+    static bool defineOwnProperty(JSObject* object, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool) { return refuse(object); }
+    static JSValue getPrototype(JSObject* object, JSGlobalObject*)
+    {
+        JSObject* prototype = modulesOf(object->globalObject())->prototypeOfModuleObjects();
+        return prototype ? JSValue(prototype) : jsNull();
+    }
+    static bool setPrototype(JSObject* object, JSGlobalObject*, JSValue, bool) { return refuse(object); }
+
+private:
+    StandInForModuleObject(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    static bool isAnsweredByModuleObject(JSObject* standIn, JSGlobalObject* realm, PropertyName name)
+    {
+        VM& vm = realm->vm();
+        if (name == vm.propertyNames->exports || name == Identifier::fromString(vm, "require"_s))
+            return true;
+        JSObject* prototype = modulesOf(standIn->globalObject())->prototypeOfModuleObjects();
+        if (!prototype)
+            return false;
+        PropertySlot slot(prototype, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        return prototype->methodTable()->getOwnPropertySlot(prototype, realm, name, slot);
+    }
+
+    static bool refuse(JSCell* cell)
+    {
+        JSObject* standIn = asObject(cell);
+        JSGlobalObject* realm = standIn->globalObject();
+        VM& vm = realm->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(realm, scope, createError(realm, asString(standIn->getDirect(vm, vm.propertyNames->message))->tryGetValue()));
+        return false;
+    }
+};
+
+const ClassInfo StandInForModuleObject::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(StandInForModuleObject) };
+
+} // namespace
+
+void Modules::notePrototypeOfModuleObjects(JSObject* freshModuleObject)
+{
+    JSValue prototype = freshModuleObject->getPrototypeDirect();
+    if (m_prototypeOfModuleObjects || !prototype.isObject())
+        return;
+    m_prototypeOfModuleObjects = asObject(prototype);
+    m_storedReferences.recordAll();
+}
+
+JSObject* Modules::objectThatStandsForModule(ModuleID module)
+{
+    if (!keepsModuleObjectToItself(module))
+        return moduleObjectMadeByRequire(module);
+    LoadedModule& loaded = ensureLoaded(module);
+    if (!loaded.standInForModuleObject)
+        loaded.standInForModuleObject.set(*this, StandInForModuleObject::create(*m_instance.vm, m_instance.globalObject, moduleObjectRefusedMessage(m_table.pathText(module))));
+    return loaded.standInForModuleObject;
+}
+
+JSObject* Modules::objectThatStandsForModuleIfMade(ModuleID module)
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    if (!loaded)
+        return nullptr;
+    if (keepsModuleObjectToItself(module))
+        return loaded->standInForModuleObject;
+    return data(module).kind == ModuleKind::CommonJs ? loaded->requirer.get() : loaded->objectMadeByRequire.get();
 }
 
 JSObject* Modules::mainModuleObject(ModuleID main)
@@ -3910,9 +4086,17 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         return;
     if (isCommonJSFile)
         noteRequireOfFile(target);
-    if (m_isMainCommonJSModuleDecided && (!mayHandOutModuleObject(target) || !mayHandOutModuleObject(referrer)))
-        return;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (isCommonJSFile && status(target) <= ModuleStatus::Linked) {
+        LoadedModule* required = loadedIfExists(target);
+        JSObject* objectOfRunThatThrew = required ? required->moduleObjectOfRunThatThrew.get() : nullptr;
+        if (objectOfRunThatThrew) [[unlikely]] {
+            unbindModuleObjectOfRunThatThrew(target);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (referrer == target)
+                required->firstRequirerOutsideImage.set(*this, objectOfRunThatThrew);
+        }
+    }
     uint64_t pair = (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
     auto recorded = m_recordedRequires.add(pair, RecordedRequire::Begun);
     if (recorded.isNewEntry) {
@@ -3922,7 +4106,11 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         if (firstRequirerOf(target) || (required && required->firstRequirerOutsideImage) || (isCommonJSFile && wasRequestedByLoader(target)))
             return;
         ensureWaysTo(target).firstRequirer = referrer;
-        m_firstRequires.append({ referrer, target });
+        bool isListed = required && std::exchange(required->hasFirstRequireOfRunThatThrew, false) && m_firstRequires.containsIf([&](const FirstRequire& first) {
+            return first.requirer == referrer && first.required == target;
+        });
+        if (!isListed)
+            m_firstRequires.append({ referrer, target });
         if (targetData.kind == ModuleKind::SourceText)
             recorded.iterator->value = RecordedRequire::BegunAndMadeObjectOfESModule;
         if (!m_isMainCommonJSModuleDecided)
@@ -3957,14 +4145,12 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
     }
     case RecordedRequire::Returned: {
         LoadedModule* requirer = loadedIfExists(referrer);
-        LoadedModule* required = loadedIfExists(target);
-        JSObject* objectOfRequired = !required ? nullptr : isCommonJSFile ? required->requirer.get() : required->objectMadeByRequire.get();
-        if (objectOfRequired && objectOfRequired->structureID() != required->idOfStructureOfModuleObjectLastLookedAt) [[unlikely]] {
+        JSObject* objectOfRequired = objectThatStandsForModuleIfMade(target);
+        if (objectOfRequired && !keepsModuleObjectToItself(target) && objectOfRequired->structureID() != loadedIfExists(target)->idOfStructureOfModuleObjectLastLookedAt) [[unlikely]] {
             lookAtExportsOfModuleObject(target, answeredBy);
             RETURN_IF_EXCEPTION(scope, void());
             requirer = loadedIfExists(referrer);
-            required = loadedIfExists(target);
-            objectOfRequired = !required ? nullptr : isCommonJSFile ? required->requirer.get() : required->objectMadeByRequire.get();
+            objectOfRequired = objectThatStandsForModuleIfMade(target);
         }
         if (requirer && requirer->requirer && objectOfRequired && host().showChildren) {
             host().showChildren(m_instance.globalObject, requirer->requirer, objectOfRequired);
@@ -4077,6 +4263,8 @@ void Modules::letGoOfModuleObject(ModuleID file)
             load->requested.quickClear(file.index());
     }
     LoadedModule* loaded = loadedIfExists(file);
+    if (loaded)
+        loaded->standInForModuleObject.set(*this, nullptr);
     if (!loaded || !loaded->requirer)
         return;
     layValueInPlaceOfExportsVariable(file);
@@ -4185,9 +4373,9 @@ JSObject* Modules::parentModuleObject(ModuleID module)
     if (loaded && loaded->firstRequirerOutsideImage && mainCommonJSModule() != module)
         return loaded->firstRequirerOutsideImage;
     std::optional<ModuleID> firstRequirer = firstRequirerOf(module);
-    if (!firstRequirer || mainCommonJSModule() == module || !mayHandOutModuleObject(*firstRequirer))
+    if (!firstRequirer || mainCommonJSModule() == module)
         return nullptr;
-    return moduleObject(*firstRequirer);
+    return keepsModuleObjectToItself(*firstRequirer) ? objectThatStandsForModule(*firstRequirer) : moduleObject(*firstRequirer);
 }
 
 bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*)>& functor)
@@ -4196,12 +4384,8 @@ bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*
     WaysToModule* ways = waysToIfRecorded(module);
     if (!ways)
         return true;
-    for (ModuleID child : ways->requiredModules) {
-        if (!mayHandOutModuleObject(child))
-            return false;
-    }
     while (ways->numberOfChildrenShown < ways->requiredModules.size()) {
-        JSObject* childObject = moduleObjectMadeByRequire(ways->requiredModules[ways->numberOfChildrenShown++]);
+        JSObject* childObject = objectThatStandsForModule(ways->requiredModules[ways->numberOfChildrenShown++]);
         RETURN_IF_EXCEPTION(scope, true);
         functor(childObject);
         RETURN_IF_EXCEPTION(scope, true);

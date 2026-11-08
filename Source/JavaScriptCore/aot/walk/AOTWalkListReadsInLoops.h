@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTWalk.h"
 #include "AOTWalkKnown.h"
 
@@ -22,7 +23,15 @@ struct ListTestedInFrontOfLoop {
     bool takesInstancesBelow { false };
     bool isAskedForItsStorageAlone { false };
     WrittenListOfVariable written;
+    bool kindMayWellBeAnother { false };
+    ArrayStorage kindAskedOtherwise { ArrayStorage::Contiguous };
+    bool keepsKindWhereNoCopyIsWalkedForAnother { false };
 };
+
+inline bool isConvertedInFrontOfTypedCopy(const ListTestedInFrontOfLoop& list)
+{
+    return (list.storage == ArrayStorage::Double || !hasArrayStorageForm(list.storage)) && list.isWritable && !list.admitsInt32Storage;
+}
 
 BuiltinClassID classOfViewBesideInstancesBelowIt(const Walker&, TypeID);
 bool loopTakesInstancesBelowViewForItsLength(Walker&, BlockID inputHead, Reference view);
@@ -43,9 +52,14 @@ Reference askWhetherStorageOfListIsOfKind(Walker&, Reference list, ArrayStorage,
 void noteKindOfStorageThatTurnFound(Walker&, Reference list, ArrayStorage, bool isWritable = false);
 std::optional<ListTestedInFrontOfLoop> askListInFrontOfTypedCopy(Walker&, const BodyValue& read, Reference list, ArrayStorage kindStoredInto = ArrayStorage::Other, bool goesByKindOfStorage = false);
 std::optional<PassedTest> askElementInFrontOfTypedCopy(Walker&, const BodyValue& read, const ListTestedInFrontOfLoop&, Reference list, Reference position);
-bool readsListFoundByReadFromInFront(const Program&, const BodyIndex&, const BodyValue& operation, uint32_t firstValueOfLoop);
+struct WhatReadsFromInFrontOfLoopFind {
+    BitVector found;
+    BitVector refused;
+};
+bool readsListFoundByReadFromInFront(const Program&, const BodyIndex&, const BodyValue& operation, uint32_t firstValueOfLoop, WhatReadsFromInFrontOfLoopFind&);
 void readListsOfStableBindingsInFrontOfLoop(Walker&, BlockID inputHead);
 Reference nameOfListThatEntersLoopAround(Walker&, const BodyIndex&, const BodyValue& access);
+bool copyOfCalleeReadsUnderKeyWhatNobodyKnows(Walker&, const BodyValue& call, uint32_t firstValueOfLoop);
 ValueID readOfVariableThatFindsReceiverInLoop(const BodyIndex&, const BodyValue& access, uint32_t firstValueOfLoop);
 bool storesIntoListTestedInFrontOfLoop(Walker&, const BodyIndex&, const BodyValue& store, uint32_t firstValueOfLoop, std::span<const ListTestedInFrontOfLoop>);
 void nameKindOfListTestedInFrontOfLoop(Draft& read, const ListTestedInFrontOfLoop&);
@@ -67,8 +81,10 @@ struct ListsReadInLoop {
     Vector<ListTestedInFrontOfLoop, 2> lists;
     bool areLeftAsTheyAre { false };
     bool areTested { false };
+    BlockID whereKindIsAnother;
 };
 void reserveRoomOfListsThatLoopFills(Walker&, BlockID inputHead, std::span<const Reference> entering);
+Reference literalThatCallPushesOntoInEveryTurn(Walker&, const BodyValue& call, BlockID inputHead);
 ListsReadInLoop findListsReadInLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
 void buildTestsOfListsReadInLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, ListsReadInLoop&, std::span<const GuessInFrontOfLoop>, std::span<const Reference> proofs, BlockID& closedStart, Origin);
 

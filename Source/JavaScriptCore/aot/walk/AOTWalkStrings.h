@@ -100,7 +100,7 @@ AOT_LINK_OF_WALK(buildTestAgainstJoinOfTexts, opcodesThatBuildTestAgainstJoinOfT
 Reference buildTestOfCodeUnitBesidePartOfJoin(Walker&, Reference string, Reference lengthOfPart, Reference holdsOfPart, char16_t unit, bool testsStart, Origin);
 ValueID findTestOfEndThatTakesJoinApart(Walker&, const BodyValue& join, Reference takenToHaveText);
 bool goesByOneRowOnOperandAsMade(Walker&, const BodyValue& call, BuiltinID, Reference value, TypeID behindTest, BuiltinOverloadID* onlyRow = nullptr);
-void openGuessAtOperandTakenAsMade(Walker&, const BodyValue& call, Reference value, TypeID tested, std::optional<uint32_t> firstPlace = std::nullopt);
+void openGuessAtOperandTakenAsMade(Walker&, const BodyValue& call, Reference value, TypeID tested, std::optional<uint32_t> firstPlace = std::nullopt, std::span<const ValueID> readsOffHolders = { });
 
 struct NotesOfStrings final : Walker::KeptForBuild {
     template<typename Noted> using ByRecord = HashMap<uint32_t, Noted, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;

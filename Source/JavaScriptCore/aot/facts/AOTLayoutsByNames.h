@@ -9,6 +9,7 @@
 
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
+#include "AOTSort.h"
 #include "AOTThinSummary.h"
 #include <algorithm>
 #include <span>
@@ -21,7 +22,7 @@ class LayoutsByNames {
 public:
     LayoutsByNames() = default;
 
-    LayoutsByNames(const Program& program, const ThinSummaries& summaries, const LinkTables& linked)
+    LayoutsByNames(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
     {
         size_t numberOfLayouts = program.layouts.size();
         listWhoWritesLayouts(program, summaries);
@@ -69,7 +70,12 @@ public:
                 pairs.append(holder | key.index());
             size_t firstPairAbove = pairs.size();
             size_t steps = 0;
-            for (LayoutID current(index); current && steps < numberOfLayouts; current = program.at(current).base, ++steps) {
+            auto above = [&](LayoutID current) {
+                const Layout& below = program.at(current);
+                bool parentIsValue = !below.base && below.has(LayoutFlags::HasHeritage) && current.index() < held.layouts.size();
+                return parentIsValue ? held.layouts[current.index()].heritage : below.base;
+            };
+            for (LayoutID current(index); current && steps < numberOfLayouts; current = above(current), ++steps) {
                 for (uint64_t name : namesAbove.span().subspan(firstNameAboveOfLayout[current.index()], firstNameAboveOfLayout[current.index() + 1] - firstNameAboveOfLayout[current.index()]))
                     pairs.append(holder | static_cast<uint32_t>(name));
             }
@@ -290,7 +296,7 @@ private:
                     m_recordsOfDeclaredParameters.append({ function, declared.parameter, LayoutID(found.holder) });
             }
         }
-        std::ranges::stable_sort(m_recordsOfDeclaredParameters, { }, &RecordOfDeclaredParameter::place);
+        AOT::stableSort(m_recordsOfDeclaredParameters, { }, &RecordOfDeclaredParameter::place);
     }
 
     static void layRows(Vector<uint64_t>& pairs, size_t rowCount, Vector<uint32_t>& firstOfRow, Vector<uint32_t>& members)

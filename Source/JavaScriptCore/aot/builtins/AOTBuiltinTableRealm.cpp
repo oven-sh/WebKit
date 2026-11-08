@@ -123,6 +123,14 @@ BuiltinCellKey cellThatNamesMemberAskedByItsByte(const BuiltinTable& table, Buil
     return table.at(object).kind == BuiltinKind::Accessor ? BuiltinCellKey::getter(object) : BuiltinCellKey::object(object);
 }
 
+bool isMemberAskedByByteAlone(const BuiltinTable& table, BuiltinID member)
+{
+    const Builtin& entry = table.at(member);
+    if (entry.kind != BuiltinKind::Accessor || entry.scope != BuiltinScope::Realm || entry.mutability != BuiltinMutability::ConstantUnlessWritten || entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
+        return false;
+    return entry.holder && entry.name && table.canonicalID(member) == member && !BuiltinCellKey::getter(member).hasCell(table);
+}
+
 bool BuiltinCellKey::hasCell(const BuiltinTable& table) const
 {
     if (table.at(m_builtin).scope == BuiltinScope::Module)

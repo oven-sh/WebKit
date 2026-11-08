@@ -337,10 +337,8 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
         encoder.fail("ProvenParentOfClassHasNoRecord"_s, classLayout);
     if (isRankedAmongClassRecords(encoder, classLayout) && parent.layout && program.at(parent.layout).kind == LayoutKind::Instance)
         parts.parentThatListsClass = parent.layout;
-    BuiltinID builtinParent = Typed::builtinParentNamedByClassRecord(program, encoder.facts, classLayout);
     data.base = (parent.isProven ? parent.layout : LayoutID()).index();
     data.expectedBase = (parent.isProven ? LayoutID() : parent.layout).index();
-    data.builtinBase = builtinParent ? builtinParent.index() : LayoutData::noBase;
     data.classConstructor = classConstructor.value_or(FunctionID()).index();
     data.environment = environment.index();
     data.numberOfStaticFields = static_cast<uint32_t>(parts.staticFields.size());

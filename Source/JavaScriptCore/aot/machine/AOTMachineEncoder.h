@@ -396,6 +396,7 @@ public:
     MacroAssembler::Jump jumpOnOverflow(bool whenItOverflowed);
 
     void encodeNumber(const Step&);
+    bool blockHasWrittenNumberRegisterInFrontOf(const Step&, FPRReg);
 
     void encodeLoad(const Step&);
     void encodeStore(const Step&);
@@ -464,6 +465,9 @@ public:
     uint32_t m_operationOfOrigin { UINT32_MAX };
     const Block* m_blockWithClearedScratchFPR { nullptr };
     unsigned m_offsetBehindClearedScratchFPR { 0 };
+    const Block* m_blockWhoseWrittenNumberRegistersAreNoted { nullptr };
+    const Step* m_firstStepNotLookedAtForNumberRegisters { nullptr };
+    RegisterMask m_numberRegistersWrittenInBlock { 0 };
 };
 
 inline bool encodedMoveIsWide(Width width)

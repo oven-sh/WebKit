@@ -360,6 +360,103 @@ struct CountedValue {
     uint32_t value { 0 };
 };
 
+static uint32_t nextOfSequenceForSortTests(uint32_t& state)
+{
+    state = state * 1664525u + 1013904223u;
+    return state >> 8;
+}
+
+static void testLongRangesComeOutAsStableSortLeavesThem()
+{
+    struct Keyed {
+        uint32_t key { 0 };
+        uint32_t position { 0 };
+        bool operator==(const Keyed&) const = default;
+    };
+    uint32_t state = 7;
+    for (uint32_t size : { 33u, 34u, 40u, 63u, 64u, 65u, 100u, 127u, 128u, 129u, 255u, 256u, 257u, 1000u, 4097u }) {
+        for (uint32_t numberOfKeys : { 1u, 2u, 7u, 100u, 1u << 20 }) {
+            for (uint32_t shape = 0; shape < 4; ++shape) {
+                Vector<Keyed> list;
+                for (uint32_t position = 0; position < size; ++position) {
+                    uint32_t key = nextOfSequenceForSortTests(state) % numberOfKeys;
+                    if (shape == 1)
+                        key = (size - position) % numberOfKeys;
+                    else if (shape == 2 && position + 3 < size)
+                        key = position / 2;
+                    else if (shape == 3 && position >= size / 2)
+                        key = position % numberOfKeys;
+                    list.append(Keyed { key, position });
+                }
+                Vector<Keyed> expected = list;
+                std::ranges::stable_sort(expected, { }, &Keyed::key);
+                AOT::sort(list, { }, &Keyed::key);
+                AOT_TEST_CHECK(list == expected);
+            }
+        }
+    }
+}
+
+static void testLongRangesOfElementsThatOwnMemoryAreMovedAndDestroyedOnce()
+{
+    static int64_t numberAlive;
+    numberAlive = 0;
+    struct Owner {
+        explicit Owner(uint32_t key)
+            : key(makeUniqueWithoutFastMallocCheck<uint32_t>(key))
+        {
+            ++numberAlive;
+        }
+        Owner(Owner&& other)
+            : key(WTF::move(other.key))
+        {
+            ++numberAlive;
+        }
+        Owner& operator=(Owner&& other)
+        {
+            key = WTF::move(other.key);
+            return *this;
+        }
+        ~Owner() { --numberAlive; }
+        std::unique_ptr<uint32_t> key;
+    };
+    uint32_t state = 11;
+    for (uint32_t size : { 33u, 64u, 65u, 300u, 1025u }) {
+        {
+            Vector<Owner> list;
+            Vector<uint32_t> expected;
+            for (uint32_t position = 0; position < size; ++position) {
+                uint32_t key = nextOfSequenceForSortTests(state) % 50;
+                list.append(Owner(key));
+                expected.append(key);
+            }
+            std::ranges::sort(expected);
+            AOT::sort(list, [](const Owner& a, const Owner& b) { return *a.key < *b.key; });
+            AOT_TEST_CHECK(numberAlive == size);
+            for (uint32_t position = 0; position < size; ++position)
+                AOT_TEST_CHECK(list[position].key && *list[position].key == expected[position]);
+        }
+        AOT_TEST_CHECK(!numberAlive);
+    }
+}
+
+static void testComparerThatIsNoOrderKeepsEveryElement()
+{
+    uint32_t state = 3;
+    for (uint32_t size : { 33u, 41u, 64u, 65u, 1000u }) {
+        for (uint32_t kind = 0; kind < 3; ++kind) {
+            Vector<uint32_t> list;
+            for (uint32_t position = 0; position < size; ++position)
+                list.append(nextOfSequenceForSortTests(state) % 97);
+            Vector<uint32_t> expected = list;
+            AOT::sort(list, [&](uint32_t a, uint32_t b) { return !kind || (kind == 1 ? !!((a ^ b) & 1) : a % 7 <= b % 7); });
+            std::ranges::sort(list);
+            std::ranges::sort(expected);
+            AOT_TEST_CHECK(list == expected);
+        }
+    }
+}
+
 static void testShortSortedListIsLookedForByHalving()
 {
     WeakRandom random(1);
@@ -540,6 +637,9 @@ std::span<const NativeTest> supportTests()
         { "threads/lanes-leave-image-as-it-is"_s, testLanesLeaveImageAsItIs },
         { "threads/plan-that-fails-its-check-in-front-of-compile-reaches-no-walk"_s, testPlanThatFailsItsCheckInFrontOfCompileReachesNoWalk },
         { "current-work/names-function-and-step"_s, testCurrentWorkNamesFunctionAndStep },
+        { "sort/long-ranges-come-out-as-a-stable-sort-leaves-them"_s, testLongRangesComeOutAsStableSortLeavesThem },
+        { "sort/long-ranges-of-elements-that-own-memory-are-moved-and-destroyed-once"_s, testLongRangesOfElementsThatOwnMemoryAreMovedAndDestroyedOnce },
+        { "sort/a-comparer-that-is-no-order-keeps-every-element"_s, testComparerThatIsNoOrderKeepsEveryElement },
         { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
         { "united-families/threads-shorten-chains-side-by-side-and-a-member-beyond-is-its-own"_s, testThreadsShortenChainsOfFamiliesSideBySide },
         { "large-list/has-room-for-more-bytes-than-a-vector"_s, testLargeListHasRoomForMoreBytesThanVector },

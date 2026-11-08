@@ -1,8 +1,9 @@
-# What --external leaves out runs uncompiled and asks the loader for whatever it likes.
+# What --external leaves out runs uncompiled. It is handed the module object of the file that asks for it, main.js. What it asks the loader for is never answered with parse.cjs:
+# the run time refuses a file whose exports stay in compiled code to the host, and stops where its module object is asked for them.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions variables mechanisms=all
-# CHECK-NOT: function f2 callers-known
-# CHECK-NOT: variable g0 {{*}}writers-known
+# CHECK: function f2 callers-known
+# CHECK: variable g0 {{*}}writers-known
 
 layout L0 module=m1 fields=[{key="parse" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]

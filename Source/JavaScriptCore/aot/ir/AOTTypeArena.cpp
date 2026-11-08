@@ -356,6 +356,7 @@ void TypeArena::reset()
     if (m_epoch == largestEpochOfTypeMemo) {
         m_memoUntilReset.fill(MemoEntry { });
         m_typesMade.fill(MemoEntry { });
+        m_typesTakenLastAtEntries.fill({ });
         m_epoch = 0;
     }
     ++m_epoch;

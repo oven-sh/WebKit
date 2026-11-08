@@ -355,6 +355,29 @@ export function filterFrom(array, length, callback, thisArg, result, i, nextInde
     return result;
 }
 
+$linkTimeConstant;
+$alwaysInline;
+export function filterTruthy(array, length, result)
+{
+    "use strict";
+
+    var nextIndex = 0;
+    var i = 0;
+    if ($isJSArray(array) && $isJSArray(result)) {
+        var end = length >>> 0;
+        for (; i < end && $hasContiguousIndex(array, i); i++) {
+            var kept = $getOwnContiguousIndex(array, i);
+            if (kept) {
+                if (!$tryPutIndex(result, nextIndex, kept))
+                    $putByValDirect(result, nextIndex, kept);
+                ++nextIndex;
+            }
+        }
+    }
+    if (i < length)
+        $filterFrom(array, length, $Boolean, undefined, result, i, nextIndex);
+}
+
 export function filter(callback /*, thisArg */)
 {
     "use strict";
@@ -369,8 +392,12 @@ export function filter(callback /*, thisArg */)
     var result = $newArrayWithSpecies(0, array, length);
 
     var nextIndex = 0;
-    var i = 0;
-    if (length > 0 && $isJSArray(array) && $isJSArray(result)) {
+    var i = nextIndex;
+    if ($isJSArray(array) && $isJSArray(result)) {
+        if (callback === $Boolean) {
+            $filterTruthy(array, length, result);
+            return result;
+        }
         for (; i < length && $hasContiguousIndex(array, i); i++) {
             var kept = $getOwnContiguousIndex(array, i);
             if (callback.$call(thisArg, kept, i, array)) {
@@ -400,12 +427,21 @@ export function mapOfList(callback /*, thisArg */)
     var thisArg = $argument(1);
     var result = $newArrayWithSpecies(length, array, length, undefined);
 
-    for (var i = 0; i < length; i++) {
-        if (!(i in array))
-            continue;
-        var mappedValue = callback.$call(thisArg, array[i], i, array);
-        $putByValDirect(result, i, mappedValue);
+    var i = 0;
+    if (length > 0 && $isJSArray(array) && $isJSArray(result)) {
+        for (; i < length && $hasContiguousIndex(array, i); i++) {
+            var made = callback.$call(thisArg, $getOwnContiguousIndex(array, i), i, array);
+            if (!$tryPutByValDirect(result, i, made)) {
+                if (!$tryPutIndex(result, i, made))
+                    $putByValDirect(result, i, made);
+                i++;
+                break;
+            }
+        }
     }
+    if (i >= length)
+        return result;
+    $mapFrom(array, length, callback, thisArg, result, i);
     return result;
 }
 

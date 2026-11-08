@@ -55,7 +55,7 @@ inline TypeID typeHeldAtPositionInResultRules(ResultRules& rules, TypeID known, 
     return maybeAbsent ? rules.context.types.withPrimitives(unknown, Primitive::Absent) : unknown;
 }
 
-inline TypeID typeHeldInVariableInResultRules(ResultRules& rules, TypeID known, VariableID variable, UnknownSeed seed)
+ALWAYS_INLINE TypeID typeHeldInVariableInResultRules(ResultRules& rules, TypeID known, VariableID variable, UnknownSeed seed)
 {
     const Program& program = rules.context.program;
     if (variable.index() < program.variables.size())

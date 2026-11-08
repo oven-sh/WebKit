@@ -276,7 +276,7 @@ static unsigned machineBuilderRankAmongOperands(const Operation* operation)
         return 0;
     if (operation->hasNoPosition())
         return 1;
-    return 2;
+    return operation->opcode() == Load && operation->type().isFloat() ? 3 : 2;
 }
 
 static bool machineBuilderShouldSwapOperands(const Operation* left, const Operation* right)
@@ -1087,7 +1087,7 @@ void Builder::noteNumberedLoadForStores(Operation* load)
 
 void Builder::stopIfLoadOfStoredWordStands(const Operation* store)
 {
-    if (isWrittenByOtherThreads(store->heap()) || (!m_block->isEntry() && !m_block->numberOfIncomingEdges()))
+    if (isWrittenByOtherThreads(store->heap()))
         return;
     int64_t begin = store->offset();
     int64_t end = begin + bytesForWidth(store->accessWidth());
@@ -1096,8 +1096,10 @@ void Builder::stopIfLoadOfStoredWordStands(const Operation* store)
         if (found == m_numberedLoadsByPlace.end())
             continue;
         for (Operation* load : found->value) {
-            if (load->offset() < end && begin < load->offset() + static_cast<int64_t>(bytesForWidth(load->accessWidth())) && m_numbering.isStillValid(machineBuilderKeyOfLoad(load, load->child(0)), load))
-                m_proc.fail(FailureKind::MalformedProcedure, store);
+            if (load->offset() < end && begin < load->offset() + static_cast<int64_t>(bytesForWidth(load->accessWidth())) && m_numbering.isStillValid(machineBuilderKeyOfLoad(load, load->child(0)), load)) {
+                m_proc.stopAtStoreOverLoadThatStands(store);
+                return;
+            }
         }
     }
 }

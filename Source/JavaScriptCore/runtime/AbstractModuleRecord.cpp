@@ -985,12 +985,18 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     //  5. Once we see star links, even if we have not yet traversed that star link path, we should disable caching.
 
     using ResolveSet = WTF::UncheckedKeyHashSet<ResolveQuery, ResolveQuery::Hash, ResolveQuery::HashTraits>;
+#if ENABLE(AOT)
+    enum class Type { Query, QueryViaStarExport, IndirectFallback, GatherStars, GatherStatement };
+#else
     enum class Type { Query, QueryViaStarExport, IndirectFallback, GatherStars };
+#endif
     struct Task {
         ResolveQuery query;
         Type type;
 #if ENABLE(AOT)
         AOT::ModuleRecord* leader { nullptr };
+        bool standsInEntryFromStar { false };
+        bool claimsWhatIsFound { false };
 #endif
     };
 
@@ -1004,6 +1010,10 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             return "IndirectFallback";
         case Type::GatherStars:
             return "GatherStars";
+#if ENABLE(AOT)
+        case Type::GatherStatement:
+            return "GatherStatement";
+#endif
         }
         RELEASE_ASSERT_NOT_REACHED();
         return nullptr;
@@ -1018,7 +1028,11 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 #if USE(BUN_JSC_ADDITIONS)
     Resolution firstLiveRecordViaStarExport = Resolution::notFound();
     // Read once: the loop below visits every module that an `export *` leads to, for every name.
+#if ENABLE(AOT)
+    bool someRecordHasLiveExports = vm.codeCache()->hasModuleRecordWithLiveExports();
+#else
     const bool someRecordHasLiveExports = vm.codeCache()->hasModuleRecordWithLiveExports();
+#endif
 #endif
 
     frames.append(Resolution::notFound());
@@ -1152,7 +1166,9 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                     continue;
                 }
                 Vector<AbstractModuleRecord*, 8> starTargets;
-                Resolution resolution = compiled->resolveOwnExport(globalObject, Identifier::fromUid(vm, query.exportName.get()), starTargets, task.leader);
+                AOT::ModuleRecord::Statement statement;
+                Resolution resolution = compiled->resolveOwnExport(globalObject, Identifier::fromUid(vm, query.exportName.get()), starTargets, task.leader, statement);
+                someRecordHasLiveExports = vm.codeCache()->hasModuleRecordWithLiveExports();
                 RELEASE_ASSERT(!answersByLeader || starTargets.isEmpty());
                 RETURN_IF_EXCEPTION(scope, Resolution::error());
                 wasAnsweredByEndedMock |= resolution.isOfEndedMock;
@@ -1168,8 +1184,17 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                     if (isFurtherRoad)
                         starTargets.clear();
                     foundStarLinks |= !starTargets.isEmpty();
+                    if (!starTargets.isEmpty()) {
+                        pendingTasks.append(Task { query, Type::GatherStatement, nullptr, false, statement.claimsWhatStarsFind });
+                        frames.append(Resolution::notFound());
+                    }
                     while (!starTargets.isEmpty())
                         pendingTasks.append(Task { ResolveQuery(starTargets.takeLast(), query.exportName.get()), Type::QueryViaStarExport, compiled });
+                    if (statement.target) {
+                        pendingTasks.append(Task { query, Type::GatherStatement, nullptr, statement.standsInEntryFromStar });
+                        frames.append(Resolution::notFound());
+                        pendingTasks.append(Task { ResolveQuery(statement.target, statement.importName.impl()), Type::Query, statement.leader });
+                    }
                     continue;
                 }
             }
@@ -1268,6 +1293,17 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             break;
         }
 
+#if ENABLE(AOT)
+        case Type::GatherStatement: {
+            Resolution resolution = frames.takeLast();
+            resolution.cameThroughEntryFromStar |= resolution.isOfEndedMock && task.standsInEntryFromStar;
+            if (task.claimsWhatIsFound && resolution.type == Resolution::Type::Resolved)
+                resolution = uncheckedDowncast<AOT::ModuleRecord>(query.moduleRecord)->claimAsOwn(Identifier::fromUid(vm, query.exportName.get()));
+            if (!mergeToCurrentTop(resolution))
+                return Resolution::ambiguous();
+            break;
+        }
+#endif
         case Type::GatherStars: {
             Resolution resolution = frames.takeLast();
             ASSERT_WITH_MESSAGE(resolution.type == Resolution::Type::Resolved || resolution.type == Resolution::Type::NotFound, "When we see Error and Ambiguous, we immediately return from this loop. So here, only Resolved and NotFound comes.");

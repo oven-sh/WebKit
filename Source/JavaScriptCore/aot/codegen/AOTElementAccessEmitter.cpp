@@ -493,6 +493,22 @@ void ElementAccessEmitter::generateGetArrayStorage(const ValueContext& value)
     define(value, elementsOf(in<CellPointer>(value->arrayOperand())).butterfly);
 }
 
+void ElementAccessEmitter::generateGetArrayRoom(const ValueContext& value)
+{
+    define(value, vectorLength(elementsOf(in<CellPointer>(value->arrayOperand()))));
+}
+
+void ElementAccessEmitter::generateExtendArrayLength(const ValueContext& value)
+{
+    ArrayElements elements = elementsOf(value, in<CellPointer>(value->arrayOperand()));
+    Integer position = indexInsideLength(value->positionOperand());
+    if (testsEveryPosition()) {
+        stopUnlessInside(value, equal(position, publicLength(elements)));
+        stopUnlessInside(value, below(position, vectorLength(elements)));
+    }
+    setPublicLength(elements, add(position, integer(1)));
+}
+
 bool ElementAccessEmitter::testsEveryPosition()
 {
     return testsEveryPositionUnder(build().options().testing) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition);
@@ -596,7 +612,7 @@ LengthTest ElementAccessEmitter::testLength(Integer index, const ArrayElements& 
 static bool liesInsideLength(const CodeGenerator& generator, const ValueContext& access)
 {
     if (access.opcode() == Opcode::IsElementPresent)
-        return access->isInBounds();
+        return access->isInBounds() || generator.liesInsideByQuestionInFrontOfTurnsLaidOut(access.id());
     return access.opcode() == Opcode::GetArrayElement && (access->isInBounds() || access->isPresent() || generator.liesInsideByQuestionInFrontOfTurnsLaidOut(access.id()));
 }
 
@@ -733,6 +749,8 @@ void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
     RELEASE_ASSERT(!form || !value->asksCellWhereNothingIsFound());
     holdKindOfList(value);
+    if (std::optional<ArrayStorage> found = !form && value->level() == KnowledgeLevel::Proven && value->isInBounds() && !value->asksCellWhereNothingIsFound() ? kindOfListFoundInFrontOfTurns(value, value->arrayOperand()) : std::nullopt)
+        form = findArrayStorageForm(*found);
     if (!form)
         readWithAnyStorage(value);
     else if (value->admitsInt32Storage())
@@ -750,6 +768,11 @@ void ElementAccessEmitter::readInsideLength(const ValueContext& value, const Arr
     Integer index = indexInsideLength(value->positionOperand());
     if (findsElement(value)) {
         define(value, readNumberInsideLength(value, form, elements, index, nullptr));
+        return;
+    }
+
+    if (form.element == Representation::JSValue && value.representation() == Representation::JSValue && generator().leavesHoleToTestBehind(value)) {
+        define(value, convertRawElement(value, form, loadRawElement(form, elements, index), Representation::JSValue, typeIDOf(value.id())));
         return;
     }
 
@@ -1087,12 +1110,15 @@ Integer ElementAccessEmitter::indexOfPresenceTest(const ValueContext& test, LBas
 void ElementAccessEmitter::branchOnElementPresence(const ValueContext& value, const ArrayStorageForm* form, const ArrayElements& elements, Integer index, BranchTargets targets)
 {
     LengthTest test = testLength(value, index, elements);
+    Integer inside = test.indexInside;
     if (!liesInsideLength(generator(), value)) {
         LBasicBlock isInBounds = newBlock();
         branch(test.isInside, { normalEdge(isInBounds), targets.notTaken });
         m_out.appendTo(isInBounds);
+        if (inside.value()->opcode() == Machine::ZExt32)
+            inside = Integer(m_out.extendWordThatIsNotNegative(inside.value()->child(0)));
     }
-    branch(form ? isHole(*form, loadRawElement(*form, elements, test.indexInside)) : isEmpty(loadBoxedElement(elements, test.indexInside)), targets.swapped());
+    branch(form ? isHole(*form, loadRawElement(*form, elements, inside)) : isEmpty(loadBoxedElement(elements, inside)), targets.swapped());
 }
 
 void ElementAccessEmitter::branchOnPresentElement(const ValueContext& test, const ArrayStorageForm& form, BranchTargets targets)
@@ -1202,7 +1228,17 @@ void ElementAccessEmitter::generateGetStringCodeUnit(const ValueContext& value)
     Word32 position = strings.word32Of(value->positionOperand());
     if (testsEveryPosition())
         stopUnlessInside(value, below(position, view.length));
-    define(value, strings.codeUnitAt(view, position));
+    ValueID wholeNumber = value->positionOperand();
+    while (opcodesThatGiveSameValue.contains(opcodeOf(wholeNumber)))
+        wholeNumber = operationAt(wholeNumber).operand(0);
+    bool isAddressedByWholeNumber = generator().isLayingOutTurns() && !m_code.isConstant(wholeNumber) && representationOf(wholeNumber) == Representation::Int64
+        && representationOf(value->positionOperand()) == Representation::Int32 && typeOf(value->positionOperand()).integers.minimum >= 0
+        && position.value()->opcode() == Machine::Trunc && position.value()->child(0) == in<Integer>(wholeNumber).value();
+    if (isAddressedByWholeNumber && testsEveryPosition())
+        stopUnlessInside(value, below(in<Integer>(wholeNumber), zeroExtended(view.length)));
+    if (isAddressedByWholeNumber)
+        build().statistics().count(StatisticID::CodeUnitsAddressedByWholeNumbers);
+    define(value, strings.codeUnitAt(view, position, isAddressedByWholeNumber ? std::optional(in<Integer>(wholeNumber)) : std::nullopt));
 }
 
 void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& value)
@@ -1222,6 +1258,8 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
 
 void ElementAccessEmitter::generateReserveArrayRoom(const ValueContext& value)
 {
+    if (std::exchange(generator().m_reservationThatBirthHasServed, ValueID()) == value.id())
+        return;
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Number room = in<Number>(value->roomOperand());
     if (!generator().paysForCodeInLine(value.block()) && value->heldOperands().empty()) {

@@ -100,12 +100,14 @@ void writeCoroutinesOfLink(const Program& program, const LinkFlow& flow, TypeAre
     });
 }
 
-void forEachFunctionNamedByCoroutinesCalledBy(const LinkTables& tables, TypeReader reader, FunctionID referrer, const ScopedLambda<void(FunctionID)>& functor)
+void forEachFunctionNamedByCoroutinesCalledBy(const Program& program, const LinkTables& tables, FunctionID referrer, const ScopedLambda<void(FunctionID)>& functor)
 {
     if (tables.coroutines.isEmpty())
         return;
-    for (const LinkedCall& call : std::ranges::equal_range(tables.calls, referrer, { }, &LinkedCall::caller)) {
-        const LinkedCoroutine* coroutine = tables.findCoroutine(call.callee);
+    TypeReader reader(program);
+    for (const LinkedCall& call : tables.callsOf(referrer)) {
+        bool calleeIsCoroutine = call.callee && call.callee.index() < program.functions.size() && program.at(call.callee).isCoroutine();
+        const LinkedCoroutine* coroutine = calleeIsCoroutine ? tables.findCoroutine(call.callee) : nullptr;
         if (!coroutine)
             continue;
         for (TypeID type : { coroutine->fulfilledWith, coroutine->returned }) {

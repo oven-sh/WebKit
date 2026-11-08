@@ -672,7 +672,7 @@ void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effe
         noteThatGuardsOfRowHaveBegunInKnownWriters(walker, declaredLayoutOf(walker.program(), draft.layout()));
     }
     static_assert(!declaredBoundOf(Opcode::PutSlot).writes.contains(AbstractHeap::NamedProperties) && !declaredBoundOf(Opcode::PutSlotOrAdd).writes.contains(AbstractHeap::NamedProperties));
-    if (draft.opcode == Opcode::PutDoubleIndex) {
+    if (draft.opcode == Opcode::PutDoubleIndex || draft.opcode == Opcode::PutPropertyOfHeir) {
         if (uint32_t storeToPutBack = walker.takeStoreBeingBuiltToPutBack(); storeToPutBack && !writesWhatTurnHasMade) {
             walker.state().noteStoreToPutBack(walker.numberOfTurnOfTypedCopy(), storeToPutBack);
             walker.keepStateBehindStoreToPutBack(storeToPutBack);

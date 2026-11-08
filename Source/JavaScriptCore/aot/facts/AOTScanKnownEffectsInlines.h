@@ -87,7 +87,7 @@ const Effects& ScanOfBody::noteOwnEffectsOfOperator(const BodyValue& value, uint
     return noEffectsInScan;
 }
 
-const Effects& ScanOfBody::noteOwnEffects(const BodyValue& value, uint32_t block, std::optional<SummaryAccess::Kind> access, const Effects& effects, Effects& storage)
+ALWAYS_INLINE const Effects& ScanOfBody::noteOwnEffects(const BodyValue& value, uint32_t block, std::optional<SummaryAccess::Kind> access, const Effects& effects, Effects& storage)
 {
     uint32_t traits = traitsOfOpcodeInScan(value.opcode());
     if (access && (traits & RowOfOpcodeInScan::mayCallUnknownCode) && keyWrittenAtInScanKnownEffects(m_program, value, m_keyOfOperation)) {

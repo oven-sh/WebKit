@@ -1801,7 +1801,7 @@ bool Allocator::isHeldAtHeadThatWayLeadsBackTo(const Operation* value) const
         const Block* head = m_order.blocksInOrder()[loops[loop].firstBlock];
         if (m_lastSearchThatReachedBlock[head->index()] == m_numberOfSearchesForWays)
             continue;
-        for (const RegisterBinding& binding : m_heads[head->index()].bindings) {
+        for (const RegisterBinding& binding : m_heads[head->index()].bindings()) {
             if (binding.value == value)
                 return true;
         }
@@ -1820,7 +1820,7 @@ bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
             return true;
     }
 
-    findBlocksThatLeadToReadsOf(value);
+    findBlocksThatLeadToReadsOf(value, firstBlockOnWaysFrom(m_block, value));
     return std::ranges::any_of(m_block->successors(), [&](const Edge& successor) {
         return m_lastSearchThatReachedBlock[successor.block()->index()] == m_numberOfSearchesForWays;
     });
@@ -1833,7 +1833,7 @@ bool Allocator::isReadOnSomeWayFromHeadOf(const Operation* value, const Block* b
     bool numberingCostsNoMoreThanSearchesHave = !m_numbersOfDominatedBlocks.isEmpty() || m_numberOfBlocksReachedBySearchesForWays >= m_order.blocksInOrder().size();
     if (numberingCostsNoMoreThanSearchesHave && m_valueOfLastSearchForWays != value && dominatesSomeReadBelowDefinitionOf(block, value))
         return true;
-    findBlocksThatLeadToReadsOf(value);
+    findBlocksThatLeadToReadsOf(value, firstBlockOnWaysFrom(block, value));
     return m_lastSearchThatReachedBlock[block->index()] == m_numberOfSearchesForWays;
 }
 
@@ -1852,18 +1852,40 @@ bool Allocator::dominatesSomeReadBelowDefinitionOf(const Block* block, const Ope
     return false;
 }
 
-void Allocator::findBlocksThatLeadToReadsOf(const Operation* value)
+uint32_t Allocator::firstBlockOnWaysFrom(const Block* block, const Operation* value)
+{
+    std::span<const Loop> loops = m_order.loops();
+    if (!m_someLoopHasSideEntrance) {
+        m_someLoopHasSideEntrance = std::ranges::any_of(loops, [](const Loop& loop) {
+            return loop.hasSideEntrance;
+        });
+    }
+    if (*m_someLoopHasSideEntrance || m_order.of(block).isRare() || m_order.of(value->owner()).isRare())
+        return 0;
+    uint32_t first = m_order.of(block).orderIndex;
+    uint32_t definedIn = m_order.of(value->owner()).orderIndex;
+    for (uint32_t loop = m_order.of(block).loop; loop != noLoop; loop = loops[loop].parent) {
+        if (loops[loop].firstBlock <= definedIn && definedIn < loops[loop].endBlock)
+            break;
+        first = std::min(first, loops[loop].firstBlock);
+    }
+    return first;
+}
+
+void Allocator::findBlocksThatLeadToReadsOf(const Operation* value, uint32_t firstBlock)
 {
     const uint32_t firstUse = m_liveness.of(value).firstUse;
-    if (m_valueOfLastSearchForWays != value) {
+    if (m_valueOfLastSearchForWays != value || firstBlock < m_firstBlockOfLastSearchForWays) {
         m_valueOfLastSearchForWays = value;
+        m_firstBlockOfLastSearchForWays = firstBlock;
         if (m_lastSearchThatReachedBlock.isEmpty())
             m_lastSearchThatReachedBlock.fill(m_arena, m_order.mostBlocks(), 0);
         ++m_numberOfSearchesForWays;
-        ArenaVector<const Block*> reached;
+        ArenaVector<const Block*>& reached = m_blocksReachedBySearchForWays;
+        reached.clear();
         auto reach = [&](const Block* block) {
             uint32_t& last = m_lastSearchThatReachedBlock[block->index()];
-            if (block == value->owner() || last == m_numberOfSearchesForWays)
+            if (block == value->owner() || last == m_numberOfSearchesForWays || m_order.of(block).orderIndex < firstBlock)
                 return;
             last = m_numberOfSearchesForWays;
             reached.append(m_arena, block);

@@ -125,7 +125,21 @@ public:
     void execute(JSGlobalObject*, JSPromise* capability = nullptr);
     void executeAsync(JSGlobalObject*);
 
-    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&, ModuleRecord* leader);
+    struct Statement {
+        AbstractModuleRecord* target { nullptr };
+        Identifier importName;
+        ModuleRecord* leader { nullptr };
+        bool standsInEntryFromStar { false };
+        bool claimsWhatStarsFind { false };
+    };
+    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&, ModuleRecord* leader, Statement&);
+    Resolution claimAsOwn(const Identifier& exportName);
+    struct Asker {
+        ModuleRecord* record;
+        UniquedStringImpl* name;
+    };
+    bool originalShows(JSGlobalObject*, const Identifier& exportName, std::span<const Asker>);
+    bool originalShows(JSGlobalObject*, const Identifier& exportName, std::span<ModuleRecord* const> askersOfSameName);
     bool isNamedByEndedMockInFrontOfItsStar(JSGlobalObject*, const Identifier& exportName, unsigned index);
     bool answersByWhoLedToIt() const;
     bool keepsEndedMock() const;
@@ -147,6 +161,8 @@ private:
     ModuleRecord(Instance&, Structure*, JSModuleLoader*, const Identifier& moduleKey, ModuleID);
     Modules& modules() const;
     void appendDynamicStarTargets(StarExportTargets&);
+    bool appendStarsThatMayProvide(const Identifier& exportName, unsigned index, StarExportTargets&);
+    AbstractModuleRecord* recordBehindStar(ModuleID);
 
     Instance& m_instance;
     ModuleID m_module;

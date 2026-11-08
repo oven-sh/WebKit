@@ -60,6 +60,7 @@ JSObject* createBuiltinsNotCompiledError(JSGlobalObject*, std::span<const String
 JSObject* createExternalModuleNotLoadedError(JSGlobalObject*, const String& path);
 JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILiteral code);
 JSObject* createFileOfImageRefusedError(JSGlobalObject*, StringView path, ASCIILiteral code);
+JSObject* createFormNotHeldError(JSGlobalObject*, StringView path, ASCIILiteral type);
 JSObject* createExportNotHandedOutError(JSGlobalObject*, StringView path, StringView name);
 JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
@@ -79,6 +80,7 @@ String changeThatCompiledCodeRulesOutMessage(ObjectMutation);
 String changeThatCompiledCodeRulesOutMessage(ASCIILiteral change);
 String deletionFromLockedBuiltinMessage(const String& property);
 String assignmentThatBuildDidNotSeeMessage(const String& property);
+String moduleObjectRefusedMessage(StringView path);
 String callOfBuiltinChangedBeforeFirstUseMessage(const String& property);
 enum class LockedIn : bool { Executable, TestRun };
 bool isWrittenByFileOfProduct(VM&);

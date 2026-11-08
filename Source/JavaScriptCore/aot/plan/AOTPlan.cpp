@@ -597,16 +597,6 @@ static BitVector functionsWithClosureCellInPlan(const Program& program, const Ca
     return functions;
 }
 
-BuiltinID builtinParentNamedByClassRecord(const Program& program, const Facts& facts, LayoutID classLayout)
-{
-    if (program.at(classLayout).kind != LayoutKind::Instance)
-        return { };
-    ClassFacts classFacts = facts.classOf(classLayout);
-    if (classFacts.baseState != BaseState::BuiltinClass || !classFacts.baseClass)
-        return { };
-    return program.builtins().at(classFacts.baseClass).constructor;
-}
-
 ParentInClassRecord parentNamedByClassRecord(const Program& program, const Facts& facts, LayoutID id)
 {
     const Layout& layout = program.at(id);
@@ -620,8 +610,6 @@ ParentInClassRecord parentNamedByClassRecord(const Program& program, const Facts
         return { writtenBaseOf(layout), false };
     case BaseState::None:
         return { classFacts.prototypeBase, false };
-    case BaseState::BuiltinClass:
-        return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -695,8 +683,6 @@ static Vector<ClassCreationPlan> classCreationOfPlan(const Program& program, con
         ClassFacts classFacts = facts.classOf(id);
         LayoutID parent;
         switch (classFacts.baseState) {
-        case BaseState::BuiltinClass:
-            return { true, { } };
         case BaseState::None:
             return { !layout.has(LayoutFlags::HasHeritage) && !classFacts.prototypeBase, { } };
         case BaseState::Layout:

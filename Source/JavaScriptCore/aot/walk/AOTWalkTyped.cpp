@@ -162,6 +162,13 @@ template<Opcode opcode> static bool buildTypedOperationOf(Walker& walker, const 
     return operatorFamiliesOfWalkTyped.contains(opcode) && opcodesThatBuildTypedOperatorTakes.contains(opcode) && buildTypedOperator(walker, value);
 }
 
+bool buildOperatorOnWhatWalkHasBuiltOfItsOpcodes(Walker& walker, const BodyValue& value)
+{
+    if (buildNumberForm(walker, value))
+        return true;
+    return operatorFamiliesOfWalkTyped.contains(value.opcode()) && opcodesThatBuildTypedOperatorTakes.contains(value.opcode()) && buildTypedOperator(walker, value);
+}
+
 bool buildTypedOperation(Walker& walker, const BodyValue& value)
 {
     using Links = bool (*)(Walker&, const BodyValue&);

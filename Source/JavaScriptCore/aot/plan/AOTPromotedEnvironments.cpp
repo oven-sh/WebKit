@@ -124,6 +124,7 @@ private:
     std::optional<Candidate> candidateOfCapture(FunctionID, uint32_t capture);
     FunctionID makerOf(Candidate candidate) const { return candidate < m_sources.size() ? m_sources[candidate].function : m_scopes[candidate - m_sources.size()].maker; }
     bool hasOneClosureThatNeverDies(FunctionID) const;
+    bool isKeptByVariableThatStays(FunctionID maker, FunctionID holder) const;
     bool isLaidOnClassEvaluatedAtMostOnce(const BodyIndex&, ValueID closure, FunctionID) const;
     FunctionID makerThatMakesOnEveryWay(FunctionID holder) const;
     bool isStoredForGood(FunctionID holder) const;
@@ -161,8 +162,8 @@ private:
     BitVector m_isCapturedByClosureThatNeverDies;
     BitVector m_isCapturedByClosureStoredForGood;
     BitVector m_servesBecauseClassIsStoredForGood;
-    BitVector m_isCapturedByMemberOfClassThatNeverDies;
-    BitVector m_membersOfClassesThatNeverDie;
+    BitVector m_isCapturedByClosureReachableForGood;
+    BitVector m_closuresReachableForGood;
     BitVector m_holdsWord;
     Vector<uint32_t> m_functionsThatHaveComeToHoldWord;
     Vector<FunctionAndCandidate> m_candidatesByFunctionHeld;
@@ -327,6 +328,28 @@ bool PlannerOfPromotedEnvironments::mayLieInFrameOfCaller(FunctionID id, const B
     return !entryParameter || m_facts.linked().onlyCallsWhatArrivesAt(id, *entryParameter);
 }
 
+static ValueID valueReturnedOnEveryWayForPromotedEnvironments(const BodyIndex& index)
+{
+    ValueID returned;
+    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+        BlockID block(number);
+        if (!index.isReachable(block))
+            continue;
+        BodyTerminator end = index.terminator(block);
+        if (end.kind() == TerminatorKind::ReturnCall)
+            return { };
+        if (end.kind() != TerminatorKind::Return)
+            continue;
+        ValueID value = end.as<TerminatorKind::Return>().valueOperand();
+        while (value && !index.isParameter(value) && inputOperationsThatOnlyHandOn.contains(index.opcodeOf(value)))
+            value = index.value(value).operand(0);
+        if (!value || (returned && returned != value))
+            return { };
+        returned = value;
+    }
+    return returned;
+}
+
 static BlockID lastBlockOnEveryWayToReturnForPromotedEnvironments(const BodyIndex& index)
 {
     BlockID last;
@@ -351,6 +374,7 @@ void PlannerOfPromotedEnvironments::followCapturedValues(FunctionID id, const Th
     BodyBlock entry = index.block(entryBlock);
     uint32_t numberOfOwnCaptures = static_cast<uint32_t>(m_program.at(id).captures.size());
     std::optional<BlockID> lastBlockOnEveryWayToReturn;
+    ValueID returnedOnEveryWay = serves ? valueReturnedOnEveryWayForPromotedEnvironments(index) : ValueID();
     for (ValueID site : summary.sitesThatHandOverCaptures) {
         BodyValue value = index.value(site);
         bool makesClosure = value.opcode() == Opcode::NewClosure;
@@ -369,9 +393,10 @@ void PlannerOfPromotedEnvironments::followCapturedValues(FunctionID id, const Th
         std::span<const ValueID> operands = makesClosure ? value.as<Opcode::NewClosure>().capturesOperands() : value.as<Opcode::CallDirect>().argumentsOperands();
         uint32_t numberOfCapturesOfCallee = static_cast<uint32_t>(m_program.at(callee).captures.size());
         bool isMemberThatNeverDies = makesClosure && serves && isLaidOnClassEvaluatedAtMostOnce(index, site, callee);
-        if (isMemberThatNeverDies)
-            m_membersOfClassesThatNeverDie.set(callee.index());
-        if (makesClosure && serves && (hasOneClosureThatNeverDies(callee) || isMemberThatNeverDies)) {
+        bool isKeptByVariable = makesClosure && site == returnedOnEveryWay && isKeptByVariableThatStays(id, callee);
+        if (isMemberThatNeverDies || isKeptByVariable)
+            m_closuresReachableForGood.set(callee.index());
+        if (makesClosure && serves && (hasOneClosureThatNeverDies(callee) || isMemberThatNeverDies || isKeptByVariable)) {
             if (!lastBlockOnEveryWayToReturn)
                 lastBlockOnEveryWayToReturn = lastBlockOnEveryWayToReturnForPromotedEnvironments(index);
             if (*lastBlockOnEveryWayToReturn && index.dominates(index.blockOf(site), *lastBlockOnEveryWayToReturn) && !index.block(index.blockOf(site)).hasHandler())
@@ -480,6 +505,39 @@ bool PlannerOfPromotedEnvironments::isLaidOnClassEvaluatedAtMostOnce(const BodyI
         isListed = true;
     }
     return isListed;
+}
+
+bool PlannerOfPromotedEnvironments::isKeptByVariableThatStays(FunctionID maker, FunctionID holder) const
+{
+    const LinkTables& linked = m_facts.linked();
+    if (!linked.function(maker).everyCallerIsKnown || !isEnteredUnderNoHandler(maker))
+        return false;
+    VariableID kept;
+    for (FunctionID referrer : linked.referrersOf(maker)) {
+        const BodyIndex* index = m_facts.bodies().find(referrer);
+        if (!index)
+            return false;
+        for (const LinkedCall& call : linked.callsOf(referrer)) {
+            if (call.callee != maker)
+                continue;
+            if (kept)
+                return false;
+            std::optional<BodyUser> user = index->onlyUser(call.site);
+            while (user && user->kind == BodyUseKind::Operand && inputOperationsThatOnlyHandOn.contains(index->opcodeOf(user->value)))
+                user = index->onlyUser(user->value);
+            if (!user || user->kind != BodyUseKind::Operand || index->opcodeOf(user->value) != Opcode::PutModuleVariable)
+                return false;
+            kept = index->value(user->value).as<Opcode::PutModuleVariable>().variable();
+        }
+    }
+    if (!kept)
+        return false;
+    const LinkedCell& cell = linked.variable(kept);
+    if (!cell.everyWriterIsKnown || !cell.proven)
+        return false;
+    Type held = m_program.at(cell.proven);
+    held.primitives &= ~Primitive::Absent;
+    return !held.primitives && singleFunctionOf(TypeReader(m_program), held) == holder;
 }
 
 bool PlannerOfPromotedEnvironments::isExportsObjectThatStays(LayoutID layout) const
@@ -592,7 +650,7 @@ bool PlannerOfPromotedEnvironments::listFunctionsWhoseClosuresAreHeld(Candidate 
         bool noneCouldBeLetGo = true;
         forEachFunctionAmongClosuresOf(TypeReader(m_program), type, scopedLambda<void(FunctionID)>([&](FunctionID function) {
             noneCouldBeLetGo &= m_isCapturedByClosureThatNeverDies.quickGet(candidate) || hasOneClosureThatNeverDies(function);
-            if (!m_isCapturedByMemberOfClassThatNeverDies.quickGet(candidate))
+            if (!m_isCapturedByClosureReachableForGood.quickGet(candidate))
                 m_candidatesByFunctionHeld.append({ function.index(), candidate });
         }));
         return noneCouldBeLetGo;
@@ -624,7 +682,7 @@ void PlannerOfPromotedEnvironments::keepWhatCouldBeLetGo()
     m_isCapturedByClosureThatNeverDies = BitVector(numberOfCandidates);
     m_isCapturedByClosureStoredForGood = BitVector(numberOfCandidates);
     m_servesBecauseClassIsStoredForGood = BitVector(numberOfCandidates);
-    m_isCapturedByMemberOfClassThatNeverDies = BitVector(numberOfCandidates);
+    m_isCapturedByClosureReachableForGood = BitVector(numberOfCandidates);
     if (!numberOfCandidates)
         return;
 
@@ -641,8 +699,8 @@ void PlannerOfPromotedEnvironments::keepWhatCouldBeLetGo()
                 m_isCapturedByClosureThatNeverDies.quickSet(*candidate);
                 if (isStoredForGood(id))
                     m_isCapturedByClosureStoredForGood.quickSet(*candidate);
-                if (m_membersOfClassesThatNeverDie.get(number))
-                    m_isCapturedByMemberOfClassThatNeverDies.quickSet(*candidate);
+                if (m_closuresReachableForGood.get(number))
+                    m_isCapturedByClosureReachableForGood.quickSet(*candidate);
             }
             if (candidate && mayBeLeftOut)
                 m_functionsByCandidateCaptured.append({ number, *candidate });
@@ -670,7 +728,7 @@ void PlannerOfPromotedEnvironments::keepWhatCouldBeLetGo()
         bool serves = !m_isRefused.quickGet(scope.index());
         for (uint32_t field = 0; serves && field < layout.fields.size(); ++field) {
             bool holdsClosures = false;
-            serves = listFunctionsWhoseClosuresAreHeld(candidate, { m_program.provenTypeOf(layout.fields[field].declared), m_facts.linked().provenOfField({ scope, field }) }, holdsClosures) || m_isCapturedByMemberOfClassThatNeverDies.quickGet(candidate);
+            serves = listFunctionsWhoseClosuresAreHeld(candidate, { m_program.provenTypeOf(layout.fields[field].declared), m_facts.linked().provenOfField({ scope, field }) }, holdsClosures) || m_isCapturedByClosureReachableForGood.quickGet(candidate);
         }
         if (!serves)
             struckFromStart.append(candidate);

@@ -46,9 +46,9 @@ private:
         uint32_t index { 0 };
     };
 
-    bool fail(FailureKind kind, const Operation* operation = nullptr)
+    bool fail(FailureKind kind, const Operation* operation = nullptr, PlaceOfCheck check = PlaceOfCheck::here())
     {
-        m_proc.fail(kind, operation);
+        m_proc.fail(kind, operation, check);
         return false;
     }
 
@@ -231,7 +231,7 @@ bool FrameChecker::checkFramedPart()
     for (const Allocation::HeadOfFramedPart& headOfFramedPart : m_allocation.headsOfFramedPart()) {
         const Block* head = headOfFramedPart.block;
         const BlockPlace& placeOfHead = m_order.of(head);
-        if (head->isEntry() || head->isLandingPad() || !placeOfHead.isReached() || placeOfHead.isRare() || placeOfHead.loop != noLoop || !m_frame.isSetUpAtHeadOf(head) || !m_allocation.isHeadOfFramedPart(head))
+        if (head->isEntry() || head->isLandingPad() || !placeOfHead.isReached() || (placeOfHead.isRare() && m_order.rareRegions()[placeOfHead.rareRegion].onlyEntry != head) || placeOfHead.loop != noLoop || !m_frame.isSetUpAtHeadOf(head) || !m_allocation.isHeadOfFramedPart(head))
             return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, head->last());
         for (const Operation* phi : head->phis()) {
             if (!m_liveness.isDropped(phi) && m_allocation.isSpilled(phi) && !m_allocation.registerAtDefinitionOf(phi).isSet())
@@ -247,7 +247,23 @@ bool FrameChecker::checkFramedPart()
         for (const Block* predecessor : m_order.of(block).predecessors) {
             if (!isInFramedPart || isHead)
                 break;
-            if (!m_allocation.isInFramedPart(predecessor) || &m_allocation.headOfFramedPartAbove(predecessor) != &m_allocation.headOfFramedPartAbove(block))
+            bool bringsOnlyHeadsKnownAboveBlock = false;
+            if (m_allocation.isInFramedPart(predecessor)) {
+                const Allocation::HeadOfFramedPart* first = &m_allocation.headOfFramedPartAbove(predecessor);
+                const uint32_t further = m_allocation.furtherHeadsOfFramedPartAbove(predecessor);
+                bool firstIsKnown = first == &m_allocation.headOfFramedPartAbove(block);
+                bool furtherAreKnown = further == UINT32_MAX;
+                uint32_t known = m_allocation.furtherHeadsOfFramedPartAbove(block);
+                for (size_t steps = m_order.of(block).predecessors.size(); ; --steps) {
+                    furtherAreKnown |= known == further;
+                    if ((firstIsKnown && furtherAreKnown) || known == UINT32_MAX || !steps)
+                        break;
+                    firstIsKnown |= &m_allocation.headsOfFramedPart()[m_allocation.furtherHeadsOfFramedPart()[known].head] == first;
+                    known = m_allocation.furtherHeadsOfFramedPart()[known].rest;
+                }
+                bringsOnlyHeadsKnownAboveBlock = firstIsKnown && furtherAreKnown;
+            }
+            if (!bringsOnlyHeadsKnownAboveBlock)
                 return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, block->last());
         }
         if (!m_frame.isSetUpAtHeadOf(block) || isHead)

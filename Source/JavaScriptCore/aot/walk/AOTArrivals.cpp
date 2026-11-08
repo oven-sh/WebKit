@@ -190,7 +190,7 @@ TypeID Arrivals::leftAt(TypeArena& types, FunctionID function, uint32_t entryPar
     return copyTypeBetweenArenasOfArrivals(m_joins, types, joined);
 }
 
-TypeID Arrivals::askedByDoorsOfCapture(TypeArena& types, FunctionID id, uint32_t entryParameter) const
+ALWAYS_INLINE TypeID Arrivals::askedByDoorsOfCapture(TypeArena& types, FunctionID id, uint32_t entryParameter) const
 {
     const Function& function = m_program.at(id);
     if (entryParameter >= function.numberOfEntryParameters() || function.entryParameterKind(entryParameter) != EntryParameter::Capture)

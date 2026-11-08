@@ -81,6 +81,7 @@ void BuiltinTableOfBuild::unlockForTestRun(std::span<const BuiltinID> members, s
     m_data.runtime.lockedMembers = m_lockedMembers.span();
     m_data.runtime.lockedObjects = m_lockedObjects.span();
     m_data.runtime.closedKeys = m_closedKeys.span();
+    answerQuestionsAboutClasses();
 }
 
 namespace Typed {

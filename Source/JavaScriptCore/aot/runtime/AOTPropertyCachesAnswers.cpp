@@ -18,6 +18,7 @@
 #include "AOTModuleNamespace.h"
 #include "AOTModules.h"
 #include "AOTObject.h"
+#include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTPrimitives.h"
 #include "AOTProgramIdentifiers.h"
@@ -831,18 +832,31 @@ static bool leavesFieldOut(State& state, const LayoutData& layout, uint32_t orde
     return !WTF::find16(listed.data(), layout.indexOf(field), listed.size());
 }
 
+static bool hasMovedBetweenSlotAndExtraProperties(const StoreQuery& query, const Object& object, const CompiledStructure& before, const FieldData& field)
+{
+    VM& vm = query.globalObject->vm();
+    if (!field.canLeaveSlot() || before.mayBePrototype() || object.compiledStructure().storedPrototype() != before.storedPrototype())
+        return false;
+    if (!object.isInSlot(field))
+        return livesInExtraProperties(vm, object, field);
+    return lookUpExtraProperty(vm, before, query.uid, ChainWalkMode::MayAllocate).result == ExtraPropertyLookupResult::Found;
+}
+
 static PropertyAnswer classifyFieldStore(const StoreQuery& query, Object& object, const FieldData& field)
 {
     SlotAccess access = accessFor(query.mode);
     const CompiledStructure* before = compiledObjectStructureOrNull(query.structureBefore);
-    if (!before || &before->layout() != &object.layout() || (object.structure() != before && !query.slot.isCacheableSetter()))
+    if (!before || &before->layout() != &object.layout())
+        return uncacheableOnce(access);
+    bool hasMoved = object.structure() != before && !query.slot.isCacheableSetter();
+    if (hasMoved && !hasMovedBetweenSlotAndExtraProperties(query, object, *before, field))
         return uncacheableOnce(access);
     if (field.flags & fieldAttributeFlags || field.slot.representation() == SlotRepresentation::DeferredClosure)
         return PropertyAnswer::uncacheable(access);
     PropertyAnswer answer { .kind = PropertyAnswerKind::Field, .access = access, .isOwn = true, .field = &field };
     answer.undefinedNeedsNoStorage = field.flags & fieldMayExistWithoutStorage && object.state().objects->layouts.slotAdmits(field, jsUndefined());
     answer.fieldTakesAnyValue = access == SlotAccess::Store && !field.isOutOfLine() && field.slot.representation() == SlotRepresentation::JSValue && object.state().objects->layouts.typeOf(field).takesEveryValue();
-    if (!field.canLeaveSlot() || before->mayBePrototype())
+    if (!field.canLeaveSlot() || before->mayBePrototype() || hasMoved)
         return answer;
     ExtraPropertyLookup amongExtraProperties = lookUpExtraProperty(query.globalObject->vm(), *before, query.uid, ChainWalkMode::MayAllocate);
     if (amongExtraProperties.result == ExtraPropertyLookupResult::Found && object.structure() == before)

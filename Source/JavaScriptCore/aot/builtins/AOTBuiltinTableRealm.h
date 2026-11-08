@@ -64,6 +64,7 @@ private:
 static_assert(sizeof(BuiltinCellKey) == 4);
 
 JS_EXPORT_PRIVATE BuiltinCellKey cellThatNamesMemberAskedByItsByte(const BuiltinTable&, BuiltinID member);
+JS_EXPORT_PRIVATE bool isMemberAskedByByteAlone(const BuiltinTable&, BuiltinID member);
 
 enum class BuiltinLookupFailure : uint8_t {
     HolderIsMissing,

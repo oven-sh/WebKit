@@ -291,14 +291,18 @@ static void fillFieldTablesForFacts(const Program& program, const LinkTables& li
                 if (facts.formOfValue.contains(FieldForm::IsAccessor))
                     facts.facts.add(FieldFact::IsAccessor);
             }
-            if (const LinkedCell* cell = holdsAccessorsInSlots ? linked.findCellOfField({ id, field }) : nullptr; cell && cell->isFilledByAccessorsAlone)
+            if (const LinkedCell* cell = holdsAccessorsInSlots ? linked.findCellOfField({ id, field }) : nullptr; cell && cell->isFilledByAccessorsAlone) {
                 facts.facts.add(FieldFact::IsAccessor);
+                if (field < numberDeclared)
+                    facts.formOfValue = cell->formThatDefinitionsCreate;
+            }
             if (!layout.possibleChanges.contains(LayoutChange::LosesProperty))
                 facts.stability.add(FieldStability::IsNeverDeleted);
             if (!layout.reachesUnseenCode) {
                 bool isDeclaredPlain = field >= numberDeclared ? facts.formOfValue.isEmpty() : fieldAt(program, declarationOf(program, { id, field })).form.isEmpty();
                 const LinkedCell* cell = layout.isRedefinedByLiteralsAlone ? linked.findCellOfField({ id, field }) : nullptr;
-                if (isDeclaredPlain && (!layout.possibleChanges.contains(LayoutChange::GetsAccessor) || (cell && cell->isFilled)))
+                const LinkedCell* own = cell ? cell : linked.findCellOfField({ id, field });
+                if (isDeclaredPlain && (!layout.possibleChanges.contains(LayoutChange::GetsAccessor) || (cell && cell->isFilled) || (own && own->liesBesideWhatDescriptorsDefine)))
                     facts.stability.add(FieldStability::IsNeverRedefined);
             }
             tables.fields.append(facts);
@@ -989,7 +993,7 @@ static void indexLayoutsByNamesForFacts(const Program& program, BuildContext& bu
 {
     StepTimes steps(build, "facts"_s);
     if (parts.mechanisms.contains(Mechanism::Guesses))
-        parts.layoutsByNames = LayoutsByNames(program, *parts.summaries, parts.linked);
+        parts.layoutsByNames = LayoutsByNames(program, *parts.summaries, parts.linked, parts.held);
     steps.didFinish("layouts by names"_s);
 }
 

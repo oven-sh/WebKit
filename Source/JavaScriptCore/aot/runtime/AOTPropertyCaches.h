@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTChainDependents.h"
+#include "AOTCheckedSpan.h"
 #include "AOTFieldTable.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesFront.h"
@@ -37,6 +38,58 @@ class CustomAccessorTable;
 class Image;
 struct Instance;
 struct State;
+
+class AddedExtraPropertiesBesideTable {
+public:
+    bool isEmpty() const { return !m_numberFilled; }
+    NEVER_INLINE const AddedExtraProperty* find(StructureID structureID, UniquedStringImpl* name)
+    {
+        AddedExtraProperty& place = placeOf(structureID, name);
+        return place.name ? &place : nullptr;
+    }
+    NEVER_INLINE void remember(const AddedExtraProperty& added)
+    {
+        if (m_places.isEmpty())
+            m_places = emptyPlaces(fewestPlaces);
+        AddedExtraProperty* place = &placeOf(added.structureBefore, added.name);
+        if (!place->name && ++m_numberFilled * 2 > m_places.size()) {
+            Vector<AddedExtraProperty> fewer = std::exchange(m_places, emptyPlaces(m_places.size() * 2));
+            for (const AddedExtraProperty& kept : fewer) {
+                if (kept.name)
+                    placeOf(kept.structureBefore, kept.name) = kept;
+            }
+            place = &placeOf(added.structureBefore, added.name);
+        }
+        *place = added;
+    }
+    void clear()
+    {
+        m_places.clear();
+        m_numberFilled = 0;
+    }
+
+private:
+    static constexpr size_t fewestPlaces = 64;
+    static Vector<AddedExtraProperty> emptyPlaces(size_t number)
+    {
+        Vector<AddedExtraProperty> places;
+        places.fill(AddedExtraProperty { }, number);
+        return places;
+    }
+    AddedExtraProperty& placeOf(StructureID structureID, UniquedStringImpl* name)
+    {
+        std::span<AddedExtraProperty> places = m_places.mutableSpan();
+        size_t mask = places.size() - 1;
+        for (size_t index = ((structureID.bits() >> StructureRowWords::granuleShift) * 0x9e3779b97f4a7c15ull + (std::bit_cast<uintptr_t>(name) >> 4) * 0xc2b2ae3d27d4eb4full) >> 32;; ++index) {
+            AddedExtraProperty& place = places[index & mask];
+            if (!place.name || (place.name == name && place.structureBefore == structureID))
+                return place;
+        }
+    }
+
+    Vector<AddedExtraProperty> m_places;
+    size_t m_numberFilled { 0 };
+};
 
 template<typename Entry, typename Key>
 class EntriesBesideTable {
@@ -71,8 +124,13 @@ public:
 
     SiteCaches(State&, const CustomAccessorTable&);
 
-    uint32_t indexOf(SiteCache site) const { return static_cast<uint32_t>(site - m_slots.data()); }
-    SiteCache at(uint32_t index) const { return &m_slots[index]; }
+    uint32_t indexOf(SiteCache site) const
+    {
+        size_t offset = std::bit_cast<uintptr_t>(site) - std::bit_cast<uintptr_t>(m_slots.data());
+        RELEASE_ASSERT(!(offset % sizeof(RememberedSlot<Slot>)) && offset / sizeof(RememberedSlot<Slot>) < m_slots.size());
+        return static_cast<uint32_t>(offset / sizeof(RememberedSlot<Slot>));
+    }
+    SiteCache at(uint32_t index) const { return &checkedAt(m_slots, index); }
 
     bool didMissBefore(SiteCache);
     void didFailToFill(SiteCache);
@@ -137,7 +195,7 @@ public:
     {
         if (WideSiteAnswers* wide = wideAnswersOf(place))
             return &wide->answers;
-        return m_indices[place] > indexOfAnswersThatHoldNothing ? &m_answers[m_indices[place] / wordsInAnswers] : nullptr;
+        return m_indices[place] > indexOfAnswersThatHoldNothing ? &checkedAt(m_answers, m_indices[place] / wordsInAnswers) : nullptr;
     }
 
     bool isDueForFilling(uint32_t place);
@@ -152,15 +210,15 @@ public:
         int32_t indexInStorageOfHolder { 0 };
     };
     void fill(uint32_t place, SiteUse, const AnswerByStructure&, UniquedStringImpl*, std::span<JSObject* const> changeableObjects, bool stubFollowsFurtherAnswers = false);
-    void moveUpFurtherAnswer(uint32_t place, StructureID);
-    void fillByShape(uint32_t place, SiteAnswers::Answer);
-    bool holdsAnotherStructure(uint32_t place, StructureID) const;
+    void moveUpFurtherAnswer(uint32_t place, SiteUse, StructureID);
+    void fillByShape(uint32_t place, SiteUse, SiteAnswers::Answer, std::optional<SiteAnswers::Answer> sameByStructure = std::nullopt);
+    bool holdsAnotherStructure(uint32_t place, SiteUse, StructureID) const;
     void addStructureThatLacksName(uint32_t place, StructureID, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
     struct WhatStandsAbove {
         uint32_t holderOrWord;
         int32_t indexInStorageOfHolder { 0 };
     };
-    bool findsSlotOf(uint32_t place, const Object&) const;
+    bool findsSlotOf(uint32_t place, SiteUse, const Object&) const;
     void fillAboveFieldLeftOut(uint32_t place, StructureID, WhatStandsAbove, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
 
     void dropChainDependent(VM&, uint32_t place, UniquedStringImpl* uidOrNull) final;
@@ -324,6 +382,7 @@ public:
 
     void set(Structure*, const CachedName&, SlotAccess, const Slot&);
     std::optional<Slot> find(StructureID, const CachedName&, SlotAccess) const;
+    bool holdsInFrontRows(StructureID, const CachedName&, SlotAccess) const;
     void remove(StructureID, const CachedName&, SlotAccess);
 
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
@@ -404,11 +463,21 @@ public:
     void cache(const CachedAccess&, const PropertyAnswer&);
     bool shouldFile(StructureID, UniquedStringImpl*, SlotAccess);
     void didFileNothing();
-    void remember(const FieldExit& exit) { putAtPlace(placeOf(exit.structureBefore, exit.name), m_fieldExitsBesideTable, exit); }
+    void remember(const FieldExit&);
     void forgetFieldExits()
     {
         m_fieldExits.fill({ });
         m_fieldExitsBesideTable.clear();
+        m_fieldReturns.fill({ });
+    }
+    void remember(const FieldReturn& back) { placeOfReturn(back.structureBefore, back.name) = back; }
+    const FieldReturn* findFieldReturn(StructureID structureID, uint32_t name)
+    {
+        const FieldReturn& back = placeOfReturn(structureID, name);
+        return back.field && back.structureBefore == structureID && back.name == name ? &back : nullptr;
+    }
+    void forgetAddedExtraProperties()
+    {
         m_addedExtraProperties.fill({ });
         m_addedExtraPropertiesBesideTable.clear();
     }
@@ -419,22 +488,29 @@ public:
             return &exit;
         return m_fieldExitsBesideTable.isEmpty() ? nullptr : takeFieldExitFromBesideTable(structureID, name);
     }
-    void remember(const AddedExtraProperty& added) { putAtPlace(placeOf(added.structureBefore, added.name), m_addedExtraPropertiesBesideTable, added); }
+    void remember(const AddedExtraProperty& added)
+    {
+        AddedExtraProperty& place = placeOf(added.structureBefore, added.name);
+        if (!place.name || (place.name == added.name && place.structureBefore == added.structureBefore))
+            place = added;
+        else
+            m_addedExtraPropertiesBesideTable.remember(added);
+    }
     const AddedExtraProperty* findAddedExtraProperty(StructureID structureID, UniquedStringImpl* name)
     {
         AddedExtraProperty& added = placeOf(structureID, name);
         if (added.name == name && added.structureBefore == structureID) [[likely]]
             return &added;
-        return m_addedExtraPropertiesBesideTable.isEmpty() ? nullptr : takeAddedExtraPropertyFromBesideTable(structureID, name);
+        return m_addedExtraPropertiesBesideTable.isEmpty() ? nullptr : m_addedExtraPropertiesBesideTable.find(structureID, name);
     }
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
-    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false);
+    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false, bool stubJumpsToArmOfAnswer = false);
     void fileOwnPlainValueUnlessFiled(JSObject*, uint32_t identifierNumber);
     static RowsOfReads::Row* claimRowOfReads(JSValue, RowsOfReads&);
     void findPlaceInRowOfReads(JSCell*, uint32_t identifierNumber, RowsOfReads::Row&, uint32_t index);
-    bool fillAboveFieldLeftOut(uint32_t place, Object&, const CachedName&);
+    bool fillAboveFieldLeftOut(uint32_t place, SiteUse, Object&, const CachedName&);
     JSCell* keyForTraps(UniquedStringImpl*);
     void prepareHoldersBeforeLookupsUnder(Symbol*, JSObject* function);
     JSObject* preparationBeforeLookupsUnder(UniquedStringImpl* uid) const { return m_preparationsBeforeLookups.isEmpty() ? nullptr : m_preparationsBeforeLookups.get(uid).function; }
@@ -483,12 +559,9 @@ private:
     UniquedStringImpl* m_symbolLookedAtByName { nullptr };
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     uint8_t* m_counterOfPairToFile { nullptr };
-    using KeyOfAddedExtraProperty = std::pair<uint32_t, UniquedStringImpl*>;
     static uint64_t keyOfFieldExit(StructureID structureID, uint32_t name) { return static_cast<uint64_t>(structureID.bits()) << 32 | name; }
     static uint64_t keyOf(const FieldExit& exit) { return keyOfFieldExit(exit.structureBefore, exit.name); }
-    static KeyOfAddedExtraProperty keyOf(const AddedExtraProperty& added) { return { added.structureBefore.bits(), added.name }; }
     static bool isFilled(const FieldExit& exit) { return !!exit.field; }
-    static bool isFilled(const AddedExtraProperty& added) { return !!added.name; }
     template<typename Entry, typename Key>
     static NEVER_INLINE void putAtPlace(Entry& place, EntriesBesideTable<Entry, Key>& beside, const Entry& entry)
     {
@@ -506,13 +579,14 @@ private:
         return &place;
     }
     NEVER_INLINE FieldExit* takeFieldExitFromBesideTable(StructureID structureID, uint32_t name) { return takeFromBesideTable(placeOf(structureID, name), m_fieldExitsBesideTable, keyOfFieldExit(structureID, name)); }
-    NEVER_INLINE AddedExtraProperty* takeAddedExtraPropertyFromBesideTable(StructureID structureID, UniquedStringImpl* name) { return takeFromBesideTable(placeOf(structureID, name), m_addedExtraPropertiesBesideTable, KeyOfAddedExtraProperty { structureID.bits(), name }); }
     FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldExit::numberOfPlaces]; }
     std::array<FieldExit, FieldExit::numberOfPlaces> m_fieldExits { };
     EntriesBesideTable<FieldExit, uint64_t> m_fieldExitsBesideTable;
+    FieldReturn& placeOfReturn(StructureID structureID, uint32_t name) { return m_fieldReturns[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldReturn::numberOfPlaces]; }
+    std::array<FieldReturn, FieldReturn::numberOfPlaces> m_fieldReturns { };
     AddedExtraProperty& placeOf(StructureID structureID, UniquedStringImpl* name) { return m_addedExtraProperties[((structureID.bits() >> StructureRowWords::granuleShift) + (std::bit_cast<uintptr_t>(name) >> 4)) % AddedExtraProperty::numberOfPlaces]; }
     std::array<AddedExtraProperty, AddedExtraProperty::numberOfPlaces> m_addedExtraProperties { };
-    EntriesBesideTable<AddedExtraProperty, KeyOfAddedExtraProperty> m_addedExtraPropertiesBesideTable;
+    AddedExtraPropertiesBesideTable m_addedExtraPropertiesBesideTable;
     std::atomic<bool> m_shouldForgetMisses { false };
 };
 

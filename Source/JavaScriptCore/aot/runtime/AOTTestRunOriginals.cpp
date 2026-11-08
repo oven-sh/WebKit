@@ -12,6 +12,7 @@
 #include "AOTModuleNamespace.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
+#include "JSModuleLoader.h"
 #include "ModuleRegistryEntry.h"
 #include <wtf/SetForScope.h>
 
@@ -58,7 +59,7 @@ bool Modules::importsOriginalBesideMock(ModuleID fileOrModule, ModuleID importer
         return false;
     bool getsOriginal = asked.iterator->value.isGiven || asked.iterator->value.staysLinked;
     if (getsOriginal)
-        m_importersThatGotOriginal.set(asked.iterator->key, GotOriginal { m_instance.vm->aotState().momentOfLoads, false, m_timesMocked.get(mocked) });
+        m_importersThatGotOriginal.set(asked.iterator->key, GotOriginal { m_instance.vm->aotState().momentOfLoads, false, m_timesMocked.get(mocked), false, asked.iterator->value.isGiven });
     else if (auto got = m_importersThatGotOriginal.find(asked.iterator->key); got != m_importersThatGotOriginal.end())
         got->value.isGivenItNoMore = true;
     else if (askedBy == OriginalIsAskedBy::Statement && status(importer) > ModuleStatus::Linked)
@@ -78,6 +79,20 @@ bool Modules::keepsOriginalUnderLaterMock(ModuleID fileOrModule, ModuleID import
         return false;
     auto anew = m_momentsLoadedAnew.find(importer);
     return status(importer) > ModuleStatus::Linked && (anew == m_momentsLoadedAnew.end() || anew->value.moment <= got->value.moment);
+}
+
+bool Modules::isLinkedToOriginalOf(ModuleID fileOrModule, ModuleID importer) const
+{
+    if (m_importersThatGotOriginal.isEmpty()) [[likely]]
+        return false;
+    ModuleID mocked = fileOf(fileOrModule);
+    auto got = m_importersThatGotOriginal.find(static_cast<uint64_t>(mocked.index()) << 32 | importer.index());
+    if (got == m_importersThatGotOriginal.end() || !got->value.isGivenByHost)
+        return false;
+    if (got->value.isGivenItNoMore && got->value.timesMocked != m_timesMocked.get(mocked) && !got->value.staysUnderKeyOfOriginal)
+        return false;
+    auto anew = m_momentsLoadedAnew.find(importer);
+    return anew == m_momentsLoadedAnew.end() || anew->value.moment <= got->value.moment;
 }
 
 void Modules::didLeaveOriginalUnderKeyOfOriginal(ModuleID fileOrModule)

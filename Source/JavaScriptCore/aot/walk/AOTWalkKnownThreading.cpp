@@ -132,6 +132,7 @@ private:
     void lookBehindEdge(LookAhead&, const PlaceLookedAt& from, const BodyTerminator&, uint32_t targetIndex, BodyTarget);
     void lookBehindReturnOfCopy(LookAhead&, const PlaceLookedAt& from, const BodyTerminator&);
     template<typename Functor> bool looksAhead(LookAhead&, const Functor& isLeanedOn);
+    bool calleeAsksFirstWhatItIsHanded(const BodyValue& operation, uint32_t operandIndex);
     bool endOfBlockMayBeWalkedForEachWayFrom(uint32_t begin);
     bool mayThrowFrom(uint32_t begin);
     uint32_t numberOfNamesBroughtApart(std::span<const uint32_t> ways);
@@ -191,9 +192,11 @@ void KnownThreading::forgetValuesThatNobodyReadsAnyMore()
     listed.slotsListedAnew.shrink(0);
     while (!listed.slotsByLastUse.isEmpty() && listed.slotsByLastUse.first().first < here) {
         std::ranges::pop_heap(listed.slotsByLastUse, std::ranges::greater());
-        Walker::Frame::ValuesBuiltTwice::Slot& dead = listed.slots[listed.slotsByLastUse.takeLast().second];
-        if (std::exchange(dead.ordinal, 0))
-            frame().references.placeOf<Walker::NamesOfValues::Writer::ForgetsValuesThatNobodyReadsAnyMore>(dead.value.index()) = Reference();
+        uint32_t dead = listed.slotsByLastUse.takeLast().second;
+        if (!listed.slots[dead].ordinal)
+            continue;
+        listed.slots.mutableAt(dead).ordinal = 0;
+        frame().references.placeOf<Walker::NamesOfValues::Writer::ForgetsValuesThatNobodyReadsAnyMore>(listed.slots[dead].value.index()) = Reference();
     }
 }
 
@@ -472,6 +475,42 @@ void KnownThreading::lookBehindReturnOfCopy(LookAhead& look, const PlaceLookedAt
     look.places.append(PlaceLookedAt { from.frameIndex - 1, caller.block, begin, copy.callCopied, given });
 }
 
+bool KnownThreading::calleeAsksFirstWhatItIsHanded(const BodyValue& operation, uint32_t operandIndex)
+{
+    if (operation.opcode() != Opcode::Call || operandIndex < numberOfNamedOperandsOf(Opcode::Call) || operation.as<Opcode::Call>().isNeverInlined())
+        return false;
+    FunctionID callee = m_walker.facts().linked().calleeAt(frame().function, operation.id());
+    const BodyIndex* body = callee ? m_walker.facts().bodies().find(callee) : nullptr;
+    if (!body)
+        return false;
+    const Function& function = m_walker.program().at(callee);
+    BodyBlock entry = body->block(entryBlock);
+    const uint32_t position = operandIndex - numberOfNamedOperandsOf(Opcode::Call);
+    const uint32_t index = function.firstParameterIndex() + position;
+    if (position >= function.numberOfPositionalParameters() || index >= entry.numberOfParameters())
+        return false;
+    ValueID parameter = entry.parameter(index);
+    std::optional<BodyUser> first = body->firstUser(parameter);
+    if (!first || first->kind != BodyUseKind::Operand || !operationsTypedByWayInKnownThreading.contains(body->opcodeOf(first->value)))
+        return false;
+    BodyValue asking = body->value(first->value);
+    auto isMoreThanHandedOn = [&](uint32_t operandIndexOfAsking) {
+        return !asking.operandUses(operandIndexOfAsking).containsOnly({ OperandUse::Retains, OperandUse::Returns });
+    };
+    const uint32_t numberOfNamedOperands = numberOfNamedOperandsOf(asking.opcode());
+    bool isNamedOperand = false;
+    bool asks = false;
+    for (uint32_t named = 0; named < numberOfNamedOperands; ++named) {
+        if (asking.operand(named) != parameter)
+            continue;
+        isNamedOperand = true;
+        asks |= isMoreThanHandedOn(named);
+    }
+    if (!asks && asking.numberOfVariadicOperands() && isMoreThanHandedOn(numberOfNamedOperands))
+        asks = !isNamedOperand || std::ranges::find(asking.variadicOperands(), parameter) != asking.variadicOperands().end();
+    return asks && copyOfCalleePaysAt(m_walker, callee, operation.as<Opcode::Call>().argumentsOperands().size(), { frame().function, m_walker.isInLoop() });
+}
+
 template<typename Functor>
 bool KnownThreading::looksAhead(LookAhead& look, const Functor& isLeanedOn)
 {
@@ -495,7 +534,7 @@ bool KnownThreading::looksAhead(LookAhead& look, const Functor& isLeanedOn)
                 continue;
             bool looks = false;
             operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                if (looks || operation.operandUses(operandIndex).containsOnly({ OperandUse::Retains, OperandUse::Returns }))
+                if (looks || (operation.operandUses(operandIndex).containsOnly({ OperandUse::Retains, OperandUse::Returns }) && !here.calleeAsksFirstWhatItIsHanded(operation, operandIndex)))
                     return;
                 if (place.frameIndex == m_frameIndex) {
                     if (ValueID value = valueFromInFront(look, operand))
@@ -705,7 +744,7 @@ bool KnownThreading::letQuietReturnsOfCopyWalkEndOfBlockApart(ValueID call)
     return oneSideIsLastBlockOfTurn && letTerminatorBeWalkedForEachWay(m_block.firstValue());
 }
 
-bool KnownThreading::walkApartFromClosedWays()
+ALWAYS_INLINE bool KnownThreading::walkApartFromClosedWays()
 {
     Walker& walker = m_walker;
     BlockID block = m_block.id();
@@ -799,7 +838,7 @@ bool KnownThreading::walkApartFromWaysThatDidSomething()
     return true;
 }
 
-bool KnownThreading::walkApartBySidesOfQuestionAskedBefore()
+ALWAYS_INLINE bool KnownThreading::walkApartBySidesOfQuestionAskedBefore()
 {
     Walker& walker = m_walker;
     BlockID block = m_block.id();

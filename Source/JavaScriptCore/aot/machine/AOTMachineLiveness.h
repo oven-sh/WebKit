@@ -356,7 +356,7 @@ public:
     void run();
     void letGoOfWorkingLists();
 
-    void scanBlock(Block*);
+    template<bool regionsHaveKinds> void scanBlock(Block*);
 
     void addUse(Operation* value, Position, Reg hint = Reg());
     void define(Operation*, Position);

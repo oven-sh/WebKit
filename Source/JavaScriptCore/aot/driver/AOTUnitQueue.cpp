@@ -12,6 +12,7 @@
 #include "AOTCallingConventions.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
+#include "AOTSort.h"
 #include <algorithm>
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
@@ -189,7 +190,7 @@ void UnitQueue::orderCycles()
 
     for (uint32_t unit = numberOfFunctions * Typed::numberOfCodeRolesOfOneFunction; unit < m_conventions.numberOfUnits(); ++unit)
         m_unitsBehindRoles.append({ m_conventions.unitAt(unit).function.index(), unit });
-    std::ranges::stable_sort(m_unitsBehindRoles, { }, &UnitBehindRoles::function);
+    AOT::stableSort(m_unitsBehindRoles, { }, &UnitBehindRoles::function);
 }
 
 std::span<const uint32_t> UnitQueue::cyclesNamedBy(uint32_t cycle) const

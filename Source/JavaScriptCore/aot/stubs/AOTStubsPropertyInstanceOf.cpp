@@ -65,7 +65,8 @@ void generateInstanceOf(StubAssembler& jit)
         return;
     }
     const bool readsPrototypeOutOfCell = operand == InstanceOfOperand::PrototypeThatIsBuiltin;
-    const bool isGivenPrototype = operand == InstanceOfOperand::Prototype;
+    const bool givesWayAtTraps = operand == InstanceOfOperand::PrototypeUnlessTrapped;
+    const bool isGivenPrototype = operand == InstanceOfOperand::Prototype || givesWayAtTraps;
     const GPRReg prototype = readsPrototypeOutOfCell ? jit.clobberRegister(jit.immediate()) : isGivenPrototype ? jit.operand(1) : jit.clobberOperand(1);
     const GPRReg constructor = prototype;
     const GPRReg current = jit.allocateScratch(StubRegister::T11);
@@ -134,7 +135,11 @@ void generateInstanceOf(StubAssembler& jit)
         isInstance.link(&jit);
         returnBoolean(true);
         slowCases.link(&jit);
-        jit.callOperationAndReturn(Entry::operationAOTDefaultHasInstance, { .secondArgumentIn = value, .thirdArgumentIn = prototype });
+        if (givesWayAtTraps) {
+            jit.move(TrustedImm32(answerOfChainWalkAtTrap), jit.result());
+            jit.returnToCaller();
+        } else
+            jit.callOperationAndReturn(Entry::operationAOTDefaultHasInstance, { .secondArgumentIn = value, .thirdArgumentIn = prototype });
         if (!readsPrototypeOutOfCell)
             return;
 
@@ -256,7 +261,7 @@ void generateInstanceOf(StubAssembler& jit)
 
 StubSignature signatureOfInstanceOf(StubKey key)
 {
-    if (static_cast<InstanceOfOperand>(key.form()) <= InstanceOfOperand::Prototype)
+    if (static_cast<InstanceOfOperand>(key.form()) <= InstanceOfOperand::PrototypeUnlessTrapped)
         return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) });
     StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::R0) });
     signature.immediate = gprOf(StubRegister::A1);

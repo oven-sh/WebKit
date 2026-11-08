@@ -49,11 +49,13 @@ struct CallInWalkCalls {
     bool restListStandsBehindArguments { false };
     bool restListIsCopied { false };
     Reference listOfUnknownLength;
+    std::span<const Reference> writtenInFrontOfList;
     BuiltinID calledBuiltin;
     bool isConstruction { false };
     bool isNeverInlined { false };
     bool calleeComesBack { false };
     std::optional<Walker::ArmThatMeets> armWhereGuardOfPrototypeHasEnded;
+    FunctionID calledWhereNoCopyIsMade;
 };
 
 enum class OperandSourceInWalkCalls : uint8_t { Given, Capture, Undefined, Absent, ArgumentCount, ListOfOtherArguments, CopyOfRestList, SharedEmptyList };
@@ -380,6 +382,8 @@ static bool buildCallAsWrittenForLongListInWalkCalls(Walker& walker, const Draft
     Draft asWritten = written;
     if (request.restListStandsBehindArguments)
         asWritten.setListOperand(buildListOfArgumentsAndListInWalkCalls(walker, originInFrontOfCall, request.arguments, request.restList));
+    else if (!request.writtenInFrontOfList.empty())
+        asWritten.setListOperand(buildListOfArgumentsAndListInWalkCalls(walker, originInFrontOfCall, request.writtenInFrontOfList, request.listOfUnknownLength));
     walker.chooseConservativeFields(asWritten);
     Reference result = walker.build(WTF::move(asWritten));
     walker.leaveAnythingAt(request.callee);
@@ -745,6 +749,19 @@ static bool isWrittenAtOrBelowInWalkCalls(const Program& program, LayoutID layou
     return false;
 }
 
+static bool standsAtOrBelowByParentsOfClassRecordsInWalkCalls(const Walker& walker, LayoutID layout, LayoutID above)
+{
+    for (size_t stepsLeft = walker.program().layouts.size(); layout && stepsLeft; --stepsLeft) {
+        if (layout == above)
+            return true;
+        LayoutID parent;
+        if (!findParentNamedByClassRecordForTypedAccess(walker, layout, parent))
+            return false;
+        layout = parent;
+    }
+    return false;
+}
+
 static bool walkConstructOfFunctionInWalkCalls(Walker&, const BodyValue& call, CallInWalkCalls&, Reference classObjectBelow);
 
 static bool goOnWhereGuardOfPrototypeHoldsInWalkCalls(Walker& walker, const BodyValue& call, CallInWalkCalls& request, const GuardOfPrototypeAtConstruction& guard, Origin origin)
@@ -1044,9 +1061,10 @@ static bool parametersAreReadOutOfListMadeElsewhereInWalkCalls(Walker& walker, c
 static bool readParametersOutOfListInWalkCalls(Walker& walker, const Function& callee, Reference list, Origin originInFrontOfCall, Vector<Reference, 8>& elements)
 {
     unsigned numberOfParameters = callee.numberOfPositionalParameters();
-    for (unsigned position = 0; position < numberOfParameters; ++position) {
+    unsigned numberWrittenInFront = elements.size();
+    for (unsigned position = numberWrittenInFront; position < numberOfParameters; ++position) {
         Draft at(Opcode::Integer, originInFrontOfCall);
-        at.setInteger(position);
+        at.setInteger(position - numberWrittenInFront);
         Draft read(Opcode::GetArrayElement, originInFrontOfCall);
         walker.chooseConservativeFields(read);
         read.setArrayOperand(list);
@@ -1155,11 +1173,13 @@ static ValueID findLastOperationThatIsObservedInWalkCalls(const Code& code, Bloc
     return { };
 }
 
-static Reference findListCopiedForCallAloneInWalkCalls(Walker& walker, const BodyValue& call, Reference copy)
+enum class WrittenInFrontOfListInWalkCalls : bool { Nothing, Values };
+
+static Reference findListCopiedForCallAloneInWalkCalls(Walker& walker, const BodyValue& call, Reference copy, WrittenInFrontOfListInWalkCalls written = WrittenInFrontOfListInWalkCalls::Nothing)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID list = call.as<Opcode::CallList>().listOperand();
-    if (!findListSpreadBehindArgumentsInWalkCalls(index, list, call.id()) || !index.value(list).as<Opcode::NewArray>().elementsOperands().empty())
+    if (!findListSpreadBehindArgumentsInWalkCalls(index, list, call.id()) || index.value(list).as<Opcode::NewArray>().elementsOperands().empty() != (written == WrittenInFrontOfListInWalkCalls::Nothing))
         return { };
     const Code& code = walker.code();
     ValueID last = findLastOperationThatIsObservedInWalkCalls(code, walker.currentBlock());
@@ -1252,6 +1272,18 @@ static bool walkCallListInWalkCalls(Walker& walker, const BodyValue& call)
             if (callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter }) || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::EscapeAnalysis))
                 return false;
             request.listOfUnknownLength = findListCopiedForCallAloneInWalkCalls(walker, call, walker.referenceOf(list));
+            Vector<Reference, 8> writtenInFront;
+            if (!request.listOfUnknownLength && (request.listOfUnknownLength = findListCopiedForCallAloneInWalkCalls(walker, call, walker.referenceOf(list), WrittenInFrontOfListInWalkCalls::Values))) {
+                for (ValueID element : index.value(list).as<Opcode::NewArray>().elementsOperands()) {
+                    Reference reference = walker.referenceOf(element);
+                    if (!reference)
+                        return false;
+                    writtenInFront.append(reference);
+                    if (elements.size() < callee.numberOfPositionalParameters())
+                        elements.append(reference);
+                }
+                request.writtenInFrontOfList = writtenInFront.span();
+            }
             if (!request.listOfUnknownLength || !isListAsMade(walker, request.listOfUnknownLength) || !hasKind(walker.types(), walker.typeOf(request.listOfUnknownLength), OperandKind::Array) || !indexesAreAbsentAboveLists(walker))
                 return false;
             Draft written = walker.draftOf(call);
@@ -1261,7 +1293,8 @@ static bool walkCallListInWalkCalls(Walker& walker, const BodyValue& call)
                 return true;
             walker.count(StatisticID::CallsThatTakeListInPlaceOfItsCopy);
             walker.count(StatisticID::CallsWhoseParametersAreReadOutOfList);
-            written.setListOperand(request.listOfUnknownLength);
+            if (writtenInFront.isEmpty())
+                written.setListOperand(request.listOfUnknownLength);
             request.arguments = elements.span();
             request.thisValue = written.thisValueOperand();
             request.calledBuiltin = written.calledBuiltin();
@@ -1407,7 +1440,8 @@ bool buildTypedConstructionOfItsOpcodes(Walker& walker, const BodyValue& value)
     ValueID classObject = read.classObjectOperand();
     LayoutID selected = classOfClassObjectAtInWalkCalls(walker, code.isConstant(classObject) ? Reference::constant(classObject) : Reference::value(classObject));
     const Plan& plan = walker.plan();
-    if (!selected || selected != read.layout() || !isWrittenAtOrBelowInWalkCalls(walker.program(), selected, allocation.layout()) || !isFoundByShapeTest(walker.program().at(selected)))
+    bool standsBelow = selected && (isWrittenAtOrBelowInWalkCalls(walker.program(), selected, allocation.layout()) || standsAtOrBelowByParentsOfClassRecordsInWalkCalls(walker, selected, allocation.layout()));
+    if (!standsBelow || selected != read.layout() || !isFoundByShapeTest(walker.program().at(selected)))
         return false;
     if (!plan.isInUse(selected) || !plan.slots().holdsCompiledObjects(selected))
         return false;
@@ -1454,7 +1488,11 @@ static bool copyOrCallDirectlyInWalkCalls(Walker& walker, const BodyValue& value
         if (walker.walkInline(value, request.callee, operands.span()))
             return true;
     }
-    return buildDirectCallInWalkCalls(walker, value, written, request);
+    if (!request.calledWhereNoCopyIsMade)
+        return buildDirectCallInWalkCalls(walker, value, written, request);
+    CallInWalkCalls ofOtherText = request;
+    ofOtherText.callee = request.calledWhereNoCopyIsMade;
+    return buildDirectCallInWalkCalls(walker, value, written, ofOtherText);
 }
 
 bool accessorAdmitsDirectCall(Walker& walker, FunctionID accessor)
@@ -1523,7 +1561,7 @@ std::optional<Vector<Reference, 8>> layOutEntryOperandsOfCall(Walker& walker, co
     return operands;
 }
 
-bool callFunctionDirectly(Walker& walker, const BodyValue& operation, FunctionID function, Reference thisValue, std::span<const Reference> arguments, MayCopyFunctionCalledDirectly mayCopy)
+bool callFunctionDirectly(Walker& walker, const BodyValue& operation, FunctionID function, Reference thisValue, std::span<const Reference> arguments, MayCopyFunctionCalledDirectly mayCopy, FunctionID calledWhereNoCopyIsMade)
 {
     if (!canCallCompilerHelper(walker, function))
         return false;
@@ -1540,21 +1578,102 @@ bool callFunctionDirectly(Walker& walker, const BodyValue& operation, FunctionID
         request.isNeverInlined = walker.program().at(function).isHiddenInStackTraces();
     if (mayCopy == MayCopyFunctionCalledDirectly::No)
         request.isNeverInlined = true;
+    request.calledWhereNoCopyIsMade = calledWhereNoCopyIsMade;
     return copyOrCallDirectlyInWalkCalls(walker, operation, written, request);
 }
 
 static constexpr uint32_t closedOperationsOfReadThatCallsGetter = 2;
 
+static bool callGetterExpectedUnderKeyInWalkCalls(Walker& walker, const BodyValue& read, Reference object, FunctionID getter, TypeID closures, BlockID inputBlock, uint32_t place, Origin origin)
+{
+    Reference property = walker.referenceOf(read.propertyOperand());
+    if (!property)
+        return false;
+    Draft lookup(Opcode::ElemGetOrOwnAccessor, origin);
+    walker.chooseConservativeFields(lookup);
+    lookup.setObjectOperand(object);
+    lookup.setPropertyOperand(property);
+    Reference found = walker.build(WTF::move(lookup));
+    if (!found)
+        return true;
+    Draft half(Opcode::GetGetterOfAccessorOrUndefined, origin);
+    walker.chooseConservativeFields(half);
+    half.setValueOperand(found);
+    Reference function = walker.build(WTF::move(half));
+    if (!function)
+        return true;
+    auto testFor = [&](TypeID tested) {
+        Draft test(Opcode::TypeTest, origin);
+        walker.chooseConservativeFields(test);
+        test.setValueOperand(function);
+        test.setTestedType(tested);
+        return walker.build(WTF::move(test));
+    };
+    Reference isAnswer = testFor(TypeTable::undefined);
+    if (!isAnswer)
+        return true;
+
+    BlockID answers = walker.addBlock();
+    BlockID holdsAccessor = walker.addBlock();
+    BlockID calls = walker.addBlock();
+    BlockID callsByValue = walker.addBlock(BlockFrequency::Rare);
+    BlockID meeting = walker.addBlock();
+    walker.branch(isAnswer, answers, holdsAccessor);
+    walker.noteGuessOpened();
+
+    Walker::StretchInArms stretch = walker.stretchInArms(inputBlock, place, place + 1);
+    Walker::ArmsThatMeet arms;
+    walker.continueIn(answers);
+    walker.bind(read.id(), found);
+    walker.listArm(stretch, arms);
+
+    auto callByValue = [&] {
+        Draft call(Opcode::Call, origin);
+        call.inputValueGiven = read.id();
+        call.setCalleeOperand(function);
+        call.setThisValueOperand(object);
+        walker.bind(read.id(), walker.build(WTF::move(call)));
+        walker.listArm(stretch, arms);
+    };
+    walker.continueIn(holdsAccessor);
+    walker.letGuessFailUnasked(callsByValue, origin);
+    Reference isGetter = testFor(closures);
+    if (!isGetter)
+        return true;
+    walker.branch(isGetter, calls, callsByValue);
+    walker.continueIn(callsByValue);
+    callByValue();
+    if (walker.hasFailed())
+        return true;
+
+    walker.continueIn(calls);
+    Draft proof(Opcode::Narrowed, origin);
+    walker.chooseConservativeFields(proof);
+    proof.setValueOperand(function);
+    proof.setTestOperand(isGetter);
+    proof.setOperandIndex(OperandIndex::TypeTest::value);
+    proof.setIsOnTakenEdge(true);
+    Reference closure = walker.build(WTF::move(proof));
+    if (closure && !callAccessor(walker, read, getter, object, { }, closure))
+        callByValue();
+    else
+        walker.listArm(stretch, arms);
+    if (!walker.hasFailed())
+        walker.letArmsMeet(stretch, arms, meeting);
+    return true;
+}
+
 bool callGetterExpectedAtRead(Walker& walker, const BodyValue& read)
 {
-    if (read.opcode() != Opcode::PropGet)
+    bool isByKey = read.opcode() == Opcode::ElemGet;
+    if (read.opcode() != Opcode::PropGet && !isByKey)
         return false;
     Walker::GettersExpectedInFunction& expected = walker.gettersExpectedInFunction;
     if (FunctionID function = walker.currentFunction(); expected.function != function) {
         auto reads = std::ranges::equal_range(walker.facts().held().gettersExpectedAtReads, function, { }, &LinkedGetterAtRead::function);
         expected = { function, std::span<const LinkedGetterAtRead>(reads.begin(), reads.end()) };
     }
-    if (expected.reads.empty() || read.isFreeName() || !walker.has(Mechanism::DirectCalls))
+    if (expected.reads.empty() || (!isByKey && read.isFreeName()) || !walker.has(Mechanism::DirectCalls))
         return false;
     Reference object = walker.referenceOf(read.objectOperand());
     if (!object || !object.isValue() || !walker.types().at(walker.typeOf(object)).isObject())
@@ -1573,6 +1692,8 @@ bool callGetterExpectedAtRead(Walker& walker, const BodyValue& read)
     Origin origin = walker.originOf(read);
     origin.isTailCall = false;
 
+    if (isByKey)
+        return callGetterExpectedUnderKeyInWalkCalls(walker, read, object, getter, closures, block.id(), place, origin);
     Draft lookup(Opcode::GetCachedGetter, origin);
     walker.chooseConservativeFields(lookup);
     lookup.setObjectOperand(object);

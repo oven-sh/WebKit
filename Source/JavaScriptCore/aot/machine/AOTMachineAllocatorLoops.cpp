@@ -108,13 +108,13 @@ const Block* Allocator::headOfLoopThatBlockOnlyLeadsBackTo(const Block* block) c
         return nullptr;
     const Block* next = block->successor(0).block();
     const BlockPlace& place = m_order.of(next);
-    return place.isLoopHead && !place.isRare() && place.head < m_order.headOf(block) && m_heads[next->index()].isSet ? next : nullptr;
+    return place.isLoopHead && !place.isRare() && place.head < m_order.headOf(block) && m_heads[next->index()].isSet() ? next : nullptr;
 }
 
 void Allocator::dropWhatBlockThatLeadsBackNeitherReadsNorHandsOn(const Block* block, const Block* headOfLoop)
 {
     const Position end = m_order.endOf(block);
-    std::span<const RegisterBinding> held = m_heads[headOfLoop->index()].bindings;
+    std::span<const RegisterBinding> held = m_heads[headOfLoop->index()].bindings();
     forEachRegister(m_bound, [&](Reg reg) {
         Operation* value = m_valueIn[reg.index()];
         if (!value || value->owner() == block || m_liveness.of(value).has(ValueFlag::IsRematerialized) || !value->type().isNumeric() || !spillHoldsValueAtHeadOf(block, value))
@@ -131,7 +131,7 @@ void Allocator::dropWhatBlockThatLeadsBackNeitherReadsNorHandsOn(const Block* bl
 
 void Allocator::holdWhatHeadOfLoopHolds(const Block* block, const Block* headOfLoop, Position limitOfDefinitions)
 {
-    for (const RegisterBinding& binding : m_heads[headOfLoop->index()].bindings) {
+    for (const RegisterBinding& binding : m_heads[headOfLoop->index()].bindings()) {
         Operation* value = binding.value;
         if (!value || value->owner() == headOfLoop || m_valueIn[binding.reg.index()] || stateOf(value).registers || !value->type().isNumeric())
             continue;

@@ -26,7 +26,7 @@ namespace {
 
 struct ArithmeticOperatorTraits {
     BinaryOperator stub;
-    std::optional<RuntimeOperation> onNumberAndValue;
+    bool hasStubWithDouble;
 };
 
 struct UnaryOperatorTraits {
@@ -40,15 +40,15 @@ static ArithmeticOperatorTraits traitsOfArithmeticOperator(ArithmeticOperator op
 {
     switch (op) {
     case ArithmeticOperator::Add:
-        return { BinaryOperator::Add, RuntimeOperation::AddNumberAndValueAsNumber };
+        return { BinaryOperator::Add, true };
     case ArithmeticOperator::Sub:
-        return { BinaryOperator::Sub, RuntimeOperation::SubNumberAndValueAsNumber };
+        return { BinaryOperator::Sub, true };
     case ArithmeticOperator::Mul:
-        return { BinaryOperator::Mul, RuntimeOperation::MulNumberAndValueAsNumber };
+        return { BinaryOperator::Mul, true };
     case ArithmeticOperator::Div:
-        return { BinaryOperator::Div, RuntimeOperation::DivNumberAndValueAsNumber };
+        return { BinaryOperator::Div, true };
     case ArithmeticOperator::Mod:
-        return { BinaryOperator::Mod, std::nullopt };
+        return { BinaryOperator::Mod, false };
     case ArithmeticOperator::Pow:
         break;
     }
@@ -136,7 +136,7 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
         return arithmeticOnNumbers(op, x, y);
     }
     case OperatorForm::NumberAndValue:
-        if (op != ArithmeticOperator::Pow && traitsOfArithmeticOperator(op).onNumberAndValue)
+        if (op != ArithmeticOperator::Pow && traitsOfArithmeticOperator(op).hasStubWithDouble)
             return arithmeticOnNumberAndValue(value, op);
         break;
     case OperatorForm::BigInts: {
@@ -194,11 +194,11 @@ Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, Ar
     Boxed otherOperand = in<Boxed>(otherID);
     ArithmeticOperatorTraits traits = traitsOfArithmeticOperator(op);
     Word32 typeAndNumberSide = word32(static_cast<int32_t>(NumberAndValueBits::encode(0, numberIsOnRight)));
+    auto byStub = [&] {
+        return Number(callStub(value, binaryWithDouble(traits.stub, numberIsOnRight), { numberOperand.value(), otherOperand.value(), typeAndNumberSide.value() }).first);
+    };
     if (typeOf(otherID).primitives & Primitive::Number) {
         m_out.noteForm(Form::Closed, StateOfKnowledge::NumberAndValue);
-        auto byStub = [&] {
-            return Number(callStub(value, binaryWithDouble(traits.stub, numberIsOnRight), { numberOperand.value(), otherOperand.value(), typeAndNumberSide.value() }).first);
-        };
         if (standsInRareBlock(value))
             return byStub();
         auto withNumber = [&](Number otherNumber) {
@@ -224,8 +224,8 @@ Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, Ar
         join.add(byStub());
         return join.finishBehind(fork);
     }
-    m_out.noteForm(Form::Runtime, StateOfKnowledge::NumberAndOtherValue);
-    return callOperation<Number>(value, *traits.onNumberAndValue, { otherOperand, typeAndNumberSide, numberOperand });
+    m_out.noteForm(Form::Closed, StateOfKnowledge::NumberAndOtherValue);
+    return byStub();
 }
 
 template<typename Functor>

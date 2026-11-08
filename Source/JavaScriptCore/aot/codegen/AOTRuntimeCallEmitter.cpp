@@ -1095,6 +1095,7 @@ void RuntimeCallEmitter::beginWatchOfWhatMayRunAgain(const ValueContext& beginni
     auto watch = makeUniqueWithoutFastMallocCheck<WatchOfEffects>();
     beginWatchOfEffects(beginning, effects, EntersCompiledCode::Yes, 0, *watch);
     digestVariablesThatUnitReads(effects, *watch);
+    keepWordsOfVariablesThatUnitStores(*watch);
     watch->deedsInFront = readWordForEffectsNet(AOT_INSTANCE_OFFSET(effectsNet.operationsThatDidSomething), std::nullopt, nullptr);
     watch->loudDeedsInFront = readWordForEffectsNet(AOT_INSTANCE_OFFSET(effectsNet.operationsThatRanOtherCode), std::nullopt, nullptr);
     m_watchesOfWhatMayRunAgain.append({ beginning.id(), WTF::move(watch) });
@@ -1114,6 +1115,12 @@ void RuntimeCallEmitter::endWatchOfWhatRunsAgain(const ValueContext& end, ValueI
         } else
             upToHere.loudDeedsInFront = nullptr;
         endWatchOfEffects(end, upToHere, nullptr);
+        if (end.opcode() == Opcode::TurnBeginsAgain) {
+            for (auto [variable, inFront] : watch->wordsOfVariablesInFront) {
+                uint32_t part = static_cast<uint32_t>(PartOfEffects::Writes) | speaksOfValueOfVariableInEffectsNet | (variable.index() & (variableInEffectsNet - 1)) << 16;
+                stopAtFalseEffects(end, upToHere.rows, m_out.equal(inFront, loadWordOfVariableForEffectsNet(variable)), part, m_out.int64Zero);
+            }
+        }
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -1156,7 +1163,7 @@ RuntimeCallEmitter::DeedsInFrontOfQuietCall RuntimeCallEmitter::countDeedOf(cons
     count->effects.writesLocalState = true;
     count->setRunsWithoutFrame(true);
     count->clobber(RegisterSet::macroClobberedGPRs());
-    int32_t step = (context.opcode() == Opcode::PutSlot || context.opcode() == Opcode::PutOwnDoubleIndex) && context->putsBackWhatTurnStored() ? -1 : 1;
+    int32_t step = (context.opcode() == Opcode::PutSlot || context.opcode() == Opcode::PutOwnDoubleIndex || context.opcode() == Opcode::PutPropertyOfHeir) && context->putsBackWhatTurnStored() ? -1 : 1;
     count->setGenerator([all, loud, step, runsOtherCode = traits.mayRunOtherCode()](CCallHelpers& jit, const Machine::PatchParameters&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.add64(CCallHelpers::TrustedImm32(step), CCallHelpers::Address(instanceGPR, all));
@@ -1336,6 +1343,31 @@ LValue RuntimeCallEmitter::loadVariableForEffectsNet(VariableID variable)
 {
     Machine::DeclaredAccessesSuspension suspension(m_out);
     return emitter<StaticsEmitter>().loadVariable(variable).value;
+}
+
+LValue RuntimeCallEmitter::loadWordOfVariableForEffectsNet(VariableID variable)
+{
+    LValue held = loadVariableForEffectsNet(variable);
+    if (held->type() == Machine::Double)
+        return m_out.bitCast(held, Machine::Int64);
+    return held->type() == Machine::Int32 ? m_out.zeroExtPtr(held) : held;
+}
+
+void RuntimeCallEmitter::keepWordsOfVariablesThatUnitStores(WatchOfEffects& watch)
+{
+    if (!m_variablesThatUnitStores) {
+        m_variablesThatUnitStores.emplace();
+        for (uint32_t index = 0; index < m_code.numberOfValues(); ++index) {
+            const Operation& operation = m_code.at(ValueID(index));
+            if (operation.opcode != Opcode::PutModuleVariable || !operation.block())
+                continue;
+            PlannedVariable planned = m_plan.variable(operation.variable());
+            if (planned.hasWordInStatics() && planned.encoding == VariableEncoding::Plain && !m_variablesThatUnitStores->contains(operation.variable()))
+                m_variablesThatUnitStores->append(operation.variable());
+        }
+    }
+    for (VariableID variable : *m_variablesThatUnitStores)
+        watch.wordsOfVariablesInFront.append({ variable, loadWordOfVariableForEffectsNet(variable) });
 }
 
 void RuntimeCallEmitter::digestVariablesThatUnitReads(const Effects& effects, WatchOfEffects& watch)

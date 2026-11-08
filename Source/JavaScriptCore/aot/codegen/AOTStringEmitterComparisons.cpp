@@ -126,21 +126,6 @@ void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context,
     emitter<RuntimeCallEmitter>().callStubAndBranch(context, equalsLiteralOfLength(operand, text.length()), operands, { }, targets);
 }
 
-StringEmitter::AtomOfName StringEmitter::atomOfName(uint32_t mentionOfName)
-{
-    Integer name = zeroExtended(numberOf(mentionOfName));
-    if (build().recordedOptions().form() != ImageForm::PositionIndependent) {
-        Pointer atoms = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.programIdentifiers));
-        return { offsetBy(atoms, mul(name, static_cast<int64_t>(sizeof(UniquedStringImpl))), 0), std::nullopt };
-    }
-    Pointer offsets = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets));
-    Word32 offset(m_out.load32(m_out.baseIndex(m_heaps.AOTInstance_fieldsFilledOnce, offsets.value(), name.value(), ScaleFour)));
-    return { offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(lazyStrings.headers)), zeroExtended(offset), 0), isNotZero(offset) };
-}
-
-static_assert(JSCell::typeInfoFlagsOffset() == JSCell::typeInfoTypeOffset() + 1);
-static constexpr uint32_t typeAndFlagsOfAtom = StringType | (TypeInfo(StringType, JSString::StructureFlags).inlineTypeFlags() | TypeInfoPerCellBit) << 8;
-
 static constexpr OpcodeSet comparisonsWithLiteral { Opcode::StringEqualsLiteral, Opcode::ValueEqualsLiteral };
 
 void StringEmitter::makeCellsHoldAtomOf(StringID literal)
@@ -165,32 +150,6 @@ bool StringEmitter::readsCharactersInLine(const OperationContext& context)
     FormAtPlace named = context.block() && generator().isInLoop(context.block()) ? namedInLoops : namedOutsideLoops;
     m_out.noteFormOf(comparisonsWithLiteral, named.form, StateOfKnowledge::Always, named.place);
     return named.form == Form::Open;
-}
-
-CellPointer StringEmitter::branchOnAtomOfLiteral(ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool isString, Machine::EdgeClass frequencyWithoutAtom)
-{
-    BlockEdge withoutAtom(newBlock(), frequencyWithoutAtom);
-    CellPointer string(subject);
-    if (operand == ComparedOperand::Value) {
-        Boxed boxed(subject);
-        continueIf(isCell(boxed), targets.notTaken);
-        string = unboxCell(boxed);
-    }
-    if (isString)
-        continueIf(hasBits(loadByte(string, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit), withoutAtom);
-    else {
-        Word32 typeAndFlags(m_out.load16ZeroExt32(m_out.address(m_heaps.JSCell_typeInfoFlags, string.value(), JSCell::typeInfoTypeOffset())));
-        continueIf(equal(typeAndFlags, static_cast<int32_t>(typeAndFlagsOfAtom)), withoutAtom);
-    }
-    AtomOfName atom = atomOfName(m_mentions.add(NumberSpace::AtomOfComparedText, literal));
-    if (atom.exists)
-        continueIf(*atom.exists, withoutAtom);
-    Condition isAtomOfText = equal(loadField<Pointer>(string, m_heaps.JSString_value), atom.address);
-    ensureStillAliveHere(string);
-    branch(isAtomOfText, targets);
-
-    m_out.appendTo(withoutAtom.block());
-    return string;
 }
 
 void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject)
@@ -228,7 +187,11 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
             return;
         }
         bool isString = operand == ComparedOperand::String || everyCellIsString;
-        string = branchOnAtomOfLiteral(operand, subject, literal, targets, isString, Machine::EdgeClass::Normal);
+        if (operand == ComparedOperand::Value) {
+            Boxed boxed(subject);
+            continueIf(isCell(boxed), targets.notTaken);
+            string = unboxCell(boxed);
+        }
         if (!isString)
             continueIf(hasCellType(string, StringType), targets.notTaken);
     } else {

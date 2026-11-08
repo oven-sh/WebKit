@@ -155,6 +155,25 @@ static void testIsWellFormedInLanguageCallTests()
         StubRun run = runner.runCall(byName, callee.address(), receiver, { });
         AOT_TEST_CHECK(run.result == nothingDoneInLanguageCallTests && !run.calledOperation);
     }
+
+    constexpr uint32_t slimClosureStructureID = 0x1080;
+    runner.instance().slimClosureHeaders[0] = slimClosureStructureID;
+    FakeObject<offsetOfSlimClosureWord + sizeof(uint64_t)> method;
+    method.setHeader(slimClosureStructureID, SlimClosureType);
+    method.at<uint64_t>(offsetOfSlimClosureWord) = runner.closureWord(0);
+    TextInLanguageCallTests cellOfOtherKind;
+    makeFlatInLanguageCallTests(cellOfOtherKind, narrow.get());
+    cellOfOtherKind.setHeader(0, ObjectType);
+    const StubKey mayBeUnread = callMethodThatMayBeUnread(BoxedCallForm::StringIsWellFormed, 0);
+    StubRun unread = runner.runCall(mayBeUnread, JSValue::ValueEmpty, narrowText.address(), { });
+    AOT_TEST_CHECK(unread.result == JSValue::ValueTrue && !unread.calledOperation && unread.landedCall.place == LandedCall::Place::Nowhere);
+    runner.recordCallsOf(Entry::operationAOTMethodCalledBoxed);
+    runner.setResultOfRecordedOperation(method.address());
+    for (uint64_t receiver : { cellOfOtherKind.address(), int32InLanguageCallTests(1), static_cast<uint64_t>(JSValue::ValueUndefined) }) {
+        StubRun run = runner.runCall(mayBeUnread, JSValue::ValueEmpty, receiver, { });
+        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.landedCall.place == LandedCall::Place::CompiledFunction);
+        AOT_TEST_CHECK(run.landedCall.values.callee == method.address() && run.landedCall.values.thisValue == receiver);
+    }
 }
 
 static void testSearchesFromPositionInLanguageCallTests()

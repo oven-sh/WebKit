@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTMachineTarget.h"
+#include "AOTSort.h"
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -198,7 +199,7 @@ Block* Order::split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeT
     Arena& arena = procedure.arena();
     Block* target = from->successor(successorIndex).block();
     ASSERT(!target->isLandingPad());
-    Block* middle = procedure.addBlock();
+    Block* middle = procedure.addBlockThatOnlyJumps();
 
     auto append = [&](ArenaVector<Operation*>& list, Opcode opcode, Type type, Origin origin) ALWAYS_INLINE_LAMBDA {
         Operation* operation = arena.create<Operation>(opcode, type, origin);
@@ -1842,7 +1843,7 @@ void Order::placeBlocksSplitLate(Procedure& procedure)
     Block* const* const endOfNewBlocks = firstNewBlock + newBlocks.size();
     auto sortNewBlocksBy = [&](const auto& keyOf) {
         if (!std::ranges::is_sorted(newBlocks, { }, keyOf))
-            std::ranges::stable_sort(newBlocks, { }, keyOf);
+            AOT::stableSort(newBlocks, { }, keyOf);
     };
 
     sortNewBlocksBy(orderIndexOf);

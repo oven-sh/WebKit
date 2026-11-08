@@ -73,7 +73,7 @@ public:
     size_t mostReferences() const { return m_firstReadSites.size() + m_returnSites.size() + m_faultingAccesses.size() + m_pollSites.size(); }
     bool isAtEnd() const { return std::min(std::min(m_offsetOfFirstReadSite, m_offsetOfReturnSite), std::min(m_offsetOfFaultingAccess, m_offsetOfPollSite)) == atEnd; }
 
-    SiteReference takeNextUnlessAtEnd()
+    ALWAYS_INLINE SiteReference takeNextUnlessAtEnd()
     {
         uint64_t offsetOfFaultingAccessOrPollSite = std::min(m_offsetOfFaultingAccess, m_offsetOfPollSite);
         if (m_offsetOfFirstReadSite <= std::min(m_offsetOfReturnSite, offsetOfFaultingAccessOrPollSite)) {
@@ -474,7 +474,7 @@ static void describeConstructionStart(const Program& program, ShownFunction& sho
     sites.rareLists.ensure().constructionStarts.append(SiteConstructionStart { number, lineColumn.line, lineColumn.column, construction->isForCallers });
 }
 
-static SitePosition describePosition(const Program& program, ShownFunctions& shownFunctions, const RecordedSite& site, uint32_t number, SiteDescription& sites)
+static ALWAYS_INLINE SitePosition describePosition(const Program& program, ShownFunctions& shownFunctions, const RecordedSite& site, uint32_t number, SiteDescription& sites)
 {
     ShownFunction& shown = shownFunctions[site.origin.inlineFrame];
     SitePosition position = positionIn(program, shown, site.origin.position, site.origin.inlineFrame);

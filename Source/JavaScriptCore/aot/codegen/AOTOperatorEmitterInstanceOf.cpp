@@ -65,6 +65,13 @@ void OperatorEmitter::generateHasInPrototypeChain(const ValueContext& value)
     });
 }
 
+void OperatorEmitter::generateFindInPrototypeChainUnlessTrapped(const ValueContext& value)
+{
+    Boxed object = in<Boxed>(value->valueOperand());
+    CellPointer prototype = in<CellPointer>(value->prototypeOperand());
+    define(value, Word32(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::PrototypeUnlessTrapped), { object.value(), boxCell(prototype).value() }).first)));
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

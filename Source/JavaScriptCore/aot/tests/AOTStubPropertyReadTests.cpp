@@ -524,6 +524,71 @@ static void testInheritedFields()
     AOT_TEST_CHECK(representationsRead > 4);
 }
 
+static KeyedValuePlace& placeOfReadByKey(StubRunner& runner, uint64_t key, uint32_t structureID)
+{
+    char* places = std::bit_cast<char*>(&runner.instance()) + InstanceLayout::offsetOfKeyedValuePlaces + KeyedValuePlace::offsetOfFirst(SlotAccess::Read);
+    return *std::bit_cast<KeyedValuePlace*>(places + KeyedValuePlace::offsetFor(std::bit_cast<JSCell*>(key), std::bit_cast<StructureID>(structureID)));
+}
+
+static void testReadByKeyHandsBackOwnAccessor()
+{
+    constexpr uint32_t structureID = PropertyReads::structureID;
+    constexpr int32_t wordInCell = 3;
+    constexpr int32_t wordOutOfLine = -2;
+    PropertyReads reads;
+    StubRunner& runner = reads.runner;
+    FakeObject<8 * sizeof(uint64_t)> object;
+    object.setHeader(structureID, FinalObjectType);
+    FakeObject<8 * sizeof(uint64_t)> storage;
+    object.at<uint64_t>(JSObject::butterflyOffset()) = storage.address() + 4 * sizeof(uint64_t);
+    FakeObject<sizeof(Symbol)> key;
+    key.setHeader(0, SymbolType);
+    key.at<uint64_t>(Symbol::offsetOfSymbolImpl()) = std::bit_cast<uintptr_t>(reads.uid());
+    FakeObject<sizeof(GetterSetter)> accessorInCell;
+    accessorInCell.setHeader(0, GetterSetterType);
+    FakeObject<sizeof(GetterSetter)> accessorOutOfLine;
+    accessorOutOfLine.setHeader(0, GetterSetterType);
+    object.at<uint64_t>(wordInCell * sizeof(uint64_t)) = accessorInCell.address();
+    storage.at<uint64_t>((4 + wordOutOfLine) * sizeof(uint64_t)) = accessorOutOfLine.address();
+    KeyedValuePlace& place = placeOfReadByKey(runner, key.address(), structureID);
+    auto read = [&](uint64_t byKey) {
+        return runner.run(getByValCachedOrOwnAccessor(), { object.address(), byKey });
+    };
+    auto lay = [&](uint64_t keyOfPlace, uint32_t structureIDOfPlace, int32_t wordIndex) {
+        place.key = std::bit_cast<JSCell*>(keyOfPlace);
+        place.structureID = structureIDOfPlace;
+        place.wordIndex = wordIndex;
+    };
+
+    lay(key.address(), structureID + KeyedValuePlace::getterBit, wordInCell);
+    StubRun inCell = read(key.address());
+    AOT_TEST_CHECK(!inCell.calledOperation && inCell.result == accessorInCell.address());
+    lay(key.address(), structureID + KeyedValuePlace::getterBit, wordOutOfLine);
+    StubRun outOfLine = read(key.address());
+    AOT_TEST_CHECK(!outOfLine.calledOperation && outOfLine.result == accessorOutOfLine.address());
+
+    object.at<uint64_t>(wordInCell * sizeof(uint64_t)) = bitsOf(jsNumber(7));
+    lay(key.address(), structureID, wordInCell);
+    StubRun value = read(key.address());
+    AOT_TEST_CHECK(!value.calledOperation && value.result == bitsOf(jsNumber(7)));
+    lay(key.address(), structureID + KeyedValuePlace::absenceBit, 0);
+    StubRun absent = read(key.address());
+    AOT_TEST_CHECK(!absent.calledOperation && absent.result == bitsOf(jsUndefined()));
+
+    object.at<uint64_t>(wordInCell * sizeof(uint64_t)) = accessorInCell.address();
+    constexpr int32_t wordOfField = 5;
+    object.at<uint64_t>(wordOfField * sizeof(uint64_t)) = bitsOf(jsNumber(11));
+    reads.file(Slot::createField(std::bit_cast<StructureID>(structureID), Slot::Kind::Field, Slot::isOwn, SlotData::create(wordOfField * sizeof(uint64_t), SlotRepresentation::JSValue), 0, 0));
+    lay(key.address(), PropertyReads::structureIDOfHolder + KeyedValuePlace::getterBit, wordInCell);
+    StubRun atPlaceOfOtherStructure = read(key.address());
+    AOT_TEST_CHECK(!atPlaceOfOtherStructure.calledOperation && atPlaceOfOtherStructure.result == bitsOf(jsNumber(11)));
+    lay(accessorOutOfLine.address(), structureID + KeyedValuePlace::getterBit, wordInCell);
+    StubRun atPlaceOfOtherKey = read(key.address());
+    AOT_TEST_CHECK(!atPlaceOfOtherKey.calledOperation && atPlaceOfOtherKey.result == bitsOf(jsNumber(11)));
+    lay(key.address(), structureID + KeyedValuePlace::getterBit, wordInCell);
+    AOT_TEST_CHECK(read(key.address()).result == accessorInCell.address());
+}
+
 static void testInheritedFieldsOfHolderThatIsNotFiled()
 {
     PropertyReads reads;
@@ -2296,7 +2361,7 @@ enum class HitAtPlace : uint8_t {
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(expected));
         return run.instructionsInStubs.value_or(0);
     }
-    StubRun run = reads.runner.run(readAtPlaceAsksStructureFirst ? readAtSiteAskingStructureFirst(receiverIs) : readAtSite(receiverIs), { object }, AnswersAtOnePlace::distance);
+    StubRun run = reads.runner.run(readAtPlaceAsksStructureFirst ? readAtSiteAskingStructureFirst(receiverIs, hit <= HitAtPlace::FieldInExtension ? SiteUse::ReadUnderNameOfField : SiteUse::Read) : readAtSite(receiverIs), { object }, AnswersAtOnePlace::distance);
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(expected) && run.instructionsInStubs);
     return *run.instructionsInStubs;
 }
@@ -2326,23 +2391,30 @@ static void testArmsOfAnswersAtPlace()
         Form form;
         uint32_t budget;
         uint32_t budgetAsFurtherAnswer;
+        uint32_t budgetUnderNameOfField;
     };
     constexpr Arm arms[] = {
-        { "a value in the storage of a holder"_s, Form::ValueInStorageOfHolder, 14, 33 },
-        { "a value in a word of the cage"_s, Form::ValueInWordOfCage, 12, 27 },
-        { "an own field in the cell"_s, Form::OwnFieldInCell, 14, 29 },
-        { "an extra value in the cell"_s, Form::ExtraValueInCell, 18, 33 },
-        { "an own value in the cell"_s, Form::OwnValueInCell, 12, 27 },
-        { "an extra value in storage"_s, Form::ExtraValueInStorage, 19, 34 },
-        { "the length of a typed array"_s, Form::LengthOfTypedArray, 18, 0 },
-        { "an own narrow reference"_s, Form::OwnNarrowReferenceInCell, 15, 0 },
-        { "an own integer"_s, Form::OwnInt32InCell, 16, 0 },
+        { "a value in the storage of a holder"_s, Form::ValueInStorageOfHolder, 14, 28, 14 },
+        { "a value in a word of the cage"_s, Form::ValueInWordOfCage, 12, 22, 12 },
+        { "an own field in the cell"_s, Form::OwnFieldInCell, 14, 24, 11 },
+        { "an own value in storage"_s, Form::OwnValueInStorage, 0, 0, 14 },
+        { "an extra value in the cell"_s, Form::ExtraValueInCell, 18, 28, 18 },
+        { "an own value in the cell"_s, Form::OwnValueInCell, 12, 22, 12 },
+        { "an extra value in storage"_s, Form::ExtraValueInStorage, 19, 29, 19 },
+        { "the length of a typed array"_s, Form::LengthOfTypedArray, 18, 0, 18 },
+        { "an own narrow reference"_s, Form::OwnNarrowReferenceInCell, 15, 0, 15 },
+        { "an own integer"_s, Form::OwnInt32InCell, 16, 0, 16 },
+        { "an own field in the extension"_s, Form::OwnFieldInExtension, 21, 0, 21 },
     };
     bool isWithinBudget = true;
     for (const Arm& arm : arms) {
-        for (bool isFurtherAnswer : { false, true }) {
-            if (isFurtherAnswer && !arm.budgetAsFurtherAnswer)
+        for (auto [use, isFurtherAnswer] : { std::pair(SiteUse::Read, false), std::pair(SiteUse::Read, true), std::pair(SiteUse::ReadUnderNameOfField, false), std::pair(SiteUse::ReadUnderNameOfField, true) }) {
+            const uint32_t budgetOfSecondAnswer = use == SiteUse::Read ? arm.budget : arm.budgetUnderNameOfField;
+            if (!(isFurtherAnswer ? arm.budgetAsFurtherAnswer : budgetOfSecondAnswer))
                 continue;
+            auto keyIn = [use = use](StubKey key, StubFamily family) {
+                return key.withFamily(family).withForm(static_cast<uint8_t>(key.form() + (use == SiteUse::Read ? 0 : readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, use).form())));
+            };
             for (bool isTruthy : { true, false }) {
                 const int32_t number = isTruthy ? 7 : 0;
                 OrdinaryObjectWithTwoValues receiver(PropertyReads::structureID, number, number);
@@ -2350,6 +2422,7 @@ static void testArmsOfAnswersAtPlace()
                 receiver.at<uint32_t>(offsetOfExtraProperties) = wordsFromCage(holder.address());
                 FakeObjectWithShape withField(1);
                 withField.at<uint32_t>(offsetOfOrderWord) = 0;
+                FakeExtension extension(FakeExtension::bitOfSlot);
                 uint64_t object = receiver.address();
                 JSValue expected = jsNumber(number);
                 uint32_t operand = 0;
@@ -2366,6 +2439,9 @@ static void testArmsOfAnswersAtPlace()
                     object = withField.address();
                     withField.field() = bitsOf(expected);
                     operand = FakeTypedObject::offsetOfField;
+                    break;
+                case Form::OwnValueInStorage:
+                    operand = static_cast<uint32_t>(indexInStorage);
                     break;
                 case Form::ExtraValueInCell:
                     operand = operandOfExtraValue(wordInCell);
@@ -2388,6 +2464,12 @@ static void testArmsOfAnswersAtPlace()
                     expected = JSValue(std::bit_cast<JSCell*>(cell.address()));
                     operand = FakeTypedObject::offsetOfField;
                     break;
+                case Form::OwnFieldInExtension:
+                    object = withField.address();
+                    extension.granule() = bitsOf(expected);
+                    withField.field() = static_cast<uint64_t>(UINT32_MAX) << 32 | extension.encode(cageBase);
+                    operand = *SiteAnswers::operandOfFieldInExtension(FieldTable::offsetInExtension);
+                    break;
                 case Form::OwnInt32InCell:
                     if (!isTruthy)
                         continue;
@@ -2404,21 +2486,23 @@ static void testArmsOfAnswersAtPlace()
                 if (isFurtherAnswer) {
                     instance.propertyCaches.firstWordOfWideAnswers = AnswersAtOnePlace::index;
                     WideSiteAnswers& wide = place.wideAnswers();
-                    wide.answers.second = *SiteAnswers::tryByStructure(SiteUse::Read, structureIDOfOtherVisitor, Form::OwnValueInStorage, wordInCell);
+                    wide.answers.second = *SiteAnswers::tryByStructure(use, structureIDOfOtherVisitor, Form::OwnValueInStorage, static_cast<uint32_t>(indexInStorage));
                     wide.structuresOfFurtherAnswers[1] = structureID.bits();
                     wide.operandsOfFurtherAnswers[1] = operand;
-                    wide.formsOfFurtherAnswersHeld[1] = { static_cast<uint8_t>(SiteAnswers::bitsOf(SiteUse::Read, arm.form)), static_cast<int8_t>(index) };
+                    wide.formsOfFurtherAnswersHeld[1] = { static_cast<uint8_t>(SiteAnswers::bitsOf(use, arm.form)), static_cast<int8_t>(index) };
                 } else {
                     instance.propertyCaches.firstWordOfWideAnswers = UINT32_MAX;
-                    place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, structureID, arm.form, operand);
+                    place.answers().second = *SiteAnswers::tryByStructure(use, structureID, arm.form, operand);
                     if (index)
-                        place.answers().first = SiteAnswers::withoutKey(SiteUse::Read, true, static_cast<uint32_t>(index));
+                        place.answers().first = SiteAnswers::withoutKey(use, true, static_cast<uint32_t>(index));
                 }
                 reads.runner.setCountsInstructions(true);
                 for (ReceiverAtSite receiverIs : { ReceiverAtSite::IsAnyValue, ReceiverAtSite::IsCell }) {
                     for (NameAtSite name : { NameAtSite::IsAnyName, NameAtSite::HasColumn }) {
                         for (StubFamily family : { StubFamily::ReadAtSite, StubFamily::ReadAtSiteAskingStructureFirst }) {
-                            StubRun run = reads.runner.run(readAtSite(receiverIs, name).withFamily(family), { object }, AnswersAtOnePlace::distance);
+                            if (use != SiteUse::Read && family == StubFamily::ReadAtSite)
+                                continue;
+                            StubRun run = reads.runner.run(keyIn(readAtSite(receiverIs, name), family), { object }, AnswersAtOnePlace::distance);
                             AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(expected));
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
                             if (family != StubFamily::ReadAtSiteAskingStructureFirst || receiverIs != ReceiverAtSite::IsAnyValue)
@@ -2428,14 +2512,16 @@ static void testArmsOfAnswersAtPlace()
 #else
                             constexpr uint32_t instructionsThatBoundIndexOfHandler = 0;
 #endif
-                            const uint32_t budget = isFurtherAnswer ? arm.budgetAsFurtherAnswer + instructionsThatBoundIndexOfHandler : arm.budget;
+                            const uint32_t budget = isFurtherAnswer ? arm.budgetAsFurtherAnswer + instructionsThatBoundIndexOfHandler : budgetOfSecondAnswer;
                             if (*run.instructionsInStubs != budget)
-                                dataLogLn("a read at a place that holds ", arm.what, isFurtherAnswer ? " as a further answer: " : ": ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+                                dataLogLn("a read at a place that holds ", arm.what, use == SiteUse::Read ? "" : " under the name of a field", isFurtherAnswer ? " as a further answer: " : ": ", *run.instructionsInStubs, " instructions, the budget is ", budget);
                             isWithinBudget &= *run.instructionsInStubs <= budget;
 #endif
                         }
                         for (StubFamily family : { StubFamily::ReadTruthAtSite, StubFamily::ReadTruthAtSiteAskingStructureFirst }) {
-                            StubRun run = reads.runner.run(readAtSite(receiverIs, name).withFamily(family), { object }, AnswersAtOnePlace::distance);
+                            if (use != SiteUse::Read && family == StubFamily::ReadTruthAtSite)
+                                continue;
+                            StubRun run = reads.runner.run(keyIn(readAtSite(receiverIs, name), family), { object }, AnswersAtOnePlace::distance);
                             AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(isTruthy));
                         }
                     }
@@ -2444,6 +2530,128 @@ static void testArmsOfAnswersAtPlace()
         }
     }
     AOT_TEST_CHECK(isWithinBudget);
+}
+
+static void testEmptyWordInCellOfPlainObjectIsAskedBehindPlace()
+{
+    PropertyReads reads;
+    FieldTable table(reads);
+    table.setFlagsOfStructure(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype);
+    AnswersAtOnePlace place(reads.runner);
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
+    reads.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
+    FakeObject<JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue)> receiver;
+    receiver.setHeader(PropertyReads::structureID, FinalObjectType);
+    receiver.at<uint64_t>(JSObject::butterflyOffset()) = 0;
+    receiver.at<uint64_t>(JSObject::offsetOfInlineStorage()) = 0;
+    receiver.at<uint64_t>(JSObject::offsetOfInlineStorage() + sizeof(EncodedJSValue)) = bitsOf(jsNumber(9));
+    reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, 1));
+    place.answers().second = *SiteAnswers::tryByStructure(SiteUse::ReadUnderNameOfField, structureID, SiteAnswers::Form::OwnFieldInCell, JSObject::offsetOfInlineStorage());
+    reads.runner.forgetAccessTable();
+    StubRun run = reads.runner.run(readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, SiteUse::ReadUnderNameOfField), { receiver.address() }, AnswersAtOnePlace::distance);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(9)));
+}
+
+static void testStructureFiledWithoutFormIsSentToItsRow()
+{
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
+    reads.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
+    OrdinaryObjectWithTwoValues receiver(PropertyReads::structureID, 7, 9);
+    reads.runner.setCountsInstructions(true);
+    bool isWithinBudget = true;
+    for (SiteUse use : { SiteUse::Read, SiteUse::ReadUnderNameOfField }) {
+        for (bool rowHoldsSlot : { true, false }) {
+            reads.clear();
+            if (rowHoldsSlot)
+                reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, firstOutOfLineOffset));
+            else
+                reads.fileBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, firstOutOfLineOffset));
+            reads.runner.forgetAccessTable();
+            place.answers() = SiteAnswers::forPlacesWithout();
+            place.answers().second = *SiteAnswers::tryByStructure(use, structureID, SiteAnswers::Form::Nothing, 0);
+            StubRun run = reads.runner.run(readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, use), { receiver.address() }, AnswersAtOnePlace::distance);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(9)));
+            StubRun truth = reads.runner.run(readTruthAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, use), { receiver.address() }, AnswersAtOnePlace::distance);
+            AOT_TEST_CHECK(!truth.calledOperation && truth.result == 1);
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+            if (!rowHoldsSlot)
+                continue;
+            if (*run.instructionsInStubs != 40)
+                dataLogLn("a read at a place that sends the structure to its row: ", *run.instructionsInStubs, " instructions, the budget is 40");
+            isWithinBudget &= *run.instructionsInStubs <= 40;
+#endif
+        }
+    }
+    AOT_TEST_CHECK(isWithinBudget);
+}
+
+static void testWidePlaceAsksItsStructuresInFrontOfShape()
+{
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    reads.runner.instance().propertyCaches.firstWordOfWideAnswers = AnswersAtOnePlace::index;
+    WideSiteAnswers& wide = place.wideAnswers();
+    wide = { };
+    wide.answers.first = SiteAnswers::byShape(shapeWordOf(1), FakeTypedObject::offsetOfField);
+    wide.structuresThatLackName[0] = PropertyReads::structureIDOfHolder;
+    OrdinaryObjectWithTwoValues lacksName(PropertyReads::structureIDOfHolder, 1, 2);
+    FakeObjectWithShape withField(1);
+    withField.at<uint32_t>(offsetOfOrderWord) = 0;
+    withField.field() = bitsOf(jsNumber(7));
+    reads.runner.setCountsInstructions(true);
+    for (StubFamily family : { StubFamily::ReadAtSite, StubFamily::ReadAtSiteAskingStructureFirst }) {
+        const StubKey stub = family == StubFamily::ReadAtSite ? readAtSite(ReceiverAtSite::IsAnyValue, NameAtSite::IsAnyName) : readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, SiteUse::ReadUnderNameOfField);
+        StubRun absent = reads.runner.run(stub, { lacksName.address() }, AnswersAtOnePlace::distance);
+        AOT_TEST_CHECK(!absent.calledOperation && absent.result == bitsOf(jsUndefined()));
+        StubRun field = reads.runner.run(stub, { withField.address() }, AnswersAtOnePlace::distance);
+        AOT_TEST_CHECK(!field.calledOperation && field.result == bitsOf(jsNumber(7)));
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+        if (family != StubFamily::ReadAtSiteAskingStructureFirst)
+            continue;
+        if (*absent.instructionsInStubs != 19 || *field.instructionsInStubs != 31)
+            dataLogLn("a wide place where the structure is asked first: ", *absent.instructionsInStubs, " instructions to a structure that lacks the name, the budget is 19; ", *field.instructionsInStubs, " to the answer by shape, the budget is 31");
+        AOT_TEST_CHECK(*absent.instructionsInStubs <= 19 && *field.instructionsInStubs <= 31);
+#endif
+    }
+}
+
+static void testStubThatCanMeetNoFieldAsksNoShape()
+{
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    Instance& instance = reads.runner.instance();
+    std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
+    instance.image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
+    instance.propertyCaches.missesOfEmptySites = 0;
+    OrdinaryObjectWithTwoValues visitor(PropertyReads::structureID, 1, 2);
+    reads.fileInFrontBesideOthers(Slot::createInStorage(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::Value, Slot::isOwn, nullptr, 0));
+    reads.runner.setCountsInstructions(true);
+    auto instructionsOfMiss = [&](StubKey stub, uint64_t expected) {
+        uint32_t instructions = 0;
+        for (unsigned turn = 0; turn < 2; ++turn) {
+            uint8_t counted = instance.propertyCaches.missesOfEmptySites;
+            StubRun run = reads.runner.run(stub, { visitor.address() }, AnswersAtOnePlace::distance);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == expected && instance.propertyCaches.missesOfEmptySites != counted);
+            instructions = run.instructionsInStubs.value_or(0);
+        }
+        return instructions;
+    };
+    for (ReceiverAtSite receiverIs : { ReceiverAtSite::IsAnyValue, ReceiverAtSite::IsCell }) {
+        [[maybe_unused]] const uint32_t askingShape = instructionsOfMiss(readAtSiteAskingStructureFirst(receiverIs, SiteUse::ReadUnderNameOfField), bitsOf(jsNumber(1)));
+        [[maybe_unused]] const uint32_t underNameThatNoLayoutLists = instructionsOfMiss(readAtSiteAskingStructureFirst(receiverIs), bitsOf(jsNumber(1)));
+        [[maybe_unused]] const uint32_t ofNoObjectOfCompiledCode = instructionsOfMiss(readAtSiteAskingStructureFirst(receiverIs, SiteUse::ReadUnderNameOfField, true), bitsOf(jsNumber(1)));
+        instructionsOfMiss(readTruthAtSiteAskingStructureFirst(receiverIs), 1);
+        instructionsOfMiss(readTruthAtSiteAskingStructureFirst(receiverIs, SiteUse::ReadUnderNameOfField, true), 1);
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+        if (underNameThatNoLayoutLists + 5 != askingShape || ofNoObjectOfCompiledCode + 5 != askingShape)
+            dataLogLn("a miss where the structure is asked first: ", askingShape, " instructions where the shape is asked, ", underNameThatNoLayoutLists, " under a name that no layout lists, ", ofNoObjectOfCompiledCode, " of what is no object of compiled code: the budget is 5 fewer");
+        AOT_TEST_CHECK(underNameThatNoLayoutLists + 5 <= askingShape && ofNoObjectOfCompiledCode + 5 <= askingShape);
+#endif
+    }
 }
 
 template<HitAtPlace hit, uint32_t budget>
@@ -2608,6 +2816,51 @@ static void testFrontOfTablesAnswersWherePlaceHoldsAnotherStructureRunningNoCode
     AOT_TEST_CHECK(readIs(0));
 }
 
+static void testFieldInExtensionByStructure()
+{
+    using Form = SiteAnswers::Form;
+    PropertyReads reads;
+    FieldTable table(reads);
+    table.setFlagsOfStructure(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype);
+    AnswersAtOnePlace place(reads.runner);
+    const uintptr_t cageBase = reads.runner.instance().cellCageBase;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
+    reads.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
+    const uint32_t operand = *SiteAnswers::operandOfFieldInExtension(FieldTable::offsetInExtension);
+    struct Case {
+        uint64_t granuleBit;
+        uint64_t word;
+        uint64_t read;
+        uint64_t readRunningNoCode;
+    };
+    const Case cases[] = {
+        { FakeExtension::bitOfSlot, bitsOf(jsNumber(7)), bitsOf(jsNumber(7)), bitsOf(jsNumber(7)) },
+        { FakeExtension::bitOfSlot, 0, bitsOf(jsUndefined()), 0 },
+        { FakeExtension::bitOfSlot >> 1, bitsOf(jsNumber(7)), bitsOf(jsUndefined()), 0 },
+        { FakeExtension::bitOfSlot << 1, bitsOf(jsNumber(7)), bitsOf(jsUndefined()), 0 },
+    };
+    for (const Case& one : cases) {
+        FakeExtension extension(one.granuleBit);
+        extension.granule() = one.word;
+        FakeObjectWithShape withField(1);
+        withField.at<uint32_t>(offsetOfOrderWord) = 0;
+        withField.field() = static_cast<uint64_t>(UINT32_MAX) << 32 | extension.encode(cageBase);
+        for (SiteUse use : { SiteUse::Read, SiteUse::ReadUnderNameOfField }) {
+            place.answers() = SiteAnswers::forPlacesWithout();
+            place.answers().second = *SiteAnswers::tryByStructure(use, structureID, Form::OwnFieldInExtension, operand);
+            StubRun run = reads.runner.run(readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, use), { withField.address() }, AnswersAtOnePlace::distance);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == one.read);
+        }
+        place.answers() = SiteAnswers::forPlacesWithout();
+        place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, structureID, Form::OwnFieldInExtension, operand);
+        for (bool asksShapeFirst : { true, false }) {
+            StubRun run = reads.runner.run(readAtSiteRunningNoCode(ReceiverAtSite::IsAnyValue, asksShapeFirst), { withField.address() }, AnswersAtOnePlace::distance);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == one.readRunningNoCode);
+        }
+    }
+}
+
 static void testFormsThatAreNoHitsRunningNoCode()
 {
     using Form = SiteAnswers::Form;
@@ -2617,7 +2870,7 @@ static void testFormsThatAreNoHitsRunningNoCode()
     OrdinaryObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
     OrdinaryObjectWithTwoValues holder(PropertyReads::structureIDOfHolder, 3, 4);
     const uint32_t wordsToHolder = static_cast<uint32_t>((holder.address() - cageBase) / sizeof(EncodedJSValue));
-    for (Form form : { Form::ExtraValueInCell, Form::GetterInStorageOfHolder, Form::ExtraValueInStorage, Form::GetterInWordOfCage, Form::OwnGetterInStorage, Form::OwnGetterInCell, Form::LengthOfTypedArray }) {
+    for (Form form : { Form::GetterInStorageOfHolder, Form::GetterInWordOfCage, Form::OwnGetterInStorage, Form::OwnGetterInCell, Form::LengthOfTypedArray, Form::Nothing }) {
         place.answers() = SiteAnswers::forPlacesWithout();
         place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, std::bit_cast<StructureID>(PropertyReads::structureID), form, wordsToHolder);
         for (bool asksShapeFirst : { true, false }) {
@@ -2625,6 +2878,155 @@ static void testFormsThatAreNoHitsRunningNoCode()
                 uint8_t counted = reads.runner.instance().propertyCaches.missesOfEmptySites;
                 StubRun run = reads.runner.run(readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { receiver.address() }, AnswersAtOnePlace::distance);
                 AOT_TEST_CHECK(!run.calledOperation && !run.result && reads.runner.instance().propertyCaches.missesOfEmptySites == counted);
+            }
+        }
+    }
+}
+
+static void testGettersAnswerCallsByNameAtSite()
+{
+    using Form = SiteAnswers::Form;
+    constexpr uint32_t slimClosureStructureID = 0x1080;
+    constexpr uint32_t offsetOfExtraProperties = 24;
+    constexpr uint32_t wordInCell = OrdinaryObjectWithTwoValues::offsetInCell / sizeof(EncodedJSValue);
+    constexpr int32_t indexInStorage = OrdinaryObjectWithTwoValues::indexInStorage;
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    Instance& instance = reads.runner.instance();
+    const uintptr_t cageBase = instance.cellCageBase;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    instance.slimClosureHeaders[0] = slimClosureStructureID;
+    std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
+    instance.image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
+    FakeObject<offsetOfSlimClosureWord + sizeof(uint64_t)> getter;
+    getter.setHeader(slimClosureStructureID, SlimClosureType);
+    getter.at<uint64_t>(offsetOfSlimClosureWord) = reads.runner.closureWord(0);
+    FakeObject<offsetOfSlimClosureWord + sizeof(uint64_t)> method;
+    method.setHeader(slimClosureStructureID, SlimClosureType);
+    method.at<uint64_t>(offsetOfSlimClosureWord) = reads.runner.closureWord(2);
+    FakeObject<sizeof(GetterSetter)> accessors;
+    accessors.setHeader(0, GetterSetterType);
+    accessors.at<uint64_t>(GetterSetter::offsetOfGetter()) = getter.address();
+    const uint64_t first = bitsOf(jsNumber(21));
+    const uint64_t second = bitsOf(jsNumber(22));
+    const uint32_t hiddenWord = offsetOfExtraProperties / sizeof(uint32_t);
+
+    enum class Lies : uint8_t { InCellOfReceiver, InStorageOfReceiver, InCellOfOther, InStorageOfOther };
+    struct Arm {
+        Form form;
+        Lies lies;
+        bool goesThroughHiddenWord;
+        bool borrowsIndex;
+    };
+    const Arm arms[] = {
+        { Form::OwnGetterInCell, Lies::InCellOfReceiver, false, false },
+        { Form::ExtraGetterInCellAtCall, Lies::InCellOfOther, true, false },
+        { Form::OwnGetterInStorage, Lies::InStorageOfReceiver, false, false },
+        { Form::ExtraGetterInStorageAtCall, Lies::InStorageOfOther, true, false },
+        { Form::GetterInWordOfCage, Lies::InCellOfOther, false, false },
+        { Form::GetterInStorageOfHolder, Lies::InStorageOfOther, false, true },
+    };
+    for (const Arm& arm : arms) {
+        for (bool liesInFirstAnswer : { true, false }) {
+            if (arm.borrowsIndex && !liesInFirstAnswer)
+                continue;
+            OrdinaryObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
+            OrdinaryObjectWithTwoValues other(PropertyReads::structureIDOfHolder, 3, 4);
+            const uint32_t wordsToOther = static_cast<uint32_t>((other.address() - cageBase) / sizeof(EncodedJSValue));
+            receiver.at<uint32_t>(offsetOfExtraProperties) = arm.goesThroughHiddenWord ? wordsToOther : 0;
+            switch (arm.lies) {
+            case Lies::InCellOfReceiver:
+                receiver.at<uint64_t>(OrdinaryObjectWithTwoValues::offsetInCell) = accessors.address();
+                break;
+            case Lies::InStorageOfReceiver:
+                receiver.storage[0] = accessors.address();
+                break;
+            case Lies::InCellOfOther:
+                other.at<uint64_t>(OrdinaryObjectWithTwoValues::offsetInCell) = accessors.address();
+                break;
+            case Lies::InStorageOfOther:
+                other.storage[0] = accessors.address();
+                break;
+            }
+            uint32_t operand = 0;
+            switch (arm.form) {
+            case Form::OwnGetterInCell:
+                operand = OrdinaryObjectWithTwoValues::offsetInCell;
+                break;
+            case Form::ExtraGetterInCellAtCall:
+                operand = wordInCell << SiteAnswers::indexShiftInOperandOfExtraValue | hiddenWord;
+                break;
+            case Form::OwnGetterInStorage:
+                operand = static_cast<uint32_t>(indexInStorage);
+                break;
+            case Form::ExtraGetterInStorageAtCall:
+                operand = static_cast<uint32_t>(indexInStorage) << SiteAnswers::indexShiftInOperandOfExtraValue | hiddenWord;
+                break;
+            case Form::GetterInWordOfCage:
+                operand = wordsToOther + wordInCell;
+                break;
+            default:
+                operand = wordsToOther;
+                break;
+            }
+            place.answers() = SiteAnswers::forPlacesWithout();
+            (liesInFirstAnswer ? place.answers().first : place.answers().second) = *SiteAnswers::tryByStructure(SiteUse::Call, structureID, arm.form, operand);
+            if (arm.borrowsIndex)
+                place.answers().second.operand = static_cast<uint32_t>(indexInStorage);
+
+            reads.runner.setResultOfNextLanding(method.address());
+            StubRun run = reads.runner.runCall(callMethodAtSite(2), 0, receiver.address(), { first, second }, AnswersAtOnePlace::distance);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == StubRunner::resultOfCompiledFunction && run.landedCall.place == LandedCall::Place::CompiledFunction);
+            AOT_TEST_CHECK(reads.runner.calleeOfEarlierLanding() == getter.address() && reads.runner.thisValueOfEarlierLanding() == receiver.address());
+            AOT_TEST_CHECK(run.landedCall.values.callee == method.address() && run.landedCall.values.thisValue == receiver.address());
+            AOT_TEST_CHECK(run.landedCall.values.arguments[0] == first && run.landedCall.values.arguments[1] == second);
+
+            bool hasWayWithoutGetter = arm.form == Form::OwnGetterInCell || arm.goesThroughHiddenWord;
+            if (!hasWayWithoutGetter)
+                continue;
+            if (arm.goesThroughHiddenWord)
+                receiver.at<uint32_t>(offsetOfExtraProperties) = 0;
+            else
+                receiver.at<uint64_t>(OrdinaryObjectWithTwoValues::offsetInCell) = 0;
+            receiver.storage[0] = method.address();
+            reads.clear();
+            reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, firstOutOfLineOffset));
+            run = reads.runner.runCall(callMethodAtSite(2), 0, receiver.address(), { first, second }, AnswersAtOnePlace::distance);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == StubRunner::resultOfCompiledFunction && run.landedCall.place == LandedCall::Place::CompiledFunction);
+            AOT_TEST_CHECK(!reads.runner.calleeOfEarlierLanding() && run.landedCall.values.callee == method.address() && run.landedCall.values.thisValue == receiver.address());
+            AOT_TEST_CHECK(run.landedCall.values.arguments[0] == first && run.landedCall.values.arguments[1] == second);
+            reads.clear();
+        }
+    }
+}
+
+static void testExtraValuesOfNarrowRecordRunningNoCode()
+{
+    using Form = SiteAnswers::Form;
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    Instance& instance = reads.runner.instance();
+    constexpr uint32_t offsetOfExtraProperties = 24;
+    OrdinaryObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
+    OrdinaryObjectWithTwoValues extraProperties(PropertyReads::structureIDOfHolder, 3, 4);
+    const uint32_t wordsToExtraProperties = static_cast<uint32_t>((extraProperties.address() - instance.cellCageBase) / sizeof(EncodedJSValue));
+    instance.propertyCaches.firstWordOfWideAnswers = UINT32_MAX;
+    struct Arm {
+        Form form;
+        int32_t index;
+        int32_t expected;
+    };
+    for (Arm arm : { Arm { Form::ExtraValueInCell, OrdinaryObjectWithTwoValues::offsetInCell / sizeof(EncodedJSValue), 3 }, Arm { Form::ExtraValueInStorage, OrdinaryObjectWithTwoValues::indexInStorage, 4 } }) {
+        const uint32_t operand = static_cast<uint32_t>(arm.index) << SiteAnswers::indexShiftInOperandOfExtraValue | offsetOfExtraProperties / sizeof(uint32_t);
+        place.answers() = SiteAnswers::forPlacesWithout();
+        place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, std::bit_cast<StructureID>(PropertyReads::structureID), arm.form, operand);
+        for (bool hasExtraProperties : { true, false }) {
+            receiver.at<uint32_t>(offsetOfExtraProperties) = hasExtraProperties ? wordsToExtraProperties : 0;
+            for (bool asksShapeFirst : { true, false }) {
+                for (ReceiverAtSite receiverIs : { ReceiverAtSite::IsAnyValue, ReceiverAtSite::IsCell }) {
+                    StubRun run = reads.runner.run(readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { receiver.address() }, AnswersAtOnePlace::distance);
+                    AOT_TEST_CHECK(!run.calledOperation && run.result == (hasExtraProperties ? bitsOf(jsNumber(arm.expected)) : 0));
+                }
             }
         }
     }
@@ -2874,6 +3276,7 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/fields-or-inherited-getters"_s, ImageTests::whenExecutable<testFieldsOrInheritedGetters> },
         { "stubs/get-by-id/inherited-fields"_s, ImageTests::whenExecutable<testInheritedFields> },
         { "stubs/get-by-id/inherited-fields-of-holder-that-is-not-filed"_s, ImageTests::whenExecutable<testInheritedFieldsOfHolderThatIsNotFiled> },
+        { "stubs/get-by-val/an-own-getter-at-the-place-hands-back-the-accessor-and-all-else-goes-on-in-the-chain"_s, ImageTests::whenExecutable<testReadByKeyHandsBackOwnAccessor> },
         { "stubs/get-by-id/fields-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsOrInheritedFields> },
         { "stubs/get-by-id/fields-in-extension-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsInExtensionOrInheritedFields> },
         { "stubs/get-by-id/names-made-at-run-time"_s, ImageTests::whenExecutable<testNamesMadeAtRunTime> },
@@ -2926,6 +3329,10 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/hits-at-sites"_s, ImageTests::whenExecutable<testHitsAtSites> },
         { "stubs/get-by-id/sites-of-other-structures"_s, ImageTests::whenExecutable<testSitesOfOtherStructures<>> },
         { "stubs/read-at-site/every-arm-of-an-answer-that-runs-no-code"_s, ImageTests::whenExecutable<testArmsOfAnswersAtPlace> },
+        { "stubs/read-at-site/an-empty-word-in-the-cell-of-a-plain-object-is-asked-behind-the-place"_s, ImageTests::whenExecutable<testEmptyWordInCellOfPlainObjectIsAskedBehindPlace> },
+        { "stubs/read-at-site/a-structure-filed-without-a-form-is-sent-to-its-row"_s, ImageTests::whenExecutable<testStructureFiledWithoutFormIsSentToItsRow> },
+        { "stubs/read-at-site/a-wide-place-asks-its-structures-in-front-of-the-shape"_s, ImageTests::whenExecutable<testWidePlaceAsksItsStructuresInFrontOfShape> },
+        { "stubs/read-at-site/a-stub-that-can-meet-no-field-asks-no-shape"_s, ImageTests::whenExecutable<testStubThatCanMeetNoFieldAsksNoShape> },
         { "stubs/read-at-site/instructions/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::BoxedField, 11>> },
         { "stubs/read-at-site/instructions/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::Int32Field, 22>> },
         { "stubs/read-at-site/instructions/a-narrow-reference"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::NarrowReferenceField, 23>> },
@@ -2938,8 +3345,8 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/read-at-site/instructions/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::ValueInCellOfHolder, 15>> },
         { "stubs/read-at-site/instructions/an-inherited-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::ValueInStorageOfHolder, 17>> },
         { "stubs/read-at-site/instructions/no-property"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::NoProperty, 15>> },
-        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/a-boxed-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::BoxedField, 16>>> },
-        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/an-integer-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::Int32Field, 22>>> },
+        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/a-boxed-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::BoxedField, 18>>> },
+        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/an-integer-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::Int32Field, 24>>> },
         { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::OwnValueInCell, 11>>> },
         { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/an-own-value-out-of-line"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::OwnValueInStorage, 12>>> },
         { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::ValueInCellOfHolder, 12>>> },
@@ -2995,6 +3402,9 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/read-at-site-running-no-code/a-miss-is-counted-and-is-no-hit"_s, ImageTests::whenExecutable<testMissAtPlaceRunningNoCode> },
         { "stubs/read-at-site-running-no-code/the-front-of-the-tables-answers-where-the-place-holds-another-structure"_s, ImageTests::whenExecutable<testFrontOfTablesAnswersWherePlaceHoldsAnotherStructureRunningNoCode> },
         { "stubs/read-at-site-running-no-code/the-forms-that-run-code-or-ask-more-are-no-hits"_s, ImageTests::whenExecutable<testFormsThatAreNoHitsRunningNoCode> },
+        { "stubs/read-at-site/a-field-in-the-extension-by-structure-and-both-ways-out"_s, ImageTests::whenExecutable<testFieldInExtensionByStructure> },
+        { "stubs/read-at-site-running-no-code/an-extra-value-of-a-narrow-record-is-read"_s, ImageTests::whenExecutable<testExtraValuesOfNarrowRecordRunningNoCode> },
+        { "stubs/call-method-at-site/a-getter-in-each-of-six-places-is-called-and-what-it-gives-is-called-on-the-receiver"_s, ImageTests::whenExecutable<testGettersAnswerCallsByNameAtSite> },
         { "stubs/read-at-site/instructions-of-misses/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInCell, 43>> },
         { "stubs/read-at-site/instructions-of-misses/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInStorage, 50>> },
         { "stubs/read-at-site/instructions-of-misses/no-property"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::NoProperty, 44>> },

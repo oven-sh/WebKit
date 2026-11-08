@@ -2,7 +2,7 @@
 # function isText(part) { return part === "text"; }
 # function isTextAmongStrings(part) { return typeof part === "string" ? part === "text" : false; }   the stub for strings is called
 # function isLongerText(part) { return part === "a-longer-text"; }   the text fits no register, so the stub takes its number
-# function countTexts(next, times) { let count = 0; for (let i = 0; i < times; i++) if (next(i) === "text") count++; return count; }   in a loop the characters are read in line
+# function countTexts(next, times) { let count = 0; for (let i = 0; i < times; i++) if (next(i) === "text") count++; return count; }   in a loop the length and the characters are read in line, and nothing is asked of the flags of the cell
 # A rope, a piece of a longer string, a 16-bit copy and a string put together at run time equal the text all the same.
 # The shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
 # LIBRARY: own
@@ -27,19 +27,17 @@
 # CHECK-NOT: = Load
 # CHECK-NOT: = Patch(
 # CHECK-LABEL: unit f4:Body
+# CHECK-NOT: = Load{{*}}JSCell_typeInfoFlags
 # CHECK: StringImpl_data
 # CHECK: characters8
 # RUN(BYTES): bytes f1:Body f2:Body f3:Body mechanisms=none+TypedOperations
 # BYTES-LABEL: unit f1:Body
-# BYTES-NOT: AtomOfComparedText
 # BYTES: {{*}} ValueEqualsLiteralOfLength count 4
 # BYTES-NOT: EqualsLiteral
 # BYTES-LABEL: unit f2:Body
-# BYTES-NOT: AtomOfComparedText
 # BYTES: {{*}} StringEqualsLiteralOfLength count 4
 # BYTES-NOT: EqualsLiteral
 # BYTES-LABEL: unit f3:Body
-# BYTES-NOT: AtomOfComparedText
 # BYTES: Number String "a-longer-text"
 # BYTES: {{*}} ValueEqualsLiteral
 # BYTES-NOT: EqualsLiteral

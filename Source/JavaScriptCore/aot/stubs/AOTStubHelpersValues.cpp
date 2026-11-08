@@ -61,6 +61,13 @@ PureDoubleBits PureDoubleBits::branchIfNotFinite(StubAssembler& jit, GPRReg bits
     return PureDoubleBits(bits);
 }
 
+PureDoubleBits PureDoubleBits::branchIfNaN(StubAssembler& jit, GPRReg bits, GPRReg scratch, GPRReg holdsInfinityDoubled, Jump& isNaN)
+{
+    jit.lshift64(bits, TrustedImm32(1), scratch);
+    isNaN = jit.branch64(CCallHelpers::Above, scratch, holdsInfinityDoubled);
+    return PureDoubleBits(bits);
+}
+
 static void subtractNumberTag(StubAssembler& jit, GPRReg bitsAndResult)
 {
     jit.withNumberTag([&](auto tag) {

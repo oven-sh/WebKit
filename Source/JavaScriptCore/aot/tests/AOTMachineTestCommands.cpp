@@ -567,7 +567,6 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
     case NumberSpace::String:
     case NumberSpace::StringCell:
     case NumberSpace::BigInt:
-    case NumberSpace::AtomOfComparedText:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
         return WordOfMentionKey::Text;

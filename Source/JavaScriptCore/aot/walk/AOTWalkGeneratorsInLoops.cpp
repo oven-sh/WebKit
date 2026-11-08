@@ -1269,7 +1269,8 @@ void Walker::resumeGeneratorToLeave(size_t place, ResumeMode mode, bool dropsWha
         frame.references = suspended.references;
         frame.references.shrink(suspended.index->numberOfValues());
         if (suspended.valuesBuiltTwice) {
-            for (const Frame::ValuesBuiltTwice::Slot& slot : suspended.valuesBuiltTwice->slots) {
+            for (uint32_t number = 0; number < suspended.valuesBuiltTwice->slots.size(); ++number) {
+                const Frame::ValuesBuiltTwice::Slot& slot = suspended.valuesBuiltTwice->slots[number];
                 if (slot.value.index() < frame.references.size())
                     frame.references.placeOf<NamesOfValues::Writer::LaysFrame>(slot.value.index()) = referenceBoundIn(suspended, slot.value);
             }

@@ -274,7 +274,7 @@ static void addToSumInWalkStrings(const Walker& walker, SumInWalkStrings& sum, V
     };
     holdToTypeOfName();
     while (opcodesThatGiveSameValue.contains(record->opcode)) {
-        if (record->opcode == Opcode::Narrowed && record->testOperand() && !record->narrowsHolderOfOperand() && !record->narrowsOtherResultOfOperand() && allRelations.contains(code.at(record->testOperand()).opcode))
+        if (record->opcode == Opcode::Narrowed && record->testOperand() && !record->narrowsHolderOfOperand() && !record->narrowsOtherResultOfOperand() && !record->narrowsTermOfOperand() && allRelations.contains(code.at(record->testOperand()).opcode))
             sum.passedTests.append({ record->testOperand(), record->isOnTakenEdge() });
         value = record->operand(0);
         record = &code.at(value);
@@ -489,7 +489,7 @@ bool nameProvesPositionBelowLengthForStrings(const Walker& walker, Reference pos
     const Code& code = walker.code();
     while (position.isValue() && opcodesThatGiveSameCell.contains(code.at(position.id()).opcode)) {
         const Operation& name = code.at(position.id());
-        if (name.opcode == Opcode::Narrowed && name.testOperand()) {
+        if (name.opcode == Opcode::Narrowed && name.testOperand() && !name.narrowsTermOfOperand()) {
             uint32_t placeOfPosition = 0;
             if (relationSaysPositionBelowLengthInWalkStrings(walker, code.at(name.testOperand()), name.isOnTakenEdge(), placeOfPosition, string) && placeOfPosition == name.operandIndex())
                 return true;

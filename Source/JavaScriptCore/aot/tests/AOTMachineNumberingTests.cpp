@@ -818,6 +818,78 @@ static void testMachineNumberingStoreOverLoadThatStandsStopsBuild()
     }
 }
 
+static void testMachineNumberingStoreOverLoadThatStandsIsJudgedByWaysFromEntry()
+{
+    enum class Shape : uint8_t { DeadBlock, DeadThenDead, DeadForkAndJoin, RingThatNothingEnters, LiveThenLive, DeadThenDeadLedIntoLater, DeadBlockLedIntoLater };
+    struct Case {
+        Shape shape;
+        bool stopsAtStore;
+        bool stopsBeforeGeneration;
+    };
+    for (auto [shape, stopsAtStore, stopsBeforeGeneration] : {
+        Case { Shape::DeadBlock, false, false },
+        Case { Shape::DeadThenDead, false, false },
+        Case { Shape::DeadForkAndJoin, false, false },
+        Case { Shape::RingThatNothingEnters, false, false },
+        Case { Shape::LiveThenLive, true, true },
+        Case { Shape::DeadThenDeadLedIntoLater, false, true },
+        Case { Shape::DeadBlockLedIntoLater, false, true },
+    }) {
+        NumberingTestFixture fixture;
+        Output& out = fixture.out;
+        out.verifyReusedLoads({ fixture.cousin.index() }, [](Operation*) { });
+        Block* taken = out.newBlock();
+        Block* first = out.newBlock();
+        Block* end = out.newBlock();
+        Operation* word = fixture.load(fixture.firstElement);
+        ScopeFork fork = out.forkScope();
+        bool firstIsLive = shape == Shape::LiveThenLive;
+        out.branch(firstIsLive ? fixture.operand : out.booleanTrue, normalEdge(taken), normalEdge(first));
+        AOT_TEST_CHECK(first->numberOfIncomingEdges() == firstIsLive);
+
+        out.appendToArm(first, fork);
+        Block* holder = first;
+        if (shape == Shape::DeadThenDead || shape == Shape::LiveThenLive || shape == Shape::DeadThenDeadLedIntoLater) {
+            holder = out.newBlock();
+            out.jump(holder);
+            out.appendToContinuation(holder);
+            AOT_TEST_CHECK(holder->singlePredecessor() == first);
+        } else if (shape == Shape::DeadForkAndJoin) {
+            Block* left = out.newBlock();
+            Block* right = out.newBlock();
+            holder = out.newBlock();
+            ScopeFork inner = out.forkScope();
+            out.branch(fixture.operand, normalEdge(left), normalEdge(right));
+            out.appendToArm(left, inner);
+            out.jump(holder);
+            out.appendToArm(right, inner);
+            out.jump(holder);
+            out.appendToJoin(holder, inner);
+            AOT_TEST_CHECK(holder->numberOfIncomingEdges() == 2);
+        }
+        const std::optional<Failure>& failure = fixture.test.procedure().failure();
+        AOT_TEST_CHECK(!failure);
+        out.store64(fixture.operand, out.address(fixture.unrelated, fixture.words, NumberingTestFixture::offsetOfWord(0)));
+        AOT_TEST_CHECK(stopsAtStore ? failure && failure->kind == FailureKind::MalformedProcedure : !failure);
+        if (stopsAtStore)
+            continue;
+        out.jump(shape == Shape::RingThatNothingEnters ? first : end);
+        AOT_TEST_CHECK(shape != Shape::RingThatNothingEnters || first->singlePredecessor() == first);
+
+        out.appendToArm(taken, fork);
+        bool isLedIntoLater = shape == Shape::DeadThenDeadLedIntoLater || shape == Shape::DeadBlockLedIntoLater;
+        if (isLedIntoLater)
+            out.branch(fixture.operand, normalEdge(end), rareEdge(first));
+        else
+            out.jump(end);
+        out.appendTo(end);
+        out.ret(word);
+        AOT_TEST_CHECK(!failure);
+        AOT_TEST_CHECK(fixture.test.prepare() == !stopsBeforeGeneration);
+        AOT_TEST_CHECK(stopsBeforeGeneration ? failure && failure->kind == FailureKind::MalformedProcedure : !failure);
+    }
+}
+
 static constexpr const char* numberingTestRequestVariable = "TESTAOT_ADD_SECOND_EDGE_ON_REQUEST";
 static constexpr ASCIILiteral numberingTestOfSecondEdgeIntoContinuation = "machine/numbering-on-request/second-edge-into-continuation"_s;
 static constexpr ASCIILiteral numberingTestOfSecondEdgeIntoJoin = "machine/numbering-on-request/second-edge-into-join"_s;
@@ -1140,6 +1212,7 @@ static std::span<const NativeTest> listOfMachineNumberingTests()
         { "machine/numbering/own-copy-of-a-narrow-reference-is-marked"_s, testMachineNumberingOwnCopyOfNarrowReferenceIsMarked },
         { "machine/numbering/reused-load-is-verified"_s, testMachineNumberingReusedLoadIsVerified },
         { "machine/numbering/store-over-load-that-stands-stops-build"_s, testMachineNumberingStoreOverLoadThatStandsStopsBuild },
+        { "machine/numbering/store-over-load-that-stands-is-judged-by-ways-from-entry"_s, testMachineNumberingStoreOverLoadThatStandsIsJudgedByWaysFromEntry },
         { "machine/numbering/second-edge-into-a-continuation-asserts"_s, testMachineNumberingSecondEdgeIntoContinuationAsserts },
         { numberingTestOfSecondEdgeIntoContinuation, testMachineNumberingAddsSecondEdgeIntoContinuationOnRequest },
         { numberingTestOfSecondEdgeIntoJoin, testMachineNumberingAddsSecondEdgeIntoJoinOnRequest },

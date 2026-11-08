@@ -29,6 +29,7 @@ template<Opcode known> ALWAYS_INLINE bool buildCoroutineOperation(Walker& walker
     return opcodesThatBuildCoroutineOperationTakes.contains(known) && (callsKeepSomething || !opcodesThatAskWhatCallsOfCoroutinesKeep.contains(known)) && buildCoroutineOperationOfItsOpcodes(walker, value);
 }
 
+inline constexpr OpcodeSet opcodesThatAnswerFromStepWrittenByHandTakes { Opcode::PropGet, Opcode::TypeTest };
 AOT_LINK_OF_WALK(answerFromStepWrittenByHand, opcodesThatAnswerFromStepWrittenByHandTakes)
 
 std::optional<Vector<Reference, 8>> layOutEntryOperandsOfCall(Walker&, const BodyValue& call, FunctionID callee, CodeUnit entered);

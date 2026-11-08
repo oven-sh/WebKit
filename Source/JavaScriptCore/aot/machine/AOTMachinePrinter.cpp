@@ -1163,6 +1163,16 @@ void printOperation(PrintStream& out, const Procedure& procedure, const Operatio
     MachinePrinter(procedure).printOperation(out, operation);
 }
 
+void printFailure(PrintStream& out, const Procedure& procedure)
+{
+    const Failure& failure = *procedure.failure();
+    out.print(failure.kind, ", by the check in ", failure.check.function, " at ", failure.check.file, ":", failure.check.line);
+    if (failure.operation < procedure.numberOfOperations()) {
+        out.print(": ");
+        printOperation(out, procedure, procedure.operationAt(failure.operation));
+    }
+}
+
 void printOrder(PrintStream& out, const Procedure& procedure)
 {
     MachinePrinter(procedure).printOrder(out);

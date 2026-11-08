@@ -90,6 +90,7 @@ public:
     }
     JSCell* classObjectHeldWhileReached(FunctionID constructor) const { return constructor && !m_evaluationsHeldWhileReached.isEmpty() ? m_evaluationsHeldWhileReached.get(constructor.index()).classObject : nullptr; }
     bool tryHoldClassObjectWhileReached(FunctionID, JSCell* classObject);
+    bool tryHoldClassObjectWhileReached(const LayoutData& constructed, FunctionID, JSCell* classObject);
     bool isMarkOfEvaluationThatDied(const JSCell* cell) const { return cell && cell == m_markOfEvaluationThatDied; }
     template<typename Visitor> void visitRoots(Visitor&);
     static bool hasComputedMemberNames(const LayoutData& classLayout)
@@ -101,8 +102,7 @@ public:
     }
     static bool canBeDefinedFromRecord(const LayoutData& classLayout)
     {
-        bool recordNamesParent = !classLayout.hasUntypedBase || classLayout.classData().builtinBase != LayoutData::noBase;
-        return recordNamesParent && !hasComputedMemberNames(classLayout);
+        return !classLayout.hasUntypedBase && !hasComputedMemberNames(classLayout);
     }
     bool isDefinedByClass(const LayoutData& layout) const
     {
@@ -149,7 +149,7 @@ public:
     enum class ClassPart : uint8_t { Everything, ClassObject, PrototypeMembers };
     JSValue resolveHeritage(JSGlobalObject*, JSValue heritage);
     Closure* createClassObject(VM&, const LayoutData&);
-    Closure* classObjectForEvaluation(Closure* allocated, const LayoutData&) const;
+    Closure* defineClassWhereItIsEvaluated(JSGlobalObject*, Closure* allocated, const LayoutData&, JSValue parent, JSValue prototypeParent);
     void defineClass(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue parent, JSValue prototypeParent);
     void defineClass(JSGlobalObject*, Closure* classObject, JSValue parent, JSValue prototypeParent);
     void createClassPart(JSGlobalObject*, Closure* classObject, ClassPart);
@@ -229,14 +229,14 @@ public:
     void didChangeEveryMember(const LayoutData&, ClassSide);
     void didFreezeHolder(VM&, const LayoutData&, ClassSide, JSObject* holder);
     void didLayWhatSeesAccesses(VM&, const LayoutData&, ClassSide);
-    static bool seesAccesses(unsigned attributes);
+    static bool seesAccesses(VM&, UniquedStringImpl*, unsigned attributes);
     bool holdsMemberOfRecordUnder(VM&, const LayoutData&, ClassSide, JSObject* holder, UniquedStringImpl*) const;
     void beginGuardsAtEndOfModule(VM&, const LayoutData&);
     void beginGuardsAheadOfFirstObject(VM&, const LayoutData&);
-    void didRegisterClosure()
+    void didRegisterClosure(FunctionID function)
     {
         if (!m_classesThatWaitForFunctions.isEmpty()) [[unlikely]]
-            letGuardsBeAskedForAgain();
+            letGuardsBeAskedForAgain(function);
     }
     void didChangePrototypeLink(const LayoutData&, ClassSide);
     void didDefineWithOtherParent(const LayoutData&, ClassSide);
@@ -334,7 +334,8 @@ private:
     void beginGuardsSlowCase(const LayoutData&);
     void countGuardsOfNamesThatDoNotHold(const LayoutData&);
     void checkParentOfPrototypeObject(const LayoutData&, JSObject* prototype);
-    bool tryLeaveDefinitionToRecord(VM&, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent);
+    bool tryLeaveDefinitionToRecord(VM&, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent, FunctionID constructor, JSCell* registered);
+    void defineClass(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue parent, JSValue prototypeParent, FunctionID constructor, JSCell* registered);
     bool tryDefineAgainWithKeptStructures(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent);
     bool hasNoGuardLeft(const LayoutData& classLayout) const { return hasNoGuardLeft(classLayout, ClassSide::Prototype) && hasNoGuardLeft(classLayout, ClassSide::Static); }
     bool everyGuardHasEnded(const LayoutData& classLayout) const { return guardHasEnded(classLayout, ClassSide::Prototype) && guardHasEnded(classLayout, ClassSide::Static); }
@@ -422,8 +423,8 @@ private:
     BitVector m_endedGuards;
     BitVector m_classesWhoseGuardsHaveBegun;
     bool m_beginsGuardsOfFunctionsNotMadeYet { false };
-    Vector<const LayoutData*, 2> m_classesThatWaitForFunctions;
-    void letGuardsBeAskedForAgain();
+    HashMap<uint32_t, Vector<const LayoutData*, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_classesThatWaitForFunctions;
+    void letGuardsBeAskedForAgain(FunctionID);
     BitVector m_classesThatCountGuardsOfNamesBehindArming;
     BitVector m_classesWhosePrototypeAwaitsFirstTouch;
     BitVector m_sidesWhereNamesEnded;
@@ -450,7 +451,19 @@ private:
     };
     static constexpr unsigned logNumberOfVerdictsOnStructuresOfHeirs = 6;
     static size_t indexOfVerdictOnStructureOfHeir(uint32_t structureID, uint32_t offsetOfStructures) { return ((structureID ^ offsetOfStructures) * multiplierOfPlaceOfPrototypeProperty) >> (32 - logNumberOfVerdictsOnStructuresOfHeirs); }
-    std::array<VerdictOnStructureOfHeir, 1u << logNumberOfVerdictsOnStructuresOfHeirs> m_verdictsOnStructuresOfHeirs { };
+    std::array<VerdictOnStructureOfHeir, 1u << logNumberOfVerdictsOnStructuresOfHeirs> m_newestVerdictsOnStructuresOfHeirs { };
+    struct HashOfVerdictOnStructureOfHeir {
+        static unsigned hash(uint64_t verdict) { return DefaultHash<uint64_t>::hash(verdict & ~static_cast<uint64_t>(VerdictOnStructureOfHeir::passesBit)); }
+        static bool equal(uint64_t first, uint64_t second) { return !((first ^ second) & ~static_cast<uint64_t>(VerdictOnStructureOfHeir::passesBit)); }
+        static constexpr bool safeToCompareToEmptyOrDeleted = true;
+    };
+    UncheckedKeyHashSet<uint64_t, HashOfVerdictOnStructureOfHeir> m_verdictsOnStructuresOfHeirs;
+    struct MembersAboveHeirs {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(MembersAboveHeirs);
+        bool canBeToldByStructure { true };
+        Vector<RefPtr<UniquedStringImpl>> names;
+    };
+    mutable UncheckedKeyHashMap<uint32_t, std::unique_ptr<MembersAboveHeirs>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_membersAboveHeirs;
     uint64_t m_numberOfWalksOverPrototypeHolders { 0 };
     unsigned m_numberOfOpenMethodTableUpdates { 0 };
     BitVector m_writablePagesOfMethodTable;
@@ -468,7 +481,7 @@ private:
     std::optional<uint32_t> m_numberOfWordOnWhatSeesAccesses;
     const LayoutData* m_classDefinedFromRecord { nullptr };
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constructorFunctionsWithoutClass;
-    const LayoutData* classThatLivesWhileReachedConstructedBy(FunctionID) const;
+    void rememberClassConstructedBy(FunctionID, const LayoutData&) const;
     void endEvaluationsThatDied(VM&, CollectionScope);
     struct EvaluationHeldWhileReached {
         JSCell* classObject { nullptr };

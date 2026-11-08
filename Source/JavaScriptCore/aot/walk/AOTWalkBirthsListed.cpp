@@ -56,6 +56,11 @@ struct StoresBehindAllocationInBirths {
     bool laysKeyTwice { false };
 };
 
+struct ValueAskedInFrontOfAllocationInBirths {
+    Reference value;
+    TypeID asked;
+};
+
 struct BodyReadInBirths {
     bool names(ValueID) const;
 
@@ -497,6 +502,37 @@ static bool copyTakesOperandsInBirths(Walker& walker, FunctionID callee, const F
     return true;
 }
 
+static Vector<ValueAskedInFrontOfAllocationInBirths, 4> findValuesToAskInFrontOfAllocationInBirths(Walker& walker, LayoutID constructed, StoresBehindAllocationInBirths& stores)
+{
+    Vector<ValueAskedInFrontOfAllocationInBirths, 4> values;
+    TypeArena& types = walker.types();
+    const SlotPlan& slots = walker.plan().slots();
+    for (size_t index = 0; index < stores.keys.size(); ++index) {
+        std::optional<FieldIndex> field = slots.findField(walker.program(), constructed, stores.keys[index]);
+        TypeID taken = field ? slots.slot(constructed, *field).typeInLayoutRecord() : TypeID();
+        if (!taken || !stores.values[index].isValue() || types.isSubset(stores.types[index], taken))
+            continue;
+        size_t place = values.findIf([&](const ValueAskedInFrontOfAllocationInBirths& each) {
+            return each.value == stores.values[index];
+        });
+        if (place == notFound)
+            values.append({ stores.values[index], taken });
+        else
+            values[place].asked = types.intersectionOf(values[place].asked, taken);
+    }
+    for (const ValueAskedInFrontOfAllocationInBirths& each : values) {
+        if (!types.overlap(walker.typeOf(each.value), each.asked))
+            return { };
+    }
+    for (size_t index = 0; index < stores.keys.size(); ++index) {
+        for (const ValueAskedInFrontOfAllocationInBirths& each : values) {
+            if (each.value == stores.values[index])
+                stores.types[index] = types.intersectionOf(stores.types[index], each.asked);
+        }
+    }
+    return values;
+}
+
 static bool looksBehindAllocationPayInBirths(const Walker& walker)
 {
     if (!walker.has(Mechanism::Guesses))
@@ -627,6 +663,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     if (stores.keys.isEmpty() || stores.laysKeyTwice || !copyTakesOperandsInBirths(walker, callee, constructor, handedOver.span(), *thisParameter, walker.types().forLayout(constructed)))
         return false;
 
+    Vector<ValueAskedInFrontOfAllocationInBirths, 4> valuesAsked = findValuesToAskInFrontOfAllocationInBirths(walker, constructed, stores);
     StoresListedAtBirth listed = findStoresThatAllocationMayList(walker, constructed, stores.keys.span(), stores.types.span(), keysFilledByBody);
     if (listed.fields.size() < stores.keys.size())
         return false;
@@ -634,7 +671,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         if (!walker.state().guardOfReadsHolds(guard.layout, guard.key, ClassSide::Static))
             listed.conditions.append(guard);
     }
-    if ((listed.asksForLayoutPrototype || !listed.conditions.isEmpty()) && !looksBehindAllocationPayInBirths(walker))
+    if ((listed.asksForLayoutPrototype || !listed.conditions.isEmpty() || !valuesAsked.isEmpty()) && !looksBehindAllocationPayInBirths(walker))
         return false;
     std::optional<GuardOfPrototypeAtConstruction> guardOfPrototype = findGuardOfPrototypeAtConstruction(walker, callee, listed.asksForLayoutPrototype, !listed.conditions.isEmpty(), origin);
     bool someGuardOfClassIsAsked = guardOfPrototype && listed.conditions.containsIf([&](const MemberConditionRecord& condition) {
@@ -683,6 +720,33 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     if (walker.checksProofs() && guardsHold && !walker.isBuiltWhereItStandsSince(numberOfRecordsInFrontOfLook, guardsHold))
         checkGuardsThatAreRemembered(walker, listed.conditions.span(), origin);
     checkGuardsThatAreRemembered(walker, listed.conditionsRemembered.span(), origin);
+
+    for (const ValueAskedInFrontOfAllocationInBirths& each : valuesAsked) {
+        Draft look(Opcode::TypeTest, origin);
+        look.setValueOperand(each.value);
+        look.setTestedType(each.asked);
+        walker.chooseConservativeFields(look);
+        Reference passes = walker.isUnreachable() ? Reference() : walker.build(WTF::move(look));
+        if (!passes)
+            return true;
+        goOnWhereLookPasses(passes);
+        Draft proof(Opcode::Narrowed, origin);
+        proof.setValueOperand(each.value);
+        proof.setTestOperand(passes);
+        proof.setOperandIndex(OperandIndex::TypeTest::value);
+        proof.setIsOnTakenEdge(true);
+        Reference narrowed = walker.build(WTF::move(proof));
+        if (!narrowed)
+            return true;
+        for (Reference& value : stores.values) {
+            if (value == each.value)
+                value = narrowed;
+        }
+        for (Reference& operand : handedOver) {
+            if (operand == each.value)
+                operand = narrowed;
+        }
+    }
 
     Reference prototype;
     if (!guardOfPrototype) {

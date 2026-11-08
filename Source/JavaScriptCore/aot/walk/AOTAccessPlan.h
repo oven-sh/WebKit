@@ -120,6 +120,8 @@ inline std::optional<FieldAccess> fieldCreatedInSlotBy(const AccessContext& cont
         return type.isObject() && type.isJavaScriptValue() && type.hasOnlyClosures();
     };
     if (form.contains(FieldForm::IsAccessor)) {
+        if (slot.type && (!definition.getter || !types.isSubset(definition.getter, slot.type)))
+            return std::nullopt;
         if (slot.representation != SlotRepresentation::JSValue || !slot.holdsAccessor || (definition.getter && !isFunctionOfProgram(definition.getter)) || (definition.setter && !isFunctionOfProgram(definition.setter)))
             return std::nullopt;
     } else {

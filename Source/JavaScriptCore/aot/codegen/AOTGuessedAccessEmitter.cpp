@@ -596,7 +596,8 @@ void GuessedAccessEmitter::storeInProvenListUnderAnyKey(const ValueContext& valu
     Integer index = keyIsRawNumber ? elements.indexOrElse(value->positionOperand(), typeOf(value->positionOperand()).isNumberWithoutFraction(), outOfLine) : signExtended(indexOrElse(in<Boxed>(value->positionOperand()), outOfLine));
     ArrayElements storage = elements.elementsOf(list);
     build().statistics().count(StatisticID::StoresUnderAnyKeyThatRaiseTheLengthInLine);
-    elements.forEachFormByShape(elements.indexingMode(list, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, formsOfGuessedAccess(elements, value), outOfLine, [&](const ArrayStorageForm& form) {
+    ArrayStorageFormList forms = formsOfGuessedAccess(elements, value);
+    elements.forEachFormByShape(elements.indexingMode(list, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, forms, outOfLine, [&](const ArrayStorageForm& form) {
         std::optional<Operand> rawElement = elements.rawElementToStore(form, stored, outOfLine);
         if (!rawElement) {
             m_out.jump(outOfLine);
@@ -617,7 +618,7 @@ void GuessedAccessEmitter::storeInProvenListUnderAnyKey(const ValueContext& valu
             emitter<BarrierEmitter>().elementBarrierAfterStore(value, list, singleElementSpan(storedElement));
         }
         m_out.jump(continuation);
-    }, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
+    }, ElementAccessEmitter::FirstForm::IsLikeTheOthers, elements.int32ThatArmOfValuesStoresInEitherKind(stored, forms));
 
     m_out.appendTo(outOfLine);
     if (keyIsRawNumber && !keyIsOptionalNumber && value->mode() == ECMAMode::Strict) {

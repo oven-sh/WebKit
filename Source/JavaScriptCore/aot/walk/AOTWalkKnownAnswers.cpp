@@ -311,7 +311,7 @@ uint32_t AnswersOfWalk::addKey(std::span<const uint32_t> words, uint32_t hash)
     return m_keys.size();
 }
 
-uint32_t AnswersOfWalk::numberConversion(Reference value, Representation wanted, Reference converted)
+ALWAYS_INLINE uint32_t AnswersOfWalk::numberConversion(Reference value, Representation wanted, Reference converted)
 {
     uint32_t number = m_conversions.size();
     uint32_t older = std::exchange(rowOf(value.id().index()).newestConversion, number + 1);
@@ -518,7 +518,7 @@ std::optional<bool> KnownAnswers::outcomeOf(Reference condition) const
     return m_held->outcomes.contains(ifTrue - 1) ? std::optional<bool>(false) : std::nullopt;
 }
 
-void KnownAnswers::noteConversion(Reference value, Representation wanted, Reference converted, bool endsAtSuspension)
+ALWAYS_INLINE void KnownAnswers::noteConversion(Reference value, Representation wanted, Reference converted, bool endsAtSuspension)
 {
     if (!m_table)
         return;
@@ -832,6 +832,7 @@ static bool doesNothingAgainInKnownAnswers(const Walker& walker, const Draft& dr
 static constexpr OpcodeSet readsAnsweredByNotesInKnownAnswers { Opcode::GetArrayLength };
 static constexpr OpcodeSet operationsWithKeysInKnownAnswers = testsNumberedInKnownAnswers | valuesNumberedInKnownAnswers | operationsThatDoNothingAgainInKnownAnswers;
 static constexpr OpcodeSet operationsFoundInKnownAnswers = operationsWithKeysInKnownAnswers | readsAnsweredByNotesInKnownAnswers;
+static_assert(!operationsFoundInKnownAnswers.contains(Opcode::FindInPrototypeChainUnlessTrapped));
 static constexpr OpcodeSet operationsThatTakeOperandsInEitherOrderInKnownAnswers = allEqualities | OpcodeSet { Opcode::Add, Opcode::Mul, Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor };
 static_assert(!operationsFoundInKnownAnswers.intersects(conversionsOfForm));
 
@@ -976,7 +977,7 @@ void noteOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Ef
     table->setWhoAskedLast(nullptr);
 
     if (opcode == Opcode::GetArrayLength) {
-        noteKnown(walker, KnownNote::LengthOfList, draft.arrayOperand(), { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::ArrayStorage }), built.bits());
+        noteKnown(walker, KnownNote::LengthOfList, draft.arrayOperand(), { }, 0, placesUnderLengthsOfLists, built.bits());
         return;
     }
     if (!operationsWithKeysInKnownAnswers.contains(opcode))
@@ -1080,6 +1081,8 @@ void noteWhatBranchDecidesOnEdge(Walker& walker, BlockID from, uint32_t targetIn
         }
         if (allRelations.contains(record.opcode))
             noteRelationInKnownAnswers(walker, condition, record, isTrue);
+        if (isTrue && record.opcode == Opcode::ToBoolean)
+            noteSlotFilledWhereAnswerOfItsReadIsTruthy(walker, rootInKnownAnswers(code, referenceToRecordInKnownAnswers(code, record.operand(0))));
         return;
     }
 }

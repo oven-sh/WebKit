@@ -25,6 +25,7 @@
 #include "AOTScanKnownEffects.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSchemaResultRules.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeTable.h"
 #include <algorithm>
@@ -93,6 +94,7 @@ enum class SinkKindInScan : uint8_t {
     ValueInSightOfChange,
     TargetOfCopyOfMembers,
     SourceOfCopyOfMembers,
+    PlaceOfWrittenList,
 };
 
 struct SinkInScan {
@@ -621,7 +623,7 @@ static constexpr OpcodeSet opcodesWithPureBoundInScan = opcodesWhere([](Opcode o
 static constexpr OpcodeSet opcodesThatMayCallUnknownCodeInScan = opcodesWhere([](Opcode opcode) { return declaredBoundOf(opcode).mayCallUnknownCode; });
 static constexpr OpcodeSet opcodesOnWhichScanLaysEffects { Opcode::Builtin, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::SuperGet, Opcode::SuperSet };
 static constexpr OpcodeSet opcodesReadInWaysOfTheirOwnInScan = catchOpcodes | OpcodeSet { Opcode::NewClass, Opcode::ResolveHeritage, Opcode::NewClassToken, Opcode::DefineMethod, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::ToThis, Opcode::ToObject, Opcode::NarrowByField, Opcode::CheckInitialized, Opcode::NarrowByTest };
-static constexpr OpcodeSet opcodesLookedAtBehindOperandsInScan { Opcode::ReleaseHint, Opcode::NewObject, Opcode::Data, Opcode::GetSuperBase, Opcode::ScopeHasBinding, Opcode::NewTemplateObject };
+static constexpr OpcodeSet opcodesLookedAtBehindOperandsInScan { Opcode::ReleaseHint, Opcode::NewObject, Opcode::Data, Opcode::GetSuperBase, Opcode::ScopeHasBinding, Opcode::NewTemplateObject, Opcode::StrictEq };
 static constexpr OpcodeSet readsOfDeclaredPlacesInScan { Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
 
 static constexpr RowOfOpcodeInScan rowOfOpcodeInScan(Opcode opcode)
@@ -1163,6 +1165,16 @@ private:
     ValueID objectDescribedBy(ValueID description, ValueID key) const;
 
     BodyValue definitionOf(uint32_t value) const;
+    ALWAYS_INLINE bool onlyTurnsTruthRound(const BodyValue& value) const
+    {
+        constexpr OpcodeSet questionsOfTruth { Opcode::ToBoolean, Opcode::LogicalNot };
+        static_assert((operationsThatWeighNothingInCopyInScan | questionsOfTruth) == operationsThatWeighNothingInCopyInScan);
+        if (!questionsOfTruth.contains(value.opcode()))
+            return false;
+        BodyValue asked = definitionOf(value.operand(0).index());
+        return asked && questionsOfTruth.contains(asked.opcode());
+    }
+    NEVER_INLINE void weighEqualityAsCaseOfSwitch(const BodyValue&);
     bool isMadeInBody(ValueID) const;
     PrimitiveKnownToFolding primitiveHeldBy(ValueID);
     BodyValue definitionBehindCasts(ValueID value) const { return definitionOf(m_roots[value.index()]); }
@@ -1380,6 +1392,8 @@ private:
     const Function* m_function { nullptr };
     SummaryBeingMade m_summary;
     bool m_summaryHoldsNothing { true };
+    ValueID m_writtenListBeingListed;
+    uint32_t m_firstPlaceOfWrittenListBeingListed { 0 };
     std::array<const Effects*, numberOfEnumerators<Opcode>> m_declaredEffectsOfEveryValue { };
     std::array<TypeID, numberOfEnumerators<Opcode>> m_widestPrimitiveResults { };
     OpcodeSet m_opcodesThatOnlyReturnTheirOperand;
@@ -1401,8 +1415,13 @@ private:
     Vector<uint32_t> m_atoms;
     Vector<ListInScan> m_lists;
     Vector<uint32_t> m_wordOffsets;
+    uint32_t m_subjectOfEqualitiesWithConstants { noDefinition };
+    uint32_t m_numberOfEqualitiesWithConstants { 0 };
+    PropertyKeyID m_keyOfSubjectOfEqualitiesWithConstants;
+    BodyValue m_lastConstantOfEqualities;
     Vector<uint32_t> m_blocks;
     Vector<uint32_t> m_roots;
+    Vector<uint32_t> m_beginningsOfTextsFound;
     Vector<uint16_t> m_uses;
     Vector<uint32_t> m_firstLeft;
     Vector<uint32_t> m_lastLeft;
@@ -1493,6 +1512,7 @@ private:
     bool m_listsFirstStoresOfBody { false };
     uint32_t m_blockBeingRead { 0 };
     Vector<uint32_t> m_immediateDominators;
+    Vector<uint32_t> m_targetsWhoseDominatorStandsAbove;
     Vector<uint32_t> m_endsOfBlocks;
     uint32_t m_blockAboveReturns { noDefinition };
     struct PlaceInBlockInScan {
@@ -1600,6 +1620,10 @@ struct ReferencesOfScan {
             namesUndefinedRecord = true;
             return;
         }
+        if constexpr (std::is_same_v<IDType, LayoutID>) {
+            if (saysWhosePrivateNameItIs)
+                return;
+        }
         scan.noteFunctionsBehind(id);
         if constexpr (std::is_same_v<IDType, TypeID>) {
             if (!statesExpectation)
@@ -1634,6 +1658,7 @@ struct ReferencesOfScan {
     bool isNewClosure;
     bool handsModuleOut;
     bool statesExpectation;
+    bool saysWhosePrivateNameItIs { false };
     bool namesUndefinedRecord { false };
 };
 
@@ -1896,6 +1921,7 @@ ThinSummary::ThinSummary(SummaryBeingMade& made)
         visit(wordsOfEffects, effects);
         visit(namesThatHostLooksFor, made.namesThatHostLooksFor);
         visit(copiesOfMembers, made.copiesOfMembers);
+        visit(placesOfWrittenLists, made.placesOfWrittenLists);
     };
 
     SummaryStorage& storage = nodes.m_storage;
@@ -2023,6 +2049,7 @@ void ScanOfBody::reset()
         std::construct_at(&m_summary);
     }
     m_summary.nodes.append(SummaryNode { });
+    m_writtenListBeingListed = { };
     m_hasStopped = false;
     m_onlyCallsTakeGatheredList = std::nullopt;
     m_nodeSlots.fill(0, std::max(initialNumberOfNodeSlots, std::bit_ceil(2 * (m_function->body.numberOfValues() + 1))));
@@ -3087,6 +3114,44 @@ ValueID ScanOfBody::objectDescribedBy(ValueID description, ValueID key) const
     return { };
 }
 
+void ScanOfBody::weighEqualityAsCaseOfSwitch(const BodyValue& equality)
+{
+    static constexpr OpcodeSet constantsOfCases { Opcode::Integer, Opcode::String };
+    uint32_t roots[] { m_roots[equality.operand(0).index()], m_roots[equality.operand(1).index()] };
+    BodyValue definitions[] { definitionOf(roots[0]), definitionOf(roots[1]) };
+    auto isConstantOfCase = [&](const BodyValue& definition) {
+        return definition && constantsOfCases.contains(definition.opcode());
+    };
+    bool leftIsConstant = isConstantOfCase(definitions[0]);
+    if (leftIsConstant == isConstantOfCase(definitions[1])) {
+        m_subjectOfEqualitiesWithConstants = noDefinition;
+        return;
+    }
+    uint32_t subject = roots[leftIsConstant];
+    PropertyKeyID key;
+    if (BodyValue read = definitions[leftIsConstant]; read && read.opcode() == Opcode::PropGet && !read.as<Opcode::PropGet>().isFreeName()) {
+        key = read.as<Opcode::PropGet>().key();
+        subject = m_roots[read.as<Opcode::PropGet>().objectOperand().index()];
+    }
+    BodyValue constant = definitions[!leftIsConstant];
+    BodyValue before = std::exchange(m_lastConstantOfEqualities, constant);
+    bool goesOn = subject == m_subjectOfEqualitiesWithConstants && key == m_keyOfSubjectOfEqualitiesWithConstants;
+    if (goesOn) {
+        goesOn = before.opcode() == constant.opcode();
+        if (goesOn && (constant.opcode() == Opcode::Integer ? before.as<Opcode::Integer>().integer() == constant.as<Opcode::Integer>().integer() : before.as<Opcode::String>().string() == constant.as<Opcode::String>().string()))
+            return;
+    }
+    if (!goesOn) {
+        m_subjectOfEqualitiesWithConstants = subject;
+        m_keyOfSubjectOfEqualitiesWithConstants = key;
+        m_numberOfEqualitiesWithConstants = 1;
+        return;
+    }
+    uint32_t numberBefore = m_numberOfEqualitiesWithConstants++;
+    auto weightOf = [](uint32_t number) { return number < 3 ? number : number / 2; };
+    m_summary.weightThatSwitchesSave += 1 + weightOf(numberBefore) - weightOf(numberBefore + 1) + !!key;
+}
+
 BodyValue ScanOfBody::definitionOf(uint32_t value) const
 {
     uint32_t offset = m_wordOffsets[value];
@@ -3129,8 +3194,13 @@ void ScanOfBody::readBody()
     const Body& body = m_function->body;
     m_lists.fill(ListInScan { }, body.numberOfValues());
     m_wordOffsets.fill(noDefinition, body.numberOfValues());
+    m_subjectOfEqualitiesWithConstants = noDefinition;
+    m_numberOfEqualitiesWithConstants = 0;
+    m_keyOfSubjectOfEqualitiesWithConstants = { };
+    m_lastConstantOfEqualities = { };
     m_blocks.fill(0, body.numberOfValues());
     m_roots.fill(0, body.numberOfValues());
+    m_beginningsOfTextsFound.shrink(0);
     m_uses.fill(0, body.numberOfValues());
     m_firstLeft.fill(hasNotLeft, body.numberOfValues());
     m_lastLeft.fill(0, body.numberOfValues());
@@ -3146,6 +3216,7 @@ void ScanOfBody::readBody()
     m_objectsOfReadsPutOff.clear();
     if (m_listsFirstStoresOfBody) {
         m_immediateDominators.fill(noDefinition, body.numberOfBlocks());
+        m_targetsWhoseDominatorStandsAbove.fill(noDefinition, body.numberOfBlocks());
         m_immediateDominators[entryBlock.index()] = entryBlock.index();
         m_endsOfBlocks.fill(0, body.numberOfBlocks());
     }
@@ -3162,7 +3233,7 @@ void ScanOfBody::readBody()
     m_firstParameterOfBlock[body.numberOfBlocks()] = m_numberOfParameters;
 }
 
-BodyBlock ScanOfBody::readBlock(const BodyBlock& block)
+ALWAYS_INLINE BodyBlock ScanOfBody::readBlock(const BodyBlock& block)
 {
     uint32_t number = block.id().index();
     m_numberOfValuesScanned += block.numberOfValues();
@@ -3283,7 +3354,7 @@ static bool readsTokenOfClassInScan(const Program& program, const BodyValue& val
     return written && program.at(written).isOpaque(OpaqueKind::ClassToken);
 }
 
-bool ScanOfBody::noteEffectsOf(const BodyValue& value, Opcode opcode, uint32_t block, std::optional<SummaryAccess::Kind> access)
+ALWAYS_INLINE bool ScanOfBody::noteEffectsOf(const BodyValue& value, Opcode opcode, uint32_t block, std::optional<SummaryAccess::Kind> access)
 {
     Effects effectsStorage;
     const Effects* declaredEffects = opcode != Opcode::IsNotFrozen ? m_declaredEffectsOfEveryValue[static_cast<unsigned>(opcode)] : nullptr;
@@ -3315,7 +3386,7 @@ bool ScanOfBody::noteEffectsOf(const BodyValue& value, Opcode opcode, uint32_t b
     return effects.mayCallUnknownCode;
 }
 
-void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
+ALWAYS_INLINE void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
 {
     using Row = RowOfOpcodeInScan;
     Opcode opcode = value.opcode();
@@ -3339,7 +3410,10 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
         beginOperationOverEnvironments(value);
     if (!(traits & Row::onlyHandsOn)) {
         m_summary.numberOfOperations += !readsTokenOfClassInScan(m_program, value);
-        m_summary.weightOfOperations += !(traits & Row::weighsNothingInCopy);
+        if (traits & Row::weighsNothingInCopy)
+            m_summary.numberOfOperationsThatOnlyTurnTruthRound += onlyTurnsTruthRound(value);
+        else
+            ++m_summary.weightOfOperations;
     }
     if (opcode == Opcode::String)
         noteTextSpelled(value.as<Opcode::String>().string());
@@ -3356,7 +3430,7 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
         bool isFollowedFromHere = (opcode == Opcode::ModuleNamespace && layoutOfNamespaceGivenBy(value)) || (opcode == Opcode::RequireModule && answersWithResultOfBody(value));
         bool handsModuleOut = (traits & Row::givesResult) && !isFollowedFromHere;
         bool statesExpectation = opcode == Opcode::Check || (opcode == Opcode::Convert && value.as<Opcode::Convert>().declared().isExpected());
-        ReferencesOfScan references { *this, value.id(), block, opcode == Opcode::NewClosure, handsModuleOut, statesExpectation };
+        ReferencesOfScan references { *this, value.id(), block, opcode == Opcode::NewClosure, handsModuleOut, statesExpectation, familyOf(opcode) == OperationFamily::PrivateAccess };
         value.forEachReference(references);
         if (traits & Row::namesModules) {
             notePathsOfModulesReadInScan(value, m_summary);
@@ -3496,6 +3570,8 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
     if (m_followsSomeEnvironment)
         noteStoreIntoEnvironment();
     if (traits & Row::isLookedAtBehindOperands) {
+        if (opcode == Opcode::StrictEq)
+            weighEqualityAsCaseOfSwitch(value);
         if (opcode == Opcode::ReleaseHint) {
             if (uint32_t letGo = m_roots[value.operand(0).index()]; letGo < std::min<uint32_t>(m_function->numberOfEntryParameters(), 64))
                 m_summary.entryParametersLetGo |= uint64_t(1) << letGo;
@@ -3655,9 +3731,11 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
 
     StringID beginningOfKey;
     if (!key && computedKey && m_walkFollowsConstants) {
+        if (m_beginningsOfTextsFound.isEmpty())
+            m_beginningsOfTextsFound.fill(0, m_roots.size());
         key = nameKeyOfAccessInScan(m_program, primitiveHeldBy(computedKey), definitionBehindCasts(computedKey), scopedLambda<BodyValue(ValueID)>([&](ValueID operand) {
             return definitionBehindCasts(operand);
-        }), beginningOfKey);
+        }), m_beginningsOfTextsFound, beginningOfKey);
         if (key)
             m_summary.accessesUnderConstantKeys.append({ value.id(), key });
     }
@@ -4395,6 +4473,20 @@ void ScanOfBody::retainInResult(const BodyValue& value, uint32_t operandIndex, L
             return;
         if (isListed && made.builtinClass && m_program.builtins().findSlot(made.builtinClass, ContentsSlot::Element)) {
             flowInto(list, contentsNode(classInstanceMadeBy(value, made.builtinClass), ContentsSlot::Element));
+            if (opcode == Opcode::NewArray && value.numberOfVariadicOperands() > 1 && value.as<Opcode::NewArray>().holes().empty()) {
+                Vector<uint32_t>& places = m_summary.placesOfWrittenLists;
+                if (m_writtenListBeingListed != value.id()) {
+                    m_writtenListBeingListed = value.id();
+                    if (places.isEmpty())
+                        places.append(0);
+                    places.append(classInstanceMadeBy(value, made.builtinClass));
+                    places.append(value.numberOfVariadicOperands());
+                    m_firstPlaceOfWrittenListBeingListed = static_cast<uint32_t>(places.size());
+                    places.insertFill(places.size(), 0, value.numberOfVariadicOperands());
+                    places[0] = static_cast<uint32_t>(places.size());
+                }
+                addSink(SinkKindInScan::PlaceOfWrittenList, list, m_firstPlaceOfWrittenListBeingListed + place);
+            }
             return;
         }
         if (opcode == Opcode::CreateMappedArguments && made.builtinClass) {
@@ -4930,7 +5022,7 @@ void ScanOfBody::listConstructions()
     if (!m_objectsBeingMade.isEmpty())
         listBirths();
     sortWithoutRepeatsInScan(m_summary.fieldsLeftEmpty);
-    std::ranges::stable_sort(m_summary.makersThatEndWhereTheyLeave, { }, &SummaryMakerThatEndsWhereItLeaves::positionOfLeaving);
+    AOT::stableSort(m_summary.makersThatEndWhereTheyLeave, { }, &SummaryMakerThatEndsWhereItLeaves::positionOfLeaving);
     for (const SummaryMakerThatEndsWhereItLeaves& maker : m_summary.makersThatEndWhereTheyLeave)
         m_summary.allocationsOfMakersThatEndWhereTheyLeave.append(maker.allocation);
     std::ranges::sort(m_summary.allocationsOfMakersThatEndWhereTheyLeave, { }, &ValueID::index);
@@ -5057,7 +5149,7 @@ BuiltinID ScanOfBody::builtinExpectedToAnswer(ValueID value) const
     return { };
 }
 
-void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCall& call, uint32_t callIndex)
+ALWAYS_INLINE void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCall& call, uint32_t callIndex)
 {
     Opcode opcode = value.opcode();
     std::optional<unsigned> thisPosition = OperandPosition::thisValue(opcode);
@@ -5468,7 +5560,17 @@ void ScanOfBody::noteEdgeOfBodyOfModule(uint32_t from, uint32_t to, KindOfEdgeIn
         return;
     uint32_t source = kind == KindOfEdgeInScan::ToHandler ? m_immediateDominators[from] : from;
     uint32_t& above = m_immediateDominators[to];
-    above = above == noDefinition ? source : nearestBlockAboveBoth(above, source);
+    if (above == noDefinition) {
+        above = source;
+        return;
+    }
+    uint32_t lower = source;
+    while (lower > above && m_targetsWhoseDominatorStandsAbove[lower] != to) {
+        m_targetsWhoseDominatorStandsAbove[lower] = to;
+        lower = m_immediateDominators[lower];
+    }
+    if (lower <= above)
+        above = nearestBlockAboveBoth(above, lower);
 }
 
 void ScanOfBody::listFirstStoresAndUses()
@@ -5570,7 +5672,7 @@ static constexpr TerminatorKindSet terminatorKindsWithoutEffectsInScan = termina
     return declaredBoundOf(kind).isPure();
 });
 
-const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uint32_t block)
+ALWAYS_INLINE const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uint32_t block)
 {
     TerminatorKind kind = terminator.kind();
     if (terminatorKindsThatNameRecordsInScan.contains(kind)) {
@@ -6276,7 +6378,7 @@ ListInScan ScanOfBody::listUnderExclusionsOf(ValueID value)
     return listOf(value);
 }
 
-void ScanOfBody::takeExclusionsAtBlock(uint32_t block)
+ALWAYS_INLINE void ScanOfBody::takeExclusionsAtBlock(uint32_t block)
 {
     if (!m_someEntryCarries) [[likely]]
         return;
@@ -6478,6 +6580,19 @@ void ScanOfBody::applySinks()
     };
     for (const SinkInScan& sink : m_sinks) {
         switch (sink.kind) {
+        case SinkKindInScan::PlaceOfWrittenList: {
+            Vector<uint32_t>& places = m_summary.placesOfWrittenLists;
+            expand(sink.value);
+            if (m_expanded.isEmpty())
+                break;
+            places[sink.target] = static_cast<uint32_t>(places.size());
+            places.append(static_cast<uint32_t>(m_expanded.size()));
+            for (const OriginInScan& origin : m_expanded) {
+                places.append(origin.node);
+                places.append(origin.passes.bits());
+            }
+            break;
+        }
         case SinkKindInScan::Edge: {
             uint32_t onlyAtom = sink.value.count == 1 ? m_atoms[sink.value.first] : parameterBit;
             if (!(onlyAtom & (parameterBit | operatorBit))) {
@@ -6717,7 +6832,6 @@ void ScanOfBody::layDescriptorsInSight()
             if (!*isConfigurable)
                 form.add(FieldForm::IsNotConfigurable);
             m_summary.accesses[definition.access].formCreated = form;
-            m_summary.changes[definition.change].createsWhatCannotBeConfigured = !isAccessor && !*isConfigurable;
         }
         auto heldUnderValue = std::ranges::find(held, valueKey, &Held::key);
         if (!isAccessor && std::ranges::count(held, valueKey, &Held::key) == 1) {
@@ -6801,7 +6915,7 @@ std::span<const uint32_t> ScanOfBody::storesInto(uint32_t root)
         m_storesByRoot.shrink(0);
         for (uint32_t index = 0; index < m_stores.size(); ++index)
             m_storesByRoot.append(index);
-        std::ranges::stable_sort(m_storesByRoot, { }, [&](uint32_t index) {
+        AOT::stableSort(m_storesByRoot, { }, [&](uint32_t index) {
             return m_stores[index].root;
         });
     }
@@ -6837,11 +6951,19 @@ void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root,
     std::optional<ListInScan> halves[2];
     std::optional<ListInScan> value;
     std::optional<ListInScan> writable;
+    std::optional<ListInScan> otherFlags[2];
     bool laysValue = false;
     auto take = [&](PropertyKeyID key, ListInScan held) {
         if (!key)
             return false;
         laysValue |= key == m_program.keyOf(BuiltinNames::value);
+        if (key == m_program.keyOf(BuiltinNames::enumerable) || key == m_program.keyOf(BuiltinNames::configurable)) {
+            std::optional<ListInScan>& flag = otherFlags[key == m_program.keyOf(BuiltinNames::configurable)];
+            if (flag)
+                return false;
+            flag = held;
+            return true;
+        }
         if (key == m_program.keyOf(BuiltinNames::value) || key == m_program.keyOf(BuiltinNames::writable)) {
             std::optional<ListInScan>& part = key == m_program.keyOf(BuiltinNames::value) ? value : writable;
             if (part)
@@ -6866,17 +6988,46 @@ void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root,
                 return;
         }
     }
+    bool everyStoreStandsOnEveryWay = true;
     for (uint32_t index : storesInto(root)) {
         const StoreInScan& store = m_stores[index];
         if (store.site.index() < position && !take(store.key, store.value))
             return;
+        everyStoreStandsOnEveryWay &= store.site.index() >= position || store.block == m_blocks[root] || store.block == m_blocks[position];
     }
     if (laysValue && (halves[0] || halves[1]))
         return;
+    auto flagWritten = [&](const std::optional<ListInScan>& written) -> std::optional<bool> {
+        if (!written)
+            return false;
+        TypeID constant = written->count == 1 ? primitiveConstantAt(m_atoms[written->first]) : TypeID();
+        uint16_t primitives = constant ? primitivesInID(constant) : 0;
+        if (primitives == Primitive::True)
+            return true;
+        if (!primitives || primitives & ~(Primitive::False | Primitive::UndefinedOrNull))
+            return std::nullopt;
+        return false;
+    };
     if (!halves[0] && !halves[1]) {
         if (!hasLeftIntoMapAlone)
             return;
         m_summary.changes[changeOfEntryInMap].isEntryWrittenInMap = true;
+        std::optional<bool> isWritable = flagWritten(writable);
+        std::optional<bool> isEnumerable = flagWritten(otherFlags[0]);
+        std::optional<bool> isConfigurable = flagWritten(otherFlags[1]);
+        if (value && isWritable && isEnumerable && isConfigurable && everyStoreStandsOnEveryWay && m_summary.accesses[access].key) {
+            OptionSet<FieldForm> form;
+            if (!*isWritable)
+                form.add(FieldForm::IsReadOnly);
+            if (!*isEnumerable)
+                form.add(FieldForm::IsNotEnumerable);
+            if (!*isConfigurable)
+                form.add(FieldForm::IsNotConfigurable);
+            m_summary.accesses[access].formCreated = form;
+            m_summary.changes[changeOfEntryInMap].descriptorIsInSight = true;
+            m_summary.changes[changeOfEntryInMap].descriptorLaysNoAccessor = true;
+            m_summary.changes[changeOfEntryInMap].valueInSight = oneNodeFor(*value);
+        }
         TypeID flag = writable && writable->count == 1 ? primitiveConstantAt(m_atoms[writable->first]) : TypeID();
         if (!value || !flag || primitivesInID(flag) != Primitive::True)
             return;
@@ -6904,6 +7055,17 @@ void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root,
     change.isEntryWrittenInMap = true;
     change.getterInSight = nodes[0];
     change.setterInSight = nodes[1];
+    std::optional<bool> isEnumerable = flagWritten(otherFlags[0]);
+    std::optional<bool> isConfigurable = flagWritten(otherFlags[1]);
+    if (writable || !isEnumerable || !isConfigurable || !everyStoreStandsOnEveryWay || !m_summary.accesses[access].key)
+        return;
+    OptionSet<FieldForm> form { FieldForm::IsAccessor };
+    if (!*isEnumerable)
+        form.add(FieldForm::IsNotEnumerable);
+    if (!*isConfigurable)
+        form.add(FieldForm::IsNotConfigurable);
+    m_summary.accesses[access].formCreated = form;
+    change.descriptorIsInSight = true;
 }
 
 void ScanOfBody::nameKeysOfDefinitionsByMaps()
@@ -6917,6 +7079,8 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
             addEdge(from.node, 0, from.passes);
         }
     };
+    Vector<uint32_t, 8> sitesOfEntriesOfMapsThatStay;
+    Vector<uint32_t, 16> keysNamedInMap;
     for (const DefinitionByMapInScan& definition : m_definitionsByMaps) {
         uint32_t root = definition.rootOfMap;
         BodyValue made = definitionOf(root);
@@ -6942,6 +7106,21 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
             }
         }
 
+        bool eachKeyIsNamedOnceOnEveryWay = true;
+        keysNamedInMap.shrink(0);
+        for (uint32_t field : listed)
+            keysNamedInMap.append(m_program.at(made.as<Opcode::NewObject>().layout()).fields[field].key.bits());
+        for (uint32_t index : storesInto(root)) {
+            const StoreInScan& store = m_stores[index];
+            if (store.site.index() >= definition.position)
+                continue;
+            eachKeyIsNamedOnceOnEveryWay &= !!store.key && (store.block == m_blocks[root] || store.block == m_blocks[definition.position]);
+            keysNamedInMap.append(store.key.bits());
+        }
+        for (const DefinitionUnderComputedKeyInScan& entry : m_definitionsUnderComputedKeys)
+            eachKeyIsNamedOnceOnEveryWay &= entry.root != root || entry.site.index() >= definition.position;
+        std::ranges::sort(keysNamedInMap);
+        eachKeyIsNamedOnceOnEveryWay &= std::ranges::adjacent_find(keysNamedInMap) == keysNamedInMap.end();
         bool isFirst = true;
         bool eachEntryLaysAccessorAsWritten = true;
         uint32_t valueWhereNoneIsInSight = m_summary.accesses[definition.access].value;
@@ -6963,6 +7142,9 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
             change.setterInSight = noSummaryNode;
             change.laysValueInSight = false;
             change.valueInSight = noSummaryNode;
+            change.descriptorIsInSight = false;
+            change.descriptorLaysNoAccessor = false;
+            access.formCreated = std::nullopt;
             access.key = key;
             access.keyNode = keyNode;
             access.value = valueWhereNoneIsInSight;
@@ -6977,7 +7159,17 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
                 return;
             nameAccessorWrittenInDescriptor(placeOfAccess, m_roots[descriptor.index()], definition.position, placeOfChange, placeWhereMapTakesEntry);
             m_summary.changes[placeOfChange].laysAccessorAsWritten = m_summary.accesses[placeOfAccess].laysAccessorAsWritten;
-            eachEntryLaysAccessorAsWritten &= m_summary.accesses[placeOfAccess].laysAccessorAsWritten;
+            if (!eachKeyIsNamedOnceOnEveryWay && m_summary.changes[placeOfChange].descriptorIsInSight) {
+                SummaryChange& read = m_summary.changes[placeOfChange];
+                read.descriptorIsInSight = false;
+                read.descriptorLaysNoAccessor = false;
+                if (!read.laysValueInSight)
+                    read.valueInSight = noSummaryNode;
+                m_summary.accesses[placeOfAccess].formCreated = std::nullopt;
+            }
+            eachEntryLaysAccessorAsWritten &= m_summary.accesses[placeOfAccess].laysAccessorAsWritten || m_summary.changes[placeOfChange].descriptorIsInSight;
+            if (m_summary.changes[placeOfChange].descriptorIsInSight && !m_summary.accesses[placeOfAccess].laysAccessorAsWritten)
+                return;
             if (m_summary.accesses[placeOfAccess].laysAccessorAsWritten) {
                 if (made.opcode() == Opcode::NewObject)
                     m_summary.accesses[placeOfAccess].mapOfWrittenAccessor = made.as<Opcode::NewObject>().layout();
@@ -7005,8 +7197,23 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
             PropertyKeyID spelled = keySpelledBy(definitionBehindCasts(written));
             nameKey(spelled, entry.stored, entry.site.index(), spelled ? ValueID() : written);
         }
-        if (!eachEntryLaysAccessorAsWritten)
+        if (!eachEntryLaysAccessorAsWritten) {
             escapeBehindSinks(definition.map);
+            continue;
+        }
+        if (made.opcode() == Opcode::NewObject || m_firstLeft[root] != definition.position || m_lastLeft[root] != definition.position)
+            continue;
+        for (uint32_t index : storesInto(root)) {
+            if (m_stores[index].site.index() < definition.position)
+                sitesOfEntriesOfMapsThatStay.append(m_stores[index].site.index());
+        }
+    }
+    if (sitesOfEntriesOfMapsThatStay.isEmpty())
+        return;
+    std::ranges::sort(sitesOfEntriesOfMapsThatStay);
+    for (SummaryAccess& access : m_summary.accesses) {
+        if (access.kind == SummaryAccess::Kind::Define && !access.isByDescriptor && std::ranges::binary_search(sitesOfEntriesOfMapsThatStay, access.site.index()))
+            access.value = 0;
     }
 }
 
@@ -7275,7 +7482,7 @@ void ScanOfBody::removeRepeatedEdges()
             edges[gap] = edge;
         }
     } else {
-        std::stable_sort(edges, edges + size, [&](const SummaryEdge& first, const SummaryEdge& second) {
+        AOT::stableSort(std::span(edges, size), [&](const SummaryEdge& first, const SummaryEdge& second) {
             return placeOf(first) < placeOf(second);
         });
     }

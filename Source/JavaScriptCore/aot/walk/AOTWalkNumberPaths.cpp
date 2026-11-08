@@ -412,6 +412,12 @@ bool buildOperatorBesideOneNumberOfItsOpcodes(Walker& walker, const BodyValue& v
         if (walker.hasFailed())
             return false;
     }
+    if (form == OperatorForm::NumberAndValue && holdOperandBesideNumberToNumberOrBeginTurnAgain(walker, draft, value.id()))
+        form = formAllowedForTypedOperator(walker, draft);
+    else if (Walker::NumberAskedBesideNumber asked = form == OperatorForm::NumberAndValue && !turnedInFront ? walker.askValueBesideNumberForNumber(value) : Walker::NumberAskedBesideNumber()) {
+        draft.setOperand(asked.operandIndex, asked.proven);
+        form = formAllowedForTypedOperator(walker, draft);
+    }
     draft.setForm(form);
     Origin origin = draft.origin();
     walker.bind(value.id(), boxedUnlessNumbersAreUnboxed(walker, walker.build(WTF::move(draft)), origin));

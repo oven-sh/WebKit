@@ -381,7 +381,7 @@ static bool isOneThingInEveryRunForFamilies(ObjectKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static ClassPartsID classPartsWidenedForFamilies(TypeArena& arena, const Families& families, ClassPartsID classes)
+static ClassPartsID classPartsWidenedForFamilies(TypeArena& arena, const Families& families, ClassPartsID classes, ContentsWidenedToFamilies& found)
 {
     if (!classes || homeOf(classes) == IDHome::Value)
         return classes;
@@ -392,7 +392,7 @@ static ClassPartsID classPartsWidenedForFamilies(TypeArena& arena, const Familie
         for (TypeID& contents : part.writtenContents) {
             if (!contents || holdsOnlyPrimitives(contents))
                 continue;
-            TypeID widened = widenedToFamily(arena, families, contents);
+            TypeID widened = widenedToFamily(arena, families, contents, SetsThatNoFamilyHolds::Stay, &found);
             if (widened == contents)
                 continue;
             contents = arena.at(widened).isAnything() ? TypeID() : widened;
@@ -419,7 +419,7 @@ static LayoutSetID withFamiliesOfMembersThatShareOneForFamilies(TypeArena& arena
     return set;
 }
 
-TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type, SetsThatNoFamilyHolds sets)
+TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type, SetsThatNoFamilyHolds sets, ContentsWidenedToFamilies* foundAround)
 {
     ASSERT(type);
     if (holdsOnlyPrimitives(type))
@@ -434,6 +434,8 @@ TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type, 
         if (classesStay && (!record.unnamedLayouts || holdsOneMember(record.unnamedLayouts) || families.familyOf(record.unnamedLayouts)))
             return type;
     }
+    if (TypeID found = foundAround ? foundAround->get(type.index()) : TypeID())
+        return found;
 
     TypeParts parts = record;
     Vector<BuiltinClassID, 4> classesOfObjectsWithoutName;
@@ -466,12 +468,15 @@ TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type, 
             parts.anyObject = arena.at(parts.unnamedLayouts).size() > mostLayoutsOfSetForFamilies;
         }
     }
+    ContentsWidenedToFamilies foundHere;
     if (!parts.anyObject)
-        parts.unnamedClasses = classPartsWidenedForFamilies(arena, families, parts.unnamedClasses);
+        parts.unnamedClasses = classPartsWidenedForFamilies(arena, families, parts.unnamedClasses, foundAround ? *foundAround : foundHere);
 
     TypeID widened = parts == static_cast<const TypeParts&>(record) ? type : arena.intern(parts);
     for (BuiltinClassID builtinClass : classesOfObjectsWithoutName)
         widened = arena.unionOf(widened, arena.builtinClass(builtinClass));
+    if (foundAround)
+        foundAround->add(type.index(), widened);
     return widened;
 }
 

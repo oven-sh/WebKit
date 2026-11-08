@@ -18,6 +18,7 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubsField.h"
 #include "AOTStubsKeyed.h"
+#include "AOTStubsPropertyExtraProperties.h"
 
 namespace JSC { namespace AOT {
 
@@ -268,8 +269,8 @@ void generatePutKnownField(StubAssembler& jit)
     alwaysNeedsStorage.link(&jit);
     createGranuleOfField(jit, registers, ways);
 
-    auto leaveUnlessFieldIsCreatedHere = [&] {
-        goesByName.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot))));
+    auto leaveUnlessFieldIsCreatedHere = [&](JumpList& isFixedOrSomeFieldHasLeft) {
+        isFixedOrSomeFieldHasLeft.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot))));
         goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
         goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, OBJECT_OFFSETOF(FieldData, slot)), TrustedImm32(offsetBitsWithoutSlotKey)));
         if (mode != PutMode::Define) {
@@ -284,12 +285,14 @@ void generatePutKnownField(StubAssembler& jit)
     fieldWithRawValue.holdsRawValueFromBirth = 1;
     goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record), TrustedImm32(static_cast<int32_t>(std::bit_cast<WordsOfField>(fieldWithRawValue)[0]))));
     branchUnlessTypeAccepts(jit, { value, registers.type, registers.field.representation, registers.scratch, registers.secondScratch, object }, goesByName, goesByName);
-    leaveUnlessFieldIsCreatedHere();
+    leaveUnlessFieldIsCreatedHere(goesByName);
     stored.append(jit.jump());
 
+    JumpList mayComeBack;
     exits.wasAbsent.link(&jit);
     Label createsField = jit.label();
-    leaveUnlessFieldIsCreatedHere();
+    leaveUnlessFieldIsCreatedHere(mayComeBack);
+    Label storesInEmptySlot = jit.label();
     storeField(jit, registers, FieldStoreEnd::JoinList, FieldTypeTest::HasPassed, &stored, creationExits);
     RELEASE_ASSERT(creationExits.wasAbsent.empty() && creationExits.wasAbsentAndIsNotAccepted.empty());
     goesByName.append(creationExits.cannot);
@@ -297,10 +300,67 @@ void generatePutKnownField(StubAssembler& jit)
     stored.link(&jit);
     jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), keyOrder.slotKey);
     jit.and32(TrustedImm32(SlotData::maxOffset), keyOrder.slotKey);
-    Jump isInCell = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsOutOfLine));
+    Jump isInCell = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsOutOfLine | fieldRecordIsCopyInFieldReturn));
+    Jump hasComeBack = jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldRecordIsCopyInFieldReturn));
     jit.or32(TrustedImm32(outOfLineSlotKey), keyOrder.slotKey);
     isInCell.link(&jit);
     listCreatedFieldAndReturn(jit, keyOrder, value);
+
+    mayComeBack.link(&jit);
+    {
+        const GPRReg back = structure;
+        const GPRReg nameOfField = registers.type;
+        const GPRReg scratch = registers.scratch;
+        const GPRReg extra = registers.secondScratch;
+        auto member = [&](ptrdiff_t offset) {
+            return Address(back, static_cast<int32_t>(offset));
+        };
+        RELEASE_ASSERT(noOverlap(object, value, record, back, nameOfField, scratch, extra, registers.field.address, registers.field.representation, instanceGPR));
+        loadNameOfField(jit, record, nameOfField);
+        jit.load32(Address(object, JSCell::structureIDOffset()), scratch);
+        jit.urshift32(scratch, TrustedImm32(StructureRowWords::granuleShift), back);
+        jit.add32(nameOfField, back);
+        jit.and32(TrustedImm32(FieldReturn::numberOfPlaces - 1), back);
+        jit.lshift32(TrustedImm32(FieldReturn::sizeShift), back);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.fieldReturns)), extra);
+        goesByName.append(jit.branchTestPtr(CCallHelpers::Zero, extra));
+        jit.addPtr(extra, back);
+        goesByName.append(jit.branch32(CCallHelpers::NotEqual, member(OBJECT_OFFSETOF(FieldReturn, structureBefore)), scratch));
+        goesByName.append(jit.branch32(CCallHelpers::NotEqual, member(OBJECT_OFFSETOF(FieldReturn, name)), nameOfField));
+        jit.load32(orderWord, scratch);
+        goesByName.append(jit.branch32(CCallHelpers::NotEqual, member(OBJECT_OFFSETOF(FieldReturn, orderWord)), scratch));
+        goesByName.append(branchIfBarrierIsNeeded(jit, object, scratch));
+        goesByName.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(frameCellState)));
+        jit.load16(member(OBJECT_OFFSETOF(FieldReturn, offsetOfExtraPropertiesWord)), extra);
+        loadExtraProperties(jit, object, extra, extra, goesByName);
+        jit.load32(member(OBJECT_OFFSETOF(FieldReturn, extraPropertiesBefore)), scratch);
+        goesByName.append(jit.branch32(CCallHelpers::NotEqual, Address(extra, JSCell::structureIDOffset()), scratch));
+        goesByName.append(branchIfBarrierIsNeeded(jit, extra, scratch));
+        jit.move(back, record);
+        jit.jump().linkTo(storesInEmptySlot, &jit);
+    }
+
+    hasComeBack.link(&jit);
+    {
+        const GPRReg back = record;
+        const GPRReg extra = T10;
+        const GPRReg scratch = T14;
+        auto member = [&](ptrdiff_t offset) {
+            return Address(back, static_cast<int32_t>(offset));
+        };
+        JumpList hasNone;
+        jit.load16(member(OBJECT_OFFSETOF(FieldReturn, offsetOfExtraPropertiesWord)), extra);
+        loadExtraProperties(jit, object, extra, extra, hasNone);
+        jit.load32(member(OBJECT_OFFSETOF(FieldReturn, offset)), scratch);
+        jit.store64(TrustedImm32(0), BaseIndex(extra, scratch, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
+        jit.load32(member(OBJECT_OFFSETOF(FieldReturn, extraPropertiesAfter)), scratch);
+        jit.store32(scratch, Address(extra, JSCell::structureIDOffset()));
+        jit.load32(member(OBJECT_OFFSETOF(FieldReturn, structureAfter)), scratch);
+        jit.store32(scratch, Address(object, JSCell::structureIDOffset()));
+        returnAfterStoring(jit, object, value);
+        hasNone.link(&jit);
+        jit.breakpoint();
+    }
 
     jit.bindEntry(createKnownField(mode));
     loadStructure(jit, object, structure);

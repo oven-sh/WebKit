@@ -13,6 +13,7 @@
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTModuleHost.h"
+#include "AOTNameClass.h"
 #include "AOTRealmStartup.h"
 #include "AOTStackTrace.h"
 #include "AOTTraceFrame.h"
@@ -298,7 +299,7 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
     bool isModuleOfBun = name.startsWith("node:"_s) || name.startsWith("bun:"_s);
     const Image* image = Image::current();
     if (!isModuleOfBun && image && hasFlag(image->header().options.admitted(), AdmittedCode::ReplacedBuiltins))
-        return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': the build saw no import() or require() of a computed path, so compiled files answer only to the paths it saw. It can't see code from a string, as in eval() or new Function(). An executable refuses this too. Import the file by a constant path."_s)), code);
+        return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': the build saw no import() or require() of a computed path that can reach it, so it answers only to the paths the build saw. The build can't see code from a string, as in eval() or new Function(). An executable refuses this too, unless you build it with this file as another entry point. Import the file by a constant path, or add --aot-allow-code-from-disk."_s)), code);
     if (!isModuleOfBun && image && image->loadsCodeOutsideImage())
         return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': it was compiled into this executable, and a dynamic path finds a compiled file only if the path is a string somewhere in your code. Pass the file to bun compile as another entry point."_s)), code);
     ASCIILiteral advice = isModuleOfBun ? "The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s : "Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk."_s;
@@ -308,6 +309,11 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
 JSObject* createFileOfImageRefusedError(JSGlobalObject* globalObject, StringView path, ASCIILiteral code)
 {
     return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, path, "': code that this executable loads from disk can't load the files that were compiled into it. It can use globals, built-in modules, files and packages on disk, and what the program hands it."_s)), code);
+}
+
+JSObject* createFormNotHeldError(JSGlobalObject* globalObject, StringView path, ASCIILiteral type)
+{
+    return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot import '"_s, path, "' as "_s, type, ": it was compiled, and its source isn't in this executable. Write the type out in the call: import(path, { with: { type: \""_s, type, "\" } })."_s)), "ERR_MODULE_NOT_FOUND"_s);
 }
 
 JSObject* createExportNotHandedOutError(JSGlobalObject* globalObject, StringView path, StringView name)
@@ -337,6 +343,11 @@ JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderCha
 JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject* globalObject, StringView path)
 {
     return createError(globalObject, makeString("Cannot read the entry of '"_s, path, "' in require.cache: the build found nothing that reads the cache, so the module was compiled for the code that imports it. Spell the read in a file that the tests import: require.cache[require.resolve(\"./module\")]"_s));
+}
+
+String moduleObjectRefusedMessage(StringView path)
+{
+    return withAOTErrorNote(makeString("Cannot get at the module object of '"_s, path, "': the build found nothing that does, so the file was compiled into the code that requires it. Write `void module.children;` in one of your files."_s));
 }
 
 JSObject* createComparisonOfPrivateFieldRefusedError(JSGlobalObject* globalObject, const String& field)
@@ -394,6 +405,32 @@ ASCIILiteral evaluationRefusedMessage()
     return "Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly."_s;
 }
 
+static bool isWrittenBehindDot(StringView name)
+{
+    if (name.isEmpty() || isASCIIDigit(name[0]))
+        return false;
+    for (unsigned index = 0; index < name.length(); ++index) {
+        char16_t unit = name[index];
+        if (!isASCIIAlphanumeric(unit) && unit != '_' && unit != '$')
+            return false;
+    }
+    return true;
+}
+
+static String spelledInBrackets(const String& object, StringView name)
+{
+    StringBuilder spelled;
+    spelled.append(object, '[');
+    spelled.appendQuotedJSONString(name.toString());
+    spelled.append(']');
+    return spelled.toString();
+}
+
+static bool mayBeKeyOfElement(const UniquedStringImpl& key)
+{
+    return !key.isSymbol() && key.is8Bit() && Typed::mayBeElementKey(Typed::classifyName(byteCast<uint8_t>(key.span8())));
+}
+
 String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key)
 {
     String text = BuiltinTable::singleton().textOf(holder);
@@ -401,6 +438,8 @@ String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key)
         return makeString(text, "[Symbol("_s, StringView(key), ")]"_s);
     if (parseIndex(*key))
         return makeString(text, '[', StringView(key), ']');
+    if (!isWrittenBehindDot(StringView(key)))
+        return spelledInBrackets(text, StringView(key));
     return holder == Builtins::GlobalThis ? String(key) : makeString(text, '.', StringView(key));
 }
 
@@ -469,12 +508,12 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
     BuiltinName name = table.nameOf(vm, key);
     BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
     bool isText = !key->isSymbol() && !parseIndex(*key);
-    bool canBeOpened = found ? table.canBeReplacedInTestRuns(found) || table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isText && table.canTakeNameInTestRuns(holder, name);
+    bool canBeOpened = found ? table.canBeReplacedInTestRuns(found) || table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isText && !mayBeKeyOfElement(*key) && table.canTakeNameInTestRuns(holder, name);
     ASCIILiteral does = found ? "replace"_s : "add"_s;
     if (!canBeOpened)
         return refusalThatNoTestRunLifts(change, member, does);
     String object = table.textOf(holder);
-    String spelled = isText ? makeString(object, '.', StringView(key)) : makeString(object, '[', StringView(key), ']');
+    String spelled = !isText ? makeString(object, '[', StringView(key), ']') : isWrittenBehindDot(StringView(key)) ? makeString(object, '.', StringView(key)) : spelledInBrackets(object, StringView(key));
     String example = found
         ? makeString(spelled, " = f or spyOn("_s, object, ", "_s, isText ? "\""_s : ""_s, StringView(key), isText ? "\""_s : ""_s, ')')
         : makeString(spelled, " = value"_s);
@@ -524,7 +563,7 @@ String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringI
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(vm, key);
     BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
-    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !found && (!name || table.findMember(holder, name).outcome != BuiltinMemberLookup::Outcome::Found);
+    bool isNewName = !key->isSymbol() && !mayBeKeyOfElement(*key) && !found && (!name || table.findMember(holder, name).outcome != BuiltinMemberLookup::Outcome::Found);
     bool isOpenWhereBuildSeesWrite = found ? table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isNewName && table.canonicalID(holder) != Builtins::ObjectPrototype && table.canTakeNameInTestRuns(holder, name);
     if (isOpenWhereBuildSeesWrite)
         return assignmentThatBuildDidNotSeeMessage(memberOfLockedBuiltin(holder, key));

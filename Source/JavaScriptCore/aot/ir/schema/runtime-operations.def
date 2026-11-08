@@ -63,6 +63,7 @@ runtime BarrierSlow : void (JSCell* cell) ; reads(all) writes(RuntimeState)
 runtime RememberElement : void (JSCell* array, EncodedJSValue element) ; reads(all) writes(RuntimeState)
 
 runtime NewArray : JSCell* (uint32_t count, const EncodedJSValue* values) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime NewArrayOfList : JSCell* (JSCell* list, uint32_t capacityAndKind) ; RuntimeAllocates
 runtime NewArrayOfHoles : JSCell* (uint32_t lengthAndCapacity, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayAtReviewedSite : JSCell* (void* profile, uint32_t seedIndexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayWithLengthAtReviewedSite : JSCell* (void* profile, uint32_t seedAndLengthAndCapacity) ; reads(all) writes(AllocatorState, RuntimeState) collects
@@ -210,9 +211,10 @@ runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; un
 runtime RecordRequire : void (uint32_t module, uint32_t referrer) ; unknownCode
 runtime RequireIfHeldForImport : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime WasLoadedSynchronously : size_t (uint32_t module) ; reads(ExternalState) writes(ExternalState)
-runtime SeesMockOf : size_t (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
-runtime MockSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
-runtime NamespaceSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
+runtime SeesMockOf : size_t (uint32_t module, uint32_t referrer, uint32_t reader) ; reads(ExternalState) writes(ExternalState)
+runtime IsLinkedBelow : size_t (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
+runtime MockSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t reader) ; reads(ExternalState) writes(ExternalState)
+runtime NamespaceSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t reader) ; unknownCode
 runtime AreLoaderFunctionsStored : size_t () ; reads(ExternalState)
 runtime CountExecution : void (uint32_t module, uint32_t description, uint32_t counter) ; reads(ExternalState) writes(ExternalState)
 runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL) ; unknownCode

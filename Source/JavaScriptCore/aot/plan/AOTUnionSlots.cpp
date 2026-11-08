@@ -585,7 +585,7 @@ private:
         m_groupsInOrder.shrink(0);
         for (uint32_t group = 0; group < m_groups.size(); ++group)
             m_groupsInOrder.append(group);
-        std::ranges::stable_sort(m_groupsInOrder, [&](uint32_t a, uint32_t b) {
+        AOT::stableSort(m_groupsInOrder, [&](uint32_t a, uint32_t b) {
             if (m_groups[a].depthOfDeepestDeclaration != m_groups[b].depthOfDeepestDeclaration)
                 return m_groups[a].depthOfDeepestDeclaration < m_groups[b].depthOfDeepestDeclaration;
             return m_rows.haveFinalWidths && m_groups[a].numberOfRowsInWidestFamily > m_groups[b].numberOfRowsInWidestFamily;

@@ -31,7 +31,7 @@ enum FunctionKind (| engine canBeBound: Bool, isClassConstructor: Bool) {
 }
 flags FunctionFlags {
     IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
-    HasExplicitName IsNakedConstructor IsNamedByComputedKey
+    HasExplicitName IsNakedConstructor IsNamedByComputedKey IsAlwaysInlined
 }
 flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers }
 enum EntryParameter (presentWith: FunctionFlags) {
@@ -79,10 +79,10 @@ record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<Col
 record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool starPlace: UInt32? }
 record ModuleExport wire {
     name: String kind: ModuleExportKind variable: Variable? module: Module(Target)? importName: String? phase: ImportPhase isFromStarExport: Bool
-    isDroppedWhileEmpty: Bool isLeftOut: Bool
+    isDroppedWhileEmpty: Bool isLeftOut: Bool writer: Module(Referrer)?
 }
 record SyntheticExport wire { name: String variable: Variable? isKnownMember: Bool isReplaceable: Bool }
-record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool }
+record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool isAskedForByStar: Bool }
 record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? endsLoadOf: Module(Referrer)? }
 record AmbiguousExport wire { module: Module(Referrer) name: String }
 record SourceStamp wire { module: Module(Referrer) low: UInt32 high: UInt32 }

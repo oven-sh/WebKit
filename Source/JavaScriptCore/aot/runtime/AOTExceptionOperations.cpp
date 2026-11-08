@@ -589,6 +589,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instanc
         printRowOfEffectsNet(said, rows >> 16);
     if (isOfTurn && (part & 0xff) == static_cast<uint32_t>(Typed::PartOfEffects::RunsOtherCode))
         said.print(opcode == Typed::Opcode::TurnWasQuiet ? " says that no other code ran in it, and since it began an operation has run that may run other code" : " says that nothing was done in it, and since it began an operation has run that is seen if it runs again");
+    else if (part & Typed::speaksOfValueOfVariableInEffectsNet)
+        said.print(" says that all that the turn has stored was put back, and the variable g", part >> 16 & (Typed::variableInEffectsNet - 1), " of a module holds another value than at the head of the turn");
     else if ((part & 0xff) == static_cast<uint32_t>(Typed::PartOfEffects::Writes)) {
         said.print(isOfTurn ? " says that nothing in it has written " : " say that the call will not write ");
         CommaPrinter comma;

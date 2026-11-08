@@ -22,7 +22,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr size_t mostArmsInUnionMethodCalls = 4;
 
 constinit const OpcodeSet opcodesThatCallMethodsBehindTestsOfShapeTakes { Opcode::PropGet };
-constinit const OpcodeSet opcodesThatReadBehindTestsOfShapeTakes { Opcode::PropGet };
 
 static ValueID findCallOfMethodReadInUnionMethodCalls(const BodyIndex& index, const BodyValue& read)
 {

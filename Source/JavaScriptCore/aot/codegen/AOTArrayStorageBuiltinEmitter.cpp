@@ -50,6 +50,21 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver())).kind;
     ArrayStorage declared = arrayStorageDeclaredBy(m_program, types(), typeIDOf(call.receiver())).predicted();
     ArrayStorageFormList forms = elements().candidateFormsFor(pushed, expected);
+    if (!hasArrayStorageForm(declared) && representationOf(pushed) == Representation::Int32) {
+        ValueID birth = call.receiver();
+        while (opcodesThatGiveSameValue.contains(opcodeOf(birth)))
+            birth = operationAt(birth).operand(0);
+        bool isBornInSightWithElements = opcodeOf(birth) == Opcode::NewArray && operationAt(birth).numberOfVariadicOperands();
+        size_t place = forms.findIf([](const ArrayStorageForm* form) {
+            return form->kind == ArrayStorage::Int32;
+        });
+        size_t wanted = isBornInSightWithElements ? 1 : 0;
+        if (place != notFound && place > wanted) {
+            const ArrayStorageForm* ofInt32s = forms[place];
+            forms.removeAt(place);
+            forms.insert(wanted, ofInt32s);
+        }
+    }
     if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
         forms.shrink(1);
     bool goesByKindOfNumbers = !hasArrayStorageForm(declared) && elements().goesByKindOfListOfNumbers(call.receiver(), pushed);

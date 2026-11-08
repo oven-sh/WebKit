@@ -168,6 +168,7 @@ export default b.declarations(
 
   builtinObjects(
     "AsyncDisposableStack",
+    "Boolean",
     "DisposableStack",
     "Iterator",
     "Map",
@@ -208,6 +209,7 @@ export default b.declarations(
     "createDisposableResource",
     "everyFrom",
     "filterFrom",
+    "filterTruthy",
     "findFrom",
     "findIndexFrom",
     "flatIntoArray",

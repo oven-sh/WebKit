@@ -21,6 +21,7 @@
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSavedFrame.h"
+#include "AOTSort.h"
 #include "AOTStubCatalog.h"
 #include "AOTTypeTestEmitter.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -599,7 +600,7 @@ bool SavedFrameEmitter::layOutHeapFrame()
     auto placeOfDefinition = [&](ValueID id) {
         return m_placesOfBlocks[m_code.blockOf(id).index()];
     };
-    std::ranges::stable_sort(kept, { }, placeOfDefinition);
+    AOT::stableSort(kept, { }, placeOfDefinition);
     uint32_t nextTraced = 0;
     uint32_t nextRaw = m_numberOfTracedWords;
     for (ValueID id : kept) {
@@ -703,7 +704,7 @@ void SavedFrameEmitter::giveWordsWhoseLivesAreApartOnePlace(uint32_t numberOfWor
         Vector<uint32_t, 64> byBegin;
         for (uint32_t word = firstWord; word < endOfWords; ++word)
             byBegin.append(word);
-        std::ranges::stable_sort(byBegin, { }, [&](uint32_t word) { return lives[word].begin; });
+        AOT::stableSort(byBegin, { }, [&](uint32_t word) { return lives[word].begin; });
         Vector<std::pair<uint64_t, uint32_t>, 64> endsOfPlaces;
         uint32_t numberOfPlaces = firstPlace;
         for (uint32_t word : byBegin) {

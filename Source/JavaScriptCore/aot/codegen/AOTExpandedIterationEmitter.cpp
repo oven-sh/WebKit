@@ -10,6 +10,7 @@
 
 #include "AOTArrayStorageForms.h"
 #include "AOTElementAccessEmitter.h"
+#include "AOTElementEmitterAllocation.h"
 #include "AOTForInEmitter.h"
 #include "AOTGuardEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -81,6 +82,10 @@ void ExpandedIterationEmitter::generateDestructureIterable(const ValueContext& v
 
 void ExpandedIterationEmitter::generateAppendIterable(const ValueContext& value)
 {
+    if (generator().m_literalLeftToSpreadRightBehind == value->arrayOperand()) [[unlikely]] {
+        ArrayAllocationEmitter(generator()).bearLiteralHoldingList(value, in<Boxed>(value->iterableOperand()).value(), appendIterable());
+        return;
+    }
     if (value->readsListsByIndex()) {
         callStub(value, appendIterable(), { in<CellPointer>(value->arrayOperand()).value(), in<Boxed>(value->iterableOperand()).value() });
         return;

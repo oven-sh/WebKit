@@ -195,6 +195,7 @@ public:
     };
     void moveFieldToExtraProperties(VM&, const FieldData&, LeavingProperty, SlotExitReason);
     bool tryRepeat(VM&, const FieldExit&, JSValue);
+    bool tryRepeat(VM&, const FieldReturn&, JSValue);
     bool tryRepeat(VM&, const AddedExtraProperty&, JSValue);
     bool tryDefineAsOnTheLastObject(VM&, PropertyName, const PropertyDescriptor&);
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
@@ -222,7 +223,8 @@ public:
         LeavingProperty property;
     };
     ExtraPropertyFound findExtraProperty(VM&, PropertyName) const;
-    bool tryAddAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    enum class MemoryOfAddedNames : bool { IsAsked, WasAskedInVain };
+    bool tryAddAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes, MemoryOfAddedNames = MemoryOfAddedNames::IsAsked);
     void replaceExtraProperty(VM&, PropertyName, LeavingProperty);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);

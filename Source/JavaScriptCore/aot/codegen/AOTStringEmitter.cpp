@@ -220,18 +220,18 @@ Word32 StringEmitter::lengthOf(ValueID string)
     return length;
 }
 
-Word32 StringEmitter::loadCodeUnit(Pointer characters, Word32 index, bool is8Bit)
+Word32 StringEmitter::loadCodeUnit(Pointer characters, Word32 index, bool is8Bit, std::optional<Integer> indexInWholeNumber)
 {
-    LValue offset = zeroExtended(index).value();
+    LValue offset = indexInWholeNumber ? indexInWholeNumber->value() : zeroExtended(index).value();
     if (is8Bit)
         return Word32(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, characters.value(), offset)));
     return Word32(m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, characters.value(), offset)));
 }
 
-Word32 StringEmitter::codeUnitAt(const CharacterView& view, Word32 index)
+Word32 StringEmitter::codeUnitAt(const CharacterView& view, Word32 index, std::optional<Integer> indexInWholeNumber)
 {
     return selectByWidth<Word32>(view.is8Bit, [&](bool is8Bit) {
-        Word32 codeUnit = loadCodeUnit(view.characters, index, is8Bit);
+        Word32 codeUnit = loadCodeUnit(view.characters, index, is8Bit, indexInWholeNumber);
         ensureStillAliveHere(view.owner);
         return codeUnit;
     });

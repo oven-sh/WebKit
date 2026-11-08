@@ -122,6 +122,25 @@ void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std
         defineTest(value, compare(relation, left.as<Word32>(), right.as<Word32>()));
         return;
     }
+    if (left.is<Integer>() || right.is<Integer>()) {
+        bool integerIsOnRight = right.is<Integer>();
+        Integer integer = (integerIsOnRight ? right : left).as<Integer>();
+        Boxed boxed = (integerIsOnRight ? left : right).as<Boxed>();
+        build().statistics().count(StatisticID::IntegersOf64BitsHeldAgainstBoxedNumbers);
+        defineTestByBranching(value, [&](BranchTargets targets) {
+            LBasicBlock int32Case = newBlock();
+            LBasicBlock numberCase = newBlock();
+            m_out.branch(isInt32(boxed).value(), normalEdge(int32Case), unlikelyEdge(numberCase));
+            m_out.appendTo(int32Case);
+            Integer wide = signExtended(low32(boxed));
+            branch(compare(relation, integerIsOnRight ? wide : integer, integerIsOnRight ? integer : wide), targets);
+            m_out.appendTo(numberCase);
+            Number unboxed = asNumber(boxed, integerIsOnRight ? leftType : rightType);
+            Number converted = toNumber(integer);
+            branch(compare(relation, integerIsOnRight ? unboxed : converted, integerIsOnRight ? converted : unboxed), targets);
+        });
+        return;
+    }
     if (!mayBeInt32(left, leftType) || !mayBeInt32(right, rightType)) {
         Number leftNumber = asNumber(left, leftType);
         defineTest(value, compare(relation, leftNumber, asNumber(right, rightType)));
@@ -367,22 +386,22 @@ Condition OperatorEmitter::relationOnValues(const ValueContext& value, Relation 
     else
         numberOperand = in<Number>(numberID);
     Boxed otherOperand = in<Boxed>(otherID);
-    auto compareByOperation = [&](const CallOptions& options) {
+    auto compareByStub = [&] {
         Boxed boxedNumber = emitter<ConversionEmitter>().boxDouble(numberOperand);
         Boxed x = numberIsOnRight ? otherOperand : boxedNumber;
         Boxed y = numberIsOnRight ? boxedNumber : otherOperand;
-        return callOperation<Condition>(value, traitsOfRelation(relation).operation, { x, y }, options);
+        return Condition(m_out.castToInt32(callStub(value, binaryOperation(traitsOfRelation(relation).stub, true), { x.value(), y.value() }).first));
     };
     if (!(typeOf(otherID).primitives & Primitive::Number)) {
-        m_out.noteForm(Form::Runtime, StateOfKnowledge::NumberAndOtherValue);
-        return compareByOperation(CallOptions { });
+        m_out.noteForm(Form::Closed, StateOfKnowledge::NumberAndOtherValue);
+        return compareByStub();
     }
     m_out.noteForm(Form::Open, StateOfKnowledge::NumberAndValue);
     return either<Condition>(isNumber(otherOperand), [&] {
         Number otherNumber = valueInRelation == ValueInRelation::IsNoInt32 ? unboxDouble(otherOperand) : numberToDouble(otherOperand);
         return numberIsOnRight ? compare(relation, otherNumber, numberOperand) : compare(relation, numberOperand, otherNumber);
     }, [&] {
-        return compareByOperation(CallOptions { .isOnRarePath = true });
+        return compareByStub();
     });
 }
 

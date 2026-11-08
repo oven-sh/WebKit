@@ -278,11 +278,12 @@ struct FrontWords {
     const PackedSlot* plane;
 };
 
-enum class AnswerHandlerTable : uint8_t { Read, ReadOfTruth, ReadOfFurtherAnswer, ReadOfTruthOfFurtherAnswer };
-inline constexpr std::array allAnswerHandlerTables { AnswerHandlerTable::Read, AnswerHandlerTable::ReadOfTruth, AnswerHandlerTable::ReadOfFurtherAnswer, AnswerHandlerTable::ReadOfTruthOfFurtherAnswer };
-constexpr AnswerHandlerTable answerHandlerTable(bool asksTruth, bool isFurtherAnswer) { return static_cast<AnswerHandlerTable>(asksTruth + 2 * isFurtherAnswer); }
+enum class AnswerHandlerTable : uint8_t { Read, ReadOfTruth, ReadOfFurtherAnswer, ReadOfTruthOfFurtherAnswer, ReadUnderNameOfField, ReadOfTruthUnderNameOfField, ReadOfFurtherAnswerUnderNameOfField, ReadOfTruthOfFurtherAnswerUnderNameOfField };
+inline constexpr std::array allAnswerHandlerTables { AnswerHandlerTable::Read, AnswerHandlerTable::ReadOfTruth, AnswerHandlerTable::ReadOfFurtherAnswer, AnswerHandlerTable::ReadOfTruthOfFurtherAnswer, AnswerHandlerTable::ReadUnderNameOfField, AnswerHandlerTable::ReadOfTruthUnderNameOfField, AnswerHandlerTable::ReadOfFurtherAnswerUnderNameOfField, AnswerHandlerTable::ReadOfTruthOfFurtherAnswerUnderNameOfField };
+constexpr AnswerHandlerTable answerHandlerTable(bool asksTruth, bool isFurtherAnswer, SiteUse use) { return static_cast<AnswerHandlerTable>(asksTruth + 2 * isFurtherAnswer + 4 * (use == SiteUse::ReadUnderNameOfField)); }
 constexpr bool asksTruth(AnswerHandlerTable table) { return static_cast<unsigned>(table) % 2; }
-constexpr bool isOfFurtherAnswers(AnswerHandlerTable table) { return static_cast<unsigned>(table) / 2; }
+constexpr bool isOfFurtherAnswers(AnswerHandlerTable table) { return static_cast<unsigned>(table) / 2 % 2; }
+constexpr SiteUse siteUseOf(AnswerHandlerTable table) { return static_cast<unsigned>(table) / 4 ? SiteUse::ReadUnderNameOfField : SiteUse::Read; }
 
 using SlotHandlers = void*[numberOfSlotHandlerTables + allAnswerHandlerTables.size()][numberOfSlotKindsWithHandlers];
 
@@ -325,6 +326,8 @@ struct PropertyCacheWords {
     JSCell* defaultHasInstanceFunction;
     JSCell* holderOfDefaultHasInstanceFunction;
     const FieldExit* fieldExits;
+    const FieldReturn* fieldReturns;
+    uint8_t placesOfFieldExitsBySlot[FieldExit::numberOfPlacesBySlot];
     AccessTableWords accessTable;
 #if !defined(BUN_HARDENED)
     SlotHandlers handlers;

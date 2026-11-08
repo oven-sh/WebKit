@@ -27,6 +27,7 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
 #include "GetterSetter.h"
+#include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "NullGetterFunction.h"
 #include <cmath>
@@ -256,11 +257,39 @@ static void stopAtNameAddedToHolder(Instance& instance, BuiltinID holder)
     }
 }
 
+static bool isYetToBeLaidOutOfTableOfClass(JSObject* holder, UniquedStringImpl* key)
+{
+    if (holder->staticPropertiesReified())
+        return false;
+    for (const ClassInfo* info = holder->classInfo(); info; info = info->parentClass) {
+        if (info->staticPropHashTable && info->staticPropHashTable->entry(PropertyName(key)))
+            return true;
+    }
+    return false;
+}
+
+static bool isAccessorLaidByHostOrEngine(JSValue found)
+{
+    if (!found.isCell())
+        return false;
+    if (found.asCell()->type() == CustomGetterSetterType)
+        return true;
+    auto* accessor = dynamicDowncast<GetterSetter>(found.asCell());
+    if (!accessor || accessor->isGetterNull())
+        return false;
+    JSObject* getter = accessor->getter();
+    if (auto* closure = dynamicDowncast<Closure>(getter))
+        return closure->isBuiltinFunction();
+    auto* function = dynamicDowncast<JSFunction>(getter);
+    return function && function->isHostOrBuiltinFunction() && !function->inherits<JSBoundFunction>();
+}
+
 static void stopAtMemberThatIsNotAsBuilt(Instance& instance, BuiltinID member)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     VM& vm = *instance.vm;
-    JSCell* holder = instance.state->builtinCells->findObject(table.canonicalID(table.at(member).holder));
+    BuiltinID holderOfMember = table.canonicalID(table.at(member).holder);
+    JSCell* holder = holderOfMember == Builtins::GlobalThis ? instance.globalObject : instance.state->builtinCells->findObject(holderOfMember);
     JSObject* object = holder ? holder->getObject() : nullptr;
     if (!object)
         return;
@@ -271,6 +300,12 @@ static void stopAtMemberThatIsNotAsBuilt(Instance& instance, BuiltinID member)
         return;
     BuiltinID canonical = table.canonicalID(member);
     bool isAccessor = table.at(canonical).kind == BuiltinKind::Accessor;
+    if (isAccessor && !BuiltinCellKey::getter(canonical).hasCell(table)) {
+        if (found ? isAccessorLaidByHostOrEngine(found) : isYetToBeLaidOutOfTableOfClass(object, name.impl()))
+            return;
+        dataLogLn("AOT: ", textOf(StubThatAnswers::MemberAsBuilt), " is held to the object, and under the name ", String(name.impl()), " the object holds ", found ? "what it was not built with"_s : "nothing"_s, ". This is a bug in Bun.");
+        CRASH();
+    }
     JSCell* built = isAccessor ? instance.state->builtinCells->findGetter(canonical) : instance.state->builtinCells->findObject(canonical);
     if (!built)
         return;

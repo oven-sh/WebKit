@@ -60,6 +60,7 @@ static constexpr uint16_t fieldIsNotConfigurable = static_cast<unsigned>(Propert
 static constexpr uint16_t fieldIsAccessor = static_cast<unsigned>(PropertyAttribute::Accessor) << fieldAttributesShift;
 static constexpr uint16_t fieldAttributeFlags = fieldIsReadOnly | fieldIsNotEnumerable | fieldIsNotConfigurable | fieldIsAccessor;
 static constexpr uint16_t allFieldFlags = (1u << 15) - 1;
+static constexpr uint16_t fieldRecordIsCopyInFieldReturn = 1u << 15;
 static_assert(fieldAttributeFlags == (allFieldFlags & ~((1u << 11) - 1)));
 
 struct FieldData {
@@ -92,6 +93,7 @@ static_assert(sizeof(FieldData) == 16 && isImageRecord<FieldData> && FieldData::
 
 struct alignas(64) FieldExit {
     static constexpr unsigned numberOfPlaces = 64;
+    static constexpr unsigned numberOfPlacesBySlot = 16;
     static constexpr unsigned sizeShift = 6;
 
     const FieldData* field;
@@ -115,6 +117,23 @@ struct alignas(64) FieldExit {
     uint8_t attributes;
 };
 static_assert(sizeof(FieldExit) == 1u << FieldExit::sizeShift && std::is_trivially_copyable_v<FieldExit>);
+
+struct alignas(64) FieldReturn {
+    static constexpr unsigned numberOfPlaces = 16;
+    static constexpr unsigned sizeShift = 6;
+
+    FieldData markedCopyOfField;
+    const FieldData* field;
+    StructureID structureBefore;
+    StructureID structureAfter;
+    StructureID extraPropertiesBefore;
+    StructureID extraPropertiesAfter;
+    uint32_t orderWord;
+    uint32_t name;
+    PropertyOffset offset;
+    uint16_t offsetOfExtraPropertiesWord;
+};
+static_assert(sizeof(FieldReturn) == 1u << FieldReturn::sizeShift && std::is_trivially_copyable_v<FieldReturn> && !offsetof(FieldReturn, markedCopyOfField));
 
 struct AddedExtraProperty {
     static constexpr unsigned numberOfPlaces = 64;
@@ -206,7 +225,6 @@ static_assert(sizeof(PropertiesOfHeirsData) == 8 && isImageRecord<PropertiesOfHe
 struct ClassData {
     uint32_t base;
     uint32_t expectedBase;
-    uint32_t builtinBase;
     uint32_t classConstructor;
     uint32_t environment;
     uint32_t numberOfMethods;
@@ -230,7 +248,7 @@ struct ClassData {
     bool hasGuardsHereOrBelow(ClassSide side) const { return sidesWithGuardsHereOrBelow >> static_cast<unsigned>(side) & 1; }
     bool isChangedInSightAlone(ClassSide side) const { return sidesChangedInSightAlone >> static_cast<unsigned>(side) & 1; }
 };
-static_assert(sizeof(ClassData) == 60 && isImageRecord<ClassData>);
+static_assert(sizeof(ClassData) == 56 && isImageRecord<ClassData>);
 
 struct ExtensionLayoutData {
     SlotData extension;

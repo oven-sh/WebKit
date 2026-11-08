@@ -1007,10 +1007,19 @@ enum class FailureKind : uint8_t {
     NeedsFrameWhereNoneIsSetUp,
 };
 
+struct PlaceOfCheck {
+    static constexpr PlaceOfCheck here(const char* file = __builtin_FILE_NAME(), const char* function = __builtin_FUNCTION(), uint32_t line = __builtin_LINE()) { return { file, function, line }; }
+
+    const char* file { nullptr };
+    const char* function { nullptr };
+    uint32_t line { 0 };
+};
+
 struct Failure {
     FailureKind kind;
     Origin origin;
     uint32_t operation { UINT32_MAX };
+    PlaceOfCheck check;
 };
 
 class Procedure {
@@ -1018,7 +1027,7 @@ class Procedure {
 public:
     JS_EXPORT_PRIVATE Procedure(Arena&, const HeapTree&, const ProcedureTraits&);
 
-    COLD JS_EXPORT_PRIVATE void fail(FailureKind, const Operation* = nullptr);
+    COLD JS_EXPORT_PRIVATE void fail(FailureKind, const Operation* = nullptr, PlaceOfCheck = PlaceOfCheck::here());
     const std::optional<Failure>& failure() const { return m_failure; }
 
     Arena& arena() { return m_arena; }
@@ -1028,10 +1037,14 @@ public:
     void noteThatOrderWasMadeAgain() { m_orderWasMadeAgain = true; }
 
     JS_EXPORT_PRIVATE Block* addBlock();
+    Block* addBlockThatOnlyJumps();
     unsigned numberOfBlocks() const { return m_blocks.size(); }
     Block* blockAt(unsigned index) const { return m_blocks[index]; }
     std::span<Block* const> blocks() const { return m_blocks.span(); }
     std::span<Block* const> blocksBegunBeforeAnythingLedToThem() const { return m_blocksBegunBeforeAnythingLedToThem.span(); }
+    COLD void stopAtStoreOverLoadThatStands(const Operation* store);
+    COLD void stopAtStoresThatWayLeadsToAfterAll();
+    bool keepsStoresToLookAtAgain() const { return !m_storesOverLoadsWhereNoWayLed.isEmpty(); }
 
     JS_EXPORT_PRIVATE Block* addEntrypoint(uint16_t id);
     std::span<const Entrypoint> entrypoints() const { return m_entrypoints.span(); }
@@ -1112,6 +1125,7 @@ private:
         operation->m_index = m_operations.size();
         m_operations.append(m_arena, operation);
     }
+    template<uint32_t capacityOfOperations> inline Block* addBlockWithRoomForOperations();
     inline Block* addBlockInline();
 
     enum class ListThatBuildingLeaves : uint8_t {
@@ -1155,6 +1169,7 @@ private:
     unsigned m_numberOfListsOfHeapsKept { 0 };
     ArenaVector<Block*> m_blocks;
     ArenaVector<Block*> m_blocksBegunBeforeAnythingLedToThem;
+    ArenaVector<const Operation*> m_storesOverLoadsWhereNoWayLed;
     ArenaVector<Operation*> m_operations;
     ArenaVector<Entrypoint> m_entrypoints;
     ArenaVector<std::span<const Type>> m_tuples;
@@ -1188,20 +1203,26 @@ private:
     std::optional<Failure> m_failure;
 };
 
-ALWAYS_INLINE Block* Procedure::addBlockInline()
+template<uint32_t capacityOfOperations>
+ALWAYS_INLINE Block* Procedure::addBlockWithRoomForOperations()
 {
     static_assert(std::is_trivially_destructible_v<Block>);
     static_assert(alignof(Block) >= alignof(Edge) && alignof(Edge) >= alignof(Operation*) && !(sizeof(Block) % alignof(Edge)));
     constexpr size_t bytesOfSuccessors = Block::firstCapacityOfSuccessors * sizeof(Edge);
-    constexpr size_t bytesOfOperations = Block::firstCapacityOfOperations * sizeof(Operation*);
+    constexpr size_t bytesOfOperations = capacityOfOperations * sizeof(Operation*);
     constexpr size_t bytesOfUpsilons = Block::firstCapacityOfUpsilons * sizeof(Operation*);
     uintptr_t memory = reinterpret_cast<uintptr_t>(m_arena.allocate(sizeof(Block) + bytesOfSuccessors + bytesOfOperations + bytesOfUpsilons, alignof(Block)));
     Block* block = new (NotNull, reinterpret_cast<void*>(memory)) Block(*this, m_blocks.size());
     block->m_successors.adoptStorage(reinterpret_cast<Edge*>(memory + sizeof(Block)), Block::firstCapacityOfSuccessors);
-    block->m_operations.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors), Block::firstCapacityOfOperations);
+    block->m_operations.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors), capacityOfOperations);
     block->m_upsilons.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors + bytesOfOperations), Block::firstCapacityOfUpsilons);
     m_blocks.append(m_arena, block);
     return block;
+}
+
+ALWAYS_INLINE Block* Procedure::addBlockInline()
+{
+    return addBlockWithRoomForOperations<Block::firstCapacityOfOperations>();
 }
 
 template<typename Functor>

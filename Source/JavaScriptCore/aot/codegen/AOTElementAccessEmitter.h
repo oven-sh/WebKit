@@ -41,6 +41,8 @@ public:
 
     void generateGetArrayLength(const ValueContext&);
     void generateGetArrayStorage(const ValueContext&);
+    void generateGetArrayRoom(const ValueContext&);
+    void generateExtendArrayLength(const ValueContext&);
     void generateGetArrayElement(const ValueContext&);
     void generatePutArrayElement(const ValueContext&);
     void generateHasArrayElement(const ValueContext&);
@@ -118,7 +120,8 @@ public:
     bool hasOnlyExpectedArmInLine(const ValueContext& store);
     using ShapeTest = Condition (ElementAccessEmitter::*)(Word32 mode, const ArrayStorageForm&);
     enum class FirstForm : bool { IsExpected, IsLikeTheOthers };
-    void forEachFormByShape(Word32 mode, ShapeTest, const ArrayStorageFormList&, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>&, FirstForm = FirstForm::IsExpected);
+    void forEachFormByShape(Word32 mode, ShapeTest, const ArrayStorageFormList&, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>&, FirstForm = FirstForm::IsExpected, ValueID int32ThatArmOfValuesStoresInEitherKind = { });
+    ValueID int32ThatArmOfValuesStoresInEitherKind(ValueID stored, const ArrayStorageFormList&);
 
     enum class NaNIndexMode : bool { TakeSlowPath, ProduceOutOfBoundsIndex };
     Integer indexOrElse(ValueID position, bool keyIsIntegral, LBasicBlock isNotAnIndex, NaNIndexMode = NaNIndexMode::TakeSlowPath);

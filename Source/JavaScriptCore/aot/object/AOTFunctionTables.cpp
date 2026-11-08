@@ -284,6 +284,7 @@ static std::span<const FunctionTextEntry> functionTextEntriesOfSource(const Prog
 static std::optional<std::span<const Latin1Character>> openBlocksOfText(Image::OpenedBlocksOfText& openedText, OpenCompressedText open, const uint8_t* compressed, std::span<const uint32_t> ends, uint32_t sizeOfText, uint32_t start, uint32_t end)
 {
     RELEASE_ASSERT(start <= end && end <= sizeOfText);
+    RELEASE_ASSERT(sizeOfText <= static_cast<uint64_t>(ends.size()) * sizeOfBlockOfText);
     if (!open)
         return std::nullopt;
     Locker locker { openedText.lock };

@@ -272,6 +272,15 @@ inline constexpr std::array<GPRReg, 2> registersThatWaysOnwardOfGetByIdLose { gp
 void jumpToSlotHandlerOfKind(StubAssembler&, SlotHandlerTable, GPRReg header, GPRReg kind);
 void linkToSlotExit(StubAssembler&, JumpList&, SlotHandlerTable, SlotExit);
 void linkToSlotCannot(StubAssembler&, JumpList&, SlotHandlerTable, SlotFinisher, const CachedSlot&);
+struct FieldExitBySlotRegisters {
+    GPRReg object;
+    GPRReg value;
+    GPRReg addressOfSlot;
+    GPRReg exit;
+    GPRReg scratch;
+    GPRReg extra;
+};
+void repeatFieldExitFoundBySlotAndReturn(StubAssembler&, const FieldExitBySlotRegisters&, JumpList& cannot);
 
 void loadValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result);
 void loadOwnValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result);

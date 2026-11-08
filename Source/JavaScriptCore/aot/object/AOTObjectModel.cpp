@@ -12,6 +12,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTCellFormat.h"
+#include "AOTCheckedSpan.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
 #include "AOTFieldTable.h"
@@ -366,7 +367,8 @@ std::optional<AcceptedValue> RuntimeLayoutTable::accept(const FieldData& field, 
         if (!value || !value.isCell() || value.asCell()->type() != GetterSetterType)
             return std::nullopt;
         auto* accessor = uncheckedDowncast<GetterSetter>(value.asCell());
-        if (!valueHasType(typeOf(field), accessor->getter()))
+        bool getterIsNotLaidYet = field.getterIsProven && !(field.flags & fieldIsNotConfigurable) && accessor->isGetterNull();
+        if (!getterIsNotLaidYet && !valueHasType(typeOf(field), accessor->getter()))
             return std::nullopt;
         if (!slotTakesHalf(field, accessor->isGetterNull() ? nullptr : accessor->getter()) || !slotTakesHalf(field, accessor->isSetterNull() ? nullptr : accessor->setter()))
             return std::nullopt;
@@ -417,7 +419,7 @@ static_assert(ConservativeRoots::findsStructuresOfFrameCells);
 struct StructureTable::VariantMaps {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(VariantMaps);
 
-    using Key = std::tuple<uint32_t, JSObject*, Structure*, uint32_t>;
+    using Key = std::tuple<uint32_t, uint32_t, JSObject*, Structure*>;
 
     static constexpr uint32_t keyMayBePrototype = 1u << 31;
     static constexpr uint32_t keyHasUnnamedExtraProperties = 1u << 30;
@@ -435,7 +437,7 @@ struct StructureTable::VariantMaps {
             shapeAndFlags |= keyHasUnnamedExtraProperties;
         if (variant.hasOtherPrototype)
             shapeAndFlags |= keyHasOtherPrototype;
-        return { shapeAndFlags, variant.prototype.getObject(), variant.extraPropertiesStructure, variant.outOfLineKeyOrder ? 1 | computeHash(*variant.outOfLineKeyOrder) : 0 };
+        return { shapeAndFlags, variant.outOfLineKeyOrder ? 1 | computeHash(*variant.outOfLineKeyOrder) : 0, variant.prototype.getObject(), variant.extraPropertiesStructure };
     }
 
     static bool describes(const Variant& variant, const CompiledStructure& structure)
@@ -500,14 +502,9 @@ struct StructureTable::VariantMaps {
         }
     }
 
-    struct FiledVariant {
-        Key key;
-        StructureID id;
-    };
-
     WeakGCMap<Key, CompiledStructure> structures;
     Vector<StructureID> listed;
-    Vector<FiledVariant> filedSinceCollection;
+    Vector<StructureID> filedSinceCollection;
     std::array<StructureID, 1u << recentIndexBits> recentByExtraProperties { };
     WTF::BitSet<1u << requestedIndexBits> requestedExtraPropertiesStructures;
 };
@@ -605,8 +602,8 @@ void StructureTable::visitRoots(Visitor& visitor)
     }
     if (visitor.collectionScope() != CollectionScope::Eden)
         return;
-    for (const VariantMaps::FiledVariant& filed : m_variants->filedSinceCollection) {
-        CompiledStructure* variant = VariantMaps::decode(filed.id);
+    for (StructureID filed : m_variants->filedSinceCollection) {
+        CompiledStructure* variant = VariantMaps::decode(filed);
         if (variant->hasOutOfLineKeyOrder())
             continue;
         JSObject* prototype = variant->storedPrototype().getObject();
@@ -622,9 +619,12 @@ size_t StructureTable::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     {
         Locker locker { m_state.caches->lock() };
-        for (const VariantMaps::FiledVariant& filed : m_variants->filedSinceCollection) {
-            if (!vm.heap.isMarked(filed.id.decode()) && !m_variants->structures.get(filed.key))
-                m_variants->structures.remove(filed.key);
+        for (StructureID filed : m_variants->filedSinceCollection) {
+            if (vm.heap.isMarked(filed.decode()))
+                continue;
+            VariantMaps::Key key = VariantMaps::keyOf(variantOf(*VariantMaps::decode(filed)));
+            if (!m_variants->structures.get(key))
+                m_variants->structures.remove(key);
         }
         m_variants->filedSinceCollection.shrink(0);
         m_variants->listed.removeAllMatching([&](StructureID id) {
@@ -764,7 +764,7 @@ ALWAYS_INLINE CompiledStructure* StructureTable::createUsual(VM& vm, const Layou
     if (noteWhetherLivesWhilePrototypeLives(layout)) {
         Locker locker { m_state.caches->lock() };
         m_shapesGivenStructuresSinceCollection.append(layout.shape);
-        m_variants->filedSinceCollection.append({ VariantMaps::keyOf(usual), created->id() });
+        m_variants->filedSinceCollection.append(created->id());
         m_variants->listed.append(created->id());
     }
     known = created->id().bits();
@@ -865,10 +865,9 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
         return createUsual(vm, layout, usual);
     CompiledStructure* created = create(vm, layout, variant);
     if (isListed(variant)) {
-        VariantMaps::Key key = VariantMaps::keyOf(variant);
-        m_variants->structures.set(key, created);
+        m_variants->structures.set(VariantMaps::keyOf(variant), created);
         Locker locker { m_state.caches->lock() };
-        m_variants->filedSinceCollection.append({ key, created->id() });
+        m_variants->filedSinceCollection.append(created->id());
         m_variants->listed.append(created->id());
     }
     if (variant.hasOtherPrototype && layout.isClass())
@@ -1079,12 +1078,12 @@ ALWAYS_INLINE AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number
 
 AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number)
 {
-    return ensureRecord(number, m_tables.allocations()[number].shape);
+    return ensureRecord(number, checkedAt(m_tables.allocations(), number).shape);
 }
 
 AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number)
 {
-    const AllocationData& allocation = m_tables.allocations()[number];
+    const AllocationData& allocation = checkedAt(m_tables.allocations(), number);
     AllocationSiteRecord& record = ensureRecord(number, allocation.shape);
     if (record.header)
         return record;

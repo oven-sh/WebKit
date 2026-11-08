@@ -9,6 +9,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableRealm.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTHostEntriesTestSupport.h"
@@ -300,6 +301,22 @@ static void testMemberLookup()
             BuiltinMemberLookup found = table().findMember(id, name);
             AOT_TEST_CHECK(found.outcome == expected.outcome && found.member == expected.member && found.holder == expected.holder);
         }
+    });
+}
+
+static void testMembersAskedByByteAlone()
+{
+    AOT_TEST_CHECK(table().at(hostBuiltin("ObjectPrototype__proto__"_s)).mutability == BuiltinMutability::AlwaysLocked && !isMemberAskedByByteAlone(table(), hostBuiltin("ObjectPrototype__proto__"_s)));
+    AOT_TEST_CHECK(isMemberAskedByByteAlone(table(), hostBuiltin("AbortSignalPrototypeAborted"_s)));
+    AOT_TEST_CHECK(isMemberAskedByByteAlone(table(), hostBuiltin("AbortControllerPrototypeSignal"_s)));
+    AOT_TEST_CHECK(!isMemberAskedByByteAlone(table(), Builtins::ArrayPrototypePush));
+    AOT_TEST_CHECK(!isMemberAskedByByteAlone(table(), Builtins::ObjectPrototype));
+    forEachBuiltin([&](BuiltinID id, const Builtin& builtin) {
+        AOT_TEST_CHECK(builtin.kind != BuiltinKind::Accessor || !builtin.flags.contains(BuiltinFlag::IsCompilerHelper));
+        if (!isMemberAskedByByteAlone(table(), id))
+            return;
+        AOT_TEST_CHECK(builtin.kind == BuiltinKind::Accessor && builtin.holder && builtin.name);
+        AOT_TEST_CHECK(cellThatNamesMemberAskedByItsByte(table(), id) == BuiltinCellKey::getter(id) && !BuiltinCellKey::getter(id).hasCell(table()));
     });
 }
 
@@ -770,6 +787,7 @@ std::span<const NativeTest> builtinTableTests()
         { "builtin-table/classes-and-slots"_s, testClassesAndSlots },
         { "builtin-table/class-relations"_s, testClassRelations },
         { "builtin-table/member-lookup"_s, testMemberLookup },
+        { "builtin-table/members-asked-by-their-byte-alone"_s, testMembersAskedByByteAlone },
         { "builtin-table/member-missing-on-target-is-not-found"_s, testMemberMissingOnTargetIsNotFound },
         { "builtin-table/mutability-follows-the-lock"_s, testMutabilityFollowsTheLock },
         { "builtin-table/locked-objects"_s, testLockedObjects },

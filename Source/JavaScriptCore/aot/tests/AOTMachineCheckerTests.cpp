@@ -36,7 +36,7 @@ namespace JSC { namespace AOT { namespace Machine {
 static bool checkerReportedFailureAt(const Procedure& procedure, FailureKind kind, std::initializer_list<const Operation*> operations)
 {
     const std::optional<Failure>& failure = procedure.failure();
-    return failure && failure->kind == kind && std::ranges::any_of(operations, [&](const Operation* operation) {
+    return failure && failure->kind == kind && failure->check.line && StringView::fromLatin1(failure->check.file).startsWith("AOTMachine"_s) && !StringView::fromLatin1(failure->check.function).startsWith("fail"_s) && std::ranges::any_of(operations, [&](const Operation* operation) {
         return failure->operation == operation->index() && failure->origin == operation->origin();
     });
 }
@@ -214,6 +214,11 @@ static void checkerRefusesReadThatNoDefinitionDominates()
         Procedure& procedure = test.procedure();
         AOT_TEST_CHECK(validate(procedure) != readsAcrossArms);
         AOT_TEST_CHECK(readsAcrossArms ? checkerReportedFailureAt(procedure, FailureKind::MalformedProcedure, { reader }) : !procedure.failure());
+        if (readsAcrossArms) {
+            StringPrintStream said;
+            printFailure(said, procedure);
+            AOT_TEST_CHECK(said.toString().startsWith("MalformedProcedure, by the check in "_s) && said.toString().contains(" at AOTMachineValidate.cpp:"_s));
+        }
     }
 }
 

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTChildProcess.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTGrowingText.h"
@@ -50,6 +51,7 @@ static constexpr ASCIILiteral appendElementsTest = "runtime-operations/append-el
 static constexpr ASCIILiteral arrayLiteralsTest = "runtime-operations/array-literals-are-pristine-and-contiguous"_s;
 static constexpr ASCIILiteral badTimeStopsTest = "runtime-operations/a-realm-with-an-image-that-begins-to-have-a-bad-time-stops"_s;
 static constexpr ASCIILiteral pushesAndHolesTest = "runtime-operations/pushes-and-holes"_s;
+static constexpr ASCIILiteral literalBornHoldingListTest = "runtime-operations/literal-born-holding-list"_s;
 static constexpr ASCIILiteral growingTextTest = "runtime-operations/a-text-that-is-added-to-grows-in-a-buffer"_s;
 static constexpr ASCIILiteral partsOfOtherWidthTest = "runtime-operations/a-growing-text-takes-parts-whose-characters-have-changed-width"_s;
 static constexpr ASCIILiteral deferredTerminationTest = "runtime-operations/poll-throws-deferred-termination-after-the-deferral"_s;
@@ -324,6 +326,65 @@ static void checkAppendElements(LoadedProgram& program)
         AOT_TEST_CHECK_FOR_SOURCE(hasAnyArrayStorage(target->indexingType()) == hadArrayStorage, appendCase.target);
         target->validatePristine(program.vm());
     }
+}
+
+static void checkLiteralsBornHoldingLists(LoadedProgram& program)
+{
+    struct Case {
+        ASCIILiteral list;
+        std::optional<IndexingType> byWhatItHolds;
+        std::optional<IndexingType> whereValuesAreNamed;
+        bool isOfFractions { false };
+    };
+    static constexpr Case cases[] = {
+        { "[1, 2, 3]"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "Array.of(1, 2, 3)"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "['x', 1, 2, 3].slice(1)"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "[]"_s, std::nullopt, std::nullopt },
+        { "(a => (a.pop(), a))([1])"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "['x'].slice(1)"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "['x', 2, 3]"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "[1, 'x', 3]"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "[1, 2, 'x']"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "['x', 1, 2.5, 3].slice(1)"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "[1, , 3]"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "['x', , 3]"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "[0.5, 1.5, -0, Infinity]"_s, ArrayWithDouble, ArrayWithContiguous, true },
+        { "(a => (a.pop(), a))([0.5])"_s, ArrayWithDouble, ArrayWithContiguous, true },
+        { "(a => (delete a[1], a))([0.5, 1.5, 2.5])"_s, ArrayWithContiguous, ArrayWithContiguous, true },
+        { "(a => (delete a[0], a))([0.5, 1.5])"_s, ArrayWithContiguous, ArrayWithContiguous, true },
+        { "(a => (a[0] = 4, delete a[2], a))([0.5, 1, 2, 3])"_s, ArrayWithContiguous, ArrayWithContiguous, true },
+        { "(a => (a[0] = 4, a))([0.5, 1, 2, 3])"_s, ArrayWithDouble, ArrayWithContiguous, true },
+        { "(a => (a[1000] = 1, a))([1])"_s, std::nullopt, std::nullopt },
+    };
+    Realms& realms = program.realms();
+    JSGlobalObject* realm = program.realm();
+    for (const Case& given : cases) {
+        for (bool namesValues : { false, true }) {
+            JSArray* list = realms.array(realm, given.list);
+            AOT_TEST_CHECK_FOR_SOURCE(hasDouble(list->indexingType()) == given.isOfFractions, given.list);
+            if (list->length() > maxHoleArrayCapacity) {
+                AOT_TEST_CHECK_FOR_SOURCE(!callFromNativeCode(program, operationAOTNewArrayOfList, list, maxHoleArrayCapacity << 1 | namesValues), given.list);
+                continue;
+            }
+            const uint32_t capacity = (list->length() + 2) | 1;
+            Vector<EncodedJSValue> elements = elementsOf(realm, list);
+            JSCell* cell = callFromNativeCode(program, operationAOTNewArrayOfList, list, capacity << 1 | namesValues);
+            std::optional<IndexingType> expected = namesValues ? given.whereValuesAreNamed : given.byWhatItHolds;
+            AOT_TEST_CHECK_FOR_SOURCE(!!cell == !!expected && elementsOf(realm, list) == elements, given.list);
+            if (!cell)
+                continue;
+            auto* born = dynamicDowncast<JSArray>(cell);
+            AOT_TEST_CHECK_FOR_SOURCE(born && born != list && born->indexingType() == *expected && born->isPristine(), given.list);
+            AOT_TEST_CHECK_FOR_SOURCE(born->length() == elements.size() && born->butterfly()->vectorLength() == capacity && elementsOf(realm, born) == elements, given.list);
+            for (uint32_t index = 0; index < capacity; ++index)
+                AOT_TEST_CHECK_FOR_SOURCE(born->canGetIndexQuickly(index) == (index < elements.size()), given.list);
+            born->validatePristine(program.vm());
+        }
+    }
+    JSArray* list = realms.array(realm, "[1, 2, 3]"_s);
+    AOT_TEST_CHECK(!callFromNativeCode(program, operationAOTNewArrayOfList, list, 1u << 1));
+    AOT_TEST_CHECK(!callFromNativeCode(program, operationAOTNewArrayOfList, list, (maxHoleArrayCapacity + 2) << 1));
 }
 
 static void haveABadTime(LoadedProgram& program)
@@ -781,6 +842,11 @@ static void realmWithImageThatBeginsToHaveABadTimeStops()
     runWithLoadedProgramThatStops(badTimeStopsTest, programText, haveABadTime, "AOT: the realm of a compiled program is having a bad time"_s);
 }
 
+static void literalsAreBornHoldingLists()
+{
+    runWithLoadedProgram(literalBornHoldingListTest, programText, checkLiteralsBornHoldingLists);
+}
+
 static void pushesAndHoles()
 {
     runWithLoadedProgram(pushesAndHolesTest, programText, checkPushesAndHoles);
@@ -842,6 +908,7 @@ std::span<const NativeTest> runtimeOperationTests()
         { arrayLiteralsTest, arrayLiteralsArePristineAndContiguous },
         { badTimeStopsTest, realmWithImageThatBeginsToHaveABadTimeStops },
         { pushesAndHolesTest, pushesAndHoles },
+        { literalBornHoldingListTest, literalsAreBornHoldingLists },
         { growingTextTest, textThatIsAddedToGrowsInBuffer },
         { partsOfOtherWidthTest, growingTextTakesPartsWhoseCharactersHaveChangedWidth },
         { deferredTerminationTest, pollThrowsDeferredTerminationAfterTheDeferral },

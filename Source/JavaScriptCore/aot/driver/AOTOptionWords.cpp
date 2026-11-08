@@ -145,9 +145,12 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::EmittersAloneTestEveryPosition:
     case Wire::TestingSwitch::QuestionsInFrontOfTurnsLaidOutAreTakenToHold:
     case Wire::TestingSwitch::EnoughTurnsAreTakenToBeLeftForTurnsLaidOut:
+    case Wire::TestingSwitch::ShapeTestsInTurnsLaidOutAreTakenToPass:
     case Wire::TestingSwitch::CallsMadeInFrontOfTurnsAreMadeAgainInThem:
     case Wire::TestingSwitch::EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands:
     case Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN:
+    case Wire::TestingSwitch::ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad:
+    case Wire::TestingSwitch::OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow:
     // A false bound on purpose, for the red control of that: isKnownToLieInsideList().
     case Wire::TestingSwitch::PositionsAreTakenToLieInside:
     case Wire::TestingSwitch::ReadsBehindTestsOfLengthsAreLeftOut:
@@ -294,6 +297,8 @@ static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
         found.row = static_cast<uint16_t>(builtin);
     } else if (matchesName(kind, "MarkOfTurns"_s) && row == "all"_s)
         found.kind = Typed::KindOfEffectsRow::MarkOfTurns;
+    else if (matchesName(kind, "RowOfLoop"_s) && row == "all"_s)
+        found.kind = Typed::KindOfEffectsRow::RowOfLoop;
     else
         return std::nullopt;
     bool speaksOfResult = found.part == Typed::PartOfEffects::RangeOfResult || found.part == Typed::PartOfEffects::KindOfResult || found.part == Typed::PartOfEffects::ContentsOfResult;

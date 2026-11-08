@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTMachineCallsOnWays.h"
+#include "AOTSort.h"
 #include <algorithm>
 #include <cstring>
 #include <memory>
@@ -266,7 +267,7 @@ static void orderByGainFromCalleeSaves(const Allocator& allocator, std::span<Val
 {
     for (ValueThatAsksForCalleeSave& one : asking)
         one.gain = allocator.numberOfReadsThatWordWouldReload(one.value, endOfWhereTheyAreKept);
-    std::ranges::stable_sort(asking, std::ranges::greater { }, &ValueThatAsksForCalleeSave::gain);
+    AOT::stableSort(asking, std::ranges::greater { }, &ValueThatAsksForCalleeSave::gain);
 }
 
 static NEVER_INLINE void bindArgumentRegistersOfEntry(Allocator& allocator, Block* entry)
@@ -1660,7 +1661,6 @@ Location Allocator::defineResult(Operation* operation, RegisterMask allowed, Reg
 
 void Allocator::enterFramedPart()
 {
-    ASSERT(!m_order.of(m_block).isRare());
     auto everyWayHasDefined = [&](const Operation* reference) {
         return dominates(reference->endsBlock() ? reference->owner()->successor(0).block() : reference->owner(), m_block);
     };
@@ -1669,6 +1669,9 @@ void Allocator::enterFramedPart()
         if (stateOf(reference).registers || (m_allocation.isSpilled(reference) && isLiveBehind(reference, m_position) && !isDeadOnEveryPathFrom(reference, m_block, m_headOfBlock) && everyWayHasDefined(reference)))
             waiting.pointer = keepPointerBesideAllocatedReference(*this, reference, waiting.pointer);
     }
+
+    if (m_order.of(m_block).isRare())
+        return;
 
     std::array<ValueThatAsksForCalleeSave, 64> asking;
     unsigned numberAsking = 0;

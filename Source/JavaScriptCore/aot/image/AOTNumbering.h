@@ -150,14 +150,13 @@ enum class NumberSpace : uint8_t {
     Allocation,
     Request,
     PropertyRun,
-    AtomOfComparedText,
     ShownString,
     AtomOfString,
     Type,
     MethodSelector,
     RegExp,
 };
-inline constexpr unsigned numberOfNumberSpaces = 37;
+inline constexpr unsigned numberOfNumberSpaces = 36;
 static_assert(static_cast<unsigned>(NumberSpace::RegExp) + 1 == numberOfNumberSpaces);
 
 enum class GlobalBindingFlags : uint8_t {
@@ -310,7 +309,6 @@ constexpr bool mayHaveUnitsBehind(NumberSpace space)
     case NumberSpace::ClassGuard:
     case NumberSpace::HeirLookedAt:
     case NumberSpace::PropertyRun:
-    case NumberSpace::AtomOfComparedText:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
     case NumberSpace::Type:
@@ -480,6 +478,7 @@ public:
     std::span<const PropertyKeyID> keyCells() const { return m_keyCells.span(); }
     std::span<const BuiltinCellKey> builtinCells() const { return m_builtinCells.span(); }
     std::span<const uint32_t> eagerBuiltinCells() const { return m_eagerBuiltinCells.span(); }
+    std::span<const BuiltinID> membersAskedByByteAlone() const { return m_membersAskedByByteAlone.span(); }
     std::span<const StringID> bigIntConstants() const { return m_bigIntConstants.span(); }
     std::span<const PlacedGlobalBinding> globalBindings() const { return m_globalBindings.span(); }
     std::span<const RequireEdge> requireEdges() const { return m_requireEdges.span(); }
@@ -551,6 +550,7 @@ private:
     Vector<uint32_t> m_keyCellNumbersPlusOne;
     Vector<BuiltinCellKey> m_builtinCells;
     Vector<uint32_t> m_eagerBuiltinCells;
+    Vector<BuiltinID> m_membersAskedByByteAlone;
     Vector<StringID> m_bigIntConstants;
     Vector<PlacedGlobalBinding> m_globalBindings;
     Vector<RequireEdge> m_requireEdges;
@@ -631,7 +631,6 @@ constexpr bool hasOneIDAsKey(NumberSpace space)
     case NumberSpace::HeirLookedAt:
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
-    case NumberSpace::AtomOfComparedText:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
     case NumberSpace::MethodSelector:

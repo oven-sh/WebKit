@@ -473,7 +473,7 @@ void StateOfLinkReach::takeWhatLanesLeft()
     }
 }
 
-void StateOfLinkReach::takeWhatLaneLeft(Left what, uint32_t index)
+ALWAYS_INLINE void StateOfLinkReach::takeWhatLaneLeft(Left what, uint32_t index)
 {
     switch (what) {
     case Left::LayoutEscapes:
@@ -1196,11 +1196,11 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
     BitVector isAskedFor = modulesThatHostAsksFor(m_program);
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         const Module& module = m_program.modules[index];
-        if (!libraryRunsCompiledAlone && module.kind != ModuleKind::RuntimeSource)
+        if (!refusedCodeOf(m_program).codeOutsideImage && module.kind != ModuleKind::RuntimeSource)
             continue;
         if (module.kind == ModuleKind::CommonJs) {
             bool isReadBySitesAlone = module.body && module.exportsVariable && module.requireResult == RequireResult::ModuleExports && module.syntheticExports.isEmpty();
-            bool hostLooksForNamesAlone = isReadBySitesAlone && !m_program.admitsInspector && std::ranges::contains(m_program.entries, ModuleID(index), &Entry::module)
+            bool hostLooksForNamesAlone = isReadBySitesAlone && libraryRunsCompiledAlone && !m_program.admitsInspector && std::ranges::contains(m_program.entries, ModuleID(index), &Entry::module)
                 && !m_flow.summaries.at(module.body).namesThatHostLooksFor.isEmpty();
             if (isReadBySitesAlone && !m_showsWaysBetweenModuleObjects && !module.flags.containsAny(flagsOfModulesHandedOut - ModuleFlags::RunsAgain) && (!isAskedFor.get(index) || hostLooksForNamesAlone))
                 m_modulesWhoseValueStaysInSight.quickSet(index);
@@ -1922,6 +1922,9 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             break;
         }
     }
+    std::span<const uint32_t> placesOfWrittenLists = summary.placesOfWrittenLists.span();
+    for (uint32_t head = 1; !placesOfWrittenLists.empty() && head < placesOfWrittenLists[0]; head += 2 + placesOfWrittenLists[head + 1])
+        m_flow.noteListIsWritten(siteAt(id, classInstances.span(), placesOfWrittenLists[head]), id, head + 2, placesOfWrittenLists[head + 1]);
     if (m_flow.isGivenMore) [[unlikely]]
         giveMoreToNodesOf(id);
 
@@ -2401,6 +2404,15 @@ void LinkFlow::arriveFromSource(FlowNodeID node, FamilyID family)
 
 void LinkFlow::arriveFromSource(FlowNodeID node, const LinkType& type)
 {
+    if (type.objects != LinkType::Objects::Set && type.objects != LinkType::Objects::Layout && type.objects != LinkType::Objects::Family) [[likely]] {
+        arrive(node, type);
+        return;
+    }
+    arriveObjectsFromSource(node, type);
+}
+
+NEVER_INLINE void LinkFlow::arriveObjectsFromSource(FlowNodeID node, const LinkType& type)
+{
     if (type.objects == LinkType::Objects::Set) {
         LinkType rest = type;
         rest.objects = LinkType::Objects::None;
@@ -2408,10 +2420,6 @@ void LinkFlow::arriveFromSource(FlowNodeID node, const LinkType& type)
         arrive(node, rest);
         for (LayoutID member : layoutsOfSet(type))
             stateOfLinkReach().arriveFromSource(node, typeOfObjectsForLinkReach(member));
-        return;
-    }
-    if (type.objects != LinkType::Objects::Layout && type.objects != LinkType::Objects::Family) {
-        arrive(node, type);
         return;
     }
     LinkType arriving = type;

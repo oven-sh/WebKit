@@ -118,6 +118,8 @@ public:
 
     bool suspends() const { return m_proc.traits().savesFrameOnSuspend; }
     bool hasHandlers() const { return code().hasHandlers(); }
+    bool isLayingOutTurns() const { return !!m_headOfTurnsLaidOut; }
+    bool leavesTurnLaidOut(BlockID target) const { return m_headOfTurnsLaidOut && target != m_headOfTurnsLaidOut && !std::ranges::contains(m_turnLaidOut, target); }
     bool isInLoop(BlockID block) const { return code().at(block).isInLoop; }
     bool isStoredIntoByName(ValueID) const;
     bool takesOpenForm(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
@@ -135,6 +137,9 @@ public:
     bool isDeferredClosure(ValueID id) const { return isDeferredClosure(code().at(id)); }
     std::optional<ArrayStorage> kindOfListFoundInFrontOfTurnsLaidOut(ValueID list) const;
     bool liesInsideByQuestionInFrontOfTurnsLaidOut(ValueID read) const;
+    bool leavesHoleToTestBehind(const ValueContext& read);
+    bool holeIsLeftToTestBehind(ValueID read) const { return m_elementsWhoseHolesAreLeftToTestsBehind.get(read.index()); }
+    LValue& wordWhoseHoleIsLeftToTestAtWork() { return m_wordWhoseHoleIsLeftToTestAtWork; }
     bool holdsByQuestionInFrontOfTurnsLaidOut(ValueID relation) const { return m_relationsAskedInFrontOfTurnsLaidOut.contains(relation); }
     std::optional<TypedArrayType> kindOfViewFoundInFrontOfTurnsLaidOut(ValueID view) const;
     LValue holdsDoublesAsReadInFrontOfTurnsLaidOut(ValueID list) const;
@@ -206,6 +211,9 @@ public:
 
     LBasicBlock blockFor(BlockID) const;
     BlockEdge edgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
+    std::optional<BlockEdge> edgeThatBringsNothing(EdgeID);
+    bool isTakenIntoSwitchInFront(BlockID block) const { return m_switchesTakenIntoSwitchInFront.get(block.index()); }
+    void noteSwitchTakenIntoSwitchInFront(BlockID block) { m_switchesTakenIntoSwitchInFront.set(block.index()); }
     void jumpTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
     void passHandlerArguments(const Edge& handler);
 
@@ -281,6 +289,16 @@ private:
     bool isDeferredClosureSlow(const Operation&) const;
     const PlacedSlot* slotOfScopeReadInPlaceOfClosureSlow(ValueID, const Operation&) const;
     ValueID m_closureReadForItsScope;
+public:
+    ValueID m_reservationThatBirthHasServed;
+    ValueID m_literalLeftToSpreadRightBehind;
+    LValue bearLiteralAsWritten(BlockID, ValueID literal);
+    std::span<const std::pair<ValueID, ValueID>> usersOfLiteralInBlock(BlockID, ValueID literal);
+private:
+    BlockID m_blockWhoseUsersOfLiteralsAreListed;
+    Vector<std::pair<ValueID, ValueID>> m_usersOfLiteralsInBlock;
+public:
+private:
     Vector<std::pair<ValueID, ValueID>, 2> m_closuresWhoseLivesEndBehindCalls;
     const PlacedSlot* m_slotOfScopeOfClosureRead { nullptr };
     void computeEffectsOf(const OperationContext&) const;
@@ -354,6 +372,9 @@ private:
         }
         return getSlow(id, operation);
     }
+    BitVector m_elementsWhoseHolesAreLeftToTestsBehind;
+    LValue m_wordWhoseHoleIsLeftToTestAtWork { nullptr };
+    UncheckedKeyHashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsMadePresentAtHeadsOfBlocks;
     Operand getSlow(ValueID, const Operation&);
     Operand zeroInPlaceOfValueOfFailedCode(Representation);
     Operand getNumberInFormKept(ValueID, LValue lowered);
@@ -399,6 +420,7 @@ private:
         ArrayStorage kind { ArrayStorage::Other };
         bool isStoredInto { false };
         bool hasOneKind { false };
+        bool otherKindsAreNotAsked { false };
     };
     struct KindToldToReads {
         ValueID list;
@@ -436,14 +458,19 @@ private:
         Vector<ValueID, 2> viewsAskedForKind;
         Vector<BoundAskedInFront, 2> boundsAskedInFront;
         Vector<ValueID, 2> relationsAskedInFront;
+        Vector<ValueID, 2> lengthsHeldAgainstBound;
+        Vector<ValueID, 2> accessesUnderCounterBelowBound;
+        Vector<ValueID, 2> relationsOfCounterBelowBound;
         TypedArrayType kindAskedOfView { NotTypedArray };
         bool holesLeaveTurns { false };
         bool storesIntoLists { false };
         bool asksListsReadAndListsStoredInto { false };
         bool sumsAreTakenOverBehindStretches { false };
+        bool layoutWithoutQuestionFollows { false };
     };
     bool findStoresOfWhatComesRound(CountedLoop&, const Edge& back) const;
     void storeWhatComesRound(const CountedLoop&, const StoreOfWhatComesRound&, LValue);
+    static void askKindsReadWhereLoopIsComeBackTo(CountedLoop&);
     struct LimitOfWrittenLoop {
         BlockID asking;
         Opcode relation { Opcode::Less };
@@ -471,6 +498,7 @@ private:
         Vector<LValue, 8> phisOfEntry;
         Vector<LValue, 8> phisIntoWritten;
         Vector<LValue, 8> phisOfWrittenHead;
+        bool nextMayOpenAnother { false };
     };
     std::optional<RingOfLoopLaidOut> m_ringOfLoopLaidOut;
     struct LayoutsInRow {
@@ -493,7 +521,6 @@ private:
     void layOutTurnsForOtherKindOfStorage(CountedLoop&, bool ofListsStoredInto = true);
     void layOutTurnsForEachKindOfView(CountedLoop&);
     void keepArgumentsForNextTurn(const Edge&);
-    bool leavesTurnLaidOut(BlockID target) const { return m_headOfTurnsLaidOut && target != m_headOfTurnsLaidOut && !std::ranges::contains(m_turnLaidOut, target); }
     void findSumsOfIntegers(CountedLoop&, const Edge& back) const;
     bool addToSumOfIntegers(ValueID);
     bool isTermOfSumOfElements(ValueID read) const { return std::ranges::any_of(m_sumsOfIntegers, [&](const SumOfIntegers& sum) { return sum.termIsElementOfList && sum.term == read; }); }
@@ -515,6 +542,7 @@ private:
     bool m_mayReleaseBehindLastReads { false };
     bool m_mayLendCells { false };
     bool m_keepsValuesInHeapFrame { false };
+    BitVector m_switchesTakenIntoSwitchInFront;
     bool m_looksBehindEachOperation { false };
     BitVector m_storesBehindWhichOwnerIsRemembered;
     PinnedValues m_pinned;
@@ -534,6 +562,8 @@ private:
     std::span<const ListAskedForKind> m_listsAskedForKindInFrontOfTurnsLaidOut;
     std::span<const BoundAskedInFront> m_boundsAskedInFrontOfTurnsLaidOut;
     Vector<ValueID, 2> m_relationsAskedInFrontOfTurnsLaidOut;
+    std::span<const ValueID> m_accessesUnderCounterBelowBoundOfTurnsLaidOut;
+    Vector<ValueID, 2> m_lengthsHeldAgainstBoundByLayoutThatAsked;
     std::optional<int64_t> mostOfKeyCutByWrittenMask(ValueID key) const;
     std::span<const ValueID> m_viewsAskedForKindInFrontOfTurnsLaidOut;
     TypedArrayType m_kindOfViewFoundInFrontOfTurnsLaidOut { NotTypedArray };

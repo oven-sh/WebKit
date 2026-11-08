@@ -68,10 +68,23 @@ static constexpr AbstractHeapSet heapsUnderStorageOfListInKnownElements {
 static_assert(perObjectHeaps.containsAll(heapsUnderStorageOfListInKnownElements));
 static constexpr unsigned shiftOfLengthInKnownElements = 32;
 
+void noteLengthThatListIsBornWith(Walker& walker, Reference list)
+{
+    if (!walker.has(Mechanism::TypedOperations) || !list || !list.isValue() || walker.code().at(list.id()).opcode != Opcode::NewArrayLike)
+        return;
+    ValueID length = walker.code().at(list.id()).lengthOperand();
+    Reference born = walker.code().isConstant(length) ? Reference::constant(length) : Reference::value(length);
+    const Type& type = walker.types().at(walker.typeOf(born));
+    if (!type.isInteger() || !type.integers.isSubsetOf(Range { 0, UINT32_MAX }))
+        return;
+    noteKnown(walker, KnownNote::LengthOfList, list, { }, 0, placesUnderLengthsOfLists, born.bits());
+}
+
 void noteStorageOfListMade(Walker& walker, Reference list)
 {
     if (!walker.has(Mechanism::TypedOperations) || !list || !list.isValue())
         return;
+    noteLengthThatListIsBornWith(walker, list);
     const Code& code = walker.code();
     const Operation& made = code.at(list.id());
     ArrayStorage storage = ArrayStorage::Other;

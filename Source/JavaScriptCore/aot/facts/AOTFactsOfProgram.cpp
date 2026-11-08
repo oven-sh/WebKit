@@ -15,6 +15,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTDiagnostics.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
 #include "AOTLargeList.h"
 #include "AOTLocalesPassedAtCalls.h"
@@ -490,6 +491,38 @@ static constexpr OpcodeSet accessesUnderComputedKeysInProgramFacts { Opcode::Ele
 static constexpr OpcodeSet readsOfVariablesInProgramFacts { Opcode::CheckInitialized, Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
 static constexpr OpcodeSet operatorsOnNumbersAloneInProgramFacts = operatorsOfKinds({ OperatorKind::Multiplicative }) | allRelations | OpcodeSet { Opcode::Sub, Opcode::Increment, Opcode::Decrement };
 static constexpr OpcodeSet operationsThatTellOfNumbersInProgramFacts = allBitwiseOperators | operatorsOnNumbersAloneInProgramFacts | storesUnderConstantKeysInProgramFacts | accessesUnderComputedKeysInProgramFacts | OpcodeSet { Opcode::Call, Opcode::NewObject };
+struct StepOfLookInProgramFacts {
+    static constexpr uint16_t isText = 1u << 0;
+    static constexpr uint16_t isData = 1u << 1;
+    static constexpr uint16_t definesUnderName = 1u << 2;
+    static constexpr uint16_t storesUnderName = 1u << 3;
+    static constexpr uint16_t makesObject = 1u << 4;
+    static constexpr uint16_t tellsOfNumbers = 1u << 5;
+    static constexpr uint16_t readsUnderName = 1u << 6;
+    static constexpr uint16_t callsByValue = 1u << 7;
+    static constexpr uint16_t loadsOrEvaluates = 1u << 8;
+    static constexpr uint16_t readsModuleVariable = 1u << 9;
+    static constexpr uint16_t takenInLibraryToo = loadsOrEvaluates | readsModuleVariable;
+};
+static constexpr std::array<uint16_t, numberOfOpcodes> stepsOfLookByOpcodeInProgramFacts = []() consteval {
+    std::array<uint16_t, numberOfOpcodes> steps { };
+    auto take = [&](OpcodeSet operations, uint16_t step) {
+        operations.forEach([&](Opcode opcode) {
+            steps[static_cast<unsigned>(opcode)] |= step;
+        });
+    };
+    take({ Opcode::String }, StepOfLookInProgramFacts::isText);
+    take({ Opcode::Data }, StepOfLookInProgramFacts::isData);
+    take({ Opcode::PropDefine }, StepOfLookInProgramFacts::definesUnderName);
+    take({ Opcode::PropSet }, StepOfLookInProgramFacts::storesUnderName);
+    take({ Opcode::NewObject }, StepOfLookInProgramFacts::makesObject);
+    take(operationsThatTellOfNumbersInProgramFacts, StepOfLookInProgramFacts::tellsOfNumbers);
+    take({ Opcode::PropGet }, StepOfLookInProgramFacts::readsUnderName);
+    take(callsByValueInProgramFacts, StepOfLookInProgramFacts::callsByValue);
+    take(loadsAndEvaluationsInProgramFacts, StepOfLookInProgramFacts::loadsOrEvaluates);
+    take({ Opcode::GetModuleVariable }, StepOfLookInProgramFacts::readsModuleVariable);
+    return steps;
+}();
 static constexpr OperandUses usesThatOnlyWriteOnOperandInProgramFacts {
     OperandUse::Inspects, OperandUse::Returns, OperandUse::WritesContents, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor,
 };
@@ -556,6 +589,7 @@ private:
     void handOn(ValueID from, ValueID to);
     bool passOn(ValueID argument, ValueID parameter, const BodyBlock& from);
 
+    ALWAYS_INLINE uint32_t stepsOf(Opcode opcode) const { return stepsOfLookByOpcodeInProgramFacts[static_cast<unsigned>(opcode)] & m_stepsTaken; }
     void look(const BodyValue&);
     void noteBuiltinsSpelledIn(StringID, bool standsInData, const BodyValue&);
     void noteBuiltinsSpelledIn(const DataNode&, const BodyValue&);
@@ -610,6 +644,7 @@ private:
     const FunctionID m_id;
     const Function& m_function;
     const bool m_isOfProgram;
+    const uint16_t m_stepsTaken { static_cast<uint16_t>(m_isOfProgram ? UINT16_MAX : StepOfLookInProgramFacts::takenInLibraryToo) };
     bool m_readsOffNodeVm { false };
     const BodyIndex& m_index;
     const ThinSummary& m_summary;
@@ -1890,20 +1925,22 @@ void BodyLookOfProgramFacts::noteModuleSpelledBy(PropertyKeyID id, const BodyVal
     }
 }
 
-void BodyLookOfProgramFacts::look(const BodyValue& value)
+ALWAYS_INLINE void BodyLookOfProgramFacts::look(const BodyValue& value)
 {
     Opcode opcode = value.opcode();
-    if (m_isOfProgram && opcode == Opcode::String)
+    using Step = StepOfLookInProgramFacts;
+    const uint32_t steps = stepsOf(opcode);
+    if (steps & Step::isText)
         noteBuiltinsSpelledIn(value.as<Opcode::String>().string(), false, value);
-    if (m_isOfProgram && opcode == Opcode::Data) {
+    if (steps & Step::isData) {
         if (DataID data = value.as<Opcode::Data>().data())
             noteBuiltinsSpelledIn(m_program.at(data).root, value);
     }
-    if (m_isOfProgram && opcode == Opcode::PropDefine)
+    if (steps & Step::definesUnderName)
         noteModuleSpelledBy(value.as<Opcode::PropDefine>().key(), value);
-    if (m_isOfProgram && opcode == Opcode::PropSet)
+    if (steps & Step::storesUnderName)
         noteModuleSpelledBy(value.as<Opcode::PropSet>().key(), value);
-    if (m_isOfProgram && opcode == Opcode::NewObject && !m_rows.modulesOfLibrary.isEmpty()) {
+    if ((steps & Step::makesObject) && !m_rows.modulesOfLibrary.isEmpty()) {
         auto allocation = value.as<Opcode::NewObject>();
         if (allocation.layout()) {
             const Layout& layout = m_program.at(allocation.layout());
@@ -1913,25 +1950,25 @@ void BodyLookOfProgramFacts::look(const BodyValue& value)
             }
         }
     }
-    if (m_isOfProgram && operationsThatTellOfNumbersInProgramFacts.contains(opcode))
+    if (steps & Step::tellsOfNumbers)
         noteWhatIsToldOfNumbers(value);
-    if (loadsAndEvaluationsInProgramFacts.contains(opcode))
+    if (steps & Step::loadsOrEvaluates)
         lookAtLoad(value);
-    if (opcode == Opcode::PropGet && m_isOfProgram && (m_builtinOfValue.isEmpty() || !builtinAt(value.operand(0)))) {
+    if ((steps & Step::readsUnderName) && (m_builtinOfValue.isEmpty() || !builtinAt(value.operand(0)))) {
         PropertyKeyID key = value.as<Opcode::PropGet>().key();
         if (key && m_program.builtinNameOf(key) && !m_namesReadOffUnknownValues.contains(key)) {
             m_namesReadOffUnknownValues.append(key);
             note(Finding::Kind::NameReadOffUnknownValue, 0, key.index(), witnessAt(value));
         }
     }
-    if (m_isOfProgram && callsByValueInProgramFacts.contains(opcode) && !m_index.isParameter(value.operand(0))) {
+    if ((steps & Step::callsByValue) && !m_index.isParameter(value.operand(0))) {
         BodyValue callee = m_index.value(value.operand(0));
         if (callee.opcode() == Opcode::ElemGet) {
             BuiltinClassID classOfReceiver = m_index.isParameter(callee.operand(0)) ? BuiltinClassID() : classOfWrittenPrimitiveInProgramFacts(m_index.value(callee.operand(0)).opcode());
             note(Finding::Kind::CallUnderComputedKey, 0, classOfReceiver ? classOfReceiver.index() : Wire::none, witnessAt(callee));
         }
     }
-    if (opcode == Opcode::GetModuleVariable) {
+    if (steps & Step::readsModuleVariable) {
         if (BuiltinID held = builtinHeldBy(value.as<Opcode::GetModuleVariable>().variable())) {
             if (m_builtinOfValue.isEmpty())
                 m_builtinOfValue.fill(BuiltinID(), m_index.numberOfValues());
@@ -1974,9 +2011,7 @@ void BodyLookOfProgramFacts::look(const BodyValue& value)
     } else if (callsByValueInProgramFacts.contains(opcode))
         lookAtCall(value);
 
-    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (operandIndex == operandAccountedFor || !isFollowed(operand))
-            return;
+    auto lookAtOperandThatIsFollowed = [&](ValueID operand, uint32_t operandIndex) NEVER_INLINE {
         Fate fate = fateOf(value, operandIndex);
         noteFate(operand, fate, value);
         if (fate == Fate::IsInspected && lightFormAt(operand)) {
@@ -1993,10 +2028,14 @@ void BodyLookOfProgramFacts::look(const BodyValue& value)
             m_builtinOfValue[value.id().index()] = builtinAt(operand);
             m_mayBeSomethingElse.set(value.id().index());
         }
+    };
+    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) ALWAYS_INLINE_LAMBDA {
+        if (operandIndex != operandAccountedFor && isFollowed(operand))
+            lookAtOperandThatIsFollowed(operand, operandIndex);
     });
 }
 
-void BodyLookOfProgramFacts::lookAtEnd(const BodyBlock& block)
+ALWAYS_INLINE void BodyLookOfProgramFacts::lookAtEnd(const BodyBlock& block)
 {
     BodyTerminator terminator = block.terminator();
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -2040,8 +2079,10 @@ void BodyLookOfProgramFacts::run()
             continue;
         }
         BodyBlock block = m_index.block(BlockID(number));
-        for (BodyValue value : block.values())
-            look(value);
+        for (BodyValue value : block.values()) {
+            if (stepsOf(value.opcode()) || !m_builtinOfValue.isEmpty())
+                look(value);
+        }
         if (!m_builtinOfValue.isEmpty())
             lookAtEnd(block);
     }
@@ -3357,6 +3398,7 @@ private:
     bool mayThrowByItself(const BodyIndex&, const BodyValue&) const;
     bool bodyMayLeave(FunctionID, ThrowsOfOperations = ThrowsOfOperations::AreLeftOut);
     Vector<ModuleID> evaluationOrder() const;
+    bool throwAtLoadMayBeSurvived();
     bool everyRunComesTo(const Witness&);
     std::optional<UserDiagnosticKind> refusalOf(const BodyIndex&, const Witness&, BuiltinID holder, PropertyKeyID, BuiltinPropertyActionKind, ValueID brought, bool throwsWhereRefused);
     std::optional<UserDiagnosticKind> refusalOfWriteAt(const Witness&, BuiltinID followed = { });
@@ -3476,6 +3518,7 @@ private:
     BitVector m_bodiesBeingAsked;
     std::array<BitVector, 2> m_bodiesThatStay;
     std::optional<bool> m_codeThatNobodyNamesMayLeave;
+    std::optional<bool> m_throwAtLoadMayBeSurvived;
     BitVector m_partOfClassIsUsed;
     Vector<Finding> m_callsOfEventsNamedInBodies;
     Vector<Witness> m_urlsThatLeaveBodies;
@@ -5032,6 +5075,12 @@ bool BuilderOfProgramFacts::codeThatNobodyNamesMayLeave()
     return *m_codeThatNobodyNamesMayLeave;
 }
 
+static bool operandMayRunCodeInProgramFacts(Opcode opcode, uint32_t operandIndex)
+{
+    operandIndex = std::min(operandIndex, numberOfNamedOperandsOf(opcode));
+    return !protocolsOf(opcode, operandIndex).isEmpty() || operandUsesOf(opcode, operandIndex).containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly });
+}
+
 bool BuilderOfProgramFacts::mayLeave(FunctionID id, const BodyIndex& index, const BodyValue& value, ThrowsOfOperations throwsOfOperations)
 {
     Opcode opcode = value.opcode();
@@ -5046,8 +5095,15 @@ bool BuilderOfProgramFacts::mayLeave(FunctionID id, const BodyIndex& index, cons
     };
     if (effectRuleOf(opcode) == EffectRule::Operator)
         return isHandedCode(0) && codeThatNobodyNamesMayLeave();
-    if ((effectRuleOf(opcode) == EffectRule::Declared && declaredBoundOf(opcode).alwaysCompletes()) || opcode == Opcode::RequireBuiltinModule)
-        return false;
+    if ((effectRuleOf(opcode) == EffectRule::Declared && declaredBoundOf(opcode).alwaysCompletes()) || opcode == Opcode::RequireBuiltinModule) {
+        bool isHandedCodeThatItRuns = false;
+        if (operandsMayRunCode(opcode)) {
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                isHandedCodeThatItRuns |= operand && operandMayRunCodeInProgramFacts(opcode, operandIndex) && !holdsNoCodeOfProgram(index, operand);
+            });
+        }
+        return isHandedCodeThatItRuns && codeThatNobodyNamesMayLeave();
+    }
     if (opcode == Opcode::RequireDynamic)
         return true;
     bool waits = opcode == Opcode::Await || opcode == Opcode::Yield || opcode == Opcode::InitialYield
@@ -5131,8 +5187,15 @@ bool BuilderOfProgramFacts::mayThrowByItself(const BodyIndex& index, const BodyV
     if ((opcode == Opcode::DefineGetter || opcode == Opcode::DefineSetter || (opcode == Opcode::DefineMethod && !value.operand(OperandIndex::DefineMethod::computedKey))) && isMadeHere(value.operand(0)))
         return false;
     switch (effectRuleOf(opcode)) {
-    case EffectRule::Declared:
-        return declaredBoundOf(opcode).mayThrowByRule();
+    case EffectRule::Declared: {
+        bool mayRunCodeThatThrows = declaredBoundOf(opcode).mayThrowByRule();
+        if (!mayRunCodeThatThrows && operandsMayRunCode(opcode)) {
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                mayRunCodeThatThrows |= operand && operandMayRunCodeInProgramFacts(opcode, operandIndex) && !holdsNoCodeOfProgram(index, operand);
+            });
+        }
+        return mayRunCodeThatThrows;
+    }
     case EffectRule::Operator: {
         bool mayRefuseOperand = false;
         value.forEachOperand([&](ValueID operand, uint32_t) {
@@ -5233,6 +5296,43 @@ Vector<ModuleID> BuilderOfProgramFacts::evaluationOrder() const
     return order;
 }
 
+bool BuilderOfProgramFacts::throwAtLoadMayBeSurvived()
+{
+    if (m_throwAtLoadMayBeSurvived)
+        return *m_throwAtLoadMayBeSurvived;
+    static constexpr std::array<ASCIILiteral, 6> namesThatLayListeners { "on"_s, "once"_s, "addListener"_s, "prependListener"_s, "prependOnceListener"_s, "setUncaughtExceptionCaptureCallback"_s };
+    auto isProcess = [&](const BodyIndex& index, ValueID object) {
+        BuiltinID holder = builtinReadByPath(index, object);
+        return holder && m_builtins.textOf(m_builtins.canonicalID(holder)) == "process"_s;
+    };
+    auto laysListener = [&](const BodyIndex& index, const BodyValue& value) {
+        if (value.opcode() == Opcode::ElemGet)
+            return isProcess(index, value.as<Opcode::ElemGet>().objectOperand());
+        if (value.opcode() != Opcode::PropGet || value.as<Opcode::PropGet>().isFreeName() || !isProcess(index, value.as<Opcode::PropGet>().objectOperand()))
+            return false;
+        const PropertyKey& key = m_source.at(value.as<Opcode::PropGet>().key());
+        return key.kind == PropertyKeyKind::Text && std::ranges::any_of(namesThatLayListeners, [&](ASCIILiteral name) {
+            return equalSpans(m_source.strings[key.text], name.span8());
+        });
+    };
+    m_throwAtLoadMayBeSurvived = programLetsUnseenCodeRun() || [&] {
+        for (uint32_t number = 0; number < m_source.functions.size(); ++number) {
+            FunctionID id(number);
+            const BodyIndex* index = isReached(id) && !isLibraryCode(m_source, m_source.at(id)) ? m_inputs.bodies.find(id) : nullptr;
+            if (!index)
+                continue;
+            for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
+                for (BodyValue value : index->block(BlockID(block)).values()) {
+                    if (laysListener(*index, value))
+                        return true;
+                }
+            }
+        }
+        return false;
+    }();
+    return *m_throwAtLoadMayBeSurvived;
+}
+
 bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
 {
     FunctionID id(site.function);
@@ -5272,7 +5372,7 @@ bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
         if (module.body && !isLibraryCode(m_source, m_source.at(module.body)) && bodyMayLeave(module.body, ThrowsOfOperations::Count))
             return false;
     }
-    return true;
+    return !throwAtLoadMayBeSurvived();
 }
 
 template<typename Functor>

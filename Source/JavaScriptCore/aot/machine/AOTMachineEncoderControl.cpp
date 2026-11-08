@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTMachineEncoder.h"
+#include "AOTSort.h"
 
 #if ENABLE(AOT)
 
@@ -518,7 +519,7 @@ void Encoder::encodeSwitchByBits(Block* block, GPRReg value, Width width, unsign
         return;
     }
     ++m_proc.m_numberOfSwitchWindowsToldByBits;
-    std::ranges::stable_sort(places, [](const PlaceToldByBits& a, const PlaceToldByBits& b) {
+    AOT::stableSort(places, [](const PlaceToldByBits& a, const PlaceToldByBits& b) {
         return std::popcount(a.mask) > std::popcount(b.mask);
     });
     bool hasNoGap = listed == (greatest == valuesInSwitchWindow - 1 ? ~uint64_t { 0 } : (uint64_t { 1 } << (greatest + 1)) - 1);
@@ -609,9 +610,13 @@ void Encoder::encodeSwitchThroughTable(Block* block, GPRReg value, int64_t first
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     MacroAssembler::TrustedImm32 endOfTable(static_cast<int32_t>(numberOfEntries));
+    GPRReg place = index;
     if (width == Width32) {
         m_jit.add32(MacroAssembler::TrustedImm32(static_cast<int32_t>(0u - static_cast<uint32_t>(firstValue))), value, index);
         addPendingJump(m_jit.branch32(MacroAssembler::AboveOrEqual, index, endOfTable), otherwise);
+    } else if (!firstValue) {
+        place = value;
+        addPendingJump(m_jit.branch64(MacroAssembler::AboveOrEqual, value, endOfTable), otherwise);
     } else {
         m_jit.add64(MacroAssembler::TrustedImm64(static_cast<int64_t>(uint64_t { 0 } - static_cast<uint64_t>(firstValue))), value, index);
         addPendingJump(m_jit.branch64(MacroAssembler::AboveOrEqual, index, endOfTable), otherwise);
@@ -619,7 +624,7 @@ void Encoder::encodeSwitchThroughTable(Block* block, GPRReg value, int64_t first
 
     GPRReg table = m_jit.scratchRegister();
     m_relocations.moveAddress(CodeSymbol { SymbolSpace::JumpTable, tableIndex }, table, PCRelativeReach::Far);
-    m_jit.load32SignedExtendTo64(MacroAssembler::BaseIndex(table, index, MacroAssembler::TimesFour), index);
+    m_jit.load32SignedExtendTo64(MacroAssembler::BaseIndex(table, place, MacroAssembler::TimesFour), index);
     m_jit.add64(index, table);
     m_jit.farJump(table, NoPtrTag);
 }

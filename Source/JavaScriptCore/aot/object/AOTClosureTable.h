@@ -18,6 +18,7 @@
 namespace JSC { namespace AOT {
 
 class Closure;
+struct LayoutData;
 struct State;
 
 class ClosureTable {
@@ -43,6 +44,7 @@ public:
     bool hasCellFor(FunctionID) const;
     bool hasSingletonClosure(FunctionID) const;
     void registerClassObject(Closure*);
+    void registerFirstClassObject(Closure*, FunctionID constructor, const LayoutData& classLayout);
     void registerClosureOfMember(FunctionID, JSCell*);
     void forgetClosures(uint32_t firstCell, uint32_t numberOfCells);
     JSObject* createClosure(VM&, FunctionID, std::span<const uint64_t> captures, unsigned numberOfReferences);

@@ -208,7 +208,7 @@ static bool seesAccessesUnderName(VM& vm, JSObject* holder, UniquedStringImpl* u
     unsigned attributes = 0;
     Object* compiled = compiledObjectOrNull(holder);
     JSValue held = compiled ? compiled->getDirectFromNativeCode(vm, uid, &attributes) : holder->getDirect(vm, uid, attributes);
-    return held && ClassTable::seesAccesses(attributes);
+    return held && ClassTable::seesAccesses(vm, uid, attributes);
 }
 
 static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, UniquedStringImpl* uidOrNull)

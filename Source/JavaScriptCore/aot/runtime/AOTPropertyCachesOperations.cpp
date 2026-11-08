@@ -355,6 +355,8 @@ static bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, J
     if (!base.isCell())
         return false;
     PropertyCaches& caches = *instance->state->propertyCaches;
+    if (const FieldReturn* back = caches.findFieldReturn(base.asCell()->structureID(), key))
+        return uncheckedDowncast<Object>(base.asCell())->tryRepeat(*instance->vm, *back, value);
     FieldExit* exit = caches.findFieldExit(base.asCell()->structureID(), key);
     if (!exit || exit->isDefinition)
         return false;
@@ -453,14 +455,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteAnswers, void, (Instance* 
         return;
     }
     if (use & visitorHitFurtherAnswer) {
-        caches.answersAtSites().moveUpFurtherAnswer(place, base->structureID());
+        caches.answersAtSites().moveUpFurtherAnswer(place, static_cast<SiteUse>(use & ~visitorHitFurtherAnswer), base->structureID());
         return;
     }
     beginPeriodOfAnotherLength(instance);
     if (!caches.answersAtSites().isDueForFilling(place))
         return;
     LeafOperationScope leaf(*instance->vm);
-    caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use & ~stubOfSiteFollowsFurtherAnswers), use & stubOfSiteFollowsFurtherAnswers);
+    caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use & ~(stubOfSiteFollowsFurtherAnswers | stubJumpsToArmOfAnswer)), use & stubOfSiteFollowsFurtherAnswers, use & stubJumpsToArmOfAnswer);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTClaimRowOfReads, size_t, (Instance* instance, EncodedJSValue base, EncodedJSValue* group))
@@ -615,6 +617,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, Encode
     }
     putByVal(instance, JSValue::decode(encodedBase), JSValue::decode(encodedProperty), JSValue::decode(encodedValue), isStrict);
     OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnValueUnderKeyOrEmpty, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
+{
+    JSValue base = JSValue::decode(encodedBase);
+    JSValue property = JSValue::decode(encodedProperty);
+    if (!base.isCell() || base.asCell()->type() != FinalObjectType || !property.isString() || asString(property)->isRope())
+        return JSValue::encode(JSValue());
+    Structure* structure = base.asCell()->structure();
+    if (structure->isCompiledStructure() || structure->typeInfo().overridesGetOwnPropertySlot())
+        return JSValue::encode(JSValue());
+    StringImpl* text = asString(property)->tryGetValueImpl();
+    RefPtr<AtomStringImpl> name = text ? AtomStringImpl::lookUp(text) : nullptr;
+    if (!name || parseIndex(*name))
+        return JSValue::encode(JSValue());
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->getConcurrently(name.get(), attributes);
+    if (!isValidOffset(offset) || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue))
+        return JSValue::encode(JSValue());
+    return JSValue::encode(asObject(base)->getDirect(offset));
 }
 
 static JSValue getFromCellAndCache(Instance* instance, JSValue base, const Identifier& name)

@@ -53,14 +53,19 @@ operation TryCopyFields (object: Object/inspects, source: Object/inspects+retain
 operation GetGlobalBinding (key: PropertyKey, level: KnowledgeLevel) [seesScriptBindings isForTypeOf] -> unknown => declared(key) ; unknownCode ; accessClass = Slot ; replaces = PropGet ; runtime = GetGlobalBinding ; formDependsOnLoop = true ; form = Closed ; openIn = Loop
 operation SetGlobalBinding (key: PropertyKey, mode: ECMAMode, value: Any/retains, level: KnowledgeLevel) [seesScriptBindings] -> none ; unknownCode ; accessClass = Slot ; replaces = PropSet ; runtime = SetGlobalBinding ; formDependsOnLoop = true ; form = Closed ; openIn = Loop ; runtimeIn = CodeThatRunsOnce
 operation GetValueAtSiteOrAbsent (object: Any/inspects, key: PropertyKey, valueType: Type) -> declared(valueType) ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) writes(RuntimeState) ; replaces = PropGet ; form = Closed
+operation GetOwnValueUnderKeyOrAbsent (object: Any/inspects, property: Any/inspects, valueType: Type) -> declared(valueType) ; reads(ShapeWords, NamedProperties) ; replaces = ElemGet ; form = Closed
+operation ElemGetOrOwnAccessor (object: Object/retains, property: Any/inspects) -> unknown ; unknownCode ; accessClass = ByName ; replaces = ElemGet ; runtime = GetByValAndCache ; form = Closed
+operation GetGetterOfAccessorOrUndefined (value: Any/inspects) -> unknown ; reads(ShapeWords, RuntimeState) ; replaces = ElemGet ; form = Open
 operation GetCachedGetter (object: Object/inspects, key: PropertyKey) -> unknown ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, RuntimeState) writes(RuntimeState) ; replaces = PropGet ; form = Closed
 engine operation GetPropertyOfHeir (object: Object/inspects, layout: Layout, field: Field) -> unknown ; reads(NamedProperties) ; replaces = PropGet ; form = Open
-engine operation PutPropertyOfHeir (object: Object/inspects, value: Any/retains(object), layout: Layout, field: Field) -> none ; writes(NamedProperties) ; replaces = PropSet ; form = Open
+engine operation PutPropertyOfHeir (object: Object/inspects, value: Any/retains(object), layout: Layout, field: Field) [| engine putsBackWhatTurnStored] -> none ; writes(NamedProperties) ; replaces = PropSet ; form = Open
 operation ElemGetByKeyParts (object: Any/retains, firstPart: Any/inspects, secondPart: Any/inspects) -> unknown ; unknownCode ; accessClass = ByName ; replaces = ElemGet, Strcat ; runtime = GetByValAndCache ; form = Closed
 
 family ElementAccess Prepared..Placed
-operation GetArrayLength (array: Array/inspects) -> natural(uint32) ; reads(ArrayStorage) ; relies = Pristine, ArrayStorage ; interpreted = Read ; form = Open
+operation GetArrayLength (array: Array/inspects) -> natural(uint32) ; reads(ArrayStorage, ArrayLengths) ; relies = Pristine, ArrayStorage ; interpreted = Read ; form = Open
 engine operation GetArrayStorage (array: Array/inspects) -> natural(ArrayStoragePointer) ; reads(ArrayStorage) ; base = array ; form = Open
+engine operation GetArrayRoom (array: Array/inspects) -> natural(uint32) ; reads(ArrayStorage) ; form = Open
+engine operation ExtendArrayLength (array: Array/inspects+writesContents, position: Integer/inspects, storage?: ArrayStoragePointer/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array], ArrayLengths) ; form = Open
 operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, storage?: ArrayStoragePointer/inspects, holdsDoubles?: Boolean/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel) [keyIsIntegral isInBounds isPresent readsHoleAsNaN | engine admitsInt32Storage asksCellWhereNothingIsFound] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot ; formDependsOnLoop = true ; openIn = Loop ; form = Open
 operation PutArrayElement(array: Array/inspects+writesContents, position: Number/inspects, value: Any/retains(array), storage?: ArrayStoragePointer/inspects, arrayStorage: ArrayStorage, mode: ECMAMode, level: KnowledgeLevel) [keyIsIntegral isInBounds | engine storageIsWritable fillsPlaceOfListMadeHere] -> none ; GrowsArray writes(NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; interpreted = Store ; replaces = ElemSet, ElemDefine ; accessClass = Slot ; runtime = ArrayPutAtIndex ; runsOwnerBarrier = true ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = ValueNeverFitsStorage ; openIn = Loop
 operation HasArrayElement (array: Array/inspects, position: Number/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel) [keyIsIntegral | engine asksCellWhereNothingIsFound] -> natural(boolean) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage ; interpreted = Test ; replaces = ElemHas ; accessClass = Slot ; branches = May ; form = Open
@@ -108,6 +113,7 @@ engine operation NewArrayOfGiven (given: Any/retains) -> allocation(Array) ; All
 operation SharedRegExpLiteral (pattern: String, regExpFlags: RegExpFlags) -> natural(RegExp) ; CreatesConstant ; runtime = SharedRegExpLiteral ; boundTo = Site ; form = Open
 operation GetBuiltinValue (builtin: Builtin, overload: BuiltinOverload) -> declared(overload) ; unknownCode ; runtime = FillBuiltinValue ; replaces = PropGet ; form = Open
 operation GetWatchedBuiltinValue (builtin: Builtin) -> unknown ; unknownCode ; runtime = FillWatchedBuiltinValue ; replaces = PropGet ; form = Open
+engine operation GetWatchedBuiltinValueOrAbsent (builtin: Builtin, valueType: Type) -> declared(valueType) ; reads(NamedProperties, RuntimeState) ; replaces = PropGet ; form = Open
 operation InitializeBuiltin (builtin: Builtin) -> none ; CreatesConstant reads(ExternalState) writes(ExternalState) ; runtime = BuiltinCell ; replaces = PropGet, CallBuiltin ; form = Closed
 
 family ExpandedIteration Prepared..Placed
@@ -155,6 +161,7 @@ operation PromiseAllOfElements (contents: Type, directCalls: UInt32, elements...
 
 family Operator Prepared..Placed
 operation HasInPrototypeChain (value: Any/inspects+runs(PrototypeChain), prototype: Object/inspects) -> natural(boolean) ; Allocates reads(PrototypeLinks) throws ; runtime = DefaultHasInstance ; branches = May ; replaces = InstanceOf ; hasOwnFoldingRule = true ; form = Closed
+engine operation FindInPrototypeChainUnlessTrapped (value: Any/inspects, prototype: Object/inspects) -> natural(int[0, 2]) ; reads(PrototypeLinks) ; form = Closed
 
 family Module Prepared..Placed
 operation BeginModuleEvaluation (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = BeginModuleEvaluation ; branches = May ; form = Open
