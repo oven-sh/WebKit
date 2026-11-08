@@ -505,7 +505,7 @@ bool setData(JSGlobalObject*, PyType*, Accessor, const Place&, JSValue value, in
 enum class Kept : bool { ForPart, ForWhole };
 bool keepAlive(JSGlobalObject*, PyCData* target, int64_t index, JSValue keep, Kept = Kept::ForPart);
 // The _objects of an instance, made if need be. Empty: an exception.
-JSValue keptObjects(JSGlobalObject*, PyCData*);
+JSValue keptObjects(JSGlobalObject*, PyCData*, Kept = Kept::ForWhole);
 // What keepAlive() remembered last for that part. Empty: nothing.
 JSValue keptFor(JSGlobalObject*, PyCData* target, int64_t index);
 

@@ -564,9 +564,9 @@ static ALWAYS_INLINE PyCData* containerOf(JSGlobalObject* globalObject, PyCData*
     return data;
 }
 
-JSValue keptObjects(JSGlobalObject* globalObject, PyCData* data)
+JSValue keptObjects(JSGlobalObject* globalObject, PyCData* data, Kept kept)
 {
-    return containerOf(globalObject, data)->objects.get();
+    return containerOf(globalObject, data, kept)->objects.get();
 }
 
 bool keepAlive(JSGlobalObject* globalObject, PyCData* target, int64_t index, JSValue keep, Kept kept)
