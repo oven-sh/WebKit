@@ -1839,37 +1839,66 @@ static JSValue typeGetBase(JSGlobalObject*, JSValue self)
 
 // Works out the MRO of the type again, and of all that derive from it. Appends to `changes`, for each type that got a new
 // one: the type, the new MRO, the old one. False: an exception.
-static bool updateMROs(JSGlobalObject* globalObject, PyType* type, MarkedArgumentBuffer& changes)
+static bool updateMROs(JSGlobalObject* globalObject, PyType* root, MarkedArgumentBuffer& changes)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PyTuple* oldMRO = type->mro();
-    MROResult result = resolveMRO(globalObject, type);
-    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == (result == MROResult::Raised));
-    if (result != MROResult::Set)
-        return result == MROResult::Superseded;
-    changes.append(type);
-    changes.append(type->mro());
-    changes.append(oldMRO ? JSValue(oldMRO) : jsUndefined());
-    // A copy: an mro() may change who derives from whom.
-    MarkedArgumentBuffer subclasses;
-    type->appendSubclassesTo(subclasses);
-    for (unsigned i = 0; i < subclasses.size(); ++i) {
-        if (failed(scope, updateMROs(globalObject, PyType::from(subclasses.at(i)), changes)))
+    // Those that are left are in a list, not on the stack: classes derive from one another to any depth. The last is next: all that derives from a class
+    // comes before the class beside it, and a class comes once for each way that leads to it, which is the order in which CPython calls mro().
+    MarkedArgumentBuffer left;
+    left.append(root);
+    // The classes on the way down to the one whose turn it is, each of them alive in `changes`. A null in `left`: all that derives from the last of them has had its turn.
+    Vector<PyType*, 16> way;
+    while (!left.isEmpty()) {
+        JSValue next = left.takeLast();
+        if (next.isNull()) {
+            way.removeLast();
+            continue;
+        }
+        PyType* type = PyType::from(next);
+        // __bases__ never lead from a class to itself. But this must end whatever the lists of who derives from whom say.
+        if (way.contains(type)) [[unlikely]]
+            continue;
+        PyTuple* oldMRO = type->mro();
+        MROResult result = resolveMRO(globalObject, type);
+        EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == (result == MROResult::Raised));
+        if (result == MROResult::Raised)
             return false;
+        if (result == MROResult::Superseded)
+            continue;
+        changes.append(type);
+        changes.append(type->mro());
+        changes.append(oldMRO ? JSValue(oldMRO) : jsUndefined());
+        // As they are now: an mro() may change who derives from whom.
+        size_t size = left.size();
+        left.append(jsNull());
+        type->appendSubclassesTo(left, PyType::SubclassOrder::NewestFirst);
+        if (left.size() == size + 1) {
+            left.removeLast();
+            continue;
+        }
+        way.append(type);
     }
     return true;
 }
 
-// After the base of the type has changed: which class decides the layout, for it and for all that derive from it.
-static void updateSolidBases(VM& vm, PyType* type)
+// After the base of the type has changed: which class decides the layout, for it and for all that have it from there. A class has one base, so each comes once.
+static void updateSolidBases(VM& vm, PyType* root)
 {
-    if (!type->slots() && !type->has(TypeFlag::OwnLayout))
+    MarkedArgumentBuffer types;
+    types.append(root);
+    for (unsigned i = 0; i < types.size(); ++i) {
+        PyType* type = PyType::from(types.at(i));
+        if (type->slots() || type->has(TypeFlag::OwnLayout))
+            continue;
         type->setSolidBase(vm, type->base()->solidBase());
-    MarkedArgumentBuffer subclasses;
-    type->appendSubclassesTo(subclasses);
-    for (unsigned i = 0; i < subclasses.size(); ++i)
-        updateSolidBases(vm, PyType::from(subclasses.at(i)));
+        MarkedArgumentBuffer subclasses;
+        type->appendSubclassesTo(subclasses);
+        for (unsigned j = 0; j < subclasses.size(); ++j) {
+            if (PyType* subclass = PyType::from(subclasses.at(j)); subclass->base() == type && subclass != root)
+                types.append(subclass);
+        }
+    }
 }
 
 static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue value)
