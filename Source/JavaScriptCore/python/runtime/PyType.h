@@ -369,6 +369,7 @@ private:
     PyType(VM&, Structure*);
 
     void takeNewLookupKey();
+    void forgetWhatIsRemembered(Change);
 
     JSValue lookupSlow(JSString* name, AsksKeys = AsksKeys::Yes, bool* hasRaised = nullptr);
     JSValue getAskingKeys(PyDict*, JSString* name, bool& hasRaised);

@@ -600,12 +600,8 @@ Structure* PyType::createInstanceStructure(VM& vm)
     return structure;
 }
 
-void PyType::didChange(VM& vm, Change change)
+void PyType::forgetWhatIsRemembered(Change change)
 {
-    // Two types may each have the other in an MRO of their own making.
-    if (m_isBeingToldOfChange)
-        return;
-    SetForScope isBeingTold(m_isBeingToldOfChange, true);
     m_version = 0;
     takeNewLookupKey();
     m_construction = Construction::Unknown;
@@ -616,14 +612,35 @@ void PyType::didChange(VM& vm, Change change)
     for (auto& special : m_specials)
         special.clear();
     m_hasAskedKeys = false;
-    JSValue subclasses = m_subclasses.get();
-    if (!subclasses)
+}
+
+void PyType::didChange(VM&, Change change)
+{
+    forgetWhatIsRemembered(change);
+    if (!m_subclasses)
         return;
-    JSArray* list = asList(subclasses);
-    for (unsigned i = 0; i < listLength(list); ++i) {
-        if (PyType* subclass = subclassInEntry(listGet(list, i)))
-            subclass->didChange(vm, change);
+    // Those that are left to tell are in a list, not on the stack: classes derive from one another to any depth. Each is told once, however many ways lead to
+    // it, and two types may each have the other in an MRO of their own making.
+    AssertNoGC assertNoGC;
+    Vector<PyType*, 16> told;
+    told.append(this);
+    m_isBeingToldOfChange = true;
+    for (size_t next = 0; next < told.size(); ++next) {
+        JSValue subclasses = told[next]->m_subclasses.get();
+        if (!subclasses)
+            continue;
+        JSArray* list = asList(subclasses);
+        for (unsigned i = 0; i < listLength(list); ++i) {
+            PyType* subclass = subclassInEntry(listGet(list, i));
+            if (!subclass || subclass->m_isBeingToldOfChange)
+                continue;
+            subclass->m_isBeingToldOfChange = true;
+            subclass->forgetWhatIsRemembered(change);
+            told.append(subclass);
+        }
     }
+    for (PyType* type : told)
+        type->m_isBeingToldOfChange = false;
 }
 
 void PyType::appendSubclassesTo(MarkedArgumentBuffer& result, SubclassOrder order) const
