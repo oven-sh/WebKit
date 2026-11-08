@@ -1775,7 +1775,8 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
     // and finds what only it referred to. The limit is for finalizers that make new garbage with finalizers for ever.
     // (Instances of the types of extensions that hang together through objects of Python's go one level a round. That ends by itself: a round after which there are fewer than ever does not count.)
     size_t fewestInstances = CApi::numberOfInstances(rt);
-    for (unsigned round = 0; round < 64; ++round) {
+    unsigned roundsLeft = 64;
+    for (unsigned round = 0; roundsLeft; ++round, --roundsLeft) {
         if (round)
             serves.willCollectAgain();
         {
@@ -1806,7 +1807,7 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
             break;
         if (size_t instances = CApi::numberOfInstances(rt); instances < fewestInstances) [[unlikely]] {
             fewestInstances = instances;
-            --round;
+            ++roundsLeft;
         }
     }
 }
