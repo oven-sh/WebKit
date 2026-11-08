@@ -47,6 +47,13 @@ public:
     bool isInternal() const { return m_isInternal; }
     void setIsInternal() { m_isInternal = true; }
     void setReferent(JSCell* referent) { m_referent = referent; }
+    // For Runtime::didCallFinalizerBehindWhichWeakRefsDie(). It dies before a collection has found its referent dead, in the belief that it is dying itself. Whether it is, only a collection knows: if it comes through
+    // the next full one, somebody holds it after all, and is told then.
+    void dieBehindFinalizerOfReferent()
+    {
+        m_referent = nullptr;
+        m_isToldIfItLivesOn = !!m_callback;
+    }
 
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
 
@@ -60,6 +67,7 @@ private:
     uint32_t m_thread { 0 };
     bool m_hasHash { false };
     bool m_isInternal { false };
+    bool m_isToldIfItLivesOn { false };
 };
 
 // The referent of a ref or a proxy, or None.

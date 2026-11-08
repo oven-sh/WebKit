@@ -1129,25 +1129,31 @@ void Runtime::letWeakRefsDie(SlotVisitor& visitor, std::span<JSCell* const> refe
 // that comes by itself: the collection that finds the object dead, and lets the references die, is the one that finds what it held. In a round that takes all levels no collection comes in between, and the
 // finalizer of a child would be given its parent, finalized, by a weak reference. (It asks for it to take itself off its list, say.) So there references to these objects are noted, and die behind the
 // finalizer of their referent: didCallFinalizerBehindWhichWeakRefsDie().
-// ONLY THOSE THAT DIE IN THIS ROUND THEMSELVES: that nothing which lives on holds (`child.parent = weakref.ref(parent)`). Nobody knows, when a finalizer returns, whether it has brought its object back, or an
+// ONLY THOSE THAT DIE IN THIS ROUND THEMSELVES, as far as can be told here: that nothing which lives on holds (`child.parent = weakref.ref(parent)`). Nobody knows, when a finalizer returns, whether it has brought its object back, or an
 // earlier one something that holds it: it takes a collection to know. A reference that is left alive wrongly is put right by that collection. One that has died wrongly stays dead: a registry of the program's
 // would have forgotten an object that lives, the function of a weakref.finalize would have run. So what the program can still ask when the round is over waits for the collection, as in any other round.
+// What is not marked here may live on all the same: this collection may yet keep what holds it (cyclic garbage that is left for later, gc.DEBUG_SAVEALL), a finalizer may save it. So its callback is left to it:
+// PyWeakRef::dieBehindFinalizerOfReferent().
 // The referents are what reference counts would have freed, and all have finalizers. Not what they hold that has none: a plain object's references die when a collection finds it dead. See DEFERRED.md.
 void Runtime::letWeakRefsDieBehindFinalizers(SlotVisitor& visitor, std::span<JSCell* const> referents)
 {
-    UncheckedKeyHashSet<JSCell*> set;
-    set.addAll(referents);
     Vector<PyWeakRef*> weakRefs; // (Nothing is marked while the heap is gone through.)
     forEachWeakRefDeadOrAlive(m_vm, [&](PyWeakRef* weakRef) {
         // (Those of another realm are that runtime's: they die when the referent does.)
-        if (!weakRef->isInternal() && weakRef->referent() && !visitor.isMarked(weakRef) && set.contains(weakRef->referent()) && weakRef->structure()->realm() == m_globalObject)
+        if (!weakRef->isInternal() && weakRef->referent() && !visitor.isMarked(weakRef) && weakRef->structure()->realm() == m_globalObject)
             weakRefs.append(weakRef);
     });
+    if (weakRefs.isEmpty())
+        return;
+    UncheckedKeyHashSet<JSCell*> set;
+    set.reserveInitialCapacity(referents.size());
+    set.addAll(referents);
     for (PyWeakRef* weakRef : weakRefs) {
-        // It is not told, whichever of the two goes first: nothing here says which. (DEFERRED.md, "A weak reference that dies with its referent".) But it may be asked: until then it is kept.
-        weakRef->clearCallback();
+        if (!set.contains(weakRef->referent()))
+            continue;
+        // It may be asked: until then it is kept.
         visitor.appendUnbarriered(weakRef);
-        m_weakRefsThatDieBehindFinalizer.add(weakRef->referent(), Vector<PyWeakRef*>()).iterator->value.append(weakRef);
+        m_weakRefsThatDieBehindFinalizer.add(weakRef->referent(), Vector<PyWeakRef*, 1>()).iterator->value.append(weakRef);
     }
 }
 
@@ -1155,7 +1161,7 @@ NEVER_INLINE void Runtime::didCallFinalizerBehindWhichWeakRefsDie(JSCell* object
 {
     Locker locker { m_finalizationLock };
     for (PyWeakRef* weakRef : m_weakRefsThatDieBehindFinalizer.take(object))
-        weakRef->setReferent(nullptr);
+        weakRef->dieBehindFinalizerOfReferent();
 }
 
 template<typename Visitor>
