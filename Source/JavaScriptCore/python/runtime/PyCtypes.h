@@ -598,7 +598,7 @@ struct Place {
 //
 // An entry: the PyByteStorage or the bytes object that the address lies in; where the memory is seen through a view, an instance that sees it, which knows where in the view it is and where the view was.
 // For the address of the code of a callback: its PyCThunk. For a py_object: the object. These say nothing about how far anything goes: they are there to be kept alive, and go along when the eight bytes are copied.
-// A place: eight bytes at a multiple of eight. Others (in a packed structure) have no entry.
+// A place: any eight bytes.
 //
 // The bytes of a cell that has them in itself, so that they stay where they are for as long as it lives: a PyByteStorage; a bytes object, with the NUL at its end. Of any other cell: none.
 std::span<uint8_t> bytesOfOwner(JSCell*);

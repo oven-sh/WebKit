@@ -274,6 +274,7 @@ PyCTable* PyCTable::tryCreate(VM& vm, Structure* structure)
 
 // The record of a cell is the entry for its first place, if that is the only one: so it is with a pointer. Else it is a table, with the entry for the place at 8 * i as its property i. Indexed properties are
 // dense or sparse by the rule that JSC has for them (ArrayConventions.h), so what a table takes goes by the entries and not by the memory.
+// A place that is not at a multiple of eight (in a packed structure) is rare. Its entry lies in the upper half of the indices, under its offset, where indexed properties are always sparse.
 static ALWAYS_INLINE PyCTable* tableIn(JSValue record)
 {
     return record && record.isCell() ? dynamicDowncast<PyCTable>(record.asCell()) : nullptr;
@@ -319,18 +320,22 @@ std::span<uint8_t> bytesOfOwner(JSCell* cell)
 
 static constexpr int64_t sizeOfPlace = sizeof(void*);
 
-// False: there is none there, or it is too far out for the table.
+static constexpr unsigned firstIndexOfOddPlaces = 1u << 31;
+
+// False: it is too far out for the table.
 static ALWAYS_INLINE bool indexOfPlace(int64_t offset, unsigned& index)
 {
-    if (offset < 0 || offset % sizeOfPlace || offset / sizeOfPlace > MAX_ARRAY_INDEX)
+    bool isOdd = offset % sizeOfPlace;
+    int64_t number = isOdd ? offset : offset / sizeOfPlace;
+    if (number < 0 || number >= firstIndexOfOddPlaces - 1)
         return false;
-    index = static_cast<unsigned>(offset / sizeOfPlace);
+    index = static_cast<unsigned>(number) + (isOdd ? firstIndexOfOddPlaces : 0);
     return true;
 }
 
 static ALWAYS_INLINE int64_t placeOfIndex(unsigned index)
 {
-    return static_cast<int64_t>(index) * sizeOfPlace;
+    return index < firstIndexOfOddPlaces ? static_cast<int64_t>(index) * sizeOfPlace : static_cast<int64_t>(index - firstIndexOfOddPlaces);
 }
 
 JSValue entryAt(JSGlobalObject* globalObject, const Home& home)
@@ -401,7 +406,7 @@ static void collectEntries(JSValue record, int64_t offset, int64_t size, Vector<
         add(0, record);
         return;
     }
-    // Where indexed properties are dense.
+    // Where indexed properties are dense, which they are in the lower half only.
     auto addDense = [&](unsigned length, auto&& at) {
         int64_t end = std::min<int64_t>(length, last / sizeOfPlace + 1);
         for (int64_t i = std::max<int64_t>(offset, 0) / sizeOfPlace; i < end; ++i)
