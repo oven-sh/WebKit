@@ -2558,9 +2558,9 @@ JSValue callForeignFunction(JSGlobalObject* globalObject, JSValue self, const Ca
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto callData = JSC::getCallData(self);
+    auto callData = self ? JSC::getCallData(self) : CallData();
     if (callData.type == CallData::Type::None) [[unlikely]]
-        return raiseTypeError(globalObject, scope, '\'', typeName(globalObject, self), "' object is not callable"_s);
+        return raiseTypeError(globalObject, scope, '\'', typeName(globalObject, self ? self : jsUndefined()), "' object is not callable"_s);
     MarkedArgumentBuffer list;
     argumentsForJS(globalObject, args, list);
     RETURN_IF_EXCEPTION(scope, { });

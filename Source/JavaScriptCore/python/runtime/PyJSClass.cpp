@@ -453,6 +453,11 @@ bool PyPrototypeView::getOwnPropertySlot(JSObject* object, JSGlobalObject*, Prop
         slot.setValue(object, hidden, jsUndefined());
         return true;
     }
+    // `set x(v) {}` makes a property without a getter: it is there, and of an instance it reads as undefined to JS.
+    if (auto* property = instance ? PyProperty::tryFrom(found) : nullptr; property && property->type() == rt.propertyType() && isNone(property->getter.get())) [[unlikely]] {
+        slot.setValue(object, hidden, jsUndefined());
+        return true;
+    }
     JSValue bound = bindDescriptor(globalObject, found, instance, start);
     RETURN_IF_EXCEPTION(scope, false);
     slot.setValue(object, hidden, valueForJS(bound));
