@@ -775,6 +775,14 @@ static JSValue dataHash(JSGlobalObject* globalObject, JSValue)
     return raiseTypeError(globalObject, scope, "unhashable type"_s);
 }
 
+static void releaseExportOfView(JSGlobalObject*, JSValue object)
+{
+    auto* view = uncheckedDowncast<PyMemoryView>(PyCData::from(object)->owner());
+    ASSERT(view->exports && view->managedBuffer());
+    --view->exports;
+    --view->managedBuffer()->bufferCount;
+}
+
 JSValue dataBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
 {
     VM& vm = getVM(globalObject);
@@ -822,6 +830,10 @@ JSValue dataBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
         buffer.owner = view->managedBuffer()->owner();
         buffer.offset = view->offset + data->offsetInView();
         buffer.requiredSize = view->managedBuffer()->requiredSize;
+        // It is a buffer taken from the view: as long as it is in use the view cannot be released, so whoever exported the memory goes on counting it as exported.
+        ++view->exports;
+        ++view->managedBuffer()->bufferCount;
+        buffer.release = releaseExportOfView;
     } else if (data->owner()) {
         auto* storage = uncheckedDowncast<PyByteStorage>(data->owner());
         buffer.owner = storage;
@@ -839,7 +851,12 @@ JSValue dataBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
         buffer.offset = 0;
         buffer.requiredSize = data->size;
     }
-    RELEASE_AND_RETURN(scope, exportBuffer(globalObject, flags, buffer));
+    scope.release();
+    JSValue result = exportBuffer(globalObject, flags, buffer);
+    // It raised before it had taken the buffer over.
+    if (auto release = std::exchange(buffer.release, nullptr)) [[unlikely]]
+        release(globalObject, self);
+    return result;
 }
 
 static JSValue dataFromOutParam(JSGlobalObject*, JSValue self) { return self; }

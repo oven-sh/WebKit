@@ -1584,7 +1584,7 @@ none is abstract. The layout of a structure is worked out in Python, by `ctypes.
   bytes in itself, and programs pass a `c_wchar` or a full `(c_char * 3)` where C looks for the end of a string.
 - A memoryview (`from_buffer`). The address is looked up through the view at each use, so it is noticed when the view has been
   released, memory of WebAssembly has grown, or an audit hook has had JS take the memory away before `from_buffer()` was through. While the program can reach the instance, or anything made of it, which keeps it alive,
-  the view counts as an export: a bytearray cannot be resized (DEFERRED.md says when it can after all). Memory of JS is pinned
+  the view counts as an export: a bytearray cannot be resized (DEFERRED.md says when it can after all). A buffer of the instance (`memoryview(c)`, `T.from_buffer(c)`, a call that fills `c`) is a buffer taken from that view (`dataBuffer()`): while it is in use the view cannot be released, by hand either. Memory of JS is pinned
   (`PyMemoryView::pinMemoryOfJS()`), because pointers and the arguments of foreign functions are addresses: until a collection finds
   that nothing at all refers to the view, released or not (`Runtime::pinningViews`, gone through when marking is over). That is no
   finalizer of Python's: it has no order, and what code written in C++ holds or a `__del__()` brings back to life is still pinned.
