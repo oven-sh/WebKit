@@ -766,6 +766,9 @@ namespace JSC {
         
         RegisterID* emitLoadArrowFunctionLexicalEnvironment(const Identifier&);
         RegisterID* ensureThis();
+        // In code with derivedContextHasInnerSuperCall, other code of the derived constructor can call super() while this code runs.
+        // ensureThis() reads |this| from the scope each time there: through the held scope, or as the body of an async arrow function does.
+        bool readsThisAtEachUse() const { return m_lexicalEnvironmentOfThisRegister || (m_codeBlock->derivedContextHasInnerSuperCall() && parseMode() == SourceParseMode::AsyncArrowFunctionBodyMode); }
         void emitLoadThisFromArrowFunctionLexicalEnvironment();
         RegisterID* emitLoadNewTargetFromArrowFunctionLexicalEnvironment();
 
@@ -1300,6 +1303,7 @@ namespace JSC {
         UnlinkedFunctionExecutable* makeFunction(FunctionMetadataNode* metadata)
         {
             DerivedContextType newDerivedContextType = DerivedContextType::None;
+            bool derivedContextHasInnerSuperCall = false;
             EvalContextType newEvalContextType = EvalContextType::FunctionEvalContext;
 
             NeedsClassFieldInitializer needsClassFieldInitializer = metadata->isConstructorAndNeedsClassFieldInitializer() ? NeedsClassFieldInitializer::Yes : NeedsClassFieldInitializer::No;
@@ -1307,6 +1311,11 @@ namespace JSC {
             if (SourceParseModeSet(SourceParseMode::ArrowFunctionMode, SourceParseMode::AsyncArrowFunctionMode, SourceParseMode::AsyncArrowFunctionBodyMode).contains(metadata->parseMode())) {
                 if (constructorKind() == ConstructorKind::Extends || isDerivedConstructorContext()) {
                     newDerivedContextType = DerivedContextType::DerivedConstructorContext;
+                    // The constructor knows each super() and eval in its arrow functions. Their code, and eval code, hand its answer on.
+                    if (constructorKind() == ConstructorKind::Extends)
+                        derivedContextHasInnerSuperCall = isSuperCallUsedInInnerArrowFunction();
+                    else
+                        derivedContextHasInnerSuperCall = m_codeBlock->derivedContextHasInnerSuperCall();
                     needsClassFieldInitializer = m_codeBlock->needsClassFieldInitializer();
                     privateBrandRequirement = m_codeBlock->privateBrandRequirement();
                 }
@@ -1329,7 +1338,7 @@ namespace JSC {
             if (isGeneratorOrAsyncFunctionWrapperParseMode(m_codeBlock->parseMode()) && isGeneratorOrAsyncFunctionBodyParseMode(parseMode))
                 generatorOrAsyncWrapperFunctionParameterNames = getParameterNames();
 
-            auto* executable = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::None, scriptMode(), WTF::move(optionalVariablesUnderTDZ), WTF::move(generatorOrAsyncWrapperFunctionParameterNames), WTF::move(parentPrivateNameEnvironment), newDerivedContextType, newEvalContextType, needsClassFieldInitializer, privateBrandRequirement);
+            auto* executable = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::None, scriptMode(), WTF::move(optionalVariablesUnderTDZ), WTF::move(generatorOrAsyncWrapperFunctionParameterNames), WTF::move(parentPrivateNameEnvironment), newDerivedContextType, newEvalContextType, needsClassFieldInitializer, privateBrandRequirement, false, derivedContextHasInnerSuperCall);
             if (shouldRunBytecodeOptimizer()) [[unlikely]]
                 executable->setParentDeclaredNames(currentDeclaredNames());
             return executable;
@@ -1354,6 +1363,7 @@ namespace JSC {
         void initializeDefaultParameterValuesAndSetupFunctionScopeStack(FunctionParameters&, bool isSimpleParameterList, FunctionNode*, SymbolTable*, int symbolTableConstantIndex, NOESCAPE const ScopedLambda<bool(UniquedStringImpl*)>& captures, bool shouldCreateArgumentsVariableInParameterScope);
         void initializeArrowFunctionContextScopeIfNeeded(SymbolTable* functionSymbolTable = nullptr, bool canReuseLexicalEnvironment = false);
         bool LEGACY_NODELETE needsDerivedConstructorInArrowFunctionLexicalEnvironment();
+        void emitLoadLexicalEnvironmentOfThis();
 
         enum class TDZNecessityLevel {
             NotNeeded,
@@ -1477,6 +1487,8 @@ namespace JSC {
         RegisterID* m_isDerivedConstuctor { nullptr };
         UncheckedKeyHashMap<LinkTimeConstant, RegisterID*, WTF::IntHash<LinkTimeConstant>, WTF::StrongEnumHashTraits<LinkTimeConstant>> m_linkTimeConstantRegisters;
         RegisterID* m_arrowFunctionContextLexicalEnvironmentRegister { nullptr };
+        // In an arrow function or eval code with derivedContextHasInnerSuperCall that uses |this|: the scope that has |this|.
+        RegisterID* m_lexicalEnvironmentOfThisRegister { nullptr };
         RegisterID* m_promiseRegister { nullptr };
 
         FinallyContext* m_currentFinallyContext { nullptr };

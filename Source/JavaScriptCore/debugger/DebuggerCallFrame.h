@@ -78,6 +78,8 @@ public:
 private:
     DebuggerCallFrame(VM&, CallFrame*, const ShadowChicken::Frame&);
 
+    JSScope* jsScope(VM&) const;
+
     CallFrame* m_validMachineFrame;
     RefPtr<DebuggerCallFrame> m_caller;
     TextPosition m_position;

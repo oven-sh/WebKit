@@ -62,6 +62,7 @@ UnlinkedCodeBlock::UnlinkedCodeBlock(VM& vm, Structure* structure, CodeType code
     , m_hasTailCalls(false)
     , m_constructorKind(static_cast<unsigned>(info.constructorKind()))
     , m_derivedContextType(static_cast<unsigned>(info.derivedContextType()))
+    , m_derivedContextHasInnerSuperCall(info.derivedContextHasInnerSuperCall())
     , m_evalContextType(static_cast<unsigned>(info.evalContextType()))
     , m_codeType(static_cast<unsigned>(codeType))
     , m_age(0)

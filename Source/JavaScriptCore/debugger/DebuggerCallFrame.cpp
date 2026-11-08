@@ -30,12 +30,14 @@
 #include "DebuggerCallFrame.h"
 
 #include "AOTRemovableFeature.h"
+#include "BuiltinNames.h"
 #include "CodeBlock.h"
 #include "DebuggerEvalEnabler.h"
 #include "DebuggerScope.h"
 #include "DirectEvalExecutable.h"
 #include "Interpreter.h"
 #include "JSFunction.h"
+#include "JSLexicalEnvironment.h"
 #include "JSWithScope.h"
 #include "ShadowChickenInlines.h"
 #include "StackVisitor.h"
@@ -150,21 +152,21 @@ DebuggerScope* DebuggerCallFrame::scope(VM& vm)
     if (!isValid())
         return nullptr;
 
-    if (!m_scope) {
-        JSScope* scope;
-        CodeBlock* codeBlock = m_validMachineFrame->isNativeCalleeFrame() ? nullptr : m_validMachineFrame->codeBlock();
-        if (isTailDeleted())
-            scope = m_shadowChickenFrame.scope;
-        else if (codeBlock && codeBlock->scopeRegister().isValid())
-            scope = m_validMachineFrame->scope(codeBlock->scopeRegister().offset());
-        else if (JSCallee* callee = dynamicDowncast<JSCallee>(m_validMachineFrame->jsCallee()))
-            scope = callee->scope();
-        else
-            scope = m_validMachineFrame->lexicalGlobalObject(vm)->globalLexicalEnvironment();
-
-        m_scope.set(vm, DebuggerScope::create(vm, scope));
-    }
+    if (!m_scope)
+        m_scope.set(vm, DebuggerScope::create(vm, jsScope(vm)));
     return m_scope.get();
+}
+
+JSScope* DebuggerCallFrame::jsScope(VM& vm) const
+{
+    CodeBlock* codeBlock = m_validMachineFrame->isNativeCalleeFrame() ? nullptr : m_validMachineFrame->codeBlock();
+    if (isTailDeleted())
+        return m_shadowChickenFrame.scope;
+    if (codeBlock && codeBlock->scopeRegister().isValid())
+        return m_validMachineFrame->scope(codeBlock->scopeRegister().offset());
+    if (JSCallee* callee = dynamicDowncast<JSCallee>(m_validMachineFrame->jsCallee()))
+        return callee->scope();
+    return m_validMachineFrame->lexicalGlobalObject(vm)->globalLexicalEnvironment();
 }
 
 DebuggerCallFrame::Type DebuggerCallFrame::type(VM&) const
@@ -196,6 +198,35 @@ JSValue DebuggerCallFrame::thisValue(VM& vm) const
     } else {
         thisValue = m_validMachineFrame->thisValue();
         codeBlock = m_validMachineFrame->isNativeCalleeFrame() ? nullptr : m_validMachineFrame->codeBlock();
+    }
+
+    // An arrow function or eval code with derivedContextHasInnerSuperCall reads |this| of its derived constructor from a scope at each
+    // use (BytecodeGenerator::ensureThis), so its frame has a copy only after a read. The frame of the constructor has no copy between
+    // a super() in such code and the next use of |this| in the constructor. The nearest scope that has |this| has the value.
+    if (codeBlock) {
+        UnlinkedCodeBlock* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
+        bool readsScope = unlinkedCodeBlock->derivedContextHasInnerSuperCall();
+        // For the constructor that is a scope of its own activation: the scope of its callee is the first one that is not.
+        JSScope* end = nullptr;
+        if (!readsScope && !thisValue && !isTailDeleted() && unlinkedCodeBlock->isConstructor() && unlinkedCodeBlock->constructorKind() == ConstructorKind::Extends) {
+            if (JSCallee* callee = dynamicDowncast<JSCallee>(m_validMachineFrame->jsCallee())) {
+                readsScope = true;
+                end = callee->scope();
+            }
+        }
+        if (readsScope) {
+            const Identifier& thisName = vm.propertyNames->builtinNames().thisPrivateName();
+            for (JSScope* scope = jsScope(vm); scope && scope != end; scope = scope->next()) {
+                auto* environment = dynamicDowncast<JSLexicalEnvironment>(scope);
+                if (!environment)
+                    continue;
+                PropertySlot slot(environment, PropertySlot::InternalMethodType::VMInquiry, &vm);
+                if (symbolTableGet(environment, thisName, slot)) {
+                    thisValue = slot.getValue(codeBlock->globalObject(), thisName);
+                    break;
+                }
+            }
+        }
     }
 
     if (!thisValue)
@@ -253,7 +284,7 @@ JSValue DebuggerCallFrame::evaluateWithScopeExtension(VM& vm, const String& scri
     PrivateNameEnvironment privateNameEnvironment;
     JSScope::collectClosureVariablesUnderTDZ(scope(vm)->jsScope(), variablesUnderTDZ, privateNameEnvironment);
 
-    auto* eval = DirectEvalExecutable::create(globalObject, makeSource(script, callFrame->callerSourceOrigin(vm), SourceTaintedOrigin::Untainted), codeBlock->ownerExecutable()->lexicallyScopedFeatures(), codeBlock->unlinkedCodeBlock()->derivedContextType(), codeBlock->unlinkedCodeBlock()->needsClassFieldInitializer(), codeBlock->unlinkedCodeBlock()->privateBrandRequirement(), codeBlock->unlinkedCodeBlock()->isArrowFunction(), codeBlock->ownerExecutable()->isInsideOrdinaryFunction(), evalContextType, &variablesUnderTDZ, &privateNameEnvironment);
+    auto* eval = DirectEvalExecutable::create(globalObject, makeSource(script, callFrame->callerSourceOrigin(vm), SourceTaintedOrigin::Untainted), codeBlock->ownerExecutable()->lexicallyScopedFeatures(), codeBlock->unlinkedCodeBlock()->derivedContextType(), codeBlock->unlinkedCodeBlock()->derivedContextHasInnerSuperCall(), codeBlock->unlinkedCodeBlock()->needsClassFieldInitializer(), codeBlock->unlinkedCodeBlock()->privateBrandRequirement(), codeBlock->unlinkedCodeBlock()->isArrowFunction(), codeBlock->ownerExecutable()->isInsideOrdinaryFunction(), evalContextType, &variablesUnderTDZ, &privateNameEnvironment);
     if (catchScope.exception()) [[unlikely]] {
         exception = catchScope.exception();
         catchScope.clearException();
