@@ -460,7 +460,8 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 #endif
 #if USE(BUN_JSC_ADDITIONS)
     // The load keeps the async context of its caller. A synchronous load keeps none: what it runs inside the call of
-    // require() runs in the context of the caller.
+    // require() runs in the context of the caller. (Empty for that one, not undefined: see
+    // ModuleRegistryEntry::ensureModulePromise().)
     JSValue asyncContext = flags.contains(ModuleLoadFlag::Synchronous) ? JSValue() : asyncContextForLoad(vm, globalObject);
     auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder, asyncContext);
 #else
@@ -769,20 +770,47 @@ JSValue JSModuleLoader::asyncContextOfLoad(JSCell* payload)
     return uncheckedDowncast<ModuleLoaderPayload>(payload)->asyncContext();
 }
 
-JSValue JSModuleLoader::asyncContextForLoad(VM& vm, JSGlobalObject* globalObject) const
+void ModuleLoaderAsyncContextScope::enterOutsideSynchronousDrain(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
 {
-    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
-    if (asyncContext.isUndefined() || !m_asyncContextOfLoadFilter) [[likely]]
-        return asyncContext;
-    return m_asyncContextOfLoadFilter(globalObject, asyncContext);
+    if (!vm.synchronousModuleQueue())
+        enter(globalObject, asyncContext);
 }
 
-JSValue JSModuleLoader::asyncContextOfModulesThatWait(VM& vm, JSGlobalObject* globalObject) const
+ModuleEvaluationAsyncContextScope::ModuleEvaluationAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
+    : ModuleLoaderAsyncContextScope(vm, globalObject, asyncContext)
+    , m_vm(vm)
+    , m_asyncContextOfLoad(asyncContext)
+    , m_outer(std::exchange(vm.m_moduleEvaluationAsyncContextScope, this))
 {
-    auto* job = vm.m_moduleEvaluationAsyncContextScope;
-    if (!job)
+}
+
+ModuleEvaluationAsyncContextScope::ModuleEvaluationAsyncContextScope(VM& vm, CalledByScriptTag)
+    : ModuleLoaderAsyncContextScope(vm, DoNotEnter)
+    , m_vm(vm)
+    , m_outer(std::exchange(vm.m_moduleEvaluationAsyncContextScope, this))
+    , m_calledByScript(true)
+{
+}
+
+ModuleEvaluationAsyncContextScope::~ModuleEvaluationAsyncContextScope()
+{
+    m_vm.m_moduleEvaluationAsyncContextScope = m_outer;
+}
+
+JSValue JSModuleLoader::asyncContextForLoad(VM& vm, JSGlobalObject* globalObject)
+{
+    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    if (asyncContext.isUndefined() || !vm.asyncContextOfLoadFilter) [[likely]]
+        return asyncContext;
+    return vm.asyncContextOfLoadFilter(globalObject, asyncContext);
+}
+
+JSValue JSModuleLoader::asyncContextOfModulesThatWait(VM& vm, JSGlobalObject* globalObject)
+{
+    auto* evaluation = vm.m_moduleEvaluationAsyncContextScope;
+    if (!evaluation)
         return { };
-    return job->didEnter() ? asyncContextForLoad(vm, globalObject) : job->asyncContextOfLoad();
+    return evaluation->handsOnWhatIsCurrent() ? asyncContextForLoad(vm, globalObject) : evaluation->asyncContextOfLoad();
 }
 #endif
 
