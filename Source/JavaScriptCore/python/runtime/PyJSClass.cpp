@@ -168,13 +168,16 @@ static bool isJSMethod(Runtime& rt, JSValue value)
 }
 
 // `static get x() {}`: the getter is called with the class as `this`. (To assign to Class.x replaces it, as it does any attribute
-// of a class that its metaclass has nothing to say about.)
+// of a class that its metaclass has nothing to say about.) Without a getter, `static set x(v) {}`, it reads as undefined, as in JS.
 enum JSStaticAccessorField : unsigned { JSStaticAccessorGetter, JSStaticAccessorFieldCount };
 
 static JSValue jsStaticAccessorGet(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue owner)
 {
+    JSValue getter = uncheckedDowncast<PyRecord>(self.asCell())->get(JSStaticAccessorGetter);
+    if (!getter)
+        return jsUndefined();
     JSValue cls = owner && !isNone(owner) ? owner : JSValue(typeOf(globalObject, instance));
-    return callForeignFunction(globalObject, uncheckedDowncast<PyRecord>(self.asCell())->get(JSStaticAccessorGetter), CallArgs(), cls);
+    return callForeignFunction(globalObject, getter, CallArgs(), cls);
 }
 
 static constexpr NativeDef jsStaticAccessorMethods[] = {
@@ -545,7 +548,8 @@ static JSValue attributeForProperty(JSGlobalObject* globalObject, const Property
         JSValue setter = descriptor.setterPresent() && isFunctionOfJS(descriptor.setter()) ? descriptor.setter() : JSValue();
         if (isStatic) {
             PyRecord* accessor = PyRecord::create(globalObject, rt.typeFor(jsStaticAccessorTypeDef), JSStaticAccessorFieldCount);
-            accessor->set(vm, JSStaticAccessorGetter, getter ? getter : jsUndefined());
+            if (getter)
+                accessor->set(vm, JSStaticAccessorGetter, getter);
             return accessor;
         }
         RELEASE_AND_RETURN(scope, call(globalObject, rt.propertyType(), getter ? makeJSMethod(globalObject, getter) : jsUndefined(), setter ? makeJSMethod(globalObject, setter) : jsUndefined()));

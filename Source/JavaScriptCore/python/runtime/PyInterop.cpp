@@ -2542,6 +2542,9 @@ JSValue callForeignFunction(JSGlobalObject* globalObject, JSValue self, const Ca
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto callData = JSC::getCallData(self);
+    if (callData.type == CallData::Type::None) [[unlikely]]
+        return raiseTypeError(globalObject, scope, '\'', typeName(globalObject, self), "' object is not callable"_s);
     MarkedArgumentBuffer list;
     argumentsForJS(globalObject, args, list);
     RETURN_IF_EXCEPTION(scope, { });
@@ -2552,7 +2555,7 @@ JSValue callForeignFunction(JSGlobalObject* globalObject, JSValue self, const Ca
     // What these return when something is thrown is not the empty value.
     JSValue result = isClassOfJS(self.asCell())
         ? JSValue(JSC::construct(globalObject, self, list, "not a constructor"_s))
-        : JSC::call(globalObject, self, JSC::getCallData(self), thisValue ? valueForJS(thisValue) : jsUndefined(), list);
+        : JSC::call(globalObject, self, callData, thisValue ? valueForJS(thisValue) : jsUndefined(), list);
     RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
