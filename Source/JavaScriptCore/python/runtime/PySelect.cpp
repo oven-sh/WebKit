@@ -8,9 +8,11 @@
 
 #if !OS(WINDOWS)
 
+#include "InternalFieldTuple.h"
 #include "JSCInlines.h"
 #include "PyHooks.h"
 #include "PyPosix.h"
+#include "VMEntryScope.h"
 #include <limits.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -152,9 +154,43 @@ static void waitClearSets(WaitRequest& request)
     }
 }
 
+// What AsyncLocalStorage promises of a callback is that it runs in the context in which what it belongs to was made. The host writes that down only where there is one: a callback that was made in
+// none is called as it is, and runs with whatever is current, which at the top of the loop is nothing. Here the loop turns with script on the stack. So for as long as it does nothing is current,
+// or the handler of one request would begin with the store of another, which waits. (AsyncContextSwapScope, but for one thing: the first AsyncLocalStorage of the program may be made meanwhile.)
+// In the realm in which the host has called whatever waits, and in that of the interpreter. (The two may be one: what was found first is put back last.)
+class NoAsyncContextScope {
+    WTF_MAKE_NONCOPYABLE(NoAsyncContextScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    explicit NoAsyncContextScope(JSGlobalObject* globalObject)
+        : m_vm(getVM(globalObject))
+        , m_current { (m_vm.entryScope ? m_vm.entryScope->globalObject() : globalObject)->m_asyncContextData.get(), globalObject->m_asyncContextData.get() }
+    {
+        if (!m_vm.isAsyncContextTrackingEnabled())
+            return;
+        for (size_t i = 0; i < std::size(m_current); ++i) {
+            m_previous[i] = m_current[i]->getInternalField(0);
+            m_current[i]->putInternalField(m_vm, 0, jsUndefined());
+        }
+    }
+    ~NoAsyncContextScope()
+    {
+        if (!m_vm.isAsyncContextTrackingEnabled())
+            return;
+        for (size_t i = std::size(m_current); i--;)
+            m_current[i]->putInternalField(m_vm, 0, m_previous[i]);
+    }
+
+private:
+    VM& m_vm;
+    InternalFieldTuple* m_current[2];
+    JSValue m_previous[2] { jsUndefined(), jsUndefined() };
+};
+
 static NEVER_INLINE int waitInHost(JSGlobalObject* globalObject, WaitFunction function, WaitRequest& request)
 {
     Runtime::EventLoopPositionScope position(runtime(globalObject), true);
+    NoAsyncContextScope nothingIsCurrent(globalObject);
     // Not for a mere look, which sleeps nowhere.
     std::optional<JSLock::EmbedderThreadWaitsInEventLoop> waits;
     if (request.timeout) {
