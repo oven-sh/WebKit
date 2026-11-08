@@ -57,10 +57,13 @@ static LinkType typeOfBuiltinForLinkReach(const Program& program, BuiltinID cano
         type.builtin = canonical;
         return type;
     }
+    case BuiltinKind::NativeBinding:
+        if (BuiltinID answered = program.builtins().builtinAnsweredBy(canonical))
+            return typeOfBuiltinForLinkReach(program, answered);
+        return LinkType::anything();
     case BuiltinKind::Accessor:
     case BuiltinKind::DataProperty:
     case BuiltinKind::Constant:
-    case BuiltinKind::NativeBinding:
         return LinkType::anything();
     }
     RELEASE_ASSERT_NOT_REACHED();

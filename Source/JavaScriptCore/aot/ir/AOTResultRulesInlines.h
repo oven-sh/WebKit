@@ -602,6 +602,19 @@ TypeID ResultRules::declared(const Operation& operation, BuiltinOverloadID overl
     return typeOfOverloadCallInResultRules(context, overload, form, operands);
 }
 
+// A native binding is what the host answers for it: the one object its row names, or else what the row's Get overload says.
+template<typename Operation>
+TypeID ResultRules::declared(const Operation& operation, BuiltinID binding)
+{
+    UNUSED_PARAM(operation);
+    const BuiltinTable& builtins = context.program.builtins();
+    BuiltinID canonical = builtins.canonicalID(binding);
+    if (BuiltinID answered = builtins.builtinAnsweredBy(canonical))
+        return typeOfBuiltinObject(context, answered);
+    BuiltinOverloadID answer = builtins.answerOfBinding(canonical);
+    return provenOrUnknown(answer ? tryTypeWrittenForOverloadInResultRules(context, answer) : TypeID(), UnknownSeed::UndescribedNativeResult);
+}
+
 template<typename Operation>
 TypeID ResultRules::declaredContents(const Operation& operation, uint32_t operandIndex, std::optional<ContentsSlot> slot)
 {

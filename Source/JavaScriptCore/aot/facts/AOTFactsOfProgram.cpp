@@ -55,25 +55,10 @@ static bool isObjectOfClassInProgramFacts(const BuiltinTable& builtins, BuiltinI
     return builtins.isObjectOfClass(canonical);
 }
 
+// The native binding stands for the object it answers, where its row names one.
 static BuiltinID objectAnsweredByBindingInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
 {
-    if (builtins.at(canonical).kind != BuiltinKind::NativeBinding)
-        return canonical;
-    BuiltinID answered;
-    for (const BuiltinOverload& overload : builtins.overloadsOf(canonical)) {
-        if (overload.mode != BuiltinCallMode::Get)
-            continue;
-        if (overload.isUndeclared() || overload.resultIsDeclaredOnly() || !overload.result.type)
-            return canonical;
-        const BuiltinType& written = builtins.at(overload.result.type);
-        if (written.isAnything() || written.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction, BuiltinTypeFlag::HasPlainData }) || !written.primitives.isEmpty() || !written.stringLiterals.empty())
-            return canonical;
-        for (const BuiltinTypePart& part : written.parts) {
-            if (part.kind != BuiltinTypePartKind::Builtin || (answered && answered != builtins.canonicalID(part.builtin)))
-                return canonical;
-            answered = builtins.canonicalID(part.builtin);
-        }
-    }
+    BuiltinID answered = builtins.builtinAnsweredBy(canonical);
     return answered ? answered : canonical;
 }
 

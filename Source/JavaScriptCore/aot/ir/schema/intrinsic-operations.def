@@ -24,7 +24,7 @@ operation StepSetIterator (iterator: Object/inspects+readsContents+writesContent
 
 family RuntimeIntrinsic AsRead..Placed ; isIntrinsic = true
 operation RequireBuiltinModule (runtimeModule: RuntimeModule) -> unknown ; unknownCode ; runtime = RequireBuiltinModule ; flow = Copies ; flowRule = Module ; form = Runtime
-operation NativeBinding (builtin: Builtin) -> unknown ; Allocates UsesRuntime throws ; runtime = NativeBinding ; flow = Unsound ; flowRule = Module ; form = Runtime
+operation NativeBinding (builtin: Builtin) -> declared(builtin) ; Allocates UsesRuntime throws ; runtime = NativeBinding ; flow = Unsound ; flowRule = Module ; form = Runtime
 operation LinkTimeConstant (constant: LinkTimeConstant) -> unknown ; CreatesConstant ; runtime = LinkTimeConstant ; flow = Unsound ; form = Open
 operation HasJSType (value: Any/inspects, first: CheckedJSType, last: CheckedJSType) -> natural(boolean) ; none ; branches = May ; flow = Checks ; hasOwnFoldingRule = true ; form = Open
 operation FindsDeclaredMember (object: Any/inspects, key: PropertyKey, declaredBy?: Any/inspects, with AccessStamp) -> natural(boolean) ; reads(MemberGuards) ; access = Has ; receiver = object ; branches = May ; flow = TableProves ; form = Open

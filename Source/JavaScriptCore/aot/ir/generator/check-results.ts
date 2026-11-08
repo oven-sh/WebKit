@@ -231,6 +231,7 @@ function declaredArgumentOf(declared: DeclaredResult): string | null {
     case "Module":
     case "Type":
     case "Overload":
+    case "Builtin":
     case "Field":
       return declared.field.name;
     case "Key":

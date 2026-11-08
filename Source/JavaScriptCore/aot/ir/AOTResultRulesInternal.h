@@ -70,6 +70,7 @@ struct ResultRules {
         return opcodeOf(operation) == Opcode::Unspecified ? context.types.withPrimitives(type, Primitive::Unspecified) : type;
     }
     template<typename Operation> TypeID declared(const Operation&, BuiltinOverloadID, uint32_t resultIndex);
+    template<typename Operation> TypeID declared(const Operation&, BuiltinID binding);
     template<typename Operation> TypeID declaredContents(const Operation&, uint32_t operandIndex, std::optional<ContentsSlot>);
     template<typename Operation> TypeID declaredResult(const Operation&, uint32_t operandIndex, uint32_t) { return operands[operandIndex]; }
     template<typename Operation> TypeID declaredParameter(const Operation&);

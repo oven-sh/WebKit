@@ -290,6 +290,8 @@ function resolveDeclaredPayload(
   const tag = declaredIdKinds.find(candidate => candidate === idKindName);
   if (tag !== undefined) return { tag, field };
   if (kind.tag === "External" && kind.external.name === "BuiltinOverload") return { tag: "Overload", field };
+  // What the host answers for the binding, as the row of the built-in states it.
+  if (kind.tag === "External" && kind.external.name === "Builtin") return { tag: "Builtin", field };
   if (kind.tag === "Scalar" && kind.scalar === "Field") {
     const layouts = payloadOf(entry).filter(candidate => isIdOf(candidate.kind, "Layout"));
     if (layouts.length === 1) return { tag: "Field", layout: layouts[0], field };

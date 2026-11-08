@@ -122,6 +122,7 @@ function declaredCall(declared: DeclaredResult, subject: string): string {
     case "Layout":
     case "Module":
     case "Type":
+    case "Builtin":
       return `rules.declared(${subject}, ${payloadOf(subject, declared.field)})`;
     case "Function":
     case "Overload":

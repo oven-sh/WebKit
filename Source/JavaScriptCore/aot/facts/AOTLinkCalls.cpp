@@ -2549,6 +2549,14 @@ bool CallInLinkCalls::rowsMayBeTakenAtTheirWord(BuiltinID builtin)
         m_state.builtinsWhoseRowsAreTakenAtTheirWord.set(builtin.index(), answer);
     });
 
+    // A native binding stands for the function it answers.
+    if (m_builtins.at(builtin).kind == BuiltinKind::NativeBinding) {
+        BuiltinID answered = m_builtins.builtinAnsweredBy(builtin);
+        if (!answered)
+            return false;
+        answer = rowsMayBeTakenAtTheirWord(answered) ? yes : no;
+        return answer == yes;
+    }
     switch (m_builtins.at(builtin).kind) {
     case BuiltinKind::Constructor:
     case BuiltinKind::Function:

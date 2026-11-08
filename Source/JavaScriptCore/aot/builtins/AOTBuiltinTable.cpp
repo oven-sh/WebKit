@@ -473,6 +473,35 @@ bool BuiltinTable::isObjectOfClass(BuiltinID canonical) const
     return entry.instanceClass && (entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Prototype);
 }
 
+BuiltinOverloadID BuiltinTable::answerOfBinding(BuiltinID canonical) const
+{
+    if (at(canonical).kind != BuiltinKind::NativeBinding)
+        return { };
+    BuiltinOverloadID answer;
+    for (BuiltinOverloadID id : overloadIDsOf(canonical)) {
+        const BuiltinOverload& overload = at(id);
+        if (overload.mode != BuiltinCallMode::Get)
+            continue;
+        if (answer || overload.isUndeclared() || overload.resultIsDeclaredOnly() || !overload.result.type)
+            return { };
+        answer = id;
+    }
+    return answer;
+}
+
+BuiltinID BuiltinTable::builtinAnsweredBy(BuiltinID canonical) const
+{
+    BuiltinOverloadID answer = answerOfBinding(canonical);
+    if (!answer)
+        return { };
+    const BuiltinType& written = at(at(answer).result.type);
+    if (written.isAnything() || written.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction, BuiltinTypeFlag::HasPlainData }) || !written.primitives.isEmpty() || !written.stringLiterals.empty())
+        return { };
+    if (written.parts.size() != 1 || written.parts[0].kind != BuiltinTypePartKind::Builtin)
+        return { };
+    return canonicalID(written.parts[0].builtin);
+}
+
 bool BuiltinTable::onlyEntriesInheritFrom(BuiltinID canonicalPrototype) const
 {
     const Builtin& prototype = at(canonicalPrototype);

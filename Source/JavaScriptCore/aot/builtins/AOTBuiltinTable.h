@@ -983,6 +983,10 @@ public:
     bool isSameOrSubclassOf(BuiltinClassID, BuiltinClassID ancestor) const;
     bool onlyEntriesInheritFrom(BuiltinID canonicalPrototype) const;
     bool isObjectOfClass(BuiltinID canonical) const;
+    // What the host answers for a native binding (`$bindgen`), as the row's one Get overload states it: the overload, or none where the row states nothing.
+    BuiltinOverloadID answerOfBinding(BuiltinID canonical) const;
+    // The one built-in that the host answers for a native binding, canonical. None where the row answers anything else: a primitive, an instance, several, nothing.
+    BuiltinID builtinAnsweredBy(BuiltinID canonical) const;
     TypedArrayType typedArrayTypeOf(BuiltinClassID) const;
     BuiltinClassID typedArrayClassOf(BuiltinClassID) const;
     BuiltinSlotID findSlot(BuiltinClassID, BuiltinName) const;

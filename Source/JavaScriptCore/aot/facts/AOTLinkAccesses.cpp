@@ -2271,6 +2271,8 @@ LinkType AccessInLinkAccesses::typeHeldAtLocationThatRealmHas(BuiltinID member)
             return primitivesForLinkAccesses(Primitive::String);
         return LinkType::anything();
     case BuiltinKind::NativeBinding:
+        if (BuiltinID answered = m_table.builtinAnsweredBy(canonical))
+            return typeHeldAtLocationThatRealmHas(answered);
         return LinkType::anything();
     }
     RELEASE_ASSERT_NOT_REACHED();

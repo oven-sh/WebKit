@@ -11,6 +11,7 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTypes.h"
 #include "AOTDiagnostics.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTFoldingOfConstants.h"
@@ -1065,6 +1066,7 @@ private:
     bool prototypeMaySelectOtherObject(const BodyValue&, LayoutID) const;
     void addAllocation(const BodyValue&, LayoutID);
     void addDeclared(const BodyValue&);
+    void addBindingAnswer(BuiltinID binding);
     LayoutID layoutOfNamespaceGivenBy(const BodyValue&) const;
     void addContents(const BodyValue&, uint32_t operandIndex, std::optional<ContentsSlot>);
     void addResultAt(const BodyValue&);
@@ -1493,6 +1495,7 @@ struct ResultRulesOfScan {
     void allocation(const BodyValue& value, LayoutID layout) { scan.addAllocation(value, layout); }
     void allocation(const BodyValue& value, BuiltinLayoutID layout) { scan.addAllocation(value, scan.m_program.layoutOf(layout)); }
     void allocation(const BodyValue& value, BuiltinClassID builtinClass, auto&&...) { scan.addNode(scan.classInstanceMadeBy(value, builtinClass)); }
+    void declared(const BodyValue&, BuiltinID binding) { scan.addBindingAnswer(binding); }
     void declared(const BodyValue& value, auto&&...) { scan.addDeclared(value); }
     void declaredContents(const BodyValue& value, uint32_t operandIndex, std::optional<ContentsSlot> slot) { scan.addContents(value, operandIndex, slot); }
     void declaredResult(const BodyValue& value, auto&&...) { scan.addResultAt(value); }
@@ -2436,6 +2439,21 @@ void ScanOfBody::addDeclared(const BodyValue& value)
         return;
     }
     addNode(0);
+}
+
+// A native binding is what the host answers for it: the one object its row names, a primitive the row describes, or a value the summary cannot name.
+void ScanOfBody::addBindingAnswer(BuiltinID binding)
+{
+    const BuiltinTable& builtins = m_program.builtins();
+    BuiltinID canonical = builtins.canonicalID(binding);
+    if (BuiltinID answered = builtins.builtinAnsweredBy(canonical)) {
+        addNode(nodeFor(SummaryNode::Kind::Builtin, answered.index()));
+        return;
+    }
+    BuiltinOverloadID answer = builtins.answerOfBinding(canonical);
+    const BuiltinType* written = answer ? &builtins.at(builtins.at(answer).result.type) : nullptr;
+    bool isPrimitive = written && !written->isAnything() && written->flags.isEmpty() && written->parts.empty() && written->stringLiterals.empty() && !written->primitives.isEmpty();
+    addNode(isPrimitive ? constant(typeOfPrimitives(primitivesOfBuiltinType(*written))) : 0);
 }
 
 LayoutID ScanOfBody::layoutOfNamespaceGivenBy(const BodyValue& value) const
@@ -4703,8 +4721,11 @@ void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCall& call, uint
     BodyValue definition = definitionBehindCasts(callee);
     call.expectedBuiltin = builtinExpectedOf(callee);
     call.expectsCalleeItself = !!call.expectedBuiltin;
-    if (definition && definition.opcode() == Opcode::NativeBinding)
-        call.builtin = definition.as<Opcode::NativeBinding>().builtin();
+    if (definition && definition.opcode() == Opcode::NativeBinding) {
+        BuiltinID binding = m_program.builtins().canonicalID(definition.as<Opcode::NativeBinding>().builtin());
+        BuiltinID answered = m_program.builtins().builtinAnsweredBy(binding);
+        call.builtin = answered ? answered : binding;
+    }
     auto isAsBuilt = [&](auto named) {
         return named.builtin() && (named.isNotReadFromHolder() || namesWhatNobodyReplacesInScan(m_program.builtins(), named.builtin()));
     };
