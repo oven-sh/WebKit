@@ -597,6 +597,7 @@ struct Place {
 // _objects cannot do it alone: it is CPython's to the letter, the program can write to it, instances share it by reference, and its keys are places in an instance, which collide.
 //
 // An entry: the PyByteStorage or the bytes object that the address lies in; where the memory is seen through a view, an instance that sees it, which knows where in the view it is and where the view was.
+// For the address of the code of a callback: its PyCThunk. That says nothing about how far anything goes: it is there to be kept alive, and goes along when the address is copied.
 // A place: eight bytes at a multiple of eight. Others (in a packed structure) have no entry.
 //
 // The bytes of a cell that has them in itself, so that they stay where they are for as long as it lives: a PyByteStorage; a bytes object, with the NUL at its end. Of any other cell: none.

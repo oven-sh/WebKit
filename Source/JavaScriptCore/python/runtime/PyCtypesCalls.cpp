@@ -932,13 +932,19 @@ static bool validateParamFlags(JSGlobalObject* globalObject, PyType* type, JSVal
     return true;
 }
 
-static bool setFunctionPointer(JSGlobalObject* globalObject, PyCData* function, const void* address)
+// `thunk`: whose code that is. Null: it is code of a library.
+static bool setFunctionPointer(JSGlobalObject* globalObject, PyCData* function, const void* address, PyCThunk* thunk = nullptr)
 {
-    auto memory = Place { function }.resolve(globalObject, sizeof(void*));
-    if (!memory.data())
-        return false;
-    memcpy(memory.data(), &address, memory.size());
-    return true;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Home home;
+    {
+        auto memory = Place { function }.resolve(globalObject, sizeof(void*), &home);
+        RETURN_IF_EXCEPTION(scope, false);
+        memcpy(memory.data(), &address, memory.size());
+    }
+    setEntry(globalObject, home, thunk ? JSValue(thunk) : JSValue());
+    return !scope.exception();
 }
 
 static JSValue functionFromLibrary(JSGlobalObject* globalObject, PyType* type, const CallArgs& args)
@@ -1040,7 +1046,7 @@ static JSValue functionNew(JSGlobalObject* globalObject, JSValue typeValue, cons
     auto* function = uncheckedDowncast<PyCFuncPtr>(data);
     function->callable.set(vm, function, callable);
     function->thunk.set(vm, function, thunk);
-    if (failed(scope, setFunctionPointer(globalObject, function, thunk->code)) || failed(scope, keepAlive(globalObject, function, 0, thunk)))
+    if (failed(scope, setFunctionPointer(globalObject, function, thunk->code, thunk)) || failed(scope, keepAlive(globalObject, function, 0, thunk)))
         return { };
     return function;
 }
