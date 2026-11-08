@@ -89,7 +89,7 @@ enum StateField : unsigned {
     // What belongs to a thread: of the thread whose ThreadState::serial is `number`,
     StateRunningLoop, // Empty: none.
     StateCurrentTask,
-    StateOtherThreads, // and of the others that have any: a dict, serial -> (loop, task). Empty: no thread has.
+    StateOtherThreads, // and of the others that have any: the first of a row of records (OfThreadField). Empty: no thread has.
 
 #define ASYNCIO_DECLARE_NAME(id, text) StateName##id,
     FOR_EACH_ASYNCIO_NAME(ASYNCIO_DECLARE_NAME)
@@ -98,6 +98,11 @@ enum StateField : unsigned {
 };
 
 static constexpr TypeDef asyncioStateTypeDef { "_asyncio.state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
+// The loop and the task of a thread that is not running. In `number`: its ThreadState::serial.
+// Records of a type that programs do not get to see, one behind the other, and no dict: a dict is an object like any other, which gc.get_objects() hands out, and this is gone through at a switch of threads, where
+// nothing can be raised and no code of the program may run (the __eq__ of a key).
+static constexpr TypeDef asyncioOfThreadTypeDef { "_asyncio._of_thread"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
+enum OfThreadField : unsigned { OfThreadLoop, OfThreadTask, OfThreadNext, OfThreadFieldCount };
 
 enum FutureField : unsigned {
     FutureModuleState,
@@ -219,49 +224,64 @@ static NEVER_INLINE void switchToThread(JSGlobalObject* globalObject, PyRecord* 
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    // The keys are numbers and the table is small: nothing here fails but for want of memory for a small cell.
+    // Nothing here fails but for want of memory for a small cell.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto keyOf = [](uint64_t serial) {
-        return jsNumber(static_cast<double>(serial));
+    auto setNext = [&](PyRecord* previous, JSValue next) {
+        if (previous)
+            previous->set(vm, OfThreadNext, next);
+        else
+            state->set(vm, StateOtherThreads, next);
     };
+    // function(record): whether it stays in the row. How many do.
+    auto keepIf = [&](const auto& function) {
+        unsigned kept = 0;
+        PyRecord* previous = nullptr;
+        for (JSValue value = state->get(StateOtherThreads); value;) {
+            auto* record = PyRecord::from(value);
+            value = record->get(OfThreadNext);
+            if (function(record)) {
+                previous = record;
+                ++kept;
+            } else
+                setNext(previous, value);
+        }
+        return kept;
+    };
+    PyRecord* mine = nullptr;
+    unsigned others = keepIf([&](PyRecord* record) {
+        if (static_cast<uint64_t>(record->number) != serial)
+            return true;
+        mine = record;
+        return false;
+    });
     JSValue loop = state->get(StateRunningLoop);
     JSValue task = state->get(StateCurrentTask);
-    PyDict* others = state->get(StateOtherThreads) ? PyDict::from(state->get(StateOtherThreads)) : nullptr;
+    JSValue loopOfMine = mine ? mine->get(OfThreadLoop) : JSValue();
+    JSValue taskOfMine = mine ? mine->get(OfThreadTask) : JSValue();
     if (loop || task) {
-        if (!others) {
-            others = PyDict::create(globalObject);
-            state->set(vm, StateOtherThreads, others);
-        }
-        others->set(globalObject, keyOf(state->number), PyTuple::create(globalObject, { orNone(loop), orNone(task) }));
+        // (The record of the thread that comes serves for the one that goes.)
+        PyRecord* record = mine ? mine : PyRecord::create(globalObject, rt.typeFor(asyncioOfThreadTypeDef), OfThreadFieldCount);
         scope.assertNoException();
+        record->number = state->number;
+        record->set(vm, OfThreadLoop, loop);
+        record->set(vm, OfThreadTask, task);
+        record->set(vm, OfThreadNext, state->get(StateOtherThreads));
+        state->set(vm, StateOtherThreads, record);
+        ++others;
     }
-    JSValue mine = others ? others->take(globalObject, keyOf(serial)) : JSValue();
-    scope.assertNoException();
-    auto valueAt = [&](unsigned index) {
-        JSValue value = mine ? PyTuple::from(mine)->at(index) : JSValue();
-        return value && !isNone(value) ? value : JSValue();
-    };
-    state->set(vm, StateRunningLoop, valueAt(0));
-    state->set(vm, StateCurrentTask, valueAt(1));
+    state->set(vm, StateRunningLoop, loopOfMine);
+    state->set(vm, StateCurrentTask, taskOfMine);
     state->number = serial;
 
     // A thread that ended while a loop of its was running left that behind.
-    if (others && others->size() > 4) {
+    if (others > 4) {
         Vector<uint64_t, 16> living;
         rt.threads().forEachThread([&](ThreadState& thread) {
             living.append(thread.serial);
         });
-        MarkedArgumentBuffer dead;
-        JSValue key;
-        JSValue value;
-        for (unsigned position = 0; others->next(position, key, value);) {
-            if (!living.contains(static_cast<uint64_t>(key.asNumber())))
-                dead.append(key);
-        }
-        for (unsigned i = 0; i < dead.size(); ++i) {
-            others->remove(globalObject, dead.at(i));
-            scope.assertNoException();
-        }
+        keepIf([&](PyRecord* record) {
+            return living.contains(static_cast<uint64_t>(record->number));
+        });
     }
 }
 
@@ -2022,13 +2042,9 @@ static JSValue asyncioCurrentTask(JSGlobalObject* globalObject, JSValue loop)
     if (state->get(StateRunningLoop) == loop) [[likely]]
         return orNone(state->get(StateCurrentTask));
     // It may be running in another thread.
-    if (JSValue others = state->get(StateOtherThreads)) {
-        JSValue key;
-        JSValue value;
-        for (unsigned position = 0; PyDict::from(others)->next(position, key, value);) {
-            if (PyTuple::from(value)->at(0) == loop)
-                return PyTuple::from(value)->at(1);
-        }
+    for (JSValue value = state->get(StateOtherThreads); value; value = PyRecord::from(value)->get(OfThreadNext)) {
+        if (PyRecord::from(value)->get(OfThreadLoop) == loop)
+            return orNone(PyRecord::from(value)->get(OfThreadTask));
     }
     return jsUndefined();
 }
