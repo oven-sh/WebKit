@@ -12772,7 +12772,7 @@ void testLinkedSites()
         { compareAndBranch, 64, RelocationKind::ConditionalJump, RelocationKind::ConditionalJumpThenNop },
         { compareAndBranch, 1 * MB + 8, RelocationKind::InvertedJumpThenJump, RelocationKind::InvertedJumpThenJump },
         { testBitAndBranch, 64, RelocationKind::TestBitJump, RelocationKind::TestBitJumpThenNop },
-        { testBitAndBranch, 16 * KB, RelocationKind::TestBitJumpThenNop, RelocationKind::TestBitJumpThenNop },
+        { testBitAndBranch, 16 * KB, RelocationKind::TestBitJump, RelocationKind::TestBitJumpThenNop },
         { testBitAndBranch, 32 * KB + 8, RelocationKind::InvertedJumpThenJump, RelocationKind::InvertedJumpThenJump },
     };
     checkPatchableBranch();
