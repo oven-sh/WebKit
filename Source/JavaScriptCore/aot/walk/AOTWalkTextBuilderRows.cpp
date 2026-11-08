@@ -150,6 +150,11 @@ bool takePartsOfJoinMadeForOneReader(Walker& walker, ValueID operand, Vector<Ref
         if (!part || !hasTextByItselfInTextBuilderRows(walker, referenceToRecordInTextBuilderRows(code, part)))
             return false;
     }
+    bool oneOperandIsText = std::ranges::any_of(made.operands(), [&](ValueID part) {
+        return hasOnlyInTextBuilderRows(walker, referenceToRecordInTextBuilderRows(code, part), Primitive::AnyString);
+    });
+    if (made.opcode == Opcode::Add && !oneOperandIsText)
+        return false;
     if (made.block() == walker.currentBlock() && !isReadByNoRecordSoFar(walker, Reference::value(root)))
         return false;
     if (mayFailForItsLength) {
