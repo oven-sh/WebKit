@@ -32,6 +32,7 @@
 #include "ProxyObject.h"
 #include "TopExceptionScope.h"
 #include "TypeError.h"
+#include <wtf/Scope.h>
 
 namespace JSC { namespace AOT {
 
@@ -269,12 +270,12 @@ static bool defineExtraProperty(Object* object, JSGlobalObject* globalObject, Pr
         RELEASE_ASSERT(extra);
     }
     bool interceptedIndexedAccesses = interceptsIndexedAccesses(*object);
-    scope.release();
-    bool isDefined = extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow);
-    object->didChangeExtraProperties(vm);
-    didChangeOwnProperties(vm, *object, exists ? VM::StructureChainIntegrityEvent::Change : VM::StructureChainIntegrityEvent::Add, name.uid());
-    didChangeIndexedProperties(vm, *object, interceptedIndexedAccesses);
-    return isDefined;
+    auto tells = makeScopeExit([&] {
+        object->didChangeExtraProperties(vm);
+        didChangeOwnProperties(vm, *object, exists ? VM::StructureChainIntegrityEvent::Change : VM::StructureChainIntegrityEvent::Add, name.uid());
+        didChangeIndexedProperties(vm, *object, interceptedIndexedAccesses);
+    });
+    RELEASE_AND_RETURN(scope, extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow));
 }
 
 static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, const FieldData& field, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
@@ -284,12 +285,12 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
     FieldProperty current = findFieldProperty(vm, *object, field);
     if (current && !current.isInSlot) {
         JSObject* extra = object->extraProperties();
-        bool isDefined = extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow);
-        static_cast<void>(scope.exception());
-        object->tryMoveFieldBackToSlot(vm, field);
-        object->didChangeExtraProperties(vm);
-        didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Change, name.uid());
-        return isDefined;
+        auto tells = makeScopeExit([&] {
+            object->tryMoveFieldBackToSlot(vm, field);
+            object->didChangeExtraProperties(vm);
+            didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Change, name.uid());
+        });
+        RELEASE_AND_RETURN(scope, extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow));
     }
 
     if (!current) {
@@ -1167,19 +1168,22 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
     if (!field)
         place = object->placeOfExtraKey(name);
     StructureID extraStructureBefore = extra->structureID();
-    bool isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
-    static_cast<void>(scope.exception());
-    slot.disableCaching();
-    if (!isDeleted)
-        return false;
-    if (field)
-        removeFieldFromKeyOrder(vm, state, *object, *field);
-    if (extra->structureID() != extraStructureBefore)
-        object->didChangeExtraProperties(vm);
-    if (!field)
-        object->didRemoveExtraKey(vm, state, place);
-    didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, name.uid());
-    return true;
+    bool isDeleted = false;
+    auto tells = makeScopeExit([&] {
+        slot.disableCaching();
+        if (!isDeleted)
+            return;
+        if (field)
+            removeFieldFromKeyOrder(vm, state, *object, *field);
+        if (extra->structureID() != extraStructureBefore)
+            object->didChangeExtraProperties(vm);
+        if (!field)
+            object->didRemoveExtraKey(vm, state, place);
+        didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, name.uid());
+    });
+    isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
+    scope.release();
+    return isDeleted;
 }
 
 bool Object::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
@@ -1191,10 +1195,13 @@ bool Object::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, u
     if (!extra)
         return true;
     VM& vm = globalObject->vm();
-    bool isDeleted = extra->methodTable()->deletePropertyByIndex(extra, globalObject, index);
-    object->didChangeExtraProperties(vm);
-    if (isDeleted)
-        didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, nullptr);
+    bool isDeleted = false;
+    auto tells = makeScopeExit([&] {
+        object->didChangeExtraProperties(vm);
+        if (isDeleted)
+            didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, nullptr);
+    });
+    isDeleted = extra->methodTable()->deletePropertyByIndex(extra, globalObject, index);
     return isDeleted;
 }
 
