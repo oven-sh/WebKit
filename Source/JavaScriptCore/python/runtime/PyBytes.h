@@ -49,7 +49,7 @@ private:
 };
 
 // The bytes of a bytearray.
-class PyByteStorage final : public JSCell {
+class PyByteStorage : public JSCell {
 public:
     using Base = JSCell;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
@@ -70,9 +70,12 @@ public:
     size_t capacity() const { return m_capacity; }
     uint8_t* data() { return storageBehind<uint8_t>(this); }
 
-private:
+protected:
     PyByteStorage(VM&, Structure*, size_t capacity);
+    // For a cell with `more` bytes behind its own. Null: there is no room for it.
+    static void* tryAllocate(VM&, size_t capacity, size_t more);
 
+private:
     size_t m_capacity;
 };
 

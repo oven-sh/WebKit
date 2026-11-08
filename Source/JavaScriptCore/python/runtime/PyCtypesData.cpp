@@ -8,6 +8,7 @@
 
 #include "JSArrayBuffer.h"
 #include "JSCInlines.h"
+#include "JSWeakMapInlines.h"
 #include "PyList.h"
 #include "PyRange.h"
 #include <wtf/HexNumber.h>
@@ -146,7 +147,7 @@ static PyCData* allocateData(JSGlobalObject* globalObject, PyType* type, PyCType
     return data;
 }
 
-static PyByteStorage* newMemory(JSGlobalObject* globalObject, int64_t size, int64_t room = 0)
+static PyByteStorage* newMemory(JSGlobalObject* globalObject, const PyCTypeInfo* info, int64_t size, int64_t room = 0)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -159,6 +160,8 @@ static PyByteStorage* newMemory(JSGlobalObject* globalObject, int64_t size, int6
         if (bytes > std::numeric_limits<int64_t>::max() - granule)
             return nullptr;
         size_t capacity = std::max<size_t>(roundUpToMultipleOf<granule>(static_cast<size_t>(bytes)), granule);
+        if (info->flags & (IsPointer | HasPointer))
+            return PyCStorage::tryCreate(vm, info->state->storageStructure.get(), capacity);
         return PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), capacity);
     };
     PyByteStorage* storage = room > size ? tryWith(room) : nullptr;
@@ -179,9 +182,9 @@ static ALWAYS_INLINE void giveMemory(VM& vm, PyCData* data, PyByteStorage* stora
     data->ownsMemory = true;
 }
 
-bool allocateMemory(JSGlobalObject* globalObject, PyCData* data, int64_t size, int64_t room)
+bool allocateMemory(JSGlobalObject* globalObject, PyCData* data, const PyCTypeInfo* info, int64_t size, int64_t room)
 {
-    PyByteStorage* storage = newMemory(globalObject, size, room);
+    PyByteStorage* storage = newMemory(globalObject, info, size, room);
     if (!storage)
         return false;
     giveMemory(getVM(globalObject), data, storage, size);
@@ -206,7 +209,7 @@ PyCData* newData(JSGlobalObject* globalObject, PyType* type)
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
     bool isFinalized = hasFinalizer(type);
-    PyByteStorage* storage = newMemory(globalObject, info->size);
+    PyByteStorage* storage = newMemory(globalObject, info, info->size);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyCData* data = allocateData(globalObject, type, info);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -214,8 +217,253 @@ PyCData* newData(JSGlobalObject* globalObject, PyType* type)
     return didMakeData(globalObject, data, isFinalized);
 }
 
+// ---- Who keeps what a pointer points to ----
+
+const ClassInfo PyCStorage::s_info = { "PyCStorage"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyCStorage) };
+static_assert(sizeof(PyCStorage) == sizeof(PyByteStorage)); // data()
+
+PyCStorage::PyCStorage(VM& vm, Structure* structure, size_t capacity)
+    : Base(vm, structure, capacity)
+{
+    slot().clear();
+}
+
+PyCStorage* PyCStorage::tryCreate(VM& vm, Structure* structure, size_t capacity)
+{
+    ASSERT(!(capacity % sizeof(WriteBarrier<Unknown>)));
+    void* cell = tryAllocate(vm, capacity, sizeof(WriteBarrier<Unknown>));
+    if (!cell)
+        return nullptr;
+    auto* storage = new (NotNull, cell) PyCStorage(vm, structure, capacity);
+    storage->finishCreation(vm);
+    return storage;
+}
+
+template<typename Visitor>
+void PyCStorage::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<PyCStorage>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->slot());
+}
+
+DEFINE_VISIT_CHILDREN(PyCStorage);
+
+const ClassInfo PyCTable::s_info = { "PyCTable"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyCTable) };
+
+PyCTable::PyCTable(VM& vm, Structure* structure)
+    : Base(vm, structure)
+{
+}
+
+PyCTable* PyCTable::tryCreate(VM& vm, Structure* structure)
+{
+    void* cell = tryAllocateCell<PyCTable>(vm);
+    if (!cell)
+        return nullptr;
+    auto* table = new (NotNull, cell) PyCTable(vm, structure);
+    table->finishCreation(vm);
+    return table;
+}
+
+// The record of a cell is the entry for its first place, if that is the only one: so it is with a pointer. Else it is a table, with the entry for the place at 8 * i as its property i. Indexed properties are
+// dense or sparse by the rule that JSC has for them (ArrayConventions.h), so what a table takes goes by the entries and not by the memory.
+static ALWAYS_INLINE PyCTable* tableIn(JSValue record)
+{
+    return record && record.isCell() ? dynamicDowncast<PyCTable>(record.asCell()) : nullptr;
+}
+
+static JSValue recordOf(JSGlobalObject* globalObject, JSCell* cell)
+{
+    if (auto* storage = dynamicDowncast<PyCStorage>(cell)) [[likely]]
+        return storage->record();
+    JSWeakMap* records = stateOf(globalObject).records.get();
+    JSValue record = records ? records->get(cell) : jsUndefined();
+    return record.isUndefined() ? JSValue() : record;
+}
+
+static void setRecordOf(JSGlobalObject* globalObject, JSCell* cell, JSValue record)
+{
+    VM& vm = getVM(globalObject);
+    if (auto* storage = dynamicDowncast<PyCStorage>(cell)) [[likely]] {
+        storage->setRecord(vm, record);
+        return;
+    }
+    State& state = stateOf(globalObject);
+    if (!record) {
+        if (state.records)
+            state.records->remove(cell);
+        return;
+    }
+    if (!state.records)
+        state.records.set(vm, &state, JSWeakMap::create(vm, globalObject->weakMapStructure()));
+    state.records->set(vm, cell, record);
+}
+
+static constexpr int64_t sizeOfPlace = sizeof(void*);
+
+// False: there is none there, or it is too far out for the table.
+static ALWAYS_INLINE bool indexOfPlace(int64_t offset, unsigned& index)
+{
+    if (offset < 0 || offset % sizeOfPlace || offset / sizeOfPlace > MAX_ARRAY_INDEX)
+        return false;
+    index = static_cast<unsigned>(offset / sizeOfPlace);
+    return true;
+}
+
+static ALWAYS_INLINE int64_t placeOfIndex(unsigned index)
+{
+    return static_cast<int64_t>(index) * sizeOfPlace;
+}
+
+JSValue entryAt(JSGlobalObject* globalObject, const Home& home)
+{
+    unsigned index;
+    if (!home || !indexOfPlace(home.offset, index))
+        return { };
+    JSValue record = recordOf(globalObject, home.cell);
+    if (PyCTable* table = tableIn(record)) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+        JSValue entry = table->getDirectIndex(globalObject, index);
+        scope.assertNoException();
+        return entry;
+    }
+    return index ? JSValue() : record;
+}
+
+void setEntry(JSGlobalObject* globalObject, const Home& home, JSValue entry)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned index;
+    if (!home || !indexOfPlace(home.offset, index))
+        return;
+    ASSERT(!entry || entry.isCell());
+    JSValue record = recordOf(globalObject, home.cell);
+    PyCTable* table = tableIn(record);
+    if (!table) {
+        if (!index) {
+            setRecordOf(globalObject, home.cell, entry);
+            return;
+        }
+        if (!entry)
+            return;
+        table = PyCTable::tryCreate(vm, stateOf(globalObject).tableStructure.get());
+        if (!table) {
+            raiseMemoryError(globalObject, scope, String());
+            return;
+        }
+        if (record) {
+            table->putByIndexInline(globalObject, 0u, record, true);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        setRecordOf(globalObject, home.cell, table);
+    }
+    scope.release();
+    // (An ordinary put, which nothing intercepts: there is no prototype. putDirectIndex() takes the short way for arrays and plain objects only, and would make every other object a dictionary.)
+    if (entry)
+        table->putByIndexInline(globalObject, index, entry, true);
+    else
+        JSObject::deletePropertyByIndex(table, globalObject, index);
+}
+
+// What the record has for the places that lie wholly in the `size` bytes from `offset` on: where each is, counted from `offset`, and its entry. It goes by the entries that there are, not by the places.
+static void collectEntries(JSValue record, int64_t offset, int64_t size, Vector<int64_t, 8>& places, MarkedArgumentBuffer* entries = nullptr)
+{
+    int64_t last = offset + size - sizeOfPlace;
+    auto add = [&](unsigned index, JSValue entry) {
+        int64_t place = placeOfIndex(index);
+        if (!entry || place < offset || place > last)
+            return;
+        places.append(place - offset);
+        if (entries)
+            entries->append(entry);
+    };
+    PyCTable* table = tableIn(record);
+    if (!table) {
+        add(0, record);
+        return;
+    }
+    // Where indexed properties are dense.
+    auto addDense = [&](unsigned length, auto&& at) {
+        int64_t end = std::min<int64_t>(length, last / sizeOfPlace + 1);
+        for (int64_t i = std::max<int64_t>(offset, 0) / sizeOfPlace; i < end; ++i)
+            add(static_cast<unsigned>(i), at(static_cast<unsigned>(i)));
+    };
+    switch (table->indexingType()) {
+    case ALL_CONTIGUOUS_INDEXING_TYPES: {
+        Butterfly* butterfly = table->butterfly();
+        addDense(butterfly->publicLength(), [&](unsigned i) { return butterfly->contiguous().at(table, i).get(); });
+        break;
+    }
+    case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
+        ArrayStorage* storage = table->butterfly()->arrayStorage();
+        addDense(std::min(storage->length(), storage->vectorLength()), [&](unsigned i) { return storage->m_vector[i].get(); });
+        SparseArrayValueMap* map = storage->m_sparseMap.get();
+        if (!map)
+            break;
+        if (static_cast<uint64_t>(size) >= map->size()) {
+            for (auto& entry : *map)
+                add(entry.index(), entry.asValue().get());
+            break;
+        }
+        // A few bytes of a memory that has many entries.
+        for (int64_t place = offset; place <= last; ++place) {
+            unsigned index;
+            if (!indexOfPlace(place, index))
+                continue;
+            if (auto entry = map->find(index); entry != map->notFound())
+                add(index, entry->asValue().get());
+        }
+        break;
+    }
+    default:
+        // Cells are all that is ever put there.
+        break;
+    }
+}
+
+void copyEntries(JSGlobalObject* globalObject, const Home& from, const Home& to, int64_t size)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!to || size < sizeOfPlace)
+        return;
+    JSValue source = from ? recordOf(globalObject, from.cell) : JSValue();
+    JSValue destination = recordOf(globalObject, to.cell);
+    if (!source && !destination)
+        return;
+    // All is looked at before anything is written: the two may be one memory, and overlap.
+    Vector<int64_t, 8> places;
+    Vector<int64_t, 8> overwritten;
+    MarkedArgumentBuffer entries;
+    collectEntries(source, from.offset, size, places, &entries);
+    collectEntries(destination, to.offset, size, overwritten);
+    if (entries.hasOverflowed()) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return;
+    }
+    for (int64_t place : overwritten) {
+        setEntry(globalObject, { to.cell, to.offset + place }, { });
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    for (unsigned i = 0; i < places.size(); ++i) {
+        setEntry(globalObject, { to.cell, to.offset + places[i] }, entries.at(i));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+// What to write down beside an address in the memory of the instance. Empty: nobody is known to own that.
+static ALWAYS_INLINE JSValue entryFor(PyCData* data)
+{
+    if (data->isView())
+        return data;
+    return data->owner() ? JSValue(data->owner()) : JSValue();
+}
+
 // What a pointer points to is, as a rule, the memory of an instance that the pointer keeps alive. Then it is known how far that
-// memory goes, and who owns it. (What it keeps alive is in _objects, which the program can get at: this helps against accidents, it is no wall.)
+// memory goes, and who owns it.
 struct Provenance {
     JSCell* owner { nullptr }; // A PyByteStorage or a PyMemoryView. Null: nothing is known.
     const uint8_t* begin { nullptr };
@@ -309,6 +557,19 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
     return false;
 }
 
+static bool findProvenanceByEntry(JSGlobalObject* globalObject, JSValue entry, const uint8_t* address, Provenance& result)
+{
+    if (!entry || !entry.isCell())
+        return false;
+    if (PyCData::is(entry))
+        return findProvenance(globalObject, entry, address, result);
+    auto* storage = uncheckedDowncast<PyByteStorage>(entry.asCell());
+    if (address < storage->data() || address > storage->data() + storage->capacity())
+        return false;
+    result = { storage, storage->data(), storage->data() + storage->capacity() };
+    return true;
+}
+
 // What is kept for a part lies in the _objects of the whole under the way to the part (keyOfPart()). If something that the part is in was stored whole, what lies under the way
 // to that are the _objects of what was stored, and the rest of the way is a key in them. `way` is from the outside in.
 static bool findProvenanceUnder(JSGlobalObject* globalObject, PyDict* kept, std::span<const int64_t> way, const uint8_t* address, Provenance& result, unsigned& looksLeft)
@@ -356,12 +617,12 @@ static bool findProvenanceOfPart(JSGlobalObject* globalObject, PyDict* kept, PyC
 }
 
 // What the pointer holds. False: an exception; a null pointer is one.
-static bool pointerTarget(JSGlobalObject* globalObject, PyCData* pointer, uint8_t*& target)
+static bool pointerTarget(JSGlobalObject* globalObject, PyCData* pointer, uint8_t*& target, Home* home = nullptr)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
-        auto memory = Place { pointer }.resolve(globalObject, sizeof(void*));
+        auto memory = Place { pointer }.resolve(globalObject, sizeof(void*), home);
         RETURN_IF_EXCEPTION(scope, false);
         memcpy(&target, memory.data(), sizeof(void*));
     }
@@ -379,18 +640,24 @@ static uint8_t* lookThroughPointer(JSGlobalObject* globalObject, PyCData* pointe
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint8_t* target;
-    if (failed(scope, pointerTarget(globalObject, pointer, target)))
+    Home home;
+    if (failed(scope, pointerTarget(globalObject, pointer, target, &home)))
         return nullptr;
     uint8_t* address = std::bit_cast<uint8_t*>(std::bit_cast<uintptr_t>(target) + static_cast<uintptr_t>(offset));
-    PyCData* root = pointer;
-    while (root->base)
-        root = root->base.get();
-    JSValue kept = root->objects.get();
-    bool isFound = findProvenance(globalObject, kept, target, provenance);
-    if (!isFound && provenance.isNotAllSeen && root != pointer) [[unlikely]] {
-        // It is a part of something larger, which keeps more alive for its parts than is looked through.
-        if (auto* dict = PyDict::tryFrom(kept); dict && dict->type() == runtime(globalObject).dictType())
-            isFound = findProvenanceOfPart(globalObject, dict, pointer, target, provenance);
+    bool isFound = findProvenanceByEntry(globalObject, entryAt(globalObject, home), target, provenance);
+    if (!isFound) {
+        // Nothing was written down for the place, or the bytes have been written since by something that writes nothing down. What the pointer keeps alive is in _objects as well, which the
+        // program can get at: this helps against accidents, it is no wall.
+        PyCData* root = pointer;
+        while (root->base)
+            root = root->base.get();
+        JSValue kept = root->objects.get();
+        isFound = findProvenance(globalObject, kept, target, provenance);
+        if (!isFound && provenance.isNotAllSeen && root != pointer) [[unlikely]] {
+            // It is a part of something larger, which keeps more alive for its parts than is looked through.
+            if (auto* dict = PyDict::tryFrom(kept); dict && dict->type() == runtime(globalObject).dictType())
+                isFound = findProvenanceOfPart(globalObject, dict, pointer, target, provenance);
+        }
     }
     if (!isFound) {
         if (!provenance.isInWhatIsGone) [[likely]]
@@ -746,9 +1013,14 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
             RELEASE_AND_RETURN(scope, storeData(globalObject, type, accessor, place, object, size, bits));
         }
         if (isNone(value) && info && info->kind == TypeKind::Pointer) {
-            auto memory = place.resolve(globalObject, sizeof(void*));
+            Home home;
+            {
+                auto memory = place.resolve(globalObject, sizeof(void*), &home);
+                RETURN_IF_EXCEPTION(scope, { });
+                memset(memory.data(), 0, memory.size());
+            }
+            setEntry(globalObject, home, { });
             RETURN_IF_EXCEPTION(scope, { });
-            memset(memory.data(), 0, memory.size());
             return none();
         }
         return raiseTypeError(globalObject, scope, "expected "_s, type->nameInMessages(), " instance, got "_s, typeName(globalObject, value));
@@ -760,11 +1032,19 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
         // __instancecheck__ may say anything.
         if (source->size < size)
             return raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
-        auto from = Place { source }.resolve(globalObject, size);
-        RETURN_IF_EXCEPTION(scope, { });
-        auto to = place.resolve(globalObject, size);
-        RETURN_IF_EXCEPTION(scope, { });
-        memmove(to.data(), from.data(), to.size());
+        Home homeOfSource;
+        Home home;
+        {
+            auto from = Place { source }.resolve(globalObject, size, &homeOfSource);
+            RETURN_IF_EXCEPTION(scope, { });
+            auto to = place.resolve(globalObject, size, &home);
+            RETURN_IF_EXCEPTION(scope, { });
+            memmove(to.data(), from.data(), to.size());
+        }
+        if (PyCTypeInfo* info = infoOf(globalObject, type); info && info->flags & (IsPointer | HasPointer)) {
+            copyEntries(globalObject, homeOfSource, home, size);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         return keptObjects(globalObject, source);
     }
 
@@ -773,9 +1053,14 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
         if (arrayInfo && arrayInfo->kind == TypeKind::Array && arrayInfo->proto.get() == pointerInfo->proto.get()) {
             uint8_t* from = source->memory(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
-            auto to = place.resolve(globalObject, sizeof(void*));
+            Home home;
+            {
+                auto to = place.resolve(globalObject, sizeof(void*), &home);
+                RETURN_IF_EXCEPTION(scope, { });
+                memcpy(to.data(), &from, to.size());
+            }
+            setEntry(globalObject, home, entryFor(source));
             RETURN_IF_EXCEPTION(scope, { });
-            memcpy(to.data(), &from, to.size());
             // The array itself has to live, not only what it keeps alive.
             return PyTuple::create(globalObject, { keptObjects(globalObject, source), source });
         }
@@ -1626,11 +1911,14 @@ static void pointerSetContents(JSGlobalObject* globalObject, JSValue self, JSVal
     }
     uint8_t* address = target->memory(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
+    Home home;
     {
-        auto memory = Place { pointer }.resolve(globalObject, sizeof(void*));
+        auto memory = Place { pointer }.resolve(globalObject, sizeof(void*), &home);
         RETURN_IF_EXCEPTION(scope, void());
         memcpy(memory.data(), &address, memory.size());
     }
+    setEntry(globalObject, home, entryFor(target));
+    RETURN_IF_EXCEPTION(scope, void());
     // What it points to has to live, and so has what that keeps alive.
     if (failed(scope, keepAlive(globalObject, pointer, 1, value)))
         return;

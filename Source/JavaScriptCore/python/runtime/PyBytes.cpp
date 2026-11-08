@@ -145,11 +145,16 @@ PyByteStorage* PyByteStorage::create(VM& vm, Structure* structure, size_t capaci
     return storage;
 }
 
-PyByteStorage* PyByteStorage::tryCreate(VM& vm, Structure* structure, size_t capacity)
+void* PyByteStorage::tryAllocate(VM& vm, size_t capacity, size_t more)
 {
     if (!bytesCanBeAllocated(capacity))
         return nullptr;
-    void* cell = tryAllocateCell<PyByteStorage>(vm, sizeof(PyByteStorage) + capacity);
+    return tryAllocateCell<PyByteStorage>(vm, sizeof(PyByteStorage) + capacity + more);
+}
+
+PyByteStorage* PyByteStorage::tryCreate(VM& vm, Structure* structure, size_t capacity)
+{
+    void* cell = tryAllocate(vm, capacity, 0);
     if (!cell)
         return nullptr;
     auto* storage = new (NotNull, cell) PyByteStorage(vm, structure, capacity);

@@ -229,7 +229,7 @@ JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint
             else if (auto* type = PyType::tryFrom(cell))
                 isValid = !type->has(TypeFlag::Internal);
             else
-                isValid = cell->isString() || cell->isHeapBigInt() || cell->isObject();
+                isValid = cell->isString() || cell->isHeapBigInt() || (cell->isObject() && !cell->inherits<PyCTable>() && cell != stateOf(globalObject).records.get());
             if (!isValid)
                 cellOfAnotherKind = cell;
         } else {

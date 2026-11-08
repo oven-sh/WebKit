@@ -7,6 +7,7 @@
 
 #include "DisallowVMEntry.h"
 #include "JSCellButterfly.h"
+#include "JSWeakMap.h"
 #include "PyBuffer.h"
 #include "PyHooks.h"
 #include "PyModuleHelpers.h"
@@ -419,6 +420,11 @@ public:
     WriteBarrier<Structure> argStructure;
     WriteBarrier<Structure> infoStructure;
     WriteBarrier<Structure> thunkStructure;
+    WriteBarrier<Structure> storageStructure;
+    WriteBarrier<Structure> tableStructure;
+    // The records of cells that have no room for a reference to theirs: what ctypes did not make (a bytearray, an ArrayBuffer), and the memory of an instance whose type holds no pointers. The cell -> its record.
+    // Null: there has been none yet.
+    WriteBarrier<JSWeakMap> records;
 
     WriteBarrier<PyDict> arrayTypes; // (type of the items, length) -> a weak reference to the array type
     unsigned arrayTypesSweepAt { 64 };
@@ -504,6 +510,53 @@ private:
 using Granted = std::span<uint8_t>;
 #endif
 
+// The memory of an instance of a type that holds pointers. Behind the bytes lies a reference to the record of what the addresses in them point into: see entryAt().
+class PyCStorage final : public PyByteStorage {
+public:
+    using Base = PyByteStorage;
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
+    {
+        return Structure::create(vm, globalObject, jsNull(), TypeInfo(CellType, StructureFlags), info());
+    }
+    // `capacity`: a multiple of 8. Null: there is no room for it.
+    static PyCStorage* tryCreate(VM&, Structure*, size_t capacity);
+
+    // Empty: it has none.
+    JSValue record() { return slot().get(); }
+    void setRecord(VM& vm, JSValue record) { slot().set(vm, this, record); }
+
+private:
+    PyCStorage(VM&, Structure*, size_t capacity);
+
+    WriteBarrier<Unknown>& slot() { return *std::bit_cast<WriteBarrier<Unknown>*>(data() + capacity()); }
+};
+
+// The table of a record: see entryAt(). An object of JS for the sake of its indexed properties. It is of a class of its own so that it is told from everything else: no program gets to see it, gc (for which
+// every array of JS is a list) does not hand it out, and a py_object that is made to hold its address is refused.
+class PyCTable final : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
+
+    DECLARE_INFO;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
+    {
+        return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info());
+    }
+    // Null: there is no room for it.
+    static PyCTable* tryCreate(VM&, Structure*);
+
+private:
+    PyCTable(VM&, Structure*);
+};
+
 // The cell that owns the bytes of a place, under all the views that there may be of them, and where in the memory of that cell the place is. So instances that have come by the same memory in different
 // ways (a part, from_buffer() of an instance or of the same bytearray, through a pointer) name a place in it alike.
 // No cell: nothing is known to own the bytes (from_address(), what a pointer of unknown origin points to), or the view of them has been released.
@@ -525,6 +578,24 @@ struct Place {
     Granted resolve(JSGlobalObject*, int64_t size, Home* = nullptr) const;
 };
 
+// ---- Who keeps what a pointer points to ----
+//
+// Eight bytes hold an address. Who owns the memory at that address, and so keeps it alive and says how far it goes, is written down beside the memory that holds the eight bytes: the record of a cell has,
+// for a place in the memory of that cell, an entry. It is ownership, as PyCData::owner() is: nothing is worked out again from it, and to drop it changes what lives.
+// AN ENTRY VOUCHES ONLY FOR AN ADDRESS THAT LIES IN MEMORY WHICH THE ENTRY ITSELF KEEPS ALIVE. So however the bytes have come about since (C, memmove(), another view of them), a yes is safe. An entry that
+// is out of date can only fail to say yes, and then _objects is searched, as before there were records.
+// _objects cannot do it alone: it is CPython's to the letter, the program can write to it, instances share it by reference, and its keys are places in an instance, which collide.
+//
+// An entry: the PyByteStorage that the address lies in; where the memory is seen through a view, an instance that sees it, which knows where in the view it is and where the view was.
+// A place: eight bytes at a multiple of eight. Others (in a packed structure) have no entry.
+//
+// Empty: there is none.
+JSValue entryAt(JSGlobalObject*, const Home&);
+// Empty: there is none from now on. If it raises, for want of memory, an entry is missing or out of date.
+void setEntry(JSGlobalObject*, const Home&, JSValue entry);
+// `size` bytes have been copied from the one to the other: what there is for the places among them goes along, and what there was at the other end goes.
+void copyEntries(JSGlobalObject*, const Home& from, const Home& to, int64_t size);
+
 // An instance with zeroed memory of its own. __init__ is not called. Null: an exception ("abstract class", MemoryError).
 PyCData* newData(JSGlobalObject*, PyType*);
 // An instance that is the part `index` of another.
@@ -541,7 +612,7 @@ bool checkRoomFor(JSGlobalObject*, PyCTypeInfo*, int64_t length, int64_t offset)
 
 // Gives the instance zeroed memory of its own, of that size. False: a MemoryError.
 // `room`: how much it is given if that much is to be had.
-bool allocateMemory(JSGlobalObject*, PyCData*, int64_t size, int64_t room = 0);
+bool allocateMemory(JSGlobalObject*, PyCData*, const PyCTypeInfo*, int64_t size, int64_t room = 0);
 
 // Replaces the pending exception by one of that type, whose message is the prefix, the name of its class and its message.
 void extendError(JSGlobalObject*, PyType* exceptionType, const String& prefix);

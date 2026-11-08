@@ -107,10 +107,12 @@ void PyCData::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<PyCData>(cell);
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->base);
-    visitor.append(thisObject->objects);
+    // The order is that in which an instance lets go of things when it dies (PyFinalizationOrder.cpp). The memory first, and with it what is written down beside it: so what _objects holds dies when _objects
+    // lets go of it, in the order of that dict, as in CPython, which has nothing else.
     visitor.append(thisObject->m_owner);
     visitor.append(thisObject->m_past);
+    visitor.append(thisObject->base);
+    visitor.append(thisObject->objects);
 }
 
 DEFINE_VISIT_CHILDREN(PyCData);
@@ -258,6 +260,9 @@ void State::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->argStructure);
     visitor.append(thisObject->infoStructure);
     visitor.append(thisObject->thunkStructure);
+    visitor.append(thisObject->storageStructure);
+    visitor.append(thisObject->tableStructure);
+    visitor.append(thisObject->records);
     visitor.append(thisObject->arrayTypes);
     visitor.append(thisObject->heldObjects);
     visitor.append(thisObject->unpickle);
@@ -313,6 +318,8 @@ static State* createState(JSGlobalObject* globalObject, PyType* holder)
     state->argStructure.set(vm, state, PyCArg::createStructure(vm, globalObject));
     state->infoStructure.set(vm, state, PyCTypeInfo::createStructure(vm, globalObject));
     state->thunkStructure.set(vm, state, PyCThunk::createStructure(vm, globalObject));
+    state->storageStructure.set(vm, state, PyCStorage::createStructure(vm, globalObject));
+    state->tableStructure.set(vm, state, PyCTable::createStructure(vm, globalObject));
 
     state->arrayTypes.set(vm, state, PyDict::create(globalObject));
     state->heldObjects.set(vm, state, PyDict::create(globalObject));
@@ -443,7 +450,7 @@ static JSValue moduleResize(JSGlobalObject* globalObject, JSValue object, JSValu
     }
     // What it had is kept. So that an instance that grows step by step does not come to hold the square of what it needs, it is given half as much again at least.
     size_t oldCapacity = oldStorage->capacity();
-    if (failed(scope, allocateMemory(globalObject, data, size, static_cast<int64_t>(oldCapacity + oldCapacity / 2))))
+    if (failed(scope, allocateMemory(globalObject, data, info, size, static_cast<int64_t>(oldCapacity + oldCapacity / 2))))
         return { };
     memcpy(data->memory(globalObject), oldStorage->data(), static_cast<size_t>(oldSize));
     data->keepFormerStorage(vm, oldStorage);
