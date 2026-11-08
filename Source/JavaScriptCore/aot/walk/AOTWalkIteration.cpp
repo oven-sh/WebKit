@@ -3634,7 +3634,7 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
         }
     }
     std::optional<ClassSteppedUnseen> proven = iterable ? findClassSteppedUnseen(walker, walker.typeOf(iterable)) : std::nullopt;
-    bool isAsMadeForGood = proven && proven->contents != ContentsStepped::Text && linksWordCanBeHeldAgainst(walker, iterable) && classOfIterableThatStaysAsMadeByLink(walker, open, iterated) == proven->builtinClass;
+    bool isAsMadeForGood = proven && proven->contents != ContentsStepped::Text && linksWordCanBeHeldAgainst(walker, iterable) && (classOfIterableThatStaysAsMadeByLink(walker, open, iterated) == proven->builtinClass || (walker.takesIterablesOfPatternsToStayAsMade() && open.as<Opcode::IteratorOpen>().isDestructuring()));
     bool isSurelyAsMade = proven && (proven->contents == ContentsStepped::Text || isAsMadeForGood || (proven->contents != ContentsStepped::View && isListAsMade(walker, iterable)));
     if (iterable && !isSurelyAsMade && stepsOfPatternStandInRow(index, open)) {
         uint32_t numberOfSteps = *open.as<Opcode::IteratorOpen>().elementCount();

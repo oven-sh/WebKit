@@ -2011,6 +2011,27 @@ static void defineOwnElementAndReturn(StubAssembler& jit, const KeyedProbeRegist
     jit.jump().linkTo(loadStorage, &jit);
 
     isNoArrayOfInt32.link(&jit);
+    Jump holdsNoFractions = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(ArrayWithDouble));
+    const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
+    miss.append(jit.branchIfNotNumber(value));
+    Jump isWhole = jit.branchIfInt32(value);
+    unboxDouble(jit, value, newLength, number);
+    miss.append(jit.branchIfNaN(number));
+    Jump isFraction = jit.jump();
+    isWhole.link(&jit);
+    jit.convertInt32ToDouble(value, number);
+    isFraction.link(&jit);
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    jit.zeroExtend32ToWord(registers.key, index);
+    Jump liesWithinLength = jit.branch32(CCallHelpers::Below, index, Address(storage, Butterfly::offsetOfPublicLength()));
+    miss.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfVectorLength())));
+    jit.add32(TrustedImm32(1), index, newLength);
+    jit.store32(newLength, Address(storage, Butterfly::offsetOfPublicLength()));
+    liesWithinLength.link(&jit);
+    jit.storeDouble(number, BaseIndex(storage, index, CCallHelpers::TimesEight));
+    jit.returnToCaller();
+
+    holdsNoFractions.link(&jit);
     miss.append(branchIfNotCompiledObject(jit, base));
     checkStubOperands(storeElementOfCompiledObject(PutMode::Define), { base, registers.key, value });
     jit.jumpToStub(storeElementOfCompiledObject(PutMode::Define));

@@ -2996,8 +2996,30 @@ void Modules::didSettleFactoryThatRequireLeft(unsigned number)
         m_waitsThatRequiresLeft[left].wait->reject(vm, thrown->value());
         return;
     }
-    if (!m_waitsThatRequiresLeft[left].factoriesYetToSettle)
-        m_waitsThatRequiresLeft[left].wait->fulfill(vm, jsUndefined());
+    if (m_waitsThatRequiresLeft[left].factoriesYetToSettle)
+        return;
+    ModuleStatus current = status(required);
+    bool wasMockLaidSince = false;
+    for (size_t fetched : m_waitsThatRequiresLeft[left].fetchedAsThemselves)
+        wasMockLaidSince |= isMocked(ModuleID(fetched));
+    bool liesOnCycle = false;
+    bool someMockBelowIsNotInPlace = false;
+    for (size_t below : reachedByStatements(required, AtMock::Stops)) {
+        liesOnCycle |= below != required.index() && reachedByStatements(ModuleID(below), AtMock::Stops).get(required.index());
+        someMockBelowIsNotInPlace |= m_modulesWithMockToRun.get(below) || (isMocked(ModuleID(below)) && !mockInPlace(ModuleID(below)));
+    }
+    if ((current == ModuleStatus::Unlinked || current == ModuleStatus::Linked) && !isEvicted(required) && !isMocked(required) && !wasMockLaidSince && !liesOnCycle && !someMockBelowIsNotInPlace) {
+        JSPromise* evaluation = evaluate(required, std::nullopt, nullptr);
+        if (Exception* failure = scope.exception()) {
+            if (vm.isTerminationException(failure) || !scope.tryClearException())
+                return;
+        } else if (evaluation)
+            evaluation->markAsHandled();
+        left = find();
+        if (left == notFound)
+            return;
+    }
+    m_waitsThatRequiresLeft[left].wait->fulfill(vm, jsUndefined());
 }
 
 void Modules::didFailFactoryThatRequireLeft(unsigned number, JSValue error)
@@ -3039,6 +3061,40 @@ void Modules::keepErrorOfFactoryThatRequireLeft(ModuleID required, JSValue error
     keepErrorOfLoad(required, error, [&](ModuleID each) { return isMocked(each) && m_modulesWithMockThatWaited.get(each.index()); });
     if (!m_modulesWithLoadEndedByMock.set(required.index()))
         ensureLoaded(required).errorKeptByLoader.set(*this, error);
+}
+
+bool Modules::stillWaitsForWhatItGaveUpOn(ModuleID required) const
+{
+    bool isInFlight = m_waitsThatRequiresLeft.containsIf([&](const auto& left) { return left.required == required && left.wait->status() == JSPromise::Status::Pending; });
+    bool waits = false;
+    for (const RequireThatGaveUp& pair : m_requiresThatGaveUp) {
+        if (pair.required != required || pair.mocked == required || m_modulesWithMockInPlace.get(pair.mocked.index()))
+            continue;
+        uint64_t call = callOfFactoryThatHasNotSettled(pair.mocked);
+        if (!call || (!isInFlight && !m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& other) { return other.required == required && other.mocked == pair.mocked && other.call == call; })))
+            return false;
+        waits = true;
+    }
+    return waits;
+}
+
+void Modules::refuseRequireAgain(ModuleID asked, ModuleID above)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    m_filesWhoseRequireThrewBesideFactories.clear(asked.index());
+    m_waitsThatRequiresLeft.removeAllMatching([](const auto& left) { return left.wait->status() != JSPromise::Status::Pending; });
+    if (!m_waitsThatRequiresLeft.containsIf([&](const auto& left) { return left.required == above; })) {
+        scope.release();
+        waitForFactoriesThatRequireLeft(above);
+        return;
+    }
+    JSValue state;
+    JSPromise* original = factoryThatWaitsBelow(asked, FactoryAskedForBy::RequireThatIsRefused, state);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (original)
+        original->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), JSPromise::create(vm, realm->promiseStructure()));
 }
 
 void Modules::waitForFactoriesThatRequireLeft(ModuleID required)
@@ -3671,6 +3727,14 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             return original;
     }
     bool isRequiredByProgram = requiredBy == RequiredBy::Program || (referrer && !data(referrer).isOfLibrary());
+    if (m_mocks && (isMocked(target) || m_modulesWithMockToRun.get(target.index())) && hasFailedWithoutMock(target)) [[unlikely]]
+        forgetLoadThatFailed(target);
+    if (!m_requiresThatGaveUp.isEmpty() && (!targetData.isOfLibrary() || isRequiredByProgram) && targetData.kind == ModuleKind::SourceText && !isMocked(target) && !vm.m_synchronousModuleQueue && !m_filesWhoseRequireThrewBesideFactories.get(target.index()) && stillWaitsForWhatItGaveUpOn(target)) [[unlikely]] {
+        refuseRequireAgain(target, target);
+        RETURN_IF_EXCEPTION(scope, { });
+        throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(target)));
+        return { };
+    }
     bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(target);
     if (!targetData.isOfLibrary() || isRequiredByProgram) {
         SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
@@ -3687,9 +3751,12 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             leaveStepsOfLoaderToJobs();
             if (Exception* thrown = scope.exception(); thrown && !vm.isTerminationException(thrown) && scope.tryClearException()) {
                 loadsOfFactories.reset();
-                waitForFactoriesThatRequireLeft(target);
-                if (!scope.exception() || scope.tryClearException())
+                refuseRequireAgain(target, target);
+                if (!scope.exception() || scope.tryClearException()) {
+                    noteThatRequireGaveUpOn(target);
+                    m_filesWhoseRequireThrewBesideFactories.set(target.index());
                     throwException(m_instance.globalObject, scope, thrown);
+                }
                 return { };
             }
         }
@@ -3698,7 +3765,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             noteThatRequireGaveUpOn(target);
             if (loadsOfFactories) {
                 loadsOfFactories.reset();
-                waitForFactoriesThatRequireLeft(target);
+                refuseRequireAgain(target, target);
                 RETURN_IF_EXCEPTION(scope, { });
             }
             throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(target)));
@@ -3718,7 +3785,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     if (someFactoryHasNotSettled) [[unlikely]]
         noteThatRequireGaveUpOn(target, false);
     if (!m_requiresThatGaveUp.isEmpty() && (!targetData.isOfLibrary() || isRequiredByProgram)) [[unlikely]] {
-        JSValue original = answerRequireWhileFactoryHasNotSettled(target);
+        JSValue original = answerRequireWhileFactoryHasNotSettled(target, referrer);
         RETURN_IF_EXCEPTION(scope, { });
         if (original)
             return original;

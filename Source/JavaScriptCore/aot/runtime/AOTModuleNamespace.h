@@ -64,6 +64,7 @@ public:
     JSValue capturedValueWithoutAllocating(UniquedStringImpl*) const;
 
     bool hasESModuleMarker() const { return m_hasESModuleMarker; }
+    bool showsESModuleMarker() const;
     void setESModuleMarker(bool hasMarker) { m_hasESModuleMarker = hasMarker; }
 
     bool hasOwnStructure() const { return m_hasOwnStructure; }

@@ -1151,9 +1151,7 @@ bool WireTypeReader::computeDeclaredMembers()
         });
         if (holdsOneNeverAllocated)
             members = sets.differenceOf(members, allNeverAllocated);
-        uint32_t module = layouts[index].module;
-        bool isWrittenInFileOfProgram = module != Wire::none && module < m_sections.modules.size() && (m_sections.modules[module].kind == static_cast<uint32_t>(ModuleKind::SourceText) || m_sections.modules[module].kind == static_cast<uint32_t>(ModuleKind::CommonJs)) && !(m_sections.modules[module].flags & static_cast<uint32_t>(ModuleFlags::IsLibrary));
-        if (isWrittenInFileOfProgram && has(layouts[index], LayoutFlags::IsNeverAllocated) && std::ranges::any_of(wireFieldsOf(conversions.checkedSections, layouts[index]), [](const Wire::Field& field) { return has(field, FieldFlags::IsRequiredAndReadThoughNeverWritten); }))
+        if (has(layouts[index], LayoutFlags::IsNeverAllocated) && std::ranges::any_of(wireFieldsOf(conversions.checkedSections, layouts[index]), [](const Wire::Field& field) { return has(field, FieldFlags::IsRequiredAndReadThoughNeverWritten); }))
             members = { };
         if (!members) {
             isViewWithoutLayouts[index] = 1;

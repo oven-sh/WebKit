@@ -2924,6 +2924,8 @@ bool callThroughSuperBehindGuards(Walker& walker, const BodyValue& superBase)
     if (!armsHoldCall)
         walker.count(StatisticID::ReadsThroughSuperGuardedInFrontOfArgumentsBuiltOnce);
     for (const MemberConditionRecord& condition : conditions) {
+        if (condition.kind == MemberConditionKind::PrototypeLinkUnchanged ? walker.passesGuardOfLinkOverAtCallsThroughSuper() : walker.passesGuardOfNameOverAtCallsThroughSuper())
+            continue;
         Draft look(Opcode::AreMembersUnchanged, origin);
         look.setConditions(singleElementSpan(condition));
         Reference holds = walker.build(WTF::move(look));
@@ -2937,6 +2939,19 @@ bool callThroughSuperBehindGuards(Walker& walker, const BodyValue& superBase)
     for (uint32_t place = begin; place < end; ++place)
         walker.bind(ValueID(first + place), Reference());
     walker.walkStretch(inputBlock, begin + 1, placeOfRead);
+    if (walker.checksProofs() && !walker.hasFailed() && !walker.isUnreachable()) {
+        WalkState believed = walker.state();
+        Reference baseAsWritten = walker.buildTestOfCheck(walker.draftOf(superBase));
+        if (baseAsWritten && !walker.isUnreachable()) {
+            walker.bind(superBase.id(), baseAsWritten);
+            Draft readAsWritten = walker.draftOf(index.value(read));
+            walker.bind(superBase.id(), Reference());
+            bindClosureThatClosureTableHoldsForTypedAccess(walker, index.value(read), method, origin);
+            walker.checkThatMemoryAnswersAsBelieved(walker.referenceOf(read), WTF::move(readAsWritten));
+            walker.bind(read, Reference());
+        }
+        walker.state() = WTF::move(believed);
+    }
     if (!armsHoldCall && !walker.hasFailed() && !walker.isUnreachable())
         bindClosureThatClosureTableHoldsForTypedAccess(walker, index.value(read), method, origin);
     if (armsHoldCall && !walker.hasFailed() && !walker.isUnreachable())

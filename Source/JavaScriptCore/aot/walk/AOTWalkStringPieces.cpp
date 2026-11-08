@@ -550,7 +550,7 @@ bool buildTestForKeyLookedUpBehindIt(Walker& walker, const CallByOneRow& call)
     };
     buildArmsAroundCallUnderPieceForStringPieces(walker, call, nullptr, isTold, BlockFrequency::Rare, AnswerWithoutCallForStringPieces(isFound));
     if (!walker.hasFailed() && !walker.isUnreachable()) {
-        noteKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), place.bits(), true);
+        noteKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), place.bits() | static_cast<uint64_t>(walker.referenceOf(call.call.id()).bits()) << 32, true);
         walker.count(StatisticID::LookupsThatKeepTheirPlace);
     }
     return true;
@@ -627,8 +627,36 @@ static void holdPlaceKeptAgainstFreshSearchForStringPieces(Walker& walker, Refer
     walker.continueIn(whereSame);
 }
 
+static bool buildStoreWhereTestFoundNoKeyForStringPieces(Walker& walker, const CallByOneRow& call)
+{
+    if (!walker.opensGuesses() || call.isForwarded || !call.receiver || call.arguments.size() != 2 || !call.arguments[0] || call.writtenArguments().size() != 2)
+        return false;
+    std::optional<uint64_t> kept = findKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten);
+    Reference answerOfTest = kept ? Reference::fromBits(static_cast<uint32_t>(*kept >> 32)) : Reference();
+    if (!answerOfTest || outcomeKnownOf(walker, answerOfTest) != std::optional<bool>(false))
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID written = call.call.id();
+    uint32_t place = placeInBlockForStrings(index, written);
+    Reference stored;
+    {
+        Walker::ClosedArm closedArm(walker);
+        walker.walkStretch(index.blockOf(written), place, place + 1);
+        if (!walker.hasFailed() && !walker.isUnreachable())
+            stored = walker.referenceOf(written);
+    }
+    if (!stored)
+        return true;
+    walker.bind(written, stored);
+    noteKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), *kept, true);
+    walker.count(StatisticID::PlacesOfKeysThatStandBehindStoresWhereTestsFoundNoKey);
+    return true;
+}
+
 bool buildStoreUnderPieceInMap(Walker& walker, const CallByOneRow& call)
 {
+    if (buildStoreWhereTestFoundNoKeyForStringPieces(walker, call))
+        return true;
     std::optional<PieceOfString> piece = pieceThatIsKeyForStringPieces(walker, call, 2);
     bool mayGoByPlace = piece || (walker.opensGuesses() && !call.isForwarded && call.receiver && call.arguments.size() == 2 && call.arguments[0] && call.writtenArguments().size() == 2);
     std::optional<uint64_t> found = mayGoByPlace ? findKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0]) : std::nullopt;

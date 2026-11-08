@@ -335,30 +335,38 @@ static JSObject* checkSuperBase(JSGlobalObject* globalObject, VM& vm, JSValue ba
     return base.getObject();
 }
 
+static ALWAYS_INLINE EncodedJSValue propertyThroughSuperById(Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Identifier& identifier = identifierAt(instance, name);
+    JSObject* parent = checkSuperBase(globalObject, vm, JSValue::decode(base), &identifier);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (instance->state->propertyCaches->findByKey(parent->structure(), identifier.impl(), SlotAccess::Read)) {
+        if (JSValue found = JSValue::decode(operationAOTGetGeneric(instance, parent, identifier.impl())))
+            return JSValue::encode(found);
+        RELEASE_AND_RETURN(scope, JSValue::encode(getWithoutCaches(instance, parent, identifier, JSValue::decode(receiver))));
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(getAndCache({ instance, identifier, name }, parent, JSValue::decode(receiver))));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTGetSuperPropertyById, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetSuperPropertyById);
-    const Identifier& identifier = identifierAt(instance, name);
-    JSObject* parent = checkSuperBase(globalObject, vm, JSValue::decode(base), &identifier);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (instance->state->propertyCaches->findByKey(parent->structure(), identifier.impl(), SlotAccess::Read)) {
-        if (JSValue found = JSValue::decode(operationAOTGetGeneric(instance, parent, identifier.impl())))
-            OPERATION_RETURN(scope, JSValue::encode(found));
-        OPERATION_RETURN(scope, JSValue::encode(getWithoutCaches(instance, parent, identifier, JSValue::decode(receiver))));
-    }
-    OPERATION_RETURN(scope, JSValue::encode(getAndCache({ instance, identifier, name }, parent, JSValue::decode(receiver))));
+    OPERATION_RETURN(scope, propertyThroughSuperById(instance, base, receiver, name));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetSuperPropertyOfClassById, EncodedJSValue, (Instance* instance, EncodedJSValue classObject, EncodedJSValue receiver, uint32_t name))
 {
+    constexpr Entry entry = Entry::operationAOTGetSuperPropertyOfClassById;
+    AOT_OPERATION_BEGIN(instance, entry);
     EncodedJSValue base;
     {
-        constexpr Entry entry = Entry::operationAOTGetSuperPropertyOfClassById;
-        AOT_OPERATION_BEGIN(instance, entry);
         DeferGCForAWhile deferGC(vm);
         base = baseOfSuper(instance, vm, classObject, Typed::HomeObjectKind::ClassPrototype, entry);
     }
-    AOT_MUST_TAIL_CALL return operationAOTGetSuperPropertyById(instance, base, receiver, name);
+    OPERATION_RETURN(scope, propertyThroughSuperById(instance, base, receiver, name));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperGet, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue key, EncodedJSValue receiver))

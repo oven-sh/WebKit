@@ -184,6 +184,7 @@ void Modules::forgetUnfinishedLoads()
     m_rootsOfImportsThatHaveGoneOn.clear();
     m_waitsThatRequiresLeft.clear();
     m_filesThatRanBesideMockThatOnlyWaited.clearAll();
+    m_filesWhoseRequireThrewBesideFactories.clearAll();
     m_modulesFetchedForStatementsBehindTurns.clearAll();
     m_importsCalledByBodiesSetAside.clear();
     m_graphsHeldBehindEarlierCalls.clear();
@@ -3518,7 +3519,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         m_modulesOwedBesideMock.clear(module.index());
     }
     SetForScope importWhoseMocksRunWhenItsTextHasCome(m_importWhoseMocksRunWhenItsTextHasCome, mocksRunWhenTextOfImportHasCome(module) ? std::optional(module) : std::nullopt);
-    if (!m_importWhoseMocksRunWhenItsTextHasCome && !mocksRunWhereLoaderFetchesThem(module)) {
+    if (!m_importWhoseMocksRunWhenItsTextHasCome && !mocksRunWhereLoaderFetchesThem(module) && !hasFailedWithPackageThatStaysFailed(module)) {
         SetForScope moduleThatProgramImportsNow(m_moduleThatProgramImportsNow, m_modulesWhoseFactoryRuns.get(module.index()) ? std::nullopt : std::optional(module));
         SetForScope moduleThatImportAsksFor(m_moduleThatImportAsksFor, module);
         SetForScope stateOfWaitOfImportThatAsks(m_stateOfWaitOfImportThatAsks, JSValue());
@@ -3532,7 +3533,10 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     if (!fetchParameters)
         return fetchParameters.error();
     bool isLeftToHost = isLeftToHostAsFarAsIsKnown(module);
-    if (!isLeftToHost && isMadeByOwnFactory && isFetchedBehindItsFactory(module)) [[unlikely]]
+    bool wasGivenUpOnByRequireOfItself = m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) {
+        return pair.required == module && pair.mocked == module && pair.call == callOfFactoryThatHasNotSettled(module);
+    });
+    if (!isLeftToHost && ((isMadeByOwnFactory && isFetchedBehindItsFactory(module)) || wasGivenUpOnByRequireOfItself)) [[unlikely]]
         RELEASE_AND_RETURN(scope, importModuleItselfWithoutLoader(module));
     if (isLeftToHost || hostAnswersInPlaceOf(module, LoadByName::Import)) [[unlikely]] {
         Identifier key;
@@ -7648,7 +7652,15 @@ void didStopLayingMock(JSGlobalObject* realm, ModuleID module)
 
 bool hasESModuleMarker(JSCell* moduleNamespace)
 {
-    return uncheckedDowncast<ModuleNamespace>(moduleNamespace)->hasESModuleMarker();
+    return uncheckedDowncast<ModuleNamespace>(moduleNamespace)->showsESModuleMarker();
+}
+
+bool ModuleNamespace::showsESModuleMarker() const
+{
+    if (!m_hasESModuleMarker)
+        return false;
+    ModuleStatus status = modules().status(m_module);
+    return status != ModuleStatus::Evaluating && status != ModuleStatus::EvaluatingAsync && status != ModuleStatus::Failed;
 }
 
 void setESModuleMarker(JSCell* moduleNamespace, bool hasMarker)

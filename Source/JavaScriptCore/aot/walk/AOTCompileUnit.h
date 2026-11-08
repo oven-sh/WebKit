@@ -133,6 +133,10 @@ struct WalkOptions {
     uint32_t phaseOfHearingsThatCutWalks { 0 };
     bool takesValuesThatComeLaterForOthersThanWhatIsMadeHere { false };
     bool takesReceiversOfMethodsOfListsToBeMadeHere { false };
+    bool takesElementsBesideSumsToComeOffListsOfNumbers { false };
+    bool takesIterablesOfPatternsToStayAsMade { false };
+    bool passesGuardOfNameOverAtCallsThroughSuper { false };
+    bool passesGuardOfLinkOverAtCallsThroughSuper { false };
     PrintStream* explainsClosedAccessesTo { nullptr };
 };
 

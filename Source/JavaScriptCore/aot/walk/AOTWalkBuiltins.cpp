@@ -2855,7 +2855,7 @@ Reference CallInWalkBuiltins::buildCodeInLineOrCall(std::span<const Reference> a
 {
     Origin origin = m_origin;
     origin.isTailCall = false;
-    TerminatorDraft attempt(TerminatorKind::TryCallInline, origin);
+    TerminatorDraft attempt(TerminatorKind::TryCallInline, m_origin);
     fillCodeInLine(attempt, arguments);
 
     BlockID done = m_walker.addBlock();

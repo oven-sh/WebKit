@@ -71,9 +71,11 @@ void prepareForGeneration(Procedure& procedure)
     procedure.m_allocation = allocateRegisters(procedure);
     if (procedure.failure())
         return;
-    if ((runsChecks || procedure.allocation().leavesOutSavesAtHeads()) && !runCheckBeforeGeneration(procedure, checkAllocation))
+    if (runsChecks && !runCheckBeforeGeneration(procedure, checkAllocation))
         return;
-    if (procedure.allocation().hasReferencesToCheck() && !runCheckBeforeGeneration(procedure, checkReferences))
+    if (!runsChecks && procedure.allocation().leavesOutSavesAtHeads() && !runCheckBeforeGeneration(procedure, checkSavesAtHeads))
+        return;
+    if (procedure.allocation().recordsWhatCheckersRead() && !runCheckBeforeGeneration(procedure, checkReferences))
         return;
 
     procedure.m_slots = assignSlots(procedure);

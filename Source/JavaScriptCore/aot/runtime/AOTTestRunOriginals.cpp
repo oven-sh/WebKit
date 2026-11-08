@@ -478,7 +478,7 @@ void Modules::noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp)
     }
 }
 
-JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
+JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleID requirer)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     m_requiresThatGaveUp.removeAllMatching([&](const RequireThatGaveUp& pair) {
@@ -503,7 +503,7 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
     };
     if (!isMocked(target) && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return pair.required == target && pair.mocked != target; })) {
         if (!m_instance.vm->m_synchronousModuleQueue) {
-            waitForFactoriesThatRequireLeft(target);
+            refuseRequireAgain(target, target);
             RETURN_IF_EXCEPTION(scope, { });
         }
         return givesUpAgain();
@@ -514,7 +514,7 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
                 continue;
             ModuleID above = pair.required;
             if (!m_instance.vm->m_synchronousModuleQueue) {
-                waitForFactoriesThatRequireLeft(above);
+                refuseRequireAgain(target, above);
                 RETURN_IF_EXCEPTION(scope, { });
             }
             return givesUpAgain();
@@ -539,14 +539,17 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
             if (!passesThroughLoadThatWasLeft)
                 continue;
             if (!m_instance.vm->m_synchronousModuleQueue) {
-                waitForFactoriesThatRequireLeft(above);
+                refuseRequireAgain(target, above);
                 RETURN_IF_EXCEPTION(scope, { });
             }
             return givesUpAgain();
         }
     }
     if (wasGivenUpOn(target)) {
-        if (cannotBeRequired(target))
+        bool isAskedFromLoadThatWasLeft = requirer && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) {
+            return pair.mocked == target && pair.required != requirer && reachedByStatements(pair.required, AtMock::Stops).get(requirer.index());
+        });
+        if (cannotBeRequired(target) || isAskedFromLoadThatWasLeft)
             return givesUpAgain();
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
     }

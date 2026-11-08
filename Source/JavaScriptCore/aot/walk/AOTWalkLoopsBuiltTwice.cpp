@@ -2122,9 +2122,9 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         if (proof && !isUnreachable() && part && part->builtinClass == BuiltinClasses::Array && isDeclaredToHoldNumbersAlone(program(), m_types, typeOf(proof)) && otherHolderOfLoopMayBeListForGuesses(*this, inputHead, member.value)) {
             starts.append(StartOfCopy { firstStart, m_state, proof, isList && listWasAskedForStorageOfNumbers, true });
             starts.append(StartOfCopy { addBlock(), m_state, proof, isList && listWasAskedForStorageOfNumbers });
-        } else if (proof && !isUnreachable() && (member.tested == TypeID(TypeTable::string) || (m_types.at(member.tested).isObject() && m_types.at(member.tested).hasOnlyClassObjects() && !m_types.overlap(member.tested, m_types.builtinClass(BuiltinClasses::Array)))) && !findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, member.value, member.tested, true).isEmpty()) {
-            size_t numberOfReaders = findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, member.value, member.tested).size();
-            if (findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, member.value, member.tested, true).size() > numberOfReaders) {
+        } else if (size_t numberOfOthers = proof && !isUnreachable() && (member.tested == TypeID(TypeTable::string) || (m_types.at(member.tested).isObject() && m_types.at(member.tested).hasOnlyClassObjects() && !m_types.overlap(member.tested, m_types.builtinClass(BuiltinClasses::Array)))) ? findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, member.value, member.tested, member.tested != TypeID(TypeTable::string)).size() : 0) {
+            size_t numberOfReaders = member.tested == TypeID(TypeTable::string) ? numberOfOthers : findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, member.value, member.tested).size();
+            if (numberOfOthers > numberOfReaders) {
                 starts.append(StartOfCopy { firstStart, m_state, proof, false });
                 starts.last().expectsOtherHoldersOfItsClass = true;
                 starts.last().expectsThoseWithWordOfListToo = true;
@@ -2266,18 +2266,13 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
     forgetValuesOfLoop(inputHead);
 
     m_closedCopiesShared.append(ClosedCopyShared { frameIndex, inputHead, closedStart, entryOfClosedCopy, false });
-    LoopID loopLookedAtAroundCopies = m_frames[frameIndex].loopLookedAt;
-    uint32_t firstValueLookedAtAroundCopies = m_frames[frameIndex].firstValueLookedAt;
-    std::shared_ptr<TypesOfValuesOfLoop> settledAroundCopies = m_frames[frameIndex].typesOfLooks;
+    LoopLookedAt lookedAtBehindClosedCopy = m_frames[frameIndex].lookedAt;
     bool turnsOfSomeCopyComeRound = false;
     for (StartOfCopy& start : starts) {
         if (m_hasFailed)
             break;
-        if (m_frames[frameIndex].loopLookedAt != loop) {
-            m_frames[frameIndex].loopLookedAt = loopLookedAtAroundCopies;
-            m_frames[frameIndex].firstValueLookedAt = firstValueLookedAtAroundCopies;
-            m_frames[frameIndex].typesOfLooks = settledAroundCopies;
-        }
+        if (m_frames[frameIndex].lookedAt.loop != loop)
+            m_frames[frameIndex].lookedAt = lookedAtBehindClosedCopy;
         bool isRest = startOfRest && start.block == startOfRest;
         bool isForWhatIsNoBuiltin = startForWhatIsNoBuiltin && start.block == startForWhatIsNoBuiltin;
         if (isRest) {

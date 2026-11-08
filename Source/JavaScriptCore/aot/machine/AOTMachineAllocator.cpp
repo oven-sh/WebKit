@@ -493,8 +493,7 @@ Allocator::Allocator(Procedure& proc, Allocation& allocation)
 void Allocator::run()
 {
     findFramedPart();
-    m_allocation.m_hasReferencesToCheck = m_proc.checksAllocation() || (m_allocation.hasFramedPart() && m_proc.numberOfInnerPointersAcrossSafepoints());
-    m_allocation.m_recordsWhatCheckersRead = m_proc.checksAllocation() || m_allocation.hasFramedPart();
+    m_allocation.m_recordsWhatCheckersRead = m_proc.checksAllocation() || (m_allocation.hasFramedPart() && m_proc.numberOfInnerPointersAcrossSafepoints());
     const std::optional<Failure>& failure = m_proc.failure();
     for (Block* block : m_order.blocksInOrder()) {
         allocateBlock(block);

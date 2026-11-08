@@ -207,6 +207,7 @@ public:
         m_rootsOfImportsThatHaveGoneOn.clear();
         m_waitsThatRequiresLeft.clear();
         m_filesThatRanBesideMockThatOnlyWaited.clearAll();
+        m_filesWhoseRequireThrewBesideFactories.clearAll();
         m_rootsOfImportsThatFailedUnderMocks.clearAll();
         m_mocksWhoseEntryProgramDeleted.clearAll();
         m_mocksOfPreloadThatCameBackBeforeAnyImport.clearAll();
@@ -761,6 +762,8 @@ public:
     void bringBackKeptFiles(const WTF::Function<void(const String&)>&);
     void forgetEvaluation(ModuleID);
     bool hasFailedRunThatMayBeForgotten(ModuleID) const;
+    bool hasFailedWithoutMock(ModuleID module) const { return hasFailedRunThatMayBeForgotten(module) && !m_modulesThatRanBesideMock.get(module.index()) && !errorOfModuleThatRanBesideMock(module); }
+    bool hasFailedWithPackageThatStaysFailed(ModuleID root);
     void forgetFailedRunOfESModuleThatMayRunAgain(ModuleID);
     void forgetFailedRunsOfESModulesThatMayRunAgain();
     void makeESModuleReadyToRunAgain(ModuleID);
@@ -856,7 +859,7 @@ public:
     JSValue requireModuleItselfBesideMock(ModuleID);
     uint64_t callOfFactoryThatHasNotSettled(ModuleID, bool* refusesEveryRequire = nullptr) const;
     void noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp = true);
-    JSValue answerRequireWhileFactoryHasNotSettled(ModuleID target);
+    JSValue answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleID requirer);
     void oweBodyBesideMock(ModuleID);
     void letLoadsInFlightKeepRecordOf(ModuleID);
     bool isKeptByLoadsInFlight(ModuleID module) const { return m_modulesKeptByLoadsInFlight.get(module.index()); }
@@ -886,6 +889,9 @@ public:
     void evaluateSynchronously(ModuleID, SynchronousEvaluationReason);
     void leaveStepsOfLoaderToJobs();
     void waitForFactoriesThatRequireLeft(ModuleID required);
+    void refuseRequireAgain(ModuleID asked, ModuleID above);
+    BitVector modulesThatRequireWouldFetch(ModuleID root) const;
+    bool stillWaitsForWhatItGaveUpOn(ModuleID required) const;
     void innerModuleEvaluation(ModuleID root, EvaluationContext&);
     void gatherAsynchronousTransitiveDependencies(ModuleID, OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen);
     bool readyForSyncExecution(ModuleID, VisitedModuleRecords& seen);
@@ -2221,6 +2227,7 @@ private:
     bool wasFetchedAsItselfByLoadThatRequireLeft(ModuleID root, ModuleID module) const;
     Vector<WaitThatRequireLeft> m_waitsThatRequiresLeft;
     unsigned m_numberOfWaitsThatRequiresHaveLeft { 0 };
+    BitVector m_filesWhoseRequireThrewBesideFactories;
     BitVector m_modulesLoadedBeforeMockThatWaited;
     BitVector m_filesThatRanAheadOfMock;
     BitVector m_filesThatRanBesideMockThatOnlyWaited;

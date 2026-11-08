@@ -2643,8 +2643,11 @@ bool Walker::splitNullishOffWhatContainerHasJustGiven(Reference given, TypeID re
 
     continueIn(isOther);
     buildCheckOfProof(given, nullish, TypeTable::anything, ProofSource::Contents, *originOfCheck, true);
-    if (!isUnreachable())
+    if (!isUnreachable()) {
+        if (!isUnderHandler())
+            m_state.clear();
         build(WTF::move(throwsOffNullish), ofThrow);
+    }
     if (!isUnreachable())
         endAsUnreachable(origin);
 
@@ -6876,13 +6879,13 @@ void Walker::enterLoopHead(BlockID inputHead)
     if (hasTextsInStringBuilders())
         typeTextsInStringBuildersForLooks(*this, entering.span(), entryTypes);
     Frame& frame = m_frames[frameIndex];
-    bool isInsideLoopLookedAt = frame.loopLookedAt && frame.loopLookedAt != currentBodyIndex().loopOf(inputHead) && currentBodyIndex().isInLoop(inputHead, frame.loopLookedAt);
+    bool isInsideLoopLookedAt = frame.lookedAt.loop && frame.lookedAt.loop != currentBodyIndex().loopOf(inputHead) && currentBodyIndex().isInLoop(inputHead, frame.lookedAt.loop);
     Vector<TypeID, 8> settledAround;
     if (isInsideLoopLookedAt) {
-        uint32_t placeOfHead = input.firstParameter().index() - frame.firstValueLookedAt;
-        RELEASE_ASSERT(!numberOfParameters || frame.typesOfLooks->holdsInOneRun(placeOfHead, numberOfParameters));
+        uint32_t placeOfHead = input.firstParameter().index() - frame.lookedAt.firstValue;
+        RELEASE_ASSERT(!numberOfParameters || frame.lookedAt.types->holdsInOneRun(placeOfHead, numberOfParameters));
         for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter)
-            settledAround.append((*frame.typesOfLooks)[placeOfHead + parameter]);
+            settledAround.append((*frame.lookedAt.types)[placeOfHead + parameter]);
     }
     LoopPreview preview = isBeingTried(frameIndex, inputHead) ? previewOutOfTries(inputHead, entryTypes.span()) : previewThatClaimsNothingOfLoops(*this, inputHead, entryTypes.span(), settledAround.span());
     if (m_hasFailed)
@@ -6907,7 +6910,7 @@ void Walker::enterLoopHead(BlockID inputHead)
     if (isInsideLoopLookedAt) {
         const BodyIndex& index = currentBodyIndex();
         LoopID loop = index.loopOf(inputHead);
-        uint32_t numberOfLoopsLeft = preview.typesOfValues.isEmpty() || frame.typesOfLooks->holdsAt(preview.firstValue - frame.firstValueLookedAt, preview.typesOfValues) ? 0 : index.loop(loop).numberOfLoopsWithin - 1;
+        uint32_t numberOfLoopsLeft = preview.typesOfValues.isEmpty() || frame.lookedAt.types->holdsAt(preview.firstValue - frame.lookedAt.firstValue, preview.typesOfValues) ? 0 : index.loop(loop).numberOfLoopsWithin - 1;
         for (uint32_t inner = loop.index() + 1; numberOfLoopsLeft && inner < index.numberOfLoops(); ++inner) {
             BodyBlock innerHead = index.block(index.loop(LoopID(inner)).head);
             if (!index.isInLoop(innerHead.id(), loop))
@@ -6916,19 +6919,17 @@ void Walker::enterLoopHead(BlockID inputHead)
             for (uint32_t parameter = 0; parameter < innerHead.numberOfParameters(); ++parameter) {
                 uint32_t value = innerHead.parameter(parameter).index();
                 TypeID found = preview.typesOfValues[value - preview.firstValue];
-                uint32_t place = value - frame.firstValueLookedAt;
-                TypeID around = (*frame.typesOfLooks)[place];
-                if (!frame.typesOfLooks->holds(place) || !found || (around && !m_types.isSubset(found, around)))
+                uint32_t place = value - frame.lookedAt.firstValue;
+                TypeID around = (*frame.lookedAt.types)[place];
+                if (!frame.lookedAt.types->holds(place) || !found || (around && !m_types.isSubset(found, around)))
                     continue;
-                if (frame.typesOfLooks.use_count() != 1)
-                    frame.typesOfLooks = std::make_shared<TypesOfValuesOfLoop>(*frame.typesOfLooks);
-                frame.typesOfLooks->set(place, found);
+                if (frame.lookedAt.types.use_count() != 1)
+                    frame.lookedAt.types = std::make_shared<TypesOfValuesOfLoop>(*frame.lookedAt.types);
+                frame.lookedAt.types->set(place, found);
             }
         }
     } else if (!preview.typesOfValues.isEmpty()) {
-        frame.loopLookedAt = currentBodyIndex().loopOf(inputHead);
-        frame.firstValueLookedAt = preview.firstValue;
-        frame.typesOfLooks = std::make_shared<TypesOfValuesOfLoop>(WTF::move(preview.typesOfValues));
+        frame.lookedAt = { currentBodyIndex().loopOf(inputHead), preview.firstValue, std::make_shared<TypesOfValuesOfLoop>(WTF::move(preview.typesOfValues)) };
     }
 
     Vector<FieldOfScope, 4> fieldsThatComeRound;

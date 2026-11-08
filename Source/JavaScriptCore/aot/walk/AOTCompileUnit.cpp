@@ -96,6 +96,10 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .phaseOfHearingsThatCutWalks = options.phaseOfHearingsThatCutWalks,
         .takesValuesThatComeLaterForOthersThanWhatIsMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere),
         .takesReceiversOfMethodsOfListsToBeMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ReceiversOfMethodsOfListsAreTakenToBeMadeHere),
+        .takesElementsBesideSumsToComeOffListsOfNumbers = AOT::hasFlag(options.lies, Wire::TestingLie::ElementsBesideSumsAreTakenToComeOffListsOfNumbers),
+        .takesIterablesOfPatternsToStayAsMade = AOT::hasFlag(options.lies, Wire::TestingLie::IterablesOfPatternsAreTakenToStayAsMade),
+        .passesGuardOfNameOverAtCallsThroughSuper = AOT::hasFlag(options.lies, Wire::TestingLie::GuardOfNameIsPassedOverAtCallsThroughSuper),
+        .passesGuardOfLinkOverAtCallsThroughSuper = AOT::hasFlag(options.lies, Wire::TestingLie::GuardOfLinkIsPassedOverAtCallsThroughSuper),
     };
 }
 

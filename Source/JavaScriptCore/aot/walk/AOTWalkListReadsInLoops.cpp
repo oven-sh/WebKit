@@ -1951,7 +1951,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
     BitVector parametersThatMeetWhatIsNoWholeNumber;
     auto noteWhatEdgesHandOn = [&](BlockID from) {
         for (BodyTarget target : index.terminator(from).targets()) {
-            if ((target.arguments().empty() && target.proofs().empty()) || target.block() == inputHead)
+            if ((target.arguments().empty() && target.proofs().empty()) || target.block().index() <= from.index() || !index.isInLoop(target.block(), loop))
                 continue;
             BodyBlock reached = index.block(target.block());
             if (!reached.numberOfParameters() || reached.firstParameter().index() < firstValueOfLoop)
@@ -2144,10 +2144,10 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
     };
 
     BlocksThatEveryTurnPasses passedByEveryTurn(index, loop);
-    BitVector namesThatEveryTurnMentions;
+    Vector<uint32_t, 32> namesThatEveryTurnMentions;
     auto noteThatEveryTurnMentions = [&](Reference name) {
-        if (name && name.isValue())
-            namesThatEveryTurnMentions.set(name.id().index());
+        if (name && name.isValue() && (namesThatEveryTurnMentions.isEmpty() || namesThatEveryTurnMentions.last() != name.id().index()))
+            namesThatEveryTurnMentions.append(name.id().index());
     };
     for (BlockID member : index.membersOf(loop)) {
         BodyBlock block = index.block(member);
@@ -2545,7 +2545,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
         bool isAskedInFrontAnyway = guesses.containsIf([&](const GuessInFrontOfLoop& guess) {
             return guess.value == list.name;
         });
-        return !namesThatEveryTurnMentions.get(list.name.id().index()) && !canFailByKindOfStorageAlone && !isAskedInFrontAnyway;
+        return !namesThatEveryTurnMentions.contains(list.name.id().index()) && !canFailByKindOfStorageAlone && !isAskedInFrontAnyway;
     });
     if (found.lists.isEmpty())
         return { };

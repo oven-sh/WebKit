@@ -61,7 +61,7 @@ enum class RequireOverride : uint8_t {
     LoaderOfExtension = 1 << 2,
 };
 
-enum class FactoryAskedForBy : uint8_t { ImportCall, ImportCallBehindItsText, LoadThatRequireLeft, Loader, Require };
+enum class FactoryAskedForBy : uint8_t { ImportCall, ImportCallBehindItsText, LoadThatRequireLeft, Loader, Require, RequireThatIsRefused };
 
 enum class AnswerForName : uint8_t { Declined, Answered, Thrown };
 

@@ -1455,7 +1455,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     if (std::ranges::any_of(parameters, [&](ValueID parameter) { return isCarriedBoxed(parameter); }))
         return std::nullopt;
     const Edge& intoTurn = code().at(blockThatAsks.terminator.taken());
-    if (!intoTurn.arguments().empty() || positionOfAsking + 1 == m_order.size() || m_order[positionOfAsking + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != asking)
+    if (!intoTurn.arguments().empty() || positionOfAsking + 1 == m_order.size() || m_order[positionOfAsking + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != asking || code().valuesOf(intoTurn.to).size() > mostOperationsInTurnLaidOut)
         return std::nullopt;
 
     unsigned numberOfPlaces = 0;

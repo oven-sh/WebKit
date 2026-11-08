@@ -495,7 +495,7 @@ static bool userTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyVa
             if (!primitiveConstants.contains(index.opcodeOf(ValueID(between))) && !opcodesThatStateTypes.contains(index.opcodeOf(ValueID(between))))
                 return false;
         }
-        return (!readGivesUpItsHole || !elementIsReadAgainInLoopInTypedElements(index, read, ReadersOfElement::ThoseThatDoMoreThanReckon)) && comesOffListOfNumbersTestedInFrontInTypedElements(walker, index.value(written), read.id());
+        return (!readGivesUpItsHole || !elementIsReadAgainInLoopInTypedElements(index, read, ReadersOfElement::ThoseThatDoMoreThanReckon)) && (comesOffListOfNumbersTestedInFrontInTypedElements(walker, index.value(written), read.id()) || walker.takesElementsBesideSumsToComeOffListsOfNumbers());
     }
     TypeID seenByLink = walker.facts().linked().resultOfReadByKey(walker.currentFunction(), written);
     return (seenByLink && isNumberOrNothing(seenByLink)) || ((!readGivesUpItsHole || !elementIsReadAgainInLoopInTypedElements(index, read, ReadersOfElement::ThoseThatDoMoreThanReckon)) && comesOffListOfNumbersTestedInFrontInTypedElements(walker, index.value(written), read.id()));

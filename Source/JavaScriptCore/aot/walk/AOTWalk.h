@@ -542,6 +542,11 @@ private:
     uint32_t m_firstValueOfNest { 0 };
     uint32_t m_placeInNest { 0 };
 };
+struct LoopLookedAt {
+    LoopID loop;
+    uint32_t firstValue { 0 };
+    std::shared_ptr<TypesOfValuesOfLoop> types;
+};
 
 template<typename T, size_t inlineCapacity>
 ALWAYS_INLINE void moveWhereSanitizerWatches(Vector<T, inlineCapacity>& list)
@@ -1723,6 +1728,10 @@ public:
     bool textOfLoopReckonsWithWhatItReads(BlockID inputHead) { return loopReckonsWithWhatItReads(inputHead); }
     std::span<const uint64_t> holdersFromInFrontThatLoopReadsUnderIndexes(BlockID inputHead);
     bool takesReceiversOfMethodsOfListsToBeMadeHere() const { return m_inputs.options.takesReceiversOfMethodsOfListsToBeMadeHere; }
+    bool takesElementsBesideSumsToComeOffListsOfNumbers() const { return m_inputs.options.takesElementsBesideSumsToComeOffListsOfNumbers; }
+    bool takesIterablesOfPatternsToStayAsMade() const { return m_inputs.options.takesIterablesOfPatternsToStayAsMade; }
+    bool passesGuardOfNameOverAtCallsThroughSuper() const { return m_inputs.options.passesGuardOfNameOverAtCallsThroughSuper; }
+    bool passesGuardOfLinkOverAtCallsThroughSuper() const { return m_inputs.options.passesGuardOfLinkOverAtCallsThroughSuper; }
     std::optional<BlockID> headOfInnermostTryInFrameOnTop() const { return !m_triesOfLoops.isEmpty() && m_triesOfLoops.last().frameIndex == m_frames.size() - 1 ? std::optional(m_triesOfLoops.last().inputHead) : std::nullopt; }
     using ObjectsMadeHereThatLoopMentions = Vector<uint32_t, 4>;
     ObjectsMadeHereThatLoopMentions objectsMadeHereThatLoopMentions(BlockID inputHead);
@@ -2083,9 +2092,7 @@ private:
         template<NarrowerNamesAsked, typename Functor> void forEachNarrowerName(Reference, const Functor&) const;
         Reference narrowestNameInLongList(Reference) const;
         bool isNarrowerNameInLongList(Reference) const;
-        LoopID loopLookedAt;
-        uint32_t firstValueLookedAt { 0 };
-        std::shared_ptr<TypesOfValuesOfLoop> typesOfLooks;
+        LoopLookedAt lookedAt;
         struct ValuesBuiltTwice {
             WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ValuesBuiltTwice);
             struct Slot {

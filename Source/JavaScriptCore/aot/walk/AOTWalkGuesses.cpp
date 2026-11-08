@@ -7323,6 +7323,8 @@ bool askBaseInFrontOfTypedCopyForList(Walker& walker, const BodyValue& access)
     return true;
 }
 
+bool buildReadWhereSomeReceiversLackField(Walker&, const BodyValue&);
+
 static bool answerIsFirstAskedWhetherItIsThereForGuesses(const Walker& walker, const BodyIndex& index, const BodyValue& read)
 {
     constexpr uint32_t testAndWhatItsTwoEdgesHandOn = 3;
@@ -7403,8 +7405,12 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
 
     if (opcode == Opcode::PropGet && !expectsOnlyProvenHolderOfName && mayHaveTypedForm && formAsItStands == TypedForm::None && answerIsFirstAskedWhetherItIsThereForGuesses(walker, index, operation)) {
         Type proven = walker.types().at(walker.types().withoutNullish(provenOfObject));
-        if (proven.hasObjects() && proven.hasOnlyLayouts() && !proven.hasOnlyClosures() && !proven.hasUnboundedUnknown())
-            return GuessOpened::None;
+        if (proven.hasObjects() && proven.hasOnlyLayouts() && !proven.hasOnlyClosures() && !proven.hasUnboundedUnknown()) {
+            if (buildReadWhereSomeReceiversLackField(walker, operation))
+                return GuessOpened::AsOneOperation;
+            if (readBehindTestsOfShape(walker, operation))
+                return GuessOpened::WithArms;
+        }
     }
 
     bool isCall = callsOfValuesForGuesses.contains(opcode);

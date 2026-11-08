@@ -344,8 +344,8 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
 }
 
 #define FOR_EACH_FIELD_OF_FRAME_IN_TRY_THAT_STANDING_BESIDE_PLAIN_WALK_TAKES_BACK(macro) \
-    macro(block) macro(endOfValues) macro(firstValueListedByBirthInFront) macro(endOfValuesListedByBirthInFront) macro(hasHandler) macro(handlerOnlyClosesIterations) macro(standsInFrontOfHead) macro(narrowedValues) macro(firstNarrowerName) macro(listOfNarrowerNamesIsLong) macro(loopLookedAt) macro(firstValueLookedAt) \
-    macro(typesOfLooks) macro(wholeExpectations) macro(shapesOfValues) macro(blockOfNamesForHandler) macro(namesForHandler)
+    macro(block) macro(endOfValues) macro(firstValueListedByBirthInFront) macro(endOfValuesListedByBirthInFront) macro(hasHandler) macro(handlerOnlyClosesIterations) macro(standsInFrontOfHead) macro(narrowedValues) macro(firstNarrowerName) macro(listOfNarrowerNamesIsLong) macro(lookedAt) \
+    macro(wholeExpectations) macro(shapesOfValues) macro(blockOfNamesForHandler) macro(namesForHandler)
 
 #define FOR_EACH_FIELD_OF_FRAME_IN_TRY_THAT_STANDING_BESIDE_PLAIN_WALK_LEAVES(macro) \
     macro(returnDominator) macro(walkedUpTo) macro(endOfStretch) macro(numberOfStretchesBeingWalked) macro(placeTakenByEndOfBlockAskedLast) \
