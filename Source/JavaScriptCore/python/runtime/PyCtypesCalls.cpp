@@ -428,8 +428,11 @@ static void takeOverReferenceIn(const uint8_t* memory, bool programGetsObject)
     CApi::takeOverReference(bits, programGetsObject);
 }
 
+// What becomes of the reference that a result which is an object comes with. (As wide as a word: see ResultOfCall.)
+enum class ReferenceOfResult : uintptr_t { None, ForProgram, Dropped };
+
 // `memory`: the room that there is. `size`: so much of it was made for a result that is an instance. (The type may have been given its fields during the call.)
-static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, std::span<const uint8_t> memory, size_t size, JSValue checker, JSValue hint, bool comesWithReference, bool isDropped)
+static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, std::span<const uint8_t> memory, size_t size, JSValue checker, JSValue hint, ReferenceOfResult reference)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -446,8 +449,8 @@ static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue res
     if (info->accessor && isSimpleInstanceType(*info->state.get(), PyType::from(resultType))) {
         result = load(globalObject, info->accessor, memory.first(std::min<size_t>(info->size, memory.size())), { }, hint);
         // (Also if the bits are not those of an object that the program may have.)
-        if (comesWithReference)
-            takeOverReferenceIn(memory.data(), result && !isDropped);
+        if (reference != ReferenceOfResult::None)
+            takeOverReferenceIn(memory.data(), result && reference == ReferenceOfResult::ForProgram);
     } else
         result = dataFromCopy(globalObject, PyType::from(resultType), memory.first(size));
     RETURN_IF_EXCEPTION(scope, { });
@@ -604,7 +607,7 @@ static NEVER_INLINE bool convertArguments(JSGlobalObject* globalObject, void* fu
 // The function may wait for as long as it likes, and what earlier frames left in room of this frame that nothing is written to is under the eyes of
 // the collector until it returns. So the room for the arguments is written whether there are so many or not, and what comes before and after
 // the call has frames of its own.
-JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* arguments, unsigned flags, JSValue convertersValue, JSValue resultType, JSValue checker, bool resultIsDropped)
+JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* arguments, unsigned flags, JSValue convertersValue, JSValue resultType, JSValue checker, ResultOfCall resultOfCall)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -685,7 +688,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
             return { };
         }
     }
-    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, static_cast<size_t>(resultSize), checker, ownResult, returnsReference, resultIsDropped));
+    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, static_cast<size_t>(resultSize), checker, ownResult, !returnsReference ? ReferenceOfResult::None : resultOfCall == ResultOfCall::Dropped ? ReferenceOfResult::Dropped : ReferenceOfResult::ForProgram));
 }
 
 // ---- Callbacks ----
@@ -1181,7 +1184,7 @@ static JSValue functionCall(JSGlobalObject* globalObject, JSValue self, const Ca
     }
     // The value of a call with out parameters is theirs (buildCallResult()). Then only these two see what the function returned.
     bool resultIsDropped = outputs.count && !checker && !errorCheck;
-    JSValue result = callFunction(globalObject, address, arguments, info->flags, converters, resultType, checker, resultIsDropped);
+    JSValue result = callFunction(globalObject, address, arguments, info->flags, converters, resultType, checker, resultIsDropped ? ResultOfCall::Dropped : ResultOfCall::GivenOn);
     RETURN_IF_EXCEPTION(scope, { });
     if (errorCheck) {
         JSValue checked = call(globalObject, errorCheck, result, self, arguments);

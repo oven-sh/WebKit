@@ -107,7 +107,11 @@ struct Packed {
 struct Bits {
     uint8_t size { 0 }; // 0: all of it.
     uint8_t offset { 0 };
+    // It is the last argument of getData() and setData(), under which code of the program runs, and is passed on the stack on some machines: all of the word is written. See ResultOfCall.
+    uint16_t unused16 { 0 };
+    uint32_t unused32 { 0 };
 };
+static_assert(sizeof(Bits) == sizeof(uintptr_t));
 
 // In two steps, because the first may run anything (__index__, __float__, __bool__), and that may move the memory.
 // `size`: of the field, which is how many bytes store() will be given. False: an exception.
@@ -583,8 +587,11 @@ PyCArg* argumentFor(JSGlobalObject*, PyCData*);
 JSValue makeReference(JSGlobalObject*, JSValue object, int64_t offset);
 
 // function(*arguments). `converters`: a tuple of from_param methods, or empty. `resultType`: empty is int.
-// `resultIsDropped`: the caller is not going to give the result to anybody.
-JSValue callFunction(JSGlobalObject*, void* function, PyTuple* arguments, unsigned flags, JSValue converters, JSValue resultType, JSValue checker, bool resultIsDropped = false);
+// Dropped: the caller is not going to give the result to anybody.
+// (As wide as a word. Under these functions a thread waits for as long as C likes, or runs code of the program. An argument that does not fit into the registers is passed on the stack, and one narrower than a word is stored
+// there as it is: the rest of the word keeps what lay there, which the collector's look at the stack may take for the address of a cell. See Buffer in PyBuffer.h.)
+enum class ResultOfCall : uintptr_t { GivenOn, Dropped };
+JSValue callFunction(JSGlobalObject*, void* function, PyTuple* arguments, unsigned flags, JSValue converters, JSValue resultType, JSValue checker, ResultOfCall = ResultOfCall::GivenOn);
 
 // The functions of C that Lib/ctypes calls through function pointers: their addresses are real, and a call to one runs
 // here, without a foreign call.
@@ -622,7 +629,7 @@ PY_END_WITHOUT_PADDING
 
 // Calls the function, without the GIL unless the flags say FunctionPythonAPI. The arguments from `fixedCount` on are those that
 // a variadic function declares as "...". False: an exception: there is no way to make such a call here.
-bool callForeignFunction(JSGlobalObject*, void* function, std::span<const ForeignValue> arguments, unsigned fixedCount, const ForeignValue& result, unsigned flags);
+bool callForeignFunction(JSGlobalObject*, void* function, std::span<const ForeignValue> arguments, unsigned fixedCount, const ForeignValue& result, uintptr_t flags);
 // Sets `code` to a function of C that calls runCallback() with the thunk. False: an exception.
 bool allocateCallbackCode(JSGlobalObject*, PyCThunk*);
 void releaseCallbackCode(PyCThunk*);

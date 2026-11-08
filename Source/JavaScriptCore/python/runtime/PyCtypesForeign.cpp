@@ -480,7 +480,7 @@ struct ActiveCall {
 };
 static thread_local ActiveCall* activeCall;
 
-bool callForeignFunction(JSGlobalObject* globalObject, void* function, std::span<const ForeignValue> arguments, unsigned fixedCount, const ForeignValue& result, unsigned flags)
+bool callForeignFunction(JSGlobalObject* globalObject, void* function, std::span<const ForeignValue> arguments, unsigned fixedCount, const ForeignValue& result, uintptr_t flags)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -851,7 +851,7 @@ void releaseCallbackCode(PyCThunk* thunk)
 
 #else // !CTYPES_HAS_FOREIGN_CALLS
 
-bool callForeignFunction(JSGlobalObject* globalObject, void*, std::span<const ForeignValue>, unsigned, const ForeignValue&, unsigned)
+bool callForeignFunction(JSGlobalObject* globalObject, void*, std::span<const ForeignValue>, unsigned, const ForeignValue&, uintptr_t)
 {
     return raiseUnsupported(globalObject, "calls of foreign functions are"_s);
 }
