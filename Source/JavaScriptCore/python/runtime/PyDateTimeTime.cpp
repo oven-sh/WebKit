@@ -263,7 +263,13 @@ static JSValue timeOfDayNew(JSGlobalObject* globalObject, JSValue cls, const Cal
             JSValue tzinfo = args.size() == 2 ? args[1] : none();
             if (!isNone(tzinfo) && !isTzInfo(globalObject, state, tzinfo))
                 return raiseTypeError(globalObject, scope, "bad tzinfo state arg"_s);
-            return PyTimeOfDay::create(vm, state.timeStructure.get(), type, Packed::time(bytes[0] & 0x7f, bytes[1], bytes[2], bytes[3] << 16 | bytes[4] << 8 | bytes[5], bytes[0] >> 7), tzinfo);
+            Fields fields;
+            readTimeBytes(bytes, fields);
+            fields.fold = fields.hour >> 7;
+            fields.hour &= 0x7f;
+            if (failed(scope, checkTimeFields(globalObject, fields.hour, fields.minute, fields.second, fields.microsecond, fields.fold))) [[unlikely]]
+                return { };
+            return PyTimeOfDay::create(vm, state.timeStructure.get(), type, Packed::time(fields.hour, fields.minute, fields.second, fields.microsecond, fields.fold), tzinfo);
         }
     }
     JSValue values[6];

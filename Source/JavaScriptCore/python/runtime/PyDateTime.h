@@ -81,10 +81,17 @@ struct Fields {
     int fold { 0 };
 };
 
+ALWAYS_INLINE bool areTimeFields(int hour, int minute, int second, int microsecond, int fold)
+{
+    auto isWithin = [](int value, int limit) { return static_cast<unsigned>(value) < static_cast<unsigned>(limit); };
+    return isWithin(hour, 24) && isWithin(minute, 60) && isWithin(second, 60) && isWithin(microsecond, microsecondsPerSecond) && isWithin(fold, 2);
+}
+
 // The same in one word, the year first and the fold last, so that words compare as moments do.
 //
-// A pickle is taken at its word but for the month (or the hour of a time), as in CPython, so a forged one makes an object with a
-// day 53. Here each field keeps the bits it has room for, which is all of them for anything a constructor lets through.
+// Each field has room for anything that a constructor lets through, and nothing else is packed: what a pickle holds is looked at as
+// the arguments are (pickledStateArgument()). So the word of a date or datetime has a date of the calendar, that of a time or
+// datetime a time of the clock. (The word of a time has no date: year, month and day 0.) What is asserted here is the range of each field.
 namespace Packed {
 static constexpr unsigned foldShift = 0;
 static constexpr unsigned microsecondShift = 1;
@@ -97,10 +104,12 @@ static constexpr unsigned yearShift = 47;
 
 ALWAYS_INLINE uint64_t date(int year, int month, int day)
 {
+    ASSERT(year >= minYear && year <= maxYear && month >= 1 && month <= 12 && day >= 1 && day <= 31);
     return (static_cast<uint64_t>(year & 0xffff) << yearShift) | (static_cast<uint64_t>(month & 15) << monthShift) | (static_cast<uint64_t>(day & 31) << dayShift);
 }
 ALWAYS_INLINE uint64_t time(int hour, int minute, int second, int microsecond, int fold)
 {
+    ASSERT(areTimeFields(hour, minute, second, microsecond, fold));
     return (static_cast<uint64_t>(hour & 31) << hourShift) | (static_cast<uint64_t>(minute & 63) << minuteShift) | (static_cast<uint64_t>(second & 63) << secondShift)
         | (static_cast<uint64_t>(microsecond & 0xfffff) << microsecondShift) | static_cast<uint64_t>(fold & 1);
 }
@@ -388,9 +397,26 @@ bool bindArguments(JSGlobalObject*, const Parameters&, const CallArgs&, JSValue*
 
 // What a pickle gives the constructor: that many bytes, or the str that pickle.loads(encoding='latin1') made of the bytes of a
 // pickle of Python 2. It is told from other arguments by its length and by whether the byte at `checkedIndex`, without its first
-// bit if that may be the fold, is at least `least` and less than `limit`.
+// bit if that may be the fold, is at least `least` and less than `limit`. That much is CPython's, which then takes the rest at its
+// word. Here the caller reads the fields (readDateBytes(), readTimeBytes()) and has them checked as those of the arguments are,
+// when it has looked at the zone, which CPython refuses first and in words of its own.
 enum class PickledState : uint8_t { No, Yes, Raised };
 PickledState pickledStateArgument(JSGlobalObject*, JSValue, ASCIILiteral what, unsigned length, unsigned checkedIndex, unsigned mask, unsigned least, unsigned limit, uint8_t* bytes);
+// The first bit of the month is the fold of a datetime. (That of the hour is the fold of a time, which takes it out itself: in a datetime an hour 129 is an hour 129.)
+ALWAYS_INLINE void readDateBytes(const uint8_t* bytes, Fields& fields)
+{
+    fields.year = bytes[0] << 8 | bytes[1];
+    fields.month = bytes[2] & 0x7f;
+    fields.day = bytes[3];
+    fields.fold = bytes[2] >> 7;
+}
+ALWAYS_INLINE void readTimeBytes(const uint8_t* bytes, Fields& fields)
+{
+    fields.hour = bytes[0];
+    fields.minute = bytes[1];
+    fields.second = bytes[2];
+    fields.microsecond = bytes[3] << 16 | bytes[4] << 8 | bytes[5];
+}
 
 // A number of seconds since the epoch, rounded down. False: an exception.
 bool secondsArgument(JSGlobalObject*, JSValue, time_t&);
@@ -401,8 +427,20 @@ bool toUniversalTime(JSGlobalObject*, time_t, struct tm&);
 // ---- Making the objects ----
 
 // False: a ValueError.
-bool checkDateFields(JSGlobalObject*, int year, int month, int day);
-bool checkTimeFields(JSGlobalObject*, int hour, int minute, int second, int microsecond, int fold);
+bool raiseForDateFields(JSGlobalObject*, int year, int month, int day);
+bool raiseForTimeFields(JSGlobalObject*, int hour, int minute, int second, int microsecond, int fold);
+ALWAYS_INLINE bool checkDateFields(JSGlobalObject* globalObject, int year, int month, int day)
+{
+    if (year >= minYear && year <= maxYear && month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month)) [[likely]]
+        return true;
+    return raiseForDateFields(globalObject, year, month, day);
+}
+ALWAYS_INLINE bool checkTimeFields(JSGlobalObject* globalObject, int hour, int minute, int second, int microsecond, int fold)
+{
+    if (areTimeFields(hour, minute, second, microsecond, fold)) [[likely]]
+        return true;
+    return raiseForTimeFields(globalObject, hour, minute, second, microsecond, fold);
+}
 // None, or an instance of tzinfo. False: a TypeError.
 bool checkTzInfo(JSGlobalObject*, State&, JSValue);
 ALWAYS_INLINE bool isTzInfo(JSGlobalObject* globalObject, State& state, JSValue value)

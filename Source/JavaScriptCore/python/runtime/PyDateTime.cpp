@@ -383,10 +383,8 @@ bool bindArguments(JSGlobalObject* globalObject, const Parameters& parameters, c
 
 // ---- Making the objects ----
 
-bool checkDateFields(JSGlobalObject* globalObject, int year, int month, int day)
+bool raiseForDateFields(JSGlobalObject* globalObject, int year, int month, int day)
 {
-    if (year >= minYear && year <= maxYear && month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month)) [[likely]]
-        return true;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (year < minYear || year > maxYear)
@@ -398,11 +396,9 @@ bool checkDateFields(JSGlobalObject* globalObject, int year, int month, int day)
     return false;
 }
 
-bool checkTimeFields(JSGlobalObject* globalObject, int hour, int minute, int second, int microsecond, int fold)
+bool raiseForTimeFields(JSGlobalObject* globalObject, int hour, int minute, int second, int microsecond, int fold)
 {
     auto isWithin = [](int value, int limit) { return static_cast<unsigned>(value) < static_cast<unsigned>(limit); };
-    if (isWithin(hour, 24) && isWithin(minute, 60) && isWithin(second, 60) && isWithin(microsecond, microsecondsPerSecond) && isWithin(fold, 2)) [[likely]]
-        return true;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isWithin(hour, 24))

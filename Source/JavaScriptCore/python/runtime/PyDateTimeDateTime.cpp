@@ -53,9 +53,13 @@ static JSValue dateTimeNew(JSGlobalObject* globalObject, JSValue cls, const Call
             JSValue tzinfo = args.size() == 2 ? args[1] : none();
             if (!isNone(tzinfo) && !isTzInfo(globalObject, state, tzinfo))
                 return raiseTypeError(globalObject, scope, "bad tzinfo state arg"_s);
-            uint64_t packed = Packed::date(bytes[0] << 8 | bytes[1], bytes[2] & 0x7f, bytes[3])
-                | Packed::time(bytes[4], bytes[5], bytes[6], bytes[7] << 16 | bytes[8] << 8 | bytes[9], bytes[2] >> 7);
-            return PyDateTime::create(vm, state.dateTimeStructure.get(), type, packed, tzinfo);
+            Fields fields;
+            readDateBytes(bytes, fields);
+            readTimeBytes(bytes + 4, fields);
+            if (failed(scope, checkDateFields(globalObject, fields.year, fields.month, fields.day))
+                || failed(scope, checkTimeFields(globalObject, fields.hour, fields.minute, fields.second, fields.microsecond, fields.fold))) [[unlikely]]
+                return { };
+            return PyDateTime::create(vm, state.dateTimeStructure.get(), type, Packed::all(fields), tzinfo);
         }
     }
     JSValue values[9];

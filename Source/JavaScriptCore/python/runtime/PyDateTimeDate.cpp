@@ -122,8 +122,11 @@ static JSValue dateNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
         uint8_t bytes[4];
         PickledState pickled = pickledStateArgument(globalObject, args[0], "date"_s, 4, 2, 0xffffffff, 1, 13, bytes);
         RETURN_IF_EXCEPTION(scope, { });
-        if (pickled == PickledState::Yes)
-            return PyDate::create(vm, state.dateStructure.get(), type, Packed::date(bytes[0] << 8 | bytes[1], bytes[2], bytes[3]));
+        if (pickled == PickledState::Yes) {
+            Fields fields;
+            readDateBytes(bytes, fields);
+            RELEASE_AND_RETURN(scope, newDate(globalObject, state, type, fields.year, fields.month, fields.day));
+        }
     }
     JSValue values[3];
     int year;
