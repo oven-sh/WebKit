@@ -248,32 +248,41 @@ static JSValue odictReversed(JSGlobalObject* globalObject, JSValue self) { retur
 
 // ---- update(), as collections.abc.MutableMapping has it: through __setitem__ ----
 
+// A pair is whatever can be gone through and gives two.
+static bool addPair(JSGlobalObject* globalObject, JSValue self, JSValue pair)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue iterator = getIter(globalObject, pair);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue key = iterNext(globalObject, iterator);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!key) {
+        raiseValueError(globalObject, scope, "need more than 0 values to unpack"_s);
+        return false;
+    }
+    JSValue value = iterNext(globalObject, iterator);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!value) {
+        raiseValueError(globalObject, scope, "need more than 1 value to unpack"_s);
+        return false;
+    }
+    JSValue unexpected = iterNext(globalObject, iterator);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (unexpected) {
+        raiseValueError(globalObject, scope, "too many values to unpack (expected 2)"_s);
+        return false;
+    }
+    setItem(globalObject, self, key, value);
+    return !scope.exception();
+}
+
 static bool addPairs(JSGlobalObject* globalObject, JSValue self, JSValue pairs)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     forEach(globalObject, pairs, [&](JSValue pair) {
-        JSValue iterator = getIter(globalObject, pair);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue key = iterNext(globalObject, iterator);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!key) {
-            raiseValueError(globalObject, scope, "need more than 0 values to unpack"_s);
-            return false;
-        }
-        JSValue value = iterNext(globalObject, iterator);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!value) {
-            raiseValueError(globalObject, scope, "need more than 1 value to unpack"_s);
-            return false;
-        }
-        JSValue unexpected = iterNext(globalObject, iterator);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (unexpected) {
-            raiseValueError(globalObject, scope, "too many values to unpack (expected 2)"_s);
-            return false;
-        }
-        setItem(globalObject, self, key, value);
+        addPair(globalObject, self, pair);
         return !scope.exception();
     });
     return !scope.exception();
@@ -299,7 +308,14 @@ static bool updateFrom(JSGlobalObject* globalObject, JSValue self, JSValue other
         if (!target)
             RELEASE_AND_RETURN(scope, addPairs(globalObject, self, items));
         for (unsigned i = 0; i < listLength(items); ++i) {
-            auto* pair = PyTuple::from(listGet(items, i));
+            // The list is an object like any other, which gc.get_objects() hands out to the __hash__ of a key. What lies there in the place of a tuple of two is taken apart as any pair is.
+            JSValue item = listGet(items, i);
+            auto* pair = PyTuple::tryFrom(item);
+            if (!pair || pair->type() != rt.tupleType() || pair->length() != 2) [[unlikely]] {
+                addPair(globalObject, self, item);
+                RETURN_IF_EXCEPTION(scope, false);
+                continue;
+            }
             target->set(globalObject, pair->at(0), pair->at(1));
             RETURN_IF_EXCEPTION(scope, false);
         }
