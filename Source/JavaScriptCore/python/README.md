@@ -772,9 +772,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     that order: a list, a tuple and a frame go from the end; the attributes of an instance in the order of their places, which is
     the order in which they were set unless one has been deleted, though those beyond the sixth lie outside the cell; a deque from
     its left end, which is somewhere in the middle of its memory.
-    The table that a dict or a set has left for another (it grew, or was made anew) is dead, still refers to what it held, and nothing
-    refers to it. With reference counts it was freed on the spot and let go of nothing. It says what it is (`wasLeftForAnother()`) and is
-    not asked what it holds: or an item would go when the second of its holders does. The table that `clear()` leaves is not one of
+    The table that a dict or a set has left for another (it grew, or was made anew) is dead, and nothing refers to it. With reference
+    counts it was freed on the spot and let go of nothing. It says what it is (`wasLeftForAnother()`) and is not asked what it
+    holds: or an item would go when the second of its holders does. The table that `clear()` leaves is not one of
     these: it is how the container let go of its items, and takes its turn among what the program has dropped, like any other thing
     that nothing refers to. A deque that grows or shrinks empties the memory that it leaves.
   - Only those are queued that no other object with a finalizer reaches. The rest wait for the collection that finds those gone, so
@@ -1313,6 +1313,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   - Whatever `visitChildren` reads that is not a value is set by the constructor and never changes: the length of a tuple, the
     capacity of a table. All the slots are visited, used or not; the unused ones hold no cell. What has to grow is a cell of its own, of
     a fixed size, which its owner replaces (`PyDictStorage`, `PySetStorage`). A list is a `JSArray`, which has JSC's own protocol.
+    The one that has been replaced is a cell like any other until it is swept: whatever still finds it, and a word that a frame has left
+    on the stack is enough, has all that it names marked. So it is emptied where it is left (`leaveForAnother()`, `gcSafeZeroMemory`), behind
+    the store of the new one, as the memory that a deque leaves is. (A butterfly that JSC has left names nothing to begin with:
+    it is no cell, and only its owner says what is in it.)
   - Values are at addresses that are multiples of their size. A store that crosses a cache line is not atomic, and the half of an int
     that has arrived looks like the address of a cell. A member is aligned by the compiler. What is behind the cell is reached through
     `storageBehind<T>(this)`, which does not compile unless the size of the class is a multiple of what `T` needs: a class with

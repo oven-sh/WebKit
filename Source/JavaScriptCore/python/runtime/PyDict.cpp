@@ -476,9 +476,10 @@ void PyDict::resize(VM& vm, unsigned minimumCapacity, unsigned unusedAtFront)
         m_isKeyed = true;
     m_firstEntry = unusedAtFront;
     vm.mutatorFence();
-    if (PyDictStorage* old = m_storage.get())
-        old->leaveForAnother();
+    PyDictStorage* old = m_storage.get();
     m_storage.set(vm, this, newStorage);
+    if (old)
+        old->leaveForAnother();
     keysChanged();
 }
 

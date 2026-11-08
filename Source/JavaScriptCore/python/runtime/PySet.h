@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "GCMemoryOperations.h"
 #include "PyObject.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -42,7 +43,11 @@ public:
     Entry* entries() { return storageBehind<Entry>(this); }
     // See PyDictStorage.
     bool wasLeftForAnother() const { return m_wasLeftForAnother; }
-    void leaveForAnother() { m_wasLeftForAnother = true; }
+    void leaveForAnother()
+    {
+        m_wasLeftForAnother = true;
+        gcSafeZeroMemory(reinterpret_cast<JSValue*>(entries()), (static_cast<size_t>(m_mask) + 1) * sizeof(Entry));
+    }
 
 private:
     PySetStorage(VM&, Structure*, size_t size);
