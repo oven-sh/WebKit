@@ -719,15 +719,15 @@ static bool socketHasTimeLimitOfKernel(PyRecord* socket, int option)
 
 // As waitForEvents(), for the socket. `events`: what to wait for, and then what there is. `idleInterval`: see WaitRequest.
 // `hasTransferred`: something has been transferred. It is lost if the call of the native function is begun again (see IdleWait), and a signal for which the program has a handler ends the
-// wait: 0.
+// wait: 0. `isAdvice`: the system call may go ahead where poll() does not say so. Then such a signal ends the wait as well: the handler may have made room.
 // In a frame of its own: the request is not to lie, unwritten, under a call that blocks without having waited here. See fileIOReadWithoutGIL().
-static NEVER_INLINE int socketWait(JSGlobalObject* globalObject, PyRecord* socket, short& events, int64_t timeout, bool hasTransferred, bool standsForBlockingCall, int64_t* deadlineTakenUp, int64_t* idleInterval)
+static NEVER_INLINE int socketWait(JSGlobalObject* globalObject, PyRecord* socket, short& events, int64_t timeout, bool hasTransferred, bool isAdvice, bool standsForBlockingCall, int64_t* deadlineTakenUp, int64_t* idleInterval)
 {
     struct pollfd descriptor { socketDescriptor(socket), events, 0 };
     WaitRequest request { WaitRequest::Kind::Poll };
     request.timeout = timeout;
     request.isWaitOfCall = !hasTransferred;
-    request.endsAtSignal = hasTransferred;
+    request.endsAtSignal = hasTransferred || isAdvice;
     request.descriptors = &descriptor;
     request.descriptorCount = 1;
     if (idleInterval)
@@ -785,7 +785,7 @@ static bool socketCall(JSGlobalObject* globalObject, PyRecord* socket, bool isWr
                 if (options.isConnect)
                     events |= POLLERR;
                 int64_t deadlineTakenUp = 0;
-                ready = socketWait(globalObject, socket, events, interval, false, waitsForHost && !options.isConnect, &deadlineTakenUp, nullptr);
+                ready = socketWait(globalObject, socket, events, interval, false, false, waitsForHost && !options.isConnect, &deadlineTakenUp, nullptr);
                 // The time began to run when the call was first begun.
                 if (hasTimeout && deadlineTakenUp)
                     deadline = deadlineTakenUp;
@@ -1654,7 +1654,7 @@ static bool socketSendCall(JSGlobalObject* globalObject, PyRecord* socket, int64
         wasToldReady = false;
         if (socketDescriptor(socket) >= 0) {
             short events = POLLOUT;
-            int ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, total, false, nullptr, &idleInterval);
+            int ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, total, true, false, nullptr, &idleInterval);
             if (failed(scope, ready != waitRaised))
                 return false;
             if (ready < 0)
@@ -1721,7 +1721,7 @@ static NEVER_INLINE bool socketReceiveWhole(JSGlobalObject* globalObject, PyReco
         int ready = 0;
         if (!blocksInCall) {
             short events = POLLIN;
-            ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, true, false, nullptr, &idleInterval);
+            ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, true, false, false, nullptr, &idleInterval);
             if (failed(scope, ready != waitRaised))
                 return false;
             if (ready < 0)
