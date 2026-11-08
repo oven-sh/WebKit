@@ -2151,6 +2151,12 @@ static NEVER_INLINE void parkWhileWorldStateIs(Atomic<unsigned>& worldState, uns
 template<typename Func>
 void Heap::waitForCollector(NOESCAPE const Func& func)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // For lastCollectionPause(): from here on the mutator is kept from running until what it waits for has happened.
+    // Both are members, so that this frame gets no new slot (see parkWhileWorldStateIs).
+    if (!m_waitForCollectorDepth++)
+        m_waitingForCollectorSince = MonotonicTime::now();
+#endif
     for (;;) {
         bool done;
         {
@@ -2186,6 +2192,10 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
 
         if (done) {
             clearMutatorWaiting(); // Clean up just in case.
+#if USE(BUN_JSC_ADDITIONS)
+            if (!--m_waitForCollectorDepth)
+                m_waitingForCollectorSince = MonotonicTime();
+#endif
             return;
         }
         
