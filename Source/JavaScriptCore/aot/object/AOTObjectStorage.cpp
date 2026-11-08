@@ -243,7 +243,7 @@ void Object::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         if (UniquedStringImpl* name = identifiers.tryGetIdentifierConcurrently(field.name))
             analyzer.analyzePropertyNameEdge(object, target, name);
     }
-    JSObject* extraProperties = object->extraProperties();
+    JSObject* extraProperties = extraPropertiesIfMade(*object);
     if (!extraProperties)
         return;
     for (const auto& entry : extraProperties->structure()->getPropertiesConcurrently()) {
