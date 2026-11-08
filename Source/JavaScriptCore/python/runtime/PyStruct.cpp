@@ -579,8 +579,12 @@ static JSValue structIterUnpackImpl(JSGlobalObject* globalObject, JSValue self, 
     RETURN_IF_EXCEPTION(scope, { });
     auto* view = PyMemoryView::from(viewValue);
     view->isInternal = true;
-    if (view->length % size) {
+    // (A view of a view is made without a look at the flags.)
+    bool isContiguous = view->isCContiguous;
+    if (!isContiguous || view->length % size) {
         view->release(globalObject);
+        if (!isContiguous)
+            return raiseBufferError(globalObject, scope, "memoryview: underlying buffer is not C-contiguous"_s);
         RELEASE_AND_RETURN(scope, structRaise(globalObject, "iterative unpacking requires a buffer of a multiple of "_s, size, " bytes"_s));
     }
     PyRecord* iterator = PyRecord::create(globalObject, runtime(globalObject).typeFor(structIteratorTypeDef), StructIteratorFieldCount);
