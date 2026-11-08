@@ -240,16 +240,13 @@ bool PyType::updateMaker()
 
 void PyType::updateMakerAgain(VM& vm)
 {
+    // What it took from its base it keeps, as a class in the list of its base would: the base may have lost its own meanwhile.
     PyNativeFunction* maker = m_maker.get();
     bool looksUpNew = m_looksUpNew;
-    bool disallowsInstantiation = has(TypeFlag::DisallowInstantiation);
-    takeMakerOfBase(vm);
     if (updateMaker()) [[likely]]
         return;
     m_maker.setMayBeNull(vm, this, maker);
     m_looksUpNew = looksUpNew;
-    if (disallowsInstantiation)
-        m_flags.add(TypeFlag::DisallowInstantiation);
 }
 
 JSValue PyType::updateMakers()

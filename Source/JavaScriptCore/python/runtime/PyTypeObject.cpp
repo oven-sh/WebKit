@@ -1658,6 +1658,8 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
 
     bool hasBeenGivenBases = resolveMRO(globalObject, type) == MROResult::Superseded;
     RETURN_IF_EXCEPTION(scope, { });
+    // (An assignment from in there that raised, and of which nothing could be taken back, has given it bases as well.)
+    hasBeenGivenBases |= type->bases() != bases;
     // If the mro() of the metaclass has given the class other bases, one that does not decide the layout may bring a __dict__ along, as where there are __slots__. (There may be instances by then:
     // a base that it was given has a __new__ of the program's, or an object was given the class. Their cells are the same with and without a __dict__.)
     bool inheritsDict = type->base()->has(TypeFlag::HasDict);
@@ -1702,6 +1704,9 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
         PyTuple* mro = type->mro();
         for (unsigned i = 0; !hasMissedChange && i < mro->length(); ++i)
             hasMissedChange = PyType::from(mro->at(i))->hasForgottenSince(timesClassesForgot);
+        // It may have left out a base as well. By way of its bases the class is told of changes to what it names: whether they still lead there goes by their MROs, and a class forgets when it is given one.
+        for (unsigned i = 0; !hasMissedChange && i < bases->length(); ++i)
+            hasMissedChange = PyType::from(bases->at(i))->hasForgottenSince(timesClassesForgot);
     }
     if (!hasMissedChange) [[likely]]
         enterUnderBases(globalObject, type, bases, MayBeThere::No);
