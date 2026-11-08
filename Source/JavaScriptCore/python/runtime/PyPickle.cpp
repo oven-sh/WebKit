@@ -291,9 +291,11 @@ enum PicklerField : unsigned {
     PicklerPersistentIdAttr,
     PicklerDispatchTable,
     PicklerBufferCallback,
-    // The memo: from an object to its number, by identity. A WeakMap of JS does that; the list is what keeps the objects.
+    // The memo: from an object to its number, by identity. A WeakMap of JS does that; the list is what keeps the objects. The list is an object like any other, which gc.get_referents() hands out: nothing is believed of
+    // it. How many objects have a number, which is the number of the next, is counted apart.
     PicklerMemoMap,
     PicklerMemoKeys,
+    PicklerMemoCount,
     PicklerBin,
     PicklerFast,
     PicklerFieldCount
@@ -306,6 +308,7 @@ static void picklerClearMemo(JSGlobalObject* globalObject, PyRecord* pickler)
     VM& vm = getVM(globalObject);
     pickler->set(vm, PicklerMemoMap, JSWeakMap::create(vm, globalObject->weakMapStructure()));
     pickler->set(vm, PicklerMemoKeys, newList(globalObject));
+    pickler->set(vm, PicklerMemoCount, jsNumber(0));
 }
 
 static void picklerMemoSet(JSGlobalObject* globalObject, PyRecord* pickler, JSCell* object, double index)
@@ -316,8 +319,35 @@ static void picklerMemoSet(JSGlobalObject* globalObject, PyRecord* pickler, JSCe
     if (!map->has(object)) {
         listAppend(globalObject, asList(pickler->get(PicklerMemoKeys)), object);
         RETURN_IF_EXCEPTION(scope, void());
+        pickler->set(vm, PicklerMemoCount, jsNumber(pickler->get(PicklerMemoCount).asNumber() + 1));
     }
     map->set(vm, object, jsNumber(index));
+}
+
+static NEVER_INLINE JSValue picklerRaiseMemoKeysChanged(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return raiseSystemError(globalObject, scope, "the list that keeps what a Pickler has memoized has been changed from outside"_s);
+}
+
+// The list of the objects that have a number, for whoever goes through it. Null: an exception: it is not as long as the Pickler has left it.
+static JSArray* picklerMemoKeysToGoThrough(JSGlobalObject* globalObject, PyRecord* pickler)
+{
+    JSArray* keys = asList(pickler->get(PicklerMemoKeys));
+    if (listLength(keys) == pickler->get(PicklerMemoCount).asNumber()) [[likely]]
+        return keys;
+    picklerRaiseMemoKeysChanged(globalObject);
+    return nullptr;
+}
+
+// The number of what has been read out of that list. Empty: an exception: the Pickler has not put it there.
+static JSValue picklerMemoNumberOf(JSGlobalObject* globalObject, JSWeakMap* map, JSValue object)
+{
+    if (object.isCell()) [[likely]] {
+        if (JSValue index = map->get(object.asCell()); index.isNumber()) [[likely]]
+            return index;
+    }
+    return picklerRaiseMemoKeysChanged(globalObject);
 }
 
 static PyRecord* picklerCreate(JSGlobalObject* globalObject, PyType* type)
@@ -595,7 +625,7 @@ private:
         if (m_fast)
             return true;
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        unsigned index = listLength(asList(m_pickler->get(PicklerMemoKeys)));
+        unsigned index = static_cast<unsigned>(m_pickler->get(PicklerMemoCount).asNumber());
         picklerMemoSet(m_globalObject, m_pickler, object.asCell(), index);
         RETURN_IF_EXCEPTION(scope, false);
         if (m_proto >= 4)
@@ -2075,10 +2105,13 @@ static void picklerSetMemo(JSGlobalObject* globalObject, JSValue self, JSValue v
     picklerClearMemo(globalObject, scratch);
     if (PyRecord* proxy = PyRecord::tryFrom(value, pickleStateType(globalObject, PickleStatePicklerMemoProxyType)); proxy && proxy->type() == pickleStateType(globalObject, PickleStatePicklerMemoProxyType)) {
         auto* other = PyRecord::from(proxy->get(PickleProxyOwner));
-        JSArray* keys = asList(other->get(PicklerMemoKeys));
+        JSArray* keys = picklerMemoKeysToGoThrough(globalObject, other);
+        RETURN_IF_EXCEPTION(scope, void());
         auto* map = uncheckedDowncast<JSWeakMap>(other->get(PicklerMemoMap).asCell());
         for (unsigned i = 0; i < listLength(keys); ++i) {
-            picklerMemoSet(globalObject, scratch, listGet(keys, i).asCell(), map->get(listGet(keys, i).asCell()).asNumber());
+            JSValue index = picklerMemoNumberOf(globalObject, map, listGet(keys, i));
+            RETURN_IF_EXCEPTION(scope, void());
+            picklerMemoSet(globalObject, scratch, listGet(keys, i).asCell(), index.asNumber());
             RETURN_IF_EXCEPTION(scope, void());
         }
     } else if (isDict(value)) {
@@ -2110,6 +2143,7 @@ static void picklerSetMemo(JSGlobalObject* globalObject, JSValue self, JSValue v
     }
     pickler->set(vm, PicklerMemoMap, scratch->get(PicklerMemoMap));
     pickler->set(vm, PicklerMemoKeys, scratch->get(PicklerMemoKeys));
+    pickler->set(vm, PicklerMemoCount, scratch->get(PicklerMemoCount));
 }
 
 static JSValue picklerMemoProxyClear(JSGlobalObject* globalObject, JSValue self)
@@ -2124,14 +2158,17 @@ static JSValue picklerMemoProxyCopy(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* pickler = PyRecord::from(PyRecord::from(self)->get(PickleProxyOwner));
-    JSArray* keys = asList(pickler->get(PicklerMemoKeys));
+    JSArray* keys = picklerMemoKeysToGoThrough(globalObject, pickler);
+    RETURN_IF_EXCEPTION(scope, { });
     auto* map = uncheckedDowncast<JSWeakMap>(pickler->get(PicklerMemoMap).asCell());
     PyDict* result = PyDict::create(globalObject);
     for (unsigned i = 0; i < listLength(keys); ++i) {
         JSValue object = listGet(keys, i);
+        JSValue index = picklerMemoNumberOf(globalObject, map, object);
+        RETURN_IF_EXCEPTION(scope, { });
         JSValue identity = identityOf(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
-        result->set(globalObject, identity, PyTuple::create(globalObject, { map->get(object.asCell()), object }));
+        result->set(globalObject, identity, PyTuple::create(globalObject, { index, object }));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return result;
