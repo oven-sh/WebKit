@@ -250,8 +250,10 @@ public:
     // Whoever brings about what is waited for calls wakeOne() or wakeAll() with the same address.
     // The texts are for the exceptions raised where nobody could: "deadlock: <the lock is held>, and there is no other thread",
     // and, once the interpreter is over, "cannot <acquire lock at interpreter finalization>".
-    // `isWaitOfCall`: see IdleWait.
-    bool waitUntil(JSGlobalObject*, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver, bool isWaitOfCall = false);
+    // `WaitOf::Call`: see IdleWait (`isWaitOfCall`). As wide as a word: it is the tenth word of the arguments, so it lies in the frame of the caller, under which the thread sleeps, and of
+    // a bool some systems write one byte there.
+    enum class WaitOf : uintptr_t { Other, Call };
+    bool waitUntil(JSGlobalObject*, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver, WaitOf = WaitOf::Other);
     // A thread that waits collects after a while (collectWhileIdle()), to find what the program has dropped and what it may be
     // waiting for the finalizer of. The collector takes every word of the stack that looks like a reference for one, and the frames
     // of C++ between the code in Python that waits and the collector are full of such words: what earlier calls left where they

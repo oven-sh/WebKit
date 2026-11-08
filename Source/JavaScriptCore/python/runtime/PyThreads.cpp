@@ -1292,7 +1292,7 @@ static NEVER_INLINE void raiseDeadlock(JSGlobalObject* globalObject, ASCIILitera
     raiseRuntimeError(globalObject, scope, "deadlock: "_s, whatIsWaitedFor, ", and there is no other thread"_s);
 }
 
-bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver, bool isWaitOfCall)
+bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver, WaitOf waitOf)
 {
     VM& vm = m_vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1314,7 +1314,7 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
     int64_t deadline = -1;
     if (timeout > 0 && __builtin_add_overflow(monotonicNanoseconds(), timeout, &deadline))
         deadline = std::numeric_limits<int64_t>::max();
-    IdleWait idle(globalObject, deadline, isWaitOfCall);
+    IdleWait idle(globalObject, deadline, waitOf == WaitOf::Call);
     if (idle.continuesWait()) {
         if (deadline >= 0 && monotonicNanoseconds() >= deadline)
             return false;
