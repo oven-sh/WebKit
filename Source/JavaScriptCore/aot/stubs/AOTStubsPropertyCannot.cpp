@@ -101,6 +101,7 @@ void generateGetterByAccessTable(StubAssembler& jit)
     jit.and32(TrustedImm32(bitsOfForm), answer, key);
     findsNone.append(jit.branch32(CCallHelpers::NotEqual, key, TrustedImm32(bitsOfForm)));
     loadValueInOwnStorageByAnswer(jit, object, answer, place, answer);
+    branchUnlessAccessorPair(jit, answer, findsNone);
     jit.loadPtr(Address(answer, GetterSetter::offsetOfGetter()), jit.result());
     jit.returnToCaller();
 

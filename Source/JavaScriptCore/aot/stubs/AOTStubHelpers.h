@@ -106,6 +106,7 @@ void loadPristineArrayKind(StubAssembler&, GPRReg array, GPRReg kind, unsigned m
 Jump branchIfWatchpointSetIsNotWatched(StubAssembler&, Address set, GPRReg scratch);
 // Falls through exactly when isFunctionType(cell->type()). A jump proves nothing: a callable Proxy or a host object needs C++. Preserves cell.
 Jump branchIfNotFunctionType(CCallHelpers&, GPRReg cell, GPRReg scratch);
+void branchUnlessAccessorPair(CCallHelpers&, GPRReg word, JumpList& isNoPair);
 
 void allocateCell(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath);
 [[nodiscard]] AssemblyHelpers::FreeListRefill allocateCellWithLateRefill(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt);

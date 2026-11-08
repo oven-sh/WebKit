@@ -434,6 +434,7 @@ static void testFieldsOrInheritedGetters()
     getter.setHeader(slimClosureStructureID, SlimClosureType);
     getter.at<uint64_t>(offsetOfSlimClosureWord) = reads.runner.closureWord(0);
     FakeObject<sizeof(GetterSetter)> accessors;
+    accessors.setHeader(0, GetterSetterType);
     accessors.at<uint64_t>(GetterSetter::offsetOfGetter()) = getter.address();
     FakeHolder holder;
     holder.property(FakeHolder::inlineOffset) = accessors.address();
@@ -444,6 +445,16 @@ static void testFieldsOrInheritedGetters()
     StubRun run = reads.read(objectWithoutField.address());
     AOT_TEST_CHECK(!run.calledOperation && run.landedCall.place == LandedCall::Place::CompiledFunction && run.result == StubRunner::resultOfCompiledFunction);
     AOT_TEST_CHECK(run.landedCall.values.callee == getter.address() && run.landedCall.values.thisValue == objectWithoutField.address() && !static_cast<uint32_t>(run.landedCall.count));
+
+    FakeObject<sizeof(GetterSetter)> cellOfOtherKind;
+    cellOfOtherKind.setHeader(0, FinalObjectType);
+    cellOfOtherKind.at<uint64_t>(GetterSetter::offsetOfGetter()) = getter.address();
+    for (uint64_t word : std::initializer_list<uint64_t> { cellOfOtherKind.address(), JSValue::ValueEmpty, bitsOf(jsNumber(5)) }) {
+        holder.property(FakeHolder::inlineOffset) = word;
+        run = reads.read(objectWithoutField.address());
+        AOT_TEST_CHECK(run.calledOperation && run.landedCall.place == LandedCall::Place::Nowhere);
+    }
+    holder.property(FakeHolder::inlineOffset) = accessors.address();
 
     FakeTypedObject object;
     object.field() = bitsOf(jsNumber(7));

@@ -416,6 +416,10 @@ static void testSetters()
     FakeObject<16> absentSetter;
     absentSetter.setHeader(0, NullSetterFunctionType);
     FakeObject<sizeof(GetterSetter)> accessors;
+    accessors.setHeader(0, GetterSetterType);
+    FakeObject<sizeof(GetterSetter)> cellOfOtherKind;
+    cellOfOtherKind.setHeader(0, FinalObjectType);
+    cellOfOtherKind.at<uint64_t>(GetterSetter::offsetOfSetter()) = setter.address();
     FakePlainObject object(PropertyStores::structureID);
     object.word(Slot::wordIndexFor(offset)) = accessors.address();
 
@@ -435,6 +439,13 @@ static void testSetters()
         AOT_TEST_CHECK(run.recordedArguments[0] == object.address() && run.recordedArguments[1] == accessors.address() && run.recordedArguments[2] == value);
         AOT_TEST_CHECK(static_cast<uint32_t>(run.recordedArguments[3]) == static_cast<uint32_t>(storeCase.mode));
         AOT_TEST_CHECK(object.word(Slot::wordIndexFor(offset)) == accessors.address());
+
+        for (uint64_t word : std::initializer_list<uint64_t> { cellOfOtherKind.address(), JSValue::ValueEmpty, bitsOf(jsNumber(5)) }) {
+            object.word(Slot::wordIndexFor(offset)) = word;
+            run = stores.store(storeCase, object.address(), value);
+            AOT_TEST_CHECK(run.calledOperation && run.landedCall.place == LandedCall::Place::Nowhere && object.word(Slot::wordIndexFor(offset)) == word);
+        }
+        object.word(Slot::wordIndexFor(offset)) = accessors.address();
     });
 }
 
@@ -710,6 +721,7 @@ static void testInheritedSettersOfAbsentFields()
     setter.setHeader(PropertyStores::slimClosureStructureID, SlimClosureType);
     setter.at<uint64_t>(offsetOfSlimClosureWord) = stores.runner.closureWord(1);
     FakeObject<sizeof(GetterSetter)> accessors;
+    accessors.setHeader(0, GetterSetterType);
     accessors.at<uint64_t>(GetterSetter::offsetOfSetter()) = setter.address();
     FakePlainObject holder(0);
     holder.word(Slot::wordIndexFor(offset)) = accessors.address();

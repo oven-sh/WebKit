@@ -1033,6 +1033,7 @@ void generateReadAnswerAtSite(StubAssembler& jit)
         checkStubOperands(callOfGetter, { receiverOfGetter, getterSetter });
         RELEASE_ASSERT(noOverlap(receiverOfGetter, getterSetter, key, operand, distance, place) && receiverOfGetter != difference);
         jit.load64(word, getterSetter);
+        branchUnlessAccessorPair(jit, getterSetter, isNotAsked);
         read.goOnIn(callOfGetter);
     };
     auto loadStorageOfHolderAndIndex = [&]() -> GPRReg {

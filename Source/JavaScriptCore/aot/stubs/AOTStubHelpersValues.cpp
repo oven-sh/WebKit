@@ -382,6 +382,13 @@ Jump branchIfWatchpointSetIsNotWatched(StubAssembler& jit, Address set, GPRReg s
     return jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(InlineWatchpointSet::encodeState(IsWatched))));
 }
 
+void branchUnlessAccessorPair(CCallHelpers& jit, GPRReg word, JumpList& isNoPair)
+{
+    isNoPair.append(jit.branchTest64(CCallHelpers::Zero, word));
+    isNoPair.append(jit.branchIfNotCell(word));
+    isNoPair.append(jit.branch8(CCallHelpers::NotEqual, Address(word, JSCell::typeInfoTypeOffset()), TrustedImm32(GetterSetterType)));
+}
+
 Jump branchIfNotFunctionType(CCallHelpers& jit, GPRReg cell, GPRReg scratch)
 {
     static_assert(slimClosureTypes.first > functionTypes.last);

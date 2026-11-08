@@ -157,7 +157,9 @@ void generateGetterAtSite(StubAssembler& jit)
     const GPRReg scratchBehindMiss = key;
 #endif
     RELEASE_ASSERT(noOverlap(object, distance, place, key, operand));
+    JumpList isNoPair;
     auto returnGetterOf = [&](GPRReg getterSetter) {
+        branchUnlessAccessorPair(jit, getterSetter, isNoPair);
         jit.loadPtr(Address(getterSetter, GetterSetter::offsetOfGetter()), result);
         jit.returnToCaller();
     };
@@ -200,6 +202,7 @@ void generateGetterAtSite(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotAnswered.link(&jit);
+    isNoPair.link(&jit);
     RELEASE_ASSERT(noOverlap(object, distance, nameBehindMiss, scratchBehindMiss, instanceGPR));
     JumpList isSample;
     countMissOfEmptySite(jit, distance, scratchBehindMiss, isSample);

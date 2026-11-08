@@ -145,6 +145,7 @@ void generateStoreSlot(StubAssembler& jit)
         jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
     };
     auto callSetter = [&](GPRReg getterSetter) {
+        branchUnlessAccessorPair(jit, getterSetter, miss);
         const SlotOperation operation = traits.operation;
         RELEASE_ASSERT(operation == SlotOperation::StoreStrict || operation == SlotOperation::StoreSloppy);
         const SlotFinisher finisher = operation == SlotOperation::StoreStrict ? SlotFinisher::CallSetterStrict : SlotFinisher::CallSetterSloppy;

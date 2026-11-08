@@ -694,11 +694,13 @@ void returnValueByAccessTable(StubAssembler& jit, const AccessTableRead& read, J
     const GPRReg getterSetter = read.waysOnwardAreCalls ? gprOf(StubRegister::T10) : r.cell == gprOf(StubRegister::T10) ? jit.clobberOperand(0) : jit.reuseScratch(StubRegister::T10);
     RELEASE_ASSERT(noOverlap(receiver, read.word, r.place) && noOverlap(getterSetter, receiver) && signature.operands[1] == Reg(getterSetter));
     findsGetterInOwnStorage.link(&jit);
+    jit.rshift64(TrustedImm32(AccessTable::answerShift), read.word);
+    jit.loadPtr(Address(r.cell, JSObject::butterflyOffset()), r.place);
+    jit.load64(BaseIndex(r.place, read.word, CCallHelpers::TimesEight), read.word);
+    branchUnlessAccessorPair(jit, read.word, isNotAnswered);
     auto bringOperands = [&] {
-        jit.rshift64(TrustedImm32(AccessTable::answerShift), read.word);
-        jit.loadPtr(Address(r.cell, JSObject::butterflyOffset()), r.place);
         jit.move(r.cell, receiver);
-        jit.load64(BaseIndex(r.place, read.word, CCallHelpers::TimesEight), getterSetter);
+        jit.move(read.word, getterSetter);
     };
     if (read.waysOnwardAreCalls) {
         jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true, .registersThatCalleeLoses = registersThatWaysOnwardOfGetByIdLose }, scopedLambda<void()>([&] {

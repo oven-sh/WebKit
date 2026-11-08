@@ -939,6 +939,7 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
         jit.load64(BaseIndex(getterSetter, header, CCallHelpers::TimesEight), getterSetter);
         hasGetterSetter.link(&jit);
         JumpList cannotCallGetter;
+        branchUnlessAccessorPair(jit, getterSetter, cannotCallGetter);
         callGetterAndReturn(jit, base, getterSetter, cannotCallGetter);
         cannotCallGetter.link(&jit);
         jit.load32(Address(base, JSCell::structureIDOffset()), registers.structureID);
@@ -950,6 +951,7 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
         jit.load32(inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, wordInCellCage)), header);
         jit.load64(BaseIndex(cellCageBaseGPR, header, CCallHelpers::TimesEight), getterSetter);
         JumpList cannotCallGetterAbove;
+        branchUnlessAccessorPair(jit, getterSetter, cannotCallGetterAbove);
         callGetterAndReturn(jit, base, getterSetter, cannotCallGetterAbove);
         cannotCallGetterAbove.link(&jit);
         jit.load32(Address(base, JSCell::structureIDOffset()), registers.structureID);
@@ -1348,6 +1350,7 @@ void generateGetSuperByVal(StubAssembler& jit)
     Jump isNotGetter = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Getter);
     loadValueBySlot(jit, slotOf(Slot::Kind::Getter), base, registers.uid, registers.structureID, getterSetter);
     Label callGetter = jit.label();
+    branchUnlessAccessorPair(jit, getterSetter, whatIsFiledDoesNotAnswer);
     callGetterAndReturn(jit, receiver, getterSetter, whatIsFiledDoesNotAnswer);
 
     isNotGetter.link(&jit);
