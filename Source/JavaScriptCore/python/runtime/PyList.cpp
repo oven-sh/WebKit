@@ -405,7 +405,12 @@ void listSet(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValu
 {
     VM& vm = getVM(globalObject);
     if (ListStorage storage { vm, list }) [[likely]] {
-        ASSERT(index < storage.length());
+        // The caller knows that the list is that long: it has asked, or has made it so. Unless it is a list that the runtime keeps for itself, and somebody else has come to it and shortened it.
+        if (index >= storage.length()) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            raiseSystemError(globalObject, scope, "an item of a list was to be written that the list does not have any more"_s);
+            return;
+        }
         storage.set(index, value);
         return;
     }
