@@ -345,6 +345,12 @@ static bool place(JSGlobalObject* globalObject, Outgoing& out, const ForeignValu
         Passing passing;
         {
             auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+            // The copy was made by this info. But a class can be given its fields while an instance is there already (code runs while _fields_ is assigned), and what C is handed
+            // goes by the bytes that there are.
+            if (size > value.size) [[unlikely]] {
+                raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
+                return false;
+            }
             passing = classify(globalObject, info);
             RETURN_IF_EXCEPTION(scope, false);
         }

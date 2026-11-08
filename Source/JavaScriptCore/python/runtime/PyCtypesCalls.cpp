@@ -164,10 +164,10 @@ PyCArg* argumentFor(JSGlobalObject* globalObject, PyCData* data)
         holder->set(vm, 1, data);
         argument->tag = 'V';
         argument->foreignKind = ForeignKind::Aggregate;
-        argument->size = info->size;
+        argument->size = memory.size();
         argument->setPointer(copy->data());
         argument->object.set(vm, argument, holder);
-        argument->keep.set(vm, argument, data);
+        argument->keep.set(vm, argument, info);
         break;
     }
     }
@@ -311,7 +311,9 @@ struct Argument {
     uint8_t unused[7] { };
     PyCTypeInfo* aggregate { nullptr };
     void* aggregateMemory { nullptr };
+    size_t aggregateSize { 0 };
     JSValue object; // What a PyObject* is believed to refer to.
+    uint8_t alsoUnused[8] { };
     alignas(16) uint8_t value[32] { };
 
     template<typename T>
@@ -349,10 +351,9 @@ static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsign
             result.object = holder && identityBits(object) != result.as<uint64_t>() ? keptFor(globalObject, holder, 0) : object;
         }
         if (result.kind == ForeignKind::Aggregate) {
-            result.aggregate = infoOfInstance(globalObject, argument->keep.get());
+            result.aggregate = uncheckedDowncast<PyCTypeInfo>(argument->keep.get().asCell());
             result.aggregateMemory = argument->pointer();
-            // The from_param() of a later argument may give the instance another class, and this one may go.
-            keeps.append(result.aggregate);
+            result.aggregateSize = static_cast<size_t>(argument->size);
         }
         return true;
     }
@@ -635,6 +636,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
             values[i].kind = converted[i].kind;
             values[i].aggregate = converted[i].aggregate;
             values[i].memory = converted[i].kind == ForeignKind::Aggregate ? converted[i].aggregateMemory : converted[i].value;
+            values[i].size = converted[i].aggregateSize;
         }
         if (!function)
             RELEASE_AND_RETURN(scope, raiseNullPointerAccess(globalObject));

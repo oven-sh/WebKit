@@ -311,10 +311,10 @@ public:
     ForeignKind foreignKind { ForeignKind::Pointer };
     char tag { 0 };
     char tag2 { 0 }; // The second letter of the complex types.
-    int64_t size { 0 }; // Of an aggregate, which is in the memory of `object`.
+    int64_t size { 0 }; // Of an aggregate: how many bytes the copy has.
     alignas(16) uint8_t value[32] { };
     WriteBarrier<Unknown> object; // What the value is of, or points into.
-    WriteBarrier<Unknown> keep; // An aggregate is passed as a copy, `object`: the instance it is a copy of.
+    WriteBarrier<Unknown> keep; // An aggregate is passed as a copy, `object`: the PyCTypeInfo by which the copy was made. (The instance may be given another class.)
 
     void setPointer(const void* pointer) { memcpy(value, &pointer, sizeof(pointer)); }
     void* pointer() const
@@ -576,6 +576,7 @@ struct ForeignValue {
     uint8_t unused[7] { };
     PyCTypeInfo* aggregate { nullptr }; // What it is made of, if it is one.
     void* memory { nullptr }; // Where its bytes are, or are to be put. A result has room for 16 bytes at least.
+    size_t size { 0 }; // Of an aggregate that is an argument: how many bytes there are.
 };
 PY_END_WITHOUT_PADDING
 
