@@ -68,6 +68,8 @@ void PyCData::setStorage(VM& vm, PyByteStorage* storage, size_t offset)
 {
     m_owner.set(vm, this, storage);
     m_address = std::bit_cast<uintptr_t>(storage->data() + offset);
+    if (m_isView)
+        m_past.clear(); // It was a number.
     m_isView = false;
 }
 
@@ -93,6 +95,7 @@ void PyCData::setView(VM& vm, PyMemoryView* view, int64_t offset, const uint8_t*
 
 void PyCData::setAddress(const void* address)
 {
+    ASSERT(!m_past);
     m_owner.clear();
     m_address = std::bit_cast<uintptr_t>(address);
     m_isView = false;
@@ -100,6 +103,7 @@ void PyCData::setAddress(const void* address)
 
 void PyCData::setMemoryOf(VM& vm, const PyCData* other, int64_t offset)
 {
+    ASSERT(!m_past);
     m_owner.setMayBeNull(vm, this, other->m_owner.get());
     m_address = other->m_address + static_cast<uintptr_t>(offset);
     m_isView = other->m_isView;
@@ -1152,15 +1156,17 @@ static JSValue sliceOfCharacters(JSGlobalObject* globalObject, Code code, Place 
         return code == Code::Char ? JSValue(runtime(globalObject).emptyBytes()) : JSValue(jsEmptyString(vm));
     // From the first of them in memory to the last. (The arithmetic is that of C: what it comes to is looked at.)
     uint64_t itemSize = code == Code::Char ? 1 : sizeof(wchar_t);
-    int64_t first = std::min(start, start + (count - 1) * step);
-    int64_t last = std::max(start, start + (count - 1) * step);
+    int64_t end = static_cast<int64_t>(static_cast<uint64_t>(start) + static_cast<uint64_t>(count - 1) * static_cast<uint64_t>(step));
+    int64_t first = std::min(start, end);
+    int64_t last = std::max(start, end);
     base.offset = static_cast<int64_t>(static_cast<uint64_t>(first) * itemSize);
-    if (static_cast<uint64_t>(last - first) >= std::numeric_limits<int64_t>::max() / itemSize)
+    uint64_t distance = static_cast<uint64_t>(last) - static_cast<uint64_t>(first);
+    if (distance >= std::numeric_limits<int64_t>::max() / itemSize)
         return raiseMemoryError(globalObject, scope, String());
-    auto granted = base.resolve(globalObject, static_cast<int64_t>((static_cast<uint64_t>(last - first) + 1) * itemSize));
+    auto granted = base.resolve(globalObject, static_cast<int64_t>((distance + 1) * itemSize));
     RETURN_IF_EXCEPTION(scope, { });
     const uint8_t* memory = granted.data();
-    start -= first;
+    start = start == first ? 0 : static_cast<int64_t>(distance);
     if (code == Code::Char) {
         PyBytes* result = newBytes(globalObject, static_cast<size_t>(count));
         RETURN_IF_EXCEPTION(scope, { });
