@@ -887,6 +887,12 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     runs in W, on top of the sleep, and never gets a lock that is not re-entrant. It takes four things at once: the maker is not
     the one who drops, the maker waits, holding a plain lock, which the finalizer takes without a timeout. The data model warns of
     locks in `__del__` for the like reason ("may deadlock"), and none was found in the standard library or in 262 distributions.
+    **Two are enough where the thread that drops the object goes on to take the lock itself**: `del x; done.wait()`, with a `__del__` that
+    calls `done.set()`. In CPython the finalizer has run at the `del`. Here it comes at a safe point of the thread after a collection has found the
+    object, and the entry of a function is one: `Event.wait()` calls `Condition.wait()` with the event's lock held, and `Event.set()` takes
+    that lock, which is not re-entrant. The thread waits for itself, and a timeout given to `wait()` does not help: the wait that it bounds has not begun. It takes a collection that ends
+    in those few instructions (as it comes: 0 runs of 30; with a collection every 3 allocations that leave the fast path: 6 of 6). So it is for whatever CPython ends at the
+    last `Py_DECREF()`, a `tp_dealloc` that calls back into Python included.
     Not with what a caller of `gc.collect()`, or the main thread as it ends, has taken: that one runs the finalizer, and waits for the lock as in CPython.
 - **At exit**, when the threads are joined and before `atexit`'s callbacks, what is unreachable by then and reference counts would
   have freed is finalized: in CPython it would have been long ago. (Only if an object is registered whose finalizer is code of the
