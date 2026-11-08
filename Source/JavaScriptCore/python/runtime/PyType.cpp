@@ -666,20 +666,25 @@ bool PyType::hasAmongBases(const PyType* other)
     return isFound;
 }
 
-void PyType::appendSubclassesTo(MarkedArgumentBuffer& result, SubclassOrder order) const
+bool PyType::appendSubclassesTo(MarkedArgumentBuffer& result, SubclassOrder order, Dependents dependents) const
 {
     JSValue subclasses = m_subclasses.get();
     if (!subclasses)
-        return;
+        return false;
     JSArray* list = asList(subclasses);
     unsigned length = listLength(list);
+    bool hasDependents = false;
     for (unsigned i = 0; i < length; ++i) {
         JSValue entry = listGet(list, order == SubclassOrder::OldestFirst ? i : length - 1 - i);
-        if (PyTuple::is(entry))
-            continue;
+        if (PyTuple::is(entry)) {
+            hasDependents = true;
+            if (dependents == Dependents::No)
+                continue;
+        }
         if (PyType* subclass = subclassInEntry(entry); subclass && !subclass->has(TypeFlag::Internal))
             result.append(subclass);
     }
+    return hasDependents;
 }
 
 void PyType::addSubclass(JSGlobalObject* globalObject, PyType* subclass)

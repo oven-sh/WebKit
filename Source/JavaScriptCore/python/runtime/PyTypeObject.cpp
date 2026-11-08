@@ -1218,10 +1218,16 @@ static void beToldByAllInMRO(JSGlobalObject* globalObject, PyType* type)
     }
 }
 
-// The same for all that derive from it, each once.
+// The same for all that derive from it, each once, at the end of an assignment to its __bases__. "By way of the base" takes a class to be in the list of the base, and assignments to one class
+// from inside one another can leave it out, as they do in CPython: then it is entered beside those that are in it.
 static void beToldBelow(JSGlobalObject* globalObject, PyType* root)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    PyTuple* bases = root->bases();
+    for (unsigned i = 0; i < bases->length(); ++i) {
+        PyType::from(bases->at(i))->addDependent(globalObject, root);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     MarkedArgumentBuffer types;
     types.append(root);
     UncheckedKeyHashSet<PyType*> seen;
@@ -1230,8 +1236,9 @@ static void beToldBelow(JSGlobalObject* globalObject, PyType* root)
         PyType* type = PyType::from(types.at(i));
         beToldByAllInMRO(globalObject, type);
         RETURN_IF_EXCEPTION(scope, void());
+        // Those beside the list too: no walk of an assignment comes to them, so they have their MROs from before.
         MarkedArgumentBuffer subclasses;
-        type->appendSubclassesTo(subclasses);
+        type->appendSubclassesTo(subclasses, PyType::SubclassOrder::OldestFirst, PyType::Dependents::Too);
         for (unsigned j = 0; j < subclasses.size(); ++j) {
             if (seen.add(PyType::from(subclasses.at(j))).isNewEntry)
                 types.append(subclasses.at(j));
@@ -1838,10 +1845,11 @@ static JSValue typeGetBase(JSGlobalObject*, JSValue self)
 }
 
 // Works out the MRO of the type again, and of all that derive from it. Appends to `changes`, for each type that got a new
-// one: the type, the new MRO, the old one. False: an exception.
-static bool updateMROs(JSGlobalObject* globalObject, PyType* root, MarkedArgumentBuffer& changes)
+// one: the type, the new MRO, the old one. `tellsAnew`: the mro() of a metaclass has been called, or a class on the way has some beside its list, to which this does not come: MROs may be left that do not follow from the bases. False: an exception.
+static bool updateMROs(JSGlobalObject* globalObject, PyType* root, MarkedArgumentBuffer& changes, bool& tellsAnew)
 {
-    VM& vm = getVM(globalObject);
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Those that are left are in a list, not on the stack: classes derive from one another to any depth. The last is next: all that derives from a class
     // comes before the class beside it, and a class comes once for each way that leads to it, which is the order in which CPython calls mro().
@@ -1860,6 +1868,7 @@ static bool updateMROs(JSGlobalObject* globalObject, PyType* root, MarkedArgumen
         if (way.contains(type)) [[unlikely]]
             continue;
         PyTuple* oldMRO = type->mro();
+        tellsAnew |= type->type() != rt.typeType();
         MROResult result = resolveMRO(globalObject, type);
         EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == (result == MROResult::Raised));
         if (result == MROResult::Raised)
@@ -1872,7 +1881,7 @@ static bool updateMROs(JSGlobalObject* globalObject, PyType* root, MarkedArgumen
         // As they are now: an mro() may change who derives from whom.
         size_t size = left.size();
         left.append(jsNull());
-        type->appendSubclassesTo(left, PyType::SubclassOrder::NewestFirst);
+        tellsAnew |= type->appendSubclassesTo(left, PyType::SubclassOrder::NewestFirst);
         if (left.size() == size + 1) {
             left.removeLast();
             continue;
@@ -1956,7 +1965,8 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     type->setBase(vm, base);
     updateSolidBases(vm, type);
     MarkedArgumentBuffer changes;
-    bool succeeded = updateMROs(globalObject, type, changes);
+    bool tellsAnew = false;
+    bool succeeded = updateMROs(globalObject, type, changes, tellsAnew);
     // An mro() that ran may itself have assigned to __bases__. Then what it assigned stays, and has been seen to.
     bool isCurrent = type->bases() == bases;
     auto settleUnderNewBases = [&] {
@@ -1966,6 +1976,13 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
         }
         for (unsigned i = 0; i < bases->length(); ++i) {
             PyType::from(bases->at(i))->addSubclass(globalObject, type);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        // An mro() that ran may have assigned to the __bases__ of another class. That one's walk comes to the classes that are in the lists then, and this class is in those of its old
+        // bases until now. So an MRO may be left that names a class which leads here no longer, as in CPython (which remembers nothing of a class whose metaclass has an mro()).
+        // Before what has been remembered is forgotten, and before a key is asked: to be entered in a list forgets nothing.
+        if (tellsAnew) {
+            beToldBelow(globalObject, type);
             RETURN_IF_EXCEPTION(scope, void());
         }
         type->didChange(vm, PyType::Change::HowAttributesAreRead);
@@ -1981,10 +1998,9 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
             canGoBack = !PyType::from(oldBases->at(i))->hasAmongBases(type);
         if (!canGoBack) [[unlikely]] {
             ExceptionSetAside suspended(globalObject);
-            settleUnderNewBases();
-            RETURN_IF_EXCEPTION(scope, void());
             // Those whose turn had not come have the old bases in their MROs still.
-            beToldBelow(globalObject, type);
+            ASSERT(tellsAnew);
+            settleUnderNewBases();
             return;
         }
         for (unsigned i = changes.size(); i; i -= 3) {
@@ -1994,17 +2010,22 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
             changed->setMRO(vm, PyTuple::tryFrom(changes.at(i - 1)));
             changed->didChange(vm);
         }
-        if (!isCurrent)
-            return;
-        type->setBases(vm, oldBases);
-        type->setBase(vm, oldBase);
-        updateSolidBases(vm, type);
-        type->didChange(vm);
+        if (isCurrent) {
+            type->setBases(vm, oldBases);
+            type->setBase(vm, oldBase);
+            updateSolidBases(vm, type);
+            type->didChange(vm);
+        }
+        if (tellsAnew) {
+            ExceptionSetAside suspended(globalObject);
+            beToldBelow(globalObject, type);
+        }
         return;
     }
-    if (!isCurrent)
-        return;
-    settleUnderNewBases();
+    if (isCurrent)
+        RELEASE_AND_RETURN(scope, settleUnderNewBases());
+    if (tellsAnew)
+        RELEASE_AND_RETURN(scope, beToldBelow(globalObject, type));
 }
 
 static JSValue typeGetDict(JSGlobalObject* globalObject, JSValue self)

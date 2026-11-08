@@ -346,11 +346,13 @@ public:
 
     // The classes derived directly from this one. It does not keep them alive.
     enum class SubclassOrder : bool { OldestFirst, NewestFirst };
-    void appendSubclassesTo(MarkedArgumentBuffer&, SubclassOrder = SubclassOrder::OldestFirst) const;
+    // The result: whether there are some beside them, see addDependent().
+    enum class Dependents : bool { No, Too };
+    bool appendSubclassesTo(MarkedArgumentBuffer&, SubclassOrder = SubclassOrder::OldestFirst, Dependents = Dependents::No) const;
     JSValue subclasses() const { return m_subclasses.get(); } // The list they are kept in, which is for nobody else. Empty: there is none.
     void addSubclass(JSGlobalObject*, PyType*);
     void removeSubclass(JSGlobalObject*, PyType*);
-    // A type that has this one in its MRO without deriving from it, by an mro() of its metaclass: it is told of changes.
+    // A type that has this one in its MRO and is not in the list: it is told of changes. Nothing, if it is in the list, either way.
     void addDependent(JSGlobalObject*, PyType*);
 
     // ---- For type.__new__ and the setters of __bases__ and the like ----

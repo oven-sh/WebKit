@@ -290,6 +290,8 @@ nothing leads to it. `typeSetBases()` writes twice, the new bases and, if an `mr
 all is done that follows an assignment, and the exception goes on. The layouts were found to agree before the first write, so whichever MRO a class is left with, what it promises of the cell holds.
 The walks down (`didChange()`, `updateMakers()`, `updateSolidBases()`, `updateMROs()`, `abcSetCollectionFlag()`) go by the lists of who derives from whom, which are kept beside `__bases__` and are not exact: an entry can be
 stale or there twice. So each of them ends whatever the lists say, and none calls itself, for classes derive from one another to any depth.
+What is remembered of a class depends on every class in its MRO, so each of those has the class in its list, as derived from it or, if no base leads there, beside those (`addDependent()`): because an `mro()` names a
+stranger, or because assignments from inside one another have left an MRO that no longer follows from the bases, or a class that is not in the list of its base, as they do in CPython. `beToldBelow()` sees to that at each end of an assignment during which an `mro()` ran, or which passed a class that has some beside its list: for the class and all that it tells, those beside the lists too, since the walks of assignments do not come to them. Nothing of the program's runs between that and the forgetting of what is remembered. It holds between assignments, and for classes that have been made: see DEFERRED.md, "What is remembered of a class in the middle of a change".
 
 ## Code
 
