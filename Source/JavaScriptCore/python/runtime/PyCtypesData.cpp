@@ -327,8 +327,8 @@ static bool findProvenanceUnder(JSGlobalObject* globalObject, PyDict* kept, std:
 
 bool liesInMemoryOf(JSGlobalObject* globalObject, PyCData* data, const void* address)
 {
-    Provenance unused;
-    return findProvenance(globalObject, data, static_cast<const uint8_t*>(address), unused);
+    Provenance provenance;
+    return findProvenance(globalObject, data, static_cast<const uint8_t*>(address), provenance) || provenance.isInWhatIsGone;
 }
 
 static bool findProvenanceOfPart(JSGlobalObject* globalObject, PyDict* kept, PyCData* pointer, const uint8_t* address, Provenance& result)

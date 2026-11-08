@@ -544,7 +544,7 @@ enum class Kept : bool { ForPart, ForWhole };
 bool keepAlive(JSGlobalObject*, PyCData* target, int64_t index, JSValue keep, Kept = Kept::ForPart);
 // The _objects of an instance, made if need be. Empty: an exception.
 JSValue keptObjects(JSGlobalObject*, PyCData*, Kept = Kept::ForWhole);
-// In the memory that the instance lies in, or lay in before a resize().
+// In the memory that the instance lies in, or lay in before a resize(), or before its view was released or the memory went from under that.
 bool liesInMemoryOf(JSGlobalObject*, PyCData*, const void* address);
 // What keepAlive() remembered last for that part. Empty: nothing.
 JSValue keptFor(JSGlobalObject*, PyCData* target, int64_t index);

@@ -280,7 +280,7 @@ static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue sourc
         return raiseTypeError(globalObject, scope, "expected a ctypes instance, got "_s, typeName(globalObject, resultValue));
 
     // The result keeps alive what the source does, and the source. (Not the source if that is of a simple type and keeps something: then the result points where the value of the source
-    // points, into what it keeps, and `_objects` is that, as in CPython.) A result that points into the source itself keeps it, whatever class the source has had at which moment.
+    // points, into what it keeps, and `_objects` is that, as in CPython.) A result that points into the source itself keeps it, whatever class the source has had at which moment, also where the memory of the source has gone meanwhile: by the source it is known that it has.
     if (data) {
         if (liesInMemoryOf(globalObject, data, pointer))
             kept = Kept::ForPart;
