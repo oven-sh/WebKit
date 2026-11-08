@@ -188,7 +188,7 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
         if (request.timeout > 0)
             request.timeout = std::max<int64_t>(deadline - monotonicNanoseconds(), 0);
     } else if (request.timeout && idle.mayBeginCallAgain()) {
-        int result = waitWithoutBlocking(request);
+        int result = request.hasJustLooked ? 0 : waitWithoutBlocking(request);
         if (result > 0 || (result < 0 && errno != EINTR))
             return result;
         if (failed(scope, idle.willBlock()))
@@ -243,7 +243,7 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
     }
 }
 
-bool waitUntilReady(JSGlobalObject* globalObject, int fd, bool isWaitOfCall)
+bool waitUntilReady(JSGlobalObject* globalObject, int fd, bool isWaitOfCall, bool hasJustLooked)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -251,6 +251,7 @@ bool waitUntilReady(JSGlobalObject* globalObject, int fd, bool isWaitOfCall)
     WaitRequest request { WaitRequest::Kind::Poll };
     request.timeout = -1;
     request.isWaitOfCall = isWaitOfCall;
+    request.hasJustLooked = hasJustLooked;
     request.descriptors = &descriptor;
     request.descriptorCount = 1;
     RELEASE_AND_RETURN(scope, waitForEvents(globalObject, request) != waitRaised);
@@ -291,6 +292,9 @@ bool waitUntilReadable(JSGlobalObject* globalObject, int fd)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // It has asked all that follows a moment ago, and has come as far as the wait.
+    if (runtime(globalObject).threads().isCallBegunAgainOnlyToBlock()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, waitUntilReady(globalObject, fd, true));
     struct pollfd descriptor { fd, POLLIN, 0 };
     int result = poll(&descriptor, 1, 0);
     // A signal interrupts even this. Its handler is not to wait behind a read.
@@ -302,7 +306,7 @@ bool waitUntilReadable(JSGlobalObject* globalObject, int fd)
     // Most of the time there is something to read. What is wrong with the descriptor, the read will say.
     if (result || !readWaitsAsPollDoes(fd))
         return true;
-    RELEASE_AND_RETURN(scope, waitUntilReady(globalObject, fd, true));
+    RELEASE_AND_RETURN(scope, waitUntilReady(globalObject, fd, true, true));
 }
 
 bool timeoutFromObject(JSGlobalObject* globalObject, JSValue value, int64_t unit, int64_t& nanoseconds, bool namesTimeout)

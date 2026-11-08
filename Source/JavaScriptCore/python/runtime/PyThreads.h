@@ -268,6 +268,9 @@ public:
     // For whoever called the function, which has returned with an exception. If it is that one, it is gone.
     enum class CallAgain : uint8_t { No, OnWipedStack, AfterCollecting };
     CallAgain takeRequestToCallAgain(CallFrame*);
+    // Whether the call on top has been begun again only to sleep on wiped stack, and has not come to its wait yet. No code of the program's has run since it gave up, and the GIL has
+    // not been let go of: what it asked the system on its way to the wait it need not ask again.
+    bool isCallBegunAgainOnlyToBlock();
     // False: there is an exception, and the call does not begin again.
     bool collectBeforeCallBeginsAgain(JSGlobalObject*, CallFrame*);
     void wakeOne(const void* address);

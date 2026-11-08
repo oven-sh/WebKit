@@ -71,6 +71,8 @@ struct WaitRequest {
     // Once a signal of the program's has arrived on the thread (signalsArrivedOnThread()), the wait is over, as if time had run out. (Else it goes on: PEP 475.)
     // For the host this is nothing: it returns EINTR as soon as calls of Python's are owed, and waitForEvents() decides.
     bool endsAtSignal { false };
+    // The caller has looked a moment ago, and there was nothing: what a wait does itself before it has the call begun again (IdleWait::willBlock()). For the host this is nothing.
+    bool hasJustLooked { false };
     // For a caller that makes one wait of several requests: what this has at the end of one it gives to the next. See IdleWait::goOnWithInterval(). For the host this is nothing.
     int64_t idleInterval { 0 };
     // If the call has been begun again in the middle of this wait: when the wait is to end, on the monotonic clock, which is not `timeout`
@@ -133,8 +135,8 @@ int waitForEvents(JSGlobalObject*, WaitRequest&);
 // terminal that delivers lines or waits for a byte; open for reading, blocking), this waits instead, until there is something:
 // in waitForEvents(), where a thread that is idle collects and a host's event loop turns. False: an exception.
 bool waitUntilReadable(JSGlobalObject*, int fd);
-// The same without asking what the descriptor is: for one that the caller has made. `isWaitOfCall`: see IdleWait.
-bool waitUntilReady(JSGlobalObject*, int fd, bool isWaitOfCall);
+// The same without asking what the descriptor is: for one that the caller has made. `isWaitOfCall`: see IdleWait. `hasJustLooked`: see WaitRequest.
+bool waitUntilReady(JSGlobalObject*, int fd, bool isWaitOfCall, bool hasJustLooked = false);
 
 // The clock that timeouts are measured by, in nanoseconds.
 int64_t monotonicNanoseconds();

@@ -1039,6 +1039,14 @@ NEVER_INLINE bool Threads::willCallFunctionThatMayWait(CallFrame* callFrame)
     return callFrame;
 }
 
+// (As IdleWait asks, without taking anything.)
+bool Threads::isCallBegunAgainOnlyToBlock()
+{
+    ThreadState& thread = current();
+    CallFrame* call = thread.callThatMayBeginAgain;
+    return call && call == thread.waitBegunAgain.call && !thread.waitBegunAgain.collects && call == m_vm.topCallFrame && isOfFunctionThatMayWait(call);
+}
+
 NEVER_INLINE Threads::CallAgain Threads::takeRequestToCallAgain(CallFrame* callFrame)
 {
     ThreadState& thread = current();
