@@ -16,6 +16,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSGenericTypedArrayViewInlines.h"
+#include "JSLexicalEnvironment.h"
 #include "JSTypedArrays.h"
 #include "PreventCollectionScope.h"
 #include "PyAbstract.h"
@@ -595,6 +596,14 @@ public:
             if (auto* butterfly = dynamicDowncast<JSCellButterfly>(cell); butterfly && hasContiguous(butterfly->indexingType())) {
                 for (unsigned i = 0; i < butterfly->publicLength(); ++i) {
                     if (JSValue value = butterfly->get(i); value && value.isCell())
+                        add(cell, value.asCell());
+                }
+            }
+            // A scope says what its symbol table has a name for. The collector visits all the slots: a parameter that another of its name hides has none, and
+            // is still an item of `arguments`.
+            if (auto* scope = dynamicDowncast<JSLexicalEnvironment>(cell)) {
+                for (unsigned i = 0, size = scope->symbolTable()->scopeSize(); i < size; ++i) {
+                    if (JSValue value = scope->variables()[i].get(); value && value.isCell())
                         add(cell, value.asCell());
                 }
             }
