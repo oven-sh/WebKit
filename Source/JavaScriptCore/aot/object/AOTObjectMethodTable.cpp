@@ -285,7 +285,7 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
     if (current && !current.isInSlot) {
         JSObject* extra = object->extraProperties();
         bool isDefined = extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow);
-        RETURN_IF_EXCEPTION(scope, false);
+        static_cast<void>(scope.exception());
         object->tryMoveFieldBackToSlot(vm, field);
         object->didChangeExtraProperties(vm);
         didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Change, name.uid());
@@ -1168,7 +1168,7 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
         place = object->placeOfExtraKey(name);
     StructureID extraStructureBefore = extra->structureID();
     bool isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
-    RETURN_IF_EXCEPTION(scope, false);
+    static_cast<void>(scope.exception());
     slot.disableCaching();
     if (!isDeleted)
         return false;
