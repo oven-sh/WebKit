@@ -292,23 +292,25 @@ enum PicklerField : unsigned {
     PicklerDispatchTable,
     PicklerBufferCallback,
     // The memo: from an object to its number, by identity. A WeakMap of JS does that; the list is what keeps the objects. The list is an object like any other, which gc.get_referents() hands out: nothing is believed of
-    // it. How many objects have a number, which is the number of the next, is counted apart.
+    // it. How many objects have a number, which is the number of the next, is counted apart: picklerMemoCount().
     PicklerMemoMap,
     PicklerMemoKeys,
-    PicklerMemoCount,
     PicklerBin,
     PicklerFast,
     PicklerFieldCount
 };
-// In `number`: the protocol, and above it
+// In `number`: the protocol, above it these, and in the upper half how many objects the memo has.
 enum PicklerBit : int64_t { PicklerFixImports = 1 << 8, PicklerIsRunning = 1 << 9 };
+static constexpr int64_t picklerOneInMemo = 1ll << 32;
+static ALWAYS_INLINE uint32_t picklerMemoCount(PyRecord* pickler) { return static_cast<uint32_t>(static_cast<uint64_t>(pickler->number) >> 32); }
+static ALWAYS_INLINE void picklerSetMemoCount(PyRecord* pickler, uint32_t count) { pickler->number = static_cast<int64_t>((static_cast<uint64_t>(pickler->number) & 0xffffffffu) | (static_cast<uint64_t>(count) << 32)); }
 
 static void picklerClearMemo(JSGlobalObject* globalObject, PyRecord* pickler)
 {
     VM& vm = getVM(globalObject);
     pickler->set(vm, PicklerMemoMap, JSWeakMap::create(vm, globalObject->weakMapStructure()));
     pickler->set(vm, PicklerMemoKeys, newList(globalObject));
-    pickler->set(vm, PicklerMemoCount, jsNumber(0));
+    picklerSetMemoCount(pickler, 0);
 }
 
 static void picklerMemoSet(JSGlobalObject* globalObject, PyRecord* pickler, JSCell* object, double index)
@@ -319,7 +321,7 @@ static void picklerMemoSet(JSGlobalObject* globalObject, PyRecord* pickler, JSCe
     if (!map->has(object)) {
         listAppend(globalObject, asList(pickler->get(PicklerMemoKeys)), object);
         RETURN_IF_EXCEPTION(scope, void());
-        pickler->set(vm, PicklerMemoCount, jsNumber(pickler->get(PicklerMemoCount).asNumber() + 1));
+        pickler->number = static_cast<int64_t>(static_cast<uint64_t>(pickler->number) + picklerOneInMemo);
     }
     map->set(vm, object, jsNumber(index));
 }
@@ -334,7 +336,7 @@ static NEVER_INLINE JSValue picklerRaiseMemoKeysChanged(JSGlobalObject* globalOb
 static JSArray* picklerMemoKeysToGoThrough(JSGlobalObject* globalObject, PyRecord* pickler)
 {
     JSArray* keys = asList(pickler->get(PicklerMemoKeys));
-    if (listLength(keys) == pickler->get(PicklerMemoCount).asNumber()) [[likely]]
+    if (listLength(keys) == picklerMemoCount(pickler)) [[likely]]
         return keys;
     picklerRaiseMemoKeysChanged(globalObject);
     return nullptr;
@@ -381,7 +383,7 @@ static bool picklerSetProtocol(JSGlobalObject* globalObject, PyRecord* pickler, 
             return false;
         }
     }
-    pickler->number = (pickler->number & PicklerIsRunning) | proto | (fixImports && proto < 3 ? PicklerFixImports : 0);
+    pickler->number = (pickler->number & ~static_cast<int64_t>(0xff | PicklerFixImports)) | proto | (fixImports && proto < 3 ? PicklerFixImports : 0);
     pickler->set(vm, PicklerBin, jsNumber(proto > 0));
     return true;
 }
@@ -625,7 +627,7 @@ private:
         if (m_fast)
             return true;
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        unsigned index = static_cast<unsigned>(m_pickler->get(PicklerMemoCount).asNumber());
+        unsigned index = picklerMemoCount(m_pickler);
         picklerMemoSet(m_globalObject, m_pickler, object.asCell(), index);
         RETURN_IF_EXCEPTION(scope, false);
         if (m_proto >= 4)
@@ -2115,7 +2117,7 @@ static void picklerSetMemo(JSGlobalObject* globalObject, JSValue self, JSValue v
             RETURN_IF_EXCEPTION(scope, void());
         }
         // (One object in the place of another that has a number too: the list is as long as it was, and each item has a number.)
-        if (scratch->get(PicklerMemoCount) != other->get(PicklerMemoCount)) [[unlikely]] {
+        if (picklerMemoCount(scratch) != picklerMemoCount(other)) [[unlikely]] {
             scope.release();
             picklerRaiseMemoKeysChanged(globalObject);
             return;
@@ -2149,7 +2151,7 @@ static void picklerSetMemo(JSGlobalObject* globalObject, JSValue self, JSValue v
     }
     pickler->set(vm, PicklerMemoMap, scratch->get(PicklerMemoMap));
     pickler->set(vm, PicklerMemoKeys, scratch->get(PicklerMemoKeys));
-    pickler->set(vm, PicklerMemoCount, scratch->get(PicklerMemoCount));
+    picklerSetMemoCount(pickler, picklerMemoCount(scratch));
 }
 
 static JSValue picklerMemoProxyClear(JSGlobalObject* globalObject, JSValue self)
