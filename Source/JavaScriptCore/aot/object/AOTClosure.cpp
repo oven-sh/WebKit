@@ -805,7 +805,8 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
-    RETURN_IF_EXCEPTION(scope, false);
+    if (Exception* exception = scope.exception(); exception && !vm.isTerminationException(exception)) [[unlikely]]
+        return false;
     holdClosureToLackingNameSlowCase(vm, closure, name.uid());
     if (classLayout) {
         classes.holdMemberToProof(vm, *classLayout, ClassSide::Static, closure, name.uid());
