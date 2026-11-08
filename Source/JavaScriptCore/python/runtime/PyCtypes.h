@@ -326,7 +326,9 @@ public:
     int64_t size { 0 }; // Of an aggregate: how many bytes the copy has.
     alignas(16) uint8_t value[32] { };
     WriteBarrier<Unknown> object; // What the value is of, or points into.
-    WriteBarrier<Unknown> keep; // An aggregate is passed as a copy, `object`: the PyCTypeInfo by which the copy was made. (The instance may be given another class.)
+    // An aggregate is passed as a copy, `object`: the PyCTypeInfo by which the copy was made. (The instance may be given another class.)
+    // An address made of a value (bytes, a str): Packed::owner.
+    WriteBarrier<Unknown> keep;
 
     void setPointer(const void* pointer) { memcpy(value, &pointer, sizeof(pointer)); }
     void* pointer() const
@@ -599,6 +601,9 @@ std::span<uint8_t> bytesOfOwner(JSCell*);
 JSValue entryAt(JSGlobalObject*, const Home&);
 // Empty: there is none from now on. If it raises, for want of memory, an entry is missing or out of date.
 void setEntry(JSGlobalObject*, const Home&, JSValue entry);
+// An address has been taken from `holder`: an instance (it lies in the memory of that, or is what the instance holds), an argument made of one or of a value, a bytes object, a PyByteStorage.
+// The entry for where the address is stored. Empty: it is not known to lie in anything that `holder` keeps alive.
+JSValue entryForAddressFrom(JSGlobalObject*, JSValue holder, const void* address);
 // `size` bytes have been copied from the one to the other: what there is for the places among them goes along, and what there was at the other end goes.
 void copyEntries(JSGlobalObject*, const Home& from, const Home& to, int64_t size);
 

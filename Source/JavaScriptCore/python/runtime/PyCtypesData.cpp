@@ -490,6 +490,15 @@ struct Provenance {
     bool isNotAllSeen { false }; // More is kept alive than is looked through.
 };
 
+static bool findProvenanceInBytesOf(JSCell* owner, const uint8_t* address, Provenance& result)
+{
+    std::span<uint8_t> memory = bytesOfOwner(owner);
+    if (!memory.data() || address < memory.data() || address > memory.data() + memory.size())
+        return false;
+    result = { owner, memory.data(), memory.data() + memory.size(), 0, owner };
+    return true;
+}
+
 static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uint8_t* address, Provenance& result, unsigned depth = 0)
 {
     if (!kept || !kept.isCell())
@@ -498,6 +507,9 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
         result.isNotAllSeen = true;
         return false;
     }
+    // What a c_char_p keeps.
+    if (kept.asCell()->type() == PyBytesType)
+        return findProvenanceInBytesOf(kept.asCell(), address, result);
     if (auto* other = PyCData::tryFrom(kept)) {
         if (!other->owner())
             return false;
@@ -580,11 +592,7 @@ static bool findProvenanceByEntry(JSGlobalObject* globalObject, JSValue entry, c
         return false;
     if (PyCData::is(entry))
         return findProvenance(globalObject, entry, address, result);
-    std::span<uint8_t> memory = bytesOfOwner(entry.asCell());
-    if (!memory.data() || address < memory.data() || address > memory.data() + memory.size())
-        return false;
-    result = { entry.asCell(), memory.data(), memory.data() + memory.size(), 0, entry.asCell() };
-    return true;
+    return findProvenanceInBytesOf(entry.asCell(), address, result);
 }
 
 // What is kept for a part lies in the _objects of the whole under the way to the part (keyOfPart()). If something that the part is in was stored whole, what lies under the way
@@ -752,6 +760,32 @@ static Home homeOf(const Provenance& provenance, const uint8_t* address)
     if (auto* view = dynamicDowncast<PyMemoryView>(provenance.owner))
         return homeInView(view, provenance.offsetOfBegin + (address - provenance.begin));
     return { provenance.owner, address - provenance.begin };
+}
+
+JSValue entryForAddressFrom(JSGlobalObject* globalObject, JSValue holder, const void* address)
+{
+    if (!holder || !holder.isCell() || !address)
+        return { };
+    auto* target = static_cast<const uint8_t*>(address);
+    Provenance provenance;
+    if (auto* argument = PyCArg::tryFrom(holder)) {
+        if (argument->foreignKind != ForeignKind::Pointer)
+            return { };
+        if (findProvenanceByEntry(globalObject, argument->keep.get(), target, provenance))
+            return provenance.entry;
+        holder = argument->object.get();
+        if (!holder || !holder.isCell())
+            return { };
+    }
+    auto* data = PyCData::tryFrom(holder);
+    if (!data)
+        return findProvenanceInBytesOf(holder.asCell(), target, provenance) ? provenance.entry : JSValue();
+    if (findProvenance(globalObject, data, target, provenance))
+        return provenance.entry;
+    // By it the copy knows that what it points into is gone.
+    if (provenance.isInWhatIsGone)
+        return data;
+    return entryForCopy(globalObject, data, homeOf(data, 0), target);
 }
 
 static ALWAYS_INLINE Granted grant(VM& vm, uint8_t* data, size_t size)

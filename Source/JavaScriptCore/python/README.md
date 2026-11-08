@@ -1630,8 +1630,10 @@ goes on changing), and its keys are places in an instance, which collide. So who
   (`ArrayConventions.h`), so what it takes goes by the entries, not by the memory. It is of a class of its own, not an array: every array of JS is a list for
   Python, and `gc.get_objects()` hands those out. What is read from a record is looked at all the same: what is no cell, or a cell of a kind that is no entry, vouches for nothing. Bits that are the address of a table are no `py_object`.
 - **Who writes.** `p.contents = x`; a pointer, an array or None stored where a pointer is; a whole instance stored into a field or an item, which copies the entries of the range (`copyEntries()`); a pointer copied from a place for which only the
-  search knows an owner takes what the search finds; the values of `c_char_p`, `c_wchar_p` and `c_void_p` (`Packed::owner`). An int or None stored as a value leaves the entry if it points into what the place
+  search knows an owner takes what the search finds; the values of `c_char_p`, `c_wchar_p` and `c_void_p` (`Packed::owner`); `cast()`. An int or None stored as a value leaves the entry if it points into what the place
   pointed into before (the value was read and stored again, or moved on a little), and clears it otherwise. Whatever else writes bytes (an int field of a union, `raw`, a slice, `memmove()`, C) writes nothing down.
+- **`cast()`** takes the owner from what the conversion of its first argument took the address from (`entryForAddressFrom()`): the instance, what its pointer points into, what `byref()` refers to, the bytes, the copy made of a str, what an `_as_parameter_` made on the spot.
+  How `_objects` of the result looks is CPython's business and has no say in it.
 - **What the program can see of it.** `_objects` looks as it did, and what that of an instance that owns its memory holds dies in the order of that dict, as in CPython: an instance that dies lets go of its memory, and so of the record, before it lets go of `_objects` (the order in `PyCData::visitChildren()`, by which the order of finalizers goes). `_objects.clear()` and `.pop()` no longer free what ctypes itself has stored the address of. An entry holds what it holds until the place is stored to again or the memory that holds the place dies, also when C has
   overwritten the bytes meanwhile: DEFERRED.md says what that prolongs.
 

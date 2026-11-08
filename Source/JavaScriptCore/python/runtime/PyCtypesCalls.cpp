@@ -246,7 +246,8 @@ static bool isTypeOfMeta(JSValue value, PyType* meta)
     return type && type->type()->isSubtypeOf(meta);
 }
 
-static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue source, JSValue type)
+// `holders`: what the conversion of the arguments left to be kept alive for the call. The address was taken from one of them.
+static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue source, JSValue type, const MarkedArgumentBuffer& holders)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -273,6 +274,11 @@ static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue sourc
             kept = Kept::ForPart;
     }
 
+    // Who owns what the result will point into. That keeps it alive and says how far it goes, whatever `_objects` comes to look like.
+    JSValue entry;
+    for (unsigned i = 0; i < holders.size() && !entry; ++i)
+        entry = entryForAddressFrom(globalObject, holders.at(i), pointer);
+
     JSValue resultValue = call(globalObject, type);
     RETURN_IF_EXCEPTION(scope, { });
     PyCData* result = PyCData::tryFrom(resultValue);
@@ -295,9 +301,14 @@ static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue sourc
             RETURN_IF_EXCEPTION(scope, { });
         }
     }
-    auto memory = Place { result }.resolve(globalObject, sizeof(void*));
+    Home home;
+    {
+        auto memory = Place { result }.resolve(globalObject, sizeof(void*), &home);
+        RETURN_IF_EXCEPTION(scope, { });
+        memcpy(memory.data(), &pointer, memory.size());
+    }
+    setEntry(globalObject, home, entry);
     RETURN_IF_EXCEPTION(scope, { });
-    memcpy(memory.data(), &pointer, memory.size());
     return result;
 }
 
@@ -467,7 +478,7 @@ static bool isOwnFunction(uintptr_t address)
 }
 
 // Runs one of them. The result is in `memory`, unless there is an exception.
-static NEVER_INLINE void callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std::span<const Argument> arguments, uint8_t* memory, JSValue& result)
+static NEVER_INLINE void callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std::span<const Argument> arguments, const MarkedArgumentBuffer& keeps, uint8_t* memory, JSValue& result)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -523,7 +534,7 @@ static NEVER_INLINE void callOwnFunction(JSGlobalObject* globalObject, uintptr_t
         RETURN_IF_EXCEPTION(scope, void());
         JSValue type = object(2);
         RETURN_IF_EXCEPTION(scope, void());
-        result = castTo(globalObject, pointer(0), source, type);
+        result = castTo(globalObject, pointer(0), source, type, keeps);
     }
     RETURN_IF_EXCEPTION(scope, void());
     uint64_t bits = identityBits(result);
@@ -648,7 +659,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
     JSValue ownResult;
     bool returnsReference = false;
     if (isOwnFunction(std::bit_cast<uintptr_t>(function))) {
-        callOwnFunction(globalObject, std::bit_cast<uintptr_t>(function), converted, resultMemory.data(), ownResult);
+        callOwnFunction(globalObject, std::bit_cast<uintptr_t>(function), converted, keeps, resultMemory.data(), ownResult);
         RETURN_IF_EXCEPTION(scope, { });
     } else {
         RoomForArguments<ForeignValue> roomForValues;

@@ -803,6 +803,8 @@ static PyCArg* packedArgument(JSGlobalObject* globalObject, Code code, char tag,
     argument->tag = tag;
     memcpy(argument->value, packed.bytes, sizeof(argument->value));
     argument->object.set(vm, argument, packed.keep);
+    if (packed.owner)
+        argument->keep.set(vm, argument, packed.owner);
     return argument;
 }
 
