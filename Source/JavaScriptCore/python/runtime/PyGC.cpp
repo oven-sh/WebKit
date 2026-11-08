@@ -498,13 +498,20 @@ static bool isTracked(Runtime& rt, JSValue value, bool isYoung, TrackedTuples* m
                 return nullptr;
             return uncheckedDowncast<PyTuple>(item.asCell());
         };
-        // Most have no tuple among their items.
+        // Most have no tuple among their items, and of those that have most have short tuples of numbers and strs: ((1, 2), 3). Such an item is not kept track of, which a look at it tells. ONLY A SHORT ONE IS LOOKED AT HERE: what
+        // is found is noted nowhere, and a great tuple may be an item of 100,000 others: that one is asked by way of the table below, once.
+        constexpr unsigned lengthOfShortTuple = 8;
+        auto isShortAndHoldsNoObject = [](PyTuple* tuple) {
+            return tuple->length() <= lengthOfShortTuple && std::ranges::none_of(tuple->span(), [](JSValue item) {
+                return item && item.isCell() && item.asCell()->isObject();
+            });
+        };
         bool hasTuples = false;
         for (JSValue item : uncheckedDowncast<PyTuple>(cell)->span()) {
             if (!item || !item.isCell() || !item.asCell()->isObject())
                 continue;
-            if (!isYoung && asSuchATuple(item))
-                hasTuples = true;
+            if (PyTuple* tuple = isYoung ? nullptr : asSuchATuple(item))
+                hasTuples |= !isShortAndHoldsNoObject(tuple);
             else if (isYoung ? !isOfUntrackedType(rt.typeOf(item)) : isTracked(rt, item))
                 return true;
         }
