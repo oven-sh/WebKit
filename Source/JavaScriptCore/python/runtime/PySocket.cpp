@@ -1635,21 +1635,21 @@ static bool socketSendCall(JSGlobalObject* globalObject, PyRecord* socket, int64
                 continue;
             }
         }
-        if (!std::exchange(hasWaited, true)) {
+        if (!hasWaited) {
             int status = fcntl(socketDescriptor(socket), F_GETFL);
             if (status < 0)
                 return fail(errno);
             // The program has made it so behind the back of the socket object.
             if (status & O_NONBLOCK)
                 return fail(EAGAIN);
-            if (socketHasTimeLimitOfKernel(socket, SO_SNDTIMEO)) {
-                callsFirst = false;
-                goesOn = false;
-                continue;
-            }
-            // Where the system's one call would go to sleep for the first time. It looks for a signal before it does: with a part gone it returns the part.
-            if (!serve(total))
-                return result;
+        }
+        // Where the system's one call would go to sleep. It looks for a signal before it does, each time: with a part gone it returns the part.
+        if (!serve(total))
+            return result;
+        if (!std::exchange(hasWaited, true) && socketHasTimeLimitOfKernel(socket, SO_SNDTIMEO)) {
+            callsFirst = false;
+            goesOn = false;
+            continue;
         }
         wasToldReady = false;
         if (socketDescriptor(socket) >= 0) {
