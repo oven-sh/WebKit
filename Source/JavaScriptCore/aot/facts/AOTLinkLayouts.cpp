@@ -4150,8 +4150,12 @@ void LinkFlow::forEachNodeAnsweredBesideObjectOfConstruction(FunctionID construc
     }
     while (!toVisit.isEmpty()) {
         uint32_t to = toVisit.takeLast();
+        bool isEnteredInSummary = false;
         for (const SummaryEdge& edge : summary.edges) {
-            if (edge.to != to || isSeen.set(edge.from))
+            if (edge.to != to)
+                continue;
+            isEnteredInSummary = true;
+            if (isSeen.set(edge.from))
                 continue;
             const SummaryNode& from = summary.nodes[edge.from];
             switch (from.kind) {
@@ -4179,6 +4183,8 @@ void LinkFlow::forEachNodeAnsweredBesideObjectOfConstruction(FunctionID construc
                 break;
             }
         }
+        if (!isEnteredInSummary && summary.nodes[to].kind == SummaryNode::Kind::Join)
+            functor(to);
     }
 }
 
