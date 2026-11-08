@@ -577,6 +577,23 @@ public:
     // ---- Threads (PyThreads.h) ----
 
     Threads& threads() const { return *m_threads; }
+    // The handles (_thread._ThreadHandle) of the threads that this runtime has started, that are not daemons and that have not ended: the interpreter waits for them before it exits.
+    // They are in no list of Python's: whatever looks at the heap (gc.get_referrers(handle)) has nothing to give the program, so what comes out is what threadStart() has put in.
+    // For a thread that holds the GIL. The lock is for the collector.
+    void waitAtExitFor(PyRecord* handle);
+    void doNotWaitAtExitFor(PyRecord* handle);
+    void waitAtExitForNoThread();
+    // The first of which the function says so. The function allocates no cell.
+    template<typename Function>
+    PyRecord* firstThreadToWaitFor(const Function& isWanted)
+    {
+        Locker locker { m_threadsToWaitForLock };
+        for (auto& handle : m_threadsToWaitFor) {
+            if (isWanted(handle.get()))
+                return handle.get();
+        }
+        return nullptr;
+    }
     // A call of a Python function by the C++ of this runtime, which wants what the function returns as it is. Any other C++
     // that calls one is the host's, and is given what JS is given: see resultForCaller(). They are told apart by the frame
     // through which the VM was entered, which the function notes when it starts.
@@ -1217,6 +1234,8 @@ private:
     WriteBarrier<Unknown> m_asyncGenFinalizer;
     WriteBarrier<Unknown> m_threadLocals;
     RefPtr<Threads> m_threads;
+    Lock m_threadsToWaitForLock;
+    Vector<WriteBarrier<PyRecord>> m_threadsToWaitFor WTF_GUARDED_BY_LOCK(m_threadsToWaitForLock);
 
     WriteBarrier<Unknown> m_sendResult;
     WriteBarrier<Unknown> m_exceptionGroupRest;

@@ -167,6 +167,11 @@ void Runtime::visit(Visitor& visitor)
     visitor.append(m_asyncGenFirstIter);
     visitor.append(m_asyncGenFinalizer);
     visitor.append(m_threadLocals);
+    {
+        Locker locker { m_threadsToWaitForLock };
+        for (auto& handle : m_threadsToWaitFor)
+            visitor.append(handle);
+    }
     visitor.append(m_sendResult);
     visitor.append(m_exceptionGroupRest);
     // What waits for a call that is owed is not the program's to reach. The collector keeps it once it has marked all that is, so that it does not
@@ -319,6 +324,27 @@ void Runtime::keepTypeMadeForDefinitionAt(const void* definition, PyType* type)
 {
     Locker locker { m_moduleTypesLock };
     m_moduleTypes.add(definition, WriteBarrier<PyType>(m_vm, m_globalObject, type));
+}
+
+void Runtime::waitAtExitFor(PyRecord* handle)
+{
+    ASSERT(m_vm.currentThreadIsHoldingAPILock());
+    Locker locker { m_threadsToWaitForLock };
+    m_threadsToWaitFor.append(WriteBarrier<PyRecord>(m_vm, m_globalObject, handle));
+}
+
+void Runtime::doNotWaitAtExitFor(PyRecord* handle)
+{
+    Locker locker { m_threadsToWaitForLock };
+    m_threadsToWaitFor.removeFirstMatching([&](auto& other) {
+        return other.get() == handle;
+    });
+}
+
+void Runtime::waitAtExitForNoThread()
+{
+    Locker locker { m_threadsToWaitForLock };
+    m_threadsToWaitFor.clear();
 }
 
 PyType* Runtime::typeFor(const TypeDef& def, PyType* base)

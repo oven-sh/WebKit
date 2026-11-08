@@ -667,29 +667,12 @@ static JSValue threadSetName(JSGlobalObject* globalObject, JSValue name)
 #define PY_HAVE_THREAD_NAMES 0
 #endif
 
-// The handles of the threads that are not daemons and have not ended: the interpreter waits for them before it exits.
-static JSArray* threadShutdownHandles(JSGlobalObject* globalObject)
+// Of those that the interpreter waits for before it exits (Runtime::waitAtExitFor()). Null: there is none.
+static PyRecord* threadToWaitForOtherThanThisOne(JSGlobalObject* globalObject)
 {
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    PyDict* state = rt.typeFor(threadStateTypeDef)->dict();
-    JSString* key = internString(vm, "shutdown_handles"_s);
-    if (JSValue list = state->get(key))
-        return asList(list);
-    JSArray* list = newList(globalObject);
-    state->set(vm, key, list);
-    return list;
-}
-
-static void threadRemoveShutdownHandle(JSGlobalObject* globalObject, PyRecord* handle)
-{
-    JSArray* handles = threadShutdownHandles(globalObject);
-    for (unsigned i = 0; i < listLength(handles); ++i) {
-        if (listGet(handles, i) == JSValue(handle)) {
-            listRemove(globalObject, handles, i, 1);
-            return;
-        }
-    }
+    return runtime(globalObject).firstThreadToWaitFor([ident = currentThreadIdent()](PyRecord* handle) {
+        return tryUInt64(handle->get(0)) != ident;
+    });
 }
 
 // A frame of Python code takes a few hundred bytes, but what is written in C++ and calls back into Python takes far more, above
@@ -716,7 +699,7 @@ static void threadRun(JSGlobalObject* globalObject, JSValue function, PyTuple* a
             scope.clearException();
     }
     localForgetThisThread(globalObject);
-    threadRemoveShutdownHandle(globalObject, handle);
+    rt.doNotWaitAtExitFor(handle);
     scope.assertNoException();
     handle->number = ThreadDone;
     rt.threads().wakeAll(handle);
@@ -736,10 +719,8 @@ static bool threadStart(JSGlobalObject* globalObject, JSValue function, PyTuple*
         raiseRuntimeError(globalObject, scope, "thread already started"_s);
         return false;
     }
-    if (!isDaemon) {
-        listAppend(globalObject, threadShutdownHandles(globalObject), handle);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
+    if (!isDaemon)
+        rt.waitAtExitFor(handle);
 
     size_t stackSize = threadDefaultStackSize;
     // What threading.stack_size() asks for is what the program gets to use. The end of every stack is the engine's reserve, where
@@ -757,7 +738,7 @@ static bool threadStart(JSGlobalObject* globalObject, JSValue function, PyTuple*
     if (error) {
         handle->number = ThreadNotStarted;
         if (!isDaemon)
-            threadRemoveShutdownHandle(globalObject, handle);
+            rt.doNotWaitAtExitFor(handle);
         raiseRuntimeError(globalObject, scope, "can't start new thread"_s);
         return false;
     }
@@ -819,14 +800,9 @@ static JSValue threadShutdown(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* handles = threadShutdownHandles(globalObject);
+    // From the first again each time: while this thread waits, threads end, and start others.
     while (true) {
-        PyRecord* handle = nullptr;
-        for (unsigned i = 0; i < listLength(handles) && !handle; ++i) {
-            auto* candidate = PyRecord::from(listGet(handles, i));
-            if (tryUInt64(candidate->get(0)) != currentThreadIdent())
-                handle = candidate;
-        }
+        PyRecord* handle = threadToWaitForOtherThanThisOne(globalObject);
         if (!handle)
             return jsUndefined();
         threadsOf(globalObject).waitUntil(globalObject, handle, -1, "a thread is still running"_s, "join thread at interpreter shutdown"_s, [&] { return handle->number == ThreadDone; });
@@ -1072,18 +1048,11 @@ static JSValue atexitRunExitFuncs(JSGlobalObject* globalObject)
 
 void runAtexitCallbacks(JSGlobalObject* globalObject) { atexitRunExitFuncs(globalObject); }
 void waitForThreadsAtExit(JSGlobalObject* globalObject) { threadShutdown(globalObject); }
-void stopWaitingForThreadsAtExit(JSGlobalObject* globalObject) { listTruncate(globalObject, threadShutdownHandles(globalObject), 0); }
+void stopWaitingForThreadsAtExit(JSGlobalObject* globalObject) { runtime(globalObject).waitAtExitForNoThread(); }
 
 bool hasThreadsOrAtexitCallbacks(JSGlobalObject* globalObject)
 {
-    if (listLength(atexitCallbacks(globalObject)))
-        return true;
-    JSArray* handles = threadShutdownHandles(globalObject);
-    for (unsigned i = 0; i < listLength(handles); ++i) {
-        if (tryUInt64(PyRecord::from(listGet(handles, i))->get(0)) != currentThreadIdent())
-            return true;
-    }
-    return false;
+    return listLength(atexitCallbacks(globalObject)) || threadToWaitForOtherThanThisOne(globalObject);
 }
 
 static JSValue atexitClear(JSGlobalObject* globalObject)

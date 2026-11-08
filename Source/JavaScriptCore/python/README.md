@@ -1560,6 +1560,8 @@ up before it waits for events while a collection that it has asked for is under 
   program (JS has called into it) and no realm of the VM has a function for any signal, the wait is a `RuntimeError` ("deadlock: ..."): nothing of JS
   runs while the thread waits, so it would only hang.
 - At exit the threads that are not daemons are joined, unless the wait is interrupted; daemon threads never get the lock again.
+  Their handles are in a vector of the runtime's (`Runtime::waitAtExitFor()`), each runtime's own, as in CPython they are in a list of C: not in a
+  list of Python's, which `gc.get_referrers(handle)` would hand to the program.
 - **A VM that goes away while the process goes on takes its threads with it** (`stopThreads()`, `Threads::stopAll()`): a worker of the host's
   that ends, or is terminated. A thread that merely never ran again would be left with frames that refer to the VM, and may have
   handed the kernel memory that dies with it (`recv_into()`). So each thread is woken wherever it waits (its sleeper; `SIGURG` again and
