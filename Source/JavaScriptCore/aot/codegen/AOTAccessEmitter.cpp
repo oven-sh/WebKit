@@ -17,6 +17,7 @@
 #include "AOTConvention.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTFieldTable.h"
+#include "AOTGuardEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTNameClass.h"
 #include "AOTOperatorEmitter.h"
@@ -25,14 +26,17 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeWords.h"
 #include "AOTSlotEmitter.h"
+#include "AOTState.h"
 #include "AOTStubCalls.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCompiledMethods.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsGlobalBindings.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTThrowEmitter.h"
 #include "AOTTruthinessEmitter.h"
 #include "AOTTypeArena.h"
+#include "ClonedArguments.h"
 #include "ECMAMode.h"
 #include "GetterSetter.h"
 #include "PropertyName.h"
@@ -87,8 +91,7 @@ std::optional<NumberedImmediate> AccessEmitter::answersOfKeyThatIsNoSymbolOfReal
 
 StubKey AccessEmitter::stubThatReadsAtSite(PropertyKeyID key, ValueID receiver)
 {
-    if (!m_plan.slots().hasColumn(key))
-        return getByIdAtSiteHashed();
+    UNUSED_PARAM(key);
     return receiver && typeOf(receiver).isObject() ? getByIdOfObjectAtSite() : getByIdAtSite();
 }
 
@@ -111,39 +114,83 @@ bool namesSizeOfTables(const Program& program, const Facts& facts, PropertyKeyID
     return true;
 }
 
+bool AccessEmitter::verifiesFastPathAnswers(PropertyKeyID key)
+{
+    return AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckWalkAtRunTime) && !isSymbolOfRealm(key);
+}
+
+Word32 AccessEmitter::recordPendingRead(Boxed receiver, PropertyKeyID key)
+{
+    Word32 count = slowPathReadCount();
+    LValue state = m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(state)));
+    m_out.store64(receiver.value(), m_out.address(m_heaps.AOTInstance_mutableFields, state, OBJECT_OFFSETOF(State, receiverOfPendingRead)));
+    m_out.store32(identifierNumber(key).value(), m_out.address(m_heaps.AOTInstance_mutableFields, state, OBJECT_OFFSETOF(State, keyOfPendingRead)));
+    m_out.store32(count.value(), m_out.address(m_heaps.AOTInstance_mutableFields, state, OBJECT_OFFSETOF(State, slowPathReadCountAtPendingRead)));
+    return count;
+}
+
+void AccessEmitter::verifyFastPathAnswer(const OperationContext& context, Boxed receiver, PropertyKeyID key, Boxed answer, StubThatAnswers stub, Word32 countBeforeRead)
+{
+    int32_t kindAndStub = static_cast<int32_t>(kindAndStubOfAnswer(KindOfAnswer::Value, stub));
+    Word32 kindAndStubWithSlowPathBit = select(equal(slowPathReadCount(), countBeforeRead), word32(kindAndStub), word32(kindAndStub | static_cast<int32_t>(answerMayComeFromSlowPath)));
+    callVoidOperation(context, RuntimeOperation::StopAtStaleAnswer, { receiver, answer, identifierNumber(key), kindAndStubWithSlowPathBit });
+}
+
 Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, PropertyKeyID key, ValueID receiverID)
+{
+    if (!verifiesFastPathAnswers(key)) [[likely]]
+        return getByIdThroughStub(context, receiver, key, receiverID);
+    Word32 countBeforeRead = recordPendingRead(receiver, key);
+    Boxed result = getByIdThroughStub(context, receiver, key, receiverID);
+    verifyFastPathAnswer(context, receiver, key, result, StubThatAnswers::ReadByName, countBeforeRead);
+    return result;
+}
+
+Boxed AccessEmitter::getByIdThroughStub(const OperationContext& context, Boxed receiver, PropertyKeyID key, ValueID receiverID)
 {
     if (isSymbolOfRealm(key))
         return Boxed(callStub(context, getByIdOfSymbolOfRealm(), { receiver.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first);
     const NumberedImmediate mention { mentionOfName(key) };
-    const bool hasColumn = m_plan.slots().hasColumn(key);
-    const bool isLength = hasColumn && m_program.nameClassOf(key) == NameClass::Length;
+    if (m_program.nameClassOf(key) == NameClass::Length) {
+        const Operation* read = context.valueID() ? &static_cast<const Operation&>(context.instruction()) : nullptr;
+        std::optional<NumberedImmediate> answers = read && read->opcode == Opcode::PropGet && read->receiverIsAskedForNameOfNoBuiltin() ? answersOfKeyThatIsNoSymbolOfRealm(context, key, SiteUse::Read) : std::nullopt;
+        if (answers)
+            return Boxed(callStub(context, readLengthAtSite(!m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key)), { receiver.value() }, { .numberedImmediate = *answers }).first);
+        if (!read || read->opcode != Opcode::PropGet || !read->receiverIsExpectedToBeArguments() || !m_generator.isInLoop(context.block()))
+            return Boxed(callStub(context, getLengthAtSite(), { receiver.value() }, { .numberedImmediate = mention }).first);
+        LBasicBlock isNotUnmappedAsMade = newBlock();
+        LBasicBlock isNotAsMade = newBlock();
+        Join<Boxed> join(m_out);
+        Type known = receiverID ? typeOf(receiverID) : Type();
+        if (!receiverID || known.primitives & ~cellPrimitives) {
+            Condition isPresentCell = isCell(receiver);
+            if (!receiverID || known.primitives & Primitive::Absent)
+                isPresentCell = logicalAnd(isPresentCell, isNotEmpty(receiver));
+            branchUnless(isPresentCell, isNotAsMade);
+        }
+        CellPointer object = unboxCell(receiver);
+        Word32 structureAsMade(m_out.load32(mutableInstanceField(AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Arguments)].header))));
+        branchUnless(equal(loadStructureID(object), structureAsMade), isNotUnmappedAsMade);
+        Pointer butterfly = loadField<Pointer>(object, m_heaps.JSObject_butterfly);
+        join.add(Boxed(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), butterfly.value(), offsetInButterfly(clonedArgumentsLengthPropertyOffset) * sizeof(EncodedJSValue)))));
+
+        m_out.appendTo(isNotUnmappedAsMade);
+        branchUnless(hasCellType(object, DirectArgumentsType), isNotAsMade);
+        branchUnless(isZero(Integer(loadField<Pointer>(object, m_heaps.DirectArguments_mappedArguments).value())), isNotAsMade);
+        join.add(boxInt32(loadField<Word32>(object, m_heaps.DirectArguments_length)));
+
+        m_out.appendTo(isNotAsMade);
+        join.add(Boxed(callStub(context, getLengthAtSite(), { receiver.value() }, { .numberedImmediate = mention, .isOnRarePath = true }).first));
+        return join.finish();
+    }
     if (std::optional<NumberedImmediate> answers = answersOfKeyThatIsNoSymbolOfRealm(context, key, SiteUse::Read)) {
-        NameAtSite name = hasColumn ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
         ReceiverAtSite receiverIs = receiverID && typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
-        const bool namesLength = hasColumn ? isLength : m_program.nameClassOf(key) == NameClass::Length;
-        StubKey stub = namesLength ? readLengthAtSite(name) : namesSizeOfTables(m_program, m_facts, key) ? readSizeOfTableAtSite(name) : !m_plan.slots().namesField(key) ? readAtSiteOfNameWithoutField(receiverIs, name) : readAtSite(receiverIs, name);
+        StubKey stub = namesSizeOfTables(m_program, m_facts, key) ? readSizeOfTableAtSite() : m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key) ? readAtSite(receiverIs) : readAtSiteAskingStructureFirst(receiverIs);
         return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = *answers }).first);
     }
-    if (isLength)
-        return Boxed(callStub(context, getLengthAtSite(), { receiver.value() }, { .numberedImmediate = mention }).first);
-    if (hasColumn && namesSizeOfTables(m_program, m_facts, key))
+    if (namesSizeOfTables(m_program, m_facts, key))
         return Boxed(callStub(context, getSizeOfTable(), { receiver.value() }, { .numberedImmediate = mention }).first);
-    StubKey stub = hasColumn ? getByIdCalledByCode() : getByIdCheckingColumn();
-    return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = mention }).first);
-}
-
-static RuntimeOperation storeOperationWithoutCachesFor(PutMode mode)
-{
-    switch (mode) {
-    case PutMode::Strict:
-        return RuntimeOperation::PutById;
-    case PutMode::Sloppy:
-        return RuntimeOperation::PutByIdSloppy;
-    case PutMode::Define:
-        return RuntimeOperation::DefineById;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return Boxed(callStub(context, getByIdCalledByCode(), { receiver.value() }, { .numberedImmediate = mention }).first);
 }
 
 void AccessEmitter::putById(const OperationContext& context, Boxed receiver, PropertyKeyID key, Boxed value, PutMode mode, std::optional<Pointer> site)
@@ -153,24 +200,15 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
         return;
     }
     CallOptions options { .numberedImmediate = NumberedImmediate { mentionOfName(key) } };
-    const bool hasColumn = m_plan.slots().hasColumn(key);
     if (!comesAgain(context)) {
-        if (hasColumn) {
-            callStub(context, putByIdOnce(mode), { receiver.value(), value.value() }, options);
-            return;
-        }
-        static constexpr OpcodeSet storesByName { Opcode::PropSet, Opcode::PropDefine };
-        m_out.noteFormOf(storesByName, Form::Runtime, StateOfKnowledge::Always, Place::CodeThatRunsOnce);
-        callVoidOperation(context, storeOperationWithoutCachesFor(mode), { receiver, identifierNumber(key), value });
+        callStub(context, putByIdOnce(mode), { receiver.value(), value.value() }, options);
         return;
     }
     if (site) {
-        NameOfStoreAtSite name = !m_plan.slots().namesField(key) ? NameOfStoreAtSite::NamesNoField : hasColumn ? NameOfStoreAtSite::NamesFieldWithColumn : NameOfStoreAtSite::NamesField;
-        callStub(context, putByIdAtSite(mode, name), { receiver.value(), value.value(), site->value() }, options);
+        callStub(context, putByIdAtSite(mode), { receiver.value(), value.value(), site->value() }, options);
         return;
     }
-    StubKey stub = hasColumn ? AOT::putById(mode) : putByIdHashed(mode);
-    callStub(context, stub, { receiver.value(), value.value() }, options);
+    callStub(context, putByIdHashed(mode), { receiver.value(), value.value() }, options);
 }
 
 Boxed AccessEmitter::loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure)
@@ -194,6 +232,7 @@ Boxed AccessEmitter::getMemberAboveLayouts(const ValueContext& value, Boxed rece
 {
     LBasicBlock asksStub = newBlock();
     Join<Boxed> join(m_out);
+    std::optional<Word32> countBeforeRead = verifiesFastPathAnswers(value->key()) ? std::optional(recordPendingRead(receiver, value->key())) : std::nullopt;
     {
         Machine::DeclaredAccessesSuspension suspension(m_out);
         join.add(loadBySlotAtSite(unboxCell(receiver), site, Slot::Kind::Value, asksStub, asksStub));
@@ -201,7 +240,10 @@ Boxed AccessEmitter::getMemberAboveLayouts(const ValueContext& value, Boxed rece
 
     m_out.appendTo(asksStub);
     join.add(Boxed(callStub(value, stubThatReadsAtSite(value->key(), value->objectOperand()), { receiver.value(), site.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(value->key()) }, .isOnRarePath = true }).first));
-    return join.finish();
+    Boxed member = join.finish();
+    if (countBeforeRead) [[unlikely]]
+        verifyFastPathAnswer(value, receiver, value->key(), member, StubThatAnswers::ReadByName, *countBeforeRead);
+    return member;
 }
 
 std::optional<PlacedSlot> AccessEmitter::findSlotInCellOfEveryReceiver(const Type& receiver, PropertyKeyID key)
@@ -277,7 +319,19 @@ Condition AccessEmitter::hasById(const OperationContext& context, Boxed receiver
 {
     if (isSymbolOfRealm(key))
         return hasByVal(context, receiver, cellOfKey(context, key));
-    return Condition(m_out.castToInt32(callStub(context, inById(PresenceQuestion::In), { receiver.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first));
+    Condition isThere = findsName(context, receiver, key, PresenceQuestion::In);
+    if (verifiesFastPathAnswers(key)) [[unlikely]]
+        verifyFastPathAnswer(context, receiver, key, boxBoolean(isThere), StubThatAnswers::PresenceByName, slowPathReadCount());
+    return isThere;
+}
+
+Condition AccessEmitter::findsName(const OperationContext& context, Boxed receiver, PropertyKeyID key, PresenceQuestion question)
+{
+    std::optional<NumberedImmediate> answers = answersOf(context, key, SiteUse::Read);
+    if (!answers)
+        return Condition(m_out.castToInt32(callStub(context, inById(question), { receiver.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first));
+    bool asksShapeFirst = m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key);
+    return Condition(m_out.castToInt32(callStub(context, findsNameAtSite(question, asksShapeFirst), { receiver.value() }, { .numberedImmediate = *answers }).first));
 }
 
 Boxed AccessEmitter::getFreeName(const ValueContext& value)
@@ -425,12 +479,269 @@ void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
     }
 
     CellPointer object = in<CellPointer>(value->objectOperand());
+    auto verified = [&](Boxed getter) {
+        if (verifiesFastPathAnswers(key)) [[unlikely]]
+            verifyFastPathAnswer(value, Boxed(object.value()), key, getter, StubThatAnswers::CachedGetterByName, slowPathReadCount());
+        return getter;
+    };
     if (std::optional<NumberedImmediate> answers = answersOf(value, key, SiteUse::Read)) {
-        NameAtSite name = m_plan.slots().hasColumn(key) ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
-        define(value, Boxed(callStub(value, getterAtSite(name), { object.value() }, { .numberedImmediate = *answers }).first));
+        define(value, verified(Boxed(callStub(value, getterAtSite(), { object.value() }, { .numberedImmediate = *answers }).first)));
         return;
     }
-    define(value, Boxed(callStub(value, getterByAccessTable(), { object.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first));
+    define(value, verified(Boxed(callStub(value, getterByAccessTable(), { object.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first)));
+}
+
+std::optional<NumberedImmediate> AccessEmitter::answersOfReadOutOfRow(BlockID block, const Operation& read)
+{
+    PropertyKeyID key = read.key();
+    if (m_program.nameClassOf(key) == NameClass::Length || isSymbolOfRealm(key) || m_code.at(block).frequency == BlockFrequency::Rare || !m_generator.isInLoop(block))
+        return std::nullopt;
+    if (liesInThread(m_unit.function) || m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key))
+        return std::nullopt;
+    return answersAtSite(read.origin(), key, SiteUse::Read);
+}
+
+void AccessEmitter::readGroupOffOneValue(const ValueContext& value, Boxed receiver, bool mayBeNoCell, NumberedImmediate answersOfFirst)
+{
+    Vector<ReadOfGroup, RowsOfReads::numberOfPlaces> reads;
+    reads.append({ value.id(), value->key(), answersOfFirst });
+    {
+        BlockID block = value.block();
+        std::span<const ValueID> behind = m_code.valuesOf(block);
+        behind = behind.subspan(std::ranges::find(behind, value.id()) - behind.begin() + 1);
+        for (bool goesOn = true; goesOn;) {
+            for (ValueID id : behind) {
+                const Operation& operation = m_code.at(id);
+                if (operation.opcode == Opcode::GetValueAtSiteOrAbsent && operation.objectOperand() == value->objectOperand()) {
+                    if (std::optional<NumberedImmediate> answers = answersOfReadOutOfRow(block, operation))
+                        reads.append({ id, operation.key(), *answers });
+                    if (reads.size() == RowsOfReads::numberOfPlaces) {
+                        goesOn = false;
+                        break;
+                    }
+                    continue;
+                }
+                EffectTraits traits = operation.traits();
+                if (traits.mayWriteWhatIsSeen() || traits.mayRunOtherCode() || traits.mayCollect()) {
+                    goesOn = false;
+                    break;
+                }
+            }
+            if (!goesOn)
+                break;
+            const Terminator& terminator = m_code.at(block).terminator;
+            BlockID next;
+            for (uint32_t index = 0; index < terminator.numberOfEdges; ++index) {
+                BlockID to = m_code.at(terminator.edge(index)).to;
+                if (m_code.at(to).frequency != BlockFrequency::Normal)
+                    continue;
+                if (next || m_generator.onlyPredecessorOf(to) != block) {
+                    goesOn = false;
+                    break;
+                }
+                next = to;
+            }
+            if (!goesOn || !next)
+                break;
+            block = next;
+            behind = m_code.valuesOf(block);
+        }
+    }
+
+    build().statistics().count(StatisticID::GroupsOfReadsOffOneValue);
+    build().statistics().count(StatisticID::ReadsOutOfRowsOfTheirValues, reads.size());
+    StubKey stub = readAtSiteRunningNoCode(mayBeNoCell ? ReceiverAtSite::IsAnyValue : ReceiverAtSite::IsCell, false);
+    std::array<uint32_t, 3> keyOfGroup { m_unit.function.bits(), static_cast<uint32_t>(m_unit.role) | static_cast<uint32_t>(m_unit.numberOfBoundArguments) << 8 | static_cast<uint32_t>(m_unit.highByteOfPlaceOfSelector) << 24, value.id().index() };
+    CellPointer record = unboxCell(receiver);
+    LBasicBlock asksRows = newBlock();
+    LBasicBlock byStubs = newBlock();
+    LBasicBlock byStubsOrByStructure = newBlock();
+    LBasicBlock hasNoRow = newBlock();
+    LBasicBlock waits = newBlock();
+    LBasicBlock claims = newBlock();
+    LBasicBlock found = newBlock();
+    LBasicBlock done = newBlock();
+    auto askStubThenStructure = [&](const ReadOfGroup& read) {
+        LBasicBlock readsByStructure = newBlock();
+        Join<Boxed> join(m_out);
+        Boxed answer(callStub(value, stub, { receiver.value() }, { .numberedImmediate = read.answers }).first);
+        branchUnless(isNotEmpty(answer), readsByStructure);
+        join.add(answer);
+        m_out.appendTo(readsByStructure);
+        join.add(callOperation<Boxed>(value, RuntimeOperation::ReadRunningNoCode, { record, identifierNumber(read.key) }, { .isOnRarePath = true }));
+        return join.finish();
+    };
+    Vector<ValueFromBlock, RowsOfReads::numberOfRows + 1> rows;
+    Vector<Vector<ValueFromBlock, 3>, RowsOfReads::numberOfPlaces> results(reads.size());
+    {
+        Machine::DeclaredAccessesSuspension suspension(m_out);
+        TypedPointer wordOfGroup = instanceWord(m_heaps.entire(AbstractHeap::RuntimeState), m_mentions.add(NumberSpace::RowsOfReads, keyOfGroup));
+        m_out.branch(m_out.isZero32(m_out.load32(wordOfGroup)), normalEdge(asksRows), unlikelyEdge(byStubs));
+
+        m_out.appendTo(asksRows);
+        LValue group = m_out.valueOf(wordOfGroup);
+        if (mayBeNoCell)
+            branchUnless(isCell(receiver), byStubs);
+        Word32 structure = loadStructureID(record);
+        for (unsigned index = 0; index < RowsOfReads::numberOfRows; ++index) {
+            ptrdiff_t offset = OBJECT_OFFSETOF(RowsOfReads, rows) + index * sizeof(RowsOfReads::Row);
+            LBasicBlock isRow = newBlock();
+            LBasicBlock isOther = index + 1 < RowsOfReads::numberOfRows ? newBlock() : hasNoRow;
+            m_out.branch(equal(Word32(m_out.load32(m_out.address(m_heaps.root, group, offset + OBJECT_OFFSETOF(RowsOfReads::Row, structure)))), structure).value(), normalEdge(isRow), unlikelyEdge(isOther));
+            m_out.appendTo(isRow);
+            rows.append(m_out.anchor(m_out.add(group, m_out.constIntPtr(offset))));
+            m_out.jump(found);
+            m_out.appendTo(isOther);
+        }
+        LValue missesLeft = m_out.load32(m_out.address(m_heaps.root, group, OBJECT_OFFSETOF(RowsOfReads, missesLeft)));
+        m_out.branch(m_out.isZero32(missesLeft), rareEdge(claims), normalEdge(waits));
+
+        m_out.appendTo(waits);
+        m_out.store32(m_out.sub(missesLeft, m_out.int32One), m_out.address(m_heaps.root, group, OBJECT_OFFSETOF(RowsOfReads, missesLeft)));
+        m_out.jump(byStubsOrByStructure);
+
+        m_out.appendTo(claims);
+        LValue claimed = callOperation<Integer>(value, RuntimeOperation::ClaimRowOfReads, { receiver, Pointer(group) }, { .isOnRarePath = true }).value();
+        LBasicBlock hasClaimed = newBlock();
+        m_out.branch(m_out.notNull(claimed), normalEdge(hasClaimed), normalEdge(byStubsOrByStructure));
+        m_out.appendTo(hasClaimed);
+        rows.append(m_out.anchor(claimed));
+        m_out.jump(found);
+
+        m_out.appendTo(found);
+        LValue row = m_out.phi(Machine::Int64, rows);
+        Vector<LValue, RowsOfReads::numberOfPlaces> outOfRow;
+        for (unsigned index = 0; index < reads.size(); ++index) {
+            LBasicBlock isInCell = newBlock();
+            LBasicBlock isNotInCell = newBlock();
+            LBasicBlock isNotInStorage = newBlock();
+            LBasicBlock isInStorage = newBlock();
+            LBasicBlock fills = newBlock();
+            LBasicBlock asksStub = newBlock();
+            Join<Boxed> join(m_out);
+            LValue place = m_out.load16SignExt32(m_out.address(m_heaps.root, row, OBJECT_OFFSETOF(RowsOfReads::Row, places) + index * sizeof(int16_t)));
+            m_out.branch(m_out.greaterThan(place, m_out.int32Zero), normalEdge(isInCell), unlikelyEdge(isNotInCell));
+
+            m_out.appendTo(isInCell);
+            Boxed inCell(m_out.load64(m_out.baseIndex(m_heaps.root, record.value(), m_out.zeroExtPtr(place), ScaleEight)));
+            join.add(inCell);
+
+            static_assert(RowsOfReads::placeIsNotKnown == INT16_MIN && !RowsOfReads::placeIsAskedOfStub);
+            m_out.appendTo(isNotInCell);
+            m_out.branch(m_out.above(place, m_out.constInt32(RowsOfReads::placeIsNotKnown)), normalEdge(isInStorage), normalEdge(isNotInStorage));
+            m_out.appendTo(isNotInStorage);
+            m_out.branch(m_out.isZero32(place), normalEdge(asksStub), rareEdge(fills));
+
+            m_out.appendTo(isInStorage);
+            Boxed inStorage(m_out.load64(m_out.baseIndex(m_heaps.root, loadField<Pointer>(record, m_heaps.JSObject_butterfly).value(), signExtended(Word32(place)).value(), ScaleEight)));
+            join.add(inStorage);
+
+            m_out.appendTo(fills);
+            callVoidOperation(value, RuntimeOperation::FindPlaceInRowOfReads, { record, identifierNumber(reads[index].key), Pointer(row), word32(static_cast<int32_t>(index)) }, { .isOnRarePath = true });
+            m_out.jump(asksStub);
+
+            m_out.appendTo(asksStub);
+            join.add(Boxed(callStub(value, stub, { receiver.value() }, { .numberedImmediate = reads[index].answers }).first));
+            outOfRow.append(join.finish().value());
+        }
+        for (unsigned index = 0; index < reads.size(); ++index)
+            results[index].append(m_out.anchor(outOfRow[index]));
+        m_out.jump(done);
+    }
+
+    m_out.appendTo(byStubsOrByStructure);
+    {
+        Vector<LValue, RowsOfReads::numberOfPlaces> ofStubsOrByStructure;
+        for (const ReadOfGroup& read : reads)
+            ofStubsOrByStructure.append(askStubThenStructure(read).value());
+        for (unsigned index = 0; index < reads.size(); ++index)
+            results[index].append(m_out.anchor(ofStubsOrByStructure[index]));
+        m_out.jump(done);
+    }
+
+    m_out.appendTo(byStubs);
+    Vector<LValue, RowsOfReads::numberOfPlaces> ofStubs;
+    for (const ReadOfGroup& read : reads)
+        ofStubs.append(callStub(value, stub, { receiver.value() }, { .numberedImmediate = read.answers }).first);
+    for (unsigned index = 0; index < reads.size(); ++index)
+        results[index].append(m_out.anchor(ofStubs[index]));
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+    for (unsigned index = 0; index < reads.size(); ++index) {
+        LValue read = m_out.phi(Machine::Int64, results[index]);
+        if (index)
+            m_valuesReadInFront.set(reads[index].id.index(), read);
+        else
+            define(value, Boxed(read));
+    }
+}
+
+void AccessEmitter::generateGetValueAtSiteOrAbsent(const ValueContext& value)
+{
+    if (LValue readInFront = m_valuesReadInFront.take(value.id().index())) {
+        build().statistics().count(StatisticID::ReadsByNameThatAskTheirSitesAlone);
+        define(value, Boxed(readInFront));
+        return;
+    }
+    PropertyKeyID key = value->key();
+    bool hasNoAnswers = m_program.nameClassOf(key) == NameClass::Length || isSymbolOfRealm(key) || m_code.at(value.block()).frequency == BlockFrequency::Rare;
+    std::optional<NumberedImmediate> answers = hasNoAnswers ? std::nullopt : answersAtSite(value, key, SiteUse::Read);
+    if (!answers) {
+        define(value, boxedConstant(JSValue()));
+        return;
+    }
+    ReceiverAtSite receiverIs = typeOf(value->objectOperand()).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
+    bool asksShapeFirst = m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key);
+    build().statistics().count(StatisticID::ReadsByNameThatAskTheirSitesAlone);
+    Boxed receiver = in<Boxed>(value->objectOperand());
+    if (answersOfReadOutOfRow(value.block(), value.value())) {
+        readGroupOffOneValue(value, receiver, receiverIs == ReceiverAtSite::IsAnyValue, *answers);
+        return;
+    }
+    define(value, Boxed(callStub(value, readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { receiver.value() }, { .numberedImmediate = *answers }).first));
+}
+
+bool AccessEmitter::lookVouchesForPropertyOfHeir(const ValueContext& value) const
+{
+    const Layout& classLayout = m_program.at(value->layout());
+    return m_plan.hasClassRecord(value->layout()) && isKnownByStructureOfClass(classLayout) && value->field() < classLayout.fields.size() && classLayout.fields[value->field()].flags.contains(FieldFlags::IsRequired);
+}
+
+TypedPointer AccessEmitter::locationOfPropertyOfHeir(const ValueContext& value, CellPointer object)
+{
+    Pointer structures = emitter<GuardEmitter>().structuresOfHeir(value->layout());
+    Word32 learned(m_out.load32(m_out.address(m_heaps.AOTInstance_fieldsFilledOnce, structures.value(), StructuresOfHeir::offsetOfDisplacementOfField(value->field()))));
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))
+        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, notEqual(learned, word32(0)), std::nullopt, ProofSource::WhatIsRemembered);
+    Pointer butterfly = loadField<Pointer>(object, m_heaps.JSObject_butterfly);
+    return m_out.baseIndex(m_heaps.entire(AbstractHeap::NamedProperties), butterfly.value(), signExtended(learned).value(), ScaleOne);
+}
+
+void AccessEmitter::generateGetPropertyOfHeir(const ValueContext& value)
+{
+    if (!lookVouchesForPropertyOfHeir(value)) {
+        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+        define(value, undefined());
+        return;
+    }
+    CellPointer object = in<CellPointer>(value->objectOperand());
+    Boxed property(m_out.load64(locationOfPropertyOfHeir(value, object)));
+    ensureStillAliveHere(object);
+    define(value, property);
+}
+
+void AccessEmitter::generatePutPropertyOfHeir(const ValueContext& value)
+{
+    if (!lookVouchesForPropertyOfHeir(value)) {
+        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+        return;
+    }
+    CellPointer object = in<CellPointer>(value->objectOperand());
+    Boxed stored = in<Boxed>(value->valueOperand());
+    m_out.store64(stored.value(), locationOfPropertyOfHeir(value, object));
+    ensureStillAliveHere(object);
+    barrierAfterStore(value, object, typeOf(value->valueOperand()));
 }
 
 bool AccessEmitter::isReadOfMethodCalledNext(const ValueContext& read)
@@ -449,8 +760,8 @@ bool AccessEmitter::isReadOfMethodCalledNext(const ValueContext& read)
     if (emitter<CallEmitter>().mayForwardCallToReceiver(call))
         return false;
     const Terminator& terminator = m_code.at(read.block()).terminator;
-    bool endsUnit = terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == behind.front();
-    if (call.isTailCall && (endsUnit || !findPatternLeftToCall(read)))
+    bool endsUnit = terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == onlyUser;
+    if (call.isTailCall && (endsUnit || (!call.inlineFrame && !findPatternLeftToCall(read))))
         return false;
     if (isSymbolOfRealm(read->key()) || !typeOf(read.id()).hasObjects())
         return false;
@@ -560,19 +871,39 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
     std::optional<BuiltinBoxedStub> boxedCall = call->methodOfReceiverAsMade() ? m_program.builtins().boxedCallStubOf(call->methodOfReceiverAsMade()) : std::nullopt;
     bool goesByClass = boxedCall && servesCallsByName(*boxedCall, count);
     std::optional<CompiledMethodOfArray> compiledMethod = !goesByClass && call->methodOfReceiverAsMade() && count <= maxArgumentCountOfCompiledMethodOfArray ? compiledMethodOfArray(call->methodOfReceiverAsMade()) : std::nullopt;
-    std::optional<NumberedImmediate> answers = (!goesByClass || call->methodIsNamedByKeyAlone()) && !compiledMethod && m_plan.slots().hasColumn(read.key) ? answersOf(call, read.key, SiteUse::Call) : std::nullopt;
+    std::optional<NumberedImmediate> answers = (!goesByClass || call->methodIsNamedByKeyAlone()) && !compiledMethod ? answersOf(call, read.key, SiteUse::Call) : std::nullopt;
     bool standsBehindFailedLookInLoop = goesByClass && m_code.at(call.block()).frequency == BlockFrequency::Rare && m_generator.paysForCodeInLine(call.block());
-    if (!answers && standsBehindFailedLookInLoop && !read.pattern && m_plan.slots().hasColumn(read.key) && !isSymbolOfRealm(read.key))
+    if (!answers && standsBehindFailedLookInLoop && !read.pattern && !isSymbolOfRealm(read.key))
         answers = answersAtSite(call, read.key, SiteUse::Call);
     RELEASE_ASSERT((!read.pattern || goesByClass) && (!lentArguments || !goesByClass));
+    const bool callsFunctionOfBuiltin = boxedCall && !goesByClass && !compiledMethod && answers && !lentArguments && !cellTypesOfReceiversOf(*boxedCall) && exists(callFunctionOfBuiltinAtSite(*boxedCall, count))
+        && m_program.builtins().at(m_program.builtins().at(call->methodOfReceiverAsMade()).holder).kind != BuiltinKind::Prototype;
     StubKey byClass = !goesByClass ? StubKey() : read.pattern ? (answers ? callMethodOfBuiltinClassAtSiteWithSharedPattern(*boxedCall, count) : callMethodOfBuiltinClassWithSharedPattern(*boxedCall, count))
         : answers ? callMethodOfBuiltinClassAtSite(*boxedCall, count)
         : calls.isProvenReceiverOf(*boxedCall, typeOf(call->thisValueOperand())) ? callMethodOfProvenBuiltinClass(*boxedCall, count) : callMethodOfBuiltinClass(*boxedCall, count);
     ConventionCall conventionCall {
-        .stub = goesByClass ? byClass : compiledMethod ? callCompiledMethodOfArray(*compiledMethod, count, lentArguments) : answers ? callMethodAtSite(count, lentArguments) : callMethodById(count, lentArguments),
+        .stub = goesByClass ? byClass : compiledMethod ? callCompiledMethodOfArray(*compiledMethod, count, lentArguments) : callsFunctionOfBuiltin ? callFunctionOfBuiltinAtSite(*boxedCall, count) : answers ? callMethodAtSite(count, lentArguments) : callMethodById(count, lentArguments),
         .thisValue = in<Boxed>(call->thisValueOperand()).value(),
         .arguments = arguments.span(),
     };
+    Vector<LValue, 4> operandsOfTable;
+    if (std::optional<TableMethod> method = goesByClass && !read.pattern && !answers ? tableMethodOf(*boxedCall) : std::nullopt) {
+        const Type& key = typeOf(call->argumentsOperands()[0]);
+        KeyComparison comparison = KeyComparison::AnyValue;
+        if (key.isJavaScriptValue() && !key.isNever()) {
+            if (key.primitives & Primitive::AnyString)
+                comparison = key.hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull) ? KeyComparison::String : KeyComparison::AnyValue;
+            else if (!(key.primitives & (Primitive::BigInt | Primitive::Number)))
+                comparison = KeyComparison::Bits;
+        }
+        conventionCall.stub = calls.isProvenReceiverOf(*boxedCall, typeOf(call->thisValueOperand())) ? callMethodOfProvenTable(*method, comparison) : callMethodOfTable(*method, comparison);
+        operandsOfTable.append(conventionCall.thisValue);
+        operandsOfTable.appendVector(arguments);
+        conventionCall.stubOperands = operandsOfTable.span();
+        conventionCall.thisValue = nullptr;
+        conventionCall.arguments = { };
+        build().statistics().count(StatisticID::TableMethodsCalledByOneStub);
+    }
     if (goesByClass && !read.pattern && *boxedCall == BuiltinBoxedStub::ArraySlice && !count && generator().isStoredIntoByName(call.id())) {
         LBasicBlock closed = newBlock();
         OperandJoin answersMeet(m_out, Representation::JSValue);
@@ -608,6 +939,28 @@ bool AccessEmitter::readsTruthAtSite(BlockID block, ValueID id) const
     return m_program.nameClassOf(key) != NameClass::Length;
 }
 
+std::optional<unsigned> AccessEmitter::integerThatLengthIsAskedFor(BlockID block, ValueID id, ValueID test)
+{
+    const Operation& read = operationAt(id);
+    const Operation& asked = operationAt(test);
+    if (read.opcode != Opcode::PropGet || read.isFreeName() || m_program.nameClassOf(read.key()) != NameClass::Length || verifiesFastPathAnswers(read.key()))
+        return std::nullopt;
+    if (asked.opcode != Opcode::StrictEq || asked.form() != OperatorForm::Int32AndValue || m_code.at(block).frequency == BlockFrequency::Rare || testsItsOwnGuess(read))
+        return std::nullopt;
+    ValueID other = asked.operand(0) == id ? asked.operand(1) : asked.operand(0);
+    const Operation& written = operationAt(other);
+    if (other == id || written.opcode != Opcode::Integer || written.integer() < 0 || written.integer() > static_cast<int64_t>(greatestIntegerThatLengthIsAskedFor))
+        return std::nullopt;
+    return static_cast<unsigned>(written.integer());
+}
+
+void AccessEmitter::branchOnWhetherLengthIs(const ValueContext& read, unsigned integer)
+{
+    m_out.noteForm(Form::Closed, StateOfKnowledge::Always);
+    LValue operands[] = { in<Boxed>(read->objectOperand()).value() };
+    emitter<RuntimeCallEmitter>().callStubAndBranch(read, lengthIs(integer), operands, { .numberedImmediate = NumberedImmediate { mentionOfName(read->key()) } }, read.branchTargets());
+}
+
 void AccessEmitter::branchOnTruthAtSite(const ValueContext& read)
 {
     PropertyKeyID key = read->key();
@@ -619,11 +972,23 @@ void AccessEmitter::branchOnTruthAtSite(const ValueContext& read)
         emitter<TruthinessEmitter>().branchOnTruthiness(read, getById(read, receiver, key, receiverID), typeOf(read.id()), read.branchTargets());
         return;
     }
-    NameAtSite name = m_plan.slots().hasColumn(key) ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
     ReceiverAtSite receiverIs = typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
     LValue operands[] = { receiver.value() };
-    StubKey stub = m_plan.slots().namesField(key) ? readTruthAtSite(receiverIs, name) : readTruthAtSiteOfNameWithoutField(receiverIs, name);
-    emitter<RuntimeCallEmitter>().callStubAndBranch(read, stub, operands, { .numberedImmediate = *answers }, read.branchTargets());
+    StubKey stub = m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key) ? readTruthAtSite(receiverIs) : readTruthAtSiteAskingStructureFirst(receiverIs);
+    if (!verifiesFastPathAnswers(key)) [[likely]] {
+        emitter<RuntimeCallEmitter>().callStubAndBranch(read, stub, operands, { .numberedImmediate = *answers }, read.branchTargets());
+        return;
+    }
+    LBasicBlock isTruthy = newBlock();
+    LBasicBlock isFalsy = newBlock();
+    Word32 countBeforeRead = recordPendingRead(receiver, key);
+    emitter<RuntimeCallEmitter>().callStubAndBranch(read, stub, operands, { .numberedImmediate = *answers }, { normalEdge(isTruthy), normalEdge(isFalsy) });
+    m_out.appendTo(isTruthy);
+    verifyFastPathAnswer(read, receiver, key, boxedConstant(jsBoolean(true)), StubThatAnswers::TruthByName, countBeforeRead);
+    m_out.jump(read.branchTargets().taken);
+    m_out.appendTo(isFalsy);
+    verifyFastPathAnswer(read, receiver, key, boxedConstant(jsBoolean(false)), StubThatAnswers::TruthByName, countBeforeRead);
+    m_out.jump(read.branchTargets().notTaken);
 }
 
 void AccessEmitter::generatePropGet(const ValueContext& value)
@@ -634,7 +999,10 @@ void AccessEmitter::generatePropGet(const ValueContext& value)
         return;
     }
     if (value.isBranchCondition()) {
-        branchOnTruthAtSite(value);
+        if (std::optional<unsigned> integer = integerThatLengthIsAskedFor(value.block(), value.id(), m_code.onlyUserOf(value.id())))
+            branchOnWhetherLengthIs(value, *integer);
+        else
+            branchOnTruthAtSite(value);
         return;
     }
     ValueID onlyUser = m_code.onlyUserOf(value.id());
@@ -664,31 +1032,48 @@ std::optional<Boxed> AccessEmitter::lookWhetherReceiverIsAsMadeInPlaceOfRead(con
         const Operation& operation = operationAt(id);
         return operation.opcode == Opcode::Box ? operation.operand(0) : id;
     };
-    if (call.opcode != Opcode::Call || !call.methodOfReceiverAsMade() || call.methodIsNamedByKeyAlone() || call.isTailCall)
+    if (call.opcode != Opcode::Call || !call.methodOfReceiverAsMade() || call.methodIsNamedByKeyAlone())
         return std::nullopt;
+    const Terminator& terminator = m_code.at(m_code.blockOf(onlyUser)).terminator;
+    const bool endsUnit = terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == onlyUser;
+    if (call.isTailCall != endsUnit && !call.inlineFrame)
+        return std::nullopt;
+    if (endsUnit) {
+        bool operandsMayBeSeen = m_code.blockOf(onlyUser) != read.block() || std::ranges::any_of(read.operationsBehind(), [&](ValueID id) {
+            const Operation& operation = operationAt(id);
+            return operation.opcode != Opcode::Box && !operation.traits().isPure();
+        });
+        if (!operandsMayBeSeen)
+            return std::nullopt;
+    }
     if (call.calleeOperand() != read.id() || !call.thisValueOperand() || inFrontOfBox(call.thisValueOperand()) != inFrontOfBox(read->objectOperand()) || std::ranges::contains(call.argumentsOperands(), read.id()))
         return std::nullopt;
     CallEmitter& calls = emitter<CallEmitter>();
     const unsigned count = static_cast<unsigned>(call.argumentsOperands().size());
     std::optional<BuiltinBoxedStub> boxedCall = m_program.builtins().boxedCallStubOf(call.methodOfReceiverAsMade());
-    if (!boxedCall || !servesCallsByName(*boxedCall, count) || !looksWhetherReceiverIsAsMade(*boxedCall) || !calls.isProvenReceiverOf(*boxedCall, typeOf(read->objectOperand())))
+    if (!boxedCall || !servesCallsByName(*boxedCall, count) || !cellTypesOfReceiversOf(*boxedCall))
+        return std::nullopt;
+    const bool receiverIsProven = calls.isProvenReceiverOf(*boxedCall, typeOf(read->objectOperand()));
+    if (receiverIsProven && !looksWhetherReceiverIsAsMade(*boxedCall))
         return std::nullopt;
     if (calls.mayForwardCallToReceiver(call) || argumentsLentBy(m_code, call))
-        return std::nullopt;
-    const Terminator& terminator = m_code.at(m_code.blockOf(onlyUser)).terminator;
-    if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == onlyUser)
         return std::nullopt;
     std::optional<NumberedImmediate> answers = answersOfKeyThatIsNoSymbolOfRealm(read, key, SiteUse::Read);
     if (!answers)
         return std::nullopt;
     m_out.noteForm(Form::Closed, StateOfKnowledge::Always);
     m_methodsThatMayBeUnread.set(read.id().index());
-    NameAtSite name = m_plan.slots().hasColumn(key) ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
     LValue receiver = in<Boxed>(read->objectOperand()).value();
+    const StubKey looks = receiverIsProven ? readAtSiteUnlessAsMade() : readMethodAtSiteUnlessReceiverFindsIt(*boxedCall, m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key));
     auto readUnlessAsMade = [&] {
-        return Boxed(callStub(read, readAtSiteUnlessAsMade(name), { receiver }, { .numberedImmediate = *answers }).first);
+        if (!verifiesFastPathAnswers(key)) [[likely]]
+            return Boxed(callStub(read, looks, { receiver }, { .numberedImmediate = *answers }).first);
+        Word32 countBeforeRead = recordPendingRead(Boxed(receiver), key);
+        Boxed method(callStub(read, looks, { receiver }, { .numberedImmediate = *answers }).first);
+        verifyFastPathAnswer(read, Boxed(receiver), key, method, StubThatAnswers::ReadByNameUnlessAsMade, countBeforeRead);
+        return method;
     };
-    if (!m_program.admitsReplacedBuiltins)
+    if (!m_program.admitsReplacedBuiltins || !receiverIsProven)
         return readUnlessAsMade();
     Pointer membersWritten = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.membersWritten));
     Condition methodIsAsBuilt = boolean(true);
@@ -870,12 +1255,54 @@ void AccessEmitter::generateElemGet(const ValueContext& value)
 
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     const PlacedSlot* extraPropertiesWord = elements.extraPropertiesWordOfReadByPosition(value);
+    if (value->receiverIsExpectedToBeArguments() && !extraPropertiesWord && m_generator.isInLoop(value.block())) {
+        LBasicBlock isNotUnmappedAsMade = newBlock();
+        LBasicBlock outOfLine = newBlock();
+        Join<Boxed> join(m_out);
+        Integer index;
+        if (key->isInteger)
+            index = Integer(key->value);
+        else {
+            Boxed boxedKey(key->value);
+            branchUnless(isInt32(boxedKey), outOfLine);
+            index = signExtended(unboxInt32(boxedKey));
+        }
+        Type known = typeOf(value->objectOperand());
+        if (known.primitives & ~cellPrimitives) {
+            Condition isPresentCell = isCell(object);
+            if (known.primitives & Primitive::Absent)
+                isPresentCell = logicalAnd(isPresentCell, isNotEmpty(object));
+            branchUnless(isPresentCell, outOfLine);
+        }
+        CellPointer cell = unboxCell(object);
+        Word32 structureAsMade(m_out.load32(mutableInstanceField(AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Arguments)].header))));
+        branchUnless(equal(loadStructureID(cell), structureAsMade), isNotUnmappedAsMade);
+        ArrayElements storage = elements.elementsOf(cell);
+        LengthTest test = elements.testLength(index, storage);
+        branchUnless(test.isInside, outOfLine);
+        Boxed element = elements.loadRawElement(arrayStorageFormOf(ArrayStorage::Contiguous), storage, test.indexInside).as<Boxed>();
+        branchUnless(isNotEmpty(element), outOfLine);
+        join.add(element);
+
+        m_out.appendTo(isNotUnmappedAsMade);
+        branchUnless(hasCellType(cell, DirectArgumentsType), outOfLine);
+        branchUnless(isZero(Integer(loadField<Pointer>(cell, m_heaps.DirectArguments_mappedArguments).value())), outOfLine);
+        branchUnless(below(index, zeroExtended(loadField<Word32>(cell, m_heaps.DirectArguments_length))), outOfLine);
+        join.add(Boxed(m_out.load64(m_out.baseIndex(m_heaps.DirectArguments_storage, cell.value(), index.value()))));
+
+        m_out.appendTo(outOfLine);
+        join.add(Boxed(callStub(value, stub, { object.value(), key->value }, { .isOnRarePath = true }).first));
+        define(value, join.finish());
+        return;
+    }
     if (!extraPropertiesWord) {
         define(value, Boxed(callStub(value, stub, { object.value(), key->value }).first));
         return;
     }
     LBasicBlock outOfLine = newBlock();
     Join<Boxed> join(m_out);
+    if (!typeOf(value->objectOperand()).isObject())
+        branchUnless(isCell(object), outOfLine);
     Integer index;
     if (key->isInteger)
         index = Integer(key->value);
@@ -916,7 +1343,34 @@ void AccessEmitter::generateElemSet(const ValueContext& value)
         JSC::ECMAMode mode = forMode(value->mode(), JSC::ECMAMode::strict(), JSC::ECMAMode::sloppy());
         stub = expected ? putByValExpecting(key->isInteger, mode, *expected) : AOT::putByVal(key->isInteger, mode);
     }
+    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
+    const PlacedSlot* extraPropertiesWord = elements.extraPropertiesWordOfReadByPosition(value);
+    if (!extraPropertiesWord) {
+        callStub(value, stub, { object.value(), key->value, stored.value() });
+        return;
+    }
+    LBasicBlock outOfLine = newBlock();
+    LBasicBlock isStored = newBlock();
+    if (!typeOf(value->objectOperand()).isObject())
+        branchUnless(isCell(object), outOfLine);
+    Integer index;
+    if (key->isInteger)
+        index = Integer(key->value);
+    else {
+        Boxed boxedKey(key->value);
+        branchUnless(isInt32(boxedKey), outOfLine);
+        index = signExtended(unboxInt32(boxedKey));
+    }
+    {
+        Machine::DeclaredAccessesSuspension suspension(m_out);
+        elements.overwriteElementOfExtraProperties(value, unboxCell(object), *extraPropertiesWord, index, stored, outOfLine);
+    }
+    m_out.jump(isStored);
+
+    m_out.appendTo(outOfLine);
     callStub(value, stub, { object.value(), key->value, stored.value() });
+    m_out.jump(isStored);
+    m_out.appendTo(isStored);
 }
 
 void AccessEmitter::generateElemHas(const ValueContext& value)

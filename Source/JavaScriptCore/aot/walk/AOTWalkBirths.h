@@ -26,11 +26,13 @@ struct StoresListedAtBirth {
     Vector<FieldIndex, 16> fields;
     bool asksForLayoutPrototype { false };
     Vector<MemberConditionRecord, 8> conditions;
+    Vector<MemberConditionRecord, 8> conditionsRemembered;
     bool isBornUnfinished { false };
 };
 StoresListedAtBirth findStoresThatAllocationMayList(Walker&, LayoutID, std::span<const PropertyKeyID> keys, std::span<const TypeID> stored, std::span<const PropertyKeyID> keysStoredFurtherOn);
 bool looksAtCellsAskForLayoutPrototype(Walker&, LayoutID);
 void noteGuardsShownByTest(Walker&, std::span<const MemberConditionRecord>, Reference test);
+void checkGuardsThatAreRemembered(Walker&, std::span<const MemberConditionRecord>, Origin);
 void askWholeSideWhereGuardsMayNotHaveBegun(Walker&, LayoutID classLayout, Vector<MemberConditionRecord, 8>& conditions);
 std::optional<MemberConditionRecord> findGuardOfCallOffConstructorFunction(Walker&, FunctionID);
 
@@ -39,7 +41,7 @@ struct GuardOfPrototypeAtConstruction {
     bool isKnownToHold { false };
 };
 std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction(Walker&, FunctionID constructor, bool newCellIsLookedAt, bool guardsAreAskedAtBirth, Origin);
-void checkPrototypeOfCellMadeBehindGuard(Walker&, Reference object, Origin);
+void checkPrototypeOfCellMadeBehindGuard(Walker&, Reference object, Reference constructor, LayoutID constructed, Origin);
 
 } } } // namespace JSC::AOT::Typed
 

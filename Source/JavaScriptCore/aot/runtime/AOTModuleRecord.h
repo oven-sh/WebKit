@@ -66,6 +66,7 @@ public:
     void setIsHeldByLoader(bool isHeldByLoader) { m_isHeldByLoader = isHeldByLoader; }
 
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
+    void recordTerminationAfterEvaluation(VM&, Exception*);
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
     void willLoadRequests(ModuleGraphLoadingState&);
     void countLoaderStep();
@@ -98,6 +99,9 @@ public:
     bool holdGraphBehindEarlierCalls(JSCell* payload, bool isDeferred);
     void takeStatus();
     bool isRunningCommonJSFile();
+    bool keepsToModule() const { return m_keepsToModule; }
+    bool takesNamesFromModuleItself();
+    void setKeepsToModule(bool keepsToModule = true) { m_keepsToModule = keepsToModule; }
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
     bool runsWhenLoaded() const { return m_runsWhenLoaded; }
     void setRunsInItsTurn() { m_runsInItsTurn = true; }
@@ -120,9 +124,14 @@ public:
     void execute(JSGlobalObject*, JSPromise* capability = nullptr);
     void executeAsync(JSGlobalObject*);
 
-    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&);
+    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&, ModuleRecord* leader);
+    bool isNamedByEndedMockInFrontOfItsStar(JSGlobalObject*, const Identifier& exportName, unsigned index);
+    bool answersByWhoLedToIt() const;
+    bool keepsEndedMock() const;
     bool someMockStandsInPlace() const;
     bool mayOutlive(AbstractModuleRecord*) const;
+    const Resolution* resolutionKept(UniquedStringImpl* exportName);
+    void keepResolution(UniquedStringImpl* exportName, const Resolution&);
     bool standsForMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
@@ -153,6 +162,7 @@ private:
     bool m_runsInItsTurn { false };
     bool m_isRequestedByWalkedModule { false };
     bool m_hasRequestThatFindsNothing { false };
+    bool m_keepsToModule { false };
 };
 
 } } // namespace JSC::AOT

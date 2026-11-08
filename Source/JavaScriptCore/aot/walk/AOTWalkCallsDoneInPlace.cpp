@@ -9,13 +9,18 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDs.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTIRProgram.h"
+#include "AOTLimits.h"
 #include "AOTLinkTables.h"
 #include "AOTOperandKinds.h"
+#include "AOTResultRulesInternal.h"
 #include "AOTSchemaInlineBuiltins.h"
 #include "AOTTypeRelations.h"
+#include "AOTWalkStrings.h"
+#include "JSBoundFunction.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -165,7 +170,7 @@ static Reference operandOfForwardedCall(const Draft& written, BuiltinOperand ope
     return operand.argumentIndex() < arguments.size() ? arguments[operand.argumentIndex()] : Reference();
 }
 
-static bool rowTakesArgumentsOfForwardedCall(Walker& walker, const Draft& written, const BuiltinOverload& overload)
+static bool rowTakesArgumentsOfForwardedCall(Walker& walker, const Draft& written, const BuiltinOverload& overload, std::optional<BuiltinOperand> operandAskedAtRunTime = std::nullopt)
 {
     BuiltinTypeContext context { walker.program(), walker.types() };
     std::span<const Reference> arguments = written.argumentsOperands();
@@ -174,7 +179,7 @@ static bool rowTakesArgumentsOfForwardedCall(Walker& walker, const Draft& writte
         return fit.fit == TypeFit::Inside && !fit.unprovenPristine;
     };
     return std::ranges::all_of(overload.parameters, [&](const BuiltinParameter& parameter) {
-        if (parameter.operand.isReceiver())
+        if (parameter.operand.isReceiver() || parameter.operand == operandAskedAtRunTime)
             return true;
         size_t index = parameter.operand.argumentIndex();
         if (isSingleOperandOfForwardedCall(parameter.operand))
@@ -192,11 +197,12 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
     if (!callee)
         return false;
 
+    bool constructs = row.operands.constructs;
     Reference list = row.operands.list ? operandOfForwardedCall(written, *row.operands.list) : Reference();
     if (list && isNullishType(walker.typeOf(list)))
         list = { };
     std::optional<Vector<Reference, 8>> elements;
-    if (list && walker.walksBodyBehindEntry() && !hasKind(types, walker.typeOf(list), OperandKind::Array)
+    if (list && !constructs && walker.walksBodyBehindEntry() && !hasKind(types, walker.typeOf(list), OperandKind::Array)
         && passOnOwnArgumentsByCount(walker, call, written, callee, row.operands.thisValue ? operandOfForwardedCall(written, *row.operands.thisValue) : Reference(), list))
         return true;
     if (list && !hasKind(types, walker.typeOf(list), OperandKind::Array)) {
@@ -206,7 +212,7 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
             list = { };
     }
     if (list && !hasKind(types, walker.typeOf(list), OperandKind::Array)) {
-        if (passOnOwnArgumentsByCount(walker, call, written, callee, row.operands.thisValue ? operandOfForwardedCall(written, *row.operands.thisValue) : Reference(), list))
+        if (!constructs && passOnOwnArgumentsByCount(walker, call, written, callee, row.operands.thisValue ? operandOfForwardedCall(written, *row.operands.thisValue) : Reference(), list))
             return true;
         Origin originBeforeCall = written.origin();
         originBeforeCall.isTailCall = false;
@@ -252,11 +258,24 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
             return true;
     }
 
-    Draft forwarded(list ? Opcode::CallList : Opcode::Call, written.origin());
+    Origin originOfForwarded = written.origin();
+    if (constructs)
+        originOfForwarded.isTailCall = false;
+    std::optional<uint32_t> lengthInSight = list ? lengthOfFreshList(walker, list) : std::nullopt;
+    bool fitsCallOfBuiltin = lengthInSight && *lengthInSight <= defaultLimitValue(LimitID::MaxBuiltinCallArguments, hostArchitecture());
+    if (std::optional<Vector<Reference, 8>> known = fitsCallOfBuiltin ? elementsOfFreshList(walker, list) : std::nullopt) {
+        walker.checkWhatIsInSightOfList(list, originOfForwarded);
+        elements = WTF::move(known);
+        list = { };
+    }
+    Opcode opcodeOfList = constructs ? Opcode::ConstructList : Opcode::CallList;
+    Draft forwarded(list ? opcodeOfList : constructs ? Opcode::Construct : Opcode::Call, originOfForwarded);
     walker.chooseConservativeFields(forwarded);
     forwarded.setCalleeOperand(callee);
     if (row.operands.thisValue)
         forwarded.setThisValueOperand(operandOfForwardedCall(written, *row.operands.thisValue));
+    if (row.operands.newTarget)
+        forwarded.setNewTargetOperand(operandOfForwardedCall(written, *row.operands.newTarget));
     if (list)
         forwarded.setListOperand(list);
     else if (elements)
@@ -266,15 +285,28 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
         forwarded.setArgumentsOperands(arguments.subspan(std::min<size_t>(*row.operands.firstArgument, arguments.size())));
     }
     forwarded.setCalleeName(written.calleeName());
-    forwarded.setExpectedResult(written.expectedResult());
+    if (!constructs)
+        forwarded.setExpectedResult(written.expectedResult());
     forwarded.expected = written.expected;
     forwarded.resultIsReturnedAtOnce = written.resultIsReturnedAtOnce;
     forwarded.inputValueGiven = written.inputValueGiven;
-    if (callForwardedDirectly(walker, call, forwarded) || callBuiltinForwarded(walker, call, forwarded))
+    if (constructs ? constructForwardedDirectly(walker, call, forwarded) : callForwardedDirectly(walker, call, forwarded) || callBuiltinForwarded(walker, call, forwarded))
         return true;
     if (Reference result = walker.build(WTF::move(forwarded)))
         walker.bind(call.id(), result);
     return true;
+}
+
+static bool constructionIsToldFromNewByNothing(Walker& walker, const BodyValue& call, const Draft& written, const RowOfForwardedCall& row)
+{
+    auto isConstructorOfClass = [&](Reference value) {
+        FunctionID only = value ? findOnlyCallee(walker, call, value) : FunctionID();
+        return only && isClassConstructorOf(walker.program().at(only).kind);
+    };
+    Reference list = row.operands.list ? operandOfForwardedCall(written, *row.operands.list) : Reference();
+    if (!list || !walker.types().isSubset(walker.typeOf(list), TypeTable::object) || !isConstructorOfClass(operandOfForwardedCall(written, row.operands.callee)))
+        return false;
+    return !row.operands.newTarget || isConstructorOfClass(operandOfForwardedCall(written, *row.operands.newTarget));
 }
 
 static bool buildForwardedConstruction(Walker& walker, const BodyValue& call, const Draft& written, const RowOfForwardedCall& row)
@@ -323,6 +355,8 @@ static bool buildForwardedConstruction(Walker& walker, const BodyValue& call, co
     return true;
 }
 
+static bool forwardCallBehindTestOfTarget(Walker&, const BodyValue& call, const Draft& written, const RowOfForwardedCall&);
+
 bool isCallForwardedInPlace(Walker& walker, const BodyValue& call)
 {
     return findRowOfForwardedCall(walker, call).has_value();
@@ -342,11 +376,21 @@ bool forwardCallOfBuiltin(Walker& walker, const BodyValue& call)
         return false;
     const BuiltinTable& table = walker.program().builtins();
     std::optional<RowOfForwardedCall> row = findRowOfCallOfBuiltin(walker, call, table.canonicalID(builtin));
-    if (!row || row->operands.constructs)
+    if (!row)
         return false;
     Draft written = walker.draftOf(call);
-    if (walker.hasFailed() || !rowTakesArgumentsOfForwardedCall(walker, written, table.at(row->overload)))
+    if (walker.hasFailed())
         return false;
+    if (!rowTakesArgumentsOfForwardedCall(walker, written, table.at(row->overload)))
+        return forwardCallBehindTestOfTarget(walker, call, written, *row);
+    if (row->operands.constructs && !constructionIsToldFromNewByNothing(walker, call, written, *row))
+        return false;
+    TypeID receiver = written.thisValueOperand() ? walker.typeOf(written.thisValueOperand()) : TypeID();
+    if (row->operands.callee.isReceiver() && (!receiver || !walker.types().isSubset(receiver, TypeTable::function))) {
+        BuiltinID spelled = written.calleeKey() ? findOwnMember(walker.program(), Builtins::FunctionPrototype, written.calleeKey()) : BuiltinID();
+        if (spelled != table.canonicalID(builtin))
+            return false;
+    }
     return buildForwardedCall(walker, call, written, *row);
 }
 
@@ -362,9 +406,13 @@ static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, cons
     const BodyIndex& index = walker.currentBodyIndex();
     std::span<const ValueID> arguments = call.as<Opcode::Call>().argumentsOperands();
     size_t position = row.operands.list->argumentIndex();
-    if (position >= arguments.size() || index.isParameter(arguments[position]) || !listsMadeAgainForForwardedCall.contains(index.opcodeOf(arguments[position])))
+    if (position >= arguments.size())
         return;
     ValueID object = arguments[position];
+    const Function& function = walker.program().at(walker.currentFunction());
+    bool isListOfCopyInLine = walker.depthOfCopies() && function.has(FunctionFlags::HasRestParameter) && object == index.block(entryBlock).parameter(function.firstParameterIndex() + function.numberOfPositionalParameters());
+    if (!isListOfCopyInLine && (index.isParameter(object) || !listsMadeAgainForForwardedCall.contains(index.opcodeOf(object))))
+        return;
     std::optional<BodyUser> user = index.onlyUser(object);
     unsigned timesNamedByCall = 0;
     call.forEachOperand([&](ValueID operand, uint32_t) {
@@ -375,12 +423,16 @@ static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, cons
     if (index.loopOf(index.blockOf(object)) != index.loopOf(index.blockOf(call.id())))
         return;
     Reference built = walker.referenceOf(object);
-    bool isArgumentsObject = argumentsObjectsOfForwardedCall.contains(index.opcodeOf(object));
+    bool isArgumentsObject = !isListOfCopyInLine && argumentsObjectsOfForwardedCall.contains(index.opcodeOf(object));
     std::optional<Vector<Reference, 8>> elements = isArgumentsObject ? std::nullopt : elementsOfFreshList(walker, built);
     if (isArgumentsObject ? !lengthOfFreshArguments(walker, built) || !listBehindParametersOfFreshArguments(walker, built, true) : !elements)
         return;
 
-    Draft again = walker.draftOf(index.value(object));
+    Origin originInFrontOfCall = asWritten.origin();
+    originInFrontOfCall.isTailCall = false;
+    Draft again = isArgumentsObject ? walker.draftOf(index.value(object)) : Draft(Opcode::NewArray, originInFrontOfCall);
+    if (!isArgumentsObject)
+        again.setContents(TypeTable::anything);
     again.standsForNoValueOfInput = true;
     again.inputValueGiven = { };
     if (elements)
@@ -396,6 +448,79 @@ static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, cons
     Vector<Reference, 8> passed(asWritten.argumentsOperands());
     passed[position] = made;
     asWritten.setArgumentsOperands(passed.span());
+}
+
+static bool forwardCallBehindTestOfTarget(Walker& walker, const BodyValue& call, const Draft& written, const RowOfForwardedCall& row)
+{
+    if (row.operands.constructs || row.operands.callee.isReceiver() || !walker.has(Mechanism::Guesses) || !walker.opensGuesses())
+        return false;
+    TypeArena& types = walker.types();
+    Reference target = operandOfForwardedCall(written, row.operands.callee);
+    if (!target || !target.isValue() || types.isSubset(walker.typeOf(target), TypeTable::function) || !types.overlap(walker.typeOf(target), TypeTable::function))
+        return false;
+    if (!rowTakesArgumentsOfForwardedCall(walker, written, walker.program().builtins().at(row.overload), row.operands.callee))
+        return false;
+    if (!shouldOpenGuess(walker, target, TypeTable::function, true, closedOperationsOfForwardedCall))
+        return false;
+
+    Origin originInFrontOfCall = written.origin();
+    originInFrontOfCall.isTailCall = false;
+    Draft test(Opcode::TypeTest, originInFrontOfCall);
+    test.setValueOperand(target);
+    test.setTestedType(TypeTable::function);
+    Reference isFunction = walker.build(WTF::move(test));
+    if (!isFunction)
+        return true;
+    walker.noteGuessOpened();
+    walker.count(StatisticID::CallsForwardedBehindTestsOfTheirTargets);
+    BlockID forwarding = walker.addBlock();
+    BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
+    walker.branch(isFunction, forwarding, asWritten);
+
+    if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), call.id()))
+        walker.leaveAnythingAt(listed);
+
+    walker.continueIn(asWritten);
+    Draft closed = written;
+    makeListForCallAsWritten(walker, call, row, closed);
+    walker.chooseConservativeFields(closed);
+    Reference result = walker.build(WTF::move(closed));
+    BlockID behindCall;
+    Reference resultBehindCall;
+    if (walker.unitReturnsAtOnce(written))
+        walker.returnAtOnce(result);
+    else {
+        behindCall = walker.addBlock();
+        resultBehindCall = walker.addParameter(behindCall, { }, Representation::JSValue);
+        if (result)
+            walker.jumpTo(behindCall, singleElementSpan(result));
+    }
+
+    walker.continueIn(forwarding);
+    walker.bind(call.id(), { });
+    Draft proof(Opcode::Narrowed, originInFrontOfCall);
+    walker.chooseConservativeFields(proof);
+    proof.setValueOperand(target);
+    proof.setTestOperand(isFunction);
+    proof.setOperandIndex(OperandIndex::TypeTest::value);
+    proof.setIsOnTakenEdge(true);
+    if (Reference function = walker.build(WTF::move(proof))) {
+        Draft withFunction = written;
+        Vector<Reference, 8> passed(written.argumentsOperands());
+        passed[row.operands.callee.argumentIndex()] = function;
+        withFunction.setArgumentsOperands(passed.span());
+        buildForwardedCall(walker, call, withFunction, row);
+    }
+    if (!behindCall)
+        return true;
+    Reference forwardedResult = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());
+    if (forwardedResult)
+        walker.jumpTo(behindCall, singleElementSpan(forwardedResult));
+    else
+        walker.continueIn(behindCall);
+    if (!walker.isUnreachable())
+        walker.bind(call.id(), resultBehindCall);
+    return true;
 }
 
 bool forwardCallBehindTestOfCallee(Walker& walker, const BodyValue& call)
@@ -467,6 +592,367 @@ bool forwardCallBehindTestOfCallee(Walker& walker, const BodyValue& call)
     walker.continueIn(forwarding);
     walker.bind(call.id(), { });
     buildForwardedCall(walker, call, written, *row);
+    if (!behindCall)
+        return true;
+    Reference forwardedResult = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());
+    if (forwardedResult)
+        walker.jumpTo(behindCall, singleElementSpan(forwardedResult));
+    else
+        walker.continueIn(behindCall);
+    if (!walker.isUnreachable())
+        walker.bind(call.id(), resultBehindCall);
+    return true;
+}
+
+bool forwardConstructionBehindTestOfTarget(Walker& walker, const BodyValue& call)
+{
+    if (call.opcode() != Opcode::Call || call.isDoneInPlace() || walker.isUnreachable() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.isInLoop())
+        return false;
+    TypeArena& types = walker.types();
+    Reference callee = walker.referenceOf(call.as<Opcode::Call>().calleeOperand());
+    TypeID proven = callee ? walker.typeOf(callee) : TypeID();
+    BuiltinID builtin = proven && types.at(proven).isObject() ? singleBuiltinOf(types, types.at(proven)) : BuiltinID();
+    if (!builtin)
+        return false;
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    std::optional<RowOfForwardedCall> row = findRowOfCallOfBuiltin(walker, call, table.canonicalID(builtin));
+    if (!row || !row->operands.constructs || row->operands.newTarget || row->operands.callee.isReceiver() || !row->operands.list)
+        return false;
+    Draft written = walker.draftOf(call);
+    if (walker.hasFailed() || walker.unitReturnsAtOnce(written) || !rowTakesArgumentsOfForwardedCall(walker, written, table.at(row->overload)) || constructionIsToldFromNewByNothing(walker, call, written, *row))
+        return false;
+    Reference target = operandOfForwardedCall(written, row->operands.callee);
+    Reference list = operandOfForwardedCall(written, *row->operands.list);
+    if (!target || !target.isValue() || !list || !elementsOfFreshList(walker, list))
+        return false;
+
+    Origin origin = written.origin();
+    origin.isTailCall = false;
+    BlockID behindCall = walker.addBlock();
+    Reference resultBehindCall = walker.addParameter(behindCall, { }, Representation::JSValue);
+    auto goOnBehindCall = [&] {
+        Reference result = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());
+        if (result)
+            walker.jumpTo(behindCall, singleElementSpan(result));
+    };
+
+    ValueID inputOfTarget = call.as<Opcode::Call>().argumentsOperands()[row->operands.callee.argumentIndex()];
+    TypeID expected = findExpectation(walker, inputOfTarget).type;
+    TypeID closures = expected ? types.withOnlyObjects(expected) : TypeID();
+    FunctionID only = closures && !isNeverType(closures) ? singleFunctionOf(types, types.at(closures)) : FunctionID();
+    if (only && isClassConstructorOf(program.at(only).kind) && types.overlap(walker.typeOf(target), closures) && walker.withoutFunctionsThatMayNotBeMentioned(closures) == closures
+        && shouldOpenGuess(walker, target, closures, false, closedOperationsOfForwardedCall)) {
+        Draft test(Opcode::TypeTest, origin);
+        walker.chooseConservativeFields(test);
+        test.setValueOperand(target);
+        test.setTestedType(closures);
+        Reference isClass = walker.build(WTF::move(test));
+        if (!isClass)
+            return true;
+        walker.noteGuessOpened();
+        BlockID makes = walker.addBlock();
+        BlockID isOther = walker.addBlock();
+        walker.branch(isClass, makes, isOther);
+
+        walker.continueIn(makes);
+        Draft narrowed(Opcode::Narrowed, origin);
+        narrowed.setValueOperand(target);
+        narrowed.setTestOperand(isClass);
+        narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+        narrowed.setIsOnTakenEdge(true);
+        Reference boundBefore = walker.referenceBoundTo(inputOfTarget);
+        if (Reference closure = walker.build(WTF::move(narrowed))) {
+            walker.bind(inputOfTarget, closure);
+            Draft ofClass = walker.draftOf(call);
+            walker.bind(call.id(), { });
+            buildForwardedCall(walker, call, ofClass, *row);
+            goOnBehindCall();
+        }
+        walker.bind(inputOfTarget, boundBefore);
+        walker.continueIn(isOther);
+    }
+
+    Draft question(Opcode::IsConstructor, origin);
+    walker.chooseConservativeFields(question);
+    question.setValueOperand(target);
+    Reference isConstructor = walker.build(WTF::move(question));
+    if (!isConstructor)
+        return true;
+    BlockID constructs = walker.addBlock();
+    BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
+    walker.branch(isConstructor, constructs, asWritten);
+
+    if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), call.id()))
+        walker.leaveAnythingAt(listed);
+
+    walker.continueIn(asWritten);
+    Draft closed = written;
+    makeListForCallAsWritten(walker, call, *row, closed);
+    walker.chooseConservativeFields(closed);
+    if (Reference result = walker.build(WTF::move(closed)))
+        walker.jumpTo(behindCall, singleElementSpan(result));
+
+    walker.continueIn(constructs);
+    walker.bind(call.id(), { });
+    buildForwardedCall(walker, call, written, *row);
+    goOnBehindCall();
+
+    walker.continueIn(behindCall);
+    if (!walker.isUnreachable())
+        walker.bind(call.id(), resultBehindCall);
+    return true;
+}
+
+static constexpr uint32_t closedOperationsOfCallOfBoundFunction = 2;
+
+static std::optional<uint32_t> numberOfBoundArgumentsThatLinkWrites(Walker& walker, const ClassPart& expected)
+{
+    const BuiltinTable& builtins = walker.program().builtins();
+    Type written = walker.types().at(expected.writtenContentsAt(builtins, ContentsSlot::Element));
+    if (!isNeverType(expected.writtenContentsAt(builtins, ContentsSlot::Key)) || !written.isInteger() || !written.integers.isSingleValue() || written.integers.minimum < 0)
+        return std::nullopt;
+    return static_cast<uint32_t>(std::min<int64_t>(written.integers.minimum, UINT32_MAX));
+}
+
+static std::optional<uint32_t> numberOfArgumentsBoundInSight(Walker& walker, ValueID callee, const ClassPart& expected)
+{
+    TypeID bound = expected.writtenContentsAt(walker.program().builtins(), ContentsSlot::Element);
+    if (!bound || isNeverType(bound))
+        return 0;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID made = index.valueBehindCasts(callee);
+    if (!made || index.isParameter(made) || index.opcodeOf(made) != Opcode::Call)
+        return numberOfBoundArgumentsThatLinkWrites(walker, expected);
+    size_t passed = index.value(made).as<Opcode::Call>().argumentsOperands().size();
+    return passed ? static_cast<uint32_t>(passed - 1) : 0;
+}
+
+static TypeID typeHeldInFieldOfReceiverThatIsRead(Walker& walker, ValueID input)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID read = index.valueBehindCasts(input);
+    while (read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::CheckInitialized)
+        read = index.valueBehindCasts(index.value(read).operand(0));
+    if (read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::GetModuleVariable)
+        return walker.facts().held().variable(index.value(read).as<Opcode::GetModuleVariable>().variable()).proven;
+    if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet || index.value(read).isFreeName())
+        return { };
+    TypeArena& types = walker.types();
+    TypingContext holding { walker.program(), types, walker.heldPositions(), TypeLevel::Proven };
+    ValueID object = index.value(read).objectOperand();
+    Reference receiver = walker.referenceOf(object);
+    auto heldInAppendedField = [&](TypeID holder) -> TypeID {
+        LayoutID layout = holder ? singleLayoutOf(types, types.at(types.withoutNullish(holder))) : LayoutID();
+        if (!layout)
+            return { };
+        std::span<const PropertyKeyID> appended = walker.facts().linked().appendedKeysOf(layout);
+        size_t place = std::ranges::find(appended, index.value(read).key()) - appended.begin();
+        const LinkedCell* cell = place < appended.size() ? walker.facts().held().findCellOfField({ layout, static_cast<uint32_t>(walker.program().at(layout).fields.size() + place) }) : nullptr;
+        return cell ? cell->proven : TypeID();
+    };
+    if (TypeID held = receiver ? heldInAppendedField(walker.typeOf(receiver)) : TypeID())
+        return held;
+    TypeID expected = findExpectation(walker, object).type;
+    if (TypeID held = heldInAppendedField(expected))
+        return held;
+    if (TypeID held = receiver ? tryTypeOfFieldRead(holding, walker.typeOf(receiver), index.value(read).key()) : TypeID())
+        return held;
+    return expected ? tryTypeOfFieldRead(holding, types.withoutNullish(expected), index.value(read).key()) : TypeID();
+}
+
+static TypeID primitivesSeenToArriveAtParameter(Walker& walker, FunctionID target, uint32_t position, Reference argument)
+{
+    const Function& function = walker.program().at(target);
+    std::span<const LinkedParameter> parameters = walker.facts().held().parametersOf(target);
+    uint32_t parameter = function.firstParameterIndex() + position;
+    if (position >= function.numberOfPositionalParameters() || parameter >= parameters.size())
+        return { };
+    TypeID seen = parameters[parameter].proven;
+    return seen && holdsOnlyPrimitives(seen) && !isNeverType(seen) ? typeThatTypeTestAsksForWhereExpected(walker, argument, seen) : TypeID();
+}
+
+struct TargetOfBoundFunctionExpected {
+    FunctionID target;
+    uint32_t numberOfBoundArguments { 0 };
+    bool isDeclared { false };
+};
+
+static std::optional<TargetOfBoundFunctionExpected> findTargetOfBoundFunctionExpected(Walker& walker, ValueID callee, TypeID proven)
+{
+    TypeArena& types = walker.types();
+    auto partOfBoundFunctions = [&](TypeID type) -> const ClassPart* {
+        if (!type || holdsOnlyPrimitives(type))
+            return nullptr;
+        Type objects = types.at(types.withOnlyObjects(type));
+        std::span<const ClassPart> parts = classPartsOf(types, objects);
+        return !objects.anyObject && !objects.anyFunction && parts.size() == 1 && parts[0].builtinClass == BuiltinClasses::BoundFunction && parts[0].hasWrittenContents() ? parts.data() : nullptr;
+    };
+    ExpectationOfValue expectation = proven ? ExpectationOfValue { proven, true } : findExpectation(walker, callee);
+    if (!partOfBoundFunctions(expectation.type))
+        expectation = findExpectation(walker, walker.currentBodyIndex().valueBehindCasts(callee));
+    if (TypeID held = partOfBoundFunctions(expectation.type) ? TypeID() : typeHeldInFieldOfReceiverThatIsRead(walker, callee))
+        expectation = { types.withoutNullish(held), false };
+    const ClassPart* expected = partOfBoundFunctions(expectation.type);
+    if (!expected)
+        return std::nullopt;
+    TypeID targets = expected->writtenContentsAt(walker.program().builtins(), ContentsSlot::Value);
+    FunctionID target = targets && types.at(targets).isObject() ? singleFunctionOf(types, types.at(targets)) : FunctionID();
+    std::optional<uint32_t> numberOfBoundArguments = target ? numberOfArgumentsBoundInSight(walker, callee, *expected) : std::nullopt;
+    if (!numberOfBoundArguments || *numberOfBoundArguments > JSBoundFunction::maxEmbeddedArgs || !walker.facts().linked().mayBeMentionedBy(walker.unit(), target))
+        return std::nullopt;
+    return TargetOfBoundFunctionExpected { target, *numberOfBoundArguments, expectation.isDeclared };
+}
+
+bool callIsExpectedToEnterTargetOfBoundFunction(Walker& walker, const BodyValue& call)
+{
+    if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::Guesses))
+        return false;
+    auto operation = call.as<Opcode::Call>();
+    std::optional<TargetOfBoundFunctionExpected> expected = findTargetOfBoundFunctionExpected(walker, operation.calleeOperand(), { });
+    return expected && copyOfCalleeCalledInLoopPays(walker, expected->target, expected->numberOfBoundArguments + operation.argumentsOperands().size());
+}
+
+bool callTargetOfBoundFunctionBehindTests(Walker& walker, const BodyValue& call)
+{
+    if (call.opcode() != Opcode::Call || call.isDoneInPlace() || walker.isUnreachable() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::Guesses) || !walker.isInLoop())
+        return false;
+    auto operation = call.as<Opcode::Call>();
+    TypeArena& types = walker.types();
+    Reference callee = walker.referenceOf(operation.calleeOperand());
+    if (!callee || !callee.isValue())
+        return false;
+    TypeID boundFunctions = types.builtinClass(BuiltinClasses::BoundFunction);
+    TypeID known = walker.typeOf(callee);
+    bool isProven = types.isSubset(known, boundFunctions);
+    if (!types.overlap(known, boundFunctions))
+        return false;
+    std::optional<TargetOfBoundFunctionExpected> expected = findTargetOfBoundFunctionExpected(walker, operation.calleeOperand(), isProven ? known : TypeID());
+    if (!expected)
+        return false;
+    FunctionID target = expected->target;
+    if (!shouldOpenGuess(walker, callee, boundFunctions, expected->isDeclared, closedOperationsOfCallOfBoundFunction))
+        return false;
+    Draft written = walker.draftOf(call);
+    if (walker.hasFailed())
+        return false;
+
+    Origin origin = written.origin();
+    origin.isTailCall = false;
+    bool turnBeginsAgain = walker.mayBeginTurnAgainInClosedCopy() && walker.standsInTurnThatLooksCountOn();
+    BlockID asWritten;
+    auto standsInFront = [&](Reference operand) {
+        return turnBeginsAgain && walker.standsInFrontOfTypedCopy(operand);
+    };
+    auto goOnWhere = [&](Reference test) {
+        if (turnBeginsAgain && walker.branchInFrontOfTypedCopy(test, true))
+            return true;
+        if (!asWritten)
+            asWritten = walker.addBlock(BlockFrequency::Rare);
+        BlockID passed = walker.addBlock();
+        walker.branch(test, passed, asWritten);
+        walker.continueIn(passed);
+        return false;
+    };
+    auto askType = [&](Reference value, TypeID tested) {
+        Walker::InFrontOfTypedCopy inFront(walker, standsInFront(value));
+        return buildTypeTestForStrings(walker, value, tested, origin);
+    };
+    auto proveBehind = [&](Reference value, Reference test) {
+        Walker::InFrontOfTypedCopy inFront(walker, goOnWhere(test));
+        return buildProofBehindTestForStrings(walker, value, test, OperandIndex::TypeTest::value, origin);
+    };
+    auto wordOf = [&](Reference function, uint32_t position) {
+        Walker::InFrontOfTypedCopy inFront(walker, standsInFront(function));
+        Draft word(Opcode::GetWordOfBoundFunction, origin);
+        walker.chooseConservativeFields(word);
+        word.setFunctionOperand(function);
+        word.setIndex(position);
+        return walker.build(WTF::move(word));
+    };
+
+    Reference bound = callee;
+    if (!isProven) {
+        Reference isBound = askType(callee, boundFunctions);
+        if (!isBound)
+            return true;
+        bound = proveBehind(callee, isBound);
+    }
+    Reference hasCount;
+    if (bound) {
+        Walker::InFrontOfTypedCopy inFront(walker, standsInFront(bound));
+        Draft count(Opcode::HasNumberOfBoundArguments, origin);
+        walker.chooseConservativeFields(count);
+        count.setFunctionOperand(bound);
+        count.setCount(expected->numberOfBoundArguments);
+        hasCount = walker.build(WTF::move(count));
+    }
+    if (!hasCount)
+        return true;
+    goOnWhere(hasCount);
+    Reference word = wordOf(bound, 0);
+    Reference isTarget = word ? askType(word, types.forFunction(target)) : Reference();
+    if (!isTarget)
+        return true;
+    Reference closure = proveBehind(word, isTarget);
+    Vector<Reference, 8> passed;
+    Reference thisValue = wordOf(bound, 1);
+    for (uint32_t position = 0; position < expected->numberOfBoundArguments; ++position) {
+        Reference argument = wordOf(bound, 2 + position);
+        if (TypeID seen = argument ? primitivesSeenToArriveAtParameter(walker, target, position, argument) : TypeID()) {
+            Reference isAsSeen = askType(argument, seen);
+            if (!isAsSeen)
+                return true;
+            argument = proveBehind(argument, isAsSeen);
+        }
+        passed.append(argument);
+    }
+    if (!closure || !thisValue || passed.contains(Reference()))
+        return true;
+    passed.append(written.argumentsOperands());
+    walker.noteGuessOpened();
+    BlockID entering = walker.currentBlock();
+
+    if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), call.id()))
+        walker.leaveAnythingAt(listed);
+
+    BlockID behindCall;
+    Reference resultBehindCall;
+    if (asWritten)
+        walker.continueIn(asWritten);
+    if (turnBeginsAgain) {
+        if (asWritten && !walker.isUnreachable())
+            walker.beginTurnAgainInClosedCopy();
+    } else {
+        Draft closed = written;
+        walker.chooseConservativeFields(closed);
+        Reference result = walker.build(WTF::move(closed));
+        if (walker.unitReturnsAtOnce(written))
+            walker.returnAtOnce(result);
+        else {
+            behindCall = walker.addBlock();
+            resultBehindCall = walker.addParameter(behindCall, { }, Representation::JSValue);
+            if (result)
+                walker.jumpTo(behindCall, singleElementSpan(result));
+        }
+    }
+
+    walker.continueIn(entering);
+    walker.bind(call.id(), { });
+    Draft forwarded(Opcode::Call, written.origin());
+    walker.chooseConservativeFields(forwarded);
+    forwarded.setCalleeOperand(closure);
+    forwarded.setThisValueOperand(thisValue);
+    forwarded.setArgumentsOperands(passed.span());
+    forwarded.setCalleeName(written.calleeName());
+    forwarded.setExpectedResult(written.expectedResult());
+    forwarded.expected = written.expected;
+    forwarded.resultIsReturnedAtOnce = written.resultIsReturnedAtOnce;
+    forwarded.inputValueGiven = written.inputValueGiven;
+    if (!callForwardedDirectly(walker, call, forwarded)) {
+        if (Reference called = walker.build(WTF::move(forwarded)))
+            walker.bind(call.id(), called);
+    }
     if (!behindCall)
         return true;
     Reference forwardedResult = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());

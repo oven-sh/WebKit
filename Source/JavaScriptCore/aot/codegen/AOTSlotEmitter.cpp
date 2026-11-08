@@ -386,6 +386,8 @@ static constexpr bool namesFormsOfGetSlotForFieldsOutOfLine(Opcode read)
             if (named.form != namedForGetSlot.form || named.place != namedForGetSlot.place)
                 return false;
         }
+        if (namedFormOf(read, state, Place::RareBlock) != namedFormOf(Opcode::GetSlot, state, Place::RareBlock))
+            return false;
     }
     return true;
 }
@@ -406,6 +408,9 @@ bool SlotEmitter::readsExtensionByCall(const PlacedSlot& slot, const MemoryLocat
     static constexpr OpcodeSet readsOfSlots { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::IsSlotFilled, Opcode::GetSlotGetter, Opcode::GetSlotSetter };
     StateOfKnowledge state = slot.isLeftOutByMakers ? StateOfKnowledge::FieldLeftOutByMakers : StateOfKnowledge::FieldInExtension;
     FormAtPlace named = formByLoopAlone(Opcode::GetSlot, state, m_generator.paysForCodeInLine(block));
+    static_assert(namedFormOf(Opcode::GetSlot, StateOfKnowledge::FieldInExtension, Place::Anywhere) == Form::Open && namedFormOf(Opcode::GetSlot, StateOfKnowledge::FieldInExtension, Place::RareBlock) == Form::Closed);
+    if (named.place == Place::Anywhere && state == StateOfKnowledge::FieldInExtension && m_generator.code().at(block).frequency == BlockFrequency::Rare)
+        named = { Form::Closed, Place::RareBlock };
     m_generator.out().noteFormOf(readsOfSlots, named.form, state, named.place);
     return named.form != Form::Open;
 }
@@ -460,6 +465,24 @@ Operand SlotEmitter::loadSlotThatHoldsValue(CellPointer cell, const PlacedSlot& 
         return operandOfBits(readFieldInExtension(cell, slot, location), slot.representation);
     Operand loaded = load(addressOf(cell, slot, location, extensionWord), slot.representation);
     keepOwnerOfExtensionAlive(cell);
+    return loaded;
+}
+
+Operand SlotEmitter::loadSlotOrLeaveIfEmpty(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot* extensionWord, BlockEdge isEmpty)
+{
+    RELEASE_ASSERT(!slot.isOutOfLine() || extensionWord);
+    LBasicBlock holds = newBlock();
+    if (!slot.isOutOfLine() || !traitsOf(slot.representation).hasAbsent || readsExtensionByCall(slot, location, *extensionWord)) {
+        branch(holdsValue(cell, slot, location, extensionWord), { normalEdge(holds), isEmpty });
+        m_out.appendToContinuation(holds);
+        return loadSlotThatHoldsValue(cell, slot, location, extensionWord);
+    }
+    RELEASE_ASSERT(representsAbsentAsZero(slot.representation));
+    Pointer extension = branchUnlessExtensionHolds(cell, *extensionWord, granuleBitOf(slot.offset), isEmpty, slot.isLeftOutByMakers).extension;
+    Operand loaded = load(addressInExtension(m_heaps.at(m_program, location), extension, slot.offset), slot.representation);
+    keepOwnerOfExtensionAlive(cell);
+    branch(isAbsent(loaded, slot.representation), { isEmpty, normalEdge(holds) });
+    m_out.appendToContinuation(holds);
     return loaded;
 }
 

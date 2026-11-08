@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTable.h"
 #include "AOTClassMemberTable.h"
 #include "AOTCompiledFrame.h"
 #include "AOTConstantPool.h"
@@ -483,6 +484,37 @@ static void testRuntimeDescriptionNamesFormatVersion()
     AOT_TEST_CHECK(difference && difference->name == "the version of the image format"_s && !difference->there);
 }
 
+static void testRuntimeDescriptionNamesPlatformOfBuiltinTable()
+{
+    Vector<uint8_t> record(descriptionOfThisRuntime());
+    uint8_t& platform = record[offsetof(RuntimeDescription, platform)];
+    AOT_TEST_CHECK(platform == static_cast<uint8_t>(targetOfThisBuild().platform));
+
+    static_assert(BuiltinPlatform::Android != BuiltinPlatform::Linux);
+    platform = static_cast<uint8_t>(targetOfThisBuild().platform == BuiltinPlatform::Android ? BuiltinPlatform::Linux : BuiltinPlatform::Android);
+    std::optional<RuntimeDifference> difference = findDifferenceFromThisRuntime(record.span());
+    AOT_TEST_CHECK(difference && difference->name == "the operating system"_s && difference->there == platform);
+}
+
+static void testRuntimeFactsNameWhatEmittedCodeTakes()
+{
+    std::span<const ASCIILiteral> names = namesOfRuntimeFacts();
+    for (ASCIILiteral name : {
+        "the names of the entries in the table of the run time in the order of their numbers"_s,
+        "runsOnlyCodeOfImage"_s,
+        "sizeOfLoopPoll"_s,
+        "sizeof(InlineAllocationData)"_s,
+        "sizeof(BuiltinDirectFunctionBinding)"_s,
+        "OBJECT_OFFSETOF(BuiltinDirectFunctionBinding, function)"_s,
+        "sizeof(StackStringBuilder)"_s,
+        "OBJECT_OFFSETOF(StackStringBuilder, limit)"_s,
+        "MutatorMarkStackLayout::offsetOfTop()"_s,
+        "OBJECT_OFFSETOF(ProgramSymbols, entries)"_s,
+        "Yarr::MatchingContextHolder::offsetOfStackLimit()"_s,
+    })
+        AOT_TEST_CHECK(std::ranges::find(names, name) != names.end());
+}
+
 static void testAdmittedCodeNeedsHeaderOfThisFormat()
 {
     auto admittedAfter = [](auto change) {
@@ -865,6 +897,8 @@ std::span<const NativeTest> imageTableTests()
         { "image/locate/constants-and-ffi-code"_s, testConstantsAndFFICode },
         { "image/stamp/stamp"_s, testStamp },
         { "image/stamp/runtime-description-names-format-version"_s, testRuntimeDescriptionNamesFormatVersion },
+        { "image/stamp/runtime-description-names-platform-of-builtin-table"_s, testRuntimeDescriptionNamesPlatformOfBuiltinTable },
+        { "image/stamp/runtime-facts-name-what-emitted-code-takes"_s, testRuntimeFactsNameWhatEmittedCodeTakes },
         { "image/admitted-code/needs-header-of-this-format"_s, testAdmittedCodeNeedsHeaderOfThisFormat },
         { "image/flags/need-header-of-this-format"_s, testFlagsNeedHeaderOfThisFormat },
         { "image/constants/constants-of-bodies-are-found-among-shared-constants"_s, testConstantsOfBodiesAreFoundAmongSharedConstants },

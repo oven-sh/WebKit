@@ -311,7 +311,7 @@ void findParametersThatAreOnlyCalled(const Program& program, const BodyIndexTabl
             if (entryParameter >= linked.numberOfParameters || entryParameter >= entry.numberOfParameters())
                 return;
             const LinkedParameter& arriving = tables.parameters[linked.firstParameter + entryParameter];
-            if (!mayBeFunction(arriving.proven) && !mayBeFunction(arriving.expected))
+            if (!mayBeFunction(arriving.proven) && !mayBeFunction(arriving.writtenOrSeenToArrive()))
                 continue;
             judgeEntryParameter(id, *index, entryParameter, handingsOfRange);
         }
@@ -379,7 +379,7 @@ void carryExpectationOfThisIntoCaptures(const Program& program, const BodyIndexT
         if (!ownThis || *ownThis >= tables.function(maker).numberOfParameters)
             continue;
         LinkedParameter arriving = tables.parametersOf(maker)[*ownThis];
-        const BodyIndex* index = arriving.expected && arriving.expectedIsDeclared ? bodies.find(maker) : nullptr;
+        const BodyIndex* index = arriving.written ? bodies.find(maker) : nullptr;
         if (!index || !index->numberOfBlocks())
             continue;
         ValueID held = index->block(entryBlock).parameter(*ownThis);
@@ -396,8 +396,8 @@ void carryExpectationOfThisIntoCaptures(const Program& program, const BodyIndexT
                 if (!operands[capture] || index->valueBehindCasts(operands[capture]) != held)
                     continue;
                 LinkedParameter& captured = tables.parameters[tables.function(made).firstParameter + capture];
-                captured.expected = arriving.expected;
-                captured.expectedIsDeclared = true;
+                captured.written = arriving.written;
+                captured.seenToArrive = { };
             }
         }
     }

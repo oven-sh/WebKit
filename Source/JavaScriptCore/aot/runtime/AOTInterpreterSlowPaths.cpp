@@ -421,21 +421,12 @@ void ObjectLiteralPlan::setClearedWords(unsigned numberOfWordsBehindSecond)
     numberOfClearedWords = numberOfWordsBehindSecond - numberOfFilledWords;
 }
 
-static bool typeAcceptsEveryValue(const RuntimeType& type)
-{
-    constexpr OptionSet<PrimitiveSet> everyPrimitive {
-        PrimitiveSet::Undefined, PrimitiveSet::Null, PrimitiveSet::False, PrimitiveSet::True, PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber,
-        PrimitiveSet::String, PrimitiveSet::Symbol, PrimitiveSet::BigInt
-    };
-    return type.primitiveSet().containsAll(everyPrimitive) && !type.integerRange() && type.acceptsEveryObject();
-}
-
 bool ObjectLiteralPlans::storesValuesUnchanged(const ObjectBuilderPlan& builder)
 {
     RuntimeLayoutTable& layouts = builder.m_state.objects->layouts;
     bool slotsHoldEveryValue = std::ranges::all_of(builder.m_fields, [&](const ObjectBuilderPlan::PlannedField& planned) {
         const FieldData& field = *planned.field;
-        return field.slot.representation() == SlotRepresentation::JSValue && !field.holdsRawValueFromBirth && typeAcceptsEveryValue(layouts.typeOf(field));
+        return field.slot.representation() == SlotRepresentation::JSValue && !field.holdsRawValueFromBirth && layouts.typeOf(field).takesEveryValue();
     });
     bool otherWordsAreZero = std::ranges::all_of(builder.m_initialWords, [](const ObjectBuilderPlan::InitialWord& initial) {
         return initial.offset == offsetOfOrderWord || !initial.word;

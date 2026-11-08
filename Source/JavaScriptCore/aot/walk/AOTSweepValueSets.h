@@ -127,6 +127,7 @@ public:
 private:
     static constexpr uint32_t lowBits = 63;
     static constexpr unsigned mostForksOnWayDown = 26;
+    static_assert(mostForksOnWayDown == 8 * sizeof(uint32_t) - std::popcount(lowBits));
 
     struct Node {
         uint32_t prefix { 0 };

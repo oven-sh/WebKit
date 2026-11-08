@@ -1,4 +1,4 @@
-# function Place() { this.label = 1; } Place.prototype.held = new CustomEvent("made up"); console.log(new Place()); setImmediate(() => {})
+# function Place() { this.label = 1; } Place.prototype.held = new MessageEvent("made up"); console.log(new Place()); setImmediate(() => {})
 # LIBRARY: own
 # RUN: link functions mechanisms=all
 # REQUIRES: entries-of-bun
@@ -22,10 +22,10 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v6 = Convert v5 declared={type=builtin(Console) flags=[IsExpected]}
     v7 = PropGet v6 key="log"
     v8 = Convert v7 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v9 = PropGet v0 key="CustomEvent" [isFreeName]
-    v10 = Convert v9 declared={type=builtin(CustomEvent) flags=[IsExpected]}
+    v9 = PropGet v0 key="MessageEvent" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(MessageEvent) flags=[IsExpected]}
     v11 = String string="made up"
-    v12 = Construct v10, -, v11 calleeName="CustomEvent"
+    v12 = Construct v10, -, v11 calleeName="MessageEvent"
     v13 = NewClosure function=f4
     v14 = PropGet v13 key="prototype"
     PropSet v14, v12 key="held"

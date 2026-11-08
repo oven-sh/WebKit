@@ -335,7 +335,7 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
 
     Vector<TestFailure> failures;
     Wire::CompileOptions options = makeOptionsOfTestedProgram();
-    RELEASE_ASSERT(!applyOptionWord(options, "check=VerifyEachStage,ValidateReferences"_s));
+    RELEASE_ASSERT(!applyOptionWord(options, "check=VerifyEachStage"_s));
     std::optional<Mechanisms> mechanismsAskedFor;
     auto applyWord = [&](const String& word, unsigned line) {
         std::optional<String> sentence = isMechanismsWord(word) ? applyMechanismsWordAskedFor(mechanismsAskedFor, word) : applyOptionWord(options, word);
@@ -358,8 +358,10 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
         return failures;
 
     bool hasRun = false;
-    for (const RunDirective& run : file.runs)
-        hasRun |= runOneDirective(file, run, options, mechanismsAskedFor, variant, failures, outputs);
+    for (const RunDirective& run : file.runs) {
+        if (!run.isLeftOutUnderFurtherOptionWords || variant.optionWords.isEmpty())
+            hasRun |= runOneDirective(file, run, options, mechanismsAskedFor, variant, failures, outputs);
+    }
     bool hasProgram = file.runs.containsIf([](const RunDirective& run) {
         const TestCommand* command = findTestCommand(run.command);
         return command && command->program != ProgramOfCommand::None;
@@ -464,6 +466,14 @@ static Vector<String> childArguments(std::span<const String> paths, const TestRu
     return arguments;
 }
 
+static ChildProcessResult runInChildProcess(const ChildProcessLauncher& launcher, std::span<const String> paths, const TestRunRequest& request)
+{
+    ChildProcessResult result = launcher.run(childArguments(paths, request).span());
+    for (ASCIILiteral lineEnd : { "\r\n"_s, "\n"_s })
+        result.output = makeStringByReplacingAll(result.output, makeString(lineAfterChildProcess, lineEnd), ""_s);
+    return result;
+}
+
 struct BatchResult {
     TestRunSummary summary;
     String report;
@@ -504,7 +514,7 @@ static std::optional<TestRunSummary> parseSummaryLine(StringView line)
 
 static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher, const String& path, const TestRunRequest& request)
 {
-    ChildProcessResult result = launcher.run(childArguments(singleElementSpan(path), request).span());
+    ChildProcessResult result = runInChildProcess(launcher, singleElementSpan(path), request);
 
     StringView output = result.output;
     size_t summaryStart = startOfLastLines(output, 1);
@@ -527,7 +537,7 @@ static BatchResult runFilesInChildProcesses(const ChildProcessLauncher& launcher
     BatchResult batch;
     StringBuilder report;
     if (paths.size() > 1) {
-        ChildProcessResult result = launcher.run(childArguments(paths, request).span());
+        ChildProcessResult result = runInChildProcess(launcher, paths, request);
         if (result.exitedWith(exitCodeForSuccess) || result.exitedWith(exitCodeForFailure)) {
             StringView output = result.output;
             size_t summaryStart = startOfLastLines(output, 1);
@@ -553,6 +563,8 @@ TestRunSummary runTestFiles(const TestRunRequest& request, PrintStream& out)
     Vector<String> files = collectTestFiles(request);
     TestRunSummary summary;
     if (!request.launcher || files.size() <= 1) {
+        if (!request.launcher)
+            printLineAfterEachChildProcess();
         for (const String& file : files) {
             FileResult result = runOneFileInThisProcess(file, request);
             count(summary, result.outcome);

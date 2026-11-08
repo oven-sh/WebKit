@@ -4,10 +4,11 @@
 # RUN: walk f1:Body mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = Substring
+
+module m0 path="m6-only-the-upper-test.ts" displayPath="m6-only-the-upper-test.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
 expectedresult x0 type=string
-# layout L132 kind=Closure
 variable g0 name="pick" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
-module m0 path="/$bunfs/root/m6-only-the-upper-test.ts" displayPath="m6-only-the-upper-test.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 177, 314, 406] quotedTexts=[{position=139 start=93 end=104}, {position=153 start=107 end=115}, {position=290 start=132 end=142}, {position=314 end=11}, {position=322 end=88}, {position=326 start=12 end=87}, {position=330 start=16 end=26}, {position=335 start=16 end=36}, {position=354 start=38 end=61}, {position=361 start=45 end=55}, {position=366 start=45 end=60}, {position=379 start=63 end=86}, {position=386 start=70 end=80}, {position=391 start=70 end=85}] textOfQuotes="console.log(run(JSON.parse('\x22abcd\x22'), Number(JSON.parse(\x220\x22)), Number(JSON.parse(\x225\x22))))at < text.length ? text[at] : undefineda += pick(c, i)"} functionText="function pick(text, at) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return at < text.length ? text[at] : undefined; }\x0afunction run(c, from, to) { let a = \x22\x22; for (let i = from | 0; i < to; i++) a += pick(c, i); return a; }\x0aconsole.log(run(JSON.parse(\x22\x5c\x22abcd\x5c\x22\x22), Number(JSON.parse(\x220\x22)), Number(JSON.parse(\x225\x22))));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f2 @0
@@ -43,7 +44,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v30 = Undefined @314
     Return v30 @314
 }
-function f1 name="pick" module=m0 text={end=140} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: number):
     v2 = Integer @73
     v3 = Convert v2 declared={type=number} @73
@@ -77,7 +78,7 @@ function f1 name="pick" module=m0 text={end=140} flags=[IsChecked, HasExplicitNa
     v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull]} @164
     Return v22 @164
 }
-function f2 name="run" module=m0 position=177 text={start=141 end=245} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="run" module=m0 position=177 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: number, v2: number):
     v3 = String string="" @245
     v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @245
@@ -87,8 +88,8 @@ function f2 name="run" module=m0 position=177 text={start=141 end=245} flags=[Is
     Jump -> next b1(v4, v7) @258
   b1(v8: undefined|null|string, v9: number):
     LoopHint @258
-    v11 = Less v9, v2 @276
-    Branch v11 -> taken b2(), notTaken b3() @276
+    v11 = Greater v2, v9 @277
+    Branch v11 -> taken b2(), notTaken b3() @277
   b2():
     v12 = GetModuleVariable variable=g0 @290
     v13 = Call v12, -, v0, v9 calleeName="pick" @290
@@ -101,4 +102,3 @@ function f2 name="run" module=m0 position=177 text={start=141 end=245} flags=[Is
     v18 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @309
     Return v18 @309
 }
-entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]

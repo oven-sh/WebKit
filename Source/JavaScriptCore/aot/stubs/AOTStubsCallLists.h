@@ -17,6 +17,11 @@ constexpr StubKey tailCallWithList() { return StubKey(StubFamily::TailCallWithLi
 constexpr StubKey superConstructWithArray() { return StubKey(StubFamily::SuperConstructWithArray); }
 constexpr StubKey callFromArgumentListFrame() { return StubKey(StubFamily::CallFromArgumentListFrame); }
 constexpr StubKey returnFromArgumentListFrame() { return StubKey(StubFamily::ReturnFromArgumentListFrame); }
+constexpr StubKey callFromArgumentListFrameWithWords(unsigned numberOfWords, unsigned bytesAboveFrameRecord)
+{
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(numberOfWords && numberOfWords <= StubKey::maxCount && (!bytesAboveFrameRecord || bytesAboveFrameRecord == sizeOfSpilledArgumentRegisters));
+    return StubKey(StubFamily::CallFromArgumentListFrameWithWords).withForm(!!bytesAboveFrameRecord).withCount(numberOfWords);
+}
 
 static constexpr unsigned maxListLengthCopiedTwice = 4096;
 

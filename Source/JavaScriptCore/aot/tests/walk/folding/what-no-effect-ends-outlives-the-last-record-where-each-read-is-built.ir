@@ -1,6 +1,6 @@
 # At a join the state keeps what both ways know. Where each knows another object nothing of that is left, the records are dropped, and what no effect ends stays:
-# that a `const` has left its dead zone on both ways. A build that checks proofs builds each read, so the mark on the second read shows it.
-# export const LIMIT = make();
+# that a variable has left its dead zone on both ways. `LIMIT` may be written again, so each read is built, and the mark on the second read shows it.
+# export let LIMIT = make();
 # const twice = often => { const first = LIMIT; if (often) { run(); here; } else { run(); there; } return first + LIMIT; }       `here` and `there` lie in two environments
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN: walk f1 mechanisms=none+Folding
@@ -10,7 +10,7 @@
 # CHECK-NOT: = CheckInitialized
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="held"}] ownFieldCount=1
-variable g0 name="LIMIT" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g0 name="LIMIT" module=m0 declared={type=anything|absent}
 module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="LIMIT" variable=g0}]
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {

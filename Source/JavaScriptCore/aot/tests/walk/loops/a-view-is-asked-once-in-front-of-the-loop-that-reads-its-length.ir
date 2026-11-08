@@ -3,11 +3,11 @@
 # function told(view: Float64Array, tell: (x: number) => void) { for (let i = 0; i < view.length; i++) tell(view[i]); }
 # `length` is a getter above the view. Whether the view is as its class makes it was asked in every turn, with the length and the vector read anew, and the look at the loop took the read for other code.
 # A view from in front of the loop whose length the turns read stands in the row in front of the loop, as a list does: it is asked once.
-# A view over a buffer that may grow is never as its class makes it, so no other thread moves the length behind the row. There the length and the vector leave the turns.
+# Nothing in this program grows shared memory, so no other thread moves the length behind the row, and the row asks for the names alone. There the length and the vector leave the turns.
 # Where a turn runs other code the view is asked in every turn, as ever.
 # RUN: walk f1 f2 f3 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = IsPristine {{*}}builtinClass=Float64Array aspects=[Storage, Names]
+# CHECK: = IsPristine {{*}}builtinClass=Float64Array aspects=[Names]
 # CHECK: = GetTypedArrayLength
 # CHECK: = GetTypedArrayVector
 # CHECK: isInLoop=true isLoopHead=true
@@ -16,8 +16,8 @@
 # CHECK-NOT: = GetTypedArrayVector
 # CHECK: = GetTypedArrayElement {{*}}isInsideView
 # CHECK-LABEL: code f2:Body
-# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage, Names]
-# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage, Names]
+# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Names]
+# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Names]
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = IsPristine
 # CHECK-NOT: = GetTypedArrayLength
@@ -25,7 +25,7 @@
 # CHECK-LABEL: code f3:Body
 # CHECK-NOT: = IsPristine
 # CHECK: isInLoop=true isLoopHead=true
-# CHECK: = IsPristine {{*}}builtinClass=Float64Array aspects=[Storage, Names]
+# CHECK: = IsPristine {{*}}builtinClass=Float64Array aspects=[Names]
 # RUN(SHELL): run-in-shell let asked = 0; const all = [new Float64Array([1.5, 2]), new Int32Array(3), new Int32Array([4, 5]), new Float64Array([7]), x => print("told " + x)]; globalThis.hidden = () => all[asked++]; globalThis.sink = (sum, copied) => { print(String(sum) + " " + copied.join()); };
 # SHELL: told 7
 # SHELL: 3.5 5,6,0

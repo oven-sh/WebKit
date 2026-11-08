@@ -20,8 +20,8 @@ v(Concatenate, CalledByCode, (), CountAxis | SlowPathRecurs, 2, 3, AllISAs, NoIS
 
 v(Substring, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, AllocatorState) | writes(AllocatorState), Substring)
 
-v(StringEqualsLiteral, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteral)
-v(ValueEqualsLiteral, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteral)
+v(StringEqualsLiteral, CalledByCode, (), CountAxis, 0, 63, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteral)
+v(ValueEqualsLiteral, CalledByCode, (), CountAxis, 0, 63, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteral)
 v(StringEqualsLiteralOfLength, CalledByCode, (), CountAxis, 0, 8, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteralOfLength)
 v(ValueEqualsLiteralOfLength, CalledByCode, (), CountAxis, 0, 8, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteralOfLength)
 v(NarrowCharactersOfString, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), NarrowCharactersOfString)

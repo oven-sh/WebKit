@@ -1,0 +1,19 @@
+# function get(o) { return o.Function; } get(globalThis)("return 1");
+# RUN: causes
+# CHECK: cause EvaluatesText Function
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = Call v0, -, v1 calleeName="get"
+    v3 = String string="return 1"
+    v4 = Call v2, -, v3
+    Return v4
+}
+function f1 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="Function"
+    Return v1
+}

@@ -1,0 +1,56 @@
+# `if ($hasContiguousIndex(array, i)) callback(i); else callback(i);` with i anywhere up to 2^53 - 1.
+# A yes says that i lies below the length of a plain vector, and no plain vector is longer than 2^28: behind the yes the index is boxed as an int32 without being asked whether it is one.
+# Behind the no it is asked as before: one question in the body, not two and not none. 4294967297 has the low half of 1: boxed without the question it would be called 1.
+# RUN: emit f1 mechanisms=all
+# CHECK: = BelowEqual(
+# CHECK-NOT: = BelowEqual(
+# RUN(ANSWER): run-in-shell mechanisms=all globalThis.after = () => { for (const i of [1, 2, 3, 2147483647, 2147483653, 4294967297, 9007199254740991]) each.call(["a", "b", "c"], (index, found) => print(typeof index, index, found), i); };
+# ANSWER: number 1 true
+# ANSWER-NEXT: number 2 true
+# ANSWER-NEXT: number 3 false
+# ANSWER-NEXT: number 2147483647 false
+# ANSWER-NEXT: number 2147483653 false
+# ANSWER-NEXT: number 4294967297 false
+# ANSWER-NEXT: number 9007199254740991 false
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="each"
+    v3 = PropGet v1 key="after"
+    v4 = Call v3, -
+    v5 = Undefined
+    Return v5
+}
+function f1 name="each" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = ToObject v0 message="no object"
+    v4 = ToLength v2
+    v5 = HasJSType v3
+    v6 = ToBoolean v5
+    Branch v6 -> taken b2(| 0), notTaken b5(| 0)
+  b2(v7):
+    v8 = Convert v3 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+    v9 = Convert v4 declared={type=int flags=[IsFromCompiler, IsClaim]}
+    v10 = HasContiguousIndex v8, v9
+    v11 = ToBoolean v10
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v12):
+    v13 = Boolean boolean=true
+    v14 = Call v1, -, v4, v13
+    Return v14
+  b4(v15):
+    v16 = Boolean
+    v17 = Call v1, -, v4, v16
+    Return v17
+  b5(v18):
+    v19 = Undefined
+    Return v19
+}

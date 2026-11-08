@@ -91,6 +91,7 @@ protected:
     bool functionSuspends() const { return m_generator.suspends(); }
     bool functionHasHandlers() const { return m_generator.hasHandlers(); }
     bool hasOneInstance() const;
+    bool emittersCheckProofs() const { return AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition); }
 
     Operand get(ValueID id) const { return m_generator.get(id); }
     template<typename T> T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
@@ -137,8 +138,10 @@ protected:
     uint32_t mentionOfName(PropertyKeyID);
     Word32 identifierNumber(PropertyKeyID);
     std::optional<Vector<uint32_t, 12>> modulesAndPositionsOf(const OperationContext&) const;
+    std::optional<Vector<uint32_t, 12>> modulesAndPositionsOf(Origin) const;
     std::optional<Pointer> siteCacheAddress(const OperationContext&, PropertyKeyID, SlotAccess);
     std::optional<NumberedImmediate> answersAtSite(const OperationContext&, PropertyKeyID, SiteUse);
+    std::optional<NumberedImmediate> answersAtSite(Origin, PropertyKeyID, SiteUse);
 
     COLD void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
 

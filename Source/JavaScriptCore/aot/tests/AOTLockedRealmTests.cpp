@@ -356,7 +356,7 @@ bool isPristine(VM& vm, JSValue value)
 {
     JSCell* cell = value.asCell();
     auto* array = dynamicDowncast<JSArray>(cell);
-    AOT_TEST_CHECK(cell->isPristine() == (cell->structure()->isPristine() && (!array || cell->structure()->hasPristineElements())));
+    AOT_TEST_CHECK(cell->isPristine() == (cell->structure()->isPristine() && (!pristineFlagOfCellCoversElements(cell->type()) || cell->structure()->hasPristineElements())));
     if (array)
         array->validatePristine(vm);
     return cell->structure()->isPristine();
@@ -638,6 +638,44 @@ static void testNumericNamesEndPristineElements()
     Structure* marked = addName(vm, createUnmarkedArrayStructure(realms), "-1"_s);
     AOT_TEST_CHECK(marked->tryMarkPristine(vm));
     AOT_TEST_CHECK(marked->isPristine() && !marked->hasPristineElements());
+}
+
+static void testNumericNamesEndFlagOfTables()
+{
+    Realms realms;
+    VM& vm = realms.vm();
+    for (ASCIILiteral source : { "new Map"_s, "new Set"_s, "new WeakMap"_s, "new WeakSet"_s, "(t => (t.tag = 1, t))(new Map)"_s, "(t => (t[0] = 1, t))(new Set)"_s }) {
+        JSObject* table = realms.object(realms.locked(), source);
+        AOT_TEST_CHECK_FOR_SOURCE(isPristine(vm, table) && table->structure()->hasPristineElements() && table->isPristine(), source);
+    }
+    for (ASCIILiteral source : { "(t => (t['1.5'] = 1, t))(new Map)"_s, "(t => (t['-1'] = 1, t))(new Set)"_s, "(t => (t['NaN'] = 1, t))(new WeakMap)"_s, "(t => (t['Infinity'] = 1, t))(new WeakSet)"_s }) {
+        JSObject* table = realms.object(realms.locked(), source);
+        AOT_TEST_CHECK_FOR_SOURCE(isPristine(vm, table) && !table->structure()->hasPristineElements() && !table->isPristine(), source);
+    }
+}
+
+static void testCachedTransitionsOfTablesEndFlag()
+{
+    Realms realms;
+    VM& vm = realms.vm();
+    realms.evaluate(realms.locked(), "function storeOften(make, store) { return [store(make()), store(make()), store(make()), store(make()), store(make()), store(make()), store(make()), store(make())]; }"_s);
+    for (ASCIILiteral source : { "storeOften(() => new Map, new Function('t', 't.tag = 1; t.other = 2; return t;'))"_s, "storeOften(() => new WeakSet, new Function('t', 't.tag = 1; t[0] = 2; return t;'))"_s }) {
+        JSArray* stored = realms.array(realms.locked(), source);
+        for (unsigned i = 0; i < 8; ++i)
+            AOT_TEST_CHECK_FOR_SOURCE(isPristine(vm, stored->getIndexQuickly(i)) && stored->getIndexQuickly(i).asCell()->isPristine(), source);
+    }
+    for (ASCIILiteral source : {
+        "storeOften(() => new Map, new Function('t', 't.tag = 1; t[\\'1.5\\'] = 2; return t;'))"_s,
+        "storeOften(() => new Set, new Function('t', 't.tag = 1; t[\\'-1\\'] = 2; return t;'))"_s,
+        "storeOften(() => new WeakMap, new Function('t', 't.tag = 1; t.NaN = 2; return t;'))"_s,
+        "storeOften(() => new WeakSet, new Function('t', 't.Infinity = 2; return t;'))"_s,
+    }) {
+        JSArray* stored = realms.array(realms.locked(), source);
+        for (unsigned i = 0; i < 8; ++i) {
+            JSCell* table = stored->getIndexQuickly(i).asCell();
+            AOT_TEST_CHECK_FOR_SOURCE(isPristine(vm, table) && !table->structure()->hasPristineElements() && !table->isPristine(), source);
+        }
+    }
 }
 
 static void testMarkReachesExistingTransitions()
@@ -1088,6 +1126,8 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/pristine-regexp-match-arrays"_s, testPristineRegExpMatchArrays },
         { "locked-realm/names-of-match-arrays-keep-arrays-pristine"_s, testNamesOfMatchArraysKeepArraysPristine },
         { "locked-realm/numeric-names-end-pristine-elements"_s, testNumericNamesEndPristineElements },
+        { "locked-realm/numeric-names-end-the-flag-of-tables"_s, testNumericNamesEndFlagOfTables },
+        { "locked-realm/cached-transitions-of-tables-end-the-flag"_s, testCachedTransitionsOfTablesEndFlag },
         { "locked-realm/mark-reaches-existing-transitions"_s, testMarkReachesExistingTransitions },
         { "locked-realm/mark-leaves-out-bits-lost-by-existing-transitions"_s, testMarkLeavesOutBitsLostByExistingTransitions },
         { "locked-realm/mark-follows-structures-marked-earlier"_s, testMarkFollowsStructuresMarkedEarlier },

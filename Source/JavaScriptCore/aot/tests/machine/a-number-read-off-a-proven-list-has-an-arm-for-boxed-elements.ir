@@ -1,0 +1,40 @@
+# function difference(pair: number[]) { return pair[0] - pair[1]; }
+# Link proves that `pair` is a list of numbers; nothing names its storage. A literal whose elements are not all proven numbers, and every list that once held something else, holds its numbers boxed:
+# the read in line has an arm for that kind behind the two for raw numbers, and asks the element for its proven type there.
+# RUN: emit f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Load({{*}}indexedDoubleProperties[0]
+# CHECK: = Load({{*}}indexedContiguousProperties[0]
+# CHECK: = Load({{*}}indexedContiguousProperties[0]
+# RUN(ANSWER): run-in-shell globalThis.seed = 3; globalThis.tell = answer => print(answer);
+# ANSWER: 3.25
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="seed" [isFreeName]
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = Double number=0.5
+    v5 = Add v3, v4
+    v6 = Double number=0.25
+    v7 = NewArray v5, v6 contents=number
+    v8 = NewClosure function=f1
+    v9 = Call v8, -, v7 [isNeverInlined]
+    v10 = PropGet v0 key="tell" [isFreeName]
+    v11 = Call v10, -, v9 calleeName="tell"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="difference" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    v3 = Integer integer=1
+    v4 = ElemGet v0, v3
+    v5 = Sub v2, v4
+    Return v5
+}

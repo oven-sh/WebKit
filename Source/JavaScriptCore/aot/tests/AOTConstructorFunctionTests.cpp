@@ -2528,7 +2528,7 @@ static void checkOneWordCountsGuardsOfSeveralClasses(LoadedProgram& program)
     counted.checkEveryCountIsExact();
     AOT_TEST_CHECK(counted.valueOf(*count) == guardsOfAbove + guardsOfBelow);
 
-    didEvaluateClassAgain(state, *old);
+    state.objects->classes.disarmMemberGuards(*old);
     counted.checkEveryCountIsExact();
     AOT_TEST_CHECK(counted.valueOf(*count) == guardsOfAbove + guardsOfBelow + guardsOfOld);
 }
@@ -2553,6 +2553,103 @@ static void checkGuardThatEndsAheadOfFirstObjectIsCountedFromThere(LoadedProgram
         counted.beginGuardsOf(vm, *old);
         AOT_TEST_CHECK(counted.valueOf(*count) == guardsOfOld);
     }
+}
+
+static constexpr ASCIILiteral classBelowConstructorFunctionAskedInOneTest = R"IR(layout L0 kind=Instance name="Old" module=m0 constructor=f1 fields=[{key="note" declared={type=undefined|null|L0}}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Below" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=80 kind=Parameter
+typesite w1 module=m0 position=160 kind=Parameter
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f2
+    v3 = NewClass v2, v0, v1 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = Construct v0
+    v6 = Construct v4
+    v7 = NewClosure function=f3
+    v8 = NewClosure function=f4
+    v9 = Builtin builtin=Function
+    v10 = String string="return globalThis.register"
+    v11 = Construct v9, -, v10
+    v12 = Call v11
+    v13 = Call v12, -, v7, v8, v5, v6
+    v14 = Undefined
+    Return v14
+}
+function f1 name="Old" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Undefined
+    Return v1
+}
+function f2 name="Below" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="noteOf" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="note"
+    Return v1
+}
+function f4 name="forget" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w1}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Undefined
+    PropSet v0, v1 key="note"
+    Return v1
+}
+)IR"_s;
+
+static void checkGuardsOfClassAboveBeginWithThoseOfClassBelow(LoadedProgram& program, const LayoutData& above, const LayoutData& below)
+{
+    VM& vm = program.vm();
+    State& state = program.state();
+    ClassTable& classes = state.objects->classes;
+    AOT_TEST_CHECK(classes.assumedBaseOf(below) == &above);
+    AOT_TEST_CHECK(!classes.guardsHaveBegun(above) && !classes.guardsHaveBegun(below));
+
+    CountedClassGuards counted(state);
+    AOT_TEST_CHECK(counted.findCountWithGuardOfEach({ &above, &below }));
+    counted.checkEveryCountIsExact();
+
+    {
+        DeferGCForAWhile deferGC(vm);
+        classes.armMemberGuards(vm, below, ClassSide::Prototype, constructEmptyObject(program.realm()));
+    }
+    AOT_TEST_CHECK(classes.guardsHaveBegun(below));
+    AOT_TEST_CHECK(classes.guardsHaveBegun(above));
+    counted.classesWhoseGuardsHaveBegun.append(&above);
+    counted.classesWhoseGuardsHaveBegun.append(&below);
+    counted.checkEveryCountIsExact();
+}
+
+static void checkGuardsOfClassWrittenAboveBeginWithThoseOfClassBelow(LoadedProgram& program)
+{
+    ThreeClassesAskedInOneTest asked(program);
+    checkGuardsOfClassAboveBeginWithThoseOfClassBelow(program, *asked.above, *asked.below);
+}
+
+static void checkNamesOfConstructorFunctionAboveAreCountedFromFirstObjectOfClassBelow(LoadedProgram& program)
+{
+    State& state = program.state();
+    ClassTable& classes = state.objects->classes;
+    const LayoutData* above = nullptr;
+    const LayoutData* below = nullptr;
+    for (uint32_t index = 0; index < state.tables.numberOfLayoutIndices; ++index) {
+        if (const LayoutData* candidate = classes.classWithIndex(index))
+            (classes.isDefinedByClass(*candidate) ? below : above) = candidate;
+    }
+    AOT_TEST_CHECK(above && below && above->classData().guardsOfNamesAwaitBeginning);
+    std::optional<uint32_t> note = identifiersOf(state.instance).numberOf(Identifier::fromString(program.vm(), "note"_s).impl());
+    AOT_TEST_CHECK(note);
+
+    endClassGuardsOfName(state, *above, ClassSide::Prototype, *note);
+    checkGuardsOfClassAboveBeginWithThoseOfClassBelow(program, *above, *below);
+    AOT_TEST_CHECK(classes.classPrototypeIfExists(*above));
 }
 
 static constexpr ASCIILiteral birthBehindLookAtTwoNames = R"IR(layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
@@ -2652,6 +2749,8 @@ std::span<const NativeTest> constructorFunctionTests()
         { "constructor-functions/compiled-prototype-object-is-assigned-a-name-found-above-it"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsNameFoundAboveIt<WayToGetName::Assign>> },
         { "constructor-functions/one-word-counts-guards-of-several-classes"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkOneWordCountsGuardsOfSeveralClasses> },
         { "constructor-functions/guard-that-ends-ahead-of-the-first-object-is-counted-from-there"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkGuardThatEndsAheadOfFirstObjectIsCountedFromThere> },
+        { "constructor-functions/guards-of-a-class-above-begin-with-those-of-the-class-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkGuardsOfClassWrittenAboveBeginWithThoseOfClassBelow> },
+        { "constructor-functions/names-of-a-constructor-function-above-are-counted-from-the-first-object-of-the-class-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowConstructorFunctionAskedInOneTest, checkNamesOfConstructorFunctionAboveAreCountedFromFirstObjectOfClassBelow> },
         { "constructor-functions/word-of-the-whole-side-and-two-names-fails-until-the-guards-begin"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, birthBehindLookAtTwoNames, checkWordOfWholeSideAndTwoNamesFailsUntilGuardsBegin> },
         { "constructor-functions/compiled-prototype-object-gets-the-name-of-a-field-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsTheNameOfAFieldBelow> },
     };

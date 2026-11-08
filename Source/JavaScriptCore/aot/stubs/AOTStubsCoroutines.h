@@ -18,8 +18,8 @@ namespace JSC { namespace AOT {
 enum class PromiseHandler : uint8_t { OnFulfilled, OnRejected };
 enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueInModuleBody };
 enum class GeneratorSuspension : uint8_t { Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait };
-enum class StepConsumer : uint8_t { AsyncFunction, AsyncGenerator, AsyncFunctionAwaitingCall, AsyncGeneratorAwaitingCall };
-enum class NewGeneratorKind : uint8_t { Sync, Async };
+enum class StepConsumer : uint8_t { AsyncFunction, AsyncGenerator };
+enum class GeneratorFunctionOrigin : uint8_t { Program, Library };
 
 constexpr StubKey newPromise() { return StubKey(StubFamily::NewPromise); }
 constexpr StubKey promiseThen(PromiseHandler handler) { return StubKey(StubFamily::PromiseThen).withForm(static_cast<uint8_t>(handler)); }
@@ -37,23 +37,24 @@ constexpr StubKey stepAsyncGenerator(StepConsumer consumer) { return StubKey(Stu
 constexpr StubKey runAsyncGeneratorStep() { return StubKey(StubFamily::RunAsyncGeneratorStep); }
 constexpr StubKey stepAsyncIteratorInEngine() { return StubKey(StubFamily::StepAsyncIteratorInEngine); }
 constexpr StubKey newHeapFrame() { return StubKey(StubFamily::NewHeapFrame); }
-constexpr StubKey newAsyncGenerator() { return StubKey(StubFamily::NewAsyncGenerator); }
+constexpr StubKey isNotThenable() { return StubKey(StubFamily::IsNotThenable); }
+constexpr StubKey newAsyncGenerator(GeneratorFunctionOrigin origin) { return StubKey(StubFamily::NewAsyncGenerator).withForm(static_cast<uint8_t>(origin)); }
 
 static_assert(static_cast<unsigned>(PromiseHandler::OnRejected) + 1 == descriptorOf(StubFamily::PromiseThen).numberOfForms && exists(promiseThen(PromiseHandler::OnRejected)));
 static_assert(static_cast<unsigned>(AwaitedOperand::ValueInModuleBody) + 1 == descriptorOf(StubFamily::AwaitBySavingFrame).numberOfForms);
 static_assert(static_cast<unsigned>(GeneratorSuspension::AsyncYieldAfterAwait) + 1 == descriptorOf(StubFamily::SuspendGenerator).numberOfForms);
 static_assert(numberOfEnumerators<GeneratorStepCheck> == descriptorOf(StubFamily::StepGenerator).numberOfForms);
 static_assert(!static_cast<unsigned>(GeneratorStepCheck::IsUnmodifiedGenerator) && static_cast<unsigned>(GeneratorStepCheck::IsGenerator) == 1 && static_cast<unsigned>(GeneratorStepCheck::IsUnmodified) == 2 && static_cast<unsigned>(GeneratorStepCheck::None) == 3);
-static_assert(static_cast<unsigned>(StepConsumer::AsyncGeneratorAwaitingCall) + 1 == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
+static_assert(static_cast<unsigned>(StepConsumer::AsyncGenerator) + 1 == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
 static_assert(exists(newPromise()) && exists(returnAsyncResult()) && exists(awaitCallBySavingFrame()) && exists(suspendGenerator(GeneratorSuspension::AsyncYieldAfterAwait)));
 static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)));
 static_assert(exists(stepGenerator(GeneratorStepCheck::None)) && exists(enterSavedFrame()) && exists(restoreSavedFrameToStack()) && exists(enterGeneratorFrame()));
 static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunction)) && exists(stepAsyncGenerator(StepConsumer::AsyncGenerator)) && exists(runAsyncGeneratorStep()) && exists(stepAsyncIteratorInEngine()));
 static_assert(bodyOf(stepAsyncIteratorInEngine()) == runAsyncGeneratorStep());
-static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunctionAwaitingCall)) && exists(stepAsyncGenerator(StepConsumer::AsyncGeneratorAwaitingCall)));
 static_assert(exists(enterHandlerOfJob()) && bodyOf(enterHandlerOfJob()) == enterSavedFrame());
 static_assert(exists(awaitWithSavedFrame()) && bodyOf(awaitWithSavedFrame()) == awaitBySavingFrame(AwaitedOperand::Value) && !static_cast<unsigned>(AwaitedOperand::Value));
-static_assert(exists(newAsyncGenerator()) && exists(newHeapFrame()));
+static_assert(static_cast<unsigned>(GeneratorFunctionOrigin::Library) + 1 == descriptorOf(StubFamily::NewAsyncGenerator).numberOfForms);
+static_assert(exists(newAsyncGenerator(GeneratorFunctionOrigin::Program)) && exists(newAsyncGenerator(GeneratorFunctionOrigin::Library)) && exists(newHeapFrame()));
 
 inline constexpr StubRegister resumeModeRegister = StubRegister::T9;
 

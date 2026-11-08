@@ -50,6 +50,7 @@ enum class PropertyAnswerKind : uint8_t {
     FieldRemoval,
     NothingToRemove,
     ArrayLength,
+    LastIndexOfRegExp,
     TypedArrayLength,
     StringLength,
     ClosureLength,
@@ -73,6 +74,7 @@ struct PropertyAnswer {
     bool absentIsUndefined { false };
     bool emptySlotMayBeUndefined { false };
     bool undefinedNeedsNoStorage { false };
+    bool fieldTakesAnyValue { false };
     bool readsByteOffset { false };
     std::optional<std::pair<uint32_t, uint32_t>> orderWords { };
     bool didFlatten { false };
@@ -107,6 +109,7 @@ struct StoreQuery {
     UniquedStringImpl* uid;
     const PutPropertySlot& slot;
     PutMode mode;
+    std::optional<uint32_t> orderWordBefore { };
 };
 
 struct DeletionQuery {
@@ -168,6 +171,7 @@ private:
 
     PropertyCaches* m_caches { nullptr };
     JSCell* m_previous { nullptr };
+    UniquedStringImpl* m_previousSymbol { nullptr };
 };
 std::optional<PropertyOffset> findOffset(VM&, Structure*, UniquedStringImpl*, ChainWalkMode, unsigned& attributes);
 bool structureProvesOwnAbsence(VM&, JSCell* base, Structure*, UniquedStringImpl*, ChainWalkMode);

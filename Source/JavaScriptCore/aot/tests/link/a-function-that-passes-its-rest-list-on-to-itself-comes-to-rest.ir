@@ -3,7 +3,7 @@
 # OPTIONS: check=FlowFixpoint
 # RUN: link functions mechanisms=all
 # CHECK: function f1 callers-known
-# CHECK-NEXT: parameter 0 expected=undefined|true|i32|string proven=undefined|true|i32|string
+# CHECK-NEXT: parameter 0 expected=undefined|true|i32|string proven=undefined|true|int[0, 2147483647]|string
 
 variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0

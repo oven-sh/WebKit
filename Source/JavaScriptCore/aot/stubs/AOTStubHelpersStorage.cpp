@@ -186,7 +186,11 @@ static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::opti
 
     slowPath.append(jit.branch32(CCallHelpers::Above, neededLength.value_or(length), TrustedImm32(maxLengthForElementwiseCopy)));
     slowPath.append(branchIfBarrierIsNeeded(jit, array, scratch));
-    branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
+    if (growth.isOfExtraProperties) {
+        jit.load32(Address(array, JSCell::structureIDOffset()), scratch);
+        slowPath.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.headerOfExtraPropertiesWithElements))));
+    } else
+        branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
     loadAllocatorOfNextVector(jit, growth, neededLength, slowPath);
     allocateCell(jit, storage, allocator, scratch, slowPath);
 

@@ -1,0 +1,12 @@
+# The load has seen a road by which a native function hands out the global object, and names it among what is used at the start. The body of the program says nothing of it.
+# RUN: image
+# CHECK: flags {{*}}LetsGlobalObjectGo
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+usedatstart builtin=GlobalThis
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

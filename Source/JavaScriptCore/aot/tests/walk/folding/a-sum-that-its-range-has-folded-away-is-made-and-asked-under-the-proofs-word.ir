@@ -1,0 +1,34 @@
+# function over(x, y) { const sum = (x & 3) + (y & 3); return sum > 6; }
+# The range of the sum folds the comparison, and nothing else reads the sum. Under the proofs' word the sum is made all the same and asked for its range, from what its form says and not from the rule that gave the range.
+# The integer form of + tests nothing by itself: there the machine's answer is held against the sum of the same two as numbers.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: walk f1:Body mechanisms=all
+# CHECK: [[sum]]: int[0, 6] @Int32 = Add {{*}}form=Integers
+# CHECK-NEXT: CheckProof [[sum]] checkedType=int[0, 6] typeWithoutProof=i32 source=OtherOperation
+# RUN(EMIT): emit f1:Body mechanisms=all
+# EMIT: Int32 @[[sum]] = Add(
+# EMIT: Double @[[made]] = IToD(@[[sum]],
+# EMIT-NEXT: Int32 @[[holds]] = Equal({{*}}, @[[made]],
+# EMIT-NEXT: = Branch(@[[holds]],
+# EMIT: effects = Terminal|ControlDependent
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="over" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=3
+    v3 = BitAnd v0, v2
+    v4 = BitAnd v1, v2
+    v5 = Add v3, v4
+    v6 = Integer integer=6
+    v7 = Greater v5, v6
+    Return v7
+}

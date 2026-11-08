@@ -27,6 +27,7 @@ struct TestOfNumber {
 };
 bool walkStretchBehindTestsOfNumbers(Walker&, std::span<const TestOfNumber>, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm);
 uint32_t limitOfStretchOfNumbers(const Walker&, const BodyBlock&);
+std::optional<uint32_t> findPlaceBehindUpdateOfElement(Walker&, const BodyValue& read);
 Reference buildTestOfNumber(Walker&, Reference value, TypeID tested, Origin);
 Reference buildProofOfNumber(Walker&, Reference value, Reference test, Origin);
 

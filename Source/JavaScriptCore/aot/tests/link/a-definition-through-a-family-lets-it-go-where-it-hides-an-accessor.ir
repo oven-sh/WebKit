@@ -9,8 +9,8 @@
 # export const size = new Loud().size;   export const tag = p.tag;
 # Both answers are "own". One layout at a time Link lets a layout go where a definition finds an accessor above and no listed field. Five layouts and more are a family; there the definition went the way of a store,
 # no layout left, and whoever finds the accessor above objects of Loud or of P could call it without a look at the object.
-# Now the rule for the access itself asks: a Define through a family lets the family go where one of its layouts has such an accessor; through lost objects, where any class declares a member under the key.
-# It does not hang on who laid the ties of the family first, a store or a definition.
+# Now how a value is laid is part of the name of the node that it is laid through: a definition and an assignment through one family, or through the same lost objects, share no node and no ties,
+# and the tie of a definition to a layout with such an accessor lets that layout go and enters no setter. It does not hang on who came first, a store or a definition.
 # L4 = Loud, L7 = P
 # OPTIONS: mechanisms=all exclude=CodeOutsideImage
 # RUN: link layouts

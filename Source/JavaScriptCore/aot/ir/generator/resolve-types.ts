@@ -20,6 +20,7 @@ import {
   functionLocalIdKinds,
   generatedEnumNames,
   innermostKindOf,
+  isWideFlagWord,
   nameOf,
   placedWordKinds,
   recordForms,
@@ -672,6 +673,7 @@ function computeAbiLayout(record: SchemaRecord): AbiLayout {
     if (kind.tag === "Scalar" && kind.scalar === "UInt8") element = { size: 1, alignment: 1 };
     else if (kind.tag === "Scalar" && (kind.scalar === "UInt64" || kind.scalar === "Double"))
       element = { size: 8, alignment: 8 };
+    else if (kind.tag === "Flags" && isWideFlagWord(kind.type)) element = { size: 8, alignment: 8 };
     else if (kind.tag === "Record" && kind.record.abiLayout !== null) element = kind.record.abiLayout;
     size = roundUp(size, element.alignment);
     offsets.push(size);

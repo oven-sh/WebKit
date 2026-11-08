@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDs.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
@@ -46,8 +47,25 @@ private:
     bool answersWithString() const { return m_method == CharacterReadInWalkStrings::CharAt || m_method == CharacterReadInWalkStrings::At || m_method == CharacterReadInWalkStrings::Element; }
     bool leavesCodeUnit() const { return answersWithString() || m_method == CharacterReadInWalkStrings::CharCodeAt; }
 
-    Reference operate(Opcode opcode, Reference left, Reference right = { }) { return buildOperatorForStrings(m_walker, opcode, left, right, m_origin); }
+    bool turnMayBeginAgain() const { return m_walker.mayBeginTurnAgainInClosedCopy() && m_walker.opensGuesses(); }
+    Reference operate(Opcode opcode, Reference left, Reference right = { })
+    {
+        Walker::InFrontOfTypedCopy inFront(m_walker, m_isReadInFront);
+        return buildOperatorForStrings(m_walker, opcode, left, right, m_origin);
+    }
+    Reference proveBehind(Reference value, Reference test, uint32_t operandIndex)
+    {
+        Walker::InFrontOfTypedCopy inFront(m_walker, m_isReadInFront);
+        return buildProofBehindTestForStrings(m_walker, value, test, operandIndex, m_origin);
+    }
     Reference integer(int64_t value) { return integerForStrings(m_walker, value); }
+    bool textMayBeReadInFront()
+    {
+        Reference flat = flatStringInSight(m_walker, m_stringRead);
+        if (flat && m_walker.standsInFrontOfTypedCopy(flat))
+            return true;
+        return m_walker.goOnInFrontOfTypedCopyWhereItsFirstTurnBegins() || !flat;
+    }
 
     Reference valueOutside()
     {
@@ -68,6 +86,22 @@ private:
     {
         if (!test || m_walker.isUnreachable())
             return;
+        if (!m_outside && turnMayBeginAgain() && m_method != CharacterReadInWalkStrings::CharAt) {
+            m_isReadInFront = m_isReadInFront && m_walker.branchInFrontOfTypedCopy(test, true);
+            if (!m_isReadInFront) {
+                BlockID inside = m_walker.addBlock();
+                BlockID leaving = m_walker.addBlock(BlockFrequency::Rare);
+                m_walker.letGuessFailUnasked(leaving, m_origin);
+                m_walker.branch(test, inside, leaving);
+                m_walker.continueIn(leaving);
+                if (!m_walker.isUnreachable())
+                    m_walker.beginTurnAgainInClosedCopy();
+                m_walker.continueIn(inside);
+            }
+            m_walker.noteGuessOpened();
+            return;
+        }
+        m_isReadInFront = false;
         BlockID passed = m_walker.addBlock();
         if (!m_outside)
             m_outside = m_walker.addBlock(BlockFrequency::Unlikely);
@@ -82,7 +116,29 @@ private:
 
     Reference codeUnitAt(Reference position)
     {
-        return buildCodeUnitOfString(m_walker, m_stringRead, placeInStringRead(position), m_origin);
+        Reference place = placeInStringRead(position);
+        Walker::InFrontOfTypedCopy inFront(m_walker, m_isReadInFront);
+        return buildCodeUnitOfString(m_walker, m_stringRead, place, m_origin);
+    }
+
+    Reference textOfCodeUnit(Reference codeUnit)
+    {
+        const BuiltinTable& table = m_walker.program().builtins();
+        for (BuiltinOverloadID id : table.overloadIDsOf(table.canonicalID(Builtins::StringFromCharCode))) {
+            const BuiltinOverload& overload = table.at(id);
+            if (overload.mode != BuiltinCallMode::Call || overload.code.implementation.inlineBuiltin != InlineBuiltin::StringFromCharCode)
+                continue;
+            Draft call(Opcode::CallInline, m_origin);
+            call.setInlineBuiltin(InlineBuiltin::StringFromCharCode);
+            call.setOverload(id);
+            call.setArgumentsOperands(std::array { codeUnit });
+            if (m_walker.isUnreachable())
+                return { };
+            m_walker.chooseConservativeFields(call);
+            Effects ofPiece = declaredBoundInTable(Opcode::Substring);
+            return m_walker.build(WTF::move(call), &ofPiece);
+        }
+        return { };
     }
 
     Reference placeInStringRead(Reference position)
@@ -108,6 +164,7 @@ private:
     Reference m_length;
     Origin m_origin;
     BlockID m_outside;
+    bool m_isReadInFront { false };
 };
 
 } // anonymous namespace
@@ -172,6 +229,9 @@ void BuilderOfCharacterRead::readInside(Reference position, std::array<Reference
         values[0] = values[1];
         return;
     }
+    values[0] = values[1] && m_walker.isInLoop() ? textOfCodeUnit(values[1]) : Reference();
+    if (values[0] || m_walker.isUnreachable())
+        return;
     Reference place = placeInStringRead(position);
     values[0] = buildPieceOfString(m_walker, m_stringRead, place, operate(Opcode::Add, place, integer(1)), m_origin);
 }
@@ -184,9 +244,9 @@ void BuilderOfCharacterRead::bindAndNote(Reference given, Reference codeUnit)
     NotesOfStrings& notes = notesOfStrings(m_walker);
     uint32_t record = given.id().index();
     if (m_walker.keepsLogsForUndo())
-        notes.codeUnitsChanged.append({ record, (answersWithString() ? notes.codeUnitsBesideCharacters : notes.codeUnitsBesideCharCodes).get(record), answersWithString() });
+        notes.codeUnitsChanged.append({ record, (answersWithString() ? notes.codePointsBesideCharacters : notes.codeUnitsBesideCharCodes).get(record), answersWithString() });
     if (answersWithString())
-        notes.codeUnitsBesideCharacters.set(record, codeUnit);
+        notes.codePointsBesideCharacters.set(record, codeUnit);
     else
         notes.codeUnitsBesideCharCodes.set(record, codeUnit);
 }
@@ -231,6 +291,27 @@ bool BuilderOfCharacterRead::build(Reference position)
     if (!position || !types.at(m_walker.typeOf(position)).isNumber())
         return false;
 
+    bool asksForNumber = m_method == CharacterReadInWalkStrings::CharCodeAt || m_method == CharacterReadInWalkStrings::CodePointAt;
+    Known place = primitiveKnownForStrings(m_walker, position);
+    Reference beside = asksForNumber && place.kind() == Known::Kind::Number && !place.asNumber() ? codePointOfCharacterInSight(m_walker, m_string) : Reference();
+    if (beside && types.at(m_walker.typeOf(beside)).isInteger() && types.at(m_walker.typeOf(beside)).integers.minimum >= 0) {
+        Reference read = beside;
+        if (m_method == CharacterReadInWalkStrings::CharCodeAt && types.at(m_walker.typeOf(beside)).integers.maximum > 0xFFFF) {
+            std::array<Reference, 1> unit;
+            bool isBuilt = buildArmsForStrings(m_walker, operate(Opcode::Less, beside, integer(0x10000)), BlockFrequency::Unlikely, [&](std::span<Reference> results) {
+                results[0] = operate(Opcode::BitAnd, beside, integer(0xFFFF));
+            }, [&](std::span<Reference> results) {
+                Reference bits = operate(Opcode::BitAnd, operate(Opcode::RShift, operate(Opcode::Sub, beside, integer(0x10000)), integer(10)), integer(0x3FF));
+                results[0] = operate(Opcode::Add, bits, integer(0xD800));
+            }, unit);
+            if (!isBuilt)
+                return true;
+            read = unit[0];
+        }
+        bindForStrings(m_walker, m_value.id(), read, m_origin);
+        return true;
+    }
+
     if (std::optional<PieceOfString> piece = pieceInSight(m_walker, m_string)) {
         m_stringRead = piece->string;
         m_startOfPiece = piece->start;
@@ -240,7 +321,18 @@ bool BuilderOfCharacterRead::build(Reference position)
     if (!m_length)
         return true;
 
-    if (!types.at(m_walker.typeOf(position)).isInteger()) {
+    if (m_method == CharacterReadInWalkStrings::Element && !types.at(m_walker.typeOf(position)).isInteger()) {
+        Reference truncated = operate(Opcode::ToInt32, position);
+        Reference isIndex = truncated ? operate(Opcode::StrictEq, truncated, position) : Reference();
+        if (!isIndex)
+            return true;
+        if (Known decided = primitiveKnownForStrings(m_walker, isIndex); decided.kind() == Known::Kind::Boolean && !decided.asBoolean()) {
+            bindOutside();
+            return true;
+        }
+        goOnWhere(isIndex);
+        position = truncated;
+    } else if (!types.at(m_walker.typeOf(position)).isInteger()) {
         Reference root = rootForStrings(m_walker, position);
         if (!root.isValue() || m_walker.code().at(root.id()).opcode != Opcode::ToIntegerOrInfinity)
             position = operate(Opcode::ToIntegerOrInfinity, position);
@@ -278,19 +370,22 @@ bool BuilderOfCharacterRead::build(Reference position)
 
     bool isInside = type.integers.minimum >= 0 && (isBelowLength || nameProvesPositionBelowLengthForStrings(m_walker, position, m_string));
     isInside = isInside || (m_method != CharacterReadInWalkStrings::At && type.integers.minimum >= 0 && testOfBodyHoldsPositionOfCharacterReadBelowLength(m_walker, m_value));
-    if (isInside && !m_walker.readsStorageWhereItIsUsed())
+    if (isInside && !m_walker.testsEveryPosition())
         m_walker.count(StatisticID::RangeChecksRemoved);
     if (!isInside) {
+        m_isReadInFront = m_method == CharacterReadInWalkStrings::CharCodeAt && !m_outside && turnMayBeginAgain() && m_walker.standsInFrontOfTypedCopy(position)
+            && m_walker.standsInFrontOfTypedCopy(m_length) && m_walker.standsInFrontOfTypedCopy(m_stringRead) && (!m_startOfPiece || m_walker.standsInFrontOfTypedCopy(m_startOfPiece))
+            && textMayBeReadInFront();
         if (type.integers.minimum < 0 && type.isInt32())
             position = operate(Opcode::URShift, position, integer(0));
         else if (type.integers.minimum < 0) {
             Reference isNotNegative = operate(Opcode::LessEq, integer(0), position);
             goOnWhere(isNotNegative);
-            position = buildProofBehindTestForStrings(m_walker, position, isNotNegative, OperandIndex::LessEq::right, m_origin);
+            position = proveBehind(position, isNotNegative, OperandIndex::LessEq::right);
         }
         Reference isBelow = operate(Opcode::Less, position, m_length);
         goOnWhere(isBelow);
-        position = buildProofBehindTestForStrings(m_walker, position, isBelow, OperandIndex::Less::left, m_origin);
+        position = proveBehind(position, isBelow, OperandIndex::Less::left);
     }
     if (position && !m_walker.isUnreachable() && !types.at(m_walker.typeOf(position)).isInt32())
         position = operate(Opcode::ToInt32, position);
@@ -308,7 +403,7 @@ static bool indexesAreAbsentAboveStringsForStringCharacters(const Walker& walker
     const BuiltinTable& builtins = program.builtins();
     BuiltinID holder = builtins.canonicalID(Builtins::StringPrototype);
     while (true) {
-        if (!builtins.closesIndexKeys(holder) || !builtins.hasLockedPrototypeLink(holder) || program.isSomeNameOpenedOn(holder))
+        if (!builtins.closesIndexKeys(holder) || !builtins.hasLockedPrototypeLink(holder))
             return false;
         const Builtin& object = builtins.at(holder);
         switch (object.prototypeLink) {
@@ -325,7 +420,9 @@ static bool indexesAreAbsentAboveStringsForStringCharacters(const Walker& walker
 
 bool buildCharacterByIndex(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
-    if (!isProvenString(walker, inputs.typeOf(value.objectOperand())) || !walker.types().at(inputs.typeOf(value.propertyOperand())).isInteger())
+    Type key = walker.types().at(inputs.typeOf(value.propertyOperand()));
+    bool standsInLoop = walker.isInLoop() || walker.currentBodyIndex().loopDepthOf(walker.currentBodyIndex().blockOf(value.id()));
+    if (!isProvenString(walker, inputs.typeOf(value.objectOperand())) || !(standsInLoop ? key.isNumber() : key.isInteger()))
         return false;
     if (!indexesAreAbsentAboveStringsForStringCharacters(walker))
         return false;
@@ -344,40 +441,56 @@ bool buildCharacterByIndex(Walker& walker, const BodyValue& value, const InputsO
     return true;
 }
 
+static std::optional<CharacterReadInWalkStrings> characterReadByMethod(InlineBuiltin method)
+{
+    switch (method) {
+    case InlineBuiltin::StringCharCodeAt:
+        return CharacterReadInWalkStrings::CharCodeAt;
+    case InlineBuiltin::StringCodePointAt:
+        return CharacterReadInWalkStrings::CodePointAt;
+    case InlineBuiltin::StringCharAt:
+        return CharacterReadInWalkStrings::CharAt;
+    case InlineBuiltin::StringAt:
+        return CharacterReadInWalkStrings::At;
+    default:
+        return std::nullopt;
+    }
+}
+
+bool readsCharacterOfText(InlineBuiltin method)
+{
+    return !!characterReadByMethod(method);
+}
+
 bool buildCharacterReadByMethod(Walker& walker, const CallByOneRow& call)
 {
-    if (!call.receiver || call.arguments.size() > 1 || !isProvenString(walker, walker.typeOf(call.receiver)))
+    std::optional<CharacterReadInWalkStrings> method = characterReadByMethod(*call.codeInLine);
+    if (!method || !call.receiver || call.arguments.size() > 1 || !isProvenString(walker, walker.typeOf(call.receiver)))
         return false;
 
-    CharacterReadInWalkStrings method;
-    switch (*call.codeInLine) {
-    case InlineBuiltin::StringCharCodeAt:
-        method = CharacterReadInWalkStrings::CharCodeAt;
-        break;
-    case InlineBuiltin::StringCodePointAt:
-        method = CharacterReadInWalkStrings::CodePointAt;
-        break;
-    case InlineBuiltin::StringCharAt:
-        method = CharacterReadInWalkStrings::CharAt;
-        break;
-    case InlineBuiltin::StringAt:
-        method = CharacterReadInWalkStrings::At;
-        break;
-    default:
-        return false;
-    }
-    BuilderOfCharacterRead read(walker, call.call, method, call.receiver, call.origin);
+    BuilderOfCharacterRead read(walker, call.call, *method, call.receiver, call.origin);
     if (!read.build(call.arguments.empty() ? walker.constant(PrimitiveKnownToFolding::undefined()) : call.arguments[0]))
         return false;
     return true;
 }
 
-Reference codeUnitOfCharacterInSight(Walker& walker, Reference character)
+void noteCodePointBesideCharacter(Walker& walker, Reference character, Reference codePoint)
+{
+    if (walker.isUnreachable() || !character || !character.isValue() || !codePoint)
+        return;
+    NotesOfStrings& notes = notesOfStrings(walker);
+    uint32_t record = character.id().index();
+    if (walker.keepsLogsForUndo())
+        notes.codeUnitsChanged.append({ record, notes.codePointsBesideCharacters.get(record), true });
+    notes.codePointsBesideCharacters.set(record, codePoint);
+}
+
+Reference codePointOfCharacterInSight(Walker& walker, Reference character)
 {
     Reference root = rootForStrings(walker, character);
     if (!root.isValue() || !walker.types().at(walker.typeOf(root)).hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined))
         return { };
-    return notesOfStrings(walker).codeUnitsBesideCharacters.get(root.id().index());
+    return notesOfStrings(walker).codePointsBesideCharacters.get(root.id().index());
 }
 
 Reference codeUnitOfCharCodeInSight(Walker& walker, Reference number)

@@ -157,6 +157,9 @@ static Typed::DistancesByShape checkedDistancesIn(Typed::DistanceForm form, std:
 {
     Typed::DistancesByShape distances = Typed::encodeDistancesByShape(members, form);
     AOT_TEST_CHECK(distances.form == form || (form == Typed::DistanceForm::HashedTable && distances.form == Typed::DistanceForm::PagedTable));
+    AOT_TEST_CHECK(distances.lastShape + 1 - distances.numberOfShapes == std::ranges::min(members, { }, [](const Typed::DistanceOfShapes& member) {
+        return member.shapes.first;
+    }).shapes.first);
     for (const Typed::DistanceOfShapes& member : members) {
         for (uint32_t shape = member.shapes.first; shape < member.shapes.end(); ++shape)
             AOT_TEST_CHECK(distances.distanceOf(shape) == member.distance);

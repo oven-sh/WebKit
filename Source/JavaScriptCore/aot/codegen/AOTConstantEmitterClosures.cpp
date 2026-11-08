@@ -112,7 +112,8 @@ CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
 {
     FunctionID function = value->function();
     std::span<const ValueID> captures = value->capturesOperands();
-    RELEASE_ASSERT(captures.size() == m_program.at(function).captures.size() && captures.size() <= Closure::maxNumberOfCaptures);
+    RELEASE_ASSERT((captures.empty() && value->closureForm() == ClosureForm::Singleton) || captures.size() == m_program.at(function).captures.size());
+    RELEASE_ASSERT(captures.size() <= Closure::maxNumberOfCaptures);
 
     CodeUnit entry = conventions().closureEntryOf(function);
     if (!conventions().exists(entry))
@@ -254,7 +255,7 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
     Vector<LValue, 4> captureWords = captureWordsBySlot(value, request);
     size_t numberOfWordsStored = 0;
     if (generator().takesOpenForm(value, StateOfKnowledge::SlimInFrame)) {
-        CodeGenerator::InitializationScope scope(generator());
+        CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
         emitter<CellAllocationEmitter>().storeHeader(cell, bitOr(loadImmutable64(AOT_INSTANCE_OFFSET(slimClosureHeaders) + request.kind.slimClosureKind() * sizeof(uint64_t)), integer(stateOfFrameCellInHeader)));
         storeField(cell, m_heaps.AOTSlimClosure_word, closureWordOf(request));
         storeThatClosureInFrameHasNoCopyInHeap(m_out, m_heaps, cell, SlimClosure::offsetOfCaptures(), count);
@@ -267,7 +268,7 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
         cell = CellPointer(emitter<RuntimeCallEmitter>().callStubWithoutSite(newSlimClosureInFrame(request.kind.slimClosureKind(), count), operands.span()).first);
     }
     {
-        CodeGenerator::InitializationScope scope(generator());
+        CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
         storeClosureCaptureWords(m_out, cell, captureWords.span(), m_heaps.AOTSlimClosure_captures, numberOfWordsStored);
     }
     return cell;
@@ -334,7 +335,7 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
     }
 
     {
-        CodeGenerator::InitializationScope scope(generator());
+        CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(isOnHeap));
         if (!isOnHeap || structure) {
             Integer header = loadImmutable64(AOT_INSTANCE_OFFSET(closures.closureHeaders) + structure * sizeof(uint64_t));
             cellAllocation.storeHeader(cell, isOnHeap ? header : bitOr(header, integer(stateOfFrameCellInHeader)));

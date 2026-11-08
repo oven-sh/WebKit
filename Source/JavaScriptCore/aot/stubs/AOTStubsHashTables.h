@@ -14,6 +14,7 @@
 namespace JSC { namespace AOT {
 
 enum class KeyComparison : uint8_t;
+enum class TableMethod : uint8_t;
 
 struct HashTableRegisterPlan {
     StubRegister hash;
@@ -64,6 +65,7 @@ struct HashTableExits {
     JumpList foundInCompactTable;
     JumpList foundAmongNarrowKeys;
     JumpList foundAmongWideKeys;
+    JumpList foundInImage;
     JumpList absent;
     JumpList hasNoStorage;
     InsertionPointExits insertionPoints;
@@ -72,6 +74,8 @@ struct HashTableExits {
 
 ptrdiff_t offsetOfHashTableStorage();
 void emitFindInHashTable(StubAssembler&, const HashTableRegisters&, HashTableLookup, HashTableExits&);
+void emitFindLatin1CharactersInHashTable(StubAssembler&, const HashTableRegisters&, GPRReg length, HashTableExits&);
+void emitMethodOfTable(StubAssembler&, TableMethod, const HashTableRegisters&);
 void emitLoadTagOfSlot(StubAssembler&, GPRReg hash);
 void emitMarkThatKeyLeftHomeSlot(StubAssembler&, BaseIndex tagAtHome);
 void emitHashOfBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch, GPRReg scratch2);

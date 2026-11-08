@@ -1,0 +1,17 @@
+# the payload leaves the empty value out: whoever takes the result would take "no hit" for a value
+# RUN: verify-code
+# CHECK: the payload says more of what a lookup finds than that it is a value or absent
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: anything @JSValue = GetValueAtSiteOrAbsent v0 key="x" valueType=anything traits=[mayTouchMemory]
+#     Return v1
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+entry module=m0

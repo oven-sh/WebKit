@@ -10,7 +10,7 @@
 # LATE-COUNT-2: CheckInitialized
 # `var count = 0`: the allocation lists undefined, and it stays in the type of the slot.
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: field L0.2 @"2" proven=undefined|i32
+# FIELDS: field L0.2 @"2" proven=undefined|int[0, 2147483647]
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything|absent} flags=[IsImmutable] variableName="first"}, {key=@"1" declared={type=anything|absent} flags=[IsImmutable] variableName="limit"}, {key=@"2" declared={type=anything} variableName="count"}] ownFieldCount=3
 module m0 path="main.js" displayPath="main.js" body=f3

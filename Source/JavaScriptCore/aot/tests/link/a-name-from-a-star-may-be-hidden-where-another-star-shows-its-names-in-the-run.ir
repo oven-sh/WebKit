@@ -3,10 +3,10 @@
 # above.mjs: export * from "./barrel.mjs": its one star leads to names that show in the run
 # the controls: the same name read off the object of first.mjs itself, and off still.mjs, whose one star leads to a table alone
 # RUN: link variables mechanisms=all
-# CHECK: variable g1 proven=undefined|i32
-# CHECK: variable g2 proven=i32 writers-known
-# CHECK: variable g3 proven=i32 writers-known
-# CHECK: variable g4 proven=undefined|i32
+# CHECK: variable g1 proven=undefined|int[0, 2147483647]
+# CHECK: variable g2 proven=int[0, 2147483647] writers-known
+# CHECK: variable g3 proven=int[0, 2147483647] writers-known
+# CHECK: variable g4 proven=undefined|int[0, 2147483647]
 
 module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}]
 module m1 path="/barrel.mjs" displayPath="barrel.mjs" body=f1 requests=[{target=m2 completes=true}, {target=m4 isDynamicStarExport=true completes=true}] exports=[{name="level" variable=g0 isFromStarExport=true}]

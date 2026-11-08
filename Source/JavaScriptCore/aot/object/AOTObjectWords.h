@@ -10,6 +10,7 @@
 #include "AOTCellFormat.h"
 #include "AOTFunctionData.h"
 #include "Structure.h"
+#include <span>
 #include <stddef.h>
 #include <stdint.h>
 #include <type_traits>
@@ -120,6 +121,7 @@ struct PrototypeTransition {
 static constexpr uint32_t numberOfPrototypeTransitions = 1024;
 static constexpr unsigned prototypeTransitionHashShift = 6;
 static constexpr uint32_t indexOfPrototypeTransition(uint32_t before, EncodedJSValue prototype) { return ((before ^ static_cast<uint32_t>(prototype)) >> prototypeTransitionHashShift) % numberOfPrototypeTransitions; }
+static constexpr uint32_t maxIndexOfFirstElementStoredContiguously = 7;
 
 struct CopyWithNames {
     uint32_t structureOfSource;
@@ -238,10 +240,44 @@ struct PrivateFieldPlace {
 };
 constexpr uint32_t numberOfPrivateFieldPlaces = 64;
 constexpr unsigned shiftOfPrivateFieldPlace = 5;
-constexpr size_t indexOfPrivateFieldPlace(uint32_t layoutOfObject, uint32_t declaredField) { return (layoutOfObject ^ declaredField) & (numberOfPrivateFieldPlaces - 1); }
+constexpr unsigned shiftOfFieldInIndexOfPrivateFieldPlace = 3;
+constexpr size_t indexOfPrivateFieldPlace(uint32_t layoutOfObject, uint32_t declaringClass, uint32_t declaredField) { return ((layoutOfObject + 3 * declaringClass) ^ declaredField << shiftOfFieldInIndexOfPrivateFieldPlace) & (numberOfPrivateFieldPlaces - 1); }
+constexpr uint32_t layoutHasNoPlaceForPrivateField = 1u << 31;
+
+struct StructuresOfHeir {
+    static constexpr unsigned numberThatPass = 4;
+    static constexpr unsigned numberRefused = 2;
+
+    static constexpr ptrdiff_t offsetOfOneThatPasses(unsigned index) { return offsetof(StructuresOfHeir, thatPass) + index * sizeof(uint32_t); }
+    static constexpr ptrdiff_t offsetOfOneRefused(unsigned index) { return offsetof(StructuresOfHeir, refused) + index * sizeof(uint32_t); }
+    static constexpr ptrdiff_t offsetOfDisplacementOfField(unsigned field) { return sizeof(StructuresOfHeir) + field * sizeof(int32_t); }
+    static constexpr size_t sizeWithDisplacementsOfFields(size_t numberOfFields) { return sizeof(StructuresOfHeir) + numberOfFields * sizeof(int32_t); }
+
+    bool holdsNoStructure() const { return !thatPass[0] && !refused[0]; }
+    std::span<int32_t> displacementsOfFields(size_t numberOfFields) { return { reinterpret_cast<int32_t*>(this + 1), numberOfFields }; }
+
+    void layInFront(uint32_t structureID, bool passes)
+    {
+        uint32_t* words = passes ? thatPass : refused;
+        for (unsigned index = (passes ? numberThatPass : numberRefused) - 1; index; --index)
+            words[index] = words[index - 1];
+        words[0] = structureID;
+    }
+
+    void layAtBack(uint32_t structureID, bool passes)
+    {
+        (passes ? thatPass[numberThatPass - 1] : refused[numberRefused - 1]) = structureID;
+    }
+
+    uint32_t thatPass[numberThatPass];
+    uint32_t refused[numberRefused];
+};
+static_assert(sizeof(StructuresOfHeir) == (StructuresOfHeir::numberThatPass + StructuresOfHeir::numberRefused) * sizeof(uint32_t) && !StructuresOfHeir::offsetOfOneThatPasses(0));
+static_assert(std::is_trivially_default_constructible_v<StructuresOfHeir> && std::is_standard_layout_v<StructuresOfHeir>);
 
 struct ClassWords {
     JSCell** classPrototypes;
+    uint8_t* structuresOfHeirs;
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
     const PrototypeOfClassObject* prototypesOfClassObjects;
     PrivateFieldPlace* privateFieldPlaces;

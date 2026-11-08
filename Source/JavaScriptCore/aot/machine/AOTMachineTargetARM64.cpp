@@ -141,21 +141,6 @@ static bool arm64TargetAddressAcceptsBase(const Operation& access, const Operati
     return distance >= -arm64TargetMaxDistanceFromFrameAddress && distance <= arm64TargetMaxDistanceFromFrameAddress;
 }
 
-static bool arm64TargetSwitchHasDenseRun(std::span<const int64_t> values)
-{
-    for (size_t begin = 0; begin + minCasesForJumpTable <= values.size(); ++begin) {
-        size_t numberOfCases = 1;
-        for (; numberOfCases < minCasesForJumpTable; ++numberOfCases) {
-            uint64_t distanceToNext = static_cast<uint64_t>(values[begin + numberOfCases]) - static_cast<uint64_t>(values[begin]);
-            if (distanceToNext >= maxEntriesOfJumpTablePerCase * (numberOfCases + 1))
-                break;
-        }
-        if (numberOfCases == minCasesForJumpTable)
-            return true;
-    }
-    return false;
-}
-
 RegisterFile registerFileFor(const ProcedureTraits& traits)
 {
     if (traits.savesFrameOnSuspend) {
@@ -237,6 +222,7 @@ bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operatio
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
         return childIndex == 1 && constant.hasInt32();
 
     case Load8Z:
@@ -314,7 +300,7 @@ unsigned numberOfScratchGPRsOf(const ProcedureTraits&, const Operation& operatio
 {
     if (operation.opcode() != Switch)
         return 0;
-    return arm64TargetSwitchHasDenseRun(operation.switchData().caseValues) ? 1 : 0;
+    return operation.switchData().caseValues.size() >= minCasesForJumpTable ? 1 : 0;
 }
 
 uint32_t trapReach()

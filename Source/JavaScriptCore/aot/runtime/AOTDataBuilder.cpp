@@ -52,6 +52,7 @@ struct Builder {
     bool dataIsOutsideHeap { JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(data.data())) };
     uint32_t allocationOfReferences { UINT32_MAX };
     const uint32_t* references { nullptr };
+    uint32_t nodeWithOwnStorage { UINT32_MAX };
 };
 
 struct ArrayNode {
@@ -281,7 +282,8 @@ static NEVER_INLINE JSArray* buildArrayAsRealmDoes(Builder& builder, const Array
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t count = static_cast<uint32_t>(node.words.size());
     size_t firstRoot = builder.roots.size();
-    if (!node.holdsRawDoubles()) {
+    bool wordsAreInt32s = node.isStorage && node.indexingType == ArrayWithInt32;
+    if (!node.holdsRawDoubles() && !wordsAreInt32s) {
         appendValues(builder, node.words);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
@@ -298,9 +300,13 @@ static NEVER_INLINE JSArray* buildArrayAsRealmDoes(Builder& builder, const Array
         memcpySpan(unsafeMakeSpan(array->butterfly()->contiguousDouble().data(), count), spanReinterpretCast<const double>(node.words));
         return array;
     }
+    if (wordsAreInt32s && hasInt32(createdType)) {
+        memcpySpan(unsafeMakeSpan(reinterpret_cast<uint64_t*>(array->butterfly()->contiguousInt32().data()), count), node.words);
+        return array;
+    }
     uint32_t numberOfHoles = 0;
     for (uint32_t index = 0; index < count; ++index) {
-        JSValue element = node.holdsRawDoubles() ? numberOrHole(node.words[index]) : builder.roots.at(firstRoot + index);
+        JSValue element = node.holdsRawDoubles() ? numberOrHole(node.words[index]) : wordsAreInt32s ? JSValue::decode(node.words[index]) : builder.roots.at(firstRoot + index);
         numberOfHoles += !element;
         array->initializeIndex(initializationScope, index, element, createdType);
     }
@@ -417,7 +423,7 @@ static JSObject* buildNode(Builder& builder, uint32_t first)
     RELEASE_ASSERT(first < builder.data.size());
     const uint64_t* node = builder.data.data() + first;
     DataNodeHeader header = DataNodeHeader::decode(*node);
-    if (header.kind() == DataNodeHeader::Kind::Array) {
+    if (header.kind() == DataNodeHeader::Kind::Array && first != builder.nodeWithOwnStorage) {
         ArrayNode array = arrayNodeAt(node, header);
         if (JSArray* created = tryCreateArrayAroundStorage(builder, array))
             return created;
@@ -469,10 +475,12 @@ JSObject* tryBuildData(JSGlobalObject* realm, State& state, const DataRequest& r
 {
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (request.sharedStorageOffset == DataRequest::noSharedStorage) {
+    if (request.sharedStorageOffset == DataRequest::noSharedStorage || request.sharedStorageOffset == DataRequest::rootHasOwnStorage) {
         DeferGC deferGC(vm);
         MarkedArgumentBuffer roots;
         Builder builder { realm, vm, state, state.tables.data(), roots };
+        if (request.sharedStorageOffset == DataRequest::rootHasOwnStorage)
+            builder.nodeWithOwnStorage = request.root;
         JSObject* root = buildNode(builder, request.root);
         vm.mutatorFence();
         RELEASE_AND_RETURN(scope, root);

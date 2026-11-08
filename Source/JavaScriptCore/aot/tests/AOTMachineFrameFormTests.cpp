@@ -917,6 +917,51 @@ static void testMachineFrameFormManyPlacesInFrameKeepRecordBesideSuchGenerator()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 30 }) == 12 * 30 + 78);
 }
 
+static void testMachineFrameFormSavesOfRareRegionArePushedAndPopped()
+{
+    constexpr uint64_t a = 0x3333444455550001ull;
+    constexpr uint64_t b = 0x3333444455550020ull;
+    TestProcedure test(traitsOfFrameFormTest(true, true));
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    Operation* first = test.argumentGPR(0);
+    Operation* second = test.argumentGPR(1);
+    Block* slow = out.newBlock();
+    Block* done = out.newBlock();
+    MacroAssembler::Label beginOfCall;
+    MacroAssembler::Label endOfCall;
+
+    out.branch(out.testNonZero64(first, out.constInt64(1)), rareEdge(slow), normalEdge(done));
+    out.appendTo(slow);
+    RegisterFile file = registerFileFor(proc.traits());
+    RegisterMask clobbered = (file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP)) & ~file.calleeSaved;
+    PatchOperation* call = out.patch(Void);
+    call->clobberLate(clobbered);
+    call->setGenerator([&, clobbered](CCallHelpers& jit, const PatchParameters& params) {
+        AOT_TEST_CHECK(params.frameIsSetUp());
+        beginOfCall = jit.label();
+        forEachRegister(clobbered, [&](Reg reg) {
+            if (reg.isGPR())
+                jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(poison)), reg.gpr());
+        });
+        endOfCall = jit.label();
+    });
+    out.jump(done);
+    out.appendTo(done);
+    out.ret(out.sub(first, second));
+    compileOrFail(test);
+
+    AOT_FRAME_FORM_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::RareRegions && proc.frameRanges().size() == 1);
+    AOT_FRAME_FORM_TEST_CHECK(test, proc.allocation().spills().size() == 2 && proc.allocation().spills()[0].isSaveInRareRegion && proc.allocation().spills()[1].isSaveInRareRegion);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(a, b) == a - b);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(a - 1, b) == a - 1 - b);
+#if CPU(X86_64)
+    AOT_FRAME_FORM_TEST_CHECK(test, !proc.frame().hasFrameRecord());
+    AOT_FRAME_FORM_TEST_CHECK(test, !MacroAssembler::differenceBetween(proc.frameRanges()[0].begin, beginOfCall));
+    AOT_FRAME_FORM_TEST_CHECK(test, !MacroAssembler::differenceBetween(endOfCall, proc.frameRanges()[0].end));
+#endif
+}
+
 static void testMachineFrameFormUseOfFramePointerKeepsRecord()
 {
     TestProcedure test(traitsOfFrameFormTest(false, true));
@@ -999,6 +1044,7 @@ std::span<const NativeTest> machineFrameFormTests()
         { "machine/frame-forms/generator-told-of-a-place-in-the-frame-keeps-the-record"_s, Machine::testMachineFrameFormGeneratorToldOfPlaceInFrameKeepsRecord },
         { "machine/frame-forms/generator-that-goes-by-the-form-of-the-frame-needs-no-record"_s, Machine::testMachineFrameFormGeneratorThatGoesByFormOfFrameNeedsNoRecord },
         { "machine/frame-forms/many-places-in-the-frame-keep-the-record-beside-such-a-generator"_s, Machine::testMachineFrameFormManyPlacesInFrameKeepRecordBesideSuchGenerator },
+        { "machine/frame-forms/saves-of-a-rare-region-are-pushed-and-popped"_s, Machine::testMachineFrameFormSavesOfRareRegionArePushedAndPopped },
         { "machine/frame-forms/use-of-the-frame-pointer-keeps-the-record"_s, Machine::testMachineFrameFormUseOfFramePointerKeepsRecord },
         { "machine/frame-forms/handlers-keep-the-record"_s, Machine::testMachineFrameFormHandlersKeepRecord },
         { "machine/frame-forms/checker-refuses-a-frame-without-a-record-that-a-patch-counts-on"_s, Machine::testMachineFrameFormCheckerRefusesFrameWithoutRecordThatPatchCountsOn },

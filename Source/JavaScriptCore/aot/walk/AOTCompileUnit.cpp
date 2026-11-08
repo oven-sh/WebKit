@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <wtf/ScopedLambda.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 
@@ -46,13 +47,25 @@ WalkOptions walkOptionsOf(const BuildContext& build)
     const AOT::CompileOptions& options = build.options();
     return {
         .takesNotes = AOT::hasFlag(options.reports, Wire::ReportSet::Flow) || AOT::hasFlag(options.reports, Wire::ReportSet::AccessCounts) || AOT::hasFlag(options.reports, Wire::ReportSet::Allocations),
-        .verifiesCode = isCheckingBuild || build.validates(),
+        .verifiesCode = isCheckingBuild || options.verifiesCode,
         .hidesNames = options.obfuscates(),
         .checksProofs = !!sourcesOfProofsCheckedUnder(options.testing),
         .sourcesOfProofsChecked = sourcesOfProofsCheckedUnder(options.testing),
-        .testsEveryPosition = AOT::hasFlag(options.testing, Wire::TestingSwitch::TestsEveryPosition),
-        .readsStorageWhereItIsUsed = readsStorageWhereItIsUsedUnder(options.testing),
+        .testsEveryPosition = testsEveryPositionUnder(options.testing),
         .takesPositionsToLieInside = AOT::hasFlag(options.testing, Wire::TestingSwitch::PositionsAreTakenToLieInside),
+        .showsPositionsTakenToLieInsideToVerifier = build.validates() && !sourcesOfProofsCheckedUnder(options.testing) && !testsEveryPositionUnder(options.testing),
+        .leavesOutReadsBehindTestsOfLengths = AOT::hasFlag(options.testing, Wire::TestingSwitch::ReadsBehindTestsOfLengthsAreLeftOut),
+        .takesVariablesThatBoundToBeAsInFront = AOT::hasFlag(options.testing, Wire::TestingSwitch::VariablesThatBoundAreTakenToBeAsInFront),
+        .takesDividendsOfReciprocalsToFit32Bits = AOT::hasFlag(options.testing, Wire::TestingSwitch::DividendsOfReciprocalsAreTakenToFit32Bits),
+        .roundsBoundsOfCountersTheOtherWay = AOT::hasFlag(options.testing, Wire::TestingSwitch::BoundsOfCountersAreRoundedTheOtherWay),
+        .takesGuardsAndFactsToHold = AOT::hasFlag(options.testing, Wire::TestingSwitch::GuardsAndFactsAreTakenToHold),
+        .makesCallsMadeInFrontAgainInTurns = AOT::hasFlag(options.testing, Wire::TestingSwitch::CallsMadeInFrontOfTurnsAreMadeAgainInThem),
+        .takesEveryBuiltinInLineToAnswerOutOfItsOperands = AOT::hasFlag(options.testing, Wire::TestingSwitch::EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands),
+        .takesNumbersStoredIntoListsOfDoublesToBeNoNaN = AOT::hasFlag(options.testing, Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN),
+        .takesOneRowToSpeakForAll = AOT::hasFlag(options.testing, Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake),
+        .takesNothingToBeDoneToFreshLists = AOT::hasFlag(options.testing, Wire::TestingSwitch::NothingIsDoneToFreshLists),
+        .sweepTurnsBranchThatDecidesIntoJump = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepTurnsBranchThatDecidesIntoJump),
+        .sweepLetsGoEdgeThatIsTaken = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepLetsGoEdgeThatIsTaken),
         .takesCalleesToKeepNothing = AOT::hasFlag(options.testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded),
         .writesBodiesStraight = AOT::hasFlag(options.testing, Wire::TestingSwitch::WritesBodiesStraight),
         .checksEffects = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime),
@@ -67,9 +80,15 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .ignoresExpectedTypes = AOT::hasFlag(options.testing, Wire::TestingSwitch::IgnoreExpectedTypes),
         .shufflesExpectedTypes = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleExpectedTypes),
         .failsGuesses = AOT::hasFlag(options.testing, Wire::TestingSwitch::FailGuesses),
+        .turnsForgetWhatWasDone = RowThatSaysLess::decode(options.rowThatSaysLess).kind == KindOfEffectsRow::MarkOfTurns,
+        .netOfEffectsWatchesTurns = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime) || RowThatSaysLess::decode(options.rowThatSaysLess).kind == KindOfEffectsRow::MarkOfTurns,
         .shufflesChoices = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleChoices),
         .judgesInt32Promises = !AOT::hasFlag(options.testing, Wire::TestingSwitch::IgnoreExpectedTypes) && !AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleExpectedTypes) && !AOT::hasFlag(options.testing, Wire::TestingSwitch::GiveLinkMore),
         .seedOfShuffles = options.seedOfShuffles,
+        .wayForcedOnUnits = static_cast<WayOfWalking>(options.wayForcedOnUnits),
+        .periodOfUnitsWalkedThatWay = options.periodOfUnitsWalkedThatWay,
+        .periodOfHearingsThatCutWalks = options.periodOfHearingsThatCutWalks,
+        .phaseOfHearingsThatCutWalks = options.phaseOfHearingsThatCutWalks,
     };
 }
 
@@ -102,9 +121,11 @@ static std::span<const uint32_t> arenaIDsInUnitMentionKey(NumberSpace space, std
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
     case NumberSpace::ArrayProfile:
+    case NumberSpace::RowsOfReads:
     case NumberSpace::EnvironmentHandedBack:
     case NumberSpace::ClassGuard:
     case NumberSpace::ClassRank:
+    case NumberSpace::HeirLookedAt:
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
     case NumberSpace::Allocation:
@@ -129,6 +150,78 @@ static bool unitMentionsThreadArenaID(const CodeBody& body)
         }
     }
     return false;
+}
+
+static bool isReachedPastBlockInCompileUnit(const Code& code, BlockID reached, BlockID avoided)
+{
+    if (reached == avoided)
+        return false;
+    BitVector seen(code.numberOfBlocks());
+    Vector<BlockID, 32> toVisit;
+    auto visit = [&](BlockID block) {
+        if (block != avoided && !seen.set(block.index()))
+            toVisit.append(block);
+    };
+    for (const EntryOfCode& entry : code.entries())
+        visit(entry.block);
+    while (!toVisit.isEmpty()) {
+        BlockID block = toVisit.takeLast();
+        if (block == reached)
+            return true;
+        const Terminator& end = code.at(block).terminator;
+        for (uint32_t index = 0; index < end.numberOfEdges; ++index)
+            visit(code.at(end.edge(index)).to);
+        if (EdgeID handler = code.handlerOf(block))
+            visit(code.at(handler).to);
+    }
+    return false;
+}
+
+static bool cellIsUsedBehindOperationInCompileUnit(const Code& code, ValueID cell, ValueID behind)
+{
+    static constexpr OpcodeSet operationsThatOnlyLetCellGo { Opcode::EndLifeOfCell, Opcode::ReleaseHint, Opcode::ReleaseEnvironment };
+    BlockID whereCellIsBorn = code.blockOf(cell);
+    bool isUsed = false;
+    auto look = [&](ValueID operand) {
+        isUsed |= operand && !code.isConstant(operand) && rootOfCellInSweptCode(code, operand) == cell;
+    };
+    BitVector seen(code.numberOfBlocks());
+    Vector<BlockID, 32> toVisit;
+    auto visit = [&](BlockID block) {
+        if (block != whereCellIsBorn && !seen.set(block.index()))
+            toVisit.append(block);
+    };
+    auto lookAtEndOf = [&](BlockID id) {
+        const Block& block = code.at(id);
+        forEachValueReadAtEndOfSweptBlock(block, look);
+        for (uint32_t index = 0; index < block.terminator.numberOfEdges; ++index) {
+            const Edge& edge = code.at(block.terminator.edge(index));
+            for (ValueID argument : edge.arguments())
+                look(argument);
+            visit(edge.to);
+        }
+        if (EdgeID handler = code.handlerOf(id)) {
+            for (ValueID argument : code.at(handler).arguments())
+                look(argument);
+            visit(code.at(handler).to);
+        }
+    };
+    bool standsBehind = false;
+    for (ValueID each : code.valuesOf(code.blockOf(behind))) {
+        if (standsBehind && !operationsThatOnlyLetCellGo.contains(code.at(each).opcode))
+            forEachOperandNeededBySweep(code.at(each), look);
+        standsBehind |= each == behind;
+    }
+    lookAtEndOf(code.blockOf(behind));
+    while (!isUsed && !toVisit.isEmpty()) {
+        BlockID block = toVisit.takeLast();
+        for (ValueID each : code.valuesOf(block)) {
+            if (!operationsThatOnlyLetCellGo.contains(code.at(each).opcode))
+                forEachOperandNeededBySweep(code.at(each), look);
+        }
+        lookAtEndOf(block);
+    }
+    return isUsed;
 }
 
 static void reportFailureOfCompileUnit(BuildContext& build, CodeUnit unit, InternalErrorKind kind, const String& detail)
@@ -176,8 +269,9 @@ static String findPartThatLinkHasNotCounted(const Code& code, const Operation& o
     if (!traits.mayWriteWhatIsSeen())
         return { };
     Vector<ValueID, 8> parametersAsked;
-    bool fillsWhatUnitMakes = operation.origin().isPartOfConstruction || !operation.numberOfOperands() || familyOf(operation.opcode) == OperationFamily::Hint || isAllocationOfUnitForEffectsAgainstLink(code, operation.operand(0), parametersAsked);
     const Effects& declared = declaredBoundInTable(operation.opcode);
+    bool takesNothing = !operation.numberOfOperands();
+    bool fillsWhatUnitMakes = operation.origin().isPartOfConstruction || (takesNothing && !declared.mayCallUnknownCode) || familyOf(operation.opcode) == OperationFamily::Hint || (!takesNothing && isAllocationOfUnitForEffectsAgainstLink(code, operation.operand(0), parametersAsked));
     if (declared.mayCallUnknownCode) {
         EffectTraits traitsCounted(counted);
         if (traits.mayWriteOutsideObjects() && !traitsCounted.mayWriteOutsideObjects())
@@ -204,8 +298,12 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
 {
     ClosuresThatCalledParametersHold held;
     auto note = [&](TypeID type) {
-        if (FunctionID function = type ? singleFunctionOf(types, types.at(type)) : FunctionID())
-            held.functions.append(function);
+        if (!type || !types.at(type).hasOnlyClosures())
+            return;
+        forEachFunctionOf(types, types.at(type), scopedLambda<void(FunctionID)>([&](FunctionID function) {
+            if (!held.functions.contains(function))
+                held.functions.append(function);
+        }));
     };
     std::span<const LinkedParameter> parameters = inputs.facts.linked().parametersOf(code.unit().function);
     for (uint32_t parameter = 0; parameter < parameters.size() && parameter < 32; ++parameter) {
@@ -261,6 +359,8 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
         const Operation& operation = code.at(ValueID(index));
         if (!operation.block() || operation.traits().mayCallUnknownCode() || (code.isEntryThatWalksBody() && operation.opcode == Opcode::CreateRest))
             continue;
+        if (operation.opcode == Opcode::TurnBeginsAgain || operation.opcode == Opcode::CopyLeavesForCall || operation.opcode == Opcode::TurnWasQuiet)
+            continue;
         String part = findPartThatLinkHasNotCounted(code, operation, counted);
         ASCIILiteral summary = "Link's effects of the function"_s;
         if (part.isNull() && given && code.at(operation.block()).frequency == BlockFrequency::Normal && !leftToCaller.run(operation)) {
@@ -278,16 +378,19 @@ namespace {
 
 class JudgeOfCalls {
 public:
-    JudgeOfCalls(const WalkInputs& inputs, TypeArena& types, const Code& code, std::span<const Walker::ArrivalHeld> held)
+    JudgeOfCalls(const WalkInputs& inputs, TypeArena& types, const Code& code, std::span<const Walker::ArrivalHeld> held, const PositionTypes* whatFunctionsHandBack)
         : m_inputs(inputs)
         , m_types(types)
         , m_code(code)
         , m_held(held)
+        , m_whatFunctionsHandBack(whatFunctionsHandBack)
     {
     }
 
     String run()
     {
+        if (!m_code.has(Mechanism::Arrivals, m_inputs.facts))
+            return { };
         for (uint32_t index = 0; index < m_code.numberOfValues(); ++index) {
             const Operation& call = m_code.at(ValueID(index));
             if (call.opcode != Opcode::CallDirect || !call.block() || call.numberOfBoundArguments())
@@ -312,6 +415,8 @@ private:
             switch (held.kind) {
             case Walker::ArrivalHeld::Kind::Anything:
                 return TypeTable::anything;
+            case Walker::ArrivalHeld::Kind::MayBeEnteredByValue:
+                break;
             case Walker::ArrivalHeld::Kind::Proven:
                 if (held.entryParameter == place)
                     here = held.proven;
@@ -353,7 +458,7 @@ private:
     {
         TypeID left = typeThatChecksInFrontOfCallAskOf(value, call);
         const Operation& record = m_code.at(value);
-        bool namesValueOfOperand = conversionsOfForm.contains(record.opcode) || (record.opcode == Opcode::Narrowed && !record.narrowsHolderOfOperand() && !record.narrowsOtherResultOfOperand());
+        bool namesValueOfOperand = conversionsOfForm.contains(record.opcode) || checksThatHandOnOrThrow.contains(record.opcode) || (record.opcode == Opcode::Narrowed && !record.narrowsHolderOfOperand() && !record.narrowsOtherResultOfOperand());
         ValueID behind = namesValueOfOperand ? record.operand(0) : ValueID();
         if (!behind || m_code.isConstant(behind) || !m_code.at(behind).type || !m_types.at(m_code.at(behind).type).isJavaScriptValue())
             return left;
@@ -372,6 +477,19 @@ private:
             return false;
         if (m_types.isSubset(typeThatTestsAndChecksLeaveOf(value, call), bound))
             return true;
+        static constexpr OpcodeSet callsByValue = opcodesWhere([](Opcode opcode) {
+            return accessClassOf(opcode) == AccessClass::IndirectCall && resultRuleOf(opcode) == ResultRule::Unknown && opcode != Opcode::CallTable;
+        });
+        if (m_whatFunctionsHandBack && callsByValue.contains(record.opcode)) {
+            Vector<TypeID, 8> operands;
+            for (ValueID operand : record.operands())
+                operands.append(operand ? m_code.at(operand).type : TypeID());
+            TypeID handedBack = Typed::resultTypeOf(TypingContext { m_inputs.program, m_types, *m_whatFunctionsHandBack, TypeLevel::Proven }, record, OperandTypes { operands.span() });
+            if (TypeID callee = operands[OperandIndex::Call::callee]; handedBack && callee && m_types.at(callee).isObject() && singleBuiltinOf(m_types, m_types.at(callee)))
+                handedBack = m_types.wholeKindsAndBuiltinClassesOf(handedBack);
+            if (handedBack && m_types.isSubset(handedBack, bound))
+                return true;
+        }
         if (conversionsOfForm.contains(record.opcode))
             return liesWithin(record.operand(0), bound, call);
         if (record.opcode != Opcode::Parameter || m_code.at(record.block()).isEntry || m_code.at(record.block()).isHandlerBlock())
@@ -382,7 +500,7 @@ private:
         size_t place = std::ranges::find(parameters, value) - parameters.begin();
         bool everyArrivalLiesWithin = true;
         bool hasArrival = false;
-        m_code.forEachEdgeInto(record.block(), [&](const Edge& edge) {
+        m_code.allEdgesIntoBlockOfFinishedCode(record.block()).forEach([&](const Edge& edge) {
             hasArrival = true;
             everyArrivalLiesWithin = everyArrivalLiesWithin && place < edge.arguments().size() && edge.arguments()[place] && liesWithin(edge.arguments()[place], bound, call);
         });
@@ -420,12 +538,11 @@ private:
             TypeID believed = m_inputs.facts.typeBelievedOfEntryParameter(m_types, callee, place, left);
             if (!m_types.at(believed).isJavaScriptValue())
                 continue;
-            if (TypeID provenByLink = isUnitOfCallee ? TypeID() : m_inputs.facts.typeOfEntryParameter(callee, place).proven; provenByLink && m_types.isSubset(provenByLink, left))
-                continue;
             if (TypeID tested = call.role() == CodeRole::Body ? m_inputs.plan.conventions().typeBehindGuard(callee, place) : TypeID()) {
                 TypeID passed = m_types.intersectionOf(believed, tested);
                 believed = isNeverType(passed) ? tested : passed;
-            }
+            } else if (TypeID provenByLink = isUnitOfCallee ? TypeID() : m_inputs.facts.typeOfEntryParameter(callee, place).proven; provenByLink && m_types.isSubset(provenByLink, left))
+                continue;
             if (isUnitOfCallee && !walksInputBody(m_code.role()) && m_code.role() != CodeRole::ParameterGuard)
                 believed = m_types.testablePartOf(believed);
             if (!operand) {
@@ -458,14 +575,15 @@ private:
     TypeArena& m_types;
     const Code& m_code;
     std::span<const Walker::ArrivalHeld> m_held;
+    const PositionTypes* m_whatFunctionsHandBack;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parametersBeingAsked;
 };
 
 } // anonymous namespace
 
-String findCallThatHandsOverWhatItsUnitHasNotLeft(const WalkInputs& inputs, TypeArena& types, const Code& code, std::span<const Walker::ArrivalHeld> arrivalsHeld)
+String findCallThatHandsOverWhatItsUnitHasNotLeft(const WalkInputs& inputs, TypeArena& types, const Code& code, std::span<const Walker::ArrivalHeld> arrivalsHeld, const PositionTypes* whatFunctionsHandBack)
 {
-    return JudgeOfCalls(inputs, types, code, arrivalsHeld).run();
+    return JudgeOfCalls(inputs, types, code, arrivalsHeld, whatFunctionsHandBack).run();
 }
 
 static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code& code)
@@ -492,7 +610,7 @@ static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code&
     return { };
 }
 
-static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const PositionTypes& positions, const Code& code, std::span<const Walker::ArrivalHeld> arrivalsHeld)
+static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const PositionTypes& positions, const PositionTypes& whatFunctionsHandBack, const Code& code, std::span<const Walker::ArrivalHeld> arrivalsHeld)
 {
     InternalErrorKind kindOfBrokenRule { InternalErrorKind::OpcodeNotInForm };
     String brokenRule = verifyCode(CodeTextContext { inputs.program, types, &inputs.plan, &inputs.facts }, code, &kindOfBrokenRule);
@@ -501,7 +619,7 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
         brokenRule = verifyTypesOfCode(TypingContext { inputs.program, types, positions }, inputs.plan.conventions(), inputs.arrivals, code);
     }
     if (brokenRule.isNull())
-        brokenRule = findCallThatHandsOverWhatItsUnitHasNotLeft(inputs, types, code, arrivalsHeld);
+        brokenRule = findCallThatHandsOverWhatItsUnitHasNotLeft(inputs, types, code, arrivalsHeld, &whatFunctionsHandBack);
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::EffectsNotCounted;
         brokenRule = findOperationThatLinkHasNotCounted(inputs, types, code);
@@ -516,10 +634,10 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
     return false;
 }
 
-static bool verifyFrameCellsOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const Code& code)
+static bool verifySweptCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const Code& code)
 {
     InternalErrorKind kindOfBrokenRule { InternalErrorKind::OpcodeNotInForm };
-    String brokenRule = verifyFrameCellsOfSweptCode(CodeTextContext { inputs.program, types, &inputs.plan, &inputs.facts }, code, &kindOfBrokenRule);
+    String brokenRule = verifySweptCode(CodeTextContext { inputs.program, types, &inputs.plan, &inputs.facts }, code, &kindOfBrokenRule);
     if (brokenRule.isNull())
         return true;
     reportFailureOfCompileUnit(build, code.unit(), kindOfBrokenRule, brokenRule);
@@ -574,7 +692,23 @@ WalkerInRoom CompileWorker::makeWalker(RoomOfFormerWalker room)
     return walker;
 }
 
+static WayOfWalking wayForcedOn(const WalkInputs& inputs, CodeUnit unit)
+{
+    const WalkOptions& options = inputs.options;
+    if (!options.periodOfUnitsWalkedThatWay || !walksInputBody(unit.role) || unit.role == CodeRole::SlowBody)
+        return WayOfWalking::AsBuilt;
+    if (unit.role == CodeRole::Body && inputs.program.at(unit.function).isCoroutine())
+        return WayOfWalking::AsBuilt;
+    bool isDrawn = !(drawBySeed(options.seedOfShuffles, DrawnFor::WayOfWalking, unit.function.index(), static_cast<uint32_t>(unit.role)) % options.periodOfUnitsWalkedThatWay);
+    return isDrawn ? options.wayForcedOnUnits : WayOfWalking::AsBuilt;
+}
+
 bool CompileWorker::walkAndSweep(CodeUnit unit)
+{
+    return walkAndSweep(unit, wayForcedOn(m_inputs.walk, unit));
+}
+
+bool CompileWorker::walkAndSweep(CodeUnit unit, WayOfWalking way)
 {
     const WalkInputs& inputs = m_inputs.walk;
     CurrentWorkScope work(inputs.program, unit.function, "walk"_s);
@@ -582,7 +716,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
     m_types.reset();
     if (m_walker->hasBegunUnit())
         m_walker = makeWalker(RoomOfFormerWalker::IsTaken);
-    bool isWalked = m_walker->walk(unit);
+    bool isWalked = m_walker->walk(unit, way);
     if (isWalked && m_walker->hasLastWalksOfLoopsToWalkAlone()) {
         WalkerInRoom first = std::exchange(m_walker, makeWalker(RoomOfFormerWalker::IsLeft));
         isWalked = m_walker->walkLastWalksOfLoopsAlone(*first);
@@ -597,30 +731,59 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
 
     if (inputs.options.verifiesCode) {
         work.setStep("verify"_s);
-        if (!verifyCodeOfCompileUnit(inputs, m_build, m_types, m_walker->positions(), code, m_walker->arrivalsHeld())) {
+        if (!verifyCodeOfCompileUnit(inputs, m_build, m_types, m_walker->positions(), m_walker->positionsKnowingWhatFunctionsHandBack(), code, m_walker->arrivalsHeld())) {
             m_build.diagnostics().append(m_walker->takeReports());
             return false;
         }
     }
 
     work.setStep("sweep"_s);
-    SweepTotals swept = Sweep(m_roomsOfSweep).run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types }, code);
+    SweepTotals swept = Sweep(m_roomsOfSweep).run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types, inputs.options.sweepTurnsBranchThatDecidesIntoJump, inputs.options.sweepLetsGoEdgeThatIsTaken }, code);
 
-    if (inputs.options.verifiesCode && code.holdsFrameCells()) {
+    if (inputs.options.verifiesCode) {
         work.setStep("verify"_s);
-        if (!verifyFrameCellsOfCompileUnit(inputs, m_build, m_types, code)) {
+        if (!verifySweptCodeOfCompileUnit(inputs, m_build, m_types, code)) {
             m_build.diagnostics().append(m_walker->takeReports());
             return false;
         }
     }
 
+    if (inputs.options.verifiesCode) {
+        work.setStep("verify"_s);
+        if (String brokenRule = findMarkOfSweepThatNothingCovers(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types }, code); !brokenRule.isNull()) {
+            m_build.diagnostics().append(m_walker->takeReports());
+            reportFailureOfCompileUnit(m_build, unit, InternalErrorKind::OpcodeNotInForm, brokenRule);
+            return false;
+        }
+    }
+
+    if (inputs.options.verifiesCode) {
+        for (auto [first, second] : code.cellsMadeForOneOperation()) {
+            if (!code.isNeeded(first) || !code.isNeeded(second) || !code.useCountOf(first) || code.at(first).opcode != code.at(second).opcode || isReachedPastBlockInCompileUnit(code, code.blockOf(second), code.blockOf(first)) || !cellIsUsedBehindOperationInCompileUnit(code, first, second))
+                continue;
+            m_build.diagnostics().append(m_walker->takeReports());
+            reportFailureOfCompileUnit(m_build, unit, InternalErrorKind::OperationMakesTwoCells, makeString("records "_s, first.index(), " and "_s, second.index()));
+            return false;
+        }
+    }
+
+    for (const Walker::ArrivalHeld& held : m_walker->arrivalsHeld()) {
+        if ((held.kind == Walker::ArrivalHeld::Kind::Anything || held.kind == Walker::ArrivalHeld::Kind::MayBeEnteredByValue) && inputs.facts.linked().entryByValueMayBeClosed(held.callee))
+            m_functionsThatUnitMayEnterByValue.append(held.callee);
+    }
     m_walker->handOverArrivals();
     m_build.diagnostics().append(m_walker->takeReports());
     m_build.statistics().count(StatisticID::OperationsSwept, swept.operationsSwept);
+    m_build.statistics().count(StatisticID::BranchesThatDecideNothing, swept.branchesThatDecideNothing);
+    m_build.statistics().count(StatisticID::DoorsDroppedWithTheirValues, swept.doorsDroppedWithTheirValues);
+    if (swept.birthsMoved)
+        m_build.statistics().count(StatisticID::BirthsLaidWhereCellsAreNeeded, swept.birthsMoved);
     m_build.statistics().count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
     m_build.statistics().count(StatisticID::ValuesWalkedAndKept, m_walker->numberOfValuesWalkedAndKept());
     m_build.statistics().count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
     m_build.statistics().count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
+    m_build.statistics().count(StatisticID::LoopsWalkedAgainWithoutAskingSums, m_walker->numberOfRowsWhoseSumsAreNotAsked());
+    m_build.statistics().count(StatisticID::WalksOfLoopsCutShort, m_walker->numberOfWalksOfLoopsCutShort());
     m_build.statistics().count(StatisticID::PurchasesOfLoopsThatFailed, m_walker->numberOfPurchasesOfLoopsThatFailed());
     m_build.statistics().count(StatisticID::OperationsBuilt, code.numberOfValues());
     m_build.statistics().count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);
@@ -628,12 +791,21 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
         m_build.statistics().count(StatisticID::TestsThatRejoin, guesses);
         m_build.statistics().count(StatisticID::LoopsBuiltTwice, m_walker->numberOfLoopsBuiltTwice());
         m_build.statistics().count(StatisticID::TurnsThatBeginAgain, m_walker->numberOfTurnsThatBeginAgain());
+        m_build.statistics().count(StatisticID::StoresPutBackWhereTurnsBeginAgain, m_walker->numberOfStoresPutBack());
         m_build.statistics().count(StatisticID::EmptySlotsTakenAsCases, m_walker->numberOfEmptySlotsTakenAsCases());
     }
     if (uint32_t assignments = m_walker->numberOfAssignmentsWrittenOut())
         m_build.statistics().count(StatisticID::AssignmentsWrittenOutFieldByField, assignments);
     if (uint32_t joins = m_walker->numberOfJoinsWalkedForEachWay())
         m_build.statistics().count(StatisticID::JoinsWalkedOnceForEachWay, joins);
+    if (uint32_t questions = m_walker->numberOfQuestionsOfTruthAnsweredByWays())
+        m_build.statistics().count(StatisticID::QuestionsOfTruthAnsweredByWays, questions);
+    if (uint32_t callees = m_walker->numberOfCalleesTestedForFunctionsWrittenForTheirFields())
+        m_build.statistics().count(StatisticID::CalleesTestedForFunctionsWrittenForTheirFields, callees);
+    if (uint32_t questions = m_walker->numberOfQuestionsForPlainInstancesLeftAsWritten())
+        m_build.statistics().count(StatisticID::QuestionsForPlainInstancesLeftAsWritten, questions);
+    if (uint32_t questions = m_walker->numberOfQuestionsByNameLeftAsWritten())
+        m_build.statistics().count(StatisticID::QuestionsByNameLeftAsWritten, questions);
     if (uint32_t objects = m_walker->numberOfObjectsMetAsOne())
         m_build.statistics().count(StatisticID::ObjectsOfSeveralWaysMetAsOne, objects);
     static_assert(static_cast<unsigned>(StatisticID::ProofsThatNoTestTells) - static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) == numberOfEnumerators<ProofSource>);
@@ -820,6 +992,29 @@ static bool readsScopesWhoseLivesMayHaveEnded(const WalkInputs& inputs, const Bo
     return (inputs.options.sourcesOfProofsChecked & bitOfSourceOfProofs(ProofSource::Lifetime)) && index.opcodes().intersects(accessesToScopes);
 }
 
+static bool hasReadsVerifiedAtRunTime(const WalkInputs& inputs, const BodyIndex& index)
+{
+    static constexpr OpcodeSet readsByName { Opcode::PropGet, Opcode::PropHas, Opcode::PropHasOwn };
+    return inputs.options.checksWalk && index.opcodes().intersects(readsByName);
+}
+
+static bool looksUnderKeyThatHasPreparation(const WalkInputs& inputs, FunctionID function, const BodyIndex& index)
+{
+    if (!index.opcodes().intersects(accessesUnderComputedKeys))
+        return false;
+    const LinkTables& linked = inputs.facts.linked();
+    bool looks = false;
+    index.body().forEachBlock([&](BodyBlock block) {
+        for (BodyValue value : block.values()) {
+            if (!accessesUnderComputedKeys.contains(value.opcode()))
+                continue;
+            PropertyKeyID key = linked.keyAt(function, value.id());
+            looks |= key && linked.lookupUnderKeyMayRunPreparation(inputs.program, key);
+        }
+    });
+    return looks;
+}
+
 static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputOperationsThatHandOn | OpcodeSet {
@@ -835,8 +1030,10 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
         return false;
     if (inputs.options.writesBodiesStraight)
         return true;
+    if (hasReadsVerifiedAtRunTime(inputs, index))
+        return false;
     if (unit.role != CodeRole::Body)
-        return !index.opcodes().contains(Opcode::Builtin);
+        return !index.opcodes().contains(Opcode::Builtin) && !looksUnderKeyThatHasPreparation(inputs, unit.function, index);
     if (!inputs.program.at(unit.function).isModuleBody())
         return false;
     return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper;
@@ -868,8 +1065,11 @@ std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
                 for (BodyValue value : block.values()) {
                     if (!opcodesThatMayRunOtherCode.contains(value.opcode()))
                         continue;
-                    if (FunctionID callee = linked.calleeAt(unit.function, value.id()))
+                    if (FunctionID callee = linked.calleeAt(unit.function, value.id())) {
                         m_inputs.walk.arrivals.leaveAnything(callee);
+                        if (linked.entryByValueMayBeClosed(callee))
+                            m_functionsThatUnitMayEnterByValue.append(callee);
+                    }
                 }
             });
         }
@@ -884,6 +1084,7 @@ std::optional<CompiledCode> CompileWorker::compileEntryByHand(CodeUnit unit)
     const WalkInputs& inputs = m_inputs.walk;
     if (unit.role != CodeRole::GenericCallEntry || inputs.options.checksProofs)
         return std::nullopt;
+    bool nobodyEnters = inputs.arrivals.entriesAreClosed(unit.function);
 
     m_types.reset();
     Code code;
@@ -896,13 +1097,15 @@ std::optional<CompiledCode> CompileWorker::compileEntryByHand(CodeUnit unit)
             return { };
         TypeID asked = m_types.testablePartOf(believed);
         return m_types.isSubset(TypeTable::anything, asked) ? TypeID() : asked;
-    }), m_totals);
+    }), m_totals, nobodyEnters);
     if (!compiled || !compiled->unit) {
         m_arena->reset();
         return std::nullopt;
     }
     m_build.statistics().count(StatisticID::UnitsCompiled);
     m_build.statistics().count(StatisticID::EntriesWrittenByHand);
+    if (nobodyEnters)
+        m_build.statistics().count(StatisticID::EntriesThatNobodyEnters);
     return compiled;
 }
 

@@ -1,6 +1,6 @@
 # `$findsNoMember(object, "missing")`: A LOOKUP OF THIS NAME ON THIS OBJECT FINDS NOTHING. Only the library can write the question. It is the look of the typed read that finds nothing, without its closed arm:
 # the walk asks its own planner whether such a read off an object of the PROVEN layouts can be answered by looks at all (no field under the name, no record and no statement lays it above, the row of classes ends in the program),
-# and the operation asks what is not known yet: that the object holds no property beside its fields, that it stands below its layout's prototype, and the guard of the name.
+# and the operation asks what is not known yet: that the object holds no property under the name beside its fields, that it stands below its layout's prototype, and the guard of the name.
 # The yes is noted on the taken edge: the plain reads of that name behind it are `undefined`, with no test and no closed arm, until code of the program can run again.
 # function Meter(level) { this.level = level; this.count = 1; }
 # Meter.prototype.read = function () { return this.level; };
@@ -14,11 +14,11 @@
 # print(road(made), road(new Meter(8)));
 # f2 = road
 # OPTIONS: mechanisms=all
-# The first question asks the cell for other properties and the guard of its name, the second its guard alone; the arm of the three yeses is one text.
+# Each question asks the cell for a property under its own name, and the guard of that name; the arm of the three yeses is one text.
 # RUN(FORM): walk f2
 # FORM: String string=made "short undefined undefined undefined"
-# FORM: = FindsNoMember {{*}}key="missing" conditions=[{layout=L0 key="missing"}] receivers=[L0] [asksForNoExtraProperties]
-# FORM: = FindsNoMember {{*}}key="other" conditions=[{layout=L0 key="other"}] receivers=[L0] traits
+# FORM: = FindsNoMember {{*}}key="missing" conditions=[{layout=L0 key="missing"}] receivers=[L0] [asksForNoExtraPropertyUnderKey]
+# FORM: = FindsNoMember {{*}}key="other" conditions=[{layout=L0 key="other"}] receivers=[L0] [asksForNoExtraPropertyUnderKey]
 # FORM-NEXT: Branch
 # FORM-NEXT: b3():
 # FORM-NEXT: Return
@@ -28,7 +28,7 @@
 # NOTHING-NEXT: may hold may hold may hold lacks
 # NOTHING-NEXT: short undefined undefined undefined short undefined undefined undefined
 # NOTHING-NEXT: exited with 0
-# WHO COULD LAY THE NAME. The object itself; any other property of its own makes the answer no as well.
+# WHO COULD LAY THE NAME. The object itself; another property of its own sends the question to its place, which remembers nothing yet (a-lookup-finds-nothing-on-an-object-that-holds-other-properties-of-its-own.ir).
 # RUN(OWN): run-in-shell change = function (made) { made.missing = 1; };
 # OWN: short undefined undefined undefined full undefined undefined
 # OWN-NEXT: may hold may hold may hold lacks

@@ -648,6 +648,8 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
             capability->rejectWithCaughtException(vm, scope);
             RELEASE_AND_RETURN(scope, capability);
         }
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module))
+            compiled->recordTerminationAfterEvaluation(vm, exception);
 #endif
         JSModuleLoader::attachErrorInfo(globalObject, exception, module, moduleKey(), moduleType(), JSModuleLoader::ModuleFailure::Kind::Evaluation);
         // 9.a. For each Cyclic Module Record m of stack, do

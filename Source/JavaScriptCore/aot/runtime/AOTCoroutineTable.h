@@ -9,6 +9,7 @@
 
 #include "AOTCoroutineWords.h"
 #include "AOTVector.h"
+#include "AOTWatchpoints.h"
 #include "CollectionScope.h"
 #include <wtf/FastMalloc.h>
 #include <array>
@@ -35,6 +36,7 @@ public:
 
     Structure* generatorStructure() const { return m_generatorStructure; }
     Structure* savedFrameStructure() const { return m_savedFrameStructure; }
+    Structure* structureOfGeneratorsOfLibrary(VM&, bool isAsync);
     void* savedFrameEntrypoint() const { return m_savedFrameEntrypoint; }
     void* handlerOfJobEntrypoint() const { return m_handlerOfJobEntrypoint; }
 
@@ -65,6 +67,8 @@ private:
     void* m_handlerOfJobEntrypoint;
     Structure* m_generatorStructure { nullptr };
     Structure* m_savedFrameStructure { nullptr };
+    std::array<std::unique_ptr<PropertyValueWatchpoint>, 2> m_watchesAboveGeneratorFunctionsOfLibrary;
+    std::array<bool, 2> m_hasAskedAboveGeneratorFunctionsOfLibrary { };
     std::array<ListOfVisitedFrames, 16> m_visitedFramesWithDeadWords;
 };
 

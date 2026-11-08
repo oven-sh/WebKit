@@ -270,15 +270,7 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     locateFieldTableEntry(jit, probe, probe.isNotCompiledObject ? *probe.isNotCompiledObject : otherwise);
     Jump isNoField = branchUnlessEntryHasName(jit, probe);
     Jump isNotInlineValue = branchUnlessForm(jit, operand, Form::InlineValue);
-    if (probe.keyInAccessTable != InvalidGPRReg) {
-        jit.load64(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight), word);
-        slotIsEmpty.append(jit.branchTest64(CCallHelpers::Zero, word));
-        jit.lshift32(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(EncodedJSValue)))), operand);
-        fileOwnValueInAccessTable(jit, { probe.receiver, probe.name, probe.keyInAccessTable, probe.placeInAccessTable }, operand);
-        jit.move(word, result);
-        finish();
-    } else
-        readValue(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight), slotIsEmpty);
+    readValue(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight), slotIsEmpty);
 
     unsigned formsTakenOff = 0;
     auto branchUnlessFormIs = [&](Form form) {
@@ -305,17 +297,17 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     };
 
     isNotInlineValue.link(&jit);
-    if (probe.keyInAccessTable != InvalidGPRReg) {
-        makeAnswerOfFieldTable(jit, operand, word);
-        fileAnswerOfFieldTableInAccessTable(jit, { probe.receiver, probe.name, probe.keyInAccessTable, probe.placeInAccessTable }, word);
-    }
-    bindArrivalsWithFormAndOperand(jit, probe);
     BaseIndex narrowSlot(probe.receiver, operand, CCallHelpers::TimesFour);
-    readOutOfLineValue();
     Jump isNotInt32 = branchUnlessFormIs(Form::InlineInt32);
+#if CPU(X86_64)
+    slotIsSilent.append(jit.branch32(CCallHelpers::LessThan, narrowSlot, TrustedImm32(minInlineInt32)));
+    jit.load32(narrowSlot, result);
+    jit.or64(numberTag, result);
+#else
     jit.load32(narrowSlot, word);
     slotIsSilent.append(jit.branch32(CCallHelpers::LessThan, word, TrustedImm32(minInlineInt32)));
     boxInt32(jit, word, result);
+#endif
     finish();
 
     isNotInt32.link(&jit);
@@ -331,7 +323,7 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     finish();
 
     isNotNarrowCell.link(&jit);
-    jit.sub32(TrustedImm32(1 << FieldTableEntry::formShift), operand);
+    readOutOfLineValue();
 
     static_assert(static_cast<unsigned>(Form::Field) == static_cast<unsigned>(Form::OutOfLineValue) + 1);
     auto first = [](uint32_t firstOperand) { return static_cast<int32_t>((1u << FieldTableEntry::formShift) + firstOperand); };
@@ -547,8 +539,6 @@ static constexpr int32_t offsetOfWordOfAccessTable(PartOfAccessTable part)
     switch (part) {
     case PartOfAccessTable::Reads:
         return static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches.accessTable.reads));
-    case PartOfAccessTable::Stores:
-        return static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches.accessTable.stores));
     case PartOfAccessTable::Calls:
         return static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches.accessTable.calls));
     }
@@ -560,8 +550,6 @@ static constexpr unsigned sizeShiftOfPlaceInAccessTable(PartOfAccessTable part)
     switch (part) {
     case PartOfAccessTable::Reads:
         return AccessTable::Read::sizeShift;
-    case PartOfAccessTable::Stores:
-        return AccessTable::Store::sizeShift;
     case PartOfAccessTable::Calls:
         return AccessTable::Call::sizeShift;
     }
@@ -664,14 +652,9 @@ void loadValueInStorageOfHolderByAnswer(StubAssembler& jit, GPRReg answer, GPRRe
     jit.load64(BaseIndex(scratch, answer, CCallHelpers::TimesEight), result);
 }
 
-void readByFormOfAnswerInAccessTable(StubAssembler& jit, GPRReg cell, GPRReg answer, GPRReg scratch, GPRReg result, JumpList& isAnsweredByFieldTable, JumpList& findsGetterInOwnStorage, const ScopedLambda<void()>& finish)
+void readByFormOfAnswerInAccessTable(StubAssembler& jit, GPRReg cell, GPRReg answer, GPRReg scratch, GPRReg result, JumpList& findsGetterInOwnStorage, const ScopedLambda<void()>& finish)
 {
-    Jump isInOwnStorage = jit.branchTest64(CCallHelpers::NonZero, answer, TrustedImm32(AccessTable::valueIsInOwnStorage));
-    Jump isInStorageOfHolder = jit.branchTest64(CCallHelpers::NonZero, answer, TrustedImm32(AccessTable::valueIsInStorageOfHolder));
-    jit.urshift64(TrustedImm32(AccessTable::answerShift), answer);
-    isAnsweredByFieldTable.append(jit.jump());
-
-    isInOwnStorage.link(&jit);
+    Jump isInStorageOfHolder = jit.branchTest64(CCallHelpers::Zero, answer, TrustedImm32(AccessTable::valueIsInOwnStorage));
     findsGetterInOwnStorage.append(jit.branchTest64(CCallHelpers::NonZero, answer, TrustedImm32(AccessTable::valueIsInStorageOfHolder)));
     loadValueInOwnStorageByAnswer(jit, cell, answer, scratch, result);
     finish();
@@ -681,7 +664,7 @@ void readByFormOfAnswerInAccessTable(StubAssembler& jit, GPRReg cell, GPRReg ans
     finish();
 }
 
-void returnValueByAccessTable(StubAssembler& jit, const AccessTableRead& read, JumpList& isNotAnswered, JumpList& isAnsweredByFieldTable)
+void returnValueByAccessTable(StubAssembler& jit, const AccessTableRead& read, JumpList& isNotAnswered)
 {
     const AccessTableRegisters& r = read.registers;
     RELEASE_ASSERT(noOverlap(read.word, r.cell, r.name, r.key, r.place));
@@ -701,7 +684,7 @@ void returnValueByAccessTable(StubAssembler& jit, const AccessTableRead& read, J
 
     hasForm.link(&jit);
     JumpList findsGetterInOwnStorage;
-    readByFormOfAnswerInAccessTable(jit, r.cell, read.word, r.place, jit.result(), isAnsweredByFieldTable, findsGetterInOwnStorage, [&] {
+    readByFormOfAnswerInAccessTable(jit, r.cell, read.word, r.place, jit.result(), findsGetterInOwnStorage, [&] {
         jit.returnToCaller();
     });
 
@@ -823,11 +806,6 @@ static void fileOtherAnswerInAccessTable(StubAssembler& jit, const AccessTableRe
     storeKeyAndWordInAccessTable(jit, r, OBJECT_OFFSETOF(AccessTable::Read, keyOfOtherAnswer), answer);
 }
 
-void fileAnswerOfFieldTableInAccessTable(StubAssembler& jit, const AccessTableRegisters& r, GPRReg answer)
-{
-    fileOtherAnswerInAccessTable(jit, r, answer);
-}
-
 void fileOwnValueOfOrdinaryCellInAccessTable(StubAssembler& jit, const AccessTableRegisters& r, GPRReg offsetInCell)
 {
     Jump isDictionary = branchIfStructureHasBitsForAccessTable(jit, r.cell, r.key, dictionaryKindsForAccessTable);
@@ -898,16 +876,6 @@ void fileAbsenceAboveFieldLeftOutInAccessTable(StubAssembler& jit, const AccessT
     fileAnswerAboveFieldLeftOutInAccessTable(jit, r, answer);
 }
 
-void fileStoreToFieldInAccessTable(StubAssembler& jit, const AccessTableRegisters& r, GPRReg answer, uint32_t orderWordBitsThatForbid)
-{
-    RELEASE_ASSERT(noOverlap(answer, r.cell, r.name, r.key, r.place));
-    const OwnedScratchRegister heldPlace(jit, r.place);
-    locatePlaceInAccessTable(jit, PartOfAccessTable::Stores, r);
-    storeKeyInAccessTable(jit, r, OBJECT_OFFSETOF(AccessTable::Store, key));
-    jit.store32(answer, Address(r.place, OBJECT_OFFSETOF(AccessTable::Store, answer)));
-    jit.store32(TrustedImm32(static_cast<int32_t>(orderWordBitsThatForbid)), Address(r.place, OBJECT_OFFSETOF(AccessTable::Store, orderWordBitsThatForbid)));
-}
-
 void fileCallInAccessTable(StubAssembler& jit, const AccessTableRegisters& r, unsigned numberOfArguments, GPRReg callee, GPRReg closureWord)
 {
     RELEASE_ASSERT(noOverlap(callee, closureWord, r.cell, r.name, r.key, r.place));
@@ -934,10 +902,11 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
     using Form = FieldTableEntry::Form;
     static_assert(sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo && FieldRecordIndex::isStoredWithoutTypeTest == 0x80 << 8);
     RELEASE_ASSERT(operation != SlotOperation::Read && noOverlap(value, scratch, probe.receiver, probe.index, probe.table) && signatureOfWriteBarrier(writeBarrier()).operands[0] == Reg(probe.receiver));
-    RELEASE_ASSERT(scratch != probe.name);
+    RELEASE_ASSERT(scratch != probe.name && probe.keyInAccessTable == InvalidGPRReg);
     const GPRReg operand = probe.index;
     const GPRReg extension = probe.table;
     JumpList isEmptySlot;
+    JumpList isEmptySlotThatTakesValue;
     auto storeValue = [&](BaseIndex slot, JumpList& isEmpty) {
         isEmpty.append(jit.branchTest64(CCallHelpers::Zero, slot));
         jit.store64(value, slot);
@@ -951,23 +920,9 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
     otherwise.append(branchUnlessEntryHasName(jit, probe));
     otherwise.append(jit.branchTest32(CCallHelpers::NonZero, Address(probe.receiver, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(operation))));
     Jump isNotInlineValue = branchUnlessForm(jit, operand, Form::InlineValue);
-    if (probe.keyInAccessTable != InvalidGPRReg) {
-        RELEASE_ASSERT(operation != SlotOperation::Define && noOverlap(value, scratch, probe.keyInAccessTable, probe.placeInAccessTable));
-        const BaseIndex slot(probe.receiver, operand, CCallHelpers::TimesEight);
-        isEmptySlot.append(jit.branchTest64(CCallHelpers::Zero, slot));
-        jit.store64(value, slot);
-        jit.lshift32(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(EncodedJSValue)))), operand);
-        fileStoreToFieldInAccessTable(jit, { probe.receiver, probe.name, probe.keyInAccessTable, probe.placeInAccessTable }, operand, integrityBitsBlockingStore(operation));
-        jit.linkToStub(jit.branchIfCell(value), writeBarrier());
-        jit.returnToCaller();
-    } else
-        storeValue(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight), isEmptySlot);
+    storeValue(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight), isEmptySlotThatTakesValue);
 
     isNotInlineValue.link(&jit);
-    if (probe.keyInAccessTable != InvalidGPRReg) {
-        makeAnswerOfFieldTable(jit, operand, extension);
-        fileStoreToFieldInAccessTable(jit, { probe.receiver, probe.name, probe.keyInAccessTable, probe.placeInAccessTable }, extension, integrityBitsBlockingStore(operation));
-    }
     bindArrivalsWithFormAndOperand(jit, probe);
     Jump isNotInt32Field = branchUnlessForm(jit, operand, Form::InlineInt32);
     const BaseIndex int32Slot(probe.receiver, operand, CCallHelpers::TimesFour);
@@ -1002,6 +957,19 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
     jit.jumpToStub(refusedValue);
 
     const GPRReg offsetOfRecord = jit.reuseScratch(slotNameRegister);
+    isEmptySlotThatTakesValue.link(&jit);
+    {
+        FieldTableProbe again = probe;
+        again.nameHasColumn = true;
+        again.receiverIsCell = true;
+        locateFieldTableEntry(jit, again, otherwise);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldRecordIndices)), scratch);
+        jit.load16(BaseIndex(scratch, probe.index, CCallHelpers::TimesTwo), scratch);
+        jit.and32(TrustedImm32(FieldRecordIndex::indexMask), scratch);
+        jit.lshift32(TrustedImm32(4), scratch);
+        jit.add32(TrustedImm32(sizeof(LayoutData)), scratch, offsetOfRecord);
+        jit.jumpToStub(putKnownFieldThatTakesAnyValue(putModeOf(operation)));
+    }
     isEmptySlot.link(&jit);
     FieldTableProbe again = probe;
     again.nameHasColumn = true;

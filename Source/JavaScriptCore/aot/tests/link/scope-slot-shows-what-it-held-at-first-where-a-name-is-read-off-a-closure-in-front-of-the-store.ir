@@ -2,7 +2,7 @@
 # An accessor above the closure, `Object.defineProperty(Function.prototype, "now", { get() { return this(); } })`, gets the closure as `this` and calls it in front of the store.
 # If the read under the name counted as a look, the scope would first leave at the Return, and the closure would read the mark of an empty slot as a number.
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 @"0" proven=i32|absent writers-known
+# CHECK: field L0.0 @"0" proven=int[0, 2147483647]|absent writers-known
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything|absent} flags=[IsImmutable] variableName="limit"}] ownFieldCount=1
 variable g0 name="sink" module=m0 declared={type=anything}

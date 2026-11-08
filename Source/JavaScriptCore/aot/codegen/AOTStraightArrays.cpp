@@ -49,18 +49,9 @@ static void generateNewArray(StraightEmitter& emitter, const BodyValue& value)
 
 static void generateAppendSpread(StraightEmitter& emitter, const BodyValue& value)
 {
-    CCallHelpers& jit = emitter.jit();
-    constexpr GPRReg iterable = operationArgumentGPR(2);
     Origin origin = value.origin();
     origin.isTailCall = false;
-
-    emitter.load(value.iterableOperand(), iterable);
-    GPRReg withoutUndefinedTag = emitter.takeResultRegister();
-    jit.and64(CCallHelpers::TrustedImm32(~JSValue::UndefinedTag), iterable, withoutUndefinedTag);
-    CCallHelpers::Jump isNeitherUndefinedNorNull = jit.branch64(CCallHelpers::NotEqual, withoutUndefinedTag, CCallHelpers::TrustedImm32(JSValue::ValueNull));
-    emitter.throwAt(origin, emitter.throwSiteWithName(ThrowKind::NullishSpread, StringID()));
-    isNeitherUndefinedNorNull.link(&jit);
-    emitter.callOperation(value, RuntimeOperation::AppendIterable, { value.arrayOperand(), StraightArgument::inRegister(iterable) }, { .origin = origin });
+    emitter.callOperation(value, RuntimeOperation::AppendIterable, { value.arrayOperand(), value.iterableOperand() }, { .origin = origin });
 }
 
 static void loadCountOfArguments(StraightEmitter& emitter, ValueID count, GPRReg destination)

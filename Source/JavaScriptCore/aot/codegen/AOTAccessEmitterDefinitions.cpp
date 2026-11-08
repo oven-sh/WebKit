@@ -472,7 +472,7 @@ void AccessEmitter::generateSuperGet(const ValueContext& value)
     auto readByOperation = [&](bool isOnRarePath) {
         return callOperation<Boxed>(value, RuntimeOperation::GetSuperPropertyById, { base, receiver, numberOf(name) }, { .isOnRarePath = isOnRarePath });
     };
-    if (keyIsThreadLocal || !m_plan.slots().hasColumn(key)) {
+    if (keyIsThreadLocal) {
         define(value, readByOperation(false));
         return;
     }

@@ -59,7 +59,7 @@ static constexpr GPRReg T13 = gprOf(StubRegister::T13);
 
 static constexpr std::array stepChecks { GeneratorStepCheck::IsUnmodifiedGenerator, GeneratorStepCheck::IsGenerator, GeneratorStepCheck::IsUnmodified, GeneratorStepCheck::None };
 static_assert(stepChecks.size() == descriptorOf(StubFamily::StepGenerator).numberOfForms);
-static constexpr std::array stepConsumers { StepConsumer::AsyncFunction, StepConsumer::AsyncGenerator, StepConsumer::AsyncFunctionAwaitingCall, StepConsumer::AsyncGeneratorAwaitingCall };
+static constexpr std::array stepConsumers { StepConsumer::AsyncFunction, StepConsumer::AsyncGenerator };
 static_assert(stepConsumers.size() == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
 
 static StubBlob buildBlob(const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
@@ -318,13 +318,17 @@ static void testBodyEntries()
     }
     AOT_TEST_CHECK(catalog.summaryOf(getByValCachedCells()).clobbered.subsumes(registersClobberedByOperations()));
     checkEntries(catalog, getByIdAtSite(), { getByIdAtSite(), getByIdOfObjectAtSite() });
-    checkEntries(catalog, getByIdAtSiteHashed(), { getByIdAtSiteHashed() });
+    for (StubKey key : { getByIdCalledByCode(), getByIdCheckingColumn(), putByIdHashed(PutMode::Strict), putByIdHashed(PutMode::Define), putByIdAtSite(PutMode::Sloppy), readAtSite(ReceiverAtSite::IsAnyValue), readAtSite(ReceiverAtSite::IsCell), readTruthAtSite(ReceiverAtSite::IsAnyValue), readAtSiteAskingStructureFirst(ReceiverAtSite::IsCell), readTruthAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue), readAtSiteUnlessAsMade(), callMethodAtSite(0), callMethodAtSite(2), callMethodAtSite(2, 1), callMethodAtSite(3, 3) }) {
+        StubKey sibling = siblingUnderNameWithColumn(key).value();
+        AOT_TEST_CHECK(exists(sibling) && sibling != key && !siblingUnderNameWithColumn(sibling));
+        AOT_TEST_CHECK(catalog.summaryOf(key).clobbered.subsumes(catalog.summaryOf(sibling).clobbered));
+    }
     checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure(), enterModuleBody() });
     checkEntries(catalog, runAsyncGeneratorStep(), { runAsyncGeneratorStep(), stepAsyncIteratorInEngine() });
     for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
         checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueCellWithoutThis(count), callValueFunctionOfEngine(count) });
         if (exists(callHostFunctionWithoutBoxedCall(count)))
-            checkEntries(catalog, callHostFunction(count), { callHostFunction(count), callHostFunctionWithoutBoxedCall(count) });
+            checkEntries(catalog, callHostFunction(count), { callHostFunction(count), callHostFunctionThatMayBeUnfetched(count), callHostFunctionWithoutBoxedCall(count) });
         else
             checkEntries(catalog, callHostFunction(count), { callHostFunction(count) });
     }
@@ -356,6 +360,9 @@ static void checkKeyedAccessReferences(const StubCatalog& catalog)
     AOT_TEST_CHECK(refersOnceBy(catalog, putByValCached(PutMode::Strict), putByVal(false, ECMAMode::strict()), StubReference::Kind::Jump));
     AOT_TEST_CHECK(refersOnceBy(catalog, putByValCached(PutMode::Sloppy), putByVal(false, ECMAMode::sloppy()), StubReference::Kind::Jump));
     AOT_TEST_CHECK(!refersToFamily(catalog, defineByValCached(), StubFamily::PutByVal));
+    AOT_TEST_CHECK(refersOnceBy(catalog, defineByValCached(), storeElementOfCompiledObject(PutMode::Define), StubReference::Kind::Jump));
+    AOT_TEST_CHECK(refersOnceBy(catalog, putByVal(false, ECMAMode::strict()), storeElementOfCompiledObject(PutMode::Strict), StubReference::Kind::Jump));
+    AOT_TEST_CHECK(refersOnceBy(catalog, putByVal(false, ECMAMode::sloppy()), storeElementOfCompiledObject(PutMode::Sloppy), StubReference::Kind::Jump));
 
     checkHandlerReferences(catalog, getByValCached(), SlotHandlerTable::ReadByVal);
     checkHandlerReferences(catalog, putByValCached(PutMode::Strict), SlotHandlerTable::StoreStrictByVal);
@@ -401,7 +408,7 @@ static void checkHostCallReferences(const StubCatalog& catalog)
             AOT_TEST_CHECK(refersOnceBy(catalog, callHostFunction(count), handler, StubReference::Kind::Jump));
             bool callsOperationOfItsCount = count > 1 && (form == BoxedCallForm::ArrayPush || form == BoxedCallForm::StringIndexOf);
             AOT_TEST_CHECK(refersToFamily(catalog, handler, family) == (acceptsArgumentCount(form, count) && !callsOperationOfItsCount));
-            AOT_TEST_CHECK(refersOnceBy(catalog, handler, callHostFunctionWithoutBoxedCall(count), StubReference::Kind::Jump));
+            AOT_TEST_CHECK(refersOnceBy(catalog, handler, fetchesFunctionOnlyToLeave(form, count) ? callHostFunctionThatMayBeUnfetched(count) : callHostFunctionWithoutBoxedCall(count), StubReference::Kind::Jump));
         }
     }
 }
@@ -454,8 +461,12 @@ static void testStartOfModule()
     for (Entry entry : { Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTAbandonModuleEvaluation })
         AOT_TEST_CHECK(blob.entriesUsed.get(indexOf(entry)));
 
+    AOT_TEST_CHECK(refersOnceBy(catalog, startModuleThatRunTimeNames(), startModule(), StubReference::Kind::Jump));
+    StubBlob blobBehindWords = buildBlob(catalog, std::array { startModuleThatRunTimeNames() }, EntrySet { });
+    AOT_TEST_CHECK(blobBehindWords.offsetOf(startModuleThatRunTimeNames()) && blobBehindWords.offsetOf(startModule()) && numberOfSites(blobBehindWords, StubFrameKind::ModuleStart) == 1);
+
     StubBlob blobWithoutStarts = buildBlob(catalog, std::array { newPromise() }, EntrySet { });
-    AOT_TEST_CHECK(!blobWithoutStarts.offsetOf(startModule()) && !numberOfSites(blobWithoutStarts, StubFrameKind::ModuleStart));
+    AOT_TEST_CHECK(!blobWithoutStarts.offsetOf(startModuleThatRunTimeNames()) && !blobWithoutStarts.offsetOf(startModule()) && !numberOfSites(blobWithoutStarts, StubFrameKind::ModuleStart));
     for (Entry entry : { Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTAbandonModuleEvaluation })
         AOT_TEST_CHECK(!blobWithoutStarts.entriesUsed.get(indexOf(entry)));
 }
@@ -471,7 +482,7 @@ static void testMissingKeys()
 
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepGenerator).withForm(4)));
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::AwaitBySavingFrame).withForm(4)));
-    AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(4)));
+    AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(2)));
     AOT_TEST_CHECK(!exists(callHostFunctionWithoutBoxedCall(BoxedCallEntry::maxArgumentCount).withCount(BoxedCallEntry::maxArgumentCount + 1)));
 }
 
@@ -646,7 +657,8 @@ static void checkCoroutineOperations(const StubCatalog& catalog)
     for (StepConsumer consumer : stepConsumers)
         AOT_TEST_CHECK(operationsCalledBy(catalog, stepAsyncGenerator(consumer)).isEmpty());
     AOT_TEST_CHECK(operationsCalledBy(catalog, runAsyncGeneratorStep()) == entrySetOf({ Entry::operationAOTAsyncIteratorStep, Entry::operationAOTFinishAsyncIteratorStep }));
-    AOT_TEST_CHECK(operationsCalledBy(catalog, newAsyncGenerator()) == entrySetOf({ Entry::operationAOTNewGenerator }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, newAsyncGenerator(GeneratorFunctionOrigin::Program)) == entrySetOf({ Entry::operationAOTNewAsyncGenerator }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, newAsyncGenerator(GeneratorFunctionOrigin::Library)) == entrySetOf({ Entry::operationAOTNewAsyncGenerator }));
 }
 
 static void checkCollectionOperations(const StubCatalog& catalog)
@@ -791,12 +803,40 @@ static void testPushStubRegisters()
     });
 }
 
+enum class PushedOnto : uint8_t { Doubles, Integers, Values };
+
+template<PushedOnto onto, bool kindIsKnown, uint32_t budget>
+static void testInstructionsOfPush()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    StubRunner runner;
+    runner.setCountsInstructions(true);
+    const JSValue pushed = onto == PushedOnto::Doubles ? jsDoubleNumber(2.5) : jsNumber(7);
+    FakeArray array(onto == PushedOnto::Doubles ? DoubleShape : onto == PushedOnto::Integers ? Int32Shape : ContiguousShape, { onto == PushedOnto::Doubles ? bitsOf(0.5) : boxed(jsNumber(1)) });
+    StubRun run = kindIsKnown ? runner.run(arrayPushOfKnownKind(), { array.address(), boxed(pushed), array.shapeAndWritability() }) : runner.run(arrayPush(), { array.address(), boxed(pushed) });
+    checkFastPath(run, jsNumber(2));
+    AOT_TEST_CHECK(array.publicLength == 2 && array.elements[1] == (onto == PushedOnto::Doubles ? bitsOf(2.5) : boxed(pushed)) && run.instructionsInStubs);
+    if (*run.instructionsInStubs != budget)
+        dataLogLn("a push: ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+    AOT_TEST_CHECK(*run.instructionsInStubs <= budget);
+#endif
+}
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 std::span<const NativeTest> stubBlobTests()
 {
     static constexpr NativeTest tests[] = {
         { "stub-blob/entry-placements"_s, testEntryPlacements },
+        { "stub-blob/instructions-of-pushes/a-double-onto-doubles"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Doubles, false, 26>> },
+        { "stub-blob/instructions-of-pushes/a-double-onto-doubles-of-a-known-kind"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Doubles, true, 24>> },
+        { "stub-blob/instructions-of-pushes/an-integer-onto-integers"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Integers, false, 23>> },
+        { "stub-blob/instructions-of-pushes/an-integer-onto-integers-of-a-known-kind"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Integers, true, 21>> },
+        { "stub-blob/instructions-of-pushes/a-number-onto-values"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Values, false, 19>> },
+        { "stub-blob/instructions-of-pushes/a-number-onto-values-of-a-known-kind"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Values, true, 17>> },
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+        { "stub-blob/instructions-that-were-enough/a-push-of-a-double-onto-doubles-takes-24-not-17"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Doubles, true, 17>>, "lists: 24 instructions where the compiler before this one took 17"_s },
+#endif
         { "stub-blob/return-sites"_s, testReturnSites },
         { "stub-blob/body-entries"_s, testBodyEntries },
         { "stub-blob/references"_s, testReferences },

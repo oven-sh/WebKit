@@ -351,7 +351,8 @@ void BodyVerifier::verifyDirectEval(const BodyBlock& block, const BodyValue& val
 
     size_t numberOfOperands = evaluation.environmentsOperands().size();
     for (const EvalBinding& binding : scope.bindings) {
-        for (std::optional<uint32_t> operandIndex : { binding.operand, binding.function, binding.setter }) {
+        bool namesBindings = binding.kind == EvalBindingKind::PrivateMethod || binding.kind == EvalBindingKind::PrivateAccessor;
+        for (std::optional<uint32_t> operandIndex : { binding.operand, namesBindings ? std::nullopt : binding.function, namesBindings ? std::nullopt : binding.setter }) {
             if (operandIndex && *operandIndex >= numberOfOperands) {
                 fail(InternalErrorKind::PayloadOutOfRange, block.id(), value.id(), *operandIndex);
                 return;

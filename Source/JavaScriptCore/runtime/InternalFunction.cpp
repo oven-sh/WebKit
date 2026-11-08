@@ -218,6 +218,18 @@ static ALWAYS_INLINE bool retainsInternalFunctionAllocationStructure(JSFunction*
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static ALWAYS_INLINE Structure* addBrandForCompiledSuperCall(VM& vm, JSFunction* newTarget, Structure* structure)
+{
+#if ENABLE(AOT)
+    if (vm.aotState().newTargetOfSuperCall == newTarget) [[unlikely]]
+        return AOT::RuntimeHooks::addBrandForSuperCall(vm, newTarget, structure);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(newTarget);
+#endif
+    return structure;
+}
+
 Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObject, JSObject* newTarget, Structure* baseClass)
 {
     VM& vm = globalObject->vm();
@@ -250,14 +262,14 @@ Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObjec
     FunctionRareData* rareData = targetFunction->ensureRareData(vm);
     Structure* structure = rareData->internalFunctionAllocationStructure();
     if (structure && structure->classInfoForCells() == baseClass->classInfoForCells() && structure->realm() == baseGlobalObject) [[likely]]
-        return structure;
+        return addBrandForCompiledSuperCall(vm, targetFunction, structure);
 
     // .prototype can't be a getter if we canUseAllocationProfiles().
     JSValue prototypeValue = targetFunction->get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (JSObject* prototype = dynamicDowncast<JSObject>(prototypeValue))
-        return rareData->createInternalFunctionAllocationStructureFromBase(vm, baseGlobalObject, prototype, baseClass);
+        return addBrandForCompiledSuperCall(vm, targetFunction, rareData->createInternalFunctionAllocationStructureFromBase(vm, baseGlobalObject, prototype, baseClass));
 
     return baseClass;
 }

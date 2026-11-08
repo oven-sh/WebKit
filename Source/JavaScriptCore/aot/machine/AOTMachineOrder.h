@@ -18,12 +18,20 @@ inline constexpr uint32_t noRareRegion = UINT32_MAX;
 
 struct Loop {
     uint32_t parent { noLoop };
+    uint32_t loopAroundOutsideRun { noLoop };
     uint32_t firstBlock { 0 };
     uint32_t endBlock { 0 };
     Position begin { 0 };
     Position end { 0 };
     bool hasSideEntrance { false };
 };
+
+inline uint32_t innermostLoopAroundBoth(const Loop* loops, uint32_t loopAroundEarlier, Position later)
+{
+    while (loopAroundEarlier != noLoop && loops[loopAroundEarlier].end <= later)
+        loopAroundEarlier = loops[loopAroundEarlier].loopAroundOutsideRun;
+    return loopAroundEarlier;
+}
 
 struct RareRegion {
     Block* onlyEntry { nullptr };

@@ -267,6 +267,7 @@ static_assert(sizeof(DataNodeHeader) == 8 && isImageRecord<DataNodeHeader>);
 
 struct DataRequest {
     static constexpr uint32_t noSharedStorage = UINT32_MAX;
+    static constexpr uint32_t rootHasOwnStorage = UINT32_MAX - 1;
 
     uint32_t root;
     uint32_t sharedStorageOffset;
@@ -401,9 +402,10 @@ struct WrittenNativeResult {
 
     uint32_t kinds : numberOfKinds;
     uint32_t constructs : 1;
-    uint32_t builtin : 23;
+    uint32_t builtin : 22;
+    uint32_t writesLengths : 1;
 
-    static constexpr uint32_t encode(uint32_t kinds, bool constructs, uint32_t builtin) { return kinds | static_cast<uint32_t>(constructs) << numberOfKinds | builtin << (numberOfKinds + 1); }
+    static constexpr uint32_t encode(uint32_t kinds, bool constructs, uint32_t builtin, bool writesLengths = false) { return kinds | static_cast<uint32_t>(constructs) << numberOfKinds | builtin << (numberOfKinds + 1) | static_cast<uint32_t>(writesLengths) << 31; }
     static WrittenNativeResult decode(uint32_t word) { return std::bit_cast<WrittenNativeResult>(word); }
 };
 static_assert(sizeof(WrittenNativeResult) == 4);

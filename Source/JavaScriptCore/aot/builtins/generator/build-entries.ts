@@ -298,6 +298,7 @@ function declareClasses({ builder, sorted }: EntryContext): void {
       isNeverPristine: columns.isNeverPristine ?? false,
       pristineTest: pristineTestOf(builder, declaration, source),
       hasClosureInstances: columns.hasClosureInstances ?? false,
+      isFollowedBesideUnseenObject: columns.isFollowedBesideUnseenObject ?? false,
       instancesAreEntries: columns.instancesAreEntries ?? false,
       keepsStructuresOfClassesBelow: columns.keepsStructuresOfClassesBelow ?? false,
       definesCharactersOnNewInstances: columns.definesCharactersOnNewInstances ?? false,
@@ -1045,6 +1046,9 @@ function finishEntries(context: EntryContext): void {
     builtin.isAddedAtFirstRead =
       columnOf(builder, builtin, "addedAtFirstRead") === true && holder !== null && !holder.flags.includes("IsGlobalObject");
     builtin.isAddedAsEnumerable = builtin.isAddedAtFirstRead && columnOf(builder, builtin, "addedAsEnumerable") === true;
+    const isConstructorOfClass = builtin.kind === "Constructor" && holder?.kind === "Prototype";
+    const laidWith = (isConstructorOfClass ? builtin.sameObjectAs : null) ?? builtin;
+    builtin.canBeListed = columnOf(builder, builtin, "canBeListed") ?? laidWith.origin !== "Engine";
     const writtenColumns = builder.columnsOf(builtin);
     builtin.marks = builtinMarks.filter(mark => writtenColumns.some(({ columns }) => columns.marks?.includes(mark)));
     const loader = writtenColumns.find(({ columns }) => columns.loadsMachineCodeAs !== undefined);
@@ -1215,6 +1219,7 @@ function buildSlots(context: SlotContext, builtinClass: MutableClass, descendant
       internalField: spec.internalField ?? null,
       holdsWhatStepsHandOut: spec.holdsWhatStepsHandOut ?? false,
       holdsWhatIsThrown: spec.holdsWhatIsThrown ?? false,
+      wordOfCell: spec.wordOfCell ?? "None",
     };
     slots.push(slot);
     if (spec.holds !== undefined) slotTypes.push({ slot, spec: spec.holds, source });

@@ -10,10 +10,12 @@
 
 #include "AOTCompactTable.h"
 #include "AOTConversionEmitter.h"
+#include "AOTHashTableBuiltinEmitter.h"
 #include "AOTResultRules.h"
 #include "AOTResultsJoin.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
+#include "AOTThrowEmitter.h"
 #include "JSMap.h"
 #include "JSMapIterator.h"
 #include "JSSet.h"
@@ -404,6 +406,89 @@ void CollectionIntrinsicEmitter::generateCollectionTable(const ValueContext& val
     }
     Boxed table(m_forwardedTable);
     define(value, table);
+}
+
+void CollectionIntrinsicEmitter::generateGetValueAtPlaceInMap(const ValueContext& value)
+{
+    TableReader reader(generator());
+    CellPointer map = in<CellPointer>(value->mapOperand());
+    Integer place = integerOf(value->placeOperand());
+    const Machine::AbstractHeap& entries = m_heaps.entire(AbstractHeap::CollectionEntries);
+    Boxed found = selectByBranch<Boxed>(lessThan(place, integer(0)), [&] {
+        return undefined();
+    }, [&] {
+        LValue table = reader.storageOf(map);
+        LValue slot = m_out.add(table, place.value());
+        if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime)) {
+            Condition placeIsOfNarrowValue = hasBits(place, placeInMapHoldsNarrowValue);
+            Condition isLive(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfStatus())), m_out.constInt32(static_cast<int32_t>(CompactTable::Status::Live))));
+            LValue widthThatPlaceSays = m_out.select(placeIsOfNarrowValue.value(), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow)), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Wide)));
+            Condition holdsValuesOfThatWidth(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfValueWidth())), widthThatPlaceSays));
+            LValue keys = reader.keysOf(table);
+            Condition keysAreWide = reader.hasKeysOfWidth(CompactTable::Width::Wide, table);
+            LValue values = m_out.select(keysAreWide.value(), reader.valuesBehind(CompactTable::Width::Wide, table, keys), reader.valuesBehind(CompactTable::Width::Narrow, table, keys));
+            LValue distance = m_out.sub(slot, values);
+            LValue entry = m_out.select(placeIsOfNarrowValue.value(), m_out.lShr(m_out.sub(distance, m_out.constInt64(placeInMapHoldsNarrowValue)), m_out.constInt32(2)), m_out.lShr(distance, m_out.constInt32(3)));
+            Condition isInUse(m_out.below(entry, m_out.zeroExtPtr(m_out.load32(reader.tableField(table, CompactTable::offsetOfUsed())))));
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(logicalAnd(isLive, holdsValuesOfThatWidth), isInUse), std::nullopt, ProofSource::WhatIsRemembered);
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, Condition(m_out.select(keysAreWide.value(), reader.isLiveKeyWord(CompactTable::Width::Wide, reader.loadKeyWord(CompactTable::Width::Wide, keys, entry)), reader.isLiveKeyWord(CompactTable::Width::Narrow, reader.loadKeyWord(CompactTable::Width::Narrow, keys, entry)))), std::nullopt, ProofSource::WhatIsRemembered);
+        }
+        return selectByBranch<Boxed>(hasBits(place, placeInMapHoldsNarrowValue), [&] {
+            return reader.decodeNarrow(NarrowReference(m_out.load32(m_out.address(entries, slot, -placeInMapHoldsNarrowValue))));
+        }, [&] {
+            return Boxed(m_out.load64(m_out.address(entries, slot)));
+        });
+    });
+    define(value, emitter<ConversionEmitter>().inRepresentation(value, found, typeOf(value.id()), value.representation()));
+}
+
+void CollectionIntrinsicEmitter::generateFindKeyInMap(const ValueContext& value)
+{
+    define(value, emitter<HashTableBuiltinEmitter>().findPlace(value, value->mapOperand(), value->keyOperand()));
+}
+
+Integer CollectionIntrinsicEmitter::movesOfEntriesInCollections()
+{
+    return Integer(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), vm().value(), VM::offsetOfAOTState() + OBJECT_OFFSETOF(VMState, movesOfEntriesInCollections))));
+}
+
+void CollectionIntrinsicEmitter::generateMovesOfEntriesInCollections(const ValueContext& value)
+{
+    define(value, movesOfEntriesInCollections());
+}
+
+void CollectionIntrinsicEmitter::generateTryPutValueAtPlaceInMap(const ValueContext& value)
+{
+    TableReader reader(generator());
+    CellPointer map = in<CellPointer>(value->mapOperand());
+    Integer place = integerOf(value->placeOperand());
+    Integer moves = integerOf(value->movesOperand());
+    Boxed stored = in<Boxed>(value->valueOperand());
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        LBasicBlock holdsWideValue = newBlock();
+        LBasicBlock liesWhereItWasFound = newBlock();
+        m_out.branch(m_out.testIsZero64(place.value(), m_out.constInt64(std::numeric_limits<int64_t>::min() | placeInMapHoldsNarrowValue)), normalEdge(holdsWideValue), targets.notTaken);
+
+        m_out.appendTo(holdsWideValue);
+        m_out.branch(equal(moves, movesOfEntriesInCollections()).value(), normalEdge(liesWhereItWasFound), targets.notTaken);
+
+        m_out.appendTo(liesWhereItWasFound);
+        LValue table = reader.storageOf(map);
+        if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime)) {
+            Condition isLive(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfStatus())), m_out.constInt32(static_cast<int32_t>(CompactTable::Status::Live))));
+            Condition holdsWideValues(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfValueWidth())), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Wide))));
+            LValue keys = reader.keysOf(table);
+            Condition keysAreWide = reader.hasKeysOfWidth(CompactTable::Width::Wide, table);
+            LValue values = m_out.select(keysAreWide.value(), reader.valuesBehind(CompactTable::Width::Wide, table, keys), reader.valuesBehind(CompactTable::Width::Narrow, table, keys));
+            LValue entry = m_out.lShr(m_out.sub(m_out.add(table, place.value()), values), m_out.constInt32(3));
+            Condition isInUse(m_out.below(entry, m_out.zeroExtPtr(m_out.load32(reader.tableField(table, CompactTable::offsetOfUsed())))));
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(logicalAnd(isLive, holdsWideValues), isInUse), std::nullopt, ProofSource::WhatIsRemembered);
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, Condition(m_out.select(keysAreWide.value(), reader.isLiveKeyWord(CompactTable::Width::Wide, reader.loadKeyWord(CompactTable::Width::Wide, keys, entry)), reader.isLiveKeyWord(CompactTable::Width::Narrow, reader.loadKeyWord(CompactTable::Width::Narrow, keys, entry)))), std::nullopt, ProofSource::WhatIsRemembered);
+        }
+        m_out.store64(stored.value(), m_out.address(m_heaps.entire(AbstractHeap::CollectionEntries), m_out.add(table, place.value())));
+        barrierAfterStore(value, CellPointer(table), typeOf(value->valueOperand()));
+        m_out.jump(targets.taken);
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

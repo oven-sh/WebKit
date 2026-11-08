@@ -24,7 +24,10 @@ struct GeneratorTakenByConsumer {
     FunctionID function;
     uint32_t numberOfYields { 0 };
     uint32_t callPosition { 0 };
+    uint64_t numberOfOperationsOfRegion { 0 };
+    bool regionHoldsIterations { false };
     bool comesRound { false };
+    bool takerCallsMethodItself { false };
     Reference state;
     Vector<Reference, 8> entryArguments;
     Vector<BlockID, 8> region;
@@ -42,6 +45,8 @@ struct GeneratorWalkedInConsumer {
     Reference state;
     Reference list;
     uint32_t numberOfYields { 0 };
+    uint64_t numberOfOperationsOfRegion { 0 };
+    bool regionHoldsIterations { false };
     Vector<BlockID, 8> region;
     Vector<TypeID, 4> typesOfCarriedValues;
     Vector<BlockID, 2> headsThatCarryValues;

@@ -268,7 +268,7 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
             }
             if (std::exchange(before->waitsForNextLoop, false))
                 before->headThatTookIt = inputHead;
-            if (web && (!before->liesInFrame || textBegunHereMayLieInFrame(walker, inputHead, *web))) {
+            if (web && (!before->liesInFrame || textBegunHereMayLieInFrame(walker, inputHead, *web)) && (!web->beginsAnewOnSomeEdge || (before->liesInFrame && walker.loopIsBeingTried(inputHead)))) {
                 TextInStringBuilder text;
                 text.web = WTF::move(*web);
                 text.frameIndex = before->frameIndex;
@@ -290,9 +290,11 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
         if (!web || !enters || !enters.isRecord())
             continue;
         Type typeOfWhatEnters = walker.types().at(walker.typeOf(enters));
-        if (!typeOfWhatEnters.isAnyString() && (!web->isOnlyConcatenated || !hasTextByItself(typeOfWhatEnters) || !walker.loopIsBeingTried(inputHead)))
+        if (!typeOfWhatEnters.isAnyString() && (web->beginsAnewOnSomeEdge || !web->isOnlyConcatenated || !hasTextByItself(typeOfWhatEnters) || !walker.loopIsBeingTried(inputHead)))
             continue;
         if (comesRoundLoopAroundAsStringInTextBuilders(walker, index, inputHead, parameterIndex))
+            continue;
+        if (web->beginsAnewOnSomeEdge && (!walker.loopIsBeingTried(inputHead) || !textBegunHereMayLieInFrame(walker, inputHead, *web)))
             continue;
         TextInStringBuilder* begun = beginTextInTextBuilders(walker, index, inputHead, WTF::move(*web), enters, origin);
         if (!begun)
@@ -493,8 +495,6 @@ bool appendRowToTextInStringBuilder(Walker& walker, const BodyValue& join, Vecto
     return true;
 }
 
-bool handlerInForceReadsTextInStringBuilder(Walker&, const TextInStringBuilder&);
-
 template<typename Functor>
 static void forEachTextLeftOnEdgeInTextBuilders(Walker& walker, BlockID from, BlockID to, const Functor& functor)
 {
@@ -522,6 +522,103 @@ bool edgeLeavesLoopOfTextInStringBuilder(Walker& walker, BlockID to)
         return IterationStatus::Done;
     });
     return leaves;
+}
+
+template<typename Functor>
+static void forEachTextBegunAnewOnEdgeInTextBuilders(Walker& walker, BlockID to, std::span<const Reference> arguments, const Functor& functor)
+{
+    BodyBlock entered = walker.currentBodyIndex().block(to);
+    for (uint32_t index = 0; index < arguments.size() && index < entered.numberOfParameters(); ++index) {
+        if (!arguments[index] || isTextInStringBuilder(walker, arguments[index]))
+            continue;
+        TextInStringBuilder* text = findTextNamedBy(walker, entered.parameter(index));
+        if (text && text->web.beginsAnewOnSomeEdge)
+            functor(*text, index);
+    }
+}
+
+bool edgeBeginsTextAnewInStringBuilder(Walker& walker, BlockID to, std::span<const Reference> arguments)
+{
+    bool begins = false;
+    forEachTextBegunAnewOnEdgeInTextBuilders(walker, to, arguments, [&](TextInStringBuilder&, uint32_t) {
+        begins = true;
+    });
+    return begins;
+}
+
+void beginTextsAnewInStringBuildersOnEdge(Walker& walker, BlockID to, Vector<Reference, 8>& arguments)
+{
+    Origin origin = walker.originOfOperation();
+    origin.isTailCall = false;
+    Vector<std::pair<TextInStringBuilder*, uint32_t>, 2> begun;
+    forEachTextBegunAnewOnEdgeInTextBuilders(walker, to, arguments.span(), [&](TextInStringBuilder& text, uint32_t index) {
+        begun.append({ &text, index });
+    });
+    for (auto [text, index] : begun) {
+        Reference begins = arguments[index];
+        Type typeOfBeginning = walker.types().at(walker.typeOf(begins));
+        if (!typeOfBeginning.isAnyString() || longestTextOf(walker.types(), typeOfBeginning) == JSString::MaxLength) {
+            walker.walkLoopAgainWithoutBuilders(*text);
+            return;
+        }
+        Reference name = walker.nameLastBoundTo(walker.currentBodyIndex().block(text->web.loopHead).parameter(text->web.parameterIndex));
+        if (!isTextInStringBuilder(walker, name))
+            name = text->builder;
+        RELEASE_ASSERT(text->liesInFrame);
+        Draft discard(Opcode::StackStringBuilderDiscard, origin);
+        walker.chooseConservativeFields(discard);
+        discard.setBuilderOperand(name);
+        walker.build(WTF::move(discard));
+        text->stringOfState = { };
+        text->lengthOfState = { };
+        if (walker.isUnreachable())
+            return;
+        if (textOfKnownPartOfStringBuilder(walker, begins) != walker.program().strings.emptyString()) {
+            appendPartsToStringBuilder(walker, *text, name, singleElementSpan(begins), origin);
+            if (walker.isUnreachable())
+                return;
+        }
+        arguments[index] = name;
+    }
+}
+
+template<typename Functor>
+static void forEachTextHandedToReaderOnEdgeInTextBuilders(Walker& walker, BlockID to, std::span<const Reference> arguments, const Functor& functor)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock entered = index.block(to);
+    for (uint32_t place = 0; place < arguments.size() && place < entered.numberOfParameters(); ++place) {
+        if (!arguments[place] || !isTextInStringBuilder(walker, arguments[place]))
+            continue;
+        TextInStringBuilder* text = findTextByRecordInTextBuilders(walker, arguments[place]);
+        if (text && text->web.parametersThatReadText.contains(entered.parameter(place)))
+            functor(*text, place);
+    }
+}
+
+bool edgeHandsTextInStringBuilderToReader(Walker& walker, BlockID to, std::span<const Reference> writtenArguments)
+{
+    bool hands = false;
+    forEachTextHandedToReaderOnEdgeInTextBuilders(walker, to, writtenArguments, [&](TextInStringBuilder&, uint32_t) {
+        hands = true;
+    });
+    return hands;
+}
+
+void handStringsOfTextsInStringBuildersToReadersOnEdge(Walker& walker, BlockID to, std::span<Reference> writtenArguments)
+{
+    Origin origin = walker.originOfOperation();
+    origin.isTailCall = false;
+    Vector<std::pair<TextInStringBuilder*, uint32_t>, 2> handed;
+    forEachTextHandedToReaderOnEdgeInTextBuilders(walker, to, writtenArguments, [&](TextInStringBuilder& text, uint32_t place) {
+        handed.append({ &text, place });
+    });
+    for (auto [text, place] : handed) {
+        Reference string = stringOfTextInStringBuilder(walker, *text, writtenArguments[place], origin);
+        if (!string || walker.isUnreachable())
+            return;
+        writtenArguments[place] = string;
+    }
 }
 
 static Reference finishInTextBuilders(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)

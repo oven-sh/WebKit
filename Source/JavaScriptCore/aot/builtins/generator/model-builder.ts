@@ -392,6 +392,7 @@ export class ModelBuilder {
       constant: null,
       isAddedAtFirstRead: false,
       isAddedAsEnumerable: false,
+      canBeListed: false,
       isCreatedInSomeRuns: false,
       namesFoundAbove: [],
       hostNumber: noHostNumber,

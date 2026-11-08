@@ -13,6 +13,7 @@
 #include "RememberedSlot.h"
 #include "StructureID.h"
 #include <array>
+#include <wtf/BitSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/text/Latin1Character.h>
 
@@ -71,6 +72,7 @@ public:
         return list.isFor(extraPropertiesStructureID, shapeWord, orderAndCount) ? &list : nullptr;
     }
     CachedPropertyList& add(CachedPropertyList&&);
+    bool isSecondWalk(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount);
     KeptOwnKeys& ownKeysFor(StructureID, uint32_t orderWord, bool listsSymbols);
     void clear();
 
@@ -80,6 +82,10 @@ private:
 
     static unsigned placeOf(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount) { return ((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries; }
 
+    static constexpr unsigned numberOfWalksRemembered = 8 * numberOfEntries;
+
+    WTF::BitSet<numberOfWalksRemembered> m_walksWithoutList;
+    unsigned m_numberOfWalksWithoutList { 0 };
     MadeInArena<Entries> m_entries;
     MadeInArena<OwnKeyLists> m_ownKeyLists;
     unsigned m_numberOfOwnKeyListsReplaced { 0 };

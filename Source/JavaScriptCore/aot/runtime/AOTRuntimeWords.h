@@ -61,6 +61,8 @@ struct ConstantCellWords {
 
 struct EffectsNetWords {
     uint64_t entriesIntoCode;
+    uint64_t operationsThatDidSomething;
+    uint64_t operationsThatRanOtherCode;
     uint8_t* exercised;
     uint64_t callHeldToThrowNothing;
     uint64_t rowsOfCallHeldToThrowNothing;

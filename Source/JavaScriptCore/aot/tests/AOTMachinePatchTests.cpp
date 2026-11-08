@@ -536,6 +536,83 @@ static void testMachinePatchEntersJoinThroughBlocksWithoutCode()
     AOT_TEST_CHECK(test.call<int64_t>(int64_t { 11 }) == 11);
 }
 
+static void testMachinePatchRareBlocksOfSameMovesStandOnce()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* a = test.argumentGPR(0);
+    Operation* b = test.argumentGPR(1);
+    Block* next = out.newBlock();
+    Block* usual = out.newBlock();
+    Block* done = out.newBlock();
+
+    Operation* early = out.opaque(out.add(a, out.constInt64(7)));
+    ValueFromBlock fromEntry = out.anchor(early);
+    out.branch(out.testNonZero64(a, 1), rareEdge(done), normalEdge(next));
+    out.appendTo(next);
+    ValueFromBlock fromNext = out.anchor(early);
+    out.branch(out.testNonZero64(b, 1), rareEdge(done), normalEdge(usual));
+    out.appendTo(usual);
+    ValueFromBlock fromUsual = out.anchor(out.opaque(out.add(early, out.constInt64(100))));
+    out.jump(done);
+    out.appendTo(done);
+    out.ret(out.add(out.phi(Int64, fromEntry, fromNext, fromUsual), out.add(early, early)));
+
+    compileOrFail(test);
+    const Allocation& allocation = test.procedure().allocation();
+    Block* behindEntry = early->owner()->successor(0).block();
+    Block* behindNext = next->successor(0).block();
+    AOT_TEST_CHECK(behindEntry != done && behindNext != done && behindEntry != behindNext);
+    AOT_TEST_CHECK(behindEntry->successor(0).block() == done && behindNext->successor(0).block() == done);
+    for (Block* block : { behindEntry, behindNext })
+        AOT_TEST_CHECK(allocation.stepsOf(block).beginOfEdgeMoves < allocation.stepsOf(block).endOfEdgeMoves);
+    AOT_TEST_CHECK(allocation.numberOfOperationsAllocated() - test.procedure().numberOfOperationsEncoded() == behindNext->size());
+    AOT_TEST_CHECK(test.call<int64_t>(int64_t { 10 }, int64_t { 20 }) == 117 + 34);
+    AOT_TEST_CHECK(test.call<int64_t>(int64_t { 11 }, int64_t { 20 }) == 18 + 36);
+    AOT_TEST_CHECK(test.call<int64_t>(int64_t { 10 }, int64_t { 21 }) == 17 + 34);
+}
+
+static void testMachinePatchRareBlocksThatMakeOtherConstantsStandApart()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* a = test.argumentGPR(0);
+    Operation* b = test.argumentGPR(1);
+    Block* second = out.newBlock();
+    Block* third = out.newBlock();
+    Block* usual = out.newBlock();
+    Block* done = out.newBlock();
+
+    Operation* early = out.opaque(out.add(a, out.constInt64(7)));
+    ValueFromBlock fromFirst = out.anchor(out.constInt64(0x1000000001));
+    out.branch(out.testNonZero64(a, 1), rareEdge(done), normalEdge(second));
+    out.appendTo(second);
+    ValueFromBlock fromSecond = out.anchor(out.constInt64(0x2000000002));
+    out.branch(out.testNonZero64(b, 1), rareEdge(done), normalEdge(third));
+    out.appendTo(third);
+    ValueFromBlock fromThird = out.anchor(out.constInt64(0x2000000002));
+    out.branch(out.testNonZero64(b, 2), rareEdge(done), normalEdge(usual));
+    out.appendTo(usual);
+    ValueFromBlock fromUsual = out.anchor(out.opaque(out.add(early, out.constInt64(100))));
+    out.jump(done);
+    out.appendTo(done);
+    out.ret(out.phi(Int64, fromFirst, fromSecond, fromThird, fromUsual));
+
+    compileOrFail(test);
+    const Allocation& allocation = test.procedure().allocation();
+    Block* behindThird = third->successor(0).block();
+    for (Block* block : { early->owner()->successor(0).block(), second->successor(0).block(), behindThird }) {
+        AOT_TEST_CHECK(block != done && block->successor(0).block() == done);
+        const BlockSteps& steps = allocation.stepsOf(block);
+        AOT_TEST_CHECK(steps.endOfEdgeMoves == steps.beginOfEdgeMoves + 1 && allocation.step(steps.beginOfEdgeMoves).kind == StepKind::Materialize);
+    }
+    AOT_TEST_CHECK(allocation.numberOfOperationsAllocated() - test.procedure().numberOfOperationsEncoded() == behindThird->size());
+    AOT_TEST_CHECK(test.call<int64_t>(int64_t { 10 }, int64_t { 4 }) == 117);
+    AOT_TEST_CHECK(test.call<int64_t>(int64_t { 11 }, int64_t { 4 }) == 0x1000000001);
+    AOT_TEST_CHECK(test.call<int64_t>(int64_t { 10 }, int64_t { 5 }) == 0x2000000002);
+    AOT_TEST_CHECK(test.call<int64_t>(int64_t { 10 }, int64_t { 6 }) == 0x2000000002);
+}
+
 static void testMachinePatchCheckHandsOverOperands()
 {
     constexpr double x = 6.5;
@@ -1092,6 +1169,8 @@ static std::span<const NativeTest> listOfMachinePatchTests()
         { "machine/patch/clobbers-on-a-successor"_s, testMachinePatchClobbersOnSuccessor },
         { "machine/patch/successor-labels-and-fall-through"_s, testMachinePatchSuccessorLabelsAndFallThrough },
         { "machine/patch/enters-join-through-blocks-without-code"_s, testMachinePatchEntersJoinThroughBlocksWithoutCode },
+        { "machine/patch/rare-blocks-of-the-same-moves-stand-once"_s, testMachinePatchRareBlocksOfSameMovesStandOnce },
+        { "machine/patch/rare-blocks-that-make-other-constants-stand-apart"_s, testMachinePatchRareBlocksThatMakeOtherConstantsStandApart },
         { "machine/patch/check-hands-over-operands"_s, testMachinePatchCheckHandsOverOperands },
         { "machine/patch/checks-share-late-paths"_s, testMachinePatchChecksShareLatePaths },
         { "machine/patch/frame-is-set-up"_s, testMachinePatchFrameIsSetUp },

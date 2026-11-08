@@ -205,7 +205,7 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
         && closures.omittedWordCount <= closures.first
         && closures.first <= closures.end
         && numberOfElements(ImageSection::ClosureWords) == closures.end - closures.omittedWordCount
-        && numberOfElements(ImageSection::StringConstants) == 2 * static_cast<uint64_t>(tables.instanceSizes.numberOfStringCells)
+        && numberOfElements(ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells
         && numberOfElements(ImageSection::NamesOfSites) == tables.instanceSizes.numberOfSiteCaches
         && tables.globalBindings().size() == tables.instanceSizes.numberOfGlobalBindings
         && tables.instanceSizes.sizeOfMethodTable <= rangeOf(ImageSection::MethodTable).size

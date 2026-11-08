@@ -456,7 +456,10 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
             auto mayBeSameObject = [](Reference other) {
                 return !(other.id().index() % 3);
             };
-            pair.state.invalidateAliasedSlots(base, field, scopedLambda<bool(Reference)>(mayBeSameObject));
+            auto isOfLayoutAlone = [](Reference named, LayoutID asked) {
+                return named.id().index() % 3 && !((named.id().index() + asked.index()) % 2);
+            };
+            pair.state.invalidateAliasedSlots(base, field, scopedLambda<bool(Reference)>(mayBeSameObject), scopedLambda<bool(Reference, LayoutID)>(isOfLayoutAlone));
             pair.lists.invalidateAliasedSlots(base, field, mayBeSameObject);
             break;
         }
@@ -540,8 +543,30 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
             auto mayEndGuard = [&](LayoutID classOfGuard) {
                 return classOfGuard.index() % 3 != rest;
             };
-            pair.state.invalidate(effectsThatWriteInWalkStateTests(written), scopedLambda<bool(Reference)>(mayBeWritten), scopedLambda<bool(LayoutID, PropertyKeyID)>([&](LayoutID classOfGuard, PropertyKeyID) { return mayEndGuard(classOfGuard); }));
-            pair.lists.invalidate(written, mayBeWritten, mayEndGuard);
+            Reference rootWritten = object();
+            auto findClassOf = [&](Reference named) -> WalkState::ClassOfHolder {
+                uint32_t number = named.id().index();
+                if (!(number % 2))
+                    return { };
+                return { LayoutID(layoutsOfWalkStateTests[number % numberOfLayouts]), number % 4 == 1 };
+            };
+            WalkState::ClassOfHolder classOfRoot = random.getUint32(2) ? findClassOf(rootWritten) : WalkState::ClassOfHolder();
+            LayoutID layoutOfObjectWritten = classOfRoot.layoutAlone;
+            auto isOfLayoutAlone = [&](Reference named, LayoutID asked) {
+                return named.id().index() % 2 && asked == LayoutID(layoutsOfWalkStateTests[named.id().index() % numberOfLayouts]);
+            };
+            auto askedOfHolders = scopedLambda<bool(Reference, LayoutID)>(isOfLayoutAlone);
+            auto mayBeWrittenByWriter = [&](Reference holder) {
+                if (layoutOfObjectWritten && holder.id().index() % 2 && layoutOfObjectWritten != LayoutID(layoutsOfWalkStateTests[holder.id().index() % numberOfLayouts]))
+                    return false;
+                if (layoutOfObjectWritten && classOfRoot.isNewCellItself && findClassOf(holder).isNewCellItself && holder != rootWritten)
+                    return false;
+                return mayBeWritten(holder);
+            };
+            auto askedForClass = scopedLambda<WalkState::ClassOfHolder(Reference)>(findClassOf);
+            WalkState::WriterOfOneObject writer { rootWritten, classOfRoot, askedOfHolders, askedForClass };
+            pair.state.invalidate(effectsThatWriteInWalkStateTests(written), scopedLambda<bool(Reference)>(mayBeWrittenByWriter), scopedLambda<bool(LayoutID, PropertyKeyID)>([&](LayoutID classOfGuard, PropertyKeyID) { return mayEndGuard(classOfGuard); }), nullptr, layoutOfObjectWritten ? &writer : nullptr);
+            pair.lists.invalidate(written, mayBeWrittenByWriter, mayEndGuard);
             break;
         }
         }
@@ -581,6 +606,109 @@ static void testObjectsThatLeaveCostNoMoreBesideManyVariables()
         AOT_TEST_CHECK(state.variable(VariableID(statement)) == valueOfWalkStateTests(statement));
 }
 
+static void testWhatIsBelievedOfFreshHoldersIsHeldAgainstWhatArrives()
+{
+    Reference kept = valueOfWalkStateTests(1);
+    Reference scope = valueOfWalkStateTests(2);
+    Reference known = valueOfWalkStateTests(3);
+    WalkState believed;
+    for (Reference object : { kept, scope }) {
+        believed.noteShape(object, TypeTable::object);
+        believed.noteFresh(object);
+    }
+    believed.noteSlot(kept, fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(10));
+    believed.noteElement(kept, valueOfWalkStateTests(20), valueOfWalkStateTests(11));
+    believed.noteEnvironmentField(scope, fieldOfWalkStateTests(1, 2), valueOfWalkStateTests(12));
+    believed.noteSlot(known, fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(13));
+
+    struct Lacking {
+        Reference holder;
+        std::optional<FieldReference> fieldOfScope;
+        Reference believed;
+    };
+    auto lackingIn = [&](const WalkState& arriving) {
+        Vector<Lacking> lacking;
+        believed.forEachBeliefOfFreshHolderLackingIn(arriving, [&](Reference holder, std::optional<FieldReference> fieldOfScope, Reference value) {
+            lacking.append(Lacking { holder, fieldOfScope, value });
+        });
+        return lacking;
+    };
+
+    WalkState same = believed;
+    AOT_TEST_CHECK(lackingIn(same).isEmpty());
+    same.noteSlot(known, fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(14));
+    same.noteSlot(kept, fieldOfWalkStateTests(0, 1), valueOfWalkStateTests(15));
+    AOT_TEST_CHECK(lackingIn(same).isEmpty());
+
+    WalkState stored = believed;
+    stored.noteSlot(kept, fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(16));
+    Vector<Lacking> slot = lackingIn(stored);
+    AOT_TEST_CHECK(slot.size() == 1 && slot[0].holder == kept && !slot[0].fieldOfScope && slot[0].believed == valueOfWalkStateTests(10));
+
+    WalkState laid = believed;
+    laid.noteElement(kept, valueOfWalkStateTests(20), valueOfWalkStateTests(17));
+    Vector<Lacking> element = lackingIn(laid);
+    AOT_TEST_CHECK(element.size() == 1 && element[0].holder == kept && element[0].believed == valueOfWalkStateTests(11));
+
+    WalkState assigned = believed;
+    assigned.noteEnvironmentField(scope, fieldOfWalkStateTests(1, 2), valueOfWalkStateTests(18));
+    Vector<Lacking> field = lackingIn(assigned);
+    AOT_TEST_CHECK(field.size() == 1 && field[0].holder == scope && field[0].fieldOfScope && field[0].fieldOfScope->field == 2 && field[0].believed == valueOfWalkStateTests(12));
+
+    WalkState left = believed;
+    left.markEscaped(kept);
+    Vector<Lacking> cell = lackingIn(left);
+    AOT_TEST_CHECK(cell.size() == 1 && cell[0].holder == kept && !cell[0].believed);
+
+    AOT_TEST_CHECK(lackingIn(WalkState()).size() == 2);
+}
+
+static void testOneChangeAmongManyFreshHoldersIsFoundInWhatIsNotShared()
+{
+    constexpr uint32_t numberOfHolders = 400;
+    constexpr uint32_t changed = 211;
+    WalkState believed;
+    for (uint32_t number = 0; number < numberOfHolders; ++number) {
+        Reference object = valueOfWalkStateTests(number);
+        believed.noteShape(object, TypeTable::object);
+        believed.noteFresh(object);
+        believed.noteFactsOfCell(object, { FactOfCell::NotFrozen });
+        believed.noteSlot(object, fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(numberOfHolders + number));
+    }
+    Reference object = valueOfWalkStateTests(changed);
+    auto lackingIn = [&](const WalkState& arriving) {
+        Vector<std::pair<Reference, Reference>> lacking;
+        believed.forEachBeliefOfFreshHolderLackingIn(arriving, [&](Reference holder, std::optional<FieldReference>, Reference value) {
+            lacking.append({ holder, value });
+        });
+        return lacking;
+    };
+    auto onlyChangedHolderIsLacking = [&](const WalkState& arriving, Reference value) {
+        auto lacking = lackingIn(arriving);
+        return lacking.size() == 1 && lacking[0].first == object && lacking[0].second == value;
+    };
+
+    WalkState same = believed;
+    same.noteSlot(valueOfWalkStateTests(2 * numberOfHolders + 1), fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(1));
+    AOT_TEST_CHECK(lackingIn(same).isEmpty());
+
+    WalkState stored = believed;
+    stored.noteSlot(object, fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(7));
+    AOT_TEST_CHECK(onlyChangedHolderIsLacking(stored, valueOfWalkStateTests(numberOfHolders + changed)));
+
+    WalkState left = believed;
+    left.markEscaped(object);
+    AOT_TEST_CHECK(onlyChangedHolderIsLacking(left, Reference()));
+
+    WalkState shaped = believed;
+    shaped.noteShape(object, TypeTable::function);
+    AOT_TEST_CHECK(onlyChangedHolderIsLacking(shaped, Reference()));
+
+    WalkState frozen = believed;
+    frozen.endFactsOfCell(object, { FactOfCell::NotFrozen });
+    AOT_TEST_CHECK(onlyChangedHolderIsLacking(frozen, Reference()));
+}
+
 static void testListTakesRoomOfFormerListAndNothingThatItHeld()
 {
     Vector<uint32_t> former;
@@ -600,31 +728,32 @@ static void testListTakesRoomOfFormerListAndNothingThatItHeld()
     AOT_TEST_CHECK(listInItsOwnRoom.isEmpty() && listInItsOwnRoom.capacity() == 4);
 }
 
-static void testRecordsTakeSegmentsOfFormerRecords()
+static void testRecordsKeepTheirSegmentsWhereUnitIsForgotten()
 {
-    StableArray<uint32_t, 4> former;
-    for (uint32_t number = 0; number < 40; ++number)
-        former.append(number);
-    const uint32_t* first = &former[0];
     StableArray<uint32_t, 4> records;
-    records.takeRoomOf(former);
-    AOT_TEST_CHECK(records.isEmpty() && former.isEmpty());
+    for (uint32_t number = 0; number < 40; ++number)
+        records.append(number);
+    const uint32_t* first = &records[0];
+    records.forgetUnit();
+    AOT_TEST_CHECK(records.isEmpty());
 #if ASSERT_ENABLED
     AOT_TEST_CHECK(*reinterpret_cast<const uint8_t*>(first) == byteOfRoomThatIsTaken);
 #endif
     records.append(7);
-    former.append(8);
-    AOT_TEST_CHECK(&records[0] == first && records[0] == 7 && &former[0] != first && former[0] == 8);
+    AOT_TEST_CHECK(&records[0] == first && records[0] == 7);
+    for (uint32_t number = 1; number < 40; ++number)
+        records.append(number);
+    for (uint32_t number = 1; number < 40; ++number)
+        AOT_TEST_CHECK(records[number] == number);
 }
 
-static void testSideWordsTakeSegmentsOfUsualSizeAlone()
+static void testSideWordsKeepSegmentsOfUsualSizeAlone()
 {
-    SideWords former;
-    uint32_t* inLargeSegment = former.allocate(1u << 15);
-    uint32_t* inUsualSegment = former.allocate(8);
-    AOT_TEST_CHECK(inLargeSegment != inUsualSegment);
     SideWords words;
-    words.takeRoomOf(former);
+    uint32_t* inLargeSegment = words.allocate(1u << 15);
+    uint32_t* inUsualSegment = words.allocate(8);
+    AOT_TEST_CHECK(inLargeSegment != inUsualSegment);
+    words.forgetUnit();
     AOT_TEST_CHECK(words.allocate(8) == inUsualSegment);
 }
 
@@ -633,9 +762,11 @@ std::span<const NativeTest> walkStateTests()
     static constexpr NativeTest tests[] {
         { "walk-state/answers-as-plain-lists-do"_s, testAnswersAsPlainListsDo },
         { "walk-state/objects-that-leave-cost-no-more-beside-many-variables"_s, testObjectsThatLeaveCostNoMoreBesideManyVariables },
+        { "walk-state/what-is-believed-of-fresh-holders-is-held-against-what-arrives"_s, testWhatIsBelievedOfFreshHoldersIsHeldAgainstWhatArrives },
+        { "walk-state/one-change-among-many-fresh-holders-is-found-in-what-is-not-shared"_s, testOneChangeAmongManyFreshHoldersIsFoundInWhatIsNotShared },
         { "walk-state/a-list-takes-the-room-of-a-former-list-and-nothing-that-it-held"_s, testListTakesRoomOfFormerListAndNothingThatItHeld },
-        { "walk-state/records-take-the-segments-of-former-records"_s, testRecordsTakeSegmentsOfFormerRecords },
-        { "walk-state/side-words-take-segments-of-the-usual-size-alone"_s, testSideWordsTakeSegmentsOfUsualSizeAlone },
+        { "walk-state/records-keep-their-segments-where-a-unit-is-forgotten"_s, testRecordsKeepTheirSegmentsWhereUnitIsForgotten },
+        { "walk-state/side-words-keep-segments-of-the-usual-size-alone"_s, testSideWordsKeepSegmentsOfUsualSizeAlone },
     };
     return tests;
 }

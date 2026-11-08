@@ -21,10 +21,15 @@
 
 namespace JSC { namespace AOT {
 
+class FunctionNumbers;
 class LinkedFunctions;
 struct CompiledCode;
 struct SiteDescription;
 struct SiteHandler;
+
+namespace Typed {
+class CallingConventions;
+}
 
 struct CallSiteRecord {
     CallSiteIndex callSite;
@@ -115,7 +120,7 @@ private:
 };
 
 inline FunctionID functionInFramesOf(BuiltinID builtin, size_t numberOfFunctions) { return FunctionID(numberOfFunctions + builtin.index()); }
-Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions&, size_t numberOfFunctions, BuildContext&);
+Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions&, const FunctionNumbers&, const Typed::CallingConventions&, BuildContext&);
 std::optional<uint32_t> endOfLastReturnSite(const CompiledCode&);
 
 void* resumeAddressAfterStackCheck(const void* returnAddress);

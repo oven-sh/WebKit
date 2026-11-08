@@ -823,7 +823,7 @@ private:
     bool isMemberWrittenByItsFields(JSObject&);
     bool writeListedFieldsOfMember(Cursor&, JSObject&, std::span<const AOT::FieldAsProperty>, unsigned reservation);
     void appendElementsInCompiledProgram(JSArray&);
-    bool isCompiledStructureKnown(const JSObject& object) const { return m_hasCompiledStructureWithoutToJSON && object.structureID().bits() == m_compiledStructureWithoutToJSON; }
+    bool isCompiledStructureKnown(const JSObject& object) const { return (m_compiledStructuresKnown & knowsCompiledStructure) && object.structureID().bits() == m_compiledStructureWithoutToJSON; }
 #endif
     String result();
 
@@ -877,15 +877,17 @@ private:
     bool m_hasSeenWideString { false };
 #if ENABLE(AOT)
     // These two take the place of padding: the members behind them are where they are without compiled code.
-    bool m_hasCompiledStructureWithoutToJSON { false };
+    static constexpr uint8_t knowsCompiledStructure = 1;
+    static constexpr uint8_t knowsCompiledStructureOfMember = 2;
+    uint8_t m_compiledStructuresKnown { 0 };
     TriState m_datesHaveBuiltinToJSON { TriState::Indeterminate };
 #endif
     std::optional<FailureReason> m_failureReason;
     Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, WTF::StringImplMalloc> m_dynamicBuffer;
     uint8_t* m_stackLimit { nullptr };
 #if ENABLE(AOT)
-    uint32_t m_compiledStructureWithoutToJSON; // The bits of a StructureID. Written before m_hasCompiledStructureWithoutToJSON is set.
-    uint32_t m_compiledStructureOfMemberWithoutToJSON { 0 }; // The same for an object that is a member of another. No StructureID is zero.
+    uint32_t m_compiledStructureWithoutToJSON; // The bits of a StructureID. Written before its bit in m_compiledStructuresKnown is set.
+    uint32_t m_compiledStructureOfMemberWithoutToJSON; // The same for an object that is a member of another.
     // While it is watching, m_stackLimit is above every frame, so every append() takes the slow check.
     NO_UNIQUE_ADDRESS std::conditional_t<growsBuffer, WatchedJSONLevels, std::monostate> m_watchedLevels;
 #endif
@@ -1200,7 +1202,7 @@ NEVER_INLINE bool FastStringifier<CharType, bufferMode>::hasStackSpaceAtWatchedL
             recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
             return false;
         }
-        bool goesOn = !m_watchedLevels.isWatching() || !value.isObject() || m_watchedLevels.enter(JSValue::encode(value), stackPointer);
+        bool goesOn = !m_watchedLevels.isWatching() || !value.isObject() || m_watchedLevels.enter(JSValue::encode(value), m_depth);
         if (!m_watchedLevels.isWatching())
             m_stackLimit = stackLimit;
         if (!goesOn)
@@ -2456,7 +2458,7 @@ bool FastStringifier<CharType, bufferMode>::mayCompiledObjectHaveToJSON(JSObject
     }
     if (cached && cached.isUndefined()) {
         m_compiledStructureWithoutToJSON = object.structureID().bits();
-        m_hasCompiledStructureWithoutToJSON = true;
+        m_compiledStructuresKnown |= knowsCompiledStructure;
         return false;
     }
     return mayHaveOwnOrInheritedToJSON(object);
@@ -2596,6 +2598,56 @@ static ALWAYS_INLINE FieldsWrittenBySlot writeFieldsBySlotInline(Latin1Character
     return { next, field };
 }
 
+static bool areFieldsPlain(std::span<const AOT::FieldAsProperty> fields)
+{
+    return std::ranges::all_of(fields, [](const AOT::FieldAsProperty& field) {
+        bool holdsAnyValue = field.representationForJSON == AOT::SlotRepresentation::JSValue || field.representationForJSON == AOT::SlotRepresentation::Cell;
+        return holdsAnyValue && field.jsonKey.size() <= AOT::FieldAsProperty::jsonKeyBlockSize;
+    });
+}
+
+// writeFieldsBySlotInline() for fields that are plain: how a field is held and how long its key is are not asked.
+static ALWAYS_INLINE FieldsWrittenBySlot writePlainFieldsInline(Latin1Character* next, const Latin1Character* limit, const JSObject& object, const AOT::FieldAsProperty* field, const AOT::FieldAsProperty* end, size_t reservation)
+{
+    for (; field != end; ++field) {
+        memcpy(next, field->jsonKey.data(), AOT::FieldAsProperty::jsonKeyBlockSize);
+        Latin1Character* afterKey = next + field->jsonKey.size();
+        JSValue held = JSValue::decode(WTF::unalignedLoad<EncodedJSValue>(std::bit_cast<const uint8_t*>(&object) + field->offsetForJSON));
+        if (held.isInt32()) {
+            next = AOT::appendJSONInteger(afterKey, held.asInt32());
+            continue;
+        }
+        if (!held.isCell()) {
+            if (held.isBoolean())
+                next = AOT::appendJSONBoolean(afterKey, held.isTrue());
+            else if (held.isDouble())
+                next = AOT::appendJSONNumber(afterKey, held.asDouble());
+            else if (held.isNull())
+                next = AOT::appendJSONLiteral(afterKey, "null"_s);
+            else if (!held.isUndefined()) [[unlikely]]
+                return { next, field };
+            continue;
+        }
+        if (!held) [[unlikely]]
+            continue;
+        JSCell* cell = held.asCell();
+        if (cell->type() != StringType)
+            return { next, field };
+        const StringImpl* string = asString(cell)->tryGetValueImpl();
+        if (!string || !string->is8Bit()) [[unlikely]]
+            return { next, field };
+        const size_t length = string->length();
+        if (static_cast<size_t>(limit - afterKey) < 1 + length + 1 + reservation) [[unlikely]]
+            return { next, field };
+        *afterKey = '"';
+        if (stringCopySameType<Latin1Character, true>(string->span8(), afterKey + 1)) [[unlikely]]
+            return { next, field };
+        afterKey[1 + length] = '"';
+        next = afterKey + 1 + length + 1;
+    }
+    return { next, field };
+}
+
 static NEVER_INLINE FieldsWrittenBySlot writeFieldsBySlot(Latin1Character* next, const Latin1Character* limit, const JSObject& object, const AOT::FieldAsProperty* field, const AOT::FieldAsProperty* end, size_t reservation)
 {
     return writeFieldsBySlotInline(next, limit, object, field, end, reservation);
@@ -2608,23 +2660,31 @@ struct ElementsWrittenBySlot {
 };
 
 // Writes the elements behind the first one, each with a comma in front, while they have the fields and the order of keys of the known object. Of the element at which it stops nothing is written.
+template<bool fieldsArePlain>
 static NEVER_INLINE ElementsWrittenBySlot writeElementsBySlot(Latin1Character* next, const Latin1Character* limit, const WriteBarrier<Unknown>* elements, unsigned index, unsigned length, const JSObject& known, std::span<const AOT::FieldAsProperty> fields, size_t reservation)
 {
-    const AOT::FieldAsProperty* end = fields.data() + fields.size();
+    const AOT::FieldAsProperty* const first = fields.data();
+    const AOT::FieldAsProperty* const end = first + fields.size();
+    const StructureID structureOfKnown = known.structureID();
+    const uint32_t orderOfKnown = AOT::PropertyWalk::orderWordWithoutIntegrity(&known);
     for (; index < length; ++index) {
         JSValue element = elements[index].get();
         if (!element || !element.isCell()) [[unlikely]]
             break;
         // Looked at as an object only once it has the Structure of one.
         const JSObject& object = *static_cast<const JSObject*>(element.asCell());
-        if (object.structureID() != known.structureID() || !AOT::PropertyWalk::haveSameFieldsInKeyOrder(&known, &object) || AOT::PropertyWalk::isInFrame(&object)) [[unlikely]]
+        if (object.structureID() != structureOfKnown || AOT::PropertyWalk::orderWordWithoutIntegrity(&object) != orderOfKnown || AOT::PropertyWalk::isInFrame(&object)) [[unlikely]]
             break;
         if (static_cast<size_t>(limit - next) < 1 + reservation) [[unlikely]]
             break;
         *next = ',';
         // Every key starts with a comma. The first one lands where the brace belongs.
         Latin1Character* brace = next + 1;
-        FieldsWrittenBySlot written = writeFieldsBySlotInline(brace, limit, object, fields.data(), end, reservation);
+        FieldsWrittenBySlot written;
+        if constexpr (fieldsArePlain)
+            written = writePlainFieldsInline(brace, limit, object, first, end, reservation);
+        else
+            written = writeFieldsBySlotInline(brace, limit, object, first, end, reservation);
         if (written.firstFieldNotWritten != end) [[unlikely]]
             return { next, index, true };
         next = written.next;
@@ -2852,18 +2912,18 @@ template<typename CharType, BufferMode bufferMode>
 ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::isMemberWrittenByItsFields(JSObject& object)
 {
     uint32_t bits = object.structureID().bits();
-    if (bits == m_compiledStructureOfMemberWithoutToJSON || isCompiledStructureKnown(object)) [[likely]]
+    if (((m_compiledStructuresKnown & knowsCompiledStructureOfMember) && bits == m_compiledStructureOfMemberWithoutToJSON) || isCompiledStructureKnown(object)) [[likely]]
         return true;
     auto& structure = *object.structure();
     uint32_t known = m_compiledStructureWithoutToJSON;
-    bool hasKnown = m_hasCompiledStructureWithoutToJSON;
+    uint8_t knownBefore = m_compiledStructuresKnown;
     if (object.isCallable() || structure.hasPolyProto() || structure.hasNonReifiedStaticProperties() || mayCompiledObjectHaveToJSON(object)) [[unlikely]]
         return false;
     // Only a Structure that has answered is remembered. Where this object alone has answered, the next one of its Structure is asked again.
     if (isCompiledStructureKnown(object)) {
         m_compiledStructureOfMemberWithoutToJSON = bits;
         m_compiledStructureWithoutToJSON = known;
-        m_hasCompiledStructureWithoutToJSON = hasKnown;
+        m_compiledStructuresKnown = knownBefore | knowsCompiledStructureOfMember;
     }
     return true;
 }
@@ -2912,12 +2972,14 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompile
     const JSObject* known = nullptr;
     std::span<const AOT::FieldAsProperty> fields;
     unsigned reservation = 0;
+    bool fieldsArePlain = false;
     Cursor cursor = cursorAtEnd();
     bool writesElementsBySlot = std::same_as<CharType, Latin1Character>;
     for (unsigned i = 0; i < length; ++i) {
         if constexpr (std::same_as<CharType, Latin1Character>) {
             if (known && writesElementsBySlot) {
-                ElementsWrittenBySlot written = writeElementsBySlot(cursor.next, cursor.limit, data.data(), i, length, *known, fields, reservation);
+                ElementsWrittenBySlot written = fieldsArePlain ? writeElementsBySlot<true>(cursor.next, cursor.limit, data.data(), i, length, *known, fields, reservation)
+                    : writeElementsBySlot<false>(cursor.next, cursor.limit, data.data(), i, length, *known, fields, reservation);
                 cursor.next = written.next;
                 i = written.firstElementNotWritten;
                 writesElementsBySlot = !written.stoppedAtField;
@@ -2931,6 +2993,12 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompile
             return;
         }
         if (known && element.isCell() && element.asCell()->type() == CompiledObjectType && AOT::PropertyWalk::haveSameFieldsInKeyOrder(known, asObject(element.asCell()))) [[likely]] {
+            if constexpr (growsBuffer) {
+                if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
+                    if (!hasStackSpaceAtWatchedLevel(element, currentStackPointer()))
+                        return;
+                }
+            }
             // The reservation of the element in front has room for the comma.
             *cursor.next++ = ',';
             if (!writeListedFields<HasGap::No>(cursor, *asObject(element.asCell()), fields, reservation)) [[unlikely]]
@@ -2957,6 +3025,8 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompile
                     known = asObject(element.asCell());
                     fields = *listed;
                     reservation = *size;
+                    if constexpr (std::same_as<CharType, Latin1Character>)
+                        fieldsArePlain = areFieldsPlain(fields);
                 }
             }
         }

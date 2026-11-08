@@ -8,11 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
 #include "AOTTypedArrayKinds.h"
+#include "AOTWalkListReadsInLoops.h"
 #include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -47,8 +49,6 @@ static bool hasTypedFormUnderKeyInNumberKeys(Walker& walker, const BodyValue& va
 
 static void buildAccessUnderKeyInNumberKeys(Walker& walker, const BodyValue& value, Reference key)
 {
-    if (walker.isUnreachable())
-        return;
     Walker::StandIn keyInPlaceOfWritten(walker, value.propertyOperand(), key);
     if (!buildTypedElementAccess(walker, value))
         walker.copy(value);
@@ -119,18 +119,29 @@ static bool buildAccessUnderCodeUnitInNumberKeys(Walker& walker, const BodyValue
     return true;
 }
 
-static bool buildViewAccessUnderNumberOrUndefinedInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+static TypeID numberToldFromUndefinedInKeyOfViewInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (value.opcode() == Opcode::ElemHas || !walker.opensGuesses())
-        return false;
+        return { };
     TypeID keyID = inputs.typeOf(value.propertyOperand());
     if (!keyID || kindOfViewInNumberKeys(walker, inputs.typeOf(value.objectOperand())) == NotTypedArray)
-        return false;
+        return { };
     Type key = walker.types().at(keyID);
     if (!key.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined) || !(key.primitives & Primitive::Number) || !(key.primitives & Primitive::Undefined))
-        return false;
+        return { };
     TypeID number = walker.types().withoutNullish(keyID);
-    if (!hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, number))
+    return hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, number) ? number : TypeID();
+}
+
+bool tellsNumberFromUndefinedInKeyOfView(Walker& walker, const BodyValue& value, const TypesOfInputs& types)
+{
+    return opcodesOfNumberKeys.contains(value.opcode()) && hasMechanismsOfNumberForms(walker) && numberToldFromUndefinedInKeyOfViewInNumberKeys(walker, value, InputsOfTypedOperation(walker, &types));
+}
+
+static bool buildViewAccessUnderNumberOrUndefinedInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+{
+    TypeID number = numberToldFromUndefinedInKeyOfViewInNumberKeys(walker, value, inputs);
+    if (!number)
         return false;
 
     Origin origin = originInFrontOfAccessInNumberKeys(walker, value);
@@ -165,6 +176,93 @@ static bool buildViewAccessUnderNumberOrUndefinedInNumberKeys(Walker& walker, co
     return true;
 }
 
+static bool buildViewAccessUnderUnknownKeyInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+{
+    if (value.opcode() == Opcode::ElemHas || !walker.opensGuesses() || !walker.isInLoop())
+        return false;
+    TypeID keyID = inputs.typeOf(value.propertyOperand());
+    if (!keyID || kindOfViewInNumberKeys(walker, inputs.typeOf(value.objectOperand())) == NotTypedArray)
+        return false;
+    TypeArena& types = walker.types();
+    Type key = types.at(keyID);
+    if (key.isNumber() || !key.isJavaScriptValue() || !(key.primitives & Primitive::Integer))
+        return false;
+    ExpectationOfValue expectation = findExpectation(walker, value.propertyOperand());
+    if (expectation.type && !types.overlap(expectation.type, TypeTable::int32))
+        return false;
+    if (!hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, TypeTable::int32))
+        return false;
+
+    Origin origin = originInFrontOfAccessInNumberKeys(walker, value);
+    Reference writtenKey = walker.referenceOf(value.propertyOperand());
+    Reference isWhole = writtenKey && writtenKey.isValue() ? buildTestOfNumber(walker, writtenKey, TypeTable::int32, origin) : Reference();
+    if (!isWhole)
+        return false;
+    BlockID whereKeyIsAnother = walker.addBlock(BlockFrequency::Rare);
+    goOnWhereTestPassesInNumberForms(walker, isWhole, whereKeyIsAnother);
+    if (Reference proven = buildProofOfNumber(walker, writtenKey, isWhole, origin))
+        buildAccessUnderKeyInNumberKeys(walker, value, proven);
+    WayInNumberForms underWhole = endOfAccessInNumberKeys(walker, value);
+
+    walker.continueIn(whereKeyIsAnother);
+    WayInNumberForms underAnother;
+    {
+        Walker::ClosedArm closedArm(walker, true);
+        if (!walker.isUnreachable()) {
+            walker.copy(value);
+            underAnother = endOfAccessInNumberKeys(walker, value);
+        }
+    }
+    walker.noteGuessOpened();
+    if (!underAnother.end) {
+        if (underWhole.end)
+            walker.continueIn(underWhole.end);
+        walker.bind(value.id(), underWhole.brought);
+        return true;
+    }
+    std::array<WayInNumberForms, 2> ways { underWhole, underAnother };
+    if (Reference met = meetInNumberForms(walker, walker.addBlock(), ways))
+        walker.bind(value.id(), met);
+    return true;
+}
+
+static bool buildListAccessUnderNumberAskedForInt32InNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+{
+    if (value.opcode() == Opcode::ElemHas || !walker.opensGuesses() || !walker.isInLoop() || !walker.standsInTurnThatLooksCountOn())
+        return false;
+    if (!keyOfProvenListMayBeAskedForInt32(walker.types(), inputs.typeOf(value.objectOperand()), inputs.typeOf(value.propertyOperand())))
+        return false;
+    Reference writtenKey = walker.referenceOf(value.propertyOperand());
+    if (!writtenKey || !writtenKey.isValue() || walker.state().checkedNameOf(writtenKey) || walker.code().at(writtenKey.id()).representation != Representation::Double)
+        return false;
+    std::optional<ListTestedInFrontOfLoop> tested = findListTestedInFrontOfLoop(walker, value);
+    if (!tested || !tested->turnsStoreIntoLists || !hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, TypeTable::int32))
+        return false;
+
+    Origin origin = originInFrontOfAccessInNumberKeys(walker, value);
+    Reference isInt32 = buildTestOfNumber(walker, writtenKey, TypeTable::int32, origin);
+    if (!isInt32 || !isInt32.isValue())
+        return false;
+    BlockID whereKeyIsAnother = walker.addBlock(BlockFrequency::Rare);
+    goOnWhereTestPassesInNumberForms(walker, isInt32, whereKeyIsAnother);
+    BlockID whereKeyIsInt32 = walker.currentBlock();
+    walker.continueIn(whereKeyIsAnother);
+    if (!walker.isUnreachable())
+        walker.beginTurnAgainInClosedCopy();
+    walker.continueIn(whereKeyIsInt32);
+    walker.noteGuessOpened();
+    if (walker.isUnreachable() || walker.hasFailed())
+        return true;
+    Reference proven = buildProofOfNumber(walker, writtenKey, isInt32, origin);
+    if (!proven)
+        return true;
+    if (proven.isValue() && proven != writtenKey)
+        walker.state().noteCheckedName(writtenKey, proven);
+    walker.count(StatisticID::KeysOfListsAskedForInt32InTurns);
+    buildAccessUnderKeyInNumberKeys(walker, value, proven);
+    return true;
+}
+
 bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (!opcodesOfNumberKeys.contains(value.opcode()) || !hasMechanismsOfNumberForms(walker))
@@ -174,12 +272,16 @@ bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const
     if (buildViewAccessUnderNumberOrUndefinedInNumberKeys(walker, value, inputs))
         return true;
 
+    if (buildViewAccessUnderUnknownKeyInNumberKeys(walker, value, inputs))
+        return true;
     TypeID key = inputs.typeOf(value.propertyOperand());
     if (!key || !walker.types().at(key).isNumber() || !inputs.typeOf(value.objectOperand()))
         return false;
     if (buildAccessUnderWholeRemainderInNumberKeys(walker, value, inputs))
         return true;
-    return buildAccessUnderCodeUnitInNumberKeys(walker, value, inputs);
+    if (buildAccessUnderCodeUnitInNumberKeys(walker, value, inputs))
+        return true;
+    return buildListAccessUnderNumberAskedForInt32InNumberKeys(walker, value, inputs);
 }
 
 } } } // namespace JSC::AOT::Typed

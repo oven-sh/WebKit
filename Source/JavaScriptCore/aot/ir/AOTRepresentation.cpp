@@ -106,6 +106,7 @@ Representation representationOf(OpaqueKind kind)
     case OpaqueKind::Cursor:
     case OpaqueKind::KeyOrder:
     case OpaqueKind::CodeAddress:
+    case OpaqueKind::Reciprocal:
     case OpaqueKind::BuilderCursor:
     case OpaqueKind::ViewVector:
     case OpaqueKind::ArrayStoragePointer:
@@ -284,6 +285,7 @@ Representation representationWantedBy(OperandKind kind, const Type& operand)
     case OperandKind::StringBuilder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::Reciprocal:
     case OperandKind::BuilderCursor:
     case OperandKind::ViewVector:
     case OperandKind::ArrayStoragePointer:

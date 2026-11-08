@@ -99,12 +99,16 @@ void StringBuilderEmitter::generateStackStringBuilderBegin(const ValueContext& v
 {
     LValue slot = m_out.lockedStackSlot(sizeof(StackStringBuilder));
     slot->slot()->setIsDeadAtSuspensions(true);
-    Pointer record(slot);
+    storeEmptyRecord(Pointer(slot));
+    define(value, CellPointer(slot));
+}
+
+void StringBuilderEmitter::storeEmptyRecord(Pointer record)
+{
     Pointer buffer = offsetBy(record, OBJECT_OFFSETOF(StackStringBuilder, buffer));
     m_out.storePtr(buffer.value(), recordField(record, OBJECT_OFFSETOF(StackStringBuilder, savedCursor)));
     m_out.storePtr(limitOnStack(record).value(), recordField(record, OBJECT_OFFSETOF(StackStringBuilder, limit)));
     m_out.storePtr(buffer.value(), recordField(record, OBJECT_OFFSETOF(StackStringBuilder, lengthOrigin)));
-    define(value, CellPointer(slot));
 }
 
 void StringBuilderEmitter::generateStackStringBuilderStart(const ValueContext& value)
@@ -152,6 +156,7 @@ void StringBuilderEmitter::generateStackStringBuilderDiscard(const ValueContext&
     ifElse(equal(limit, limitOnStack(record)), [] { }, [&] {
         callVoidOperation(value, RuntimeOperation::StackStringBuilderDiscard, { record }, { .isOnRarePath = true, .accessesCollectorState = true });
     });
+    storeEmptyRecord(record);
 }
 
 Pointer StringBuilderEmitter::limitOf(Pointer record)

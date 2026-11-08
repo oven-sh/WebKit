@@ -85,6 +85,11 @@ static bool classRecordCreatesMemberInStraightForm(StraightEmitter& emitter, con
     return capturesOfClassObject.size() == 1 && inFrontOfCasts(capturesOfClassObject[0]) == inFrontOfCasts(capturesOfMember[0]);
 }
 
+bool StraightEmitter::classRecordCreatesMemberDefinedBy(const BodyValue& value)
+{
+    return classRecordCreatesMemberInStraightForm(*this, value);
+}
+
 static void generateDefineMethod(StraightEmitter& emitter, const BodyValue& value)
 {
     if (classRecordCreatesMemberInStraightForm(emitter, value))

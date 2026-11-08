@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
@@ -44,7 +45,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static bool holdsOnlyWhatItsBodyLaysInScan(const Program&, const BodyValue&);
+
 namespace {
+
+static constexpr size_t mostSourcesOfHeritageLaidOneByOneInScan = 8;
 
 struct ListInScan {
     uint32_t first { 0 };
@@ -125,6 +130,7 @@ struct OperatorInScan {
     ValueID site;
     Opcode opcode { Opcode::Add };
     bool isNeeded { false };
+    SummaryOperator::WrittenDivisor writtenDivisor { SummaryOperator::WrittenDivisor::None };
     uint32_t numberOfOperands { 0 };
     ListInScan operands[SummaryOperator::mostOperands];
     uint32_t record { noRecord };
@@ -312,11 +318,13 @@ struct ObjectBeingMadeInScan {
     uint32_t blockOfFinish { 0 };
     uint32_t positionOfFinish { 0 };
     uint32_t positionOfLastFill { 0 };
+    uint32_t blockWhereFillsWereMetLast { UINT32_MAX };
     Vector<FillInScan, 8> filledAtEnd;
     Vector<PropertyKeyID, 8> keysLookedUp;
     Vector<FunctionID, 1> parts;
     Vector<uint32_t, 1> parametersHandedTo;
     Vector<PropertyKeyID, 4> definedInTurn;
+    Vector<PropertyKeyID, 1> keysThatHoldItself;
 };
 
 struct ObjectHandedToBlockInScan {
@@ -428,6 +436,14 @@ struct DefinitionByMapInScan {
     uint32_t access { 0 };
     uint32_t rootOfMap { 0 };
     uint32_t position { 0 };
+    ListInScan map;
+};
+
+struct DefinitionUnderComputedKeyInScan {
+    uint32_t root { 0 };
+    ValueID site;
+    ValueID key;
+    ValueID stored;
 };
 
 struct DefinitionByDescriptorInScan {
@@ -604,7 +620,7 @@ static constexpr OpcodeSet operationsThatWeighNothingInCopyInScan { Opcode::Unde
 static constexpr OpcodeSet opcodesWithPureBoundInScan = opcodesWhere([](Opcode opcode) { return declaredBoundOf(opcode).isPure(); });
 static constexpr OpcodeSet opcodesThatMayCallUnknownCodeInScan = opcodesWhere([](Opcode opcode) { return declaredBoundOf(opcode).mayCallUnknownCode; });
 static constexpr OpcodeSet opcodesOnWhichScanLaysEffects { Opcode::Builtin, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::SuperGet, Opcode::SuperSet };
-static constexpr OpcodeSet opcodesReadInWaysOfTheirOwnInScan = catchOpcodes | OpcodeSet { Opcode::NewClass, Opcode::NewClassToken, Opcode::DefineMethod, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::ToThis, Opcode::ToObject, Opcode::NarrowByField, Opcode::CheckInitialized, Opcode::NarrowByTest };
+static constexpr OpcodeSet opcodesReadInWaysOfTheirOwnInScan = catchOpcodes | OpcodeSet { Opcode::NewClass, Opcode::ResolveHeritage, Opcode::NewClassToken, Opcode::DefineMethod, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::ToThis, Opcode::ToObject, Opcode::NarrowByField, Opcode::CheckInitialized, Opcode::NarrowByTest };
 static constexpr OpcodeSet opcodesLookedAtBehindOperandsInScan { Opcode::ReleaseHint, Opcode::NewObject, Opcode::Data, Opcode::GetSuperBase, Opcode::ScopeHasBinding, Opcode::NewTemplateObject };
 static constexpr OpcodeSet readsOfDeclaredPlacesInScan { Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
 
@@ -959,6 +975,7 @@ private:
     static constexpr uint32_t isInData = 1u << 31;
     static constexpr uint32_t isResultOfCall = UINT32_MAX;
     static constexpr uint32_t isReadNotYetNeeded = UINT32_MAX - 1;
+    static constexpr uint32_t isJoinNotYetNeeded = UINT32_MAX - 2;
     static constexpr uint32_t noDefinition = UINT32_MAX;
     static constexpr uint32_t noComponent = UINT32_MAX;
     static constexpr uint32_t hasNotLeft = UINT32_MAX;
@@ -972,7 +989,8 @@ private:
     static constexpr uint8_t isAccessedByName = 1 << 4;
     static constexpr uint16_t isLaidAccessorsUnderNames = 1 << 7;
     static constexpr uint16_t isAccessedBesideNamedStoresAndAccessors = 1 << 8;
-    static constexpr uint16_t isAccessedBesideNamedStores = isLaidAccessorsUnderNames | isAccessedBesideNamedStoresAndAccessors;
+    static constexpr uint16_t isDefinedUnderComputedKeys = 1 << 10;
+    static constexpr uint16_t isAccessedBesideNamedStores = isLaidAccessorsUnderNames | isAccessedBesideNamedStoresAndAccessors | isDefinedUnderComputedKeys;
     static constexpr uint16_t hasNullAboveByItsOwnText = 1 << 9;
     static constexpr uint8_t mayComeInFrontOfDefinition = 1 << 5;
     static constexpr uint8_t readsAnswerOfSuperCall = 1 << 6;
@@ -1031,13 +1049,51 @@ private:
     }
     ALWAYS_INLINE ListInScan listOf(ValueID value)
     {
-        static_assert(isReadNotYetNeeded + 1 == isResultOfCall && isResultOfCall == UINT32_MAX);
+        static_assert(isJoinNotYetNeeded + 1 == isReadNotYetNeeded && isReadNotYetNeeded + 1 == isResultOfCall && isResultOfCall == UINT32_MAX);
         ListInScan list = m_lists[value.index()];
-        if (list.count < isReadNotYetNeeded) [[likely]]
+        if (list.count < isJoinNotYetNeeded) [[likely]]
             return list;
         return listOfValueAskedForFirst(value, list);
     }
     ListInScan listOfValueAskedForFirst(ValueID, ListInScan);
+    static constexpr uint32_t noExclusion = UINT32_MAX;
+    struct ExclusionInScan {
+        ValueID subject;
+        uint16_t excluded { 0 };
+        uint32_t above { noExclusion };
+        uint32_t join { 0 };
+        ListInScan listUnderneath;
+        bool letsEverythingThrough { false };
+        bool isOutermostOverSubject { false };
+        uint32_t depth { 1 };
+        uint32_t jump { noExclusion };
+    };
+    struct ExclusionCarriedInScan {
+        uint32_t block { 0 };
+        uint32_t exclusion { noExclusion };
+    };
+    static constexpr bool liesBehind(uint32_t exclusion, uint32_t other) { return exclusion != noExclusion && (other == noExclusion || exclusion > other); }
+    void carryExclusionsOver(uint32_t to, uint32_t targetIndex, const BodyValue& test);
+    uint32_t addExclusion(ValueID subject, uint16_t excluded, uint32_t above);
+    uint32_t depthOfExclusion(uint32_t exclusion) const { return exclusion == noExclusion ? 0 : m_exclusions[exclusion].depth; }
+    uint32_t jumpOfExclusion(uint32_t exclusion) const { return exclusion == noExclusion ? noExclusion : m_exclusions[exclusion].jump; }
+    uint32_t sharedEndOfExclusions(uint32_t, uint32_t) const;
+    ListInScan listUnderExclusionsOf(ValueID);
+    void takeExclusionsAtBlock(uint32_t block);
+    void putInForce(uint32_t exclusion);
+    uint32_t joinOfExclusion(uint32_t exclusion);
+    void giveUpWhatEdgeLeadingBackDoesNotCarry(uint32_t to);
+    void keepObjectOfReadPutOff(uint32_t read, ValueID object);
+    ListInScan objectOfReadPutOff(uint32_t read, ValueID object);
+    HashMap<uint32_t, ListInScan, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_listsUnderExclusions;
+    HashMap<uint32_t, ListInScan, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_objectsOfReadsPutOff;
+    Vector<ExclusionInScan, 4> m_exclusions;
+    Vector<uint32_t> m_numberOfEntriesThatCarry;
+    Vector<uint32_t> m_whatEntriesShare;
+    bool m_someEntryCarries { false };
+    Vector<uint32_t, 4> m_exclusionsToLay;
+    Vector<ExclusionCarriedInScan, 4> m_exclusionsTakenAtBlocks;
+    uint32_t m_exclusionInForce { noExclusion };
     ListInScan readByName(uint32_t read);
     void noteInspection(ValueID site, ThinSummary::Inspection::Kind, ListInScan);
     uint32_t takerOfMemberBesideFields(uint32_t object, PropertyKeyID);
@@ -1077,6 +1133,7 @@ private:
     void handToCodeThatRuns(ListInScan);
     ListInScan objectsAmong(ListInScan);
     void addArgument(ValueID, bool leaves = true);
+    uint32_t lengthOfListWrittenRightInFrontOf(const BodyValue& call, ValueID operand) const;
     uint32_t callMember(ValueID site, ListInScan receiver, BuiltinName, std::initializer_list<ListInScan> arguments, uint32_t block);
     uint32_t addAccess(SummaryAccess::Kind, ValueID site, ListInScan subject, PropertyKeyID);
     uint32_t addAccessUnder(SummaryAccess::Kind, ValueID site, ListInScan subject, PropertyKeyID, ValueID computedKey);
@@ -1087,10 +1144,12 @@ private:
     void storeIntoContents(ValueID site, ListInScan holder, SlotOfContents, ListInScan stored);
     ListInScan settle(ValueID site, ListInScan, uint32_t block);
     bool standsRightBehindCallThatGives(const BodyValue&, ValueID operand) const;
+    bool isNameThatLoopOverGave(ValueID key, ValueID object) const;
     std::optional<SlotOfContents> slotNamedByRowOf(const BodyValue&) const;
     bool someResultIsReadOutOf(const BodyValue&, uint32_t operandIndex) const;
     void addChange(SummaryChange::Kind, ValueID site, ListInScan subject, PropertyKeyID, std::optional<ListInScan> other);
     void defineByDescriptor(ValueID site, ListInScan subject, PropertyKeyID, std::optional<ListInScan> other, bool isUnderNameThatNobodyElseNames = false, bool laysNewValueOfNativeCode = false);
+    bool storeWhatLiteralSpells(ValueID site, ListInScan subject, ValueID source);
     VariableID constantReadAs(ValueID) const;
     uint32_t valuesLaidIntoDescriptorHeldBy(VariableID);
     struct KeyWrittenInScan {
@@ -1098,7 +1157,7 @@ private:
         PropertyKeyID key;
     };
     KeyWrittenInScan keyWrittenAs(ValueID) const;
-    void noteCopyOfMembers(ValueID site, ListInScan target, ListInScan source, bool copiesAccessorsAsTheyAre);
+    void noteCopyOfMembers(ListInScan target, ListInScan source, bool copiesAccessorsAsTheyAre);
     bool holdSameKey(ValueID, ValueID) const;
     ValueID objectReadUnder(ValueID key, ValueID read) const;
     ValueID objectDescribedBy(ValueID description, ValueID key) const;
@@ -1107,6 +1166,8 @@ private:
     bool isMadeInBody(ValueID) const;
     PrimitiveKnownToFolding primitiveHeldBy(ValueID);
     BodyValue definitionBehindCasts(ValueID value) const { return definitionOf(m_roots[value.index()]); }
+    SummaryCall* findCallThatMade(ValueID);
+    void noteResultReadAsKey(SummaryCall&);
     ALWAYS_INLINE void noteLeaving(ValueID value, WayOfLeavingInScan way = WayOfLeavingInScan::IsSeenFromOutside)
     {
         uint32_t root = m_roots[value.index()];
@@ -1201,6 +1262,7 @@ private:
     void returnValue(ValueID, uint32_t block);
     void readNamesThatLoaderTakesOff(ValueID returned);
     void readWhatHostLooksFor(ValueID site);
+    void layCallThatHostMakes(VariableID, const HostRead&);
     void readExportsCapturedByFace(const BodyValue& evaluation);
     void returnFromCoroutine(ListInScan, uint32_t block);
 
@@ -1230,6 +1292,7 @@ private:
     void takeObjectsHandedTo(const BodyBlock&);
     void carryFillsOver(uint32_t from, uint32_t to);
     void listConstructions();
+    void listFieldsLeftEmptyByObjectsOfOneLayout();
     void listDefinitionsBehindAllocation(const ObjectBeingMadeInScan&);
 
     void readWhatNobodyAskedFor();
@@ -1266,6 +1329,9 @@ private:
         return oneNodeForOrigins(list);
     }
     uint32_t oneNodeForOrigins(ListInScan);
+    bool mayHaveFewSources(ListInScan) const;
+    bool gatherSourcesOf(ListInScan, Vector<OriginInScan, 4>& sources, Vector<uint32_t, 4>& parametersGoneThrough);
+    void layHeritagesBySource();
     void applySinks();
     void applyConversionToPrimitive(const SinkInScan&);
     void applyOperator(const OperatorInScan&);
@@ -1273,7 +1339,8 @@ private:
     void nameKeysOfDefinitionsByMaps();
     void nameGettersOfDescriptors();
     void layDescriptorsInSight();
-    void nameAccessorWrittenInDescriptor(uint32_t access, uint32_t rootOfDescriptor, uint32_t positionOfDefinition);
+    static constexpr uint32_t changeOfNoMap = UINT32_MAX;
+    void nameAccessorWrittenInDescriptor(uint32_t access, uint32_t rootOfDescriptor, uint32_t positionOfDefinition, uint32_t changeOfEntryInMap = changeOfNoMap, uint32_t placeWhereMapTakesEntry = 0);
     FunctionID functionWrittenAt(const SummaryNode&) const;
     std::span<const uint32_t> storesInto(uint32_t root);
     void followObjectsMadeToBePrototypes();
@@ -1318,6 +1385,7 @@ private:
     OpcodeSet m_opcodesThatOnlyReturnTheirOperand;
     Vector<const Effects*, 8> m_effectsMerged;
     std::array<uint64_t, 256> m_typesThatNameNoFunction { };
+    std::array<uint64_t, 64> m_typesWhoseFunctionsBodyHasNamed { };
     std::array<uint64_t, 256> m_typesWhoseSetsAreNoted { };
     SetsOfLayoutsWritten m_setsOfLayoutsWritten;
     uint64_t m_numberOfValuesScanned { 0 };
@@ -1368,6 +1436,13 @@ private:
     Vector<bool> m_isEntered;
 
     Vector<uint32_t> m_firstParameterOfBlock;
+    struct AnswerTestedForObjectInScan {
+        uint32_t blockWhereItIsObject { noDefinition };
+        uint32_t position { 0 };
+        ValueID call;
+        ValueID nameWhereItIsObject;
+    };
+    AnswerTestedForObjectInScan m_answerTestedForObject;
     uint32_t m_numberOfParameters { 0 };
     Vector<IncomingInScan> m_incoming;
     Vector<SinkInScan> m_sinks;
@@ -1383,6 +1458,9 @@ private:
         ValueID value;
     };
     Vector<ValueOfVariableInScan> m_valuesOfImmutableVariables;
+    Vector<std::pair<VariableID, ValueID>> m_storesIntoImmutableVariables;
+    Vector<VariableID> m_moduleVariablesRead;
+    std::optional<std::pair<SummaryCall, VariableID>> m_callThatHostMakes;
     Vector<std::pair<VariableID, uint32_t>, 2> m_valuesLaidIntoDescriptors;
     Vector<KeyOfVariableInScan> m_keysOfVariables;
     Vector<MemberUnderVariableInScan> m_membersUnderVariables;
@@ -1393,6 +1471,14 @@ private:
     Vector<uint32_t> m_storesByRoot;
     bool m_storesAreSortedByRoot { false };
     Vector<uint32_t> m_readsNotYetNeeded;
+    struct HeritageInScan {
+        ValueID site;
+        ValueID readOffHeritage;
+        ListInScan above;
+        ListInScan classObject;
+        uint32_t prototypeObject { 0 };
+    };
+    Vector<HeritageInScan, 1> m_heritages;
     Vector<std::pair<ListInScan, uint32_t>> m_returnsOfCoroutine;
     Vector<EdgeLeadingBackInScan> m_edgesLeadingBack;
     bool m_listsDefinitions { false };
@@ -1420,11 +1506,13 @@ private:
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_readsNotedOfBodyOfModule;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_usesNotedOfBodyOfModule;
     Vector<uint32_t> m_blocksOfCalls;
+    Vector<std::pair<ValueID, uint32_t>, 4> m_storesIntoConstantLists;
     Vector<BlockID> m_handlersOfBlocks;
     Vector<uint32_t> m_nodesCaughtByBlocks;
     Vector<bool> m_fieldIsListed;
     Vector<ChangeOfBuiltinInScan, 4> m_changesOfBuiltin;
     Vector<DefinitionByMapInScan, 4> m_definitionsByMaps;
+    Vector<DefinitionUnderComputedKeyInScan, 4> m_definitionsUnderComputedKeys;
     Vector<DefinitionByDescriptorInScan, 4> m_definitionsByDescriptors;
     Vector<StoreOfPrototypeInScan, 4> m_storesOfPrototypes;
     Vector<HeirMadeByBuiltinInScan, 4> m_heirsMadeByBuiltins;
@@ -1453,6 +1541,8 @@ private:
     uint32_t m_environmentStoredInto { noDefinition };
     uint32_t m_slotStoredInto { 0 };
     Vector<SummaryConstruction::Key> m_keysOfConstruction;
+    Vector<std::pair<LayoutID, uint32_t>> m_placesOfObjectsOfOneLayout;
+    Vector<uint32_t> m_fieldsThatNoObjectLeftEmptySoFar;
 
     Vector<EdgeLeadingBackInScan> m_openLoops;
     Vector<uint32_t> m_innermostLoopHeads;
@@ -1594,7 +1684,9 @@ void ScanOfBody::noteFunctionsBehind(TypeID type)
         return;
     uint64_t asKnown = static_cast<uint64_t>(type.bits()) + 1;
     uint64_t& known = m_typesThatNameNoFunction[type.bits() % m_typesThatNameNoFunction.size()];
-    if (known == asKnown)
+    uint64_t asNamed = (static_cast<uint64_t>(m_id.index()) + 1) << 32 | type.bits();
+    uint64_t& named = m_typesWhoseFunctionsBodyHasNamed[type.bits() % m_typesWhoseFunctionsBodyHasNamed.size()];
+    if (known == asKnown || named == asNamed)
         return;
     bool namesFunction = false;
     TypeReader types(m_program);
@@ -1602,8 +1694,7 @@ void ScanOfBody::noteFunctionsBehind(TypeID type)
         namesFunction = true;
         noteFunctionNamed(function);
     });
-    if (!namesFunction)
-        known = asKnown;
+    (namesFunction ? named : known) = namesFunction ? asNamed : asKnown;
 }
 
 void ScanOfBody::noteSetOfLayoutsWritten(TypeID type)
@@ -1766,6 +1857,8 @@ ThinSummary::ThinSummary(SummaryBeingMade& made)
         visit(symbolsMadeOnce, made.symbolsMadeOnce);
         visit(callThatGivesResult, made.callThatGivesResult);
         visit(storesOnResult, made.storesOnResult);
+        visit(constantListsStoredIntoInLoops, made.constantListsStoredIntoInLoops);
+        visit(writtenListsOfVariables, made.writtenListsOfVariables);
         visit(keysOfTestedFields, made.keysOfTestedFields);
         visit(operators, made.operators);
         visit(changes, made.changes);
@@ -1945,6 +2038,9 @@ void ScanOfBody::reset()
     m_stores.shrink(0);
     m_keysWrittenForMembers.shrink(0);
     m_valuesOfImmutableVariables.shrink(0);
+    m_storesIntoImmutableVariables.shrink(0);
+    m_moduleVariablesRead.shrink(0);
+    m_callThatHostMakes = std::nullopt;
     m_valuesLaidIntoDescriptors.shrink(0);
     if (!m_accessorsLaid.isEmpty()) {
         m_accessorsLaid.shrink(0);
@@ -1952,10 +2048,12 @@ void ScanOfBody::reset()
     }
     m_storesAreSortedByRoot = false;
     m_definitionsByMaps.shrink(0);
+    m_definitionsUnderComputedKeys.shrink(0);
     m_definitionsByDescriptors.shrink(0);
     m_storesOfPrototypes.shrink(0);
     m_heirsMadeByBuiltins.shrink(0);
     m_readsNotYetNeeded.shrink(0);
+    m_heritages.shrink(0);
     m_returnsOfCoroutine.shrink(0);
     m_edgesLeadingBack.shrink(0);
     m_listsDefinitions = listsDefinitions();
@@ -1968,6 +2066,7 @@ void ScanOfBody::reset()
     m_readsNotedOfBodyOfModule.clear();
     m_usesNotedOfBodyOfModule.clear();
     m_blocksOfCalls.shrink(0);
+    m_storesIntoConstantLists.shrink(0);
     m_handlersOfBlocks.shrink(0);
     m_nodesCaughtByBlocks.shrink(0);
     m_innermostLoopHeads.shrink(0);
@@ -2167,6 +2266,8 @@ ListInScan ScanOfBody::listOfValueAskedForFirst(ValueID value, ListInScan list)
 {
     if (list.count == isResultOfCall)
         list = listOfNode(nodeFor(SummaryNode::Kind::ResultOfCall, list.first, 0));
+    else if (list.count == isJoinNotYetNeeded)
+        list = listOfNode(joinOfExclusion(list.first));
     else
         list = readByName(list.first);
     m_lists[value.index()] = list;
@@ -2175,11 +2276,24 @@ ListInScan ScanOfBody::listOfValueAskedForFirst(ValueID value, ListInScan list)
 
 ListInScan ScanOfBody::readByName(uint32_t read)
 {
-    if (m_lists[read].count != isReadNotYetNeeded)
+    if (m_lists[read].count != isReadNotYetNeeded) {
+        if (!m_listsUnderExclusions.isEmpty()) [[unlikely]] {
+            if (auto underneath = m_listsUnderExclusions.find(read); underneath != m_listsUnderExclusions.end())
+                return underneath->value;
+        }
         return m_lists[read];
+    }
+    if (definitionOf(read).opcode() == Opcode::ResolveHeritage) {
+        ValueID heritage = definitionOf(read).operand(0);
+        if (heritage)
+            noteLeaving(heritage);
+        Vector<uint32_t> atoms { addRead(ValueID(read), heritage ? objectOfReadPutOff(read, heritage) : ListInScan(), m_program.keyOf(BuiltinNames::prototype)), constant(TypeTable::null) };
+        m_lists[read] = internAtoms(atoms);
+        return m_lists[read];
+    }
     auto definition = definitionOf(read).as<Opcode::PropGet>();
     ValueID object = definition.objectOperand();
-    uint32_t access = addAccessUnder(SummaryAccess::Kind::Read, ValueID(read), object ? listOf(object) : ListInScan(), definition.key(), ValueID());
+    uint32_t access = addAccessUnder(SummaryAccess::Kind::Read, ValueID(read), object ? objectOfReadPutOff(read, object) : ListInScan(), definition.key(), ValueID());
     m_summary.accesses[access].isPartOfConstruction = m_uses[read] & mayComeInFrontOfDefinition;
     m_summary.accesses[access].subjectIsAnsweredBySuperCall = m_uses[read] & readsAnswerOfSuperCall;
     ListInScan list = listOfNode(resultOfRead(access));
@@ -2308,8 +2422,10 @@ void ScanOfBody::addConstant(const BodyValue& value)
         auto named = value.as<Opcode::Builtin>();
         const BuiltinTable& builtins = m_program.builtins();
         bool isObjectItself = named.builtin() && (named.isNotReadFromHolder() || namesWhatNobodyReplacesInScan(builtins, named.builtin()));
-        addNode(isObjectItself ? nodeFor(SummaryNode::Kind::Builtin, builtins.canonicalID(named.builtin()).index()) : 0);
-        if (ModuleID compiled = isObjectItself ? compiledModuleWithObject(m_program, builtins.canonicalID(named.builtin())) : ModuleID()) {
+        ModuleID compiled = isObjectItself ? compiledModuleWithObject(m_program, builtins.canonicalID(named.builtin())) : ModuleID();
+        if (!compiled || !objectOfLibraryFileIsResultOfBody(m_program, compiled))
+            addNode(isObjectItself ? nodeFor(SummaryNode::Kind::Builtin, builtins.canonicalID(named.builtin()).index()) : 0);
+        if (compiled) {
             uint32_t answer = newJoin();
             m_summary.objectsOfCompiledModules.append({ compiled, answer });
             addNode(answer);
@@ -2419,6 +2535,8 @@ void ScanOfBody::addDeclared(const BodyValue& value)
     Opcode opcode = value.opcode();
     if (opcode == Opcode::GetModuleVariable) {
         addNode(variableNode(value.as<Opcode::GetModuleVariable>().variable()));
+        if (m_function->isModuleBody())
+            m_moduleVariablesRead.append(value.as<Opcode::GetModuleVariable>().variable());
         return;
     }
     if (opcode == Opcode::GetEnvironmentField) {
@@ -2445,7 +2563,9 @@ LayoutID ScanOfBody::layoutOfNamespaceGivenBy(const BodyValue& value) const
     auto named = value.as<Opcode::ModuleNamespace>();
     if (!named.module() || named.phase() == ImportPhase::Defer)
         return { };
-    return m_program.layoutOfWholeNamespace(named.module());
+    if (LayoutID whole = m_program.layoutOfWholeNamespace(named.module()))
+        return whole;
+    return m_program.layoutOfNamespaceThatListsNoName(named.module());
 }
 
 void ScanOfBody::addContents(const BodyValue& value, uint32_t operandIndex, std::optional<ContentsSlot> slot)
@@ -2488,7 +2608,7 @@ void ScanOfBody::addResultAt(const BodyValue& value)
         addNode(0);
         return;
     }
-    ListInScan handedOut = m_lists[producer.index()];
+    ListInScan handedOut = listUnderExclusionsOf(producer);
     if (flowRuleOf(opcode) == FlowRule::Iteration && handedOut.count && ((unknownResultsOf(opcode) >> std::min(read.index(), 31u)) & 1)) {
         addList(handedOut);
         return;
@@ -2506,6 +2626,11 @@ void ScanOfBody::addOperator(const BodyValue& value)
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         found.operands[operandIndex] = listOf(operand);
     });
+    if (found.opcode == Opcode::Mod) {
+        BodyValue divisor = definitionBehindCasts(value.operand(1));
+        if (int64_t written = divisor && divisor.opcode() == Opcode::Integer ? divisor.as<Opcode::Integer>().integer() : 0; written >= 1 && written <= int64_t { 1 } << 32)
+            found.writtenDivisor = written <= INT32_MAX ? SummaryOperator::WrittenDivisor::FromOneBelowTwoTo31 : SummaryOperator::WrittenDivisor::FromTwoTo31ToTwoTo32;
+    }
 
     ListInScan result { static_cast<uint32_t>(m_atoms.size()), 1 };
     m_atoms.append(operatorBit | static_cast<uint32_t>(m_operators.size()));
@@ -2581,6 +2706,27 @@ uint32_t ScanOfBody::callMember(ValueID site, ListInScan receiver, BuiltinName n
     return callIndex;
 }
 
+uint32_t ScanOfBody::lengthOfListWrittenRightInFrontOf(const BodyValue& call, ValueID operand) const
+{
+    constexpr size_t mostElements = (1 << 13) - 1;
+    BodyValue list = definitionBehindCasts(operand);
+    if (!list || m_blocks[list.id().index()] != m_blocks[call.id().index()])
+        return 0;
+    size_t length = 0;
+    if (list.opcode() == Opcode::NewArray)
+        length = list.as<Opcode::NewArray>().elementsOperands().size();
+    else if (DataID data = list.opcode() == Opcode::Data ? list.as<Opcode::Data>().data() : DataID(); data && m_program.at(data).root.kind() == DataNode::Kind::Array)
+        length = m_program.at(data).root.as<DataNode::Array>().elements.size();
+    if (!length || length > mostElements)
+        return 0;
+    for (uint32_t between = list.id().index() + 1; between < call.id().index(); ++between) {
+        BodyValue operation = definitionOf(between);
+        if (operation && !opcodesThatStateTypes.contains(operation.opcode()))
+            return 0;
+    }
+    return static_cast<uint32_t>(length);
+}
+
 void ScanOfBody::addArgument(ValueID operand, bool leaves)
 {
     uint32_t place = static_cast<uint32_t>(m_summary.arguments.size());
@@ -2612,6 +2758,9 @@ uint32_t ScanOfBody::addAccessUnder(SummaryAccess::Kind kind, ValueID site, List
     m_summary.accesses[access].keyNode = 0;
     if (computedKey) {
         m_summary.accesses[access].keyIsSurelyIndex = isSurelyIndex(computedKey);
+        BodyValue written = kind == SummaryAccess::Kind::Read ? definitionBehindCasts(computedKey) : BodyValue();
+        if (written && written.opcode() == Opcode::Integer && written.as<Opcode::Integer>().integer() >= 0 && written.as<Opcode::Integer>().integer() < noSummaryNode)
+            m_summary.accesses[access].writtenIndexOfRead = static_cast<uint32_t>(written.as<Opcode::Integer>().integer());
         addSink(SinkKindInScan::KeyOfAccess, listOf(computedKey), access);
     }
     return access;
@@ -2792,6 +2941,10 @@ ScanOfBody::KeyWrittenInScan ScanOfBody::keyWrittenAs(ValueID operand) const
         ValueID stated = definition.operand(0);
         definition = stated ? definitionOf(stated.index()) : BodyValue();
     }
+    if (definition && definition.opcode() == Opcode::Builtin) {
+        PropertyKeyID symbol = keyOfWellKnownSymbol(m_program, m_program.builtins().canonicalID(definition.as<Opcode::Builtin>().builtin()));
+        return { !!symbol, symbol };
+    }
     if (!definition || definition.opcode() != Opcode::String)
         return { };
     StringID text = definition.as<Opcode::String>().string();
@@ -2808,12 +2961,53 @@ bool ScanOfBody::isMadeInBody(ValueID value) const
     return made && flowOf(made.opcode()) == ValueFlowEdgeClass::Allocates;
 }
 
-void ScanOfBody::noteCopyOfMembers(ValueID site, ListInScan target, ListInScan source, bool copiesAccessorsAsTheyAre)
+bool ScanOfBody::storeWhatLiteralSpells(ValueID site, ListInScan subject, ValueID source)
+{
+    uint32_t root = m_roots[source.index()];
+    BodyValue made = definitionOf(root);
+    if (!made || made.opcode() != Opcode::NewObject || made.as<Opcode::NewObject>().prototypeOperand() || m_blocks[root] != m_blocks[site.index()])
+        return false;
+    const Layout& layout = m_program.at(made.as<Opcode::NewObject>().layout());
+    if (layout.kind != LayoutKind::Record || m_firstLeft[root] < site.index() || (m_uses[root] & isAccessedBesideNamedStores))
+        return false;
+
+    Vector<std::pair<PropertyKeyID, ListInScan>, 16> spelled;
+    std::span<const uint32_t> fields = made.as<Opcode::NewObject>().fields();
+    std::span<const ValueID> values = made.variadicOperands();
+    for (size_t place = 0; place < fields.size(); ++place) {
+        if (fields[place] >= layout.fields.size() || place >= values.size() || !values[place] || !layout.fields[fields[place]].key || !layout.fields[fields[place]].form.isEmpty())
+            return false;
+        spelled.append({ layout.fields[fields[place]].key, listOf(values[place]) });
+    }
+    size_t firstStoreBehindRoot = m_stores.size();
+    while (firstStoreBehindRoot && m_stores[firstStoreBehindRoot - 1].site.index() > root)
+        --firstStoreBehindRoot;
+    for (size_t index = firstStoreBehindRoot; index < m_stores.size(); ++index) {
+        const StoreInScan& store = m_stores[index];
+        if (store.root != root)
+            continue;
+        if (!store.isDefinition || store.block != m_blocks[root])
+            return false;
+        spelled.append({ store.key, store.value });
+    }
+    for (const auto& [key, value] : spelled) {
+        if (m_program.nameClassOf(key) == NameClass::Proto)
+            return false;
+    }
+    for (const auto& [key, value] : spelled) {
+        uint32_t access = addAccess(SummaryAccess::Kind::Store, site, subject, key);
+        m_summary.accesses[access].isSpelledByCopy = true;
+        addSink(SinkKindInScan::ValueOfAccess, value, access);
+    }
+    return true;
+}
+
+void ScanOfBody::noteCopyOfMembers(ListInScan target, ListInScan source, bool copiesAccessorsAsTheyAre)
 {
     if (!target.count || !source.count || isAlwaysPrimitive(target) || isAlwaysPrimitive(source))
         return;
     uint32_t index = static_cast<uint32_t>(m_summary.copiesOfMembers.size());
-    m_summary.copiesOfMembers.append(SummaryCopyOfMembers { site, 0, 0, copiesAccessorsAsTheyAre });
+    m_summary.copiesOfMembers.append(SummaryCopyOfMembers { 0, 0, copiesAccessorsAsTheyAre });
     addSink(SinkKindInScan::TargetOfCopyOfMembers, target, index);
     addSink(SinkKindInScan::SourceOfCopyOfMembers, source, index);
 }
@@ -2916,7 +3110,8 @@ PrimitiveKnownToFolding ScanOfBody::primitiveHeldBy(ValueID value)
 void ScanOfBody::noteLeavingOfObjectBeingMade(uint32_t root, WayOfLeavingInScan way)
 {
     noteWhereFinishedLiteralLeavesFirst(objectBeingMade(root));
-    meetFillsWhereObjectLeaves(objectBeingMade(root), fillsOf(root, m_fills));
+    if (std::exchange(objectBeingMade(root).blockWhereFillsWereMetLast, m_blockBeingRead) != m_blockBeingRead)
+        meetFillsWhereObjectLeaves(objectBeingMade(root), fillsOf(root, m_fills));
     if (way == WayOfLeavingInScan::IsReturned)
         meetFillsWhereConstructionEnds(root);
 }
@@ -2940,8 +3135,15 @@ void ScanOfBody::readBody()
     m_firstLeft.fill(hasNotLeft, body.numberOfValues());
     m_lastLeft.fill(0, body.numberOfValues());
     m_firstParameterOfBlock.fill(0, body.numberOfBlocks() + 1);
+    m_answerTestedForObject = { };
     m_fillsAtBlocks.fill(noFillsYet, body.numberOfBlocks());
     m_numberOfEdgesInto.fill(0, body.numberOfBlocks());
+    m_exclusions.shrink(0);
+    m_someEntryCarries = false;
+    m_exclusionsTakenAtBlocks.shrink(0);
+    m_exclusionInForce = noExclusion;
+    m_listsUnderExclusions.clear();
+    m_objectsOfReadsPutOff.clear();
     if (m_listsFirstStoresOfBody) {
         m_immediateDominators.fill(noDefinition, body.numberOfBlocks());
         m_immediateDominators[entryBlock.index()] = entryBlock.index();
@@ -2956,6 +3158,7 @@ void ScanOfBody::readBody()
     BodyBlock block = body.entry();
     for (uint32_t remaining = body.numberOfBlocks(); remaining-- && !m_hasStopped;)
         block = readBlock(block);
+    putInForce(noExclusion);
     m_firstParameterOfBlock[body.numberOfBlocks()] = m_numberOfParameters;
 }
 
@@ -2985,8 +3188,12 @@ BodyBlock ScanOfBody::readBlock(const BodyBlock& block)
             readEntryParameter(position);
     }
 
+    if (m_answerTestedForObject.blockWhereItIsObject == number && m_answerTestedForObject.position < block.numberOfParameters())
+        m_answerTestedForObject.nameWhereItIsObject = block.parameter(m_answerTestedForObject.position);
+
     m_position = block.firstValue().index();
     m_blockBeingRead = number;
+    takeExclusionsAtBlock(number);
     m_blockBeingReadHasHandler = block.hasHandler();
     if (m_followsSomeEnvironment)
         enterBlockForEnvironments(number);
@@ -3000,6 +3207,7 @@ BodyBlock ScanOfBody::readBlock(const BodyBlock& block)
     }
     if (block.hasHandler()) {
         readArgumentsOf(number, block.handler(), KindOfEdgeInScan::ToHandler);
+        carryExclusionsOver(block.handler().block().index(), 0, BodyValue());
         noteHandlerOf(block);
     }
 
@@ -3135,6 +3343,8 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
     }
     if (opcode == Opcode::String)
         noteTextSpelled(value.as<Opcode::String>().string());
+    if (opcode == Opcode::Convert && value.as<Opcode::Convert>().declared().has(PositionFlags::IsInt32Promise))
+        m_summary.traits.add(SummaryTrait::HoldsInt32Promise);
     if (m_listsFirstStoresOfBody)
         lookForFirstStoresAndUses(value);
     if (m_listsDefinitions)
@@ -3199,6 +3409,12 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
             readNewClass(value);
             return;
         }
+        if (opcode == Opcode::ResolveHeritage) {
+            m_lists[index] = { index, isReadNotYetNeeded };
+            m_readsNotYetNeeded.append(index);
+            keepObjectOfReadPutOff(index, value.operand(0));
+            return;
+        }
         if (opcode == Opcode::NewClassToken)
             m_summary.classesEvaluated.append(value.as<Opcode::NewClassToken>().layout());
         if (opcode == Opcode::DefineMethod) {
@@ -3217,7 +3433,11 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
         }
         if ((opcode == Opcode::ToThis || opcode == Opcode::ToObject) && value.operand(0)) {
             ValueID given = value.operand(0);
-            noteLeaving(given);
+            bool isThisBeingMade = opcode == Opcode::ToThis && m_thisBeingMade != noDefinition && m_function->kind != FunctionKind::Initializer && block == entryBlock.index() && m_roots[given.index()] == m_thisBeingMade;
+            if (isThisBeingMade)
+                m_roots.begin()[index] = m_thisBeingMade;
+            else
+                noteLeaving(given);
             OperatorInScan conversion;
             conversion.site = value.id();
             conversion.opcode = opcode;
@@ -3317,6 +3537,10 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
     else if (opcode == Opcode::RequireModule && answersWithResultOfBody(value))
         addNode(resultOfCall(*findCall(value.id())));
     else if (TypeID primitives = m_widestPrimitiveResults[static_cast<unsigned>(opcode)]) {
+        if (ValueID converted = traits & Row::convertsToPropertyKey ? value.operand(0) : ValueID()) {
+            if (SummaryCall* madeKey = findCallThatMade(converted == m_answerTestedForObject.nameWhereItIsObject ? m_answerTestedForObject.call : converted))
+                noteResultReadAsKey(*madeKey);
+        }
         if (resultFollowsOperandsInScan(traits, primitives))
             addOperator(value);
         else
@@ -3391,7 +3615,14 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
         const OperandInfo& info = operandInfoOf(opcode, operandIndex);
         if (operandIndex == receiverIndex) {
             object = operand;
-            if (info.uses != OperandUses { OperandUse::Inspects } || !info.protocols.isEmpty())
+            if (opcode == Opcode::ElemDefine && operand && info.protocols.isEmpty() && !(m_uses[m_roots[operand.index()]] & isUnderConstruction) && holdsOnlyWhatItsBodyLaysInScan(m_program, definitionBehindCasts(operand))) {
+                uint32_t root = m_roots[operand.index()];
+                uint32_t firstLeft = m_firstLeft[root];
+                uint32_t lastLeft = m_lastLeft[root];
+                noteLeaving(operand);
+                m_firstLeft[root] = firstLeft;
+                m_lastLeft[root] = lastLeft;
+            } else if (info.uses != OperandUses { OperandUse::Inspects } || !info.protocols.isEmpty())
                 noteLeaving(operand);
             else if (m_followsSomeEnvironment && operand && !environmentBeingMade(m_roots[operand.index()]))
                 noteLeavingOverEnvironments(m_roots[operand.index()]);
@@ -3402,6 +3633,17 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
         }
         if (storedIndex == operandIndex) {
             stored = operand;
+            if (uint32_t root = m_roots[operand.index()]; key && object && m_roots[object.index()] == root && (m_uses[root] & isFollowedWhileMade) && block == entryBlock.index()
+                && m_program.nameClassOf(key) != NameClass::Proto && objectBeingMade(root).kind != ObjectBeingMadeKindInScan::OfOneLayout) {
+                Vector<PropertyKeyID, 1>& keys = objectBeingMade(root).keysThatHoldItself;
+                if (auto place = std::ranges::lower_bound(keys, key); place == keys.end() || *place != key)
+                    keys.insert(place - keys.begin(), key);
+                if (m_followsSomeEnvironment)
+                    noteLeavingOverEnvironments(root);
+                m_firstLeft[root] = std::min(m_firstLeft[root], m_position);
+                m_lastLeft[root] = std::max(m_lastLeft[root], m_position);
+                return;
+            }
             noteLeaving(operand);
             return;
         }
@@ -3419,16 +3661,26 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
         if (key)
             m_summary.accessesUnderConstantKeys.append({ value.id(), key });
     }
+    if (SummaryCall* madeKey = !key && computedKey ? findCallThatMade(computedKey) : nullptr)
+        noteResultReadAsKey(*madeKey);
     ListInScan subject = object ? listOf(object) : listOfNode(0);
     auto addAccessUnderKey = [&] {
         uint32_t added = addAccessUnder(kind, value.id(), subject, key, computedKey);
+        m_summary.accesses[added].keyIsNameThatLoopOverSubjectGave = kind == SummaryAccess::Kind::Read && !key && computedKey && object && isNameThatLoopOverGave(computedKey, object);
         m_summary.accesses[added].beginningOfKey = beginningOfKey;
         return added;
     };
     if (object) {
         uint16_t& uses = m_uses[m_roots[object.index()]];
         uses |= isAccessedByName;
-        if (!key || (kind != SummaryAccess::Kind::Store && kind != SummaryAccess::Kind::Define) || (kind == SummaryAccess::Kind::Store && m_program.nameClassOf(key) == NameClass::Proto))
+        if (BodyValue made = !key && kind == SummaryAccess::Kind::Store ? definitionBehindCasts(object) : BodyValue(); made && made.opcode() == Opcode::Data && made.as<Opcode::Data>().data()) {
+            const auto* list = m_program.at(made.as<Opcode::Data>().data()).root.tryAs<DataNode::Array>();
+            if (list && !list->elements.isEmpty())
+                m_storesIntoConstantLists.append({ made.id(), m_blocks[value.id().index()] });
+        }
+        if (!key && computedKey && stored && kind == SummaryAccess::Kind::Define)
+            uses |= isDefinedUnderComputedKeys;
+        else if (!key || (kind != SummaryAccess::Kind::Store && kind != SummaryAccess::Kind::Define) || (kind == SummaryAccess::Kind::Store && m_program.nameClassOf(key) == NameClass::Proto))
             uses |= isAccessedBesideNamedStores;
         if (!key && (uses & isFollowedWhileMade) && kind != SummaryAccess::Kind::Define && kind != SummaryAccess::Kind::Has)
             noteLeaving(object);
@@ -3436,11 +3688,14 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
 
     switch (kind) {
     case SummaryAccess::Kind::Read: {
+        if (object && key && (m_uses[m_roots[object.index()]] & isFollowedWhileMade) && std::ranges::binary_search(objectBeingMade(m_roots[object.index()]).keysThatHoldItself, key))
+            noteLeaving(object);
         bool comesInFrontOfDefinition = object && key && readMayComeInFrontOfDefinition(m_roots[object.index()], key);
         bool isAnsweredBySuperCall = comesInFrontOfDefinition && objectBeingMade(m_roots[object.index()]).kind == ObjectBeingMadeKindInScan::AnsweredBySuperCall;
         if (opcode == Opcode::PropGet && key) {
             m_lists[index] = { index, isReadNotYetNeeded };
             m_readsNotYetNeeded.append(index);
+            keepObjectOfReadPutOff(index, object);
             if (comesInFrontOfDefinition)
                 m_uses[index] |= mayComeInFrontOfDefinition;
             if (isAnsweredBySuperCall)
@@ -3475,9 +3730,17 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
         }
         uint32_t access = addAccessUnderKey();
         m_summary.accesses[access].subjectIsMadeInBody = isMadeInBody(object);
+        if (!key && computedKey && object && stored && kind == SummaryAccess::Kind::Define)
+            m_definitionsUnderComputedKeys.append(DefinitionUnderComputedKeyInScan { m_roots[object.index()], value.id(), computedKey, stored });
         addSink(SinkKindInScan::ValueOfAccess, held, access);
-        if (ValueID source = !key && kind == SummaryAccess::Kind::Store && object && stored && computedKey ? objectReadUnder(computedKey, stored) : ValueID())
-            noteCopyOfMembers(value.id(), subject, listOf(source), false);
+        if (ValueID source = !key && kind == SummaryAccess::Kind::Store && object && stored && computedKey ? objectReadUnder(computedKey, stored) : ValueID()) {
+            noteCopyOfMembers(subject, listOf(source), false);
+            if (isNameThatLoopOverGave(computedKey, source)) {
+                m_summary.accesses[access].isCopySpelledByLoop = true;
+                addChange(SummaryChange::Kind::CopiesInto, value.id(), subject, { }, listOf(source));
+                m_summary.changes.last().isSpelledByLoop = true;
+            }
+        }
         return;
     }
     }
@@ -3531,6 +3794,15 @@ void ScanOfBody::readNewClass(const BodyValue& value)
     if (constructor)
         noteLeaving(constructor);
 
+    ValueID readOffHeritage = evaluation.prototypeParentOperand();
+    if (ValueID heritage = evaluation.heritageOperand(); heritage && readOffHeritage && m_lists[readOffHeritage.index()] == ListInScan { readOffHeritage.index(), isReadNotYetNeeded }
+        && definitionOf(readOffHeritage.index()).opcode() == Opcode::ResolveHeritage && definitionOf(readOffHeritage.index()).operand(0) == heritage) {
+        noteLeaving(heritage);
+        uint32_t prototypeObject = addRead(value.id(), classObject, m_program.keyOf(BuiltinNames::prototype));
+        m_heritages.append(HeritageInScan { value.id(), readOffHeritage, listOf(heritage), classObject, prototypeObject });
+        m_lists[value.id().index()] = classObject;
+        return;
+    }
     if (ValueID heritage = evaluation.heritageOperand()) {
         noteLeaving(heritage);
         addChange(SummaryChange::Kind::BecomesPrototype, value.id(), listOf(heritage), { }, classObject);
@@ -3541,6 +3813,92 @@ void ScanOfBody::readNewClass(const BodyValue& value)
         addChange(SummaryChange::Kind::BecomesPrototype, value.id(), listOf(parent), { }, listOfNode(prototypeObject));
     }
     m_lists[value.id().index()] = classObject;
+}
+
+bool ScanOfBody::mayHaveFewSources(ListInScan list) const
+{
+    Vector<uint32_t, 16> parametersToLookAt;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> parametersMet;
+    size_t numberOfSources = 0;
+    auto lookAt = [&](ListInScan asked) {
+        for (uint32_t position = 0; position < asked.count; ++position) {
+            uint32_t atom = m_atoms[asked.first + position];
+            if (atom & operatorBit)
+                return false;
+            if (!(atom & parameterBit)) {
+                if (++numberOfSources > mostSourcesOfHeritageLaidOneByOneInScan)
+                    return false;
+                continue;
+            }
+            uint32_t parameter = atom & ~parameterBit;
+            if (!parametersMet.add(parameter).isNewEntry)
+                return false;
+            parametersToLookAt.append(parameter);
+        }
+        return true;
+    };
+    if (!lookAt(list))
+        return false;
+    while (!parametersToLookAt.isEmpty()) {
+        uint32_t parameter = parametersToLookAt.takeLast();
+        for (uint32_t place = m_firstIncoming[parameter]; place < m_firstIncoming[parameter + 1]; ++place) {
+            if (!lookAt(m_incoming[m_incomingByParameter[place]].list))
+                return false;
+        }
+    }
+    return true;
+}
+
+bool ScanOfBody::gatherSourcesOf(ListInScan list, Vector<OriginInScan, 4>& sources, Vector<uint32_t, 4>& parametersGoneThrough)
+{
+    for (uint32_t position = 0; position < list.count; ++position) {
+        uint32_t atom = m_atoms[list.first + position];
+        if (atom & operatorBit)
+            return false;
+        if (!(atom & parameterBit)) {
+            sources.append(OriginInScan { atom, { } });
+            continue;
+        }
+        uint32_t parameter = atom & ~parameterBit;
+        if (parametersGoneThrough.contains(parameter))
+            return false;
+        parametersGoneThrough.append(parameter);
+        for (uint32_t place = m_firstIncoming[parameter]; place < m_firstIncoming[parameter + 1]; ++place) {
+            const IncomingInScan& incoming = m_incoming[m_incomingByParameter[place]];
+            size_t first = sources.size();
+            if (!gatherSourcesOf(incoming.list, sources, parametersGoneThrough))
+                return false;
+            for (size_t index = first; index < sources.size(); ++index)
+                sources[index] = behindTest(sources[index], incoming.passes);
+        }
+    }
+    return sources.size() <= mostSourcesOfHeritageLaidOneByOneInScan;
+}
+
+void ScanOfBody::layHeritagesBySource()
+{
+    for (const HeritageInScan& heritage : m_heritages) {
+        Vector<OriginInScan, 4> origins;
+        Vector<uint32_t, 4> parametersGoneThrough;
+        if (m_lists[heritage.readOffHeritage.index()].count != isReadNotYetNeeded || !mayHaveFewSources(heritage.above) || !gatherSourcesOf(heritage.above, origins, parametersGoneThrough)) {
+            addChange(SummaryChange::Kind::BecomesPrototype, heritage.site, heritage.above, { }, heritage.classObject);
+            addChange(SummaryChange::Kind::BecomesPrototype, heritage.site, readByName(heritage.readOffHeritage.index()), { }, listOfNode(heritage.prototypeObject));
+            continue;
+        }
+        if (origins.isEmpty())
+            origins.append(OriginInScan { });
+        for (const OriginInScan& origin : origins) {
+            uint32_t source = origin.node;
+            if (origin.passes) {
+                source = newJoin();
+                addEdge(origin.node, source, origin.passes);
+            }
+            addChange(SummaryChange::Kind::BecomesPrototype, heritage.site, listOfNode(source), { }, heritage.classObject);
+            uint32_t access = addAccessUnder(SummaryAccess::Kind::Read, heritage.readOffHeritage, listOfNode(source), m_program.keyOf(BuiltinNames::prototype), ValueID());
+            m_summary.accesses[access].readsPrototypeOfHeritage = true;
+            addChange(SummaryChange::Kind::BecomesPrototype, heritage.site, listOfNode(resultOfRead(access)), { }, listOfNode(heritage.prototypeObject));
+        }
+    }
 }
 
 void ScanOfBody::readDefineAccessor(const BodyValue& value, ValueID object, ValueID function, PropertyKeyID key, SummaryChange::Lays lays)
@@ -3591,6 +3949,16 @@ void ScanOfBody::readDefineMethod(const BodyValue& value)
     if (function)
         noteLeaving(function);
     addSink(SinkKindInScan::ValueOfMember, function ? listOf(function) : ListInScan(), place);
+}
+
+bool ScanOfBody::isNameThatLoopOverGave(ValueID key, ValueID object) const
+{
+    BodyValue given = definitionBehindCasts(key);
+    if (!given || given.opcode() != Opcode::ResultAt || given.as<Opcode::ResultAt>().index() != static_cast<uint32_t>(ForInStepResult::Key))
+        return false;
+    ValueID producer = given.as<Opcode::ResultAt>().resultsOperand();
+    BodyValue step = producer ? definitionOf(producer.index()) : BodyValue();
+    return step && step.opcode() == Opcode::ForInStep && m_roots[step.as<Opcode::ForInStep>().objectOperand().index()] == m_roots[object.index()];
 }
 
 bool ScanOfBody::standsRightBehindCallThatGives(const BodyValue& value, ValueID operand) const
@@ -3673,6 +4041,7 @@ void ScanOfBody::readOperand(const BodyValue& value, ValueID operand, uint32_t o
         case OperandUse::DefinesName:
         case OperandUse::TakesDescriptor:
             defineByDescriptor(value.id(), list, value.opcode() == Opcode::SetFunctionName ? m_program.keyOf(BuiltinNames::name) : m_keyOfOperation, std::nullopt);
+            m_summary.changes.last().descriptorLaysNoAccessor = value.opcode() == Opcode::SetFunctionName;
             break;
         case OperandUse::ChangesIntegrity:
             addChange(SummaryChange::Kind::Freezes, value.id(), list, { }, std::nullopt);
@@ -3959,8 +4328,10 @@ void ScanOfBody::retain(const BodyValue& value, uint32_t operandIndex, const Ope
     case RetainedIn::UnknownMemory:
         if (value.opcode() == Opcode::PutModuleVariable) {
             VariableID variable = value.as<Opcode::PutModuleVariable>().variable();
-            if (m_function->isModuleBody() && m_program.at(variable).module == m_function->module && m_program.at(variable).flags.contains(VariableFlags::IsImmutable))
+            if (m_function->isModuleBody() && m_program.at(variable).module == m_function->module && m_program.at(variable).flags.contains(VariableFlags::IsImmutable)) {
                 m_valuesOfImmutableVariables.append({ variable, value.as<Opcode::PutModuleVariable>().valueOperand() });
+                m_storesIntoImmutableVariables.append({ variable, value.id() });
+            }
             if (m_program.at(variable).initialization == VariableInitialization::Function)
                 m_summary.functionVariablesStoredInto.append(variable);
             flowInto(list, variableNode(variable));
@@ -4026,6 +4397,10 @@ void ScanOfBody::retainInResult(const BodyValue& value, uint32_t operandIndex, L
             flowInto(list, contentsNode(classInstanceMadeBy(value, made.builtinClass), ContentsSlot::Element));
             return;
         }
+        if (opcode == Opcode::CreateMappedArguments && made.builtinClass) {
+            flowInto(list, contentsNode(classInstanceMadeBy(value, made.builtinClass), SlotOfContents::under(m_program.keyOf(BuiltinNames::callee))));
+            return;
+        }
         escape(list);
         m_resultLeaves = true;
         return;
@@ -4059,6 +4434,8 @@ void ScanOfBody::retainInResult(const BodyValue& value, uint32_t operandIndex, L
 void ScanOfBody::retainInOperand(const BodyValue& value, const OperandInfo& info, ListInScan list)
 {
     Opcode opcode = value.opcode();
+    if (opcode == Opcode::SetLiteralPrototype && definitionBehindCasts(value.as<Opcode::SetLiteralPrototype>().prototypeOperand()).opcode() == Opcode::Null)
+        return;
     if (opcode == Opcode::PutEnvironmentField) {
         auto store = value.as<Opcode::PutEnvironmentField>();
         flowInto(list, fieldNode(store.layout(), store.field()));
@@ -4444,28 +4821,48 @@ void ScanOfBody::listDefinitionsBehindAllocation(const ObjectBeingMadeInScan& ob
     lists[start + 1] = static_cast<uint32_t>(listed.size());
 }
 
-void ScanOfBody::listConstructions()
+void ScanOfBody::listFieldsLeftEmptyByObjectsOfOneLayout()
 {
-    for (const ObjectBeingMadeInScan& object : m_objectsBeingMade) {
+    std::ranges::sort(m_placesOfObjectsOfOneLayout);
+    LayoutID layoutOfFields;
+    for (auto [id, place] : m_placesOfObjectsOfOneLayout) {
+        const Layout& layout = m_program.at(id);
+        if (std::exchange(layoutOfFields, id) != id) {
+            m_fieldsThatNoObjectLeftEmptySoFar.shrink(0);
+            for (uint32_t field = 0; field < layout.fields.size(); ++field)
+                m_fieldsThatNoObjectLeftEmptySoFar.append(field);
+        }
+        if (m_fieldsThatNoObjectLeftEmptySoFar.isEmpty())
+            continue;
+        const ObjectBeingMadeInScan& object = m_objectsBeingMade[place];
         auto isFilled = [&](PropertyKeyID key) {
             return key && (std::ranges::binary_search(object.filled, FillInScan { object.root, false, key.bits() }) || isListedByAllocation(object.root, key));
         };
+        auto hasAtItsFinish = [&](PropertyKeyID key) {
+            return key && (isListedByAllocation(object.root, key) || (object.isFinished && !object.isConstant && !object.isGivenUp && std::ranges::binary_search(object.filledAtEnd, FillInScan { object.root, false, key.bits() })));
+        };
+        bool goesByLiteralAlone = layout.kind == LayoutKind::Record && !object.endsWhereItLeaves;
+        m_fieldsThatNoObjectLeftEmptySoFar.removeAllMatching([&](uint32_t field) {
+            PropertyKeyID key = layout.fields[field].key;
+            if (goesByLiteralAlone ? hasAtItsFinish(key) : isFilled(key))
+                return false;
+            m_summary.fieldsLeftEmpty.append(FieldReference { id, field });
+            return true;
+        });
+    }
+}
 
+void ScanOfBody::listConstructions()
+{
+    m_placesOfObjectsOfOneLayout.shrink(0);
+    for (const ObjectBeingMadeInScan& object : m_objectsBeingMade) {
         if (object.kind == ObjectBeingMadeKindInScan::OfOneLayout) {
             listDefinitionsBehindAllocation(object);
             LayoutID id = layoutOfAllocation(definitionOf(object.root));
             const Layout& layout = m_program.at(id);
             bool goesByLiteralAlone = layout.kind == LayoutKind::Record && !object.endsWhereItLeaves;
-            auto hasAtItsFinish = [&](PropertyKeyID key) {
-                return key && (isListedByAllocation(object.root, key) || (object.isFinished && !object.isConstant && !object.isGivenUp && std::ranges::binary_search(object.filledAtEnd, FillInScan { object.root, false, key.bits() })));
-            };
-            if (!object.hasLeft && !goesByLiteralAlone)
-                continue;
-            for (uint32_t field = 0; field < layout.fields.size(); ++field) {
-                PropertyKeyID key = layout.fields[field].key;
-                if (goesByLiteralAlone ? !hasAtItsFinish(key) : !isFilled(key))
-                    m_summary.fieldsLeftEmpty.append(FieldReference { id, field });
-            }
+            if (object.hasLeft || goesByLiteralAlone)
+                m_placesOfObjectsOfOneLayout.append({ id, static_cast<uint32_t>(&object - m_objectsBeingMade.begin()) });
             continue;
         }
 
@@ -4500,6 +4897,8 @@ void ScanOfBody::listConstructions()
                     m_keysOfConstruction.append(SummaryConstruction::Key { layout.fields[field].key, true, false });
             }
         }
+        for (PropertyKeyID key : object.keysThatHoldItself)
+            m_keysOfConstruction.append(SummaryConstruction::Key { key, false, false, true });
         for (PropertyKeyID key : object.keysLookedUp)
             m_keysOfConstruction.append(SummaryConstruction::Key { key, false, true });
         std::ranges::sort(m_keysOfConstruction, { }, &SummaryConstruction::Key::key);
@@ -4513,6 +4912,7 @@ void ScanOfBody::listConstructions()
             }
             m_summary.keysOfConstructions.last().isFilled |= key.isFilled;
             m_summary.keysOfConstructions.last().isLookedUp |= key.isLookedUp;
+            m_summary.keysOfConstructions.last().holdsObject |= key.holdsObject;
         }
         construction.numberOfKeys = static_cast<uint32_t>(m_summary.keysOfConstructions.size()) - construction.firstKey;
 
@@ -4522,6 +4922,7 @@ void ScanOfBody::listConstructions()
         construction.numberOfParts = static_cast<uint32_t>(object.parts.size());
         m_summary.constructions.append(construction);
     }
+    listFieldsLeftEmptyByObjectsOfOneLayout();
     if (!m_accessorsLaid.isEmpty())
         listHalvesOfAccessorsNotLaid();
     if (!m_objectsBeingMade.isEmpty())
@@ -4680,8 +5081,15 @@ void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCall& call, uint
                 m_summary.traits.add(SummaryTrait::OnlyPassesOnGatheredArguments);
             }
             m_summary.arguments.append(readContents(value.id(), listOf(operand), ContentsSlot::Element));
-        } else
+        } else if (BodyValue written = call.isConstruction && callee && definitionBehindCasts(callee) && definitionBehindCasts(callee).opcode() == Opcode::Builtin ? definitionBehindCasts(operand) : BodyValue(); written && written.opcode() == Opcode::Integer && written.as<Opcode::Integer>().integer() > 0 && WrittenUnit::integer(written.as<Opcode::Integer>().integer())) {
+            uint32_t place = static_cast<uint32_t>(m_summary.arguments.size());
+            m_summary.arguments.append(0);
+            addSink(SinkKindInScan::Argument, listOfNode(nodeFor(SummaryNode::Kind::Constant, typeOfIntegerInScan(written.as<Opcode::Integer>().integer()).bits(), WrittenUnit::integer(written.as<Opcode::Integer>().integer()).bits())), place);
+        } else {
+            if (call.isConstruction && callee && definitionBehindCasts(callee) && definitionBehindCasts(callee).opcode() == Opcode::Builtin)
+                call.lengthOfWrittenList = lengthOfListWrittenRightInFrontOf(value, operand);
             addArgument(operand);
+        }
     });
 
     m_summary.ownEffects.mayThrow |= ThrowEffect(true);
@@ -4752,16 +5160,10 @@ void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCall& call, uint
                 if (arguments.size())
                     firstArgument = *arguments.begin();
             }
-            BodyValue keyMadeByCall = firstArgument ? definitionBehindCasts(firstArgument) : BodyValue();
-            if (keyMadeByCall && (keyMadeByCall.opcode() == Opcode::Call || keyMadeByCall.opcode() == Opcode::CallDirect)) {
+            if (SummaryCall* madeKey = firstArgument ? findCallThatMade(firstArgument) : nullptr) {
                 const BuiltinTable& table = m_program.builtins();
-                if (findOwnMember(m_program, table.at(BuiltinClasses::Map).prototype, read.key()) || findOwnMember(m_program, table.at(BuiltinClasses::Set).prototype, read.key())) {
-                    auto record = std::ranges::lower_bound(m_summary.calls, keyMadeByCall.id(), { }, &SummaryCall::site);
-                    if (record != m_summary.calls.end() && record->site == keyMadeByCall.id()) {
-                        record->resultIsReadAsKey = true;
-                        m_summary.someResultIsReadAsKey = true;
-                    }
-                }
+                if (findOwnMember(m_program, table.at(BuiltinClasses::Map).prototype, read.key()) || findOwnMember(m_program, table.at(BuiltinClasses::Set).prototype, read.key()))
+                    noteResultReadAsKey(*madeKey);
             }
             if (m_uses[definition.id().index()] & mayComeInFrontOfDefinition)
                 readByName(definition.id().index());
@@ -4769,7 +5171,7 @@ void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCall& call, uint
         }
     }
     noteLeaving(callee);
-    addSink(SinkKindInScan::SubjectOfCall, listOf(callee), callIndex);
+    addSink(SinkKindInScan::SubjectOfCall, listUnderExclusionsOf(callee), callIndex);
 }
 
 void ScanOfBody::readChangesMadeByBuiltin(const BodyValue& value, const SummaryCall& call, uint32_t callIndex, ValueID receiver)
@@ -4872,13 +5274,30 @@ void ScanOfBody::readChangesMadeByBuiltin(const BodyValue& value, const SummaryC
         case BuiltinPropertyActionKind::DeletesByKey:
             note(SummaryChange::Kind::Deletes);
             break;
-        case BuiltinPropertyActionKind::AssignsFrom:
-            forEachPair([&](ListInScan subject, std::optional<ListInScan> source) {
+        case BuiltinPropertyActionKind::AssignsFrom: {
+            auto copy = [&](ListInScan subject, std::optional<ListInScan> source) {
                 addChange(SummaryChange::Kind::CopiesInto, site, subject, { }, source ? *source : listOfNode(0));
                 if (source)
-                    noteCopyOfMembers(site, subject, *source, false);
+                    noteCopyOfMembers(subject, *source, false);
+            };
+            if (!change.other || change.other->isReceiver() || call.passesList) {
+                forEachPair(copy);
+                break;
+            }
+            forEachListAt(change.object, [&](ListInScan subject) {
+                bool findsSource = false;
+                for (uint32_t index = change.other->argumentIndex(); index < arguments.size() && change.other->coversArgument(index); ++index) {
+                    if (!arguments[index])
+                        continue;
+                    findsSource = true;
+                    if (!storeWhatLiteralSpells(site, subject, arguments[index]))
+                        copy(subject, listOf(arguments[index]));
+                }
+                if (!findsSource)
+                    copy(subject, std::nullopt);
             });
             break;
+        }
         case BuiltinPropertyActionKind::DefinesName:
         case BuiltinPropertyActionKind::TakesDescriptor:
         case BuiltinPropertyActionKind::TakesDescriptorMap:
@@ -4888,8 +5307,9 @@ void ScanOfBody::readChangesMadeByBuiltin(const BodyValue& value, const SummaryC
             forEachPair([&](ListInScan subject, std::optional<ListInScan> descriptor) {
                 bool isOneArgument = change.kind == BuiltinPropertyActionKind::TakesDescriptorMap && descriptor && change.other->kind() == BuiltinOperand::Kind::Argument && !call.passesList;
                 ValueID map = isOneArgument ? arguments[change.other->argumentIndex()] : ValueID();
-                if (map && m_firstLeft[m_roots[map.index()]] >= site.index())
-                    m_definitionsByMaps.append(DefinitionByMapInScan { static_cast<uint32_t>(m_summary.changes.size()), static_cast<uint32_t>(m_summary.accesses.size()), m_roots[map.index()], site.index() });
+                bool mapWaitsForItsJudgment = map && m_firstLeft[m_roots[map.index()]] >= site.index();
+                if (mapWaitsForItsJudgment)
+                    m_definitionsByMaps.append(DefinitionByMapInScan { static_cast<uint32_t>(m_summary.changes.size()), static_cast<uint32_t>(m_summary.accesses.size()), m_roots[map.index()], site.index(), *descriptor });
                 bool isOneDescriptor = change.kind == BuiltinPropertyActionKind::TakesDescriptor && descriptor && change.other->kind() == BuiltinOperand::Kind::Argument && !call.passesList;
                 ValueID written = isOneDescriptor ? arguments[change.other->argumentIndex()] : ValueID();
                 bool hasNotLeft = written && m_firstLeft[m_roots[written.index()]] >= site.index();
@@ -4901,12 +5321,12 @@ void ScanOfBody::readChangesMadeByBuiltin(const BodyValue& value, const SummaryC
                     m_summary.changes.last().valueLaidThroughConstant = valuesLaidIntoDescriptorHeldBy(constant);
                 if (hasNotLeft && keyWritten.key)
                     m_definitionsByDescriptors.last().access = static_cast<uint32_t>(m_summary.accesses.size()) - 1;
-                if (descriptor && !waitsForItsJudgment)
+                if (descriptor && !waitsForItsJudgment && !mapWaitsForItsJudgment)
                     escape(*descriptor);
                 bool keyIsOneArgument = written && !keyWritten.isWritten && change.key && change.key->kind() == BuiltinOperand::Kind::Argument && change.key->argumentIndex() < arguments.size();
                 ValueID keyOfDefinition = keyIsOneArgument ? arguments[change.key->argumentIndex()] : ValueID();
                 if (ValueID described = keyOfDefinition ? objectDescribedBy(written, keyOfDefinition) : map ? objectDescribedBy(map, { }) : ValueID())
-                    noteCopyOfMembers(site, subject, listOf(described), true);
+                    noteCopyOfMembers(subject, listOf(described), true);
             });
             break;
         case BuiltinPropertyActionKind::ChangesIntegrity:
@@ -5156,6 +5576,8 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
         terminator.forEachReference(references);
         if (kind == TerminatorKind::ReturnCall) {
             for (TailCast cast : terminator.as<TerminatorKind::ReturnCall>().casts()) {
+                if (cast.declared.has(PositionFlags::IsInt32Promise))
+                    m_summary.traits.add(SummaryTrait::HoldsInt32Promise);
                 if (cast.declared.written() && !cast.declared.isExpected())
                     noteSetOfLayoutsWritten(cast.declared.written());
             }
@@ -5240,6 +5662,7 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
             continue;
         }
         readArgumentsOf(block, target);
+        carryExclusionsOver(target.block().index(), targetIndex, test);
         uint32_t position = static_cast<uint32_t>(target.arguments().size());
         for (uint32_t operandIndex : target.proofs()) {
             ValueID subject;
@@ -5248,6 +5671,8 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
             TypeID passes;
             if (subject && !targetIndex && test && test.opcode() == Opcode::TypeTest)
                 passes = test.as<Opcode::TypeTest>().testedType();
+            if (SummaryCall* madeAnswer = passes == TypeTable::object ? findCallThatMade(subject) : nullptr)
+                m_answerTestedForObject = { target.block().index(), position, madeAnswer->site, { } };
             if (subject)
                 handToBlock(subject, block, target.block().index(), position, KindOfEdgeInScan::Plain);
             m_incoming.append(IncomingInScan { target.block().index(), position, subject ? listOf(subject) : listOfNode(0), passes });
@@ -5337,9 +5762,10 @@ void ScanOfBody::readWhatHostLooksFor(ValueID site)
             continue;
         }
         if (auto listed = std::ranges::find(module.exports, read.exportName, &ModuleExport::name); listed != module.exports.end()) {
-            if (listed->kind == ModuleExportKind::Variable && listed->variable)
+            if (listed->kind == ModuleExportKind::Variable && listed->variable) {
                 lookAt(variableNode(listed->variable), read);
-            else
+                layCallThatHostMakes(listed->variable, read);
+            } else
                 lookAt(addRead(site, listOfNode(nodeFor(SummaryNode::Kind::Allocation, namespaceOfEntry.index())), key), read);
             continue;
         }
@@ -5352,6 +5778,72 @@ void ScanOfBody::readWhatHostLooksFor(ValueID site)
     }
     if (m_summary.namesThatHostLooksFor.isEmpty())
         m_summary.namesThatHostLooksFor.append(constant(TypeTable::undefined));
+}
+
+void ScanOfBody::layCallThatHostMakes(VariableID variable, const HostRead& read)
+{
+    if (!read.builtin || read.parameter)
+        return;
+    ValueID store;
+    for (auto [stored, site] : m_storesIntoImmutableVariables) {
+        if (stored != variable)
+            continue;
+        if (store)
+            return;
+        store = site;
+    }
+    if (!store)
+        return;
+    BodyValue finished = definitionOf(definitionOf(store.index()).as<Opcode::PutModuleVariable>().valueOperand().index());
+    bool isLiteral = finished && finished.opcode() == Opcode::FinishObject;
+    ValueID literal = isLiteral ? finished.operand(0) : ValueID();
+    BodyValue made = literal ? definitionOf(literal.index()) : BodyValue();
+    if (isLiteral && (!made || made.opcode() != Opcode::NewObject || !made.as<Opcode::NewObject>().layout()))
+        return;
+    auto isLookedFor = [&](PropertyKeyID written) {
+        return std::ranges::any_of(read.namesLookedFor, [&](StringID name) {
+            return m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = name }) == written;
+        });
+    };
+    bool writesNameLookedFor = !isLiteral;
+    if (isLiteral) {
+        for (uint32_t field : made.as<Opcode::NewObject>().fields())
+            writesNameLookedFor |= isLookedFor(m_program.at(made.as<Opcode::NewObject>().layout()).fields[field].key);
+    }
+    for (uint32_t number = literal.index() + 1; isLiteral && number < finished.id().index(); ++number) {
+        BodyValue part = definitionOf(number);
+        if (part && part.opcode() == Opcode::PropDefine && part.operand(0) == literal)
+            writesNameLookedFor |= isLookedFor(part.as<Opcode::PropDefine>().key());
+    }
+    static constexpr OptionSet<ModuleFlags> flagsOfModulesThatOthersFind {
+        ModuleFlags::IsFoundByName, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::IsImportedAsNamespace, ModuleFlags::AnswersLoaderWithNamespace,
+        ModuleFlags::IsListedInCache, ModuleFlags::IsShownByEntryOfCache, ModuleFlags::IsHandedOutByTestRunner, ModuleFlags::IsChangedOnDiskByRun,
+        ModuleFlags::MayBeImportedWhileItRuns, ModuleFlags::RunsAgain, ModuleFlags::IsLoadedByLoader, ModuleFlags::IsRequiredDuringLoad,
+    };
+    const Module& module = m_program.at(m_function->module);
+    if (!writesNameLookedFor || module.flags.containsAny(flagsOfModulesThatOthersFind) || std::ranges::any_of(module.requests, &ModuleRequest::isDynamicStarExport))
+        return;
+    for (const Entry& entry : m_program.entries) {
+        if (entry.module != m_function->module)
+            continue;
+        for (const HostRead& other : entry.hostReads) {
+            if (other.exportName != read.exportName && std::ranges::contains(module.exports, other.exportName, &ModuleExport::name))
+                return;
+        }
+    }
+    for (const Module& other : m_program.modules) {
+        if (std::ranges::contains(other.requests, m_function->module, &ModuleRequest::target))
+            return;
+    }
+
+    SummaryCall call;
+    call.site = store;
+    call.callee = SummaryCall::Callee::Builtin;
+    call.builtin = read.builtin;
+    call.isMadeByHost = true;
+    call.handsOverLiteral = isLiteral;
+    call.numberOfArguments = 1;
+    m_callThatHostMakes = std::pair { call, variable };
 }
 
 void ScanOfBody::returnValue(ValueID operand, uint32_t block)
@@ -5383,10 +5875,15 @@ void ScanOfBody::returnValue(ValueID operand, uint32_t block)
 
 void ScanOfBody::readWhatNobodyAskedFor()
 {
+    size_t nextHeritage = 0;
     for (uint32_t read : m_readsNotYetNeeded) {
-        if (!(m_uses[read] & isCalledByName))
+        bool isReadBySource = false;
+        for (; nextHeritage < m_heritages.size() && m_heritages[nextHeritage].readOffHeritage.index() == read; ++nextHeritage)
+            isReadBySource = true;
+        if (!(m_uses[read] & isCalledByName) && !isReadBySource)
             readByName(read);
     }
+    RELEASE_ASSERT(nextHeritage == m_heritages.size());
     for (auto [list, block] : m_returnsOfCoroutine)
         returnFromCoroutine(list, block);
 }
@@ -5426,6 +5923,12 @@ void ScanOfBody::findLoops()
         if (!m_openLoops.isEmpty())
             m_innermostLoopHeads[block] = m_openLoops.last().head;
     }
+    for (auto [list, blockOfStore] : m_storesIntoConstantLists) {
+        if (m_innermostLoopHeads[blockOfStore] != noLoop && m_innermostLoopHeads[blockOfStore] != m_innermostLoopHeads[m_blocks[list.index()]])
+            m_summary.constantListsStoredIntoInLoops.append(list);
+    }
+    std::ranges::sort(m_summary.constantListsStoredIntoInLoops, { }, &ValueID::index);
+    m_summary.constantListsStoredIntoInLoops.shrink(std::ranges::unique(m_summary.constantListsStoredIntoInLoops).begin() - m_summary.constantListsStoredIntoInLoops.begin());
     uint32_t numberOfEntryParameters = std::min<uint32_t>(m_function->numberOfEntryParameters(), 64);
     for (uint32_t call = 0; call < m_summary.calls.size(); ++call) {
         SummaryCall& record = m_summary.calls[call];
@@ -5442,12 +5945,29 @@ void ScanOfBody::findLoops()
     }
 }
 
+SummaryCall* ScanOfBody::findCallThatMade(ValueID value)
+{
+    BodyValue made = definitionBehindCasts(value);
+    if (!made || (made.opcode() != Opcode::Call && made.opcode() != Opcode::CallDirect))
+        return nullptr;
+    auto record = std::ranges::lower_bound(m_summary.calls, made.id(), { }, &SummaryCall::site);
+    return record != m_summary.calls.end() && record->site == made.id() ? &*record : nullptr;
+}
+
+void ScanOfBody::noteResultReadAsKey(SummaryCall& call)
+{
+    call.resultIsReadAsKey = true;
+    m_summary.someResultIsReadAsKey = true;
+}
+
 PropertyKeyID ScanOfBody::keySpelledBy(const BodyValue& definition) const
 {
     if (!definition)
         return { };
     if (definition.opcode() == Opcode::String)
         return keyWrittenAs(definition.id()).key;
+    if (definition.opcode() == Opcode::Builtin)
+        return keyOfWellKnownSymbol(m_program, m_program.builtins().canonicalID(definition.as<Opcode::Builtin>().builtin()));
     if (definition.opcode() != Opcode::Call)
         return { };
     auto record = std::ranges::lower_bound(m_summary.calls, definition.id(), { }, &SummaryCall::site);
@@ -5459,7 +5979,15 @@ void ScanOfBody::nameKeysOfMembers()
     for (auto [variable, value] : m_valuesOfImmutableVariables) {
         if (PropertyKeyID key = value ? keySpelledBy(definitionBehindCasts(value)) : PropertyKeyID())
             m_keysOfVariables.append({ variable, key });
+        BodyValue made = value ? definitionBehindCasts(value) : BodyValue();
+        const auto* written = made && made.opcode() == Opcode::Data && made.as<Opcode::Data>().data() ? m_program.at(made.as<Opcode::Data>().data()).root.tryAs<DataNode::Array>() : nullptr;
+        bool isWhole = written && isStorageOfArray(*written) && std::ranges::none_of(written->elements, [](const DataNode& element) {
+            return element.is<DataNode::Hole>();
+        });
+        if (ArrayStorage storage = isWhole ? arrayStorageOfData(m_program, *written) : ArrayStorage::Other; holdsOnlyNumbers(storage))
+            m_summary.writtenListsOfVariables.append({ variable, made.as<Opcode::Data>().data(), made.id(), static_cast<uint32_t>(written->elements.size()), static_cast<uint8_t>(storage) });
     }
+    std::ranges::sort(m_summary.writtenListsOfVariables, { }, [](const SummaryWrittenListOfVariable& each) { return each.variable.index(); });
     for (auto [member, written] : m_keysWrittenForMembers) {
         BodyValue definition = definitionBehindCasts(written);
         if (definition && definition.opcode() == Opcode::ToPropertyKey && definition.operand(0))
@@ -5549,6 +6077,7 @@ void ScanOfBody::markParametersThatSinksNeed()
         SummaryOperator record;
         record.site = found.site;
         record.opcode = found.opcode;
+        record.writtenDivisor = found.writtenDivisor;
         record.result = found.joinOfResult ? found.joinOfResult : addNodeAskedForOnce({ SummaryNode::Kind::ResultOfOperator, found.record, 0 });
         m_summary.operators.append(record);
     }
@@ -5558,6 +6087,8 @@ void ScanOfBody::resolveParameters()
 {
     uint32_t count = m_numberOfParameters;
     sortIncomingByParameter();
+    if (!m_heritages.isEmpty())
+        layHeritagesBySource();
     markParametersThatSinksNeed();
 
     m_resolved.fill(ListInScan { }, count);
@@ -5670,6 +6201,184 @@ void ScanOfBody::resolveComponent(std::span<const uint32_t> members, uint32_t co
     m_origins.appendVector(m_gathered);
     for (uint32_t member : members)
         m_resolved[member] = list;
+}
+
+void ScanOfBody::carryExclusionsOver(uint32_t to, uint32_t targetIndex, const BodyValue& test)
+{
+    if (to <= m_blockBeingRead) {
+        giveUpWhatEdgeLeadingBackDoesNotCarry(to);
+        return;
+    }
+    uint32_t carried = m_exclusionInForce;
+    if (test && test.opcode() == Opcode::StrictEq && targetIndex == 1) {
+        for (uint32_t side = 0; side < 2; ++side) {
+            ValueID written = test.operand(side), subject = test.operand(1 - side);
+            if (!written || !subject)
+                continue;
+            BodyValue definition = definitionOf(written.index());
+            uint16_t excluded = 0;
+            if (definition && definition.opcode() == Opcode::Boolean)
+                excluded = definition.as<Opcode::Boolean>().boolean() ? Primitive::True : Primitive::False;
+            else if (definition && definition.opcode() == Opcode::Undefined)
+                excluded = Primitive::Undefined;
+            else if (definition && definition.opcode() == Opcode::Null)
+                excluded = Primitive::Null;
+            if (!excluded)
+                continue;
+            carried = addExclusion(subject, excluded, carried);
+            break;
+        }
+    }
+    if (carried == noExclusion)
+        return;
+    if (!std::exchange(m_someEntryCarries, true)) {
+        m_numberOfEntriesThatCarry.fill(0, m_numberOfEdgesInto.size());
+        m_whatEntriesShare.fill(noExclusion, m_numberOfEdgesInto.size());
+    }
+    m_whatEntriesShare[to] = m_numberOfEntriesThatCarry[to]++ ? sharedEndOfExclusions(m_whatEntriesShare[to], carried) : carried;
+}
+
+uint32_t ScanOfBody::addExclusion(ValueID subject, uint16_t excluded, uint32_t above)
+{
+    ExclusionInScan added { subject, excluded, above, 0, { }, false, false, depthOfExclusion(above) + 1, noExclusion };
+    uint32_t jump = jumpOfExclusion(above);
+    if (above != noExclusion)
+        added.jump = depthOfExclusion(above) - depthOfExclusion(jump) == depthOfExclusion(jump) - depthOfExclusion(jumpOfExclusion(jump)) ? jumpOfExclusion(jump) : above;
+    m_exclusions.append(added);
+    return m_exclusions.size() - 1;
+}
+
+uint32_t ScanOfBody::sharedEndOfExclusions(uint32_t first, uint32_t second) const
+{
+    auto climbTo = [&](uint32_t exclusion, uint32_t depth) {
+        while (depthOfExclusion(exclusion) > depth)
+            exclusion = depthOfExclusion(jumpOfExclusion(exclusion)) >= depth ? jumpOfExclusion(exclusion) : m_exclusions[exclusion].above;
+        return exclusion;
+    };
+    first = climbTo(first, depthOfExclusion(second));
+    second = climbTo(second, depthOfExclusion(first));
+    while (first != second) {
+        bool jumpsPart = jumpOfExclusion(first) != jumpOfExclusion(second);
+        first = jumpsPart ? jumpOfExclusion(first) : m_exclusions[first].above;
+        second = jumpsPart ? jumpOfExclusion(second) : m_exclusions[second].above;
+    }
+    return first;
+}
+
+ListInScan ScanOfBody::listUnderExclusionsOf(ValueID value)
+{
+    if (!m_listsUnderExclusions.isEmpty()) [[unlikely]] {
+        if (auto underneath = m_listsUnderExclusions.find(value.index()); underneath != m_listsUnderExclusions.end())
+            return underneath->value;
+    }
+    return listOf(value);
+}
+
+void ScanOfBody::takeExclusionsAtBlock(uint32_t block)
+{
+    if (!m_someEntryCarries) [[likely]]
+        return;
+    uint32_t entries = m_numberOfEntriesThatCarry[block];
+    uint32_t shared = m_whatEntriesShare[block];
+    putInForce(entries == m_numberOfEdgesInto[block] ? shared : noExclusion);
+    if (m_exclusionInForce != noExclusion)
+        m_exclusionsTakenAtBlocks.append(ExclusionCarriedInScan { block, m_exclusionInForce });
+}
+
+void ScanOfBody::giveUpWhatEdgeLeadingBackDoesNotCarry(uint32_t to)
+{
+    if (m_exclusionsTakenAtBlocks.isEmpty()) [[likely]]
+        return;
+    auto taken = std::ranges::lower_bound(m_exclusionsTakenAtBlocks, to, { }, &ExclusionCarriedInScan::block);
+    if (taken == m_exclusionsTakenAtBlocks.end() || taken->block != to)
+        return;
+    uint32_t held = taken->exclusion, carried = sharedEndOfExclusions(taken->exclusion, m_exclusionInForce);
+    taken->exclusion = carried;
+    while (held != carried) {
+        ExclusionInScan& givenUp = m_exclusions[held];
+        if (!std::exchange(givenUp.letsEverythingThrough, true) && givenUp.join) {
+            ListInScan underneath = givenUp.listUnderneath;
+            uint32_t join = givenUp.join;
+            if (underneath.count == isJoinNotYetNeeded)
+                underneath = listOfNode(joinOfExclusion(underneath.first));
+            addSink(SinkKindInScan::Edge, underneath, join);
+        }
+        held = givenUp.above;
+    }
+}
+
+void ScanOfBody::keepObjectOfReadPutOff(uint32_t read, ValueID object)
+{
+    if (m_listsUnderExclusions.isEmpty() || !object) [[likely]]
+        return;
+    if (m_listsUnderExclusions.contains(object.index()))
+        m_objectsOfReadsPutOff.add(read, m_lists[object.index()]);
+}
+
+ListInScan ScanOfBody::objectOfReadPutOff(uint32_t read, ValueID object)
+{
+    if (!m_objectsOfReadsPutOff.isEmpty()) [[unlikely]] {
+        if (auto kept = m_objectsOfReadsPutOff.find(read); kept != m_objectsOfReadsPutOff.end())
+            return kept->value.count == isJoinNotYetNeeded ? listOfNode(joinOfExclusion(kept->value.first)) : kept->value;
+    }
+    if (!m_listsUnderExclusions.isEmpty()) [[unlikely]] {
+        if (auto underneath = m_listsUnderExclusions.find(object.index()); underneath != m_listsUnderExclusions.end())
+            return underneath->value;
+    }
+    return listOf(object);
+}
+
+void ScanOfBody::putInForce(uint32_t exclusion)
+{
+    m_exclusionsToLay.shrink(0);
+    while (m_exclusionInForce != exclusion) {
+        if (liesBehind(m_exclusionInForce, exclusion)) {
+            const ExclusionInScan& taken = m_exclusions[m_exclusionInForce];
+            m_lists[taken.subject.index()] = taken.listUnderneath;
+            if (taken.isOutermostOverSubject)
+                m_listsUnderExclusions.remove(taken.subject.index());
+            m_exclusionInForce = taken.above;
+            continue;
+        }
+        m_exclusionsToLay.append(exclusion);
+        exclusion = m_exclusions[exclusion].above;
+    }
+    while (!m_exclusionsToLay.isEmpty()) {
+        uint32_t number = m_exclusionsToLay.takeLast();
+        ValueID subject = m_exclusions[number].subject;
+        ListInScan underneath = m_lists[subject.index()];
+        if (underneath.count > isJoinNotYetNeeded)
+            underneath = listOf(subject);
+        m_exclusions[number].listUnderneath = underneath;
+        m_exclusions[number].isOutermostOverSubject = m_listsUnderExclusions.add(subject.index(), underneath).isNewEntry;
+        m_lists[subject.index()] = m_exclusions[number].join ? listOfNode(m_exclusions[number].join) : ListInScan { number, isJoinNotYetNeeded };
+        m_exclusionInForce = number;
+    }
+}
+
+uint32_t ScanOfBody::joinOfExclusion(uint32_t asked)
+{
+    Vector<uint32_t, 4> marks;
+    for (uint32_t number = asked; !m_exclusions[number].join; number = m_exclusions[number].listUnderneath.first) {
+        marks.append(number);
+        if (m_exclusions[number].listUnderneath.count != isJoinNotYetNeeded)
+            break;
+    }
+    while (!marks.isEmpty()) {
+        uint32_t number = marks.takeLast();
+        ListInScan underneath = m_exclusions[number].listUnderneath;
+        if (underneath.count == isJoinNotYetNeeded)
+            underneath = listOfNode(m_exclusions[underneath.first].join);
+        uint32_t join = newJoin();
+        if (m_exclusions[number].letsEverythingThrough)
+            addSink(SinkKindInScan::Edge, underneath, join);
+        else {
+            addSink(SinkKindInScan::Edge, underneath, join, TypeTable::object);
+            addSink(SinkKindInScan::Edge, underneath, join, typeOfPrimitives(Primitive::All & ~m_exclusions[number].excluded));
+        }
+        m_exclusions[number].join = join;
+    }
+    return m_exclusions[asked].join;
 }
 
 OriginInScan ScanOfBody::behindTestThatIsWritten(OriginInScan origin, TypeID passes)
@@ -5850,7 +6559,7 @@ void ScanOfBody::followObjectsMadeToBePrototypes()
         uint32_t root = candidate.rootOfStored;
         uint32_t position = m_stores[candidate.store].site.index();
         BodyValue made = definitionOf(root);
-        if (!made || m_firstLeft[root] != position || m_lastLeft[root] != position || m_uses[root] & (isAccessedBesideNamedStoresAndAccessors | hasNullAboveByItsOwnText))
+        if (!made || m_firstLeft[root] != position || m_lastLeft[root] != position || m_uses[root] & (isAccessedBesideNamedStoresAndAccessors | isDefinedUnderComputedKeys | hasNullAboveByItsOwnText))
             continue;
         uint32_t head = m_innermostLoopHeads.isEmpty() ? noLoop : m_innermostLoopHeads[m_stores[candidate.store].block];
         if (head != noLoop && head > m_blocks[root])
@@ -5962,7 +6671,8 @@ void ScanOfBody::layDescriptorsInSight()
             return std::ranges::count(held, key, &Held::key) <= 1;
         };
         if (!isInSight || !isNamedOnceAtMost(get) || !isNamedOnceAtMost(set)) {
-            escape(definition.descriptor);
+            if (definition.access == DefinitionByDescriptorInScan::noDefinitionUnderName)
+                escape(definition.descriptor);
             continue;
         }
 
@@ -6005,6 +6715,7 @@ void ScanOfBody::layDescriptorsInSight()
             if (!*isConfigurable)
                 form.add(FieldForm::IsNotConfigurable);
             m_summary.accesses[definition.access].formCreated = form;
+            m_summary.changes[definition.change].createsWhatCannotBeConfigured = !isAccessor && !*isConfigurable;
         }
         auto heldUnderValue = std::ranges::find(held, valueKey, &Held::key);
         if (!isAccessor && std::ranges::count(held, valueKey, &Held::key) == 1) {
@@ -6014,20 +6725,22 @@ void ScanOfBody::layDescriptorsInSight()
             if (definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName)
                 m_summary.accesses[definition.access].laysTextNumberOrBooleanThatIsWritten = isTextNumberOrBoolean;
         }
-        bool definitionBringsValue = definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName && !isAccessor && std::ranges::count(held, valueKey, &Held::key) == 1 && isEnumerable && isConfigurable && isWritable && *isWritable
+        bool valueIsInSight = definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName && !isAccessor && std::ranges::count(held, valueKey, &Held::key) == 1 && isEnumerable && isConfigurable && isWritable
             && heldUnderValue->field != noSummaryNode && m_firstLeft[root] == definition.position && m_lastLeft[root] == definition.position;
+        bool definitionBringsValue = valueIsInSight && *isWritable;
         m_summary.changes[definition.change].laysValueInSight = definitionBringsValue;
         for (const Held& member : held) {
             if (member.key != get && member.key != set && member.key != valueKey)
                 continue;
-            if (definitionBringsValue) {
+            if (valueIsInSight) {
                 for (SinkInScan& sink : m_sinks) {
                     if (sink.kind != SinkKindInScan::Edge || sink.target != member.field || sink.value.first != member.list.first || sink.value.count != member.list.count)
                         continue;
                     sink.value.count = 0;
                     break;
                 }
-                addSink(SinkKindInScan::ValueOfAccess, member.list, definition.access);
+                if (definitionBringsValue)
+                    addSink(SinkKindInScan::ValueOfAccess, member.list, definition.access);
                 addSink(SinkKindInScan::ValueInSightOfChange, member.list, definition.change);
                 continue;
             }
@@ -6043,8 +6756,10 @@ void ScanOfBody::nameGettersOfDescriptors()
     PropertyKeyID get = m_program.keyOf(BuiltinNames::get);
     for (const DefinitionByDescriptorInScan& definition : m_definitionsByDescriptors) {
         uint32_t root = definition.rootOfDescriptor;
-        if (definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName)
+        if (definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName) {
             nameAccessorWrittenInDescriptor(definition.access, root, definition.position);
+            m_summary.changes[definition.change].laysAccessorAsWritten = m_summary.accesses[definition.access].laysAccessorAsWritten;
+        }
         BodyValue made = definitionOf(root);
         if (!holdsOnlyWhatItsBodyLaysInScan(m_program, made) || m_uses[root] & isAccessedBesideNamedStores)
             continue;
@@ -6104,8 +6819,11 @@ FunctionID ScanOfBody::functionWrittenAt(const SummaryNode& held) const
     return variable.initialization == VariableInitialization::Function && variable.flags.contains(VariableFlags::IsImmutable) ? variable.function : FunctionID();
 }
 
-void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root, uint32_t position)
+void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root, uint32_t position, uint32_t changeOfEntryInMap, uint32_t placeWhereMapTakesEntry)
 {
+    bool hasLeftIntoMapAlone = changeOfEntryInMap != changeOfNoMap && m_firstLeft[root] == placeWhereMapTakesEntry && m_lastLeft[root] == placeWhereMapTakesEntry;
+    if (changeOfEntryInMap != changeOfNoMap && !hasLeftIntoMapAlone)
+        return;
     BodyValue made = definitionOf(root);
     if (!holdsOnlyWhatItsBodyLaysInScan(m_program, made) || m_uses[root] & isAccessedBesideNamedStores)
         return;
@@ -6115,9 +6833,20 @@ void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root,
     PropertyKeyID get = m_program.keyOf(BuiltinNames::get);
     PropertyKeyID set = m_program.keyOf(BuiltinNames::set);
     std::optional<ListInScan> halves[2];
+    std::optional<ListInScan> value;
+    std::optional<ListInScan> writable;
+    bool laysValue = false;
     auto take = [&](PropertyKeyID key, ListInScan held) {
-        if (!key || key == m_program.keyOf(BuiltinNames::value))
+        if (!key)
             return false;
+        laysValue |= key == m_program.keyOf(BuiltinNames::value);
+        if (key == m_program.keyOf(BuiltinNames::value) || key == m_program.keyOf(BuiltinNames::writable)) {
+            std::optional<ListInScan>& part = key == m_program.keyOf(BuiltinNames::value) ? value : writable;
+            if (part)
+                return false;
+            part = held;
+            return true;
+        }
         if (key != get && key != set)
             return true;
         std::optional<ListInScan>& half = halves[key == set];
@@ -6140,8 +6869,21 @@ void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root,
         if (store.site.index() < position && !take(store.key, store.value))
             return;
     }
-    if (!halves[0] && !halves[1])
+    if (laysValue && (halves[0] || halves[1]))
         return;
+    if (!halves[0] && !halves[1]) {
+        if (!hasLeftIntoMapAlone)
+            return;
+        m_summary.changes[changeOfEntryInMap].isEntryWrittenInMap = true;
+        TypeID flag = writable && writable->count == 1 ? primitiveConstantAt(m_atoms[writable->first]) : TypeID();
+        if (!value || !flag || primitivesInID(flag) != Primitive::True)
+            return;
+        uint32_t laid = oneNodeFor(*value);
+        m_summary.changes[changeOfEntryInMap].laysValueInSight = true;
+        m_summary.changes[changeOfEntryInMap].valueInSight = laid;
+        m_summary.accesses[access].value = laid;
+        return;
+    }
     FunctionID functions[2];
     for (unsigned half = 0; half < 2; ++half) {
         if (!halves[half])
@@ -6153,18 +6895,38 @@ void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root,
     m_summary.accesses[access].laysAccessorAsWritten = true;
     m_summary.accesses[access].writtenGetter = functions[0];
     m_summary.accesses[access].writtenSetter = functions[1];
+    if (!hasLeftIntoMapAlone)
+        return;
+    uint32_t nodes[2] { halves[0] ? oneNodeFor(*halves[0]) : noSummaryNode, halves[1] ? oneNodeFor(*halves[1]) : noSummaryNode };
+    SummaryChange& change = m_summary.changes[changeOfEntryInMap];
+    change.isEntryWrittenInMap = true;
+    change.getterInSight = nodes[0];
+    change.setterInSight = nodes[1];
 }
 
 void ScanOfBody::nameKeysOfDefinitionsByMaps()
 {
+    auto escapeBehindSinks = [&](ListInScan list) {
+        if (!list.count || holdsOnlyConstants(list))
+            return;
+        expand(list);
+        for (const OriginInScan& origin : m_expanded) {
+            OriginInScan from = behindTest(origin, { });
+            addEdge(from.node, 0, from.passes);
+        }
+    };
     for (const DefinitionByMapInScan& definition : m_definitionsByMaps) {
         uint32_t root = definition.rootOfMap;
         BodyValue made = definitionOf(root);
-        if (!holdsOnlyWhatItsBodyLaysInScan(m_program, made) || m_uses[root] & isAccessedBesideNamedStores)
+        if (!holdsOnlyWhatItsBodyLaysInScan(m_program, made) || m_uses[root] & (isLaidAccessorsUnderNames | isAccessedBesideNamedStoresAndAccessors)) {
+            escapeBehindSinks(definition.map);
             continue;
+        }
         uint32_t head = m_innermostLoopHeads.isEmpty() ? noLoop : m_innermostLoopHeads[m_blocks[definition.position]];
-        if (head != noLoop && head > m_blocks[root])
+        if (head != noLoop && head > m_blocks[root]) {
+            escapeBehindSinks(definition.map);
             continue;
+        }
         std::span<const uint32_t> listed;
         if (made.opcode() == Opcode::NewObject) {
             listed = made.as<Opcode::NewObject>().fields();
@@ -6172,31 +6934,48 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
             bool eachIsNamed = listed.size() <= made.variadicOperands().size() && std::ranges::all_of(listed, [&](uint32_t field) {
                 return field < layout.fields.size() && layout.fields[field].key;
             });
-            if (!eachIsNamed)
+            if (!eachIsNamed) {
+                escapeBehindSinks(definition.map);
                 continue;
+            }
         }
 
         bool isFirst = true;
-        auto nameKey = [&](PropertyKeyID key, ValueID descriptor) {
+        bool eachEntryLaysAccessorAsWritten = true;
+        uint32_t valueWhereNoneIsInSight = m_summary.accesses[definition.access].value;
+        auto nameKey = [&](PropertyKeyID key, ValueID descriptor, uint32_t placeWhereMapTakesEntry, ValueID computedKey = { }) {
+            uint32_t keyNode = computedKey ? oneNodeFor(listOf(computedKey)) : noSummaryNode;
             if (!isFirst) {
                 m_summary.changes.append(SummaryChange(m_summary.changes[definition.change]));
                 m_summary.accesses.append(SummaryAccess(m_summary.accesses[definition.access]));
             }
             uint32_t placeOfAccess = isFirst ? definition.access : static_cast<uint32_t>(m_summary.accesses.size() - 1);
+            uint32_t placeOfChange = isFirst ? definition.change : static_cast<uint32_t>(m_summary.changes.size() - 1);
             SummaryChange& change = isFirst ? m_summary.changes[definition.change] : m_summary.changes.last();
             SummaryAccess& access = m_summary.accesses[placeOfAccess];
             change.key = key;
+            change.keyNode = keyNode;
+            change.isEntryWrittenInMap = false;
+            change.laysAccessorAsWritten = false;
+            change.getterInSight = noSummaryNode;
+            change.setterInSight = noSummaryNode;
+            change.laysValueInSight = false;
+            change.valueInSight = noSummaryNode;
             access.key = key;
-            access.keyNode = noSummaryNode;
+            access.keyNode = keyNode;
+            access.value = valueWhereNoneIsInSight;
             access.laysAccessorAsWritten = false;
             access.writtenGetter = { };
             access.writtenSetter = { };
             access.mapOfWrittenAccessor = { };
             access.descriptorFromElsewhere = noSummaryNode;
             isFirst = false;
+            eachEntryLaysAccessorAsWritten &= key && descriptor;
             if (!descriptor)
                 return;
-            nameAccessorWrittenInDescriptor(placeOfAccess, m_roots[descriptor.index()], definition.position);
+            nameAccessorWrittenInDescriptor(placeOfAccess, m_roots[descriptor.index()], definition.position, placeOfChange, placeWhereMapTakesEntry);
+            m_summary.changes[placeOfChange].laysAccessorAsWritten = m_summary.accesses[placeOfAccess].laysAccessorAsWritten;
+            eachEntryLaysAccessorAsWritten &= m_summary.accesses[placeOfAccess].laysAccessorAsWritten;
             if (m_summary.accesses[placeOfAccess].laysAccessorAsWritten) {
                 if (made.opcode() == Opcode::NewObject)
                     m_summary.accesses[placeOfAccess].mapOfWrittenAccessor = made.as<Opcode::NewObject>().layout();
@@ -6206,15 +6985,26 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
             m_summary.accesses[placeOfAccess].descriptorFromElsewhere = from;
         };
         for (size_t place = 0; place < listed.size(); ++place)
-            nameKey(m_program.at(made.as<Opcode::NewObject>().layout()).fields[listed[place]].key, made.variadicOperands()[place]);
+            nameKey(m_program.at(made.as<Opcode::NewObject>().layout()).fields[listed[place]].key, made.variadicOperands()[place], root);
         for (uint32_t index : storesInto(root)) {
             StoreInScan store = m_stores[index];
             if (store.site.index() >= definition.position)
                 continue;
             BodyValue operation = definitionOf(store.site.index());
             bool storesOperand = operation && (operation.opcode() == Opcode::PropDefine || operation.opcode() == Opcode::PropSet);
-            nameKey(store.key, storesOperand ? operation.valueOperand() : ValueID());
+            nameKey(store.key, storesOperand ? operation.valueOperand() : ValueID(), store.site.index());
         }
+        for (const DefinitionUnderComputedKeyInScan& entry : m_definitionsUnderComputedKeys) {
+            if (entry.root != root || entry.site.index() >= definition.position)
+                continue;
+            ValueID written = entry.key;
+            if (BodyValue conversion = definitionBehindCasts(written); conversion && conversion.opcode() == Opcode::ToPropertyKey && conversion.operand(0))
+                written = conversion.operand(0);
+            PropertyKeyID spelled = keySpelledBy(definitionBehindCasts(written));
+            nameKey(spelled, entry.stored, entry.site.index(), spelled ? ValueID() : written);
+        }
+        if (!eachEntryLaysAccessorAsWritten)
+            escapeBehindSinks(definition.map);
     }
 }
 
@@ -6334,6 +7124,12 @@ void ScanOfBody::finish()
         addEdge(0, nodeFor(SummaryNode::Kind::Thrown));
     }
 
+    if (m_callThatHostMakes && !(m_callThatHostMakes->first.handsOverLiteral && m_moduleVariablesRead.contains(m_callThatHostMakes->second))) {
+        auto [call, handedOver] = *m_callThatHostMakes;
+        call.firstArgument = static_cast<uint32_t>(m_summary.arguments.size());
+        m_summary.arguments.append(variableNode(handedOver));
+        m_summary.calls.append(call);
+    }
     removeRepeatedEdges();
     listNamesSpelled();
     if (!m_summary.modulesWhosePathIsRead.isEmpty())
@@ -6363,7 +7159,7 @@ void ScanOfBody::listWhatWalkAsksOfNodesAndCalls()
     for (const SummaryCall& call : calls) {
         if (call.callee == SummaryCall::Callee::Builtin)
             callsBuiltinWithKey |= !!call.key;
-        else if (!call.isMadeByProtocol) {
+        else if (!call.isMadeByProtocol && !call.isMadeByHost) {
             ++m_summary.numberOfOwnCalls;
             m_summary.numberOfArgumentsOfOwnCalls += call.numberOfArguments;
         }

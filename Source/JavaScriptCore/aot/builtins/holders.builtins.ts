@@ -894,6 +894,17 @@ export default b.declarations(
     nativeSymbols: ["webAssemblyInstantiateStreamingFunc"],
   }),
   b.extend("WebAssembly.promising", { nativeSymbols: ["webAssemblyPromisingFunc"] }),
+  [
+    "WebAssembly.JSTag",
+    "WebAssembly.compileStreaming",
+    "WebAssembly.instantiateStreaming",
+    "WebAssembly.promising",
+    "WebAssembly.Global.prototype.value",
+    "WebAssembly.Instance.prototype.exports",
+    "WebAssembly.Memory.prototype.toFixedLengthBuffer",
+    "WebAssembly.Memory.prototype.toResizableBuffer",
+    "console.takeHeapSnapshot",
+  ].flatMap(path => b.extend(path, { canBeListed: true })),
   webAssemblyClass("Exception", {
     prototypeTable: webAssemblyTable("WebAssemblyExceptionPrototype", "prototypeTableWebAssemblyException"),
     construct: webAssemblyConstruction(

@@ -101,31 +101,39 @@ static void forEachNamedSlotOfCompiledObjectsForNamePlan(const Program& program,
     }
 }
 
-static void findKeysOfFieldsForNamePlan(const Program& program, SlotPlanParts& parts, const ParallelLoops& loops)
+static void findModulesThatWriteFieldsForNamePlan(const Program& program, const LayoutsByNames& layouts, SlotPlanParts& parts)
 {
-    unsigned numberOfKeys = program.types.numberOfPropertyKeys();
-    Vector<uint8_t> namesField;
-    namesField.fill(0, numberOfKeys);
-    forEachRangeOfIndicesInParallel(loops, parts.layouts.size(), [&](size_t first, size_t end) {
-        forEachNamedSlotOfCompiledObjectsForNamePlan(program, parts, first, end, [&](PropertyKeyID key, const PlacedSlot&) {
-            AtomicRef(namesField[key.index()]).store(1, std::memory_order_relaxed);
-        });
-    });
-    parts.keysOfFields.ensureSize(numberOfKeys);
-    static_assert(!(indicesInRangeOfLoop % 64));
-    forEachRangeOfIndicesInParallel(loops, numberOfKeys, [&](size_t first, size_t end) {
-        for (size_t key = first; key < end; ++key) {
-            if (namesField[key])
-                parts.keysOfFields.quickSet(key);
+    size_t numberOfKeys = program.types.numberOfPropertyKeys();
+    Vector<uint32_t> modulesSeenUpTo;
+    modulesSeenUpTo.fill(0, numberOfKeys);
+    Vector<uint64_t> written;
+    for (uint32_t module = 0; module < program.modules.size(); ++module) {
+        for (uint32_t layout : layouts.layoutsWrittenIn(ModuleID(module))) {
+            forEachNamedSlotOfCompiledObjectsForNamePlan(program, parts, layout, layout + 1, [&](PropertyKeyID key, const PlacedSlot&) {
+                if (std::exchange(modulesSeenUpTo[key.index()], module + 1) != module + 1)
+                    written.append(static_cast<uint64_t>(key.index()) << 32 | module);
+            });
         }
-    });
+    }
+    Vector<uint32_t>& first = parts.firstModuleThatWritesFieldUnder;
+    first.fill(0, numberOfKeys + 1);
+    for (uint64_t pair : written)
+        ++first[(pair >> 32) + 1];
+    for (size_t next = 1; next <= numberOfKeys; ++next)
+        first[next] += first[next - 1];
+    parts.modulesThatWriteFields.grow(written.size());
+    for (uint64_t pair : written)
+        parts.modulesThatWriteFields[first[pair >> 32]++] = static_cast<uint32_t>(pair);
+    for (size_t next = numberOfKeys; next; --next)
+        first[next] = first[next - 1];
+    first[0] = 0;
 }
 
-void planNames(const Program&, const MentionedKeys&, BuildContext&, SlotPlanParts&);
-void planNames(const Program& program, const MentionedKeys& mentioned, BuildContext& build, SlotPlanParts& parts)
+void planNames(const Program&, const LayoutsByNames&, const MentionedKeys&, BuildContext&, SlotPlanParts&);
+void planNames(const Program& program, const LayoutsByNames& layouts, const MentionedKeys& mentioned, BuildContext& build, SlotPlanParts& parts)
 {
     parts.keysWithColumn = chooseKeysWithColumnForNamePlan(program, mentioned, build);
-    findKeysOfFieldsForNamePlan(program, parts, build.parallelLoops());
+    findModulesThatWriteFieldsForNamePlan(program, layouts, parts);
 }
 
 } } } // namespace JSC::AOT::Typed

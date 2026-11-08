@@ -138,8 +138,6 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
         placed.inRegisters.append(Machine::ConstrainedValue(call.callee, Machine::ValueRep::reg(calleeGPR)));
     if (call.thisValue)
         placed.inRegisters.append(Machine::ConstrainedValue(call.thisValue, Machine::ValueRep::reg(thisGPR)));
-    if (call.count)
-        placed.inRegisters.append(Machine::ConstrainedValue(call.count, Machine::ValueRep::reg(countGPR)));
     for (size_t i = 0; i < call.arguments.size(); ++i) {
         if (i < 64 && (call.argumentsLetGo >> i & 1) && !call.arguments[i]->hasInt64())
             placed.letGoByCallee.append(call.arguments[i]);
@@ -158,6 +156,11 @@ void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine:
     if (released.isEmpty())
         return;
     released.exclude(params.usedRegisters());
+    if (params.value()->leavesMoveOutOfResultToCallee()) {
+        released.remove(Reg(GPRInfo::returnValueGPR));
+        if (Reg moved = params.value()->registerThatCalleeMovesIntoResult())
+            released.remove(moved);
+    }
     released.forEach([&](Reg reg) {
         jit.move(CCallHelpers::TrustedImm32(0), reg.gpr());
     });
@@ -173,6 +176,7 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
         .lateClobbered = registersClobberedByCalls,
         .effects = Effects::unknownCode(),
     };
+    const StubSummary* summaryOfCalledStub = nullptr;
     switch (target.kind) {
     case TargetKind::Function:
         if (conventions().savesRegistersOfCallers(target.calledUnit))
@@ -180,10 +184,11 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
         break;
     case TargetKind::Stub:
         if (answersOfCalledStub) {
-            request.lateClobbered.merge(answersOfCalledStub->summary->clobbered);
+            summaryOfCalledStub = answersOfCalledStub->summary;
             request.effects = answersOfCalledStub->effects;
         } else
-            request.lateClobbered.merge(inputs().stubCatalog.summaryAndEffectsOf(target.calledStub, request.effects).clobbered);
+            summaryOfCalledStub = &inputs().stubCatalog.summaryAndEffectsOf(target.calledStub, request.effects);
+        request.lateClobbered.merge(summaryOfCalledStub->clobbered);
         break;
     case TargetKind::Address:
         break;
@@ -194,6 +199,10 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
     Machine::PatchOperation* patchpoint = calls.createCallPatchpoint(context, request);
     if (options.callerSuspendsAtReturn)
         patchpoint->setNeedsFrameRecord(true);
+    else if (summaryOfCalledStub && summaryOfCalledStub->signature.filledOutOfResultInFront && !target.immediate && !options.numberedImmediate) {
+        patchpoint->setRegisterThatCalleeFillsOutOfResult(summaryOfCalledStub->signature.filledOutOfResultInFront);
+        patchpoint->setRegisterThatCalleeMovesIntoResult(summaryOfCalledStub->signature.movedIntoResultInFront);
+    }
     for (const Machine::ConstrainedValue& argument : placed.inRegisters)
         patchpoint->append(argument);
     if (target.kind == TargetKind::Address)
@@ -238,7 +247,7 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
         firstReadSite = { calls.addSite(context, { .origin = options.readBeforeCall }) };
     uint32_t site = calls.addSite(context, options);
 
-    RELEASE_ASSERT(!options.throwSite || target.kind == TargetKind::Stub);
+    RELEASE_ASSERT(!options.throwSite || target.kind != TargetKind::Function);
     std::span<const uint32_t> wordsOfThrowSite;
     uint8_t wordsThatAreMentions = 0;
     if (options.throwSite) {
@@ -252,23 +261,26 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
         if (callerSuspendsAtReturn)
             FrameMapEmitter::releaseSavedRegisters(jit, params);
         StubCalls& stubCalls = records->stubCalls;
+        uint32_t returnSite = 0;
         switch (kind) {
         case TargetKind::Function:
             stubCalls.callFunction(jit, calledUnit, entry, site);
             return;
-        case TargetKind::Stub: {
-            uint32_t returnSite = numberedImmediate ? stubCalls.call(jit, calledStub, *numberedImmediate, site, firstReadSite)
+        case TargetKind::Stub:
+            if (params.value()->leavesMoveOutOfResultToCallee()) [[unlikely]]
+                stubCalls.enterNextStubInFront(params.value()->registerThatCalleeFillsOutOfResult(), params.value()->registerThatCalleeMovesIntoResult());
+            returnSite = numberedImmediate ? stubCalls.call(jit, calledStub, *numberedImmediate, site, firstReadSite)
                 : immediate ? stubCalls.call(jit, calledStub, *immediate, site, firstReadSite)
                 : stubCalls.call(jit, calledStub, site);
-            if (!wordsOfThrowSite.empty())
-                records->traps.callThrowSites.append(CallThrowSite { returnSite, Vector<uint32_t, 3>(wordsOfThrowSite), wordsThatAreMentions });
-            return;
-        }
+            break;
         case TargetKind::Address:
-            stubCalls.callRegister(jit, valueEntryGPR, site);
-            return;
+            if (immediate)
+                jit.move(CCallHelpers::TrustedImm32(*immediate), countGPR);
+            returnSite = stubCalls.callRegister(jit, valueEntryGPR, site);
+            break;
         }
-        RELEASE_ASSERT_NOT_REACHED();
+        if (!wordsOfThrowSite.empty())
+            records->traps.callThrowSites.append(CallThrowSite { returnSite, Vector<uint32_t, 3>(wordsOfThrowSite), wordsThatAreMentions });
     });
     calls.finishCallPatchpoint(context, patchpoint, site, request);
     return patchpoint;
@@ -314,6 +326,14 @@ Boxed CallEmitter::callByConvention(const OperationContext& context, const Conve
     return Boxed(emitCall(context, CallTarget::stub(call.stub, options.immediate), placeConventionArguments(call, answers.summary->signature), { &boxedResult, 1 }, options, &answers));
 }
 
+Boxed CallEmitter::callAddressByConvention(const OperationContext& context, Pointer address, const ConventionCall& call, const CallOptions& options)
+{
+    const ArgumentLocation boxedResult { ArgumentLocation::Kind::GPR, GPRInfo::returnValueGPR, 0, Representation::JSValue };
+    CallTarget target = CallTarget::address(address.value(), { });
+    target.immediate = static_cast<uint32_t>(call.arguments.size());
+    return Boxed(emitCall(context, target, placeConventionArguments(call, callConventionSignature({ })), { &boxedResult, 1 }, options));
+}
+
 void CallEmitter::chooseStubThatCallsValue(ConventionCall& call, LValue& countOperand, bool calleeIsCell)
 {
     unsigned count = static_cast<unsigned>(call.arguments.size());
@@ -336,13 +356,14 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
 
     ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span(), .argumentsLetGo = call.argumentsLetGo };
     LValue countOperand = nullptr;
+    const bool comesBack = positionOf(context) == CallPosition::Ordinary || context.origin().inlineFrame;
     if (call.methodMayBeUnread) {
-        RELEASE_ASSERT(call.methodOfBuiltinClass && !call.lentArguments && positionOf(context) == CallPosition::Ordinary);
-        conventionCall.stub = callMethodThatMayBeUnread(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()));
+        RELEASE_ASSERT(call.methodOfBuiltinClass && !call.lentArguments && comesBack);
+        conventionCall.stub = call.receiverIsProvenOfBuiltinClass ? callMethodThatMayBeUnread(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size())) : callMethodOfAnyReceiverThatMayBeUnread(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()));
     } else if (call.lentArguments) {
         RELEASE_ASSERT(values.size() <= numberOfArgumentGPRs && !(call.lentArguments >> values.size()));
         conventionCall.stub = callValueLending(static_cast<unsigned>(values.size()), call.lentArguments, positionOf(context));
-    } else if (call.methodOfBuiltinClass && positionOf(context) == CallPosition::Ordinary && servesCallsByName(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()))) {
+    } else if (call.methodOfBuiltinClass && comesBack && servesCallsByName(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()))) {
         conventionCall.stub = call.receiverIsProvenOfBuiltinClass ? callMethodOfProvenBuiltinClassByValue(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size())) : callMethodOfBuiltinClassByValue(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()));
     } else {
         chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);

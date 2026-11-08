@@ -1,0 +1,110 @@
+# function kind(w) { if (w === "content_block_start") return 1; if (w === "123456789") return 2; if (w === "sixteen_letters_") return 3; if (w === "aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddd") return 4; if (w === "aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddde") return 5; if (w === "\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416") return 6; return 0; }      sink(kind);
+# Outside loops a text is held against a literal of more than eight characters by a stub. The stub is told the literal's length by its key:
+# another length is answered in front of the walk through the table for the literal's header (it was: ten instructions later); two atoms of other words are other texts;
+# narrow characters are compared word by word, the last word from the end, where a leaf was called. Ropes, pieces of other texts, wide texts and literals of more than 63 characters go the old way.
+# RUN: bytes f1:Body mechanisms=all
+# CHECK: Call Stub ValueEqualsLiteral count 19
+# CHECK: Call Stub ValueEqualsLiteral count 9
+# CHECK: Call Stub ValueEqualsLiteral count 16
+# CHECK: Call Stub ValueEqualsLiteral count 63
+# CHECK: Call Stub ValueEqualsLiteral count 0
+# CHECK: Call Stub ValueEqualsLiteral count 10
+# RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = kind => { const joined = (base, length) => { const pieces = []; for (let i = 0; i < length; i += 2) pieces.push(base.slice(i, i + 2 < length ? i + 2 : length)); return pieces.join(""); }; const flat = text => joined(text, text.length); const wide = text => { const base = text + "\u0416"; base.toLowerCase(); return joined(base, text.length); }; const rope = text => flat(text.slice(0, 5)) + flat(text.slice(5)); const piece = text => flat("__" + text + "__").slice(2, -2); const texts = ["content_block_start", "123456789", "sixteen_letters_", "aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddd", "aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddde", "\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416"]; for (const text of texts) print(kind(text), kind(flat(text)), kind(wide(text)), kind(rope(text)), kind(piece(text))); for (const text of texts) { const other = at => flat(text.slice(0, at) + "~" + text.slice(at + 1)); print(kind(other(0)), kind(other(text.length >> 1)), kind(other(text.length - 1)), kind(wide(other(text.length - 1))), kind(text + "x"), kind(text.slice(1))); } const keys = {}; for (const text of texts) { const other = flat(text.slice(0, -1) + "~"); keys[other] = 1; const same = flat(text); keys[same] = 1; print(kind(other), kind(same)); } print(kind(5), kind(undefined), kind(null), kind({}), kind(Symbol.iterator), kind("")); };
+# ANSWER: 1 1 1 1 1
+# ANSWER-NEXT: 2 2 2 2 2
+# ANSWER-NEXT: 3 3 3 3 3
+# ANSWER-NEXT: 4 4 4 4 4
+# ANSWER-NEXT: 5 5 5 5 5
+# ANSWER-NEXT: 6 6 6 6 6
+# ANSWER-NEXT: 0 0 0 0 0 0
+# ANSWER-NEXT: 0 0 0 0 0 0
+# ANSWER-NEXT: 0 0 0 0 0 0
+# ANSWER-NEXT: 0 0 0 0 0 0
+# ANSWER-NEXT: 0 0 0 0 0 0
+# ANSWER-NEXT: 0 0 0 0 0 0
+# ANSWER-NEXT: 0 1
+# ANSWER-NEXT: 0 2
+# ANSWER-NEXT: 0 3
+# ANSWER-NEXT: 0 4
+# ANSWER-NEXT: 0 5
+# ANSWER-NEXT: 0 6
+# ANSWER-NEXT: 0 0 0 0 0 0
+# ANSWER-NEXT: exited with 0
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @406
+    v3 = PropGet v2 key="sink" [isFreeName] @406
+    v4 = Call v3, -, v1 calleeName="sink" @406
+    v5 = Undefined @406
+    Return v5 @406
+}
+function f1 name="kind" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="content_block_start" @29
+    v2 = StrictEq v0, v1 @29
+    Branch v2 -> taken b1(), notTaken b2() @29
+  b1():
+    v3 = Integer integer=1 @59
+    Return v3 @59
+  b2():
+    v4 = String string="123456789" @72
+    v5 = StrictEq v0, v4 @72
+    Branch v5 -> taken b3(), notTaken b4() @72
+  b3():
+    v6 = Integer integer=2 @92
+    Return v6 @92
+  b4():
+    v7 = String string="sixteen_letters_" @105
+    v8 = StrictEq v0, v7 @105
+    Branch v8 -> taken b5(), notTaken b6() @105
+  b5():
+    v9 = Integer integer=3 @132
+    Return v9 @132
+  b6():
+    v10 = String string="aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddd" @145
+    v11 = StrictEq v0, v10 @145
+    Branch v11 -> taken b7(), notTaken b8() @145
+  b7():
+    v12 = Integer integer=4 @219
+    Return v12 @219
+  b8():
+    v13 = String string="aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddde" @232
+    v14 = StrictEq v0, v13 @232
+    Branch v14 -> taken b9(), notTaken b10() @232
+  b9():
+    v15 = Integer integer=5 @307
+    Return v15 @307
+  b10():
+    v16 = String string="\u{416}\u{416}\u{416}\u{416}\u{416}\u{416}\u{416}\u{416}\u{416}\u{416}" @320
+    v17 = StrictEq v0, v16 @320
+    Branch v17 -> taken b11(), notTaken b12() @320
+  b11():
+    v18 = Integer integer=6 @391
+    Return v18 @391
+  b12():
+    v19 = Integer @401
+    Return v19 @401
+}
+function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private

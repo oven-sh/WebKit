@@ -196,6 +196,9 @@ static void printLinesOfProgramList(IRPrinter& printer, ProgramList list)
     case ProgramList::SourceStamps:
         printLinesOfList(printer, list, program.sourceStamps);
         return;
+    case ProgramList::DeclaredRecords:
+        printLinesOfList(printer, list, program.declaredRecords);
+        return;
     case ProgramList::EvalScopes:
         printLinesOfList(printer, list, program.evalScopes);
         return;

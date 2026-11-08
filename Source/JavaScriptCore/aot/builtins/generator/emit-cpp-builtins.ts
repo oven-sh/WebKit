@@ -185,6 +185,15 @@ function formatBuiltin(builtin: ModelBuiltin): string {
         builtinFlags.filter(flag => builtin.flags.includes(flag)),
       ),
     ],
+    [
+      "marks",
+      builtin.marks.length === 0
+        ? null
+        : builtinMarks
+            .filter(mark => builtin.marks.includes(mark))
+            .map(mark => `bitOfMark(${formatEnumerator("BuiltinMark", mark)})`)
+            .join(" | "),
+    ],
     ["holder", formatId("BuiltinID", builtin.holder)],
     ["name", formatName(builtin.name)],
     ["inheritsFrom", formatId("BuiltinID", prototype.link === "Builtin" ? prototype.builtin : null)],
@@ -197,6 +206,7 @@ function formatBuiltin(builtin: ModelBuiltin): string {
     ["isNamedByText", builtin.hostNumber === noHostNumber ? null : "true"],
     ["isAddedAtFirstRead", builtin.isAddedAtFirstRead ? "true" : null],
     ["isAddedAsEnumerable", builtin.isAddedAsEnumerable ? "true" : null],
+    ["canBeListed", builtin.canBeListed ? "true" : null],
     ["isReadWithoutType", isReadWithoutType ? "true" : null],
   ]);
 }
@@ -222,6 +232,7 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
     ["isNeverPristine", formatUnlessFalse(builtinClass.isNeverPristine)],
     ["pristineTest", formatUnlessDefault("BuiltinPristineTest", builtinClass.pristineTest, "Mark")],
     ["hasClosureInstances", formatUnlessFalse(builtinClass.hasClosureInstances)],
+    ["isFollowedBesideUnseenObject", formatUnlessFalse(builtinClass.isFollowedBesideUnseenObject)],
     ["instancesAreEntries", formatUnlessFalse(builtinClass.instancesAreEntries)],
     ["keepsStructuresOfClassesBelow", formatUnlessFalse(builtinClass.keepsStructuresOfClassesBelow)],
     ["definesCharactersOnNewInstances", formatUnlessFalse(builtinClass.definesCharactersOnNewInstances)],
@@ -251,6 +262,7 @@ function formatSlot(slot: ModelSlot): string {
     ["internalField", slot.internalField === null ? null : String(slot.internalField)],
     ["holdsWhatStepsHandOut", formatUnlessFalse(slot.holdsWhatStepsHandOut)],
     ["holdsWhatIsThrown", formatUnlessFalse(slot.holdsWhatIsThrown)],
+    ["wordOfCell", formatUnlessDefault("BuiltinWordOfCell", slot.wordOfCell, "None")],
   ]);
 }
 

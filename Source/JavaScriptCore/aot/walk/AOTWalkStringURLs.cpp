@@ -468,6 +468,12 @@ static const URLThatIsNeverMade* findURLThatIsNeverMadeByMention(Walker& walker,
     return nullptr;
 }
 
+bool standsForMethodOfURLThatIsNeverMade(Walker& walker, const BodyValue& read)
+{
+    const URLThatIsNeverMade* url = findURLThatIsNeverMadeByMention(walker, read.objectOperand());
+    return url && mentionInStringURLs(*url, read.id()) == MentionInStringURLs::Method;
+}
+
 static Reference buildAsWrittenInStringURLs(Walker& walker, const BodyValue& value)
 {
     Draft written = walker.draftOf(value);
@@ -517,7 +523,8 @@ static bool answerReadOffURLInStringURLs(Walker& walker, const URLThatIsNeverMad
     };
     auto readOffObject = [&](std::span<Reference> results) {
         Walker::ClosedArm closedArm(walker);
-        results[0] = buildAsWrittenInStringURLs(walker, read);
+        Reference written = buildAsWrittenInStringURLs(walker, read);
+        results[0] = written && question ? walker.proveOrTrap(written, TypeTable::string, ProofSource::ResultOfCall, origin) : written;
     };
     std::array<Reference, 1> met;
     if (buildArmsForStrings(walker, isPlainInStringURLs(walker, url, origin), BlockFrequency::Rare, ArmForStrings(answerOutOfText), ArmForStrings(readOffObject), met))
@@ -563,9 +570,12 @@ static bool answerCallOnQueryInStringURLs(Walker& walker, const URLThatIsNeverMa
         Walker::ClosedArm closedArm(walker);
         Reference kept = walker.referenceOf(call.thisValueOperand());
         auto makeObject = [&](std::span<Reference> results) {
-            Reference object = buildAsWrittenInStringURLs(walker, index.value(url.made));
+            Draft again = *url.constructionAsWritten;
+            walker.chooseConservativeFields(again);
+            Reference object = walker.build(WTF::move(again));
             if (!object)
                 return;
+            walker.bind(url.made, object);
             walker.bind(readOfQuery.objectOperand(), object);
             results[0] = buildAsWrittenInStringURLs(walker, readOfQuery);
         };
@@ -616,16 +626,19 @@ bool answerFromURLThatIsNeverMadeOfItsOpcodes(Walker& walker, const BodyValue& v
 
 static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Reference text, Reference base, TypeID typeOfObject)
 {
+    if (call.writtenArguments().empty())
+        return false;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID made = call.call.id();
     if (walker.hasTextsInStringBuilders()) {
-        for (ValueID argument : call.call.argumentsOperands()) {
+        for (ValueID argument : call.writtenArguments()) {
             if (findTextNamedBy(walker, argument))
                 return false;
         }
     }
     URLThatIsNeverMade url;
     uint32_t numberOfReads = 0;
+    url.constructionAsWritten = walker.draftOf(call.call);
     if (!everyMentionIsAnsweredOutOfTextInStringURLs(walker, made, typeOfObject, url, numberOfReads) || !numberOfReads)
         return false;
     TypeID typeOfQuery = url.typeOfQuery;
@@ -635,7 +648,7 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
 
     bool isProven = isProvenString(walker, walker.typeOf(text));
     if (!isProven) {
-        TypeID written = findExpectation(walker, call.call.argumentsOperands()[0]).type;
+        TypeID written = findExpectation(walker, call.writtenArguments()[0]).type;
         if (!text.isValue() || !walker.types().overlap(walker.typeOf(text), TypeTable::string) || (written && !walker.types().overlap(written, TypeTable::string)))
             return false;
     }

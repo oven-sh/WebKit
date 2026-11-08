@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCheckLines.h"
 #include "AOTChildProcess.h"
 #include "AOTCompileOptionWords.h"
@@ -95,9 +96,42 @@ static void testPrintWireRejects()
     expectRejectedWith(runPrintWire(programWithoutEntry), InternalErrorKind::NoEntryPoint);
 }
 
+static void testPrintWireRejectsNamesOfBuiltinsThatStringsDoNotSpell()
+{
+    BuildContext build(makeDefaultCompileOptions());
+    Vector<uint8_t> bytes = encodeProgramText(makeStringByReplacingAll(sampleProgram, "name=\"sum\""_s, "name=\"slice\""_s), build);
+    AOT_TEST_CHECK(bytes.size() >= sizeof(Wire::Header));
+    Wire::Section section = spanReinterpretCast<const Wire::Header>(bytes.span().first(sizeof(Wire::Header)))[0].sections[static_cast<size_t>(ProgramList::Strings)];
+    auto stringsOf = [&](Vector<uint8_t>& program) {
+        return spanReinterpretCast<Wire::String>(program.mutableSpan().subspan(section.offsetInBytes, section.count * sizeof(Wire::String)));
+    };
+    auto carriesName = [](const Wire::String& string) {
+        return string.builtinName != Wire::none;
+    };
+    std::span<Wire::String> strings = stringsOf(bytes);
+    size_t named = std::ranges::find_if(strings, carriesName) - strings.begin();
+    size_t plain = std::ranges::find_if_not(strings, carriesName) - strings.begin();
+    AOT_TEST_CHECK(named < strings.size() && plain < strings.size());
+    uint32_t name = strings[named].builtinName;
+    TemporaryFile wholeProgram(".bin"_s, bytes.span());
+    expectExitCode(runPrintWire(wholeProgram), 0);
+
+    struct Damage {
+        size_t string;
+        uint32_t builtinName;
+    };
+    for (Damage damage : { Damage { plain, name }, Damage { plain, BuiltinTable::singleton().textNameCount() } }) {
+        Vector<uint8_t> damaged = bytes;
+        stringsOf(damaged)[damage.string].builtinName = damage.builtinName;
+        TemporaryFile damagedProgram(".bin"_s, damaged.span());
+        expectRejectedWith(runPrintWire(damagedProgram), InternalErrorKind::NameClassMismatch);
+    }
+}
+
 std::span<const NativeTest> driverTests()
 {
     static constexpr NativeTest tests[] = {
+        { "subcommands/print-wire-rejects-names-of-builtins-that-strings-do-not-spell"_s, testPrintWireRejectsNamesOfBuiltinsThatStringsDoNotSpell },
         { "subcommands/print-wire-rejects"_s, testPrintWireRejects },
     };
     return tests;

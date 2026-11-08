@@ -178,6 +178,13 @@ public:
         return buildAsItIs(WTF::move(proof));
     }
 
+    std::optional<PassedTest> goOnWhereTestPasses(Reference test, BlockID otherwise)
+    {
+        std::optional<PassedTest> passed = m_walker.goOnWhereTestPasses(test, otherwise);
+        standUnderHandler();
+        return passed;
+    }
+
     Reference goOnWhereTypeTestPasses(Reference value, TypeID tested, BlockID otherwise)
     {
         Reference test = testType(value, tested);
@@ -291,8 +298,9 @@ public:
         return build(WTF::move(words));
     }
 
-    Reference takeWordsOfProtocol(Reference parameter)
+    Reference takeWordsOfProtocol(Reference parameter, Reference listAsMade)
     {
+        m_listOfWordsAsMade = listAsMade;
         Reference test = testType(parameter, m_walker.types().builtinClass(BuiltinClasses::Array));
         BlockID holdsList = addBlock();
         BlockID never = addBlock(BlockFrequency::Rare);
@@ -370,8 +378,10 @@ private:
         element.setArrayStorage(ArrayStorage::Contiguous);
         element.setLevel(KnowledgeLevel::Proven);
         element.setKeyIsIntegral(true);
-        element.setIsInBounds(true);
-        element.setIsPresent(true);
+        if (std::optional<PassedTest> inside = m_walker.findWhatHoldsWordInsideListMadeByWalk(words, m_listOfWordsAsMade, integer(word))) {
+            element.setIsInBounds(*inside);
+            element.setIsPresent(*inside);
+        }
         return buildAsItIs(WTF::move(element));
     }
 
@@ -394,6 +404,7 @@ private:
 
     Walker& m_walker;
     Origin m_origin;
+    Reference m_listOfWordsAsMade;
     BlockID m_handler;
 };
 

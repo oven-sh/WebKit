@@ -52,6 +52,8 @@ struct CandidateInTextBuilderWeb {
     bool grows { false };
     bool isRefused { false };
     bool isOnlyConcatenated { true };
+    bool beginsAnewOnSomeEdge { false };
+    Vector<ValueID, 2> parametersThatReadText;
 };
 
 class TextBuilderWebScan {
@@ -73,12 +75,16 @@ private:
     void scanOperation(const BodyValue&);
     TypeID typeInLooks(ValueID) const;
     bool isProvenToBeText(ValueID) const;
+    bool isOneOfWrittenTexts(ValueID) const;
     std::optional<uint32_t> onlyTargetThatWalkLeadsTo(const BodyTerminator&) const;
     void passOverEdge(ValueID, uint32_t parameterIndex);
+    bool someEdgeHandsOverWhatNamesNoText(BlockID, uint32_t parameterIndex) const;
     void followEdge(const BodyTerminator&, uint32_t targetIndex, BodyTarget);
     void holdBackEdgeToBringingTexts();
     void followHandlerEdge(BodyBlock);
-    void arriveAt(BlockID, uint32_t text, uint32_t parameterIndex);
+    void arriveAt(BlockID, uint32_t text, uint32_t parameterIndex, bool beginsAnew = false);
+    void findParametersThatComeRound();
+    uint32_t textThatComesRoundIn(ValueID parameter) const;
     template<typename Functor> void forEachNameLiveAtHeadOf(BlockID, const Functor&);
 
     NameInTextBuilderWeb* findName(ValueID);
@@ -101,6 +107,7 @@ private:
     bool m_standsUnderHandlers { false };
 
     Vector<CandidateInTextBuilderWeb, 2> m_candidates;
+    Vector<uint32_t, 128> m_textsThatComeRoundInValues;
     uint32_t m_numberOfOpenCandidates { 0 };
     Vector<NameInTextBuilderWeb, 16> m_names;
     Vector<uint32_t, 128> m_namesOfValues;
@@ -202,6 +209,12 @@ bool TextBuilderWebScan::isProvenToBeText(ValueID value) const
     return type && m_walker.types().at(type).isAnyString();
 }
 
+bool TextBuilderWebScan::isOneOfWrittenTexts(ValueID value) const
+{
+    TypeID type = typeInLooks(value);
+    return type && m_walker.types().at(type).isAnyString() && longestTextOf(m_walker.types(), m_walker.types().at(type)) != JSString::MaxLength;
+}
+
 std::optional<uint32_t> TextBuilderWebScan::onlyTargetThatWalkLeadsTo(const BodyTerminator& terminator) const
 {
     ValueID operand = terminator.numberOfTargets() > 1 ? terminator.operand(0) : ValueID();
@@ -264,6 +277,39 @@ void TextBuilderWebScan::findCandidates()
             m_candidates.append(CandidateInTextBuilderWeb { parameterIndex });
     }
     m_numberOfOpenCandidates = static_cast<uint32_t>(m_candidates.size());
+    findParametersThatComeRound();
+}
+
+uint32_t TextBuilderWebScan::textThatComesRoundIn(ValueID parameter) const
+{
+    size_t place = parameter.index() - m_firstValue;
+    return parameter.index() >= m_firstValue && place < m_textsThatComeRoundInValues.size() ? m_textsThatComeRoundInValues[place] : none;
+}
+
+void TextBuilderWebScan::findParametersThatComeRound()
+{
+    if (m_candidates.isEmpty())
+        return;
+    m_textsThatComeRoundInValues.fill(none, m_index.block(m_last).endOfValues().index() - m_firstValue);
+    for (uint32_t text = 0; text < m_candidates.size(); ++text)
+        m_textsThatComeRoundInValues[m_head.parameter(m_candidates[text].parameterIndex).index() - m_firstValue] = text;
+    std::span<const BlockID> members = m_index.membersOf(m_loop);
+    for (size_t place = members.size(); place--;) {
+        for (BodyTarget target : m_index.terminator(members[place]).targets()) {
+            if (!isInLoop(target.block()))
+                continue;
+            BodyBlock entered = m_index.block(target.block());
+            std::span<const ValueID> arguments = target.arguments();
+            for (uint32_t argumentIndex = 0; argumentIndex < arguments.size() && argumentIndex < entered.numberOfParameters(); ++argumentIndex) {
+                uint32_t text = arguments[argumentIndex] ? textThatComesRoundIn(entered.parameter(argumentIndex)) : none;
+                if (text == none)
+                    continue;
+                ValueID root = m_index.valueBehindCasts(arguments[argumentIndex]);
+                if (m_index.isParameter(root) && root.index() >= m_head.firstValue().index() && textThatComesRoundIn(root) == none)
+                    m_textsThatComeRoundInValues[root.index() - m_firstValue] = text;
+            }
+        }
+    }
 }
 
 bool TextBuilderWebScan::makesTextThatIsOnlyRead(const BodyValue& join)
@@ -339,7 +385,7 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
     candidate.grows = true;
 }
 
-void TextBuilderWebScan::arriveAt(BlockID block, uint32_t text, uint32_t parameterIndex)
+void TextBuilderWebScan::arriveAt(BlockID block, uint32_t text, uint32_t parameterIndex, bool beginsAnew)
 {
     ValueID arriving = m_versions[text];
     if (parameterIndex != none) {
@@ -349,7 +395,7 @@ void TextBuilderWebScan::arriveAt(BlockID block, uint32_t text, uint32_t paramet
             return;
         }
         ValueID parameter = target.parameter(parameterIndex);
-        if (m_index.numberOfIncomingEdges(block) > 1)
+        if (m_index.numberOfIncomingEdges(block) > 1 || beginsAnew)
             arriving = parameter;
         giveName(parameter, text, arriving);
     }
@@ -369,6 +415,23 @@ void TextBuilderWebScan::passOverEdge(ValueID value, uint32_t parameterIndex)
     if (m_parametersThatTakeTexts[name->text] != none)
         refuse(name->text);
     m_parametersThatTakeTexts[name->text] = parameterIndex;
+}
+
+bool TextBuilderWebScan::someEdgeHandsOverWhatNamesNoText(BlockID block, uint32_t parameterIndex) const
+{
+    for (const BodyIncomingEdge& edge : m_walker.incomingEdgesOf(m_index, block)) {
+        std::span<const ValueID> arguments = edge.target.arguments();
+        ValueID handed = parameterIndex < arguments.size() ? arguments[parameterIndex] : ValueID();
+        if (!handed || !isInLoop(edge.from))
+            continue;
+        ValueID root = m_index.valueBehindCasts(handed);
+        if (m_index.isParameter(root) || isOneOfWrittenTexts(root))
+            continue;
+        Opcode opcode = m_index.opcodeOf(root);
+        if (!operationsThatJoinTexts.contains(opcode) && !castsInTextBuilderWebs.contains(opcode) && !checksThatHandOnOrThrow.contains(opcode) && opcode != Opcode::ToString)
+            return true;
+    }
+    return false;
 }
 
 void TextBuilderWebScan::holdBackEdgeToBringingTexts()
@@ -401,9 +464,28 @@ void TextBuilderWebScan::followEdge(const BodyTerminator& terminator, uint32_t t
         return;
     }
     if (isInLoop(to)) {
+        BodyBlock entered = m_index.block(to);
+        bool comesRoundToHeadInside = m_index.isLoopHead(to) && m_index.isInLoop(terminator.block(), m_index.loopOf(to));
         for (uint32_t text = 0; text < m_candidates.size(); ++text) {
-            if (isOpen(text))
-                arriveAt(to, text, m_parametersThatTakeTexts[text]);
+            if (!isOpen(text))
+                continue;
+            bool beginsAnew = false;
+            for (uint32_t argumentIndex = 0; !comesRoundToHeadInside && m_parametersThatTakeTexts[text] == none && argumentIndex < arguments.size() && argumentIndex < entered.numberOfParameters(); ++argumentIndex) {
+                ValueID begins = arguments[argumentIndex];
+                if (!begins || textThatComesRoundIn(entered.parameter(argumentIndex)) != text || findName(begins) || !isOneOfWrittenTexts(begins))
+                    continue;
+                m_parametersThatTakeTexts[text] = argumentIndex;
+                m_candidates[text].beginsAnewOnSomeEdge = true;
+                beginsAnew = true;
+            }
+            uint32_t taking = m_parametersThatTakeTexts[text];
+            if (taking != none && !beginsAnew && !m_index.isLoopHead(to) && taking < entered.numberOfParameters() && someEdgeHandsOverWhatNamesNoText(to, taking)) {
+                noteThatStateIsSeen(*findName(m_versions[text]));
+                if (!m_candidates[text].parametersThatReadText.contains(entered.parameter(taking)))
+                    m_candidates[text].parametersThatReadText.append(entered.parameter(taking));
+                taking = none;
+            }
+            arriveAt(to, text, taking, beginsAnew);
         }
         return;
     }
@@ -542,12 +624,14 @@ void TextBuilderWebScan::run(Vector<GrowingText, 2>& texts)
 
     for (uint32_t text = 0; text < m_candidates.size(); ++text) {
         const CandidateInTextBuilderWeb& candidate = m_candidates[text];
-        if (candidate.isRefused || !candidate.grows)
+        if (candidate.isRefused || !candidate.grows || (candidate.beginsAnewOnSomeEdge && m_standsUnderHandlers))
             continue;
         GrowingText grown;
+        grown.beginsAnewOnSomeEdge = candidate.beginsAnewOnSomeEdge;
         grown.loopHead = m_head.id();
         grown.parameterIndex = candidate.parameterIndex;
         grown.isOnlyConcatenated = candidate.isOnlyConcatenated;
+        grown.parametersThatReadText = candidate.parametersThatReadText;
         grown.standsUnderHandlers = m_standsUnderHandlers;
         for (const NameInTextBuilderWeb& name : m_names) {
             if (name.text != text)

@@ -59,6 +59,7 @@ static constexpr unsigned maxArrayElementsInRegisters = 4;
 static constexpr unsigned arrayLiteralVectorLength(unsigned count) { return (count ? count : 5) | 1; }
 static constexpr unsigned maxArrayLengthInStubKey = 16;
 static constexpr unsigned capacityShiftInArrayLiteralCount = 27;
+static constexpr unsigned int32ValuesInArrayLiteralCount = 1u << 26;
 
 static constexpr unsigned maxFrameSizeWithoutStackCheck = 240;
 static constexpr unsigned maxUncheckedFrameSize = 256;

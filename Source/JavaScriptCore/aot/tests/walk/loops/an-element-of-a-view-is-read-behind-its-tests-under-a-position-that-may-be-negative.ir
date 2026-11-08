@@ -10,7 +10,7 @@
 # CHECK: [[key]]: i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
 # CHECK: = GreaterEq [[key]], {{*}}form=Integers
 # CHECK: [[below]]: boolean @Boolean = Less {{*}}form=Integers
-# CHECK: [[inside]]: i32 @Int32 = Narrowed [[key]], [[below]] [isOnTakenEdge]
+# CHECK: [[inside]]: int[-2147483648, 1073741823] @Int32 = Narrowed [[key]], [[below]] [isOnTakenEdge]
 # CHECK: : i32 @Int32 = GetTypedArrayElement {{*}}, [[inside]], {{*}}isInsideView
 # CHECK-LABEL: code f2:Body
 # CHECK: isInLoop=true isLoopHead=true

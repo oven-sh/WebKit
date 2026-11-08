@@ -125,7 +125,7 @@ static Location memoryHomeOfPatchOperand(Allocator& allocator, Operation* value)
 {
     if (spillHoldsValueWherePatchStands(allocator, value)) {
         allocator.noteFrameUse();
-        return Location::spill(allocator.m_allocation.spillOf(value));
+        return allocator.placeToReadIn(allocator.m_allocation.spillOf(value));
     }
 
     if (!liesInMemoryForPatchAllocation(allocator, value)) {
@@ -146,7 +146,7 @@ static ALWAYS_INLINE Location memoryHomeOfPatchOperandInLine(Allocator& allocato
 {
     if (spillHoldsValueWherePatchStands(allocator, value)) [[likely]] {
         allocator.noteFrameUse();
-        return Location::spill(allocator.m_allocation.spillOf(value));
+        return allocator.placeToReadIn(allocator.m_allocation.spillOf(value));
     }
     return memoryHomeOfPatchOperand(allocator, value);
 }
@@ -357,7 +357,7 @@ static Location sourceOfFixedPatchOperand(Allocator& allocator, Operation* value
         return Location::immediate();
     allocator.noteFrameUse();
     if (spillHoldsValueWherePatchStands(allocator, value)) [[likely]]
-        return Location::spill(allocator.m_allocation.spillOf(value));
+        return allocator.placeToReadIn(allocator.m_allocation.spillOf(value));
     return allocator.memoryLocationOf(value);
 }
 
@@ -1028,7 +1028,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
                         letOperandStayInRegister();
                     else if (!held && kind == ValueRep::ColdAny && spillHoldsValueWherePatchStands(*this, value)) {
                         traitsOfPatch |= SomeOperandStaysInItsSpill;
-                        place = Location::spill(m_allocation.spillOf(value));
+                        place = placeToReadIn(m_allocation.spillOf(value));
                         writtenForOperandsToldElsewhere |= maskToBringTo;
                     } else
                         traitsOfPatch |= SomeOperandIsPlacedInItsTurn;
@@ -1830,8 +1830,26 @@ bool Allocator::isReadOnSomeWayFromHeadOf(const Operation* value, const Block* b
 {
     if (m_liveness.of(value).has(ValueFlag::IsKeptForCollector))
         return true;
+    bool numberingCostsNoMoreThanSearchesHave = !m_numbersOfDominatedBlocks.isEmpty() || m_numberOfBlocksReachedBySearchesForWays >= m_order.blocksInOrder().size();
+    if (numberingCostsNoMoreThanSearchesHave && m_valueOfLastSearchForWays != value && dominatesSomeReadBelowDefinitionOf(block, value))
+        return true;
     findBlocksThatLeadToReadsOf(value);
     return m_lastSearchThatReachedBlock[block->index()] == m_numberOfSearchesForWays;
+}
+
+bool Allocator::dominatesSomeReadBelowDefinitionOf(const Block* block, const Operation* value)
+{
+    if (block == value->owner() || !dominates(value->owner(), block))
+        return false;
+    std::span<Block* const> blocks = m_order.blocksInOrder();
+    for (uint32_t use = m_liveness.of(value).firstUse; use; use = m_liveness.use(use).next) {
+        auto behind = std::ranges::upper_bound(blocks, m_liveness.use(use).position, { }, [&](const Block* other) {
+            return m_order.headOf(other);
+        });
+        if (dominates(block, *std::prev(behind)))
+            return true;
+    }
+    return false;
 }
 
 void Allocator::findBlocksThatLeadToReadsOf(const Operation* value)
@@ -1861,6 +1879,7 @@ void Allocator::findBlocksThatLeadToReadsOf(const Operation* value)
             for (const Block* predecessor : m_order.of(reached[index]).predecessors)
                 reach(predecessor);
         }
+        m_numberOfBlocksReachedBySearchesForWays += reached.size();
     }
 }
 
