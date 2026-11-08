@@ -765,6 +765,7 @@ struct LinkTables {
     bool holderIsChangedInSightAlone(const Program&, LayoutID classLayout, ClassSide) const;
     bool memberHoldsOneFunction(const Program&, LayoutID classLayout, ClassSide, PropertyKeyID, FunctionID written) const;
     std::optional<FindsNothing> findsNothing(const Program&, LayoutID, ClassSide, PropertyKeyID, Of) const;
+    std::span<const uint32_t> membersUnderKeyAlongRows(ClassSide, PropertyKeyID) const;
     struct StretchOfRows {
         uint32_t first;
         uint32_t end;

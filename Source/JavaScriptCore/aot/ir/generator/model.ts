@@ -506,6 +506,7 @@ export interface InlineBuiltin {
   readonly effects: Effects;
   readonly family: string;
   readonly hasOptionalSlowPath: boolean;
+  readonly reckonsInLine: boolean;
   readonly location: Location;
 }
 

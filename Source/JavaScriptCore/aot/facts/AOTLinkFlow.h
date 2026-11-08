@@ -697,7 +697,10 @@ public:
 
     FlowNodeID foundBesideFieldsOf(LayoutID);
     FlowNodeID storedBesideFieldsOf(LayoutID);
-    FlowNodeID storedUnderUnknownNamesOf(LayoutID);
+    FlowNodeID storedUnderUnknownNamesOf(LayoutID, bool keyIsNumber);
+    FlowNodeID foundUnderNamesThatNoNumberSpells(LayoutID);
+    FlowNodeID foundBesideFieldsFor(LayoutID layout, PropertyKeyID key) { return mayBeNamedByNumber(key) ? foundBesideFieldsOf(layout) : foundUnderNamesThatNoNumberSpells(layout); }
+    bool isFilledUnderUnknownNames(LayoutID layout) const { return m_nodesStoredUnderUnknownNames[layout.index()] != UINT32_MAX || m_nodesStoredUnderNumbers[layout.index()] != UINT32_MAX; }
     Vector<FlowNodeID, 8> nodesWithOwnValuesOf(LayoutID);
     Vector<FlowNodeID, 4> cellsOfWrittenPrivateNamesOf(LayoutID);
     bool isInspectedByComparisonOfPrivateFields(FlowNodeID) const;
@@ -711,14 +714,20 @@ public:
     BitVector layoutsWhoseOwnFieldsListAccessor;
     FlowNodeID foundBesideFieldsUnder(PropertyKeyID);
     bool listMembersThatMayAnswerUnder(FamilyID, PropertyKeyID, Vector<LayoutID>&);
-    Vector<FlowNodeID> letKeeperHearOfFieldsBornUnder(FamilyID, PropertyKeyID, const FlowObserver& keeper);
+    struct FieldBornOnMember {
+        LayoutID member;
+        FlowNodeID node;
+    };
+    Vector<FieldBornOnMember> letKeeperHearOfFieldsBornUnder(FamilyID, PropertyKeyID, const FlowObserver& keeper);
+    Vector<FieldBornOnMember> fieldsBornOnMembersUnder(FamilyID, PropertyKeyID);
     void letKeeperWatch(const FlowObserver& keeper, FlowNodeID);
-    bool wakeKeepersOfSleepersIn(FamilyID);
+    bool tellPorterThatMemberIsLost(FamilyID, LayoutID);
     void wakeEverySleeperToSeeThatNothingGrows();
     String describeSleeperThatMayFindSomething();
-    bool someInstanceOfClassIsLostOrFindsSomethingBesideItsFields(FamilyID);
-    bool someFieldBornInFamilyHoldsSomething(FamilyID, PropertyKeyID);
-    FlowNodeID foundBesideFieldsOfMembersOf(FamilyID);
+    std::span<const LayoutID> instancesOfClassesIn(FamilyID);
+    enum class WhatSilentMemberFinds : uint8_t { Nothing, NothingThatCanBeCalled, TheUnknownAlone, SomethingOfItsOwn };
+    WhatSilentMemberFinds whatSilentMemberFinds(LayoutID, PropertyKeyID calledName);
+    WhatSilentMemberFinds whatPorterTakesMemberToFind(const FlowObserver& porter, LayoutID, PropertyKeyID calledName);
     FlowNodeID appendedField(LayoutID, PropertyKeyID);
     FlowNodeID appendedFieldAsStoredThroughItsLayout(LayoutID, PropertyKeyID);
     FlowNodeID findAppendedFieldAsStoredThroughItsLayout(LayoutID, PropertyKeyID) const;
@@ -1247,6 +1256,7 @@ public:
         Vector<FunctionID, 4> listed;
         Vector<BuiltinID, 4> builtins;
         Vector<uint32_t, 2> shared;
+        HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> listedToLookUp;
     };
     struct InlineRoomOfCalleesOfCall {
         union {
@@ -1317,13 +1327,24 @@ public:
         List<BuiltinID> builtins() const LIFETIME_BOUND { return List<BuiltinID>(liesOnHeap ? listsOnHeap->builtins.span() : std::span<const BuiltinID>(inlineBuiltins).first(numberOfInlineBuiltins)); }
         List<uint32_t> shared() const LIFETIME_BOUND { return List<uint32_t>(liesOnHeap ? listsOnHeap->shared.span() : std::span<const uint32_t>(inlineShared).first(numberOfInlineShared)); }
 
+        bool lists(FunctionID callee) const
+        {
+            if (liesOnHeap && !listsOnHeap->listedToLookUp.isEmpty())
+                return listsOnHeap->listedToLookUp.contains(callee.index());
+            return listed().contains(callee);
+        }
         void list(FunctionID callee)
         {
             if (!liesOnHeap && numberOfInlineListed < inlineListed.size()) {
                 inlineListed[numberOfInlineListed++] = callee;
                 return;
             }
-            ensureListsOnHeap().listed.append(callee);
+            ListsOfCalleesOnHeap& lists = ensureListsOnHeap();
+            lists.listed.append(callee);
+            if (!lists.listedToLookUp.isEmpty())
+                lists.listedToLookUp.add(callee.index());
+            else
+                lookUpListedOnceTheyAreMany(lists);
         }
         void add(BuiltinID builtin)
         {
@@ -1350,6 +1371,8 @@ public:
         {
             if (liesOnHeap) {
                 listsOnHeap->listed.removeAllMatching(matches);
+                listsOnHeap->listedToLookUp.clear();
+                lookUpListedOnceTheyAreMany(*listsOnHeap);
                 return;
             }
             uint8_t numberKept = 0;
@@ -1395,6 +1418,14 @@ public:
         }
 
     private:
+        static constexpr size_t fewestListedThatAreLookedUp = 16;
+        static void lookUpListedOnceTheyAreMany(ListsOfCalleesOnHeap& lists)
+        {
+            if (lists.listed.size() < fewestListedThatAreLookedUp)
+                return;
+            for (FunctionID callee : lists.listed)
+                lists.listedToLookUp.add(callee.index());
+        }
         NEVER_INLINE ListsOfCalleesOnHeap& ensureListsOnHeap()
         {
             if (liesOnHeap)
@@ -2148,11 +2179,14 @@ private:
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodesOnDemand;
     Vector<uint32_t> m_nodesBesideFields;
     Vector<uint32_t> m_nodesStoredUnderUnknownNames;
+    Vector<uint32_t> m_nodesStoredUnderNumbers;
+    Vector<uint32_t> m_nodesFoundUnderNamesThatNoNumberSpells;
     Vector<Vector<OwnValue>> m_ownValuesOfLayouts;
     BitVector m_layoutsWithListedFieldWithoutKey;
     BitVector m_layoutsWhoseOwnValuesAreListed;
     Vector<OwnValue, 8> listOwnValuesOf(LayoutID);
     Vector<LayoutID> m_layoutsWithNodesBesideFields;
+    static constexpr uint32_t keyOfStoreToTieIsNumber = 1u << 31;
     Vector<std::pair<uint32_t, uint32_t>> m_storesUnderUnknownNamesToTie;
     struct alignas(128) PartOfNodesThatDefinitionsWatch {
         std::atomic<bool> isLocked { false };

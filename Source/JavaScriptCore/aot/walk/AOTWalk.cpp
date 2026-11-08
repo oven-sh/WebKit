@@ -1114,8 +1114,10 @@ bool Walker::walkBodyBehindItsParameters()
     for (uint32_t number = 0; number < index.numberOfBlocks() && !m_hasFailed; ++number)
         walkBlock(BlockID(number));
     endBlocksInFrontOfLoops(0, { });
-    if (checksWalk() || checksProofs())
+    if (checksWalk() || checksProofs()) {
+        m_typesShown.clear();
         askParametersOfHeadsForWhatIsShown();
+    }
     return !m_hasFailed;
 }
 
@@ -2387,6 +2389,8 @@ void Walker::checkRawNumberThatFoldRestsOn(Reference number, Origin origin)
 
 TypeID Walker::asFarAsUnitMayAsk(TypeID claimed)
 {
+    if (claimed && !isNeverType(claimed) && !holdsOnlyPrimitives(claimed) && m_types.at(claimed).hasUnboundedUnknown() && m_types.at(claimed).primitives & Primitive::Number && m_types.at(claimed).primitives & Primitive::AnyString)
+        return TypeID();
     if (claimed && (m_types.at(claimed).primitives & Primitive::Integer) && !m_types.at(claimed).integers.isSingleValue() && m_types.at(claimed).integers.isSubsetOf(Range::int32()))
         claimed = m_types.unionOf(claimed, TypeTable::int32);
     if (!claimed || holdsOnlyPrimitives(claimed) || !m_types.at(claimed).isJavaScriptValue())
@@ -7173,7 +7177,7 @@ void Walker::walkBlock(BlockID inputBlock)
             enterHandlerBlock(inputBlock);
         else if (!isHeadOfTurnsWrittenOut && !liesBehindHeadCopied && index.isLoopHead(inputBlock))
             enterLoopHead(inputBlock);
-        else if (!isHeadOfTurnsWrittenOut && !liesBehindHeadCopied && severalEdgesEnter && !(m_makerOfListsBehindEntry && frame.isOfUnit && inputBlock == m_whereListsAreMadeBehindEntry) && (walkBlockApartFromClosedWays(inputBlock) || walkBlockApartFromWaysThatDidSomething(inputBlock) || walkBlockForEachWayThatBringsObjectInSight(inputBlock) || walkBlockApartBySidesOfQuestionAskedBefore(inputBlock)))
+        else if (!isHeadOfTurnsWrittenOut && !liesBehindHeadCopied && severalEdgesEnter && !(m_makerOfListsBehindEntry && frame.isOfUnit && inputBlock == m_whereListsAreMadeBehindEntry) && walkBlockApart(inputBlock))
             return;
         else {
             enterJoin(inputBlock, record, block);
@@ -7385,6 +7389,8 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         if (!isBuilt && (value.opcode() == Opcode::FindsDeclaredMember || value.opcode() == Opcode::FindsNoMember))
             ++m_numberOfQuestionsByNameLeftAsWritten;
     }
+    if (!isBuilt && has(Mechanism::Guesses) && askWhetherHolderOfStoreInClosedArmOfLoopIsList(*this, value))
+        return true;
     if (!isBuilt && value.opcode() == Opcode::PropGet && has(Mechanism::TypedOperations))
         isBuilt = buildReadWhereSomeReceiversLackField(*this, value);
     if (!isBuilt && has(Mechanism::Guesses) && m_opensGuesses && readBehindTestsOfShape(*this, value))

@@ -308,6 +308,7 @@ struct ModuleEvaluationPlanner {
     Vector<uint32_t> imports;
     Vector<ModuleID> moduleWithBody;
     bool somebodyAsksWhoRequiredWhom { true };
+    bool factoryOfMockMayRequire { true };
 
     BitVector isWalkedByCode;
     BitVector startsItself;
@@ -493,7 +494,7 @@ FoundModuleSiteKind ModuleEvaluationPlanner::kindInPlanOf(const FoundModuleSite&
 
 bool ModuleEvaluationPlanner::recordsNothingThatIsSeen(uint32_t index) const
 {
-    if (somebodyAsksWhoRequiredWhom)
+    if (somebodyAsksWhoRequiredWhom || factoryOfMockMayRequire)
         return false;
     const Module& module = program.modules[index];
     if (module.kind != ModuleKind::SourceText || std::ranges::contains(module.exports, program.stringOf(BuiltinNames::__esModule), &ModuleExport::name))
@@ -658,6 +659,9 @@ void ModuleEvaluationPlanner::chooseModulesWalkedByCode()
     moduleWithBody.fill(ModuleID(), program.functions.size());
     bool loadsTwoGraphsAtOnce = mayLoadTwoGraphsAtOnce();
     somebodyAsksWhoRequiredWhom = asksWhoRequiredWhom(program, facts);
+    factoryOfMockMayRequire = std::ranges::any_of(modules, [](const Module& module) {
+        return module.flags.contains(ModuleFlags::MayBeMocked);
+    });
     for (uint32_t index = 0; index < numberOfModules; ++index) {
         const Module& module = modules[index];
         if (!isEvaluatedWithImporter(index) || needsLoader.quickGet(index))

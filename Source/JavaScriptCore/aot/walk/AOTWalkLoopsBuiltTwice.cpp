@@ -2185,7 +2185,7 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
             return effectRuleOf(operation.opcode()) == EffectRule::Operator || siteMayAnswerReadWithoutOtherCode(*this, operation);
         });
     };
-    if (tellsListFromBytes && !isUnreachable() && onlyOperatorsAndSuchReadsRanOtherCode()) {
+    if (tellsListFromBytes && steppedAtHead.asTheyEntered.isEmpty() && !isUnreachable() && onlyOperatorsAndSuchReadsRanOtherCode()) {
         startForWhatIsNoBuiltin = addBlock(BlockFrequency::Rare);
         atEndOfTests = m_state;
         jumpTo(startForWhatIsNoBuiltin, { });
@@ -2630,6 +2630,15 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         list.admitsInt32Storage = true;
         list.kindMayWellBeAnother = false;
     }
+    bool otherCopyAsksCountersAlone = listsRead.someListIsTakenUnderCounterAskedInFront && !m_walksCopyThatAsksCountersAlone && !m_asksOnlyWhetherLoopMayBeBuiltTwice;
+    if (otherCopyAsksCountersAlone && (sharedCopyIsPlainWalk || !closedCopyHasEntry || !steppedAtHead.asTheyEntered.isEmpty() || loopCarriesValuesOfConsumerRound(inputHead)))
+        return false;
+    bool closedCopyIsSharedBehindOtherCopy = otherCopyAsksCountersAlone && sharedEntry;
+    bool frontLeadsOnAsItDid = closedCopyIsSharedBehindOtherCopy && frontLeadsToNextStartOfMember;
+    if (closedCopyIsSharedBehindOtherCopy)
+        sharedEntry = { };
+    if (closedCopyIsSharedBehindOtherCopy && !frontLeadsOnAsItDid)
+        sharedStart = { };
     auto isHeldWhereItComesRound = [](const CounterTestedInFrontOfLoop& counter) {
         return counter.isHeldWhereItComesRound;
     };
@@ -3538,7 +3547,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     BlockID typedStart = isUnreachable() ? BlockID() : m_block;
     WalkState stateWhereTestsPassed = m_state;
     if (!sharedEntry) {
-        if (closedStart)
+        if (closedStart && !frontLeadsOnAsItDid)
             continueIn(closedStart);
         else {
             m_state.clear();
@@ -3563,7 +3572,34 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 m_iterationsByIndex[steppedAtHead.asTheyEntered[place].first].position = positionsEnteringClosedCopy[place];
             enterClosedCopy(entryOfClosedCopy, preview);
         }
-        if (otherCopyOpensItsGuesses) {
+        if (otherCopyAsksCountersAlone && entryOfClosedCopy) {
+            count(StatisticID::LoopsWhoseOtherCopyAsksCountersAlone);
+            SetForScope asksCountersAlone(m_walksCopyThatAsksCountersAlone, true);
+            SetForScope endedLists(m_typedBuildEndedListsTestedInFront, m_typedBuildEndedListsTestedInFront);
+            SetForScope asksGuards(m_typedBuildAsksGuardsThatItWasBoughtFor, m_typedBuildAsksGuardsThatItWasBoughtFor);
+            SetForScope everyTurnLeaves(m_everyTurnOfTypedBuildLeaves, m_everyTurnOfTypedBuildLeaves);
+            SetForScope leavesWithoutTest(m_turnOfTypedBuildLeavesWithoutTest, m_turnOfTypedBuildLeavesWithoutTest);
+            SetForScope testsNothing(m_typedBuildTestsNothing, m_typedBuildTestsNothing);
+            SetForScope isLeftAtOtherCode(m_typedBuildIsLeftAtOtherCodeOnUsualWay, m_typedBuildIsLeftAtOtherCodeOnUsualWay);
+            SetForScope askedNoList(m_typedBuildAskedNoListThatItWasBoughtFor, m_typedBuildAskedNoListThatItWasBoughtFor);
+            SetForScope report(m_reportOfTypedBuildMadeLast, m_reportOfTypedBuildMadeLast);
+            SetForScope walkWasKept(m_walkOfLoopWasKept, m_walkOfLoopWasKept);
+            std::pair<uint32_t, BlockID> boughtFirst { static_cast<uint32_t>(frameIndex), inputHead };
+            bool firstPurchaseIsListed = !m_loopsBeingBought.isEmpty() && m_loopsBeingBought.last() == boughtFirst;
+            if (firstPurchaseIsListed)
+                m_loopsBeingBought.removeLast();
+            if (closedCopyIsSharedBehindOtherCopy)
+                m_closedCopiesShared.last().isAboutToBeTaken = true;
+            else
+                m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
+            walkCopyOfLoop(inputHead, enteringClosedCopy.span());
+            if (closedCopyIsSharedBehindOtherCopy)
+                m_closedCopiesShared.last().isAboutToBeTaken = false;
+            else
+                m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
+            if (firstPurchaseIsListed)
+                m_loopsBeingBought.append(boughtFirst);
+        } else if (otherCopyOpensItsGuesses) {
             bool standsInsideTypedCopy = m_waysIntoClosedCopies.containsIf([&](const WayIntoClosedCopy& way) { return way.frameIndex != frameIndex || way.inputHead != inputHead; });
             if (standsInsideTypedCopy)
                 m_otherCopiesInsideTypedCopies.append({ frameIndex, inputHead });

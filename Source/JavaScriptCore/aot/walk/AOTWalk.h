@@ -30,6 +30,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 class PrimitiveKnownToFolding;
+class UsersOfValuesInCountersOfLoops;
 class Walker;
 
 class TypeWithoutProof {
@@ -130,6 +131,8 @@ enum class GuessOpened : uint8_t {
 };
 TypeID typeTestedInPlaceOfWrittenType(Walker&, FunctionID, uint32_t entryParameter, TypeID tested);
 GuessOpened openGuessAt(Walker&, const BodyValue&);
+inline constexpr OpcodeSet opcodesThatAskWhetherHolderOfStoreInClosedArmOfLoopIsListTakes { Opcode::ElemSet };
+AOT_LINK_OF_WALK(askWhetherHolderOfStoreInClosedArmOfLoopIsList, opcodesThatAskWhetherHolderOfStoreInClosedArmOfLoopIsListTakes)
 bool openGuessAtAllocation(Walker&, const BodyValue&);
 bool replaceOperation(Walker&, const BodyValue&);
 
@@ -805,6 +808,18 @@ public:
     bool someElementOfLoopMeetsWhatGoesRoundInCurrentBody(LoopID);
     static bool findsElementThatMeetsWhatGoesRound(const BodyIndex&, LoopID, OpcodeSet operatorsOfRunningValues);
     const BitVector& listsThatCallsAloneTakeInCurrentBody();
+    struct UsersOfValuesOfLoop {
+        const BodyIndex* body { nullptr };
+        FunctionID function;
+        BlockID head;
+        std::shared_ptr<const UsersOfValuesInCountersOfLoops> users;
+    };
+    UsersOfValuesOfLoop& usersOfValuesOfLoopOfFrame()
+    {
+        if (m_usersOfValuesOfLoops.size() < m_frames.size())
+            m_usersOfValuesOfLoops.grow(m_frames.size());
+        return m_usersOfValuesOfLoops[m_frames.size() - 1];
+    }
     UsersWithinBlock& usersWithinBlockOfFrame()
     {
         if (m_usersWithinBlocks.size() < m_frames.size())
@@ -1293,7 +1308,7 @@ public:
     uint32_t numberOfWalksOfLoopsUndone() const { return m_numberOfWalksOfLoopsUndone; }
     bool sumsAreNotAskedInRow() const { return m_sumsAreNotAskedInRow; }
     uint32_t numberOfRowsWhoseSumsAreNotAsked() const { return m_rowsWhoseSumsAreNotAsked.size(); }
-    bool keysAreReadOffLookInRow() const { return m_keysAreReadOffLookInRow; }
+    bool keysAreReadOffLookInRow() const { return m_keysAreReadOffLookInRow || m_walksCopyThatAsksCountersAlone; }
     void noteKeyTakenForCounterAskedInFront() { m_keyWasTakenForCounterAskedInFront = true; }
     uint32_t numberOfRowsWhoseKeysAreReadOffLook() const { return m_rowsWhoseKeysAreReadOffLook.size(); }
     uint32_t numberOfWalksOfLoopsCutShort() const { return m_numberOfWalksOfLoopsCutShort; }
@@ -1925,6 +1940,8 @@ private:
     };
 
     struct Frame {
+        Frame() { }
+
         FunctionID function;
         const Body* body { nullptr };
         const BodyIndex* index { nullptr };
@@ -2621,6 +2638,7 @@ private:
     bool m_sumsAreNotAskedInRow { false };
     bool m_keysAreReadOffLookInRow { false };
     bool m_keyWasTakenForCounterAskedInFront { false };
+    bool m_walksCopyThatAsksCountersAlone { false };
     bool m_typedBuildEndedListsTestedInFront { false };
     BlockID m_headOfTypedBuildOverListsTestedInFront;
     size_t m_frameOfTypedBuildOverListsTestedInFront { 0 };
@@ -3100,16 +3118,13 @@ private:
     uint32_t m_numberOfFramesOverHandlersOfCode { 0 };
     std::unique_ptr<KeptForBuild>& m_keptByGeneratorsInLoops;
     bool isWalkingBlockForEachWay(size_t frameIndex) const;
-    bool walkBlockApartFromClosedWays(BlockID inputBlock);
-    bool walkBlockApartFromWaysThatDidSomething(BlockID inputBlock);
     bool letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<Frame::ReturnOfCopy* const> passing, std::span<Frame::ReturnOfCopy* const> closed);
     std::optional<uint32_t> turnWhoseQuietWaysGoToHeadAround(BlockID inputBlock);
     bool letQuietReturnsOfCopyWalkEndOfBlockApart(ValueID call);
     bool letAnswersOfCopyWalkEndOfBlockApart(ValueID call);
     void walkEndOfBlockBehindReturnsOfCopy(ValueID call);
     bool goOnBehindReturnsOfCopy(const BodyValue& call, const Function&, const LinkedFunction&, const Vector<Reference, 2>& heldByCallAlone, Origin originOfCall, Vector<Frame::ReturnOfCopy, 2>& returns, uint32_t numberOfValuesBuiltBefore);
-    bool walkBlockForEachWayThatBringsObjectInSight(BlockID inputBlock);
-    bool walkBlockApartBySidesOfQuestionAskedBefore(BlockID inputBlock);
+    bool walkBlockApart(BlockID inputBlock);
     Reference booleanOfUnit(bool);
     bool inlineCalleeAsLinkOfChain(const BodyValue& call);
     bool inlineCalleeAsLinkOfChainOfItsOpcodes(const BodyValue& call);
@@ -3289,6 +3304,7 @@ private:
     StretchWithArmsAsWritten m_stretchWithArmsAsWritten;
     Vector<StoresIntoRowsOfBlock, 2> m_storesIntoRowsOfBlocks;
     Vector<UsersWithinBlock, 2> m_usersWithinBlocks;
+    Vector<UsersOfValuesOfLoop, 2> m_usersOfValuesOfLoops;
     HashMap<const BodyIndex*, BitVector> m_valuesTakenForKeys;
     HashMap<const BodyIndex*, BitVector> m_loopsThatReckonWithElements;
     mutable HashMap<const void*, BitVector> m_numbersInListsOfWrittenObjects;
@@ -3876,6 +3892,7 @@ TypeID typeFoundInFilledSlot(Walker&, const BodyValue& read, TypeID typeOfObject
 TypeID typeSeenToArriveInFilledSlot(Walker&, const BodyValue& read, TypeID typeOfObject);
 TypeID typeTakenBySlotOfStore(Walker&, const BodyValue& store, TypeID typeOfObject);
 void noteSlotFoundEmpty(Walker&, const BodyValue& access, Reference object);
+bool definePlainFieldInSlot(Walker&, const BodyValue& call, ValueID objectAsWritten, Reference object, PropertyKeyID, Reference stored);
 bool emptySlotIsUndefinedBehindLooks(Walker&, const BodyValue& read, Reference object);
 void lookAtCellInFrontOfStores(Walker&, std::span<const ValueID> stores, Reference object, NOESCAPE const ScopedLambda<void(Reference test)>& goOnWhereTestPasses, std::span<const ValueID> accessesThatLookAtSlots = { });
 std::optional<uint32_t> findLikelyOrderWordInFrontOfStores(Walker&, ValueID firstOfStretch, std::span<const ValueID> stores, Reference object, TypeID typeOfObject = { });

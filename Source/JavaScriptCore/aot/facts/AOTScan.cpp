@@ -16,6 +16,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTFoldingOfConstants.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTIterationHelpers.h"
 #include "AOTLinkCoroutines.h"
 #include "AOTLinkUnions.h"
@@ -1924,6 +1925,7 @@ ThinSummary::ThinSummary(SummaryBeingMade& made)
         visit(namesThatHostLooksFor, made.namesThatHostLooksFor);
         visit(copiesOfMembers, made.copiesOfMembers);
         visit(placesOfWrittenLists, made.placesOfWrittenLists);
+        visit(definitionsByDescriptorInOrderOfSites, made.definitionsByDescriptorInOrderOfSites);
     };
 
     SummaryStorage& storage = nodes.m_storage;
@@ -2950,6 +2952,7 @@ uint32_t ScanOfBody::valuesLaidIntoDescriptorHeldBy(VariableID constant)
 
 void ScanOfBody::defineByDescriptor(ValueID site, ListInScan subject, PropertyKeyID key, std::optional<ListInScan> other, bool isUnderNameThatNobodyElseNames, bool laysNewValueOfNativeCode)
 {
+    m_summary.definitionsByDescriptorInOrderOfSites.append(static_cast<uint32_t>(m_summary.changes.size()));
     addChange(SummaryChange::Kind::DefinesByDescriptor, site, subject, key, other);
     m_summary.changes.last().laysNewValueOfNativeCode = laysNewValueOfNativeCode;
     if (isUnderNameThatNobodyElseNames) {
@@ -4006,6 +4009,7 @@ void ScanOfBody::readDefineAccessor(const BodyValue& value, ValueID object, Valu
         m_placesOfAccessorsLaid.add(static_cast<uint64_t>(m_roots[object.index()]) << 32 | key.bits());
     }
     uint32_t change = static_cast<uint32_t>(m_summary.changes.size());
+    m_summary.definitionsByDescriptorInOrderOfSites.append(static_cast<uint32_t>(m_summary.changes.size()));
     addChange(SummaryChange::Kind::DefinesByDescriptor, value.id(), subject, key, laid);
     m_summary.changes[change].lays = lays;
 }
@@ -6335,7 +6339,7 @@ void ScanOfBody::resolveComponent(std::span<const uint32_t> members, uint32_t co
         m_resolved[member] = list;
 }
 
-void ScanOfBody::carryExclusionsOver(uint32_t to, uint32_t targetIndex, const BodyValue& test)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::carryExclusionsOver(uint32_t to, uint32_t targetIndex, const BodyValue& test)
 {
     if (to <= m_blockBeingRead) {
         giveUpWhatEdgeLeadingBackDoesNotCarry(to);
@@ -7155,6 +7159,8 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
         auto nameKey = [&](PropertyKeyID key, ValueID descriptor, uint32_t placeWhereMapTakesEntry, ValueID computedKey = { }) {
             uint32_t keyNode = computedKey ? oneNodeFor(listOf(computedKey)) : noSummaryNode;
             if (!isFirst) {
+                if (m_summary.changes[definition.change].kind == SummaryChange::Kind::DefinesByDescriptor)
+                    m_summary.definitionsByDescriptorInOrderOfSites.append(static_cast<uint32_t>(m_summary.changes.size()));
                 m_summary.changes.append(SummaryChange(m_summary.changes[definition.change]));
                 m_summary.accesses.append(SummaryAccess(m_summary.accesses[definition.access]));
             }
@@ -7383,6 +7389,9 @@ void ScanOfBody::finish()
     sortWithoutRepeatsInScan(m_summary.functionsNamed);
     listWhatWalkAsksOfNodesAndCalls();
     listStoresOnResult();
+    AOT::stableSort(m_summary.definitionsByDescriptorInOrderOfSites, { }, [&](uint32_t change) {
+        return m_summary.changes[change].site.index();
+    });
 }
 
 void ScanOfBody::listWhatWalkAsksOfNodesAndCalls()

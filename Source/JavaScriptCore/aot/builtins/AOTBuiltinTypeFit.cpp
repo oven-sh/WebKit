@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
@@ -201,7 +202,7 @@ TypeFit BuiltinTypeFitWalk::run()
     return m_isOutside ? TypeFit::Outside : TypeFit::Unknown;
 }
 
-TypeFit fitOfPrimitiveInBuiltinType(const BuiltinType& tested, PrimitiveSet primitive, Range integers)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeFit fitOfPrimitiveInBuiltinType(const BuiltinType& tested, PrimitiveSet primitive, Range integers)
 {
     auto has = [&](BuiltinPrimitive member) {
         return tested.primitives.contains(member);

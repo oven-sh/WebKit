@@ -14,6 +14,8 @@
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "JSCInlines.h"
+#include "ObjectConstructor.h"
+#include "TopExceptionScope.h"
 
 namespace JSC { namespace AOT {
 
@@ -201,6 +203,29 @@ void Modules::letGoOfEndedMocksNobodySees()
     }
 }
 
+JSObject* Modules::withNamesOfPatchedMock(JSObject* patched, JSObject* patch)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* seen = constructEmptyObject(realm);
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    patched->methodTable()->getOwnPropertyNames(patched, realm, names, DontEnumPropertiesMode::Exclude);
+    if (scope.exception()) [[unlikely]] {
+        scope.tryClearException();
+        return patch;
+    }
+    for (const Identifier& name : names) {
+        JSValue value = patch->get(realm, name);
+        if (scope.exception()) [[unlikely]] {
+            scope.tryClearException();
+            return patch;
+        }
+        seen->putDirect(vm, name, value);
+    }
+    return seen;
+}
+
 std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid laid, uint32_t momentEnded, BitVector&& exportsLeftOut)
 {
     if (m_momentsOfLoads.isEmpty())
@@ -211,8 +236,18 @@ std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* 
     letGoOfEndedMocksNobodySees();
     Vector<EndedMock, 2>& ended = m_endedMocks.add(fileOrModule, Vector<EndedMock, 2>()).iterator->value;
     if (!ended.isEmpty() && ended.last().momentLaid == laid.moment) {
-        if (!endedMock(fileOrModule, ended.size() - 1))
-            storeValue(m_instance.globalObject, ensureLoaded(fileOrModule).endedMocks.get(), static_cast<unsigned>(ended.size() - 1), mock);
+        unsigned last = ended.size() - 1;
+        JSObject* kept = endedMock(fileOrModule, last);
+        if (kept && kept != mock && ended.last().momentEnded <= ended.last().momentLaid) {
+            mock = withNamesOfPatchedMock(kept, mock);
+            kept = nullptr;
+            LoadedModule& held = ensureLoaded(fileOrModule);
+            JSValue view = held.namespacesOfEndedMocks ? held.namespacesOfEndedMocks->getDirectIndex(m_instance.globalObject, last) : JSValue();
+            if (auto* object = view ? dynamicDowncast<ModuleNamespace>(view) : nullptr)
+                object->setMockOfView(*m_instance.vm, mock);
+        }
+        if (!kept)
+            storeValue(m_instance.globalObject, ensureLoaded(fileOrModule).endedMocks.get(), last, mock);
         m_endedMocksToAskAbout.add(fileOrModule, Vector<unsigned, 2>()).iterator->value.append(ended.size() - 1);
         ended.last().momentEnded = momentEnded;
         ended.last().momentOfTestFile = state.momentOfTestFile;
@@ -579,7 +614,6 @@ void Modules::letLinksOfLoadStand(ModuleID root)
             didGiveUpLinksBeforeLoad(links.before);
         return links.isHeldBy(root);
     });
-    letGoOfEndedMocksNobodySees();
 }
 
 void Modules::bringBackLinksOfLoadThatFailed(ModuleID root)

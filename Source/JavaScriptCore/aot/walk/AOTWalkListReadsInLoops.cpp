@@ -119,7 +119,7 @@ static bool holdsBoxedValuesOfEitherKind(const ListTestedInFrontOfLoop& tested)
 static bool writesWhatLiesUnderListsReadInLoops(const Walker& walker, const Effects& effects)
 {
     if (walker.takesStorageAndLengthsToBeAsInFront())
-        return effects.writes.containsAny(heapsUnderListsReadInLoops - AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths });
+        return effects.writes.containsAny(heapsUnderListsReadInLoops - AbstractHeapSet { AbstractHeap::ArrayStorage });
     return effects.writes.containsAny(heapsUnderListsReadInLoops);
 }
 
@@ -1798,7 +1798,7 @@ static ValueID valueThatStepHandsOutInListReadsInLoops(const BodyIndex& index, c
     return { };
 }
 
-static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses, bool keysOfReadsTakeNotes, bool& someReadHasNotedKey)
+static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses, bool keysOfReadsTakeNotes, bool& someReadHasNotedKey, std::optional<BitVector>& namesOfCountersAskedInFront)
 {
     ListsReadInLoop found;
     WhatReadsFromInFrontOfLoopFind foundFromInFront;
@@ -1824,7 +1824,6 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
         return input.index() >= preview.firstValue && place < preview.typesOfValues.size() ? preview.typesOfValues[place] : TypeID();
     };
 
-    std::optional<BitVector> namesOfCountersAskedInFront;
     auto typeOfKeyInLook = [&](ValueID key) -> TypeID {
         TypeID seen = typeInLook(key);
         if (!seen || types.at(seen).isInteger() || !(types.at(seen).primitives & Primitive::Integer) || key.index() < firstValueOfLoop || walker.keysAreReadOffLookInRow())
@@ -1917,6 +1916,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
     Vector<Reference, 2> listsThatTakeMoreThanInt32s;
     Vector<Reference, 2> listsThatCopiesOfCalleesStoreIntoUncounted;
     Vector<Reference, 2> listsTakenUnderCountersAskedInFront;
+    Vector<Reference, 2> listsReachedUnderCountersAskedInFront;
     auto entersLoopAsNumber = [&](ValueID value) {
         ValueID made = index.valueBehindCasts(value);
         std::optional<uint32_t> place = made ? index.block(inputHead).indexOfParameter(made) : std::nullopt;
@@ -2107,6 +2107,8 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                     bool holdsNumbers = holdsOnlyNumbers(written);
                     if (!holdsNumbers && key && typeOfKeyInLook(key) != typeInLook(key))
                         return;
+                    if (key && typeOfKeyInLook(key) != typeInLook(key) && !listsReachedUnderCountersAskedInFront.contains(name))
+                        listsReachedUnderCountersAskedInFront.append(name);
                     found.lists.append(ListTestedInFrontOfLoop { name, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers });
                     if (readerHasLoops)
                         walker.count(StatisticID::ListsReadInLoopsOfCopiesAskedInFrontOfLoops);
@@ -2128,6 +2130,8 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                     TypeID list = types.withoutNullish(ownTypeInListReadsInLoops(walker, name));
                     if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeOfKeyInLook(key))))
                         return;
+                    if (key && typeOfKeyInLook(key) != typeInLook(key) && !listsReachedUnderCountersAskedInFront.contains(name))
+                        listsReachedUnderCountersAskedInFront.append(name);
                     size_t place = found.lists.findIf([&](const ListTestedInFrontOfLoop& listed) {
                         return listed.name == name;
                     });
@@ -2260,6 +2264,8 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
             bool keyIsAskedInTurn = keyIsReckonedInTurn && walker.looksCountOnTurnsThatBeginAgain(inputHead) && keyOfProvenListMayBeAskedForInt32(types, list, keyInLook) && textOfLoopStoresIntoList(name);
             if (!keyIsAskedInTurn && !readTakesIndexOfProvenList(types, list, keyInLook))
                 continue;
+            if (keyIsCounterAskedInFront && !listsReachedUnderCountersAskedInFront.contains(name))
+                listsReachedUnderCountersAskedInFront.append(name);
             if (isFreshInListReadsInLoops(walker, name))
                 continue;
             if ((asksPlainVector ? !!findNoteInListReadsInLoops(walker, name) : isNotedForReadByKey(name)) && !walker.isAskedAtHeadOfTypedCopyAround(name))
@@ -2332,7 +2338,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
         }
     }
     if (someListIsTakenForNotedKey && !rowFindsListsLeftAsTheyAreInListReadsInLoops(walker, inputHead, found.lists.span(), guesses.span(), { }))
-        return findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, false, someReadHasNotedKey);
+        return findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, false, someReadHasNotedKey, namesOfCountersAskedInFront);
     found.lists.removeAllMatching([&](const ListTestedInFrontOfLoop& list) {
         return !holdsOnlyNumbers(list.storage) && listsTakenUnderCountersAskedInFront.contains(list.name);
     });
@@ -2344,9 +2350,15 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
             return listsTakenUnderCountersAskedInFront.contains(list.name);
         });
     }
+    for (Reference name : listsReachedUnderCountersAskedInFront) {
+        if (!listsTakenUnderCountersAskedInFront.contains(name))
+            listsTakenUnderCountersAskedInFront.append(name);
+    }
     for (Reference name : listsTakenUnderCountersAskedInFront) {
-        if (found.lists.containsIf([&](const ListTestedInFrontOfLoop& list) { return list.name == name; }))
-            walker.count(StatisticID::ListsTakenUnderCountersAskedInFrontOfLoops);
+        if (!found.lists.containsIf([&](const ListTestedInFrontOfLoop& list) { return list.name == name; }))
+            continue;
+        walker.count(StatisticID::ListsTakenUnderCountersAskedInFrontOfLoops);
+        found.someListIsTakenUnderCounterAskedInFront = true;
     }
     bool turnsStoreIntoLists = found.lists.containsIf([](const ListTestedInFrontOfLoop& list) {
         return list.isWritable;
@@ -2400,10 +2412,11 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
 ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
 {
     bool someReadHasNotedKey = false;
-    ListsReadInLoop found = findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, false, someReadHasNotedKey);
+    std::optional<BitVector> namesOfCountersAskedInFront;
+    ListsReadInLoop found = findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, false, someReadHasNotedKey, namesOfCountersAskedInFront);
     if (!found.lists.isEmpty() || !someReadHasNotedKey)
         return found;
-    return findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, true, someReadHasNotedKey);
+    return findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, true, someReadHasNotedKey, namesOfCountersAskedInFront);
 }
 
 static Draft questionWhetherListIsAsMadeInListReadsInLoops(Walker& walker, Reference list, Origin origin)

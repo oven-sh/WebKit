@@ -171,10 +171,20 @@ void Modules::makeCallAgain(TextThatWaits& text)
         return;
     }
     SetForScope momentOfCall(m_momentOfCallWhoseTextHasCome, text.momentOfCall);
+    bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(text.module);
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, text.caller, TextOfImport::HasCome, promise);
+    bool walkFiledLinks = !wasHeldBeforeWalk && holdsLinksOfLoadThatMayFail(text.module);
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);
+        if (walkFiledLinks)
+            bringBackLinksOfLoadThatFailed(text.module);
         return;
+    }
+    if (walkFiledLinks) [[unlikely]] {
+        if (loaded->status() == JSPromise::Status::Rejected)
+            bringBackLinksOfLoadThatFailed(text.module);
+        else
+            hearWhetherImportThatLinkedAnewFails(text.module, loaded);
     }
     scope.release();
     if (loaded != promise)
@@ -189,10 +199,39 @@ void Modules::forgetMockLaidBehindCallWhoseTextHasCome(ModuleID file)
     auto laid = m_momentsWaitingMocksWereLaid.find(file);
     if (laid == m_momentsWaitingMocksWereLaid.end() || laid->value.moment <= *momentOfCall)
         return;
+    if (m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && fileOf(each.module) == file; }))
+        return;
     if (m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == file && above.original; }))
         return;
     forgetMockThatWaits(file);
     forgetCallOfMock(file);
+}
+
+void Modules::walkInPlaceOfCallsHeldForTextOf(ModuleID file)
+{
+    size_t place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && !each.hasWalkedAheadOfItsText && fileOf(each.module) == file; });
+    if (place == notFound)
+        return;
+    ModuleID asked = m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].module;
+    if (!needsOriginalAheadOfFactory(asked) && !needsOriginalAheadOfFactory(file))
+        return;
+    for (ImportWhoseMocksRunWhenItsTextHasCome& each : m_importsWhoseMocksRunWhenTheirTextsHaveCome)
+        each.hasWalkedAheadOfItsText |= fileOf(each.module) == file;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+    {
+        SetForScope moduleThatProgramImportsNow(m_moduleThatProgramImportsNow, std::optional(asked));
+        SetForScope moduleThatImportAsksFor(m_moduleThatImportAsksFor, asked);
+        SetForScope stateOfWaitOfImportThatAsks(m_stateOfWaitOfImportThatAsks, JSValue());
+        runMocksBelow(asked);
+    }
+    Exception* exception = scope.exception();
+    if (!exception)
+        return;
+    JSValue error = exception->value();
+    if (!scope.tryClearException())
+        return;
+    noteImportFailedUnderMock(asked, error);
+    keepFailureOfFactoryForCallsHeldForTheirTexts(file, error);
 }
 
 void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)

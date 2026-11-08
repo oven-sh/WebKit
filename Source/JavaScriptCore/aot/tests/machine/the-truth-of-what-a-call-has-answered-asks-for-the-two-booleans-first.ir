@@ -3,13 +3,15 @@
 # In a loop the truth of a value of which nothing is known is asked in line: an object? true? nothing or false? What a call by value has answered is asked for the two booleans first:
 # `false` is answered by one compare where three were asked (the turn of a list method that is entered by value: some, find, filter), `true` by two as before;
 # an object and nothing pay two compares more. What is read out of a list keeps the old order: the bits of `false` are compared nowhere in held.
-# RUN: emit f1:Body f2:Body mechanisms=all
+# RUN: emit f1:Body mechanisms=all
 # CHECK-LABEL: unit f1:Body
 # CHECK: = Const64(7)
 # CHECK: = Const64(6)
-# CHECK-LABEL: unit f2:Body
-# CHECK: = Const64(7)
-# CHECK-NOT: = Const64(6)
+# With guesses the turns of held are laid out eight in a row, once a kind of storage: a 6 stands there as the counter's offset of the seventh turn and as the shape of doubles. Without them the loop stands as written, its truth in line.
+# RUN(HELD): emit f2:Body mechanisms=all-Guesses
+# HELD-LABEL: unit f2:Body
+# HELD: = Const64(7)
+# HELD-NOT: = Const64(6)
 # RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = (count, held) => { const all = [false, true, 0, 1, "", "a", null, undefined, NaN, {}, [], 0n, 1n, -0, Symbol(), 0.5, function () {}]; print(count(all, x => x), held(all)); const each = []; for (let i = 0; i < all.length; i++) each.push(count([all[i]], x => x)); print(each.join("")); print(count(all, () => false), count(all, () => true), count(all, () => {}), count(all, x => typeof x === "number")); };
 # ANSWER: 9 9
 # ANSWER: 01010100011010111

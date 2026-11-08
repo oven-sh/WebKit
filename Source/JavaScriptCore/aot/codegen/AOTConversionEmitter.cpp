@@ -147,8 +147,9 @@ Number ConversionEmitter::numberPartOf(Operand operand, const Type& type)
     case Representation::Int32:
         return toNumber(operand.as<Word32>());
     case Representation::Int64:
-    case Representation::OptionalInt64:
         return toNumber(Integer(operand.value), type.integers);
+    case Representation::OptionalInt64:
+        return isWithinInt32(type.integers) ? toNumber(low32(Integer(operand.value))) : toNumber(Integer(operand.value));
     case Representation::Double:
         return operand.as<Number>();
     case Representation::OptionalDouble:
@@ -246,6 +247,20 @@ void ConversionEmitter::stopUnlessBoxHolds(Boxed value, TypeID kinds)
     emitter<ThrowEmitter>().requireOrStopAtFalseProof(*context, hasType(value, typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, kinds)), value, ProofSource::OtherOperation);
 }
 
+void ConversionEmitter::stopUnlessToldRangeHolds(Condition holds)
+{
+    if (const OperationContext* context = generator().contextBeingGenerated())
+        emitter<ThrowEmitter>().requireOrStopAtFalseProof(*context, holds, std::nullopt, ProofSource::OtherOperation);
+}
+
+Word32 ConversionEmitter::lowHalfOfIntegerToldInsideInt32(Integer wide)
+{
+    Word32 low = low32(wide);
+    if (emittersCheckProofs())
+        stopUnlessToldRangeHolds(equal(signExtended(low), wide));
+    return low;
+}
+
 Number ConversionEmitter::unboxDoubleThatIsAsked(Boxed value)
 {
     stopUnlessBoxHolds(value, TypeTable::number);
@@ -263,7 +278,7 @@ Operand ConversionEmitter::unbox(Boxed value, const Type& type, Representation t
         return either<Word32>(isInt32(value), [&] {
             return unboxInt32(value);
         }, [&] {
-            return low32(toInteger(unboxDoubleThatIsAsked(value)));
+            return lowHalfOfIntegerToldInsideInt32(toInteger(unboxDoubleThatIsAsked(value)));
         });
     case Representation::Int64:
         return either<Integer>(isInt32(value), [&] {
@@ -442,17 +457,18 @@ Word32 ConversionEmitter::int32OrElse(Number value, LBasicBlock isNoInt32)
 
 Word32 ConversionEmitter::int32OrElse(Integer value, Range range, LBasicBlock isNoInt32)
 {
+    if (isWithinInt32(range))
+        return lowHalfOfIntegerToldInsideInt32(value);
     Word32 low = low32(value);
-    if (!isWithinInt32(range))
-        branchUnless(isNonNegative(range) ? belowOrEqual(value, integer(INT32_MAX)) : equal(signExtended(low), value), isNoInt32);
+    branchUnless(isNonNegative(range) ? belowOrEqual(value, integer(INT32_MAX)) : equal(signExtended(low), value), isNoInt32);
     return low;
 }
 
 Boxed ConversionEmitter::boxInteger(Integer value, Range range)
 {
-    Word32 low = low32(value);
     if (isWithinInt32(range))
-        return boxInt32(low);
+        return boxInt32(lowHalfOfIntegerToldInsideInt32(value));
+    Word32 low = low32(value);
     if (m_boxesNumbersByStub) {
         m_out.noteFormOf(boxings, Form::Closed, StateOfKnowledge::Always, m_placeThatBoxesByStub);
         return boxByStub(BoxedNumberForm::Integer, value.value());
@@ -474,7 +490,7 @@ Boxed ConversionEmitter::boxInteger(Integer value, Range range)
 Number ConversionEmitter::toNumber(Integer value, Range range)
 {
     if (isWithinInt32(range))
-        return toNumber(low32(value));
+        return toNumber(lowHalfOfIntegerToldInsideInt32(value));
     return toNumber(value);
 }
 
@@ -828,7 +844,11 @@ std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)
 
 Integer ConversionEmitter::widen(Word32 value, Range range)
 {
-    return isNonNegative(range) ? Integer(m_out.extendWordThatIsNotNegative(value.value())) : signExtended(value);
+    if (!isNonNegative(range))
+        return signExtended(value);
+    if (emittersCheckProofs())
+        stopUnlessToldRangeHolds(greaterThanOrEqual(value, word32(0)));
+    return Integer(m_out.extendWordThatIsNotNegative(value.value()));
 }
 
 Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)

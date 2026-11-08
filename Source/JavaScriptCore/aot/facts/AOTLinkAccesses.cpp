@@ -218,6 +218,7 @@ private:
     void storeBesideFieldsOf(LayoutID);
     bool resolveOnWhatStandsAbove(FlowNodeID above, unsigned stepsLeft);
     bool mayStoreIntoPrototypeLink() const { return m_access.kind == Kind::Store && m_keyMayNamePrototypeLink; }
+    std::span<const uint32_t> definitionsByDescriptorAtSite() const;
     FlowNodeID findValueThatWrittenDescriptorLays() const;
     bool changeLaysAccessorInSight() const;
     bool changeLaysWhatDescriptorsInSightHold();
@@ -888,12 +889,22 @@ bool AccessInLinkAccesses::readsUnderTextsThatBodyWrites()
     return true;
 }
 
+std::span<const uint32_t> AccessInLinkAccesses::definitionsByDescriptorAtSite() const
+{
+    const ThinSummary& summary = m_flow.summaries.at(m_function);
+    auto found = std::ranges::equal_range(summary.definitionsByDescriptorInOrderOfSites.span(), m_access.site.index(), { }, [&](uint32_t change) {
+        return summary.changes[change].site.index();
+    });
+    return { found.begin(), found.end() };
+}
+
 bool AccessInLinkAccesses::changeLaysWhatDescriptorsInSightHold()
 {
     if (m_shared || m_access.kind != Kind::Define || !m_access.isByDescriptor || !m_access.key || m_value != m_flow.unseen())
         return false;
-    for (const SummaryChange& change : m_flow.summaries.at(m_function).changes) {
-        if (change.site != m_access.site || change.kind != SummaryChange::Kind::DefinesByDescriptor || change.descriptorIsInSight || change.other == noSummaryNode)
+    for (uint32_t place : definitionsByDescriptorAtSite()) {
+        const SummaryChange& change = m_flow.summaries.at(m_function).changes[place];
+        if (change.descriptorIsInSight || change.other == noSummaryNode)
             continue;
         FlowNodeID descriptor = m_flow.nodeOf(m_function, change.other);
         tellAgainOnceClimbs(descriptor);
@@ -909,8 +920,9 @@ FlowNodeID AccessInLinkAccesses::findValueThatWrittenDescriptorLays() const
 {
     if (m_shared || m_access.kind != Kind::Define || !m_access.isByDescriptor || !m_access.key || m_value != m_flow.unseen())
         return { };
-    for (const SummaryChange& change : m_flow.summaries.at(m_function).changes) {
-        if (change.site == m_access.site && change.key == m_access.key && change.kind == SummaryChange::Kind::DefinesByDescriptor && change.descriptorIsInSight && change.descriptorLaysNoAccessor && change.valueInSight != noSummaryNode)
+    for (uint32_t place : definitionsByDescriptorAtSite()) {
+        const SummaryChange& change = m_flow.summaries.at(m_function).changes[place];
+        if (change.key == m_access.key && change.descriptorIsInSight && change.descriptorLaysNoAccessor && change.valueInSight != noSummaryNode)
             return m_flow.nodeOf(m_function, change.valueInSight);
     }
     return { };
@@ -920,8 +932,9 @@ bool AccessInLinkAccesses::changeLaysAccessorInSight() const
 {
     if (m_shared || m_access.kind != Kind::Define || !m_access.isByDescriptor || !m_access.key || m_value != m_flow.unseen())
         return false;
-    return std::ranges::any_of(m_flow.summaries.at(m_function).changes, [&](const SummaryChange& change) {
-        return change.site == m_access.site && change.key == m_access.key && change.kind == SummaryChange::Kind::DefinesByDescriptor && change.lays == SummaryChange::Lays::WhatDescriptorSays
+    return std::ranges::any_of(definitionsByDescriptorAtSite(), [&](uint32_t place) {
+        const SummaryChange& change = m_flow.summaries.at(m_function).changes[place];
+        return change.key == m_access.key && change.lays == SummaryChange::Lays::WhatDescriptorSays
             && change.descriptorIsInSight && !change.descriptorLaysNoAccessor;
     });
 }
@@ -1194,7 +1207,7 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
     }
 
     if (isRead()) {
-        giveFrom(foundBesideFieldsOf(id));
+        giveFrom(m_flow.foundBesideFieldsFor(id, m_access.key));
         if (foundOnPrototypes)
             giveFrom(foundOnPrototypes);
         if (field) {
@@ -1248,7 +1261,7 @@ void AccessInLinkAccesses::resolvePrototypeLinkOfLayout(LayoutID id, const Layou
             give(prototypeForLinkAccesses(id));
         else
             giveAnything();
-        giveFrom(foundBesideFieldsOf(id));
+        giveFrom(m_flow.foundBesideFieldsFor(id, m_access.key));
         giveFrom(m_flow.appendedField(id, m_access.key));
         return;
     case Kind::Store:
@@ -1548,7 +1561,7 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
     }
     bool goesOnAboveClasses = members.lookupGoesOnAboveClasses();
     if (goesOnAboveClasses && isRead())
-        giveFrom(foundBesideFieldsOf(id));
+        giveFrom(m_flow.foundBesideFieldsFor(id, m_access.key));
     if (goesOnAboveClasses && isRead() && !isPrivateName) {
         if (m_nameClass == NameClass::Constructor && m_flow.isBelowConstructorFunction(id))
             giveConstructorsOfRowAbove(id);
@@ -1776,7 +1789,7 @@ void AccessInLinkAccesses::resolvePrototypePropertyOf(FunctionID function, Layou
 {
     if (isRead()) {
         give(prototypeForLinkAccesses(constructed));
-        giveFrom(foundBesideFieldsOf(constructed));
+        giveFrom(m_flow.foundBesideFieldsFor(constructed, m_access.key));
         if (!m_shared && m_flow.isOfConstructorFunction(constructed) && !m_flow.functionsThatReadPrototypeObjects.get(m_function.index()))
             m_flow.note(LinkFlow::Note::PrototypeObjectRead, m_function.index());
         return;

@@ -515,7 +515,23 @@ void ElementAccessEmitter::generateSetArrayLength(const ValueContext& value)
     Integer length = integerOf(value->lengthOperand());
     StubKey stub = setArrayLength(value->mode() == ECMAMode::Sloppy);
     build().statistics().count(StatisticID::LengthsStoredIntoProvenLists);
-    callStub(value, stub, { array.value(), length.value() });
+    if (!generator().paysForCodeInLine(value.block())) {
+        callStub(value, stub, { array.value(), length.value() });
+        return;
+    }
+    using Asked = ListWhoseLengthIsStoredWithoutRunTime;
+    LBasicBlock otherwise = newBlock();
+    LBasicBlock done = newBlock();
+    branchUnless(belowOrEqual(sub(indexingMode(array, IndexingShapeAndWritabilityMask), Asked::firstKind), Asked::lastKind - Asked::firstKind), otherwise);
+    branchUnless(isZero(bitAnd(loadField<Word32>(loadStructure(array), m_heaps.Structure_bitField), word32(Asked::bitsThatItsStructureMayNotHave))), otherwise);
+    branchUnless(equal(publicLength(elementsOf(array)), length), otherwise);
+    m_out.jump(done);
+
+    m_out.appendTo(otherwise);
+    callStub(value, stub, { array.value(), length.value() }, { .isOnRarePath = true });
+    m_out.jump(done);
+
+    m_out.appendTo(done);
 }
 
 bool ElementAccessEmitter::testsEveryPosition()
@@ -739,6 +755,15 @@ Boxed ElementAccessEmitter::readBoxedElement(const ValueContext& value, const Ar
     return rawElement;
 }
 
+bool ElementAccessEmitter::asksTruthOfRawElement(ValueID read)
+{
+    const Operation& operation = generator().code().at(read);
+    if (operation.opcode != Opcode::GetArrayElement || findArrayStorageForm(operation.arrayStorage()) || operation.level() != KnowledgeLevel::Proven || !operation.isInBounds() || operation.asksCellWhereNothingIsFound() || operation.readsHoleAsNaN())
+        return false;
+    std::optional<ArrayStorage> found = generator().kindOfListFoundInFrontOfTurnsLaidOut(operation.arrayOperand());
+    return found && holdsOnlyNumbers(*found);
+}
+
 void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
 {
     if (!accessToElementsHasCode(Opcode::GetArrayElement, value->arrayStorage(), value->admitsInt32Storage(), false)) {
@@ -748,6 +773,14 @@ void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
     }
     if (liesInsideLength(generator(), value))
         holdPositionInsideList(value);
+    if (value.isBranchCondition()) {
+        static_assert(!static_cast<uint32_t>(JSValue::ValueEmpty));
+        const ArrayStorageForm& form = arrayStorageFormOf(*kindOfListFoundInFrontOfTurns(value, value->arrayOperand()));
+        Operand raw = loadRawElement(form, elementsOf(value, in<CellPointer>(value->arrayOperand())), indexInsideLength(value->positionOperand()));
+        branch(form.kind == ArrayStorage::Double ? isNeitherZeroNorNaN(raw.as<Number>()) : isNotZero(low32(raw.as<Boxed>())), value.branchTargets());
+        build().statistics().count(StatisticID::TruthsAskedOfRawElementsInTurnsLaidOut);
+        return;
+    }
     if (GuessedAccessEmitter::testsForItself(value)) {
         emitter<GuessedAccessEmitter>().generateElementRead(value);
         return;

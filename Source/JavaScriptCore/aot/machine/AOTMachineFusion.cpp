@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineFolding.h"
 #include "AOTSlotRepresentation.h"
 #include <algorithm>
@@ -1395,7 +1396,7 @@ static bool parseSumTestedByOverflow(const Operation* branch, SumTestedByOverflo
     return true;
 }
 
-bool mayTestSumByOverflow(const Operation* branch)
+ALWAYS_INLINE_INTO_OTHER_FILES bool mayTestSumByOverflow(const Operation* branch)
 {
     if (!branchMayReadSumOfExtendedWords(branch))
         return false;

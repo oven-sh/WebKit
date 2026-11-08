@@ -59,6 +59,7 @@ public:
     void generateGetEnumeratorIndexedLength(const ValueContext&);
     void generateIsElementInStorage(const ValueContext&);
     void generateGetElementInStorageOrAbsent(const ValueContext&);
+    bool asksTruthOfRawElement(ValueID read);
     void generateGetStringLength(const ValueContext&);
     void generateGetStringCodeUnit(const ValueContext&);
 

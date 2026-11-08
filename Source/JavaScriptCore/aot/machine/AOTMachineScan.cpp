@@ -840,7 +840,7 @@ static ALWAYS_INLINE void noteScannedCall(BackwardScan& scan, const PatchOperati
         }
     }
     if (patch->effects.mayCollect) {
-        RELEASE_ASSERT(!patch->runsWithoutFrame() || patch->effects.terminal || patch->showsRegistersToCollector());
+        RELEASE_ASSERT(!patch->runsWithoutFrame() || (patch->effects.terminal && !patch->owner()->numSuccessors()) || patch->showsRegistersToCollector());
         scan.m_nextSafepoint = late;
         isEvent = true;
     }

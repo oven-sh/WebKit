@@ -717,14 +717,29 @@ static std::optional<uint32_t> numberOfBoundArgumentsThatLinkWrites(Walker& walk
     return static_cast<uint32_t>(std::min<int64_t>(written.integers.minimum, UINT32_MAX));
 }
 
-static std::optional<uint32_t> numberOfArgumentsBoundInSight(Walker& walker, ValueID callee, const ClassPart& expected)
+static bool isCalledAsMethodOfFunction(Walker& walker, const BodyValue& call, FunctionID function)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto operation = call.as<Opcode::Call>();
+    ValueID read = index.valueBehindCasts(operation.calleeOperand());
+    if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet || !operation.thisValueOperand())
+        return false;
+    ValueID receiver = index.value(read).objectOperand();
+    if (index.valueBehindCasts(receiver) != index.valueBehindCasts(operation.thisValueOperand()))
+        return false;
+    Reference holder = walker.referenceOf(receiver);
+    TypeID type = holder ? walker.typeOf(holder) : TypeID();
+    return type && walker.types().at(type).isObject() && singleFunctionOf(walker.types(), walker.types().at(type)) == function;
+}
+
+static std::optional<uint32_t> numberOfArgumentsBoundInSight(Walker& walker, ValueID callee, const ClassPart& expected, FunctionID target)
 {
     TypeID bound = expected.writtenContentsAt(walker.program().builtins(), ContentsSlot::Element);
     if (!bound || isNeverType(bound))
         return 0;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID made = index.valueBehindCasts(callee);
-    if (!made || index.isParameter(made) || index.opcodeOf(made) != Opcode::Call)
+    if (!made || index.isParameter(made) || index.opcodeOf(made) != Opcode::Call || !isCalledAsMethodOfFunction(walker, index.value(made), target))
         return numberOfBoundArgumentsThatLinkWrites(walker, expected);
     size_t passed = index.value(made).as<Opcode::Call>().argumentsOperands().size();
     return passed ? static_cast<uint32_t>(passed - 1) : 0;
@@ -800,7 +815,7 @@ static std::optional<TargetOfBoundFunctionExpected> findTargetOfBoundFunctionExp
         return std::nullopt;
     TypeID targets = expected->writtenContentsAt(walker.program().builtins(), ContentsSlot::Value);
     FunctionID target = targets && types.at(targets).isObject() ? singleFunctionOf(types, types.at(targets)) : FunctionID();
-    std::optional<uint32_t> numberOfBoundArguments = target ? numberOfArgumentsBoundInSight(walker, callee, *expected) : std::nullopt;
+    std::optional<uint32_t> numberOfBoundArguments = target ? numberOfArgumentsBoundInSight(walker, callee, *expected, target) : std::nullopt;
     if (!numberOfBoundArguments || *numberOfBoundArguments > JSBoundFunction::maxEmbeddedArgs || !walker.facts().linked().mayBeMentionedBy(walker.unit(), target))
         return std::nullopt;
     return TargetOfBoundFunctionExpected { target, *numberOfBoundArguments, expectation.isDeclared };

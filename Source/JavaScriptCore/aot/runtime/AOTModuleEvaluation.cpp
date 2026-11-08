@@ -590,8 +590,10 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
     if (isUnderAnotherEvaluation && bodyStoresStatus) [[unlikely]]
         mayBeginHere = noteModulesThatMayBeginUnder(mark, module);
     m_instance.modules.evaluatingMark = mark;
-    if (ModuleID file = m_table.fileBehindFace(module).value_or(module); data(file).mayBeImportedWhileItRuns()) [[unlikely]]
+    if (ModuleID file = m_table.fileBehindFace(module).value_or(module); data(file).mayBeImportedWhileItRuns()) [[unlikely]] {
         ensureLoaded(file).synchronousLoadCountAtStart = m_synchronousLoadCount;
+        ensureLoaded(file).beganInsideSynchronousLoad = m_activeSynchronousLoad;
+    }
     JSValue result = callBody(module);
     m_instance.modules.evaluatingMark = outerMark;
     for (auto [left, markBefore] : mayBeginHere) {
@@ -2951,6 +2953,60 @@ void Modules::leaveStepsOfLoaderToJobs()
     steps.shrink(0);
 }
 
+static JSC_DECLARE_HOST_FUNCTION(didSettleFactoriesThatRequireLeftInModuleEvaluation);
+static JSC_DECLARE_HOST_FUNCTION(didFailFactoryThatRequireLeftInModuleEvaluation);
+
+JSC_DEFINE_HOST_FUNCTION(didSettleFactoriesThatRequireLeftInModuleEvaluation, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    Modules* modules = modulesOf(realm);
+    ModuleID required(callFrame->argument(1).asUInt32());
+    modules->didGoOnBehindFactories();
+    bool isForgotten = !modules->isWaitThatRequireLeftKept(required);
+    modules->runMocksBelow(required);
+    if (isForgotten)
+        modules->dropErrorsOfLoadsEndedByMocks();
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(didFailFactoryThatRequireLeftInModuleEvaluation, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    modulesOf(realm)->didGoOnBehindFactories();
+    if (ModuleID required(callFrame->argument(1).asUInt32()); modulesOf(realm)->isWaitThatRequireLeftKept(required))
+        modulesOf(realm)->keepErrorOfFactoryThatRequireLeft(required, callFrame->argument(0));
+    return throwVMError(realm, scope, callFrame->argument(0));
+}
+
+void Modules::keepErrorOfFactoryThatRequireLeft(ModuleID required, JSValue error)
+{
+    keepErrorOfLoad(required, error, [&](ModuleID each) { return isMocked(each) && m_modulesWithMockThatWaited.get(each.index()); });
+    if (!m_modulesWithLoadEndedByMock.set(required.index()))
+        ensureLoaded(required).errorKeptByLoader.set(*this, error);
+}
+
+void Modules::waitForFactoriesThatRequireLeft(ModuleID required)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    m_waitsThatRequiresLeft.removeAllMatching([](const auto& left) { return left.second->status() != JSPromise::Status::Pending; });
+    if (size_t left = m_waitsThatRequiresLeft.findIf([&](const auto& each) { return each.first == required; }); left != notFound) {
+        m_waitsThatRequiresLeft[left].second->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), JSPromise::create(vm, realm->promiseStructure()));
+        return;
+    }
+    JSValue state;
+    JSPromise* factories = factoryThatWaitsBelow(required, FactoryAskedForBy::ImportCallBehindItsText, state);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!factories)
+        return;
+    JSPromise* wait = JSPromise::create(vm, realm->promiseStructure());
+    JSFunction* didSettle = JSFunction::create(vm, realm, 2, String(), didSettleFactoriesThatRequireLeftInModuleEvaluation, ImplementationVisibility::Private);
+    JSFunction* didFail = JSFunction::create(vm, realm, 2, String(), didFailFactoryThatRequireLeftInModuleEvaluation, ImplementationVisibility::Private);
+    factories->performPromiseThenWithContext(vm, realm, didSettle, didFail, wait, jsNumber(required.index()));
+    wait->markAsHandled();
+    m_waitsThatRequiresLeft.append({ required, Strong<JSPromise>(vm, wait) });
+}
+
 void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason reason)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -3014,7 +3070,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         }
         RELEASE_AND_RETURN(scope, captureExportsOfFilesBeingEvaluated(module));
     case ModuleStatus::EvaluatingAsync:
-        throwAsyncModuleError();
+        if (!isMocked(module) || !m_modulesThatRanBesideMock.get(module.index()))
+            throwAsyncModuleError();
         return;
     case ModuleStatus::Unlinked:
         break;
@@ -3313,6 +3370,11 @@ ModuleID Modules::formThatRequireFinds(ModuleID target)
 
 JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
 {
+    SetForScope noImportAsks(m_moduleThatWroteImportThatAsks, ModuleID());
+    if (auto* willLoad = m_mocks ? host().willLoad : nullptr) [[unlikely]]
+        willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadByName::Require);
+    if (referrer && m_goesModuleByModule) [[unlikely]]
+        noteRequireThatRunTimeAnswers(target, referrer);
     if (!referrer || !m_showsWaysBetweenModuleObjects) [[likely]]
         return answerRequire(target, referrer, requiredBy, FormThatAnswers::TheOneThatLoaderFinds);
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -3509,6 +3571,10 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     auto scope = DECLARE_THROW_SCOPE(vm);
     endMocksThatStoodForLoadsInFlight();
     RETURN_IF_EXCEPTION(scope, { });
+    if (!m_importsWhoseMocksRunWhenTheirTextsHaveCome.isEmpty()) [[unlikely]] {
+        walkInPlaceOfCallsHeldForTextOf(fileOf(target));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (standsForLoadsInFlight(target) && m_modulesWithMockToRun.get(target.index()) && !isEvaluatedByLoader(target) && haveLoadsInFlightTakenAnswerThatStandsOn(target)) [[unlikely]] {
         endMockThatStandsForLoadsInFlight(target);
         RETURN_IF_EXCEPTION(scope, { });
@@ -3558,6 +3624,11 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         RETURN_IF_EXCEPTION(scope, { });
         if (factoryHasNotSettled) [[unlikely]] {
             noteThatRequireGaveUpOn(target);
+            if (loadsOfFactories) {
+                loadsOfFactories.reset();
+                waitForFactoriesThatRequireLeft(target);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
             throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(target)));
             return { };
         }
@@ -3685,17 +3756,9 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         RELEASE_ASSERT(targetData.requireResult != RequireResult::ModuleExports);
         JSObject* namespaceObject = moduleNamespace(target, ModulePhase::Evaluation);
         RETURN_IF_EXCEPTION(scope, { });
-        if (m_moduleExportsName.isNull())
-            m_moduleExportsName = Identifier::fromString(vm, "module.exports"_s);
-        JSValue esModule = readExportForRequire(namespaceObject, vm.propertyNames->__esModule);
+        result = whatRequireMakesOfNamespace(namespaceObject);
         RETURN_IF_EXCEPTION(scope, { });
-        JSValue moduleExports;
-        if (esModule) {
-            moduleExports = readExportForRequire(namespaceObject, m_moduleExportsName);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
         markNamespaceAsRequired(target);
-        result = !moduleExports || moduleExports.isUndefinedOrNull() ? JSValue(namespaceObject) : moduleExports;
     }
     if (!isAnsweredAsByLoader)
         loaded.requiredValue.set(*this, result);
@@ -4131,6 +4194,10 @@ NEVER_INLINE void Modules::lookAtExportsOfModuleObject(ModuleID module, RequireA
 template<Modules::RequireAnsweredBy answeredBy>
 void Modules::recordRequire(ModuleID target, ModuleID referrer)
 {
+    if constexpr (answeredBy == RequireAnsweredBy::CompiledCode) {
+        if (auto* willLoad = m_mocks ? host().willLoad : nullptr) [[unlikely]]
+            willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadByName::Require);
+    }
     const ModuleData& targetData = data(target);
     bool isCommonJSFile = targetData.kind == ModuleKind::CommonJs;
     if (!isCommonJSFile)
@@ -4503,6 +4570,22 @@ void Modules::markNamespaceAsRequired(ModuleID module)
     auto* namespaceObject = uncheckedDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation));
     if (namespaceObject && !namespaceObject->hasExport(m_instance.vm->propertyNames->__esModule.impl()))
         namespaceObject->setESModuleMarker(true);
+}
+
+JSValue Modules::whatRequireMakesOfNamespace(JSObject* namespaceObject)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_moduleExportsName.isNull())
+        m_moduleExportsName = Identifier::fromString(vm, "module.exports"_s);
+    JSValue esModule = readExportForRequire(namespaceObject, vm.propertyNames->__esModule);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue moduleExports;
+    if (esModule) {
+        moduleExports = readExportForRequire(namespaceObject, m_moduleExportsName);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return !moduleExports || moduleExports.isUndefinedOrNull() ? JSValue(namespaceObject) : moduleExports;
 }
 
 JSValue Modules::readExportForRequire(JSObject* namespaceObject, const Identifier& name)

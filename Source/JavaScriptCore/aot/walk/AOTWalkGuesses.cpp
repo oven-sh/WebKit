@@ -2221,7 +2221,7 @@ static TypeID kindThatFieldsOfLayoutsHoldForGuesses(Walker& walker, const BodyVa
     return proven;
 }
 
-bool isShapedLikeLayoutsThatItCanNeverBe(Walker& walker, ValueID value)
+ALWAYS_INLINE_INTO_OTHER_FILES bool isShapedLikeLayoutsThatItCanNeverBe(Walker& walker, ValueID value)
 {
     return !!layoutsThatValueIsShapedLikeForGuesses(walker, value);
 }
@@ -3929,6 +3929,57 @@ static Reference buildProofOfGuess(Walker& walker, Reference value, Reference te
     if (proven && chosen.layouts)
         walker.state().noteShape(proven, walker.typeOf(proven));
     return proven;
+}
+
+bool askWhetherHolderOfStoreInClosedArmOfLoopIsListOfItsOpcodes(Walker& walker, const BodyValue& store)
+{
+    if (!walker.isInLoop() || walker.unit().role != CodeRole::Body || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::LoopInvariants) || walker.code().at(walker.currentBlock()).frequency == BlockFrequency::Rare)
+        return false;
+    TypeArena& types = walker.types();
+    Reference holder = walker.referenceOf(store.objectOperand());
+    Reference key = walker.referenceOf(store.propertyOperand());
+    if (!holder || !holder.isValue() || !key || !types.at(walker.typeOf(key)).isInteger() || !saysNothingForGuesses(types, walker.typeOf(holder)))
+        return false;
+    Walker::ReadWhoseGuessIsOpen opened { walker.depthOfCopies(), store.id() };
+    if (walker.readWhoseGuessIsOpen() == opened)
+        return false;
+    SetForScope isOpen(walker.readWhoseGuessIsOpen(), opened);
+
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(store.id()));
+    uint32_t place = store.id().index() - block.firstValue().index();
+    Origin origin = walker.originOf(store);
+    origin.isTailCall = false;
+    TypeID anyList = types.builtinClass(BuiltinClasses::Array);
+    TypeID expected = findExpectationForGuesses(walker, store.objectOperand()).type;
+    TypeID listExpected = expected ? types.withOnlyObjects(types.withoutNullish(expected)) : TypeID();
+    TestOfGuess chosen { listExpected && !isNeverType(listExpected) && types.isSubset(listExpected, anyList) ? listExpected : anyList, { } };
+    Reference isList = buildTestOfGuess(walker, holder, chosen, origin);
+    if (!isList || !isList.isValue() || walker.isUnreachable())
+        return false;
+    BlockID typed = walker.addBlock();
+    BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
+    BlockID meeting = walker.addBlock();
+    walker.branch(isList, typed, asWritten);
+
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1);
+    Walker::ArmsThatMeet arms;
+    walker.walkClosedArm(asWritten, stretch, arms);
+    if (walker.hasFailed())
+        return true;
+
+    walker.continueIn(typed);
+    {
+        Reference list = buildProofOfGuess(walker, holder, isList, chosen, origin);
+        Walker::StandIn listInPlaceOfHolder(walker, store.objectOperand(), list ? list : holder);
+        if (!buildTypedOperation(walker, store))
+            walker.copy(store);
+    }
+    walker.count(StatisticID::StoresInLoopsThatAskWhetherTheirHolderIsAList);
+    walker.listArm(stretch, arms);
+    if (!walker.hasFailed())
+        walker.letArmsMeet(stretch, arms, meeting);
+    return true;
 }
 
 static TypeID typeAskedOfStoredValueForGuesses(Walker& walker, const BodyValue& store, TypeID typeOfObject, TypeID typeOfValue)
@@ -7471,6 +7522,12 @@ void forEachTypeThatGuessWouldProveAt(Walker& walker, const BodyValue& operation
         TypeID held = typesOfInputs(operand);
         if (!held || types.isSubset(held, chosen->tested) || !types.overlap(held, chosen->tested))
             return;
+        if (allBitwiseOperators.contains(operation.opcode()) && types.at(held).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull | Primitive::Boolean)) {
+            const BodyIndex& index = walker.currentBodyIndex();
+            LoopID loop = index.loopOf(index.blockOf(operation.id()));
+            if (loop && !index.isInLoop(index.blockOf(index.valueBehindCasts(operand)), loop))
+                return;
+        }
         functor(operand, expectation.type, types.intersectionOf(held, chosen->tested));
     });
     walker.setTypesOfInputsInLook(nullptr);
@@ -9885,6 +9942,21 @@ bool otherHolderOfLoopMayBeListForGuesses(Walker& walker, BlockID inputHead, Ref
     return false;
 }
 
+static bool wordOfWhatNameFindsOnUnknownObjectIsDrawnFromUseForGuesses(Walker& walker, ValueID operand)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    TypeArena& types = walker.types();
+    ExpectationForGuesses expectation = findExpectationForGuesses(walker, operand);
+    if (!expectation.type || expectation.isDeclared || expectation.isHeld)
+        return false;
+    ValueID found = index.valueBehindCasts(operand);
+    if (!found || index.isParameter(found) || index.opcodeOf(found) != Opcode::PropGet || index.value(found).isFreeName())
+        return false;
+    TypeID receiver = findExpectationForGuesses(walker, index.value(found).objectOperand()).type;
+    TypeID objects = receiver ? types.withoutNullish(receiver) : TypeID();
+    return !objects || isNeverType(objects) || !types.at(objects).layouts;
+}
+
 bool wordOfFieldThatFindsValueIsDrawnFromUseForGuesses(Walker& walker, ValueID operand)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -10616,6 +10688,11 @@ Vector<GuessInFrontOfLoop, 4> findMembersToldApartInFrontOfLoop(Walker& walker, 
                 parts = textAndListWhoseElementsMeetCharactersForGuesses(walker, operand, text);
             if (readOfVariable && parts.size() < 2 && expected && saysNothingForGuesses(types, proven) && !findExpectationForGuesses(walker, operand).isHeld && listOfVariableIsExpectedByUseForGuesses(walker.program(), index.value(readOfVariable)) && isDeclaredToHoldNumbersAlone(walker.program(), types, types.withOnlyObjects(expected)) && operatorThatElementGoesThroughForGuesses(walker, operation))
                 parts = listBytesAndOtherViewsForGuesses(types, types.withOnlyObjects(expected), text.multipliesElementsOf(inFront), text.turnsCall());
+            if (!readOfVariable && parts.size() < 2 && expected && saysNothingForGuesses(types, proven) && operation.opcode() == Opcode::ElemSet && types.at(typeInLook(operation.propertyOperand())).isInteger() && !turnsCallWhatNobodyKnows()
+                && wordOfWhatNameFindsOnUnknownObjectIsDrawnFromUseForGuesses(walker, operand) && isDeclaredToHoldNumbersAlone(walker.program(), types, types.withOnlyObjects(expected))) {
+                parts = listBytesAndOtherViewsForGuesses(types, types.withOnlyObjects(expected), !types.at(typeInLook(operation.valueOperand())).isInteger(), false);
+                parts.removeAt(0);
+            }
             if (!readOfVariable && parts.size() < 2 && expected && saysNothingForGuesses(types, proven) && !findExpectationForGuesses(walker, operand).isHeld && wordOfFieldThatFindsValueIsDrawnFromUseForGuesses(walker, operand) && isDeclaredToHoldNumbersAlone(walker.program(), types, types.withOnlyObjects(expected)) && operation.opcode() == Opcode::ElemGet && keySpeaksForIndexForGuesses(index, operation))
                 parts = listBytesAndOtherViewsForGuesses(types, types.withOnlyObjects(expected), text.multipliesElementsOf(inFront), text.turnsCall());
             if (!readOfVariable && parts.isEmpty() && operation.opcode() != Opcode::Call && saysNothingForGuesses(types, proven))

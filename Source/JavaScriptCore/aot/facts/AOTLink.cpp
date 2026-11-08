@@ -220,12 +220,18 @@ void LinkTables::indexMembersByKey(const Program& program, AskedByKey whoAsksByK
     });
 }
 
-static LayoutID nearestClassWithMemberUnderInLinkTables(const LinkTables& tables, LayoutID layout, ClassSide side, PropertyKeyID key, bool& isKnown)
+std::span<const uint32_t> LinkTables::membersUnderKeyAlongRows(ClassSide side, PropertyKeyID key) const
 {
-    auto underKey = std::ranges::equal_range(tables.membersByKeyAlongRows, std::pair { side, key }, { }, [&](uint32_t place) {
-        const LinkedMember& member = tables.members[place];
+    auto underKey = std::ranges::equal_range(membersByKeyAlongRows, std::pair { side, key }, { }, [&](uint32_t place) {
+        const LinkedMember& member = members[place];
         return std::pair { member.side, member.key };
     });
+    return { underKey.begin(), underKey.end() };
+}
+
+static LayoutID nearestClassWithMemberUnderInLinkTables(const LinkTables& tables, LayoutID layout, ClassSide side, PropertyKeyID key, bool& isKnown)
+{
+    std::span<const uint32_t> underKey = tables.membersUnderKeyAlongRows(side, key);
     uint32_t placeInRows = tables.placesOfLayoutsInRows[layout.index()];
     auto behind = std::ranges::upper_bound(underKey, placeInRows, { }, [&](uint32_t place) {
         return tables.placesOfLayoutsInRows[tables.members[place].classLayout.index()];
@@ -245,10 +251,7 @@ static LayoutID nearestClassWithMemberUnderInLinkTables(const LinkTables& tables
 
 bool LinkTables::someClassAtOrAboveDeclares(const Program& program, std::span<const StretchOfRows> stretches, ClassSide side, PropertyKeyID key, uint32_t& classesAsked) const
 {
-    auto underKey = std::ranges::equal_range(membersByKeyAlongRows, std::pair { side, key }, { }, [&](uint32_t place) {
-        const LinkedMember& member = members[place];
-        return std::pair { member.side, member.key };
-    });
+    std::span<const uint32_t> underKey = membersUnderKeyAlongRows(side, key);
     if (underKey.empty())
         return false;
     auto placeOfDeclarer = [&](uint32_t place) {
@@ -1511,6 +1514,20 @@ static NEVER_INLINE Vector<LinkedGetterAtRead> findGettersReadOffTablesWhileWays
     for (size_t index : flow.reached) {
         FunctionID function(static_cast<uint32_t>(index));
         const ThinSummary& summary = flow.summaries.at(function);
+        for (const SummaryChange& change : summary.changes) {
+            if (change.kind != SummaryChange::Kind::DefinesByDescriptor || !change.key || !change.descriptorIsInSight || change.getterInSight == noSummaryNode || change.setterInSight != noSummaryNode || liesInThread(change.key))
+                continue;
+            FlowNodeID target = flow.nodeOf(function, change.subject);
+            LayoutID record = recordAt(target);
+            if (!record)
+                continue;
+            const SummaryNode& laid = summary.nodes[change.getterInSight];
+            bool isOneFunction = laid.kind == SummaryNode::Kind::Closure && flow.reached.get(laid.first) && program.at(FunctionID(laid.first)).hasBody();
+            auto added = getters.add(static_cast<uint64_t>(record.index()) << 32 | change.key.index(), isOneFunction ? laid.first : several);
+            if (!added.isNewEntry && added.iterator->value != (isOneFunction ? laid.first : several))
+                added.iterator->value = several;
+            fillings.append({ record, target, { } });
+        }
         if (summary.inspections.isEmpty() || !std::ranges::contains(summary.inspections, ThinSummary::Inspection::Kind::ListsKeys, &ThinSummary::Inspection::kind))
             continue;
         for (const SummaryCall& call : summary.calls) {
@@ -1632,7 +1649,7 @@ static NEVER_INLINE Vector<LinkedGetterAtRead> findGettersReadOffTablesWhileWays
     if (readers.isEmpty())
         return reads;
     for (const Filling& filling : fillings) {
-        if (recordsThatAreRead.get(filling.record.index()))
+        if (filling.tables && recordsThatAreRead.get(filling.record.index()))
             noteNamesOf(filling.record, filling.tables);
     }
     const BodyIndexTable& bodies = bodiesLookedAt(flow.looks);
@@ -1704,6 +1721,8 @@ void WriterOfLink::writeGettersExpectedAtReads()
             if (FunctionID getter = holder ? laid.find(*holder, access.key) : FunctionID())
                 reads.append(LinkedGetterAtRead { function, access.site, getter });
         }
+        if (reads.size() - first < 2)
+            return;
         std::ranges::sort(reads.mutableSpan().subspan(first));
         for (size_t place = first; place + 1 < reads.size();) {
             if (reads[place].site != reads[place + 1].site) {
@@ -1892,6 +1911,39 @@ void WriterOfLink::writeResultsOfReadsByKey()
     };
     PropertyKeyID valueOfStep = m_program.keyOf(BuiltinNames::value);
     PropertyKeyID nextOfStep = m_program.keyOf(BuiltinNames::next);
+    BitVector layoutsFilledUnderUnknownNames(m_program.layouts.size());
+    BitVector lostFamiliesFilledUnderUnknownNames(m_program.layouts.size());
+    for (uint32_t layout = 0; layout < m_program.layouts.size() && !writesWhatIsExpected(); ++layout) {
+        if (!m_flow.isFilledUnderUnknownNames(LayoutID(layout)))
+            continue;
+        layoutsFilledUnderUnknownNames.quickSet(layout);
+        lostFamiliesFilledUnderUnknownNames.quickSet(m_flow.unitedLayouts.representativeWithoutShortening(layout));
+    }
+    BitVector familiesFilledUnderUnknownNames;
+    if (!layoutsFilledUnderUnknownNames.isEmpty()) {
+        familiesFilledUnderUnknownNames = m_flow.families.familiesWithSomeMemberThat([&](LayoutID member) {
+            return layoutsFilledUnderUnknownNames.quickGet(member.index());
+        });
+    }
+    auto mayBeFilledUnderUnknownNames = [&](const LinkType& subject) {
+        switch (subject.objects) {
+        case LinkType::Objects::None:
+        case LinkType::Objects::Prototype:
+        case LinkType::Objects::Prototypes:
+            return false;
+        case LinkType::Objects::Layout:
+            return layoutsFilledUnderUnknownNames.quickGet(subject.layout.index());
+        case LinkType::Objects::Set:
+            return std::ranges::any_of(m_flow.layoutsOfSet(subject), [&](LayoutID member) {
+                return layoutsFilledUnderUnknownNames.quickGet(member.index());
+            });
+        case LinkType::Objects::Family:
+            return familiesFilledUnderUnknownNames.get(subject.family.index());
+        case LinkType::Objects::Lost:
+            return subject.layout && lostFamiliesFilledUnderUnknownNames.quickGet(m_flow.unitedLayouts.representativeWithoutShortening(subject.layout.index()));
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
     Vector<Read> found = collectInParallel<Read>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<Read>& readsOfChunk) {
         if (!m_flow.reached.get(index))
             return;
@@ -1912,6 +1964,8 @@ void WriterOfLink::writeResultsOfReadsByKey()
             if (access.key && !isWhatStepHandsOut(access))
                 continue;
             if (textsMayBeOpened && (access.key || !spellsNoText(function, access)))
+                continue;
+            if (!access.key && mayBeFilledUnderUnknownNames(m_flow.typeAt(m_flow.nodeOf(function, access.subject))))
                 continue;
             readsOfChunk.append(Read { function, access.site, m_flow.nodeOf(function, access.value) });
         }
@@ -3545,9 +3599,12 @@ LinkTables link(std::unique_ptr<LinkFlow>&& flowAtStart, TurnsOfReadings* turns)
         asItIs = linkProgramAsItIs(program, flow.summaries, flow.families, flow.looks, mechanisms, build, flow.orderOfWorklist(), flow.setsDeclaredInProgram);
     if (asItIs && givesMoreToRunOnProgramAsItIs(build)) [[unlikely]]
         flow.isGivenMore = false;
+    StepTimes steps(build, "facts"_s);
     flow.reachEntries();
     seedCellsSharedWithUnseenCode(flow);
+    steps.didFinish("Link: entries are reached"_s);
     flow.run();
+    steps.didFinish("Link: the flow runs"_s);
     build.statistics().count(StatisticID::SymbolsWithPreparationThatGoByValue, flow.numberOfSymbolsThatGoByValue());
     if (String sleeper = flow.describeSleeperThatMayFindSomething(); !sleeper.isNull()) [[unlikely]]
         build.diagnostics().add(InternalError { .kind = InternalErrorKind::FlowEndedTooEarly, .count = 1, .detail = sleeper });
@@ -3567,7 +3624,9 @@ LinkTables link(std::unique_ptr<LinkFlow>&& flowAtStart, TurnsOfReadings* turns)
     Vector<LinkedGetterAtRead> gettersReadOffTables;
     if (turns && mechanisms.contains(Mechanism::DirectCalls))
         gettersReadOffTables = findGettersReadOffTablesWhileWaysOfFlowStand(flow);
+    steps.didFinish("Link: what is asked of the flow at rest"_s);
     flow.forgetWaysOfFlow();
+    steps.didFinish("Link: the ways of the flow are forgotten"_s);
     if (!turns) {
         LinkTables tables = writeTablesOfProvingReading(program, mechanisms, ownedFlow);
         if (asItIs) [[unlikely]]
@@ -3579,6 +3638,7 @@ LinkTables link(std::unique_ptr<LinkFlow>&& flowAtStart, TurnsOfReadings* turns)
     SizeOfLinkFlow sizeOfFlow = flow.size();
     bool unseenCodeCanRun = flow.builtinsInReach().unseenCodeCanRun();
     LinkTables tables;
+    steps.didFinish("Link: the view of the held reading"_s);
     runLanes(flow.loops, 2, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
         if (!lane) {
             writeTablesOfProvingReading(program, mechanisms, ownedFlow, turns, tables);
@@ -3614,6 +3674,7 @@ LinkTables link(std::unique_ptr<LinkFlow>&& flowAtStart, TurnsOfReadings* turns)
         }
         destroyInBackground(build.backgroundJobs(), WTF::move(view));
     });
+    steps.didFinish("Link: the tables of both readings"_s);
     if (asItIs) [[unlikely]]
         stopWhereLinkFindsLessFromMore(program, build, *asItIs, tables);
     return tables;

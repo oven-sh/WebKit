@@ -24,7 +24,7 @@ static bool loadOrStoreMovesNumber(const Operation* access)
 }
 
 template<typename Functor>
-static void withOperandOfLoadOrStore(const AddressForm& form, const Functor& functor)
+static ALWAYS_INLINE void withOperandOfLoadOrStore(const AddressForm& form, const Functor& functor)
 {
     static_assert(!MacroAssembler::TimesOne && MacroAssembler::TimesTwo == 1 && MacroAssembler::TimesFour == 2 && MacroAssembler::TimesEight == 3);
     switch (form.kind) {

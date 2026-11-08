@@ -673,8 +673,10 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             if (module != walk.root()) {
-                if (ModuleID file = fileOf(module); !isMocked(file) && !mockInPlace(file))
-                    m_facesThatTookCopiesForMock.clear(module.index());
+                if (!mockInPlace(fileOf(module))) {
+                    takeCopiesAnewWhereMockCallAloneTookThem(module);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
                 bindLatestCapture(module);
                 RETURN_IF_EXCEPTION(scope, void());
             }
@@ -898,7 +900,16 @@ void Modules::captureExports(ModuleID module)
         if (hasCapturedFields)
             RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 
-        deferredExportsSource = host().captureSyntheticExports(realm, captureRuleOf(data(module)), value, names, values);
+        JSObject* standIn = m_copiesThatGettersGave && m_faceWhoseGettersKeepTheirCopies == module ? standInWhoseGettersAreTheirCopies(value, m_copiesThatGettersGave) : nullptr;
+        RETURN_IF_EXCEPTION(scope, void());
+        if (standIn) {
+            MarkedArgumentBuffer read;
+            host().captureSyntheticExports(realm, captureRuleOf(data(module)), standIn, names, read);
+            RETURN_IF_EXCEPTION(scope, void());
+            for (unsigned i = 0; i < read.size(); ++i)
+                values.append(read.at(i) == JSValue(standIn) ? value : read.at(i));
+        } else
+            deferredExportsSource = host().captureSyntheticExports(realm, captureRuleOf(data(module)), value, names, values);
         RETURN_IF_EXCEPTION(scope, void());
     }
     if (values.hasOverflowed()) [[unlikely]] {
@@ -935,6 +946,62 @@ void Modules::copyExportsOfFinishedFile(ModuleID face)
     MarkedArgumentBuffer values;
     scope.release();
     host().captureSyntheticExports(m_instance.globalObject, captureRuleOf(data(face)), value, names, values);
+}
+
+void Modules::takeCopiesAnewWhereMockCallAloneTookThem(ModuleID face)
+{
+    ModuleID file = fileOf(face);
+    if (isMocked(file) || !m_facesThatTookCopiesForMock.get(face.index()))
+        return;
+    bool wasImported = mockInPlace(file) || wasLoadedByImport(file) || namespaceIfCreated(face, ModulePhase::Evaluation);
+    m_facesThatTookCopiesForMock.clear(face.index());
+    if (!wasImported)
+        captureExportsAgainKeepingWhatGettersGave(face);
+}
+
+void Modules::captureExportsAgainKeepingWhatGettersGave(ModuleID face)
+{
+    JSObject* copies = ensureLoaded(face).capturedExports.get();
+    EnsureStillAliveScope keepsCopies(copies);
+    SetForScope copiesThatGettersGave(m_copiesThatGettersGave, copies);
+    SetForScope faceWhoseGettersKeepTheirCopies(m_faceWhoseGettersKeepTheirCopies, std::optional(face));
+    captureExportsAgain(face);
+}
+
+JSObject* Modules::standInWhoseGettersAreTheirCopies(JSValue exports, JSObject* copies)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = exports.getObject();
+    if (!object || object->type() == ProxyObjectType)
+        return nullptr;
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, realm, names, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* standIn = constructEmptyObject(realm);
+    bool standsInForGetter = false;
+    for (const Identifier& name : names) {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasName = object->methodTable()->getOwnPropertySlot(object, realm, name, slot);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!hasName)
+            continue;
+        if (slot.isTaintedByOpaqueObject())
+            return nullptr;
+        JSValue copy = slot.isAccessor() ? storedValue(realm, copies, name) : JSValue();
+        bool getterWasRead = copy && copy != JSValue(copies);
+        standsInForGetter |= getterWasRead;
+        JSValue value = getterWasRead ? copy : object->get(realm, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        unsigned attributes = slot.attributes() & PropertyAttribute::DontEnum;
+        if (std::optional<uint32_t> index = parseIndex(name))
+            standIn->putDirectIndex(realm, *index, value, attributes, PutDirectIndexLikePutDirect);
+        else
+            standIn->putDirect(vm, name, value, attributes);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return standsInForGetter ? standIn : nullptr;
 }
 
 void Modules::captureExportsAgain(ModuleID fileOrFace)
@@ -1238,7 +1305,7 @@ JSObject* Modules::namespaceOfFileThatRanAheadOfMock(ModuleID file)
     return namespaceOfModuleThatRanBesideMock(moduleWithExportsOf(file));
 }
 
-JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedBelowOriginal owedBelowOriginal)
+JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedBelowOriginal owedBelowOriginal, bool* readOfNameThrew)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
@@ -1246,6 +1313,7 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedB
     bool isCommonJSFile = data(file).kind == ModuleKind::CommonJs;
     if (isLeftAloneByMock(file) && !isLeftToHostAsFarAsIsKnown(file)) {
         if (isCommonJSFile) {
+            m_facesThatTookCopiesForMock.clear(moduleWithExportsOf(file).index());
             JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get();
             return original ? original : commonJSExports(file);
         }
@@ -1338,7 +1406,11 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedB
     RETURN_IF_EXCEPTION(scope, { });
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     namespaceObject->methodTable()->getOwnPropertyNames(namespaceObject, realm, names, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, { });
+    if (scope.exception()) [[unlikely]] {
+        if (readOfNameThrew)
+            *readOfNameThrew = true;
+        return { };
+    }
     JSObject* exports = constructEmptyObject(realm);
     for (const Identifier& name : names) {
         if (!m_table.findExport(file, name.impl()) && (!data(file).hasDynamicStarExport() || isAddedByMock(file, name)))
@@ -1350,7 +1422,11 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedB
             continue;
         if (!value) {
             value = namespaceObject->get(realm, name);
-            RETURN_IF_EXCEPTION(scope, { });
+            if (scope.exception()) [[unlikely]] {
+                if (readOfNameThrew)
+                    *readOfNameThrew = true;
+                return { };
+            }
         }
         exports->putDirectMayBeIndex(realm, name, value);
         RETURN_IF_EXCEPTION(scope, { });

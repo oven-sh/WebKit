@@ -4531,7 +4531,7 @@ void WriterOfLinkLayouts::writeFields()
                 && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration);
             cell.isFilledByAccessorsAlone = isRecord && record.form.isEmpty() && hasKnownAccessor.quickGet(cellOf(reference))
                 && !m_fieldsGivenValues.quickGet(cellOf(reference)) && !m_fieldsGivenValues.quickGet(declaration);
-            bool isGivenValuesByDefinitionsAlone = isRecord && record.form.isEmpty() && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration) && cell.everyWriterIsKnown && !cell.isOfBirth
+            bool isGivenValuesByDefinitionsAlone = isRecord && !isLost && record.form.isEmpty() && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration) && cell.everyWriterIsKnown && !cell.isOfBirth
                 && m_flow.fieldsNotOfBirth.get(cellOf(reference)) && !m_fieldsWrittenWithoutDefinition.get(cellOf(reference)) && !m_fieldsWrittenWithoutDefinition.get(declaration);
             if (uint32_t forms = cell.isFilledByAccessorsAlone || isGivenValuesByDefinitionsAlone ? m_formsLaidInListedFields.get(cellOf(reference)) | m_formsLaidInListedFields.get(declaration) : 0; hasOneBitSet(forms) && forms != formNobodyKnows)
                 cell.formThatDefinitionsCreate = OptionSet<FieldForm>::fromRaw(static_cast<uint8_t>(WTF::ctz(forms)));

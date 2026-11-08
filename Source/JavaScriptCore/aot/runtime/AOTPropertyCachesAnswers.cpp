@@ -294,6 +294,22 @@ static ExtraPropertyLookup lookUpExtraProperty(VM& vm, const CompiledStructure& 
     return lookup;
 }
 
+[[noreturn]] static NEVER_INLINE void stopAtExtraPropertiesOfAnotherStructure(JSGlobalObject* realm)
+{
+    static constexpr ASCIILiteral reason = "AOT: the properties that an object holds beside its fields are not laid out as the structure of the object says."_s;
+    dataLogLn(reason, " This is a bug in Bun.");
+    if (auto* stopWithReport = moduleHostOf(realm).stopWithReport)
+        stopWithReport(reason.span());
+    CRASH();
+}
+
+void holdExtraPropertiesToStructureThatIsNamed(JSGlobalObject* realm, Object& object)
+{
+    JSObject* extraProperties = object.extraProperties();
+    if (!extraProperties || extraProperties->structureID() != object.compiledStructure().extraPropertiesStructureID()) [[unlikely]]
+        stopAtExtraPropertiesOfAnotherStructure(realm);
+}
+
 static PropertyAnswer classifyExtraPropertyRead(const ReadQuery& query, Object& object)
 {
     VM& vm = query.globalObject->vm();
@@ -302,6 +318,7 @@ static PropertyAnswer classifyExtraPropertyRead(const ReadQuery& query, Object& 
     ExtraPropertyLookup lookup = lookUpExtraProperty(vm, object.compiledStructure(), query.uid, query.mode);
     if (lookup.result != ExtraPropertyLookupResult::Found)
         return uncacheableOnce(SlotAccess::Read);
+    holdExtraPropertiesToStructureThatIsNamed(query.globalObject, object);
     if (!(lookup.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
         return PropertyAnswer::own(PropertyAnswerKind::ExtraProperty, SlotAccess::Read, lookup.offset);
     if (lookup.attributes & PropertyAttribute::Accessor)

@@ -29,7 +29,6 @@ public:
 private:
     void generate(const ValueContext&);
     Integer heldToWhatConversionGives(const OperationContext&, Number, Integer);
-    void holdWideIntegerToldInsideInt32(const OperationContext&, Integer wide, Range told);
 };
 
 } } } // namespace JSC::AOT::Typed

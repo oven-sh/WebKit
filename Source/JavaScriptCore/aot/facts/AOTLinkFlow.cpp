@@ -536,6 +536,8 @@ void LinkFlow::makeTablesThatNeedNoNodes()
 
     m_nodesBesideFields.fill(noNodeInLinkFlow, 2 * numberOfLayouts);
     m_nodesStoredUnderUnknownNames.fill(noNodeInLinkFlow, numberOfLayouts);
+    m_nodesStoredUnderNumbers.fill(noNodeInLinkFlow, numberOfLayouts);
+    m_nodesFoundUnderNamesThatNoNumberSpells.fill(noNodeInLinkFlow, numberOfLayouts);
     m_newestAppendedFieldOfLayout.fill(UINT32_MAX, numberOfLayouts);
 
     for (BitVector* byLayout : { &layoutsMetInFamilies, &m_layoutsToldLost, &m_layoutsToldToEscape, &m_layoutsAtUnseen, &m_prototypesAtUnseen, &m_openLayouts, &m_lostLayoutsWhoseAppendedFieldsAreTied })
@@ -5192,14 +5194,33 @@ FlowNodeID LinkFlow::whereLossIsTold(LayoutID layout)
     });
 }
 
-FlowNodeID LinkFlow::storedUnderUnknownNamesOf(LayoutID layout)
+FlowNodeID LinkFlow::storedUnderUnknownNamesOf(LayoutID layout, bool keyIsNumber)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    uint32_t& node = m_nodesStoredUnderUnknownNames[layout.index()];
+    uint32_t& node = (keyIsNumber ? m_nodesStoredUnderNumbers : m_nodesStoredUnderUnknownNames)[layout.index()];
     if (node == noNodeInLinkFlow) {
         node = makeNode().index();
         addEdge(FlowNodeID(node), storedBesideFieldsOf(layout));
         addEdge(FlowNodeID(node), foundBesideFieldsOf(layout));
+        if (!keyIsNumber)
+            addEdge(FlowNodeID(node), foundUnderNamesThatNoNumberSpells(layout));
+    }
+    return FlowNodeID(node);
+}
+
+FlowNodeID LinkFlow::foundUnderNamesThatNoNumberSpells(LayoutID layout)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    uint32_t& node = m_nodesFoundUnderNamesThatNoNumberSpells[layout.index()];
+    if (node == noNodeInLinkFlow) {
+        FlowNodeID found = foundBesideFieldsOf(layout);
+        node = makeNode().index();
+        if (m_openLayouts.get(layout.index()))
+            addEdge(unseen(), FlowNodeID(node));
+        if (typeAt(found).primitives & Primitive::Undefined && layoutsThatGetNullAbove.get(layout.index()))
+            arrive(FlowNodeID(node), fromTypeID(TypeTable::undefined));
+        if (uint32_t stored = m_nodesStoredUnderUnknownNames[layout.index()]; stored != noNodeInLinkFlow)
+            addEdge(FlowNodeID(stored), FlowNodeID(node));
     }
     return FlowNodeID(node);
 }
@@ -5523,7 +5544,7 @@ bool LinkFlow::tieAppendedFieldsOfLostLayouts()
         if (LayoutID lost(static_cast<uint32_t>(layout)); mayHaveAppendedFieldsInLinkFlow(program.at(lost))) {
             families.forEachFamilyOf(lost, [&](FamilyID family) {
                 hasTied |= noteLostMemberWithNothingAbove(family, lost);
-                hasTied |= wakeKeepersOfSleepersIn(family);
+                hasTied |= tellPorterThatMemberIsLost(family, lost);
             });
         }
         for (uint32_t place = m_newestAppendedFieldOfLayout[layout]; place != UINT32_MAX;) {
@@ -5615,6 +5636,8 @@ void LinkFlow::open(LayoutID layout)
     UnknownByEscapeAlone unknownByEscapeAlone(true);
     size_t index = 2 * static_cast<size_t>(layout.index());
     addEdge(unseen(), FlowNodeID(m_nodesBesideFields[index]));
+    if (uint32_t underNames = m_nodesFoundUnderNamesThatNoNumberSpells[layout.index()]; underNames != noNodeInLinkFlow)
+        addEdge(unseen(), FlowNodeID(underNames));
     addEdge(FlowNodeID(m_nodesBesideFields[index + 1]), unseen());
 }
 
@@ -5629,6 +5652,8 @@ bool LinkFlow::openLayoutsThatChanged()
             FlowNodeID found(m_nodesBesideFields[2 * static_cast<size_t>(layout.index())]);
             if (layoutsThatGetNullAbove.get(layout.index()) && !(typeAt(found).primitives & Primitive::Undefined)) {
                 arrive(found, fromTypeID(TypeTable::undefined));
+                if (uint32_t underNames = m_nodesFoundUnderNamesThatNoNumberSpells[layout.index()]; underNames != noNodeInLinkFlow)
+                    arrive(FlowNodeID(underNames), fromTypeID(TypeTable::undefined));
                 hasOpened = true;
             }
             continue;
@@ -5649,7 +5674,7 @@ bool LinkFlow::tieStoresUnderUnknownNames()
     for (auto [layout, aggregate] : waiting) {
         if (m_openLayouts.get(layout))
             continue;
-        addEdge(FlowNodeID(aggregate), storedUnderUnknownNamesOf(LayoutID(layout)));
+        addEdge(FlowNodeID(aggregate & ~keyOfStoreToTieIsNumber), storedUnderUnknownNamesOf(LayoutID(layout), aggregate & keyOfStoreToTieIsNumber));
         hasTied = true;
     }
     return hasTied;
@@ -6016,10 +6041,10 @@ LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
     return *m_sortedMembersOfFamilies.add(family.index(), WTF::move(sorted)).iterator->value;
 }
 
-FlowNodeID LinkFlow::foundBesideFieldsOfMembersOf(FamilyID family)
+std::span<const LayoutID> LinkFlow::instancesOfClassesIn(FamilyID family)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    return sortedMembersOf(family).foundBesideTheirFields;
+    return sortedMembersOf(family).instancesOfClasses.span();
 }
 
 bool LinkFlow::listMembersThatMayAnswerUnder(FamilyID family, PropertyKeyID key, Vector<LayoutID>& members)
@@ -6031,7 +6056,7 @@ bool LinkFlow::listMembersThatMayAnswerUnder(FamilyID family, PropertyKeyID key,
         return false;
     const SortedMembersOfFamily& sorted = sortedMembersOf(family);
     std::span<const DeclarerOfMember> declarers = classesThatDeclareOnPrototype(key);
-    if (sorted.instancesOfClasses.isEmpty() || sorted.numberLost || program.layoutsWithName(key).size() + declarers.size() > sorted.instancesOfClasses.size())
+    if (sorted.instancesOfClasses.isEmpty() || program.layoutsWithName(key).size() + declarers.size() > sorted.instancesOfClasses.size())
         return false;
     for (LayoutID listing : program.layoutsWithName(key)) {
         if (isMemberOf(family, listing))
@@ -6063,32 +6088,23 @@ bool LinkFlow::listMembersThatMayAnswerUnder(FamilyID family, PropertyKeyID key,
     return true;
 }
 
-bool LinkFlow::someInstanceOfClassIsLostOrFindsSomethingBesideItsFields(FamilyID family)
-{
-    return std::ranges::any_of(sortedMembersOf(family).instancesOfClasses, [&](LayoutID id) {
-        return (lostLayouts.get(id.index()) && mayHaveAppendedFieldsInLinkFlow(program.at(id))) || !typeAt(foundBesideFieldsOf(id)).isNothing();
-    });
-}
-
-bool LinkFlow::someFieldBornInFamilyHoldsSomething(FamilyID family, PropertyKeyID key)
-{
-    auto born = m_fieldsBornBelowClassesByKey.find(key.bits());
-    return born != m_fieldsBornBelowClassesByKey.end() && std::ranges::any_of(born->value, [&](const FieldBornBesideFields& field) {
-        return !typeAt(field.node).isNothing() && isMemberOf(family, field.layout);
-    });
-}
-
-Vector<FlowNodeID> LinkFlow::letKeeperHearOfFieldsBornUnder(FamilyID family, PropertyKeyID key, const FlowObserver& keeper)
+Vector<LinkFlow::FieldBornOnMember> LinkFlow::letKeeperHearOfFieldsBornUnder(FamilyID family, PropertyKeyID key, const FlowObserver& keeper)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     auto& keepers = m_keepersOfSleepersByName.add(static_cast<uint64_t>(family.index()) << 32 | key.bits(), Vector<FlowObserver, 1>()).iterator->value;
     if (!keepers.contains(keeper))
         keepers.append(keeper);
-    Vector<FlowNodeID> bornAlready;
+    return fieldsBornOnMembersUnder(family, key);
+}
+
+Vector<LinkFlow::FieldBornOnMember> LinkFlow::fieldsBornOnMembersUnder(FamilyID family, PropertyKeyID key)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    Vector<FieldBornOnMember> bornAlready;
     if (auto born = m_fieldsBornBelowClassesByKey.find(key.bits()); born != m_fieldsBornBelowClassesByKey.end()) {
         for (const FieldBornBesideFields& field : born->value) {
             if (isMemberOf(family, field.layout))
-                bornAlready.append(field.node);
+                bornAlready.append({ field.layout, field.node });
         }
     }
     return bornAlready;
@@ -6696,7 +6712,7 @@ FlowNodeID LinkFlow::findOrMakeAnyFieldStoredThrough(LinkType::Objects objects, 
     case LinkType::Objects::Layout: {
         auto [aggregate, isNew] = keyIsNumber ? aggregateOfReadsUnderNumbers(m_elementsStoredThroughLayouts, program.layouts.size(), layout.index()) : nodeOnDemand(NodeOnDemand::AnyFieldStoredOfLayout, layout.index(), { });
         if (isNew) {
-            m_storesUnderUnknownNamesToTie.append({ layout.index(), aggregate.index() });
+            m_storesUnderUnknownNamesToTie.append({ layout.index(), aggregate.index() | (keyIsNumber ? keyOfStoreToTieIsNumber : 0) });
             addEdge(aggregate, elementsSeenOn(layout));
             tieStoreOfAnyField(aggregate, layout, keyIsNumber);
         }

@@ -93,6 +93,8 @@ struct ValuesInLinkCalls {
 };
 
 struct PassedInLinkCalls {
+    PassedInLinkCalls() { }
+
     std::optional<ValuesInLinkCalls> receiver;
     Vector<ValuesInLinkCalls, 4> arguments;
     std::optional<ValuesInLinkCalls> list;
@@ -177,8 +179,9 @@ struct SharedCallInLinkCalls {
     FlowNodeID result;
     FlowNodeID thrown;
     bool someMembersSleep { false };
-    bool someMemberIsLost { false };
+    bool someSleeperWasWoken { false };
     Vector<LayoutID> membersAwakeFromTheStart;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersWokenLater;
 };
 
 struct MemberOfSharedCallInLinkCalls {
@@ -533,7 +536,16 @@ public:
     HashMap<std::pair<uint64_t, uint32_t>, uint32_t, DefaultHash<std::pair<uint64_t, uint32_t>>, WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> indexesOfSharedCalls;
     Vector<std::unique_ptr<SharedCallInLinkCalls>> sharedCalls;
     Vector<MemberOfSharedCallInLinkCalls> membersOfSharedCalls;
-    HashMap<uint32_t, Vector<FlowObserver, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keepersOfSleepersByFamily;
+    static constexpr uint32_t isPorterOfFamily = 1u << 31;
+    struct SleepersOfFamily {
+        Vector<uint32_t> sharedCalls;
+        Vector<LayoutID> membersThatAreUp;
+        HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> portersOfMembers;
+        HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> isUp;
+        PropertyKeyID nameOfFirstCall;
+        bool someMemberFindsTheUnknownAlone { false };
+    };
+    HashMap<uint32_t, std::unique_ptr<SleepersOfFamily>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> sleepersOfFamilies;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> observedByMembers;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> listedBySharedCalls;
     Vector<uint8_t> callsOfUnseen;
@@ -752,8 +764,11 @@ public:
 
     void resolve();
     void resolveMemberOfSharedCall(uint32_t member);
-    void wakeMembersOnceSomethingMayBeFoundBesideFields();
+    void wakeMembersOnWhichFieldIsBornUnderName();
     void wakeEverySleeper();
+    void wake(LayoutID);
+    void layPortersAtMembersOf(FamilyID, Vector<LayoutID>& membersThatMayAnswer);
+    void callUnseenForMembersThatFindTheUnknownAlone() { callUnseen(); }
     void takeStepOfInspection(uint32_t step, const LinkType& now);
     void showPrivateFieldsOf(LayoutID, uint32_t inspection);
     static QuestionsInLinkCalls questionsOfComparisonOfPrivateFields();
@@ -785,7 +800,7 @@ private:
     FlowNodeID thrownNode() const { return m_shared ? m_shared->thrown : nodeTakingWhatIsThrown(m_flow, m_caller, m_call.thrownTo); }
     ALWAYS_INLINE LinkType heldAt(FlowNodeID node) const { return node == m_flow.unseen() ? LinkType::anything() : m_flow.typeAt(node); }
     LinkFlow::CalleesOfCall& callees() { return m_shared ? m_flow.calleesOfSharedCalls[m_shared->index] : m_flow.calleesOfCalls[m_number]; }
-    bool lists(FunctionID callee) { return m_shared ? m_state.listedBySharedCalls.contains(static_cast<uint64_t>(m_shared->index) << 32 | callee.index()) : callees().listed().contains(callee); }
+    bool lists(FunctionID callee) { return m_shared ? m_state.listedBySharedCalls.contains(static_cast<uint64_t>(m_shared->index) << 32 | callee.index()) : callees().lists(callee); }
     void list(FunctionID);
     bool isSettledButForOwnCallees() const { return m_state.hasCalledUnseen(m_number); }
     bool hasGivenUpInSight() const { return m_shared ? m_state.hasCalledUnseen(m_number) : m_state.callsOfUnseen[m_number] == static_cast<uint8_t>(UnknownIs::InSight); }
@@ -1165,7 +1180,7 @@ const Vector<ResultInLinkCalls, 1>& CallInLinkCalls::results()
 
 void CallInLinkCalls::list(FunctionID callee)
 {
-    if (m_shared ? m_state.listedBySharedCalls.add(static_cast<uint64_t>(m_shared->index) << 32 | callee.index()).isNewEntry : !callees().listed().contains(callee))
+    if (m_shared ? m_state.listedBySharedCalls.add(static_cast<uint64_t>(m_shared->index) << 32 | callee.index()).isNewEntry : !callees().lists(callee))
         callees().list(callee);
 }
 
@@ -2100,6 +2115,9 @@ ValuesInLinkCalls CallInLinkCalls::tieToSharedCall(SharedCall::Subjects subjects
         Vector<LayoutID> membersThatMayAnswer;
         if (subjects == SharedCall::Subjects::Instances && m_flow.listMembersThatMayAnswerUnder(family, m_call.key, membersThatMayAnswer)) {
             m_flow.build.statistics().count(StatisticID::SharedCallsWhoseSilentMembersSleep);
+            layPortersAtMembersOf(family, membersThatMayAnswer);
+            firstMember = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
+            m_state.sleepersOfFamilies.get(family.index())->sharedCalls.append(index);
             for (LayoutID member : membersThatMayAnswer)
                 m_state.membersOfSharedCalls.append(MemberOfSharedCallInLinkCalls { index, member, 0 });
             m_state.membersOfSharedCalls.append(MemberOfSharedCallInLinkCalls { index, LayoutID(), 0 });
@@ -2141,7 +2159,7 @@ void CallInLinkCalls::resolveMemberOfSharedCall(uint32_t member)
     LayoutID layout = m_state.membersOfSharedCalls[member].layout;
     throwError();
     if (!layout) {
-        wakeMembersOnceSomethingMayBeFoundBesideFields();
+        wakeMembersOnWhichFieldIsBornUnderName();
         return;
     }
     switch (m_shared->subjects) {
@@ -2161,40 +2179,75 @@ void CallInLinkCalls::resolveMemberOfSharedCall(uint32_t member)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void CallInLinkCalls::wakeMembersOnceSomethingMayBeFoundBesideFields()
+void CallInLinkCalls::layPortersAtMembersOf(FamilyID family, Vector<LayoutID>& membersThatMayAnswer)
+{
+    auto& sleepers = *m_state.sleepersOfFamilies.ensure(family.index(), [] {
+        return makeUniqueWithoutFastMallocCheck<StateOfLinkCalls::SleepersOfFamily>();
+    }).iterator->value;
+    if (sleepers.portersOfMembers.isEmpty()) {
+        bool hearsNothing = AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::NobodyWakesSleepersOfSharedCalls);
+        sleepers.nameOfFirstCall = m_call.key;
+        for (LayoutID member : m_flow.instancesOfClassesIn(family)) {
+            uint32_t porter = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
+            m_state.membersOfSharedCalls.append(MemberOfSharedCallInLinkCalls { StateOfLinkCalls::isPorterOfFamily | family.index(), member, 0 });
+            sleepers.portersOfMembers.add(member.index(), porter);
+            switch (hearsNothing ? LinkFlow::WhatSilentMemberFinds::Nothing : m_flow.whatPorterTakesMemberToFind(FlowObserver { FlowObserver::Kind::MemberOfSharedCall, m_caller, porter }, member, m_call.key)) {
+            case LinkFlow::WhatSilentMemberFinds::Nothing:
+            case LinkFlow::WhatSilentMemberFinds::NothingThatCanBeCalled:
+                break;
+            case LinkFlow::WhatSilentMemberFinds::TheUnknownAlone:
+                sleepers.someMemberFindsTheUnknownAlone = true;
+                break;
+            case LinkFlow::WhatSilentMemberFinds::SomethingOfItsOwn:
+                if (sleepers.isUp.add(member.index()).isNewEntry)
+                    sleepers.membersThatAreUp.append(member);
+                break;
+            }
+        }
+    }
+    membersThatMayAnswer.appendVector(sleepers.membersThatAreUp);
+    std::ranges::sort(membersThatMayAnswer);
+    membersThatMayAnswer.shrink(std::ranges::unique(membersThatMayAnswer).begin() - membersThatMayAnswer.begin());
+}
+
+void CallInLinkCalls::wakeMembersOnWhichFieldIsBornUnderName()
 {
     if (!m_shared->someMembersSleep || AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::NobodyWakesSleepersOfSharedCalls))
         return;
-    FlowNodeID besideFields = m_flow.foundBesideFieldsOfMembersOf(m_shared->family);
-    watch(besideFields, 1);
-    bool somethingMayBeFound = m_shared->someMemberIsLost || !heldAt(besideFields).isNothing();
+    if (m_state.sleepersOfFamilies.get(m_shared->family.index())->someMemberFindsTheUnknownAlone)
+        callUnseen();
     FlowObserver keeper { FlowObserver::Kind::MemberOfSharedCall, m_caller, m_memberThatWatches };
-    {
-        LinkFlow::LockerOfWhatIsShared locker(m_flow);
-        auto& keepers = m_state.keepersOfSleepersByFamily.add(m_shared->family.index(), Vector<FlowObserver, 1>()).iterator->value;
-        if (!keepers.contains(keeper))
-            keepers.append(keeper);
+    for (LinkFlow::FieldBornOnMember born : m_flow.letKeeperHearOfFieldsBornUnder(m_shared->family, m_call.key, keeper)) {
+        watch(born.node, 1);
+        if (!heldAt(born.node).isNothing())
+            wake(born.member);
     }
-    for (FlowNodeID born : m_flow.letKeeperHearOfFieldsBornUnder(m_shared->family, m_call.key, keeper)) {
-        watch(born, 1);
-        somethingMayBeFound |= !heldAt(born).isNothing();
-    }
-    if (!somethingMayBeFound)
+}
+
+void CallInLinkCalls::wake(LayoutID member)
+{
+    LinkFlow::LockerOfWhatIsShared locker(m_flow);
+    if (!m_shared->someMembersSleep || std::ranges::binary_search(m_shared->membersAwakeFromTheStart, member) || !m_shared->membersWokenLater.add(member.index()).isNewEntry)
         return;
-    m_flow.build.statistics().count(StatisticID::SharedCallsWhoseSleepersWereWoken);
-    wakeEverySleeper();
+    if (!std::exchange(m_shared->someSleeperWasWoken, true))
+        m_flow.build.statistics().count(StatisticID::SharedCallsWhoseSleepersWereWoken);
+    m_flow.build.statistics().count(StatisticID::SleepersWokenInSharedCalls);
+    uint32_t entry = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
+    m_state.membersOfSharedCalls.append(MemberOfSharedCallInLinkCalls { m_shared->index, member, 0 });
+    CallInLinkCalls(m_flow, m_state, *m_shared).resolveMemberOfSharedCall(entry);
 }
 
 void CallInLinkCalls::wakeEverySleeper()
 {
     LinkFlow::LockerOfWhatIsShared locker(m_flow);
-    m_shared->someMembersSleep = false;
     uint32_t firstMember = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
     forEachLayoutOf(m_shared->family, [&](LayoutID member) {
-        if (!std::ranges::binary_search(m_shared->membersAwakeFromTheStart, member))
+        if (!std::ranges::binary_search(m_shared->membersAwakeFromTheStart, member) && !m_shared->membersWokenLater.contains(member.index()))
             m_state.membersOfSharedCalls.append(MemberOfSharedCallInLinkCalls { m_shared->index, member, 0 });
     });
+    m_shared->someMembersSleep = false;
     m_shared->membersAwakeFromTheStart.clear();
+    m_shared->membersWokenLater.clear();
     uint32_t endOfMembers = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
     for (uint32_t member = firstMember; member < endOfMembers; ++member)
         CallInLinkCalls(m_flow, m_state, *m_shared).resolveMemberOfSharedCall(member);
@@ -2281,7 +2334,7 @@ void CallInLinkCalls::callMemberOfInstance(LayoutID id)
         }
     }
 
-    callValueAt(m_flow.foundBesideFieldsOf(id), passed);
+    callValueAt(m_flow.foundBesideFieldsFor(id, m_call.key), passed);
     if (!field)
         callValueAt(m_flow.appendedField(id, m_call.key), passed);
     if (!field && layout.has(LayoutFlags::IsOfCreatedObject))
@@ -2314,7 +2367,7 @@ void CallInLinkCalls::callMemberOfPrototype(LayoutID id)
     }
     if (foundOnPrototypes) {
         callValueAt(foundOnPrototypes, passedByCall());
-        callValueAt(m_flow.foundBesideFieldsOf(id), passedByCall());
+        callValueAt(m_flow.foundBesideFieldsFor(id, m_call.key), passedByCall());
     }
     for (const LinkFlow::FoundMember& member : members) {
         switch (member.kind) {
@@ -6822,20 +6875,65 @@ void LinkFlow::wakeEverySleeperToSeeThatNothingGrows()
 
 String LinkFlow::describeSleeperThatMayFindSomething()
 {
-    if (!m_stateOfLinkCalls || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::SleepersOfSharedCallsAreNotAskedAtRest))
+    if (!m_stateOfLinkCalls)
         return { };
     StateOfLinkCalls& state = *m_stateOfLinkCalls;
-    HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> familiesAsked;
+    auto sleepsIn = [](const SharedCallInLinkCalls& shared, LayoutID member) {
+        return shared.someMembersSleep && !std::ranges::binary_search(shared.membersAwakeFromTheStart, member) && !shared.membersWokenLater.contains(member.index());
+    };
+    auto describe = [](const SharedCallInLinkCalls& shared, LayoutID member) {
+        return makeString("in the shared call "_s, shared.index, " the layout "_s, member.index(), " still sleeps and may find something under the called name"_s);
+    };
+    for (const auto& [family, sleepers] : state.sleepersOfFamilies) {
+        bool someMemberFindsTheUnknownAlone = false;
+        for (LayoutID member : instancesOfClassesIn(FamilyID(family))) {
+            LinkFlow::WhatSilentMemberFinds found = whatSilentMemberFinds(member, sleepers->nameOfFirstCall);
+            someMemberFindsTheUnknownAlone |= found == LinkFlow::WhatSilentMemberFinds::TheUnknownAlone;
+            if (found != LinkFlow::WhatSilentMemberFinds::SomethingOfItsOwn)
+                continue;
+            for (uint32_t index : sleepers->sharedCalls) {
+                if (sleepsIn(*state.sharedCalls[index], member))
+                    return describe(*state.sharedCalls[index], member);
+            }
+        }
+        for (uint32_t index : sleepers->sharedCalls) {
+            if (someMemberFindsTheUnknownAlone && state.sharedCalls[index]->someMembersSleep && !calleesOfSharedCalls[index].mayEnterUnseen)
+                return makeString("members of the shared call "_s, index, " sleep that find the unknown beside their fields, and the call does not enter unseen code"_s);
+        }
+    }
     for (const auto& shared : state.sharedCalls) {
         if (!shared->someMembersSleep)
             continue;
-        auto asked = familiesAsked.find(shared->family.index());
-        if (asked == familiesAsked.end())
-            asked = familiesAsked.add(shared->family.index(), someInstanceOfClassIsLostOrFindsSomethingBesideItsFields(shared->family)).iterator;
-        if (asked->value || someFieldBornInFamilyHoldsSomething(shared->family, shared->call.key))
-            return makeString("members of the shared call "_s, shared->index, " still sleep, and one of its family may find something under the called name"_s);
+        for (FieldBornOnMember born : fieldsBornOnMembersUnder(shared->family, shared->call.key)) {
+            if (!typeAt(born.node).isNothing() && sleepsIn(*shared, born.member))
+                return describe(*shared, born.member);
+        }
     }
     return { };
+}
+
+LinkFlow::WhatSilentMemberFinds LinkFlow::whatSilentMemberFinds(LayoutID member, PropertyKeyID calledName)
+{
+    using Finds = WhatSilentMemberFinds;
+    if (lostLayouts.get(member.index()) && !program.at(member).has(LayoutFlags::IsNeverAllocated))
+        return Finds::SomethingOfItsOwn;
+    LinkType found = typeAt(foundBesideFieldsFor(member, calledName));
+    if (found.isNothing())
+        return Finds::Nothing;
+    if (found.functions != LinkType::Functions::None || found.builtin || found.classes != LinkType::Classes::None)
+        return Finds::SomethingOfItsOwn;
+    if (found.holdsUnseen || (found.objects != LinkType::Objects::None && !holdsOnlyObjectsThatCannotBeCalledForLinkCalls(*this, found)))
+        return Finds::TheUnknownAlone;
+    return Finds::NothingThatCanBeCalled;
+}
+
+LinkFlow::WhatSilentMemberFinds LinkFlow::whatPorterTakesMemberToFind(const FlowObserver& porter, LayoutID member, PropertyKeyID calledName)
+{
+    letKeeperWatch(porter, foundBesideFieldsFor(member, calledName));
+    WhatSilentMemberFinds found = whatSilentMemberFinds(member, calledName);
+    if (found == WhatSilentMemberFinds::SomethingOfItsOwn && AOT::hasFlag(build.options().testing, Wire::TestingSwitch::PortersTakeWhatIsOfTheMemberForTheUnknown))
+        return WhatSilentMemberFinds::TheUnknownAlone;
+    return found;
 }
 
 void LinkFlow::letKeeperWatch(const FlowObserver& keeper, FlowNodeID node)
@@ -6844,24 +6942,20 @@ void LinkFlow::letKeeperWatch(const FlowObserver& keeper, FlowNodeID node)
         observe(node, keeper);
 }
 
-bool LinkFlow::wakeKeepersOfSleepersIn(FamilyID family)
+bool LinkFlow::tellPorterThatMemberIsLost(FamilyID family, LayoutID lost)
 {
     if (!m_stateOfLinkCalls)
         return false;
     StateOfLinkCalls& state = *m_stateOfLinkCalls;
-    auto keepers = state.keepersOfSleepersByFamily.find(family.index());
-    if (keepers == state.keepersOfSleepersByFamily.end())
+    auto sleepers = state.sleepersOfFamilies.find(family.index());
+    if (sleepers == state.sleepersOfFamilies.end() || sleepers->value->isUp.contains(lost.index()))
         return false;
-    bool hasToldSome = false;
-    for (const FlowObserver& keeper : keepers->value) {
-        SharedCallInLinkCalls& shared = *state.sharedCalls[state.membersOfSharedCalls[keeper.record].sharedCall];
-        if (!shared.someMembersSleep || std::exchange(shared.someMemberIsLost, true))
-            continue;
-        hasToldSome = true;
-        if (!state.membersToResolve.set(keeper.record))
-            state.membersObservedToResolve.append(keeper);
-    }
-    return hasToldSome;
+    auto porter = sleepers->value->portersOfMembers.find(lost.index());
+    if (porter == sleepers->value->portersOfMembers.end())
+        return false;
+    if (!state.membersToResolve.set(porter->value))
+        state.membersObservedToResolve.append(FlowObserver { FlowObserver::Kind::MemberOfSharedCall, state.sharedCalls[sleepers->value->sharedCalls[0]]->firstCaller, porter->value });
+    return true;
 }
 
 void LinkFlow::callObserved(const FlowObserver& observer, const LinkType& told)
@@ -6904,7 +6998,40 @@ bool LinkFlow::resolveCallsThatWereTold()
         hasResolvedSome = true;
         CodeAtWork codeAtWork(*this, observer.function);
         state.membersToResolve.clear(observer.record);
-        CallInLinkCalls(*this, state, *state.sharedCalls[state.membersOfSharedCalls[observer.record].sharedCall]).resolveMemberOfSharedCall(observer.record);
+        MemberOfSharedCallInLinkCalls told = state.membersOfSharedCalls[observer.record];
+        if (told.sharedCall & StateOfLinkCalls::isPorterOfFamily) {
+            auto& sleepers = *state.sleepersOfFamilies.get(told.sharedCall & ~StateOfLinkCalls::isPorterOfFamily);
+            if (AOT::hasFlag(build.options().testing, Wire::TestingSwitch::NobodyWakesSleepersOfSharedCalls))
+                continue;
+            switch (whatPorterTakesMemberToFind(observer, told.layout, sleepers.nameOfFirstCall)) {
+            case LinkFlow::WhatSilentMemberFinds::Nothing:
+            case LinkFlow::WhatSilentMemberFinds::NothingThatCanBeCalled:
+                break;
+            case LinkFlow::WhatSilentMemberFinds::TheUnknownAlone:
+                if (std::exchange(sleepers.someMemberFindsTheUnknownAlone, true))
+                    break;
+                for (size_t place = 0; place < sleepers.sharedCalls.size(); ++place) {
+                    SharedCallInLinkCalls& shared = *state.sharedCalls[sleepers.sharedCalls[place]];
+                    if (!shared.someMembersSleep)
+                        continue;
+                    CodeAtWork codeOfCall(*this, shared.firstCaller);
+                    CallInLinkCalls(*this, state, shared).callUnseenForMembersThatFindTheUnknownAlone();
+                }
+                break;
+            case LinkFlow::WhatSilentMemberFinds::SomethingOfItsOwn:
+                if (!sleepers.isUp.add(told.layout.index()).isNewEntry)
+                    break;
+                sleepers.membersThatAreUp.append(told.layout);
+                for (size_t place = 0; place < sleepers.sharedCalls.size(); ++place) {
+                    SharedCallInLinkCalls& shared = *state.sharedCalls[sleepers.sharedCalls[place]];
+                    CodeAtWork codeOfCall(*this, shared.firstCaller);
+                    CallInLinkCalls(*this, state, shared).wake(told.layout);
+                }
+                break;
+            }
+            continue;
+        }
+        CallInLinkCalls(*this, state, *state.sharedCalls[told.sharedCall]).resolveMemberOfSharedCall(observer.record);
     }
     return hasResolvedSome;
 }

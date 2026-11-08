@@ -47,7 +47,7 @@ public:
         return member;
     }
     bool areUnited(uint32_t one, uint32_t other) const { return representativeOf(one) == representativeOf(other); }
-    uint32_t representativeWithoutShortening(uint32_t member) const
+    ALWAYS_INLINE uint32_t representativeWithoutShortening(uint32_t member) const
     {
         if (member >= m_parent.size())
             return member;

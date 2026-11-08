@@ -447,6 +447,8 @@ public:
 
 private:
     struct Held {
+        Held() { }
+
         SetOfAnswersForGood forGood;
         SetOfAnswersForGood untilSuspension;
         SetOfAnswersForGood outcomes;

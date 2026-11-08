@@ -19,7 +19,7 @@ struct X86ConditionsOfComparison {
     std::optional<MacroAssembler::DoubleCondition> ofNumbers;
 };
 
-static X86ConditionsOfComparison conditionsOfX86Comparison(Opcode relation)
+static ALWAYS_INLINE X86ConditionsOfComparison conditionsOfX86Comparison(Opcode relation)
 {
     switch (relation) {
     case Equal:
@@ -75,7 +75,7 @@ struct X86ComparedOperand {
         return result;
     }
 
-    static X86ComparedOperand readBy(Opcode load, const AddressForm& form)
+    static ALWAYS_INLINE X86ComparedOperand readBy(Opcode load, const AddressForm& form)
     {
         RELEASE_ASSERT(isLoad(load) && form.kind != AddressForm::InstanceSymbol && form.extension == IndexExtension::None && form.shift <= 3);
         X86ComparedOperand result;

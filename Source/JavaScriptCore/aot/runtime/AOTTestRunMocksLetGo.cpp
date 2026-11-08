@@ -171,11 +171,21 @@ void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
         };
         for (uint32_t index : m_requirers[imported])
             visit(index);
+        if (auto answered = m_requirersThatRunTimeAnswered.find(imported); answered != m_requirersThatRunTimeAnswered.end()) {
+            for (uint32_t index : answered->value)
+                visit(index);
+        }
         if (!isAboveRequirer)
             continue;
         for (uint32_t index : m_importersByStatement[imported])
             visit(index);
     }
+}
+
+void Modules::noteRequireThatRunTimeAnswers(ModuleID target, ModuleID referrer)
+{
+    if (m_requiresThatRunTimeAnswered.add((static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index()).isNewEntry)
+        m_requirersThatRunTimeAnswered.add(target.index(), Vector<uint32_t, 2>()).iterator->value.append(referrer.index());
 }
 
 void Modules::listImportersAndRequirers()
@@ -346,7 +356,7 @@ void Modules::passModuleThatHasRun(ModuleID root, BitVector& isPassed)
     };
     Vector<ModuleOnPath, 16> path;
     auto enter = [&](ModuleID module) {
-        if (isPassed.quickSet(module.index()))
+        if (isPassed.quickSet(module.index()) || isEvicted(module))
             return;
         if (isMocked(module) || mockInPlace(module)) {
             if (!m_mockedModulesPassedOverByWalks.contains(module))

@@ -8,11 +8,60 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
+#include "AOTMachineCallsOnWays.h"
 #include <bit>
 
 namespace JSC { namespace AOT { namespace Machine {
 
 static constexpr unsigned costOfCalleeSaveNotYetSaved = 2;
+static constexpr unsigned mostReloadsThatCostNoMoreBytesThanCalleeSave = 4;
+
+static NEVER_INLINE bool slotServesEveryReadAsCheaplyAsRegister(const Allocator& allocator, const Operation* argument, const Block* blockOfWalk)
+{
+    const Liveness& liveness = allocator.m_liveness;
+    const uint32_t firstUse = allocator.findReadFrom(argument, allocator.m_position + 1);
+    unsigned numberOfReads = 0;
+    for (uint32_t use = firstUse; use; use = liveness.use(use).next) {
+        if (++numberOfReads > mostReloadsThatCostNoMoreBytesThanCalleeSave)
+            return false;
+    }
+
+    const Order& order = allocator.m_order;
+    uint32_t place = order.of(blockOfWalk).orderIndex;
+    for (uint32_t use = firstUse; use; use = liveness.use(use).next) {
+        Position position = liveness.use(use).position;
+        place = findPlaceOfBlockAtPosition(order, position, place);
+        const Block* block = order.blocksInOrder()[place];
+        unsigned numberInBlock = (position - order.of(block).head) / 2;
+        if (!numberInBlock || numberInBlock > block->size())
+            return false;
+        const Operation* reader = block->at(numberInBlock - 1);
+        if (reader->opcode() == Jump)
+            continue;
+        if (reader->opcode() == Return) {
+            if (reader->numberOfInlineChildren() != 1 || reader->inlineChildren()[0] != argument)
+                return false;
+            continue;
+        }
+        const PatchOperation* patch = reader->as<PatchOperation>();
+        if (!patch)
+            return false;
+        bool isOperand = false;
+        std::span<Operation* const> operands = patch->operands();
+        for (unsigned child = 0; child < operands.size(); ++child) {
+            if (operands[child] != argument)
+                continue;
+            const ValueRep& constraint = patch->constraintOf(child);
+            if (!constraint.isReg() && constraint.kind() != ValueRep::ColdAny && constraint.kind() != ValueRep::LateColdAny)
+                return false;
+            isOperand = true;
+        }
+        if (!isOperand)
+            return false;
+    }
+    return numberOfReads;
+}
 
 static NEVER_INLINE bool isWorthCalleeSaveNotYetSavedThoughRareRegionsReadIt(const Allocator& allocator, const Operation* value, uint32_t firstReadInRareRegion, unsigned worth)
 {
@@ -38,7 +87,7 @@ static NEVER_INLINE bool isWorthCalleeSaveNotYetSavedThoughRareRegionsReadIt(con
     return answer == IsWorthIt;
 }
 
-static bool isWorthCalleeSaveNotYetSaved(const Allocator& allocator, const Operation* value, const Block* block)
+static ALWAYS_INLINE bool isWorthCalleeSaveNotYetSaved(const Allocator& allocator, const Operation* value, const Block* block)
 {
     if (allocator.m_order.of(block).loop != noLoop)
         return true;
@@ -52,7 +101,7 @@ static bool isWorthCalleeSaveNotYetSaved(const Allocator& allocator, const Opera
             return isWorthCalleeSaveNotYetSavedThoughRareRegionsReadIt(allocator, value, use, worth);
         lastRead = liveness.use(use).position;
         if (++worth > costOfCalleeSaveNotYetSaved)
-            return true;
+            return value->opcode() != ArgumentReg || !slotServesEveryReadAsCheaplyAsRegister(allocator, value, block);
     }
     return facts.lastUse != noPosition && facts.lastUse > lastRead;
 }
@@ -67,7 +116,7 @@ unsigned Allocator::numberOfReadsThatWordWouldReload(const Operation* value, Pos
     return number;
 }
 
-RegisterMask Allocator::calleeSavesWorthTakingFor(const Operation* value, Bank bank, const Block* block) const
+ALWAYS_INLINE_INTO_OTHER_FILES RegisterMask Allocator::calleeSavesWorthTakingFor(const Operation* value, Bank bank, const Block* block) const
 {
     RegisterMask calleeSaved = m_file.calleeSavedIn(bank);
     RegisterMask notYetSaved = calleeSaved & ~m_allocation.usedCalleeSaves();

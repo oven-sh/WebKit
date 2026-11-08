@@ -53,7 +53,7 @@ public:
     using iterator = T*;
     using const_iterator = const T*;
 
-    ListOfUnit() = default;
+    ListOfUnit() { }
     ListOfUnit(std::initializer_list<T> elements) { append(std::span<const T>(elements.begin(), elements.size())); }
     explicit ListOfUnit(std::span<const T> elements) { append(elements); }
     ListOfUnit(const ListOfUnit& other) { append(other.span()); }

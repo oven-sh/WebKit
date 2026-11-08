@@ -81,6 +81,7 @@ struct ListsReadInLoop {
     Vector<ListTestedInFrontOfLoop, 2> lists;
     bool areLeftAsTheyAre { false };
     bool areTested { false };
+    bool someListIsTakenUnderCounterAskedInFront { false };
     BlockID whereKindIsAnother;
 };
 void reserveRoomOfListsThatLoopFills(Walker&, BlockID inputHead, std::span<const Reference> entering);

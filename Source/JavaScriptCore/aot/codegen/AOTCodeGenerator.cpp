@@ -27,6 +27,7 @@
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSavedFrameEmitter.h"
+#include "AOTSchemaInlineBuiltins.h"
 #include "AOTStringEmitter.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeIDs.h"
@@ -162,6 +163,28 @@ GenerationResult CodeGenerator::run()
                         changed.sumsAreTakenOverBehindStretches = false;
                         findSumsOfIntegers(changed, back);
                     };
+                    bool onlyTruthIsAsked = std::ranges::all_of(loop->turn, [&](BlockID inTurn) {
+                        std::span<const ValueID> values = code().valuesOf(inTurn);
+                        return std::ranges::all_of(values, [&](ValueID read) {
+                            const Operation& operation = code().at(read);
+                            if (operation.opcode != Opcode::GetArrayElement || !std::ranges::any_of(loop->listsAskedForKind, [&](const ListAskedForKind& asked) { return asked.otherKindsAreNotAsked && asked.list == operation.arrayOperand(); }))
+                                return true;
+                            ValueID test = code().at(inTurn).terminator.kind == TerminatorKind::Branch ? testReadByBranchAlone(inTurn, code().at(inTurn).terminator) : ValueID();
+                            return test && values.size() >= 2 && values.back() == test && values[values.size() - 2] == read && opcodeOf(test) == Opcode::ToBoolean && code().at(test).form() == OperatorForm::Generic && code().at(test).valueOperand() == read && code().useCountOf(read) == 1;
+                        });
+                    });
+                    if (onlyTruthIsAsked) {
+                        CountedLoop forWholeNumbers = *loop;
+                        for (ListAskedForKind& asked : forWholeNumbers.listsAskedForKind) {
+                            if (asked.otherKindsAreNotAsked)
+                                asked.kind = ArrayStorage::Int32;
+                        }
+                        forWholeNumbers.mayComeBack = false;
+                        forWholeNumbers.boundsAskedInFront.shrink(0);
+                        findSumsAnew(forWholeNumbers);
+                        build().statistics().count(StatisticID::LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked);
+                        layOutForEveryKind(forWholeNumbers);
+                    }
                     CountedLoop forDoubles = *loop;
                     forDoubles.mayComeBack = loop->mayComeBack && loop->boundsAskedInFront.isEmpty();
                     forDoubles.layoutWithoutQuestionFollows = forDoubles.mayComeBack;
@@ -1075,10 +1098,16 @@ void CodeGenerator::generateBranchCondition(const TerminatorContext& terminator,
 
 NEVER_INLINE ValueID CodeGenerator::readLeftToBranchOnItsTruthSlow(BlockID id, std::span<const ValueID> values, ValueID test)
 {
-    if (code().at(id).isInLoop || m_headOfTurnsLaidOut || code().handlerOf(id))
+    if (code().handlerOf(id))
         return { };
     const Operation& asked = code().at(test);
     ValueID read = values[values.size() - 2];
+    if (m_headOfTurnsLaidOut) {
+        bool asksTruthOfRead = asked.opcode == Opcode::ToBoolean && asked.form() == OperatorForm::Generic && asked.valueOperand() == read && code().useCountOf(read) == 1;
+        return asksTruthOfRead && emitter<ElementAccessEmitter>().asksTruthOfRawElement(read) ? read : ValueID();
+    }
+    if (code().at(id).isInLoop)
+        return { };
     if (code().useCountOf(read) == 1 && code().onlyUserOf(read) == test && emitter<AccessEmitter>().integerThatLengthIsAskedFor(id, read, test))
         return read;
     if (asked.opcode != Opcode::ToBoolean || asked.form() != OperatorForm::Generic || asked.valueOperand() != read || code().useCountOf(read) != 1)
@@ -1487,7 +1516,16 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                 return false;
             if (operation.opcode == Opcode::CheckProof && operation.isLeftToTestBehind())
                 continue;
-            if (operation.opcode == Opcode::CallInline && (operation.inlineBuiltin() == InlineBuiltin::MathImul || operation.inlineBuiltin() == InlineBuiltin::MathClz32) && traits.isPure())
+            if (operation.opcode == Opcode::ToBoolean) {
+                ValueID read = operation.valueOperand();
+                const Operation& element = code().at(read);
+                if (operation.form() != OperatorForm::Generic || code().isConstant(read) || code().blockOf(read) != id || code().useCountOf(read) != 1 || element.opcode != Opcode::GetArrayElement)
+                    return false;
+                if (element.arrayStorage() != ArrayStorage::Other || element.level() != KnowledgeLevel::Proven || !element.isInBounds() || element.asksCellWhereNothingIsFound() || representationOf(read) != Representation::JSValue)
+                    return false;
+                continue;
+            }
+            if (operation.opcode == Opcode::CallInline && reckonsInLine(operation.inlineBuiltin()) && traits.isPure())
                 continue;
             if (!operationsOfTurnsLaidOut.contains(operation.opcode) || traits.mayWriteWhatIsSeen())
                 return false;

@@ -158,7 +158,7 @@ static TypeID widestPrimitiveResultByRuleOf(Opcode opcode)
     return applyResultRule(rules, Draft(opcode), 0, ResultSide::Unproven);
 }
 
-TypeID widestPrimitiveResultOf(Opcode opcode)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID widestPrimitiveResultOf(Opcode opcode)
 {
     static const std::array<TypeID, numberOfEnumerators<Opcode>> results = [] {
         std::array<TypeID, numberOfEnumerators<Opcode>> byRule;

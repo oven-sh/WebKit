@@ -32,7 +32,9 @@
 #include "OperationResult.h"
 #include "Options.h"
 #include "TopExceptionScope.h"
+#include "VMEntryScopeInlines.h"
 #include "VMTrapsInlines.h"
+#include "Watchdog.h"
 #include <setjmp.h>
 #include <stdlib.h>
 #include <type_traits>
@@ -689,7 +691,7 @@ static void checkPollThrowsDeferredTerminationAfterTheDeferral(LoadedProgram& pr
     vm.clearHasTerminationRequest();
 }
 
-#if AOT_LOOP_POLLS_FAULT && OS(LINUX) && !defined(BUN_HARDENED)
+#if AOT_LOOP_POLLS_FAULT && OS(LINUX)
 
 static constexpr ASCIILiteral programThatSpins =
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
@@ -723,9 +725,10 @@ NEVER_INLINE static void clearStackBelowCaller()
         word = 0;
 }
 
-NEVER_INLINE static void JIT_OPERATION_ATTRIBUTES lookForCellsWithEyesOfCollector(Instance* instance)
+NEVER_INLINE static bool lookForCellsWithEyesOfCollector(JSGlobalObject* realm, void*, void*)
 {
-    Heap& heap = instance->vm->heap;
+    clearStackBelowCaller();
+    Heap& heap = realm->vm().heap;
     heap.collectNow(Sync, CollectionScope::Full);
     for (GPRReg reg : allocatableGPRs) {
         if (heap.isMarked(std::bit_cast<const void*>(s_maskedCellsOfRegistersAtPoll[static_cast<unsigned>(reg)] ^ maskOfCellsAtPoll)))
@@ -848,10 +851,16 @@ static void checkPollThatFaultsShowsEveryRegisterToCollector(LoadedProgram& prog
     }
     AOT_TEST_CHECK(poll);
 
+    VM& vm = program.vm();
     Instance& instance = program.instance();
-    Vector<void*> table(std::span<void* const>(instance.runtimeTable, numberOfEntries));
-    table[offsetInRuntimeTable(Entry::operationAOTPollSlow) / sizeof(void*)] = tagCFunctionPtr<void*, OperationPtrTag>(lookForCellsWithEyesOfCollector);
-    void** tableOfProgram = std::exchange(instance.runtimeTable, table.mutableSpan().data());
+    Watchdog& watchdog = vm.ensureWatchdog();
+    watchdog.setTimeLimit(0_s, lookForCellsWithEyesOfCollector);
+    VMEntryScope entryScope(vm, program.realm());
+    SetForScope topCallFrame(vm.topCallFrame, vm.topCallFrame);
+    SetForScope topEntryFrame(vm.topEntryFrame, static_cast<EntryFrame*>(Thread::currentSingleton().stack().origin()));
+    if (!watchdog.isActive())
+        watchdog.enteredVM();
+    vm.notifyNeedWatchdogCheck();
     makeCellForEveryRegisterAtPoll(program.realm());
     clearStackBelowCaller();
     setPollsEnabled(instance, true);
@@ -859,10 +868,14 @@ static void checkPollThatFaultsShowsEveryRegisterToCollector(LoadedProgram& prog
     if (!setjmp(s_placeToComeBackToFromPoll))
         enterPollWithCellInEveryRegister(&instance, poll);
     setPollsEnabled(instance, false);
-    instance.runtimeTable = tableOfProgram;
+    watchdog.setTimeLimit(Watchdog::noTimeLimit);
 
+    uint64_t registersThatHeldCells = 0;
     for (GPRReg reg : allocatableGPRs)
-        AOT_TEST_CHECK(s_registersWhoseCellsWereFound & uint64_t { 1 } << static_cast<unsigned>(reg));
+        registersThatHeldCells |= uint64_t { 1 } << static_cast<unsigned>(reg);
+    if (s_registersWhoseCellsWereFound != registersThatHeldCells)
+        dataLogLn("registers whose cells were marked: ", RawHex(s_registersWhoseCellsWereFound), " of ", RawHex(registersThatHeldCells));
+    AOT_TEST_CHECK(s_registersWhoseCellsWereFound == registersThatHeldCells);
 }
 
 static void pollThatFaultsShowsEveryRegisterToCollector()
@@ -1131,10 +1144,8 @@ std::span<const NativeTest> runtimeOperationTests()
         { partsOfOtherWidthTest, growingTextTakesPartsWhoseCharactersHaveChangedWidth },
         { deferredTerminationTest, pollThrowsDeferredTerminationAfterTheDeferral },
         { pollInCallStubTest, pollInCallStubLeavesPendingOutOfMemoryError },
-#if AOT_LOOP_POLLS_FAULT && OS(LINUX) && !defined(BUN_HARDENED)
+#if AOT_LOOP_POLLS_FAULT && OS(LINUX)
         { pollShowsRegistersTest, pollThatFaultsShowsEveryRegisterToCollector },
-#else
-        { pollShowsRegistersTest, [] { }, "written for Linux without BUN_HARDENED: it lays its own function into the instance's runtime table"_s },
 #endif
         { callsAreCountedTest, callsAreCountedUnderCountsPath },
         { callsAreNotCountedTest, callsAreNotCountedByDefault },

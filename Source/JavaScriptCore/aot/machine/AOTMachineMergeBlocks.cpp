@@ -364,6 +364,7 @@ bool MachineBlockMerger::areEqual(const PatchOperation* a, const PatchOperation*
         || a->earlyClobberedMask() != b->earlyClobberedMask()
         || a->lateClobberedMask() != b->lateClobberedMask()
         || a->runsWithoutFrame() != b->runsWithoutFrame()
+        || a->showsRegistersToCollector() != b->showsRegistersToCollector()
         || a->followsFrameSetup() != b->followsFrameSetup()
         || a->testsStackAheadOfFramedPart() != b->testsStackAheadOfFramedPart()
         || a->leavesByReturning() != b->leavesByReturning()

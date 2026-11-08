@@ -412,7 +412,7 @@ void Modules::evaluateModuleItself(ModuleID module)
 JSValue Modules::requireModuleItselfBesideMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    if (ModuleRecord* record = recordSetAside(module); record && record->status() == CyclicModuleRecord::Status::EvaluatingAsync) [[unlikely]] {
+    if (ModuleRecord* record = recordSetAside(module); (record && record->status() == CyclicModuleRecord::Status::EvaluatingAsync) || (hasRunItself(module) && status(module) == ModuleStatus::EvaluatingAsync) || m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return pair.required == module && pair.mocked != module && pair.call == callOfFactoryThatHasNotSettled(pair.mocked); })) [[unlikely]] {
         throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, makeString(m_table.pathText(module), "?actual"_s)));
         return { };
     }
@@ -420,6 +420,7 @@ JSValue Modules::requireModuleItselfBesideMock(ModuleID module)
         oweBodyBesideMock(module);
         evaluateSynchronously(module, SynchronousEvaluationReason::Require);
         if (scope.exception()) [[unlikely]] {
+            m_modulesOwedBesideMock.clear(module.index());
             setAsideErrorOfModuleThatRanBesideMock(module);
             return { };
         }
@@ -428,7 +429,13 @@ JSValue Modules::requireModuleItselfBesideMock(ModuleID module)
         throwException(m_instance.globalObject, scope, error);
         return { };
     }
-    RELEASE_AND_RETURN(scope, namespaceOfModuleItself(module));
+    JSObject* own = namespaceOfModuleItself(module);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue answer = whatRequireMakesOfNamespace(own);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (auto* names = uncheckedDowncast<ModuleNamespace>(own); !names->hasExport(m_instance.vm->propertyNames->__esModule.impl()))
+        names->setESModuleMarker(true);
+    return answer;
 }
 
 uint64_t Modules::callOfFactoryThatHasNotSettled(ModuleID module, bool* refusesEveryRequire) const
@@ -482,8 +489,13 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
             return true;
         return data(module).hasTopLevelAwait() || status(module) == ModuleStatus::EvaluatingAsync;
     };
-    if (m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return pair.required == target && pair.mocked != target; }))
+    if (!isMocked(target) && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return pair.required == target && pair.mocked != target; })) {
+        if (!m_instance.vm->m_synchronousModuleQueue) {
+            waitForFactoriesThatRequireLeft(target);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         return givesUpAgain();
+    }
     if (wasGivenUpOn(target)) {
         if (cannotBeRequired(target))
             return givesUpAgain();

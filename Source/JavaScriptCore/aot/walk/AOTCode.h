@@ -664,7 +664,7 @@ struct Block {
     bool hasEnded() const { return terminator.isSet; }
     std::span<const ValueID> parameters() const LIFETIME_BOUND { return { m_parameters, m_numberOfParameters }; }
     static constexpr size_t mostParametersSearchedFromFront = 32;
-    size_t placeOfParameter(ValueID parameter) const
+    ALWAYS_INLINE size_t placeOfParameter(ValueID parameter) const
     {
         if (m_numberOfParameters > mostParametersSearchedFromFront) [[unlikely]]
             return placeAmongManyParameters(parameter);

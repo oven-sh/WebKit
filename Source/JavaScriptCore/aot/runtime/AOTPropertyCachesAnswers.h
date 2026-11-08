@@ -178,6 +178,7 @@ bool structureProvesOwnAbsence(VM&, JSCell* base, Structure*, UniquedStringImpl*
 bool hasOrdinaryDefineForName(VM&, JSCell* base, Structure*, UniquedStringImpl*);
 bool isHostObjectOverridingPut(Structure*);
 bool isWriteJudgedByWriter(Structure*, UniquedStringImpl*);
+void holdExtraPropertiesToStructureThatIsNamed(JSGlobalObject*, Object&);
 bool flattenOnce(VM&, JSObject*);
 bool flattenForListing(VM&, JSObject*);
 bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*);

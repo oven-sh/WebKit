@@ -130,6 +130,14 @@ private:
     Vector<Use, 128> m_uses;
 };
 
+static std::shared_ptr<const UsersOfValuesInCountersOfLoops> usersOfValuesOfLoopInCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead)
+{
+    Walker::UsersOfValuesOfLoop& kept = walker.usersOfValuesOfLoopOfFrame();
+    if (!kept.users || kept.body != &index || kept.function != walker.currentFunction() || kept.head != inputHead)
+        kept = { &index, walker.currentFunction(), inputHead, std::make_shared<const UsersOfValuesInCountersOfLoops>(walker, index, inputHead) };
+    return kept.users;
+}
+
 class UsersOfNamesInCountersOfLoops {
 public:
     explicit UsersOfNamesInCountersOfLoops(const UsersOfValuesInCountersOfLoops& users)
@@ -959,14 +967,14 @@ BitVector namesOfCountersAskedForInt32InFrontOfLoop(Walker& walker, BlockID inpu
     const BodyIndex& index = walker.currentBodyIndex();
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers) || !index.holdsAnyOf(stepsByOneOfCountersOfLoops | stepsByNumberOfCountersOfLoops))
         return found;
-    std::optional<UsersOfValuesInCountersOfLoops> users;
+    std::shared_ptr<const UsersOfValuesInCountersOfLoops> users;
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
     uint32_t numberOfParameters = index.block(inputHead).numberOfParameters();
     for (uint32_t position = 0; position < numberOfParameters && position < entering.size(); ++position) {
         if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, entering[position]) || std::ranges::find(entering.first(position), entering[position]) != entering.first(position).end())
             continue;
         if (!users)
-            users.emplace(walker, index, inputHead);
+            users = usersOfValuesOfLoopInCountersOfLoops(walker, index, inputHead);
         NamesOfCounterOfLoop names;
         if (!isSteppedAllRoundInCountersOfLoops(walker, index, *users, inputHead, position, names))
             continue;
@@ -989,10 +997,10 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
     uint32_t numberOfParameters = index.block(inputHead).numberOfParameters();
     Vector<WhatComesRoundInCountersOfLoops, 8> whatComesRound;
     whatComesRound.fill(WhatComesRoundInCountersOfLoops::NotAsked, numberOfParameters);
-    std::optional<UsersOfValuesInCountersOfLoops> usersOnceAsked;
+    std::shared_ptr<const UsersOfValuesInCountersOfLoops> usersOnceAsked;
     auto users = [&]() -> const UsersOfValuesInCountersOfLoops& {
         if (!usersOnceAsked)
-            usersOnceAsked.emplace(walker, index, inputHead);
+            usersOnceAsked = usersOfValuesOfLoopInCountersOfLoops(walker, index, inputHead);
         return *usersOnceAsked;
     };
     for (uint32_t position = 0; position < numberOfParameters && position < entering.size(); ++position) {
@@ -1223,8 +1231,8 @@ RelationOfHeadOnNumber findRelationOfHeadBetweenCounterThatEntersAsInt32AndNumbe
     if (!variable && (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end()))
         return { };
     NamesOfCounterOfLoop names;
-    UsersOfValuesInCountersOfLoops users(walker, index, inputHead);
-    if (!isSteppedAllRoundInCountersOfLoops(walker, index, users, inputHead, position, names) || !turnsTakeCounterAsIntegerInCountersOfLoops(index, users, names))
+    std::shared_ptr<const UsersOfValuesInCountersOfLoops> users = usersOfValuesOfLoopInCountersOfLoops(walker, index, inputHead);
+    if (!isSteppedAllRoundInCountersOfLoops(walker, index, *users, inputHead, position, names) || !turnsTakeCounterAsIntegerInCountersOfLoops(index, *users, names))
         return { };
     return { asked, number, variable };
 }
