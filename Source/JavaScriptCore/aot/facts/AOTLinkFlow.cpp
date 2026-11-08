@@ -5360,11 +5360,12 @@ FlowNodeID LinkFlow::appendedField(LayoutID layout, PropertyKeyID key)
         isNew = true;
         FlowNodeID node = makeNode();
         m_appendedFields.append(AppendedField { key, node, std::exchange(m_newestAppendedFieldOfLayout[layout.index()], static_cast<uint32_t>(m_appendedFields.size())) });
-        if (hasNothingAbove(layout) && mayHaveAppendedFieldsInLinkFlow(program.at(layout))) {
+        if (mayHaveAppendedFieldsInLinkFlow(program.at(layout))) {
+            bool waitsForRead = hasNothingAbove(layout);
             families.forEachFamilyOf(layout, [&](FamilyID family) {
                 if (FlowNodeID read = findNodeOnDemand(NodeOnDemand::ReadThroughFamily, family.index(), key))
                     addEdge(node, read);
-                else
+                else if (waitsForRead)
                     m_appendedFieldsThatWaitForRead.add(static_cast<uint64_t>(family.index()) << 32 | key.bits(), Vector<FlowNodeID, 1>()).iterator->value.append(node);
             });
         }
@@ -5428,7 +5429,7 @@ bool LinkFlow::tieAppendedFieldsOfLostLayouts()
     m_lostLayoutsWhoseAppendedFieldsAreTied.merge(fresh);
     bool hasTied = false;
     for (size_t layout : fresh) {
-        if (LayoutID lost(static_cast<uint32_t>(layout)); hasNothingAbove(lost) && mayHaveAppendedFieldsInLinkFlow(program.at(lost))) {
+        if (LayoutID lost(static_cast<uint32_t>(layout)); mayHaveAppendedFieldsInLinkFlow(program.at(lost))) {
             families.forEachFamilyOf(lost, [&](FamilyID family) {
                 hasTied |= noteLostMemberWithNothingAbove(family, lost);
             });
@@ -5869,6 +5870,8 @@ LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
     for (LayoutID id : program.types.listOf(families.layoutsOf(family))) {
         if (!hasNothingAbove(id)) {
             sorted->tiedOneByOne.append(id);
+            if (mayHaveAppendedFieldsInLinkFlow(program.at(id)) && m_lostLayoutsWhoseAppendedFieldsAreTied.get(id.index()))
+                ++sorted->numberLost;
             continue;
         }
         withNothingAbove.append(id);
@@ -5882,9 +5885,11 @@ LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
             ++sorted->numberLost;
     }
     sorted->numberWithNothingAbove = static_cast<uint32_t>(withNothingAbove.size());
-    if (!withNothingAbove.isEmpty()) {
+    if (!withNothingAbove.isEmpty() || !sorted->tiedOneByOne.isEmpty()) {
         sorted->foundBesideTheirFields = makeNode();
         for (LayoutID id : withNothingAbove)
+            addEdge(foundBesideFieldsOf(id), sorted->foundBesideTheirFields);
+        for (LayoutID id : sorted->tiedOneByOne)
             addEdge(foundBesideFieldsOf(id), sorted->foundBesideTheirFields);
     }
     return *m_sortedMembersOfFamilies.add(family.index(), WTF::move(sorted)).iterator->value;
@@ -5908,16 +5913,21 @@ bool LinkFlow::noteLostMemberWithNothingAbove(FamilyID family, LayoutID lost)
 void LinkFlow::tieReadThroughSortedMembers(FlowNodeID aggregate, FamilyID family, PropertyKeyID key)
 {
     SortedMembersOfFamily& sorted = sortedMembersOf(family);
-    for (LayoutID layout : sorted.tiedOneByOne) {
-        if (!tieRead(aggregate, layout, key) && mayHaveAppendedFieldsInLinkFlow(program.at(layout)))
-            addEdge(appendedField(layout, key), aggregate);
-        addEdge(foundBesideFieldsOf(layout), aggregate);
-    }
-    if (!sorted.numberWithNothingAbove)
-        return;
-    addEdge(sorted.foundBesideTheirFields, aggregate);
+    bool someMayHoldItBesideTheirFields = false;
     uint32_t numberThatList = 0;
     uint32_t numberLostThatList = 0;
+    for (LayoutID layout : sorted.tiedOneByOne) {
+        bool mayHaveAppendedFields = mayHaveAppendedFieldsInLinkFlow(program.at(layout));
+        if (tieRead(aggregate, layout, key))
+            numberLostThatList += mayHaveAppendedFields && m_lostLayoutsWhoseAppendedFieldsAreTied.get(layout.index());
+        else if (mayHaveAppendedFields) {
+            someMayHoldItBesideTheirFields = true;
+            if (FlowNodeID born = findAppendedField(layout, key))
+                addEdge(born, aggregate);
+        }
+    }
+    if (sorted.foundBesideTheirFields)
+        addEdge(sorted.foundBesideTheirFields, aggregate);
     if (auto listing = sorted.membersWithNothingAboveByKey.find(key.bits()); listing != sorted.membersWithNothingAboveByKey.end()) {
         for (LayoutID layout : listing->value) {
             tieRead(aggregate, layout, key);
@@ -5925,10 +5935,11 @@ void LinkFlow::tieReadThroughSortedMembers(FlowNodeID aggregate, FamilyID family
             numberLostThatList += mayHaveAppendedFieldsInLinkFlow(program.at(layout)) && m_lostLayoutsWhoseAppendedFieldsAreTied.get(layout.index());
         }
     }
-    if (numberThatList == sorted.numberWithNothingAbove)
+    if (numberThatList != sorted.numberWithNothingAbove)
+        arrive(aggregate, typeOfPrimitivesInLinkFlow(Primitive::Undefined));
+    else if (!someMayHoldItBesideTheirFields)
         return;
 
-    arrive(aggregate, typeOfPrimitivesInLinkFlow(Primitive::Undefined));
     for (FlowNodeID appended : m_appendedFieldsThatWaitForRead.take(static_cast<uint64_t>(family.index()) << 32 | key.bits()))
         addEdge(appended, aggregate);
     if (sorted.numberLost > numberLostThatList)

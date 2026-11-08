@@ -147,7 +147,7 @@ public:
 
     void appendElement(const ValueContext& store, CellPointer array, ValueID element);
     Boxed appendOutOfLine(const OperationContext&, CellPointer array, ValueID element);
-    Condition tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored);
+    Condition tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored, bool leavesStorageAsItIs = false, std::optional<Pointer> profileOfSite = std::nullopt);
     void widenStorageOfIntegers(CellPointer array, const ArrayStorageForm& wider, LBasicBlock isLeftToOthers);
     void turnIntegersIntoFractions(CellPointer array, const ArrayElements&, LBasicBlock isLeftToOthers);
 

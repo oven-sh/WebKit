@@ -856,6 +856,7 @@ public:
         return static_cast<EdgeClass>(m_classesOfIncomingEdgesFolded);
     }
     bool hasOnlyOnePredecessor() const { return m_hasOnlyOnePredecessor; }
+    bool writesMemory() const { return m_writesMemory; }
     bool isLandingPad() const { return m_isLandingPad; }
     bool isEntry() const { return m_isEntry; }
 
@@ -917,6 +918,7 @@ private:
     bool m_isLandingPad { false };
     bool m_isEntry { false };
     bool m_lastOperationMayEndBlock { false };
+    bool m_writesMemory { false };
     ArenaVector<Operation*> m_operations;
     ArenaVector<Operation*> m_phis;
     ArenaVector<Operation*> m_upsilons;

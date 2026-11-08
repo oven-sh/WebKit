@@ -2310,6 +2310,7 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         for (auto [place, number] : start.elementsThatEnterAsNumbers)
             enteringCopy[place] = number;
         m_everyTurnOfTypedBuildLeaves = false;
+        SetForScope holderIsNoBuiltin(m_walksCopyWhereHolderIsNoBuiltin, m_walksCopyWhereHolderIsNoBuiltin || (isRest && tellsListFromBytes));
         walkCopyOfLoop(inputHead, enteringCopy.span());
         turnsOfSomeCopyComeRound |= !std::exchange(m_everyTurnOfTypedBuildLeaves, false);
         dropWayIntoClosedCopy();
@@ -3671,6 +3672,10 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             m_typedBuildIsLeftAtOtherCodeOnUsualWay = !sharedEntry && !otherCopyOpensItsGuesses;
             for (size_t place = 0; place < std::min(carried.size(), taken.size()); ++place)
                 m_typedBuildIsLeftAtOtherCodeOnUsualWay |= m_code.at(taken[place]).representation == Representation::JSValue && m_code.at(carried[place]).representation != Representation::JSValue;
+            if (m_waysIntoClosedCopies.last().headAsksLesserBound && m_everyTurnOfTypedBuildLeaves && !m_otherCodeStayedInVainOfRow) {
+                m_typedBuildIsLeftAtOtherCodeOnUsualWay = true;
+                m_everyTurnOfTypedBuildLeaves = false;
+            }
         }
         copyBesideIsEntered = !isCopyBeside && entryOfClosedCopy && m_waysIntoClosedCopies.last().guessOfSomeTurnsIsAskedInFront;
         copyBesideIsBoughtByItself = copyBesideIsEntered && m_waysIntoClosedCopies.last().questionOfEveryTurnIsAskedInFront;

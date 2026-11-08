@@ -58,7 +58,7 @@ enum StatisticID (stage: StatisticStage) {
     LoopsBuiltTwiceWhoseValuesHandlersOutsideRead
     ListsAskedForBesideViewsInFrontOfLoops
     StoresFollowedIntoFreshLists
-    ListsFilledByCopiedRunsThatRememberStorageAtSite
+    ListsFilledByCopiedRunsThatRememberStorageAtSite NumbersStoredByKindOfStorageInCopiedRuns StoresOfCopiedRunsThatTakeListsAsTheyAre
     DeletesFollowedIntoFreshObjects DeletesOfNamesThatFreshObjectsDoNotHold
     CallsOfWhatIsNoObjectThatRunNoCode
     CallsForwardedBehindTestsOfTheirTargets

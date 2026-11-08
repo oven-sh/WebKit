@@ -122,6 +122,8 @@ public:
             return { };
         std::span<const uint32_t> fewest = holdersOf(names[0]);
         for (PropertyKeyID name : names.subspan(1)) {
+            if (fewest.empty())
+                break;
             if (std::span<const uint32_t> holders = holdersOf(name); holders.size() < fewest.size())
                 fewest = holders;
         }

@@ -780,15 +780,21 @@ static void chooseStorageOfListBeingFilledInChoices(Walker& walker, Draft& store
     if (store.opcode != Opcode::TryPutByValDirect)
         return;
     if (hasArrayStorageForm(born) || !isBornHereWithoutSourceInChoices(walker, list)) {
+        if (walker.depthOfCopies() && holdsOnlyNumbers(born) && isBornHereWithoutSourceInChoices(walker, list) && !walker.types().at(walker.typeOf(stored)).isNumber()) {
+            walker.count(StatisticID::StoresOfCopiedRunsThatTakeListsAsTheyAre);
+            return;
+        }
         store.setArrayStorage(born);
         return;
     }
     if (walker.depthOfCopies()) {
         ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
         if (!walker.code().at(root).remembersStorageAtSite()) {
-            walker.code().letListRememberStorageAtSite(root);
+            walker.code().letListRememberStorageAtSite(root, true);
             walker.count(StatisticID::ListsFilledByCopiedRunsThatRememberStorageAtSite);
         }
+        walker.count(StatisticID::StoresOfCopiedRunsThatTakeListsAsTheyAre);
+        return;
     }
     Reference position = store.positionOperand();
     becomeInChoices(store, Opcode::TryPutIndex);

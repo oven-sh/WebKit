@@ -374,7 +374,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
 #define NAMES_BETWEEN_COMMAS(...) WITHOUT_WHAT_STANDS_IN_FRONT_OF_FIRST_COMMA(__VA_ARGS__)
 
 #define FOR_EACH_FIELD_OF_WALKER_IN_TRY(macro) \
-    macro(m_state) macro(m_block) macro(m_origin) macro(m_opensGuesses) macro(m_firstFreeOpenEdge) macro(m_pendingBlocks) macro(m_numberOfClosedArms) \
+    macro(m_state) macro(m_block) macro(m_origin) macro(m_opensGuesses) macro(m_closedArmKeepsSites) macro(m_firstFreeOpenEdge) macro(m_pendingBlocks) macro(m_numberOfClosedArms) \
     macro(m_numberOfIterationsInFrontOfTheirLoops) macro(m_isLeadingHandlerEdge) \
     macro(m_numberOfLoopsThatMayBeLeft) macro(m_numberOfScopesWhereProofsHoldEverywhere) \
     macro(m_loopsOverGenerators) macro(m_environmentCellsOfUnit) macro(m_operationsCopiedAtWrittenCall) macro(m_closuresThatAllocationAloneTakes) macro(m_valuesDefinedBehindBirth) macro(m_valuesWrittenBehindBirth) macro(m_layoutOfBirthThatListsWhatIsBehind) macro(m_numberOfCopiesBuiltForSize) macro(m_walksCopyWhereHolderIsNoBuiltin) macro(m_otherCopiesInsideTypedCopies) \
@@ -408,7 +408,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
 #define FOR_EACH_FIELD_OF_WALKER_THAT_ITS_WRITER_PUTS_BACK(macro) \
     macro(m_valuesStoodInFor) macro(m_whereListsAreMadeBehindEntry) macro(m_makerOfListsBehindEntry) macro(m_accessWhoseKeyIsTested) macro(m_depthOfCopiesAroundThatAccess) macro(m_accessWhoseKeyArmHolds) macro(m_depthOfCopiesAroundKeyHeldByArm) macro(m_staticFieldSeenInVariableByArm) macro(m_isMakingObjectsOfConstant) \
     macro(m_numberOfMarksOfTries) macro(m_nestingDepth) macro(m_serialOfNewestMark) macro(m_loopsBeingBought) macro(m_sizesOfLogsWhereFramesWentOnTop) macro(m_buysTwoBuilds) \
-    macro(m_numberOfFormsHeardAsArms) macro(m_operationsThatRanOtherCodeOfRow) macro(m_guardsOfStoresAskedOfRow) macro(m_previewOutOfRow) macro(m_listsAreStruckInRow) macro(m_otherCodeStaysInTypedBuildOfRow) macro(m_otherCodeIsKeptOutOfFirstCopyInVainOfRow) macro(m_readsAskSitesThoughCallStaysOfRow) macro(m_sumsAreNotAskedInRow) macro(m_headOfTypedBuildOverListsTestedInFront) \
+    macro(m_numberOfFormsHeardAsArms) macro(m_operationsThatRanOtherCodeOfRow) macro(m_guardsOfStoresAskedOfRow) macro(m_previewOutOfRow) macro(m_listsAreStruckInRow) macro(m_otherCodeStaysInTypedBuildOfRow) macro(m_otherCodeIsKeptOutOfFirstCopyInVainOfRow) macro(m_otherCodeStayedInVainOfRow) macro(m_readsAskSitesThoughCallStaysOfRow) macro(m_sumsAreNotAskedInRow) macro(m_headOfTypedBuildOverListsTestedInFront) \
     macro(m_frameOfTypedBuildOverListsTestedInFront) macro(m_listsMadeHereOfTypedBuildOverListsTestedInFront) macro(m_headOfRowHandedOn) macro(m_frameOfRowHandedOn) macro(m_enteredOfRowHandedOn) macro(m_typesOfRowHandedOn) \
     macro(m_rungsOfRowHandedOn) macro(m_parametersThatRareWaysWidenedHandedOn) macro(m_parametersThatElementsOutsideViewsWidenedHandedOn) macro(m_firstOtherCodeRanInCopyOfRow) macro(m_someCallStaysInTurnOfRow) macro(m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces) macro(m_rowSaysTurnsAreQuietOutsideArms) macro(m_effectsOutsideArmsOfRow) \
     macro(m_testsSeenOfRow) macro(m_asksOnlyWhetherLoopMayBeBuiltTwice) macro(m_operatorsMadeInFrontOfLoops) macro(m_ordinalOfCopyOfLoop) macro(m_walksCopyWithoutGuessesOfSomeTurns) macro(m_walksCopyWithoutQuestionsOfEveryTurn) macro(m_walksCopyForAnotherKindOfStorage) macro(m_frontsSharedWithTypedBuilds) macro(m_inputHeadAskedAboutTypedCopy) \
@@ -2212,6 +2212,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
             SetForScope listsStruck(m_listsAreStruckInRow, m_answersOfLoops[place].listsAreStruck);
             SetForScope otherCodeStays(m_otherCodeStaysInTypedBuildOfRow, m_answersOfLoops[place].otherCodeStaysInTypedBuild);
             SetForScope keptOutInVain(m_otherCodeIsKeptOutOfFirstCopyInVainOfRow, m_answersOfLoops[place].otherCodeIsKeptOutOfFirstCopyInVain);
+            SetForScope stayedInVain(m_otherCodeStayedInVainOfRow, m_answersOfLoops[place].otherCodeStayedInVain);
             SetForScope readsAskSites(m_readsAskSitesThoughCallStaysOfRow, m_answersOfLoops[place].readsAskSitesThoughCallStays);
             SetForScope readWasKeptFromItsSite(m_readWasKeptFromItsSiteBecauseCallStays, false);
             m_typedBuildIsLeftAtOtherCodeOnUsualWay = false;
@@ -2266,6 +2267,8 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                     isBuilt = isKept(!std::exchange(m_typedBuildEndedListsTestedInFront, false) && isBuilt);
                     if (isBuilt)
                         break;
+                    m_answersOfLoops[place].otherCodeStayedInVain = true;
+                    m_otherCodeStayedInVainOfRow = true;
                 }
                 m_typedBuildIsLeftAtOtherCodeOnUsualWay = false;
             }

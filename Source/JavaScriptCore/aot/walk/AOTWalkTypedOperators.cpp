@@ -183,7 +183,7 @@ static bool equalsTextAloneInTypedOperator(Walker& walker, const Type& text, con
     return std::isnan(jsToNumber(walker.types().viewOf(literal, buffer)));
 }
 
-static TypeID typeOfOneTestableBuiltinOfTypedOperator(Walker& walker, const Type& type)
+static ALWAYS_INLINE TypeID typeOfOneTestableBuiltinOfTypedOperator(Walker& walker, const Type& type)
 {
     const BuiltinTable& table = walker.program().builtins();
     BuiltinID builtin = type.isObject() ? singleBuiltinOf(walker.types(), type) : BuiltinID();

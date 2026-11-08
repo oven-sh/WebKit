@@ -332,7 +332,7 @@ Condition AccessEmitter::hasById(const OperationContext& context, Boxed receiver
 
 Condition AccessEmitter::findsName(const OperationContext& context, Boxed receiver, PropertyKeyID key, PresenceQuestion question)
 {
-    std::optional<NumberedImmediate> answers = answersOf(context, key, SiteUse::Read);
+    std::optional<NumberedImmediate> answers = m_code.at(context.block()).frequency == BlockFrequency::Rare ? std::nullopt : answersOf(context, key, SiteUse::Read);
     if (!answers)
         return Condition(m_out.castToInt32(callStub(context, inById(question), { receiver.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first));
     bool asksShapeFirst = m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key);

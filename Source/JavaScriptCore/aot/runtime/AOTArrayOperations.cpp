@@ -537,7 +537,22 @@ static void startWindow(ArrayAllocationProfile& profile)
     std::ranges::fill(profile.largestLengths, 0);
 }
 
-void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull)
+static IndexingType narrowestShapeThatHoldsContentsOf(JSArray* array)
+{
+    IndexingType shape = Int32Shape;
+    Butterfly* butterfly = array->butterfly();
+    for (unsigned position = 0; position < butterfly->publicLength(); ++position) {
+        JSValue value = butterfly->contiguous().at(array, position).get();
+        if (!value || value.isInt32())
+            continue;
+        if (!value.isDouble() || value.asDouble() != value.asDouble())
+            return ContiguousShape;
+        shape = DoubleShape;
+    }
+    return shape;
+}
+
+void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull, bool readsContentsAtFirst)
 {
     if (!lastArrayOrNull) {
         if (profile.intervalDoublings)
@@ -545,6 +560,8 @@ void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* last
         return;
     }
     IndexingType shape = lastArrayOrNull->indexingType() & IndexingShapeMask;
+    if (readsContentsAtFirst && !profile.shape() && shape == ContiguousShape)
+        shape = narrowestShapeThatHoldsContentsOf(lastArrayOrNull);
     if (shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape) {
         if (!profile.shape())
             profile.set(profile.capacity(), Int32Shape);

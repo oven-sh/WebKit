@@ -268,6 +268,8 @@ void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const Functi
         checker.checkRequired(functionType);
     for (BuiltinID member : function.builtinMembers)
         checker.checkRequired(member);
+    for (StringID specifier : function.originalsAskedFor)
+        checker.checkRequired(specifier);
 }
 
 void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const TypeSite& site)

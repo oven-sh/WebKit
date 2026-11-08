@@ -271,7 +271,7 @@ JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, AfterFailure = After
 JS_EXPORT_PRIVATE void letMockWaitBehindLateFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void dropErrorsOfLoadsEndedByMocks(JSGlobalObject*);
 enum class OriginalBehindEntryOfProgram : uint8_t { GoesWithPatch, Stays };
-JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID, OriginalBehindEntryOfProgram = OriginalBehindEntryOfProgram::GoesWithPatch, bool wasLaidOverMockOfPreload = true);
+JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID, OriginalBehindEntryOfProgram = OriginalBehindEntryOfProgram::GoesWithPatch, bool wasLaidOverMockOfPreload = true, bool bringsBackWhatWasSetAside = true);
 JS_EXPORT_PRIVATE void letMockStandForLoadsInFlight(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool standsForLoadsInFlight(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isImportHeld(JSGlobalObject*, ModuleID);
@@ -302,6 +302,8 @@ JS_EXPORT_PRIVATE JSObject* moduleObjectBehindEntryOfProgram(JSGlobalObject*, Mo
 JS_EXPORT_PRIVATE void forgetOriginalOfFileThatLeftProgram(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE bool liesUnderKeyOfOriginal(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE void setLiesUnderKeyOfOriginal(JSGlobalObject*, ModuleID file, bool);
+JS_EXPORT_PRIVATE bool didOriginalComeBackUnderOwnKey(JSGlobalObject*, ModuleID file);
+JS_EXPORT_PRIVATE void setOriginalCameBackUnderOwnKey(JSGlobalObject*, ModuleID file, bool);
 JS_EXPORT_PRIVATE JSValue exportsThatMockWasLaidOver(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE bool hasMockLaidOver(JSGlobalObject*, ModuleID);
 enum class LoadedBy : uint8_t { Nobody, Preload, EarlierTestFile, ThisTestFile };
@@ -329,7 +331,7 @@ struct LoadedUnderStandingMock {
 };
 JS_EXPORT_PRIVATE LoadedUnderStandingMock loadedUnderStandingMockThatImportersKeep(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRequiredUnderMockInPlace(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE bool wasOnlyImportedUnderMockLaidInPreload(JSGlobalObject*, ModuleID file);
+JS_EXPORT_PRIVATE bool wasRequiredUnderMockLaidInPreload(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE JSObject* mockInPlaceBehind(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE bool hasWordOfMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSValue whatRequireAnswers, bool exportsAreOfCommonJSModule = false);

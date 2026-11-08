@@ -1029,7 +1029,7 @@ void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
         static std::atomic_flag isEnding = ATOMIC_FLAG_INIT;
         while (isEnding.test_and_set())
             pause();
-        dataLogLn("FATAL: out of memory. ", noRoomUnderLimitOnAddressSpace);
+        dataLogLn("FATAL: out of memory. ", noRoomUnderLimitOnAddressSpace.characters());
         _exit(EXIT_FAILURE);
     }
 #endif

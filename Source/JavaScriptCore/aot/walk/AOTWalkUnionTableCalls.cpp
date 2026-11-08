@@ -61,7 +61,7 @@ struct TableCallInUnionTableCalls {
 
 } // anonymous namespace
 
-static bool isCallOfMethodReadInUnionTableCalls(const BodyIndex& index, const BodyValue& read, ValueID call)
+static ALWAYS_INLINE bool isCallOfMethodReadInUnionTableCalls(const BodyIndex& index, const BodyValue& read, ValueID call)
 {
     auto lookup = read.as<Opcode::PropGet>();
     if (lookup.isFreeName() || !lookup.objectOperand() || !call || index.opcodeOf(call) != Opcode::Call || index.blockOf(call) != index.blockOf(read.id()))

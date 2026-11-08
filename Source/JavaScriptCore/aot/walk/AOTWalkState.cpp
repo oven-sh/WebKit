@@ -432,7 +432,7 @@ PropertyKeyID WalkState::Held::keyOfSlot(const ProgramOfState& program, FieldRef
     return program.slots ? program.slots->keyOf(*program.program, field) : PropertyKeyID();
 }
 
-uint8_t WalkState::Held::bitOfSlot(const ProgramOfState& program, FieldReference field)
+ALWAYS_INLINE uint8_t WalkState::Held::bitOfSlot(const ProgramOfState& program, FieldReference field)
 {
     PropertyKeyID key = keyOfSlot(program, field);
     return key ? bitOf(program, MemoryLocation::objectField(key)) : Place::entireHeap;
@@ -797,7 +797,7 @@ ALWAYS_INLINE void WalkState::Held::listAsReachedByEffects(uint32_t holder)
     m_holdersReachedByEffects.append(holder);
 }
 
-void WalkState::Held::takeOffListOfReachedByEffects(uint32_t holder)
+ALWAYS_INLINE void WalkState::Held::takeOffListOfReachedByEffects(uint32_t holder)
 {
     uint32_t place = std::exchange(m_holders.mutableAt(holder).placeAmongReachedByEffects, none);
     uint32_t numberLeft = m_holdersReachedByEffects.size() - 1;

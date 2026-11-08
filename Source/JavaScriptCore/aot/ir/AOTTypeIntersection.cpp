@@ -254,7 +254,7 @@ ObjectSetID filterMembersOncePerBuild(TypeArena& arena, SharedQuestion kind, Obj
     return picked;
 }
 
-static ObjectSetID intersectNamedObjects(TypeArena& arena, const Type& type, const Type& other, bool wholeUnknownOfOtherStays)
+static ALWAYS_INLINE ObjectSetID intersectNamedObjects(TypeArena& arena, const Type& type, const Type& other, bool wholeUnknownOfOtherStays)
 {
     if (!type.objects || other.anyObject || type.objects == other.objects)
         return type.objects;

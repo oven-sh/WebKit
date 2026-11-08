@@ -637,7 +637,7 @@ void Code::bearListWithStorage(ValueID list, ArrayStorage storage)
     const_cast<uint32_t&>(word) = encodePayloadWord(storage);
 }
 
-void Code::letListRememberStorageAtSite(ValueID list)
+void Code::letListRememberStorageAtSite(ValueID list, bool takesAnyValueAtFirst)
 {
     RELEASE_ASSERT(!m_isSwept);
     Operation& record = m_operations[checkedIndexInCode(list, m_operations.size())];
@@ -646,6 +646,8 @@ void Code::letListRememberStorageAtSite(ValueID list)
     if (m_keepsChangesToOlderParts)
         m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, list, record });
     record.flags |= *FlagMask::remembersStorageAtSite(Opcode::NewArrayLike);
+    if (takesAnyValueAtFirst)
+        record.flags |= *FlagMask::takesAnyValueAtFirst(Opcode::NewArrayLike);
 }
 
 void Code::letListForgetStorageAtSite(ValueID list)
@@ -656,7 +658,7 @@ void Code::letListForgetStorageAtSite(ValueID list)
     RELEASE_ASSERT(record.remembersStorageAtSite());
     if (m_keepsChangesToOlderParts)
         m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, list, record });
-    record.flags &= ~*FlagMask::remembersStorageAtSite(Opcode::NewArrayLike);
+    record.flags &= ~(*FlagMask::remembersStorageAtSite(Opcode::NewArrayLike) | *FlagMask::takesAnyValueAtFirst(Opcode::NewArrayLike));
 }
 
 ValueID Code::appendParameter(BlockID blockID, TypeID type, Representation representation, Origin origin)

@@ -1147,6 +1147,8 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
         filledWhereverObjectIs.emplace(walker);
     bool holdsMark = slotHoldsMarkForTypedAccess(walker, *receivers, key);
     Opcode opcodeOfRead = isFilled ? (holdsMark ? Opcode::GetDeferredClosureSlot : Opcode::GetSlot) : (holdsMark ? Opcode::GetDeferredClosureSlotOrUndefined : Opcode::GetSlotOrUndefined);
+    if (markAnswers)
+        walker.checkFactsRememberedOfCell(object, walker.originOf(value), FactOfCell::BearsNoMark);
     if (holdsMark && readsFilledSlotForCallAlone()) {
         Effects effects = Effects::ofReadByNameThatRunsNoCode();
         Reference read = walker.build(draftOfSlotOperationForTypedAccess(walker, value, opcodeOfRead, object, *receivers, key), &effects);
@@ -1156,8 +1158,6 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
             walker.state().noteSlot(object, field.place, read);
         return TypedForm::Built;
     }
-    if (markAnswers)
-        walker.checkFactsRememberedOfCell(object, walker.originOf(value), FactOfCell::BearsNoMark);
     Draft draft = draftOfSlotOperationForTypedAccess(walker, value, opcodeOfRead, object, *receivers, key);
     if (markAnswers && field.markAnswersForValue && opcodeOfRead == Opcode::GetSlot)
         draft.setHoldsDeclaredType(true);

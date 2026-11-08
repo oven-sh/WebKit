@@ -346,7 +346,7 @@ static std::optional<uint8_t> placeOfReceiverForGuesses(Opcode opcode)
     return receiverOf(opcode);
 }
 
-static TypeID typeOfReadForGuesses(Walker& walker, const TypingContext& typing, const BodyValue& read, TypeID receiver)
+static ALWAYS_INLINE TypeID typeOfReadForGuesses(Walker& walker, const TypingContext& typing, const BodyValue& read, TypeID receiver)
 {
     if (read.opcode() == Opcode::PropGet && !read.isFreeName()) {
         TypeID object = receiver ? receiver : provenTypeOfInputForGuesses(walker, read.objectOperand());
@@ -522,6 +522,13 @@ struct KeptWithBodyForGuesses final : KeptWithBodyIndex {
     {
         return std::ranges::equal_range(joinsThatHandNamesBack, static_cast<uint64_t>(root), { }, [](uint64_t listed) { return listed >> 32; });
     }
+    Vector<uint32_t> groupsOfRootsThatHandNamesOn;
+    Vector<uint32_t> firstMembersOfGroupsThatHandNamesOn;
+    Vector<uint32_t> membersOfGroupsThatHandNamesOn;
+    std::span<const uint32_t> membersOfGroupThatHandsNamesOn(uint32_t group) const
+    {
+        return membersOfGroupsThatHandNamesOn.span().subspan(firstMembersOfGroupsThatHandNamesOn[group], firstMembersOfGroupsThatHandNamesOn[group + 1] - firstMembersOfGroupsThatHandNamesOn[group]);
+    }
     Vector<uint32_t> readersOfCharactersNotOnlyCalled;
     Vector<uint32_t> rootsHandedFunctionsWrittenInPlace;
     Vector<uint64_t> castsOfRoots;
@@ -620,6 +627,82 @@ static bool showsValueUnderAnotherViewForGuesses(const Program& program, const B
 static bool namesReaderOfCharactersForGuesses(const Program& program, PropertyKeyID key)
 {
     return key == program.keyOf(BuiltinNames::charCodeAt) || key == program.keyOf(BuiltinNames::charAt) || key == program.keyOf(BuiltinNames::codePointAt);
+}
+
+static void groupRootsThatHandNamesOnForGuesses(KeptWithBodyForGuesses& kept, uint32_t numberOfValues)
+{
+    constexpr uint32_t none = UINT32_MAX;
+    struct Step {
+        uint32_t root;
+        uint32_t nextJoin;
+        uint32_t endOfJoins;
+    };
+    const Vector<uint64_t>& joins = kept.joinsThatHandNamesBack;
+    Vector<uint32_t>& groups = kept.groupsOfRootsThatHandNamesOn;
+    Vector<uint32_t>& firstMembers = kept.firstMembersOfGroupsThatHandNamesOn;
+    Vector<uint32_t>& members = kept.membersOfGroupsThatHandNamesOn;
+    groups.fill(none, numberOfValues);
+    Vector<uint32_t> placeWhereFound;
+    placeWhereFound.fill(none, numberOfValues);
+    Vector<uint32_t> earliestInReach;
+    earliestInReach.fill(0, numberOfValues);
+    Vector<uint32_t> withoutGroup;
+    Vector<Step> steps;
+    uint32_t numberFound = 0;
+    auto enter = [&](uint32_t root) {
+        placeWhereFound[root] = earliestInReach[root] = numberFound++;
+        withoutGroup.append(root);
+        auto handingBack = kept.joinsThatHandNamesBackTo(root);
+        steps.append({ root, static_cast<uint32_t>(handingBack.begin() - joins.begin()), static_cast<uint32_t>(handingBack.end() - joins.begin()) });
+    };
+    for (uint64_t first : joins) {
+        if (placeWhereFound[first >> 32] != none)
+            continue;
+        enter(static_cast<uint32_t>(first >> 32));
+        while (!steps.isEmpty()) {
+            if (Step& step = steps.last(); step.nextJoin < step.endOfJoins) {
+                uint32_t join = static_cast<uint32_t>(joins[step.nextJoin++]);
+                if (placeWhereFound[join] == none)
+                    enter(join);
+                else if (groups[join] == none)
+                    earliestInReach[step.root] = std::min(earliestInReach[step.root], placeWhereFound[join]);
+                continue;
+            }
+            uint32_t root = steps.takeLast().root;
+            if (!steps.isEmpty())
+                earliestInReach[steps.last().root] = std::min(earliestInReach[steps.last().root], earliestInReach[root]);
+            if (earliestInReach[root] != placeWhereFound[root])
+                continue;
+            uint32_t group = firstMembers.size();
+            firstMembers.append(members.size());
+            for (uint32_t member = none; member != root;) {
+                member = withoutGroup.takeLast();
+                groups[member] = group;
+                members.append(member);
+            }
+        }
+    }
+    uint32_t numberOfGroups = firstMembers.size();
+    firstMembers.append(members.size());
+    Vector<uint32_t> standsFor;
+    standsFor.grow(numberOfGroups);
+    for (uint32_t group = 0; group < numberOfGroups; ++group) {
+        uint32_t onlyGroupBehind = none;
+        bool standsForItself = false;
+        for (uint32_t member : kept.membersOfGroupThatHandsNamesOn(group)) {
+            standsForItself |= !kept.ownNamesOf(member).empty();
+            for (uint64_t join : kept.joinsThatHandNamesBackTo(member)) {
+                if (groups[static_cast<uint32_t>(join)] == group)
+                    continue;
+                uint32_t behind = standsFor[groups[static_cast<uint32_t>(join)]];
+                standsForItself |= onlyGroupBehind != none && onlyGroupBehind != behind;
+                onlyGroupBehind = behind;
+            }
+        }
+        standsFor[group] = standsForItself || onlyGroupBehind == none ? group : onlyGroupBehind;
+    }
+    for (uint32_t member : members)
+        groups[member] = standsFor[groups[member]];
 }
 
 static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& index, KeptWithBodyForGuesses& kept)
@@ -1103,6 +1186,7 @@ static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& in
                 kept.joinsThatHandNamesBack.append(arrival << 32 | arrival >> 32);
         }
         std::ranges::sort(kept.joinsThatHandNamesBack);
+        groupRootsThatHandNamesOnForGuesses(kept, numberOfValues);
     }
     std::ranges::sort(casts);
     kept.castsOfRoots = Vector<uint64_t>(casts.span());
@@ -1249,22 +1333,54 @@ bool Walker::loopReckonsWithWhatItReads(BlockID inputHead)
 
 static NEVER_INLINE std::span<const PropertyKeyID> gatherNamesOfRootAndOfJoinsItArrivesAtForGuesses(Walker& walker, const KeptWithBodyForGuesses& kept, uint32_t root)
 {
-    auto gathered = walker.namesGatheredForRoots().add({ &kept, root }, Vector<PropertyKeyID>());
-    Vector<PropertyKeyID>& names = gathered.iterator->value;
-    if (!gathered.isNewEntry)
-        return names.span();
-    Vector<uint32_t, 16> roots { root };
-    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> isListed { root };
-    for (size_t next = 0; next < roots.size(); ++next) {
-        names.append(kept.ownNamesOf(roots[next]));
-        for (uint64_t join : kept.joinsThatHandNamesBackTo(roots[next])) {
-            if (isListed.add(static_cast<uint32_t>(join)).isNewEntry)
-                roots.append(static_cast<uint32_t>(join));
+    auto& gathered = walker.namesGatheredForRoots();
+    uint32_t asked = kept.groupsOfRootsThatHandNamesOn[root];
+    if (auto found = gathered.find({ &kept, asked }); found != gathered.end())
+        return found->value.span();
+    Vector<uint32_t, 16> waiting { asked };
+    Vector<uint32_t, 8> groupsBehind;
+    while (!waiting.isEmpty()) {
+        uint32_t group = waiting.last();
+        if (gathered.contains({ &kept, group })) {
+            waiting.removeLast();
+            continue;
         }
+        std::span<const uint32_t> members = kept.membersOfGroupThatHandsNamesOn(group);
+        groupsBehind.shrink(0);
+        for (uint32_t member : members) {
+            for (uint64_t join : kept.joinsThatHandNamesBackTo(member)) {
+                if (uint32_t behind = kept.groupsOfRootsThatHandNamesOn[static_cast<uint32_t>(join)]; behind != group)
+                    groupsBehind.append(behind);
+            }
+        }
+        std::ranges::sort(groupsBehind);
+        groupsBehind.shrink(std::ranges::unique(groupsBehind).begin() - groupsBehind.begin());
+        size_t numberThatWaited = waiting.size();
+        for (uint32_t behind : groupsBehind) {
+            if (!gathered.contains({ &kept, behind }))
+                waiting.append(behind);
+        }
+        if (waiting.size() != numberThatWaited)
+            continue;
+        waiting.removeLast();
+        Vector<PropertyKeyID> names;
+        for (uint32_t member : members)
+            names.append(kept.ownNamesOf(member));
+        if (members.size() == 1 && groupsBehind.size() == 1) {
+            std::span<const PropertyKeyID> handedBack = gathered.find({ &kept, groupsBehind[0] })->value.span();
+            Vector<PropertyKeyID> both;
+            both.grow(names.size() + handedBack.size());
+            both.shrink(std::ranges::set_union(names, handedBack, both.begin(), { }, &PropertyKeyID::index, &PropertyKeyID::index).out - both.begin());
+            names = WTF::move(both);
+        } else {
+            for (uint32_t behind : groupsBehind)
+                names.append(gathered.find({ &kept, behind })->value.span());
+            std::ranges::sort(names, { }, &PropertyKeyID::index);
+            names.shrink(std::ranges::unique(names).begin() - names.begin());
+        }
+        gathered.add({ &kept, group }, WTF::move(names));
     }
-    std::ranges::sort(names, { }, &PropertyKeyID::index);
-    names.shrink(std::ranges::unique(names).begin() - names.begin());
-    return names.span();
+    return gathered.find({ &kept, asked })->value.span();
 }
 
 static ALWAYS_INLINE std::span<const PropertyKeyID> namesOfRootAndOfJoinsItArrivesAtForGuesses(Walker& walker, const KeptWithBodyForGuesses& kept, uint32_t root)
@@ -1471,7 +1587,7 @@ LayoutID Walker::onlyLayoutInSightWithAllNames(std::span<const PropertyKeyID> na
     return only;
 }
 
-static PropertyKeyID findNameUsedOffValueForGuesses(const Program& program, const BodyIndex& index, ValueID value)
+static ALWAYS_INLINE PropertyKeyID findNameUsedOffValueForGuesses(const Program& program, const BodyIndex& index, ValueID value)
 {
     while (true) {
         std::optional<BodyUser> user = index.firstUser(value);
@@ -1976,7 +2092,7 @@ static ExpectationForGuesses findWhatIsProvenOrExpectedForGuesses(Walker& walker
 
 static bool testedLayoutsAnswerNoNameUsedForGuesses(Walker&, ValueID, TypeID);
 
-static TypeID layoutsThatValueIsShapedLikeForGuesses(Walker& walker, ValueID value)
+static ALWAYS_INLINE TypeID layoutsThatValueIsShapedLikeForGuesses(Walker& walker, ValueID value)
 {
     if (!walker.someValueOfFrameHasShape())
         return { };
@@ -2904,17 +3020,27 @@ static ExpectationForGuesses findExpectationAsRememberedForGuesses(Walker& walke
     return lessWhatInstanceOfDeniedForGuesses(walker, input, expectation);
 }
 
-static ExpectationForGuesses findExpectationForGuesses(Walker& walker, ValueID input)
+static ALWAYS_INLINE ExpectationForGuesses unlessEveryTurnWouldAskItForGuesses(Walker& walker, ValueID input, ExpectationForGuesses expectation)
 {
-    ExpectationForGuesses expectation = findExpectationAsRememberedForGuesses(walker, input);
-    if (walker.someCopyExpectsSomethingOfArguments()) [[unlikely]] {
-        const Walker::ExpectationOfArgument* ofArgument = saysNothingForGuesses(walker.types(), expectation.type) && walker.currentBodyIndex().isParameter(input) && walker.currentBodyIndex().blockOf(input) == entryBlock && walker.mayLeaveCopyForCall() ? walker.expectedOfArgumentOfCopy(input.index()) : nullptr;
-        if (ofArgument)
-            return { ofArgument->type, ofArgument->isDeclared };
-    }
     if (walker.walksCopyWithoutQuestionsOfEveryTurn() && expectation.type && walker.types().at(expectation.type).isNumber() && walker.leavesOutQuestionThatEveryTurnWouldAsk() && staysTheSameThroughTurnsOfTypedCopyForGuesses(walker, input)) [[unlikely]]
         return { };
     return expectation;
+}
+
+static NEVER_INLINE ExpectationForGuesses orWhatIsExpectedOfArgumentOfCopyForGuesses(Walker& walker, ValueID input, ExpectationForGuesses expectation)
+{
+    const Walker::ExpectationOfArgument* ofArgument = saysNothingForGuesses(walker.types(), expectation.type) && walker.currentBodyIndex().isParameter(input) && walker.currentBodyIndex().blockOf(input) == entryBlock && walker.mayLeaveCopyForCall() ? walker.expectedOfArgumentOfCopy(input.index()) : nullptr;
+    if (ofArgument)
+        return { ofArgument->type, ofArgument->isDeclared };
+    return unlessEveryTurnWouldAskItForGuesses(walker, input, expectation);
+}
+
+static ExpectationForGuesses findExpectationForGuesses(Walker& walker, ValueID input)
+{
+    ExpectationForGuesses expectation = findExpectationAsRememberedForGuesses(walker, input);
+    if (walker.someCopyExpectsSomethingOfArguments()) [[unlikely]]
+        return orWhatIsExpectedOfArgumentOfCopyForGuesses(walker, input, expectation);
+    return unlessEveryTurnWouldAskItForGuesses(walker, input, expectation);
 }
 
 static bool isEntryParameterExpectedToBeObjectForGuesses(Walker& walker, ValueID input)
@@ -3256,7 +3382,7 @@ static ExpectationForGuesses expectationOfHolderOfPrivateNameForGuesses(Walker& 
     return { holders, true };
 }
 
-static bool standsBehindTestOfGuess(const Code& code, Reference value, const TestOfGuess& chosen)
+static ALWAYS_INLINE bool standsBehindTestOfGuess(const Code& code, Reference value, const TestOfGuess& chosen)
 {
     const Operation& narrowed = code.at(value.id());
     if (narrowed.opcode != Opcode::Narrowed || !narrowed.testOperand())
@@ -3494,7 +3620,7 @@ static std::optional<TestOfGuess> chooseLookAtStructureOfClassForGuesses(Walker&
     return chosen;
 }
 
-static TypeID partWhoseClassesHaveGuardsForGuesses(Walker& walker, TypeID expected)
+static ALWAYS_INLINE TypeID partWhoseClassesHaveGuardsForGuesses(Walker& walker, TypeID expected)
 {
     static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::PartWhoseClassesHaveGuards);
     TypeArena& types = walker.types();
@@ -4342,6 +4468,7 @@ static TestOfGuess secondTestOfGuess(Walker& walker, const TestOfGuess& first)
     if (Type asked = walker.types().at(second.tested); asked.isObject() && asked.hasOnlyLayouts() && !asked.hasOnlyClosures()) {
         if (std::optional<TestOfGuess> ofShapes = chooseTestOfTypeForGuesses(walker, second.tested))
             second = *ofShapes;
+        second.failingSideKeepsSites = true;
     }
     second.typedRunOpensGuesses = first.failingSideIsAsLikely;
     return second;
@@ -4647,6 +4774,13 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
             return walker.plan().slots().findField(walker.program(), member, name) || walker.facts().layoutsByNames().hasAll(member, singleElementSpan(name));
         });
     };
+    auto testsForRecordWhereNothingIsKnown = [&] {
+        if (!chosen.layouts || walker.types().at(walker.types().withoutNullish(walker.typeOf(value))).hasOnlyLayouts())
+            return false;
+        return std::ranges::any_of(walker.types().listOf(chosen.layouts), [&](LayoutID member) {
+            return walker.program().at(member).kind == LayoutKind::Record;
+        });
+    };
     auto goOnWhereTestPasses = [&](Reference test, bool passesWithYes = true) {
         lastTest = passesWithYes ? test : Reference();
         ++numberOfTests;
@@ -4656,7 +4790,7 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         BlockID passed = walker.addBlock();
         if (!closedBlock) {
             closedBlock = chosen.failingSideIsAsLikely || closedArmIsWalkedHereForWhatMayBeExpected || (chosen.failingSideAsksForNothing && !walker.isInLoop()) ? walker.addBlock() : walker.addBlock(BlockFrequency::Rare);
-            if (chosen.failingSideKeepsSites || (walker.isInLoop() && readsNameThatNoTestedLayoutAnswers()))
+            if (chosen.failingSideKeepsSites || (walker.isInLoop() && (testsForRecordWhereNothingIsKnown() || readsNameThatNoTestedLayoutAnswers())))
                 walker.code().markRareBlockThatKeepsSites(closedBlock);
         }
         walker.branch(test, passesWithYes ? passed : closedBlock, passesWithYes ? closedBlock : passed);
@@ -4972,6 +5106,7 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     if (closedBlock && !failingWayLeavesCopy) {
         walker.continueIn(closedBlock);
         Walker::ClosedArm closedArm(walker, failingWayBeginsTurnAgain);
+        SetForScope waysOutKeepSites(walker.closedArmKeepsSites(), walker.code().at(closedBlock).keepsSitesThoughRare);
         if (numberOfTests == 1 && !chosen.isPassedAlready && !chosen.knownByStructure)
             bindNamesBehindFailedTest(walker, value, lastTest, chosen.layouts ? OperandIndex::ShapeTest::object : OperandIndex::TypeTest::value, names.span(), origin);
         Reference refused = (chosen.failingSideAsksForNothing || chosen.failingSideAsksFor) && !names.isEmpty() && !walker.isUnreachable() ? walker.referenceOf(names[0]) : Reference();
@@ -5485,7 +5620,7 @@ static bool isReadOfVariableForGuesses(const BodyIndex& index, ValueID value)
     return value && !index.isParameter(value) && (index.opcodeOf(value) == Opcode::GetEnvironmentField || index.opcodeOf(value) == Opcode::GetModuleVariable);
 }
 
-static bool testAdmitsAllThatIsExpectedForGuesses(Walker& walker, const BodyValue& operation, ValueID operand, uint32_t operandIndex, TypeID expected, TypeID tested)
+static ALWAYS_INLINE bool testAdmitsAllThatIsExpectedForGuesses(Walker& walker, const BodyValue& operation, ValueID operand, uint32_t operandIndex, TypeID expected, TypeID tested)
 {
     static constexpr OpcodeSet accessesThatThrowOffNothing { Opcode::PropGet, Opcode::PropSet, Opcode::ElemGet, Opcode::ElemSet };
     static constexpr OpcodeSet accessesByName { Opcode::PropGet, Opcode::PropSet };
@@ -5643,7 +5778,7 @@ static uint32_t endOfWhatTakesResultForGuesses(Walker& walker, const BodyBlock& 
     return end;
 }
 
-static bool takeApartCallThatFindsBuiltinForGuesses(Walker& walker, const BodyValue& read)
+static ALWAYS_INLINE bool takeApartCallThatFindsBuiltinForGuesses(Walker& walker, const BodyValue& read)
 {
     if (!walker.facts().held().callersThatFindBuiltins.get(walker.currentFunction().index()) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::DirectCalls))
         return false;
@@ -5672,7 +5807,7 @@ static bool takeApartCallThatFindsBuiltinForGuesses(Walker& walker, const BodyVa
     return true;
 }
 
-static bool askGuardOfNameReadOffConstructorFunction(Walker& walker, const BodyValue& read)
+static ALWAYS_INLINE bool askGuardOfNameReadOffConstructorFunction(Walker& walker, const BodyValue& read)
 {
     Reference function = walker.has(Mechanism::TypedOperations) && !read.isFreeName() ? walker.referenceOf(read.objectOperand()) : Reference();
     if (!function || !function.isRecord() || !readOffConstructorFunctionAwaitsGuard(walker, read, walker.typeOf(function)))
@@ -5696,7 +5831,7 @@ static bool askGuardOfNameReadOffConstructorFunction(Walker& walker, const BodyV
     return true;
 }
 
-static bool askGuardsOfMethodReadOffPrototypeOfClass(Walker& walker, const BodyValue& read)
+static ALWAYS_INLINE bool askGuardsOfMethodReadOffPrototypeOfClass(Walker& walker, const BodyValue& read)
 {
     if (!walker.has(Mechanism::TypedOperations) || read.isFreeName() || read.key() != walker.program().keyOf(BuiltinNames::prototype))
         return false;
@@ -5903,7 +6038,7 @@ static bool askBytesOfMembersReadOffBuiltins(Walker& walker, const BodyValue& re
     return true;
 }
 
-static bool nameMayOpenGuessOfKeyOrdersForGuesses(const Walker& walker, const BodyValue& access)
+static ALWAYS_INLINE bool nameMayOpenGuessOfKeyOrdersForGuesses(const Walker& walker, const BodyValue& access)
 {
     if (access.isFreeName())
         return false;
@@ -6980,7 +7115,7 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
             chosen = chooseTestOfGuess(walker, value, expectation.type);
         TypeID membersLeftToFailingSide;
         if (operand == object && !isUnderPrivateName && !lacksOnlyFilledSlot) {
-            MembersAskedInTurnForGuesses members = membersThatMeetAtJoinForGuesses(walker, operand, expectation.type);
+            MembersAskedInTurnForGuesses members = membersThatMeetAtJoinForGuesses(walker, operand, walker.types().withoutNullish(expectation.type));
             if (std::optional<TestOfGuess> ofWhatArrives = members.first ? chooseTestOfGuess(walker, value, members.first) : std::nullopt) {
                 chosen = ofWhatArrives;
                 membersLeftToFailingSide = members.second;

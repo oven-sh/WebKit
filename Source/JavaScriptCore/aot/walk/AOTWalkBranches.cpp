@@ -273,7 +273,7 @@ bool isUnseenWhenUnused(const Walker& walker, const BodyValue& operation)
     return declaredEffectsOfOperation(walker.program(), opcode, operation).isRemovableWhenUnused();
 }
 
-static bool isPassedUnseenInWalkBranches(const Walker& walker, const BodyIndex& index, BodyBlock block, BodyTarget arriving)
+static ALWAYS_INLINE bool isPassedUnseenInWalkBranches(const Walker& walker, const BodyIndex& index, BodyBlock block, BodyTarget arriving)
 {
     if (index.numberOfIncomingEdges(block.id()) != 1 || block.numberOfParameters() != arriving.numberOfIncomingValues())
         return false;

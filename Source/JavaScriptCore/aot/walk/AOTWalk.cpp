@@ -1360,7 +1360,7 @@ void Walker::holdWhatIsFoundInPlace(Reference found, TypeID held, ProofSource so
     ++m_numbersOfProofsChecked[static_cast<unsigned>(source)];
 }
 
-void Walker::holdVariableOfAnotherFileStoredFirst(VariableID variable)
+ALWAYS_INLINE void Walker::holdVariableOfAnotherFileStoredFirst(VariableID variable)
 {
     if (program().at(variable).module == program().at(currentFunction()).module || !facts().linked().variables[variable.index()].isFilled)
         return;
@@ -4332,7 +4332,7 @@ Reference Walker::cellThatRunTimeKeeps(Draft& draft)
     return Reference::constant(added);
 }
 
-Reference Walker::readVariableWhereItIsTaken(Reference constant, Origin origin)
+ALWAYS_INLINE Reference Walker::readVariableWhereItIsTaken(Reference constant, Origin origin)
 {
     if (m_code.at(constant.id()).opcode != Opcode::GetModuleVariable)
         return constant;
@@ -5091,6 +5091,7 @@ ALWAYS_INLINE void Walker::releaseOpenEdge(uint32_t place)
     edge.names.clear();
     edge.inputBlockLeft = { };
     edge.isLedByClosedArm = false;
+    edge.isLedByClosedArmThatKeepsSites = false;
     edge.next = std::exchange(m_firstFreeOpenEdge, place);
 }
 
@@ -6508,6 +6509,7 @@ void Walker::leadEdge(EdgeID edge, BlockID from, const BodyTerminator& terminato
     open.state = WTF::move(m_state);
     open.inputBlockLeft = m_frames[frameIndex].block;
     open.isLedByClosedArm = !m_opensGuesses;
+    open.isLedByClosedArmThatKeepsSites = !m_opensGuesses && m_closedArmKeepsSites;
     if (Frame::ValuesBuiltTwice* listed = m_frames[frameIndex].valuesBuiltTwice.get()) [[unlikely]] {
         takeNamesOntoEdge(open, frameIndex);
         auto recordOf = [](const std::pair<Reference, Reference>& taken) { return taken.first.bits(); };

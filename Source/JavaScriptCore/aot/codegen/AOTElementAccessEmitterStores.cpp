@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAccessEmitter.h"
+#include "AOTArrayAllocationProfile.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementEmitterAllocation.h"
@@ -505,7 +506,7 @@ void ElementAccessEmitter::turnIntegersIntoFractions(CellPointer array, const Ar
     m_out.appendTo(done);
 }
 
-Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored)
+Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored, bool leavesStorageAsItIs, std::optional<Pointer> profileOfSite)
 {
     RELEASE_ASSERT(store->valueOperand() == stored);
     LBasicBlock otherwise = newBlock();
@@ -514,11 +515,23 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
     ArrayElements elements = elementsOf(array);
     forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, candidateFormsFor(stored, storageExpectedToHold(representationOf(stored))), otherwise, [&](const ArrayStorageForm& form) {
         Operand rawElement = *rawElementToStore(form, stored, otherwise);
-        storeInVector(store, form, elements, index, rawElement, otherwise);
+        if (leavesStorageAsItIs) {
+            LengthTest test = testLength(index, elements);
+            branchUnless(test.isInside, otherwise);
+            replaceElement(store, form, elements, test.indexInside, rawElement);
+        } else
+            storeInVector(store, form, elements, index, rawElement, otherwise);
         join.add(boolean(true));
     });
 
     m_out.appendTo(otherwise);
+    if (leavesStorageAsItIs) {
+        static_assert(ArrayAllocationProfile::countMask == 0xffffu << ArrayAllocationProfile::allocationCountShift && !(ArrayAllocationProfile::allocationCountShift % 8));
+        if (profileOfSite)
+            m_out.store32As16(m_out.int32Zero, m_out.address(m_heaps.AOTInstance_arrayProfiles, profileOfSite->value(), OBJECT_OFFSETOF(ArrayAllocationProfile, word) + ArrayAllocationProfile::allocationCountShift / 8));
+        join.add(boolean(false));
+        return join.finish();
+    }
     LBasicBlock isLeftToOthers = newBlock();
     const ArrayStorageForm& forInt32 = arrayStorageFormOf(ArrayStorage::Int32);
     const ArrayStorageForm& forAnyValue = arrayStorageFormOf(ArrayStorage::Contiguous);

@@ -335,7 +335,7 @@ static OperatorForm chooseLooseEqualityForm(const OperandsOfForm& operands)
     return OperatorForm::Generic;
 }
 
-OperatorForm chooseComparisonForm(const Program&, const TypeArena& types, Opcode opcode, OperatorTypes operandTypes)
+ALWAYS_INLINE OperatorForm chooseComparisonForm(const Program&, const TypeArena& types, Opcode opcode, OperatorTypes operandTypes)
 {
     RELEASE_ASSERT(comparisonsWithForm.contains(opcode));
     checkOperandsOfForm(opcode, operandTypes);

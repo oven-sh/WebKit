@@ -1113,7 +1113,7 @@ public:
     void leadJumpPastBlockThatJumps(BlockID);
     void leaveCheckOfProofToTestBehind(ValueID);
     void bearListWithStorage(ValueID, ArrayStorage);
-    void letListRememberStorageAtSite(ValueID);
+    void letListRememberStorageAtSite(ValueID, bool takesAnyValueAtFirst = false);
     void letListForgetStorageAtSite(ValueID);
     ValueID append(BlockID, const Draft&, TypeID proven, EffectTraits);
     void noteEffectsBelieved(ValueID, const Effects&);

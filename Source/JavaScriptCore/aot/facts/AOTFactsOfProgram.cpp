@@ -574,7 +574,7 @@ private:
     BuiltinID builtinThatLinkLedToAt(ValueID value) const { return value && !m_builtinThatLinkLedToOfValue.isEmpty() ? m_builtinThatLinkLedToOfValue[value.index()] : BuiltinID(); }
     void followAsComeByThroughLink(ValueID, BuiltinID canonicalAbove);
     const BuiltinCondition* lightFormAt(ValueID value) const { return builtinAt(value) ? m_rows.lightFormOf(m_builtins, m_builtins.canonicalID(builtinAt(value))) : nullptr; }
-    bool isFollowed(ValueID value) const { return builtinAt(value) || originOfURL(value) || holderOfMethodServed(value) || classOfPartAt(value); }
+    ALWAYS_INLINE bool isFollowed(ValueID value) const { return builtinAt(value) || originOfURL(value) || holderOfMethodServed(value) || classOfPartAt(value); }
     BodyValue valueBehindCasts(ValueID value) const { return m_index.value(m_index.valueBehindCasts(value)); }
 
     void note(Finding::Kind, uint8_t detail, uint32_t subject, uint32_t key, const Witness&);
@@ -971,7 +971,7 @@ void BodyLookOfProgramFacts::accessMemberOfPartOfClass(const BodyValue& value, B
     }
 }
 
-PropertyKeyID BodyLookOfProgramFacts::wellKnownSymbolThatReadGoesBy(const BodyValue& value) const
+ALWAYS_INLINE PropertyKeyID BodyLookOfProgramFacts::wellKnownSymbolThatReadGoesBy(const BodyValue& value) const
 {
     if (value.opcode() != Opcode::ElemGet)
         return { };

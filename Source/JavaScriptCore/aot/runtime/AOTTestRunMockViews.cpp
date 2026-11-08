@@ -456,6 +456,10 @@ void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
     BitVector seen(m_table.size());
     seen.quickSet(root.index());
     Vector<ModuleID, 32> work { root };
+    auto wasLeftAloneBeforeEndOf = [&](ModuleID module, ModuleID mocked, unsigned ended) {
+        auto over = m_mocksOverModulesThatHaveRun.find(m_table.fileBehindFace(module).value_or(module));
+        return over != m_mocksOverModulesThatHaveRun.end() && !m_importersOfMockThatEnded.get(module.index()) && over->value.momentThisWasLaid < m_endedMocks.find(mocked)->value[ended].momentEnded;
+    };
     while (!work.isEmpty()) {
         ModuleID module = work.takeLast();
         bool isLoaded = status(module) > ModuleStatus::Linked && !m_loadedInPreload.get(module.index());
@@ -463,7 +467,8 @@ void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
         for (const ModuleRequestData& request : m_table.imports(module)) {
             ModuleID target = moduleLoadedBy(request);
             ModuleID mocked = m_table.fileBehindFace(target).value_or(target);
-            if (isLoaded && !exportsBehindEntryOfProgram(module) && indexOfEndedMockSeenBy(mocked, module) && !keepsEndedMockWhereItIsAskedForAgain(mocked, module)) {
+            std::optional<unsigned> ended = isLoaded && !exportsBehindEntryOfProgram(module) ? indexOfEndedMockSeenBy(mocked, module) : std::nullopt;
+            if (ended && !wasLeftAloneBeforeEndOf(module, mocked, *ended) && !keepsEndedMockWhereItIsAskedForAgain(mocked, module)) {
                 noteLoadedAnew(module, root);
                 loaderGoesBelow = true;
             }

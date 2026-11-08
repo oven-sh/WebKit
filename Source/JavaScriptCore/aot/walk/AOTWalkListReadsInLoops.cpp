@@ -730,6 +730,7 @@ static bool buildPlainVectorOfNumbersInListReadsInLoops(Walker& walker, const Bo
 }
 
 static Draft questionForKindOfStorageInListReadsInLoops(Walker&, const ListTestedInFrontOfLoop&, Origin);
+OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 
 static bool storeIntoVectorAskedInFrontOfTypedCopy(Walker& walker, const BodyValue& value)
 {
@@ -737,40 +738,80 @@ static bool storeIntoVectorAskedInFrontOfTypedCopy(Walker& walker, const BodyVal
     if (!walker.has(Mechanism::Folding) || !walker.isInLoop() || walker.state().answers().isEmpty())
         return false;
     Draft written = walker.draftOf(value);
+    ValueID birth = written.arrayOperand() && written.arrayOperand().isValue() ? rootOfCellInSweptCode(walker.code(), written.arrayOperand().id()) : ValueID();
+    bool remembered = birth && walker.code().at(birth).opcode == Opcode::NewArrayLike && walker.code().at(birth).remembersStorageAtSite();
     walker.chooseConservativeFields(written);
-    if (written.opcode != Opcode::TryPutByValDirect || written.arrayStorage() != ArrayStorage::Contiguous)
+    if (written.opcode != Opcode::TryPutByValDirect)
         return false;
     Reference list = written.arrayOperand();
     Reference position = written.positionOperand();
     Reference stored = written.valueOperand();
+    bool goesByKind = written.arrayStorage() == ArrayStorage::Double && stored && walker.typeOf(stored) && walker.types().at(walker.typeOf(stored)).isNumber();
+    if (written.arrayStorage() != ArrayStorage::Contiguous && !goesByKind)
+        return false;
+    auto staysTyped = [&] {
+        if (goesByKind && remembered && walker.code().at(birth).remembersStorageAtSite())
+            walker.code().letListForgetStorageAtSite(birth);
+        return false;
+    };
+    bool mayBeNaN = goesByKind && !canStoreWithoutConversion(walker.types(), ArrayStorage::Double, walker.typeOf(stored));
+    if (mayBeNaN && !walker.mayBeginTurnAgainInClosedCopy())
+        return staysTyped();
+    ArrayStorage kindAsked = goesByKind ? ArrayStorage::Other : ArrayStorage::Contiguous;
     if (!list || !list.isValue() || !position || !stored || !walker.standsInFrontOfTypedCopy(list, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(list, turn))
-        return false;
+        return staysTyped();
     if (!walker.findWhatHoldsPositionInsideList(list, position))
-        return false;
+        return staysTyped();
     Origin origin = written.origin();
     origin.isTailCall = false;
     std::optional<ListTestedInFrontOfLoop> tested = findNoteInListReadsInLoops(walker, list);
     if (!tested) {
-        ListTestedInFrontOfLoop asked { list, ArrayStorage::Contiguous, false, true, true };
+        ListTestedInFrontOfLoop asked { list, kindAsked, false, true, true };
         Reference test;
         {
             Walker::InFrontOfTypedCopy inFront(walker, true, turn);
             test = walker.build(questionForKindOfStorageInListReadsInLoops(walker, asked, origin));
         }
         if (!test || !walker.branchInFrontOfTypedCopy(test, true, turn))
-            return false;
+            return staysTyped();
         walker.noteGuessOpened();
         walker.noteListAskedInFrontOfTypedCopy();
         noteListTestedInListReadsInLoops(walker, asked);
         tested = asked;
     }
-    if (!tested->isWritable || tested->storage != ArrayStorage::Contiguous || tested->admitsInt32Storage)
-        return false;
+    if (!tested->isWritable || tested->storage != kindAsked || tested->admitsInt32Storage)
+        return staysTyped();
+    if (mayBeNaN) {
+        Draft isItself(Opcode::StrictEq, origin);
+        walker.chooseConservativeFields(isItself);
+        isItself.setLeftOperand(stored);
+        isItself.setRightOperand(stored);
+        isItself.setForm(formAllowedForTypedOperator(walker, isItself));
+        Reference test = walker.build(WTF::move(isItself));
+        if (!test)
+            return true;
+        BlockID passed = walker.addBlock();
+        BlockID failed = walker.addBlock(BlockFrequency::Rare);
+        walker.branch(test, passed, failed);
+        walker.continueIn(failed);
+        if (!walker.isUnreachable())
+            walker.beginTurnAgainInClosedCopy();
+        walker.continueIn(passed);
+        walker.noteGuessOpened();
+        if (walker.isUnreachable() || walker.hasFailed())
+            return true;
+    }
     Draft store(Opcode::PutContiguousIndex, origin);
     walker.chooseConservativeFields(store);
     store.setArrayOperand(list);
     store.setPositionOperand(position);
     store.setValueOperand(stored);
+    if (goesByKind) {
+        store.setGoesByKindOfStorage(true);
+        walker.count(StatisticID::NumbersStoredByKindOfStorageInCopiedRuns);
+        if (remembered && !walker.code().at(birth).remembersStorageAtSite())
+            walker.code().letListRememberStorageAtSite(birth);
+    }
     if (Reference storage = storageOfListFromInFrontOfLoop(walker, *tested, origin))
         store.setStorageOperand(storage);
     walker.build(WTF::move(store));

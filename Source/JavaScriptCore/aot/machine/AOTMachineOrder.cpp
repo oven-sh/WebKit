@@ -273,6 +273,49 @@ Block* Order::askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* s
     return asked;
 }
 
+void Order::askBitsOfTwoTestsAtOnce(Block* first, unsigned wayOfFirstWhereBitIsSet, Operation* bitsOfFirst, Block* second, unsigned wayOfSecondWhereBitIsSet, Operation* bitsOfSecond)
+{
+    Procedure& procedure = first->procedure();
+    RELEASE_ASSERT(first->last()->opcode() == Branch && first->numSuccessors() == 2 && second->last()->opcode() == Branch && second->numSuccessors() == 2);
+    RELEASE_ASSERT(first->successor(1 - wayOfFirstWhereBitIsSet).block() == second && second->numberOfIncomingEdges() == 1);
+    RELEASE_ASSERT(first->upsilons().empty() && second->upsilons().empty());
+
+    const Edge targetOfFirst = first->successor(wayOfFirstWhereBitIsSet);
+    const Edge toSecond = first->successor(1 - wayOfFirstWhereBitIsSet);
+    const Edge targetOfSecond = second->successor(wayOfSecondWhereBitIsSet);
+    const Edge wayOn = second->successor(1 - wayOfSecondWhereBitIsSet);
+
+    Operation* maskOfFirst = bitsOfFirst->m_children[1];
+    Operation* maskOfSecond = bitsOfSecond->m_children[1];
+    Operation* maskOfBoth = procedure.arena().create<Operation>(maskOfFirst->opcode(), maskOfFirst->type(), first->last()->origin());
+    maskOfBoth->m_payload.bits = maskOfFirst->asInt() | maskOfSecond->asInt();
+    procedure.didCreate(maskOfBoth);
+    bitsOfFirst->m_children[1] = maskOfBoth;
+    maskOfBoth->gainUse();
+    bitsOfSecond->m_children[1] = maskOfFirst;
+    maskOfSecond->loseUse();
+    Operation* wordOfFirst = bitsOfFirst->m_children[0];
+    Operation* wordOfSecond = bitsOfSecond->m_children[0];
+    if (wordOfSecond != wordOfFirst) {
+        RELEASE_ASSERT(wordOfFirst->owner() == first && wordOfSecond->owner() == second && wordOfSecond->useCount() == 1);
+        bitsOfSecond->m_children[0] = wordOfFirst;
+        wordOfFirst->gainUse();
+        wordOfSecond->loseUse();
+    }
+
+    Edge whereBitOfEitherIsSet(second, std::min(targetOfFirst.edgeClass(), targetOfSecond.edgeClass()));
+    Edge whereNoBitIsSet(wayOn.block(), std::max(toSecond.edgeClass(), wayOn.edgeClass()));
+    second->clearSuccessors();
+    if (wayOfFirstWhereBitIsSet)
+        first->setSuccessors(whereNoBitIsSet, whereBitOfEitherIsSet);
+    else
+        first->setSuccessors(whereBitOfEitherIsSet, whereNoBitIsSet);
+    if (wayOfSecondWhereBitIsSet)
+        second->setSuccessors(targetOfSecond, targetOfFirst);
+    else
+        second->setSuccessors(targetOfFirst, targetOfSecond);
+}
+
 void Order::joinEdgesToOneBlock(Block* from)
 {
     ASSERT(from->isTerminated());

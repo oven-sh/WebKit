@@ -332,10 +332,10 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     return elementsBelowLength == ElementsBelowLength::NotCleared ? array : setLength(array);
 }
 
-std::optional<Pointer> ArrayAllocationEmitter::profileOfListsOfLengthAtSite(const ValueContext& value, const ArrayStorageForm& seed)
+std::optional<Pointer> ArrayAllocationEmitter::profileOfListsOfLengthAtSite(Origin origin, const ArrayStorageForm& seed)
 {
     static constexpr uint32_t markOfListsOfLength = 8;
-    std::optional<Vector<uint32_t, 12>> site = modulesAndPositionsOf(value);
+    std::optional<Vector<uint32_t, 12>> site = modulesAndPositionsOf(origin);
     if (!site || seed.holdsCells)
         return std::nullopt;
     site->append(markOfListsOfLength | static_cast<uint32_t>(elementKindOfForm(seed)));

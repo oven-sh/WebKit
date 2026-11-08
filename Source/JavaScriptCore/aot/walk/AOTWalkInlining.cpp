@@ -49,7 +49,7 @@ struct CallOfInlining {
     std::span<const Reference> arguments;
 };
 
-static Reference closureCalledAtInlining(const Draft& site)
+static ALWAYS_INLINE Reference closureCalledAtInlining(const Draft& site)
 {
     return site.opcode == Opcode::SuperConstruct ? site.parentOperand() : site.calleeOperand();
 }
@@ -91,7 +91,7 @@ static bool isOnlyCalledAtInlining(const BodyIndex& body, ValueID parameter)
     return calls && calls == body.useCount(parameter);
 }
 
-static bool onlyHandsFunctionToHelperThatCallsItAtInlining(const Walker& walker, FunctionID forwarder)
+static ALWAYS_INLINE bool onlyHandsFunctionToHelperThatCallsItAtInlining(const Walker& walker, FunctionID forwarder)
 {
     const ThinSummary& summary = walker.facts().summaries().at(forwarder);
     if (summary.tailCallThatIsOnlyCall.isEmpty() || summary.has(SummaryTrait::HasLoops))
@@ -456,7 +456,7 @@ static Reference operandHandedOverAtInlining(const CallOfInlining& call, const F
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool fitsParameterAtInlining(Walker& walker, const Function& callee, unsigned entryParameter, TypeID arriving)
+static ALWAYS_INLINE bool fitsParameterAtInlining(Walker& walker, const Function& callee, unsigned entryParameter, TypeID arriving)
 {
     const DeclaredType* declared = callee.declaredEntryParameter(entryParameter);
     if (!declared || !declared->isEstablished())

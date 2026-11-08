@@ -31,7 +31,7 @@ public:
     enum class ElementsBelowLength : bool { Cleared, NotCleared };
     enum class LengthIsSetBy : bool { Allocation, Caller };
     CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath, ElementsBelowLength = ElementsBelowLength::Cleared, LengthIsSetBy = LengthIsSetBy::Allocation);
-    std::optional<Pointer> profileOfListsOfLengthAtSite(const ValueContext&, const ArrayStorageForm& seed);
+    std::optional<Pointer> profileOfListsOfLengthAtSite(Origin, const ArrayStorageForm& seed);
     CellPointer allocateArrayOfHolesAtSite(const ValueContext&, Integer length, const ArrayStorageForm& seed, Pointer profile, LBasicBlock slowPath);
     CellPointer bearArrayOfLength(const OperationContext&, const ArrayStorageForm&, Integer length);
     CellPointer allocateEmptyArrayWithRoom(const OperationContext&, Integer room, const ArrayStorageForm&, LBasicBlock slowPath);

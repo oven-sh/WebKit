@@ -222,7 +222,7 @@ static bool isAccessorOfLayout(const Program& program, LayoutID layout, Property
     return field && fieldAt(program, *field).form.contains(FieldForm::IsAccessor);
 }
 
-static TypeID tryProvenTypeFoundAboveObjects(const TypingContext& context, const Type& receiver, PropertyKeyID key)
+static ALWAYS_INLINE TypeID tryProvenTypeFoundAboveObjects(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
     auto askEachLayout = [&]() -> TypeID {
         TypeID foundByAll;
@@ -244,7 +244,7 @@ static TypeID tryProvenTypeFoundAboveObjects(const TypingContext& context, const
     return context.positions.askedOfEachLayout(PositionTypes::QuestionOfEachLayout::FoundAboveObjects, context.level, receiver.layouts, key, scopedLambda<TypeID()>(askEachLayout));
 }
 
-static TypeID tryProvenTypeReadOffLayouts(const TypingContext& context, const Type& receiver, PropertyKeyID key)
+static ALWAYS_INLINE TypeID tryProvenTypeReadOffLayouts(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
     auto askEachLayout = [&]() -> TypeID {
         FieldReadUnion read { context };

@@ -395,6 +395,11 @@ struct NameOfStatementData {
     StringID nameString() const { return StringID(name); }
 };
 
+struct OriginalAskedForData {
+    uint32_t function;
+    uint32_t specifier;
+};
+
 struct StarAsWrittenData {
     uint32_t module;
     uint32_t target;
@@ -518,6 +523,7 @@ static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatement
 static_assert(sizeof(AmbiguousExportData) == 8 && isImageRecord<AmbiguousExportData>);
 static_assert(sizeof(SourceStampData) == 12 && isImageRecord<SourceStampData>);
 static_assert(sizeof(NameOfStatementData) == 8 && isImageRecord<NameOfStatementData>);
+static_assert(sizeof(OriginalAskedForData) == 8 && isImageRecord<OriginalAskedForData>);
 static_assert(sizeof(StarAsWrittenData) == 12 && isImageRecord<StarAsWrittenData>);
 static_assert(sizeof(WriterOfExportData) == 12 && isImageRecord<WriterOfExportData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
@@ -588,6 +594,8 @@ private:
     v(modulesReachedUnderOtherNames, uint32_t) \
     v(modulesThatDependOnMoreThanSource, uint32_t) \
     v(asyncFunctionsWithoutAwait, uint32_t) \
+    v(functionsThatMayAskForOwnOriginal, uint32_t) \
+    v(originalsAskedFor, OriginalAskedForData) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \
     v(stateOfLibraryModules, StateOfLibraryModuleData) \

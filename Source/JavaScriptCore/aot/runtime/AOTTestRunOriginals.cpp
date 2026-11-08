@@ -95,6 +95,24 @@ bool Modules::isLinkedToOriginalOf(ModuleID fileOrModule, ModuleID importer) con
     return anew == m_momentsLoadedAnew.end() || anew->value.moment <= got->value.moment;
 }
 
+bool Modules::isOfPackage(ModuleID module) const
+{
+    String path = m_table.pathText(module);
+    return path.contains("/node_modules/"_s) || path.contains("\\node_modules\\"_s);
+}
+
+bool Modules::wasLoadedUnderKeyOfOriginal(ModuleID fileOrModule) const
+{
+    ModuleID mocked = fileOf(fileOrModule);
+    if (m_importersThatGotOriginal.isEmpty() || (!isMocked(mocked) && !isOfPackage(mocked)))
+        return false;
+    for (auto& got : m_importersThatGotOriginal) {
+        if (got.key >> 32 == mocked.index() && got.value.isGivenByHost)
+            return true;
+    }
+    return false;
+}
+
 void Modules::didLeaveOriginalUnderKeyOfOriginal(ModuleID fileOrModule)
 {
     uint64_t mocked = fileOf(fileOrModule).index();

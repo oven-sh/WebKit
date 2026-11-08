@@ -369,7 +369,7 @@ BeliefInMemberAbove beliefInMemberFoundOnObjectAsMade(const Walker& walker, Buil
 
 static constexpr PristineAspectSet aspectsOfObjectAsMade { PristineAspects::Storage, PristineAspects::Names, PristineAspects::NamesKeptBelow, PristineAspects::Prototype };
 
-static BuiltinClassID classThatHasTestOfObjectAsMadeInWalkBuiltins(const Walker& walker, TypeID object)
+static ALWAYS_INLINE BuiltinClassID classThatHasTestOfObjectAsMadeInWalkBuiltins(const Walker& walker, TypeID object)
 {
     Type type = walker.types().at(object);
     const ClassPart* part = type.isObject() ? singleBuiltinClassOf(walker.types(), type) : nullptr;

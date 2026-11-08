@@ -364,12 +364,17 @@ void ArrayIntrinsicEmitter::newArrayOfHoles(const ValueContext& value, Integer l
     ArrayAllocationEmitter allocation(generator());
     std::optional<Pointer> profile;
     if (value->opcode == Opcode::NewArrayLike && value->remembersStorageAtSite() && !flags)
-        profile = allocation.profileOfListsOfLengthAtSite(value, form);
+        profile = allocation.profileOfListsOfLengthAtSite(value.origin(), form);
+    bool takesAnyValueAtFirst = profile && value->takesAnyValueAtFirst() && !hasArrayStorageForm(value->arrayStorage());
+    if (takesAnyValueAtFirst) {
+        static_assert(ArrayAllocationProfile::shapeMask == 0xffu << ArrayAllocationProfile::shapeShift && !(ArrayAllocationProfile::shapeShift % 8));
+        branchUnless(Condition(m_out.notZero32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_arrayProfiles, profile->value(), OBJECT_OFFSETOF(ArrayAllocationProfile, word) + ArrayAllocationProfile::shapeShift / 8)))), slowPath);
+    }
     join.add(profile ? allocation.allocateArrayOfHolesAtSite(value, length, form, *profile, slowPath) : allocation.allocateArrayOfHoles(value, length, form, slowPath, ElementsBelowLength::Cleared, LengthIsSetBy::Caller));
 
     m_out.appendTo(slowPath);
     if (profile)
-        join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHolesAtSite, { *profile, sourceOrNull(source), length, word32(form.indexingType) }, { .isOnRarePath = true }));
+        join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHolesAtSite, { *profile, sourceOrNull(source), length, word32(takesAnyValueAtFirst ? ArrayWithUndecided : form.indexingType) }, { .isOnRarePath = true }));
     else
         join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { sourceOrNull(source), length, word32(form.indexingType), word32(flags) }, { .isOnRarePath = true }));
     CellPointer array = join.finish();
@@ -419,6 +424,11 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Integer index = integerOperand(value->positionOperand());
     ValueID stored = value->valueOperand();
+    if (const Operation& born = m_code.at(rootOfCellInSweptCode(m_code, value->arrayOperand())); !hasArrayStorageForm(value->arrayStorage()) && born.opcode == Opcode::NewArrayLike && born.remembersStorageAtSite()) {
+        const ArrayStorageForm* seed = findArrayStorageForm(born.arrayStorage());
+        define(value, elements().tryStoreElement(value, array, index, stored, true, ArrayAllocationEmitter(generator()).profileOfListsOfLengthAtSite(born.origin(), seed ? *seed : int32s)));
+        return;
+    }
     const ArrayStorageForm* formOfList = findFormOfListFilled(value);
     const ArrayStorageForm& form = formOfList ? *formOfList : contiguous;
     LBasicBlock otherwise = newBlock();

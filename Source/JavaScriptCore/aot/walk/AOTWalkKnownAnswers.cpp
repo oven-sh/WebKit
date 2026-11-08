@@ -506,7 +506,7 @@ void KnownAnswers::note(std::span<const uint32_t> wordsOfKey, AnswersOfWalk::Pla
     m_held->restsOn.merge(restsOn);
 }
 
-std::optional<bool> KnownAnswers::outcomeOf(Reference condition) const
+ALWAYS_INLINE std::optional<bool> KnownAnswers::outcomeOf(Reference condition) const
 {
     if (!m_held || m_held->outcomes.isEmpty())
         return std::nullopt;

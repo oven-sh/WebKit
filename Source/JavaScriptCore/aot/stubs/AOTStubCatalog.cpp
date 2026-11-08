@@ -399,7 +399,7 @@ const StubCatalog::Node& StubCatalog::nodeOf(StubKey body) const
     return closedNodeAt(findIndexInStubCatalog(m_nodeOfBody, body));
 }
 
-const StubCatalog::Answer* StubCatalog::tryFindOwnAnswer(StubKey key) const
+ALWAYS_INLINE const StubCatalog::Answer* StubCatalog::tryFindOwnAnswer(StubKey key) const
 {
     if (!key.immediate()) {
         auto place = m_answerOfKeyWithoutImmediate.find(key.bits());

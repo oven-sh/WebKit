@@ -33,7 +33,7 @@ flags FunctionFlags {
     IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
     HasExplicitName IsNakedConstructor IsNamedByComputedKey IsAlwaysInlined
 }
-flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers }
+flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers MayAskForOwnOriginal }
 enum EntryParameter (presentWith: FunctionFlags) {
     Capture(none) This(HasThis) Callee(TakesCallee) NewTarget(HasNewTarget) ArgumentCount(HasArgumentCount) Parameter(none) HiddenRest(HasHiddenRest)
 }
@@ -44,6 +44,7 @@ record Function wire extendedEngine {
     name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 syntax: FunctionSyntax
     enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredCapture> thisType: DeclaredType parameters: Span<DeclaredType>
     results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
+    originalsAskedFor: Span<String>
     | engine capabilities: FunctionCapabilities constructedClass: Layout?
 }
 

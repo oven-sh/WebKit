@@ -180,8 +180,11 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
             continue;
         for (const RequiredNameData& requiredName : m_table.requiredNames(module)) {
             ModuleID exporter = requiredName.exporterModule();
-            if (mockInPlace(exporter) || (asked == ModulesAsked::ThoseLoadedAnew && isMocked(exporter) && !wasLoadedInThisTestFile(exporter))) [[unlikely]]
-                continue;
+            if ((mockInPlace(exporter) && mayGetNameFromMock(exporter, module)) || (asked == ModulesAsked::ThoseLoadedAnew && isMocked(exporter) && !wasLoadedInThisTestFile(exporter))) [[unlikely]] {
+                bool patchesFileThatHasRun = mockInPlace(exporter) && isLeftAloneByMock(exporter) && !isSetAsideByMock(fileOf(exporter));
+                if (requiredName.mayBeAbsent || !patchesFileThatHasRun || !m_table.isAmbiguousExport(exporter, identifier(requiredName.name).string()))
+                    continue;
+            }
             if (m_mocks) [[unlikely]]
                 noteLoadBehindMock(exporter, false);
             if (isFoundInTextOfFile(requiredName))
@@ -218,7 +221,7 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
             case StarExportResolution::Type::Error:
                 if (requiredName.mayBeAbsent && data(exporter).exportRule != SyntheticExportRule::RuntimeModule)
                     continue;
-                if (isMockedInItsImage(exporter, MocksAskedFor::ThoseThatAddNames))
+                if (isMockedInItsImage(exporter, MocksAskedFor::ThoseThatAddNames) && mayGetNameFromMock(exporter, module))
                     continue;
                 if (resolution == StarExportResolution::Type::NotFound && data(exporter).isOfLibrary() && exportsWhatMockNamesAlone(exporter))
                     continue;
@@ -641,8 +644,8 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             if (module != walk.root()) {
-                if (ModuleID file = fileOf(module); !isMocked(file) && !mockInPlace(file))
-                    m_facesThatTookCopiesForMock.clear(module.index());
+                takeCopiesAnewWhereMockCallAloneTookThem(module);
+                RETURN_IF_EXCEPTION(scope, void());
                 bindLatestCapture(module);
                 RETURN_IF_EXCEPTION(scope, void());
             }
@@ -903,6 +906,17 @@ void Modules::copyExportsOfFinishedFile(ModuleID face)
     MarkedArgumentBuffer values;
     scope.release();
     host().captureSyntheticExports(m_instance.globalObject, captureRuleOf(data(face)), value, names, values);
+}
+
+void Modules::takeCopiesAnewWhereMockCallAloneTookThem(ModuleID face)
+{
+    ModuleID file = fileOf(face);
+    if (isMocked(file) || mockInPlace(file) || !m_facesThatTookCopiesForMock.get(face.index()))
+        return;
+    bool wasImported = wasLoadedByImport(file);
+    m_facesThatTookCopiesForMock.clear(face.index());
+    if (!wasImported)
+        captureExportsAgain(face);
 }
 
 void Modules::captureExportsAgain(ModuleID fileOrFace)
@@ -1772,6 +1786,22 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
             auto taken = nameSearchedFor ? filesThatTakeNameBack.find(nameSearchedFor->impl()) : filesThatTakeNameBack.end();
             return taken != filesThatTakeNameBack.end() && taken->value.contains(source);
         };
+        auto listAskersBut = [&](ModuleRecord* recordOfMock) {
+            Vector<ModuleRecord*, 8> askers;
+            auto appendAsker = [&](AbstractModuleRecord* asker) {
+                auto* compiled = dynamicDowncast<ModuleRecord>(asker);
+                if (compiled && compiled != recordOfMock && !askers.contains(compiled))
+                    askers.append(compiled);
+            };
+            appendAsker(record);
+            for (auto& onPath : pending) {
+                appendAsker(recordForResolution(onPath.first));
+                RETURN_IF_EXCEPTION(scope, askers);
+            }
+            for (auto& beingMade : m_namespacesBeingMade)
+                appendAsker(m_records.get(beingMade.first));
+            return askers;
+        };
         auto findsNothingUnderMock = [&](ModuleID source, const ModuleExportData& listed) {
             if (!m_mocks || listed.kind() != ModuleExportKind::Indirect)
                 return false;
@@ -1784,6 +1814,12 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                 JSObject* mock = mockInPlace(provider->module());
                 isFound = mock && mock->hasProperty(realm, found.localName);
                 RETURN_IF_EXCEPTION(scope, false);
+                if (isFound && isMockedByFactoryThatTakesOriginal(provider->module())) {
+                    Vector<ModuleRecord*, 8> askers = listAskersBut(provider);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    isFound = provider->originalShows(realm, found.localName, askers.span());
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
             }
             if (!isFound)
                 filesThatTakeBack(identifier(listed.name));
@@ -1873,19 +1909,8 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                     WTF::Vector<Identifier> addedByMock;
                     if (seesMock && isMockedByFactoryThatTakesOriginal(source)) {
                         auto* recordOfMock = dynamicDowncast<ModuleRecord>(recordForResolution(source));
-                        Vector<ModuleRecord*, 8> askers;
-                        auto appendAsker = [&](AbstractModuleRecord* asker) {
-                            auto* compiled = dynamicDowncast<ModuleRecord>(asker);
-                            if (compiled && compiled != recordOfMock && !askers.contains(compiled))
-                                askers.append(compiled);
-                        };
-                        appendAsker(record);
-                        for (auto& onPath : pending) {
-                            appendAsker(recordForResolution(onPath.first));
-                            RETURN_IF_EXCEPTION(scope, { });
-                        }
-                        for (auto& beingMade : m_namespacesBeingMade)
-                            appendAsker(m_records.get(beingMade.first));
+                        Vector<ModuleRecord*, 8> askers = listAskersBut(recordOfMock);
+                        RETURN_IF_EXCEPTION(scope, { });
                         auto originalShows = [&](const Identifier& name) {
                             return recordOfMock ? recordOfMock->originalShows(realm, name, askers.span()) : ensureRecordSetAside(source)->resolveExport(realm, name).type == StarExportResolution::Type::Resolved;
                         };

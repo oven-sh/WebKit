@@ -764,12 +764,19 @@ ALWAYS_INLINE bool KnownThreading::walkApartFromClosedWays()
         return false;
 
     uint32_t namesAtHead = walker.inputBlock(m_frameIndex, block).firstNarrowerName;
+    bool closedWaysKeepSites = std::ranges::all_of(closed, [&](uint32_t place) {
+        return walker.m_openEdges[place].isLedByClosedArmThatKeepsSites;
+    });
+    uint32_t firstBlockOfClosedWays = walker.m_code.numberOfBlocks();
     {
         Walker::ClosedArm closedArm(walker);
+        SetForScope waysOutKeepSites(walker.m_closedArmKeepsSites, closedWaysKeepSites);
         ++walker.m_numberOfCopiesBuiltForSize;
         walkBlockOnWays(closed.span(), namesAtHead);
         --walker.m_numberOfCopiesBuiltForSize;
     }
+    for (uint32_t number = firstBlockOfClosedWays; closedWaysKeepSites && number < walker.m_code.numberOfBlocks(); ++number)
+        walker.m_code.markRareBlockThatKeepsSites(BlockID(number));
     walkBlockOnWays(passing.span(), namesAtHead);
 
     frame().blocksWalkedForEachWay.shrink(0);

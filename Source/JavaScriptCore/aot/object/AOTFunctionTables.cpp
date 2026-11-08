@@ -574,6 +574,24 @@ bool awaitsByItself(JSCell* cell)
     return function && !std::ranges::binary_search(programTables().asyncFunctionsWithoutAwait(), sourceFunctionOf(*function).index());
 }
 
+bool mayAskForOwnOriginal(JSCell* cell)
+{
+    std::optional<FunctionID> function = functionOf(cell);
+    return !function || std::ranges::binary_search(programTables().functionsThatMayAskForOwnOriginal(), sourceFunctionOf(*function).index());
+}
+
+Vector<String> originalsAskedFor(JSCell* cell)
+{
+    Vector<String> specifiers;
+    std::optional<FunctionID> function = functionOf(cell);
+    if (!function)
+        return specifiers;
+    const Image& image = *Image::current();
+    for (const OriginalAskedForData& asked : std::ranges::equal_range(programTables().originalsAskedFor(), sourceFunctionOf(*function).index(), { }, &OriginalAskedForData::function))
+        specifiers.append(image.text().createString(StringID(asked.specifier)));
+    return specifiers;
+}
+
 String closureDeclaredName(JSObject* object)
 {
     std::optional<FunctionID> function = functionOf(object);

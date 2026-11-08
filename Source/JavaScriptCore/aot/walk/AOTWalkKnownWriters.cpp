@@ -293,7 +293,7 @@ static bool opcodeMayRunCodeOfOperandsInKnownWriters(Opcode opcode, uint32_t num
     return false;
 }
 
-static bool writesThroughDeclaredOperandInKnownWriters(Opcode opcode, uint32_t declaredIndex, uint32_t numberOfDeclaredOperands)
+static ALWAYS_INLINE bool writesThroughDeclaredOperandInKnownWriters(Opcode opcode, uint32_t declaredIndex, uint32_t numberOfDeclaredOperands)
 {
     if (operandUsesOf(opcode, declaredIndex).containsAny(usesThatWriteOperandInKnownWriters))
         return true;

@@ -1012,6 +1012,7 @@ Operation* Builder::store(Opcode opcode, Operation* value, Operation* base, ptrd
     Operation* result = appendNewMemoryAccess(opcode, Void, ownValue, ownBase);
     result->m_payload.memory.offset = address.offset;
     result->m_payload.memory.heap = heap.index();
+    result->m_owner->m_writesMemory = true;
     m_numbering.didWrite(heap.index());
     if (m_verifierOfReusedLoads) [[unlikely]]
         stopIfLoadOfStoredWordStands(result);
@@ -1131,7 +1132,7 @@ void Builder::noteIntegerAddedTo(Operation* load)
 void Builder::fence()
 {
     sealPendingPatch();
-    appendNew(Fence, Void);
+    appendNew(Fence, Void)->m_owner->m_writesMemory = true;
 }
 
 std::optional<int64_t> Builder::valueKnownToBeReadThrough(const Operation* base)
@@ -1507,10 +1508,13 @@ void Builder::sealPatch()
     PatchOperation* patch = std::exchange(m_pendingPatch, nullptr);
     ASSERT(!patch->effects.terminal || patch->owner()->last() == patch);
     if (patch->isSuspension()) [[unlikely]] {
+        patch->m_owner->m_writesMemory = true;
         m_numbering.didWrite(HeapSet::top());
         m_numbering.didSuspend();
         return;
     }
+    if (!patch->effects.writes.isEmpty() || (patch->opcode() == Patch && !patch->onlyKeepsChildrenAlive))
+        patch->m_owner->m_writesMemory = true;
     m_numbering.didWrite(patch->effects.writes);
 }
 

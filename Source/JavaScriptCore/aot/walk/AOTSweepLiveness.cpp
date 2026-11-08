@@ -30,7 +30,7 @@ static constexpr OpcodeSet interiorPointersInSweptCode = [] {
     return opcodes;
 }();
 
-static bool liesInPlaceThatSweepMayClear(const Code& code, ValueID value)
+static ALWAYS_INLINE bool liesInPlaceThatSweepMayClear(const Code& code, ValueID value)
 {
     return value && !code.isConstant(value) && code.isNeeded(value) && holdsCells(code.at(value).representation);
 }
@@ -403,7 +403,7 @@ void Sweep::beginFollowingLiveness()
     m_liveness->operationsThatSuspend.ensureSize(numberOfValues);
 }
 
-void Sweep::followIfEnvironmentIsHandedBack(ValueID id)
+ALWAYS_INLINE void Sweep::followIfEnvironmentIsHandedBack(ValueID id)
 {
     const Code& code = *m_code;
     LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(id).type);
@@ -424,7 +424,7 @@ static bool holdsEnvironmentsWithoutMarkingThemInSweptCode(const Operation& hold
     return mayLieInFrame || holder.opcode == Opcode::Results;
 }
 
-void Sweep::noteIfMayHoldEnvironmentInFrame(ValueID id)
+ALWAYS_INLINE void Sweep::noteIfMayHoldEnvironmentInFrame(ValueID id)
 {
     const Code& code = *m_code;
     if (holdsEnvironmentsWithoutMarkingThemInSweptCode(code.at(rootOfCellInSweptCode(code, id))))

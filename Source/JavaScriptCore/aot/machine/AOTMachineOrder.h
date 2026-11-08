@@ -113,6 +113,7 @@ public:
     static void replaceJumpWithBranch(Block* from, const Operation* phi, bool isInverted);
     static Block* split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeToTarget);
     static Block* askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond);
+    static void askBitsOfTwoTestsAtOnce(Block* first, unsigned wayOfFirstWhereBitIsSet, Operation* bitsOfFirst, Block* second, unsigned wayOfSecondWhereBitIsSet, Operation* bitsOfSecond);
     static void makePhiOfTruncationBehindJoin(Block* join, Operation* truncation);
     static void passJoinBy(Block* from, Block* target, Operation* phi, Operation* value);
     static bool isUnsplit(const Block* from, const BlockPlace& placeOfTarget)

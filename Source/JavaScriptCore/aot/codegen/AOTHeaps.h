@@ -56,6 +56,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTInstance_moduleValues, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_globalBindings, 0, Mutable, RuntimeState) \
     v(AOTInstance_siteCaches, 0, OutsideDeclaredEffects, RuntimeState) \
+    v(AOTInstance_arrayProfiles, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTPropertyCaches_front, 0, Mutable, RuntimeState) \
     v(AOTClassToken_knownStructures, JSCellButterfly::offsetOfData() + ClassToken::knownStructuresSlot * sizeof(EncodedJSValue), OutsideDeclaredEffects, RuntimeState) \
     v(AOTClassToken_records, 0, OutsideDeclaredEffects, RuntimeState) \

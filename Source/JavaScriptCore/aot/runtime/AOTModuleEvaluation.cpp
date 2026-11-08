@@ -901,7 +901,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
         noteAskUnderMockInPlace(module);
         if (!m_innermostFilesBeingRun)
             ensureLoaded(module).wasRequiredUnderMockInPlace = true;
-        if (!m_innermostFilesBeingRun || fileOf(m_innermostFilesBeingRun->root) != module)
+        if (!isBegunForStatement(module))
             noteDoorThatLoadsMockLaidInPreload(module, LoadByName::Require);
     }
     if (m_filesToLoadAgain.get(module.index())) [[unlikely]] {
@@ -956,6 +956,19 @@ void Modules::forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)>
         if (std::optional<ModuleID> fileOrFace = fileOrFaceEvaluatedIn(*load))
             functor(*fileOrFace);
     }
+}
+
+bool Modules::isBegunForStatement(ModuleID fileOrFace) const
+{
+    ModuleID file = fileOf(fileOrFace);
+    if (m_innermostFilesBeingRun)
+        return fileOf(m_innermostFilesBeingRun->root) == file || (m_innermostFilesBeingRun->fileOrFace && fileOf(*m_innermostFilesBeingRun->fileOrFace) == file);
+    if (fileOrFace != file)
+        return true;
+    if (!m_innermostEvaluation || m_innermostEvaluation->frames.isEmpty())
+        return false;
+    ModuleID asking = m_innermostEvaluation->frames.last().module;
+    return asking != file && fileOf(asking) == file;
 }
 
 std::optional<ModuleID> Modules::fileOrFaceEvaluatedIn(const FilesBeingRun& load) const

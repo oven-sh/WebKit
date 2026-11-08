@@ -36,7 +36,7 @@ bool openGuessOfKeyOrdersOfItsOpcodes(Walker& walker, const BodyValue& value)
     return callAccessorInSlot(walker, value) || accessStaticFieldInVariable(walker, value);
 }
 
-static ValueID valueBehindNamesInWalkCopies(const Code& code, ValueID value)
+static ALWAYS_INLINE ValueID valueBehindNamesInWalkCopies(const Code& code, ValueID value)
 {
     while (!code.isConstant(value) && opcodesThatGiveSameCell.contains(code.at(value).opcode))
         value = code.at(value).operand(0);

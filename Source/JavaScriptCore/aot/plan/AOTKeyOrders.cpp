@@ -253,7 +253,6 @@ struct CompleteOrdersOfSources {
     struct Order {
         uint32_t firstKey { 0 };
         uint32_t numberOfKeys { 0 };
-        LayoutID onlySource;
     };
 
     std::span<const PropertyKeyID> keysOf(const Order& order) const { return keys.span().subspan(order.firstKey, order.numberOfKeys); }
@@ -780,7 +779,7 @@ void CollectorOfKeyOrders::collectCompleteOrdersOf(LayoutID source, std::span<co
             continue;
         if (std::ranges::any_of(fieldsOf(order), [&](FieldIndex index) { return index >= declaredSource.fields.size(); }))
             continue;
-        found.orders.append({ static_cast<uint32_t>(found.keys.size()), order.numberOfFields, source });
+        found.orders.append({ static_cast<uint32_t>(found.keys.size()), order.numberOfFields });
         for (FieldIndex index : fieldsOf(order))
             found.keys.append(declaredSource.fields[index].key);
     }
@@ -791,17 +790,9 @@ void CollectorOfKeyOrders::fileOrdersByRarestKey(CompleteOrdersOfSources& found)
     std::ranges::sort(found.orders, [&](const auto& first, const auto& second) {
         return std::ranges::lexicographical_compare(found.keysOf(first), found.keysOf(second));
     });
-    size_t numberOfDistinctOrders = 0;
-    for (const CompleteOrdersOfSources::Order& order : found.orders) {
-        if (numberOfDistinctOrders && std::ranges::equal(found.keysOf(found.orders[numberOfDistinctOrders - 1]), found.keysOf(order))) {
-            CompleteOrdersOfSources::Order& kept = found.orders[numberOfDistinctOrders - 1];
-            if (kept.onlySource != order.onlySource)
-                kept.onlySource = { };
-            continue;
-        }
-        found.orders[numberOfDistinctOrders++] = order;
-    }
-    found.orders.shrink(numberOfDistinctOrders);
+    found.orders.shrink(std::unique(found.orders.begin(), found.orders.end(), [&](const auto& first, const auto& second) {
+        return std::ranges::equal(found.keysOf(first), found.keysOf(second));
+    }) - found.orders.begin());
 
     Vector<PropertyKeyID> keysOfAllOrders;
     for (const CompleteOrdersOfSources::Order& order : found.orders)
@@ -848,11 +839,8 @@ void CollectorOfKeyOrders::addOrderOfCopy(LayoutID target, std::span<const Prope
 void CollectorOfKeyOrders::addOrdersOfCopy(LayoutID target, const CompleteOrdersOfSources& sources, std::span<const uint32_t> writtenBesideCopy, std::span<const uint32_t> keysLeftOut)
 {
     auto addOrdersFiledUnder = [&](PropertyKeyID key) {
-        for (auto [rarestKey, number] : std::ranges::equal_range(sources.ordersByRarestKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first)) {
-            const CompleteOrdersOfSources::Order& order = sources.orders[number];
-            if (order.onlySource != target)
-                addOrderOfCopy(target, sources.keysOf(order), writtenBesideCopy, keysLeftOut);
-        }
+        for (auto [rarestKey, order] : std::ranges::equal_range(sources.ordersByRarestKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first))
+            addOrderOfCopy(target, sources.keysOf(sources.orders[order]), writtenBesideCopy, keysLeftOut);
     };
     for (const Field& field : m_program.at(target).fields) {
         if (!std::ranges::binary_search(keysLeftOut, field.key.bits()))

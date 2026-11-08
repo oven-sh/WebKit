@@ -1459,6 +1459,7 @@ public:
     struct KeptForBuild {
         virtual ~KeptForBuild() = default;
     };
+    bool& closedArmKeepsSites() { return m_closedArmKeepsSites; }
     std::unique_ptr<KeptForBuild>& keptByTypedAccesses() { return m_keptByTypedAccesses; }
     std::unique_ptr<KeptForBuild>& keptByUnionTableCalls() { return m_keptByUnionTableCalls; }
     std::unique_ptr<KeptForBuild>& keptByCopiesOwnKeys() { return m_keptByCopiesOwnKeys; }
@@ -1747,6 +1748,7 @@ private:
         NamesOfWay names;
         BlockID inputBlockLeft;
         bool isLedByClosedArm { false };
+        bool isLedByClosedArmThatKeepsSites { false };
     };
 
     static constexpr uint32_t noNarrowerName = UINT32_MAX;
@@ -2375,6 +2377,7 @@ private:
         bool listsAreStruck { false };
         bool otherCodeStaysInTypedBuild { false };
         bool otherCodeIsKeptOutOfFirstCopyInVain { false };
+        bool otherCodeStayedInVain { false };
         bool readsAskSitesThoughCallStays { false };
         bool counterWasSteppedDown { false };
         bool effectsAreGuessed { false };
@@ -2559,6 +2562,7 @@ private:
     bool m_listsAreStruckInRow { false };
     bool m_otherCodeStaysInTypedBuildOfRow { false };
     bool m_otherCodeIsKeptOutOfFirstCopyInVainOfRow { false };
+    bool m_otherCodeStayedInVainOfRow { false };
     bool m_readsAskSitesThoughCallStaysOfRow { false };
     bool m_sumsAreNotAskedInRow { false };
     bool m_typedBuildEndedListsTestedInFront { false };
@@ -3222,6 +3226,7 @@ private:
     ValueID m_receiverOfCopyThatMakesNewList;
     size_t m_depthOfCopyThatMakesNewList { 0 };
     bool m_opensGuesses { true };
+    bool m_closedArmKeepsSites { false };
     size_t m_numberOfFramesAtRowOfShapeTests { 0 };
     StretchWithArmsAsWritten m_stretchWithArmsAsWritten;
     Vector<StoresIntoRowsOfBlock, 2> m_storesIntoRowsOfBlocks;
