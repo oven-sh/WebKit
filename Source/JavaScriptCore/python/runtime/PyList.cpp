@@ -356,7 +356,17 @@ static bool hasItemsWithAttributes(JSArray* list)
     if (!hasAnyArrayStorage(list->indexingType()))
         return false;
     SparseArrayValueMap* map = list->butterfly()->arrayStorage()->m_sparseMap.get();
-    return map && (map->sparseMode() || map->lengthIsReadOnly());
+    if (!map)
+        return false;
+    if (map->lengthIsReadOnly())
+        return true;
+    // (Not sparseMode(): that says that the items stay in the map for good. So they do once an attribute has been given, though it be taken back, and, where a prototype has an accessor
+    // for an index, in every instance of a class derived from list that has more than a few items.)
+    for (auto& entry : *map) {
+        if (entry.attributes())
+            return true;
+    }
+    return false;
 }
 
 // Once a prototype of the array has an accessor for an index (for Array.prototype that goes for every array of the realm), `a[i] = v`
