@@ -14,6 +14,7 @@
 #include "PyModule.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
+#include <errno.h>
 
 namespace JSC {
 namespace Python {
@@ -136,8 +137,12 @@ OutermostContextScope::OutermostContextScope(JSGlobalObject* globalObject)
 
 OutermostContextScope::~OutermostContextScope()
 {
-    if (m_current) [[unlikely]]
-        runtime(m_globalObject).setCurrentContext(m_current);
+    if (!m_current) [[likely]]
+        return;
+    // (Whoever has waited goes by errno next.)
+    int error = errno;
+    runtime(m_globalObject).setCurrentContext(m_current);
+    errno = error;
 }
 
 static JSValue contextRun(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)

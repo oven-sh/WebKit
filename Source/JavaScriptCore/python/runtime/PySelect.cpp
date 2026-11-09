@@ -167,9 +167,11 @@ static ALWAYS_INLINE void forEachRealmOnStack(JSGlobalObject* globalObject, cons
 {
     VM& vm = getVM(globalObject);
     function(globalObject->m_asyncContextData.get());
+#if ENABLE(AOT)
     // The frames of code that was compiled ahead of time cannot be walked so, nor what lies below them.
     if (vm.hasCompiledCode() && AOT::isTopFrameCompiled(vm)) [[unlikely]]
         return;
+#endif
     JSGlobalObject* last = globalObject;
     EntryFrame* entryFrame = vm.topEntryFrame;
     for (CallFrame* callFrame = vm.topCallFrame; callFrame; callFrame = callFrame->callerFrameUnlessCompiled(vm, entryFrame)) {
