@@ -305,8 +305,8 @@ private:
     MonotonicTime m_afterGC;
     MonotonicTime m_stopTime;
 #if USE(BUN_JSC_ADDITIONS)
-    // For how long the collection in progress had the mutators stopped, up to its last resume or to the start of a
-    // mutator's wait for it. runEndPhase adds the rest.
+    // For how long the collection in progress had the mutators stopped, up to its last resume. runEndPhase adds the
+    // last stop. Written only while the mutators are stopped.
     Seconds m_pauseBeforeLastStop;
 #endif
 

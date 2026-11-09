@@ -677,11 +677,9 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
     m_scheduler->willResume();
 
 #if USE(BUN_JSC_ADDITIONS)
-    // One reading for the sum and for the log, so that the two agree. A mutator that waits for the collection counts
-    // as stopped from the start of its wait to the end of the cycle (runEndPhase), so its stops are not summed here.
+    // One reading for the sum and for the log, so that the two agree.
     MonotonicTime resumeTime = MonotonicTime::now();
-    if (!heap().m_waitingForCollectorSince)
-        m_pauseBeforeLastStop += resumeTime - m_stopTime;
+    m_pauseBeforeLastStop += resumeTime - m_stopTime;
 #endif
     if (Options::logGC()) [[unlikely]] {
 #if USE(BUN_JSC_ADDITIONS)
@@ -810,12 +808,17 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
         heap.setNeedCollectionEpilogue();
         heap.recordCollectionTime(m_afterGC - m_beforeGC);
 #if USE(BUN_JSC_ADDITIONS)
-        // The last stop ends where the cycle does, as the pause that logGC prints above. A mutator that waits for the
-        // collection counts as stopped from the start of its wait, or from the start of the cycle if that came later.
+        // The last stop ends where the cycle does, as the pause that logGC prints above. A mutator that waits here
+        // counts as stopped from the start of its wait: the stops of this cycle that ended before the wait, and then
+        // all of the cycle. A wait that ended before this point has left only the stops.
+        Seconds pauseBeforeLastStop = m_pauseBeforeLastStop;
         MonotonicTime lastStopBegan = m_stopTime;
-        if (MonotonicTime waitingSince = heap.m_waitingForCollectorSince)
-            lastStopBegan = std::max(waitingSince, m_beforeGC);
-        heap.m_lastCollectionPause = m_pauseBeforeLastStop + (m_afterGC - lastStopBegan);
+        if (MonotonicTime waitingSince = heap.m_waitingForCollectorSince) {
+            bool waitBeganInThisCycle = waitingSince > m_beforeGC;
+            pauseBeforeLastStop = waitBeganInThisCycle ? heap.m_pauseWhenWaitBegan : Seconds();
+            lastStopBegan = waitBeganInThisCycle ? waitingSince : m_beforeGC;
+        }
+        heap.m_lastCollectionPause = pauseBeforeLastStop + (m_afterGC - lastStopBegan);
         heap.m_lastCollectionWasForced = m_currentRequest.isForced;
 #endif
     });

@@ -582,11 +582,12 @@ public:
     // The collection in progress was requested by the embedder because the application went idle (GCRequest::isIdle).
     bool isIdleCollection() const;
     // About the last collection that ended, for an embedder that reports collections: a GC completion callback reads
-    // them for the collection that it is told of. The pause is the time for which the collection kept the mutator from
-    // running. That is the sum of its stops, and for a mutator that waited for the collection (a synchronous one, or
-    // preventCollection()), all of the cycle from the start of the wait on. lastFullGCLength() and lastEdenGCLength()
-    // are the length of the whole cycle, and a concurrent collection lets a mutator that does not wait run in most of
-    // it. Forced: the request had GCRequest::isForced.
+    // them for the collection that it is told of. A HeapObserver and GCRequest::didFinishEndPhase run before the heap
+    // has them, and read those of the collection before. The pause is the time for which the collection kept the
+    // mutator from running: the sum of its stops. Where the mutator waited for the end of the collection (a
+    // synchronous one, or preventCollection()), it is the stops that ended before the wait began, and all of the cycle
+    // from there on. lastFullGCLength() and lastEdenGCLength() are the length of the whole cycle, and a concurrent
+    // collection lets a mutator that does not wait run in most of it. Forced: the request had GCRequest::isForced.
     Seconds lastCollectionPause() const { return m_lastCollectionPause; }
     bool lastCollectionWasForced() const { return m_lastCollectionWasForced; }
 #endif
@@ -1026,9 +1027,11 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     Seconds m_lastCollectionPause;
     bool m_lastCollectionWasForced { false };
-    // waitForCollector() keeps them. The time is zero while the mutator does not wait.
+    // waitForCollector() keeps them. The time is zero while the mutator does not wait. The pause is what
+    // Collector::m_pauseBeforeLastStop was when the wait began.
     unsigned m_waitForCollectorDepth { 0 };
     MonotonicTime m_waitingForCollectorSince;
+    Seconds m_pauseWhenWaitBegan;
 #endif
 
     DoublyLinkedList<WeakBlock> m_detachedWeakBlocks;
