@@ -200,21 +200,32 @@ static ImageTests::ExecutableCopy load(const RegExpSection& section)
     return code;
 }
 
-static Vector<int> interpret(const Source& source, StringView subject)
-{
-    Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
-    Yarr::YarrPattern pattern(source.pattern, source.flags, error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Performed);
-    AOT_TEST_CHECK(!Yarr::hasError(error));
-    BumpPointerAllocator allocator;
-    auto bytecode = Yarr::byteCompile(pattern, &allocator, error);
-    AOT_TEST_CHECK(bytecode && !Yarr::hasError(error));
-    Vector<unsigned> output(FillWith { }, pattern.offsetsSize(), Yarr::offsetNoMatch);
-    if (Yarr::interpret(bytecode.get(), subject, 0, output.mutableSpan().data()) == Yarr::offsetNoMatch)
-        return { };
-    return output.map([](unsigned offset) {
-        return static_cast<int>(offset);
-    });
-}
+class Interpreter {
+public:
+    explicit Interpreter(const Source& source)
+        : m_pattern(source.pattern, source.flags, m_error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Performed)
+    {
+        AOT_TEST_CHECK(!Yarr::hasError(m_error));
+        m_bytecode = Yarr::byteCompile(m_pattern, &m_allocator, m_error);
+        AOT_TEST_CHECK(m_bytecode && !Yarr::hasError(m_error));
+    }
+
+    Vector<int> match(StringView subject)
+    {
+        Vector<unsigned> output(FillWith { }, m_pattern.offsetsSize(), Yarr::offsetNoMatch);
+        if (Yarr::interpret(m_bytecode.get(), subject, 0, output.mutableSpan().data()) == Yarr::offsetNoMatch)
+            return { };
+        return output.map([](unsigned offset) {
+            return static_cast<int>(offset);
+        });
+    }
+
+private:
+    Yarr::ErrorCode m_error { Yarr::ErrorCode::NoError };
+    Yarr::YarrPattern m_pattern;
+    BumpPointerAllocator m_allocator;
+    std::unique_ptr<Yarr::BytecodePattern> m_bytecode;
+};
 
 MatchResult Matcher::match(Yarr::YarrCodeBlock& codeBlock, std::span<int> output, StringView subject)
 {
@@ -240,8 +251,9 @@ void Matcher::checkAnswers(const LaidOutRegExps& laidOut, const ImageTests::Exec
         auto [offsetFor8Bit, offsetFor16Bit] = laidOut.section.entries[index];
         Yarr::YarrCodeBlock codeBlock(nullptr);
         codeBlock.setCodeFromImage(code.start() + offsetFor8Bit, code.start() + offsetFor16Bit);
+        Interpreter interpreter(source);
         for (const String& subject : subjects) {
-            bool isSame = execute(codeBlock, outputSize, subject) == interpret(source, subject);
+            bool isSame = execute(codeBlock, outputSize, subject) == interpreter.match(subject);
             if (!isSame)
                 dataLogLn("/", source.pattern, "/ and the interpreter disagree on \"", subject, "\"");
             AOT_TEST_CHECK(isSame);
