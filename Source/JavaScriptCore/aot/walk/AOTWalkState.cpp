@@ -1753,7 +1753,7 @@ bool leavesDeadZoneForGood(const Program& program, VariableID id)
     return loaderEntersBodyAtMostOnce(program.at(variable.module));
 }
 
-ALWAYS_INLINE_INTO_OTHER_FILES void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
+void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
 {
     if (!other.m_size) {
         clear();

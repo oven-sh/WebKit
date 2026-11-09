@@ -3486,6 +3486,13 @@ ModuleID Modules::formThatRequireFinds(ModuleID target)
 JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
 {
     SetForScope noImportAsks(m_moduleThatWroteImportThatAsks, ModuleID());
+    ModuleID recordedAhead = m_targetOfRequireRecordedAhead == target ? m_requirerRecordedAhead : ModuleID();
+    m_targetOfRequireRecordedAhead = ModuleID();
+    m_requirerRecordedAhead = ModuleID();
+    SetForScope requirerOfRequireUnderWay(m_requirerOfRequireUnderWay, referrer ? referrer : recordedAhead);
+    auto notesAnswer = makeScopeExit([&] {
+        m_targetOfRequireJustAnswered = recordedAhead && !m_instance.vm->exceptionForInspection() ? target : ModuleID();
+    });
     if (m_mocks) [[unlikely]]
         noteAskForKey(target, referrer, LoadByName::Require);
     if (auto* willLoad = m_mocks || m_hasBegunTestFile ? host().willLoad : nullptr) [[unlikely]]
@@ -3836,6 +3843,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     }
 
     if (JSValue thrownByBody = isLeftAloneByMock(target) && !mockInPlace(target) ? errorOfModuleThatRanBesideMock(target) : JSValue()) [[unlikely]] {
+        tellThatFailureStayedBehindMock(target);
         throwException(m_instance.globalObject, scope, thrownByBody);
         return { };
     }
@@ -4338,8 +4346,13 @@ template<Modules::RequireAnsweredBy answeredBy>
 void Modules::recordRequire(ModuleID target, ModuleID referrer)
 {
     if constexpr (answeredBy == RequireAnsweredBy::CompiledCode) {
-        if (m_mocks) [[unlikely]]
+        if (m_mocks) [[unlikely]] {
             noteAskForKey(target, referrer, LoadByName::Require);
+            bool comesBehindRequire = m_targetOfRequireRecordedAhead == target || m_targetOfRequireJustAnswered == target;
+            m_targetOfRequireJustAnswered = ModuleID();
+            m_targetOfRequireRecordedAhead = comesBehindRequire ? ModuleID() : target;
+            m_requirerRecordedAhead = comesBehindRequire ? ModuleID() : referrer;
+        }
         if (auto* willLoad = m_mocks || m_hasBegunTestFile ? host().willLoad : nullptr) [[unlikely]]
             willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadByName::Require);
     }

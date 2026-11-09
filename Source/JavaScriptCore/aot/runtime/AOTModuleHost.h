@@ -116,6 +116,7 @@ struct ModuleHost {
     void (*didForgetRunOfModuleObject)(JSGlobalObject*, JSObject* module, bool nextRunBegins);
     bool (*isPatchedOnceFactorySettles)(JSGlobalObject*, const String& path);
     uint32_t (*willLoad)(JSGlobalObject*, ModuleID fileThatWroteItIfKnown, ModuleID asked, LoadByName);
+    bool (*wroteFactoryThatHasNotSettled)(JSGlobalObject*, ModuleID file, ModuleID mocked);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -282,6 +283,7 @@ JS_EXPORT_PRIVATE void forEachModuleWhoseBodyRuns(VM&, CallFrame*, const ScopedL
 JS_EXPORT_PRIVATE bool isBeingEvaluated(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasPulledInByLoadThatFailed(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isRootOfImportThatFailed(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool keepsFailureThatMockTakesOut(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLoadedAheadOfThisTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didLeaveLoaderInThisTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void noteThatKeyIsOfThisTestFile(JSGlobalObject*, ModuleID);

@@ -4100,6 +4100,8 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
     if (draft.opcode == Opcode::GetPropertyOfHeir || draft.opcode == Opcode::PutPropertyOfHeir) [[unlikely]]
         nameFieldInEffectsOfAccessToHeir(program(), draft.opcode, fieldAt(program(), FieldReference { draft.layout(), draft.field() }).key, effects);
     cutByRowThatSaysLess(draft, effects);
+    if (m_buildsWhereItStands && effects.mayRunOtherCode()) [[unlikely]]
+        count(StatisticID::OperationsBuiltWhereTheyStandThatMayRunCode);
     if ((steps & Step::storesIntoSlots) && draft.opcode == Opcode::PutSlot) [[unlikely]] {
         static constexpr AbstractHeapSet heapsThatNoStoreBackMends { AbstractHeap::NamedProperties, AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks };
         if (Reference held = std::exchange(m_heldInFrontOfStoreBeingBuilt, Reference()); held && !effects.mayRunOtherCode() && !effects.writes.containsAny(heapsThatNoStoreBackMends)) {

@@ -423,6 +423,11 @@ public:
     Vector<std::pair<ModuleID, ModuleID>> m_filesRequiredWithOriginalWhileFactoryRan;
     void tellThatFileDidNotRunAgain(ModuleID);
     void tellThatFailureStayedBehindMock(ModuleID);
+    bool keepsFailureThatMockTakesOut(ModuleID module) const
+    {
+        const LoadedModule* loaded = loadedIfExists(fileOf(module));
+        return loaded && loaded->keepsFailureThatMockTakesOut;
+    }
     void tellOfFilesThatStayedLoadedBelow(ModuleID root);
     void letGoOfModuleLoadedAsMock(ModuleID module, bool endBringsBackWhatWasSetAside)
     {
@@ -2197,6 +2202,10 @@ private:
     bool m_walkGoesOnPastFactoriesThatHaveNotSettled { false };
     bool m_letsGoOfMocksAtLinkFromSource { false };
     ModuleID m_moduleThatRequires;
+    ModuleID m_targetOfRequireRecordedAhead;
+    ModuleID m_requirerRecordedAhead;
+    ModuleID m_targetOfRequireJustAnswered;
+    ModuleID m_requirerOfRequireUnderWay;
     ModuleID m_moduleThatImportAsksFor;
     ModuleID m_moduleThatWroteImportThatAsks;
     ModuleID m_moduleThatImportThatAsksNames;

@@ -12,6 +12,7 @@
 #include "AOTStubTestSupport.h"
 #include "AOTStubsArrays.h"
 #include "AOTStubsElements.h"
+#include "AOTStubsPropertyKeys.h"
 #include "ArrayConventions.h"
 #include "ButterflyInlines.h"
 #include "CellState.h"
@@ -409,6 +410,76 @@ static void testValueOfOtherKindStillReachesOperation()
         AOT_TEST_CHECK(array.butterfly[index] == integers.hole);
 }
 
+static void testDefinitionUnderIndexIsStoredInPlaceOrLeftWhole()
+{
+    constexpr uint32_t capacity = 6;
+    constexpr uint32_t length = 3;
+    GrowingArrays arrays;
+    for (const ArrayKind& kind : arrayKinds()) {
+        const uint8_t asMade = IsArray | kind.shape;
+        auto define = [&](uint8_t indexingTypeAndMisc, uint32_t lengthBefore, uint64_t key, uint64_t value, std::optional<uint64_t> stored) {
+            FakeVector<capacity> vector;
+            vector.fill(kind);
+            vector.publicLength = lengthBefore;
+            for (uint32_t index = lengthBefore; index < capacity; ++index)
+                vector.elements[index] = kind.hole;
+            const std::array<uint64_t, capacity> before = vector.elements;
+            FakeArray array(kind, vector.butterfly());
+            array.indexingTypeAndMisc = indexingTypeAndMisc;
+            StubRun run = arrays.runner.run(defineByValCached(), { array.address(), key, value });
+            AOT_TEST_CHECK(run.calledOperation == !stored && array.butterfly == vector.butterfly() && array.vectorLength() == capacity);
+            AOT_TEST_CHECK(array.structureID == kind.structureID && array.indexingTypeAndMisc == indexingTypeAndMisc);
+            const uint32_t place = stored ? static_cast<uint32_t>(JSValue::decode(static_cast<EncodedJSValue>(key)).asInt32()) : capacity;
+            AOT_TEST_CHECK(array.publicLength() == (stored ? std::max(lengthBefore, place + 1) : lengthBefore));
+            for (uint32_t index = 0; index < capacity; ++index)
+                AOT_TEST_CHECK(vector.elements[index] == (index == place ? *stored : before[index]));
+        };
+        auto at = [](int32_t place) { return boxed(jsNumber(place)); };
+        const uint64_t fits = boxed(kind.appended);
+
+        for (int32_t place : { 0, 1, 2, 3, 4, 5 })
+            define(asMade, length, at(place), fits, kind.appendedElement);
+        define(asMade, length, at(capacity), fits, std::nullopt);
+        define(asMade, length, at(capacity + 40), fits, std::nullopt);
+        define(asMade, length, at(-1), fits, std::nullopt);
+        define(asMade, length, boxed(jsDoubleNumber(1.0)), fits, std::nullopt);
+        for (uint8_t other : { static_cast<uint8_t>(asMade | CopyOnWrite), static_cast<uint8_t>(kind.shape), static_cast<uint8_t>(ArrayWithArrayStorage), static_cast<uint8_t>(ArrayWithSlowPutArrayStorage), static_cast<uint8_t>(ArrayWithUndecided) })
+            define(other, length, at(1), fits, std::nullopt);
+
+        const uint64_t whole = boxed(jsNumber(7));
+        const uint64_t fraction = boxed(jsDoubleNumber(2.25));
+        const uint64_t minusZero = boxed(jsDoubleNumber(-0.0));
+        const uint64_t notANumber = boxed(jsNaN());
+        const uint64_t nothing = boxed(jsUndefined());
+        switch (kind.shape) {
+        case DoubleShape:
+            define(asMade, capacity, at(capacity), fits, std::nullopt);
+            for (int32_t place : { 1, 3, 4 }) {
+                define(asMade, length, at(place), whole, std::bit_cast<uint64_t>(7.0));
+                define(asMade, length, at(place), minusZero, std::bit_cast<uint64_t>(-0.0));
+                define(asMade, length, at(place), notANumber, std::nullopt);
+                define(asMade, length, at(place), nothing, std::nullopt);
+                define(asMade, length, at(place), arrays.room.address(), std::nullopt);
+            }
+            break;
+        case Int32Shape:
+            for (int32_t place : { 1, 3, 4 }) {
+                for (uint64_t noWholeNumber : { fraction, minusZero, notANumber, nothing })
+                    define(asMade, length, at(place), noWholeNumber, std::nullopt);
+            }
+            break;
+        case ContiguousShape:
+            for (int32_t place : { 1, 3, 4 }) {
+                for (uint64_t anyValue : { whole, fraction, minusZero, notANumber, nothing })
+                    define(asMade, length, at(place), anyValue, anyValue);
+            }
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+}
+
 static void checkThatIntegersAreWidened(Append append)
 {
     constexpr uint32_t capacity = 4;
@@ -694,6 +765,7 @@ std::span<const NativeTest> stubVectorGrowthTests()
         { "stubs/vector-growth/store-leaves-other-vectors-to-operation"_s, ImageTests::whenExecutable<testStoreLeavesOtherVectorsToOperation> },
         { "stubs/vector-growth/value-of-other-kind-still-reaches-operation"_s, ImageTests::whenExecutable<testValueOfOtherKindStillReachesOperation> },
         { "stubs/vector-growth/what-is-no-number-widens-integers-where-it-stands"_s, ImageTests::whenExecutable<testWhatIsNoNumberWidensIntegers> },
+        { "stubs/definition-under-an-index/is-stored-in-place-or-left-whole-to-the-operation"_s, ImageTests::whenExecutable<testDefinitionUnderIndexIsStoredInPlaceOrLeftWhole> },
         { "stubs/literal-born-holding-list/its-storage-goes-by-what-it-holds"_s, ImageTests::whenExecutable<testStorageOfLiteralBornHoldingListGoesByWhatItHolds> },
         { "stubs/literal-born-holding-list/fractions-are-held-raw-and-as-values-where-a-hole-is-among-them"_s, ImageTests::whenExecutable<testLiteralBornHoldingFractions> },
         { "stubs/literal-born-holding-list/other-lists-are-not-served-and-a-dry-allocator-calls-the-operation"_s, ImageTests::whenExecutable<testListsThatNoLiteralIsBornHolding> },

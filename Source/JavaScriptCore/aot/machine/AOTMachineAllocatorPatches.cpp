@@ -383,8 +383,10 @@ static void appendStepsBehindPatchResult(Allocator& allocator, Operation* value,
         appendMoveForPatchAllocation(allocator, StepKind::Reload, value, Location::reg(reg), definedIn);
         allocator.bind(reg, value);
         SpillIndex spill = allocator.markSpilled(value);
-        if (!isMember || borrowed)
+        if (!isMember || borrowed) {
             appendMoveForPatchAllocation(allocator, StepKind::Save, value, Location::spill(spill), Location::reg(reg));
+            allocator.m_spillsWrittenInBlocks.append(allocator.m_arena, Allocator::SpillWrittenInBlock { spill, allocator.m_block });
+        }
         allocator.noteFrameUse();
     }
 
@@ -1737,6 +1739,7 @@ static void clearMemoryOfReleasedValue(Allocator& allocator, Operation* value)
         Step& step = allocator.appendStep(StepKind::ClearSpill, value);
         step.width = allocator.m_allocation.spills()[spill].width;
         step.destination = Location::spill(spill);
+        allocator.m_spillsWrittenInBlocks.append(allocator.m_arena, Allocator::SpillWrittenInBlock { spill, allocator.m_block });
         allocator.noteFrameUse();
     };
     clear(allocator.m_allocation.spillOf(value));
@@ -1793,6 +1796,7 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
                 Step& step = appendStep(StepKind::ClearSpill, handedOn);
                 step.width = place.width;
                 step.destination = Location::spill(spill);
+                m_spillsWrittenInBlocks.append(m_arena, SpillWrittenInBlock { spill, m_block });
                 noteFrameUse();
             }
         }

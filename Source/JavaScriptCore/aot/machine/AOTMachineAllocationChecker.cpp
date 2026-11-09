@@ -389,7 +389,7 @@ bool AllocationChecker::noteSpillRead(SpillIndex spill, const Operation* reader)
 bool AllocationChecker::noteSpillWrite(SpillIndex spill, Width width, const Operation* writer)
 {
     const SpillFacts& facts = m_spills[spill];
-    if (bytesForWidth(width) > bytesForWidth(facts.width))
+    if (bytesForWidth(width) > bytesForWidth(facts.width) || facts.isReadByNoStep)
         return fail(FailureKind::SpillSlotLacksItsValue, writer);
     m_wroteSpillBehindLastExecute = true;
     if (isInRange(facts))
@@ -867,7 +867,7 @@ bool AllocationChecker::transfer(const Step& step)
             return fail(FailureKind::SpillSlotLacksItsValue, step.operation);
         const SpillFacts& facts = m_spills[step.destination.spillIndex()];
         bool standsRightBehindLastRead = m_now.lower == facts.end + 1 && facts.begin <= m_now.upper && !m_wroteSpillBehindLastExecute;
-        if (!isInRange(facts) && !standsRightBehindLastRead)
+        if (facts.isReadByNoStep || (!isInRange(facts) && !standsRightBehindLastRead))
             return fail(FailureKind::SpillSlotLacksItsValue, step.operation);
         set(place, nothing);
         killSecondScratchGPR();
@@ -963,6 +963,8 @@ bool AllocationChecker::enter(Block* block)
             continue;
         }
         SpillIndex spill = m_allocation.spillOf(phi);
+        if (spill < m_spills.size() && m_spills[spill].isReadByNoStep)
+            continue;
         if (spill >= m_spills.size() || m_state[m_firstSpillPlace + spill] != idOf(phi))
             return fail(FailureKind::SpillSlotLacksItsValue, phi);
     }

@@ -1730,7 +1730,15 @@ public:
     bool takesReceiversOfMethodsOfListsToBeMadeHere() const { return m_inputs.options.takesReceiversOfMethodsOfListsToBeMadeHere; }
     bool takesElementsBesideSumsToComeOffListsOfNumbers() const { return m_inputs.options.takesElementsBesideSumsToComeOffListsOfNumbers; }
     bool takesIterablesOfPatternsToStayAsMade() const { return m_inputs.options.takesIterablesOfPatternsToStayAsMade; }
+    bool takesValuesThatPatternsTakeApartInTurnsForListsAsMade() const { return m_inputs.options.takesValuesThatPatternsTakeApartInTurnsForListsAsMade; }
+    bool standsInTypedCopyWhoseTurnsAreTakenToHaveDoneNothing() const { return m_inputs.options.takesTurnsToHaveDoneNothingWherePatternsAreHeld && !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().isEntered && !isUnreachable() && m_waysIntoClosedCopies.last().looksCountOnTurnsThatBeginAgain; }
     bool passesGuardOfNameOverAtCallsThroughSuper() const { return m_inputs.options.passesGuardOfNameOverAtCallsThroughSuper; }
+    bool leavesLinksOfKinUnguarded() const { return m_inputs.options.leavesLinksOfKinUnguarded; }
+    bool leavesConditionsOfClassAskedForUnguarded() const { return m_inputs.options.leavesConditionsOfClassAskedForUnguarded; }
+    bool asksNoStrangerAmongKinWhereItStands() const { return m_inputs.options.asksNoStrangerAmongKinWhereItStands; }
+    bool asksNoObjectOfClassAskedForWhereItStands() const { return m_inputs.options.asksNoObjectOfClassAskedForWhereItStands; }
+    bool takesValuesAskedForClassesToStandWhereTheyWereMade() const { return m_inputs.options.takesValuesAskedForClassesToStandWhereTheyWereMade; }
+    bool takesLayoutsAboveClassAskedForForStrangers() const { return m_inputs.options.takesLayoutsAboveClassAskedForForStrangers; }
     bool passesGuardOfLinkOverAtCallsThroughSuper() const { return m_inputs.options.passesGuardOfLinkOverAtCallsThroughSuper; }
     std::optional<BlockID> headOfInnermostTryInFrameOnTop() const { return !m_triesOfLoops.isEmpty() && m_triesOfLoops.last().frameIndex == m_frames.size() - 1 ? std::optional(m_triesOfLoops.last().inputHead) : std::nullopt; }
     using ObjectsMadeHereThatLoopMentions = Vector<uint32_t, 4>;

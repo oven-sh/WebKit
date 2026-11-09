@@ -609,6 +609,19 @@ bool Allocator::isReadByMoreThanSteps(const SpillFacts& facts) const
         || (factsOfValue.has(ValueFlag::IsKeptForCollector) && !m_proc.traits().takesValuesKeptForCollectorToBeReadByStepsAlone);
 }
 
+static NEVER_INLINE void takeOutStepsThatWriteSpill(Step* steps, uint32_t begin, uint32_t& end, SpillIndex spill)
+{
+    uint32_t endOfStepsThatStay = begin;
+    for (uint32_t index = begin; index < end; ++index) {
+        if ((steps[index].kind == StepKind::Save || steps[index].kind == StepKind::ClearSpill) && steps[index].destination == Location::spill(spill))
+            continue;
+        if (endOfStepsThatStay != index)
+            steps[endOfStepsThatStay] = steps[index];
+        ++endOfStepsThatStay;
+    }
+    end = endOfStepsThatStay;
+}
+
 void Allocator::findSpillsThatNoStepReads()
 {
     ArenaVector<SpillFacts>& spills = m_allocation.m_spills;
@@ -619,6 +632,18 @@ void Allocator::findSpillsThatNoStepReads()
         if ((facts.isRead && !m_proc.traits().takesSpillsThatStepsReadToBeReadByNone) || !facts.value)
             continue;
         facts.isReadByNoStep = !isReadByMoreThanSteps(facts);
+        if (!facts.isReadByNoStep || facts.value->opcode() != Phi || (m_allocation.registerAtDefinitionOf(facts.value).isSet() && !m_allocation.isWrittenByEdges(facts.value)))
+            continue;
+        for (const Block* predecessor : m_order.of(facts.value->owner()).predecessors) {
+            BlockSteps& range = m_allocation.m_blocks[predecessor->index()];
+            takeOutStepsThatWriteSpill(m_allocation.m_steps.begin(), range.beginOfEdgeMoves, range.endOfEdgeMoves, index);
+        }
+    }
+    for (const SpillWrittenInBlock& written : m_spillsWrittenInBlocks) {
+        if (!spills[written.spill].isReadByNoStep)
+            continue;
+        BlockSteps& range = m_allocation.m_blocks[written.block->index()];
+        takeOutStepsThatWriteSpill(m_allocation.m_steps.begin(), range.begin, range.end, written.spill);
     }
 }
 

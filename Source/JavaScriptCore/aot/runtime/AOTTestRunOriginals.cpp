@@ -545,11 +545,33 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleI
             return givesUpAgain();
         }
     }
+    auto isAskedByStranger = [&](ModuleID mocked) {
+        return m_requirerOfRequireUnderWay && host().wroteFactoryThatHasNotSettled && !host().wroteFactoryThatHasNotSettled(m_instance.globalObject, fileOf(m_requirerOfRequireUnderWay), mocked);
+    };
+    auto isMetByWhatHasYetToRun = [&](ModuleID mocked) {
+        BitVector seen(m_table.size());
+        Vector<ModuleID, 8> work { target };
+        while (!work.isEmpty()) {
+            ModuleID file = work.takeLast();
+            if (seen.quickSet(file.index()))
+                continue;
+            for (const ModuleRequestData& request : m_table.imports(file)) {
+                if (request.isHoisted || request.isDeferred)
+                    continue;
+                ModuleID imported = moduleLoadedBy(request);
+                if (imported == mocked)
+                    return true;
+                if (!isMocked(imported) && status(imported) < ModuleStatus::Evaluating)
+                    work.append(imported);
+            }
+        }
+        return false;
+    };
     if (wasGivenUpOn(target)) {
         bool isAskedFromLoadThatWasLeft = requirer && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) {
             return pair.mocked == target && pair.required != requirer && reachedByStatements(pair.required, AtMock::Stops).get(requirer.index());
         });
-        if (cannotBeRequired(target) || isAskedFromLoadThatWasLeft)
+        if (cannotBeRequired(target) || isAskedFromLoadThatWasLeft || isAskedByStranger(target))
             return givesUpAgain();
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
     }
@@ -561,6 +583,21 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleI
             continue;
         if (cannotBeRequired(mocked))
             return givesUpAgain();
+        if (isAskedByStranger(mocked) && isMetByWhatHasYetToRun(mocked)) {
+            ModuleID above = target;
+            for (const RequireThatGaveUp& pair : m_requiresThatGaveUp) {
+                if (pair.mocked == mocked && pair.required != mocked) {
+                    above = pair.required;
+                    break;
+                }
+            }
+            noteThatRequireGaveUpOn(target, true);
+            if (!m_instance.vm->m_synchronousModuleQueue) {
+                refuseRequireAgain(target, above);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            return givesUpAgain();
+        }
         requireModuleItselfBesideMock(mocked);
         RETURN_IF_EXCEPTION(scope, { });
         m_filesRequiredWithOriginalWhileFactoryRan.append({ target, mocked });

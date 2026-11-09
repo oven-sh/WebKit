@@ -232,7 +232,6 @@ private:
     void handOutRecordsOfInternalFiles();
     bool handsBackRecordThatStaysAsBorn(ModuleID);
     Vector<ModuleID> m_modulesThatNativeCodeReadsNamesOff;
-    Vector<std::pair<RuntimeModuleID, BuiltinName>> m_exportsThatHostOnlyKeepsWhereLinkFollows;
     bool m_hasEnteredLoaderFunctionsForTestRun { false };
     bool m_hasEnteredLoaderFunctionsForValueOfHost { false };
     void enterWhatUndeclaredNativeCodeCalls();
@@ -1190,7 +1189,6 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
 {
     const BuiltinTable& builtins = m_program.builtins();
     m_modulesWhoseValueStaysInSight = BitVector(m_program.modules.size());
-    m_exportsThatHostOnlyKeepsWhereLinkFollows = exportsThatHostOnlyKeepsWhereLinkFollows(builtins);
     bool libraryRunsCompiledAlone = refusedCodeOf(m_program).codeOutsideImage && std::ranges::none_of(m_program.modules, [](const Module& module) {
         return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
     });
@@ -1522,7 +1520,7 @@ void StateOfLinkReach::letGoWhatNativeCodeReadsOffModules()
             for (BuiltinName name : m_program.builtins().at(module.runtimeModule).exportsReadByNativeCode) {
                 PropertyKeyID key = m_program.keyOf(name);
                 std::optional<FieldReference> field = key ? findField(m_program, holder, key) : std::nullopt;
-                if (field && m_exportsThatHostOnlyKeepsWhereLinkFollows.contains(std::pair { module.runtimeModule, name }))
+                if (field && std::ranges::contains(m_program.builtins().at(module.runtimeModule).exportsOfWhichMembersAloneAreKept, name))
                     continue;
                 if (field)
                     escapeField(*field);
