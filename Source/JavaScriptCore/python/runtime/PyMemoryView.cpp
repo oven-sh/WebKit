@@ -485,24 +485,34 @@ static JSValue managedBufferFinalize(JSGlobalObject* globalObject, JSValue self)
 
 // ---- What the program has dropped ----
 
+// (Among them are the frames of C++.)
+template<typename Function>
+SUPPRESS_ASAN NEVER_INLINE static void bufferForEachWordBetween(Register* begin, Register* end, const Function& function)
+{
+    for (auto* word = std::bit_cast<const EncodedJSValue*>(begin); word < std::bit_cast<const EncodedJSValue*>(end); ++word)
+        function(JSValue::decode(*word));
+}
+
 // Calls the function with each cell that a frame refers to: the callee, the arguments, the variables, and those temporaries
 // that the code will read again. False: there is a frame of which that cannot be told.
+// `looksAtCells`: the function does more with a cell than note its address. Then it is given none that may be dead, which leaves some out.
 template<typename Function>
-static bool bufferForEachCellInFrames(VM& vm, const Function& function)
+static bool bufferForEachCellInFrames(VM& vm, bool looksAtCells, const Function& function)
 {
     // Code compiled ahead of time has frames of a kind of their own.
     if (vm.hasCompiledCode())
         return false;
     bool isComplete = true;
-    // Where the frame that this one called ends. It lies among the registers of this one.
+    // Where the frame before ends. If this one called it, it lies among the registers of this one.
     Register* endOfCallee = nullptr;
+    // It did not: C++ did, for the instruction that this one is at, and entered the VM anew.
+    bool hasCrossedEntry = false;
     // A register that the analysis takes to be live need not have been set: what a handler reads counts as live all through the
     // range the handler covers. It then has what a callee left there, which may be no value at all.
     if (!vm.heap.objectSpace().preciseAllocationSet())
         vm.heap.objectSpace().enablePreciseAllocationTracking();
     auto filter = vm.heap.objectSpace().blocks().filter();
-    auto consider = [&](Register& slot) {
-        JSValue value = slot.jsValue();
+    auto consider = [&](JSValue value) {
         if (value && value.isCell() && HeapUtil::isJSCellStorage(vm.heap, filter, value.asCell()) && !value.asCell()->isZapped())
             function(value.asCell());
     };
@@ -525,19 +535,33 @@ static bool bufferForEachCellInFrames(VM& vm, const Function& function)
         Register* arguments = frame->registers() + CallFrame::argumentOffsetIncludingThis(0);
         function(frame->jsCallee());
         for (size_t i = 0; i < argumentCount; ++i)
-            consider(arguments[i]);
+            consider(arguments[i].jsValue());
         if (codeBlock) {
             function(codeBlock);
             FastBitVector live;
-            bool isKnown = liveLocalsOfFrame(frame, codeBlock, endOfCallee, live);
+            // Whether the instruction has called is asked twice. Has it made the call that it is there to make? Then the frame before is its callee's. Has anything been
+            // called for it, by whomever? Then it has not set its result yet, and what an earlier expression left in that register holds nothing.
+            bool isKnown = (endOfCallee && !hasCrossedEntry) || !fillsFrameFromArray(frame, codeBlock);
+            if (isKnown)
+                liveLocalsOfFrame(frame, codeBlock, endOfCallee, live);
+            else {
+                // It is filling a frame from an array, and that runs code of the program. How long the frame is only C++ knows, and it may end beyond the registers
+                // of this one: every word down to the frame which that code runs in counts. If there is none, how far down cannot be told.
+                if (!endOfCallee) {
+                    isComplete = false;
+                    return false;
+                }
+                if (!looksAtCells)
+                    bufferForEachWordBetween(endOfCallee, frame->registers() - codeBlock->numCalleeLocals(), consider);
+            }
             // The variables come first, after what is saved of the machine's registers. They keep their values for as long
             // as the frame lives, read again or not.
             for (unsigned i = CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters(); i < codeBlock->numCalleeLocals(); ++i) {
                 Register* slot = &frame->uncheckedR(virtualRegisterForLocal(i));
                 if (slot < endOfCallee)
                     break;
-                if (!isKnown || i < codeBlock->numVars() || live[i])
-                    consider(*slot);
+                if (i < codeBlock->numVars() || (isKnown ? live[i] : !looksAtCells))
+                    consider(slot->jsValue());
             }
         }
         endOfCallee = arguments + argumentCount;
@@ -547,8 +571,12 @@ static bool bufferForEachCellInFrames(VM& vm, const Function& function)
     // no frame, leaves out the one that a call in tail position was inlined in, and ends early if it cannot tell.
     auto visitFrames = [&](CallFrame* frame, EntryFrame* entryFrame) {
         endOfCallee = nullptr;
-        while (frame && visitFrame(frame))
+        hasCrossedEntry = false;
+        while (frame && visitFrame(frame)) {
+            EntryFrame* entryFrameBefore = entryFrame;
             frame = frame->callerFrame(entryFrame);
+            hasCrossedEntry = entryFrame != entryFrameBefore;
+        }
     };
     visitFrames(vm.topCallFrame, vm.topEntryFrame);
 
@@ -699,7 +727,7 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
         // So that the collection it listens to is the one asked for here, from beginning to end.
         PreventCollectionScope preventCollection(m_vm.heap);
         HeapProfiler& profiler = m_vm.ensureHeapProfiler();
-        isPrecise = !profiler.activeHeapAnalyzer() && bufferForEachCellInFrames(m_vm, [&](JSCell* cell) { reachability.addRoot(cell); });
+        isPrecise = !profiler.activeHeapAnalyzer() && bufferForEachCellInFrames(m_vm, false, [&](JSCell* cell) { reachability.addRoot(cell); });
         if (isPrecise) {
             profiler.setActiveHeapAnalyzer(&reachability);
             m_markingObserver = &reachability;
@@ -790,7 +818,7 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
 bool isHeldByFrames(JSGlobalObject* globalObject, JSValue exporter)
 {
     bool found = false;
-    bufferForEachCellInFrames(getVM(globalObject), [&](JSCell* cell) {
+    bufferForEachCellInFrames(getVM(globalObject), true, [&](JSCell* cell) {
         auto* view = PyMemoryView::tryFrom(cell);
         found |= view && !view->isReleased() && view->managedBuffer()->object() == exporter;
     });

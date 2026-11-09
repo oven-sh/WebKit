@@ -69,22 +69,25 @@ FastBitVector liveLocalsBefore(CodeBlock* codeBlock, unsigned offset)
     return live;
 }
 
+bool fillsFrameFromArray(CallFrame* callFrame, CodeBlock* codeBlock)
+{
+    switch (codeBlock->instructions().at(callFrame->bytecodeIndex())->opcodeID()) {
+    case op_call_varargs:
+    case op_tail_call_varargs:
+    case op_construct_varargs:
+    case op_super_construct_varargs:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCalling, FastBitVector& live)
 {
+    if (!isCalling && fillsFrameFromArray(callFrame, codeBlock))
+        return false;
     BytecodeIndex index = callFrame->bytecodeIndex();
     const JSInstruction* instruction = codeBlock->instructions().at(index).ptr();
-    if (!isCalling) {
-        // The frame of the callee is being filled from an array, in registers the instruction does not name.
-        switch (instruction->opcodeID()) {
-        case op_call_varargs:
-        case op_tail_call_varargs:
-        case op_construct_varargs:
-        case op_super_construct_varargs:
-            return false;
-        default:
-            break;
-        }
-    }
 
     live = liveLocalsBefore(codeBlock, index.offset());
     // A trace function has said where the frame is to go on (frame.f_lineno = n), and has not returned yet. What is read from there on is in its registers
