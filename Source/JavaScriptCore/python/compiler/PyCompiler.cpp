@@ -3063,7 +3063,7 @@ void Unit::withStatement(With* node, unsigned index, const Last& isLast)
             g.emitPyGetMethod(exit.get(), exitSelf.get(), manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AExit : SpecialMethodForWith::Exit))));
             g.emitPyGetMethod(value.get(), enterSelf.get(), manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AEnter : SpecialMethodForWith::Enter))));
         }
-        emitMethodCall(value.get(), value.get(), enterSelf.get(), { }, range, isAsync ? 0 : callOfEnterMark);
+        emitMethodCall(value.get(), value.get(), enterSelf.get(), { }, range, callOfEnterMark);
     }
     if (isAsync)
         emitAwait(value.get(), value.get(), 1);

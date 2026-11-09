@@ -447,8 +447,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionThatMayWait, static N
 
 // CPython looks for signals after every call. Code counts on it: os.kill(os.getpid(), n), and the handler has run.
 // (Only signals. A finalizer between next(counter) and queue.put() in queue.put(next(counter)) is more than code is used to.)
-// Not after the call of __enter__ by a `with`: what a handler raises there would leave what has been entered without its __exit__. The signal waits for the
-// next place, which is in the statement.
+// Not after the call of __enter__ by a `with`, or of __aenter__ by an `async with`: what a handler raises there would leave what has been entered without its __exit__. The signal
+// waits for the next place, which is in the statement.
 static NEVER_INLINE bool checkSignalsAfterCall(JSGlobalObject* globalObject, CallFrame* nativeFrame)
 {
     VM& vm = getVM(globalObject);
