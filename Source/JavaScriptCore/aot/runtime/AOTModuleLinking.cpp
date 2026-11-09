@@ -104,15 +104,15 @@ StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const
     return m_table.isAmbiguousExport(exporter, name.string()) ? StarExportResolution::Type::Ambiguous : StarExportResolution::Type::NotFound;
 }
 
-bool Modules::isMockedInItsImageSlow(ModuleID module, MocksAskedFor which)
+bool Modules::isMockedThroughStarExportsSlow(ModuleID module, MockFilter which)
 {
     auto counts = [&](ModuleID each, ModuleID importer) {
         if (!isMocked(each))
             return false;
-        if (which == MocksAskedFor::ThoseThatAddNames && importer && !seesMockOf(each, importer))
+        if (which == MockFilter::AddingNames && importer && !seesMockOf(each, importer))
             return false;
-        const LoadedModule* loaded = which == MocksAskedFor::ThoseThatAddNames && data(each).isESModuleOfProgram() ? loadedIfExists(each) : nullptr;
-        return !loaded || !loaded->hasMockLaidOver;
+        const LoadedModule* loaded = which == MockFilter::AddingNames && data(each).isESModuleOfProgram() ? loadedIfExists(each) : nullptr;
+        return !loaded || !loaded->isPatchedByMock;
     };
     auto isMockedAsSeenBy = [&](ModuleID asked, ModuleID importer) {
         return !data(asked).isUncompiledCode() && (counts(fileOf(asked), importer) || counts(asked, importer));
@@ -163,8 +163,8 @@ void Modules::checkRequiredNamesOfModulesLoadedAnewBelow(ModuleID root)
         }
         if (seen.quickSet(module.index()))
             continue;
-        bool standsBehindMock = isMocked(module) || mockInPlace(module);
-        if (standsBehindMock && !hasMockLaidOver(module))
+        bool standsBehindMock = isMocked(module) || activeMock(module);
+        if (standsBehindMock && !isPatchedByMock(module))
             continue;
         work.append({ module, true });
         if (standsBehindMock)
@@ -188,8 +188,8 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
             continue;
         for (const RequiredNameData& requiredName : m_table.requiredNames(module)) {
             ModuleID exporter = requiredName.exporterModule();
-            if (m_mocks && (isCommonJSFileOrFace(exporter) || (data(exporter).isESModuleOfProgram() && data(exporter).hasDynamicStarExport())) && !m_modulesThatHadRunWhenMocked.get(fileOf(exporter).index()) && (mockInPlace(exporter) ? !seesMockOf(exporter, module) : isMocked(fileOf(exporter)) && importsOriginalBesideMock(exporter, module))) [[unlikely]] {
-                if (ModuleID file = fileOf(exporter); mockInPlace(file) && !isLeftAloneByMock(file) && moduleWithExportsOf(file) != file) {
+            if (m_mocks && (isCommonJSFileOrFace(exporter) || (data(exporter).isESModuleOfProgram() && data(exporter).hasDynamicStarExport())) && !m_modulesThatHadRunWhenMocked.get(fileOf(exporter).index()) && (activeMock(exporter) ? !seesMockOf(exporter, module) : isMocked(fileOf(exporter)) && importsOriginalDespiteMock(exporter, module))) [[unlikely]] {
+                if (ModuleID file = fileOf(exporter); activeMock(file) && !hasIntactOriginal(file) && moduleWithExportsOf(file) != file) {
                     runFileBesideMock(file);
                     RETURN_IF_EXCEPTION(scope, void());
                 }
@@ -209,8 +209,8 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
                     continue;
                 RELEASE_AND_RETURN(scope, resolution == StarExportResolution::Type::Ambiguous ? throwExportAmbiguous(requiredName) : throwExportNotFound(requiredName));
             }
-            if ((mockInPlace(exporter) && mayGetNameFromMock(exporter, module)) || (asked == ModulesAsked::ThoseLoadedAnew && isMocked(exporter) && !wasLoadedInThisTestFile(exporter))) [[unlikely]] {
-                bool patchesFileThatHasRun = mockInPlace(exporter) && isLeftAloneByMock(exporter) && !isSetAsideByMock(fileOf(exporter));
+            if ((activeMock(exporter) && mayGetNameFromMock(exporter, module)) || (asked == ModulesAsked::ThoseLoadedAnew && isMocked(exporter) && !wasLoadedInThisTestFile(exporter))) [[unlikely]] {
+                bool patchesFileThatHasRun = activeMock(exporter) && hasIntactOriginal(exporter) && !isDisplacedByMock(fileOf(exporter));
                 if (requiredName.mayBeAbsent || !patchesFileThatHasRun || !m_table.isAmbiguousExport(exporter, identifier(requiredName.name).string()))
                     continue;
             }
@@ -222,7 +222,7 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
                 if (!m_exportsLeftOut.isEmpty()) [[unlikely]] {
                     std::optional<unsigned> index = m_table.findExport(exporter, identifier(requiredName.name).impl());
                     if (index && isLeftOut(exporter, *index, TablesBehindStars::HaveName)) {
-                        if (isMocked(exporter) || mockThatAnswersFor(exporter, m_table.exports(exporter)[*index]) || dropExportThatFindsNothing(module, requiredName))
+                        if (isMocked(exporter) || findMockForReexport(exporter, m_table.exports(exporter)[*index]) || dropExportThatFindsNothing(module, requiredName))
                             continue;
                         RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
                     }
@@ -250,7 +250,7 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
             case StarExportResolution::Type::Error:
                 if (requiredName.mayBeAbsent && data(exporter).exportRule != SyntheticExportRule::RuntimeModule)
                     continue;
-                if (isMockedInItsImage(exporter, MocksAskedFor::ThoseThatAddNames) && mayGetNameFromMock(exporter, module))
+                if (isMockedThroughStarExports(exporter, MockFilter::AddingNames) && mayGetNameFromMock(exporter, module))
                     continue;
                 if (resolution == StarExportResolution::Type::NotFound && data(exporter).isOfLibrary() && exportsWhatMockNamesAlone(exporter))
                     continue;
@@ -458,13 +458,13 @@ void Modules::willMock(ModuleID mocked)
     m_importersAskedAboutOriginal.clear();
     m_modulesWithNoNamesOwedBelow.clearAll();
     if (hasRunBesideMockAlone(mocked)) [[unlikely]] {
-        m_modulesThatRanBesideMock.set(mocked.index());
+        m_originalsEvaluatedUnderMock.set(mocked.index());
         m_modulesOwedToImportersThatRan.clear(mocked.index());
         if (status(mocked) == ModuleStatus::Unlinked)
             setStatus(mocked, ModuleStatus::Evaluated);
     } else if (LoadedModule* loaded = m_modulesThatRanBesideMockAlone.get(mocked.index()) ? loadedIfExists(mocked) : nullptr)
         loaded->errorOfModuleThatRanBesideMock.set(*this, JSValue());
-    m_modulesThatHadRunWhenMocked.set(mocked.index(), status(mocked) == ModuleStatus::Evaluated && (!mockInPlace(mocked) || hasRunItself(mocked)));
+    m_modulesThatHadRunWhenMocked.set(mocked.index(), status(mocked) == ModuleStatus::Evaluated && (!activeMock(mocked) || wasOriginalEvaluated(mocked)));
     momentOfFirstMockInTestFile(mocked);
     ++m_timesMocked.add(mocked, 0u).iterator->value;
     BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());
@@ -472,16 +472,16 @@ void Modules::willMock(ModuleID mocked)
     m_mocks = createMockedModules(m_table, WTF::move(modules), m_mocks.get());
 }
 
-void Modules::didEndMock(ModuleID mocked)
+void Modules::didRemoveMock(ModuleID mocked)
 {
-    if (didLayingTakeFormOutOfLoader(mocked))
-        noteThatImportersLeftLoaderWith(mocked);
+    if (wasVariantEvictedByMock(mocked))
+        markImportersEvictedWithVariant(mocked);
     leaveImportersAbove(mocked);
-    m_modulesKeptByLoadsInFlight.clear(mocked.index());
+    m_modulesRetainedByInFlightLoads.clear(mocked.index());
     m_modulesWithNoNamesOwedBelow.clearAll();
     if (!isMocked(mocked))
         return;
-    if (!mockInPlace(mocked))
+    if (!activeMock(mocked))
         bringBackErrorOfModuleThatRanBesideMock(mocked);
     m_importersAskedAboutOriginal.clear();
     BitVector others = m_mocks->modules;
@@ -616,7 +616,7 @@ void Modules::link(const ModuleLinkWalk& walk)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (m_moduleWhoseOwnNamespaceIsMade != walk.root()) [[likely]] {
-        runMocksBelow(walk.root());
+        runMocksInGraph(walk.root());
         RETURN_IF_EXCEPTION(scope, void());
     }
 
@@ -675,7 +675,7 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             if (module != walk.root()) {
-                if (!mockInPlace(fileOf(module))) {
+                if (!activeMock(fileOf(module))) {
                     takeCopiesAnewWhereMockCallAloneTookThem(module);
                     RETURN_IF_EXCEPTION(scope, void());
                 }
@@ -846,7 +846,7 @@ JSValue Modules::evaluateForCapture(ModuleID module)
     std::optional<ModuleID> file = m_table.fileBehindFace(module);
     RELEASE_ASSERT(file);
     bool isFileRunningWithoutFace = status(*file) == ModuleStatus::Evaluating && (status(module) == ModuleStatus::Unlinked || status(module) == ModuleStatus::Linked);
-    bool isReadPastMockThatWaits = m_moduleWhoseOwnNamespaceIsMade == module && status(*file) == ModuleStatus::Evaluated && m_modulesWithMockToRun.get(file->index());
+    bool isReadPastMockThatWaits = m_moduleWhoseOwnNamespaceIsMade == module && status(*file) == ModuleStatus::Evaluated && m_modulesWithPendingMock.get(file->index());
     if (!isFileRunningWithoutFace && !isReadPastMockThatWaits) {
         evaluateSynchronously(module, SynchronousEvaluationReason::Require);
         RETURN_IF_EXCEPTION(scope, { });
@@ -958,7 +958,7 @@ void Modules::takeCopiesAnewWhereMockCallAloneTookThem(ModuleID face)
     ModuleID file = fileOf(face);
     if (isMocked(file) || !m_facesThatTookCopiesForMock.get(face.index()))
         return;
-    bool wasImported = mockInPlace(file) || wasLoadedByImport(file) || namespaceIfCreated(face, ModulePhase::Evaluation);
+    bool wasImported = activeMock(file) || wasLoadedByImport(file) || namespaceIfCreated(face, ModulePhase::Evaluation);
     m_facesThatTookCopiesForMock.clear(face.index());
     if (!wasImported)
         captureExportsAgainKeepingWhatGettersGave(face);
@@ -1169,22 +1169,22 @@ bool Modules::isESModuleThatThrew(ModuleID file) const
     return data(file).isESModuleOfProgram() && !data(file).isFaceOfFile() && status(file) == ModuleStatus::Failed;
 }
 
-void Modules::noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displacesEarlierMock, bool setsModuleAside)
+void Modules::noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displacesEarlierMock, bool displacesModule)
 {
-    if (displacesEarlierMock && !setsModuleAside)
+    if (displacesEarlierMock && !displacesModule)
         return;
     LoadedModule& loaded = ensureLoaded(file);
-    loaded.hadThrownWhenMockWasMade = !setsModuleAside && isESModuleThatThrew(file) && !wasLetGoByLoader(file) && !loaded.holdsValueOfMockThatEnded;
-    loaded.keepsFailureThatMockTakesOut |= setsModuleAside && isESModuleThatThrew(file) && !wasLoadedWithImporter(file);
+    loaded.hadThrownWhenMockWasMade = !displacesModule && isESModuleThatThrew(file) && !wasReleasedByLoader(file) && !loaded.holdsValueOfMockThatEnded;
+    loaded.wasDisplacedAfterFailure |= displacesModule && isESModuleThatThrew(file) && !wasLoadedWithImporter(file);
 }
 
-void Modules::keepWhatMockIsLaidOver(ModuleID file)
+void Modules::saveExportsBeforePatch(ModuleID file)
 {
-    m_moduleWithMockBeingLaid = file;
+    m_moduleBeingPatched = file;
     LoadedModule& loaded = ensureLoaded(file);
-    if (!std::exchange(loaded.hasMockLaidOver, true)) {
-        loaded.hadRunWhenMockWasLaid = status(file) == ModuleStatus::Evaluated;
-        loaded.hadThrownWhenMockWasLaid = loaded.hadThrownWhenMockWasMade;
+    if (!std::exchange(loaded.isPatchedByMock, true)) {
+        loaded.wasEvaluatedWhenPatched = status(file) == ModuleStatus::Evaluated;
+        loaded.hadThrownWhenPatched = loaded.hadThrownWhenMockWasMade;
     }
     if (loaded.valueBeforeMock)
         return;
@@ -1197,12 +1197,12 @@ void Modules::endMockLaidOverFile(ModuleID file)
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    m_moduleWithMockBeingLaid = std::nullopt;
+    m_moduleBeingPatched = std::nullopt;
     LoadedModule* found = loadedIfExists(file);
-    if (!found || !std::exchange(found->hasMockLaidOver, false))
+    if (!found || !std::exchange(found->isPatchedByMock, false))
         return;
     LoadedModule& loaded = *found;
-    didEndMock(file);
+    didRemoveMock(file);
     loaded.exportsOfMock.set(*this, nullptr);
     auto giveBackExports = [&](ModuleID holder) {
         LoadedModule* held = loadedIfExists(holder);
@@ -1226,7 +1226,7 @@ void Modules::endMockLaidOverFile(ModuleID file)
     };
     if (data(file).hasExportTable()) {
         for (ModuleID holder : modulesThatKeepNamesHandedOnBy(*this, file)) {
-            if (m_libraryModulesWithMock.get(holder.index()) || hasMockLaidOver(fileOf(holder)))
+            if (m_libraryModulesWithMock.get(holder.index()) || isPatchedByMock(fileOf(holder)))
                 continue;
             giveBackExports(holder);
             RETURN_IF_EXCEPTION(scope, void());
@@ -1251,7 +1251,7 @@ void Modules::endMockLaidOverFile(ModuleID file)
             setCommonJSExports(file, value);
         else if (loaded.requiredValue) {
             loaded.requiredValue.set(*this, value);
-            if (JSObject* entry = loaded.objectMadeByRequire) {
+            if (JSObject* entry = loaded.moduleObjectFromRequire) {
                 entry->putDirect(vm, vm.propertyNames->exports, value);
                 loaded.exportsGivenToObjectMadeByRequire.set(*this, value);
             }
@@ -1288,43 +1288,43 @@ void Modules::endMockLaidOverFile(ModuleID file)
 
 void Modules::letGoOfNamespaceOfFileThatRanAheadOfMock(ModuleID file)
 {
-    if (!m_filesThatRanAheadOfMock.get(file.index()))
+    if (!m_modulesEvaluatedBeforeMock.get(file.index()))
         return;
-    m_filesThatRanAheadOfMock.clear(file.index());
+    m_modulesEvaluatedBeforeMock.clear(file.index());
     LoadedModule* exporting = loadedIfExists(moduleWithExportsOf(file));
-    if (exporting && !mockInPlace(file))
+    if (exporting && !activeMock(file))
         exporting->namespaceBeforeMockInPlace.set(*this, nullptr);
 }
 
-JSObject* Modules::namespaceOfFileThatRanAheadOfMock(ModuleID file)
+JSObject* Modules::namespaceBeforeMock(ModuleID file)
 {
-    if (data(file).kind != ModuleKind::CommonJs || !m_filesThatRanAheadOfMock.get(file.index()) || status(file) != ModuleStatus::Evaluated || isLeftToHostAsFarAsIsKnown(file))
+    if (data(file).kind != ModuleKind::CommonJs || !m_modulesEvaluatedBeforeMock.get(file.index()) || status(file) != ModuleStatus::Evaluated || isLeftToHostAsFarAsIsKnown(file))
         return nullptr;
     LoadedModule* loaded = loadedIfExists(file);
-    if (loaded && loaded->hasMockLaidOver)
+    if (loaded && loaded->isPatchedByMock)
         return nullptr;
     LoadedModule* exporting = loadedIfExists(moduleWithExportsOf(file));
     bool wasMadeWhileMockWaited = exporting && exporting->namespaceBeforeMockInPlace;
-    if (!wasMadeWhileMockWaited && (!m_modulesWithMockToRun.get(file.index()) || isLeftAloneByMock(file) || mockInPlace(file)))
+    if (!wasMadeWhileMockWaited && (!m_modulesWithPendingMock.get(file.index()) || hasIntactOriginal(file) || activeMock(file)))
         return nullptr;
     stopWhereExportsLeaveCompiledCode(file);
     return namespaceOfModuleThatRanBesideMock(moduleWithExportsOf(file));
 }
 
-JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedBelowOriginal owedBelowOriginal, bool* readOfNameThrew)
+JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, OwedBelowOriginal owedBelowOriginal, bool* didExportReadThrow)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isCommonJSFile = data(file).kind == ModuleKind::CommonJs;
-    if (isLeftAloneByMock(file) && !isLeftToHostAsFarAsIsKnown(file)) {
+    if (hasIntactOriginal(file) && !isLeftToHostAsFarAsIsKnown(file)) {
         if (isCommonJSFile) {
             m_facesThatTookCopiesForMock.clear(moduleWithExportsOf(file).index());
             JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get();
             return original ? original : commonJSExports(file);
         }
         JSValue error = ensureLoaded(file).errorOfModuleThatRanBesideMock.get();
-        if (ModuleRecord* record = error ? nullptr : recordSetAside(file))
+        if (ModuleRecord* record = error ? nullptr : displacedRecord(file))
             error = record->evaluationError();
         if (error) [[unlikely]] {
             tellThatFailureStayedBehindMock(file);
@@ -1337,14 +1337,14 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedB
         }
         RELEASE_AND_RETURN(scope, namespaceOfModuleItself(file));
     }
-    if (JSValue original = isCommonJSFile && mockInPlace(file) ? ensureLoaded(file).exportsOfOriginalBesideMock.get() : JSValue())
+    if (JSValue original = isCommonJSFile && activeMock(file) ? ensureLoaded(file).exportsOfOriginalBesideMock.get() : JSValue())
         return original;
-    if (mockInPlace(file) || isLeftToHostAsFarAsIsKnown(file))
+    if (activeMock(file) || isLeftToHostAsFarAsIsKnown(file))
         return { };
     LoadedModule* loaded = loadedIfExists(file);
-    bool isLaidOver = loaded && loaded->hasMockLaidOver;
-    bool hasThrown = evenIfItsBodyThrew && loaded && (isLaidOver ? loaded->hadThrownWhenMockWasLaid : loaded->hadThrownWhenMockWasMade && !isMocked(file) && isESModuleThatThrew(file));
-    bool hadRun = isLaidOver ? hasThrown || loaded->hadRunWhenMockWasLaid : hasThrown || ((!isMocked(file) || m_filesThatRanAheadOfMock.get(file.index())) && status(file) == ModuleStatus::Evaluated);
+    bool isLaidOver = loaded && loaded->isPatchedByMock;
+    bool hasThrown = evenIfEvaluationFailed && loaded && (isLaidOver ? loaded->hadThrownWhenPatched : loaded->hadThrownWhenMockWasMade && !isMocked(file) && isESModuleThatThrew(file));
+    bool hadRun = isLaidOver ? hasThrown || loaded->wasEvaluatedWhenPatched : hasThrown || ((!isMocked(file) || m_modulesEvaluatedBeforeMock.get(file.index())) && status(file) == ModuleStatus::Evaluated);
     if (!hadRun)
         return { };
     if (isCommonJSFile) {
@@ -1414,8 +1414,8 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedB
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     namespaceObject->methodTable()->getOwnPropertyNames(namespaceObject, realm, names, DontEnumPropertiesMode::Exclude);
     if (scope.exception()) [[unlikely]] {
-        if (readOfNameThrew)
-            *readOfNameThrew = true;
+        if (didExportReadThrow)
+            *didExportReadThrow = true;
         return { };
     }
     JSObject* exports = constructEmptyObject(realm);
@@ -1430,8 +1430,8 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedB
         if (!value) {
             value = namespaceObject->get(realm, name);
             if (scope.exception()) [[unlikely]] {
-                if (readOfNameThrew)
-                    *readOfNameThrew = true;
+                if (didExportReadThrow)
+                    *didExportReadThrow = true;
                 return { };
             }
         }
@@ -1463,10 +1463,10 @@ void Modules::exportWhatMockNamesAlone(ModuleID file, bool hasRun)
     ensureLoaded(file).hadRunAheadOfMocksThatNameAlone = hasRun;
 }
 
-bool Modules::wasRequiredUnderMockInPlace(ModuleID file) const
+bool Modules::wasRequiredUnderActiveMock(ModuleID file) const
 {
     LoadedModule* loaded = loadedIfExists(file);
-    return loaded && loaded->wasRequiredUnderMockInPlace;
+    return loaded && loaded->wasRequiredUnderActiveMock;
 }
 
 void Modules::noteLoadBehindMock(ModuleID fileOrFace, bool isRequired)
@@ -1639,7 +1639,7 @@ void Modules::fillCapturedExports(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(module);
-    if (loaded.bindsEarlierCapture || isLeftAloneByMock(module)) [[unlikely]]
+    if (loaded.bindsEarlierCapture || hasIntactOriginal(module)) [[unlikely]]
         return;
 
     for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
@@ -1767,7 +1767,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
 
         CollectionOfNamesBehindStars collection;
         SetForScope collectsNamesBehindStars(m_collectionOfNamesBehindStars, &collection);
-        AbstractModuleRecord* record = isOfModuleItself && mockInPlace(module) ? ensureRecordSetAside(module) : recordForResolution(module);
+        AbstractModuleRecord* record = isOfModuleItself && activeMock(module) ? ensureDisplacedRecord(module) : recordForResolution(module);
         IdentifierSet listedNames;
         BitVector entriesThatYieldToStars;
         UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint32_t, IdentifierRepHash> whereHeldNamesLand;
@@ -1912,7 +1912,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
             RETURN_IF_EXCEPTION(scope, false);
             bool isFound = found.type == StarExportResolution::Type::Resolved;
             if (auto* provider = isFound ? dynamicDowncast<ModuleRecord>(found.moduleRecord) : nullptr; provider && provider->standsForMock()) {
-                JSObject* mock = mockInPlace(provider->module());
+                JSObject* mock = activeMock(provider->module());
                 isFound = mock && mock->hasProperty(realm, found.localName);
                 RETURN_IF_EXCEPTION(scope, false);
                 if (isFound && isMockedByFactoryThatTakesOriginal(provider->module())) {
@@ -1967,7 +1967,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                     std::span<const Identifier> names = namesAskedOf(ended, DontEnumPropertiesMode::Exclude);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, names, namespaceSeenBy(source, importer));
-                } else if (mockInPlace(source) ? !seesMockOf(source, importer) : isMocked(source) && importsOriginalBesideMock(source, importer)) [[unlikely]] {
+                } else if (activeMock(source) ? !seesMockOf(source, importer) : isMocked(source) && importsOriginalDespiteMock(source, importer)) [[unlikely]] {
                     auto beingMade = std::ranges::find(m_namespacesBeingMade, source, &std::pair<ModuleID, JSObject*>::first);
                     JSObject* own = beingMade != m_namespacesBeingMade.end() ? beingMade->second : namespaceOfModuleItself(source);
                     RETURN_IF_EXCEPTION(scope, { });
@@ -2002,7 +2002,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                         std::optional<unsigned> asked = m_table.findExport(source, nameSearchedFor->impl());
                         entriesAsked = asked ? entriesOfSource.subspan(*asked, 1) : entriesOfSource.first(0);
                     }
-                    bool seesMock = mockInPlace(source);
+                    bool seesMock = activeMock(source);
                     appendLiveExports(source, entriesAsked | std::views::filter([&](const ModuleExportData& entry) {
                         return !isLeftOut(source, &entry - entriesOfSource.data(), TablesBehindStars::HaveName) && (seesMock || (!takesNameBackFromPath(source, entry) && !findsNothingUnderMock(source, entry)));
                     }) | std::views::transform([&](const ModuleExportData& entry) {
@@ -2015,7 +2015,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                         Vector<ModuleRecord*, 8> askers = listAskersBut(recordOfMock);
                         RETURN_IF_EXCEPTION(scope, { });
                         auto originalShows = [&](const Identifier& name) {
-                            return recordOfMock ? recordOfMock->originalShows(realm, name, askers.span()) : ensureRecordSetAside(source)->resolveExport(realm, name).type == StarExportResolution::Type::Resolved;
+                            return recordOfMock ? recordOfMock->originalShows(realm, name, askers.span()) : ensureDisplacedRecord(source)->resolveExport(realm, name).type == StarExportResolution::Type::Resolved;
                         };
                         for (const ModuleExportData& entry : entriesAsked) {
                             if (!isLeftOut(source, &entry - entriesOfSource.data(), TablesBehindStars::HaveName))

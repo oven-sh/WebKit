@@ -758,7 +758,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::create(VM& vm,
         return field.attributes() & PropertyAttribute::DontDelete;
     });
     if (variant.hasExtraProperties && !hasFieldThatIsBornFixed)
-        structure->didFindEveryFieldBornConfigurable();
+        structure->setHasOnlyConfigurableFields();
     return structure;
 }
 

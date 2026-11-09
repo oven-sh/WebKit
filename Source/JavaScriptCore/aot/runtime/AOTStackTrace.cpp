@@ -1165,10 +1165,10 @@ LineColumn obfuscatedPositionOf(const TraceFrame& frame)
 
 String sourceURLOf(ModuleID module)
 {
-    return module ? pathOfFileOfModule(module) : emptyString();
+    return module ? moduleFilePath(module) : emptyString();
 }
 
-String pathOfFileThatDeclares(JSCell* compiledFunction)
+String declaringFilePath(JSCell* compiledFunction)
 {
     std::optional<FunctionID> function = functionOf(compiledFunction);
     std::optional<SourcePosition> definition = function ? FunctionDescription(*function).definition() : std::nullopt;
@@ -1183,7 +1183,7 @@ String sourceProviderURLOf(ModuleID module)
 String sourceProviderURLOf(const TraceFrame& frame, const std::optional<SourcePosition>& position)
 {
     if (FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
-        return moduleOfCompilerHelpers;
+        return compilerHelpersModule;
     return position ? sourceProviderURLOf(position->source) : emptyString();
 }
 

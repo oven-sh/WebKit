@@ -302,8 +302,8 @@ static ExtraPropertyLookup lookUpExtraProperty(VM& vm, const CompiledStructure& 
     reason.print("AOT: where ", whatIsDoneHere, ", the properties that an object holds beside its fields are not laid out as the structure of the object says: it names structure ", object.compiledStructure().extraPropertiesStructureID().bits(), ", they have ", extraProperties ? extraProperties->structureID().bits() : 0, ".");
     dataLogLn(reason.toString(), " This is a bug in Bun.");
     ASCIICString text = reason.toASCIICString();
-    if (auto* stopWithReport = moduleHostOf(realm).stopWithReport)
-        stopWithReport(text.span());
+    if (auto* crashWithReason = moduleHostOf(realm).crashWithReason)
+        crashWithReason(text.span());
     CRASH();
 }
 
@@ -412,7 +412,7 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
     }
-    if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->mockThatAnswersFor(moduleNamespace->module(), moduleExport))
+    if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->findMockForReexport(moduleNamespace->module(), moduleExport))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     JSValue held = ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable);
     if (!held)

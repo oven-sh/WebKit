@@ -515,7 +515,7 @@ bool onlyUserTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyValue
 
 static bool everyUserTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyValue& read, WhatStandsBesideRead beside, bool readGivesUpItsHole = true)
 {
-    if (walker.takesEveryUserOfElementToReckonWithIt()) [[unlikely]]
+    if (walker.shouldAssumeArithmeticUsers()) [[unlikely]]
         return true;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID name = read.id();

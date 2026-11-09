@@ -229,13 +229,13 @@ static bool isExtensibleCompiledObjectWithConfigurablePropertiesOnly(JSObject* t
     if (object->hasFlagsInOrderWord() || fields.size() > maxFieldsLookedAt)
         return false;
     auto* structure = uncheckedDowncast<AOT::CompiledStructure>(target->structure());
-    if (structure->isKnownThatEveryFieldIsBornConfigurable())
+    if (structure->hasOnlyConfigurableFields())
         return true;
     bool hasFieldThatBinds = std::ranges::any_of(fields, [](const AOT::FieldData& field) {
         return field.attributes() & PropertyAttribute::DontDelete;
     });
     if (!hasFieldThatBinds)
-        structure->didFindEveryFieldBornConfigurable();
+        structure->setHasOnlyConfigurableFields();
     return !hasFieldThatBinds;
 }
 #endif

@@ -558,6 +558,13 @@ public:
         uint32_t firstStepBehind;
     };
     ArenaVector<ReleaseByWaysOn> m_releasesByWaysOn;
+    struct PhiSourceState {
+        uint32_t lastVisit { 0 };
+        bool isInert { false };
+        const Block* settledIn { nullptr };
+    };
+    ArenaVector<PhiSourceState> m_phiSourceStates;
+    uint32_t m_phiSourceVisits { 0 };
     struct SpillWrittenInBlock {
         SpillIndex spill;
         const Block* block;

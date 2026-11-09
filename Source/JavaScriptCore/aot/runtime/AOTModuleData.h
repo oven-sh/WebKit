@@ -38,8 +38,8 @@ constexpr Number24 optionalNumber24(uint32_t word)
     return Number24(word);
 }
 
-enum class OtherNameOfModule : uint8_t;
-constexpr uint32_t moduleReachedUnder(uint32_t module, OtherNameOfModule name) { return module << 2 | static_cast<uint32_t>(name); }
+enum class ModuleAliasKind : uint8_t;
+constexpr uint32_t moduleReachedUnder(uint32_t module, ModuleAliasKind name) { return module << 2 | static_cast<uint32_t>(name); }
 
 struct ModuleData {
     enum class Flag : uint16_t {
@@ -421,22 +421,24 @@ struct ModuleFailureData {
     static constexpr uint32_t isLoadOfModuleBit = 1u << 29;
     static constexpr uint32_t bits = isAbsentExportBit | isAskedByExportStatementBit | isLoadOfModuleBit;
 
-    static ModuleFailureData ofAbsentExport(ModuleID exporter, uint32_t name) { return { exporter.index() | isAbsentExportBit, name }; }
-    static ModuleFailureData ofExportStatement(uint32_t exportSpecifier, uint32_t exportName)
+    static ModuleFailureData ofAbsentExport(ModuleID referrer, ModuleID exporter, uint32_t name) { return { exporter.index() | isAbsentExportBit, name, referrer.index() }; }
+    static ModuleFailureData ofExportStatement(ModuleID referrer, uint32_t exportSpecifier, uint32_t exportName)
     {
         RELEASE_ASSERT(!(exportSpecifier & bits));
-        return { exportSpecifier | isAbsentExportBit | isAskedByExportStatementBit, exportName };
+        return { exportSpecifier | isAbsentExportBit | isAskedByExportStatementBit, exportName, referrer.index() };
     }
-    static ModuleFailureData ofLoad(ModuleID module, ModuleFailureID failure) { return { module.index() | isLoadOfModuleBit, failure.index() }; }
+    static ModuleFailureData ofLoad(ModuleID module, ModuleFailureID failure) { return { module.index() | isLoadOfModuleBit, failure.index(), module.index() }; }
 
     uint32_t importer;
     uint32_t specifier;
+    uint32_t referrer;
 
     bool isAbsentExport() const { return importer & isAbsentExportBit; }
     bool isAskedByExportStatement() const { return importer & isAskedByExportStatementBit; }
     bool isLoadOfModule() const { return importer & isLoadOfModuleBit; }
     ModuleFailureID failureOfLoad() const { ASSERT(isLoadOfModule()); return ModuleFailureID(specifier); }
     ModuleID importerModule() const { ASSERT(!isAskedByExportStatement()); return ModuleID(importer & ~bits); }
+    ModuleID referrerModule() const { return ModuleID(referrer); }
     StringID exportSpecifierString() const { ASSERT(isAskedByExportStatement()); return StringID(importer & ~bits); }
     StringID specifierString() const { return StringID(specifier); }
 };
@@ -528,7 +530,7 @@ static_assert(sizeof(NameOfStatementData) == 8 && isImageRecord<NameOfStatementD
 static_assert(sizeof(OriginalAskedForData) == 8 && isImageRecord<OriginalAskedForData>);
 static_assert(sizeof(StarAsWrittenData) == 12 && isImageRecord<StarAsWrittenData>);
 static_assert(sizeof(WriterOfExportData) == 12 && isImageRecord<WriterOfExportData>);
-static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
+static_assert(sizeof(ModuleFailureData) == 12 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
 static_assert(sizeof(StateOfLibraryModuleData) == 12 && isImageRecord<StateOfLibraryModuleData>);
 static_assert(sizeof(CompiledRuntimeModuleData) == 8 && isImageRecord<CompiledRuntimeModuleData>);

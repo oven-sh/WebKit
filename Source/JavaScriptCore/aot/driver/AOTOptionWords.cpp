@@ -191,9 +191,9 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::NobodyWakesSleepersOfSharedCalls:
     case Wire::TestingSwitch::PortersTakeWhatIsOfTheMemberForTheUnknown:
     case Wire::TestingSwitch::ReadsThroughFamiliesAreTiedMemberByMember:
-    case Wire::TestingSwitch::CallsThatEnteredUnseenCodeDoNotHearTheUnknownCome:
-    case Wire::TestingSwitch::WhatBirthsLayIsTakenToBeLaidByDefinitions:
-    case Wire::TestingSwitch::ViewsAreTakenToBeWrittenOneLonger:
+    case Wire::TestingSwitch::IgnoreEscapeAfterUnknownCall:
+    case Wire::TestingSwitch::TreatLiteralFieldsAsDefined:
+    case Wire::TestingSwitch::OverstateTypedArrayLength:
     case Wire::TestingSwitch::ReadsByKeyOffFilledRecordsAreListed:
         return true;
     }
@@ -254,8 +254,8 @@ static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
         found.part = Typed::PartOfEffects::KindOfResult;
     else if (matchesName(*part, "ContentsOfResult"_s))
         found.part = Typed::PartOfEffects::ContentsOfResult;
-    else if (matchesName(*part, "HoldersOfResult"_s))
-        found.part = Typed::PartOfEffects::HoldersOfResult;
+    else if (matchesName(*part, "FreshnessOfResult"_s))
+        found.part = Typed::PartOfEffects::FreshnessOfResult;
     else if (matchesName(*part, "TestsOfGuard"_s))
         found.part = Typed::PartOfEffects::TestsOfGuard;
     else if (matchesName(*part, "ShapesKnown"_s))
@@ -317,7 +317,7 @@ static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
         found.kind = Typed::KindOfEffectsRow::RowOfLoop;
     else
         return std::nullopt;
-    bool speaksOfResult = found.part == Typed::PartOfEffects::RangeOfResult || found.part == Typed::PartOfEffects::KindOfResult || found.part == Typed::PartOfEffects::ContentsOfResult || found.part == Typed::PartOfEffects::HoldersOfResult;
+    bool speaksOfResult = found.part == Typed::PartOfEffects::RangeOfResult || found.part == Typed::PartOfEffects::KindOfResult || found.part == Typed::PartOfEffects::ContentsOfResult || found.part == Typed::PartOfEffects::FreshnessOfResult;
     bool speaksOfRuleOfOperation = found.part == Typed::PartOfEffects::KindOfResult && found.kind == Typed::KindOfEffectsRow::Operation;
     if (speaksOfResult && found.kind != Typed::KindOfEffectsRow::Builtin && !speaksOfRuleOfOperation)
         return std::nullopt;

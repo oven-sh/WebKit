@@ -822,8 +822,8 @@ public:
     LinkType withoutObjectsThatHaveEscaped(LinkType) const;
     Vector<BreachOfClosure> findBreachesOfClosure();
     void describe(PrintStream&, FlowNodeID) const;
-    void describeWhatWasMadeOnDemand(PrintStream&, FlowNodeID) const;
-    bool describeNodeOfSharedCall(PrintStream&, FlowNodeID) const;
+    void describeLazyNode(PrintStream&, FlowNodeID) const;
+    bool describeSharedCallNode(PrintStream&, FlowNodeID) const;
     size_t numberOfNodesWithLists() const { return m_listsOfNodes.size(); }
     Vector<FlowNodeID> endsOfEdgesOutOf(FlowNodeID) const;
     Vector<FlowObserver> observersOf(FlowNodeID) const;

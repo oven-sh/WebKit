@@ -379,7 +379,7 @@ static String refusal(unsigned count)
 {
     StringBuilder text;
     for (unsigned index = 0; index < count; ++index)
-        text.append("EvalError\n"_s, evaluationRefusedMessage(), '\n');
+        text.append("EvalError\n"_s, rejectedEvaluationMessage(), '\n');
     return text.toString();
 }
 

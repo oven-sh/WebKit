@@ -48,7 +48,7 @@ Ref<Thread> startBuildThread(ASCIILiteral name, Function<void()>&& function)
 void exitIfBuildIsOutOfMemory()
 {
     std::array<char, 768> place;
-    size_t length = describeWhereThisThreadStopped(place);
+    size_t length = describeCurrentThreadWork(place);
     if (!length)
         return;
     writeToStandardError("error: Out of memory while compiling\n"_s.span());

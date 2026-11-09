@@ -543,7 +543,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetWithProxyTrap, EncodedJSValue, (Instance
     OPERATION_RETURN(scope, JSValue::encode(ProxyObject::getWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key, words.proxy)));
 }
 
-static bool isSeenToBeAllowedByTarget(VM& vm, JSObject* target, JSCell* key, JSValue answer)
+static bool isTrapResultAllowed(VM& vm, JSObject* target, JSCell* key, JSValue answer)
 {
     if (!key->isString())
         return false;
@@ -554,7 +554,7 @@ static bool isSeenToBeAllowedByTarget(VM& vm, JSObject* target, JSCell* key, JSV
     JSObject* holder = target;
     if (target->type() == CompiledObjectType) {
         auto* object = uncheckedDowncast<Object>(target);
-        if (object->isFrozen() || object->isSealed() || !object->compiledStructure().isKnownThatEveryFieldIsBornConfigurable())
+        if (object->isFrozen() || object->isSealed() || !object->compiledStructure().hasOnlyConfigurableFields())
             return false;
         holder = extraPropertiesIfMade(*object);
         if (!holder)
@@ -576,7 +576,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateAnswerOfProxyTrap, EncodedJSValue, 
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateAnswerOfProxyTrap);
     const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
-    if (isSeenToBeAllowedByTarget(vm, words.target, words.key, JSValue::decode(answer)))
+    if (isTrapResultAllowed(vm, words.target, words.key, JSValue::decode(answer)))
         OPERATION_RETURN(scope, answer);
     ProxyObject::validateGetTrapResultWhereBound(globalObject, JSValue::decode(answer), words.target, words.key);
     OPERATION_RETURN(scope, answer);

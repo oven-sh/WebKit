@@ -125,11 +125,11 @@ static Vector<ModuleFailureData> listFailuresForModuleTables(const Typed::Progra
             failedLoads.append(ModuleFailureData::ofLoad(failure.endsLoadOf, ModuleFailureID(failures.size())));
         uint32_t specifier = numberOfString(failure.specifier);
         if (failure.exportSpecifier)
-            failures.append(ModuleFailureData::ofExportStatement(numberOfString(failure.exportSpecifier), specifier));
+            failures.append(ModuleFailureData::ofExportStatement(failure.importer, numberOfString(failure.exportSpecifier), specifier));
         else if (failure.exporter)
-            failures.append(ModuleFailureData::ofAbsentExport(failure.exporter, specifier));
+            failures.append(ModuleFailureData::ofAbsentExport(failure.importer, failure.exporter, specifier));
         else
-            failures.append(ModuleFailureData { failure.importer.index(), specifier });
+            failures.append(ModuleFailureData { failure.importer.index(), specifier, failure.importer.index() });
     }
     AOT::sort(failedLoads, { }, &ModuleFailureData::importer);
     failures.appendVector(failedLoads);
@@ -267,10 +267,10 @@ static RequestsThatWalksFollow listRequestsThatWalksFollow(const ParallelLoops& 
 static void appendOtherNamesThatReachModule(const Typed::Module& module, uint32_t index, Vector<uint32_t>& result)
 {
     using Typed::ModuleFlags;
-    constexpr std::pair<ModuleFlags, OtherNameOfModule> otherNames[] = {
-        { ModuleFlags::IsReachedWithoutExtension, OtherNameOfModule::WithoutExtension },
-        { ModuleFlags::IsReachedUnderAnotherExtension, OtherNameOfModule::UnderAnotherExtension },
-        { ModuleFlags::IsReachedAsFolder, OtherNameOfModule::AsFolder },
+    constexpr std::pair<ModuleFlags, ModuleAliasKind> otherNames[] = {
+        { ModuleFlags::IsReachedWithoutExtension, ModuleAliasKind::WithoutExtension },
+        { ModuleFlags::IsReachedUnderAnotherExtension, ModuleAliasKind::WithOtherExtension },
+        { ModuleFlags::IsReachedAsFolder, ModuleAliasKind::AsDirectory },
     };
     if (!module.flags.contains(ModuleFlags::MayBeMocked))
         return;

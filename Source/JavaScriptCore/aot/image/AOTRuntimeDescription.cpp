@@ -152,7 +152,7 @@ static std::optional<RuntimeDifference> findDifferenceFromThisTable(const Builti
     return std::nullopt;
 }
 
-std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const uint8_t> other)
+std::optional<RuntimeDifference> findRuntimeDifference(std::span<const uint8_t> other)
 {
     if (BuiltinTableDescription table; other.size() >= sizeof(table)) {
         memcpy(&table, other.data(), sizeof(table));

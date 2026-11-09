@@ -316,7 +316,7 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
     return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. "_s, advice)), code);
 }
 
-JSObject* createFileOfImageRefusedError(JSGlobalObject* globalObject, StringView path, ASCIILiteral code)
+JSObject* createCompiledModuleAccessError(JSGlobalObject* globalObject, StringView path, ASCIILiteral code)
 {
     return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, path, "': code that this executable loads from disk can't load the files that were compiled into it. It can use globals, built-in modules, files and packages on disk, and what the program hands it."_s)), code);
 }
@@ -342,9 +342,9 @@ JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderCha
         return createError(globalObject, makeString("Cannot take '"_s, changed, "' out of require.cache: the build found nothing that does, so the code that imports it was compiled for a module that loads once. Spell the path where it is deleted, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
     if (change == LoaderChange::StoreUnderNameOfModuleInRequireCache)
         return createError(globalObject, withAOTErrorNote(makeString("Cannot store an entry under '"_s, changed, "' in require.cache: the build read no store under that key, so require(\""_s, changed, "\") was compiled to answer with the module. Spell the key where it is stored: require.cache[\""_s, changed, "\"] = entry. In a test, mock.module(\""_s, changed, "\", () => ({ .. })) replaces the module too."_s)));
-    if (change == LoaderChange::RunFileAgain)
+    if (change == LoaderChange::EvaluateModuleAgain)
         return createError(globalObject, withAOTErrorNote(makeString("Cannot run '"_s, changed, "' a second time: the loader in Module._extensions runs the text of a file into the module object that it is handed, and this executable holds the file compiled, once. require() answers with what the file exports."_s)));
-    if (change == LoaderChange::HandTextToCompile)
+    if (change == LoaderChange::PassSourceToCompile)
         return createError(globalObject, withAOTErrorNote(makeString("Cannot hand the source text of '"_s, changed, "' to module._compile: a loader in Module._extensions has replaced module._compile, and this executable holds the file compiled, without its text. The build has compiled TypeScript and JSX already. If the program depends on what the loader does to the text, build it with --no-aot."_s)));
     bool isInRequireCache = change == LoaderChange::ReplaceInRequireCache;
     return createError(globalObject, withAOTErrorNote(makeString("Cannot replace "_s, isInRequireCache ? "'"_s : ""_s, changed, isInRequireCache ? "' in require.cache"_s : ""_s, ": imports in this executable were resolved at build time, so the module loader can't be patched."_s)));
@@ -410,7 +410,7 @@ String functionNotCompiledMessage()
     return messageOfFunctionNotCompiled("This function"_s);
 }
 
-ASCIILiteral evaluationRefusedMessage()
+ASCIILiteral rejectedEvaluationMessage()
 {
     return "Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly."_s;
 }
@@ -618,19 +618,19 @@ static String becauseCallerWasNotCompiled(const String& file, ASCIILiteral made)
     return makeString(" because \""_s, file, "\", which makes the "_s, made, ", wasn't compiled with your tests: the build couldn't follow the path that loads it. Import that file by a constant path, or put its path together from import.meta.dir: import(import.meta.dir + \"/folder/\" + name)"_s, pageOnCompiledTests);
 }
 
-String spyOnExportRefusedMessage(UniquedStringImpl* name, const String& path, LockedIn lockedIn, const String& callerOutsideBuild)
+String makeSpyOnExportErrorMessage(UniquedStringImpl* name, const String& path, LockedIn lockedIn, const String& uncompiledCaller)
 {
-    if (lockedIn == LockedIn::TestRun && !callerOutsideBuild.isNull())
-        return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, '"', becauseCallerWasNotCompiled(callerOutsideBuild, "spy"_s));
+    if (lockedIn == LockedIn::TestRun && !uncompiledCaller.isNull())
+        return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, '"', becauseCallerWasNotCompiled(uncompiledCaller, "spy"_s));
     if (lockedIn == LockedIn::TestRun)
         return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because the build didn't see a test spy on it. Spell out the module and the name where the spy is made: import * as module from \"<path>\"; spyOn(module, \""_s, StringView(name), "\")"_s, pageOnCompiledTests);
     return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because module exports can't be replaced in a compiled executable. Spy on it in a test, under bun test"_s);
 }
 
-String mockOfModuleRefusedMessage(const String& path, LockedIn lockedIn, const String& callerOutsideBuild)
+String makeMockModuleErrorMessage(const String& path, LockedIn lockedIn, const String& uncompiledCaller)
 {
-    if (lockedIn == LockedIn::TestRun && !callerOutsideBuild.isNull())
-        return makeString("mock(module, fn) cannot replace \""_s, path, '"', becauseCallerWasNotCompiled(callerOutsideBuild, "mock"_s));
+    if (lockedIn == LockedIn::TestRun && !uncompiledCaller.isNull())
+        return makeString("mock(module, fn) cannot replace \""_s, path, '"', becauseCallerWasNotCompiled(uncompiledCaller, "mock"_s));
     if (lockedIn == LockedIn::TestRun)
         return makeString("mock(module, fn) cannot replace \""_s, path, "\" because the build didn't see a test mock it. Spell out the module's path where the mock is made: mock.module(\"<path>\", factory)"_s, pageOnCompiledTests);
     return makeString("mock(module, fn) cannot replace \""_s, path, "\" because it was compiled ahead of time. Mock it in a test, under bun test"_s);

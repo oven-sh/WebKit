@@ -549,33 +549,33 @@ static void testCurrentWorkNamesFunctionAndStep()
 {
     BuildContext build(makeDefaultCompileOptions());
     std::unique_ptr<Program> program = parseProgramOfSupportTests(build);
-    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).isEmpty());
+    AOT_TEST_CHECK(textOf(describeCurrentThreadWork).isEmpty());
     {
         CurrentWorkScope stage("plan"_s);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in plan.\n"_s);
+        AOT_TEST_CHECK(textOf(describeCurrentThreadWork) == "Stopped while compiling in plan.\n"_s);
         {
             CurrentWorkScope scope(*program, FunctionID(1u), "walk"_s);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in walk.\n"_s);
-            String saidOfAllThreads = textOf(describeWhatThreadsAreCompiling);
+            AOT_TEST_CHECK(textOf(describeCurrentThreadWork) == "Stopped while compiling second (a.ts:1) in walk.\n"_s);
+            String saidOfAllThreads = textOf(describeAllThreadsWork);
             AOT_TEST_CHECK(saidOfAllThreads.contains("compiling second (a.ts:1) in walk"_s));
             AOT_TEST_CHECK(saidOfAllThreads.find('\n') + 1 == saidOfAllThreads.length());
             scope.setStep("encode"_s);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in encode.\n"_s);
+            AOT_TEST_CHECK(textOf(describeCurrentThreadWork) == "Stopped while compiling second (a.ts:1) in encode.\n"_s);
         }
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in plan.\n"_s);
+        AOT_TEST_CHECK(textOf(describeCurrentThreadWork) == "Stopped while compiling in plan.\n"_s);
         {
             CurrentWorkScope scope(*program, FunctionID(1000u), "walk"_s);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in walk.\n"_s);
+            AOT_TEST_CHECK(textOf(describeCurrentThreadWork) == "Stopped while compiling in walk.\n"_s);
         }
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in plan.\n"_s);
+        AOT_TEST_CHECK(textOf(describeCurrentThreadWork) == "Stopped while compiling in plan.\n"_s);
     }
-    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).isEmpty());
+    AOT_TEST_CHECK(textOf(describeCurrentThreadWork).isEmpty());
     {
         PhaseTimes times(build, Stage::PlanSlots);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).startsWith("Stopped while compiling in "_s));
+        AOT_TEST_CHECK(textOf(describeCurrentThreadWork).startsWith("Stopped while compiling in "_s));
     }
-    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).isEmpty());
-    AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling).isEmpty());
+    AOT_TEST_CHECK(textOf(describeCurrentThreadWork).isEmpty());
+    AOT_TEST_CHECK(textOf(describeAllThreadsWork).isEmpty());
 }
 
 static void testLargeListHasRoomForMoreBytesThanVector()

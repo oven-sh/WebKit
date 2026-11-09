@@ -45,7 +45,7 @@ public:
     ModuleID module() const { return m_module; }
     bool isDeferred() const { return m_isDeferred; }
     bool isAnsweredByMock() const;
-    JSObject* mockInPlace() const;
+    JSObject* activeMock() const;
     void setKeepsToModule(bool keepsToModule) { m_keepsToModule = keepsToModule; }
     bool keepsToModule() const { return m_keepsToModule; }
     void setMockOfView(VM& vm, JSObject* mock) { m_mockOfView.set(vm, this, mock); }

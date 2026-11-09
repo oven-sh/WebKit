@@ -147,7 +147,7 @@ private:
         RefPtr<PropertyNameArray> m_propertyNames;
         Vector<std::tuple<PropertyName, unsigned>, 8> m_propertiesAndOffsets;
 #if ENABLE(AOT)
-        // The own properties of a compiled object when the walk began, where they were its fields. The list lives as long as the program.
+        // A compiled object's own properties at the start of the walk, if they were all fields. The list lives as long as the program.
         std::span<const AOT::FieldAsProperty> m_listedFields;
 #endif
     };
@@ -527,7 +527,7 @@ inline void Stringifier::startNewLine(StringBuilder& builder) const
 }
 
 #if ENABLE(AOT)
-// The fields of a compiled object that has no other own property, where each has its key at hand as JSON writes it.
+// The fields of a compiled object that has no other own properties, if each field has its key precomputed in JSON form.
 static std::optional<std::span<const AOT::FieldAsProperty>> listedFieldsWithJSONKeys(JSObject* object)
 {
     if (object->type() != CompiledObjectType)
@@ -653,7 +653,7 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
             const AOT::FieldAsProperty& field = m_listedFields[index];
             propertyName = field.name;
             keyAsWritten = field.jsonKey.subspan(1);
-            // Code that ran for a member in front may have changed the object.
+            // Code that ran for an earlier member may have changed the object.
             auto currentFields = AOT::PropertyWalk::fieldsInKeyOrder(m_object);
             if (currentFields && currentFields->data() == m_listedFields.data()) [[likely]]
                 value = AOT::PropertyWalk::readListedField(m_object, field);
@@ -809,7 +809,7 @@ private:
     bool tryAppendObjectWithExtraProperties(JSObject&);
     bool mayCompiledObjectHaveToJSON(JSObject&);
     bool mayHaveOwnOrInheritedToJSON(JSObject&);
-    // Where the next character goes, and where the buffer ends. While one is in use m_length is out of date.
+    // The position of the next character and the end of the buffer. While a cursor is in use, m_length is stale.
     struct Cursor {
         CharType* next { nullptr };
         CharType* limit { nullptr };
@@ -876,7 +876,7 @@ private:
     bool m_checkedArrayPrototype { false };
     bool m_hasSeenWideString { false };
 #if ENABLE(AOT)
-    // These two take the place of padding: the members behind them are where they are without compiled code.
+    // These two fill existing padding, so the members after them keep the offsets that they have without ENABLE(AOT).
     static constexpr uint8_t knowsCompiledStructure = 1;
     static constexpr uint8_t knowsCompiledStructureOfMember = 2;
     uint8_t m_compiledStructuresKnown { 0 };
@@ -2074,7 +2074,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
 
     default:
 #if ENABLE(AOT)
-        // Not cases of their own: the switch keeps the form it has without them, and a process without compiled code asks only where it has failed.
+        // These are not separate cases, so the switch compiles as it does without them, and a process without compiled code checks only after the switch has failed.
         if (cell.type() == CompiledObjectType) [[unlikely]] {
             appendCompiledObject<hasGap>(*asObject(&cell));
             return;
@@ -2132,7 +2132,7 @@ bool FastStringifier<CharType, bufferMode>::datesHaveBuiltinToJSON(JSObject& dat
     auto& names = *m_vm.propertyNames;
     for (auto* name : { names.toJSON.impl(), names.toISOString.impl(), names.valueOf.impl(), names.toPrimitiveSymbol.impl() })
         result &= datePrototype.structure()->isImmutablePropertyForReader(name);
-    // The prototype adds a member where it is first read. The general way reads these two on every date, in this order, and toISOString on a valid one.
+    // The prototype reifies a member on first read. The generic path reads these two for every date, in this order, and toISOString for a valid one.
     if (result && m_vm.aotState().realmWhoseDatesAreWrittenInPlace != &m_globalObject)
         result = readOwnMember(datePrototype, names.toJSON) && readOwnMember(datePrototype, names.valueOf);
     m_datesHaveBuiltinToJSON = triState(result);
@@ -2154,7 +2154,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendCompiledObject(JS
         if (AOT::PropertyWalk::hasExtraProperties(&object) && tryAppendObjectWithExtraProperties(object))
             return;
     }
-    // All of this is asked of the Structure. The one that is remembered has answered.
+    // All of these checks depend only on the Structure. The remembered Structure has already passed them.
     if (!isCompiledStructureKnown(object)) {
         if (object.isCallable()) [[unlikely]] {
             recordFailure("callable object"_s);
@@ -2314,8 +2314,8 @@ static const AOT::CachedPropertyList* listOfPropertiesForJSON(VM& vm, JSObject& 
     return list && !list->hasToJSON && !list->endsOfJSONKeys.isEmpty() ? list : nullptr;
 }
 
-// Writes the listed properties from `index` on, each with a comma in front, up to the first one that takes more than its key, the room up to the limit and a number, a boolean, null or a flat 8-bit string.
-// Of a value that is left to the caller the key is written. Of a property that needs room, and of a field that is absent, nothing is.
+// Writes the listed properties starting at `index`, each preceded by a comma, and stops at the first one that needs more than its key, the space up to the limit, and a number, boolean, null or flat 8-bit string.
+// If the value is left to the caller, the key has been written. If the property needs more space, or the field is absent, nothing has been written.
 static NEVER_INLINE ListedPropertiesWritten writeListedProperties(const JSObject& object, JSObject* extraProperties, const AOT::CachedPropertyList& list, unsigned index, Latin1Character* next, const Latin1Character* limit)
 {
     using Status = ListedPropertiesWritten::Status;
@@ -2375,13 +2375,13 @@ static NEVER_INLINE ListedPropertiesWritten writeListedProperties(const JSObject
     return { Status::All, index, next };
 }
 
-// False with nothing written, for an object that is left to the general way of compiled objects. True with the object written, or with a failure.
+// Returns false without writing anything if the object is left to the generic path for compiled objects. Returns true if the object was written or a failure was recorded.
 template<typename CharType, BufferMode bufferMode>
 NEVER_INLINE bool FastStringifier<CharType, bufferMode>::tryAppendObjectWithExtraProperties(JSObject& object)
 {
     if constexpr (std::same_as<CharType, Latin1Character>) {
         using Status = ListedPropertiesWritten::Status;
-        // A collection forgets the list.
+        // A garbage collection drops the list.
         DeferGC deferGC(m_vm);
         JSObject* extraProperties;
         const AOT::CachedPropertyList* list = listOfPropertiesForJSON(m_vm, object, extraProperties);
@@ -2394,7 +2394,7 @@ NEVER_INLINE bool FastStringifier<CharType, bufferMode>::tryAppendObjectWithExtr
             return true;
 
         unsigned count = list->properties.size();
-        // Every key starts with a comma. The first one lands where the brace belongs, which is written at the end.
+        // Every key starts with a comma. The first comma lands where the opening brace belongs, and the brace overwrites it at the end.
         unsigned brace = m_length;
         bool hasPublished = false;
         Cursor cursor = cursorAtEnd();
@@ -2424,7 +2424,7 @@ NEVER_INLINE bool FastStringifier<CharType, bufferMode>::tryAppendObjectWithExtr
             append<HasGap::No>(written.otherValue);
             if (haveFailure()) [[unlikely]]
                 return true;
-            // The list of an object inside this one may have taken its place.
+            // The list of a nested object may have replaced it.
             list = listOfPropertiesForJSON(m_vm, object, extraProperties);
             if (!list || list->properties.size() != count) [[unlikely]] {
                 recordFailure("the list of a compiled object's properties was replaced"_s);
@@ -2478,7 +2478,7 @@ struct FieldsWrittenBySlot {
     const AOT::FieldAsProperty* firstFieldNotWritten;
 };
 
-// Writes the members of a compiled object that is not in a frame, up to the first one that takes more than its slot, its key and the room that is reserved.
+// Writes the members of a compiled object that is not in a stack frame, and stops at the first one that needs more than its slot, its key and the reserved space.
 static ALWAYS_INLINE FieldsWrittenBySlot writeFieldsBySlotInline(Latin1Character* next, const Latin1Character* limit, const JSObject& object, const AOT::FieldAsProperty* field, const AOT::FieldAsProperty* end, size_t reservation)
 {
     constexpr size_t blockSize = AOT::FieldAsProperty::jsonKeyBlockSize;
@@ -2606,7 +2606,7 @@ static bool areFieldsPlain(std::span<const AOT::FieldAsProperty> fields)
     });
 }
 
-// writeFieldsBySlotInline() for fields that are plain: how a field is held and how long its key is are not asked.
+// writeFieldsBySlotInline() for plain fields: it does not check a field's representation or the length of its key.
 static ALWAYS_INLINE FieldsWrittenBySlot writePlainFieldsInline(Latin1Character* next, const Latin1Character* limit, const JSObject& object, const AOT::FieldAsProperty* field, const AOT::FieldAsProperty* end, size_t reservation)
 {
     for (; field != end; ++field) {
@@ -2659,7 +2659,7 @@ struct ElementsWrittenBySlot {
     bool stoppedAtField;
 };
 
-// Writes the elements behind the first one, each with a comma in front, while they have the fields and the order of keys of the known object. Of the element at which it stops nothing is written.
+// Writes the elements after the first one, each preceded by a comma, as long as they have the same fields and key order as the known object. Nothing is written for the element at which it stops.
 template<bool fieldsArePlain>
 static NEVER_INLINE ElementsWrittenBySlot writeElementsBySlot(Latin1Character* next, const Latin1Character* limit, const WriteBarrier<Unknown>* elements, unsigned index, unsigned length, const JSObject& known, std::span<const AOT::FieldAsProperty> fields, size_t reservation)
 {
@@ -2671,14 +2671,14 @@ static NEVER_INLINE ElementsWrittenBySlot writeElementsBySlot(Latin1Character* n
         JSValue element = elements[index].get();
         if (!element || !element.isCell()) [[unlikely]]
             break;
-        // Looked at as an object only once it has the Structure of one.
+        // It is treated as an object only after its Structure shows that it is one.
         const JSObject& object = *static_cast<const JSObject*>(element.asCell());
         if (object.structureID() != structureOfKnown || AOT::PropertyWalk::orderWordWithoutIntegrity(&object) != orderOfKnown || AOT::PropertyWalk::isInFrame(&object)) [[unlikely]]
             break;
         if (static_cast<size_t>(limit - next) < 1 + reservation) [[unlikely]]
             break;
         *next = ',';
-        // Every key starts with a comma. The first one lands where the brace belongs.
+        // Every key starts with a comma. The first comma lands where the opening brace belongs.
         Latin1Character* brace = next + 1;
         FieldsWrittenBySlot written;
         if constexpr (fieldsArePlain)
@@ -2695,7 +2695,7 @@ static NEVER_INLINE ElementsWrittenBySlot writeElementsBySlot(Latin1Character* n
     return { next, index, false };
 }
 
-// Room for so many characters behind the cursor.
+// Space for this many characters after the cursor.
 template<typename CharType, BufferMode bufferMode>
 ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::reserve(Cursor& cursor, size_t size)
 {
@@ -2710,7 +2710,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::reserve(Cursor& cursor
     return true;
 }
 
-// Room for a comma, the braces and every key, number, boolean and null of an object with these fields: only a string and a nested value ask for more.
+// Space for a comma, the braces and every key, number, boolean and null of an object with these fields. Only a string or a nested value needs more.
 template<typename CharType, BufferMode bufferMode>
 ALWAYS_INLINE std::optional<unsigned> FastStringifier<CharType, bufferMode>::reservationFor(std::span<const AOT::FieldAsProperty> fields)
 {
@@ -2722,7 +2722,7 @@ ALWAYS_INLINE std::optional<unsigned> FastStringifier<CharType, bufferMode>::res
     return size;
 }
 
-// Writes a compiled object whose own properties are these fields. False with a failure.
+// Writes a compiled object whose own properties are these fields. Returns false on failure.
 template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Cursor& cursor, JSObject& object, std::span<const AOT::FieldAsProperty> fields, unsigned reservation)
@@ -2742,7 +2742,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
     if (!enterHolder<hasGap>()) [[unlikely]]
         return false;
     if constexpr (hasGap == HasGap::Yes) {
-        // In front of each member a new line and its indent, behind its colon a space; a new line in front of the closing brace.
+        // A newline and the indent before each member, a space after its colon, and a newline before the closing brace.
         size_t size = reservation + (fields.size() + 1) * static_cast<size_t>(newLineAndIndentSize() + 1) + maxGapLength;
         if (size > std::numeric_limits<unsigned>::max()) [[unlikely]] {
             recordBufferFull();
@@ -2753,7 +2753,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
 
     if (!reserve(cursor, reservation)) [[unlikely]]
         return false;
-    // Every key starts with a comma. The first one lands where the brace belongs, which is written at the end.
+    // Every key starts with a comma. The first comma lands where the opening brace belongs, and the brace overwrites it at the end.
     const size_t positionOfBrace = cursor.next - buffer();
     const bool readsSlots = writesLatin1 && hasGap == HasGap::No && !AOT::PropertyWalk::isInFrame(&object);
 
@@ -2777,7 +2777,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
         const size_t positionOfMember = cursor.next - buffer();
         auto appendKey = [&]() ALWAYS_INLINE_LAMBDA {
             if constexpr (hasGap == HasGap::Yes) {
-                // The new line stands between the comma and the quote.
+                // The newline goes between the comma and the quote.
                 *cursor.next++ = ',';
                 appendNewLineAndIndent();
                 key = key.subspan(1);
@@ -2826,7 +2826,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
             JSType type = cell.type();
             if (type == StringType) {
                 if constexpr (writesLatin1) {
-                    // A rope is left to the general case.
+                    // A rope is left to the generic path.
                     const StringImpl* string = asString(&cell)->tryGetValueImpl();
                     if (string && string->is8Bit()) [[likely]] {
                         appendKey();
@@ -2852,7 +2852,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
                 }
                 continue;
             } else if constexpr (writesLatin1 && hasGap == HasGap::No) {
-                // A compiled object of which all is known goes on with this cursor.
+                // A compiled object that is fully known continues with this cursor.
                 if (type == CompiledObjectType && !AOT::PropertyWalk::hasExtraProperties(asObject(&cell))) {
                     if (!isMemberWrittenByItsFields(*asObject(&cell))) [[unlikely]] {
                         recordFailure("compiled object that is callable, has a prototype of its own or static properties that are not made yet, or may have toJSON"_s);
@@ -2907,7 +2907,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
     return true;
 }
 
-// What appendCompiledObject() asks of an object without extra properties in front of its fields.
+// The checks that appendCompiledObject() makes on an object without extra properties before it writes the fields.
 template<typename CharType, BufferMode bufferMode>
 ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::isMemberWrittenByItsFields(JSObject& object)
 {
@@ -2919,7 +2919,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::isMemberWrittenByItsFi
     uint8_t knownBefore = m_compiledStructuresKnown;
     if (object.isCallable() || structure.hasPolyProto() || structure.hasNonReifiedStaticProperties() || mayCompiledObjectHaveToJSON(object)) [[unlikely]]
         return false;
-    // Only a Structure that has answered is remembered. Where this object alone has answered, the next one of its Structure is asked again.
+    // Only a Structure that passed the checks is remembered. If only this object passed them, the next object with its Structure is checked again.
     if (isCompiledStructureKnown(object)) {
         m_compiledStructureOfMemberWithoutToJSON = bits;
         m_compiledStructureWithoutToJSON = known;
@@ -2954,7 +2954,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendListedFields(JSOb
         publishLength(cursor);
 }
 
-// The elements of an array are mostly objects with one Structure and one order of keys: what is known of one element holds for the next.
+// An array's elements are mostly objects with the same Structure and key order, so what is known about one element holds for the next.
 template<typename CharType, BufferMode bufferMode>
 NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompiledProgram(JSArray& array)
 {
@@ -2999,7 +2999,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompile
                         return;
                 }
             }
-            // The reservation of the element in front has room for the comma.
+            // The previous element's reservation has space for the comma.
             *cursor.next++ = ',';
             if (!writeListedFields<HasGap::No>(cursor, *asObject(element.asCell()), fields, reservation)) [[unlikely]]
                 return;

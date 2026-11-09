@@ -230,7 +230,7 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const Compile
     RELEASE_ASSERT(!facts.unseenCodeCanRun() || facts.linked().unseenCodeCanRun);
     if (facts.unseenCodeCanRun() || facts.unseenScriptsCanRun())
         flags.add(ImageFlag::AdmitsUnknownJavaScript);
-    if (facts.storesPathOfMainModule())
+    if (facts.setsMainModulePath())
         flags.add(ImageFlag::StoresPathOfMainModule);
     const Typed::Program& program = facts.program();
     if (facts.isLetGo(program.builtins().canonicalID(Builtins::GlobalThis)))

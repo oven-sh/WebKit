@@ -57,7 +57,7 @@ bool Walker::leavesLoopBeingBuiltTwice(size_t frameIndex, BlockID to) const
     };
     if (std::ranges::any_of(frame.loopsBeingBuiltTwice, isLeft))
         return true;
-    return std::ranges::any_of(m_loopsWhoseOtherCopyMayBeBoughtAnew, [&](const std::pair<size_t, LoopID>& walked) {
+    return std::ranges::any_of(m_reversionableLoops, [&](const std::pair<size_t, LoopID>& walked) {
         return walked.first == frameIndex && isLeft(walked.second);
     });
 }
@@ -3789,7 +3789,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 m_closedCopiesShared.last().isEnteredOutOfTurns = true;
             } else {
                 m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
-                m_loopsWhoseOtherCopyMayBeBoughtAnew.append({ frameIndex, loop });
+                m_reversionableLoops.append({ frameIndex, loop });
             }
             walkCopyOfLoop(inputHead, enteringClosedCopy.span());
             if (wayAroundBeginsLoop)
@@ -3798,7 +3798,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 m_closedCopiesShared.last().isAboutToBeTaken = false;
                 m_closedCopiesShared.last().isEnteredOutOfTurns = false;
             } else {
-                m_loopsWhoseOtherCopyMayBeBoughtAnew.removeLast();
+                m_reversionableLoops.removeLast();
                 m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
             }
             if (firstPurchaseIsListed)
@@ -4055,10 +4055,6 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         forgetValuesOfLoop(inputHead);
         standInOtherBlock(inputHead);
         m_frames[frameIndex].standsInFrontOfHead = true;
-        if (!frontIsEnteredOutOfTurns || m_block != closedStart) {
-            m_block = { };
-            m_state.clear();
-        }
         continueIn(listsRead.whereKindIsAnother);
         if (knownInFrontOfTestsOfLists && !isUnreachable())
             m_state = WTF::move(*knownInFrontOfTestsOfLists);
@@ -4172,8 +4168,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     if (entryOfClosedCopy && !sharedEntry)
         forgetWhatWasBelievedAt(entryOfClosedCopy);
     m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
-    m_block = { };
-    m_state.clear();
+    leaveBlockPending();
     return true;
 }
 

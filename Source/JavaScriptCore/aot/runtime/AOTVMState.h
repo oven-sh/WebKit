@@ -114,7 +114,7 @@ public:
     BitVector filesWhoseKeptTextWasCompiled;
     BitVector filesWhoseKeptTextWasReadBelowVitest;
     BitVector filesStartedByHost;
-    BitVector filesWhoseTextHostHoldsItself;
+    BitVector modulesWithHostCachedSource;
     BitVector builtinMembersWrittenInSomeRealm;
     BitVector builtinHoldersWithNamesAddedInSomeRealm;
     JSCell* parentOfSuperCall { nullptr };

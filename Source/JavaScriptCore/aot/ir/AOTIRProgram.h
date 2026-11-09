@@ -106,7 +106,7 @@ public:
     uint16_t builtinWhoseRowWritesNullAlone { 0 };
     uint16_t operationWhoseRuleWritesAnotherKind { 0 };
     uint16_t builtinWhoseRowWritesThatItsResultHoldsNullAlone { 0 };
-    uint16_t builtinWhoseRowWritesThatNobodyElseHoldsItsResult { 0 };
+    uint16_t builtinInjectedAsFresh { 0 };
     bool admitsInspector { false };
 
     Function& at(FunctionID id) { return functions[id.index()]; }

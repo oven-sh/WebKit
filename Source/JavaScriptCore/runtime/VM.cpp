@@ -1065,7 +1065,7 @@ NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVis
 }
 
 #if ENABLE(AOT) && !ENABLE(C_LOOP)
-// What a call from bytecode enters in place of llint_native_call_trampoline in a process without a JIT: llint/LowLevelInterpreterAOT.asm.
+// The entry point that a call from bytecode uses instead of llint_native_call_trampoline in a process without a JIT. See llint/LowLevelInterpreterAOT.asm.
 static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
 {
     switch (intrinsic) {
@@ -1526,7 +1526,7 @@ NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalO
     std::optional<HandlerType> nearest;
     if (globalObject->aotInstance() && vm.topCallFrame)
         nearest = AOT::findNearestHandler(vm, vm.topCallFrame);
-    // Nobody lists the frames of what a `catch` takes.
+    // Nothing lists the frames of an exception that a `catch` handles.
     if (nearest == HandlerType::SynthesizedCatch || nearest == HandlerType::Catch)
         return Exception::create(vm, thrownValue, Action::DoNotCaptureStack);
     if (Exception* exception = Exception::tryCreateWithStackOfErrorMadeHere(vm, thrownValue))

@@ -249,7 +249,7 @@ void Structure::validateFlags()
 
     bool overridesPut = methodTable.put != JSObject::put && ((typeInfo().type() == StringType || typeInfo().type() == SymbolType || typeInfo().type() == HeapBigIntType) || methodTable.put != JSCell::put);
 #if ENABLE(AOT)
-    // InternalFunction sets the flag itself, and only where its put() refuses anything.
+    // InternalFunction sets the flag itself, and only where its put() can reject a write.
     if (methodTable.put == InternalFunction::info()->methodTable.put)
         overridesPut = typeInfo().overridesPut();
 #endif
@@ -1806,7 +1806,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     ASSERT(object->structure() == this);
 
 #if ENABLE(AOT)
-    // A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays. Nothing that was learnt about it is out of date.
+    // A cacheable dictionary becomes an ordinary object: every name still resolves to the same value at the same offset, and the prototype is unchanged. Nothing cached about it goes stale.
     if (vm.hasCompiledCode() && mayBePrototype() && isUncacheableDictionary())
         AOT::RuntimeHooks::didChangePrototypeChain(vm, object, nullptr);
 #endif

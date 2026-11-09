@@ -4750,7 +4750,7 @@ void WriterOfLinkLayouts::lookAtSummaries()
         },
     });
     m_fieldsGivenValues.merge(m_saidByEdges.fieldsGivenValues);
-    if (!AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::WhatBirthsLayIsTakenToBeLaidByDefinitions))
+    if (!AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::TreatLiteralFieldsAsDefined))
         m_fieldsWrittenWithoutDefinition.merge(m_saidByEdges.fieldsGivenValues);
     m_fieldsGivenUndefinedByMakers.merge(m_saidByEdges.fieldsGivenUndefinedByMakers);
     m_fieldsFilledByConstructors.merge(m_saidByEdges.fieldsFilledByConstructors);

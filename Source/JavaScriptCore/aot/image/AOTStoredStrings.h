@@ -26,7 +26,7 @@ struct StoredStrings {
     Vector<uint8_t> report;
 };
 
-JS_EXPORT_PRIVATE StoredStrings readStoredStrings(std::span<const uint8_t> file, OpenCompressedText = nullptr);
+JS_EXPORT_PRIVATE StoredStrings readStoredStrings(std::span<const uint8_t> file, DecompressTextFunction = nullptr);
 
 } } // namespace JSC::AOT
 

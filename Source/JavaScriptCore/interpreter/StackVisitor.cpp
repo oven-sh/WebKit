@@ -144,7 +144,7 @@ void StackVisitor::WithCompiledFrames::startInCompiledFrames(CallFrame* startFra
         gotoNextFrame();
 }
 
-// Most frames of the interpreter were called by the interpreter.
+// Most interpreter frames were called by the interpreter.
 ALWAYS_INLINE bool StackVisitor::WithCompiledFrames::isCalledByCompiledCode(CallFrame* callFrame) const
 {
     CallFrame* callee = m_frame.m_callFrame;

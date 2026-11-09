@@ -281,7 +281,7 @@ static std::span<const FunctionTextEntry> functionTextEntriesOfSource(const Prog
     return { found.begin(), found.end() };
 }
 
-static std::optional<std::span<const Latin1Character>> openBlocksOfText(Image::OpenedBlocksOfText& openedText, OpenCompressedText open, const uint8_t* compressed, std::span<const uint32_t> ends, uint32_t sizeOfText, uint32_t start, uint32_t end)
+static std::optional<std::span<const Latin1Character>> openBlocksOfText(Image::OpenedBlocksOfText& openedText, DecompressTextFunction open, const uint8_t* compressed, std::span<const uint32_t> ends, uint32_t sizeOfText, uint32_t start, uint32_t end)
 {
     RELEASE_ASSERT(start <= end && end <= sizeOfText);
     RELEASE_ASSERT(sizeOfText <= static_cast<uint64_t>(ends.size()) * sizeOfBlockOfText);
@@ -322,7 +322,7 @@ static std::optional<std::span<const Latin1Character>> bytesOf(const Image& imag
     const ProgramTables& tables = image.programTables();
     const FunctionTexts& texts = tables.functionTexts()[0];
     if (texts.numberOfBlocks)
-        return openBlocksOfText(image.openedTextOfFunctions(), image.openCompressedText(), tables.at<uint8_t>(texts.textOffset), { tables.at<uint32_t>(texts.endsOfBlocksOffset), texts.numberOfBlocks }, texts.sizeOfText, entry.start, entry.end);
+        return openBlocksOfText(image.openedTextOfFunctions(), image.decompressText(), tables.at<uint8_t>(texts.textOffset), { tables.at<uint32_t>(texts.endsOfBlocksOffset), texts.numberOfBlocks }, texts.sizeOfText, entry.start, entry.end);
     return std::span { tables.at<Latin1Character>(texts.textOffset) + entry.start, entry.end - entry.start };
 }
 
@@ -333,7 +333,7 @@ std::optional<std::span<const Latin1Character>> quotedTextBytes(uint32_t start, 
     std::span<const uint32_t> blocks = image.programTables().blocksOfTextOfQuotes();
     if (blocks.empty())
         return byteCast<Latin1Character>(text.subspan(start, length));
-    return openBlocksOfText(image.openedTextOfQuotes(), image.openCompressedText(), text.data(), blocks.subspan(1), blocks[0], start, start + length);
+    return openBlocksOfText(image.openedTextOfQuotes(), image.decompressText(), text.data(), blocks.subspan(1), blocks[0], start, start + length);
 }
 
 std::optional<std::span<const Latin1Character>> functionSourceBytes(FunctionID function)
@@ -566,7 +566,7 @@ DeclaredAs declaredAs(JSCell* cell)
     return kindData.isAsync ? DeclaredAs::AsyncFunction : DeclaredAs::Function;
 }
 
-bool awaitsByItself(JSCell* cell)
+bool hasOwnAwait(JSCell* cell)
 {
     if (declaredAs(cell) != DeclaredAs::AsyncFunction)
         return false;
@@ -574,7 +574,7 @@ bool awaitsByItself(JSCell* cell)
     return function && !std::ranges::binary_search(programTables().asyncFunctionsWithoutAwait(), sourceFunctionOf(*function).index());
 }
 
-bool mayAskForOwnOriginal(JSCell* cell)
+bool mayImportOwnOriginal(JSCell* cell)
 {
     std::optional<FunctionID> function = functionOf(cell);
     return !function || std::ranges::binary_search(programTables().functionsThatMayAskForOwnOriginal(), sourceFunctionOf(*function).index());

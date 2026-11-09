@@ -204,7 +204,7 @@ struct CompiledFrame {
     bool isOfBuiltin() const;
     bool runsCodeOfFile() const;
     JS_EXPORT_PRIVATE bool isActivationOf(JSCell* function) const;
-    std::optional<ModuleID> moduleWhoseBodyRuns() const;
+    std::optional<ModuleID> evaluatingModule() const;
 
     Instance* instance { nullptr };
     CallFrame* callFrame { nullptr };

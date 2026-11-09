@@ -72,7 +72,7 @@ struct ProgramOwner {
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions&, const HostThreadPool* = nullptr, ProgramOwner = { });
 
 JS_EXPORT_PRIVATE size_t imageAlignment();
-JS_EXPORT_PRIVATE size_t peakResidentMegabytesOfProcess();
+JS_EXPORT_PRIVATE size_t processPeakResidentMegabytes();
 
 } } // namespace JSC::AOT
 

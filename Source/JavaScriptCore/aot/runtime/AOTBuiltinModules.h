@@ -47,8 +47,8 @@ private:
 
 JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t registryID);
 JS_EXPORT_PRIVATE JSValue evaluateBuiltinModule(JSGlobalObject*, uint32_t registryID);
-JS_EXPORT_PRIVATE void willHandBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t registryID);
-JS_EXPORT_PRIVATE void willHandExportOfBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t registryID, ASCIILiteral exportName);
+JS_EXPORT_PRIVATE void willExposeBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t registryID);
+JS_EXPORT_PRIVATE void willExposeBuiltinExportToNativeCode(JSGlobalObject*, uint32_t registryID, ASCIILiteral exportName);
 JS_EXPORT_PRIVATE JSValue evaluateEveryBuiltinModuleForTesting(JSGlobalObject*);
 void fillWordsOfCompiledMethodsOfArray(Instance&);
 JS_EXPORT_PRIVATE bool hasBuiltinFunction(VM&, uint32_t id);
@@ -56,12 +56,12 @@ JS_EXPORT_PRIVATE JSFunction* builtinFunction(JSGlobalObject*, uint32_t id, JSOb
 JS_EXPORT_PRIVATE NativeExecutable* builtinExecutable(JSGlobalObject*, uint32_t id);
 std::optional<FunctionID> compiledBuiltinFunctionID(const JSCell*);
 
-JS_EXPORT_PRIVATE bool refusesLibraryText();
-JS_EXPORT_PRIVATE bool refusesLibraryText(JSGlobalObject*);
+JS_EXPORT_PRIVATE bool rejectsLibrarySource();
+JS_EXPORT_PRIVATE bool rejectsLibrarySource(JSGlobalObject*);
 bool isInterpretationDisallowed(JSGlobalObject*, ScriptExecutable&);
-JS_EXPORT_PRIVATE void admitFunctionOfTestRunner(VM&, FunctionExecutable&);
-JS_EXPORT_PRIVATE bool refusesToRun(JSFunction*);
-JS_EXPORT_PRIVATE bool isNeededByNothingThatRuns(JSFunction*);
+JS_EXPORT_PRIVATE void allowTestRunnerFunction(VM&, FunctionExecutable&);
+JS_EXPORT_PRIVATE bool isFunctionDisallowed(JSFunction*);
+JS_EXPORT_PRIVATE bool isUnreachableLibraryFunction(JSFunction*);
 bool lacksOnlyWhatReachMissed(const Image&);
 void throwLibraryFunctionNotCompiled(JSGlobalObject*, ScriptExecutable&);
 JS_EXPORT_PRIVATE void throwBuiltinNotCompiled(JSGlobalObject*, const String& builtin);

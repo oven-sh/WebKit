@@ -610,7 +610,7 @@ void generateThroughProxy(StubAssembler& jit)
         loadStructure(jit, target, scratch);
         bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(operations.bitsOfTargetThatMayBind)));
         JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, target);
-        runTimeFinishes.append(jit.branchTest8(CCallHelpers::Zero, Address(scratch, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::EveryFieldIsBornConfigurable))));
+        runTimeFinishes.append(jit.branchTest8(CCallHelpers::Zero, Address(scratch, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasOnlyConfigurableFields))));
         bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(target, offsetOfOrderWord), TrustedImm32(~orderAndCountMask)));
         runTimeFinishes.append(jit.jump());
 

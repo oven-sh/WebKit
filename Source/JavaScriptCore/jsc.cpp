@@ -1368,7 +1368,7 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
         return key;
 
 #if ENABLE(AOT)
-    // Bun: the loader asks for a module of an image by its key.
+    // Bun: the loader requests a compiled module by its key.
     if (AOT::Shell::isCompiledModuleKey(key.string()))
         return key;
 #endif
@@ -1416,7 +1416,7 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
         return resolvePath(currentWorkingDirectory());
 
 #if ENABLE(AOT)
-    // Bun: the key of a module of an image is its path.
+    // Bun: a compiled module's key is its path.
     if (AOT::Shell::isCompiledModuleKey(referrer.string())) {
         Identifier resolved = resolvePath(URL::fileURLWithFileSystemPath(referrer.string()));
         RETURN_IF_EXCEPTION(scope, { });
@@ -1733,7 +1733,7 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
 #if ENABLE(AOT)
-    // Bun: an image has the modules that it names.
+    // Bun: an image contains every module that it names.
     if (!attributes) {
         JSPromise* compiled = AOT::Shell::fetchCompiledModule(globalObject, moduleKey);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));

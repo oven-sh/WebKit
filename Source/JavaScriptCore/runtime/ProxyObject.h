@@ -93,12 +93,12 @@ public:
     JS_EXPORT_PRIVATE static void validateGetTrapResultWhereBound(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key);
     JS_EXPORT_PRIVATE static bool hasWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key);
     JS_EXPORT_PRIVATE static void setWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key, JSValue putValue, JSValue receiver, bool shouldThrow);
-    // What follows the call of the trap.
+    // The steps after the trap call.
     JS_EXPORT_PRIVATE static bool finishHas(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key);
     JS_EXPORT_PRIVATE static void finishSet(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key, JSValue putValue, bool shouldThrow);
-    // The trap has said yes.
+    // The trap returned true.
     JS_EXPORT_PRIVATE static void finishDelete(JSGlobalObject*, JSObject* target, JSValue key);
-    // What the getOwnPropertyDescriptor trap has answered is held against the target. Whether it describes a property.
+    // Validates the getOwnPropertyDescriptor trap's result against the target. Returns whether it describes a property.
     JS_EXPORT_PRIVATE static bool hasOwnByAnswerOfTrap(JSGlobalObject*, JSObject* target, JSValue key, JSValue trapResult);
 #endif
 

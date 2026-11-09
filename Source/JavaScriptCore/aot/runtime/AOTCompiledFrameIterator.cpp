@@ -297,7 +297,7 @@ JSGlobalObject* CompiledFrame::globalObject() const
 String CompiledFrame::sourceURL() const
 {
     if (FunctionDescription(function).isHelperOfCompiler()) [[unlikely]]
-        return moduleOfCompilerHelpers;
+        return compilerHelpersModule;
     auto position = findPosition(*this);
     return position && position->source ? sourceURLOf(position->source) : String();
 }
@@ -349,7 +349,7 @@ bool CompiledFrame::isActivationOf(JSCell* cell) const
     return isClosureOf(cell, function);
 }
 
-std::optional<ModuleID> CompiledFrame::moduleWhoseBodyRuns() const
+std::optional<ModuleID> CompiledFrame::evaluatingModule() const
 {
     if (FunctionDescription(function).codeType() != ModuleCode && !functionKindData(function).isCommonJSModule)
         return std::nullopt;
@@ -357,13 +357,13 @@ std::optional<ModuleID> CompiledFrame::moduleWhoseBodyRuns() const
     return position && position->source ? std::optional(position->source) : std::nullopt;
 }
 
-void forEachModuleWhoseBodyRuns(VM& vm, CallFrame* callFrame, const ScopedLambda<void(ModuleID)>& functor)
+void forEachEvaluatingModuleOnStack(VM& vm, CallFrame* callFrame, const ScopedLambda<void(ModuleID)>& functor)
 {
     StackVisitor::visit(callFrame, vm, [&](auto& visitor) {
         if constexpr (std::remove_cvref_t<decltype(visitor)>::visitsCompiledFrames) {
             if (visitor->isCompiledFrame()) {
                 const CompiledFrame& frame = visitor->compiledFrame();
-                if (std::optional<ModuleID> module = frame.moduleWhoseBodyRuns())
+                if (std::optional<ModuleID> module = frame.evaluatingModule())
                     functor(*module);
             }
         }

@@ -4566,7 +4566,7 @@ void FlowObserver::dump(PrintStream& out) const
     out.print(names[static_cast<size_t>(kind)], " ", record, " of f", function.index());
 }
 
-void LinkFlow::describeWhatWasMadeOnDemand(PrintStream& out, FlowNodeID id) const
+void LinkFlow::describeLazyNode(PrintStream& out, FlowNodeID id) const
 {
     auto printKey = [&](PropertyKeyID key) {
         if (!key)
@@ -4606,7 +4606,7 @@ void LinkFlow::describeWhatWasMadeOnDemand(PrintStream& out, FlowNodeID id) cons
         out.print(")");
         return;
     }
-    describeNodeOfSharedCall(out, id);
+    describeSharedCallNode(out, id);
 }
 
 void LinkFlow::describe(PrintStream& out, FlowNodeID id) const
@@ -4637,7 +4637,7 @@ void LinkFlow::describe(PrintStream& out, FlowNodeID id) const
     }
     if (node >= m_nodesOfFunctions[numberOfFunctions].firstParameter) {
         out.print("madeOnDemand", node - m_nodesOfFunctions[numberOfFunctions].firstParameter);
-        describeWhatWasMadeOnDemand(out, id);
+        describeLazyNode(out, id);
         return;
     }
     size_t function = std::ranges::upper_bound(m_nodesOfFunctions, static_cast<uint32_t>(node), { }, &NodesOfFunction::firstParameter) - m_nodesOfFunctions.begin() - 1;

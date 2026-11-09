@@ -1162,6 +1162,7 @@ public:
     void switchOn(Reference subject, std::span<const int64_t> cases, std::span<const BlockID> targets, BlockID otherwise);
     Reference tryCallInline(TerminatorDraft&&, BlockID done, BlockID miss, const Effects* foundByCaller = nullptr);
     void continueIn(BlockID);
+    void leaveBlockPending();
     void letGoOfPendingBlocksThatHaveEnded();
     Reference addParameter(BlockID, TypeID, Representation);
     Representation formOfParameter(TypeID, std::span<const Representation> arguments);
@@ -1740,7 +1741,7 @@ public:
     std::span<const uint64_t> holdersFromInFrontThatLoopReadsUnderIndexes(BlockID inputHead);
     bool takesReceiversOfMethodsOfListsToBeMadeHere() const { return m_inputs.options.takesReceiversOfMethodsOfListsToBeMadeHere; }
     bool takesElementsBesideSumsToComeOffListsOfNumbers() const { return m_inputs.options.takesElementsBesideSumsToComeOffListsOfNumbers; }
-    bool takesEveryUserOfElementToReckonWithIt() const { return m_inputs.options.takesEveryUserOfElementToReckonWithIt; }
+    bool shouldAssumeArithmeticUsers() const { return m_inputs.options.shouldAssumeArithmeticUsers; }
     bool takesIterablesOfPatternsToStayAsMade() const { return m_inputs.options.takesIterablesOfPatternsToStayAsMade; }
     bool takesValuesThatPatternsTakeApartInTurnsForListsAsMade() const { return m_inputs.options.takesValuesThatPatternsTakeApartInTurnsForListsAsMade; }
     bool takesPartsOfPairsWhateverIsStepped() const { return m_inputs.options.takesPartsOfPairsWhateverIsStepped; }
@@ -1937,6 +1938,15 @@ private:
         bool hasState { false };
         bool parametersAreSet { false };
         bool isMadeByAddBlock { false };
+
+        template<typename State> void addArrival(State&& arriving)
+        {
+            ++numberOfArrivals;
+            if (std::exchange(hasState, true))
+                state.meetWith(arriving);
+            else
+                state = std::forward<State>(arriving);
+        }
     };
 
     class CountOfFrame {
@@ -3693,7 +3703,7 @@ private:
     };
     HolderThatIsNoBuiltin m_holderThatIsNoBuiltin;
     Vector<std::pair<size_t, BlockID>, 2> m_otherCopiesInsideTypedCopies;
-    Vector<std::pair<size_t, LoopID>, 2> m_loopsWhoseOtherCopyMayBeBoughtAnew;
+    Vector<std::pair<size_t, LoopID>, 2> m_reversionableLoops;
     bool m_isWalkingAccess { false };
     bool m_operationWritesWhatTurnHasMade { false };
     ListPutBackByLog<TextInStringBuilder, 2> m_textsInStringBuilders;

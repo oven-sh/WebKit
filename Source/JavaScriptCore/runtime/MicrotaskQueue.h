@@ -194,7 +194,7 @@ public:
         return true;
     }
 
-    // In their order, to the end of the other queue.
+    // Keeps their order and appends them to the other queue.
     void moveTasksAfter(size_t count, MarkedMicrotaskDeque& other)
     {
         Vector<QueuedTask, 8> moved;

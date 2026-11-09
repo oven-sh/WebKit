@@ -5766,7 +5766,7 @@ void CallInLinkCalls::addInstanceOf(RowCall& call, const BuiltinTypePart& part, 
     SiteID site = siteOf(part, made, isResult && nobodyElseHoldsIt && !call.isCalledByBuiltin);
     if (TypedArrayType view = m_builtins.typedArrayTypeOf(made); isResult && view != NotTypedArray && view != TypeDataView) {
         uint32_t written = lengthWrittenForView(call);
-        if (written && AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::ViewsAreTakenToBeWrittenOneLonger) && !m_flow.codeAtWorkIsOfLibrary())
+        if (written && AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::OverstateTypedArrayLength) && !m_flow.codeAtWorkIsOfLibrary())
             ++written;
         m_flow.noteLengthIsWritten(site, written);
     }
@@ -6991,7 +6991,7 @@ static bool namesSameObjectsAndFunctionsInLinkCalls(LinkType first, LinkType sec
     return first == second;
 }
 
-bool LinkFlow::describeNodeOfSharedCall(PrintStream& out, FlowNodeID id) const
+bool LinkFlow::describeSharedCallNode(PrintStream& out, FlowNodeID id) const
 {
     if (!m_stateOfLinkCalls)
         return false;
@@ -7131,7 +7131,7 @@ void LinkFlow::callObserved(const FlowObserver& observer, const LinkType& told)
         return;
     uint32_t numberOfCallObserved = firstCallOfFunction[observer.function.index()] + observer.record;
     bool isEnteredNoMore = state.callsOfUnseen[numberOfCallObserved] == StateOfLinkCalls::hasGivenUpInSight || (state.callsOfUnseen[numberOfCallObserved] && !state.callsThatEnterMembersOfTable[numberOfCallObserved]);
-    if (isEnteredNoMore && namesSameObjectsAndFunctionsInLinkCalls(told, typeObservedBefore()) && told.holdsUnseenInSight() == typeObservedBefore().holdsUnseenInSight() && (told.holdsUnseen == typeObservedBefore().holdsUnseen || summaries.at(observer.function).calls[observer.record].newTarget == noSummaryNode || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CallsThatEnteredUnseenCodeDoNotHearTheUnknownCome)))
+    if (isEnteredNoMore && namesSameObjectsAndFunctionsInLinkCalls(told, typeObservedBefore()) && told.holdsUnseenInSight() == typeObservedBefore().holdsUnseenInSight() && (told.holdsUnseen == typeObservedBefore().holdsUnseen || summaries.at(observer.function).calls[observer.record].newTarget == noSummaryNode || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::IgnoreEscapeAfterUnknownCall)))
         return;
     if (!std::exchange(state.callsToResolve[firstCallOfFunction[observer.function.index()] + observer.record], 1))
         state.observersToResolve[laneOfObserversOf(observer.function)].append(observer);

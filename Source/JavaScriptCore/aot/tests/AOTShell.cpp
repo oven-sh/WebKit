@@ -375,7 +375,7 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTFindObjectOfLayout, (JSGlobalObject* globalO
 JSC_DEFINE_HOST_FUNCTION(functionFilesInRequireCache, (JSGlobalObject* globalObject, CallFrame*))
 {
     StringBuilder files;
-    forEachEvaluatedFile(globalObject, [&](const String& path) {
+    forEachRequireCacheKey(globalObject, [&](const String& path) {
         if (findModule(path))
             files.append(files.isEmpty() ? ""_s : ","_s, path);
     });
@@ -835,7 +835,7 @@ static JSObject* createAsyncModuleRequiredError(JSGlobalObject* globalObject, co
 static std::optional<ModuleID> findModuleWithAttributes(JSGlobalObject* globalObject, const String& path, const ScriptFetchParameters& attributes)
 {
     String pathOfForm = makeString(path, '?', attributes.hostDefinedImportType());
-    for (ModuleID form : formsThatAttributesAskFor(globalObject, path)) {
+    for (ModuleID form : importAttributeVariants(globalObject, path)) {
         if (modulePath(form) == pathOfForm)
             return form;
     }

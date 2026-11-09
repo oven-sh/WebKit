@@ -160,7 +160,7 @@ std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath, unsigned 
     return std::nullopt;
 }
 
-bool ModuleTable::holdsFormThatAttributeAsksFor(StringView publicPath) const
+bool ModuleTable::hasAttributeVariant(StringView publicPath) const
 {
     String start = makeString(publicPath, '?');
     ModuleNumbers byPath = modulesByPath();
@@ -171,7 +171,7 @@ bool ModuleTable::holdsFormThatAttributeAsksFor(StringView publicPath) const
     return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
 }
 
-Vector<ModuleID, 2> ModuleTable::formsThatAttributesAskFor(StringView publicPath) const
+Vector<ModuleID, 2> ModuleTable::importAttributeVariants(StringView publicPath) const
 {
     String start = makeString(publicPath, '?');
     ModuleNumbers byPath = modulesByPath();
@@ -185,7 +185,7 @@ Vector<ModuleID, 2> ModuleTable::formsThatAttributesAskFor(StringView publicPath
     return forms;
 }
 
-bool ModuleTable::holdsPathStartingWith(StringView start) const
+bool ModuleTable::containsPathWithPrefix(StringView start) const
 {
     ModuleNumbers byPath = modulesByPath();
     auto places = std::views::iota(size_t(0), byPath.size());
@@ -195,7 +195,7 @@ bool ModuleTable::holdsPathStartingWith(StringView start) const
     return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
 }
 
-bool ModuleTable::mayHoldPathStartingWith(StringView start) const
+bool ModuleTable::mayContainPathWithPrefix(StringView start) const
 {
     std::span<const uint32_t> bits = m_tables->directoriesOfModulesByPath();
     size_t slash = start.reverseFind('/');
@@ -208,11 +208,11 @@ bool ModuleTable::mayHoldPathStartingWith(StringView start) const
     return bits[bit / 32] >> (bit % 32) & 1;
 }
 
-bool Image::mayHoldModulePathStartingWith(StringView start) const
+bool Image::mayContainModulePathWithPrefix(StringView start) const
 {
     ModuleTable table(programTables());
-    bool mayHold = table.mayHoldPathStartingWith(start);
-    ASSERT(mayHold || !table.holdsPathStartingWith(start));
+    bool mayHold = table.mayContainPathWithPrefix(start);
+    ASSERT(mayHold || !table.containsPathWithPrefix(start));
     return mayHold;
 }
 
@@ -382,7 +382,7 @@ String ModuleTable::pathTextForLineColumns(ModuleID module) const
     return data(module).hasInstalledPositions ? pathText(module) : displayPathText(module);
 }
 
-IterationStatus ModuleTable::forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor) const
+IterationStatus ModuleTable::forEachFilePathWithPrefix(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor) const
 {
     ModuleNumbers byPath = modulesByPath();
     auto places = std::views::iota(size_t(0), byPath.size());

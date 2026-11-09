@@ -470,17 +470,17 @@ static void testRuntimeDescriptionNamesFormatVersion()
     uint32_t named;
     memcpy(&named, record.data() + 28, sizeof(named));
     AOT_TEST_CHECK(named == imageFormatVersion && named == smallImage().image->header().formatVersion);
-    AOT_TEST_CHECK(!findDifferenceFromThisRuntime(record));
+    AOT_TEST_CHECK(!findRuntimeDifference(record));
 
     Vector<uint8_t> other(record);
     ++named;
     memcpy(other.mutableSpan().data() + 28, &named, sizeof(named));
-    std::optional<RuntimeDifference> difference = findDifferenceFromThisRuntime(other.span());
+    std::optional<RuntimeDifference> difference = findRuntimeDifference(other.span());
     AOT_TEST_CHECK(difference && difference->name == "the version of the image format"_s && difference->here == imageFormatVersion && difference->there == imageFormatVersion + 1);
 
     named = 0;
     memcpy(other.mutableSpan().data() + 28, &named, sizeof(named));
-    difference = findDifferenceFromThisRuntime(other.span());
+    difference = findRuntimeDifference(other.span());
     AOT_TEST_CHECK(difference && difference->name == "the version of the image format"_s && !difference->there);
 }
 
@@ -492,7 +492,7 @@ static void testRuntimeDescriptionNamesPlatformOfBuiltinTable()
 
     static_assert(BuiltinPlatform::Android != BuiltinPlatform::Linux);
     platform = static_cast<uint8_t>(targetOfThisBuild().platform == BuiltinPlatform::Android ? BuiltinPlatform::Linux : BuiltinPlatform::Android);
-    std::optional<RuntimeDifference> difference = findDifferenceFromThisRuntime(record.span());
+    std::optional<RuntimeDifference> difference = findRuntimeDifference(record.span());
     AOT_TEST_CHECK(difference && difference->name == "the operating system"_s && difference->there == platform);
 }
 

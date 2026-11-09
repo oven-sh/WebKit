@@ -1564,7 +1564,7 @@ public:
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
 #if ENABLE(AOT)
-    // While the innermost queue is this one, reactions go to the microtask queue. It stays in the chain, where the collector finds it.
+    // While the innermost queue is this one, reactions go to the normal microtask queue. It stays in the chain so that the collector still visits it.
     SynchronousModuleQueue* m_suspendedSynchronousModuleQueue { nullptr };
 #endif
     // The queue that reactions are diverted to.

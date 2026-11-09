@@ -79,21 +79,21 @@ static void testTableDescribesItself()
     auto bytesOf = [](const BuiltinTableDescription& description) {
         return std::span(reinterpret_cast<const uint8_t*>(&description), sizeof(description));
     };
-    AOT_TEST_CHECK(!findDifferenceFromThisRuntime(bytesOf(describedBuiltinTable)));
+    AOT_TEST_CHECK(!findRuntimeDifference(bytesOf(describedBuiltinTable)));
 
     BuiltinTableDescription other = describedBuiltinTable;
     other.hashOfTable ^= 1;
-    std::optional<RuntimeDifference> difference = findDifferenceFromThisRuntime(bytesOf(other));
+    std::optional<RuntimeDifference> difference = findRuntimeDifference(bytesOf(other));
     AOT_TEST_CHECK(difference && difference->name == "the table of built-ins"_s);
 
     other = describedBuiltinTable;
     other.hashOfHostBindings ^= 1;
-    difference = findDifferenceFromThisRuntime(bytesOf(other));
+    difference = findRuntimeDifference(bytesOf(other));
     AOT_TEST_CHECK(difference && difference->name == "the table of native functions"_s);
 
     other = describedBuiltinTable;
     other.size += 4;
-    difference = findDifferenceFromThisRuntime(bytesOf(other));
+    difference = findRuntimeDifference(bytesOf(other));
     AOT_TEST_CHECK(difference && difference->name == "the size of the description of the table of built-ins"_s && difference->there == difference->here + 4);
 }
 

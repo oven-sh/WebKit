@@ -172,7 +172,7 @@ static void storeExportsThroughModuleObject(LoadedProgram& program)
 
 static void layMockOverFile(LoadedProgram& program)
 {
-    modulesOf(program.instance()).keepWhatMockIsLaidOver(fileThatSitesAloneRead);
+    modulesOf(program.instance()).saveExportsBeforePatch(fileThatSitesAloneRead);
 }
 
 static void makeModuleObject(LoadedProgram& program)

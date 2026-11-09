@@ -1005,7 +1005,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             if (mapEntry->record() && !deferredPromise) {
 #if ENABLE(AOT)
                 // A module that imports the entry point while the entry point's graph is loading is notified one loader step before the caller that loaded the program, so it gets its own load promise.
-                if (auto* compiled = promise->status() == JSPromise::Status::Pending ? dynamicDowncast<AOT::ModuleRecord>(mapEntry->record()) : nullptr; compiled && compiled->takeShouldSplitMainLoadPromise()) {
+                if (auto* compiled = promise->status() == JSPromise::Status::Pending ? dynamicDowncast<AOT::ModuleRecord>(mapEntry->record()) : nullptr; compiled && compiled->takeMainPromiseSplit()) {
                     promise = JSPromise::create(vm, globalObject->promiseStructure());
                     promise->markAsHandled();
                     mapEntry->setLoadPromise(vm, promise);

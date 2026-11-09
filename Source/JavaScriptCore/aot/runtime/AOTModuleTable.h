@@ -115,7 +115,7 @@ public:
             return entry.staysIn;
         });
     }
-    std::optional<SlotData> wordOfMock(ModuleID module) const
+    std::optional<SlotData> mockSlot(ModuleID module) const
     {
         std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
         return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? std::optional(entries.back().variable) : std::nullopt;
@@ -140,9 +140,9 @@ public:
 
     std::optional<ModuleID> findByPath(StringView publicPath) const { return findByPath(publicPath, publicPath.hash()); }
     std::optional<ModuleID> findByPath(StringView publicPath, unsigned hashOfPath) const;
-    bool holdsFormThatAttributeAsksFor(StringView publicPath) const;
-    Vector<ModuleID, 2> formsThatAttributesAskFor(StringView publicPath) const;
-    bool holdsPathStartingWith(StringView start) const;
+    bool hasAttributeVariant(StringView publicPath) const;
+    Vector<ModuleID, 2> importAttributeVariants(StringView publicPath) const;
+    bool containsPathWithPrefix(StringView start) const;
     std::span<const UncompiledModuleData> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
     String typeAttribute(ModuleID) const;
     std::optional<ModuleID> findRuntimeSource(uint32_t registryID) const;
@@ -158,8 +158,8 @@ public:
     String displayPathText(ModuleID) const;
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
-    IterationStatus forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
-    bool mayHoldPathStartingWith(StringView start) const;
+    IterationStatus forEachFilePathWithPrefix(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
+    bool mayContainPathWithPrefix(StringView start) const;
 
 private:
     using PiecesOfPath = Vector<StringView, 16>;

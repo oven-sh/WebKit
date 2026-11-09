@@ -4681,12 +4681,7 @@ void Walker::settleParametersOf(BlockID block)
 
 void Walker::arriveAt(BlockID block, WalkState&& state)
 {
-    PendingBlock& pending = pendingBlock(block);
-    ++pending.numberOfArrivals;
-    if (std::exchange(pending.hasState, true))
-        pending.state.meetWith(state);
-    else
-        pending.state = WTF::move(state);
+    pendingBlock(block).addArrival(WTF::move(state));
 }
 
 BlockID Walker::addBlock(BlockFrequency frequency)
@@ -4824,20 +4819,12 @@ void Walker::branch(Reference condition, BlockID taken, BlockID notTaken, bool l
         atEnd = m_state;
         noteWhatBranchDecidesOnEdge(*this, from, 0);
     }
-    ++pendingTaken->numberOfArrivals;
-    if (std::exchange(pendingTaken->hasState, true))
-        pendingTaken->state.meetWith(m_state);
-    else
-        pendingTaken->state = m_state;
+    pendingTaken->addArrival(m_state);
     if (atEnd) {
         m_state = WTF::move(*atEnd);
         noteWhatBranchDecidesOnEdge(*this, from, 1);
     }
-    ++pendingNotTaken->numberOfArrivals;
-    if (std::exchange(pendingNotTaken->hasState, true))
-        pendingNotTaken->state.meetWith(m_state);
-    else
-        pendingNotTaken->state = WTF::move(m_state);
+    pendingNotTaken->addArrival(WTF::move(m_state));
     m_block = { };
     m_state.clear();
 }
@@ -4972,6 +4959,17 @@ Reference Walker::tryCallInline(TerminatorDraft&& terminator, BlockID done, Bloc
     return result;
 }
 
+void Walker::leaveBlockPending()
+{
+    if (!isUnreachable()) {
+        PendingBlock& left = pendingBlock(m_block);
+        left.state = WTF::move(m_state);
+        left.hasState = true;
+    }
+    m_block = { };
+    m_state.clear();
+}
+
 void Walker::continueIn(BlockID block)
 {
     if (m_hasFailed) {
@@ -4980,12 +4978,7 @@ void Walker::continueIn(BlockID block)
     }
     if (m_block == block)
         return;
-    if (!isUnreachable()) {
-        PendingBlock& left = pendingBlock(m_block);
-        left.state = WTF::move(m_state);
-        left.hasState = true;
-    }
-    m_state.clear();
+    leaveBlockPending();
 
     PendingBlock* pending = findPendingBlock(block);
     if (!pending) {
@@ -6328,7 +6321,7 @@ void Walker::leadEdge(EdgeID edge, BlockID from, const BodyTerminator& terminato
     BlockID head = entered.head;
     uint32_t numberOfProofs = static_cast<uint32_t>(target.proofs().size());
     bool entersAlone = !head && index.numberOfIncomingEdges(to) == 1 && !index.isLoopHead(to)
-        && ((frame.loopsBeingBuiltTwice.isEmpty() && m_loopsWhoseOtherCopyMayBeBoughtAnew.isEmpty()) || !leavesLoopBeingBuiltTwice(frameIndex, to))
+        && ((frame.loopsBeingBuiltTwice.isEmpty() && m_reversionableLoops.isEmpty()) || !leavesLoopBeingBuiltTwice(frameIndex, to))
         && (frame.blocksWalkedForEachWay.isEmpty() || !isWalkingBlockForEachWay(frameIndex));
 
     Vector<Reference, 8> arguments;

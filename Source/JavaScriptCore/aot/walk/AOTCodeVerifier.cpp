@@ -148,7 +148,7 @@ private:
     void verifyNarrowedValues();
     void verifyUsersOfHolesReadAsNaN();
     bool takesUndefinedForNaN(ValueID, const Operation& user, uint32_t operandIndex) const;
-    bool onlyChoosesFormOfOperatorAtItsPlace(ValueID test) const;
+    bool isOperatorSpecializationCheck(ValueID test) const;
     void verifyTestsPassed();
     void verifyLengthsHeldAgainst();
     void verifyKindsOfStorageNamed();
@@ -162,7 +162,7 @@ private:
     void verifyReturn(BlockID, const Terminator&);
     void verifyArguments(BlockID from, const Edge&, uint32_t place, uint32_t numberOfDeclaredResults, bool isHandlerEdge);
     void verifyNarrowed(BlockID, ValueID, const Operation&);
-    void verifyFieldsLaidWithoutDefinition(BlockID, ValueID, const Operation&);
+    void verifyPlainFieldWrites(BlockID, ValueID, const Operation&);
     void verifyPointerIntoStorage(BlockID, ValueID access, ValueID pointer, Opcode readOfPointer, ValueID owner);
     void verifyFramePointersTakenBy(BlockID, ValueID, const Operation&);
     void verifyFramePointersTakenByEnd(BlockID, const Terminator&);
@@ -902,7 +902,7 @@ void CodeVerifier::verifyOperation(BlockID block, uint32_t place, ValueID id, co
         if (kind.opcode != Opcode::HasArrayStorage || kind.arrayStorage() != ArrayStorage::Double || kind.admitsInt32Storage() || !areSameCells(kind.arrayOperand(), operation.arrayOperand()))
             return fail(block, id, "a read takes for the kind of its list what no question of that list for doubles gives"_s, operation.holdsDoublesOperand());
     }
-    verifyFieldsLaidWithoutDefinition(block, id, operation);
+    verifyPlainFieldWrites(block, id, operation);
     if (hasFailed())
         return;
     if (OperandPosition::storage(opcode))
@@ -911,11 +911,11 @@ void CodeVerifier::verifyOperation(BlockID block, uint32_t place, ValueID id, co
         verifyPointerIntoStorage(block, id, operation.vectorOperand(), Opcode::GetTypedArrayVector, operation.viewOperand());
 }
 
-void CodeVerifier::verifyFieldsLaidWithoutDefinition(BlockID block, ValueID id, const Operation& operation)
+void CodeVerifier::verifyPlainFieldWrites(BlockID block, ValueID id, const Operation& operation)
 {
     if (!m_facts || !m_plan)
         return;
-    auto refuseUnlessPlain = [&](FieldReference field, ASCIILiteral rule) {
+    auto requirePlainField = [&](FieldReference field, ASCIILiteral rule) {
         FieldFacts facts = m_facts->field(field);
         if (hasFailed() || (facts.formOfValue.isEmpty() && !facts.facts.contains(FieldFact::IsAccessor)))
             return;
@@ -931,29 +931,29 @@ void CodeVerifier::verifyFieldsLaidWithoutDefinition(BlockID block, ValueID id, 
         for (size_t place = 0; place < operation.fields().size(); ++place) {
             ValueID value = place < operation.valuesOperands().size() ? operation.valuesOperands()[place] : ValueID();
             if (!value || !m_types.isSubset(m_code.at(value).type, TypeTable::absent))
-                refuseUnlessPlain({ operation.layout(), operation.fields()[place] }, "a birth fills a field whose slot is planned in the form that definitions create"_s);
+                requirePlainField({ operation.layout(), operation.fields()[place] }, "a birth fills a field whose slot is planned in the form that definitions create"_s);
         }
         return;
     case Opcode::TryCopyFields: {
         static constexpr ASCIILiteral rule = "a copy of own keys fills a field whose slot is planned in the form that definitions create"_s;
         LayoutID source = operation.sourceLayout() ? operation.sourceLayout() : operation.layout();
-        auto refuseUnlessBothArePlain = [&](uint32_t fieldOfSource) {
-            refuseUnlessPlain({ source, fieldOfSource }, rule);
+        auto requirePlainFieldPair = [&](uint32_t fieldOfSource) {
+            requirePlainField({ source, fieldOfSource }, rule);
             PropertyKeyID key = source != operation.layout() ? m_plan->slots().keyOf(m_program, { source, fieldOfSource }) : PropertyKeyID();
             if (std::optional<FieldIndex> field = key ? m_plan->slots().findField(m_program, operation.layout(), key) : std::nullopt)
-                refuseUnlessPlain({ operation.layout(), *field }, rule);
+                requirePlainField({ operation.layout(), *field }, rule);
         };
         for (uint32_t field : operation.fields())
-            refuseUnlessBothArePlain(field);
+            requirePlainFieldPair(field);
         for (uint32_t field = 0; operation.fields().empty() && field < m_plan->layout(source).slots.size(); ++field)
-            refuseUnlessBothArePlain(field);
+            requirePlainFieldPair(field);
         return;
     }
     case Opcode::PutSlot:
     case Opcode::PutSlotOrAdd:
         for (LayoutID member : membersOf(m_types, operation.receivers())) {
             if (std::optional<FieldIndex> field = m_plan->slots().findField(m_program, member, operation.key()))
-                refuseUnlessPlain({ member, *field }, "a store fills a field whose slot is planned in the form that definitions create"_s);
+                requirePlainField({ member, *field }, "a store fills a field whose slot is planned in the form that definitions create"_s);
         }
         return;
     default:
@@ -1353,12 +1353,12 @@ void CodeVerifier::verifyNarrowedValues()
 
 static constexpr OpcodeSet arithmeticOnTwoNumbersInCodeVerifier { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
 
-bool CodeVerifier::onlyChoosesFormOfOperatorAtItsPlace(ValueID test) const
+bool CodeVerifier::isOperatorSpecializationCheck(ValueID test) const
 {
     const Operation& asked = m_code.at(test);
     BitVector names(m_code.numberOfValues());
-    bool isTakenWhereItPasses = false;
-    bool isTakenWhereItFails = false;
+    bool isUsedOnPass = false;
+    bool isUsedOnFailure = false;
     for (bool someNameIsNew = true; std::exchange(someNameIsNew, false);) {
         for (BlockID block : m_reachedBlocks) {
             for (ValueID id : operationsOf(block)) {
@@ -1369,7 +1369,7 @@ bool CodeVerifier::onlyChoosesFormOfOperatorAtItsPlace(ValueID test) const
             }
         }
     }
-    auto passesBehind = [&](ValueID name) {
+    auto isOnPassingEdge = [&](ValueID name) {
         while (m_code.at(name).opcode != Opcode::Narrowed || m_code.at(name).testOperand() != test)
             name = m_code.at(name).operand(0);
         return m_code.at(name).isOnTakenEdge();
@@ -1384,7 +1384,7 @@ bool CodeVerifier::onlyChoosesFormOfOperatorAtItsPlace(ValueID test) const
                     continue;
                 if (user.position != asked.position || user.inlineFrame != asked.inlineFrame)
                     return false;
-                (passesBehind(user.operand(operandIndex)) ? isTakenWhereItPasses : isTakenWhereItFails) = true;
+                (isOnPassingEdge(user.operand(operandIndex)) ? isUsedOnPass : isUsedOnFailure) = true;
             }
         }
         const Terminator& end = m_code.at(block).terminator;
@@ -1392,14 +1392,14 @@ bool CodeVerifier::onlyChoosesFormOfOperatorAtItsPlace(ValueID test) const
             if (end.operand(operandIndex) == test && (!end.isConditionalBranch() || end.conditionOperand() != test))
                 return false;
         }
-        bool isHandedOn = false;
+        bool isEdgeArgument = false;
         m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
-            isHandedOn |= std::ranges::contains(edge.arguments(), test);
+            isEdgeArgument |= std::ranges::contains(edge.arguments(), test);
         });
-        if (isHandedOn)
+        if (isEdgeArgument)
             return false;
     }
-    return isTakenWhereItPasses && isTakenWhereItFails;
+    return isUsedOnPass && isUsedOnFailure;
 }
 
 bool CodeVerifier::takesUndefinedForNaN(ValueID id, const Operation& user, uint32_t operandIndex) const
@@ -1418,7 +1418,7 @@ bool CodeVerifier::takesUndefinedForNaN(ValueID id, const Operation& user, uint3
         const Type& tested = m_types.at(user.testedType());
         if (tested.mayBeNaN() == !!(tested.primitives & Primitive::Undefined))
             return true;
-        return onlyChoosesFormOfOperatorAtItsPlace(id);
+        return isOperatorSpecializationCheck(id);
     }
     return user.opcode == Opcode::PutTypedArrayElement && user.valueOperand() == user.operand(operandIndex) && user.viewOperand() != user.operand(operandIndex) && user.positionOperand() != user.operand(operandIndex) && !isBigInt(user.typedArrayType());
 }

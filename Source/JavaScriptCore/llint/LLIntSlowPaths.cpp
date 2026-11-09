@@ -999,9 +999,9 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
 }
 
 #if ENABLE(AOT)
-// The cache of a site holds one Structure. llint_aot_op_get_by_id counts the objects of other Structures that come by, in GetByIdModeMetadataDefault::padding1, from below up to zero. There what comes by takes the cache over.
-// Each wait is twice as long as the one in front of it (GetByIdModeMetadata::padding4 counts them), so a site that two kinds of objects share is filled anew some twenty times in all.
-// Both words lie where a cache in the mode ProtoLoad has its pointer, so they say something only from one Structure in the cache to the next: a cache that held none begins with the shortest wait.
+// A site's cache holds one Structure. llint_aot_op_get_by_id counts the misses (objects with other Structures) in GetByIdModeMetadataDefault::padding1, from a negative number up to zero. At zero the next miss replaces the cached Structure.
+// Each wait is twice as long as the previous one (GetByIdModeMetadata::padding4 counts the doublings), so a site that two kinds of objects share is refilled about twenty times in total.
+// Both fields overlap the pointer of a ProtoLoad cache, so they are meaningful only from one cached Structure to the next. A cache that held no Structure starts with the shortest wait.
 static void startWaitForOtherStructure(GetByIdModeMetadata& metadata, bool heldStructure)
 {
     constexpr uint32_t shortestWait = 16;
@@ -1115,7 +1115,7 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
 }
 
 #if ENABLE(AOT)
-// llint_aot_op_get_by_id takes an empty slot for a miss, which no other reader of such a cache does.
+// llint_aot_op_get_by_id treats an empty slot as a miss. No other reader of this cache does.
 static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObject* globalObject, Structure* structure, const Identifier& ident, GetByIdModeMetadata& metadata)
 {
     if (!Options::useLLIntICs() || metadata.mode != GetByIdMode::Default)
@@ -1126,7 +1126,7 @@ static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObj
     std::optional<PropertyOffset> offset = AOT::Interpreter::fieldOffsetForSiteCache(globalObject, structure, ident);
     ConcurrentJSLocker locker(codeBlock->m_lock);
     if (!offset || *offset == invalidOffset) {
-        // What the cache holds goes on serving those that it was made for.
+        // The cached entry keeps serving the objects that it was created for.
         if (holdsOtherStructure)
             startWaitForOtherStructure(metadata, true);
         else if (offset)
@@ -1157,7 +1157,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
             if (!throwScope.exception())
                 cacheFieldOfCompiledObject(vm, codeBlock, globalObject, structure, ident, metadata.m_modeMetadata);
         } else if (GetByIdModeMetadata& cache = metadata.m_modeMetadata; cache.mode == GetByIdMode::Default && cache.defaultMode.structureID && !cache.defaultMode.padding1) {
-            // The wait has run out on something that the cache cannot hold.
+            // The wait ended on an access that the cache cannot hold.
             startWaitForOtherStructure(cache, true);
         }
         LLINT_RETURN_PROFILED(result);
@@ -1891,7 +1891,7 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_enumerator_get_by_val)
     RELEASE_AND_RETURN(throwScope, slow_path_enumerator_get_by_val(callFrame, pc));
 }
 
-// llint_aot_op_new_object goes on at the instruction that this returns, so this steps over the new_object itself.
+// llint_aot_op_new_object resumes at the instruction that this returns, so this skips the new_object itself.
 LLINT_SLOW_PATH_DECL(slow_path_aot_new_object)
 {
     LLINT_BEGIN();
@@ -1911,7 +1911,7 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_new_object)
     LLINT_RETURN(reinterpret_cast<JSObject*>(cell));
 }
 
-// llint_aot_op_get_by_id has found the accessor, so nothing is looked up again.
+// llint_aot_op_get_by_id already found the accessor, so there is no second lookup.
 extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame* callFrame, const JSInstruction* pc, const AOT::CustomAccessorRecord* record, JSCell* base)
 {
     LLINT_BEGIN();

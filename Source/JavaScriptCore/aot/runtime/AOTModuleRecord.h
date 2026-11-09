@@ -95,7 +95,7 @@ public:
     bool takeMainModuleLoadStep();
     bool isLoadedByLoader();
     bool importsEvaluatingCommonJSModule();
-    bool takeShouldSplitMainLoadPromise();
+    bool takeMainPromiseSplit();
     JSPromise* evaluateMainModule(JSPromise* evaluation);
     static void didEvaluateModulesInJob(JSGlobalObject*);
     static void didFailModulesInJob(JSGlobalObject*);
@@ -121,8 +121,8 @@ public:
     void didLoadImportedModule(uint8_t flagsBefore);
     static uint8_t willLoadForUncompiledReferrer(JSGlobalObject*);
     static void didLoadForUncompiledReferrer(JSGlobalObject*, uint8_t flagsBefore);
-    static void checkAccessFromUncompiledReferrer(JSGlobalObject*, const Identifier& key, const Identifier& keyOfAsker);
-    static void checkAccessOnRegistryHit(JSGlobalObject*, const Identifier& key, const String& pathOfAsker);
+    static void checkAccessFromUncompiledReferrer(JSGlobalObject*, const Identifier& key, const Identifier& requesterKey);
+    static void checkAccessOnRegistryHit(JSGlobalObject*, const Identifier& key, const String& requesterPath);
     AbstractModuleRecord* nextRequestedRecord(JSGlobalObject*, const Identifier& key);
     AbstractModuleRecord* findRequestedRecord(const Identifier& key);
     bool tryDeferFetchFulfillment(JSPromise* fetched, AbstractModuleRecord* requested);

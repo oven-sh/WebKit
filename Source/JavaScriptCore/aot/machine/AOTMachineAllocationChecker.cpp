@@ -140,7 +140,7 @@ private:
 
     void checkBlock(Block*);
     bool enter(Block*);
-    bool isReleasedAndReadOnNoWayFrom(const Operation*, const Block* head);
+    bool isReleasedAndDeadAt(const Operation*, const Block* head);
     bool runSteps(uint32_t begin, uint32_t end, bool isOnEdge);
     void findNextExecute(uint32_t begin, uint32_t end);
     bool matchNextOperation(const Operation*, Position& early);
@@ -1217,7 +1217,7 @@ bool AllocationChecker::enter(Block* block)
             return fail(FailureKind::RegisterLacksItsValue, binding.value);
         if (m_state[binding.reg.index()] != id) {
             SpillIndex spill = binding.value->opcode() == Phi ? m_allocation.spillOf(binding.value) : noSpill;
-            if ((spill >= m_spills.size() || !m_spills[spill].isSharedByPhis) && !isReleasedAndReadOnNoWayFrom(binding.value, block))
+            if ((spill >= m_spills.size() || !m_spills[spill].isSharedByPhis) && !isReleasedAndDeadAt(binding.value, block))
                 return fail(FailureKind::RegisterLacksItsValue, binding.value);
         }
     }
@@ -1240,12 +1240,12 @@ bool AllocationChecker::enter(Block* block)
     return true;
 }
 
-bool AllocationChecker::isReleasedAndReadOnNoWayFrom(const Operation* value, const Block* head)
+bool AllocationChecker::isReleasedAndDeadAt(const Operation* value, const Block* head)
 {
-    auto clearsSlotOfValue = [&](const Step& step) {
+    auto clearsValueSlot = [&](const Step& step) {
         return step.kind == StepKind::ClearSpill && step.operation == value;
     };
-    if (std::ranges::none_of(m_allocation.steps(), clearsSlotOfValue))
+    if (std::ranges::none_of(m_allocation.steps(), clearsValueSlot))
         return false;
 
     BitVector isEntered;

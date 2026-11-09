@@ -164,7 +164,7 @@ void installDeferredWatchpoints(JSGlobalObject* realm)
 
 void didCreateRealm(JSGlobalObject* realm)
 {
-    refuseEvaluationUnlessAdmitted(realm);
+    rejectEvaluationUnlessAllowed(realm);
     Instance* instance = Instance::of(realm);
     if (!instance || (!BuiltinBindings::hasHost() && !hasBuiltinFunction(realm->vm(), static_cast<uint32_t>(BuiltinCodeIndex::generatorPrototypeNextCode))))
         installGeneratorMethodsForCompiledGenerators(realm);

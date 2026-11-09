@@ -1188,7 +1188,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
     auto status = static_cast<JSPromise::Status>(payload);
 
 #if ENABLE(AOT)
-    // hostLoadImportedModule() may have left another promise in the entry, for whoever asked for the entry point while its graph was loaded. However a step ends the load, that promise ends with it.
+    // hostLoadImportedModule() may have stored another promise in the entry, for modules that imported the entry point while its graph was loading. However this step ends the load, that promise settles with it.
     auto settleLoadPromiseInEntry = makeScopeExit([&] {
         if (loadPromise->status() == JSPromise::Status::Pending || context->step() == ModuleLoadingContext::Step::Cached || !vm.hasCompiledCode())
             return;
@@ -1249,7 +1249,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
                 return;
             }
             if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && context->referrer().isRealm() && compiled->takeMainModuleLoadStep()) {
-                // The entry point is loaded from here on, for whoever asks the loader for it or has asked. Who asked for the program hears of it in the next step.
+                // From here on the entry point counts as loaded for every past and future importer. The caller that loaded the program is notified in the next step.
                 JSPromise* importerLoadPromise = JSPromise::create(vm, globalObject->promiseStructure());
                 importerLoadPromise->markAsHandled();
                 importerLoadPromise->fulfill(vm, module);
@@ -1331,7 +1331,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
 #if USE(BUN_JSC_ADDITIONS)
         // ModuleRegistryEntry::provideModule(): the entry already holds its record, nothing to provide.
 #if ENABLE(AOT)
-        // No entry holds the record that the fetch hook answers with for a compiled module, and without one it would be fetched again.
+        // No registry entry holds the record that the fetch hook returns for a compiled module yet. Without one the module would be fetched again.
         if (!moduleData.inherits<AbstractModuleRecord>() || moduleData.inherits<AOT::ModuleRecord>()) {
 #else
         if (!moduleData.inherits<AbstractModuleRecord>()) {

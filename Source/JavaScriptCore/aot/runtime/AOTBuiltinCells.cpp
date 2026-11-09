@@ -956,18 +956,18 @@ void lockBuiltinsWithoutImage()
     locksBuiltinsWithoutImage = true;
 }
 
-static Vector<std::pair<uint32_t, Vector<uint8_t>>>& namesOpenedWithoutImage()
+static Vector<std::pair<uint32_t, Vector<uint8_t>>>& namesUnlockedWithoutImage()
 {
     static NeverDestroyed<Vector<std::pair<uint32_t, Vector<uint8_t>>>> names;
     return names;
 }
 
-void openNameWithoutImage(uint32_t holder, std::span<const uint8_t> name)
+void unlockNameWithoutImage(uint32_t holder, std::span<const uint8_t> name)
 {
-    namesOpenedWithoutImage().append({ holder, Vector<uint8_t>(name) });
+    namesUnlockedWithoutImage().append({ holder, Vector<uint8_t>(name) });
 }
 
-static constinit RefusedChangeListener refusedChangeListener = nullptr;
+static constinit RejectedChangeListener rejectedChangeListener = nullptr;
 static constinit Lock namesOfLockedObjectsLock;
 
 static UncheckedKeyHashMap<JSObject*, BuiltinID>& namesOfLockedObjects() WTF_REQUIRES_LOCK(namesOfLockedObjectsLock)
@@ -976,15 +976,15 @@ static UncheckedKeyHashMap<JSObject*, BuiltinID>& namesOfLockedObjects() WTF_REQ
     return names;
 }
 
-void setRefusedChangeListener(RefusedChangeListener listener)
+void setRejectedChangeListener(RejectedChangeListener listener)
 {
-    refusedChangeListener = listener;
+    rejectedChangeListener = listener;
 }
 
-void tellRefusedChangeListener(JSGlobalObject* realm, const String& refusal)
+void notifyRejectedChangeListener(JSGlobalObject* realm, const String& refusal)
 {
-    if (refusedChangeListener) [[unlikely]]
-        refusedChangeListener(realm, refusal);
+    if (rejectedChangeListener) [[unlikely]]
+        rejectedChangeListener(realm, refusal);
 }
 
 static void noteNameOfLockedObject(JSObject* object, BuiltinID id)
@@ -1010,7 +1010,7 @@ static Instance* instanceOfRealmOf(JSObject* object)
 
 void didRejectWrite(JSGlobalObject* realm, JSObject* object, UniquedStringImpl* keyOrNull, RejectedWrite change)
 {
-    if (!refusedChangeListener) [[likely]]
+    if (!rejectedChangeListener) [[likely]]
         return;
     BuiltinID id = builtinOfLockedObject(instanceOfRealmOf(object), object);
     if (!id)
@@ -1021,13 +1021,13 @@ void didRejectWrite(JSGlobalObject* realm, JSObject* object, UniquedStringImpl* 
     };
     switch (change) {
     case RejectedWrite::Store:
-        return refusedChangeListener(realm, makeString("Cannot assign to "_s, member()));
+        return rejectedChangeListener(realm, makeString("Cannot assign to "_s, member()));
     case RejectedWrite::Definition:
-        return refusedChangeListener(realm, makeString("Cannot define "_s, member()));
+        return rejectedChangeListener(realm, makeString("Cannot define "_s, member()));
     case RejectedWrite::Deletion:
-        return refusedChangeListener(realm, makeString("Cannot delete "_s, member()));
+        return rejectedChangeListener(realm, makeString("Cannot delete "_s, member()));
     case RejectedWrite::Prototype:
-        return refusedChangeListener(realm, makeString("Cannot change the prototype of "_s, holder));
+        return rejectedChangeListener(realm, makeString("Cannot change the prototype of "_s, holder));
     }
 }
 
@@ -1046,17 +1046,17 @@ String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedString
     return change == RejectedWrite::Deletion ? deletionFromLockedBuiltinMessage(vm, id, key, lockedIn) : assignmentToLockedBuiltinMessage(vm, id, key, lockedIn);
 }
 
-bool isNameRefusedByLibraryFunction(JSObject* object, UniquedStringImpl* key)
+bool rejectsOwnPropertyOnLibraryFunction(JSObject* object, UniquedStringImpl* key)
 {
     auto* closure = dynamicDowncast<Closure>(object);
     return closure && closure->refusesOwnProperty(object->vm(), PropertyName(key));
 }
 
-String refusedSpyMessage(JSGlobalObject* globalObject, JSObject* object, UniquedStringImpl* key)
+String rejectedSpyMessage(JSGlobalObject* globalObject, JSObject* object, UniquedStringImpl* key)
 {
     ImmutablePropertyNames* names = object->structure()->listedImmutablePropertyNames();
     String message = names ? names->storeErrorMessage(key) : lockedObjectErrorMessage(globalObject, object, key, RejectedWrite::Store);
-    if (isNameRefusedByLibraryFunction(object, key))
+    if (rejectsOwnPropertyOnLibraryFunction(object, key))
         message = assignmentToNameThatBuiltinFunctionInheritsMessage(key);
     constexpr ASCIILiteral start = "Cannot assign to "_s;
     if (!message.startsWith(start))
@@ -1070,16 +1070,16 @@ static LockedIn kindOfRun(JSGlobalObject* realm)
     return instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
 }
 
-String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name, const String& callerOutsideBuild)
+String spyOnExportErrorMessage(JSCell* moduleNamespace, UniquedStringImpl* name, const String& uncompiledCaller)
 {
     auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
     JSGlobalObject* realm = object->realm();
-    return spyOnExportRefusedMessage(name, modulesOf(realm)->table().pathText(object->module()), kindOfRun(realm), callerOutsideBuild);
+    return makeSpyOnExportErrorMessage(name, modulesOf(realm)->table().pathText(object->module()), kindOfRun(realm), uncompiledCaller);
 }
 
-String refusedMockMessage(JSGlobalObject* realm, const String& path, const String& callerOutsideBuild)
+String mockModuleErrorMessage(JSGlobalObject* realm, const String& path, const String& uncompiledCaller)
 {
-    return mockOfModuleRefusedMessage(path, kindOfRun(realm), callerOutsideBuild);
+    return makeMockModuleErrorMessage(path, kindOfRun(realm), uncompiledCaller);
 }
 
 static bool hasUnlocked(const Instance& instance, BuiltinID member)
@@ -1136,7 +1136,7 @@ bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
     return member && (table.at(member).mutability == BuiltinMutability::ChangesOnItsOwn || hasUnlocked(*running, member));
 }
 
-bool isMemberTakenForConstant(JSObject* object, UniquedStringImpl* key)
+bool isMemberFoldedAsConstant(JSObject* object, UniquedStringImpl* key)
 {
     JSGlobalObject* realm = object->realm();
     const BuiltinTable& table = BuiltinTable::singleton();
@@ -1164,10 +1164,10 @@ bool reflectThrowsOnLockedProperty(JSObject* lockedObject)
     return instance && admitsReplacedBuiltins(*instance) && !isWrittenByFileOfProduct(lockedObject->vm());
 }
 
-void refuseEvaluationUnlessAdmitted(JSGlobalObject* realm)
+void rejectEvaluationUnlessAllowed(JSGlobalObject* realm)
 {
     if (!realm->vm().aotState().image->admitsUnknownJavaScript())
-        realm->setEvalEnabled(false, evaluationRefusedMessage());
+        realm->setEvalEnabled(false, rejectedEvaluationMessage());
 }
 
 [[noreturn]] static NEVER_INLINE void crashOnBuiltinHolder(BuiltinID holder, ASCIILiteral problem)
@@ -1513,7 +1513,7 @@ static void lockBuiltins(Instance& instance)
     lockHoldersOfProgram(locker, realm, instance.tables(), cells.holdersThatTellOfWrites());
 }
 
-void lockBuiltinsOfTable(JSGlobalObject* realm)
+void lockTableBuiltins(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
     DeferTerminationForAWhile deferTermination(vm);
@@ -1521,7 +1521,7 @@ void lockBuiltinsOfTable(JSGlobalObject* realm)
     const BuiltinTable& table = BuiltinTable::singleton();
     auto namesOpenedOn = [&](BuiltinID holder) {
         Vector<Identifier, 2> names;
-        for (const auto& [opened, name] : namesOpenedWithoutImage()) {
+        for (const auto& [opened, name] : namesUnlockedWithoutImage()) {
             if (table.canonicalID(BuiltinID(opened)) == table.canonicalID(holder))
                 names.append(Identifier::fromString(vm, String::fromUTF8(name.span())));
         }
@@ -1708,7 +1708,7 @@ void hostDidCreateStructure(JSGlobalObject* realm, Structure* structure)
     markPristine(realm->vm(), builtinClass, structure);
 }
 
-void hostDidCreateObjectOfGlobal(JSGlobalObject* realm, UniquedStringImpl* key, JSObject* object)
+void hostDidCreateGlobalMember(JSGlobalObject* realm, UniquedStringImpl* key, JSObject* object)
 {
     lockMemberOfLockedHolder(realm, realm, key, object);
 }
@@ -1798,7 +1798,7 @@ void hostDidCreateRealm(JSGlobalObject* realm)
         didInstallBuiltins(*realm->aotInstance());
         RuntimeHooks::installDeferredWatchpoints(realm);
     } else if (locksBuiltins(realm))
-        lockBuiltinsOfTable(realm);
+        lockTableBuiltins(realm);
 }
 
 } } // namespace JSC::AOT

@@ -39,7 +39,7 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(InternalFunction);
 const ClassInfo InternalFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalFunction) };
 
 #if ENABLE(AOT)
-// Function.prototype is such a function too, and has the names as members of its own: they stay what its own lock makes of them.
+// Function.prototype is an InternalFunction too and has these names as own properties. Its own lock decides what happens to them.
 static bool rejectsNewProperty(VM& vm, InternalFunction* function, PropertyName propertyName)
 {
     return AOT::RuntimeHooks::rejectsNativeConstructorProperty(function->globalObject(), propertyName) && !isValidOffset(function->structure()->get(vm, propertyName));
@@ -51,7 +51,7 @@ bool InternalFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyN
     InternalFunction* function = uncheckedDowncast<InternalFunction>(cell);
     if (slot.thisValue() == JSValue(function) && rejectsNewProperty(vm, function, propertyName)) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        // Function.prototype[Symbol.hasInstance] is read-only, so the language itself refuses that store, and says nothing of it in sloppy code.
+        // Function.prototype[Symbol.hasInstance] is read-only, so the specification already rejects that store, silently in sloppy mode.
         bool isTold = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
         return typeError(globalObject, scope, isTold, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
     }
@@ -95,7 +95,7 @@ InternalFunction::InternalFunction(VM& vm, Structure* structure, NativeFunction 
     ASSERT(type() == InternalFunctionType || type() == NullSetterFunctionType);
 
 #if ENABLE(AOT)
-    // Not Function.prototype, which has the put of an ordinary object.
+    // Not Function.prototype, which uses the ordinary object's put.
     if (structure->classInfoForCells()->methodTable.put == InternalFunction::put && AOT::RuntimeHooks::locksNativeConstructorPrototypes(structure->realm())) [[unlikely]]
         structure->setOverridesPut();
 #endif
