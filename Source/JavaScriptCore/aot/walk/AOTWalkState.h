@@ -177,7 +177,7 @@ private:
     bool m_remembersPlaces { true };
 };
 
-enum class FactOfCell : uint8_t {
+enum class FactOfCell : uint16_t {
     NotFrozen = 1 << 0,
     NoFieldOutsideSlot = 1 << 1,
     HasLayoutPrototype = 1 << 2,
@@ -186,7 +186,10 @@ enum class FactOfCell : uint8_t {
     IsLikelyAsConstructed = 1 << 5,
     NoExtraProperties = 1 << 6,
     BearsNoMark = 1 << 7,
+    KeysAreAsEnumeratorFoundThem = 1 << 8,
 };
+inline constexpr uint32_t numberOfFactsOfCell = 9;
+static_assert(static_cast<uint32_t>(FactOfCell::KeysAreAsEnumeratorFoundThem) == 1u << (numberOfFactsOfCell - 1));
 
 OptionSet<FactOfCell> factsOfCellEndedBy(const LocationMasks& writes);
 
@@ -740,7 +743,7 @@ private:
         uint32_t numberOfPlaces { 0 };
         uint32_t numberOfElements { 0 };
         uint64_t maskOfPlaces { 0 };
-        uint16_t kindsOfPlaces { 0 };
+        uint8_t kindsOfPlaces { 0 };
         LayoutsOfSlots layoutsOfSlots { LayoutsOfSlots::None };
         OptionSet<FactOfCell> factsOfCell;
         bool isFresh { false };
@@ -748,6 +751,8 @@ private:
         bool isListedAsFreshWithElements { false };
         bool elementsLieOutsideViews { false };
     };
+    static_assert(sizeof(Holder) == 56);
+    static_assert(static_cast<unsigned>(PlaceKind::GuardOfReads) < 8 * sizeof(Holder::kindsOfPlaces));
     struct Place {
         static constexpr uint8_t entireHeap = 64;
 

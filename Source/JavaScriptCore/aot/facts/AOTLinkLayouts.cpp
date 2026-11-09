@@ -1159,7 +1159,25 @@ bool LinkFlow::followsCopySpelledByLoop(const LinkType& target, const LinkType& 
         });
         return areRecords;
     };
-    return namesRecordsAlone(target) && (source.isNothing() || namesRecordsAlone(source));
+    auto listsNamesOf = [&](LayoutID lister, LayoutID other) {
+        for (const Field& field : program.at(other).fields) {
+            if (field.key && !field.computedKey && !isPrivateNameInLink(program, field.key) && !findField(program, lister, field.key))
+                return false;
+        }
+        return true;
+    };
+    auto listSameNames = [&](const LinkType& type) {
+        LayoutID first;
+        bool listSame = true;
+        forEachLayoutNamedInLinkLayouts(*this, type, [&](LayoutID layout) {
+            if (!first)
+                first = layout;
+            else
+                listSame = listSame && listsNamesOf(first, layout) && listsNamesOf(layout, first);
+        });
+        return listSame;
+    };
+    return namesRecordsAlone(target) && (source.isNothing() || (namesRecordsAlone(source) && listSameNames(source)));
 }
 
 enum class CopyWaitsForInLinkLayouts : uint8_t { WhateverLiesBesideFields, WhatIsSeenAlone, Nothing };
@@ -1297,8 +1315,10 @@ bool LinkFlow::descriptorsInSightLayValuesAlone(const LinkType& descriptors, con
         return false;
     PropertyKeyID halves[] { program.keyOf(BuiltinNames::get), program.keyOf(BuiltinNames::set) };
     PropertyKeyID value = program.keyOf(BuiltinNames::value);
-    if (!isAbsentAboveClasses(halves[0]) || !isAbsentAboveClasses(halves[1]) || !isAbsentAboveClasses(value))
-        return false;
+    for (BuiltinName name : { BuiltinNames::enumerable, BuiltinNames::configurable, BuiltinNames::writable, BuiltinNames::value, BuiltinNames::get, BuiltinNames::set }) {
+        if (!isAbsentAboveClasses(program.keyOf(name)))
+            return false;
+    }
     auto nodeUnder = [&](LayoutID layout, PropertyKeyID key) {
         std::optional<FieldReference> listed = findField(program, layout, key);
         return listed ? field(*listed) : appendedField(layout, key);
@@ -2990,20 +3010,11 @@ ALWAYS_INLINE void WriterOfLinkLayouts::lookAtChanges(FunctionID id, const ThinS
             noteWrite(subject, { }, { Trait::ComesAfterConstruction, Trait::MayGiveValue });
             if (change.isSpelledByLoop) {
                 const LinkType& sources = typeAt(id, change.other);
-                auto everySourceLists = [&](PropertyKeyID key) {
-                    bool lists = true;
-                    forEachLayoutNamedInLinkLayouts(m_flow, sources, [&](LayoutID source) {
-                        lists &= !!findField(m_program, source, key);
-                    });
-                    return lists;
-                };
                 forEachLayoutNamedInLinkLayouts(m_flow, sources, [&](LayoutID source) {
                     for (const Field& field : m_program.at(source).fields) {
                         if (!field.key || field.computedKey || isPrivateNameInLink(m_program, field.key))
                             continue;
                         noteWrite(subject, field.key, { Trait::AddsWhatIsNotListed, Trait::ComesAfterConstruction, Trait::MayGiveValue });
-                        if (!everySourceLists(field.key))
-                            continue;
                         m_flow.forEachLayoutOf(subject, [&](LayoutID target) {
                             if (auto noted = m_pairsNotListed.find(static_cast<uint64_t>(target.index()) << 32 | field.key.bits()); noted != m_pairsNotListed.end())
                                 m_namesNotListed[noted->value].isBroughtByCopyingLoop = true;

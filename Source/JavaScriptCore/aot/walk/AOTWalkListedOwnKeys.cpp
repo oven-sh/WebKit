@@ -198,7 +198,7 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     }
 
     uint32_t end = (readOfLength ? readOfLength.index() - block.firstValue().index() : place) + 1;
-    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, end, true);
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, end);
     Walker::ArmsThatMeet ends;
     walker.walkClosedArm(walker.currentBlock(), stretch, ends);
     if (walker.hasFailed())

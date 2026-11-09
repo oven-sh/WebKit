@@ -179,7 +179,7 @@ private:
     StubCallResult emitEntryCall(const OperationContext*, AOT::Entry, std::span<const LValue> arguments, const CallOptions&);
     StubCallResult emitCall(const OperationContext*, const CallRequest&);
     enum class EntersCompiledCode : bool { No, Yes };
-    void beginWatchOfEffects(const OperationContext&, const Effects&, EntersCompiledCode, uint32_t rows, WatchOfEffects&);
+    void beginWatchOfEffects(const OperationContext&, const Effects&, EntersCompiledCode, uint32_t rows, WatchOfEffects&, uint8_t countsThatBeliefLeavesOpen = 0);
     LValue readCountsForEffectsNet(uint8_t counts, LValue behind);
     LValue digestForEffectsNet(LValue cell, uint64_t lanes);
     LValue restOfDigestForEffectsNet(LValue digest);

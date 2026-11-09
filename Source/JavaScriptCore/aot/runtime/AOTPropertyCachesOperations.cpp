@@ -639,6 +639,29 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnValueUnderKeyOrEmpty, EncodedJS
     return JSValue::encode(asObject(base)->getDirect(offset));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindsDefaultHasInstance, size_t, (EncodedJSValue encodedConstructor))
+{
+    JSValue constructor = JSValue::decode(encodedConstructor);
+    if (!constructor.isObject())
+        return false;
+    JSObject* current = asObject(constructor);
+    UniquedStringImpl* name = current->vm().propertyNames->hasInstanceSymbol.impl();
+    JSFunction* ofEngine = current->globalObject()->functionProtoHasInstanceSymbolFunction();
+    while (true) {
+        if (current->type() == ProxyObjectType)
+            return false;
+        Structure* structure = current->structure();
+        unsigned attributes = 0;
+        PropertyOffset offset = structure->getConcurrently(name, attributes);
+        if (isValidOffset(offset))
+            return !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue)) && current->getDirect(offset) == JSValue(ofEngine);
+        JSValue above = structure->storedPrototype(current);
+        if (!above.isObject())
+            return true;
+        current = asObject(above);
+    }
+}
+
 static JSValue getFromCellAndCache(Instance* instance, JSValue base, const Identifier& name)
 {
     VM& vm = *instance->vm;

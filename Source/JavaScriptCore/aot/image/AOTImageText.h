@@ -237,6 +237,18 @@ public:
     bool isAtom(StringID string) const { return m_strings[string.index()].isAtom(); }
     ImageStringWord wordOf(StringID string) const { return m_strings[string.index()]; }
     StringView view(StringID string) const { return view(wordOf(string)); }
+    ALWAYS_INLINE StringView viewInline(StringID string) const
+    {
+        ImageStringWord word = wordOf(string);
+#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+        if ((word.bits & (ImageString::hasTextFlag | ImageString::hasNoHeaderFlag | ImageString::is16BitFlag)) == ImageString::hasTextFlag) [[likely]] {
+            const ImageStringHeader& header = headerAt(word.number());
+            if (header.length) [[likely]]
+                return StringView(unsafeMakeSpan(std::bit_cast<const Latin1Character*>(header.characters), header.length));
+        }
+#endif
+        return view(word);
+    }
     unsigned hash(StringID string) const { return hash(wordOf(string)); }
     JS_EXPORT_PRIVATE bool equals(StringID, StringView) const;
     String createString(StringID string) const { return createString(wordOf(string)); }

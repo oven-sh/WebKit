@@ -124,7 +124,7 @@ public:
         if (written.contains(AbstractHeap::PrototypeLinks))
             facts.add(FactOfCell::HasLayoutPrototype);
         if (written.containsAny({ AbstractHeap::ShapeWords, AbstractHeap::NamedProperties, AbstractHeap::OrderWords }))
-            facts.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
+            facts.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem });
         return facts;
     }
 
@@ -347,7 +347,7 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
         AbstractHeap::NamedProperties, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards,
     };
     static constexpr FactOfCell facts[] {
-        FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed,
+        FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem,
     };
 
     WeakRandom random(seed);

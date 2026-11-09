@@ -1,7 +1,7 @@
 # `const [a, b] = values`: between the open and the close behind the last step stand the steps, the reads of what they give and jumps. Nothing runs in between, so all the steps are taken where the open stands:
 # one operation of the run time opens, steps and closes, whatever is iterated, and reads a list that nobody can see being iterated by index. A step that throws leaves the iteration done, so whoever catches it has nothing to close:
 # the steps and the closes as written build nothing, nothing is kept in memory, and the handler that closes is gone. No guess is needed, in a loop either: there the code of the operation itself
-# reads a list as lists are made in line: machine/pattern-in-a-loop-reads-a-list-in-line.ir.
+# reads a list as lists are made in line: Bun's test/aot/engine-tests/machine/pattern-in-a-loop-reads-a-list-in-line.ir.
 # function two(values: number[]) { const [a, b] = values; return keep(a, b); }
 # RUN: walk f1 mechanisms=none+TypedOperations
 # CHECK-LABEL: code f1:Body

@@ -1729,13 +1729,16 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
         }
         return true;
     };
+    ModuleRegistryEntry* entryAhead = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript) : nullptr;
+    bool wasLoadBegunAhead = entryAhead && entryAhead->loadPromise() && entryAhead->loadPromise()->status() == JSPromise::Status::Pending;
     JSPromise* result = loadModule(globalObject, moduleName, parameters.copyRef(), scriptFetcher.copyRef(), { ModuleLoadFlag::Evaluate });
     RETURN_IF_EXCEPTION(scope, result);
     drainSynchronousModuleQueue(globalObject);
     RETURN_IF_EXCEPTION(scope, result);
-    if (result->status() != JSPromise::Status::Pending || !waitsForStepOfImport())
+    if (result->status() != JSPromise::Status::Pending || !wasLoadBegunAhead || !waitsForStepOfImport())
         return result;
     // The root is loaded again, and takes its own steps from the module promise.
+    // Without it a require() that comes between the factory of a mock and the steps of the import() that called it throws: Bun's test/aot/parallel-test-runs/a-require-of-a-module-whose-load-an-import-has-begun.
     SetForScope rootThatTakesOwnLoadSteps(m_rootThatTakesOwnLoadSteps, moduleName.impl());
     result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
 #else

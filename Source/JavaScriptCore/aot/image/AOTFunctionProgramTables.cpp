@@ -88,6 +88,8 @@ public:
     void appendTo(TablePart&);
 
 private:
+    bool listsRecordsUnderOtherNumbers() const { return AOT::hasFlag(m_encoder.build.options().lies, Wire::TestingLie::RecordsOfFunctionsAreListedUnderOtherNumbers); }
+    uint32_t firstNumberListedByFunction() const { return listsRecordsUnderOtherNumbers() ? 1 : functionRecordIsListedByFunction; }
     void collectFunction(uint32_t index, RowsOfFunctionRange&);
     void collectName(uint32_t index, std::optional<BuiltinID> implemented, Vector<Number24>&);
     void collectClosureFunction(uint32_t index, CodeUnit, FunctionKindData, Vector<FunctionWithLargeCountsData>&);
@@ -310,7 +312,7 @@ void FunctionTablesByRange::numberRecords()
         range.firstRecordListedByFunction = numberListedByFunction;
         for (DistinctFunctionRecord& record : range.records) {
             record.number = std::ranges::lower_bound(distinct, record.bits, { }, &DistinctFunctionRecord::bits)->number;
-            if (record.number >= functionRecordIsListedByFunction)
+            if (record.number >= firstNumberListedByFunction())
                 numberListedByFunction += record.count;
         }
     }
@@ -358,7 +360,7 @@ void FunctionTablesByRange::collectClosureFunction(uint32_t index, CodeUnit unit
     m_kinds[number] = kind;
     m_lengths[number] = length < countsAreListed ? static_cast<uint8_t>(length) : countsAreListed;
     m_captureCounts[number] = counts.encoded();
-    if (m_lengths[number] == countsAreListed || m_captureCounts[number] == countsAreListed)
+    if ((m_lengths[number] == countsAreListed || m_captureCounts[number] == countsAreListed) && !AOT::hasFlag(m_encoder.build.options().lies, Wire::TestingLie::RowsOfFunctionsWithLargeCountsAreLeftOut))
         functionsWithLargeCounts.append({ Number24(index), counts, { static_cast<uint8_t>(length), static_cast<uint8_t>(length >> 8) } });
     m_cellNumbers[number] = Number24(unit.role == Typed::CodeRole::GenericCallEntry ? m_encoder.numbers.closureCellNumber(unit.function) : 0);
 }
@@ -464,12 +466,12 @@ void FunctionTablesByRange::write(size_t first, size_t end)
     for (size_t index = first; index < end; ++index) {
         uint32_t bits = m_bitsOfRecords[index];
         uint32_t number = std::ranges::lower_bound(range.records, bits, { }, &DistinctFunctionRecord::bits)->number;
-        if (number < functionRecordIsListedByFunction) {
+        if (number < firstNumberListedByFunction()) {
             m_recordNumbers[index] = static_cast<uint8_t>(number);
             continue;
         }
         m_recordNumbers[index] = functionRecordIsListedByFunction;
-        m_recordsByFunction[nextListedByFunction++] = { static_cast<uint32_t>(index), std::bit_cast<FunctionRecordData>(bits) };
+        m_recordsByFunction[nextListedByFunction++] = { static_cast<uint32_t>(index + listsRecordsUnderOtherNumbers()), std::bit_cast<FunctionRecordData>(bits) };
     }
 
     uint32_t namesInFrontOfRange = static_cast<uint32_t>(m_names.firstOfRange[numberOfRange]);

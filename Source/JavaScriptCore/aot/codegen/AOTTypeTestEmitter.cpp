@@ -18,6 +18,7 @@
 #include "JSCJSValueInlines.h"
 #include <bit>
 #include <wtf/MathExtras.h>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -109,6 +110,12 @@ const TypeTestPlan& TypeTestEmitter::planFor(TypeID from, Representation represe
             return *kept.add(key, compute()).iterator->value;
     }
     return *m_plans[static_cast<size_t>(representation)].ensure(key, compute).iterator->value;
+}
+
+void TypeTestEmitter::emitBranchAskingEachFunctionByItself(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
+{
+    SetForScope eachByItself(m_asksEachFunctionByItself, true);
+    emitBranch(operand, plan, targets);
 }
 
 void TypeTestEmitter::emitBranch(Operand operand, const TypeTestPlan& plan, BranchTargets targets)

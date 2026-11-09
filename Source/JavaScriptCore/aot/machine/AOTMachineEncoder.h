@@ -284,20 +284,20 @@ public:
     }
     AddressForm resolveAddressSlowCase(const Operation* access, LeafCursor&);
     AddressForm resolveScaledSum(const Operation* sum, LeafCursor&);
-    NEVER_INLINE void failBecauseSlotThatNoStepReadsIsRead(SpillIndex) const;
-    ALWAYS_INLINE void noteThatSlotIsRead(SpillIndex spill) const
+    NEVER_INLINE void failBecauseSlotThatNoStepReadsIsRead() const;
+    ALWAYS_INLINE int32_t offsetOfSlot(SpillIndex spill, MemoryOfEncodedMove use) const
     {
-        if (m_allocation.spills()[spill].isReadByNoStep) [[unlikely]]
-            failBecauseSlotThatNoStepReadsIsRead(spill);
+        int32_t offset = m_frame.offsetFromFPWithMarkOf(spill);
+        if (use == MemoryOfEncodedMove::IsRead)
+            m_marksOfSlotsRead |= offset;
+        return offset & ~Frame::markOfSlotThatNoStepReads;
     }
     ALWAYS_INLINE MacroAssembler::Address addressOf(Location memory, MemoryOfEncodedMove use = MemoryOfEncodedMove::IsRead) const
     {
         switch (memory.kind()) {
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
-            if (use == MemoryOfEncodedMove::IsRead)
-                noteThatSlotIsRead(memory.spillIndex());
-            return m_frame.addressInFrame(m_frame.offsetFromFPOf(memory.spillIndex()));
+            return m_frame.addressInFrame(offsetOfSlot(memory.spillIndex(), use));
 
         case Location::Outgoing:
             RELEASE_ASSERT(m_frameIsSetUp);
@@ -337,9 +337,7 @@ public:
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
             RELEASE_ASSERT(m_frame.hasFrameRecord() || patch->findsOperandsInFrameWithoutRecord());
-            if (access == MemoryOfEncodedMove::IsRead)
-                noteThatSlotIsRead(location.spillIndex());
-            return ValueRep::stack(m_frame.offsetFromFPOf(location.spillIndex()));
+            return ValueRep::stack(offsetOfSlot(location.spillIndex(), access));
         case Location::Outgoing:
             RELEASE_ASSERT(m_frameIsSetUp);
             return ValueRep::stackArgument(static_cast<ValueRep::OffsetType>(location.offsetFromSP()));
@@ -431,6 +429,7 @@ public:
     const Step* const m_steps;
     const SpillIndex* const m_spillsOfValues;
     const ValueFacts* const m_valueFacts;
+    mutable int32_t m_marksOfSlotsRead { 0 };
 
     UncheckedSpan<MacroAssembler::Label> m_labels;
     UncheckedSpan<const Block*> m_blocksEntered;

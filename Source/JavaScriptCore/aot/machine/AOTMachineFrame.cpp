@@ -265,7 +265,9 @@ Frame* planFrame(Procedure& proc)
         for (SpillIndex spill = 0; spill < spills.size(); ++spill) {
             const uint32_t distance = slots.distanceOf(spill);
             ASSERT(distance && distance <= slots.bytesInAll() && !(distance % bytesForWidth(spills[spill].width)));
-            offsetOfSpill[spill] = form.topOfSlots - static_cast<int32_t>(distance);
+            const int32_t offset = form.topOfSlots - static_cast<int32_t>(distance);
+            RELEASE_ASSERT(!(offset & Frame::markOfSlotThatNoStepReads));
+            offsetOfSpill[spill] = spills[spill].isReadByNoStep ? offset | Frame::markOfSlotThatNoStepReads : offset;
         }
         frame->m_offsetOfSpill = std::span<int32_t>(offsetOfSpill, spills.size());
     }

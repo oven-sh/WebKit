@@ -7,16 +7,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltProgramTestSupport.h"
 #include "AOTBuiltinTable.h"
-#include "AOTImage.h"
-#include "AOTImageFlagNames.h"
 #include "AOTNativeTest.h"
 #include "AOTRealmStartup.h"
 #include "AOTShellProgramTestSupport.h"
 #include "AOTTestHarness.h"
 #include <algorithm>
-#include <source_location>
-#include <wtf/HexNumber.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -28,11 +25,9 @@ using Flags = OptionSet<ImageFlag>;
 
 static constexpr Flags refusesOriginals { ImageFlag::RefusesOriginalsBesideMocks };
 static constexpr Flags closed = refusesOriginals;
-static constexpr Flags runsText = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::LetsGlobalObjectGo };
 static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LetsGlobalObjectGo };
 static constexpr Flags findsModulesByName = refusesOriginals | Flags { ImageFlag::LoadsModulesByName };
 static constexpr Flags loadsCodeFromOutside = runsModuleFromOutside | Flags { ImageFlag::LoadsCodeOutsideImage };
-static constexpr Flags runsTextThatLoadsCode = runsOnlyCodeOfImage ? runsText : loadsCodeFromOutside;
 static constexpr Flags showsWaysBetweenModuleObjects = refusesOriginals | Flags { ImageFlag::ShowsWaysBetweenModuleObjects };
 static constexpr Flags open = loadsCodeFromOutside;
 
@@ -114,17 +109,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR" AOT_APPLY_EVALUATOR_TEXT ""_s;
 
-static constexpr ASCIILiteral evaluatorUnderUnknownKeyOfGlobalObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="name" [isFreeName]
-    v2 = ElemGet v0, v1
-    v3 = CallDirect v2 function=f1
-    Return
-}
-)IR" AOT_APPLY_EVALUATOR_TEXT ""_s;
-
 static constexpr ASCIILiteral evaluatorComesBackFromUnknownCode = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -150,139 +134,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral handsOnConstructorOfWorkers = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="print" [isFreeName]
-    v2 = Builtin builtin=Worker
-    v3 = Call v1, -, v2
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral handsOnGlobalObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="listed"
-    v2 = Call v1, v0
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral handsOnGlobalObjectBesideWorkerWithName = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="listed"
-    v2 = Call v1, v0
-    v3 = Builtin builtin=Worker
-    v4 = String string="./other.js"
-    v5 = Construct v3, -, v4
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral startsWorkerFromUnknownValue = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="name" [isFreeName]
-    v2 = Builtin builtin=Worker
-    v3 = Construct v2, -, v1
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral startsTwoWorkersFromUnknownValues = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="name" [isFreeName]
-    v2 = Builtin builtin=Worker
-    v3 = Construct v2, -, v1
-    v4 = Construct v2, -, v1
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral startsWorkerFromTextOfURL = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=URL
-    v1 = String string="./other.js"
-    v2 = ModuleBuiltin builtin=ImportMeta module=m0
-    v3 = PropGet v2 key="url"
-    v4 = Construct v0, -, v1, v3
-    v5 = PropGet v4 key="href"
-    v6 = Builtin builtin=Worker
-    v7 = Construct v6, -, v5
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral startsWorkerFromAnotherMemberOfURL = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=URL
-    v1 = String string="./other.js"
-    v2 = ModuleBuiltin builtin=ImportMeta module=m0
-    v3 = PropGet v2 key="url"
-    v4 = Construct v0, -, v1, v3
-    v5 = PropGet v4 key="search"
-    v6 = Builtin builtin=Worker
-    v7 = Construct v6, -, v5
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral startsWorkerFromTextOfUnknownURL = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=URL
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="name" [isFreeName]
-    v3 = Construct v0, -, v2
-    v4 = PropGet v3 key="href"
-    v5 = Builtin builtin=Worker
-    v6 = Construct v5, -, v4
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral callsUnknownFunction = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="sink" [isFreeName]
-    v2 = Call v1, -, v0
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral evaluatesUnknownText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="text" [isFreeName]
-    v2 = PropGet v0 key="eval" [isFreeName]
-    v3 = Call v2, -, v1
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral constructsFunctionFromUnknownText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="text" [isFreeName]
-    v2 = Builtin builtin=Function
-    v3 = Construct v2, -, v1
-    Return
-}
-)IR"_s;
-
 static constexpr ASCIILiteral importsUncompiledModule = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
 entry module=m0
@@ -300,18 +151,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = Builtin builtin=ProcessDlopen
     v4 = String string="addon.node"
     v5 = Call v3, v0, v2, v4
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral installsPlugin = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=Bun
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="plugin" [isFreeName]
-    v3 = Builtin builtin=BunPlugin
-    v4 = Call v3, v0, v2
     Return
 }
 )IR"_s;
@@ -339,31 +178,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v1 = PropGet v0 key="text" [isFreeName]
     v2 = PropGet v0 key="eval" [isFreeName]
     v3 = Call v2, -, v1
-    Return
-}
-function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="print" [isFreeName]
-    v2 = String string="other ran"
-    v3 = Call v1, -, v2
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral unseenCodeMayCallLoader = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
-module m1 path="/other.js" displayPath="other.js" body=f1
-entry module=m0
-function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="text" [isFreeName]
-    v2 = PropGet v0 key="eval" [isFreeName]
-    v3 = Call v2, -, v1
-    v4 = PropGet v0 key="sink" [isFreeName]
-    v5 = Builtin builtin=Process
-    v6 = Call v4, -, v5
-    v7 = PropGet v0 key="name" [isFreeName]
-    v8 = ElemGet v6, v7
-    v9 = Call v8, v6, v7
     Return
 }
 function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
@@ -472,19 +286,6 @@ function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = Modu
 static constexpr ASCIILiteral takesMainModuleAsFrontEndSays = AOT_TAKES_MAIN_MODULE_AS_VALUE("KeepsError, NamesWayToModuleObjects");
 static constexpr ASCIILiteral takesMainModuleBehindFrontEnd = AOT_TAKES_MAIN_MODULE_AS_VALUE("KeepsError");
 
-#define AOT_STORES_PATH_OF_MAIN_MODULE(replaceableBuiltins) R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] body=f0
-entry module=m0
-)IR" replaceableBuiltins R"IR(function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="path" [isFreeName]
-    v2 = Builtin builtin=Bun
-    PropSet v2, v1 key="main"
-    Return
-}
-)IR"_s
-
-static constexpr ASCIILiteral storesPathOfMainModuleLeftOpen = AOT_STORES_PATH_OF_MAIN_MODULE("replaceablebuiltin member=Bun_main\n");
-static constexpr ASCIILiteral storesPathOfMainModuleDecidedInCode = AOT_STORES_PATH_OF_MAIN_MODULE("");
-
 #define AOT_HOLDS_MOCK_OF_FILE(flagsOfVariable) R"IR(variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 module=m1 declared={type=anything|absent} flags=[)IR" flagsOfVariable R"IR(]
 module m0 path="/main.js" displayPath="main.js" body=f0
@@ -503,33 +304,6 @@ function f1 name="mocked" module=m1 kind=CommonJsModule flags=[IsSloppy] results
 
 static constexpr ASCIILiteral holdsMockOfFile = AOT_HOLDS_MOCK_OF_FILE("IsReplaceable, HoldsMock");
 static constexpr ASCIILiteral holdsMockOfFileWhoseOriginalMayRun = AOT_HOLDS_MOCK_OF_FILE("IsReplaceable, HoldsMock, OriginalMayRun");
-
-static constexpr ASCIILiteral holdsMockOfRuntimeModule = R"IR(variable g0 module=m1 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock]
-module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
-module m1 path="node:fs" displayPath="node:fs" kind=Runtime flags=[MayBeMocked] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeFs
-entry module=m0
-function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral holdsMockOfFileBesideRuntimeModuleWhoseOriginalMayRun = R"IR(variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
-variable g1 module=m1 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock]
-variable g2 module=m2 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock, OriginalMayRun]
-module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true}]
-module m1 path="/mocked.cjs" displayPath="mocked.cjs" kind=CommonJs flags=[KeepsError, MayBeMocked] requireResult=ModuleExports body=f1 exportsVariable=g0
-module m2 path="node:fs" displayPath="node:fs" kind=Runtime flags=[MayBeMocked] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeFs
-entry module=m0
-entry module=m1
-function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-    Return
-}
-function f1 name="mocked" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-    v0 = Integer integer=1
-    PutModuleVariable v0 variable=g0
-    Return
-}
-)IR"_s;
 
 #define AOT_LIBRARY_LOADS_BY_NAME(operation) R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/other.js" displayPath="other.js" body=f1
@@ -601,56 +375,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 
 static constexpr ASCIILiteral everyEvaluator = "globalThis.text = '1 + 1'; const evaluators = [eval, Function, (async function () { }).constructor, (function* () { }).constructor, (async function* () { }).constructor]; globalThis.take = () => evaluators.shift();"_s;
 
-static Flags flagsOf(ASCIILiteral programText, OptionWords optionWords = { })
-{
-    std::unique_ptr<CompileOutput> output;
-    runOnBuildThread([&] {
-        output = compileForShellOnThisThread(programText, optionWords);
-    });
-    std::optional<Flags> flags = Image::flags(output->section(Wire::ResultSection::Image));
-    AOT_TEST_CHECK(flags);
-    return *flags;
-}
-
-static String namesOf(Flags flags)
-{
-    StringBuilder names;
-    auto append = [&](const auto&... parts) {
-        names.append(names.isEmpty() ? ""_s : ", "_s, parts...);
-    };
-    for (auto [flag, name] : namedImageFlags) {
-        if (flags.contains(flag))
-            append(name);
-        flags.remove(flag);
-    }
-    if (!flags.isEmpty())
-        append("0x"_s, hex(flags.toRaw(), Lowercase));
-    return names.toString();
-}
-
-struct ExpectedFlags {
-    ASCIILiteral programText;
-    Flags flags;
-    OptionWords optionWords { };
-    std::source_location location = std::source_location::current();
-};
-
-static void checkFlags(std::initializer_list<ExpectedFlags> expectations)
-{
-    const ExpectedFlags* firstMismatch = nullptr;
-    unsigned mismatchCount = 0;
-    for (const ExpectedFlags& expected : expectations) {
-        Flags found = flagsOf(expected.programText, expected.optionWords);
-        if (found == expected.flags)
-            continue;
-        dataLogLn("ImageFlags: line ", expected.location.line(), ": unexpected [", namesOf(found - expected.flags), "], missing [", namesOf(expected.flags - found), "]");
-        if (!mismatchCount++)
-            firstMismatch = &expected;
-    }
-    if (firstMismatch)
-        failNativeTestBecause(firstMismatch->location.file_name(), static_cast<int>(firstMismatch->location.line()), makeString(mismatchCount, " of "_s, expectations.size(), " images differ"_s));
-}
-
 static String refusal(unsigned count)
 {
     StringBuilder text;
@@ -667,7 +391,7 @@ static void checkShellOutput(ASCIILiteral programText, const String& expectedOut
 
 static void testProgramWithoutEventIsClosed()
 {
-    checkFlags({
+    checkImageFlags({
         { printsSum, closed },
         { otherModuleIsNeverLoaded, closed },
         { loadsNativeAddon, closed },
@@ -676,30 +400,15 @@ static void testProgramWithoutEventIsClosed()
 
 static void testReachableEvaluatorLeavesTheProgramClosed()
 {
-    checkFlags({
+    checkImageFlags({
         { evaluatorsFromUnknownCode, closed },
         { evaluatorUnderUnknownKey, closed },
     });
 }
 
-static void testCallThatStartsUnseenCodeAdmitsWhatTextMayLoad()
-{
-    checkFlags({
-        { evaluatesUnknownText, runsText, { "exclude=CodeOutsideImage"_s } },
-        { evaluatesUnknownText, runsTextThatLoadsCode },
-        { constructsFunctionFromUnknownText, runsTextThatLoadsCode },
-        { installsPlugin, runsTextThatLoadsCode },
-        { evaluatesTextBesideOtherModule, runsTextThatLoadsCode },
-        { unseenCodeMayCallLoader, runsTextThatLoadsCode },
-        { evaluatorComesBackFromUnknownCode, runsTextThatLoadsCode },
-        { callsUnknownFunction, runsTextThatLoadsCode },
-        { evaluatorUnderUnknownKeyOfGlobalObject, runsTextThatLoadsCode },
-    });
-}
-
 static void testUncompiledModuleOpensTheProgram()
 {
-    checkFlags({
+    checkImageFlags({
         { importsUncompiledModule, runsModuleFromOutside, { "exclude=CodeOutsideImage"_s } },
         { importsUncompiledModule, runsOnlyCodeOfImage ? runsModuleFromOutside : loadsCodeFromOutside },
     });
@@ -707,7 +416,7 @@ static void testUncompiledModuleOpensTheProgram()
 
 static void testOptionThatAdmitsCodeOpensTheProgram()
 {
-    checkFlags({
+    checkImageFlags({
         { printsSum, open, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
         { printsSum, open, { "admit=Inspector"_s } },
     });
@@ -744,48 +453,9 @@ static void testOptionThatAdmitsCodeKeepsEveryFeature()
     AOT_TEST_CHECK(locales.size() == 1 && locales[0].kind == Wire::LocaleUseKind::Unknown);
 }
 
-static void testCodeThatNobodyHasReadIsNoWorkerStartedWithoutName()
-{
-    auto startsWithoutName = [](ASCIILiteral program, std::initializer_list<ASCIILiteral> words) {
-        std::unique_ptr<CompileOutput> output;
-        runOnBuildThread([&] {
-            output = compileForShellOnThisThread(program, words);
-        });
-        return output->records<Wire::WorkerStartRecord>(Wire::ResultSection::WorkerStartsWithoutName).size();
-    };
-    AOT_TEST_CHECK(!startsWithoutName(printsSum, { }));
-    AOT_TEST_CHECK(!startsWithoutName(printsSum, { "admit=Inspector"_s }));
-    AOT_TEST_CHECK(!startsWithoutName(evaluatesUnknownText, { }));
-    AOT_TEST_CHECK(startsWithoutName(handsOnConstructorOfWorkers, { }) == 1);
-    AOT_TEST_CHECK(startsWithoutName(handsOnConstructorOfWorkers, { "exclude=CodeOutsideImage"_s }) == 1);
-    AOT_TEST_CHECK(startsWithoutName(startsWorkerFromUnknownValue, { }) == 1);
-    AOT_TEST_CHECK(startsWithoutName(startsTwoWorkersFromUnknownValues, { }) == 2);
-}
-
-static void testStartOfWorkerHasPlaceOnlyWhereConstructorWasSeen()
-{
-    auto startHasPlace = [](ASCIILiteral program) -> std::optional<bool> {
-        std::unique_ptr<CompileOutput> output;
-        runOnBuildThread([&] {
-            output = compileForShellOnThisThread(program, { });
-        });
-        std::span<const Wire::WorkerStartRecord> starts = output->records<Wire::WorkerStartRecord>(Wire::ResultSection::WorkerStartsWithoutName);
-        if (starts.empty())
-            return std::nullopt;
-        return starts[0].witness.function != Wire::none;
-    };
-    AOT_TEST_CHECK(startHasPlace(handsOnGlobalObject) == false);
-    AOT_TEST_CHECK(startHasPlace(handsOnGlobalObjectBesideWorkerWithName) == false);
-    AOT_TEST_CHECK(startHasPlace(handsOnConstructorOfWorkers) == true);
-    AOT_TEST_CHECK(startHasPlace(startsWorkerFromUnknownValue) == true);
-    AOT_TEST_CHECK(startHasPlace(startsWorkerFromTextOfURL) == std::nullopt);
-    AOT_TEST_CHECK(startHasPlace(startsWorkerFromAnotherMemberOfURL) == true);
-    AOT_TEST_CHECK(startHasPlace(startsWorkerFromTextOfUnknownURL) == true);
-}
-
 static void testLoadByUnknownNameOnlyExposesModules()
 {
-    checkFlags({
+    checkImageFlags({
         { otherModuleIsLoadedByUnknownName, findsModulesByName, { "exclude=CodeOutsideImage"_s } },
         { otherModuleIsLoadedByUnknownName, runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside },
         { otherModuleIsLoadedByUnknownName, open, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
@@ -794,7 +464,7 @@ static void testLoadByUnknownNameOnlyExposesModules()
 
 static void testLoaderCalledAsValueLoadsByName()
 {
-    checkFlags({
+    checkImageFlags({
         { callsRequireAsValueUnderKnownName, findsModulesByName, { "exclude=CodeOutsideImage"_s } },
         { callsRequireAsValueUnderKnownName, runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside },
     });
@@ -803,7 +473,7 @@ static void testLoaderCalledAsValueLoadsByName()
 
 static void testLoadByNameInLibraryFunctionLeavesTheProgramClosed()
 {
-    checkFlags({
+    checkImageFlags({
         { libraryRequiresUnknownName, closed },
         { libraryImportsUnknownName, closed },
     });
@@ -811,7 +481,7 @@ static void testLoadByNameInLibraryFunctionLeavesTheProgramClosed()
 
 static void testWhatIsDoneToModuleCacheLeavesTheProgramClosed()
 {
-    checkFlags({
+    checkImageFlags({
         { requiresOtherModule, closed },
         { readsModuleCache, closed },
         { removesFromModuleCache, closed },
@@ -821,39 +491,23 @@ static void testWhatIsDoneToModuleCacheLeavesTheProgramClosed()
 
 static void testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown()
 {
-    checkFlags({
+    checkImageFlags({
         { takesMainModuleAsFrontEndSays, (runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside) | showsWaysBetweenModuleObjects },
         { takesMainModuleBehindFrontEnd, runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside },
         { takesMainModuleAsFrontEndSays, open | showsWaysBetweenModuleObjects, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
     });
 }
 
-static void testStoreIntoPathOfMainModuleIsTakenWhereFrontEndLeftItOpen()
-{
-    AOT_TEST_CHECK(flagsOf(storesPathOfMainModuleLeftOpen).contains(ImageFlag::StoresPathOfMainModule));
-    AOT_TEST_CHECK(!flagsOf(storesPathOfMainModuleDecidedInCode).contains(ImageFlag::StoresPathOfMainModule));
-    AOT_TEST_CHECK(!flagsOf(storesPathOfMainModuleDecidedInCode, { "admit=Inspector"_s }).contains(ImageFlag::StoresPathOfMainModule));
-}
-
-static void testExcludedTextLeavesTheProgramClosed()
-{
-    checkFlags({
-        { evaluatesUnknownText, closed, { "exclude=EvaluatedText"_s } },
-        { installsPlugin, runsTextThatLoadsCode, { "exclude=EvaluatedText"_s } },
-        { evaluatesUnknownText, runsTextThatLoadsCode, { "exclude=HostEvaluatedText"_s } },
-    });
-}
-
 static void testObfuscationIsAnotherFlag()
 {
-    checkFlags({ { printsSum, closed | Flags { ImageFlag::IsObfuscated }, { "obfuscate"_s } } });
+    checkImageFlags({ { printsSum, closed | Flags { ImageFlag::IsObfuscated }, { "obfuscate"_s } } });
 }
 
 static constexpr ASCIILiteral testRunWord = "admit=ReplacedBuiltins"_s;
 
 static void testExecutableRefusesOriginalsUnlessVariableSaysThatOneMayRun()
 {
-    checkFlags({
+    checkImageFlags({
         { printsSum, refusesOriginals },
         { holdsMockOfFile, refusesOriginals },
         { holdsMockOfFileWhoseOriginalMayRun, Flags { } },
@@ -862,26 +516,10 @@ static void testExecutableRefusesOriginalsUnlessVariableSaysThatOneMayRun()
 
 static void testTestRunRefusesOriginalsOnlyBesideMockOfFile()
 {
-    checkFlags({
+    checkImageFlags({
         { printsSum, Flags { }, { testRunWord } },
         { holdsMockOfFile, refusesOriginals, { testRunWord } },
         { holdsMockOfFileWhoseOriginalMayRun, Flags { }, { testRunWord } },
-    });
-}
-
-static void testMockOfModuleOfRunTimeIsMockOfNoFile()
-{
-    checkFlags({
-        { holdsMockOfRuntimeModule, Flags { }, { testRunWord } },
-        { holdsMockOfRuntimeModule, refusesOriginals },
-    });
-}
-
-static void testOriginalOfModuleOfRunTimeIsOriginalOfNoFile()
-{
-    checkFlags({
-        { holdsMockOfFileBesideRuntimeModuleWhoseOriginalMayRun, refusesOriginals, { testRunWord } },
-        { holdsMockOfFileBesideRuntimeModuleWhoseOriginalMayRun, refusesOriginals },
     });
 }
 
@@ -981,23 +619,16 @@ std::span<const NativeTest> closedWorldTests()
     static constexpr NativeTest tests[] {
         { "closed-world/flags/program-without-event-is-closed"_s, testProgramWithoutEventIsClosed },
         { "closed-world/flags/reachable-evaluator-leaves-the-program-closed"_s, testReachableEvaluatorLeavesTheProgramClosed },
-        { "closed-world/flags/call-that-starts-unseen-code-admits-what-a-text-may-load"_s, testCallThatStartsUnseenCodeAdmitsWhatTextMayLoad },
         { "closed-world/flags/uncompiled-module-opens-the-program"_s, testUncompiledModuleOpensTheProgram },
         { "closed-world/flags/option-that-admits-code-opens-the-program"_s, testOptionThatAdmitsCodeOpensTheProgram },
-        { "closed-world/flags/code-that-nobody-has-read-is-no-worker-started-without-a-name"_s, testCodeThatNobodyHasReadIsNoWorkerStartedWithoutName },
-        { "closed-world/flags/start-of-worker-has-place-only-where-constructor-was-seen"_s, testStartOfWorkerHasPlaceOnlyWhereConstructorWasSeen },
         { "closed-world/flags/load-by-unknown-name-only-exposes-modules"_s, testLoadByUnknownNameOnlyExposesModules },
         { "closed-world/flags/loader-called-as-value-loads-by-name"_s, testLoaderCalledAsValueLoadsByName },
         { "closed-world/flags/load-by-name-in-library-function-leaves-the-program-closed"_s, testLoadByNameInLibraryFunctionLeavesTheProgramClosed },
         { "closed-world/flags/what-is-done-to-module-cache-leaves-the-program-closed"_s, testWhatIsDoneToModuleCacheLeavesTheProgramClosed },
         { "closed-world/flags/front-end-alone-says-whether-ways-between-module-objects-are-shown"_s, testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown },
-        { "closed-world/flags/store-into-path-of-main-module-is-taken-where-front-end-left-it-open"_s, testStoreIntoPathOfMainModuleIsTakenWhereFrontEndLeftItOpen },
-        { "closed-world/flags/excluded-text-leaves-the-program-closed"_s, testExcludedTextLeavesTheProgramClosed },
         { "closed-world/flags/obfuscation-is-another-flag"_s, testObfuscationIsAnotherFlag },
         { "closed-world/flags/executable-refuses-originals-unless-a-variable-says-that-one-may-run"_s, testExecutableRefusesOriginalsUnlessVariableSaysThatOneMayRun },
         { "closed-world/flags/test-run-refuses-originals-only-beside-a-mock-of-a-file"_s, testTestRunRefusesOriginalsOnlyBesideMockOfFile },
-        { "closed-world/flags/mock-of-a-module-of-the-run-time-is-a-mock-of-no-file"_s, testMockOfModuleOfRunTimeIsMockOfNoFile },
-        { "closed-world/flags/original-of-a-module-of-the-run-time-is-the-original-of-no-file"_s, testOriginalOfModuleOfRunTimeIsOriginalOfNoFile },
         { "closed-world/features/option-that-admits-code-keeps-every-feature"_s, testOptionThatAdmitsCodeKeepsEveryFeature },
         { "closed-world/evaluation/closed-program-refuses-every-evaluator"_s, testClosedProgramRefusesEveryEvaluator },
         { "closed-world/evaluation/program-that-evaluates-text-keeps-every-evaluator"_s, testProgramThatEvaluatesTextKeepsEveryEvaluator },

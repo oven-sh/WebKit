@@ -72,6 +72,11 @@ void OperatorEmitter::generateFindInPrototypeChainUnlessTrapped(const ValueConte
     define(value, Word32(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::PrototypeUnlessTrapped), { object.value(), boxCell(prototype).value() }).first)));
 }
 
+void OperatorEmitter::generateFindsDefaultHasInstanceUnlessTrapped(const ValueContext& value)
+{
+    defineTest(value, callLeaf<Condition>(RuntimeOperation::FindsDefaultHasInstance, { in<Boxed>(value->constructorOperand()) }));
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

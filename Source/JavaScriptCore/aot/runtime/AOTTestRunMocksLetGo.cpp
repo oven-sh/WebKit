@@ -328,7 +328,11 @@ void Modules::evaluateModuleOwed(ModuleID module)
         return;
     if (ModuleID file = fileOf(module); m_modulesWithMockToRun.get(file.index())) {
         scope.release();
-        runMocksBelow(file, RootOfLoad::IsImportedByStatement);
+        m_factoryOverModuleOwedHasNotSettled |= runMocksBelow(file, RootOfLoad::IsImportedByStatement);
+        return;
+    }
+    if (callOfFactoryThatHasNotSettled(fileOf(module))) {
+        m_factoryOverModuleOwedHasNotSettled = true;
         return;
     }
     m_modulesOwedToImportersThatRan.clear(module.index());

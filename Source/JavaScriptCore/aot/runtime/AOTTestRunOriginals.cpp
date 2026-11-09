@@ -127,7 +127,7 @@ void Modules::didLeaveOriginalUnderKeyOfOriginal(ModuleID fileOrModule)
 void Modules::noteWhereOriginalLiesBehindEndOfMock(ModuleID fileOrModule)
 {
     ModuleID module = moduleWithExportsOf(fileOrModule);
-    if (m_modulesThatRanBesideMock.get(module.index()) && !m_packagesThatMockLeavesLoaded.get(module.index())) [[unlikely]]
+    if (m_modulesThatRanBesideMock.get(module.index()) && !m_modulesThatMockLeavesLoaded.get(module.index())) [[unlikely]]
         didLeaveOriginalUnderKeyOfOriginal(fileOrModule);
 }
 
@@ -455,7 +455,7 @@ uint64_t Modules::callOfFactoryThatHasNotSettled(ModuleID module, bool* refusesE
     uint64_t call = host().callOfFactoryThatHasNotSettled(m_instance.globalObject, module, refuses);
     if (refusesEveryRequire)
         *refusesEveryRequire = refuses;
-    return refuses || data(module).isESModuleOfProgram() ? call : 0;
+    return refuses || data(module).isESModuleOfProgram() || (data(module).kind == ModuleKind::CommonJs && !data(module).isOfLibrary()) ? call : 0;
 }
 
 void Modules::noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp)
@@ -501,14 +501,14 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleI
             return true;
         return data(module).hasTopLevelAwait() || status(module) == ModuleStatus::EvaluatingAsync;
     };
-    if (!isMocked(target) && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return pair.required == target && pair.mocked != target; })) {
+    if (!isMocked(target) && !m_importOfFactorysOwnAsks && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return pair.required == target && pair.mocked != target; })) {
         if (!m_instance.vm->m_synchronousModuleQueue) {
             refuseRequireAgain(target, target);
             RETURN_IF_EXCEPTION(scope, { });
         }
         return givesUpAgain();
     }
-    if (!isMocked(target)) {
+    if (!isMocked(target) && !m_importOfFactorysOwnAsks) {
         for (const RequireThatGaveUp& pair : m_requiresThatGaveUp) {
             if (pair.required == pair.mocked || !reachedByStatements(pair.required, AtMock::Stops).get(target.index()) || !reachedByStatements(target, AtMock::Stops).get(pair.mocked.index()))
                 continue;
@@ -528,7 +528,7 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleI
             bool passesThroughLoadThatWasLeft = false;
             for (size_t index : belowTarget) {
                 ModuleID file(index);
-                if (file == above || file == target || isMocked(file) || standsAsItRan(file) || !belowLoadThatWasLeft.get(index))
+                if (file == above || file == target || isMocked(fileOf(file)) || standsAsItRan(file) || !belowLoadThatWasLeft.get(index))
                     continue;
                 BitVector belowFile = reachedByStatements(file, AtMock::Stops);
                 if (m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return belowFile.get(pair.mocked.index()); })) {
@@ -545,12 +545,52 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleI
             return givesUpAgain();
         }
     }
+    auto isAskedByStranger = [&](ModuleID mocked) {
+        return m_requirerOfRequireUnderWay && host().wroteFactoryThatHasNotSettled && !host().wroteFactoryThatHasNotSettled(m_instance.globalObject, fileOf(m_requirerOfRequireUnderWay), mocked);
+    };
+    auto isMetByWhatHasYetToRun = [&](ModuleID mocked) {
+        BitVector seen(m_table.size());
+        Vector<ModuleID, 8> work { target };
+        while (!work.isEmpty()) {
+            ModuleID file = work.takeLast();
+            if (seen.quickSet(file.index()))
+                continue;
+            for (const ModuleRequestData& request : m_table.imports(file)) {
+                if (request.isHoisted || request.isDeferred)
+                    continue;
+                ModuleID imported = moduleLoadedBy(request);
+                if (fileOf(imported) == mocked)
+                    return true;
+                if (!isMocked(fileOf(imported)) && status(imported) < ModuleStatus::Evaluating)
+                    work.append(imported);
+            }
+        }
+        return false;
+    };
+    auto refuseStranger = [&](ModuleID mocked) {
+        ModuleID above = target;
+        for (const RequireThatGaveUp& pair : m_requiresThatGaveUp) {
+            if (pair.mocked == mocked && pair.required != mocked) {
+                above = pair.required;
+                break;
+            }
+        }
+        if (target != mocked)
+            noteThatRequireGaveUpOn(target, true);
+        if (!m_instance.vm->m_synchronousModuleQueue)
+            refuseRequireAgain(target, above);
+    };
     if (wasGivenUpOn(target)) {
         bool isAskedFromLoadThatWasLeft = requirer && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) {
             return pair.mocked == target && pair.required != requirer && reachedByStatements(pair.required, AtMock::Stops).get(requirer.index());
         });
         if (cannotBeRequired(target) || isAskedFromLoadThatWasLeft)
             return givesUpAgain();
+        if (isAskedByStranger(target)) {
+            refuseStranger(target);
+            RETURN_IF_EXCEPTION(scope, { });
+            return givesUpAgain();
+        }
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
     }
     if (callOfFactoryThatHasNotSettled(target))
@@ -561,11 +601,66 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleI
             continue;
         if (cannotBeRequired(mocked))
             return givesUpAgain();
-        requireModuleItselfBesideMock(mocked);
-        RETURN_IF_EXCEPTION(scope, { });
+        if (isAskedByStranger(mocked) && isMetByWhatHasYetToRun(mocked)) {
+            refuseStranger(mocked);
+            RETURN_IF_EXCEPTION(scope, { });
+            return givesUpAgain();
+        }
+        if (data(mocked).kind != ModuleKind::CommonJs) {
+            requireModuleItselfBesideMock(mocked);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         m_filesRequiredWithOriginalWhileFactoryRan.append({ target, mocked });
     }
     return { };
+}
+
+bool Modules::isImportOfFactorysOwnBehindRequireThatGaveUp(ModuleID module, ModuleID referrer)
+{
+    if (!host().wroteFactoryThatHasNotSettled || isMocked(fileOf(module)))
+        return false;
+    m_requiresThatGaveUp.removeAllMatching([&](const RequireThatGaveUp& pair) {
+        return pair.call != callOfFactoryThatHasNotSettled(pair.mocked) || mockInPlace(pair.mocked);
+    });
+    bool comesToMockThatWasGivenUpOn = false;
+    for (size_t below : reachedByStatements(module, AtMock::Stops)) {
+        ModuleID mocked = fileOf(ModuleID(below));
+        if (!m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return pair.mocked == mocked; }))
+            continue;
+        if (hasBegunToLoad(mocked) || !host().wroteFactoryThatHasNotSettled(m_instance.globalObject, fileOf(referrer), mocked))
+            return false;
+        comesToMockThatWasGivenUpOn = true;
+    }
+    return comesToMockThatWasGivenUpOn;
+}
+
+JSValue Modules::continueImportAsFactorysOwn(ModuleID module, ModuleID referrer)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!isImportOfFactorysOwnBehindRequireThatGaveUp(module, referrer)) {
+        SetForScope importOfFactorysOwnHasItsText(m_importOfFactorysOwnHasItsText, true);
+        RELEASE_AND_RETURN(scope, import(module, referrer, jsUndefined()));
+    }
+    SetForScope importOfFactorysOwnAsks(m_importOfFactorysOwnAsks, true);
+    bool anotherFactoryHasNotSettled = runMocksBelow(module);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (anotherFactoryHasNotSettled) {
+        m_importOfFactorysOwnAsks = false;
+        SetForScope importOfFactorysOwnHasItsText(m_importOfFactorysOwnHasItsText, true);
+        RELEASE_AND_RETURN(scope, import(module, referrer, jsUndefined()));
+    }
+    require(module, referrer, RequiredBy::Program);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSObject* names = moduleNamespace(module, ModulePhase::Evaluation, false);
+    RETURN_IF_EXCEPTION(scope, { });
+    m_filesRequiredWithOriginalWhileFactoryRan.removeAllMatching([&](const auto& pair) {
+        if (pair.first != module)
+            return false;
+        if (wouldBeEvicted(fileOf(module)))
+            evict(module);
+        return true;
+    });
+    return names;
 }
 
 JSValue Modules::importModuleItselfBesideMock(ModuleID module, JSValue answerOfImport)

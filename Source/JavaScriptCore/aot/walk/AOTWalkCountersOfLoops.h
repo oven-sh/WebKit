@@ -43,6 +43,7 @@ bool isNumberCarriedBesideTextOrBigInt(const Walker&, Reference enters, TypeID c
 struct VariableAskedInFrontOfLoop {
     VariableID variable;
     TypeID tested;
+    StatisticID counted;
 };
 void guessDivisorsOfIntegersInFrontOfLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses, Vector<VariableAskedInFrontOfLoop, 2>& variables);
 

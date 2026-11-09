@@ -558,6 +558,11 @@ public:
         uint32_t firstStepBehind;
     };
     ArenaVector<ReleaseByWaysOn> m_releasesByWaysOn;
+    struct SpillWrittenInBlock {
+        SpillIndex spill;
+        const Block* block;
+    };
+    ArenaVector<SpillWrittenInBlock> m_spillsWrittenInBlocks;
     mutable ArenaVector<uint8_t> m_whetherValuesThatRareRegionsReadAreWorthCalleeSaveNotYetSaved;
     struct WhetherHeadAroundHolds {
         uint32_t loopWhoseHeadHolds { noLoop };

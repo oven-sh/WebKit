@@ -697,6 +697,9 @@ void Encoder::run()
         for (const MacroAssembler::Label& target : table.targets)
             RELEASE_ASSERT(target.isSet());
     }
+
+    if (m_marksOfSlotsRead & Frame::markOfSlotThatNoStepReads) [[unlikely]]
+        failBecauseSlotThatNoStepReadsIsRead();
 }
 
 bool Encoder::fallsThroughToSlowCase(const Block* from, const Block* target) const
@@ -1154,9 +1157,28 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeExecuteInline(const Step& ste
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void Encoder::failBecauseSlotThatNoStepReadsIsRead(SpillIndex spill) const
+void Encoder::failBecauseSlotThatNoStepReadsIsRead() const
 {
-    m_proc.fail(FailureKind::SpillSlotLacksItsValue, m_allocation.spills()[spill].value);
+    std::span<const SpillFacts> spills = m_allocation.spills();
+    const Operation* valueOfSlot = nullptr;
+    auto look = [&](Location location) {
+        if (!valueOfSlot && location.isSpill() && spills[location.spillIndex()].isReadByNoStep)
+            valueOfSlot = spills[location.spillIndex()].value;
+    };
+    for (const Step& step : m_allocation.steps()) {
+        for (Location source : step.sources)
+            look(source);
+        if (step.patchAssignment == UINT32_MAX)
+            continue;
+        std::span<const Location> locations = m_allocation.patchAssignment(step.patchAssignment).locations;
+        for (Location operand : locations.subspan(std::min<size_t>(m_proc.resultCount(step.operation->type()), locations.size())))
+            look(operand);
+    }
+    for (const SpillFacts& spill : spills) {
+        if (!valueOfSlot && spill.isReadByNoStep)
+            valueOfSlot = spill.value;
+    }
+    m_proc.fail(FailureKind::SpillSlotLacksItsValue, valueOfSlot);
 }
 
 void Encoder::storeToSpill(const Operation* value)

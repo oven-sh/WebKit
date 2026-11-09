@@ -11,6 +11,7 @@
 #include "AOTCode.h"
 #include "AOTCompileUnit.h"
 #include "AOTStages.h"
+#include "AOTSumOverRecords.h"
 #include "AOTSweep.h"
 #include "AOTTypeText.h"
 #include "AOTWalk.h"
@@ -160,6 +161,139 @@ static void runVerifyCodeCommand(TestCommandContext& context)
         context.out.println("verified"_s);
     else
         context.out.println(nameOf(kindOfBrokenRule), ": "_s, brokenRule);
+}
+
+static std::optional<std::pair<StringView, ValueID>> valueNamedByWordOfWalkCommand(const Code& code, const String& word)
+{
+    size_t equals = word.find('=');
+    if (equals == notFound || word.length() < equals + 3 || word[equals + 1] != 'v')
+        return std::nullopt;
+    std::optional<uint32_t> number = parseInteger<uint32_t>(StringView(word).substring(equals + 2));
+    if (!number || *number >= code.numberOfValues())
+        return std::nullopt;
+    return std::pair { StringView(word).left(equals), ValueID(*number) };
+}
+
+static void runPositionInsideCommand(TestCommandContext& context)
+{
+    VerifiedWalks walks(context);
+    if (!walks.isReady())
+        return;
+    Code code;
+    if (!readCodeOfSection(context, walks, code))
+        return;
+    GroundsOfPosition grounds;
+    for (const String& word : context.arguments) {
+        auto named = valueNamedByWordOfWalkCommand(code, word);
+        ValueID GroundsOfPosition::* place = !named ? nullptr
+            : named->first == "position"_s ? &GroundsOfPosition::position
+            : named->first == "length"_s ? &GroundsOfPosition::length
+            : named->first == "below"_s || named->first == "not-below"_s ? &GroundsOfPosition::isBelow
+            : named->first == "from-zero-up"_s ? &GroundsOfPosition::isFromZeroUp
+            : named->first == "counter"_s ? &GroundsOfPosition::counter
+            : named->first == "start"_s ? &GroundsOfPosition::start
+            : named->first == "length-holds-bound"_s ? &GroundsOfPosition::lengthHoldsBound
+            : nullptr;
+        if (!place) {
+            context.out.println("bad argument "_s, word);
+            return;
+        }
+        grounds.*place = named->second;
+        if (named->first == "not-below"_s)
+            grounds.isBelowAnswersYes = false;
+    }
+    bool isShown = grounds.position && groundsShowPositionInside(code, walks.types(), grounds.position, grounds, scopedLambda<bool(ValueID, bool)>([](ValueID, bool) {
+        return true;
+    }));
+    context.out.println(isShown ? "shown"_s : "not shown"_s);
+}
+
+struct GroundsWrittenInTests {
+    static PassedTest make(std::span<const PassedTest::Side> sides, const std::optional<GroundsOfPosition>& grounds)
+    {
+        PassedTest passed;
+        for (const PassedTest::Side& side : sides)
+            passed.add(side);
+        passed.m_groundsOfPosition = grounds;
+        return passed;
+    }
+};
+
+static void runVerifyGroundsCommand(TestCommandContext& context)
+{
+    VerifiedWalks walks(context);
+    if (!walks.isReady())
+        return;
+    Code code;
+    if (!readCodeOfSection(context, walks, code))
+        return;
+    code.setKeepsTestsPassed(true);
+    ValueID access;
+    Vector<PassedTest::Side, 4> sides;
+    std::optional<GroundsOfPosition> grounds;
+    auto noteGroundsOfAccess = [&] {
+        if (access)
+            code.noteTestsPassedFor(access, GroundsWrittenInTests::make(sides.span(), grounds));
+        sides.shrink(0);
+        grounds = std::nullopt;
+    };
+    for (const String& word : context.arguments) {
+        auto named = valueNamedByWordOfWalkCommand(code, word);
+        if (named && named->first == "access"_s) {
+            noteGroundsOfAccess();
+            access = named->second;
+            continue;
+        }
+        if (named && access && (named->first == "passed"_s || named->first == "failed"_s)) {
+            sides.append({ named->second, named->first == "passed"_s });
+            continue;
+        }
+        ValueID GroundsOfPosition::* place = !named || !access ? nullptr
+            : named->first == "view"_s ? &GroundsOfPosition::view
+            : named->first == "position"_s ? &GroundsOfPosition::position
+            : named->first == "length"_s ? &GroundsOfPosition::length
+            : named->first == "below"_s ? &GroundsOfPosition::isBelow
+            : named->first == "from-zero-up"_s ? &GroundsOfPosition::isFromZeroUp
+            : named->first == "length-holds-bound"_s ? &GroundsOfPosition::lengthHoldsBound
+            : nullptr;
+        if (!place) {
+            context.out.println("bad argument "_s, word);
+            return;
+        }
+        if (!grounds)
+            grounds = GroundsOfPosition { };
+        (*grounds).*place = named->second;
+    }
+    noteGroundsOfAccess();
+    String brokenRule = verifyCode(walks.contextOfVerifier(), code);
+    context.out.println(brokenRule.isNull() ? "verified"_s : brokenRule);
+}
+
+static void runElementPresentCommand(TestCommandContext& context)
+{
+    VerifiedWalks walks(context);
+    if (!walks.isReady())
+        return;
+    Code code;
+    if (!readCodeOfSection(context, walks, code))
+        return;
+    ValueID list;
+    ValueID position;
+    Vector<PassedTest::Side, 4> sides;
+    for (const String& word : context.arguments) {
+        auto named = valueNamedByWordOfWalkCommand(code, word);
+        if (named && named->first == "list"_s)
+            list = named->second;
+        else if (named && named->first == "position"_s)
+            position = named->second;
+        else if (named && (named->first == "passed"_s || named->first == "failed"_s))
+            sides.append({ named->second, named->first == "passed"_s });
+        else {
+            context.out.println("bad argument "_s, word);
+            return;
+        }
+    }
+    context.out.println(list && position && !sides.isEmpty() && testsShowElementPresent(code, list, position, sides.span()) ? "shown"_s : "not shown"_s);
 }
 
 static void runSweepCodeCommand(TestCommandContext& context)
@@ -348,6 +482,9 @@ std::span<const TestCommand> walkTestCommands()
         { "code-round-trip"_s, runCodeRoundTripCommand },
         { "verify-code"_s, runVerifyCodeCommand },
         { "sweep-code"_s, runSweepCodeCommand },
+        { "position-inside"_s, runPositionInsideCommand, ProgramOfCommand::AsWritten, "position=v<n> length=v<n> { below=v<n> | not-below=v<n> | from-zero-up=v<n> | counter=v<n> | start=v<n> | length-holds-bound=v<n> }"_s },
+        { "element-present"_s, runElementPresentCommand, ProgramOfCommand::AsWritten, "list=v<n> position=v<n> { passed=v<n> | failed=v<n> }"_s },
+        { "verify-grounds"_s, runVerifyGroundsCommand, ProgramOfCommand::AsWritten, "{ access=v<n> { view=v<n> | position=v<n> | length=v<n> | below=v<n> | from-zero-up=v<n> | length-holds-bound=v<n> | passed=v<n> | failed=v<n> } }"_s },
     };
     return commands;
 }

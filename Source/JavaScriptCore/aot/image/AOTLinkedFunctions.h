@@ -96,6 +96,7 @@ public:
         , m_fusedCallEntries(WTF::move(fusedCallEntries))
     {
         RELEASE_ASSERT(m_placesInCode.size() == m_functions.size());
+        RELEASE_ASSERT(std::ranges::is_sorted(m_fusedCallEntries, { }, &FusedCallEntry::unitIndex) && std::ranges::is_sorted(m_fusedCallEntries, { }, &FusedCallEntry::place));
         indexPlacesInCode();
     }
     explicit LinkedFunctions(Vector<CompiledCode>&& functions, Vector<FusedCallEntry>&& fusedCallEntries = { })

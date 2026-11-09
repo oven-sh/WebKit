@@ -12,6 +12,7 @@ namespace JSC { namespace AOT { namespace Typed {
 inline constexpr OpcodeSet opcodesThatBuildTypedForInTakes { Opcode::ForInOpen, Opcode::ForInStep };
 AOT_LINK_OF_WALK(buildTypedForIn, opcodesThatBuildTypedForInTakes)
 bool countOfNamesComesRound(Walker&, const Walker::IterationByIndex&);
+void noteKeysAreAsEnumeratorFoundThem(Walker&, Reference enumerator, Reference object);
 
 inline constexpr OpcodeSet opcodesThatUseKeyOfForInBehindTestTakes { Opcode::ElemGet, Opcode::ElemHas, Opcode::Call };
 bool useKeyOfForInBehindTestOfItsOpcodes(Walker&, const BodyValue&);

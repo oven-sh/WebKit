@@ -811,24 +811,34 @@ bool Modules::isImportedByModuleLinkedInThisTestFile(ModuleID fileOrModule, Modu
     return false;
 }
 
-bool Modules::bringBackMockKeptByImportersOfThisTestFile(ModuleID fileOrModule)
+bool Modules::isMockOfPreloadSetAsideByMockOfThisTestFile(ModuleID fileOrModule)
 {
-    LoadedModule& held = ensureLoaded(fileOrModule);
     JSObject* standing = mockInPlace(fileOrModule);
-    JSObject* ofPreload = held.mockLaidInPreload.get();
+    JSObject* ofPreload = ensureLoaded(fileOrModule).mockLaidInPreload.get();
     if (!standing || !ofPreload || hasMockThatEnded(fileOrModule))
         return false;
     if (standing != ofPreload) {
         auto ended = m_endedMocks.find(fileOrModule);
-        if (ended == m_endedMocks.end() || !ended->value.last().isKeptWhereImporterIsAskedForAgain || ended->value.last().momentOfTestFile != m_instance.vm->aotState().momentOfTestFile || endedMock(fileOrModule, ended->value.size() - 1) != ofPreload)
-            return false;
+        return ended != m_endedMocks.end() && ended->value.last().isKeptWhereImporterIsAskedForAgain && ended->value.last().momentOfTestFile == m_instance.vm->aotState().momentOfTestFile && endedMock(fileOrModule, ended->value.size() - 1) == ofPreload;
+    }
+    auto waiting = m_momentsWaitingMocksWereLaid.find(fileOrModule);
+    return m_modulesWithMockToRun.get(fileOrModule.index()) && waiting != m_momentsWaitingMocksWereLaid.end() && waiting->value.importersKeepMockThatStands;
+}
+
+bool Modules::bringBackMockKeptByImportersOfThisTestFile(ModuleID fileOrModule)
+{
+    if (!isMockOfPreloadSetAsideByMockOfThisTestFile(fileOrModule))
+        return false;
+    LoadedModule& held = ensureLoaded(fileOrModule);
+    JSObject* standing = mockInPlace(fileOrModule);
+    JSObject* ofPreload = held.mockLaidInPreload.get();
+    held.isAnsweredWithNamespaceUnderMockLaidInPreload |= data(fileOrModule).kind == ModuleKind::CommonJs && held.wasImportedUnderMockLaidInPreload && !held.wasRequiredUnderMockLaidInPreload;
+    if (standing != ofPreload) {
         ModuleID module = moduleWithExportsOf(fileOrModule);
         keepMockThatStoodInPlace(fileOrModule, module, standing, exportsLeftOutOf(module));
         letGoOfNamespaceMadeUnderMock(module);
         setMockInPlace(fileOrModule, ofPreload, held.whatRequireAnswersUnderMockLaidInPreload.get());
-    } else if (auto waiting = m_momentsWaitingMocksWereLaid.find(fileOrModule); !m_modulesWithMockToRun.get(fileOrModule.index()) || waiting == m_momentsWaitingMocksWereLaid.end() || !waiting->value.importersKeepMockThatStands)
-        return false;
-    else
+    } else
         m_mocksOfPreloadThatCameBackBeforeAnyImport.set(fileOrModule.index(), !ensureLoaded(moduleWithExportsOf(fileOrModule)).wasImportedUnderMockInPlace);
     forgetCallOfMock(fileOrModule);
     m_modulesWithMockToRun.clear(fileOrModule.index());

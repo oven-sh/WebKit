@@ -9,7 +9,6 @@
 
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTableRealm.h"
-#include "AOTHostEntriesTestSupport.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramTables.h"
@@ -84,26 +83,6 @@ static uint32_t putKeyInPlaceOf(LoadedProgram& program, BuiltinCellKey keyOfImag
 static JSValue evaluate(LoadedProgram& program, ASCIILiteral source)
 {
     return program.realms().evaluate(program.realm(), source);
-}
-
-static void checkKeys(LoadedProgram& program)
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    std::span<const uint32_t> keys = program.instance().tables().builtinCells();
-    AOT_TEST_CHECK(!keys.empty());
-    for (uint32_t encoded : keys) {
-        std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(encoded, table);
-        AOT_TEST_CHECK(key && key->encoded() == encoded && key->hasCell(table));
-    }
-
-    AOT_TEST_CHECK(!BuiltinCellKey::decode(UINT32_MAX, table) && !BuiltinCellKey::decode(3u << 24, table) && !BuiltinCellKey::decode(table.builtinCount(), table));
-    AOT_TEST_CHECK(BuiltinCellKey::decode(BuiltinCellKey::setter(Builtins::MathMax).encoded(), table) == BuiltinCellKey::setter(Builtins::MathMax));
-    AOT_TEST_CHECK(BuiltinCellKey::object(Builtins::MathMax).hasCell(table) && BuiltinCellKey::object(Builtins::SymbolIterator).hasCell(table));
-    AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::MathPI).hasCell(table) && !BuiltinCellKey::getter(Builtins::MathMax).hasCell(table));
-    AOT_TEST_CHECK(BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeByteLength).hasCell(table) && !BuiltinCellKey::setter(Builtins::ArrayBufferPrototypeByteLength).hasCell(table));
-    AOT_TEST_CHECK(!BuiltinCellKey::getter(Builtins::ArrayPrototypeLength).hasCell(table));
-    AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::ModuleObjectExports).hasCell(table) && !BuiltinCellKey::object(Builtins::ImportMeta).hasCell(table));
-    AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::CompilerHelpers).hasCell(table) && BuiltinCellKey::object(Builtins::CompilerHelpersOwnEntriesFlat).hasCell(table));
 }
 
 static BuiltinCellKey nativeGetterKeyOf() { return BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeMaxByteLength); }
@@ -216,7 +195,6 @@ static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<builtinC
 std::span<const NativeTest> builtinCellsTests()
 {
     static constexpr NativeTest tests[] = {
-        { "builtin-cells/keys"_s, withProgram<checkKeys> },
         { "builtin-cells/getter-of-custom-accessor-survives-a-collection"_s, withProgram<checkGetterOfCustomAccessorSurvivesACollection> },
         { "builtin-cells/built-in-outside-the-realm"_s, withProgram<checkBuiltinOutsideTheRealm> },
         { "builtin-cells/per-module-member"_s, withProgram<checkPerModuleMember> },

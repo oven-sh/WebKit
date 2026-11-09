@@ -27,7 +27,7 @@ operation AreMembersUnchanged (conditions: List<MemberConditionRecord>) -> natur
 operation HasKeyOrder (object: Layout/inspects, layout: Layout, fields: List<Field>) [| engine hasNoFlags] -> natural(boolean) ; reads(OrderWords) ; proves = KeyOrder ; relies = Shape ; form = Open
 operation AreHeldFieldsFilled (object: Layout/inspects, layout: Layout) -> natural(boolean) ; reads(ObjectFields, OrderWords, NamedProperties) ; proves = HeldFieldsFilled ; relies = Shape ; runtime = AreHeldFieldsFilled ; form = Open
 operation IsClosureOf (function: Function(Dispatch), value: Any/inspects) -> natural(boolean) ; none ; AsRead..Placed ; proves = ExactFunction ; flow = TableProves ; hasOwnFoldingRule = true ; form = Open
-operation IsEnumeratorCurrent (enumerator: Enumerator/inspects, object: Any/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; proves = EnumeratorCurrent ; form = Open
+operation IsEnumeratorCurrent (enumerator: Enumerator/inspects, object: Any/inspects, position: Integer/inspects, currentNames?: Integer/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; proves = EnumeratorCurrent ; form = Open
 
 family GuardValue Prepared..Placed
 
@@ -164,6 +164,7 @@ operation PromiseAllOfElements (contents: Type, directCalls: UInt32, elements...
 family Operator Prepared..Placed
 operation HasInPrototypeChain (value: Any/inspects+runs(PrototypeChain), prototype: Object/inspects) -> natural(boolean) ; Allocates reads(PrototypeLinks) throws ; runtime = DefaultHasInstance ; branches = May ; replaces = InstanceOf ; hasOwnFoldingRule = true ; form = Closed
 engine operation FindInPrototypeChainUnlessTrapped (value: Any/inspects, prototype: Object/inspects) -> natural(int[0, 2]) ; reads(PrototypeLinks) ; form = Closed
+engine operation FindsDefaultHasInstanceUnlessTrapped (constructor: Object/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; form = Closed
 
 family Module Prepared..Placed
 operation BeginModuleEvaluation (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = BeginModuleEvaluation ; branches = May ; form = Open
