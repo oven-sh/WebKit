@@ -1,6 +1,6 @@
 # the storage of an eval binding fits its kind
 # RUN: verify
-# DIAGNOSTIC: PayloadOutOfRange 27
+# DIAGNOSTIC: PayloadOutOfRange 30
 
 module m0 path="main" displayPath="main"
 entry module=m0
@@ -9,7 +9,7 @@ layout L1 fields=[{key="c" declared={type=anything}}]
 layout L2 kind=Instance fields=[{key=#"p"@L2 declared={type=anything} flags=[IsPrivate]}, {key="q" declared={type=anything}}]
 variable g0 name="x" module=m0 declared={type=anything}
 evalscope e0 bindings=[{name="goodVariable" variable=g0}, {name="goodOperand" operand=0}, {name="goodField" layout=L0 field=0 operand=0}, {name="goodMappedArgument" kind=MappedArgument field=1 operand=0}]
-evalscope e1 bindings=[{name="goodPrivateName" kind=PrivateName layout=L2 field=0 operand=0}, {name="goodPrivateNameOfToken" kind=PrivateName operand=0}, {name="goodStaticPrivateName" kind=PrivateName layout=L0 field=0 operand=0}]
+evalscope e1 bindings=[{name="goodPrivateName" kind=PrivateName layout=L2 field=0 operand=0}, {kind=ClassObject depth=1 operand=1}, {name="goodStaticPrivateName" kind=PrivateName depth=1 layout=L0 field=0 operand=0}, {name="goodStaticPrivateNameInVariable" kind=PrivateName depth=1 variable=g0 operand=1}]
 evalscope e2 bindings=[{kind=PrivateFunction operand=1}, {name="goodPrivateMethod" kind=PrivateMethod layout=L2 field=0 operand=0 function=0}, {name="goodGetter" kind=PrivateAccessor layout=L2 field=0 operand=0 function=0}, {name="goodSetter" kind=PrivateAccessor layout=L2 field=0 operand=0 setter=0}, {kind=PrivateAccessorPair layout=L0 field=0 operand=1}, {name="goodPair" kind=PrivateAccessor layout=L2 field=0 operand=0 function=4 setter=4}, {kind=PrivateFunction variable=g0}]
 evalscope e3 bindings=[{name="badNeitherVariableNorOperand"}]
 evalscope e4 bindings=[{name="badVariableAndOperand" variable=g0 operand=0}]
@@ -38,3 +38,6 @@ evalscope e26 bindings=[{name="x" variable=g0}, {name="badPrivateMethodWhoseFunc
 evalscope e27 bindings=[{kind=PrivateAccessorPair operand=1}, {name="badPrivateMethodOfAPair" kind=PrivateMethod layout=L2 field=0 operand=0 function=0}]
 evalscope e28 bindings=[{kind=PrivateAccessorPair operand=1}, {name="badGetterOfAPairWithoutItsSetter" kind=PrivateAccessor layout=L2 field=0 operand=0 function=0}]
 evalscope e29 bindings=[{name="badPrivateFunctionWithAName" kind=PrivateFunction operand=1}]
+evalscope e30 bindings=[{kind=ClassObject operand=1}, {name="badStaticPrivateNameByValue" kind=PrivateName operand=0}]
+evalscope e31 bindings=[{name="badStaticPrivateNameWithoutItsClassObject" kind=PrivateName layout=L0 field=0 operand=0}]
+evalscope e32 bindings=[{kind=ClassObject depth=1 operand=1}, {name="badStaticPrivateNameAtAnotherDepthThanItsClassObject" kind=PrivateName depth=2 variable=g0 operand=1}]

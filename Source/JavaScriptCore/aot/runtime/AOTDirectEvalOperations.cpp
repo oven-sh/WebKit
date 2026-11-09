@@ -378,6 +378,7 @@ Symbol* EvalBindings::nameOfStaticField(VM& vm, const EvalBindingData& binding)
     uint32_t index = privateValueIndexOf(binding);
     if (JSValue known = m_operands->get(index))
         return asSymbol(known);
+    // The verifier of programs holds a static private field to the two assertions below: isStoredBesideItsClassObject.
     auto bindingsOfRequest = unsafeMakeSpan(m_request->bindings, m_request->numberOfBindings);
     auto bindingOfClassObject = std::ranges::find_if(bindingsOfRequest, [&](const EvalBindingData& other) {
         return kindOf(other) == EvalBindingKind::ClassObject && other.depth == binding.depth;
