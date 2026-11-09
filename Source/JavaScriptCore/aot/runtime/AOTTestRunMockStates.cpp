@@ -22,13 +22,13 @@ namespace JSC { namespace AOT {
 auto Modules::mockState(ModuleID module) -> MockState
 {
     LoadedModule* loaded = loadedIfExists(module);
-    bool waits = m_modulesWithMockToRun.get(module.index());
-    bool isInPlace = m_modulesWithMockInPlace.get(module.index());
-    bool isLaidOver = loaded && loaded->hasMockLaidOver;
-    bool isOverModuleThatHasRun = isLeftAloneByMock(module);
-    bool isToBeLetGo = hasMockThatEnded(module);
+    bool waits = m_modulesWithPendingMock.get(module.index());
+    bool isInPlace = m_modulesWithActiveMock.get(module.index());
+    bool isLaidOver = loaded && loaded->isPatchedByMock;
+    bool isOverModuleThatHasRun = hasIntactOriginal(module);
+    bool isToBeLetGo = hasRemovedMock(module);
     bool hasWaited = m_modulesWithMockThatWaited.get(module.index());
-    bool hasKeptError = m_modulesWithLoadEndedByMock.get(module.index()) || m_mockedModulesWithErrorKeptByLoader.get(module.index());
+    bool hasKeptError = m_modulesWithMockLoadError.get(module.index()) || m_mockedModulesWithErrorKeptByLoader.get(module.index());
     bool isOfLibrary = data(module).isOfLibrary();
     ModuleStatus body = status(module);
     bool hasBegun = body != ModuleStatus::Unlinked && body != ModuleStatus::Linking && body != ModuleStatus::Linked;
@@ -77,14 +77,14 @@ String Modules::describeMockState(ModuleID module)
         };
         text.append(" ["_s);
         say(isMocked(module), "mocked"_s);
-        say(m_modulesWithMockToRun.get(module.index()), "to-run"_s);
+        say(m_modulesWithPendingMock.get(module.index()), "to-run"_s);
         say(m_modulesWithMockThatWaited.get(module.index()), "waited"_s);
-        say(m_modulesWithMockThatAsksAgain.get(module.index()), "asks-again"_s);
-        say(m_modulesWithMockInPlace.get(module.index()), "in-place"_s);
-        say(hasMockThatEnded(module), "to-let-go"_s);
-        say(loaded && loaded->hasMockLaidOver, "laid-over"_s);
-        say(isLeftAloneByMock(module), "over-run"_s);
-        say(m_modulesWithLoadEndedByMock.get(module.index()), "load-ended"_s);
+        say(m_mocksRetriedAfterFailure.get(module.index()), "asks-again"_s);
+        say(m_modulesWithActiveMock.get(module.index()), "in-place"_s);
+        say(hasRemovedMock(module), "to-let-go"_s);
+        say(loaded && loaded->isPatchedByMock, "laid-over"_s);
+        say(hasIntactOriginal(module), "over-run"_s);
+        say(m_modulesWithMockLoadError.get(module.index()), "load-ended"_s);
         say(m_mockedModulesWithErrorKeptByLoader.get(module.index()), "error-kept"_s);
         text.append(" ]"_s);
     }

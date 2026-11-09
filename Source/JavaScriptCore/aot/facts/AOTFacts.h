@@ -71,7 +71,7 @@ struct ProgramFactTables {
     bool hasOneInstance { false };
     bool unseenCodeCanRun { true };
     bool unseenScriptsCanRun { true };
-    bool storesPathOfMainModule { true };
+    bool setsMainModulePath { true };
     bool matchesRegExps { true };
     bool mayReadLegacyRegExpStatics { true };
 
@@ -287,7 +287,7 @@ public:
     std::span<const UnseenCodeRecord> loadsOfMachineCode() const LIFETIME_BOUND { return m_tables.program.loadsOfMachineCode.span(); }
     bool hasOneInstance() const { return m_tables.program.hasOneInstance; }
     bool matchesRegExps() const { return m_tables.program.matchesRegExps; }
-    bool storesPathOfMainModule() const { return m_tables.program.storesPathOfMainModule; }
+    bool setsMainModulePath() const { return m_tables.program.setsMainModulePath; }
     std::span<const RegExpTextInSight> regExpTextsInSight() const LIFETIME_BOUND { return m_tables.program.regExpTextsInSight.span(); }
     std::span<const RegExpTextWorkedOut> regExpTextsWorkedOut() const LIFETIME_BOUND { return m_tables.program.regExpTextsWorkedOut.span(); }
     std::span<const WorkerEntry> workerEntries() const LIFETIME_BOUND { return m_tables.program.workerEntries.span(); }

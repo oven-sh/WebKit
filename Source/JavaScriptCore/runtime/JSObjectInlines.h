@@ -312,7 +312,7 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
         if (!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
             prototype = object->getPrototypeDirect();
 #if ENABLE(AOT)
-        else if (vm.hasCompiledCode() && AOT::PropertyWalk::searchCameByStructures(this, object))
+        else if (vm.hasCompiledCode() && AOT::PropertyWalk::isOrdinaryPrototypeChain(this, object))
             prototype = object->getPrototypeDirect();
 #endif
         else {

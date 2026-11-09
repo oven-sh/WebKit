@@ -751,11 +751,15 @@ ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::create(VM& vm,
     ++m_numberOfStructuresMade;
     RELEASE_ASSERT(!variant.hasExtraProperties || !layout.extraPropertiesSlot() == !!variant.heldExtraProperties);
     RELEASE_ASSERT(!variant.heldExtraProperties || (variant.hasExtraProperties && !variant.extraPropertiesStructure));
-    if (variant.realm == realm)
-        return CompiledStructure::createForObject(vm, *templateStructure, variant);
     Variant parameters = variant;
     parameters.realm = realm;
-    return CompiledStructure::createForObject(vm, *templateStructure, parameters);
+    CompiledStructure* structure = CompiledStructure::createForObject(vm, *templateStructure, parameters);
+    bool hasFieldThatIsBornFixed = variant.hasExtraProperties && std::ranges::any_of(layout.fields(), [](const FieldData& field) {
+        return field.attributes() & PropertyAttribute::DontDelete;
+    });
+    if (variant.hasExtraProperties && !hasFieldThatIsBornFixed)
+        structure->setHasOnlyConfigurableFields();
+    return structure;
 }
 
 ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::createUsual(VM& vm, const LayoutData& layout, const Variant& usual)

@@ -79,7 +79,7 @@ public:
     void didLoadModule(RuntimeModuleID, JSObject* exports);
     void didLoadNativeModule(RuntimeModuleID, JSObject* exports);
     void didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* member);
-    JSObject* takeMemberMadeAhead(JSObject* holder, UniquedStringImpl* key);
+    JSObject* takePreallocatedMember(JSObject* holder, UniquedStringImpl* key);
     JSObject* memberMadeAhead(JSObject* holder, UniquedStringImpl* key) const;
 
     bool didLock(BuiltinID, JSObject*);

@@ -383,8 +383,10 @@ static void appendStepsBehindPatchResult(Allocator& allocator, Operation* value,
         appendMoveForPatchAllocation(allocator, StepKind::Reload, value, Location::reg(reg), definedIn);
         allocator.bind(reg, value);
         SpillIndex spill = allocator.markSpilled(value);
-        if (!isMember || borrowed)
+        if (!isMember || borrowed) {
             appendMoveForPatchAllocation(allocator, StepKind::Save, value, Location::spill(spill), Location::reg(reg));
+            allocator.m_spillsWrittenInBlocks.append(allocator.m_arena, Allocator::SpillWrittenInBlock { spill, allocator.m_block });
+        }
         allocator.noteFrameUse();
     }
 
@@ -1737,6 +1739,7 @@ static void clearMemoryOfReleasedValue(Allocator& allocator, Operation* value)
         Step& step = allocator.appendStep(StepKind::ClearSpill, value);
         step.width = allocator.m_allocation.spills()[spill].width;
         step.destination = Location::spill(spill);
+        allocator.m_spillsWrittenInBlocks.append(allocator.m_arena, Allocator::SpillWrittenInBlock { spill, allocator.m_block });
         allocator.noteFrameUse();
     };
     clear(allocator.m_allocation.spillOf(value));
@@ -1754,6 +1757,12 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
     RegisterMask freed = 0;
     ArenaVector<Operation*> phis;
     phis.append(m_arena, released);
+    if (m_phiSourceStates.isEmpty())
+        m_phiSourceStates.fill(m_arena, m_proc.numberOfOperations(), PhiSourceState { });
+    const uint32_t visit = ++m_phiSourceVisits;
+    m_phiSourceStates[released->index()].lastVisit = visit;
+    bool hasUnsettledSource = false;
+    bool hasClearedSlot = false;
     for (uint32_t index = 0; index < phis.size(); ++index) {
         for (const Block* predecessor : m_order.of(phis[index]->owner()).predecessors) {
             for (Operation* upsilon : predecessor->upsilons()) {
@@ -1761,11 +1770,23 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
                 if (upsilon->phi() != phis[index] || handedOn->hasNoPosition())
                     continue;
                 const ValueFacts& facts = m_liveness.of(handedOn);
-                if (facts.definition == noPosition || facts.definition >= position || facts.lastUse == noPosition)
+                if (facts.definition == noPosition || facts.lastUse == noPosition)
                     continue;
+                if (facts.definition >= position) {
+                    hasUnsettledSource = true;
+                    continue;
+                }
+                const PhiSourceState& state = m_phiSourceStates[handedOn->index()];
+                if (state.isInert)
+                    continue;
+                if (state.settledIn && dominates(state.settledIn, m_block)) {
+                    hasClearedSlot = true;
+                    continue;
+                }
                 SpillIndex spill = m_allocation.spillOf(handedOn);
                 bool isReadFurtherOn = facts.lastUse >= position;
                 if (isReadFurtherOn) {
+                    hasUnsettledSource = true;
                     RegisterMask held = stateOf(handedOn).registers & m_file.allocatableIn(Bank::GP);
                     if ((spill == noSpill && !held) || isReadOnSomeWayOn(handedOn, position))
                         continue;
@@ -1775,7 +1796,7 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
                         freed |= held;
                     }
                 }
-                if (handedOn->opcode() == Phi && std::ranges::find(phis.span(), handedOn) == phis.span().end())
+                if (handedOn->opcode() == Phi && std::exchange(m_phiSourceStates[handedOn->index()].lastVisit, visit) != visit)
                     phis.append(m_arena, handedOn);
 
                 if (spill == noSpill)
@@ -1785,16 +1806,29 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
                     continue;
                 if (place.end < lastSuspension)
                     continue;
+                hasClearedSlot = true;
                 if (!isReadFurtherOn) {
-                    if (place.end >= position)
+                    if (place.end >= position) {
+                        hasUnsettledSource |= place.end > position;
                         continue;
+                    }
                     place.end = position;
                 }
                 Step& step = appendStep(StepKind::ClearSpill, handedOn);
                 step.width = place.width;
                 step.destination = Location::spill(spill);
+                m_spillsWrittenInBlocks.append(m_arena, SpillWrittenInBlock { spill, m_block });
                 noteFrameUse();
             }
+        }
+    }
+    if (!hasUnsettledSource) {
+        for (uint32_t index = 1; index < phis.size(); ++index) {
+            PhiSourceState& state = m_phiSourceStates[phis[index]->index()];
+            if (hasClearedSlot)
+                state.settledIn = m_block;
+            else
+                state.isInert = true;
         }
     }
     return freed;
@@ -1833,7 +1867,7 @@ bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
 
 void Allocator::checkThatNoWayOnReadsWhatHintsReleased()
 {
-    if (m_releasesByWaysOn.isEmpty())
+    if (m_releasesByWaysOn.isEmpty() || m_proc.traits().skipsReleaseCheck)
         return;
     std::sort(m_releasesByWaysOn.begin(), m_releasesByWaysOn.end(), [](const ReleaseByWaysOn& left, const ReleaseByWaysOn& right) {
         return left.value->index() < right.value->index();

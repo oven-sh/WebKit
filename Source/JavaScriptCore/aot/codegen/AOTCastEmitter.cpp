@@ -18,6 +18,7 @@
 #include "AOTStubsClosures.h"
 #include "AOTStubsValues.h"
 #include "AOTThrowEmitter.h"
+#include "AOTTypeTestEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include <algorithm>
 #include <wtf/SetForScope.h>
@@ -310,7 +311,7 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     ScopeFork fork = m_out.forkScope();
     if (asksForType) {
         LBasicBlock hasCheckedType = looksAtCell ? newBlock() : continuation;
-        branchOnType(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType()), { normalEdge(hasCheckedType), rareEdge(stops) });
+        emitter<TypeTestEmitter>().emitBranchAskingEachFunctionByItself(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType()), { normalEdge(hasCheckedType), rareEdge(stops) });
         if (looksAtCell)
             m_out.appendToJoin(hasCheckedType, fork);
     }

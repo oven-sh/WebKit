@@ -26,11 +26,11 @@ struct ModuleHost;
 
 namespace JSC::AOT::Shell {
 
-void enableGlobalsOfBuiltinTable();
+void enableBuiltinTableGlobals();
 void mapImageFromOptions();
 void addShellFunctions(VM&, JSGlobalObject*);
 std::span<const ASCIILiteral> shellFunctionNames();
-bool isKeyOfCompiledModule(const String&);
+bool isCompiledModuleKey(const String&);
 JSPromise* fetchCompiledModule(JSGlobalObject*, const String& key);
 void addMissingImportMetaFunctions(JSGlobalObject*, JSObject* importMeta);
 extern const ModuleHost moduleHost;

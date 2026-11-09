@@ -1,0 +1,10 @@
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES joinShortParts(Instance* instance, uint32_t count, const EncodedJSValue* parts)
+{
+    if (JSString* kept = findKept(instance, count, parts))
+        return { kept, nullptr };
+    if (fitsInOnePiece(count, parts)) {
+        AOT_OPERATION_BEGIN(instance, Entry::operationJoin);
+        OPERATION_RETURN(scope, makeOnePiece(vm, count, parts));
+    }
+    AOT_MUST_TAIL_CALL return joinByContents(instance, count, parts);
+}

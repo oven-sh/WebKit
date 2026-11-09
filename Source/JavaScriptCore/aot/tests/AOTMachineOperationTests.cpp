@@ -1792,6 +1792,51 @@ static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWithoutCode()
     }
 }
 
+static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWhereTestFailed()
+{
+    constexpr uint64_t tag = 0xfffe000000000000ull;
+    for (bool extendsInBlockBehind : { false, true }) {
+        OperationTestProcedure test;
+        Output& out = test.out();
+        LValue sum = out.add(out.signExt32To64(out.castToInt32(test.argumentGPR(0))), out.constInt64(-1));
+        LBasicBlock tests = out.m_block;
+        LBasicBlock passes = out.newBlock();
+        LBasicBlock fails = out.newBlock();
+        LBasicBlock fits = out.newBlock();
+        LBasicBlock doesNotFit = out.newBlock();
+        out.branch(out.greaterThanOrEqual(sum, out.constInt64(0)), normalEdge(passes), normalEdge(fails));
+
+        out.appendTo(passes);
+        LValue extendedWhereItPassed = out.zeroExtPtr(out.castToInt32(sum));
+        out.ret(out.add(extendedWhereItPassed, out.constInt64(static_cast<int64_t>(tag))));
+
+        out.appendTo(fails);
+        LValue wholeAsNumber = out.bitCast(out.intToDouble(sum), Int64);
+        LValue low = out.castToInt32(sum);
+        LValue extendedWhereItFailed = extendsInBlockBehind ? nullptr : out.zeroExtPtr(low);
+        out.branch(out.equal(out.bitCast(out.intToDouble(low), Int64), wholeAsNumber), normalEdge(fits), normalEdge(doesNotFit));
+        out.appendTo(fits);
+        if (extendsInBlockBehind)
+            extendedWhereItFailed = out.zeroExtPtr(low);
+        out.ret(out.add(extendedWhereItFailed, out.constInt64(static_cast<int64_t>(tag))));
+        out.appendTo(doesNotFit);
+        out.ret(wholeAsNumber);
+        compileOrFail(test);
+
+        const Liveness& liveness = test.procedure().liveness();
+        checkOperationTest(liveness.goesByOverflow(tests->last()), test, "the Branch goes by overflow");
+        checkOperationTest(sumTestedByOverflowOf(liveness, sum).isWidenedWhereTestFails, test, "the sum is widened");
+        checkOperationTest(isFreeInRegisterOfChild(liveness, extendedWhereItPassed), test, "where the test passed the extension of the low half takes code");
+        checkOperationTest(!isFreeInRegisterOfChild(liveness, extendedWhereItFailed), test, "where the test failed the extension of the low half takes no code");
+        for (uint64_t a : operationTestInt32s) {
+            int64_t whole = static_cast<int64_t>(static_cast<int32_t>(a)) - 1;
+            uint64_t expected = whole == static_cast<int32_t>(whole) ? static_cast<uint32_t>(whole) + tag : std::bit_cast<uint64_t>(static_cast<double>(whole));
+            uint64_t returned = test.call<uint64_t>(operationTestWithDirtAbove(a, sizeof(uint32_t)));
+            checkOperationTest(returned == expected, test, "one less than ", static_cast<int32_t>(a), ", its low half extended, gave ", RawHex(returned), " and not ", RawHex(expected));
+        }
+    }
+}
+
 static unsigned operationTestNumberOfRegistersZeroed(TestProcedure& test)
 {
     std::span<const uint8_t> code = test.linkedCode();
@@ -1870,6 +1915,7 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/sums-tested-by-overflow/spilled-sum-is-widened"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSpilledSumThatIsWidened> },
         { "machine/operations/sums-tested-by-overflow/sum-is-made-a-number-where-it-overflows"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSumThatIsMadeNumberWhereItOverflows> },
         { "machine/operations/sums-tested-by-overflow/low-half-is-extended-without-code"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnLowHalfOfSumThatIsExtendedWithoutCode> },
+        { "machine/operations/sums-tested-by-overflow/low-half-is-extended-by-code-where-the-test-failed"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnLowHalfOfSumThatIsExtendedWhereTestFailed> },
     };
     return tests;
 }

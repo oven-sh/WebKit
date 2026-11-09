@@ -72,7 +72,7 @@ void RegExpBuiltinEmitter::generateRegExpExec(const InlineCall& call)
 {
     CellPointer regExpObject = cellOperand(call.receiver());
     CellPointer string = cellOperand(call.argument(0));
-    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::Array), { regExpObject.value(), string.value() }).first));
+    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::Array), { regExpObject.value(), string.value() }, { .calledBuiltin = functionOf(call.overload()) }).first));
 }
 
 void RegExpBuiltinEmitter::generateRegExpTest(const InlineCall& call)
@@ -80,11 +80,11 @@ void RegExpBuiltinEmitter::generateRegExpTest(const InlineCall& call)
     CellPointer regExpObject = cellOperand(call.receiver());
     CellPointer string = cellOperand(call.argument(0));
     if (resultRepresentationOf(call) == Representation::JSValue) {
-        Boxed isMatch(callStub(call.context(), regExpMatch(RegExpMatchResult::BoxedBoolean), { regExpObject.value(), string.value() }).first);
+        Boxed isMatch(callStub(call.context(), regExpMatch(RegExpMatchResult::BoxedBoolean), { regExpObject.value(), string.value() }, { .calledBuiltin = functionOf(call.overload()) }).first);
         finish(call, isMatch, m_program.at(TypeTable::boolean));
         return;
     }
-    LValue isMatch = callStub(call.context(), regExpMatch(RegExpMatchResult::Boolean), { regExpObject.value(), string.value() }).first;
+    LValue isMatch = callStub(call.context(), regExpMatch(RegExpMatchResult::Boolean), { regExpObject.value(), string.value() }, { .calledBuiltin = functionOf(call.overload()) }).first;
     finish(call, Condition(m_out.castToInt32(isMatch)));
 }
 
@@ -116,7 +116,7 @@ void RegExpBuiltinEmitter::generateStringReplace(const InlineCall& call)
     }
     CellPointer regExpObject = cellOperand(pattern);
     if (typeOf(replacement).isAnyString()) {
-        LValue replaced = callStub(call.context(), stringReplaceRegExpMayNotMatch(), { string.value(), regExpObject.value(), cellOperand(replacement).value() }).first;
+        LValue replaced = callStub(call.context(), stringReplaceRegExpMayNotMatch(), { string.value(), regExpObject.value(), cellOperand(replacement).value() }, { .calledBuiltin = functionOf(call.overload()) }).first;
         finish(call, CellPointer(replaced), stringType);
         return;
     }
@@ -149,21 +149,21 @@ void RegExpBuiltinEmitter::generateStringSplit(const InlineCall& call)
             missUnless(call, greaterThanOrEqual(limit, word32(0)));
     }
     RuntimeOperation operation = takesRegExp(call) ? RuntimeOperation::StringSplitRegExp : RuntimeOperation::StringSplitString;
-    finish(call, callOperation<CellPointer>(call.context(), operation, { string, separator, limit }), types().at(types().builtinClass(BuiltinClasses::Array)));
+    finish(call, callOperation<CellPointer>(call.context(), operation, { string, separator, limit }, { .calledBuiltin = takesRegExp(call) ? functionOf(call.overload()) : BuiltinID() }), types().at(types().builtinClass(BuiltinClasses::Array)));
 }
 
 void RegExpBuiltinEmitter::generateStringMatch(const InlineCall& call)
 {
     CellPointer string = cellOperand(call.receiver());
     CellPointer regExpObject = cellOperand(call.argument(0));
-    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::ArrayForStringMatch), { string.value(), regExpObject.value() }).first));
+    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::ArrayForStringMatch), { string.value(), regExpObject.value() }, { .calledBuiltin = functionOf(call.overload()) }).first));
 }
 
 void RegExpBuiltinEmitter::generateStringSearch(const InlineCall& call)
 {
     CellPointer string = cellOperand(call.receiver());
     CellPointer regExpObject = cellOperand(call.argument(0));
-    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::IndexForStringSearch), { string.value(), regExpObject.value() }).first));
+    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::IndexForStringSearch), { string.value(), regExpObject.value() }, { .calledBuiltin = functionOf(call.overload()) }).first));
 }
 
 } } } // namespace JSC::AOT::Typed

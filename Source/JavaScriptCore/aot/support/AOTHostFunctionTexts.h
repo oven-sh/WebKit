@@ -21,7 +21,7 @@ struct HostFunctionTexts {
     size_t (*compress)(std::span<uint8_t> compressed, std::span<const uint8_t> text) { nullptr };
 };
 
-using OpenCompressedText = bool (*)(std::span<uint8_t> text, std::span<const uint8_t> compressed);
+using DecompressTextFunction = bool (*)(std::span<uint8_t> text, std::span<const uint8_t> compressed);
 
 } } // namespace JSC::AOT
 

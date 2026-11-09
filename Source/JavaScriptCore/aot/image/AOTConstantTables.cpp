@@ -134,8 +134,13 @@ void encodeConstantTables(TableEncoder& encoder)
 {
     const ImageNumbers& numbers = encoder.numbers;
     StepTimes times(encoder.build, "image: constant tables"_s);
-    setConstantTableOfWords(encoder, ProgramTableIndex::builtinCells, numbers.builtinCells(), [](BuiltinCellKey key) {
-        return key.encoded();
+    std::span<const BuiltinCellKey> builtinCells = numbers.builtinCells();
+    bool swapsFirstTwo = builtinCells.size() > 1 && AOT::hasFlag(encoder.build.options().lies, Wire::TestingLie::TwoCellsOfBuiltinsBearEachOthersNumbers);
+    encoder.part.setTableWrittenInPlace<uint32_t>(ProgramTableIndex::builtinCells, builtinCells.size(), [&](std::span<uint32_t> words) {
+        for (size_t place = 0; place < words.size(); ++place)
+            words[place] = builtinCells[swapsFirstTwo && place < 2 ? 1 - place : place].encoded();
+        if (std::ranges::adjacent_find(words, std::ranges::greater_equal { }) != words.end())
+            encoder.fail("TableNotSorted"_s, { }, "builtinCells"_s);
     });
     encoder.part.setTable(ProgramTableIndex::eagerBuiltinCells, numbers.eagerBuiltinCells());
     encoder.part.setTable(ProgramTableIndex::constantAndUnlockedBuiltinMembers, listConstantAndUnlockedBuiltinMembers(encoder));

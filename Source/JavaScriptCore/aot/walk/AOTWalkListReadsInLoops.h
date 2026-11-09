@@ -88,6 +88,42 @@ struct ListsReadInLoop {
     bool someListIsTakenUnderCounterAskedInFront { false };
     BlockID whereKindIsAnother;
 };
+
+template<typename Entry, Reference Entry::* nameOfEntry>
+class FirstPlacesByName {
+public:
+    size_t find(std::span<const Entry> entries, Reference name)
+    {
+        if (entries.size() <= mostEntriesWalked || !mayBeKey(name)) [[likely]] {
+            auto first = std::ranges::find(entries, name, nameOfEntry);
+            return first == entries.end() ? notFound : static_cast<size_t>(first - entries.begin());
+        }
+        for (; m_numberOfEntriesTakenIn < entries.size(); ++m_numberOfEntriesTakenIn) {
+            if (mayBeKey(entries[m_numberOfEntriesTakenIn].*nameOfEntry))
+                m_firstPlaces.add((entries[m_numberOfEntriesTakenIn].*nameOfEntry).bits(), static_cast<uint32_t>(m_numberOfEntriesTakenIn));
+        }
+        auto place = m_firstPlaces.find(name.bits());
+        return place == m_firstPlaces.end() ? notFound : place->value;
+    }
+
+    void forget()
+    {
+        m_firstPlaces.clear();
+        m_numberOfEntriesTakenIn = 0;
+    }
+
+    static constexpr size_t mostEntriesWalked = 8;
+
+private:
+    static bool mayBeKey(Reference name) { return name.bits() < std::numeric_limits<uint32_t>::max() - 1; }
+
+    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstPlaces;
+    size_t m_numberOfEntriesTakenIn { 0 };
+};
+
+using PlacesOfListsByName = FirstPlacesByName<ListTestedInFrontOfLoop, &ListTestedInFrontOfLoop::name>;
+using PlacesOfGuessesByName = FirstPlacesByName<GuessInFrontOfLoop, &GuessInFrontOfLoop::value>;
+
 void reserveRoomOfListsThatLoopFills(Walker&, BlockID inputHead, std::span<const Reference> entering);
 Reference literalThatCallPushesOntoInEveryTurn(Walker&, const BodyValue& call, BlockID inputHead);
 ListsReadInLoop findListsReadInLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);

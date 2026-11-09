@@ -44,6 +44,7 @@ private:
 
 bool everyWayStepsUpFrom(const Code&, const TypeArena&, ValueID, ValueID from, ValueID stepIsFromZeroUp, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough);
 bool groundsShowPositionInside(const Code&, const TypeArena&, ValueID position, const GroundsOfPosition&, NOESCAPE const ScopedLambda<bool(ValueID, bool answersYes)>& holds);
+bool testsShowElementPresent(const Code&, ValueID list, ValueID position, std::span<const PassedTest::Side>);
 
 } } } // namespace JSC::AOT::Typed
 

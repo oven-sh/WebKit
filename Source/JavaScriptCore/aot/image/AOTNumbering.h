@@ -343,6 +343,16 @@ public:
     FunctionID firstClosureFunction() const { return FunctionID(m_firstDerived); }
     FunctionID endOfClosureFunctions() const { return FunctionID(m_firstDerived + m_numberOfClosureFunctions); }
     uint32_t closureNumberOf(FunctionID closureEntry) const { return closureEntry.index() - m_firstDerived; }
+    bool closureNumbersRiseAsTestsOfClosuresInCompiledCodeExpect() const
+    {
+        for (uint32_t number = 0; number < m_numberOfClosureFunctions; ++number) {
+            if (number && m_unitOfDerived[number - 1] >= m_unitOfDerived[number])
+                return false;
+            if (idOf(m_unitOfDerived[number]).index() != m_firstDerived + number)
+                return false;
+        }
+        return true;
+    }
 
 private:
     friend struct ImageNumbersBuilder;

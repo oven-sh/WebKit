@@ -1,6 +1,6 @@
 # Bun.build() runs the program's own plugins in the realm of its caller, and the macros of the files that it bundles in a VM and a global object of their own: nobody writes on the caller's built-ins out of sight
 # so beside a call of it the program lays its locks as any other program does
-# no-lock-beside-code-that-counts-as-the-programs.ir: the control, with Bun.plugin()
+# Bun's test/aot/engine-tests/link/locks/no-lock-beside-code-that-counts-as-the-programs.ir: the control, with Bun.plugin()
 # f0: Bun.build(options); Date.now();
 # RUN: locks
 # CHECK: locked DateNow constant

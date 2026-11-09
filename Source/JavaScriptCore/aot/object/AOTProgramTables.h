@@ -182,11 +182,18 @@ struct ProgramTables {
         return number;
     }
 
+    template<typename Row>
+    static const Row& rowThatMarkPromises(std::span<const Row> rows, uint32_t number, const auto& numberOf)
+    {
+        auto found = std::ranges::lower_bound(rows, number, { }, numberOf);
+        RELEASE_ASSERT(found != rows.end() && static_cast<uint32_t>(std::invoke(numberOf, *found)) == number);
+        return *found;
+    }
     uint32_t constructorOfAllocation(uint32_t number) const
     {
         if (!allocations()[number].isConstructed)
             return AllocationData::notConstructed;
-        return std::ranges::lower_bound(constructedAllocations(), number, { }, [](const ConstructedAllocationData& entry) -> uint32_t { return entry.allocation; })->constructedBy;
+        return rowThatMarkPromises(constructedAllocations(), number, [](const ConstructedAllocationData& entry) -> uint32_t { return entry.allocation; }).constructedBy;
     }
     bool hasLayoutForShape(uint32_t shape) const { return shape < firstEnvironmentShape && layouts()[shape]; }
     const LayoutData& layoutForShape(uint32_t shape) const
@@ -260,7 +267,7 @@ struct ProgramTables {
     }
     const FunctionWithLargeCountsData& largeCountsOf(uint32_t function) const
     {
-        return *std::ranges::lower_bound(functionsWithLargeCounts(), function, { }, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
+        return rowThatMarkPromises(functionsWithLargeCounts(), function, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
     }
     bool hasClosureNumber(uint32_t number) const { return number < closureFunctions.end - closureFunctions.first; }
     uint32_t closureNumberOf(uint32_t function) const
@@ -299,7 +306,7 @@ struct ProgramTables {
         uint8_t number = functionRecordNumbers()[function];
         if (number != functionRecordIsListedByFunction) [[likely]]
             return functionRecords()[number];
-        return std::ranges::lower_bound(functionRecordsByFunction(), function, { }, &FunctionRecordByFunctionData::function)->record;
+        return rowThatMarkPromises(functionRecordsByFunction(), function, &FunctionRecordByFunctionData::function).record;
     }
     const FunctionTraceData& traceOfFunction(uint32_t function) const { return recordOfFunction(function).trace; }
     FunctionKindData kindOfFunction(uint32_t function) const
@@ -329,7 +336,7 @@ struct ProgramTables {
     {
         if (!traceOfFunction(function).implementsBuiltin)
             return std::nullopt;
-        return std::ranges::lower_bound(implementedBuiltins(), function, { }, &ImplementedBuiltinData::function)->builtin;
+        return rowThatMarkPromises(implementedBuiltins(), function, &ImplementedBuiltinData::function).builtin;
     }
 };
 static_assert(std::is_trivially_copyable_v<ProgramTables> && isImageRecord<ProgramTables>);

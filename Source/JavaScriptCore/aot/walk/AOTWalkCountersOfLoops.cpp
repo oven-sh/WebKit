@@ -1132,7 +1132,7 @@ void guessDivisorsOfIntegersInFrontOfLoop(Walker& walker, BlockID inputHead, con
                 continue;
             if (variable) {
                 if (!variables.containsIf([&](const VariableAskedInFrontOfLoop& asked) { return asked.variable == variable; })) {
-                    variables.append({ variable, positiveInt32 });
+                    variables.append({ variable, positiveInt32, StatisticID::DivisorsInVariablesReadInFrontOfLoops });
                     walker.count(StatisticID::NumbersBesideCountersAskedInFrontOfLoops);
                 }
                 continue;

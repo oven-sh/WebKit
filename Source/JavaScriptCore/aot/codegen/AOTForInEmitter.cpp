@@ -107,9 +107,11 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     ResultsJoin<Condition, CellPointer, Integer, Integer> join(m_out);
     Join<Integer> isStructureName(m_out);
 
-    EnumeratorFields fields = loadFields(enumerator);
-    Integer nameIndex = nameIndexOf(fields, position);
     const bool checksPresenceOnce = !!value->currentNamesOperand();
+    EnumeratorFields fields;
+    if (!checksPresenceOnce)
+        fields = loadFields(enumerator);
+    Integer nameIndex = checksPresenceOnce ? nameIndexOf(enumerator, position) : nameIndexOf(fields, position);
     Integer numberOfCurrentNames = checksPresenceOnce ? integerOf(value->currentNamesOperand()) : integer(0);
     if (checksPresenceOnce) {
         LBasicBlock isKnownToBeCurrent = newBlock();
@@ -118,6 +120,7 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
         m_out.appendTo(isKnownToBeCurrent);
         isStructureName.add(numberOfCurrentNames);
         m_out.appendTo(isNotKnownToBeCurrent);
+        fields = loadFields(enumerator);
     }
     branch(isOwnName(fields, nameIndex), { checksPresenceOnce ? unlikelyEdge(isOwnNameToCheck) : normalEdge(isOwnNameToCheck), normalEdge(isNotStructureName) });
 

@@ -197,6 +197,7 @@ public:
     bool isWrittenByEdges(const Operation* phi) const { return m_phisWrittenByEdges.size() && m_phisWrittenByEdges.get(phi->index()); }
 
     std::span<const SpillFacts> spills() const { return m_spills.span(); }
+    std::span<SpillFacts> spillsForTesting() { return m_spills.span(); }
     std::span<PatchOperation* const> suspensions() const { return m_suspensions.span(); }
     const BitSpan& spillsHeldAt(uint32_t suspension) const { return m_spillsHeldAtSuspension[suspension]; }
 

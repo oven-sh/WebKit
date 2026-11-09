@@ -1,0 +1,9 @@
+JSC_DEFINE_JIT_OPERATION(operationReadOffBaseOfHome, EncodedJSValue, (Instance* instance, EncodedJSValue home, EncodedJSValue receiver, uint32_t name))
+{
+    EncodedJSValue base;
+    {
+        AOT_OPERATION_BEGIN(instance, Entry::operationReadOffBaseOfHome);
+        base = baseOf(instance, vm, home);
+    }
+    AOT_MUST_TAIL_CALL return operationReadOffBase(instance, base, receiver, name);
+}

@@ -52,7 +52,7 @@ size_t imageAlignment()
     return imagePageSize;
 }
 
-size_t peakResidentMegabytesOfProcess()
+size_t processPeakResidentMegabytes()
 {
     return PhaseTimes::takePeakResidentMegabytes().ofProcess;
 }

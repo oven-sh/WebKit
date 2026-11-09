@@ -107,7 +107,7 @@ JS_EXPORT_PRIVATE IterationStatus appendShownFramesOfRun(VM&, CompiledFrameItera
 enum class HiddenFrameOnTop : bool { IsLeftOut, IsShown };
 void forEachShownFrameOfRunAtTop(VM&, HiddenFrameOnTop, const ScopedLambda<IterationStatus(const TraceFrame&)>&);
 JS_EXPORT_PRIVATE bool tryGetStackTrace(VM&, JSCell* owner, WTF::Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, const ScopedLambda<bool(const StackFrame&)>* wanted = nullptr);
-JS_EXPORT_PRIVATE std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM&, CallFrame*);
+JS_EXPORT_PRIVATE std::optional<TraceFrame> tryGetClassCallWithoutNewFrame(VM&, CallFrame*);
 std::optional<TraceFrame> frameOfFunctionWhoseThisIsMade(const Image&, FunctionID constructed);
 JS_EXPORT_PRIVATE std::optional<SourcePosition> positionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE std::optional<SourcePosition> definitionOf(const TraceFrame&);

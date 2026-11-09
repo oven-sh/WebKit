@@ -138,9 +138,15 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
     if (call.calleeOperand() != read.id() || call.thisValueOperand() != receiverID)
         return false;
     ValueID handedOver = copiesLibraryText && !arguments.empty() ? index.valueBehindCasts(arguments[0]) : ValueID();
-    if (copiesLibraryText && (!handedOver || index.isParameter(handedOver) || index.opcodeOf(handedOver) != Opcode::NewClosure))
-        return false;
-    if (copiesLibraryText && walker.facts().linked().function(index.value(handedOver).function()).weightAsLeaf == LinkedFunction::notLeaf)
+    FunctionID functionHandedOver;
+    if (handedOver && !index.isParameter(handedOver) && index.opcodeOf(handedOver) == Opcode::NewClosure)
+        functionHandedOver = index.value(handedOver).function();
+    else if (handedOver && !index.isParameter(handedOver) && index.opcodeOf(handedOver) == Opcode::GetModuleVariable) {
+        const Variable& variable = program.at(index.value(handedOver).as<Opcode::GetModuleVariable>().variable());
+        if (variable.initialization == VariableInitialization::Function && variable.flags.contains(VariableFlags::IsImmutable))
+            functionHandedOver = variable.function;
+    }
+    if (copiesLibraryText && (!functionHandedOver || walker.facts().linked().function(functionHandedOver).weightAsLeaf == LinkedFunction::notLeaf))
         return false;
     for (uint32_t number = read.id().index() + 1; number < callID.index(); ++number) {
         ValueID user = index.onlyUsingValue(ValueID(number));
@@ -157,6 +163,8 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
         readsOffHolders.shrink(0);
     else
         walker.count(StatisticID::RowsOfCallsOfMethodsOfOneTableBehindOneTest);
+    if (copiesLibraryText && index.opcodeOf(handedOver) == Opcode::GetModuleVariable)
+        walker.count(StatisticID::GuessesAtListsOpenedForFunctionsHandedByName);
     openGuessAtOperandTakenAsMade(walker, index.value(last), receiver, instances, read.id().index() - block.firstValue().index(), readsOffHolders.span());
     return true;
 }

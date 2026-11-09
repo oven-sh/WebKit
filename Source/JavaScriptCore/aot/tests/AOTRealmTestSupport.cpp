@@ -84,7 +84,7 @@ static constexpr ModuleHost testModuleHost {
     .createAsyncModuleRequiredError = failOnModuleHostCall,
     .createLoadError = nullptr,
     .mockOperations = mockOperations,
-    .givesOriginalBesideMock = givesOriginalToPackages,
+    .shouldBypassMock = givesOriginalToPackages,
 };
 
 static JSGlobalObject* createPlainRealm(VM& vm)
@@ -106,7 +106,7 @@ static JSGlobalObject* createRealmWithImmutableBuiltins(VM& vm)
 {
     JSGlobalObject* realm = createPlainRealm(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    lockBuiltinsOfTable(realm);
+    lockTableBuiltins(realm);
     markOriginalStructuresPristine(vm, realm);
     AOT_TEST_CHECK(!scope.exception());
     AOT_TEST_CHECK(!Instance::of(realm));

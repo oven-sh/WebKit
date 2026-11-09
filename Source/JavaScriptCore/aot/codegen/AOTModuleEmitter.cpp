@@ -147,6 +147,12 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
         define(value, callOperation<Boxed>(value, RuntimeOperation::RequireIfHeldForImport, { moduleIndex(module), moduleIndex(value->referrer()) }));
         return;
     }
+    if (std::optional<Boxed> objectOfRun = inOptional<Boxed>(value->objectOfRunOperand())) {
+        CallOptions options;
+        options.calledBuiltin = functionOfHostThatRequireCallsFor(target);
+        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireModuleOfRun, { moduleIndex(module), moduleIndex(value->referrer()), *objectOfRun }, options));
+        return;
+    }
     auto requireInSlowPath = [&](CallOptions options) {
         options.calledBuiltin = functionOfHostThatRequireCallsFor(target);
         return callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
@@ -168,7 +174,11 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
 
 void ModuleEmitter::generateRecordRequire(const ValueContext& value)
 {
-    callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()) });
+    if (std::optional<Boxed> objectOfRun = inOptional<Boxed>(value->objectOfRunOperand())) {
+        callVoidOperation(value, RuntimeOperation::RecordRequireOfRun, { moduleIndex(value->module()), moduleIndex(value->referrer()), word32(value->byMadeRequire()), word32(value->behindTheLoad()), *objectOfRun });
+        return;
+    }
+    callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()), word32(value->byMadeRequire()) });
 }
 
 void ModuleEmitter::generateAreLoaderFunctionsStored(const ValueContext& value)
@@ -228,6 +238,10 @@ void ModuleEmitter::generateImportDynamic(const ValueContext& value)
 
 void ModuleEmitter::generateRequireDynamic(const ValueContext& value)
 {
+    if (std::optional<Boxed> objectOfRun = inOptional<Boxed>(value->objectOfRunOperand())) {
+        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireDynamicOfRun, { in<Boxed>(value->specifierOperand()), moduleIndex(value->referrer()), *objectOfRun }));
+        return;
+    }
     define(value, callOperation<Boxed>(value, RuntimeOperation::RequireDynamic, { in<Boxed>(value->specifierOperand()), moduleIndex(value->referrer()) }));
 }
 

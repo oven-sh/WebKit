@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHostEntriesTestSupport.h"
 #include "AOTClosureTable.h"
 #include "AOTCompiledCallee.h"
 #include "AOTLoadedProgramTestSupport.h"

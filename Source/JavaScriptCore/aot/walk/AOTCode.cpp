@@ -297,6 +297,7 @@ void Code::reset(CodeUnit unit)
     m_inputsOfHolesReadAsNaN.shrink(0);
     m_readsAnsweredByHolesReadAsNaN.shrink(0);
     m_cellsMadeForOneOperation.shrink(0);
+    m_readsOfVariablesThatStandForNoValueOfText.shrink(0);
     m_valuesThatFoldedArithmeticGives.shrink(0);
     m_pollsWithFates.shrink(0);
     m_opcodesOfValues = { };

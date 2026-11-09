@@ -30,11 +30,11 @@ OptionSet<FactOfCell> factsOfCellEndedBy(const LocationMasks& writes)
 {
     OptionSet<FactOfCell> ended;
     if (writes.contains(AbstractHeap::ShapeWords))
-        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
+        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem, FactOfCell::BearsNoMark });
     if (writes.contains(AbstractHeap::NamedProperties))
-        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
+        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem, FactOfCell::BearsNoMark });
     if (writes.contains(AbstractHeap::OrderWords))
-        ended.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
+        ended.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem });
     if (writes.contains(AbstractHeap::PrototypeLinks))
         ended.add(FactOfCell::HasLayoutPrototype);
     return ended;
@@ -93,7 +93,7 @@ struct WalkState::Held::Lists {
     static constexpr uint32_t entryInChain = 2;
     static constexpr uint32_t standsInChain = notListed - 1;
 
-    static constexpr uint32_t listOfShapes = 8 * sizeof(OptionSet<FactOfCell>::StorageType);
+    static constexpr uint32_t listOfShapes = numberOfFactsOfCell;
     static constexpr uint32_t listOfElements = listOfShapes + 1;
     static constexpr uint32_t listsOfHolders = listOfElements + 1;
     static constexpr uint32_t listOfHoldersNotAsked = listsOfHolders;
@@ -106,7 +106,12 @@ struct WalkState::Held::Lists {
     static constexpr uint32_t wordOfNewCells = 1;
     static constexpr uint32_t wordOfFirstHolder = 2;
 
-    static uint32_t listOf(FactOfCell fact) { return std::countr_zero(static_cast<OptionSet<FactOfCell>::StorageType>(fact)); }
+    static uint32_t listOf(FactOfCell fact)
+    {
+        uint32_t list = std::countr_zero(static_cast<OptionSet<FactOfCell>::StorageType>(fact));
+        RELEASE_ASSERT(list < numberOfFactsOfCell);
+        return list;
+    }
 
     static bool add(Table& table, uint32_t list, uint32_t entry, uint32_t record)
     {
@@ -1656,7 +1661,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
             endFactsOfCell(holder, factsEnded);
         if (endsPlacesOfHolder) {
             noteRecordsGoneThrough(numberOfPlaces, placesFoundWithoutTable);
-            uint16_t kindsLeft = 0;
+            uint8_t kindsLeft = 0;
             uint64_t maskLeft = 0;
             endPlacesOf(holder, ListOfPlaces::AllButElements, [&](const Place& place) {
                 if ((writtenOfKind(place.kind) & place.mask()) && !liesBesideWhatIsWritten(program, place, writtenOfKind(place.kind), writtenAlone))
@@ -1753,7 +1758,7 @@ bool leavesDeadZoneForGood(const Program& program, VariableID id)
     return loaderEntersBodyAtMostOnce(program.at(variable.module));
 }
 
-ALWAYS_INLINE_INTO_OTHER_FILES void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
+void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
 {
     if (!other.m_size) {
         clear();

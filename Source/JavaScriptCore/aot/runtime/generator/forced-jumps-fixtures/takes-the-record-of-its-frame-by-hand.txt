@@ -1,0 +1,11 @@
+JSC_DEFINE_JIT_OPERATION(operationThatNamesTheRecord, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name))
+{
+    instance->vm->topCallFrame = std::bit_cast<CallFrame*>(AOT_FRAME_RECORD_OF_THIS_FUNCTION());
+    AOT_MUST_TAIL_CALL return operationReadOffBase(instance, base, receiver, name);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationThatAsksTheCompiler, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name))
+{
+    instance->vm->topCallFrame = static_cast<CallFrame*>(__builtin_frame_address(0));
+    AOT_MUST_TAIL_CALL return operationReadOffBase(instance, base, receiver, name);
+}

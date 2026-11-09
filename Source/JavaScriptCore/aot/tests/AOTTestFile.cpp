@@ -10,7 +10,6 @@
 
 #include "AOTCodeSites.h"
 #include "AOTCompileOptions.h"
-#include "AOTHostEntriesTestSupport.h"
 #include "AOTProgramFile.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -81,7 +80,6 @@ private:
         bool requiresCallingLoopPolls { false };
         bool requiresCodeOutsideImage { false };
         bool requiresTargetWithoutJSCVT { false };
-        bool requiresEntriesOfBun { false };
         bool requiresOptionsAsWritten { false };
     };
 
@@ -716,7 +714,6 @@ static constexpr ASCIILiteral faultingLoopPolls = "faulting-loop-polls"_s;
 static constexpr ASCIILiteral callingLoopPolls = "calling-loop-polls"_s;
 static constexpr ASCIILiteral codeOutsideImage = "code-outside-image"_s;
 static constexpr ASCIILiteral noJSCVT = "no-jscvt"_s;
-static constexpr ASCIILiteral entriesOfBun = "entries-of-bun"_s;
 static constexpr ASCIILiteral asWritten = "as-written"_s;
 #if ASAN_ENABLED
 static constexpr bool isBuiltWithAddressSanitizer = true;
@@ -744,12 +741,12 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
     for (StringView word : words) {
-        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : word == entriesOfBun ? group->requiresEntriesOfBun : word == asWritten ? group->requiresOptionsAsWritten : group->hasRequiredArchitecture;
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : word == asWritten ? group->requiresOptionsAsWritten : group->hasRequiredArchitecture;
         if (std::exchange(isGiven, true)) {
             addError(directive.line, "REQUIRES is given twice for "_s, prefix);
             return;
         }
-        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == codeOutsideImage || word == noJSCVT || word == entriesOfBun || word == asWritten)
+        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == codeOutsideImage || word == noJSCVT || word == asWritten)
             continue;
         group->requiredArchitecture = findNamedValue(targetArchitectures, word);
         if (!group->requiredArchitecture) {
@@ -907,7 +904,7 @@ void TestFileParser::finishCheckGroups()
     for (PendingCheckGroup& group : m_checkGroups) {
         if (!group.hasMalformedLine)
             validateCheckGroup(group);
-        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && isBuiltWithAddressSanitizer) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresWindows && !isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCallingLoopPolls && hasFaultingLoopPolls) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT) || (group.requiresEntriesOfBun && hasStandInHost())) {
+        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && isBuiltWithAddressSanitizer) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresWindows && !isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCallingLoopPolls && hasFaultingLoopPolls) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT)) {
             m_file.runs.removeAllMatching([&](const RunDirective& run) {
                 return run.prefix == group.prefix;
             });

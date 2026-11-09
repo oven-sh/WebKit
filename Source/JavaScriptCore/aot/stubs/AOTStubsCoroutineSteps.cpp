@@ -498,10 +498,12 @@ void generateNewHeapFrame(StubAssembler& jit)
     jit.store64(frame, Address(frame, SavedFrame::offsetOfPromiseOrWaiter()));
     jit.store64(TrustedImm32(0), Address(frame, SavedFrame::offsetOfPreservedRegister()));
     jit.store64(TrustedImm32(0), Address(frame, SavedFrame::offsetOfAsyncContext()));
-    jit.move(numberOfWords, index);
+    jit.add32(TrustedImm32(1), numberOfWords, index);
+    jit.and32(TrustedImm32(~1), index);
     Label next = jit.label();
     jit.store64(TrustedImm32(0), BaseIndex(frame, index, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - static_cast<int32_t>(sizeof(uint64_t))));
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), index).linkTo(next, &jit);
+    jit.store64(TrustedImm32(0), BaseIndex(frame, index, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 2 * static_cast<int32_t>(sizeof(uint64_t))));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), index).linkTo(next, &jit);
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
