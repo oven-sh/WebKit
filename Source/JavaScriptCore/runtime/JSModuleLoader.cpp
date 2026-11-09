@@ -948,7 +948,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                         fetchSynchronously(globalObject, fetchPromise, resolved, moduleReferrer(referrerKey), RefPtr { moduleRequest.m_attributes }, scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
 #if ENABLE(AOT)
-                // AOT-compiled code may run a CommonJS file before the loader reaches it. If that file threw, or is still running while compiled code hands this synchronous load to the loader, queue its fetch-settled step again (once per load) instead of taking it now, as if the fetch were still pending.
+                // AOT-compiled code may run a CommonJS file before the loader reaches it. If that file threw, or is still running while compiled code hands this synchronous load to the loader, queue its fetch-settled step again (once per load) instead of taking it now, as if the fetch were still pending. During such a hand-over the same holds for an ES module that has not started evaluating.
                 } else if (bool queuesStep = false; vm.hasCompiledCode() && fetchPromise->status() == JSPromise::Status::Fulfilled && AOT::ModuleRecord::waitsForFileBeingHandedToLoader(globalObject, resolved, queuesStep)) {
                     if (queuesStep)
                         fetchPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryFetchSettled, modulePromise, mapEntry);

@@ -8109,8 +8109,15 @@ bool ModuleRecord::waitsForFileBeingHandedToLoader(JSGlobalObject* globalObject,
 bool Modules::waitsForFileBeingHandedToLoader(const Identifier& key, bool& queuesStep)
 {
     std::optional<ModuleID> asked = findByKey(key);
-    if (!asked || !isCommonJSFileOrFace(*asked))
+    if (!asked)
         return false;
+    if (!isCommonJSFileOrFace(*asked)) {
+        ModuleRecord* record = m_fileBeingHandedToLoader && hasNotBegun(*asked) ? m_records.get(*asked) : nullptr;
+        if (!record)
+            return false;
+        queuesStep = record->takesPlaceInQueueOf(m_activeSynchronousLoad);
+        return true;
+    }
     ModuleStatus statusOfFile = status(fileOf(*asked));
     if (statusOfFile == ModuleStatus::Evaluated || (statusOfFile != ModuleStatus::Failed && !m_fileBeingHandedToLoader))
         return false;
