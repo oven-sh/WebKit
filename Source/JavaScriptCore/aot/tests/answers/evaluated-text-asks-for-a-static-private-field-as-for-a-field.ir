@@ -1,0 +1,487 @@
+# function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } }
+# let later;
+# class Registry {
+#   static #step() { return 1; }
+#   static { report(eval("#total in this")); report(#total in this); report(eval("#step in this")); report(attempt(() => eval("this.#total"))); report(attempt(() => eval("this.#total = 5"))); later = eval("() => String(#total in this) + this.#total"); }
+#   static #total = 7;
+#   static ask(text, value) { return eval(text); }
+#   static read() { return this.#total; }
+# }
+# class Below extends Registry {}
+# function probe(value) { report(attempt(() => Registry.ask("#total in value", value))); report(attempt(() => Registry.ask("value.#total", value))); report(attempt(() => Registry.ask("value.#total = 1", value))); report(attempt(() => Registry.ask("value.#total++", value))); report(attempt(() => Registry.ask("eval('value.#total')", value))); }
+# report(later());
+# report(Registry.ask("#total in value", Registry));
+# report(Registry.ask("value.#total", Registry));
+# report(Registry.ask("value.#total = 9", Registry));
+# report(Registry.read());
+# report(Registry.ask("value.#total++", Registry));
+# report(Registry.ask("eval('value.#total += 2')", Registry));
+# report(Registry.read());
+# probe(Below);
+# probe({});
+# probe(5);
+# probe(null);
+# probe(undefined);
+# report(Registry.read());
+# report("end");
+# A STATIC PRIVATE FIELD IS A FIELD FOR THE TEXT OF A DIRECT EVAL. The front end keeps its value in a slot, here a variable of the module, and no object has a property for it.
+# Texts get a private name of their own for the field of the class object when one first asks, and JSObject's private field functions, which find no property under that name, ask the run time of direct eval for the slot.
+# Before the field has its value `#total in this` is false and a read or a store throws the error of a field, where a static method beside it is there from the start. A function that the text made early answers once the value is there.
+# On the class the text reads, stores and updates what compiled code reads. On a subclass, an object of no class, a number, null and undefined it answers and throws as the same text does in the shell.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } } let later; class Registry {   static #step() { return 1; }   static { report(eval("#total in this")); report(#total in this); report(eval("#step in this")); report(attempt(() => eval("this.#total"))); report(attempt(() => eval("this.#total = 5"))); later = eval("() => String(#total in this) + this.#total"); }   static #total = 7;   static ask(text, value) { return eval(text); }   static read() { return this.#total; } } class Below extends Registry {} function probe(value) { report(attempt(() => Registry.ask("#total in value", value))); report(attempt(() => Registry.ask("value.#total", value))); report(attempt(() => Registry.ask("value.#total = 1", value))); report(attempt(() => Registry.ask("value.#total++", value))); report(attempt(() => Registry.ask("eval('value.#total')", value))); } report(later()); report(Registry.ask("#total in value", Registry)); report(Registry.ask("value.#total", Registry)); report(Registry.ask("value.#total = 9", Registry)); report(Registry.read()); report(Registry.ask("value.#total++", Registry)); report(Registry.ask("eval('value.#total += 2')", Registry)); report(Registry.read()); probe(Below); probe({}); probe(5); probe(null); probe(undefined); report(Registry.read()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 40 of 40 of 40
+# CHECK-NEXT: exited with 0
+# The same answers with a collection at every allocation that leaves the fast path, full and then eden: the name that texts have for the field lives in a list that a weak map holds under the class object,
+# and both are used across collections.
+# RUN(COLLECTS): run-in-shell --slowPathAllocsBetweenGCs=1 --useZombieMode=1 --scribbleFreeCells=1 (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } } let later; class Registry {   static #step() { return 1; }   static { report(eval("#total in this")); report(#total in this); report(eval("#step in this")); report(attempt(() => eval("this.#total"))); report(attempt(() => eval("this.#total = 5"))); later = eval("() => String(#total in this) + this.#total"); }   static #total = 7;   static ask(text, value) { return eval(text); }   static read() { return this.#total; } } class Below extends Registry {} function probe(value) { report(attempt(() => Registry.ask("#total in value", value))); report(attempt(() => Registry.ask("value.#total", value))); report(attempt(() => Registry.ask("value.#total = 1", value))); report(attempt(() => Registry.ask("value.#total++", value))); report(attempt(() => Registry.ask("eval('value.#total')", value))); } report(later()); report(Registry.ask("#total in value", Registry)); report(Registry.ask("value.#total", Registry)); report(Registry.ask("value.#total = 9", Registry)); report(Registry.read()); report(Registry.ask("value.#total++", Registry)); report(Registry.ask("eval('value.#total += 2')", Registry)); report(Registry.read()); probe(Below); probe({}); probe(5); probe(null); probe(undefined); report(Registry.read()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# COLLECTS: 40 of 40 of 40
+# COLLECTS-NEXT: exited with 0
+# RUN(EDEN): run-in-shell --slowPathAllocsBetweenGCs=1 --useEdenCollectionsAtSlowPathAllocs=1 --useZombieMode=1 --scribbleFreeCells=1 (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } } let later; class Registry {   static #step() { return 1; }   static { report(eval("#total in this")); report(#total in this); report(eval("#step in this")); report(attempt(() => eval("this.#total"))); report(attempt(() => eval("this.#total = 5"))); later = eval("() => String(#total in this) + this.#total"); }   static #total = 7;   static ask(text, value) { return eval(text); }   static read() { return this.#total; } } class Below extends Registry {} function probe(value) { report(attempt(() => Registry.ask("#total in value", value))); report(attempt(() => Registry.ask("value.#total", value))); report(attempt(() => Registry.ask("value.#total = 1", value))); report(attempt(() => Registry.ask("value.#total++", value))); report(attempt(() => Registry.ask("eval('value.#total')", value))); } report(later()); report(Registry.ask("#total in value", Registry)); report(Registry.ask("value.#total", Registry)); report(Registry.ask("value.#total = 9", Registry)); report(Registry.read()); report(Registry.ask("value.#total++", Registry)); report(Registry.ask("eval('value.#total += 2')", Registry)); report(Registry.read()); probe(Below); probe({}); probe(5); probe(null); probe(undefined); report(Registry.read()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# EDEN: 40 of 40 of 40
+# EDEN-NEXT: exited with 0
+# JSObject's private field functions declare a scope that may throw, and ask the run time of direct eval from inside it before they throw.
+# Under the option of the run below an engine built with assertions aborts where such a scope is left with a check owed. Any other engine takes the option and checks nothing.
+# RUN(SCOPES): run-in-shell --validateExceptionChecks=1 (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } } let later; class Registry {   static #step() { return 1; }   static { report(eval("#total in this")); report(#total in this); report(eval("#step in this")); report(attempt(() => eval("this.#total"))); report(attempt(() => eval("this.#total = 5"))); later = eval("() => String(#total in this) + this.#total"); }   static #total = 7;   static ask(text, value) { return eval(text); }   static read() { return this.#total; } } class Below extends Registry {} function probe(value) { report(attempt(() => Registry.ask("#total in value", value))); report(attempt(() => Registry.ask("value.#total", value))); report(attempt(() => Registry.ask("value.#total = 1", value))); report(attempt(() => Registry.ask("value.#total++", value))); report(attempt(() => Registry.ask("eval('value.#total')", value))); } report(later()); report(Registry.ask("#total in value", Registry)); report(Registry.ask("value.#total", Registry)); report(Registry.ask("value.#total = 9", Registry)); report(Registry.read()); report(Registry.ask("value.#total++", Registry)); report(Registry.ask("eval('value.#total += 2')", Registry)); report(Registry.read()); probe(Below); probe({}); probe(5); probe(null); probe(undefined); report(Registry.read()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# SCOPES: 40 of 40 of 40
+# SCOPES-NEXT: exited with 0
+
+module m0 path="evaluated-text-asks-for-a-static-private-field-as-for-a-field.js" displayPath="evaluated-text-asks-for-a-static-private-field-as-for-a-field.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Registry" module=m0 position=133 constructor=f3 place=133
+layout L1 kind=Instance name="Below" module=m0 position=545 base=L0 constructor=f8 supertypes=[L0] flags=[HasHeritage] place=545
+layout L2 module=m0 position=1263 place=1263
+layout L3 kind=Environment module=m0 fields=[{key=@"0" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired] variableName="text"}, {key=@"1" declared={type=anything} flags=[IsRequired] variableName="value"}] place=62 ownFieldCount=2
+data d0 root=Object{layout=L2} module=m0
+variable g0 name="attempt" module=m0 declared={type=anything} initialization=Function function=f1 place=1
+variable g1 name="probe" module=m0 declared={type=anything} initialization=Function function=f2 place=2
+variable g2 name="later" module=m0 declared={type=undefined|null|function|absent flags=[IsExpected]} place=3
+variable g3 name="Registry" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable] place=4
+variable g4 name="Below" module=m0 declared={type=anything|absent} place=10
+variable g5 name="Registry" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable] place=12
+variable g6 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=34
+variable g7 module=m0 declared={type=anything|absent} place=53
+variable g8 module=m0 declared={type=anything} flags=[IsImmutable] place=37
+variable g9 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=42
+evalscope e0 bindings=[{name="later" variable=g2}, {name="Below" variable=g4}, {name="attempt" depth=1 variable=g0}, {name="probe" depth=1 variable=g1}]
+evalscope e1 flags=[IsInFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="text" depth=1 layout=L3 field=0 operand=0}, {name="value" depth=1 layout=L3 field=1 operand=0}, {name="arguments" kind=Arguments depth=1 operand=1}, {kind=HomeObject depth=1 operand=2}, {name="Registry" kind=Constant depth=5 variable=g5}, {kind=ClassObject depth=5 variable=g6}, {kind=PrivateFunction depth=5 variable=g8}, {name="#step" kind=PrivateMethod depth=5 operand=3 function=6}, {name="#total" kind=PrivateName depth=5 variable=g7 operand=3}] outer=e0
+evalscope e2 flags=[IsInFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="arguments" kind=Arguments depth=1 operand=0}, {kind=HomeObject depth=1 operand=1}, {name="Registry" kind=Constant depth=5 variable=g5}, {kind=ClassObject depth=5 variable=g6}, {kind=PrivateFunction depth=5 variable=g8}, {name="#step" kind=PrivateMethod depth=5 operand=2 function=4}, {name="#total" kind=PrivateName depth=5 variable=g7 operand=2}] outer=e0
+evalscope e3 flags=[IsInFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="arguments" kind=Arguments depth=1 operand=0}, {kind=HomeObject depth=1 operand=1}, {name="Registry" kind=Constant depth=5 variable=g5}, {kind=ClassObject depth=5 variable=g6}, {kind=PrivateFunction depth=5 variable=g8}, {name="#step" kind=PrivateMethod depth=5 operand=2 function=4}, {name="#total" kind=PrivateName depth=5 variable=g7 operand=2}] outer=e0
+evalscope e4 flags=[IsInFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="arguments" kind=Arguments depth=1 operand=0}, {kind=HomeObject depth=1 operand=1}, {name="Registry" kind=Constant depth=5 variable=g5}, {kind=ClassObject depth=5 variable=g6}, {kind=PrivateFunction depth=5 variable=g8}, {name="#step" kind=PrivateMethod depth=5 operand=2 function=4}, {name="#total" kind=PrivateName depth=5 variable=g7 operand=2}] outer=e0
+evalscope e5 flags=[IsInFunction, IsInArrowFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="arguments" kind=Arguments depth=3 operand=0}, {kind=HomeObject depth=3 operand=1}, {name="Registry" kind=Constant depth=7 variable=g5}, {kind=ClassObject depth=7 variable=g6}, {kind=PrivateFunction depth=7 variable=g8}, {name="#step" kind=PrivateMethod depth=7 operand=2 function=4}, {name="#total" kind=PrivateName depth=7 variable=g7 operand=2}] outer=e0
+evalscope e6 flags=[IsInFunction, IsInArrowFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="arguments" kind=Arguments depth=3 operand=0}, {kind=HomeObject depth=3 operand=1}, {name="Registry" kind=Constant depth=7 variable=g5}, {kind=ClassObject depth=7 variable=g6}, {kind=PrivateFunction depth=7 variable=g8}, {name="#step" kind=PrivateMethod depth=7 operand=2 function=4}, {name="#total" kind=PrivateName depth=7 variable=g7 operand=2}] outer=e0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @116
+    v1 = Convert v0 declared={type=undefined|null|function flags=[IsExpected]} @116
+    PutModuleVariable v1 variable=g2 @116
+    v3 = NewClosure function=f3 @127
+    v4 = NewClass v3 layout=L0 @127
+    PutModuleVariable v4 variable=g6 @127
+    v6 = NewClosure function=f4 @153
+    PutModuleVariable v6 variable=g8 @153
+    v8 = NewClosure function=f5 @457
+    DefineMethod v4, v8 layout=L0 side=Static key="ask" @457
+    v10 = NewClosure function=f6 @506
+    DefineMethod v4, v10 layout=L0 side=Static index=1 key="read" @506
+    v12 = FinishClass v4 layout=L0 @127
+    v13 = Convert v12 declared={type=f3 flags=[IsFromCompiler]} @127
+    PutModuleVariable v13 variable=g5 @127
+    v15 = Convert v12 declared={type=function flags=[IsFromCompiler]} @127
+    v16 = CallDirect v15 function=f7 @127
+    v17 = Convert v12 declared={type=f3 flags=[IsFromCompiler]} @127
+    PutModuleVariable v17 variable=g3 @127
+    v19 = ResolveHeritage v17 @559
+    v20 = NewClosure function=f8 @539
+    v21 = NewClass v20, v17, v19 layout=L1 @539
+    PutModuleVariable v21 variable=g9 @539
+    v23 = FinishClass v21 layout=L1 @539
+    PutModuleVariable v23 variable=g4 @539
+    v25 = Builtin builtin=GlobalThis @914
+    v26 = PropGet v25 key="report" [isFreeName] @914
+    v27 = GetModuleVariable variable=g2 @921
+    v28 = CheckInitialized v27 name="later" @921
+    v29 = Call v28 calleeName="later" @921
+    v30 = Call v26, -, v29 calleeName="report" @914
+    v31 = Builtin builtin=GlobalThis @931
+    v32 = PropGet v31 key="report" [isFreeName] @931
+    v33 = PropGet v17 key="ask" @938
+    v34 = String string="#total in value" @951
+    v35 = Call v33, v17, v34, v17 calleeKey="ask" calleeName="Registry.ask" @947
+    v36 = Call v32, -, v35 calleeName="report" @931
+    v37 = Builtin builtin=GlobalThis @982
+    v38 = PropGet v37 key="report" [isFreeName] @982
+    v39 = PropGet v17 key="ask" @989
+    v40 = String string="value.#total" @1002
+    v41 = Call v39, v17, v40, v17 calleeKey="ask" calleeName="Registry.ask" @998
+    v42 = Call v38, -, v41 calleeName="report" @982
+    v43 = Builtin builtin=GlobalThis @1030
+    v44 = PropGet v43 key="report" [isFreeName] @1030
+    v45 = PropGet v17 key="ask" @1037
+    v46 = String string="value.#total = 9" @1050
+    v47 = Call v45, v17, v46, v17 calleeKey="ask" calleeName="Registry.ask" @1046
+    v48 = Call v44, -, v47 calleeName="report" @1030
+    v49 = Builtin builtin=GlobalThis @1082
+    v50 = PropGet v49 key="report" [isFreeName] @1082
+    v51 = PropGet v17 key="read" @1089
+    v52 = Call v51, v17 calleeKey="read" calleeName="Registry.read" @1098
+    v53 = Call v50, -, v52 calleeName="report" @1082
+    v54 = Builtin builtin=GlobalThis @1107
+    v55 = PropGet v54 key="report" [isFreeName] @1107
+    v56 = PropGet v17 key="ask" @1114
+    v57 = String string="value.#total++" @1127
+    v58 = Call v56, v17, v57, v17 calleeKey="ask" calleeName="Registry.ask" @1123
+    v59 = Call v55, -, v58 calleeName="report" @1107
+    v60 = Builtin builtin=GlobalThis @1157
+    v61 = PropGet v60 key="report" [isFreeName] @1157
+    v62 = PropGet v17 key="ask" @1164
+    v63 = String string="eval('value.#total += 2')" @1177
+    v64 = Call v62, v17, v63, v17 calleeKey="ask" calleeName="Registry.ask" @1173
+    v65 = Call v61, -, v64 calleeName="report" @1157
+    v66 = Builtin builtin=GlobalThis @1218
+    v67 = PropGet v66 key="report" [isFreeName] @1218
+    v68 = PropGet v17 key="read" @1225
+    v69 = Call v68, v17 calleeKey="read" calleeName="Registry.read" @1234
+    v70 = Call v67, -, v69 calleeName="report" @1218
+    v71 = GetModuleVariable variable=g1 @1243
+    v72 = GetModuleVariable variable=g4 @1249
+    v73 = CheckInitialized v72 name="Below" @1249
+    v74 = Call v71, -, v73 calleeName="probe" @1243
+    v75 = GetModuleVariable variable=g1 @1257
+    v76 = Data data=d0 @1263
+    v77 = Call v75, -, v76 calleeName="probe" @1257
+    v78 = GetModuleVariable variable=g1 @1268
+    v79 = Integer integer=5 @1274
+    v80 = Call v78, -, v79 calleeName="probe" @1268
+    v81 = GetModuleVariable variable=g1 @1278
+    v82 = Null @1284
+    v83 = Call v81, -, v82 calleeName="probe" @1278
+    v84 = GetModuleVariable variable=g1 @1291
+    v85 = Undefined @1297
+    v86 = Call v84, -, v85 calleeName="probe" @1291
+    v87 = Builtin builtin=GlobalThis @1309
+    v88 = PropGet v87 key="report" [isFreeName] @1309
+    v89 = PropGet v17 key="read" @1316
+    v90 = Call v89, v17 calleeKey="read" calleeName="Registry.read" @1325
+    v91 = Call v88, -, v90 calleeName="report" @1309
+    v92 = Builtin builtin=GlobalThis @1334
+    v93 = PropGet v92 key="report" [isFreeName] @1334
+    v94 = String string="end" @1341
+    v95 = Call v93, -, v94 calleeName="report" @1334
+    v96 = Undefined @1334
+    Return v96 @1334
+}
+function f1 name="attempt" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @24
+  b1() handler=b2():
+    v1 = Builtin builtin=String @37
+    v2 = Call v0 calleeName="run" @44
+    v3 = Call v1, -, v2 calleeName="String" @37
+    Return v3 @37
+  b2() role=CatchHandler:
+    v4 = CatchValue @68
+    v5 = PropGet v4 key="name" @77
+    v6 = String string=": " @90
+    v7 = Add v5, v6 @90
+    v8 = PropGet v4 key="message" @97
+    v9 = Add v7, v8 @97
+    Return v9 @97
+}
+function f2 name="probe" module=m0 position=571 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis @595
+    v2 = PropGet v1 key="report" [isFreeName] @595
+    v3 = GetModuleVariable variable=g0 @602
+    v4 = NewClosure v0 function=f9 @610
+    v5 = Call v3, -, v4 calleeName="attempt" @602
+    v6 = Call v2, -, v5 calleeName="report" @595
+    v7 = Builtin builtin=GlobalThis @658
+    v8 = PropGet v7 key="report" [isFreeName] @658
+    v9 = GetModuleVariable variable=g0 @665
+    v10 = NewClosure v0 function=f10 @673
+    v11 = Call v9, -, v10 calleeName="attempt" @665
+    v12 = Call v8, -, v11 calleeName="report" @658
+    v13 = Builtin builtin=GlobalThis @718
+    v14 = PropGet v13 key="report" [isFreeName] @718
+    v15 = GetModuleVariable variable=g0 @725
+    v16 = NewClosure v0 function=f11 @733
+    v17 = Call v15, -, v16 calleeName="attempt" @725
+    v18 = Call v14, -, v17 calleeName="report" @718
+    v19 = Builtin builtin=GlobalThis @782
+    v20 = PropGet v19 key="report" [isFreeName] @782
+    v21 = GetModuleVariable variable=g0 @789
+    v22 = NewClosure v0 function=f12 @797
+    v23 = Call v21, -, v22 calleeName="attempt" @789
+    v24 = Call v20, -, v23 calleeName="report" @782
+    v25 = Builtin builtin=GlobalThis @844
+    v26 = PropGet v25 key="report" [isFreeName] @844
+    v27 = GetModuleVariable variable=g0 @851
+    v28 = NewClosure v0 function=f13 @859
+    v29 = Call v27, -, v28 calleeName="attempt" @851
+    v30 = Call v26, -, v29 calleeName="report" @844
+    v31 = Undefined @844
+    Return v31 @844
+}
+function f3 name="Registry" module=m0 position=133 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @133
+    v2 = NewObject v1 layout=L0 @133
+    v3 = Convert v2 declared={type=L0} @133
+    Return v3 @133
+}
+function f4 name="#step" module=m0 position=146 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1 @170
+    Return v0 @170
+}
+function f5 name="ask" module=m0 position=450 kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 thisType={type=function flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function, v1: int[0, 4294967295], v2: undefined|null|string, v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v1, v4, v2, v3 @450
+    v6 = NewObject -, v2, v3 layout=L3 fields=[0, 1] @467
+    v7 = Builtin builtin=GlobalThis @483
+    v8 = PropGet v7 key="eval" [isFreeName] @483
+    v9 = Convert v8 declared={type=builtin(Eval) flags=[IsExpected]} @483
+    v10 = GetEnvironmentField v6 layout=L3 @488
+    v11 = Builtin builtin=Eval [isNotReadFromHolder] @483
+    v12 = StrictEq v9, v11 @483
+    Branch v12 -> taken b1(), notTaken b2(| 0) @483
+  b1():
+    v13 = Undefined @483
+    v14 = GetModuleVariable variable=g6 @483
+    v15 = GetModuleVariable variable=g6 @483
+    v16 = DirectEval v10, v0, v13, v6, v5, v14, v15 evalScope=e1 @483
+    Jump -> next b3(v16) @483
+  b2(v17):
+    v18 = Call v17, -, v10 calleeName="eval" @483
+    Jump -> next b3(v18) @483
+  b3(v19):
+    Return v19 @483
+}
+function f6 name="read" module=m0 position=499 kind=Method flags=[HasThis, HasExplicitName] thisType={type=function flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    v1 = GetModuleVariable variable=g6 @522
+    v2 = StrictEq v0, v1 @522
+    Branch v2 -> taken b1(), notTaken b4() @522
+  b1():
+    v3 = GetModuleVariable variable=g7 @522
+    v4 = TypeTest v3 testedType=absent @522
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0) @522
+  b2(v5):
+    v6 = NewRuntimeError runtimeError=InvalidPrivateRead @522
+    Throw v6 @522
+  b3(v7):
+    Return v7 @522
+  b4():
+    v8 = TypeTest v0 testedType=undefined|null @522
+    Branch v8 -> taken b5(| 0), notTaken b6(| 0) @522
+  b5(v9):
+    v10 = PropGet v9 key="#total" @522
+    Unreachable @522
+  b6(v11):
+    v12 = NewRuntimeError runtimeError=InvalidPrivateRead @522
+    Throw v12 @522
+}
+function f7 module=m0 position=133 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @133
+    v2 = Convert v1 declared={type=function flags=[IsFromCompiler]} @133
+    v3 = Integer @133
+    v4 = NewArray contents=anything @133
+    v5 = CallDirect v2, v3, v4 function=f14 @133
+    v6 = Integer integer=7 @445
+    PutModuleVariable v6 variable=g7 @436
+    v8 = Undefined @133
+    Return v8 @133
+}
+function f8 name="Below" module=m0 position=545 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @545
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @545
+    v5 = Convert v4 declared={type=L1} @545
+    Return v5 @545
+}
+function f9 module=m0 position=610 kind=Arrow captures=[{type=anything variableName="value"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3 @616
+    v2 = CheckInitialized v1 name="Registry" @616
+    v3 = PropGet v2 key="ask" @616
+    v4 = String string="#total in value" @629
+    v5 = Call v3, v2, v4, v0 calleeKey="ask" calleeName="Registry.ask" @625
+    ReturnCall v5 @625
+}
+function f10 module=m0 position=673 kind=Arrow captures=[{type=anything variableName="value"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3 @679
+    v2 = CheckInitialized v1 name="Registry" @679
+    v3 = PropGet v2 key="ask" @679
+    v4 = String string="value.#total" @692
+    v5 = Call v3, v2, v4, v0 calleeKey="ask" calleeName="Registry.ask" @688
+    ReturnCall v5 @688
+}
+function f11 module=m0 position=733 kind=Arrow captures=[{type=anything variableName="value"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3 @739
+    v2 = CheckInitialized v1 name="Registry" @739
+    v3 = PropGet v2 key="ask" @739
+    v4 = String string="value.#total = 1" @752
+    v5 = Call v3, v2, v4, v0 calleeKey="ask" calleeName="Registry.ask" @748
+    ReturnCall v5 @748
+}
+function f12 module=m0 position=797 kind=Arrow captures=[{type=anything variableName="value"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3 @803
+    v2 = CheckInitialized v1 name="Registry" @803
+    v3 = PropGet v2 key="ask" @803
+    v4 = String string="value.#total++" @816
+    v5 = Call v3, v2, v4, v0 calleeKey="ask" calleeName="Registry.ask" @812
+    ReturnCall v5 @812
+}
+function f13 module=m0 position=859 kind=Arrow captures=[{type=anything variableName="value"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3 @865
+    v2 = CheckInitialized v1 name="Registry" @865
+    v3 = PropGet v2 key="ask" @865
+    v4 = String string="eval('value.#total')" @878
+    v5 = Call v3, v2, v4, v0 calleeKey="ask" calleeName="Registry.ask" @874
+    ReturnCall v5 @874
+}
+function f14 module=m0 position=177 kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function, v1: int[0, 4294967295], v2: Array):
+    v3 = CreateUnmappedArguments v1, v2 @177
+    v4 = Builtin builtin=GlobalThis @186
+    v5 = PropGet v4 key="report" [isFreeName] @186
+    v6 = Builtin builtin=GlobalThis @193
+    v7 = PropGet v6 key="eval" [isFreeName] @193
+    v8 = Convert v7 declared={type=builtin(Eval) flags=[IsExpected]} @193
+    v9 = String string="#total in this" @198
+    v10 = Builtin builtin=Eval [isNotReadFromHolder] @193
+    v11 = StrictEq v8, v10 @193
+    Branch v11 -> taken b1(), notTaken b2(| 0) @193
+  b1():
+    v12 = Undefined @193
+    v13 = GetModuleVariable variable=g6 @193
+    v14 = GetModuleVariable variable=g6 @193
+    v15 = DirectEval v9, v0, v12, v3, v13, v14 evalScope=e2 @193
+    Jump -> next b3(v15) @193
+  b2(v16):
+    v17 = Call v16, -, v9 calleeName="eval" @193
+    Jump -> next b3(v17) @193
+  b3(v18):
+    v19 = Call v5, -, v18 calleeName="report" @186
+    v20 = Builtin builtin=GlobalThis @218
+    v21 = PropGet v20 key="report" [isFreeName] @218
+    v22 = TypeTest v0 testedType=object @235
+    Branch v22 -> taken b4(| 0), notTaken b13(| 0) @235
+  b4(v23):
+    v24 = GetModuleVariable variable=g6 @235
+    v25 = StrictEq v23, v24 @235
+    Branch v25 -> taken b5(), notTaken b6(v25) @235
+  b5():
+    v26 = GetModuleVariable variable=g7 @235
+    v27 = TypeTest v26 testedType=absent @235
+    v28 = LogicalNot v27 @235
+    Jump -> next b6(v28) @235
+  b6(v29):
+    v30 = Call v21, -, v29 calleeName="report" @218
+    v31 = Builtin builtin=GlobalThis @242
+    v32 = PropGet v31 key="report" [isFreeName] @242
+    v33 = Builtin builtin=GlobalThis @249
+    v34 = PropGet v33 key="eval" [isFreeName] @249
+    v35 = Convert v34 declared={type=builtin(Eval) flags=[IsExpected]} @249
+    v36 = String string="#step in this" @254
+    v37 = Builtin builtin=Eval [isNotReadFromHolder] @249
+    v38 = StrictEq v35, v37 @249
+    Branch v38 -> taken b7(), notTaken b8(| 0) @249
+  b7():
+    v39 = Undefined @249
+    v40 = GetModuleVariable variable=g6 @249
+    v41 = GetModuleVariable variable=g6 @249
+    v42 = DirectEval v36, v0, v39, v3, v40, v41 evalScope=e3 @249
+    Jump -> next b9(v42) @249
+  b8(v43):
+    v44 = Call v43, -, v36 calleeName="eval" @249
+    Jump -> next b9(v44) @249
+  b9(v45):
+    v46 = Call v32, -, v45 calleeName="report" @242
+    v47 = Builtin builtin=GlobalThis @273
+    v48 = PropGet v47 key="report" [isFreeName] @273
+    v49 = GetModuleVariable variable=g0 @280
+    v50 = NewClosure v0, v3, v3 function=f15 @288
+    v51 = Call v49, -, v50 calleeName="attempt" @280
+    v52 = Call v48, -, v51 calleeName="report" @273
+    v53 = Builtin builtin=GlobalThis @317
+    v54 = PropGet v53 key="report" [isFreeName] @317
+    v55 = GetModuleVariable variable=g0 @324
+    v56 = NewClosure v0, v3, v3 function=f16 @332
+    v57 = Call v55, -, v56 calleeName="attempt" @324
+    v58 = Call v54, -, v57 calleeName="report" @317
+    v59 = GetModuleVariable variable=g2 @365
+    v60 = CheckInitialized v59 name="later" @365
+    v61 = Builtin builtin=GlobalThis @373
+    v62 = PropGet v61 key="eval" [isFreeName] @373
+    v63 = Convert v62 declared={type=builtin(Eval) flags=[IsExpected]} @373
+    v64 = String string="() => String(#total in this) + this.#total" @378
+    v65 = Builtin builtin=Eval [isNotReadFromHolder] @373
+    v66 = StrictEq v63, v65 @373
+    Branch v66 -> taken b10(), notTaken b11(| 0) @373
+  b10():
+    v67 = Undefined @373
+    v68 = GetModuleVariable variable=g6 @373
+    v69 = GetModuleVariable variable=g6 @373
+    v70 = DirectEval v64, v0, v67, v3, v68, v69 evalScope=e4 @373
+    Jump -> next b12(v70) @373
+  b11(v71):
+    v72 = Call v71, -, v64 calleeName="eval" @373
+    Jump -> next b12(v72) @373
+  b12(v73):
+    v74 = Convert v73 declared={type=undefined|null|function flags=[IsExpected]} @365
+    PutModuleVariable v74 variable=g2 @365
+    v76 = Undefined @365
+    Return v76 @365
+  b13(v77):
+    v78 = PropHas v77 key="#total" @235
+    Unreachable @235
+}
+function f15 module=m0 position=288 kind=Arrow captures=[{type=function flags=[IsFromCompiler] variableName="this"}, {type=object flags=[IsFromCompiler] variableName="arguments"}, {type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function, v1: object, v2: anything):
+    v3 = Builtin builtin=GlobalThis @294
+    v4 = PropGet v3 key="eval" [isFreeName] @294
+    v5 = Convert v4 declared={type=builtin(Eval) flags=[IsExpected]} @294
+    v6 = String string="this.#total" @299
+    v7 = Builtin builtin=Eval [isNotReadFromHolder] @294
+    v8 = StrictEq v5, v7 @294
+    Branch v8 -> taken b1(), notTaken b2(| 0) @294
+  b1():
+    v9 = Undefined @294
+    v10 = GetModuleVariable variable=g6 @294
+    v11 = GetModuleVariable variable=g6 @294
+    v12 = DirectEval v6, v0, v9, v2, v10, v11 evalScope=e5 @294
+    Jump -> next b3(v12) @294
+  b2(v13):
+    v14 = Call v13, -, v6 calleeName="eval" @294
+    Jump -> next b3(v14) @294
+  b3(v15):
+    Return v15 @294
+}
+function f16 module=m0 position=332 kind=Arrow captures=[{type=function flags=[IsFromCompiler] variableName="this"}, {type=object flags=[IsFromCompiler] variableName="arguments"}, {type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function, v1: object, v2: anything):
+    v3 = Builtin builtin=GlobalThis @338
+    v4 = PropGet v3 key="eval" [isFreeName] @338
+    v5 = Convert v4 declared={type=builtin(Eval) flags=[IsExpected]} @338
+    v6 = String string="this.#total = 5" @343
+    v7 = Builtin builtin=Eval [isNotReadFromHolder] @338
+    v8 = StrictEq v5, v7 @338
+    Branch v8 -> taken b1(), notTaken b2(| 0) @338
+  b1():
+    v9 = Undefined @338
+    v10 = GetModuleVariable variable=g6 @338
+    v11 = GetModuleVariable variable=g6 @338
+    v12 = DirectEval v6, v0, v9, v2, v10, v11 evalScope=e6 @338
+    Jump -> next b3(v12) @338
+  b2(v13):
+    v14 = Call v13, -, v6 calleeName="eval" @338
+    Jump -> next b3(v14) @338
+  b3(v15):
+    Return v15 @338
+}
