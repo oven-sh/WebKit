@@ -1167,21 +1167,23 @@ JSC_DEFINE_HOST_FUNCTION(callPythonObject, (JSGlobalObject* globalObject, CallFr
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     CallArgs args(callFrame);
-    if (!args.hasKeywords() && hasKeywordMarker(globalObject, callFrame)) [[unlikely]] {
-        JSValue result = callWithKeywordMarker(globalObject, callFrame);
-        RETURN_IF_EXCEPTION(scope, { });
-        RELEASE_AND_RETURN(scope, JSValue::encode(resultForCaller(globalObject, callFrame, result)));
-    }
-    // As in bindPositional(): what JS passes a bound method beyond what it takes is dropped.
-    if (auto* method = dynamicDowncast<PyMethod>(callFrame->jsCallee()); method && !args.hasKeywords()) {
-        if (auto* function = PyFunction::tryFrom(method->function())) {
-            CodeInfo& info = function->codeInfo();
-            if (args.size() + 1 > info.argCount && info.argCount && !info.flags.contains(CodeFlag::VarArgs) && !isCalledByPython(globalObject, callFrame))
-                args = CallArgs(args.positional().first(info.argCount - 1));
+    JSValue result;
+    if (!args.hasKeywords() && hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
+        result = callWithKeywordMarker(globalObject, callFrame);
+    else {
+        // As in bindPositional(): what JS passes a bound method beyond what it takes is dropped.
+        if (auto* method = dynamicDowncast<PyMethod>(callFrame->jsCallee()); method && !args.hasKeywords()) {
+            if (auto* function = PyFunction::tryFrom(method->function())) {
+                CodeInfo& info = function->codeInfo();
+                if (args.size() + 1 > info.argCount && info.argCount && !info.flags.contains(CodeFlag::VarArgs) && !isCalledByPython(globalObject, callFrame))
+                    args = CallArgs(args.positional().first(info.argCount - 1));
+            }
         }
+        result = call(globalObject, callFrame->jsCallee(), args);
     }
-    JSValue result = call(globalObject, callFrame->jsCallee(), args);
     RETURN_IF_EXCEPTION(scope, { });
+    if (failed(scope, lookForSignalsBehindCall(globalObject, callFrame, result))) [[unlikely]]
+        return { };
     RELEASE_AND_RETURN(scope, JSValue::encode(resultForCaller(globalObject, callFrame, result)));
 }
 

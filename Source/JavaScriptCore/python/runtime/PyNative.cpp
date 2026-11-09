@@ -469,7 +469,7 @@ bool hasSignalsToHandle(JSGlobalObject*); // PySignal.cpp
 // The trap that brings a call here stands for more than signals, and until the next safe point: a thread that waits for the GIL, calls that are owed, a signal that is for another thread to
 // handle. So the marks are searched only if a handler would be called. That is asked once: a signal that comes behind the question waits for the next look. (checkOnlySignals() would ask
 // again, and handle it, whatever call this is. What is left of it without a signal is the question for a thread that is being stopped.)
-static NEVER_INLINE bool checkSignalsAfterCall(JSGlobalObject* globalObject, CallFrame* nativeFrame)
+NEVER_INLINE bool checkSignalsAfterCall(JSGlobalObject* globalObject, CallFrame* nativeFrame)
 {
     if (!hasSignalsToHandle(globalObject))
         return !runtime(globalObject).threads().throwIfStopping();
@@ -500,7 +500,6 @@ static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES callNativeFunctionWi
         if (args.size() > most && !isBeingCalledByPython(globalObject, callFrame)) [[unlikely]]
             args = CallArgs(args.positional().first(most));
     }
-    VM& vm = getVM(globalObject);
     JSValue result;
     if (hasMarker) [[unlikely]]
         result = callWithKeywordMarker(globalObject, callFrame);
@@ -519,7 +518,7 @@ static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES callNativeFunctionWi
             [[clang::musttail]] return callNativeFunctionAgainAfterCollecting(globalObject, callFrame);
         }
     }
-    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignalsAfterCall(globalObject, callFrame)) [[unlikely]]
+    if (!lookForSignalsBehindCall(globalObject, callFrame, result)) [[unlikely]]
         return { };
     return JSValue::encode(resultForCaller(globalObject, callFrame, result));
 }
@@ -572,7 +571,7 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES callNativeFunctionInOrder(JSGloba
         return def.functionOfArity<arity>()(globalObject, value(index)...);
     }(std::make_index_sequence<arity>());
 
-    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignalsAfterCall(globalObject, callFrame)) [[unlikely]]
+    if (!lookForSignalsBehindCall(globalObject, callFrame, result)) [[unlikely]]
         return { };
     if (!result || !result.isCell()) [[likely]]
         return JSValue::encode(result);

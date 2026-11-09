@@ -31,16 +31,23 @@ namespace Python {
 
 const ClassInfo PyType::s_info = { "PyType"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyType) };
 
+static ALWAYS_INLINE EncodedJSValue wayBackToCaller(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue result)
+{
+    if (!lookForSignalsBehindCall(globalObject, callFrame, result)) [[unlikely]]
+        return { };
+    return JSValue::encode(resultForCaller(globalObject, callFrame, result));
+}
+
 JSC_DEFINE_HOST_FUNCTION(callType, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     CallArgs args(callFrame);
     if (!args.hasKeywords() && hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
-        return JSValue::encode(resultForCaller(globalObject, callFrame, callWithKeywordMarker(globalObject, callFrame)));
+        return wayBackToCaller(globalObject, callFrame, callWithKeywordMarker(globalObject, callFrame));
     // What call() comes to for a class whose class is type.
     auto* type = uncheckedDowncast<PyType>(callFrame->jsCallee());
     if (type->type() == runtime(globalObject).typeType() && getVM(globalObject).isSafeToRecurseSoft()) [[likely]]
-        return JSValue::encode(resultForCaller(globalObject, callFrame, typeCall(globalObject, type, args)));
-    return JSValue::encode(resultForCaller(globalObject, callFrame, call(globalObject, type, args)));
+        return wayBackToCaller(globalObject, callFrame, typeCall(globalObject, type, args));
+    return wayBackToCaller(globalObject, callFrame, call(globalObject, type, args));
 }
 
 // `new T(...)` in JS.

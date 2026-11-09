@@ -169,6 +169,20 @@ JSValue withArgumentsFromJS(JSGlobalObject* globalObject, CallFrame* callFrame, 
 
 // What a host function that is Python to its callers returns: JS code gets valueForJS(result).
 // resultForCaller() is in PyHooks.h.
+// THE WAY BACK OF A HOST FUNCTION THAT PYTHON CODE ENTERS. CPython looks for signals after every call of what is no function of Python's, and code counts on it: libc.raise(n), and the handler has run, in the frame of
+// whoever made the call. Here such a callee is entered by a host function, and each of those looks on its way back: the ones in PyNative.cpp (a function written in C++), callPythonObject() (an object with a __call__: a
+// partial, a function pointer of ctypes, a function of an extension, a bound method or an instance that comes to one of those) and callType() (a class). Only signals, and not behind the __enter__ of a `with` or the __aenter__ of an
+// `async with`: see checkSignalsAfterCall() in PyNative.cpp. What a handler raises comes out of the call, and the result is dropped. (Where the interpreter itself enters the function of Python's that a bound method, an instance or a
+// class comes to, nobody looks behind it, nor does CPython: that function has looked at its entry. A function of JS's is entered by the engine, and nobody looks behind it.)
+// False: a handler has raised, or the thread is being stopped with its VM. (Nobody looks behind a call that has raised: `result` is empty.) A function that has a scope asks under it, failed(scope, ...), before it releases it: the scope of what calls the
+// handlers ends above that one, and resultForCaller() may open the next (JS is the caller, the result is a coroutine).
+bool checkSignalsAfterCall(JSGlobalObject*, CallFrame* nativeFrame);
+ALWAYS_INLINE bool lookForSignalsBehindCall(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue result)
+{
+    if (!getVM(globalObject).traps().needHandling(VMTraps::NeedPythonCalls)) [[likely]]
+        return true;
+    return !result || checkSignalsAfterCall(globalObject, callFrame);
+}
 
 // For who walks up the prototypes of an object of JS's. They make no circle, but through a Proxy: t = {}, Object.setPrototypeOf(t, new Proxy(t, {})). So one of the objects passed is kept,
 // a later one each time twice as far on, and whoever comes by it again is in a circle and has seen all there is. (A trap that gives a new Proxy each time it is asked makes a chain without
