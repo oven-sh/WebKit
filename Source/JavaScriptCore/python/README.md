@@ -1447,7 +1447,7 @@ The event loop is the host's, and there are three ways to it (`PyExec.h`, `PyEve
   which the host replaces: Bun watches the descriptor and a timer in its own loop and turns that until one of them fires. So
   `asyncio.run()` and any loop a program makes are asyncio's own, unchanged, and timers, promises and I/O of JS go on while they sleep.
   Where the wait is itself under a callback of JS's (`asyncio.run()` in what a timer or a server calls), what the loop calls meanwhile and was made in no context of `AsyncLocalStorage`'s begins with none, as at the top of the loop, not with
-  that of the callback that waits, which has its own again behind the wait (`NoAsyncContextScope`): a request that is served meanwhile does not see the store of the handler that sits in `asyncio.run()`.
+  that of the callback that waits, which has its own again behind the wait (`NoAsyncContextScope`): a request that is served meanwhile does not see the store of the handler that sits in `asyncio.run()`. That goes for every realm that has a frame on the stack. (`enterWith()`: see DEFERRED.)
   A socket that blocks waits there too on the main thread, not in the system call. To read, it waits and then calls: `POLLIN` says what `recv()` would
   say. (Not with `MSG_OOB`, or `MSG_ERRQUEUE` where there is such a queue, for which `POLLIN` never comes, nor with `SO_RCVTIMEO` set, of which the wait knows nothing and for which the descriptor is asked before it waits: there the call is
   made as a thread makes it. NOT MENDED: with `SO_RCVLOWAT` on TCP `POLLIN` comes only at that mark, where `recv()` returns what there is when it is called: there such a call waits for the mark. And `recv()` with `MSG_WAITALL` waits for the

@@ -10,9 +10,9 @@
 
 #include "InternalFieldTuple.h"
 #include "JSCInlines.h"
+#include "MarkedVector.h"
 #include "PyHooks.h"
 #include "PyPosix.h"
-#include "VMEntryScope.h"
 #include <limits.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -156,36 +156,79 @@ static void waitClearSets(WaitRequest& request)
 
 // What AsyncLocalStorage promises of a callback is that it runs in the context in which what it belongs to was made. The host writes that down only where there is one: a callback that was made in
 // none is called as it is, and runs with whatever is current, which at the top of the loop is nothing. Here the loop turns with script on the stack. So for as long as it does nothing is current,
-// or the handler of one request would begin with the store of another, which waits. (AsyncContextSwapScope, but for one thing: the first AsyncLocalStorage of the program may be made meanwhile.)
-// In the realm in which the host has called whatever waits, and in that of the interpreter. (The two may be one: what was found first is put back last.)
+// or the handler of one request would begin with the store of another, which waits. Each realm has a current context of its own, and what is current in one is so because of somebody on the stack,
+// who has entered it and will leave it: so, in every realm that has a frame there, and in that of the interpreter.
+#if USE(BUN_JSC_ADDITIONS)
 class NoAsyncContextScope {
     WTF_MAKE_NONCOPYABLE(NoAsyncContextScope);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
     explicit NoAsyncContextScope(JSGlobalObject* globalObject)
-        : m_vm(getVM(globalObject))
-        , m_current { (m_vm.entryScope ? m_vm.entryScope->globalObject() : globalObject)->m_asyncContextData.get(), globalObject->m_asyncContextData.get() }
+        : m_globalObject(globalObject)
     {
-        if (!m_vm.isAsyncContextTrackingEnabled())
-            return;
-        for (size_t i = 0; i < std::size(m_current); ++i) {
-            m_previous[i] = m_current[i]->getInternalField(0);
-            m_current[i]->putInternalField(m_vm, 0, jsUndefined());
-        }
+        if (getVM(globalObject).isAsyncContextTrackingEnabled()) [[unlikely]]
+            putAside();
     }
     ~NoAsyncContextScope()
     {
-        if (!m_vm.isAsyncContextTrackingEnabled())
-            return;
-        for (size_t i = std::size(m_current); i--;)
-            m_current[i]->putInternalField(m_vm, 0, m_previous[i]);
+        if (getVM(m_globalObject).isAsyncContextTrackingEnabled()) [[unlikely]]
+            putBack();
     }
 
 private:
-    VM& m_vm;
-    InternalFieldTuple* m_current[2];
-    JSValue m_previous[2] { jsUndefined(), jsUndefined() };
+    NEVER_INLINE void putAside()
+    {
+        VM& vm = getVM(m_globalObject);
+        m_realms.emplace();
+        JSGlobalObject* last = nullptr;
+        auto take = [&](JSGlobalObject* realm) {
+            if (realm == last || !realm)
+                return;
+            last = realm;
+            // (Some share one: the contexts of node:vm have that of the realm that made them.)
+            InternalFieldTuple* current = realm->m_asyncContextData.get();
+            if (m_realms->current.contains(current))
+                return;
+            m_realms->current.append(current);
+            m_realms->previous.append(current->getInternalField(0));
+            current->putInternalField(vm, 0, jsUndefined());
+        };
+        take(m_globalObject);
+        EntryFrame* entryFrame = vm.topEntryFrame;
+        // (Below code that was compiled ahead of time there is nothing that can be walked so.)
+        for (CallFrame* callFrame = vm.topCallFrame; callFrame; callFrame = callFrame->callerFrameUnlessCompiled(vm, entryFrame)) {
+            if (!callFrame->isNativeCalleeFrame())
+                take(callFrame->jsCallee()->realm());
+        }
+    }
+
+    // (Whoever has waited goes by errno next.)
+    NEVER_INLINE void putBack()
+    {
+        int error = errno;
+        if (!m_realms) {
+            // The first AsyncLocalStorage of the program was made meanwhile. Before it nothing was current anywhere.
+            putAside();
+        } else {
+            for (size_t i = 0; i < m_realms->current.size(); ++i)
+                m_realms->current[i]->putInternalField(getVM(m_globalObject), 0, m_realms->previous[i]);
+        }
+        m_realms.reset();
+        errno = error;
+    }
+
+    struct Realms {
+        Vector<InternalFieldTuple*, 4> current;
+        MarkedVector<JSValue, 4> previous;
+    };
+    JSGlobalObject* m_globalObject;
+    std::optional<Realms> m_realms;
 };
+#else
+struct NoAsyncContextScope {
+    explicit NoAsyncContextScope(JSGlobalObject*) { }
+};
+#endif
 
 static NEVER_INLINE int waitInHost(JSGlobalObject* globalObject, WaitFunction function, WaitRequest& request)
 {
