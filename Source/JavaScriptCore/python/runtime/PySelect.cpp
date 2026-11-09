@@ -8,6 +8,7 @@
 
 #if !OS(WINDOWS)
 
+#include "AOTCompiledCaller.h"
 #include "InternalFieldTuple.h"
 #include "JSCInlines.h"
 #include "MarkedVector.h"
@@ -157,95 +158,90 @@ static void waitClearSets(WaitRequest& request)
 
 // What AsyncLocalStorage promises of a callback is that it runs in the context in which what it belongs to was made. The host writes that down only where there is one: a callback that was made in
 // none is called as it is, and runs with whatever is current, which at the top of the loop is nothing. Here the loop turns with script on the stack. So for as long as it does nothing is current,
-// or the handler of one request would begin with the store of another, which waits. Each realm has a current context of its own, and what is current in one is so because of somebody on the stack,
-// who has entered it and will leave it: so, in every realm that has a frame there, and in that of the interpreter.
+// or the handler of one request would begin with the store of another, which waits. Each realm has a current context of its own. What is current in one is so, as a rule, because of somebody on the
+// stack, who has entered it and will leave it: so, in every realm that has a frame there, and in that of the interpreter.
 #if USE(BUN_JSC_ADDITIONS)
-class NoAsyncContextScope {
-    WTF_MAKE_NONCOPYABLE(NoAsyncContextScope);
-    WTF_FORBID_HEAP_ALLOCATION;
-public:
-    explicit NoAsyncContextScope(JSGlobalObject* globalObject)
-        : m_globalObject(globalObject)
-    {
-        if (getVM(globalObject).isAsyncContextTrackingEnabled()) [[unlikely]]
-            putAside();
+// function(what holds the current context of the realm), for some more than once.
+template<typename Functor>
+static ALWAYS_INLINE void forEachRealmOnStack(JSGlobalObject* globalObject, const Functor& function)
+{
+    VM& vm = getVM(globalObject);
+    function(globalObject->m_asyncContextData.get());
+    // The frames of code that was compiled ahead of time cannot be walked so, nor what lies below them.
+    if (vm.hasCompiledCode() && AOT::isTopFrameCompiled(vm)) [[unlikely]]
+        return;
+    JSGlobalObject* last = globalObject;
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    for (CallFrame* callFrame = vm.topCallFrame; callFrame; callFrame = callFrame->callerFrameUnlessCompiled(vm, entryFrame)) {
+        if (callFrame->isNativeCalleeFrame())
+            continue;
+        JSGlobalObject* realm = callFrame->jsCallee()->realmMayBeNull();
+        if (realm == last || !realm)
+            continue;
+        last = realm;
+        function(realm->m_asyncContextData.get());
     }
-    ~NoAsyncContextScope()
-    {
-        if (getVM(m_globalObject).isAsyncContextTrackingEnabled()) [[unlikely]]
-            putBack();
-    }
+}
 
-private:
-    NEVER_INLINE void putAside()
-    {
-        VM& vm = getVM(m_globalObject);
-        m_realms.emplace();
-        JSGlobalObject* last = nullptr;
-        auto take = [&](JSGlobalObject* realm) {
-            if (realm == last || !realm)
+// In frames of their own, which only a program with an AsyncLocalStorage comes to have: see blockingWait().
+static NEVER_INLINE int waitInHostWithNoAsyncContext(JSGlobalObject* globalObject, WaitFunction function, WaitRequest& request)
+{
+    VM& vm = getVM(globalObject);
+    // By turns: what holds the current context of a realm, and what was there.
+    MarkedVector<JSValue, 8> putAside;
+    forEachRealmOnStack(globalObject, [&](InternalFieldTuple* current) ALWAYS_INLINE_LAMBDA {
+        // (Some share one: the contexts of node:vm have that of the realm that made them.)
+        for (size_t i = 0; i < putAside.size(); i += 2) {
+            if (putAside[i].asCell() == current)
                 return;
-            last = realm;
-            // (Some share one: the contexts of node:vm have that of the realm that made them.)
-            InternalFieldTuple* current = realm->m_asyncContextData.get();
-            if (m_realms->current.contains(current))
-                return;
-            m_realms->current.append(current);
-            m_realms->previous.append(current->getInternalField(0));
-            current->putInternalField(vm, 0, jsUndefined());
-        };
-        take(m_globalObject);
-        EntryFrame* entryFrame = vm.topEntryFrame;
-        // (Below code that was compiled ahead of time there is nothing that can be walked so.)
-        for (CallFrame* callFrame = vm.topCallFrame; callFrame; callFrame = callFrame->callerFrameUnlessCompiled(vm, entryFrame)) {
-            if (!callFrame->isNativeCalleeFrame())
-                take(callFrame->jsCallee()->realm());
         }
-    }
-
+        putAside.append(current);
+        putAside.append(current->getInternalField(0));
+        current->putInternalField(vm, 0, jsUndefined());
+    });
+    int result = function(globalObject, request);
     // (Whoever has waited goes by errno next.)
-    NEVER_INLINE void putBack()
-    {
-        int error = errno;
-        if (!m_realms) {
-            // The first AsyncLocalStorage of the program was made meanwhile. Before it nothing was current anywhere.
-            putAside();
-        } else {
-            for (size_t i = 0; i < m_realms->current.size(); ++i)
-                m_realms->current[i]->putInternalField(getVM(m_globalObject), 0, m_realms->previous[i]);
-        }
-        m_realms.reset();
-        errno = error;
-    }
+    int error = errno;
+    for (size_t i = 0; i < putAside.size(); i += 2)
+        uncheckedDowncast<InternalFieldTuple>(putAside[i].asCell())->putInternalField(vm, 0, putAside[i + 1]);
+    errno = error;
+    return result;
+}
 
-    struct Realms {
-        Vector<InternalFieldTuple*, 4> current;
-        MarkedVector<JSValue, 4> previous;
-    };
-    JSGlobalObject* m_globalObject;
-    std::optional<Realms> m_realms;
-};
-#else
-struct NoAsyncContextScope {
-    explicit NoAsyncContextScope(JSGlobalObject*) { }
-};
+// The first AsyncLocalStorage of the program was made under the wait. Before it nothing was current anywhere.
+static NEVER_INLINE void leaveNoAsyncContext(JSGlobalObject* globalObject)
+{
+    int error = errno;
+    forEachRealmOnStack(globalObject, [&](InternalFieldTuple* current) ALWAYS_INLINE_LAMBDA {
+        current->putInternalField(getVM(globalObject), 0, jsUndefined());
+    });
+    errno = error;
+}
 #endif
 
 static NEVER_INLINE int waitInHost(JSGlobalObject* globalObject, WaitFunction function, WaitRequest& request)
 {
     Runtime::EventLoopPositionScope position(runtime(globalObject), true);
-    NoAsyncContextScope nothingIsCurrent(globalObject);
+    // A mere look sleeps nowhere, and the host's loop does not turn for it.
+    if (!request.timeout)
+        return function(globalObject, request);
+    VM& vm = getVM(globalObject);
+    JSLock::EmbedderThreadWaitsInEventLoop waits(vm.apiLock());
+    // Whoever asks for what runs to be ended either finds that, or has asked before this looks.
+    if (runtime(globalObject).threads().throwIfHostEndsWhatRuns()) [[unlikely]]
+        return waitRaised;
     // So with the variables of Python's: what the loop calls is not called by whoever waits.
     OutermostContextScope inNobodysContext(globalObject);
-    // Not for a mere look, which sleeps nowhere.
-    std::optional<JSLock::EmbedderThreadWaitsInEventLoop> waits;
-    if (request.timeout) {
-        waits.emplace(getVM(globalObject).apiLock());
-        // Whoever asks for what runs to be ended either finds that, or has asked before this looks.
-        if (runtime(globalObject).threads().throwIfHostEndsWhatRuns()) [[unlikely]]
-            return waitRaised;
-    }
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return waitInHostWithNoAsyncContext(globalObject, function, request);
+    int result = function(globalObject, request);
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        leaveNoAsyncContext(globalObject);
+    return result;
+#else
     return function(globalObject, request);
+#endif
 }
 
 int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)

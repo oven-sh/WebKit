@@ -55,8 +55,9 @@ namespace Python {
 // for the time that is left. That is how a signal that Python handles gets its handler called, as after the system call, and
 // how a wait is ended when the host ends what runs (mainThreadIsToHandleTrap()).
 // A request with timeout 0 comes here too (asyncio asks that way whenever it has something to run): waitWithoutBlocking() is
-// the whole answer, and whether to turn the loop once first, so that a busy Python loop does not starve it, is up to the host.
-// It must not sleep for such a request: nobody would know to wake it.
+// the whole answer. The host must not sleep for such a request: nobody would know to wake it. Nor does it turn its loop: what the
+// loop calls is to find nothing current of whoever waits (AsyncLocalStorage, contextvars), and that is seen to for a wait, not
+// for a look, of which a busy loop makes one for each of its iterations.
 // What does not come here: time.sleep(), locks and semaphores. What does, as a Poll of one descriptor: os.read() and the like
 // (waitUntilReadable()), and on Linux os.waitpid() for one child and os.spawnv(os.P_WAIT) and its kin (waitUntilReady()).
 
