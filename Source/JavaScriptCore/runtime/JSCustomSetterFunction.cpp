@@ -61,7 +61,7 @@ JSCustomSetterFunction* JSCustomSetterFunction::create(VM& vm, JSGlobalObject* g
     // raw NativeExecutable name unprefixed so toString() renders as `function foo() { [native code] }`.
     auto name = makeString("set "_s, propertyName.publicName());
     FunctionRareData* rareData = function->ensureRareData(vm);
-    rareData->setHasReifiedName();
+    rareData->setHasReifiedName(FunctionRareData::ReifiedName::AssignedAtRunTime);
     function->putDirect(vm, vm.propertyNames->name, jsString(vm, WTF::move(name)), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     return function;
 }
