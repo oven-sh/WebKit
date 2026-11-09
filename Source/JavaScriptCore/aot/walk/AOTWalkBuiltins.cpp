@@ -20,14 +20,12 @@
 #include "AOTIRProgram.h"
 #include "AOTInliningAcrossFiles.h"
 #include "AOTLimits.h"
-#include "AOTOperatorForms.h"
 #include "AOTSchemaInlineBuiltins.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCompiledMethods.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
-#include "AOTWalkLoopsOverGeneratorsBuilder.h"
 #include "AOTWalkTextBuilderRows.h"
 #include "AOTWalkNumberForms.h"
 #include "AOTWalkNumberGuesses.h"
@@ -2424,22 +2422,14 @@ bool CallInWalkBuiltins::settle(Operand& operand, Origin origin)
             continue;
         if (opcode == Opcode::ToString && holdOperandToTextOrBeginTurnAgain(operand, origin))
             continue;
-        bool isTyped = m_walker.has(Mechanism::TypedOperations);
-        if (isTyped && m_walker.isUnreachable())
-            return false;
-        bool namesBuiltin = Operation::opcodesWithCalledBuiltin.contains(opcode);
-        Origin originOfConversion = origin;
-        originOfConversion.isTailCall = namesBuiltin && m_origin.isTailCall;
-        Draft conversion(opcode, originOfConversion);
+        if (m_walker.has(Mechanism::TypedOperations)) {
+            operand.value = buildOperatorForStrings(m_walker, opcode, operand.value, { }, origin);
+            continue;
+        }
+        Draft conversion(opcode, origin);
         m_walker.chooseConservativeFields(conversion);
         conversion.setOperand(0, operand.value);
-        if (namesBuiltin)
-            conversion.setCalledBuiltin(m_builtin);
-        if (isTyped && hasOperatorForm(opcode))
-            conversion.setForm(formAllowedForTypedOperator(m_walker, conversion));
         operand.value = m_walker.build(WTF::move(conversion));
-        if (isTyped && operand.value)
-            operand.value = boxedUnlessNumbersAreUnboxed(m_walker, operand.value, origin);
     }
     return !!operand.value;
 }

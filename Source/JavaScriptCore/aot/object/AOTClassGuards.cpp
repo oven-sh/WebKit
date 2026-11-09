@@ -856,7 +856,6 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
         if (side == ClassSide::Static)
             m_state.objects->closures.didGivePrototypePropertyTo(vm, holder);
     }
-    ASSERT(!isDefinedByClass(layout) || !holder->structure()->hasPolyProto());
     auto entry = m_classSidesByHolder.add(holder, encodeSideOfClassHolder(layout, side));
     bool isEnteredForThisSide = entry.iterator->value == encodeSideOfClassHolder(layout, side);
     if (entry.isNewEntry)

@@ -708,21 +708,44 @@ static Vector<NativeCellInLinkCalls> nativeCellsOfTableForLinkCalls(const Builti
             }
         }
     }
-    auto gatherExportsKept = [&](const BuiltinModuleLoad& load) {
-        for (size_t place = 0; place < load.usesOfExports.size(); ++place) {
-            for (const BuiltinHostUse& use : load.usesOfExports[place].list) {
-                size_t position = use.use == BuiltinHostReadUse::Kept ? cells.findIf([&](const NativeCellInLinkCalls& cell) { return cell.name == use.nativeCell; }) : notFound;
-                bool staysBecauseLinkFollowsCell = std::ranges::contains(table.at(load.module).exportsOfWhichMembersAloneAreKept, load.exports[place]);
-                RELEASE_ASSERT(!staysBecauseLinkFollowsCell || (position != notFound && cells[position].isCalled && !cells[position].isHandedOut));
-                if (position != notFound)
-                    cells[position].exportsKept.append({ load.module, load.exports[place], use.memberPath });
+    for (uint32_t index = 0; index < table.builtinCount(); ++index) {
+        for (const BuiltinModuleLoad& load : table.moduleLoadsOf(BuiltinID(index))) {
+            for (size_t place = 0; place < load.usesOfExports.size(); ++place) {
+                for (const BuiltinHostUse& use : load.usesOfExports[place].list) {
+                    size_t position = use.use == BuiltinHostReadUse::Kept ? cells.findIf([&](const NativeCellInLinkCalls& cell) { return cell.name == use.nativeCell; }) : notFound;
+                    if (position != notFound)
+                        cells[position].exportsKept.append({ load.module, load.exports[place], use.memberPath });
+                }
             }
+        }
+    }
+    return cells;
+}
+
+Vector<std::pair<RuntimeModuleID, BuiltinName>> exportsThatHostOnlyKeepsWhereLinkFollows(const BuiltinTable& table)
+{
+    Vector<NativeCellInLinkCalls> cells = nativeCellsOfTableForLinkCalls(table);
+    Vector<std::pair<RuntimeModuleID, BuiltinName>> followed;
+    Vector<std::pair<RuntimeModuleID, BuiltinName>> usedOtherwise;
+    auto lookAt = [&](const BuiltinModuleLoad& load) {
+        for (size_t place = 0; place < load.exports.size(); ++place) {
+            bool isOnlyKept = !load.readsEveryExport && place < load.usesOfExports.size() && load.usesOfExports[place].areListed && !load.usesOfExports[place].list.empty();
+            for (size_t index = 0; isOnlyKept && index < load.usesOfExports[place].list.size(); ++index) {
+                const BuiltinHostUse& use = load.usesOfExports[place].list[index];
+                isOnlyKept = use.use == BuiltinHostReadUse::Kept && !use.memberPath.empty() && cells.containsIf([&](const NativeCellInLinkCalls& cell) {
+                    return cell.name == use.nativeCell && cell.isCalled && !cell.isHandedOut;
+                });
+            }
+            (isOnlyKept ? followed : usedOtherwise).append({ load.module, load.exports[place] });
         }
     };
     for (uint32_t index = 0; index < table.builtinCount(); ++index)
-        std::ranges::for_each(table.moduleLoadsOf(BuiltinID(index)), gatherExportsKept);
-    std::ranges::for_each(table.startupLoads(), gatherExportsKept);
-    return cells;
+        std::ranges::for_each(table.moduleLoadsOf(BuiltinID(index)), lookAt);
+    std::ranges::for_each(table.startupLoads(), lookAt);
+    followed.removeAllMatching([&](const std::pair<RuntimeModuleID, BuiltinName>& exported) {
+        return usedOtherwise.contains(exported);
+    });
+    return followed;
 }
 
 StateOfLinkCalls::StateOfLinkCalls(const LinkFlow& flow)

@@ -681,7 +681,7 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
             uint32_t placeOfTested = found->placesAtOrBelow.get(tested->layout.index()).first;
             kinDecideEveryShape = std::ranges::none_of(considered, [&](LayoutID layout) {
                 size_t index = std::ranges::lower_bound(found->layouts, layout) - found->layouts.begin();
-                return !walker.takesLayoutsAboveClassAskedForForStrangers() && found->placesOfClasses[index] < placeOfTested && placeOfTested < found->endsOfPlacesBelowClasses[index];
+                return found->placesOfClasses[index] < placeOfTested && placeOfTested < found->endsOfPlacesBelowClasses[index];
             });
         }
         if (kinDecideEveryShape) {
@@ -693,7 +693,7 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
                 if (place >= first && place < end)
                     chains.instances.append(layout);
             }
-            chains.testsObjects = !walker.asksNoObjectOfClassAskedForWhereItStands();
+            chains.testsObjects = true;
             instancesBesideKin.shrink(0);
             kin = found;
         }
@@ -708,7 +708,7 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
         }
         std::ranges::sort(chains.instances);
         chains.instances.shrink(std::ranges::unique(chains.instances).begin() - chains.instances.begin());
-        chains.testsObjects = !walker.asksNoObjectOfClassAskedForWhereItStands();
+        chains.testsObjects = true;
     }
     FormOfInstanceOf form;
     form.tested = tested->layout;
@@ -740,7 +740,7 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
             uint32_t placeOfTested = kin->placesAtOrBelow.get(form.tested.index()).first;
             Vector<LayoutID, 8> kinThatStandNotAbove;
             for (size_t index = 0; index < kin->layouts.size(); ++index) {
-                if (walker.takesLayoutsAboveClassAskedForForStrangers() || kin->placesOfClasses[index] >= placeOfTested || placeOfTested >= kin->endsOfPlacesBelowClasses[index])
+                if (kin->placesOfClasses[index] >= placeOfTested || placeOfTested >= kin->endsOfPlacesBelowClasses[index])
                     kinThatStandNotAbove.append(kin->layouts[index]);
             }
             form.kin = types.layoutSets().ofSorted(kinThatStandNotAbove.span());
@@ -762,7 +762,6 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     if (!typeOfValue || !typeOfConstructor)
         return false;
     bool valueStandsWhereMade = !inputs.areOnlyTypes() && factsOfCellAsPlannerTakesThem(walker, walker.referenceOf(test.valueOperand())).contains(FactOfCell::HasLayoutPrototype);
-    valueStandsWhereMade |= walker.takesValuesAskedForClassesToStandWhereTheyWereMade() && !inputs.areOnlyTypes();
     TypeID expectedOfValue = !inputs.areOnlyTypes() && maySpendBytesForTimeInInstanceOf(walker) ? findExpectation(walker, test.valueOperand()).type : TypeID();
     std::optional<FormOfInstanceOf> form = planFormOfInstanceOf(walker, typeOfValue, typeOfConstructor, valueStandsWhereMade, expectedOfValue);
     if (!form)
@@ -819,12 +818,10 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         if (answers.armsEndWithBranch() && name && !walker.isUnreachable() && !walker.state().checkedNameOf(value))
             walker.state().noteCheckedName(value, name);
     };
-    if (form->kinDecideEveryShape)
-        walker.count(StatisticID::QuestionsOfInstanceOfThatKinDecideForEveryShape);
     bool hasArms = false;
     BlockID asWritten;
     for (std::span<const MemberConditionRecord> conditions : { std::span<const MemberConditionRecord>(form->conditions.span()), form->linksOfKin }) {
-        if (conditions.empty() || (walker.leavesLinksOfKinUnguarded() && conditions.data() == form->linksOfKin.data()) || (walker.leavesConditionsOfClassAskedForUnguarded() && conditions.data() == form->conditions.span().data()))
+        if (conditions.empty())
             continue;
         bool asksInFront = prototypeObjectIsInTable && !hasOneClosedArm && walker.mayBeginTurnAgainInClosedCopy() && walker.turnsOfTypedCopyWriteNoMemberGuards();
         Reference areUnchanged;
@@ -854,33 +851,15 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     auto holdAnswerOfShapesToWalkOfChain = [&](bool answerOfShapes) {
         if (!walker.checksProofs() || !prototypeObjectIsInTable || walker.isUnreachable())
             return;
-        WalkState believed = walker.state();
         Draft read(Opcode::GetClassPrototype, origin);
         walker.chooseConservativeFields(read);
         read.setClassObjectOperand(constructor);
         read.setLayout(form->tested);
-        if (Reference prototype = walker.build(WTF::move(read))) {
-            Draft chainWalk(Opcode::FindInPrototypeChainUnlessTrapped, origin);
-            walker.chooseConservativeFields(chainWalk);
-            chainWalk.setValueOperand(value);
-            chainWalk.setPrototypeOperand(prototype);
-            if (Reference found = walker.buildTestOfCheck(WTF::move(chainWalk))) {
-                Draft answer(Opcode::Integer);
-                answer.setInteger(answerOfShapes);
-                Draft comparison(Opcode::StrictEq, origin);
-                walker.chooseConservativeFields(comparison);
-                comparison.setLeftOperand(found);
-                comparison.setRightOperand(walker.constant(WTF::move(answer)));
-                comparison.setForm(OperatorForm::Integers);
-                if (Reference agrees = walker.buildTestOfCheck(WTF::move(comparison)))
-                    walker.checkProof(agrees, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::OtherOperation, origin);
-            }
-        }
-        if (!walker.isUnreachable())
-            walker.state() = WTF::move(believed);
+        if (Reference found = buildWalkOfChainForInstanceOf(walker, value, walker.build(WTF::move(read)), origin))
+            walker.checkProof(found, TypeArena::fromPrimitives(answerOfShapes ? Primitive::True : Primitive::False), TypeTable::boolean, ProofSource::OtherOperation, origin);
     };
 
-    bool holdsAnswersOfKin = walker.checksProofs() && form->valueIsSurelyObject;
+    bool holdsAnswersOfKin = walker.checksProofs() && !form->linksOfKin.empty() && form->valueIsSurelyObject;
     auto buildAnswerOfMiss = [&]() -> Reference {
         if (form->missMeansFalse && holdsAnswersOfKin)
             holdAnswerOfShapesToWalkOfChain(false);
@@ -896,7 +875,7 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         return walker.mayBeginTurnAgainInClosedCopy() ? buildWalkOfChainThatGivesWayForInstanceOf(walker, value, prototype, origin) : buildWalkOfChainForInstanceOf(walker, value, prototype, origin);
     };
 
-    bool testsPrototype = form->testsPrototypeOfInstance && !factsOfCellAsPlannerTakesThem(walker, value).contains(FactOfCell::HasLayoutPrototype) && !(walker.takesValuesAskedForClassesToStandWhereTheyWereMade() && form->kinDecideEveryShape);
+    bool testsPrototype = form->testsPrototypeOfInstance && !factsOfCellAsPlannerTakesThem(walker, value).contains(FactOfCell::HasLayoutPrototype);
     if (form->testsPrototypeOfInstance && !testsPrototype)
         walker.checkFactsRememberedOfCell(value, origin, FactOfCell::HasLayoutPrototype);
     auto buildAnswerWhereClassIsUnchanged = [&]() -> Reference {
@@ -952,21 +931,17 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
                 BlockID isBelowClass = walker.addBlock();
                 walker.branch(standsWhereMade, isBelowClass, walksChain);
                 walker.continueIn(isBelowClass);
-                holdAnswerOfShapesToWalkOfChain(true);
                 noteNameThatArmHasTested(instance);
                 walker.state().noteFactsOfCell(value, FactOfCell::HasLayoutPrototype);
                 walker.state().noteFactsOfCell(instance, FactOfCell::HasLayoutPrototype);
-            } else
-                holdAnswerOfShapesToWalkOfChain(true);
+            }
         } else if (answers.armsEndWithBranch()) {
-            Reference instance = buildProofOfInstanceOf(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
-            holdAnswerOfShapesToWalkOfChain(true);
-            if (instance) {
+            if (Reference instance = buildProofOfInstanceOf(walker, value, isInstance, OperandIndex::ShapeTest::object, origin)) {
                 noteNameThatArmHasTested(instance);
                 walker.state().noteFactsOfCell(instance, FactOfCell::HasLayoutPrototype);
             }
-        } else
-            holdAnswerOfShapesToWalkOfChain(true);
+        }
+        holdAnswerOfShapesToWalkOfChain(true);
         answers.arrive(booleanAnswerOfInstanceOf(walker, true));
 
         if (asksWhetherMissIsStranger) {
@@ -992,13 +967,13 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
             }
             if (standsWhereMade) {
                 BlockID standsBesideClass = walker.addBlock();
-                walker.branch(standsWhereMade, standsBesideClass, walker.asksNoStrangerAmongKinWhereItStands() ? standsBesideClass : walksChain);
+                walker.branch(standsWhereMade, standsBesideClass, walksChain);
                 walker.continueIn(standsBesideClass);
                 walker.count(StatisticID::MissesOfInstanceOfAnsweredByShapesOfKin);
-                holdAnswerOfShapesToWalkOfChain(false);
                 noteNameThatArmHasTested(stranger);
                 walker.state().noteFactsOfCell(value, FactOfCell::HasLayoutPrototype);
                 walker.state().noteFactsOfCell(stranger, FactOfCell::HasLayoutPrototype);
+                holdAnswerOfShapesToWalkOfChain(false);
                 answers.arrive(booleanAnswerOfInstanceOf(walker, false));
             } else if (!walker.isUnreachable())
                 walker.jumpTo(walksChain);
@@ -1006,9 +981,10 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
 
         if (form->missMeansFalse) {
             walker.continueIn(hasOtherShape);
+            if (holdsAnswersOfKin)
+                holdAnswerOfShapesToWalkOfChain(false);
             if (form->kinDecideEveryShape)
                 walker.count(StatisticID::MissesOfInstanceOfAnsweredByShapesOfKin);
-            Reference stranger;
             if (answers.armsEndWithBranch() && !walker.isUnreachable()) {
                 Draft left(Opcode::Narrowed, origin);
                 walker.chooseConservativeFields(left);
@@ -1016,14 +992,10 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
                 left.setTestOperand(isInstance);
                 left.setOperandIndex(OperandIndex::ShapeTest::object);
                 left.setIsOnTakenEdge(false);
-                if (walker.resultTypeOf(left))
-                    stranger = walker.build(WTF::move(left));
-            }
-            if (holdsAnswersOfKin)
-                holdAnswerOfShapesToWalkOfChain(false);
-            if (stranger && !walker.isUnreachable()) {
-                noteNameThatArmHasTested(stranger);
-                walker.state().noteFactsOfCell(stranger, FactOfCell::HasLayoutPrototype);
+                if (Reference stranger = walker.resultTypeOf(left) ? walker.build(WTF::move(left)) : Reference()) {
+                    noteNameThatArmHasTested(stranger);
+                    walker.state().noteFactsOfCell(stranger, FactOfCell::HasLayoutPrototype);
+                }
             }
             answers.arrive(booleanAnswerOfInstanceOf(walker, false));
         }

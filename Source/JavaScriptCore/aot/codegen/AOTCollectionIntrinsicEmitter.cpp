@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTCompactTable.h"
-#include "AOTCompileUnit.h"
 #include "AOTConversionEmitter.h"
 #include "AOTHashTableBuiltinEmitter.h"
 #include "AOTResultRules.h"
@@ -420,7 +419,7 @@ void CollectionIntrinsicEmitter::generateGetValueAtPlaceInMap(const ValueContext
     }, [&] {
         LValue table = reader.storageOf(map);
         LValue slot = m_out.add(table, place.value());
-        if (testsEveryPositionUnder(build().options().testing)) {
+        if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime)) {
             Condition placeIsOfNarrowValue = hasBits(place, placeInMapHoldsNarrowValue);
             Condition isLive(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfStatus())), m_out.constInt32(static_cast<int32_t>(CompactTable::Status::Live))));
             LValue widthThatPlaceSays = m_out.select(placeIsOfNarrowValue.value(), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow)), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Wide)));
@@ -475,7 +474,7 @@ void CollectionIntrinsicEmitter::generateTryPutValueAtPlaceInMap(const ValueCont
 
         m_out.appendTo(liesWhereItWasFound);
         LValue table = reader.storageOf(map);
-        if (testsEveryPositionUnder(build().options().testing)) {
+        if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime)) {
             Condition isLive(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfStatus())), m_out.constInt32(static_cast<int32_t>(CompactTable::Status::Live))));
             Condition holdsWideValues(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfValueWidth())), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Wide))));
             LValue keys = reader.keysOf(table);

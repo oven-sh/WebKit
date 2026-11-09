@@ -100,7 +100,7 @@ bool Modules::isImportedByGraphUnderEvaluation(ModuleID module, bool forMockThat
     Vector<ModuleID, 16> importers;
     for (unsigned index = 0; index < m_table.size(); ++index) {
         ModuleStatus current = status(ModuleID(index));
-        if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || (countsImportersThatFailed && current == ModuleStatus::Failed && !failureByAbsentExport(ModuleID(index)) && !(forMockThatLeavesModulesAlone && wasLetGoByLoader(ModuleID(index)))) || (wasMockLaidOverFailureOf(ModuleID(index)) && !wasLetGoByLoader(ModuleID(index))))
+        if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || (countsImportersThatFailed && current == ModuleStatus::Failed && !failureByAbsentExport(ModuleID(index)) && !(forMockThatLeavesModulesAlone && wasLetGoByLoader(ModuleID(index)))) || (forMockThatLeavesModulesAlone && wasMockLaidOverFailureOf(ModuleID(index)) && !wasLetGoByLoader(ModuleID(index))))
             importers.append(ModuleID(index));
     }
     while (!importers.isEmpty()) {
@@ -1041,8 +1041,6 @@ auto Modules::runOriginalInSweep(ModuleID mocked) -> OriginalInSweep
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue thrownByBody = errorOfModuleThatRanBesideMock(mocked)) [[unlikely]] {
-        if (keepsFailureThatMockTakesOut(mocked))
-            return OriginalInSweep::IsLeftToHost;
         throwException(m_instance.globalObject, scope, thrownByBody);
         return OriginalInSweep::HasFailed;
     }

@@ -103,7 +103,6 @@ struct WalkOptions {
     bool takesNothingToBeDoneToFreshLists { false };
     bool typedTurnsPassStoresIntoListsOver { false };
     bool takesBoundFunctionsToBindOneMore { false };
-    bool handsGroundsOfPositionsBelowSumsOverUnproven { false };
     bool sweepTurnsBranchThatDecidesIntoJump { false };
     bool sweepLetsGoEdgeThatIsTaken { false };
     bool handlerEdgesTakeWhatStandsIn { false };
@@ -136,15 +135,7 @@ struct WalkOptions {
     bool takesReceiversOfMethodsOfListsToBeMadeHere { false };
     bool takesElementsBesideSumsToComeOffListsOfNumbers { false };
     bool takesIterablesOfPatternsToStayAsMade { false };
-    bool takesValuesThatPatternsTakeApartInTurnsForListsAsMade { false };
-    bool takesTurnsToHaveDoneNothingWherePatternsAreHeld { false };
     bool passesGuardOfNameOverAtCallsThroughSuper { false };
-    bool leavesLinksOfKinUnguarded { false };
-    bool leavesConditionsOfClassAskedForUnguarded { false };
-    bool asksNoStrangerAmongKinWhereItStands { false };
-    bool asksNoObjectOfClassAskedForWhereItStands { false };
-    bool takesValuesAskedForClassesToStandWhereTheyWereMade { false };
-    bool takesLayoutsAboveClassAskedForForStrangers { false };
     bool passesGuardOfLinkOverAtCallsThroughSuper { false };
     PrintStream* explainsClosedAccessesTo { nullptr };
 };

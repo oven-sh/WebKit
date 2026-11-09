@@ -97,7 +97,7 @@ void willHandExportOfBuiltinModuleToNativeCode(JSGlobalObject* globalObject, uin
         return;
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(byteCast<uint8_t>(exportName.span()));
-    if (name && std::ranges::contains(table.at(RuntimeModuleID(id)).exportsReadByNativeCode, name) && !std::ranges::contains(table.at(RuntimeModuleID(id)).exportsOfWhichMembersAloneAreKept, name))
+    if (name && std::ranges::contains(table.at(RuntimeModuleID(id)).exportsReadByNativeCode, name))
         return;
     dataLogLn("AOT: native code reads the export ", exportName, " of the library module ", table.tokenOf(RuntimeModuleID(id)), ", and no row of the table of built-ins lists that read. The build has kept the module for compiled code alone: what it has proven of it no longer holds.");
     CRASH();

@@ -595,10 +595,8 @@ struct KeptWithBodyForGuesses final : KeptWithBodyIndex {
     Vector<uint32_t> placesOfNearestBlocksAboveThatAskTheSame;
     Vector<std::pair<uint32_t, uint64_t>> storesOfOutermostLoops;
     Vector<std::pair<uint32_t, uint8_t>> numbersStoredUnderNames;
-    Vector<uint32_t> variablesOfFilesThatAreMoreThanMeasured;
     Lock lockOfLists;
     std::atomic<bool> hasNumbersStoredUnderNames { false };
-    std::atomic<bool> hasVariablesOfFilesThatAreMoreThanMeasured { false };
     std::atomic<bool> hasIncomingEdges { false };
     std::atomic<bool> hasStoresOfOutermostLoops { false };
     std::atomic<bool> hasBlocksThatBranchOnTruth { false };
@@ -7405,7 +7403,7 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
     bool lacksOnlyFilledSlot = formAsItStands == TypedForm::BuiltBehindFilledSlot || formAsItStands == TypedForm::BuiltBehindEmptySlot || formAsItStands == TypedForm::BuiltOnObjectAsMade
         || formAsItStands == TypedForm::BuiltBehindLookAtCell || formAsItStands == TypedForm::BuiltBehindFilledSlotAndLookAtCell || (askedOfStoredValue && formAsItStands == TypedForm::Built);
 
-    if (opcode == Opcode::PropGet && !expectsOnlyProvenHolderOfName && mayHaveTypedForm && formAsItStands == TypedForm::None && walker.has(Mechanism::TypedOperations) && answerIsFirstAskedWhetherItIsThereForGuesses(walker, index, operation)) {
+    if (opcode == Opcode::PropGet && !expectsOnlyProvenHolderOfName && mayHaveTypedForm && formAsItStands == TypedForm::None && answerIsFirstAskedWhetherItIsThereForGuesses(walker, index, operation)) {
         Type proven = walker.types().at(walker.types().withoutNullish(provenOfObject));
         if (proven.hasObjects() && proven.hasOnlyLayouts() && !proven.hasOnlyClosures() && !proven.hasUnboundedUnknown()) {
             if (buildReadWhereSomeReceiversLackField(walker, operation))
@@ -12269,24 +12267,19 @@ bool bodyOnlyMeasuresVariable(const Program& program, const BodyIndex& index, Va
             source = index.valueBehindCasts(index.value(source).operand(0));
         return source && !index.isParameter(source) && index.opcodeOf(source) == Opcode::GetModuleVariable ? index.value(source).variable() : VariableID();
     };
-    KeptWithBodyForGuesses& kept = keptWithBodyForGuesses(index);
-    makeListKeptWithBodyForGuesses(kept, kept.hasVariablesOfFilesThatAreMoreThanMeasured, [&] {
-        for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
-            for (BodyValue other : index.block(BlockID(block)).values()) {
-                if (other.opcode() == Opcode::CheckInitialized || inputOperationsThatOnlyHandOn.contains(other.opcode()))
-                    continue;
-                if (other.opcode() == Opcode::PropGet && !other.isFreeName() && program.nameClassOf(other.key()) == NameClass::Length)
-                    continue;
-                other.forEachOperand([&](ValueID named, uint32_t) {
-                    if (VariableID behind = named ? variableBehind(named) : VariableID())
-                        kept.variablesOfFilesThatAreMoreThanMeasured.append(behind.index());
-                });
-            }
+    for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
+        for (BodyValue other : index.block(BlockID(block)).values()) {
+            bool namesVariable = false;
+            other.forEachOperand([&](ValueID named, uint32_t) {
+                namesVariable |= named && variableBehind(named) == variable;
+            });
+            if (!namesVariable || other.opcode() == Opcode::CheckInitialized || inputOperationsThatOnlyHandOn.contains(other.opcode()))
+                continue;
+            if (other.opcode() != Opcode::PropGet || other.isFreeName() || program.nameClassOf(other.key()) != NameClass::Length)
+                return false;
         }
-        std::ranges::sort(kept.variablesOfFilesThatAreMoreThanMeasured);
-        kept.variablesOfFilesThatAreMoreThanMeasured.shrink(std::ranges::unique(kept.variablesOfFilesThatAreMoreThanMeasured).begin() - kept.variablesOfFilesThatAreMoreThanMeasured.begin());
-    });
-    return !std::ranges::binary_search(kept.variablesOfFilesThatAreMoreThanMeasured, variable.index());
+    }
+    return true;
 }
 
 BitVector findHoldersOfElementsThatLoopComparesWithCharactersOrNumbers(const Program& program, const BodyIndex& index, LoopID loop)

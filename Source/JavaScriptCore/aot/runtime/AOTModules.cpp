@@ -7261,12 +7261,6 @@ bool wasPulledInByLoadThatFailed(JSGlobalObject* realm, ModuleID module)
     return modules && modules->wasPulledInByLoadThatFailed(module);
 }
 
-bool keepsFailureThatMockTakesOut(JSGlobalObject* realm, ModuleID module)
-{
-    Modules* modules = modulesOf(realm);
-    return modules && modules->keepsFailureThatMockTakesOut(module);
-}
-
 bool isRootOfImportThatFailed(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);

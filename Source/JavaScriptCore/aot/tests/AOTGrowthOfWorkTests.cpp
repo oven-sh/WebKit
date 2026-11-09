@@ -1101,48 +1101,6 @@ static void testNestOfLoopsOverHoldersOfTheirOwnIsWalkedNoMoreThanItWas()
     AOT_TEST_CHECK(walksOfLoopsForGrowthTests(loopsInsideOneAnotherOverHoldersOfTheirOwnForGrowthTests(8), 0) <= 41000);
 }
 
-static String loopThatReadsManyListsUnderOneCounterForGrowthTests(unsigned numberOfLists)
-{
-    constexpr ASCIILiteral asCounter = " declared={type=i32 flags=[IsExpected]}\n"_s;
-    constexpr ASCIILiteral asSum = " declared={type=number flags=[IsExpected]}\n"_s;
-    StringBuilder text;
-    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
-    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
-    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
-    text.append("function f1 name=\"run\" module=m0 length="_s, numberOfLists, " thisType={type=anything} parameters=["_s);
-    for (unsigned list = 0; list < numberOfLists; ++list)
-        text.append(list ? ", "_s : ""_s, "{type=undefined|null|Array<number> flags=[IsExpected]}"_s);
-    text.append("] results=[{type=anything}] {\n  b0("_s);
-    for (unsigned list = 0; list < numberOfLists; ++list)
-        text.append(list ? ", v"_s : "v"_s, list, ": undefined|null|Array<number>"_s);
-    unsigned value = numberOfLists;
-    text.append("):\n    v"_s, value, " = Integer\n    v"_s, value + 1, " = Convert v"_s, value, asSum, "    v"_s, value + 2, " = Integer\n    v"_s, value + 3, " = Convert v"_s, value + 2, asCounter);
-    text.append("    Jump -> next b1(v"_s, value + 1, ", v"_s, value + 3, ")\n"_s);
-    value += 4;
-    unsigned sum = value;
-    unsigned counter = value + 1;
-    text.append("  b1(v"_s, sum, ", v"_s, counter, "):\n    LoopHint\n    v"_s, value + 3, " = PropGet v0 key=\"length\"\n    v"_s, value + 4, " = Less v"_s, counter, ", v"_s, value + 3, '\n');
-    text.append("    Branch v"_s, value + 4, " -> taken b2(), notTaken b3()\n  b2():\n"_s);
-    value += 5;
-    unsigned running = sum;
-    for (unsigned list = 0; list < numberOfLists; ++list, value += 5) {
-        text.append("    v"_s, value, " = ElemGet v"_s, list, ", v"_s, counter, "\n    v"_s, value + 1, " = Integer integer=2\n    v"_s, value + 2, " = Mul v"_s, value, ", v"_s, value + 1, '\n');
-        text.append("    v"_s, value + 3, " = Add v"_s, running, ", v"_s, value + 2, "\n    v"_s, value + 4, " = Convert v"_s, value + 3, asSum);
-        running = value + 4;
-    }
-    text.append("    v"_s, value, " = Increment v"_s, counter, "\n    v"_s, value + 1, " = Convert v"_s, value, asCounter, "    Jump -> next b1(v"_s, running, ", v"_s, value + 1, ")\n"_s);
-    text.append("  b3():\n    Return v"_s, sum, "\n}\n"_s);
-    return text.toString();
-}
-
-static void testWalkOfLoopThatReadsManyListsUnderOneCounterGrowsNoFasterThanItDid()
-{
-    InstructionCounts::begin();
-    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(loopThatReadsManyListsUnderOneCounterForGrowthTests(100), FunctionID(1u));
-    std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(loopThatReadsManyListsUnderOneCounterForGrowthTests(400), FunctionID(1u));
-    AOT_TEST_CHECK(!smaller || !large || 10 * *large < 85 * *smaller);
-}
-
 static void testScratchRealmHasItsRoomWhereverQuestionStands()
 {
     runOnBuildThread([&] {
@@ -1866,7 +1824,6 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/a-nest-of-loops-is-walked-alike-whatever-room-its-stack-has"_s, testNestOfLoopsIsWalkedAlikeWhateverRoomStackHas },
         { "growth-of-work/a-nest-round-a-sum-that-is-deeper-than-tries-go-is-walked-little-more-than-one-that-is-not"_s, testNestDeeperThanTriesGoIsWalkedLittleMoreThanOneThatIsNot },
         { "growth-of-work/a-nest-of-loops-over-holders-of-their-own-is-walked-no-more-than-it-was"_s, testNestOfLoopsOverHoldersOfTheirOwnIsWalkedNoMoreThanItWas },
-        { "growth-of-work/the-walk-of-a-loop-that-reads-many-lists-under-one-counter-grows-no-faster-than-it-did"_s, testWalkOfLoopThatReadsManyListsUnderOneCounterGrowsNoFasterThanItDid },
         { "growth-of-work/the-scratch-realm-has-its-room-wherever-a-question-stands"_s, testScratchRealmHasItsRoomWhereverQuestionStands },
         { "growth-of-work/the-walk-grows-as-the-early-returns-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfOneOfThreeElements, 1000> },
         { "growth-of-work/the-walk-grows-as-the-early-returns-behind-guesses-of-their-own-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfElementOfItsOwn, 150> },

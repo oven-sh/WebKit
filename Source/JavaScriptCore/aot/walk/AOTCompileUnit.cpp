@@ -68,7 +68,6 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .takesNothingToBeDoneToFreshLists = AOT::hasFlag(options.testing, Wire::TestingSwitch::NothingIsDoneToFreshLists),
         .typedTurnsPassStoresIntoListsOver = AOT::hasFlag(options.lies, Wire::TestingLie::TypedTurnsPassStoresIntoListsOver),
         .takesBoundFunctionsToBindOneMore = AOT::hasFlag(options.lies, Wire::TestingLie::BoundFunctionsAreTakenToBindOneMore),
-        .handsGroundsOfPositionsBelowSumsOverUnproven = AOT::hasFlag(options.lies, Wire::TestingLie::GroundsOfPositionsBelowSumsAreHandedOverUnproven),
         .sweepTurnsBranchThatDecidesIntoJump = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepTurnsBranchThatDecidesIntoJump),
         .sweepLetsGoEdgeThatIsTaken = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepLetsGoEdgeThatIsTaken),
         .takesCalleesToKeepNothing = AOT::hasFlag(options.testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded),
@@ -99,15 +98,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .takesReceiversOfMethodsOfListsToBeMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ReceiversOfMethodsOfListsAreTakenToBeMadeHere),
         .takesElementsBesideSumsToComeOffListsOfNumbers = AOT::hasFlag(options.lies, Wire::TestingLie::ElementsBesideSumsAreTakenToComeOffListsOfNumbers),
         .takesIterablesOfPatternsToStayAsMade = AOT::hasFlag(options.lies, Wire::TestingLie::IterablesOfPatternsAreTakenToStayAsMade),
-        .takesValuesThatPatternsTakeApartInTurnsForListsAsMade = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesThatPatternsTakeApartInTurnsAreTakenForListsAsMade),
-        .takesTurnsToHaveDoneNothingWherePatternsAreHeld = AOT::hasFlag(options.lies, Wire::TestingLie::TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld),
         .passesGuardOfNameOverAtCallsThroughSuper = AOT::hasFlag(options.lies, Wire::TestingLie::GuardOfNameIsPassedOverAtCallsThroughSuper),
-        .leavesLinksOfKinUnguarded = AOT::hasFlag(options.lies, Wire::TestingLie::LinksOfKinAreLeftUnguarded),
-        .leavesConditionsOfClassAskedForUnguarded = AOT::hasFlag(options.lies, Wire::TestingLie::ConditionsOfClassAskedForAreLeftUnguarded),
-        .asksNoStrangerAmongKinWhereItStands = AOT::hasFlag(options.lies, Wire::TestingLie::StrangersAmongKinAreNotAskedWhereTheyStand),
-        .asksNoObjectOfClassAskedForWhereItStands = AOT::hasFlag(options.lies, Wire::TestingLie::ObjectsOfClassAskedForAreNotAskedWhereTheyStand),
-        .takesValuesAskedForClassesToStandWhereTheyWereMade = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesAskedForClassesAreTakenToStandWhereTheyWereMade),
-        .takesLayoutsAboveClassAskedForForStrangers = AOT::hasFlag(options.lies, Wire::TestingLie::LayoutsAboveClassAskedForAreTakenForStrangers),
         .passesGuardOfLinkOverAtCallsThroughSuper = AOT::hasFlag(options.lies, Wire::TestingLie::GuardOfLinkIsPassedOverAtCallsThroughSuper),
     };
 }

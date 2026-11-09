@@ -973,17 +973,11 @@ public:
     {
         if (stepped.contents != ContentsStepped::List || stepped.kind != JSC::IterationKind::Values || stepped.restsOnWatchAboveInstances || stepped.methodAskedByItsByte)
             return std::nullopt;
-        if (((!m_walker.standsInTurnThatLooksCountOn() || !m_walker.mayBeginTurnAgainInClosedCopy()) && !m_walker.standsInTypedCopyWhoseTurnsAreTakenToHaveDoneNothing()) || !indexesAreAbsentAboveLists(m_walker) || !listTakenApartIsExpectedToHoldNumbers(m_walker, open, iterable))
+        if (!m_walker.standsInTurnThatLooksCountOn() || !m_walker.mayBeginTurnAgainInClosedCopy() || !indexesAreAbsentAboveLists(m_walker) || !listTakenApartIsExpectedToHoldNumbers(m_walker, open, iterable))
             return std::nullopt;
         Walker::IterationByIndex iteration;
         BlockID otherwise = addBlock(BlockFrequency::Rare);
-        if (m_walker.takesValuesThatPatternsTakeApartInTurnsForListsAsMade()) [[unlikely]] {
-            TypeID instances = typeOfInstancesStepped(m_walker, stepped.builtinClass, stepped.contents);
-            iteration.list = m_walker.types().isSubset(m_walker.typeOf(iterable), instances) ? iterable : goOnWhereTypeTestPasses(iterable, instances, otherwise);
-            if (!m_walker.isUnreachable())
-                noteListAsMade(m_walker, iteration.list);
-        } else
-            iteration.list = goOnWhereInstanceIsAsMade(iterable, stepped, otherwise);
+        iteration.list = goOnWhereInstanceIsAsMade(iterable, stepped, otherwise);
         BlockID held = m_walker.isUnreachable() ? BlockID() : m_walker.currentBlock();
         continueIn(otherwise);
         if (!m_walker.isUnreachable())

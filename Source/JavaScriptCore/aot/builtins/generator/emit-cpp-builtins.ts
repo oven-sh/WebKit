@@ -292,7 +292,6 @@ function formatRealmStructure({ getter, names }: ModelRealmStructure, realmStruc
 interface NativeReads {
   readsEveryExport: boolean;
   names: Map<number, ModelName>;
-  namesWithAnotherUseThanKeepingMembers: Set<number>;
 }
 
 function collectNativeReads(model: TableModel): Map<ModelModule, NativeReads> {
@@ -300,15 +299,9 @@ function collectNativeReads(model: TableModel): Map<ModelModule, NativeReads> {
   const loads = [...model.builtins.flatMap(builtin => builtin.attachments.moduleLoads), ...model.startup.loads];
   for (const { module, exports } of loads) {
     let read = reads.get(module);
-    if (read === undefined)
-      reads.set(module, (read = { readsEveryExport: false, names: new Map(), namesWithAnotherUseThanKeepingMembers: new Set() }));
+    if (read === undefined) reads.set(module, (read = { readsEveryExport: false, names: new Map() }));
     if (exports === null) read.readsEveryExport = true;
-    else
-      for (const { name, uses } of exports) {
-        read.names.set(name.number, name);
-        const membersAloneAreKept = !!uses?.length && uses.every(use => use.read === "Kept" && use.path.length > 0);
-        if (!membersAloneAreKept) read.namesWithAnotherUseThanKeepingMembers.add(name.number);
-      }
+    else for (const { name } of exports) read.names.set(name.number, name);
   }
   return reads;
 }
@@ -337,15 +330,6 @@ function formatModule(
       "exportsReadByNativeCode",
       exportsReadByNativeCode.add(
         [...(nativeReads?.names.values() ?? [])]
-          .sort((left, right) => left.number - right.number)
-          .map(name => formatName(name)),
-      ),
-    ],
-    [
-      "exportsOfWhichMembersAloneAreKept",
-      exportsReadByNativeCode.add(
-        [...(nativeReads?.names.values() ?? [])]
-          .filter(name => !nativeReads!.readsEveryExport && !nativeReads!.namesWithAnotherUseThanKeepingMembers.has(name.number))
           .sort((left, right) => left.number - right.number)
           .map(name => formatName(name)),
       ),

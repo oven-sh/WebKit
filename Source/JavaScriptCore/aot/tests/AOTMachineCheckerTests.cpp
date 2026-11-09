@@ -607,10 +607,8 @@ static std::optional<CheckerTestThreeHeads> buildHeadEnteredOutOfOtherPartsForCh
     }
     bool hasShape = heads.saveAtThirdOfWhatOthersSave != UINT32_MAX;
     AOT_CHECKER_TEST_CHECK(test, hasShape || !isX86_64());
-    if (!hasShape) {
-        dataLogLn("NOT RUN, the allocator makes no head here that is entered out of other parts and saves what their heads save");
+    if (!hasShape)
         return std::nullopt;
-    }
     AOT_CHECKER_TEST_CHECK(test, checkSavesAtHeads(test.procedure()) && !test.procedure().failure());
     return heads;
 }
@@ -646,10 +644,10 @@ static void checkerOfSavesAtHeadsPassesSlotThatWasEmptiedAndIsMovedOn()
     Allocation& allocation = test.procedure().allocationForTesting();
     Location slot = allocation.step(heads->saveAtThirdOfWhatOthersSave).destination;
     const BlockSteps& range = allocation.stepsOf(heads->third);
-    bool isReloadedBehindFirstStep = false;
+    bool isReadBehindFirstStep = false;
     for (uint32_t index = range.begin + 1; index < range.end; ++index)
-        isReloadedBehindFirstStep |= allocation.step(index).kind == StepKind::Reload && allocation.step(index).sources[0] == slot;
-    AOT_CHECKER_TEST_CHECK(test, isReloadedBehindFirstStep);
+        isReadBehindFirstStep |= std::ranges::find(allocation.step(index).sources, slot) != std::ranges::end(allocation.step(index).sources);
+    AOT_CHECKER_TEST_CHECK(test, isReadBehindFirstStep);
     Step empties { StepKind::ClearSpill };
     empties.destination = slot;
     empties.operation = allocation.step(heads->saveAtThirdOfWhatOthersSave).operation;

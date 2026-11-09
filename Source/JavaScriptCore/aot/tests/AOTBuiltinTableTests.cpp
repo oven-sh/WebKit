@@ -639,15 +639,8 @@ static void testModulesListWhatRowsSayNativeCodeReads()
     auto checkRow = [&](const BuiltinModuleLoad& load) {
         const RuntimeModuleData& module = table().at(load.module);
         AOT_TEST_CHECK(!load.readsEveryExport || module.flags.contains(RuntimeModuleFlag::NativeCodeReadsEveryExport));
-        for (size_t place = 0; place < load.exports.size(); ++place) {
-            BuiltinName name = load.exports[place];
+        for (BuiltinName name : load.exports)
             AOT_TEST_CHECK(std::ranges::contains(module.exportsReadByNativeCode, name));
-            const BuiltinHostUses& uses = load.usesOfExports[place];
-            bool membersAloneAreKept = uses.areListed && !uses.list.empty() && std::ranges::all_of(uses.list, [](const BuiltinHostUse& use) {
-                return use.use == BuiltinHostReadUse::Kept && !use.memberPath.empty();
-            });
-            AOT_TEST_CHECK(membersAloneAreKept || !std::ranges::contains(module.exportsOfWhichMembersAloneAreKept, name));
-        }
         namesInRows += load.exports.size();
     };
     for (uint32_t index = 0; index < table().builtinCount(); ++index)
