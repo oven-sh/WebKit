@@ -645,8 +645,8 @@ JSValue constructForeignFunction(JSGlobalObject*, JSValue function, const CallAr
 // promise.then(onFulfilled, onRejected) as the engine does it where it waits for a promise itself (`await`, an async generator): not by way of the properties `then` and
 // `constructor`, which are the program's to replace.
 JSPromise* thenOfPromise(JSGlobalObject*, JSPromise*, JSValue onFulfilled, JSValue onRejected);
-// `async for`: aiter(iterable), and what is to be awaited when the loop is left before the end, by `break`, `return` or the exception,
-// or None. It is None if nobody `waits`.
+// `async for`: aiter(iterable), and what is to be awaited when the loop is left, by `break`, `return` or the exception, or None. Every loop comes by the second, one that has come to its end too: an
+// iterator that has said its last is told nothing. It is None if nobody `waits`.
 JSValue getAIterOfLoop(JSGlobalObject*, JSValue iterable);
 JSValue leaveAsyncFor(JSGlobalObject*, JSValue iterator, JSValue exception, bool waits);
 // A function written in JS that is found in a class is a method of the instances, as one written in Python is. The instance is its
