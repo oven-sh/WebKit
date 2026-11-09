@@ -2069,6 +2069,7 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
                 imported = moduleLoadedBy(request);
             if (isAheadOfTestFiles && data(imported).isOfLibrary())
                 m_libraryModulesAskedForInPreload.set(imported.index());
+            noteAskForForm(imported);
             if (!data(imported).isESModuleOfProgram())
                 continue;
             noteAskForKey(imported, ModuleID(module), LoadByName::Import);
@@ -3563,6 +3564,8 @@ JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy required
     auto notesAnswer = makeScopeExit([&] {
         m_targetOfRequireJustAnswered = recordedAhead && !m_instance.vm->exceptionForInspection() ? target : ModuleID();
     });
+    if (m_goesModuleByModule) [[unlikely]]
+        noteAskForForm(target);
     if (m_mocks) [[unlikely]]
         noteAskForKey(target, referrer, LoadByName::Require);
     if (auto* willLoad = m_mocks || m_hasBegunTestFile ? host().willLoad : nullptr) [[unlikely]]
@@ -4412,6 +4415,8 @@ template<Modules::RequireAnsweredBy answeredBy>
 void Modules::recordRequire(ModuleID target, ModuleID referrer)
 {
     if constexpr (answeredBy == RequireAnsweredBy::CompiledCode) {
+        if (m_goesModuleByModule) [[unlikely]]
+            noteAskForForm(target);
         if (m_mocks) [[unlikely]] {
             noteAskForKey(target, referrer, LoadByName::Require);
             bool comesBehindRequire = m_targetOfRequireRecordedAhead == target || m_targetOfRequireJustAnswered == target;

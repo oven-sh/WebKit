@@ -102,6 +102,7 @@ struct WalkOptions {
     bool takesRoomsAskedInFrontForGiven { false };
     bool takesLengthsAskedInTurnsForGiven { false };
     bool takesStoresOfLengthsToEndNothing { false };
+    bool takesReadsOfConstructorsPrototypesToEndNoGuard { false };
     bool takesKeysOfForInToBeAsStepFoundThem { false };
     bool takesOneRowToSpeakForAll { false };
     bool takesNothingToBeDoneToFreshLists { false };

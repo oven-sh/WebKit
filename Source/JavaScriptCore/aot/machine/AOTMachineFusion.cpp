@@ -390,7 +390,9 @@ static bool fusionCanRunAheadOfTrap(const Operation* between)
 {
     if (fusionIsLoad(between->opcode()))
         return !between->traps() && fusionChildrenOf(between)[0]->hasNoPosition();
-    return between->opcode() != Patch && !between->mustStay();
+    if (between->opcode() == Patch)
+        return between->as<PatchOperation>()->effects.maySink();
+    return !between->mustStay();
 }
 
 static ALWAYS_INLINE bool comparisonMayReadSumOfExtendedWords(const Operation* comparison)

@@ -822,7 +822,7 @@ bool Modules::isMockOfPreloadSetAsideByMockOfThisTestFile(ModuleID fileOrModule)
         return ended != m_endedMocks.end() && ended->value.last().isKeptWhereImporterIsAskedForAgain && ended->value.last().momentOfTestFile == m_instance.vm->aotState().momentOfTestFile && endedMock(fileOrModule, ended->value.size() - 1) == ofPreload;
     }
     auto waiting = m_momentsWaitingMocksWereLaid.find(fileOrModule);
-    return m_modulesWithMockToRun.get(fileOrModule.index()) && waiting != m_momentsWaitingMocksWereLaid.end() && waiting->value.importersKeepMockThatStands;
+    return (m_modulesWithMockToRun.get(fileOrModule.index()) || m_modulesWhoseFactoryRuns.get(fileOrModule.index())) && waiting != m_momentsWaitingMocksWereLaid.end() && waiting->value.importersKeepMockThatStands;
 }
 
 bool Modules::bringBackMockKeptByImportersOfThisTestFile(ModuleID fileOrModule)

@@ -197,8 +197,12 @@ public:
         m_filesWhoseKeyIsOfThisTestFile.clearAll();
         m_filesWhoseKeyMockHasEmptied.clearAll();
         m_filesWhoseFetchInFlightOutlivesMock.clearAll();
-        if (!std::exchange(m_hasBegunTestFile, true))
+        if (!std::exchange(m_hasBegunTestFile, true)) {
             m_filesThatRanInPreload = m_filesThatRanBeforeTestFile;
+            noteWhatPreloadsRegistered();
+        }
+        giveKeysBack();
+        m_formsThatThisTestFileFetched.clearAll();
         for (BitVector* letGo : { &m_modulesThatLoaderLetGo, &m_importersOfMockThatEnded }) {
             letGo->exclude(m_loadedInPreload);
             letGo->exclude(m_filesThatRanInPreload);
@@ -232,6 +236,27 @@ public:
     bool isKeyOfThisTestFile(ModuleID module) const { return m_filesWhoseKeyIsOfThisTestFile.get(module.index()) || m_filesWhoseKeyEndOfTestFileEmptied.get(module.index()); }
     void noteThatEndOfTestFileEmptiedKey(ModuleID file) { m_filesWhoseKeyEndOfTestFileEmptied.set(file.index()); }
     void noteThatMockOfPreloadFilledKey(ModuleID file) { m_filesWhoseKeyEndOfTestFileEmptied.clear(file.index()); }
+    void noteThatLayingTookFormOutOfLoader(ModuleID form)
+    {
+        m_formsThatLayingTookOutOfLoader.set(form.index());
+        noteThatImportersLeftLoaderWith(form);
+    }
+    bool didLayingTakeFormOutOfLoader(ModuleID form) const { return m_formsThatLayingTookOutOfLoader.get(form.index()); }
+    void noteAskForForm(ModuleID fileOrFace)
+    {
+        ModuleID form = fileOf(fileOrFace);
+        if (!isMocked(fileOrFace) && !isMocked(form) && m_formsThatLayingTookOutOfLoader.clear(form.index()))
+            m_formsThatThisTestFileFetched.set(form.index());
+        if (m_importersThatLeftLoaderWithForms.clear(fileOrFace.index()))
+            askAgainForWhatStatementsImport(fileOrFace);
+    }
+    bool didThisTestFileFetchForm(ModuleID form) const { return m_formsThatThisTestFileFetched.get(form.index()); }
+    void noteThatImportersLeftLoaderWith(ModuleID form);
+    void askAgainForWhatStatementsImport(ModuleID importer);
+    bool didPreloadRegisterForm(ModuleID form) const { return m_formsThatPreloadRegistered.get(form.index()); }
+    void giveKeyBackAtEndOfTestFile(ModuleID heldAgain, const Vector<ModuleID, 2>& forms) { m_keysToGiveBack.append({ heldAgain, forms }); }
+    void noteWhatPreloadsRegistered();
+    void giveKeysBack();
     void noteThatMockHasEmptiedKey(ModuleID file) { m_filesWhoseKeyMockHasEmptied.set(file.index()); }
     void noteThatKeyIsFilledAgain(ModuleID file) { m_filesWhoseKeyMockHasEmptied.clear(file.index()); }
     void noteThatFetchInFlightOutlivesMock(ModuleID file);
@@ -1974,6 +1999,11 @@ private:
     BitVector m_filesWhoseKeyMockHasEmptied;
     BitVector m_filesWhoseFetchInFlightOutlivesMock;
     BitVector m_filesWhoseKeyEndOfTestFileEmptied;
+    BitVector m_formsThatLayingTookOutOfLoader;
+    BitVector m_formsThatPreloadRegistered;
+    BitVector m_formsThatThisTestFileFetched;
+    BitVector m_importersThatLeftLoaderWithForms;
+    Vector<std::pair<ModuleID, Vector<ModuleID, 2>>> m_keysToGiveBack;
     BitVector m_filesWithKnownLoad;
     BitVector m_filesLoadedSynchronously;
     BitVector m_filesWhoseNextLoadIsFirst;

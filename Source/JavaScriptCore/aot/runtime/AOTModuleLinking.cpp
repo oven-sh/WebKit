@@ -474,6 +474,8 @@ void Modules::willMock(ModuleID mocked)
 
 void Modules::didEndMock(ModuleID mocked)
 {
+    if (didLayingTakeFormOutOfLoader(mocked))
+        noteThatImportersLeftLoaderWith(mocked);
     leaveImportersAbove(mocked);
     m_modulesKeptByLoadsInFlight.clear(mocked.index());
     m_modulesWithNoNamesOwedBelow.clearAll();

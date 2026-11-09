@@ -414,7 +414,7 @@ static bool isOnlyClosureOfClassWhoseGuardsHaveBegunInKnownWriters(const Walker&
     const Program& program = walker.program();
     LayoutID classLayout = declaredLayoutOf(program, made);
     AccessContext context { program, WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() };
-    if (!newTarget || !walker.state().guardsHaveBegun(classLayout) || !prototypeOfConstructorFunctionIsLeftToGuards(context, classLayout))
+    if (!newTarget || (!walker.state().guardsHaveBegun(classLayout) && !walker.takesReadsOfConstructorsPrototypesToEndNoGuard()) || !prototypeOfConstructorFunctionIsLeftToGuards(context, classLayout))
         return false;
     Type type = walker.types().at(newTarget);
     return type.isObject() && type.hasOnlyClosures() && singleFunctionOf(walker.types(), type) == program.at(classLayout).constructor;

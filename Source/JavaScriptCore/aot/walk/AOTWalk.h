@@ -1452,6 +1452,7 @@ public:
     bool takesRoomsAskedInFrontForGiven() const { return m_inputs.options.takesRoomsAskedInFrontForGiven; }
     bool takesLengthsAskedInTurnsForGiven() const { return m_inputs.options.takesLengthsAskedInTurnsForGiven; }
     bool takesStoresOfLengthsToEndNothing() const { return m_inputs.options.takesStoresOfLengthsToEndNothing; }
+    bool takesReadsOfConstructorsPrototypesToEndNoGuard() const { return m_inputs.options.takesReadsOfConstructorsPrototypesToEndNoGuard; }
     bool takesKeysOfForInToBeAsStepFoundThem() const { return m_inputs.options.takesKeysOfForInToBeAsStepFoundThem; }
     bool takesOneRowToSpeakForAll() const { return m_inputs.options.takesOneRowToSpeakForAll; }
     bool takesNothingToBeDoneToFreshLists() const { return m_inputs.options.takesNothingToBeDoneToFreshLists; }

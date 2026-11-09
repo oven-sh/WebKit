@@ -5518,7 +5518,10 @@ void Walker::closeEdgesInto(BlockID block, BlockID inputBlock, std::span<const u
             type = joinTypes(type, ownTypeOf(name));
             forms.append(representationOf(name));
         }
-        parameters.append(m_code.appendParameter(block, type, isHandler ? boxedFormOf(type) : formOfParameter(type, forms.span()), m_origin));
+        Representation form = isHandler ? boxedFormOf(type) : formOfParameter(type, forms.span());
+        if (isHandler && !isSameWord(forms[0], form) && isLegalRepresentation(m_types.at(type), forms[0]) && std::ranges::all_of(forms, [&](Representation brought) { return brought == forms[0]; }))
+            form = forms[0];
+        parameters.append(m_code.appendParameter(block, type, form, m_origin));
         names.setNameIn(slot, Reference::value(parameters.last()));
         frame.valuesBuiltTwice->noteSeveralNamesIn(slot);
         frame.references.placeOf<NamesOfValues::Writer::ClosesEdgesIntoBlock>(frame.valuesBuiltTwice->slots[slot].value.index()) = Reference();

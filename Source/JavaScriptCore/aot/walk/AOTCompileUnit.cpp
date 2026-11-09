@@ -67,6 +67,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .takesRoomsAskedInFrontForGiven = AOT::hasFlag(options.lies, Wire::TestingLie::RoomsAskedInFrontAreTakenForGiven),
         .takesLengthsAskedInTurnsForGiven = AOT::hasFlag(options.lies, Wire::TestingLie::LengthsAskedInTurnsAreTakenForGiven),
         .takesStoresOfLengthsToEndNothing = AOT::hasFlag(options.lies, Wire::TestingLie::StoresOfLengthsAreTakenToEndNothing),
+        .takesReadsOfConstructorsPrototypesToEndNoGuard = AOT::hasFlag(options.lies, Wire::TestingLie::ReadsOfConstructorsPrototypesAreTakenToEndNoGuard),
         .takesKeysOfForInToBeAsStepFoundThem = AOT::hasFlag(options.lies, Wire::TestingLie::KeysOfForInAreTakenToBeAsTheStepFoundThem),
         .takesOneRowToSpeakForAll = AOT::hasFlag(options.testing, Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake),
         .takesNothingToBeDoneToFreshLists = AOT::hasFlag(options.testing, Wire::TestingSwitch::NothingIsDoneToFreshLists),

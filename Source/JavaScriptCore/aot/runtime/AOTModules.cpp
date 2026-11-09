@@ -4304,6 +4304,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         return promiseForCaller();
     if (m_goesModuleByModule) [[unlikely]]
         m_rootsOfCallsOfImport.set(module.index());
+    if (m_goesModuleByModule) [[unlikely]]
+        noteAskForForm(module);
     if (m_mocks) [[unlikely]]
         noteAskForKey(module, m_moduleThatWroteImportThatAsks, LoadByName::Import);
     if (text == TextOfImport::MayComeLater && isHeldBySweepUnderWay(module)) [[unlikely]]
@@ -7422,6 +7424,76 @@ void noteThatKeyIsOfThisTestFile(JSGlobalObject* realm, ModuleID module)
 {
     if (Modules* modules = modulesOf(realm))
         modules->noteThatKeyIsOfThisTestFile(module);
+}
+
+void noteThatLayingTookFormOutOfLoader(JSGlobalObject* realm, ModuleID form)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->noteThatLayingTookFormOutOfLoader(form);
+}
+
+bool didLayingTakeFormOutOfLoader(JSGlobalObject* realm, ModuleID form)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->didLayingTakeFormOutOfLoader(form);
+}
+
+bool didPreloadRegisterForm(JSGlobalObject* realm, ModuleID form)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->didPreloadRegisterForm(form);
+}
+
+void giveKeyBackAtEndOfTestFile(JSGlobalObject* realm, ModuleID heldAgain, const Vector<ModuleID, 2>& forms)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->giveKeyBackAtEndOfTestFile(heldAgain, forms);
+}
+
+bool didThisTestFileFetchForm(JSGlobalObject* realm, ModuleID form)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->didThisTestFileFetchForm(form);
+}
+
+void Modules::noteThatImportersLeftLoaderWith(ModuleID form)
+{
+    listImportersAndRequirers();
+    Vector<uint32_t, 8> work { form.index() };
+    if (std::optional<ModuleID> face = m_table.faceOfFile(form))
+        work.append(face->index());
+    while (!work.isEmpty()) {
+        for (uint32_t importer : m_importersByStatement[work.takeLast()]) {
+            if (status(ModuleID(importer)) <= ModuleStatus::Linked || m_loadedInPreload.get(importer) || m_importersThatLeftLoaderWithForms.set(importer))
+                continue;
+            work.append(importer);
+        }
+    }
+}
+
+void Modules::askAgainForWhatStatementsImport(ModuleID importer)
+{
+    for (const ModuleRequestData& request : m_table.imports(importer)) {
+        if (!request.isHoisted && !request.isDeferred)
+            noteAskForForm(moduleLoadedBy(request));
+    }
+}
+
+void Modules::noteWhatPreloadsRegistered()
+{
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID form(index);
+        if (hasBegunToLoad(form) && (mockInPlace(form) || !didLayingTakeFormOutOfLoader(form)))
+            m_formsThatPreloadRegistered.set(index);
+    }
+}
+
+void Modules::giveKeysBack()
+{
+    for (auto& [heldAgain, forms] : std::exchange(m_keysToGiveBack, { })) {
+        for (ModuleID form : forms)
+            m_formsThatLayingTookOutOfLoader.set(form.index(), form != heldAgain);
+    }
 }
 
 void noteThatEndOfTestFileEmptiedKey(JSGlobalObject* realm, ModuleID module)
