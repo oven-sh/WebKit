@@ -565,6 +565,7 @@ class BufferReachability final : public HeapAnalyzer, public Runtime::MarkingObs
 public:
     explicit BufferReachability(VM& vm)
         : m_vm(vm)
+        , m_structureOfChains(vm.structureChainStructure->id())
     {
     }
 
@@ -638,10 +639,22 @@ private:
         JSCell* to;
     };
 
+    bool isForTheEngineOnly(JSCell* from, JSCell* to) const
+    {
+        if (to->type() != StructureType)
+            return to->structureID() == m_structureOfChains;
+        auto* structure = dynamicDowncast<Structure>(from);
+        return structure && to == structure->trySingleTransition();
+    }
+
     void add(JSCell* from, JSCell* to)
     {
         // The only root that refers to a managed buffer is the list of what is to be finalized.
         if (!from && PyManagedBuffer::is(to))
+            return;
+        // What the engine keeps for itself, and the program gets nowhere by: the structure that follows a structure, which a collection of the young marks, and the
+        // chain of the structures of an object's prototypes, which may be out of date. A prototype is reached from the object before it, or from the structure of that.
+        if (from && isForTheEngineOnly(from, to))
             return;
         Locker locker { m_lock };
         if (!from) {
@@ -655,6 +668,7 @@ private:
     }
 
     VM& m_vm;
+    const StructureID m_structureOfChains;
     Lock m_lock;
     Vector<Edge> m_edges;
     Vector<JSCell*> m_visited;
