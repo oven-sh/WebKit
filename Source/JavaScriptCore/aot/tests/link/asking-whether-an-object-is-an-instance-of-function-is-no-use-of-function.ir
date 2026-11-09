@@ -1,0 +1,23 @@
+# ({}) instanceof Function
+# The scan writes InstanceOf as a call under Symbol.hasInstance; Link finds Function.prototype[Symbol.hasInstance] and goes by its rows. The row asks its receiver for `prototype`
+# and only looks at what it finds. The receiver is an object of the table, the table lists the member at a locked location: the table alone answers, no code of the program runs,
+# and nobody comes by the receiver.
+# If a built-in that a row asks any question went to unseen code, Function would be in the hands of code that nobody sees: the program would count as one that evaluates text,
+# and unseen code could run.
+# The controls stand beside this file: asking-*.ir.
+# RUN: causes
+# CHECK-NOT: cause EvaluatesText
+# CHECK: unseen-code cannot-run
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Function" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Function) flags=[IsExpected]}
+    v4 = InstanceOf v0, v3
+    Return v4
+}

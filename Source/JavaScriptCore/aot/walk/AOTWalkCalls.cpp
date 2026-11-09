@@ -503,6 +503,8 @@ static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, co
         walker.leaveArrivals(request.callee, operands.span());
     if (result && !walker.unitReturnsAtOnce(written))
         result = proveResultThatPassesNoReturnInWalkCalls(walker, call, request.callee, result, originInFrontOfCall);
+    if (result && callee.has(FunctionFlags::IsAsync) && !callee.has(FunctionFlags::IsGenerator) && !request.isConstruction)
+        noteListAsMade(walker, result);
     if (behindCall) {
         if (result)
             walker.jumpTo(behindCall, singleElementSpan(result));
@@ -580,6 +582,34 @@ struct BindingOfCalleeInWalkCalls {
     Reference asBoundBefore;
 };
 
+static constexpr Effects effectsOfCallOfWhatIsNoObjectInWalkCalls()
+{
+    return { .reads = LocationMasks::top(), .writes = LocationMasks::top().restrictedTo(heapsWhoseWritesNobodySees), .mayThrow = true, .mayCollect = true, .mayCallUnknownCode = false, .maySuspend = false, .mayBeTerminated = false };
+}
+
+static bool turnOfLoopMakesCalleeAnewInWalkCalls(const BodyIndex& index, const BodyValue& call)
+{
+    static constexpr OpcodeSet readsOfVariables { Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
+    LoopID loop = index.loopOf(index.blockOf(call.id()));
+    if (!loop)
+        return false;
+    for (ValueID value = index.valueBehindCasts(call.calleeOperand()); value && index.isInLoop(index.blockOf(value), loop);) {
+        if (index.isParameter(value))
+            return true;
+        BodyValue made = index.value(value);
+        if (inputOperationsThatHandOn.contains(made.opcode())) {
+            value = made.operand(0);
+            continue;
+        }
+        if (readsOfVariables.contains(made.opcode()))
+            return false;
+        if (made.opcode() != Opcode::PropGet || made.isFreeName())
+            return true;
+        value = index.valueBehindCasts(made.objectOperand());
+    }
+    return false;
+}
+
 static bool testCalleeThatMayBeNoObjectInWalkCalls(Walker& walker, const BodyValue& call)
 {
     bool isConstruction = call.opcode() == Opcode::Construct;
@@ -614,11 +644,15 @@ static bool testCalleeThatMayBeNoObjectInWalkCalls(Walker& walker, const BodyVal
     if (walker.withoutFunctionsThatMayNotBeMentioned(closures) != closures)
         return false;
 
+    Effects throwsAlone = effectsOfCallOfWhatIsNoObjectInWalkCalls();
+    const Effects* ofThrow = (walker.standsInTurnOfTypedCopy() && !walker.mayBeginTurnAgainInClosedCopy()) || turnOfLoopMakesCalleeAnewInWalkCalls(walker.currentBodyIndex(), call) ? &throwsAlone : nullptr;
+    if (ofThrow)
+        walker.count(StatisticID::CallsOfWhatIsNoObjectThatRunNoCode);
     Draft asWritten = walker.draftOf(call);
     if (!walker.unitReturnsAtOnce(asWritten)) {
         Draft throws = walker.draftOf(call);
         walker.chooseConservativeFields(throws);
-        if (walker.splitNullishOffWhatContainerHasJustGiven(callee, closures, WTF::move(throws)))
+        if (walker.splitNullishOffWhatContainerHasJustGiven(callee, closures, WTF::move(throws), ofThrow))
             return true;
     }
     Origin origin = asWritten.origin();
@@ -637,7 +671,7 @@ static bool testCalleeThatMayBeNoObjectInWalkCalls(Walker& walker, const BodyVal
     walker.continueIn(throws);
     bool returnsAtOnce = walker.unitReturnsAtOnce(asWritten);
     walker.chooseConservativeFields(asWritten);
-    Reference neverGiven = walker.build(WTF::move(asWritten));
+    Reference neverGiven = walker.build(WTF::move(asWritten), ofThrow);
     if (returnsAtOnce)
         walker.returnAtOnce(neverGiven);
     else
@@ -811,7 +845,7 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     std::optional<GuardOfPrototypeAtConstruction> guardOfPrototype = !classObjectBelow && call.opcode() == Opcode::Construct ? findGuardOfPrototypeAtConstruction(walker, request.callee, walker.opensGuesses() && looksAtCellsAskForLayoutPrototype(walker, constructed), false, origin) : std::nullopt;
     if (guardOfPrototype && !goOnWhereGuardOfPrototypeHoldsInWalkCalls(walker, call, request, *guardOfPrototype, origin))
         return true;
-    bool allocationNamesPrototype = (guardOfPrototype && !walker.checksProofs()) || (classObjectBelow && walker.facts().isEvaluatedAtMostOnce(constructed) && walker.plan().hasClassRecord(constructed));
+    bool allocationNamesPrototype = guardOfPrototype || (classObjectBelow && walker.facts().isEvaluatedAtMostOnce(constructed) && walker.plan().hasClassRecord(constructed));
     Reference prototype = allocationNamesPrototype ? Reference() : walker.build(WTF::move(read), &ofRead);
     if (!prototype && !allocationNamesPrototype)
         return true;
@@ -828,7 +862,7 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     request.typeOfThisToBeMade = { };
     noteFreshObject(walker, object, 0);
     if (guardOfPrototype) {
-        checkPrototypeOfCellMadeBehindGuard(walker, object, origin);
+        checkPrototypeOfCellMadeBehindGuard(walker, object, request.closure, constructed, origin);
         walker.state().noteFactsOfCell(object, FactOfCell::HasLayoutPrototype);
     }
 
@@ -988,6 +1022,25 @@ static bool parametersAreReadOutOfListInWalkCalls(Walker& walker, const Function
     return !callee.numberOfPositionalParameters() || (walker.has(Mechanism::TypedOperations) && isFreshListAsMade(walker, list));
 }
 
+static bool parametersAreReadOutOfListMadeElsewhereInWalkCalls(Walker& walker, const BodyValue& call, const Function& callee, Reference list, Origin originInFrontOfCall)
+{
+    if (!list || callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter }) || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::EscapeAnalysis))
+        return false;
+    if (!hasKind(walker.types(), walker.typeOf(list), OperandKind::Array) || !indexesAreAbsentAboveLists(walker))
+        return false;
+    if (isListAsMade(walker, list))
+        return true;
+    ValueID written;
+    call.forEachOperand([&](ValueID operand, uint32_t) {
+        if (walker.referenceOf(operand) == list)
+            written = operand;
+    });
+    if (!written || !linksWordCanBeHeldAgainst(walker, list) || classOfIterableThatStaysAsMadeByLink(walker, call, written) != BuiltinClasses::Array)
+        return false;
+    holdLinksWordAgainstObjectAsMade(walker, list, originInFrontOfCall);
+    return isListAsMade(walker, list);
+}
+
 static bool readParametersOutOfListInWalkCalls(Walker& walker, const Function& callee, Reference list, Origin originInFrontOfCall, Vector<Reference, 8>& elements)
 {
     unsigned numberOfParameters = callee.numberOfPositionalParameters();
@@ -1081,6 +1134,52 @@ static ValueID findListSpreadBehindArgumentsInWalkCalls(const BodyIndex& index, 
     return index.value(spread).as<Opcode::AppendSpread>().iterableOperand();
 }
 
+static ValueID findLastOperationThatIsObservedInWalkCalls(const Code& code, BlockID block)
+{
+    for (unsigned blocksLeft = 2; blocksLeft; --blocksLeft) {
+        for (ValueID id = code.lastOperationOf(block); id; id = code.at(id).previous) {
+            const Operation& operation = code.at(id);
+            if (operation.opcode == Opcode::AppendElements || !operation.traits().isUnobservable() || operation.traits().mayCollect())
+                return id;
+        }
+        BlockID from;
+        unsigned numberOfEdges = 0;
+        code.forEachEdgeIntoSoFar(block, [&](const Edge& edge) {
+            from = edge.from;
+            ++numberOfEdges;
+        });
+        if (numberOfEdges != 1)
+            return { };
+        block = from;
+    }
+    return { };
+}
+
+static Reference findListCopiedForCallAloneInWalkCalls(Walker& walker, const BodyValue& call, Reference copy)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID list = call.as<Opcode::CallList>().listOperand();
+    if (!findListSpreadBehindArgumentsInWalkCalls(index, list, call.id()) || !index.value(list).as<Opcode::NewArray>().elementsOperands().empty())
+        return { };
+    const Code& code = walker.code();
+    ValueID last = findLastOperationThatIsObservedInWalkCalls(code, walker.currentBlock());
+    if (!copy || !copy.isValue() || !last || code.at(copy.id()).opcode != Opcode::NewArray)
+        return { };
+    const Operation& append = code.at(last);
+    if (append.opcode != Opcode::AppendElements || append.arrayOperand() != copy.id())
+        return { };
+    return Reference::value(append.sourceOperand());
+}
+
+void letCallTakeListCopiedForItAlone(Walker& walker, const BodyValue& call, Draft& written)
+{
+    Reference list = findListCopiedForCallAloneInWalkCalls(walker, call, written.listOperand());
+    if (!list)
+        return;
+    written.setListOperand(list);
+    walker.count(StatisticID::CallsThatTakeListInPlaceOfItsCopy);
+}
+
 static bool listSpreadIsMadeForCallAloneInWalkCalls(Walker& walker, const BodyIndex& index, ValueID spreadList, ValueID call)
 {
     const Function& function = walker.program().at(walker.currentFunction());
@@ -1127,7 +1226,7 @@ static bool walkCallListInWalkCalls(Walker& walker, const BodyValue& call)
         }
         request.arguments = elements.span();
     } else if (std::optional<Vector<Reference, 8>> known = elementsOfFreshList(walker, walker.referenceOf(list))) {
-        walker.checkElementsRememberedOfList(walker.referenceOf(list), known->span(), walker.originOf(call));
+        walker.checkWhatIsInSightOfList(walker.referenceOf(list), walker.originOf(call));
         elements = WTF::move(*known);
         request.arguments = elements.span();
     } else {
@@ -1149,8 +1248,25 @@ static bool walkCallListInWalkCalls(Walker& walker, const BodyValue& call)
             request.calledBuiltin = written.calledBuiltin();
             return buildDirectCallInWalkCalls(walker, call, written, request);
         }
-        if (callee.numberOfPositionalParameters() || callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
-            return false;
+        if (callee.numberOfPositionalParameters() || callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest })) {
+            if (callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter }) || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::EscapeAnalysis))
+                return false;
+            request.listOfUnknownLength = findListCopiedForCallAloneInWalkCalls(walker, call, walker.referenceOf(list));
+            if (!request.listOfUnknownLength || !isListAsMade(walker, request.listOfUnknownLength) || !hasKind(walker.types(), walker.typeOf(request.listOfUnknownLength), OperandKind::Array) || !indexesAreAbsentAboveLists(walker))
+                return false;
+            Draft written = walker.draftOf(call);
+            Origin originInFrontOfCall = written.origin();
+            originInFrontOfCall.isTailCall = false;
+            if (!readParametersOutOfListInWalkCalls(walker, callee, request.listOfUnknownLength, originInFrontOfCall, elements))
+                return true;
+            walker.count(StatisticID::CallsThatTakeListInPlaceOfItsCopy);
+            walker.count(StatisticID::CallsWhoseParametersAreReadOutOfList);
+            written.setListOperand(request.listOfUnknownLength);
+            request.arguments = elements.span();
+            request.thisValue = written.thisValueOperand();
+            request.calledBuiltin = written.calledBuiltin();
+            return buildDirectCallInWalkCalls(walker, call, written, request);
+        }
         request.listOfUnknownLength = walker.referenceOf(list);
         if (!request.listOfUnknownLength)
             return false;
@@ -1226,6 +1342,27 @@ static constexpr OpcodeSet opcodesOfConstructionInWalkCalls { Opcode::GetConstru
 constinit const OpcodeSet opcodesThatBuildTypedConstructionTakes = opcodesOfConstructionInWalkCalls;
 static_assert(opcodesThatBuildTypedConstructionTakesInChains == opcodesOfConstructionInWalkCalls);
 
+static LayoutID classWhoseConstructorRunsInWalkCalls(Walker& walker, const Operation& fetch, LayoutID written)
+{
+    const Program& program = walker.program();
+    const Function& own = program.at(walker.unit().function);
+    LayoutID ownClass = own.constructedClass;
+    if (walker.unit().role != CodeRole::Body || !ownClass || ownClass == written || !own.has(FunctionFlags::HasNewTarget) || !isWrittenAtOrBelowInWalkCalls(program, ownClass, written))
+        return { };
+    if (!isFoundByShapeTest(program.at(ownClass)) || !walker.plan().isInUse(ownClass) || !walker.plan().slots().holdsCompiledObjects(ownClass))
+        return { };
+    const LinkTables& link = walker.facts().linked();
+    if (ownClass.index() < link.layouts.size() && !link.layout(ownClass).possibleChanges.contains(LayoutChange::ChangesPrototype))
+        return { };
+    const Code& code = walker.code();
+    ValueID named = fetch.newTargetOperand();
+    while (opcodesThatNameTheirOperand.contains(code.at(named).opcode))
+        named = code.at(named).operand(0);
+    std::span<const ValueID> entered = code.at(entryBlock).parameters();
+    unsigned place = own.numberOfEntryParametersBefore(EntryParameter::NewTarget);
+    return code.at(entryBlock).isEntry && place < entered.size() && entered[place] == named ? ownClass : LayoutID();
+}
+
 bool buildTypedConstructionOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
     if (!opcodesOfConstructionInWalkCalls.contains(value.opcode()))
@@ -1254,6 +1391,17 @@ bool buildTypedConstructionOfItsOpcodes(Walker& walker, const BodyValue& value)
     while (opcodesThatNameTheirOperand.contains(code.at(root).opcode))
         root = code.at(root).operand(0);
     const Operation& read = code.at(root);
+    if (read.opcode == Opcode::GetConstructPrototype) {
+        LayoutID ownClass = classWhoseConstructorRunsInWalkCalls(walker, read, allocation.layout());
+        if (!ownClass)
+            return false;
+        Draft draft = walker.draftOf(value);
+        walker.chooseConservativeFields(draft);
+        draft.setLayout(ownClass);
+        walker.count(StatisticID::BirthsThatNameClassWhoseConstructorRuns);
+        walker.bind(value.id(), walker.build(WTF::move(draft)));
+        return true;
+    }
     if (read.opcode != Opcode::GetClassPrototype)
         return false;
     ValueID classObject = read.classObjectOperand();
@@ -1287,7 +1435,7 @@ static bool copyOrCallDirectlyInWalkCalls(Walker& walker, const BodyValue& value
         site.setFunction(request.callee);
         site.setVariadicOperands(operands.span());
         mayBeCopied = shouldCopyCallee(walker, site, request.callee, operands.span());
-        if (!mayBeCopied && !walker.hasTextsInStringBuilders() && walker.currentFunction() == walker.unit().function) {
+        if (!mayBeCopied && walker.currentFunction() == walker.unit().function) {
             Draft asWrittenOut(Opcode::Call, written.origin());
             asWrittenOut.setArgumentsOperands(request.arguments);
             mayBeCopied = turnsOfCopyWrittenOutAt(walker, asWrittenOut, request.callee, PlaceOfCall { }).has_value();
@@ -1327,6 +1475,8 @@ bool callAccessor(Walker& walker, const BodyValue& access, FunctionID accessor, 
     if (!thisValue || !bodyRunsWhenCalledInWalkCalls(callee.kind))
         return false;
     request.isNeverInlined = callee.isHiddenInStackTraces();
+    if (!stored)
+        walker.askObjectAgainForGetterThatNameFinds(access, thisValue, accessor);
     return copyOrCallDirectlyInWalkCalls(walker, access, walker.draftOf(access), request);
 }
 
@@ -1484,22 +1634,47 @@ bool callForwardedDirectly(Walker& walker, const BodyValue& call, const Draft& f
     if (forwarded.opcode == Opcode::Call)
         request.arguments = forwarded.argumentsOperands();
     else if (std::optional<Vector<Reference, 8>> known = elementsOfFreshList(walker, forwarded.listOperand())) {
-        walker.checkElementsRememberedOfList(forwarded.listOperand(), known->span(), forwarded.origin());
+        walker.checkWhatIsInSightOfList(forwarded.listOperand(), forwarded.origin());
         elements = WTF::move(*known);
         request.arguments = elements.span();
     } else {
         request.listOfUnknownLength = forwarded.listOperand();
-        if (!isFreshListAsMade(walker, request.listOfUnknownLength) || !parametersAreReadOutOfListInWalkCalls(walker, callee, request.listOfUnknownLength))
-            return false;
         Origin originInFrontOfCall = forwarded.origin();
         originInFrontOfCall.isTailCall = false;
+        bool isMadeHere = isFreshListAsMade(walker, request.listOfUnknownLength) && parametersAreReadOutOfListInWalkCalls(walker, callee, request.listOfUnknownLength);
+        if (!isMadeHere && !parametersAreReadOutOfListMadeElsewhereInWalkCalls(walker, call, callee, request.listOfUnknownLength, originInFrontOfCall))
+            return false;
         if (!readParametersOutOfListInWalkCalls(walker, callee, request.listOfUnknownLength, originInFrontOfCall, elements))
             return true;
+        if (!isMadeHere)
+            walker.count(StatisticID::CallsWhoseParametersAreReadOutOfList);
         request.arguments = elements.span();
     }
     request.thisValue = forwarded.thisValueOperand();
     request.calledBuiltin = forwarded.calledBuiltin();
     return copyOrCallDirectlyInWalkCalls(walker, call, forwarded, request);
+}
+
+bool constructForwardedDirectly(Walker& walker, const BodyValue& call, const Draft& forwarded)
+{
+    if (!walker.has(Mechanism::DirectCalls) || forwarded.opcode != Opcode::Construct)
+        return false;
+    if (forwarded.newTargetOperand() && forwarded.newTargetOperand() != forwarded.calleeOperand())
+        return false;
+    CallInWalkCalls request;
+    request.closure = forwarded.calleeOperand();
+    request.callee = findOnlyCallee(walker, call, request.closure);
+    if (!request.callee)
+        return false;
+    const Function& constructor = walker.program().at(request.callee);
+    if (!isClassConstructorOf(constructor.kind) || constructor.has(FunctionFlags::HasThis))
+        return false;
+    if (inlineConstructionHandedOn(walker, call, forwarded, request.callee) || walker.hasFailed())
+        return true;
+    request.newTarget = request.closure;
+    request.arguments = forwarded.argumentsOperands();
+    request.isConstruction = true;
+    return buildDirectCallInWalkCalls(walker, call, forwarded, request);
 }
 
 static FunctionID findFunctionThatRowsNameInWalkCalls(const Program& program, BuiltinID builtin)

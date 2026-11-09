@@ -335,6 +335,8 @@ public:
         return found ? Lookup { QuickLookup::Found, *found } : Lookup { QuickLookup::Absent, 0 };
     }
 
+    template<typename CharacterType> int64_t placeOfValueUnder(std::span<const CharacterType>) const;
+
     static constexpr uint32_t probeStartFor(unsigned indexBits, unsigned hash)
     {
         unsigned spreadShift = indexBits > hashBits ? indexBits - hashBits : 0;
@@ -461,6 +463,7 @@ public:
     JS_EXPORT_PRIVATE uint32_t numberOfTakenSlots() const;
     static void clear(JSGlobalObject*, JSObject* owner);
     static CompactStorage::Position next(VM&, JSCell* storage, uint32_t entry);
+    static CompactStorage::Position nextBehindDeletedEntry(VM&, JSCell* storage, uint32_t entry);
     template<typename Functor>
     static void forEachInColumn(VM& vm, JSCell* storage, uint32_t entry, bool wantsKeys, NOESCAPE const Functor& functor)
     {
@@ -491,16 +494,23 @@ public:
         }
     }
 
-    template<typename Functor>
-    static void forEachEntry(VM& vm, JSCell* storage, NOESCAPE const Functor& functor)
+    JS_EXPORT_PRIVATE static uint32_t firstEntryBehindDeletedOnes(const void* keys, bool keysAreWide, uint32_t entry, uint32_t used);
+    enum class DeletedEntries : bool { AreReadOneByOne, ArePassedByInSteps };
+    static constexpr uint32_t entriesBetweenScans = 8;
+    static constexpr uint32_t deletedEntriesReadByStub = 64;
+    template<DeletedEntries deletedEntries = DeletedEntries::ArePassedByInSteps, typename Functor>
+    static void forEachEntryFrom(VM& vm, JSCell* storage, uint32_t entry, NOESCAPE const Functor& functor)
     {
         auto* table = uncheckedDowncast<CompactTable>(storage);
         if (!table->isLive() || table->isInImage()) [[unlikely]] {
-            for (CompactStorage::Position position = next(vm, storage, 0); position.storage; position = next(vm, position.storage, position.entry + 1))
-                functor(position.key, position.value);
+            for (CompactStorage::Position position = next(vm, storage, entry); position.storage; position = next(vm, position.storage, position.entry + 1)) {
+                if (!functor(position.entry, position.key, position.value))
+                    return;
+            }
             return;
         }
         uint32_t used = table->m_used;
+        bool hasValues = table->hasValues();
         auto columnAt = [table](size_t offset, bool isWide) {
             return [table, isWide, narrow = table->at<uint32_t>(offset), wide = table->at<EncodedJSValue>(offset)](uint32_t entry) ALWAYS_INLINE_LAMBDA {
                 return isWide ? JSValue::decode(wide[entry]) : table->decodeNarrow(narrow[entry]);
@@ -508,10 +518,24 @@ public:
         };
         auto keyAt = columnAt(table->offsetOfKeys(), table->m_keysShiftAndFlags & keysAreWide);
         auto valueAt = columnAt(table->offsetOfValues(), table->m_valueWidth == Width::Wide);
-        for (uint32_t entry = 0; entry < used; ++entry) {
-            if (JSValue key = keyAt(entry))
-                functor(key, valueAt(entry));
+        for (; entry < used; ++entry) {
+            if (JSValue key = keyAt(entry)) {
+                if (!functor(entry, key, hasValues ? valueAt(entry) : JSValue()))
+                    return;
+            } else if constexpr (deletedEntries == DeletedEntries::ArePassedByInSteps) {
+                if (!(entry % entriesBetweenScans))
+                    entry = firstEntryBehindDeletedOnes(table->at<uint8_t>(table->offsetOfKeys()), table->m_keysShiftAndFlags & keysAreWide, entry + 1, used) - 1;
+            }
         }
+    }
+
+    template<typename Functor>
+    static void forEachEntry(VM& vm, JSCell* storage, NOESCAPE const Functor& functor)
+    {
+        forEachEntryFrom<DeletedEntries::AreReadOneByOne>(vm, storage, 0, [&](uint32_t, JSValue key, JSValue value) ALWAYS_INLINE_LAMBDA {
+            functor(key, value);
+            return true;
+        });
     }
 
     template<typename Visitor> ALWAYS_INLINE static void visitFields(CompactTable*, Visitor&);

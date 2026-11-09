@@ -9,19 +9,25 @@
 #if ENABLE(AOT)
 
 #include "AOTCompileOptions.h"
+#include "AOTCompiledFrame.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
+#include "AOTModuleHost.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTPendingStars.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTProgramStatics.h"
 #include "AOTState.h"
+#include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
+#include "CodeBlock.h"
 #include "GetterSetter.h"
 #include "HeapAnalyzer.h"
 #include "HeapCellInlines.h"
 #include "JSCInlines.h"
+#include "StackVisitor.h"
 #include <bit>
 #include <wtf/DataLog.h>
 
@@ -303,6 +309,65 @@ void crashOnImpossibleMutation(VM&, const Object& object, ObjectMutation mutatio
     crashOnFalseProof(object, mutation, nullptr);
 }
 
+bool isAskedByCodeThatInspectorBrought(VM& vm, const Object& object)
+{
+    return isAskedByCodeThatInspectorBrought(vm, object.state().instance);
+}
+
+static bool isOfInjectedScriptOfInspector(VM& vm, CodeBlock* codeBlock)
+{
+    SourceCode whole = vm.builtinExecutables()->injectedScriptSourceCreateInspectorInjectedScriptCodeSource();
+    const SourceCode& source = codeBlock->ownerExecutable()->source();
+    return source.provider() == whole.provider() && source.startOffset() >= whole.startOffset() && source.endOffset() <= whole.endOffset();
+}
+
+bool isAskedByCodeThatInspectorBrought(VM& vm, const Instance& instance, FrameThatAsks frameThatAsks)
+{
+    if (!hasFlag(instance.options().admitted(), AdmittedCode::Inspector))
+        return false;
+    bool isAskedByConsole = false;
+    bool textWithoutOriginAsks = false;
+    bool standsInEnteredFrame = frameThatAsks == FrameThatAsks::IsAboveTheTopFrame;
+    StackVisitor::visitWithCompiledFrames(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+        if (visitor->isCompiledFrame()) {
+            if (!std::exchange(standsInEnteredFrame, false))
+                return IterationStatus::Done;
+            CompiledFrameIterator& frames = visitor.compiledFrames();
+            frames.advanceToCallerMachineFrame();
+            return frames.isAtEnd() || frames.isAmongFramesThatWait() ? IterationStatus::Continue : IterationStatus::Done;
+        }
+        CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock)
+            return IterationStatus::Continue;
+        if (codeBlock->unlinkedCodeBlock()->isBuiltinFunction()) {
+            if (!textWithoutOriginAsks || !isOfInjectedScriptOfInspector(vm, codeBlock))
+                return IterationStatus::Continue;
+            isAskedByConsole = true;
+            return IterationStatus::Done;
+        }
+        const SourceOrigin& origin = codeBlock->ownerExecutable()->sourceOrigin();
+        if (ScriptFetcher* fetcher = origin.fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
+            return IterationStatus::Continue;
+        if (origin.isNull()) {
+            textWithoutOriginAsks = true;
+            return IterationStatus::Continue;
+        }
+        isAskedByConsole = !textWithoutOriginAsks && !(origin.url().protocolIsFile() && (findModule(origin.url().fileSystemPath()) || isOriginOfCompiledFile(instance, origin)));
+        return IterationStatus::Done;
+    }, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
+    return isAskedByConsole;
+}
+
+bool refusesMutation(VM& vm, const Object& object, ObjectMutation mutation)
+{
+    if (!isAskedByCodeThatInspectorBrought(vm, object))
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!scope.exception())
+        throwTypeError(object.structure()->realm(), scope, changeThatCompiledCodeRulesOutMessage(mutation));
+    return true;
+}
+
 void crashOnImpossibleMutation(VM&, const Object& object, PropertyName, ObjectMutation mutation)
 {
     crashOnFalseProof(object, mutation, nullptr);
@@ -392,7 +457,7 @@ void didChangeIndexedProperties(VM& vm, Object& object, bool interceptedIndexedA
         object.structure()->realm()->haveABadTime(vm, &object);
 }
 
-const ClassInfo Environment::s_info = { "Environment"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(Environment) };
+const ClassInfo Environment::s_info = { "JSLexicalEnvironment"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(Environment) };
 
 static_assert(offsetOfEnvironmentShapeLowByte == JSCell::indexingTypeAndMiscOffset() && offsetOfEnvironmentShapeHighByte == JSCell::typeInfoFlagsOffset());
 
@@ -463,12 +528,19 @@ void Environment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
     const ProgramIdentifiers& identifiers = *environment->vm().aotState().identifiers;
     uintptr_t cageBase = cageBaseOf(environment);
-    for (auto& variable : environment->layout().describedVariables()) {
+    const EnvironmentData& layout = environment->layout();
+    Instance* instance = layout.moduleAfterNone ? environment->structure()->realm()->aotInstance() : nullptr;
+    JSCell* environmentOfModule = instance ? instance->state->statics->environmentOfModule(layout.moduleAfterNone - 1) : nullptr;
+    if (environmentOfModule)
+        analyzer.analyzeEdge(environment, environmentOfModule, RootMarkReason::None);
+    for (auto& variable : layout.describedVariables()) {
         if (!traitsOf(variable.slot.representation()).holdsCell)
             continue;
         JSCell* target = cellInSlot(variable.slot.representation(), &environment->at<uint8_t>(variable.slot.offset), cageBase);
         UniquedStringImpl* name = target ? identifiers.nameInHeapSnapshots(&variable) : nullptr;
-        if (name)
+        if (name && environmentOfModule && variable.isVariableOfModule())
+            instance->state->statics->analyzeVariableOfModule(environmentOfModule, target, name, analyzer);
+        else if (name)
             analyzer.analyzeVariableNameEdge(environment, target, name);
     }
 }

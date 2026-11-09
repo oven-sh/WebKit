@@ -77,6 +77,7 @@ struct Range {
     static constexpr Range exact() { return { -maxExactInteger, maxExactInteger }; }
     static constexpr Range aroundEveryFraction() { return { -magnitudeWithoutFractions, magnitudeWithoutFractions }; }
     static constexpr Range int32() { return { INT32_MIN, INT32_MAX }; }
+    static constexpr Range int32OrLength() { return { INT32_MIN, 1ll << 32 }; }
     static constexpr Range uint32() { return { 0, UINT32_MAX }; }
     static constexpr Range length() { return { 0, INT32_MAX }; }
     static constexpr Range empty() { return { 1, 0 }; }

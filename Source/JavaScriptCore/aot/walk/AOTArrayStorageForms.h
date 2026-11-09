@@ -18,7 +18,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class Code;
 class Program;
+struct Operation;
 
 struct ArrayStorageForm {
     ArrayStorage kind;
@@ -62,6 +64,15 @@ constexpr ArrayStorage arrayStorageOf(IndexingType indexingType)
 
 constexpr bool hasArrayStorageForm(ArrayStorage kind) { return findArrayStorageForm(kind); }
 
+constexpr bool accessToElementsHasCode(Opcode opcode, ArrayStorage kind, bool admitsInt32Storage, bool isWritable)
+{
+    if (opcode != Opcode::HasArrayStorage)
+        return !isWritable && (!admitsInt32Storage || kind == ArrayStorage::Double);
+    if (!hasArrayStorageForm(kind))
+        return isWritable;
+    return !admitsInt32Storage || (kind != ArrayStorage::Int32 && !isWritable);
+}
+
 constexpr bool holdsOnlyNumbers(ArrayStorage kind)
 {
     const ArrayStorageForm* form = findArrayStorageForm(kind);
@@ -86,6 +97,8 @@ Expected<ArrayStorage> arrayStorageDeclaredBy(const Program&, TypeReader, TypeID
 bool isDeclaredToHoldNumbersAlone(const Program&, TypeReader, TypeID array);
 bool isProvenToBeList(TypeReader, TypeID array);
 bool readTakesIndexOfProvenList(TypeReader, TypeID array, TypeID position);
+bool numberOfProvenListIsReadUnboxed(TypeReader, TypeID array, TypeID position, Representation formOfPosition, bool testsForItself);
+bool keyOfProvenListMayBeAskedForInt32(TypeReader, TypeID array, TypeID position);
 inline bool storeTakesIndexOfProvenList(TypeReader types, TypeID array, TypeID position) { return readTakesIndexOfProvenList(types, array, position); }
 
 JS_EXPORT_PRIVATE ArrayStorage arrayStorageOfData(const Program&, const DataNode::Array&);
@@ -94,6 +107,8 @@ inline constexpr uint32_t maxNodesOfExpandedData = 16;
 bool canStoreWithoutConversion(const TypeArena&, ArrayStorage, TypeID stored);
 bool canStoreWithoutConversion(ArrayStorage, double stored);
 bool fitsStorageOfLiteral(const TypeArena&, ArrayStorage, TypeID element);
+const ArrayStorageForm* findFormOfLiteral(const TypeArena&, const Code&, std::span<const ValueID> elements, ArrayStorage named, ArrayStorage declaredByList);
+ArrayStorage storageThatLiteralIsSurelyBornWith(const Program&, const TypeArena&, const Code&, const Operation& made);
 TypeID typeOfElementRead(ArrayStorage);
 
 static_assert(arrayStorageOf(ArrayWithInt32) == ArrayStorage::Int32 && arrayStorageOf(CopyOnWriteArrayWithDouble) == ArrayStorage::Double);

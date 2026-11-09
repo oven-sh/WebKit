@@ -67,6 +67,7 @@ import type {
   TypeNameSpec,
   TypeSpec,
   UseSpec,
+  WordOfCell,
 } from "./vocabulary.ts";
 import { callbackAftermaths, targetPlatforms } from "./vocabulary.ts";
 
@@ -657,6 +658,11 @@ export const whenOperandHasProperty = (name: OperandName, property: string): Con
   operand: name,
   hasProperty: property,
 });
+export const whenPropertyOfOperandStartsWith = (
+  name: OperandName,
+  property: string,
+  ...prefixes: readonly string[]
+): ConditionSpec => ({ operand: name, hasProperty: property, startsWith: prefixes });
 export const whenBuildAdmitsRuntimeCode: ConditionSpec = { buildAdmitsRuntimeCode: true };
 export const whenCallRunsOtherCode: ConditionSpec = { callRunsOtherCode: true };
 export const whenObjectNobodyKnowsIsWritten: ConditionSpec = { objectNobodyKnowsIsWritten: true };
@@ -792,6 +798,7 @@ const entryColumnKeys = [
   "privateAlias",
   "defaultExport",
   "constructable",
+  "canBeListed",
   "length",
   "nativeSymbols",
   "customGetter",
@@ -1020,6 +1027,7 @@ export const internalField = (index: number, heap: Heap, holds?: TableType): Slo
 });
 export const handedOutBySteps = (heap: Heap): SlotSpec => ({ ...state(heap), holdsWhatStepsHandOut: true });
 export const thrownValue = (slot: SlotSpec): SlotSpec => ({ ...slot, holdsWhatIsThrown: true });
+export const wordOfCell = (followed: Exclude<WordOfCell, "None">, slot: SlotSpec): SlotSpec => ({ ...slot, wordOfCell: followed });
 export const exactType = (path: string, ...typeArguments: readonly SlotName[]): TypeNameSpec => ({
   path: path.split("."),
   isView: false,
@@ -1054,6 +1062,7 @@ const classColumnKeys = [
   "isNeverPristine",
   "pristineTest",
   "hasClosureInstances",
+  "isFollowedBesideUnseenObject",
   "instancesAreEntries",
   "keepsStructuresOfClassesBelow",
   "definesCharactersOnNewInstances",

@@ -1278,6 +1278,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
 #if ENABLE(AOT)
     if (object->structure()->isCompiledStructure()) {
         AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Sealed);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
 #endif
@@ -1326,6 +1327,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
         AOT::PropertyWalk::prepareForFreeze(object);
         RETURN_IF_EXCEPTION(scope, nullptr);
         AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Frozen);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
     // A slim closure is an ordinary object once it has its properties: JSObject::freeze() gives it them and takes the one transition. Its `prototype` object is still made at the first read.

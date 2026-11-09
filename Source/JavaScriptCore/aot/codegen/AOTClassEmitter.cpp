@@ -56,7 +56,7 @@ void ClassEmitter::generateGetClassPrototype(const ValueContext& value)
     auto readByOperation = [&](bool isOnRarePath) {
         return callWithoutSite<CellPointer>(RuntimeOperation::GetClassPrototype, { classObject }, { .isOnRarePath = isOnRarePath });
     };
-    std::optional<Word32> rank = rankOfClassWithOnePrototypeObject(value);
+    std::optional<Word32> rank = value->readsClassObjectItself() ? std::nullopt : rankOfClassWithOnePrototypeObject(value);
     if (!rank) {
         define(value, readByOperation(false));
         return;
@@ -100,7 +100,7 @@ void ClassEmitter::generateBeginMemberGuards(const ValueContext& value)
     branch(emitter<GuardEmitter>().guardsWereBegun(constructorFunction), { normalEdge(continuation), rareEdge(wereNeverBegun) });
 
     m_out.appendTo(wereNeverBegun);
-    Operand arguments[] { word32(constructorFunction.index()) };
+    Operand arguments[] { word32(constructorFunction.index()), word32(value->endsTopLevelOfModule()) };
     callWithoutSite(RuntimeOperation::BeginMemberGuards, arguments, Representation::Void, { .isOnRarePath = true });
     m_out.jump(continuation);
 

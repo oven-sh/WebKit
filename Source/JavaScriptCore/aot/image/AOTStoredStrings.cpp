@@ -59,11 +59,12 @@ struct RangeOfBytes {
 
 class ReaderOfImage {
 public:
-    ReaderOfImage(std::span<const uint8_t> file, size_t offsetInFile, unsigned number, StoredStrings& result)
+    ReaderOfImage(std::span<const uint8_t> file, size_t offsetInFile, unsigned number, StoredStrings& result, OpenCompressedText open)
         : m_image(file.subspan(offsetInFile))
         , m_offsetInFile(offsetInFile)
         , m_number(number)
         , m_result(result)
+        , m_open(open)
     {
     }
 
@@ -96,6 +97,7 @@ private:
     size_t m_offsetInFile;
     unsigned m_number;
     StoredStrings& m_result;
+    OpenCompressedText m_open;
     ImageHeader m_header;
 };
 
@@ -243,11 +245,31 @@ VerdictOnStoredStrings ReaderOfImage::readTextsOfProgramTables()
         return liesInTables(range.offset, static_cast<uint64_t>(range.count) * sizeOfElement);
     };
     if (!tableLiesInTables(ProgramTableIndex::quotedTextGroups, sizeof(QuotedTextGroupData)) || !tableLiesInTables(ProgramTableIndex::quotedTextRows, 1)
-        || !tableLiesInTables(ProgramTableIndex::textOfQuotes, 1) || !tableLiesInTables(ProgramTableIndex::functionTexts, sizeof(FunctionTexts)))
+        || !tableLiesInTables(ProgramTableIndex::textOfQuotes, 1) || !tableLiesInTables(ProgramTableIndex::blocksOfTextOfQuotes, sizeof(uint32_t)) || !tableLiesInTables(ProgramTableIndex::functionTexts, sizeof(FunctionTexts)))
         return refuse("a table of texts lies outside the tables of the program");
 
+    auto openBlocks = [&](Vector<uint8_t>& opened, const uint8_t* compressed, std::span<const uint32_t> ends, uint32_t sizeOfText) {
+        opened.grow(sizeOfText);
+        for (size_t block = 0; block < ends.size(); ++block) {
+            uint32_t first = block ? ends[block - 1] : 0;
+            size_t offset = block * sizeOfBlockOfText;
+            if (!m_open(opened.mutableSpan().subspan(offset, std::min<size_t>(sizeOfBlockOfText, opened.size() - offset)), { compressed + first, ends[block] - first }))
+                return false;
+        }
+        return true;
+    };
+
     VerdictOnStoredStrings worst = VerdictOnStoredStrings::NothingLiesBesideStrings;
-    if (std::span<const uint8_t> text = tables.textOfQuotes(); !text.empty()) {
+    std::span<const uint8_t> textOfQuotes = tables.textOfQuotes();
+    Vector<uint8_t> openedTextOfQuotes;
+    if (std::span<const uint32_t> blocks = tables.blocksOfTextOfQuotes(); !blocks.empty()) {
+        std::span<const uint32_t> ends = blocks.subspan(1);
+        if (!m_open || ends.empty() || ends.size() != (static_cast<uint64_t>(blocks[0]) + sizeOfBlockOfText - 1) / sizeOfBlockOfText || !std::ranges::is_sorted(ends) || ends.back() != textOfQuotes.size()
+            || !openBlocks(openedTextOfQuotes, textOfQuotes.data(), ends, blocks[0]))
+            return refuse("quoted text is compressed and cannot be opened");
+        textOfQuotes = openedTextOfQuotes.span();
+    }
+    if (std::span<const uint8_t> text = textOfQuotes; !text.empty()) {
         std::span<const QuotedTextGroupData> groups = tables.quotedTextGroups();
         std::span<const uint8_t> rows = tables.quotedTextRows();
         Vector<RangeOfBytes> covered;
@@ -280,9 +302,19 @@ VerdictOnStoredStrings ReaderOfImage::readTextsOfProgramTables()
         uint64_t size = 0;
         for (const FunctionTextEntry& entry : entries)
             size = std::max<uint64_t>(size, entry.end);
-        if (!liesInTables(texts.textOffset, size))
+        Vector<uint8_t> openedText;
+        if (texts.numberOfBlocks) {
+            uint64_t numberOfBlocksOfText = (static_cast<uint64_t>(texts.sizeOfText) + sizeOfBlockOfText - 1) / sizeOfBlockOfText;
+            if (!m_open || size > texts.sizeOfText || texts.numberOfBlocks != numberOfBlocksOfText || !liesInTables(texts.endsOfBlocksOffset, static_cast<uint64_t>(texts.numberOfBlocks) * sizeof(uint32_t)))
+                return refuse("function text is compressed and cannot be opened");
+            std::span ends { tables.at<uint32_t>(texts.endsOfBlocksOffset), texts.numberOfBlocks };
+            if (!std::ranges::is_sorted(ends) || !liesInTables(texts.textOffset, ends.back()))
+                return refuse("function text lies outside the tables of the program");
+            if (!openBlocks(openedText, tables.at<uint8_t>(texts.textOffset), ends, texts.sizeOfText))
+                return refuse("function text is compressed and cannot be opened");
+        } else if (!liesInTables(texts.textOffset, size))
             return refuse("function text lies outside the tables of the program");
-        std::span text { tables.at<uint8_t>(texts.textOffset), static_cast<size_t>(size) };
+        std::span<const uint8_t> text = texts.numberOfBlocks ? openedText.span().first(static_cast<size_t>(size)) : std::span<const uint8_t> { tables.at<uint8_t>(texts.textOffset), static_cast<size_t>(size) };
         Vector<RangeOfBytes> covered;
         for (const FunctionTextEntry& entry : entries) {
             uint32_t start = entry.start;
@@ -308,7 +340,7 @@ static bool isHeaderOfImage(std::span<const uint8_t> file, size_t at)
     return size && !(size % smallestPageOfImage) && codeOffset && !(codeOffset % smallestPageOfImage) && codeOffset < size && size <= file.size() - at;
 }
 
-StoredStrings readStoredStrings(std::span<const uint8_t> file)
+StoredStrings readStoredStrings(std::span<const uint8_t> file, OpenCompressedText open)
 {
     StoredStrings result;
     unsigned numberOfImages = 0;
@@ -316,7 +348,7 @@ StoredStrings readStoredStrings(std::span<const uint8_t> file)
     for (size_t at = 0; at + sizeof(imageMagic) <= file.size(); at += smallestAlignmentOfImageInFile) {
         if (memcmp(file.data() + at, &imageMagic, sizeof(imageMagic)) || !isHeaderOfImage(file, at))
             continue;
-        worst = std::max(worst, ReaderOfImage(file, at, numberOfImages++, result).read());
+        worst = std::max(worst, ReaderOfImage(file, at, numberOfImages++, result, open).read());
     }
     if (!numberOfImages) {
         result.report.append(byteCast<uint8_t>("the file holds no image\n"_s.span8()));

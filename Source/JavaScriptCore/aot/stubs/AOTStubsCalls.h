@@ -28,7 +28,6 @@ constexpr StubKey callNotClosureWithCount(CallPosition position = CallPosition::
 constexpr StubKey callBoundFunction(CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallBoundFunction).withForm(static_cast<uint8_t>(position)); }
 constexpr StubKey constructValue(ConstructSyntax syntax) { return StubKey(StubFamily::ConstructValue).withForm(static_cast<uint8_t>(syntax)); }
 constexpr StubKey resolveCallValue(unsigned count) { return StubKey(StubFamily::ResolveCallValue).withCount(std::min(count, numberOfArgumentGPRs + 1)); }
-constexpr StubKey callResolvedValue() { return StubKey(StubFamily::CallResolvedValue); }
 constexpr StubKey callEngineCallee() { return StubKey(StubFamily::CallEngineCallee); }
 constexpr StubKey callEngineFunction() { return StubKey(StubFamily::CallEngineFunction); }
 

@@ -132,6 +132,7 @@ static FunctionID findBodyThatListedCallEntersInPromiseAll(Walker& walker, const
 static Reference buildOperationInPromiseAll(Walker& walker, const BodyIndex& index, const CallOfPromiseAllInPromiseAll& written, std::span<const DirectCallInPromiseAll> directCalls)
 {
     uint32_t bitsOfDirectCalls = 0;
+    static_assert(maxComputedElementsOfArrayLiteral <= 8 * sizeof(bitsOfDirectCalls));
     Vector<Reference, 8> elements;
     for (ValueID element : index.value(written.list).elementsOperands()) {
         ValueID source = index.valueBehindCasts(element);

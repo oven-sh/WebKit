@@ -74,24 +74,24 @@ ProgramStrings::ProgramStrings(State& state)
     state.caches->add(CacheKind::StrongRoots, "string constants"_s, *this, RootVolatility::GreyedByExecution);
 }
 
-JSString* ProgramStrings::string(VM& vm, StringID string, Made made) const
+JSString* ProgramStrings::string(VM& vm, ImageStringWord word, Made made) const
 {
     DeferGCForAWhile deferGC(vm);
     const ImageText& text = m_image.text();
-    if (StringImpl* header = text.tryGetHeader(string))
+    if (StringImpl* header = text.tryGetHeader(word))
         return jsOwnedString(vm, String { *header });
-    StringView characters = text.view(string);
+    StringView characters = text.view(word);
     if (characters.isEmpty())
         return jsEmptyString(vm);
     if (characters.length() == 1) {
         if (char16_t character = characters.codeUnitAt(0); character <= maxSingleCharacterString)
             return vm.smallStrings.singleCharacterString(character);
     }
-    if (made == Made::Once && text.hasListedHash(string)) {
-        if (StringImpl* header = tryCreateHeader(characters, text.hash(string)))
+    if (made == Made::Once && word.hasListedHash()) {
+        if (StringImpl* header = tryCreateHeader(characters, text.hash(word)))
             return jsOwnedString(vm, String { *header });
     }
-    String value = text.isAtom(string) ? text.createAtom(string) : text.createString(string);
+    String value = word.isAtom() ? text.createAtom(word) : text.createString(word);
     if (Image::isBackedByStaticData(*value.impl()))
         return jsOwnedString(vm, value);
     return jsString(vm, value);
@@ -214,7 +214,7 @@ void ProgramStrings::willAnalyzeHeap(VM& vm)
         if (shape >= m_tables.firstEnvironmentShape) {
             for (const VariableData& variable : m_tables.environmentForShape(shape).describedVariables()) {
                 if (!m_hasNamedVariablesForHeapSnapshots && variable.name != VariableData::noName)
-                    identifiers.nameForHeapSnapshots(&variable, AtomString(text(m_tables, StringID(variable.name))));
+                    identifiers.nameForHeapSnapshots(&variable, AtomString(text(m_tables, StringID(variable.string()))));
             }
             continue;
         }
@@ -223,7 +223,7 @@ void ProgramStrings::willAnalyzeHeap(VM& vm)
     }
     if (!m_hasNamedVariablesForHeapSnapshots) {
         bool endsWhereClosureNumberEnds = forEachNamedCapture(m_tables.namedCaptures(), [&](const NamedCaptureData& capture) {
-            identifiers.nameForHeapSnapshots(capture.closureNumber, capture.slot, AtomString(text(m_tables, StringID(capture.name))));
+            identifiers.nameForHeapSnapshots(capture.closureNumber, capture.slot, AtomString(text(m_tables, StringID(capture.name))), capture.isVariableOfModule);
         });
         RELEASE_ASSERT(endsWhereClosureNumberEnds);
     }

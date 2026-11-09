@@ -26,7 +26,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxCaptures(Lower, BitWidth, HeapAllocation, 255, 255, 255, "variables a closure captures")
     MaxProgramIds(LinkAndEmit, BitWidth, BuildError, 4294967294, 4294967294, 0, "ids in a program")
     MaxWorkers(Any, BitWidth, FewerThreads, 2047, 2047, 0, "compiler threads")
-    MaxDeclarationsPredictedFromNames(Optimize, CodeSize, GenericPath, 4, 4, 0, "object types guessed from the property names used on a value")
     MaxReservedStackArguments(Optimize, BitWidth, BuildError, 65535, 65535, 0, "stack arguments of a call")
     MaxBuiltinCallArguments(Optimize, BitWidth, GenericPath, 254, 254, 254, "arguments of a built-in call")
     MaxNumberPathValues(Select, CodeSize, NotOptimized, 12, 12, 0, "code duplicated to keep an integer fast path")

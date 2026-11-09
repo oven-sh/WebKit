@@ -153,7 +153,9 @@ static void noteWhatNewObjectFillsIn(Walker& walker, Reference object, const Ope
 
     WalkState& state = walker.state();
     std::span<const FieldIndex> fillers = walker.fillersOfAllocation(object);
-    bool isAsAllocated = fillers.empty() && (numberOfFieldsWritten == SIZE_MAX || made.fields().size() == numberOfFieldsWritten);
+    std::optional<FieldIndex> environmentOfClosures = walker.plan().layout(layout).environmentOfDeferredClosures;
+    size_t numberOfNamesListed = made.fields().size() - (environmentOfClosures && !made.fields().empty() && made.fields().back() == *environmentOfClosures);
+    bool isAsAllocated = fillers.empty() && (numberOfFieldsWritten == SIZE_MAX || numberOfNamesListed == numberOfFieldsWritten);
     if (made.prototypeOperand() && program.prototypeMaySelectOtherClass(layout)) {
         std::optional<PlacedAllocation> placed = isAsAllocated ? walker.plan().allocation(program, layout, made.fields()) : std::nullopt;
         if (placed && placed->orderWord == unorderedOrderWord)
@@ -265,12 +267,29 @@ static void noteWhatArgumentsObjectHolds(Walker& walker, Reference object, const
 static size_t numberOfFieldsWrittenForEscapeAnalysis(const Walker& walker, const BodyValue& allocation, const Operation& made)
 {
     if (allocation.opcode() == Opcode::NewObject)
-        return allocation.as<Opcode::NewObject>().fields().size();
+        return allocation.as<Opcode::NewObject>().fields().size() + walker.numberOfValuesThatBirthListsFromBehind();
     if (allocation.opcode() != Opcode::Data)
         return SIZE_MAX;
     DataID data = allocation.as<Opcode::Data>().data();
     const DataNode::Object* constant = data ? walker.program().at(data).root.tryAs<DataNode::Object>() : nullptr;
     return constant && constant->members.size() != made.fields().size() ? constant->members.size() : SIZE_MAX;
+}
+
+static_assert(allocationsOfEscapeAnalysis.contains(Opcode::NewArrayLike));
+
+static bool noteWhatListMadeWithLengthHolds(Walker& walker, Reference object, const Operation& made)
+{
+    const Code& code = walker.code();
+    ValueID length = made.lengthOperand();
+    if (made.sourceOperand() || !length || !code.isConstant(length) || code.at(length).opcode != Opcode::Integer)
+        return false;
+    int64_t known = code.at(length).integer();
+    if (known < 0 || known > static_cast<int64_t>(UINT32_MAX))
+        return false;
+    WalkState& state = walker.state();
+    state.noteElement(object, keyOfLengthOfFreshList(walker), positionInFreshList(walker, static_cast<uint32_t>(known)));
+    state.noteShape(object, made.type);
+    return true;
 }
 
 static bool buildAllocationOfFreshObject(Walker& walker, const BodyValue& allocation)
@@ -294,6 +313,7 @@ static bool buildAllocationOfFreshObject(Walker& walker, const BodyValue& alloca
     else if ((made.opcode == Opcode::Data && hasKind(walker.types(), made.type, OperandKind::Array)) || made.opcode == Opcode::NewRegExp)
         walker.state().noteShape(object, made.type);
     walker.state().noteFresh(object);
+    noteStorageOfListMade(walker, object);
     walker.bind(allocation.id(), object);
     return true;
 }
@@ -303,10 +323,16 @@ void noteFreshList(Walker& walker, Reference list)
     if (!walker.has(Mechanism::EscapeAnalysis) || !list || !list.isValue())
         return;
     const Operation& made = walker.code().at(list.id());
-    if (made.opcode != Opcode::NewArray || !givesObjectThatNothingElseNames(made))
+    if ((made.opcode != Opcode::NewArray && made.opcode != Opcode::NewArrayLike) || !givesObjectThatNothingElseNames(made))
         return;
+    if (made.opcode == Opcode::NewArrayLike) {
+        if (noteWhatListMadeWithLengthHolds(walker, list, made))
+            walker.state().noteFresh(list);
+        return;
+    }
     noteWhatNewArrayFillsIn(walker, list, made);
     walker.state().noteFresh(list);
+    noteStorageOfListMade(walker, list);
 }
 
 void noteFreshObject(Walker& walker, Reference name, size_t numberOfFieldsWritten)
@@ -708,6 +734,27 @@ static bool followAppendToFreshList(Walker& walker, const Draft& append, const F
     return true;
 }
 
+static bool followStoreUnderKnownIndexIntoFreshList(Walker& walker, const Draft& store, const FreshOperandOfEscapeAnalysis& written)
+{
+    if (written.operandIndex != OperandIndex::PutArrayElement::array || !store.fillsPlaceOfListMadeHere() || !store.valueOperand().isRecord())
+        return false;
+    std::optional<uint32_t> length = lengthOfFreshList(walker, written.object);
+    Reference position = store.positionOperand();
+    if (!length || !isListAsMade(walker, written.object) || !position || !position.isConstant() || walker.code().at(position.id()).opcode != Opcode::Integer)
+        return false;
+    int64_t index = walker.code().at(position.id()).integer();
+    if (index < 0 || index >= static_cast<int64_t>(UINT32_MAX))
+        return false;
+    WalkState& state = walker.state();
+    state.markEscaped(written.object);
+    state.noteElement(written.object, positionInFreshList(walker, static_cast<uint32_t>(index)), valueHeldByFreshObject(walker.code(), store.valueOperand().id()));
+    if (index >= static_cast<int64_t>(*length))
+        state.noteElement(written.object, keyOfLengthOfFreshList(walker), positionInFreshList(walker, static_cast<uint32_t>(index) + 1));
+    state.noteFresh(written.object);
+    walker.count(StatisticID::StoresFollowedIntoFreshLists);
+    return true;
+}
+
 static bool followStoreToMappedArgument(Walker& walker, const Draft& store, const FreshOperandOfEscapeAnalysis& written)
 {
     if (written.operandIndex != OperandIndex::SetMappedArgument::arguments || !store.valueOperand().isRecord())
@@ -724,6 +771,8 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
     Opcode opcode = store.opcode;
     if (appendsFollowedByEscapeAnalysis.contains(opcode))
         return followAppendToFreshList(walker, store, written);
+    if (opcode == Opcode::PutArrayElement)
+        return followStoreUnderKnownIndexIntoFreshList(walker, store, written);
     if (opcode == Opcode::SetMappedArgument)
         return followStoreToMappedArgument(walker, store, written);
     bool storesIntoEnvironment = opcode == Opcode::PutEnvironmentField;
@@ -779,6 +828,13 @@ static bool calleeOnlyLooksAtFreshCell(Walker& walker, const Draft& call, const 
     return linkTablesForEscapeAnalysis(walker).onlyLooksAtWhatArrivesAt(call.function(), operand.operandIndex - numberOfNamedOperands) && nothingButOwnFieldsAnswersFor(walker.program(), walker.code().at(operand.object.id()));
 }
 
+static bool laysNullAboveFreshObject(Walker& walker, const Draft& draft, const FreshOperandOfEscapeAnalysis& operand)
+{
+    if (draft.opcode != Opcode::SetLiteralPrototype || operand.isHeldByClosure || operand.operandIndex != OperandIndex::SetLiteralPrototype::object)
+        return false;
+    return walker.typeOf(draft.prototypeOperand()) == TypeTable::null;
+}
+
 void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* foundByCaller)
 {
     Opcode opcode = draft.opcode;
@@ -786,9 +842,11 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
         return;
 
     bool closuresHoldScopes = walker.closuresHoldScopes();
+    static constexpr OpcodeSet appendsToLists { Opcode::AppendElement, Opcode::AppendHole, Opcode::AppendElements, Opcode::AppendMembers };
+    bool passesFreshListsOver = walker.takesNothingToBeDoneToFreshLists() && !appendsToLists.contains(opcode);
     Vector<FreshOperandOfEscapeAnalysis, 4> freshOperands;
     draft.forEachOperand([&](Reference operand, uint32_t operandIndex) {
-        if (Reference object = freshObjectNamedBy(walker, operand))
+        if (Reference object = freshObjectNamedBy(walker, operand); object && !(passesFreshListsOver && isFreshListAsMade(walker, operand)))
             freshOperands.append({ object, operandIndex });
         if (!closuresHoldScopes || !operand || !operand.isValue())
             return;
@@ -809,12 +867,14 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
     Effects effects = effectsOfDraftForEscapeAnalysis(walker.program(), draft, doesGenericOperation);
     if (foundByCaller && !doesGenericOperation)
         effects.intersect(*foundByCaller);
+    walker.cutByRowThatSaysLess(draft, effects);
     bool runsOtherCode = effects.mayRunOtherCode();
 
     if (opcode == Opcode::CallDirect && returnsResultOfFunction(draft.role()) && !draft.numberOfBoundArguments()) {
         const LinkedFunction& callee = linkTablesForEscapeAnalysis(walker).function(draft.function());
         effects = callee.effectsOnReturn();
         effects.merge(callee.effectsOnThrow());
+        walker.cutByRowThatSaysLess(draft, effects);
     }
 
     uint32_t numberOfNamedOperands = draft.numberOfNamedOperands();
@@ -822,7 +882,7 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
     for (const FreshOperandOfEscapeAnalysis& operand : freshOperands) {
         if (opcode == Opcode::CallDirect && operand.operandIndex >= numberOfNamedOperands && walker.takesCalleesToKeepNothing())
             continue;
-        if (calleeOnlyLooksAtFreshCell(walker, draft, operand))
+        if (calleeOnlyLooksAtFreshCell(walker, draft, operand) || laysNullAboveFreshObject(walker, draft, operand))
             continue;
         if (walker.unitHasMadeScopes() && opcodesThatMayBorrowScopesInEscapeAnalysis.contains(opcode) && walker.operationOnlyBorrowsScope(draft, operand.object, operand.operandIndex, operand.isHeldByClosure))
             continue;
@@ -847,7 +907,8 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
     if (someObjectHasLeft || !lent.isEmpty()) {
         if (effects.writes.contains(AbstractHeap::MemberGuards) && !effects.mayRunOtherCode() && writerEndsNoGuard(walker, draft))
             effects.writes.remove(AbstractHeapSet { AbstractHeap::MemberGuards });
-        state.invalidate(effects);
+        std::optional<MemoryLocation> writtenAlone = storeMayLeaveWhatLiesBeside(state, draft) ? locationThatStoreNames(walker.program(), draft, effects) : std::nullopt;
+        state.invalidate(effects, writtenAlone ? &*writtenAlone : nullptr);
     }
     for (Reference object : lent)
         state.noteFresh(object);

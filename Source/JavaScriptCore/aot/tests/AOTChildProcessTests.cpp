@@ -174,6 +174,16 @@ static void testCrashThatRunAsksForIsNotNamed()
     AOT_TEST_CHECK(!result.output.contains("crashed"_s) && !result.output.contains("SIG"_s));
 }
 
+static void testChildOfSeveralFilesSaysWhenShellHasEnded()
+{
+    TemporaryFile asking(".ir"_s, byteCast<uint8_t>(fileThatAsksShellToCrash.span8()));
+    TemporaryFile passing(".ir"_s, byteCast<uint8_t>(passingFile.span8()));
+    ChildProcessResult child = runWith(createLauncher(), { String(runSubcommandName), "--single-process"_s, asking.path(), passing.path() });
+    AOT_TEST_CHECK(child.exitedWith(0) && child.output.contains(lineAfterChildProcess));
+    ChildProcessResult whole = runWith(createLauncher(), { String(runSubcommandName), asking.path(), passing.path() });
+    AOT_TEST_CHECK(whole.exitedWith(0) && whole.output.contains("2 passed, 0 failed, 0 todo\n"_s) && !whole.output.contains(lineAfterChildProcess));
+}
+
 static void testCrashThatNoRunAsksForSaysHowShellWasStarted()
 {
     TemporaryFile file(".ir"_s, byteCast<uint8_t>(fileWhoseShellAlsoCrashesUnasked.span8()));
@@ -246,6 +256,7 @@ std::span<const NativeTest> childProcessTests()
         { "runner/todo-of-a-file-stands-for-no-death"_s, testTodoOfFileStandsForNoDeath },
         { "runner/todo-of-a-native-test-stands-for-no-death"_s, testTodoOfNativeTestStandsForNoDeath },
         { "runner/crash-that-a-run-asks-for-is-not-named"_s, testCrashThatRunAsksForIsNotNamed },
+        { "runner/child-of-several-files-says-when-a-shell-has-ended"_s, testChildOfSeveralFilesSaysWhenShellHasEnded },
         { "runner/crash-that-no-run-asks-for-says-how-the-shell-was-started"_s, testCrashThatNoRunAsksForSaysHowShellWasStarted },
         { "crash-on-request/first"_s, testCrashesOnRequest },
         { "crash-on-request/fails-a-check"_s, testFailsCheckOnRequest },

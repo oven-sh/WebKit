@@ -13,7 +13,7 @@
 # CHECK-NEXT: 243
 # CHECK-NEXT: exited with 0
 # The row of the operation, then that of the operation of the run time, as each was before: under testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h) the process stops by name.
-# The key is put together out of three pairs of parts. The net keeps one byte a heap of what it hashes, and of a text it hashes addresses: one pair of words, in front and behind, reads alike in one process of 256.
+# The key is put together out of three pairs of parts. The net keeps two bytes a heap of what it hashes, and of a text it hashes addresses: one pair of words, in front and behind, reads alike in one process of 65,536. While it kept one byte, this file with one pair was red once in 256.
 # RUN(OPERATION): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Operation/DefineGetter/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
 # OPERATION: AOT: f{{*}} at {{*}}: the rows of effects of operation:DefineGetter and of runtime:operationAOTDefineAccessor say that the call will not write StringStorage, and those words of operand 2 are others behind it. This is a bug in Bun.
 # RUN(RUNTIME): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:RuntimeOperation/DefineAccessor/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));

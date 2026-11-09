@@ -32,6 +32,11 @@ PristineTest pristineTestOf(const BuiltinTable& table, BuiltinClassID builtinCla
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool standsAboveClassesOfViews(const BuiltinTable& table, BuiltinClassID builtinClass)
+{
+    return builtinClass && builtinClass == table.at(BuiltinClasses::Float64Array).parent;
+}
+
 BuiltinClassID classBelowWithTestedStructure(const BuiltinTable& table, BuiltinClassID builtinClass)
 {
     bool hasClosures = pristineTestOf(table, builtinClass) == PristineTest::ClosureAsCreated;

@@ -28,8 +28,6 @@ void endClassGuard(State&, const LayoutData& classLayout, ClassSide);
 enum class GuardsOfNameToEnd : uint8_t { All, StoresStillPass, ReadsStillFind, OneObjectHidesName };
 void endClassGuardsOfName(State&, const LayoutData& classLayout, ClassSide, std::optional<uint32_t> key, GuardsOfNameToEnd = GuardsOfNameToEnd::All);
 
-void didEvaluateClassAgain(State&, const LayoutData& classLayout);
-
 bool declaresMember(const LayoutData& classLayout, ClassSide, uint32_t key);
 
 } } // namespace JSC::AOT

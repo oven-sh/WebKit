@@ -12,7 +12,9 @@
 #include "AOTElementAccessEmitter.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTRepresentationRules.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStrings.h"
+#include "AOTThrowEmitter.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include "JSCJSValueInlines.h"
@@ -82,23 +84,36 @@ Pointer StringEmitter::implOfFlatString(FlatStringCell flatString)
 
 CharacterView StringEmitter::viewOfSource(const CharacterSource& source, CellPointer owner)
 {
-    Condition is8Bit = m_flagsFoundNarrow.contains(source.implFlags.value()) ? boolean(true) : hasBits(source.implFlags, StringImpl::flagIs8Bit());
+    bool isFoundNarrow = m_flagsFoundNarrow.contains(source.implFlags.value());
+    if (const OperationContext* context = generator().contextBeingGenerated(); context && (isFoundNarrow || m_flagsFoundWide.contains(source.implFlags.value())) && emitter<ElementAccessEmitter>().testsEveryPosition()) {
+        Word32 flags(m_out.opaque(source.implFlags.value()));
+        emitter<ThrowEmitter>().requireOrStopAtFalseProof(*context, isFoundNarrow ? hasBits(flags, StringImpl::flagIs8Bit()) : hasNoBits(flags, StringImpl::flagIs8Bit()), std::nullopt, ProofSource::WhatIsRemembered);
+        build().statistics().count(StatisticID::KindsFoundInFrontOfTurnsHeldAgainstCells);
+    }
+    Condition is8Bit = m_flagsFoundNarrow.contains(source.implFlags.value()) ? boolean(true) : m_flagsFoundWide.contains(source.implFlags.value()) ? boolean(false) : hasBits(source.implFlags, StringImpl::flagIs8Bit());
     return { source.characters, source.length, is8Bit, owner };
 }
 
-std::optional<Condition> StringEmitter::findNarrow(ValueID flatString)
+bool StringEmitter::widthIsFoundAtRun(ValueID flatString)
+{
+    auto opened = m_openedStrings.find(in<CellPointer>(flatString).value());
+    return opened != m_openedStrings.end() && !opened->value.source.implFlags.value()->hasInt();
+}
+
+std::optional<Condition> StringEmitter::findWidth(ValueID flatString, bool isNarrow)
 {
     auto opened = m_openedStrings.find(in<CellPointer>(flatString).value());
     if (opened == m_openedStrings.end())
         return std::nullopt;
     Word32 flags = opened->value.source.implFlags;
-    if (m_flagsFoundNarrow.contains(flags.value()))
+    Vector<LValue, 2>& found = isNarrow ? m_flagsFoundNarrow : m_flagsFoundWide;
+    if (found.contains(flags.value()))
         return boolean(true);
-    Condition is8Bit = hasBits(flags, StringImpl::flagIs8Bit());
-    if (is8Bit.value()->isInt(0))
+    Condition hasWidth = isNarrow ? hasBits(flags, StringImpl::flagIs8Bit()) : hasNoBits(flags, StringImpl::flagIs8Bit());
+    if (hasWidth.value()->isInt(0))
         return std::nullopt;
-    m_flagsFoundNarrow.append(flags.value());
-    return is8Bit;
+    found.append(flags.value());
+    return hasWidth;
 }
 
 CharacterView StringEmitter::viewOfFlatString(CellPointer flat)
@@ -449,9 +464,57 @@ void StringEmitter::generateSubstring(const ValueContext& value)
     define(value, substring(value, string, { start, end }));
 }
 
+void StringEmitter::generateSubstringOrUndefined(const ValueContext& value)
+{
+    CellPointer string = in<CellPointer>(value->stringOperand());
+    Word32 start = word32Of(value->startOperand());
+    Word32 end = word32Of(value->endOperand());
+    define(value, selectByBranch<Boxed>(logicalAnd(greaterThanOrEqual(start, word32(0)), greaterThanOrEqual(end, start)), [&] {
+        if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.testsEveryPosition()) {
+            elements.stopUnlessInside(value, belowOrEqual(start, end));
+            elements.stopUnlessInside(value, belowOrEqual(end, lengthOf(string)));
+        }
+        return boxCell(substring(value, string, { start, end }));
+    }, [&] {
+        return undefined();
+    }));
+}
+
+void StringEmitter::generateBoundsOfStringSplit(const ValueContext& value)
+{
+    uint32_t count = value->count();
+    RELEASE_ASSERT(count < (1u << 31));
+    CharacterView view = viewOf(value, value->stringOperand());
+    static_assert(2 * sizeof(uint32_t) == sizeof(EncodedJSValue));
+    Pointer bounds = emitter<RuntimeCallEmitter>().uninitializedArgumentBuffer(std::max(count, 1u));
+    Word32 countAndWhetherAllAreCounted = word32(static_cast<int32_t>(count | (value->countsEveryPiece() ? 1u << 31 : 0)));
+    String separator = textOf(value->literal());
+    bool isOneCodeUnit = separator.length() == 1;
+    Word32 sought = isOneCodeUnit ? word32(separator[0]) : numberOf(m_mentions.add(NumberSpace::String, value->literal()));
+    Word32 numberOfPieces = selectByWidth<Word32>(view.is8Bit, [&](bool is8Bit) {
+        RuntimeOperation operation = isOneCodeUnit
+            ? (is8Bit ? RuntimeOperation::StringFindSeparators8 : RuntimeOperation::StringFindSeparators16)
+            : (is8Bit ? RuntimeOperation::StringFindLongSeparators8 : RuntimeOperation::StringFindLongSeparators16);
+        return low32(callLeaf<Integer>(operation, { view.characters, view.length, sought, countAndWhetherAllAreCounted, bounds }));
+    });
+    ensureStillAliveHere(view.owner);
+    Vector<Operand, 9> results;
+    for (uint32_t bound = 0; bound < 2 * count; ++bound)
+        results.append(Word32(m_out.load32(m_out.address(m_heaps.argumentBuffer, bounds.value(), bound * sizeof(uint32_t)))));
+    results.append(numberOfPieces);
+    defineResults(value, results.span());
+}
+
+void StringEmitter::generateNewStringSplitArray(const ValueContext& value)
+{
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::StringSplitString, { in<CellPointer>(value->stringOperand()), in<CellPointer>(value->separatorOperand()), word32(-1) }));
+}
+
 void StringEmitter::generateFlattenString(const ValueContext& value)
 {
     CellPointer string = in<CellPointer>(value->stringOperand());
+    if (ValueID isRead = value->isReadOperand())
+        string = select(in<Condition>(isRead), string, emptyString());
     LBasicBlock isFlat = newBlock();
     LBasicBlock isRope = newBlock();
     LBasicBlock continuation = newBlock();

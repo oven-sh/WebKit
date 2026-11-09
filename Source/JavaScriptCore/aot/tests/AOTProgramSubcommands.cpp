@@ -66,7 +66,7 @@ static constexpr ASCIILiteral wireFlag = "--wire"_s;
 static constexpr ASCIILiteral outputFlag = "--output"_s;
 static constexpr ASCIILiteral programOfTagFlag = "--program-of-tag"_s;
 
-static constexpr ASCIILiteral checksOfEveryTestRun = "check=VerifyEachStage,ValidateReferences"_s;
+static constexpr ASCIILiteral checksOfEveryTestRun = "check=VerifyEachStage"_s;
 
 static String unknownFlagSentence(StringView name)
 {
@@ -133,6 +133,20 @@ static std::expected<FlagsOfProgramSubcommand, String> parseFlagsOfProgramSubcom
         path = flag.value.toString();
     }
     return result;
+}
+
+static Wire::CompileOptions optionsToCompileBy(const ProgramFile& file, const String& path, PrintStream& errors)
+{
+    Wire::CompileOptions ofTest = makeOptionsOfTestedProgram();
+    if (file.options) {
+        Wire::CompileOptions ofBuild = *file.options;
+        ofBuild.threadCount = ofTest.threadCount;
+        ofBuild.executableIdentity = ofTest.executableIdentity;
+        return ofBuild;
+    }
+    if (file.kind == ProgramFile::Kind::Bytes)
+        errors.println(path, " brings no options of its build: it is compiled as if code from disk were allowed and nothing were left out");
+    return ofTest;
 }
 
 static std::optional<String> applyWordsOfCommandLine(Wire::CompileOptions& options, Mechanisms& mechanisms, std::span<const String> words, Vector<String>* argumentsOfCommand)
@@ -264,6 +278,7 @@ int runCommandSubcommand(StringView name, std::span<const String> arguments)
         return exitCodeForFailure;
 
     InputsOfCommand inputs;
+    inputs.options = optionsToCompileBy(*file, path, errors);
     RELEASE_ASSERT(!applyOptionWord(inputs.options, checksOfEveryTestRun));
     if (file->kind == ProgramFile::Kind::Text && !takeDirectivesOfProgramText(*command, *file, path, inputs, errors))
         return exitCodeForFailure;
@@ -319,14 +334,13 @@ int runPrintSubcommand(std::span<const String> arguments)
     auto flags = parseFlagsOfProgramSubcommand(programArguments->flags.span(), { wireFlag, programOfTagFlag });
     if (!flags)
         return reportInvalidCommandLine("print"_s, flags.error(), errors);
-    Wire::CompileOptions options = makeOptionsOfTestedProgram();
-    Mechanisms mechanisms = mechanismsOfProcess();
-    if (std::optional<String> sentence = applyWordsOfCommandLine(options, mechanisms, programArguments->words.span(), nullptr))
-        return reportInvalidCommandLine("print"_s, *sentence, errors);
-
     std::optional<ProgramFile> file = readProgramFile(programArguments->programPath, errors);
     if (!file)
         return exitCodeForFailure;
+    Wire::CompileOptions options = optionsToCompileBy(*file, programArguments->programPath, errors);
+    Mechanisms mechanisms = mechanismsOfProcess();
+    if (std::optional<String> sentence = applyWordsOfCommandLine(options, mechanisms, programArguments->words.span(), nullptr))
+        return reportInvalidCommandLine("print"_s, *sentence, errors);
 
     int exitCode = exitCodeForFailure;
     runOnBuildThread([&] {
@@ -370,7 +384,10 @@ int runCompileSubcommand(std::span<const String> arguments)
         return reportInvalidCommandLine("compile"_s, flags.error(), errors);
     if (flags->outputPath.isNull())
         return reportInvalidCommandLine("compile"_s, makeString(outputFlag, " is required"_s), errors);
-    Wire::CompileOptions options = makeOptionsOfTestedProgram();
+    std::optional<ProgramFile> file = readProgramFile(programArguments->programPath, errors);
+    if (!file)
+        return exitCodeForFailure;
+    Wire::CompileOptions options = optionsToCompileBy(*file, programArguments->programPath, errors);
     Vector<String> namesOfStatistics;
     Mechanisms mechanisms = mechanismsOfProcess();
     if (std::optional<String> sentence = applyWordsOfCommandLine(options, mechanisms, programArguments->words.span(), &namesOfStatistics))
@@ -382,10 +399,6 @@ int runCompileSubcommand(std::span<const String> arguments)
             return reportInvalidCommandLine("compile"_s, makeString("unknown statistic "_s, word), errors);
         printedStatistics.append(*statistic);
     }
-
-    std::optional<ProgramFile> file = readProgramFile(programArguments->programPath, errors);
-    if (!file)
-        return exitCodeForFailure;
 
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {

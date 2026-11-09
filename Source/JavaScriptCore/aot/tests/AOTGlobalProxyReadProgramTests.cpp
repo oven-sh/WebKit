@@ -57,11 +57,12 @@ function f5 name="isTruthy" parameters=[{type=anything}] results=[{type=anything
 }
 )IR"_s;
 
-#define STATEMENTS_DEFINING_REPEAT R"JS(
+#define STATEMENTS_DEFINING_REPEAT COUNTED_CALLS(R"("GetByIdAndCache", "GetById", "GetGeneric", "GetByValAndCache", "GetByVal", "InByIdAndCache", "HasOwnByIdAndCache", "HasOwnByValAndCache")") R"JS(
 const repeat = (what, access) => {
+    const before = countedCalls();
     let result;
     for (let i = 0; i < 100; i++) result = access();
-    print(what + ": " + result);
+    print(what + ": " + result + servedBy(before, 100));
 };
 )JS"
 
@@ -105,34 +106,36 @@ globalThis.publish = (read, has, hasOwn, readByKey, isTruthy) => {
 };
 )JS"_s;
 
+static constexpr ASCIILiteral outputOfReads =
+    "own value: 7\n"
+    "own value tested: 1\n"
+    "own value by key: 7\n"
+    "own value, in: true\n"
+    "own value, hasOwn: true\n"
+    "replaced: 8\n"
+    "deleted: undefined\n"
+    "deleted, tested: 0\n"
+    "deleted, by key: undefined\n"
+    "deleted, in: false\n"
+    "deleted, hasOwn: false\n"
+    "added: 9\n"
+    "added, by key: 9\n"
+    "added, hasOwn: true\n"
+    "getter: 100\n"
+    "getter, hasOwn: true\n"
+    "getter that replaces itself: -10\n"
+    "value of that getter: 10\n"
+    "inherited: true\n"
+    "inherited and stored to: true\n"
+    "deleted again: undefined\n"
+    "variable of a script: 11\n"
+    "variable of a script, hasOwn: true\n"
+    "variable stored to: 12\n"_s;
+
 static void testReadsFollowTheGlobalObject()
 {
-    checkOutputOfProgramInShell(programText,
-        "own value: 7\n"
-        "own value tested: 1\n"
-        "own value by key: 7\n"
-        "own value, in: true\n"
-        "own value, hasOwn: true\n"
-        "replaced: 8\n"
-        "deleted: undefined\n"
-        "deleted, tested: 0\n"
-        "deleted, by key: undefined\n"
-        "deleted, in: false\n"
-        "deleted, hasOwn: false\n"
-        "added: 9\n"
-        "added, by key: 9\n"
-        "added, hasOwn: true\n"
-        "getter: 100\n"
-        "getter, hasOwn: true\n"
-        "getter that replaces itself: -10\n"
-        "value of that getter: 10\n"
-        "inherited: true\n"
-        "inherited and stored to: true\n"
-        "deleted again: undefined\n"
-        "variable of a script: 11\n"
-        "variable of a script, hasOwn: true\n"
-        "variable stored to: 12\n"_s,
-        { }, statementsChangingTheGlobalObject);
+    checkOutputOfProgramInShell(programText, outputOfReads, { }, statementsChangingTheGlobalObject);
+    checkServicesInShell(__FILE__, __LINE__, programText, outputOfReads, statementsChangingTheGlobalObject, wordsOfCaches, "ccccnccccccccnnn.ccccnnn"_s);
 }
 
 static constexpr ASCIILiteral statementsWithOtherReceivers = STATEMENTS_DEFINING_REPEAT R"JS(
@@ -154,17 +157,19 @@ globalThis.publish = (read, has, hasOwn) => {
 };
 )JS"_s;
 
+static constexpr ASCIILiteral outputOfOtherReceivers =
+    "other realm: 3\n"
+    "other realm, replaced: 4\n"
+    "other realm, deleted: undefined\n"
+    "other realm, hasOwn: false\n"
+    "below the proxy: 5\n"
+    "below the proxy, deleted: undefined\n"
+    "below the proxy, in: false\n"_s;
+
 static void testReadsFollowOtherReceivers()
 {
-    checkOutputOfProgramInShell(programText,
-        "other realm: 3\n"
-        "other realm, replaced: 4\n"
-        "other realm, deleted: undefined\n"
-        "other realm, hasOwn: false\n"
-        "below the proxy: 5\n"
-        "below the proxy, deleted: undefined\n"
-        "below the proxy, in: false\n"_s,
-        { }, statementsWithOtherReceivers);
+    checkOutputOfProgramInShell(programText, outputOfOtherReceivers, { }, statementsWithOtherReceivers);
+    checkServicesInShell(__FILE__, __LINE__, programText, outputOfOtherReceivers, statementsWithOtherReceivers, wordsOfCaches, "nnnnnnn"_s);
 }
 
 static constexpr ASCIILiteral programWithStoresByKey = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
@@ -182,13 +187,14 @@ function f1 name="write" parameters=[{type=anything}, {type=anything}, {type=any
 }
 )IR"_s;
 
-static constexpr ASCIILiteral statementsWithStoresByKey = R"JS(
+static constexpr ASCIILiteral statementsWithStoresByKey = COUNTED_CALLS(R"("PutByVal", "PutByValAndCache", "PutByValGeneric")") R"JS(
 const repeat = (what, write, key) => {
+    const before = countedCalls();
     let threw = false;
     for (let i = 0; i < 100; i++) {
         try { write(globalThis, key, i); } catch { threw = true; }
     }
-    print(what + ": " + globalThis[key] + (threw ? ", threw" : ""));
+    print(what + ": " + globalThis[key] + (threw ? ", threw" : "") + servedBy(before, 100, 7));
 };
 globalThis.publish = (write) => {
     repeat("first store adds it", write, "shared");
@@ -222,32 +228,33 @@ globalThis.publish = (write) => {
     repeat("behind a collection", write, text);
     const other = createGlobalObject();
     other.shared = 3;
-    for (let i = 0; i < 100; i++) write(other, "shared", i);
-    print("other realm: " + other.shared);
+    { const before = countedCalls(); for (let i = 0; i < 100; i++) write(other, "shared", i); print("other realm: " + other.shared + servedBy(before, 100, 7)); }
 };
 )JS"_s;
 
+static constexpr ASCIILiteral outputOfStoresByKey =
+    "first store adds it: 99\n"
+    "own value: 99\n"
+    "own value under a symbol: 99\n"
+    "setter: 99\n"
+    "read only: -1, threw\n"
+    "deleted: false\n"
+    "added again: 99\n"
+    "value again: 99\n"
+    "other: 99\n"
+    "variable of a script: 99\n"
+    "read by name: 99\n"
+    "inherited: 99\n"
+    "a key that is another string of the same text: 99\n"
+    "read only under that string: -2, threw\n"
+    "writable again under that string: 99\n"
+    "behind a collection: 99\n"
+    "other realm: 99\n"_s;
+
 static void testStoresByKeyFollowTheGlobalObject()
 {
-    checkOutputOfProgramInShell(programWithStoresByKey,
-        "first store adds it: 99\n"
-        "own value: 99\n"
-        "own value under a symbol: 99\n"
-        "setter: 99\n"
-        "read only: -1, threw\n"
-        "deleted: false\n"
-        "added again: 99\n"
-        "value again: 99\n"
-        "other: 99\n"
-        "variable of a script: 99\n"
-        "read by name: 99\n"
-        "inherited: 99\n"
-        "a key that is another string of the same text: 99\n"
-        "read only under that string: -2, threw\n"
-        "writable again under that string: 99\n"
-        "behind a collection: 99\n"
-        "other realm: 99\n"_s,
-        { }, statementsWithStoresByKey);
+    checkOutputOfProgramInShell(programWithStoresByKey, outputOfStoresByKey, { }, statementsWithStoresByKey);
+    checkServicesInShell(__FILE__, __LINE__, programWithStoresByKey, outputOfStoresByKey, statementsWithStoresByKey, wordsOfCaches, "cccnn.cccn.ccnccn"_s);
 }
 
 static constexpr ASCIILiteral programWithStoresByName = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
@@ -275,13 +282,14 @@ function f3 name="writeVariable" parameters=[{type=anything}, {type=anything}] r
 }
 )IR"_s;
 
-static constexpr ASCIILiteral statementsWithStoresByName = R"JS(
+static constexpr ASCIILiteral statementsWithStoresByName = COUNTED_CALLS(R"("PutById", "PutByIdSloppy", "PutByIdAndCache")") R"JS(
 const repeat = (what, write, read = () => globalThis.shared, base = globalThis) => {
+    const before = countedCalls();
     let threw = false;
     for (let i = 0; i < 100; i++) {
         try { write(base, i); } catch { threw = true; }
     }
-    print(what + ": " + read() + (threw ? ", threw" : ""));
+    print(what + ": " + read() + (threw ? ", threw" : "") + servedBy(before, 100));
 };
 globalThis.publish = (write, writeSloppy, writeVariable) => {
     repeat("first store adds it", write);
@@ -327,31 +335,33 @@ globalThis.publish = (write, writeSloppy, writeVariable) => {
 };
 )JS"_s;
 
+static constexpr ASCIILiteral outputOfStoresByName =
+    "first store adds it: 99\n"
+    "own value: 99\n"
+    "own value, sloppy: 99\n"
+    "setter: 99\n"
+    "the setter's this is globalThis: true\n"
+    "read only: -1, threw\n"
+    "read only, sloppy: -1\n"
+    "deleted: false\n"
+    "added again: 99\n"
+    "value again: 99\n"
+    "behind other names: 99\n"
+    "behind deletions: 99\n"
+    "the others keep their values: 1 39 false\n"
+    "variable of a script: 99\n"
+    "behind a collection: 99\n"
+    "kept over collections: 20\n"
+    "a plain object between: 99\n"
+    "and globalThis again: 99\n"
+    "an object below globalThis: 99 true 99\n"
+    "other realm: 99 99\n"
+    "frozen: 99, threw\n"_s;
+
 static void testStoresByNameFollowTheGlobalObject()
 {
-    checkOutputOfProgramInShell(programWithStoresByName,
-        "first store adds it: 99\n"
-        "own value: 99\n"
-        "own value, sloppy: 99\n"
-        "setter: 99\n"
-        "the setter's this is globalThis: true\n"
-        "read only: -1, threw\n"
-        "read only, sloppy: -1\n"
-        "deleted: false\n"
-        "added again: 99\n"
-        "value again: 99\n"
-        "behind other names: 99\n"
-        "behind deletions: 99\n"
-        "the others keep their values: 1 39 false\n"
-        "variable of a script: 99\n"
-        "behind a collection: 99\n"
-        "kept over collections: 20\n"
-        "a plain object between: 99\n"
-        "and globalThis again: 99\n"
-        "an object below globalThis: 99 true 99\n"
-        "other realm: 99 99\n"
-        "frozen: 99, threw\n"_s,
-        { }, statementsWithStoresByName);
+    checkOutputOfProgramInShell(programWithStoresByName, outputOfStoresByName, { }, statementsWithStoresByName);
+    checkServicesInShell(__FILE__, __LINE__, programWithStoresByName, outputOfStoresByName, statementsWithStoresByName, wordsOfCaches, "cccn.nn.cccc.nc.cccnn"_s);
 }
 
 std::span<const NativeTest> globalProxyReadProgramTests()

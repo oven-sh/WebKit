@@ -247,12 +247,44 @@ struct ProxyAccessWords {
     uint64_t storeIsStrictOrHeaderOfSlot;
 };
 
+struct RowsOfReads {
+    static constexpr unsigned numberOfRows = 4;
+    static constexpr unsigned numberOfPlaces = 6;
+    static constexpr int16_t placeIsAskedOfStub = 0;
+    static constexpr int16_t placeIsNotKnown = INT16_MIN;
+    static constexpr uint32_t firstWait = 16;
+    static constexpr uint8_t mostDoublings = 10;
+    static constexpr uint8_t numberOfSamples = 16;
+    static constexpr uint32_t markOfHiddenRow = 1;
+
+    struct Row {
+        uint32_t structure;
+        int16_t places[numberOfPlaces];
+    };
+
+    uint32_t hasGivenUp;
+    uint32_t missesLeft;
+    Row rows[numberOfRows];
+    uint8_t unused;
+    uint8_t doublings;
+    uint8_t samplesLeft;
+    uint8_t samplesThatHadRow;
+    uint8_t cameInLastSample[numberOfRows];
+};
+static_assert(sizeof(RowsOfReads::Row) == 16 && sizeof(RowsOfReads) == 80 && !OBJECT_OFFSETOF(RowsOfReads, hasGivenUp));
+
 struct FrontWords {
     const uint32_t* rowsForStructureIDZero;
     const PackedSlot* plane;
 };
 
-using SlotHandlers = void*[numberOfSlotHandlerTables][numberOfSlotKindsWithHandlers];
+enum class AnswerHandlerTable : uint8_t { Read, ReadOfTruth, ReadOfFurtherAnswer, ReadOfTruthOfFurtherAnswer };
+inline constexpr std::array allAnswerHandlerTables { AnswerHandlerTable::Read, AnswerHandlerTable::ReadOfTruth, AnswerHandlerTable::ReadOfFurtherAnswer, AnswerHandlerTable::ReadOfTruthOfFurtherAnswer };
+constexpr AnswerHandlerTable answerHandlerTable(bool asksTruth, bool isFurtherAnswer) { return static_cast<AnswerHandlerTable>(asksTruth + 2 * isFurtherAnswer); }
+constexpr bool asksTruth(AnswerHandlerTable table) { return static_cast<unsigned>(table) % 2; }
+constexpr bool isOfFurtherAnswers(AnswerHandlerTable table) { return static_cast<unsigned>(table) / 2; }
+
+using SlotHandlers = void*[numberOfSlotHandlerTables + allAnswerHandlerTables.size()][numberOfSlotKindsWithHandlers];
 
 struct PropertyCacheWords {
     FrontWords front[numberOfSlotAccesses];
@@ -269,14 +301,16 @@ struct PropertyCacheWords {
     uint8_t placesSayAbsence;
     uint8_t placesTakeReplacementsAsUnwatched;
     uint8_t pairsHavePlaces;
+    uint8_t placesHoldCopiesOfSlots;
     uint32_t timesAbsencesWereForgotten;
-    uint16_t placesFiledFromSlots;
-    uint16_t placesFiledFromSlotsAndCleared;
+    uint32_t slowPathReadCount;
     const void* infoOfClassPrototypes;
     SiteCacheState* siteCacheStates;
     uint8_t missesOfEmptySites;
     uint8_t missesOfPlacesOfPairs;
+    uint8_t hitsOfFurtherAnswers;
     uint32_t firstWordOfWideAnswers;
+    uint32_t wordOfCageThatHoldsUndefined;
     const CustomAccessorRecord* customAccessors;
     uint32_t numberStructureID;
     uint32_t booleanStructureID;

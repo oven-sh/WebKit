@@ -340,7 +340,7 @@ void ThrowEmitter::stopAtFalseProof(const OperationContext& context, std::option
     m_out.unreachable();
 }
 
-void ThrowEmitter::stopUnlessAmongKinds(const OperationContext& context, Boxed found, uint32_t kinds, ProofSource source, std::optional<uint32_t> mentionOfUpperHalfOfClosureWord)
+void ThrowEmitter::stopUnlessStubPasses(const OperationContext& context, Boxed found, StubKey stub, uint32_t kinds, ProofSource source, std::optional<uint32_t> mentionAboveKinds, std::optional<uint32_t> numberInRegister)
 {
     RELEASE_ASSERT(!generator().isInitializingCell());
     Machine::PatchOperation* check = m_out.patchpoint(Machine::Void);
@@ -348,17 +348,20 @@ void ThrowEmitter::stopUnlessAmongKinds(const OperationContext& context, Boxed f
     check->effects.exitsSideways = true;
     check->effects.controlDependent = true;
     check->effects.reads = Machine::HeapSet::top();
-    check->clobber(inputs().stubCatalog.clobberedByRegisterVariantsOf(mentionOfUpperHalfOfClosureWord ? checkProofOfClosure() : checkProofOfKinds()));
+    check->clobber(inputs().stubCatalog.clobberedByRegisterVariantsOf(stub));
     check->appendSomeRegister(found.value());
+    if (numberInRegister)
+        check->append(Machine::ConstrainedValue(numberOf(*numberInRegister).value(), Machine::ValueRep::reg(signatureOf(stub).operands[2].gpr())));
     uint32_t callSite = emitter<RuntimeCallEmitter>().addSite(context);
-    check->setGenerator([records = &m_records, words = KindsOfProof::withSource(kinds, source), mentionOfUpperHalfOfClosureWord, callSite](CCallHelpers& jit, const Machine::PatchParameters& params) {
+    check->setGenerator([records = &m_records, stub, words = KindsOfProof::withSource(kinds, source), mentionAboveKinds, callSite](CCallHelpers& jit, const Machine::PatchParameters& params) {
         GPRReg value = params[0].gpr();
-        StubKey key = mentionOfUpperHalfOfClosureWord ? checkProofOfClosure() : checkProofOfKinds();
+        StubKey key = stub;
         if (value != signatureOf(key).operands[0].gpr())
             key = key.withOperandRegister(value);
+        RELEASE_ASSERT(params.size() < 2 || params[1].gpr() == signatureOf(key).operands[2].gpr());
         ArgumentMoves moves;
-        if (mentionOfUpperHalfOfClosureWord)
-            appendArgumentMove(moves, throwWordGPR, ArgumentSource::ConstantBelowMention, words | static_cast<uint64_t>(*mentionOfUpperHalfOfClosureWord) << KindsOfProof::shiftOfNumber);
+        if (mentionAboveKinds)
+            appendArgumentMove(moves, throwWordGPR, ArgumentSource::ConstantBelowMention, words | static_cast<uint64_t>(*mentionAboveKinds) << KindsOfProof::shiftOfNumber);
         else
             appendArgumentMove(moves, throwWordGPR, ArgumentSource::Constant, words);
         records->stubCalls.call(jit, key, std::nullopt, OptionalIndex { callSite }, moves);

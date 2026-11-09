@@ -25,6 +25,12 @@ ALWAYS_INLINE bool haveSameFieldsInKeyOrder(const JSObject* compiledObject, cons
     return compiledObject->structureID() == other->structureID() && !((uncheckedDowncast<Object>(compiledObject)->orderWord() ^ uncheckedDowncast<Object>(other)->orderWord()) & ~orderWordIntegrityBits);
 }
 
+ALWAYS_INLINE uint32_t orderWordWithoutIntegrity(const JSObject* compiledObject)
+{
+    ASSERT(isCompiledObject(compiledObject));
+    return uncheckedDowncast<Object>(compiledObject)->orderWord() & ~orderWordIntegrityBits;
+}
+
 ALWAYS_INLINE bool hasExtraProperties(const JSObject* compiledObject)
 {
     ASSERT(isCompiledObject(compiledObject));

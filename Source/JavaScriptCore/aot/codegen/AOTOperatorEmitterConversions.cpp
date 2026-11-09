@@ -232,7 +232,7 @@ void OperatorEmitter::generateToBoolean(const ValueContext& value)
             Operand operand = get(tested);
             if (!operand.is<Boxed>())
                 m_out.noteForm(Form::Open, StateOfKnowledge::Bits);
-            truthiness.branchOnTruthiness(value, operand, typeOf(tested), value.branchTargets());
+            truthiness.branchOnTruthiness(value, operand, typeOf(tested), value.branchTargets(), value->expectsObjectOrNothing(), value->expectsInt32OrNothing(), (callsByValue | OpcodeSet { Opcode::CallResolved }).contains(generator().code().at(tested).opcode), value->expectsBoolean());
             return;
         }
         m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);

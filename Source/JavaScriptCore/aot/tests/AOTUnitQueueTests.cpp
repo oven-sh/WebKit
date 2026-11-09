@@ -82,6 +82,33 @@ static String featuresUnderOneNameForQueueTests(unsigned numberOfFeatures)
     return text.toString();
 }
 
+static String tableWhoseFunctionsReadItForQueueTests(unsigned numberOfFunctions)
+{
+    StringBuilder text;
+    text.append("layout L0 module=m0 fields=["_s);
+    for (unsigned index = 0; index < numberOfFunctions; ++index)
+        text.append(index ? ", "_s : ""_s, "{key=\"step"_s, index, "\" declared={type=anything} flags=[IsRequired]}"_s);
+    text.append("]\nvariable g0 name=\"table\" module=m0 declared={type=anything|absent} flags=[IsImmutable]\n"_s);
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n"_s);
+    for (unsigned index = 0; index < numberOfFunctions; ++index)
+        text.append("    v"_s, index, " = NewClosure function=f"_s, index + 1, '\n');
+    text.append("    v"_s, numberOfFunctions, " = NewObject -"_s);
+    for (unsigned index = 0; index < numberOfFunctions; ++index)
+        text.append(", v"_s, index);
+    text.append(" layout=L0 fields=["_s);
+    for (unsigned index = 0; index < numberOfFunctions; ++index)
+        text.append(index ? ", "_s : ""_s, index);
+    text.append("]\n    v"_s, numberOfFunctions + 1, " = FinishObject v"_s, numberOfFunctions, '\n');
+    text.append("    PutModuleVariable v"_s, numberOfFunctions + 1, " variable=g0\n"_s);
+    text.append("    v"_s, numberOfFunctions + 3, " = Call v0, -, v0\n    Return v"_s, numberOfFunctions + 3, "\n}\n"_s);
+    for (unsigned index = 0; index < numberOfFunctions; ++index) {
+        text.append("function f"_s, index + 1, " module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n"_s);
+        text.append("    v1 = GetModuleVariable variable=g0\n    v2 = CheckInitialized v1 name=\"table\"\n    v3 = ElemGet v2, v0\n    v4 = Call v3, -, v0\n    Return v4\n}\n"_s);
+    }
+    return text.toString();
+}
+
 namespace {
 
 struct ProgramOfQueueTests {
@@ -136,6 +163,23 @@ static void testWhoMayNameAFunctionGrowsWithTheProgram()
     AOT_TEST_CHECK(smaller.referrers >= 3 * 64);
     AOT_TEST_CHECK(large.referrers <= 2 * smaller.referrers);
     AOT_TEST_CHECK(large.cyclesAwaited <= 2 * smaller.cyclesAwaited);
+}
+
+static void testReadersOfATableUnderUnknownKeysNameOneGroup()
+{
+    auto referrersWith = [](unsigned numberOfFunctions) {
+        size_t referrers = 0;
+        withProgramOfQueueTests(tableWhoseFunctionsReadItForQueueTests(numberOfFunctions), [&](const ProgramOfQueueTests& program) {
+            referrers = program.linked.referrers.size();
+            AOT_TEST_CHECK(program.linked.leadsTo(FunctionID(1u), FunctionID(numberOfFunctions)));
+            AOT_TEST_CHECK(program.linked.leadsTo(FunctionID(numberOfFunctions), FunctionID(1u)));
+        });
+        return referrers;
+    };
+    size_t smaller = referrersWith(64);
+    size_t large = referrersWith(128);
+    AOT_TEST_CHECK(smaller >= 2 * 64);
+    AOT_TEST_CHECK(large <= 2 * smaller);
 }
 
 static constexpr ASCIILiteral methodWithAGuardThatCallsWhatItIsHanded = R"IR(layout L0 module=m0 fields=[{key="then" declared={type=anything} flags=[IsRequired]}]
@@ -251,6 +295,7 @@ std::span<const NativeTest> unitQueueTests()
 {
     static constexpr NativeTest tests[] {
         { "unit-queue/who-may-name-a-function-grows-with-the-program"_s, testWhoMayNameAFunctionGrowsWithTheProgram },
+        { "unit-queue/readers-of-a-table-under-unknown-keys-name-one-group"_s, testReadersOfATableUnderUnknownKeysNameOneGroup },
         { "unit-queue/a-slow-version-comes-behind-the-other-units-of-its-cycle"_s, testSlowVersionComesBehindTheOtherUnitsOfItsCycle },
         { "unit-queue/a-seed-is-mentioned-by-whoever-does-not-lead-to-it"_s, testSeedIsMentionedByWhoeverDoesNotLeadToIt },
     };

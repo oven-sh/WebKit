@@ -25,8 +25,10 @@ namespace JSC { namespace AOT { namespace Typed {
 class BodyIndexTable;
 
 struct LinkedParameter {
-    TypeID expected;
-    bool expectedIsDeclared { false };
+    TypeID writtenOrSeenToArrive() const { return written ? written : seenToArrive; }
+
+    TypeID written;
+    TypeID seenToArrive;
     TypeID proven;
     bool staysAsItsClassMakesIt { false };
     bool isOnlyCalled { false };
@@ -38,6 +40,7 @@ struct LinkedFunction {
     bool isReached { true };
     bool everyCallerIsKnown { false };
     bool everyCallHasOneCallee { false };
+    bool everyTakerOfResultKnowsCallee { false };
     bool ringsOfTailCallsAreListed { false };
     bool runsAtMostOnce { false };
     bool isNamedInItsCycle { true };
@@ -47,8 +50,8 @@ struct LinkedFunction {
     bool namesOnlyWhatEveryFunctionLeadsTo { false };
     bool closuresAreChanged { false };
     bool closuresGetOnlyNamesThatAreListed { false };
-    bool hasInstanceIsDefinedOnClosures { false };
     bool prototypePropertyStaysAsMade { false };
+    bool holdsInt32Promise { false };
     uint32_t cycle { 0 };
     TypeID result;
     uint32_t firstParameter { 0 };
@@ -81,8 +84,18 @@ struct LinkedCell {
     bool isGivenUndefinedOrNullInSight { false };
     bool isGivenByNoMaker { false };
     bool isKeptFromComparisons { false };
+    bool isTestedByValue { false };
     OptionSet<FieldForm> formThatDefinitionsCreate;
 };
+
+inline bool holdsTagThatNarrowSlotForgets(TypeReader types, const LinkedCell& cell)
+{
+    if (!cell.isTestedByValue || !cell.everyWriterIsKnown || !cell.proven)
+        return false;
+    Type proven = types.at(cell.proven);
+    bool isBooleanOrInteger = proven.primitives == Primitive::True || proven.primitives == Primitive::False || proven.primitives == Primitive::Integer;
+    return isBooleanOrInteger && !proven.hasObjects() && isSingleValue(types, proven);
+}
 
 enum class LayoutChange : uint8_t {
     IsFrozen = 1 << 0,
@@ -90,6 +103,7 @@ enum class LayoutChange : uint8_t {
     LosesProperty = 1 << 2,
     ChangesPrototype = 1 << 3,
     GetsAccessor = 1 << 4,
+    GetsObjectAbove = 1 << 5,
 };
 
 inline constexpr uint32_t maxAppendedFieldsOutOfLine = maxExtensionGranules;
@@ -98,14 +112,16 @@ struct LinkedLayout {
     FamilyID family;
     bool isAllocated { true };
     bool reachesUnseenCode { true };
-    OptionSet<LayoutChange> possibleChanges { LayoutChange::IsFrozen, LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor };
+    OptionSet<LayoutChange> possibleChanges { LayoutChange::IsFrozen, LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor, LayoutChange::GetsObjectAbove };
     bool isRedefinedByLiteralsAlone { false };
+    bool isDefinedOnByDescriptorsThatLayValuesAlone { false };
     bool takesCellsOfBase { false };
     bool listsEveryMemberAbove { false };
     bool listsEveryStaticMember { false };
-    bool classObjectsOfRowMayHoldHasInstance { true };
+    std::array<bool, 2> namesAreDefinedPastLists { true, true };
     bool hasConstructorFunctionInRow { true };
     bool isFilledUnderComputedKeys { false };
+    bool instancesAreLaidAsPrototypes { false };
     bool onlyOwnObjectsStandBelowPrototype { false };
     bool prototypeObjectIsSettledAheadOfEveryObject { false };
     LayoutID heritage;
@@ -133,6 +149,8 @@ struct LinkedNameOnPrototype {
     FunctionID expectedGetter;
     FunctionID expectedSetter;
     bool isStoredIntoFromOutside { false };
+    bool isUnderSymbolsAlone { false };
+    bool mayHoldAccessor { false };
 };
 
 struct LinkedNameOnFunction {
@@ -154,7 +172,6 @@ void appendMembersAssignedByProgram(const Program&, const LinkTables&, LayoutID,
 struct MemberFound {
     enum class Kind : uint8_t {
         Unknown,
-        Nothing,
         Method,
         Accessor,
     };
@@ -165,10 +182,18 @@ struct MemberFound {
     FunctionID setter;
 };
 
+class FindsNothing {
+    friend struct LinkTables;
+    FindsNothing() = default;
+};
+
+enum class Of : uint8_t { ObjectItself, HolderItself, HolderAndAbove };
+
 struct LinkedGroup {
     enum class Kind : uint8_t {
         Anybody,
         Constructors,
+        FunctionsInFields,
         SharedCall,
     };
 
@@ -183,6 +208,7 @@ struct LinkedCall {
     FunctionID callee;
     bool isInTailPosition { false };
     bool mayComeAgain { true };
+    bool asksForIterator { false };
 
     friend constexpr auto operator<=>(const LinkedCall&, const LinkedCall&) = default;
 };
@@ -236,6 +262,20 @@ struct LinkedReceiverAsMade {
     friend constexpr auto operator<=>(const LinkedReceiverAsMade&, const LinkedReceiverAsMade&) = default;
 };
 
+inline std::optional<uint32_t> indexWrittenAtInLinkTables(const SummaryAccess& access)
+{
+    return access.kind == SummaryAccess::Kind::Read && access.writtenIndexOfRead != noSummaryNode ? std::optional(access.writtenIndexOfRead) : std::nullopt;
+}
+
+struct LinkedReadOffViews {
+    FunctionID function;
+    ValueID site;
+    uint32_t leastLength { 0 };
+
+    friend bool operator==(const LinkedReadOffViews&, const LinkedReadOffViews&) = default;
+    friend auto operator<=>(const LinkedReadOffViews&, const LinkedReadOffViews&) = default;
+};
+
 struct LinkedVariableStoredFirst {
     FunctionID body;
     FunctionID functionWhoseUseCounts;
@@ -260,6 +300,12 @@ struct LinkedAccessorsOfField {
     friend constexpr auto operator<=>(const LinkedAccessorsOfField&, const LinkedAccessorsOfField&) = default;
 };
 
+struct TiesOfPoolsInLinkFlow {
+    uint64_t all { 0 };
+    uint64_t ofRowsOfUnequalLength { 0 };
+    uint64_t behindAnotherOfSameSettling { 0 };
+};
+
 struct SizeOfLinkFlow {
     uint64_t nodes { 0 };
     uint64_t edges { 0 };
@@ -267,6 +313,7 @@ struct SizeOfLinkFlow {
     uint64_t nodesTakenOffWorklist { 0 };
     uint64_t observersTold { 0 };
     uint64_t rounds { 0 };
+    TiesOfPoolsInLinkFlow tiesOfPools;
 };
 
 struct WriteFollowedToBuiltin {
@@ -287,14 +334,22 @@ struct LinkedCallOfBuiltin {
 struct LookupsPastProgramObjects {
     BitVector namesRead;
     BitVector namesCalled;
+    BitVector namesCalledWithOperands;
     BitVector namesSpelledByProgram;
     BitVector builtinsRead;
     BitVector builtinsCalled;
     BitVector builtinsConstructed;
     BitVector builtinsCalledByCode;
     BitVector builtinsLetGo;
+    BitVector builtinsUsedWhereFlowBroughtThem;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> builtinsFoundWhereFlowBroughtHolders;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> constructorsBelowBuiltins;
     BitVector builtinsCalledOutOfSight;
     BitVector builtinsCalledWithoutRow;
+    BitVector builtinsCalledWithOperandsNobodyRead;
+    BitVector holdersReadUnderKeysNobodyKnows;
+    BitVector rowsApplied;
+    BitVector builtinsWithCallsLeftToUnseen;
     BitVector builtinsWithCallsThatMayRunCode;
     UncheckedKeyHashSet<uint64_t> conditionsThatOperandsMayMeet;
     Vector<LinkedCallOfBuiltin> callsOfBuiltinsAtSites;
@@ -311,9 +366,15 @@ struct LookupsPastProgramObjects {
     BitVector builtinsAtUnseen;
     BitVector builtinsPassedOptionThatRunsCode;
     BitVector classesWithInstancesAtUnseen;
+    BitVector classesWhoseInstancesHaveEscaped;
+    BitVector classesHandedToFormatters;
+    bool formattersAreHandedInstancesOfSeveralClasses { false };
     bool formattersAreHandedObjects { false };
+    bool instancesLoseTheirConstructor { false };
+    bool formattersMayCallMethodsOfInstances { false };
     BitVector typesHandedToHandlers;
     BitVector entriesThatHandHostNothing;
+    BitVector entriesThatHostStartsByCallInSight;
     BitVector namesReadThroughLostBuiltins;
     BitVector namesWrittenThroughLostBuiltins;
     BitVector namesWrittenThroughUnseenByProgram;
@@ -326,8 +387,10 @@ struct LookupsPastProgramObjects {
     bool writesUnderAnyNameThroughLostBuiltinsBesideProduct { false };
     bool climbsFromLostBuiltins { false };
     bool climbsFromUnseenObjects { false };
+    bool handsOperandsToCalleesNobodyKnows { false };
     bool lostBuiltinsReachUnseen { false };
     bool readsUnderKeysNobodyKnows { false };
+    bool readsUnderNamesThatLoopsGave { false };
     UncheckedKeyHashSet<uint64_t> readsOfProgramUnderKeysNobodyKnows;
     bool namesFromRunTimeWereHeldBack { false };
     BitVector builtinsUsedWithoutNamesFromRunTime;
@@ -346,9 +409,19 @@ private:
     UncheckedKeyHashSet<uint64_t> m_fields;
 };
 
+struct LinkedFunctionUnderName {
+    uint32_t variable { 0 };
+    uint32_t key { 0 };
+    FunctionID function;
+
+    friend constexpr auto operator<=>(const LinkedFunctionUnderName&, const LinkedFunctionUnderName&) = default;
+};
+
 struct LinkTables {
     std::unique_ptr<Families> familiesBehindFlow;
     BitVector exportsThatStayIn;
+    Vector<std::pair<VariableID, FunctionID>> functionsTakenOutOfRequiredFiles;
+    Vector<LinkedFunctionUnderName> functionsLaidUnderNamesOfVariables;
     BitVector modulesWhoseValueStaysIn;
     BitVector modulesWhoseRecordIsHandedOutFrozen;
     LargeList<LinkedFunction> functions;
@@ -367,7 +440,9 @@ struct LinkTables {
     Vector<LinkedResultOfRead> resultsOfReadsByKey;
     Vector<LinkedContentsAtOperation> contentsAtOperations;
     Vector<LinkedReceiverAsMade> receiversThatStayAsMade;
+    Vector<LinkedReceiverAsMade> receiversThatNobodyChanges;
     Vector<LinkedReceiverAsMade> iterablesThatStayAsMade;
+    Vector<LinkedReadOffViews> readsOffViewsOfWrittenLengths;
     FieldsOfNumbers fieldsReadAsIntegers;
     FieldsOfNumbers fieldsReadForArithmetic;
     FieldsOfNumbers fieldsStoredWhatIsNoInt32;
@@ -402,6 +477,7 @@ struct LinkTables {
     Vector<PropertyKeyID> keysAppendedByHeldAlone;
     BitVector keysAppendedByHeldAloneThatLieInCell;
     Vector<LinkedCell> appendedFields;
+    uint32_t numberOfCellsExpectedByNamesAsked { 0 };
     BitVector appendedFieldsThatSomeWrittenTypeRequires;
     BitVector appendedFieldsThatTypeOfThisRequires;
     BitVector appendedFieldsLaidLate;
@@ -431,8 +507,6 @@ struct LinkTables {
     LargeList<LinkedLayout> layouts;
     Vector<LinkedMember> members;
     Vector<LinkedMember> membersAboveCreatedLayouts;
-    Vector<std::pair<PropertyKeyID, FunctionID>> functionsAboveCreatedLayoutsUnderKeys;
-    BitVector keysOfFunctionsAboveCreatedLayouts;
     Vector<uint32_t> membersByKey;
     Vector<uint32_t> firstMemberByKeyOfSide;
     Vector<uint32_t> membersOfLongRowsByKey;
@@ -458,8 +532,21 @@ struct LinkTables {
     bool cycleLeadsTo(uint32_t referrer, uint32_t named) const;
     bool leadsTo(FunctionID referrer, FunctionID function) const { return cycleLeadsTo(functions[referrer.index()].cycle, functions[function.index()].cycle); }
     bool bodyTakesWhatCallersLeave(FunctionID id) const { return functions[id.index()].everyCallerIsKnown && functions[id.index()].everyCallHasOneCallee && !functions[id.index()].isNamedInItsCycle; }
+    bool entryByValueMayBeClosed(FunctionID id) const { return functions[id.index()].isReached && functions[id.index()].everyCallerIsKnown && functions[id.index()].everyCallHasOneCallee && !functions[id.index()].holdsInt32Promise; }
     bool standsOutsideCycles(CodeUnit unit) const { return namesOnlyUnitsOfItsFunction(unit.role) && functions[unit.function.index()].isInQueueFromStart && !(unit.role == CodeRole::GenericCallEntry && functions[unit.function.index()].callEntryWalksBody); }
     bool leadsTo(CodeUnit referrer, FunctionID function) const { return leadsTo(referrer.function, function) && (!standsOutsideCycles(referrer) || functions[function.index()].isInQueueFromStart); }
+    FunctionID functionTakenOutOfRequiredFileBy(VariableID variable) const
+    {
+        auto found = std::ranges::lower_bound(functionsTakenOutOfRequiredFiles, variable, { }, &std::pair<VariableID, FunctionID>::first);
+        return found != functionsTakenOutOfRequiredFiles.end() && found->first == variable ? found->second : FunctionID();
+    }
+    FunctionID functionLaidUnderNameOf(VariableID variable, PropertyKeyID key) const
+    {
+        auto found = std::ranges::lower_bound(functionsLaidUnderNamesOfVariables, std::pair(variable.index(), key.bits()), { }, [](const LinkedFunctionUnderName& laid) {
+            return std::pair(laid.variable, laid.key);
+        });
+        return found != functionsLaidUnderNamesOfVariables.end() && found->variable == variable.index() && found->key == key.bits() ? found->function : FunctionID();
+    }
     bool mayBeMentionedBy(CodeUnit referrer, FunctionID function) const { return functions[function.index()].isInQueueFromStart || leadsTo(referrer, function); }
     const LinkedCell& field(FieldReference field) const LIFETIME_BOUND { return fields[firstFieldOfLayout[field.layout.index()] + field.field]; }
     std::span<const PropertyKeyID> appendedKeysOf(LayoutID id) const LIFETIME_BOUND
@@ -595,6 +682,14 @@ struct LinkTables {
         });
         return found ? found->callee : FunctionID();
     }
+    std::span<const LinkedCall> callsOf(FunctionID caller) const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(firstCallOfCaller.last() == calls.size());
+        if (caller.index() + 1 >= firstCallOfCaller.size())
+            return { };
+        uint32_t first = firstCallOfCaller[caller.index()];
+        return calls.span().subspan(first, firstCallOfCaller[caller.index() + 1] - first);
+    }
     bool onlyCallsWhatArrivesAt(FunctionID function, unsigned entryParameter) const
     {
         if (function.index() >= functions.size())
@@ -648,6 +743,12 @@ struct LinkTables {
         };
         return std::ranges::binary_search(receiversThatStayAsMade, placeOf({ function, site }), { }, placeOf);
     }
+    bool nobodyChangesReceiverAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(receiversThatNobodyChanges, LinkedReceiverAsMade { function, site }); }
+    uint32_t leastLengthOfViewsReadAt(FunctionID function, ValueID site) const
+    {
+        auto found = std::ranges::lower_bound(readsOffViewsOfWrittenLengths, LinkedReadOffViews { function, site, 0 });
+        return found != readsOffViewsOfWrittenLengths.end() && found->function == function && found->site == site ? found->leastLength : 0;
+    }
     bool iterableStaysAsMadeAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(iterablesThatStayAsMade, LinkedReceiverAsMade { function, site }); }
     const LinkedAccessorsOfField* findAccessorsExpectedIn(FieldReference) const LIFETIME_BOUND;
     TypeID caughtAt(FunctionID, BlockID handler) const;
@@ -655,9 +756,10 @@ struct LinkTables {
     std::span<const uint32_t> membersUnder(LayoutID classLayout, ClassSide, PropertyKeyID) const LIFETIME_BOUND;
     MemberFound findMember(const Program&, LayoutID, ClassSide, PropertyKeyID) const;
     bool findFunctionsLaidAbove(const Program&, LayoutID, PropertyKeyID, Vector<FunctionID, 4>&) const;
+    bool mayBeLaidOnPrototypeUnderUnknownKey(const Program&, LayoutID constructorFunction, PropertyKeyID) const;
     bool holderIsChangedInSightAlone(const Program&, LayoutID classLayout, ClassSide) const;
     bool memberHoldsOneFunction(const Program&, LayoutID classLayout, ClassSide, PropertyKeyID, FunctionID written) const;
-    bool findsNothingOnClassObjects(const Program&, LayoutID classLayout, PropertyKeyID) const;
+    std::optional<FindsNothing> findsNothing(const Program&, LayoutID, ClassSide, PropertyKeyID, Of) const;
     Vector<LinkedNameOnFunction> namesOnFunctions;
     const LinkedNameOnFunction* findNameOnFunction(FunctionID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool closuresLackName(FunctionID, PropertyKeyID) const;

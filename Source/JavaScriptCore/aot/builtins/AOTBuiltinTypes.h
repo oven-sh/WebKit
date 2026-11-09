@@ -68,6 +68,8 @@ TypeID typeExpectedByLibraryFunction(const Program&, TypeArena&, FunctionID, uin
 uint16_t primitivesOfBuiltinType(const BuiltinType&);
 Range integerRangeWrittenBy(const BuiltinType&);
 TypedArrayType typedArrayTypeOf(const BuiltinTypeContext&, TypeID);
+uint32_t kindsOfViewsOfNumbersIn(const Program&, TypeReader, TypeID);
+BuiltinClassID classAboveViewsOfSeveralKinds(const Program&, TypeReader, TypeID);
 
 OperandFit fitOf(const BuiltinTypeContext&, TypeID operandOrNotPassed, BuiltinTypeID tested);
 bool fitsIfPristine(const BuiltinTypeContext&, TypeID operandOrNotPassed, BuiltinTypeID tested);

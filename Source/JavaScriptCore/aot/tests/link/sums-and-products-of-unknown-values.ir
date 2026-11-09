@@ -1,0 +1,57 @@
+# `a * a + b * b` of what nobody knows: each product is a number or a BigInt, and their sum is one of these: no text comes of it. `(a - b) + (b - a)` the same.
+# `a + 1` is a number or a text (beside a number a BigInt throws); two of them joined are a number or a text: neither turns into a BigInt; a step of one is a number.
+# Where both may be anything, everything may come.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=number|bigint returns
+# CHECK: function f2 {{*}}result=number|bigint returns
+# CHECK: function f3 {{*}}result=number|string returns
+# CHECK: function f4 {{*}}result=number|string|bigint returns
+# CHECK: function f5 {{*}}result=number returns
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="squares" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Mul v0, v0
+    v3 = Mul v1, v1
+    v4 = Add v2, v3
+    Return v4
+}
+function f2 name="differences" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1
+    v3 = Sub v1, v0
+    v4 = Add v2, v3
+    Return v4
+}
+function f3 name="joined" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = Add v0, v2
+    v4 = Add v1, v2
+    v5 = Add v3, v4
+    Return v5
+}
+function f4 name="anything" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}
+function f5 name="stepOfNumberOrText" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = Increment v2
+    Return v3
+}

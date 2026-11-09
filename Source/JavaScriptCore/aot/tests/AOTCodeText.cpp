@@ -474,6 +474,10 @@ void CodeTextWriter::writeFatesOfPolls()
         m_printer.print(listed.poll);
         m_printer.beginField("fate"_s);
         m_out.print(nameInCodeText(listed.fate));
+        if (listed.unlessKept) {
+            m_printer.beginField("unlessKept"_s);
+            m_printer.print(listed.unlessKept);
+        }
         m_printer.endLine();
     }
 }

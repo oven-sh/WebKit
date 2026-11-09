@@ -123,13 +123,26 @@ bool ListOfAnswersUntilEnded::add(uint32_t number)
         m_places.mutableAt(place) = number;
         return true;
     }
-    uint32_t last = m_places[size - 1];
-    m_places.append(last);
-    for (uint32_t moved = size - 1; moved > place; --moved) {
-        uint32_t inFront = m_places[moved - 1];
-        m_places.mutableAt(moved) = inFront;
+    if (held & hasEnded) {
+        m_places.mutableAt(place) = number;
+        return true;
     }
-    m_places.mutableAt(place) = number;
+    if (place && m_places[place - 1] & hasEnded) {
+        m_places.mutableAt(place - 1) = number;
+        return true;
+    }
+    uint32_t numberEnded = size - (m_numberHeld - 1);
+    uint32_t mostEnded = m_numberHeld + endedPlacesAlwaysBorne;
+    uint32_t room = place || number ? std::min(size - place, mostEnded > numberEnded ? mostEnded - numberEnded : 0) : 0;
+    uint32_t ended = (place ? m_places[place - 1] & ~hasEnded : 0) | hasEnded;
+    m_places.grow(ended, size + room + 1);
+    for (uint32_t moved = size; moved > place; --moved) {
+        uint32_t behind = m_places[moved - 1];
+        m_places.mutableAt(moved + room) = behind;
+    }
+    for (uint32_t left = place; left < place + room; ++left)
+        m_places.mutableAt(left) = ended;
+    m_places.mutableAt(place + room) = number;
     return true;
 }
 
@@ -692,6 +705,8 @@ static constexpr uint32_t mostValuesInKeyOfKnownAnswer = 2;
 static constexpr uint32_t mostWordsOfContentInKeyOfKnownAnswer = 255;
 static_assert(numberOfEnumerators<Opcode> <= 1u << shiftOfFlagsInKeyOfKnownAnswer);
 static_assert(shiftOfValuesByContentInKeyOfKnownAnswer + mostValuesInKeyOfKnownAnswer <= shiftOfFamilyInKeyOfKnownAnswer);
+static_assert(8 * sizeof(Draft::flags) <= shiftOfValuesByContentInKeyOfKnownAnswer - shiftOfFlagsInKeyOfKnownAnswer);
+static_assert(mostWordsOfContentInKeyOfKnownAnswer <= UINT32_MAX >> shiftOfValuesByContentInKeyOfKnownAnswer);
 
 static uint32_t headOfKeyOfKnownAnswer(KnownAnswer::Family family, uint32_t kind, uint32_t flags = 0)
 {
@@ -712,10 +727,7 @@ static Reference valueBehindFormsInKnownAnswers(const Code& code, Reference name
 {
     if (!name.isValue())
         return name;
-    ValueID value = name.id();
-    while (opcodesThatGiveSameValue.contains(code.at(value).opcode))
-        value = code.at(value).operand(0);
-    return referenceToRecordInKnownAnswers(code, value);
+    return referenceToRecordInKnownAnswers(code, code.valueBehindNames<opcodesThatGiveSameValue>(name.id()));
 }
 
 static ALWAYS_INLINE void appendValueToKeyOfKnownAnswer(const Code& code, Reference value, uint32_t position, AnswersOfWalk::WordsOfKey& words)
@@ -777,7 +789,7 @@ void noteKnown(Walker& walker, KnownNote kind, Reference subject, Reference othe
 std::optional<uint64_t> findKnown(const Walker& walker, KnownNote kind, Reference subject, Reference other, uint32_t word)
 {
     const KnownAnswers& answers = walker.state().answers();
-    if (answers.isEmpty() || !walker.has(Mechanism::Folding))
+    if (answers.isEmpty() || !walker.has(Mechanism::Folding) || !walker.state().remembersPlaces())
         return std::nullopt;
     const Code& code = walker.code();
     Reference holder = rootInKnownAnswers(code, subject);
@@ -808,7 +820,7 @@ void endKnown(Walker& walker, KnownNote kind, Reference subject, Reference other
     answers.end(words.span());
 }
 
-static constexpr OpcodeSet testsNumberedInKnownAnswers = allEqualities | allRelations | OpcodeSet { Opcode::ToBoolean };
+static constexpr OpcodeSet testsNumberedInKnownAnswers = allEqualities | allRelations | OpcodeSet { Opcode::ToBoolean, Opcode::HasArrayStorage };
 static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::PrivateGet };
 static constexpr OpcodeSet operationsThatDoNothingAgainInKnownAnswers { Opcode::GetBuiltinValue, Opcode::ModuleBuiltin };
 static bool doesNothingAgainInKnownAnswers(const Walker& walker, const Draft& draft)
@@ -858,6 +870,11 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
         break;
     case Opcode::ToInt32:
         words.append(draft.flags);
+        break;
+    case Opcode::HasArrayStorage:
+        words.append(static_cast<uint32_t>(draft.arrayStorage()));
+        words.append(draft.flags);
+        words.append(draft.data() ? draft.data().index() + 1 : 0);
         break;
     default:
         break;
@@ -918,7 +935,7 @@ constinit const OpcodeSet opcodesThatNoteOperationBuiltTakes = operationsFoundIn
 Reference findEqualOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Effects& effects)
 {
     Opcode opcode = draft.opcode;
-    if (!walker.has(Mechanism::Folding))
+    if (!walker.has(Mechanism::Folding) || !walker.state().remembersPlaces())
         return { };
     KnownAnswers& answers = walker.state().answers();
     AnswersOfWalk* table = answers.table();

@@ -31,11 +31,6 @@ static_assert(!static_cast<unsigned>(ExpectedElements::Anything) && !static_cast
 static_assert(!static_cast<unsigned>(TailCallRequirement::Required));
 static_assert(!static_cast<unsigned>(OperatorForm::Unselected) && !static_cast<unsigned>(DataEncoding::Unselected));
 
-static constexpr OpcodeSet opcodesThatNeedChoices = Operation::opcodesWithForm | OpcodeSet {
-    Opcode::Data, Opcode::NewClosure, Opcode::NewObject, Opcode::NewArray, Opcode::ForInOpen, Opcode::ForInStep, Opcode::ResultAt, Opcode::CallDirect,
-    Opcode::TryPutByValDirect, Opcode::TryFillNewArray
-};
-
 static void becomeInChoices(Draft& draft, Opcode opcode)
 {
     ValueID inputValueGiven = draft.inputValueGiven;
@@ -282,6 +277,18 @@ static bool settleAllocationOfObjectInChoices(Walker& walker, Draft& draft, Refe
     bool hasSlots = plan.layout(layout).hasSlots();
     draft.setStorage(AllocationStorage::Heap);
 
+    if (auto behind = walker.takeWhatIsDefinedBehindBirthOf(layout); !behind.isEmpty() && draft.fields().size() == draft.numberOfVariadicOperands()) {
+        Vector<FieldIndex, 16> fieldsWithWhatIsBehind;
+        Vector<Reference, 16> valuesWithWhatIsBehind;
+        fieldsWithWhatIsBehind.append(draft.fields());
+        valuesWithWhatIsBehind.append(draft.variadicOperands());
+        for (const Walker::ValueDefinedBehindBirth& defined : behind) {
+            fieldsWithWhatIsBehind.append(defined.field);
+            valuesWithWhatIsBehind.append(defined.value);
+        }
+        draft.setFields(fieldsWithWhatIsBehind.span());
+        draft.setVariadicOperands(valuesWithWhatIsBehind.span());
+    }
     size_t numberOfFieldsAsWritten = draft.fields().size();
     if (numberOfFieldsAsWritten != draft.numberOfVariadicOperands()) {
         walker.fail("an allocation lists other values than fields"_s);
@@ -388,26 +395,12 @@ static void chooseAllocationOfObjectInChoices(Walker& walker, Draft& allocation)
         walker.fail("the plan keeps no cells of the layout of an environment"_s);
         return;
     }
-    if (planned.liesOnlyInFrames) {
-        walker.fail("the plan keeps an environment in frames, and the closed form makes it on the heap"_s);
-        return;
-    }
     allocation.setStorage(AllocationStorage::Heap);
     if (planned.cellsAreHandedBack)
         noteEnvironmentThatUnitMakes(walker, allocation);
 
-    size_t numberOfFields = allocation.fields().size();
-    if (numberOfFields != allocation.numberOfVariadicOperands()) {
+    if (allocation.fields().size() != allocation.numberOfVariadicOperands())
         walker.fail("an allocation lists other values than fields"_s);
-        return;
-    }
-    for (size_t index = 0; index < numberOfFields; ++index) {
-        TypeID typeOfPlan = plan.slot(layout, allocation.fields()[index]).type;
-        if (typeOfPlan && !walker.types().isSubset(walker.typeOf(allocation.variadicOperands()[index]), typeOfPlan)) {
-            walker.fail("the plan holds a slot of an environment to a type that the value listed for it is not proven to have"_s);
-            return;
-        }
-    }
 }
 
 static bool isAggregateOfDataInChoices(const DataNode& node)
@@ -656,6 +649,36 @@ static void chooseWhatListTakesFromItsSiteInChoices(Walker& walker, Draft& list)
         list.setLiteralStorage(ArrayLiteralStorage::Profiled);
 }
 
+static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
+{
+    if (!walker.has(Mechanism::TypedOperations))
+        return;
+    if (!list.numberOfVariadicOperands() || !list.holes().empty() || list.storage() != AllocationStorage::Heap || list.arrayStorage() != ArrayStorage::Other)
+        return;
+    bool holdsNumbersAsWritten = list.contents() && holdsOnlyNumbers(arrayStorageHolding(walker.types(), list.contents()));
+    if (list.contents() && !walker.types().at(list.contents()).isAnything() && !holdsNumbersAsWritten)
+        return;
+    bool numbersAreWritten = holdsNumbersAsWritten && walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked);
+    bool isOnlyHandedOn = list.inputValueGiven && walker.currentBodyIndex().hasOneUse(list.inputValueGiven);
+    if (!numbersAreWritten && !isOnlyHandedOn)
+        return;
+    bool areInt32 = true;
+    bool mayHaveFraction = false;
+    for (Reference element : list.variadicOperands()) {
+        TypeID proven = walker.typeOf(element);
+        if (!proven || !walker.types().at(proven).isNumber())
+            return;
+        areInt32 &= walker.types().at(proven).isInt32();
+        mayHaveFraction |= !!(walker.types().at(proven).primitives & Primitive::Number & ~Primitive::NumberWithoutFraction);
+    }
+    if (!areInt32 && !numbersAreWritten && !mayHaveFraction)
+        return;
+    if (!areInt32)
+        list.setArrayStorage(ArrayStorage::Double);
+    else if (isOnlyHandedOn)
+        list.setArrayStorage(ArrayStorage::Int32);
+}
+
 static unsigned widthOfStorageInChoices(ArrayStorage storage)
 {
     const ArrayStorageForm* form = findArrayStorageForm(storage);
@@ -678,19 +701,51 @@ ArrayStorage askBirthOfListForStorage(Walker& walker, Reference list, ArrayStora
     return born.arrayStorage();
 }
 
+static bool stepsElementOfListItselfInChoices(Walker& walker, Reference list, Reference stored)
+{
+    if (!list || !list.isValue() || !stored.isValue())
+        return false;
+    const Code& code = walker.code();
+    const Operation& made = code.at(stored.id());
+    static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub };
+    if (!steps.contains(made.opcode))
+        return false;
+    ValueID root = rootOfCellInSweptCode(code, list.id());
+    bool readsListItself = false;
+    bool restAreIntegers = true;
+    made.forEachChild([&](ValueID child) {
+        const Operation& read = code.at(rootOfCellInSweptCode(code, child));
+        if (read.opcode == Opcode::GetArrayElement && rootOfCellInSweptCode(code, read.arrayOperand()) == root)
+            readsListItself = true;
+        else
+            restAreIntegers &= walker.types().at(read.type).isInteger();
+    });
+    return readsListItself && restAreIntegers;
+}
+
 ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, Reference stored)
 {
     if (!stored || isNeverType(walker.typeOf(stored)))
         return askBirthOfListForStorage(walker, list, ArrayStorage::Other);
     Type type = walker.types().at(walker.typeOf(stored));
+    if (type.isNumberWithoutFraction() && stepsElementOfListItselfInChoices(walker, list, stored))
+        return askBirthOfListForStorage(walker, list, ArrayStorage::Other);
     ArrayStorage taking = ArrayStorage::Other;
-    if (type.isInteger())
+    if (type.isNumberWithoutFraction() && type.primitives & Primitive::Integer)
         taking = ArrayStorage::Int32;
     else if (type.isNumber())
         taking = ArrayStorage::Double;
     else if (!(type.primitives & Primitive::Number))
         taking = ArrayStorage::Contiguous;
-    return askBirthOfListForStorage(walker, list, taking);
+    ArrayStorage born = askBirthOfListForStorage(walker, list, taking);
+    if (born == ArrayStorage::Int32 && taking == ArrayStorage::Int32 && !type.isInt32()) {
+        ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
+        if (!walker.code().at(root).remembersStorageAtSite()) {
+            walker.code().letListRememberStorageAtSite(root);
+            walker.count(StatisticID::ListsOfLengthThatRememberStorageAtSite);
+        }
+    }
+    return born;
 }
 
 static bool isBornHereWithoutSourceInChoices(Walker& walker, Reference list)
@@ -751,6 +806,8 @@ static void becomeNodeOfDataInChoices(Walker& walker, Draft& draft, const DataNo
     draft.setContents(array->contents);
     draft.setHoles(holes.span());
     draft.setVariadicOperands(elements.span());
+    if (ArrayStorage written = holes.isEmpty() && !elements.isEmpty() && isStorageOfArray(*array) ? arrayStorageOfData(walker.program(), *array) : ArrayStorage::Other; holdsOnlyNumbers(written) && walker.has(Mechanism::TypedOperations))
+        draft.setArrayStorage(written);
     chooseWhatListTakesFromItsSiteInChoices(walker, draft);
 }
 
@@ -804,7 +861,8 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
     SetForScope makingObjectsOfConstant = walker.makingObjectsOfConstant();
     const DataNode& root = walker.program().at(data.data()).root;
     if (const auto* array = root.tryAs<DataNode::Array>(); array && sharesStorageOfArrayInChoices(walker, *array)) {
-        data.setEncoding(DataEncoding::CopyOnWriteArray);
+        bool isStoredIntoInLoop = data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
+        data.setEncoding(isStoredIntoInLoop ? DataEncoding::TreeWithOwnStorage : DataEncoding::CopyOnWriteArray);
         return;
     }
     data.setEncoding(DataEncoding::ReadOnlyTree);
@@ -958,11 +1016,9 @@ static void stepForInInChoices(Walker& walker, Draft& step)
     step.setValuesOperands(std::array { isDone, key });
 }
 
-void Walker::chooseConservativeFields(Draft& draft)
+void Walker::chooseConservativeFieldsOfOpcodeThatNeedsChoices(Draft& draft)
 {
     Opcode opcode = draft.opcode;
-    if (!opcodesThatNeedChoices.contains(opcode))
-        return;
     if (Operation::opcodesWithForm.contains(opcode)) {
         draft.setForm(OperatorForm::Generic);
         return;
@@ -977,6 +1033,7 @@ void Walker::chooseConservativeFields(Draft& draft)
     }
     if (opcode == Opcode::NewArray) {
         chooseWhatListTakesFromItsSiteInChoices(*this, draft);
+        nameStorageOfLiteralOfNumbersInChoices(*this, draft);
         return;
     }
     if (opcode == Opcode::TryPutByValDirect || opcode == Opcode::TryFillNewArray) {

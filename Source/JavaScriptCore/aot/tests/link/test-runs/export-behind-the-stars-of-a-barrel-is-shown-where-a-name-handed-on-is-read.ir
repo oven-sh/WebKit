@@ -1,0 +1,55 @@
+# plain.js: export const oval = 6, round = 5   shapes.js, which a test mocks: export const square = 2   wide.js: export * from "./shapes.js"; export * from "./plain.js"   last.js: export { round } from "./wide.js"
+# main.test.js: import * as all from "./last.js"; out = all.round
+# A mock of shapes.js may bring `round`, so the run follows the stars of wide.js and its table does not list the name: the entry of last.js is an indirect one that ends there.
+# The read may come through a mock, so giveExport() gives anything and returns ahead of the place where it lets the namespace of the barrel go. Nothing showed `round` of plain.js then: it was marked as staying in,
+# and the run refused the read: "Cannot read 'round' from the namespace object of plain.js". showExport() follows the entries and the stars that the run follows.
+# the control: nobody reads `oval`
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link modules mechanisms=all
+# CHECK-NOT: export g0 stays-in
+# CHECK: export g3 stays-in
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/last.js" displayPath="last.js" body=f1 requests=[{target=m2 completes=true}] exports=[{name="round" kind=Indirect module=m2 importName="round"}]
+module m2 path="/wide.js" displayPath="wide.js" body=f2 requests=[{target=m3 isDynamicStarExport=true completes=true}, {target=m4 isDynamicStarExport=true completes=true}]
+module m3 path="/shapes.js" displayPath="shapes.js" flags=[MayBeMocked] body=f3 exports=[{name="square" variable=g1}]
+module m4 path="/plain.js" displayPath="plain.js" body=f4 exports=[{name="oval" variable=g3}, {name="round" variable=g0}]
+entry module=m0
+variable g0 name="round" module=m4 declared={type=anything}
+variable g1 name="square" module=m3 declared={type=anything} flags=[IsReplaceable]
+variable g2 name="out" module=m0 declared={type=anything}
+variable g3 name="oval" module=m4 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="round"
+    PutModuleVariable v1 variable=g2
+    v3 = Undefined
+    Return v3
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g1
+    v2 = Undefined
+    Return v2
+}
+function f4 module=m4 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=6
+    PutModuleVariable v2 variable=g3
+    v4 = Undefined
+    Return v4
+}

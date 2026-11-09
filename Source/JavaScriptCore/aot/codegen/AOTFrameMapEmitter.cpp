@@ -16,6 +16,7 @@
 #include "AOTMachineTarget.h"
 #include "AOTResultRules.h"
 #include "AOTSavedFrame.h"
+#include "AOTSavedFrameEmitter.h"
 #include "AOTSavedFrameMap.h"
 #include "AOTStubRegisters.h"
 #include "AOTSweep.h"
@@ -70,8 +71,9 @@ FrameMapEmitter::Roots FrameMapEmitter::appendRoots(Machine::PatchOperation* pat
         unsigned numberOfResults = conventions().numberOfResults(conventions().unitEnteredBy(producer));
         return numberOfResults > 1 ? std::optional<uint32_t>(numberOfResults) : std::nullopt;
     };
+    SavedFrameEmitter& frames = emitter<SavedFrameEmitter>();
     auto addRoot = [&](ValueID id) {
-        if (!id || id == suspension.id() || m_code.isConstant(id) || isDeferredClosure(id))
+        if (!id || frames.hasWordInMachineFrame(id) || id == suspension.id() || m_code.isConstant(id) || isDeferredClosure(id))
             return;
         if (typeOf(id).isOpaque(OpaqueKind::StringBuilder) && !stringBuilderIsCellOfHeap(m_code, id)) {
             fail(suspension, InternalErrorKind::FramePointerAcrossSuspension);
@@ -86,6 +88,10 @@ FrameMapEmitter::Roots FrameMapEmitter::appendRoots(Machine::PatchOperation* pat
             append(get(id));
     };
 
+    if (frames.keepsWordsInMachineFrame()) {
+        result.slotOfKeptWords = frames.slotOfKeptWords();
+        result.numberOfTracedWordsInSlot = frames.numberOfTracedWords();
+    }
     std::span<const ValueID> live = m_code.liveAt(suspension.id());
     for (ValueID id : live)
         addRoot(id);
@@ -217,6 +223,14 @@ void FrameMapEmitter::releaseSavedRegisters(CCallHelpers& jit, const Machine::Pa
         jit.move(CCallHelpers::TrustedImm32(0), SavedFrame::preservedRegister);
 }
 
+std::optional<uint64_t> FrameMapEmitter::siteWordOfFrameOnHeap(const Machine::PatchParameters& params)
+{
+    std::optional<uint32_t> savedRegisters = savedRegistersWordOf(params.frame());
+    if (!savedRegisters)
+        return std::nullopt;
+    return SavedFrame::siteWord(0, 0, *savedRegisters);
+}
+
 std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, const Machine::PatchParameters& params, const Roots& roots, unsigned promiseChild)
 {
     const Machine::Frame& frame = params.frame();
@@ -254,6 +268,12 @@ std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, c
             builder.addNarrowReference(*location);
             break;
         }
+    }
+    for (uint32_t word = 0; roots.slotOfKeptWords && word < roots.numberOfTracedWordsInSlot; ++word) {
+        uint32_t location = SavedFrame::locationInFrame(roots.slotOfKeptWords->offsetFromFP() + static_cast<intptr_t>(word * sizeof(uint64_t)));
+        if (!isKeptForFunction(location))
+            return std::nullopt;
+        builder.addValue(location);
     }
     std::optional<uint32_t> promiseLocation = locationInSavedFrame(params[promiseChild], FrameSlotKind::Cell);
     if (!promiseLocation || !isKeptForFunction(*promiseLocation))

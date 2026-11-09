@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCompileOptions.h"
 #include "AOTClosure.h"
@@ -137,15 +138,22 @@ JSValue evaluateEveryBuiltinModuleForTesting(JSGlobalObject* globalObject)
 void fillWordsOfCompiledMethodsOfArray(Instance& instance)
 {
     const ProgramTables& tables = instance.tables();
-    ModuleTable modules(tables);
-    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
-        if (function.role != RuntimeFunctionRole::EngineBuiltin)
+    const BuiltinTable& builtins = BuiltinTable::singleton();
+    const BuiltinID sort = builtins.canonicalID(Builtins::ArrayPrototypeSort);
+    for (const CompiledRuntimeFunctionData& entry : tables.compiledRuntimeFunctions()) {
+        if (entry.function < tables.closureFunctions.first || entry.function >= tables.closureFunctions.end)
             continue;
+        uint64_t word = instance.functionTables.closureWords[tables.closureNumberOf(entry.function)];
+        const RuntimeFunctionData& function = builtins.at(RuntimeFunctionID(entry.id));
         for (BuiltinID builtin : function.implements) {
-            std::optional<CompiledMethodOfArray> method = compiledMethodOfArray(builtin);
-            const CompiledRuntimeFunctionData* entry = method ? modules.findRuntimeFunction(function.id.index()) : nullptr;
-            if (entry && tables.closureFunctions.first <= entry->function && entry->function < tables.closureFunctions.end)
-                instance.stubs.wordsOfCompiledMethodsOfArray[static_cast<unsigned>(*method)] = instance.functionTables.closureWords[tables.closureNumberOf(entry->function)];
+            if (builtin == sort) {
+                instance.stubs.wordOfCompiledSort = word;
+                continue;
+            }
+            if (function.role != RuntimeFunctionRole::EngineBuiltin)
+                continue;
+            if (std::optional<CompiledMethodOfArray> method = compiledMethodOfArray(builtin))
+                instance.stubs.wordsOfCompiledMethodsOfArray[static_cast<unsigned>(*method)] = word;
         }
     }
 }
@@ -336,9 +344,20 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
     return names;
 }
 
-static bool lacksOnlyWhatReachMissed(const Image& image)
+bool lacksOnlyWhatReachMissed(const Image& image)
 {
     return image.isBuiltWithLibrary() && !image.admitsUnknownJavaScript() && !image.loadsCodeOutsideImage() && !hasFlag(image.header().options.admitted(), AdmittedCode::Inspector);
+}
+
+static thread_local bool t_eventMayExposeGlobalObject;
+
+void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject* realm)
+{
+    if (!Instance::of(realm))
+        return;
+    const Image& image = *Image::current();
+    if (!image.letsGlobalObjectGo() && lacksOnlyWhatReachMissed(image))
+        t_eventMayExposeGlobalObject = true;
 }
 
 [[noreturn]] static void stopAtMissOfReach(const String& leftOut)
@@ -350,9 +369,10 @@ static bool lacksOnlyWhatReachMissed(const Image& image)
 void throwBuiltinNotCompiled(JSGlobalObject* realm, const String& builtin)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    if (lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests())
+    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests();
+    if (isMissOfReach && !t_eventMayExposeGlobalObject)
         stopAtMissOfReach(builtin);
-    JSObject* error = createBuiltinNotCompiledError(realm, builtin);
+    JSObject* error = isMissOfReach ? createBuiltinBehindTargetOfEventNotCompiledError(realm, builtin) : createBuiltinNotCompiledError(realm, builtin);
     noteErrorOfCodeLeftOut(realm, error);
     throwException(realm, scope, error);
 }
@@ -366,9 +386,11 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
     Vector<String, 4> names = id ? globalBuiltinsThatRun(RuntimeFunctionID(*id)) : Vector<String, 4>();
     if (id && std::ranges::contains(table.moduleLoaderFunctions(), RuntimeFunctionID(*id)))
         names = { "The module loader"_str };
-    if (lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests())
-        stopAtMissOfReach(names.isEmpty() ? makeString("The built-in function '"_s, function.name().string(), '\'') : makeStringByJoining(names.span(), " or "_s));
-    JSObject* error = names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span());
+    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests();
+    String leftOut = !isMissOfReach ? String() : names.isEmpty() ? makeString("The built-in function '"_s, function.name().string(), '\'') : makeStringByJoining(names.span(), " or "_s);
+    if (isMissOfReach && !t_eventMayExposeGlobalObject)
+        stopAtMissOfReach(leftOut);
+    JSObject* error = isMissOfReach ? createBuiltinBehindTargetOfEventNotCompiledError(realm, leftOut) : names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span());
     bool isGetterOfAccessor = id && table.contains(RuntimeFunctionID(*id)) && std::ranges::any_of(table.at(RuntimeFunctionID(*id)).implements, [&](BuiltinID builtin) {
         return table.at(builtin).kind == BuiltinKind::Accessor;
     });

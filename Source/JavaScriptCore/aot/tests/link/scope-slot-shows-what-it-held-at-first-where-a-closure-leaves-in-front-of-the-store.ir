@@ -2,8 +2,8 @@
 # function make() { const early = read(); var count = 0; const limit = 10; return early; function read() { return limit + count; } }
 # an empty slot with a dead zone reads as the mark alone: `undefined` comes out of it only where it was stored. The var shows the undefined that the allocation lists
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 @"0" proven=i32|absent writers-known
-# CHECK: field L0.1 @"1" proven=undefined|i32 writers-known
+# CHECK: field L0.0 @"0" proven=int[0, 2147483647]|absent writers-known
+# CHECK: field L0.1 @"1" proven=undefined|int[0, 2147483647] writers-known
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything|absent} flags=[IsImmutable] variableName="limit"}, {key=@"1" declared={type=anything} flags=[IsRequired] variableName="count"}] ownFieldCount=2
 variable g0 name="sink" module=m0 declared={type=anything}

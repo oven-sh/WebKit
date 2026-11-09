@@ -65,7 +65,7 @@ bool Modules::hasTextAtHand() const
 bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
 {
     ModuleID file = fileOf(module);
-    if (!isTextReadOnOtherThread(file))
+    if (!isTextReadOnOtherThread(file) || mockInPlace(module) || mockInPlace(file))
         return false;
     if (isCommonJSFileOrFace(module)) {
         for (ModuleID fileOrFace : { module, file }) {
@@ -96,7 +96,7 @@ void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* 
         queueJobOfRound(module);
     }
     uint64_t place = static_cast<uint64_t>(m_turnOfTexts) << 32 | m_numberOfTextsAskedFor++;
-    m_textsThatWait.append(TextThatWaits { place, m_turnOfDeliveries, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, caller, m_jobsBehindFirstCall });
+    m_textsThatWait.append(TextThatWaits { place, m_turnOfDeliveries, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, caller, m_jobsBehindFirstCall, vm.aotState().momentOfLoads });
     host().callInLaterTurn(m_instance.globalObject);
 }
 
@@ -107,7 +107,7 @@ void Modules::putCallsThatWaitApartInLine()
     for (TextThatWaits& text : textsThatWait()) {
         if (!text.requestedRecord)
             m_modulesOfQueuedImports.set(text.module.index());
-        m_textsOnTheirWay.appendAndBubble(TextOnItsWay { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder, std::nullopt }, [&](const TextOnItsWay& inLine) {
+        m_textsOnTheirWay.appendAndBubble(TextOnItsWay { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder, std::nullopt, text.momentOfCall }, [&](const TextOnItsWay& inLine) {
             return inLine.place > text.place;
         });
     }
@@ -169,6 +169,7 @@ void Modules::makeCallAgain(TextThatWaits& text)
         promise->fulfill(vm, text.requestedRecord.get());
         return;
     }
+    SetForScope momentOfCall(m_momentOfCallWhoseTextHasCome, text.momentOfCall);
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, text.caller, TextOfImport::HasCome, promise);
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);
@@ -177,6 +178,18 @@ void Modules::makeCallAgain(TextThatWaits& text)
     scope.release();
     if (loaded != promise)
         settleAsLoaderDoesInImportTurns(m_instance.globalObject, promise, loaded);
+}
+
+void Modules::forgetMockLaidBehindCallWhoseTextHasCome(ModuleID file)
+{
+    std::optional<uint32_t> momentOfCall = std::exchange(m_momentOfCallWhoseTextHasCome, std::nullopt);
+    if (!momentOfCall || !m_modulesWithMockToRun.get(file.index()))
+        return;
+    auto laid = m_momentsWaitingMocksWereLaid.find(file);
+    if (laid == m_momentsWaitingMocksWereLaid.end() || laid->value.moment <= *momentOfCall)
+        return;
+    forgetMockThatWaits(file);
+    forgetCallOfMock(file);
 }
 
 void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)

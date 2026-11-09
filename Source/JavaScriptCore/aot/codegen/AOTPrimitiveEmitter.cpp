@@ -181,6 +181,7 @@ LValue PrimitiveEmitter::countTrailingZerosOfNonZero(LValue bits)
 
 void PrimitiveEmitter::mutatorFence()
 {
+    m_owesFenceBehindStores = false;
     if (isX86_64())
         return;
 

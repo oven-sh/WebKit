@@ -91,7 +91,7 @@ public:
     bool didWaitForSamples(const void* site);
 
 private:
-    SiteCacheState& stateOf(const void* site) const { return *reinterpret_cast<SiteCacheState*>(reinterpret_cast<uint8_t*>(m_states) + ((std::bit_cast<uintptr_t>(site) >> SiteCacheState::slotAddressShift) & SiteCacheState::offsetMask)); }
+    SiteCacheState& stateOf(const void* site) const { return *reinterpret_cast<SiteCacheState*>(reinterpret_cast<uint8_t*>(m_states) + SiteCacheState::offsetOfStateOf(std::bit_cast<uintptr_t>(site))); }
     uint8_t& refillCountOf(const void* site) const { return m_refillCounts[&stateOf(site) - m_states]; }
 
     State& m_state;
@@ -137,16 +137,22 @@ public:
     {
         if (WideSiteAnswers* wide = wideAnswersOf(place))
             return &wide->answers;
-        return m_indices[place] ? &m_answers[m_indices[place] / wordsInAnswers] : nullptr;
+        return m_indices[place] > indexOfAnswersThatHoldNothing ? &m_answers[m_indices[place] / wordsInAnswers] : nullptr;
     }
 
     bool isDueForFilling(uint32_t place);
+    void pointAtAnswersThatHoldNothingUnlessFilled(uint32_t place)
+    {
+        if (!m_indices[place])
+            m_indices[place] = indexOfAnswersThatHoldNothing;
+    }
     void didFailToFill(uint32_t place);
     struct AnswerByStructure {
         SiteAnswers::Answer answer;
         int32_t indexInStorageOfHolder { 0 };
     };
-    void fill(uint32_t place, SiteUse, const AnswerByStructure&, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
+    void fill(uint32_t place, SiteUse, const AnswerByStructure&, UniquedStringImpl*, std::span<JSObject* const> changeableObjects, bool stubFollowsFurtherAnswers = false);
+    void moveUpFurtherAnswer(uint32_t place, StructureID);
     void fillByShape(uint32_t place, SiteAnswers::Answer);
     bool holdsAnotherStructure(uint32_t place, StructureID) const;
     void addStructureThatLacksName(uint32_t place, StructureID, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
@@ -164,16 +170,20 @@ public:
 
 private:
     static constexpr uint32_t wordsInAnswers = sizeof(SiteAnswers) / sizeof(uint64_t);
+    static constexpr uint32_t numberOfAnswersThatHoldNothing = 1;
+    static constexpr uint16_t indexOfAnswersThatHoldNothing = numberOfAnswersThatHoldNothing * wordsInAnswers;
+    static_assert(indexOfAnswersThatHoldNothing == indexOfSiteAnswersThatHoldNothing);
     static constexpr uint32_t wordsInWideAnswers = sizeof(WideSiteAnswers) / sizeof(uint64_t);
 
-    const void* keyOfState(uint32_t place) const { return &m_indices[place]; }
+    const void* keyOfState(uint32_t place) const { return std::bit_cast<const void*>(SiteCacheState::keyOfPlaceOfAnswers(place)); }
     SiteAnswers* ensureAnswersOf(uint32_t place, SiteUse);
     WideSiteAnswers& wideAnswersAt(uint32_t number) const { return m_endOfWideAnswers[-1 - static_cast<ptrdiff_t>(number)]; }
     uint32_t numberOf(const WideSiteAnswers& wide) const { return static_cast<uint32_t>(m_endOfWideAnswers - 1 - &wide); }
     uint32_t firstWordOfWideAnswersAt(uint32_t number) const { return static_cast<uint32_t>(m_answers.size() * wordsInAnswers - (number + 1) * wordsInWideAnswers); }
     WideSiteAnswers* wideAnswersOf(uint32_t place) const;
     WideSiteAnswers* ensureWideAnswersOf(uint32_t place);
-    void addFurtherAnswer(uint32_t place, SiteAnswers::Answer, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
+    void addFurtherAnswer(uint32_t place, const AnswerByStructure&, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
+    bool wasPutOut(uint32_t place, StructureID id) const { return m_visitorsPutOut.contains(static_cast<uint64_t>(place) << 32 | id.bits()); }
     void giveBackIfEmpty(uint32_t numberOfAnswers);
     void giveBackWideAnswersIfEmpty(uint32_t numberOfWideAnswers);
 
@@ -189,6 +199,7 @@ private:
     uint32_t m_nextStructureToForget { 0 };
     uint64_t* m_placesThatMissed { nullptr };
     uint64_t* m_placesThatFailed { nullptr };
+    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_visitorsPutOut;
     static constexpr uint8_t requestsThatOpenPage = 3;
     unsigned m_placesInPageShift { 0 };
     uint8_t* m_requestsOfPages { nullptr };
@@ -318,6 +329,7 @@ public:
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
     bool addFilterAndCheckStoreCreatesOwnField(JSGlobalObject*, Object&, uint32_t identifierNumber);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
+    void didReplaceValueOnObjectOfSomeChain(JSObject* changed, UniquedStringImpl*);
     void didStartWatchingReplacements();
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
@@ -418,7 +430,10 @@ public:
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
-    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse);
+    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false);
+    void fileOwnPlainValueUnlessFiled(JSObject*, uint32_t identifierNumber);
+    static RowsOfReads::Row* claimRowOfReads(JSValue, RowsOfReads&);
+    void findPlaceInRowOfReads(JSCell*, uint32_t identifierNumber, RowsOfReads::Row&, uint32_t index);
     bool fillAboveFieldLeftOut(uint32_t place, Object&, const CachedName&);
     JSCell* keyForTraps(UniquedStringImpl*);
     void prepareHoldersBeforeLookupsUnder(Symbol*, JSObject* function);
@@ -426,8 +441,9 @@ public:
     bool hasPreparationsBeforeLookups() const { return !m_preparationsBeforeLookups.isEmpty(); }
     bool isPreparingHolder() const { return m_isPreparingHolder; }
     void setIsPreparingHolder(bool isPreparing) { m_isPreparingHolder = isPreparing; }
-    JSCell* holderLookedAtByName() const { return m_holderLookedAtByName; }
+    bool isLookedAtByName(const JSCell* holder, const UniquedStringImpl* symbol) const { return m_holderLookedAtByName == holder && m_symbolLookedAtByName == symbol; }
     JSCell* exchangeHolderLookedAtByName(JSCell* holder) { return std::exchange(m_holderLookedAtByName, holder); }
+    UniquedStringImpl* exchangeSymbolLookedAtByName(UniquedStringImpl* symbol) { return std::exchange(m_symbolLookedAtByName, symbol); }
 
     template<typename Visitor> void visitRoots(Visitor&);
     void didFinishCollection(VM&, CollectionScope);
@@ -464,6 +480,7 @@ private:
     UncheckedKeyHashMap<UniquedStringImpl*, PreparationBeforeLookups> m_preparationsBeforeLookups;
     bool m_isPreparingHolder { false };
     JSCell* m_holderLookedAtByName { nullptr };
+    UniquedStringImpl* m_symbolLookedAtByName { nullptr };
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     uint8_t* m_counterOfPairToFile { nullptr };
     using KeyOfAddedExtraProperty = std::pair<uint32_t, UniquedStringImpl*>;

@@ -1,0 +1,38 @@
+# A read off what lies at the place goes the way of lost functions: it names nobody. If the two stayed known beside it, what is stored on one of them through the set would be held against neither. The call enters both all the same.
+# function take(f) { f.tag; return f(1); }  take(first);  take(second);
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: function f2 {{*}}in-queue-from-start
+# CHECK: function f3 {{*}}in-queue-from-start
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f2 callers-known
+# NEVER-NOT: function f3 callers-known
+# NEVER-NOT: unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v0, -, v1 calleeName="take"
+    v4 = Call v0, -, v2 calleeName="take"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="tag"
+    v2 = Integer integer=1
+    v3 = Call v0, -, v2 calleeName="f"
+    Return v3
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

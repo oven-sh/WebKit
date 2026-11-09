@@ -347,6 +347,48 @@ static void testMachineNumberingArmThatNothingReaches()
     AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 3) && memory[0] == 3);
 }
 
+static void testMachineNumberingSumIsFoundAgainWhereverItsBlockAloneLeads()
+{
+    NumberingTestFixture fixture;
+    Output& out = fixture.out;
+    Block* left = out.newBlock();
+    Block* behindLeft = out.newBlock();
+    Block* right = out.newBlock();
+    Block* join = out.newBlock();
+    Block* apart = out.newBlock();
+    Operation* word = fixture.load(fixture.firstElement);
+    Operation* atFork = out.mul(word, fixture.operand);
+    AOT_TEST_CHECK(atFork->opcode() == Mul && out.findsAgain(atFork) && !out.findsAgain(word) && !out.findsAgain(fixture.operand));
+    ScopeFork fork = out.forkScope();
+    out.branch(fixture.operand, normalEdge(left), normalEdge(right));
+
+    out.appendToArm(left, fork);
+    Operation* inLeft = out.add(atFork, word);
+    AOT_TEST_CHECK(inLeft->opcode() == Add && inLeft->owner() == left && out.findsAgain(atFork) && out.findsAgain(inLeft));
+    out.jump(behindLeft);
+    ScopeFork atEndOfLeft = out.forkScope();
+    out.appendToSuccessor(behindLeft, atEndOfLeft);
+    AOT_TEST_CHECK(out.m_block == behindLeft && out.findsAgain(atFork) && out.findsAgain(inLeft));
+    fixture.store(inLeft, fixture.secondElement, 1);
+    out.jump(join);
+
+    out.appendToArm(right, fork);
+    AOT_TEST_CHECK(out.findsAgain(atFork) && !out.findsAgain(inLeft));
+    out.jump(join);
+
+    out.appendToJoin(join, fork);
+    AOT_TEST_CHECK(out.findsAgain(atFork) && !out.findsAgain(inLeft));
+    out.jump(apart);
+
+    out.appendTo(apart);
+    AOT_TEST_CHECK(!out.findsAgain(atFork) && !out.findsAgain(inLeft));
+    out.ret(atFork);
+
+    compileOrFail(fixture.test);
+    NumberingTestFixture::Memory memory = numberingTestMemory;
+    AOT_TEST_CHECK(fixture.run(memory, 5) == 15 && memory[1] == 18);
+}
+
 static void testMachineNumberingScopesHoldWhileTableGrows()
 {
     constexpr unsigned numberAtFork = 40;
@@ -715,13 +757,13 @@ static void testMachineNumberingOwnCopyOfNarrowReferenceIsMarked()
     AOT_TEST_CHECK(fixture.run(memory, 5) == 3);
 }
 
-static void testMachineNumberingInheritedLoadIsVerified()
+static void testMachineNumberingReusedLoadIsVerified()
 {
-    for (bool declaresWrite : { false, true }) {
+    for (auto [declaresWrite, crossesEdge] : { std::pair { false, true }, std::pair { true, true }, std::pair { false, false }, std::pair { true, false } }) {
         NumberingTestFixture fixture;
         Output& out = fixture.out;
         unsigned numberOfChecks = 0;
-        out.verifyInheritedLoads(fixture.cousin.index(), [&](Operation* readSameBits) {
+        out.verifyReusedLoads({ fixture.cousin.index() }, [&](Operation* readSameBits) {
             ++numberOfChecks;
             PatchOperation* check = out.check(out.isZero32(readSameBits));
             check->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
@@ -732,15 +774,16 @@ static void testMachineNumberingInheritedLoadIsVerified()
             });
         });
 
-        Block* next = out.newBlock();
         Operation* word = fixture.load(fixture.firstElement);
         Operation* exempt = fixture.load(fixture.cousin, 2);
         Operation* fixed = fixture.load(fixture.immutable, 4);
         fixture.appendWriter(0)->effects.writes = fixture.test.procedure().heapSet(declaresWrite ? fixture.firstElement : fixture.unrelated);
-        out.jump(next);
-        ScopeFork atEnd = out.forkScope();
-
-        out.appendToSuccessor(next, atEnd);
+        if (crossesEdge) {
+            Block* next = out.newBlock();
+            out.jump(next);
+            ScopeFork atEnd = out.forkScope();
+            out.appendToSuccessor(next, atEnd);
+        }
         AOT_TEST_CHECK(fixture.load(fixture.cousin, 2) == exempt && fixture.load(fixture.immutable, 4) == fixed && !numberOfChecks);
         Operation* found = fixture.load(fixture.firstElement);
         AOT_TEST_CHECK((found == word) == !declaresWrite && numberOfChecks == (declaresWrite ? 0u : 1u));
@@ -751,6 +794,27 @@ static void testMachineNumberingInheritedLoadIsVerified()
         AOT_TEST_CHECK(fixture.run(memory, 5) == (declaresWrite ? numberingTestAnswer(5, 6, 30) : -1));
         memory = numberingTestMemory;
         AOT_TEST_CHECK(fixture.run(memory, 3) == numberingTestAnswer(3, 6, 30));
+    }
+}
+
+static void testMachineNumberingStoreOverLoadThatStandsStopsBuild()
+{
+    struct Case {
+        bool isVerified;
+        bool endsLoad;
+        unsigned wordStored;
+        bool stops;
+    };
+    for (auto [isVerified, endsLoad, wordStored, stops] : { Case { true, false, 0, true }, Case { true, true, 0, false }, Case { true, false, 1, false }, Case { false, false, 0, false } }) {
+        NumberingTestFixture fixture;
+        Output& out = fixture.out;
+        if (isVerified)
+            out.verifyReusedLoads({ fixture.cousin.index() }, [](Operation*) { });
+        Operation* word = fixture.load(fixture.firstElement);
+        out.store64(fixture.operand, out.address(endsLoad ? fixture.firstElement : fixture.unrelated, fixture.words, NumberingTestFixture::offsetOfWord(wordStored)));
+        out.ret(word);
+        const std::optional<Failure>& failure = fixture.test.procedure().failure();
+        AOT_TEST_CHECK(stops ? failure && failure->kind == FailureKind::MalformedProcedure : !failure);
     }
 }
 
@@ -1071,9 +1135,11 @@ static std::span<const NativeTest> listOfMachineNumberingTests()
         { "machine/numbering/word-filled-once"_s, testMachineNumberingWordFilledOnceIsLoadedOnce },
         { "machine/numbering/load-is-made-again-on-request"_s, testMachineNumberingLoadIsMadeAgainOnRequest },
         { "machine/numbering/block-that-lost-an-edge-starts-empty"_s, testMachineNumberingBlockThatLostAnEdgeStartsEmpty },
+        { "machine/numbering/sum-is-found-again-wherever-its-block-alone-leads"_s, testMachineNumberingSumIsFoundAgainWhereverItsBlockAloneLeads },
         { "machine/numbering/successor-reads-its-own-copy-of-two-comparisons"_s, testMachineNumberingSuccessorReadsOwnCopyOfTwoComparisons },
         { "machine/numbering/own-copy-of-a-narrow-reference-is-marked"_s, testMachineNumberingOwnCopyOfNarrowReferenceIsMarked },
-        { "machine/numbering/inherited-load-is-verified"_s, testMachineNumberingInheritedLoadIsVerified },
+        { "machine/numbering/reused-load-is-verified"_s, testMachineNumberingReusedLoadIsVerified },
+        { "machine/numbering/store-over-load-that-stands-stops-build"_s, testMachineNumberingStoreOverLoadThatStandsStopsBuild },
         { "machine/numbering/second-edge-into-a-continuation-asserts"_s, testMachineNumberingSecondEdgeIntoContinuationAsserts },
         { numberingTestOfSecondEdgeIntoContinuation, testMachineNumberingAddsSecondEdgeIntoContinuationOnRequest },
         { numberingTestOfSecondEdgeIntoJoin, testMachineNumberingAddsSecondEdgeIntoJoinOnRequest },

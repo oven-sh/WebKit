@@ -1,5 +1,5 @@
-# A test run has opened a name on Object.prototype. "Only Object.prototype stands above the record, which has no such name and gets none" does not hold there, and no look at the object and no guard of a class sees what comes to lie on it.
-# So nobody answers for what stands above an object (whoAnswersForWhatStandsAboveObjectsOf()), and the read of a field that is left out goes as it is written.
+# A test run has opened a name on Object.prototype, and it is the name that the program reads. "Only Object.prototype stands above the record, which has no such name and gets none" does not hold for that name, and no look at the object and no guard of a class sees a test lay it.
+# So nobody answers for what stands above an object under that name (whoAnswersForWhatStandsAboveObjectsOf()), and the read of a field that is left out goes as it is written. Under every other name the build answers as in an executable: field-left-out-below-another-name-that-a-test-run-has-opened-is-read-behind-a-look.ir.
 # The records are those of the twin, field-left-out-is-read-behind-a-look-where-a-loop-copies-the-function.ir, where the copy in the loop of f0 holds `= GetSlotOrUndefined`, and one more: the last line.
 # RUN: walk f0 mechanisms=all
 # CHECK-LABEL: code f0:Body

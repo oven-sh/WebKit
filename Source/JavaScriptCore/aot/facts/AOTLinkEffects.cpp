@@ -634,6 +634,10 @@ void CalleeSummarizerForLinkEffects::indexHolders()
     for (const LinkFlow::NameOnPrototype& name : m_flow.namesOnPrototypes()) {
         if (name.key)
             note(HolderUnderKey { name.key, name.stored, traitsOfCallableAt(name.stored) });
+        if (name.isAccessorAsWritten) {
+            note(HolderUnderKey { name.key, name.getter, runsAtReads });
+            note(HolderUnderKey { name.key, name.setter, runsAtStores });
+        }
     }
     noteAll(collectChunksInParallel<HolderUnderKey>(m_flow.loops, static_cast<unsigned>(m_program.layouts.size()), [&](unsigned index, Vector<HolderUnderKey>& found) {
         const Layout& layout = m_program.layouts[index];
@@ -740,6 +744,9 @@ void CalleeSummarizerForLinkEffects::addFunctionsAt(const LinkType& held, CodeFo
         }
         break;
     case LinkType::Functions::Set:
+        for (FunctionID member : m_flow.functionsOfSet(held))
+            found.add(member);
+        break;
     case LinkType::Functions::Lost:
         found.mayBeLost = true;
         break;
@@ -770,8 +777,12 @@ void CalleeSummarizerForLinkEffects::lookInLayout(LayoutID layout, bool hasOwnFi
         lookAt(m_flow.typeAt(m_flow.member(member.classLayout, ClassSide::Prototype, member.index)), member.kind == wanted);
     uint32_t stepsLeft = m_program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; current = m_program.at(current).base, --stepsLeft) {
-        if (const LinkFlow::NameOnPrototype* name = m_flow.findNameOnPrototype(current, key))
-            lookAt(m_flow.typeAt(name->stored), false);
+        const LinkFlow::NameOnPrototype* name = m_flow.findNameOnPrototype(current, key);
+        if (!name)
+            continue;
+        lookAt(m_flow.typeAt(name->stored), false);
+        if (name->isAccessorAsWritten && wanted != MethodKind::Method)
+            lookAt(m_flow.typeAt(wanted == MethodKind::Getter ? name->getter : name->setter), true);
     }
 }
 
@@ -927,6 +938,8 @@ bool CalleeSummarizerForLinkEffects::addEffectsOnOperand(const BuiltinOverload& 
     }
     if (parameter->uses.containsAny(usesThatChangeShape))
         effects.writes.add(AbstractHeapSet { AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards, AbstractHeap::ShapeWords, AbstractHeap::OrderWords });
+    if (parameter->uses.contains(OperandUse::DefinesName))
+        effects.writes.add(AbstractHeapSet { AbstractHeap::NamedProperties });
     return true;
 }
 
@@ -1346,11 +1359,20 @@ void rankReferrersFirst(LinkTables& tables)
 
     for (LinkedFunction& function : tables.functions)
         function.namesOnlyWhatEveryFunctionLeadsTo = true;
+    BitVector groupsThatNameMore(tables.groups.size());
+    auto everyFunctionLeadsTo = [&](uint32_t node) {
+        if (node < numberOfFunctions)
+            return tables.functions[node].isInQueueFromStart;
+        LinkedGroup::Kind kind = tables.groups[node - numberOfFunctions].kind;
+        return kind == LinkedGroup::Kind::Anybody || (kind == LinkedGroup::Kind::FunctionsInFields && !groupsThatNameMore.get(node - numberOfFunctions));
+    };
     for (uint32_t node = 0; node < numberOfNodes; ++node) {
-        if (node < numberOfFunctions ? tables.functions[node].isInQueueFromStart : tables.groups[node - numberOfFunctions].kind == LinkedGroup::Kind::Anybody)
+        if (everyFunctionLeadsTo(node))
             continue;
         for (FunctionID referrer : tables.referrersOf(FunctionID(node))) {
-            if (referrer.index() < numberOfFunctions && referrer.index() != node)
+            if (referrer.index() >= numberOfFunctions)
+                groupsThatNameMore.set(referrer.index() - numberOfFunctions);
+            else if (referrer.index() != node)
                 tables.functions[referrer.index()].namesOnlyWhatEveryFunctionLeadsTo = false;
         }
     }

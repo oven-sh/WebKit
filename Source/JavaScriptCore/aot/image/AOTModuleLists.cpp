@@ -76,7 +76,7 @@ void forEachIndexOfLoopsInParallel(const ParallelLoops& loops, std::initializer_
 
 static bool unitHasCodeForModuleLists(const TableInputs& inputs, CodeUnit unit)
 {
-    return inputs.functions.positionOfUnit(unit, inputs.plan.conventions().indexOf(unit)).has_value();
+    return inputs.functions.positionOfUnit(unit, inputs.plan.conventions().indexOf(unit)).has_value() || inputs.functions.hasFusedCallEntry(unit, inputs.plan.conventions().indexOf(unit));
 }
 
 static bool moduleHasCompiledBody(const TableInputs& inputs, ModuleID id)
@@ -519,8 +519,12 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
         if (answers.ofModules[index].contains(AnswerAboutModule::IsUncompiledCode))
             answers.modulesOfUncompiledCode.append(index);
     }
+    const auto& linkedFunctions = inputs.facts.linked().functions;
+    FunctionID sorts = Typed::functionThatSorts(program);
+    bool runTimeEntersSort = sorts && sorts.index() < linkedFunctions.size() && !linkedFunctions[sorts.index()].everyCallerIsKnown;
     for (uint32_t place = 0; place < numberOfRuntimeFunctions; ++place) {
-        if (hostEntersCodeOfRuntimeFunction[place] && functionsCalledByHost.get(program.runtimeFunctions[place].function.index()))
+        FunctionID function = program.runtimeFunctions[place].function;
+        if (hostEntersCodeOfRuntimeFunction[place] && (functionsCalledByHost.get(function.index()) || (runTimeEntersSort && function == sorts)))
             answers.compiledRuntimeFunctions.append(place);
     }
     return answers;
@@ -563,6 +567,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
     ModuleData entry { };
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
+    entry.bodyThrowsAtLoad = module.flags.contains(ModuleFlags::ThrowsAtLoad);
     entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::MayBeImportedWhileItRuns : module.kind == ModuleKind::Data ? ModuleFlags::AnswersLoaderWithNamespace : ModuleFlags::IsImportedAsNamespace);
     if (isModuleOfHost)
         entry.importedWhileItRunsOrAsNamespace = inputs.plan.hasRequireCacheValue(id);
@@ -636,7 +641,7 @@ static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, V
         if (!isExportDescribedInModuleLists(inputs, moduleExport))
             continue;
         ModuleExportData entry { };
-        entry.staysIn = behind && inputs.facts.linked().exportsThatStayIn.get(behind.index());
+        entry.staysIn = moduleExport.isLeftOut || (behind && inputs.facts.linked().exportsThatStayIn.get(behind.index()));
         entry.name = numbers.nameOfText(moduleExport.name, "an export of"_s, id);
         entry.kindBits = static_cast<uint32_t>(moduleExport.kind);
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;

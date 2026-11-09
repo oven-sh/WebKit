@@ -27,7 +27,11 @@ struct Function : FunctionRecord {
 
     const DeclaredType& result() const;
 
-    bool isModuleBody() const;
+    bool isModuleBody() const
+    {
+        static_assert(numberOfEnumerators<FunctionKind> == 10, "say here whether the new kind of function is the body of a module");
+        return kind == FunctionKind::Module || kind == FunctionKind::CommonJsModule;
+    }
     bool isCoroutine() const { return hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }); }
     ConstructorForm constructorForm() const;
     bool takesThisFromConstruction() const { return kind == FunctionKind::Plain && constructorForm() == ConstructorForm::Base; }

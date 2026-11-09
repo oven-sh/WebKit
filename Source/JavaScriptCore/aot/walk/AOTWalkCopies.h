@@ -57,7 +57,7 @@ struct OwnKeyPlan {
 inline constexpr unsigned mostArmsOfOwnKeyWalk = 2;
 inline constexpr size_t mostFieldsOfOwnKeyWalk = 12;
 std::optional<OwnKeyOrder> ownKeysInSight(Walker&, Reference object);
-OwnKeyPlan planOwnKeyWalk(Walker&, ValueID source, Reference built);
+OwnKeyPlan planOwnKeyWalk(Walker&, ValueID source, Reference built, size_t mostFields = mostFieldsOfOwnKeyWalk);
 bool goOnWhereObjectHasOwnKeys(Walker&, Reference& object, const OwnKeyOrder&, bool layoutIsProven, Origin, BlockID whereTestFails);
 struct WaysOutOfOwnKeyTests {
     BlockID whereLayoutDiffers;
@@ -72,7 +72,10 @@ bool callAccessorInSlot(Walker&, const BodyValue& access);
 bool accessStaticFieldInVariable(Walker&, const BodyValue& access);
 bool buildCopyThatMakesObject(Walker&, const BodyValue& copy);
 bool fillLiteralInSight(Walker&, const BodyValue& firstCopy);
-bool mayStandBehindCopy(const BodyValue&, ValueID copy);
+bool walkCopyApartFromSourceWithoutProperties(Walker&, const BodyValue& copy);
+inline constexpr uint16_t primitivesWithoutPropertiesToCopy = Primitive::NumberLike | Primitive::AnySymbol | Primitive::BigInt;
+bool defineOwnKeysOfSourceOnObjectThatStands(Walker&, const BodyValue& copy);
+bool mayStandBehindCopy(const Walker&, const BodyIndex&, const BodyValue&, ValueID copy);
 inline constexpr OpcodeSet opcodesThatBuildCopyWithWhatFollowsTakes { Opcode::CopyObject };
 AOT_LINK_OF_WALK(buildCopyWithWhatFollows, opcodesThatBuildCopyWithWhatFollowsTakes)
 

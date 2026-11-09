@@ -1,6 +1,6 @@
 # function maybe(f) { if (f) return f(1); return 0; }  keep = maybe;  maybe(first);  maybe(second);  maybe(undefined);
 # What is expected of `f` is one of two closures or nothing. A test for "one of the two" tells nothing that a call can use: behind it the call is still a call by value, and the closed arm holds the same call again:
-# in the application 188 such tests stood with 24 calls built twice. Several closures are told apart one by one, in front of a loop, and nowhere else.
+# such tests stood with calls built twice. Several closures are told apart one by one, in front of a loop, and nowhere else.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = Call

@@ -455,7 +455,7 @@ static void printImageProgramTables(PrintStream& out, const TokensOfRuntimeFunct
         out.println("  closuresOfModule module=", modulesWithNamedVariables - 1, " first=", first, " length=", length);
     });
     forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& row) {
-        out.println("  namedCapture closure=", static_cast<uint32_t>(row.closureNumber), " slot=", static_cast<unsigned>(row.slot), " name=s", row.name);
+        out.println("  namedCapture closure=", static_cast<uint32_t>(row.closureNumber), " slot=", static_cast<unsigned>(row.slot), " name=s", row.name, row.isVariableOfModule ? " isVariableOfModule"_s : ""_s);
     });
 }
 
@@ -823,6 +823,8 @@ static void runUnitsWithCodeCommand(TestCommandContext& context)
     std::ranges::sort(inOrderOfUnits, { }, [](const CompiledCode* code) { return code->unit; });
 
     auto bytesOfFusedCallEntry = [&](CodeUnit unit) -> uint64_t {
+        if (conventions.callEntryIsNumberOfModuleStart(unit.function))
+            return 0;
         const CodeBody& body = whole.functions[*whole.functions.positionOfUnit(unit, conventions.indexOf(unit))].body;
         return body.primaryEntryOffset() - *body.offsetOfEntry(fusedCallEntry);
     };

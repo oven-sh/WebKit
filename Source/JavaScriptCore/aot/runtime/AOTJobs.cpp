@@ -477,11 +477,19 @@ static void rejectAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOf
         awaitPromise();
 }
 
+static bool mayWaitAsDriver(const Instance& instance, const uint64_t* slotsOfStub, JSAsyncGenerator* generator)
+{
+    return !instance.vm->isAsyncContextTrackingEnabled() && generator->queue().isNull() && generator->resumePromise() == JSValue(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame]))
+        && generator->realm()->promiseThenWatchpointSet().isStillValid()
+        && instance.globalObject->promiseSpeciesWatchpointSet().state() == IsWatched;
+}
+
 static AsyncGeneratorStep finishAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOfStub, JSAsyncGenerator* generator, JSValue returned, bool consumerMayContinue)
 {
     VM& vm = *instance.vm;
     bool isSeenTo = returned == JSValue(vm.fastAsyncGeneratorSentinel());
-    if (slotsOfStub[consumerSlotInStubFrame] & consumerOfStepAwaitsCall) {
+    const bool awaitsCall = slotsOfStub[consumerSlotInStubFrame] & consumerOfStepAwaitsCall;
+    if (awaitsCall && (isSeenTo || !mayWaitAsDriver(instance, slotsOfStub, generator))) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSPromise* promise = tryPutPromiseInPlaceOfDriver(instance, slotsOfStub, generator);
         std::optional<AsyncGeneratorStep> awaitedInFront;
@@ -496,11 +504,31 @@ static AsyncGeneratorStep finishAsyncGeneratorStep(Instance& instance, const uin
         return awaitedInFront ? *awaitedInFront : awaitPromiseInPlaceOfDriver(instance, slotsOfStub, promise);
     }
     RELEASE_ASSERT(!isSeenTo);
+    SavedFrame* consumer = awaitsCall ? savedFrameOfDriver(JSValue(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame]))) : nullptr;
+    RELEASE_ASSERT(!awaitsCall || consumer);
+    const bool hasAwaitedInFront = consumer && consumerHasAwaitedInFrontOfEnd(slotsOfStub, generator);
+    if (hasAwaitedInFront)
+        noteThatConsumerHasPassedAwait(slotsOfStub);
+    if (consumer)
+        consumer->setGoesOnInContextOfItsAwait(true);
     std::optional<AsyncGeneratorStepInProgress> step;
     if (consumerMayContinue)
         step.emplace(instance, asObject(generator->resumePromise()));
     finishAsyncGeneratorBodyCall(instance.globalObject, generator, returned, JSValue(), &vm.syncResumeCallCache());
-    return step ? step->resultOr(vm.fastAsyncGeneratorSentinel()) : AsyncGeneratorStep { vm.fastAsyncGeneratorSentinel(), AsyncGeneratorStepStatus::Result };
+    AsyncGeneratorStep answer = step ? step->resultOr(vm.fastAsyncGeneratorSentinel()) : AsyncGeneratorStep { vm.fastAsyncGeneratorSentinel(), AsyncGeneratorStepStatus::Result };
+    if (!consumer)
+        return answer;
+    if (answer.status != AsyncGeneratorStepStatus::Result) {
+        consumer->setGoesOnInContextOfItsAwait(false);
+        return answer;
+    }
+    if (!hasAwaitedInFront && vm.isAsyncContextTrackingEnabled() && !vm.hasPendingTerminationException()) [[unlikely]] {
+        if (JSPromise* promise = tryPutPromiseInPlaceOfDriver(instance, slotsOfStub, generator)) {
+            consumer->setGoesOnInContextOfItsAwait(false);
+            return awaitPromiseInPlaceOfDriver(instance, slotsOfStub, promise);
+        }
+    }
+    return answer;
 }
 
 JSValue enterSavedFrame(VM& vm, Instance& instance, SavedFrame* saved, ResumeMode mode, JSValue sent)
@@ -874,11 +902,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRejectWithException, JSCell*, (Instance* in
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPromiseThen, void, (Instance* instance, JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived))
+JSC_DEFINE_JIT_OPERATION(operationAOTPromiseThen, JSCell*, (Instance* instance, JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPromiseThen);
     uncheckedDowncast<JSPromise>(promise)->performPromiseThen(vm, globalObject, JSValue::decode(onFulfilled), JSValue::decode(onRejected), derived);
-    OPERATION_RETURN(scope);
+    OPERATION_RETURN(scope, derived);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPromiseCatch, JSCell*, (Instance* instance, JSCell* promise, EncodedJSValue onRejected))
@@ -895,22 +923,38 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPromiseAll, JSCell*, (Instance* instance, u
     OPERATION_RETURN(scope, promiseAllOfElements(globalObject, std::span { elements, count }, directCalls));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* instance, EncodedJSValue closure, uint32_t kind))
+static void ensureAllocatorOfGenerators(VM& vm, Instance& instance)
 {
-    bool isAsync = kind == static_cast<uint32_t>(NewGeneratorKind::Async);
+    if (!instance.coroutines.generatorAllocator)
+        instance.coroutines.generatorAllocator = subspaceFor<Generator>(vm)->allocatorFor(sizeof(Generator), AllocatorForMode::EnsureAllocator).localAllocator();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* instance, EncodedJSValue closure))
+{
     constexpr Entry entry = Entry::operationAOTNewGenerator;
     AOT_OPERATION_BEGIN(instance, entry);
     DeferTerminationForAWhile deferTermination(vm);
-    if (!isAsync && !instance->coroutines.generatorAllocator)
-        instance->coroutines.generatorAllocator = subspaceFor<Generator>(vm)->allocatorFor(sizeof(Generator), AllocatorForMode::EnsureAllocator).localAllocator();
-    if (!closure) {
-        RELEASE_ASSERT(!isAsync);
+    ensureAllocatorOfGenerators(vm, *instance);
+    if (!closure)
         return Generator::create(vm, instance->state->coroutines->generatorStructure());
-    }
-    JSObject* generatorFunction = objectArgument(closure, entry);
-    JSObject* generator = createGenerator(globalObject, *instance, generatorFunction, isAsync ? CoroutineKind::AsyncGenerator : CoroutineKind::Generator);
+    JSObject* generator = createGenerator(globalObject, *instance, objectArgument(closure, entry), CoroutineKind::Generator);
     scope.releaseAssertNoException();
     return generator;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewGeneratorOfLibrary, JSCell*, (Instance* instance, EncodedJSValue closure))
+{
+    constexpr Entry entry = Entry::operationAOTNewGeneratorOfLibrary;
+    AOT_OPERATION_BEGIN(instance, entry);
+    ensureAllocatorOfGenerators(vm, *instance);
+    OPERATION_RETURN(scope, createGenerator(globalObject, *instance, objectArgument(closure, entry), CoroutineKind::Generator));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewAsyncGenerator, JSCell*, (Instance* instance, EncodedJSValue closure))
+{
+    constexpr Entry entry = Entry::operationAOTNewAsyncGenerator;
+    AOT_OPERATION_BEGIN(instance, entry);
+    OPERATION_RETURN(scope, createGenerator(globalObject, *instance, objectArgument(closure, entry), CoroutineKind::AsyncGenerator));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewHeapFrame, JSCell*, (Instance* instance, uint32_t numberOfWords, void* resumeAddress))
@@ -929,16 +973,16 @@ static CoroutineKind generatorKind(JSObject* generator, Entry entry)
     return CoroutineKind::AsyncGenerator;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTakeGeneratorPrototype, void, (Instance* instance, JSCell* generator, EncodedJSValue closure))
+JSC_DEFINE_JIT_OPERATION(operationAOTTakeGeneratorPrototype, void, (Instance* instance, JSCell* generator, EncodedJSValue closure))
 {
     constexpr Entry entry = Entry::operationAOTTakeGeneratorPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
-    DeferTerminationForAWhile deferTermination(vm);
     JSObject* object = cellArgument<JSObject>(generator, entry);
     Structure* structure = structureOfGenerator(globalObject, *instance, objectArgument(closure, entry), generatorKind(object, entry));
-    scope.releaseAssertNoException();
+    OPERATION_RETURN_IF_EXCEPTION(scope);
     if (object->structure() != structure)
         object->setStructure(vm, structure);
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndYield, JSCell*, (Instance* instance, JSCell* generator, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords))

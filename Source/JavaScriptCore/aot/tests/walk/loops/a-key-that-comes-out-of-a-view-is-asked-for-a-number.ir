@@ -7,13 +7,13 @@
 # CHECK-LABEL: code f1:Body
 # CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage, Names]
 # CHECK: = GetTypedArrayLength
-# CHECK: @Int64) isInLoop=true isLoopHead=true
+# CHECK: @Int32) isInLoop=true isLoopHead=true
 # CHECK-NOT: = IsPristine
 # CHECK-NOT: = ElemGet
 # CHECK: = Less {{*}}form=Integers
 # CHECK-LABEL: code f2:Body
 # CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage, Names]
-# CHECK: @Int64) isInLoop=true isLoopHead=true
+# CHECK: @Int32) isInLoop=true isLoopHead=true
 # CHECK-NOT: = IsPristine
 # CHECK-NOT: = ElemSet
 # CHECK: = PutTypedArrayElement

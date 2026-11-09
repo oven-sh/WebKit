@@ -12,6 +12,7 @@
 #include "AOTProgramTables.h"
 #include "AOTVector.h"
 #include "RememberedSlot.h"
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -48,11 +49,14 @@ public:
     static JSValue readVariableWithoutAllocating(const Instance&, SlotData);
     static bool isVariableEmpty(const Instance&, SlotData);
     static void writeVariable(Instance&, SlotData, JSValue);
+    static void emptyVariableWhoseValueHasMoved(Instance&, SlotData);
 
     template<typename Visitor> void visitRoots(Visitor&);
 
     void willAnalyzeHeap(VM&);
     JSCell* environmentOfModuleThatDefines(uint32_t closureNumber) const;
+    JSCell* environmentOfModule(uint32_t module) const;
+    void analyzeVariableOfModule(JSCell* standIn, JSCell* held, UniquedStringImpl* name, HeapAnalyzer&) const;
     JSCell* scopeInHeapSnapshotOf(JSCell* closure) const;
     void analyzeVariablesOfModule(JSCell* standIn, uint32_t module, HeapAnalyzer&) const;
 
@@ -77,6 +81,7 @@ private:
 
         VM* vm { nullptr };
         Vector<std::pair<JSCell*, JSCell*>> list;
+        mutable UncheckedKeyHashSet<std::tuple<JSCell*, JSCell*, UniquedStringImpl*>> variablesShown;
     };
     ScopesOfClosures m_scopesOfClosures;
 };

@@ -248,10 +248,10 @@ public:
     }
 
     enum class Lookup : uint8_t { Found, Absent, AbsentIndex };
-    ALWAYS_INLINE Lookup findKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const
+    ALWAYS_INLINE Lookup findKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash, bool mayBeIndex = true) const
     {
         ASSERT(characters.size() >= 2 && characters.size() <= maxCachedKeyLength);
-        if (characters.size() <= maxIndexLength) {
+        if (mayBeIndex && characters.size() <= maxIndexLength) {
             if (std::optional<uint32_t> index = tryParseIndex(characters)) {
                 key = *index <= INT32_MAX ? tryFindIntegerKey(*index) : nullptr;
                 return key ? Lookup::Found : Lookup::AbsentIndex;

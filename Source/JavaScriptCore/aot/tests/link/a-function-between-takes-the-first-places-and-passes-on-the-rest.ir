@@ -3,7 +3,7 @@
 # OPTIONS: check=FlowFixpoint
 # RUN: link functions mechanisms=all
 # CHECK: function f2 callers-known {{*}}result=string returns=
-# CHECK-NEXT: parameter 0 expected=i32 proven=i32
+# CHECK-NEXT: parameter 0 expected=i32 proven=int[0, 2147483647]
 # CHECK-NEXT: parameter 1 expected=string proven=string
 # CHECK: function f3 callers-known
 # CHECK-NEXT: parameter 0 expected=true proven=true

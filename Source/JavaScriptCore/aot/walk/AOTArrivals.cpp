@@ -73,6 +73,7 @@ Arrivals::Arrivals(const Program& program, const Facts& facts, TypeTable& types)
     , m_joins(m_types, ArenaKeeps::UntilReset)
 {
     RELEASE_ASSERT(linkTablesOfArrivals(facts).functions.size() == m_program.functions.size());
+    m_entriesAreClosed.fill(0, m_program.functions.size());
 }
 
 void Arrivals::leave(TypeArena& types, FunctionID callee, uint32_t entryParameter, TypeID proven)

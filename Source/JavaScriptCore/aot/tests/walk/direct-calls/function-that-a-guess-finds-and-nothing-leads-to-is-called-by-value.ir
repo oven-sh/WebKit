@@ -10,7 +10,7 @@
 # NEVER-NOT: CallDirect {{*}}function=f1
 # RUN(LINK): link functions mechanisms=all
 # LINK: function f1 callers-known one-callee {{*}} takes-arrivals
-# LINK-NEXT: parameter 0 {{*}}proven=i32
+# LINK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]
 # LINK-NEXT: referrers f0
 # RUN(WHOLE): units-with-code f2:Body mechanisms=all
 # WHOLE: unit f2:Body {{*}} bytes

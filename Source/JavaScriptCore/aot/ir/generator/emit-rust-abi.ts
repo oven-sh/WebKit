@@ -1,7 +1,7 @@
 import { enumBlock, flagWord } from "./emit-rust-enums.ts";
 import { blocks, braced, delimited, indent, rustMarker } from "./lines.ts";
 import type { AbiLayout, Schema, SchemaRecord } from "./model.ts";
-import { recordsOf } from "./model.ts";
+import { isWideFlagWord, recordsOf } from "./model.ts";
 import { rustIdTypeName, rustIdentifier, rustTypeName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 import { abiFieldTypeOf, holdsDouble } from "./rust-types.ts";
@@ -10,6 +10,9 @@ const bytesPerWord = 4;
 
 const wordReader =
   "fn word_at(bytes: &[u8], offset: usize) -> u32 { u32::from_ne_bytes([bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]]) }";
+
+const wideWordReader =
+  "fn wide_word_at(bytes: &[u8], offset: usize) -> u64 { let mut word = [0u8; 8]; word.copy_from_slice(&bytes[offset..offset + 8]); u64::from_ne_bytes(word) }";
 
 interface AbiFile {
   readonly output: string;
@@ -67,6 +70,7 @@ const abiFiles: readonly AbiFile[] = [
 interface CheckedWord {
   readonly offset: number;
   readonly type: string;
+  readonly isWide: boolean;
 }
 
 function abiEnumsOf(schema: Schema, file: AbiFile): string[] {
@@ -101,9 +105,11 @@ function checkedWords(record: SchemaRecord, base: number): CheckedWord[] {
       return elements.flatMap(element => checkedWords(kind.record, base + offsets[index] + element * size));
     }
     if ((kind.tag !== "Enum" && kind.tag !== "Flags") || field.isOptional) return [];
+    const isWide = isWideFlagWord(kind.type);
     return elements.map(element => ({
-      offset: base + offsets[index] + element * bytesPerWord,
+      offset: base + offsets[index] + element * bytesPerWord * (isWide ? 2 : 1),
       type: rustTypeName(kind.type.name),
+      isWide,
     }));
   });
 }
@@ -129,7 +135,9 @@ function abiRecord(record: SchemaRecord): string[] {
     `align_of::<${type}>() == ${layout.alignment}`,
     ...names.map((name, index) => `core::mem::offset_of!(${type}, ${name}) == ${layout.offsets[index]}`),
   ];
-  const checks = checkedWords(record, 0).map(word => `${word.type}::from_wire(word_at(record, ${word.offset}))?;`);
+  const checks = checkedWords(record, 0).map(
+    word => `${word.type}::from_wire(${word.isWide ? "wide_word_at" : "word_at"}(record, ${word.offset}))?;`,
+  );
   const derives = ["Copy", "Clone", "PartialEq", ...(holdsDouble({ tag: "Record", record }) ? [] : ["Eq"]), "Debug"];
   return [
     "#[repr(C)]",
@@ -165,6 +173,7 @@ function abiRs(schema: Schema, file: AbiFile): string[] {
     "",
     ...(file.imports.length > 0 ? [...file.imports.map(path => `use ${path};`), ""] : []),
     ...(records.length > 0 ? [wordReader, ""] : []),
+    ...(records.some(record => checkedWords(record, 0).some(word => word.isWide)) ? [wideWordReader, ""] : []),
     ...blocks(enums, ...records.map(abiRecord)),
   ];
 }

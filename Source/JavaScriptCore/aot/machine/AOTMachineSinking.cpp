@@ -34,6 +34,7 @@ static bool canSinkIntoRareRegion(const Operation* operation)
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case Clz:
     case PopCount:
     case Abs:

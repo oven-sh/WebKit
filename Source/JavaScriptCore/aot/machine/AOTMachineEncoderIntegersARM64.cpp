@@ -339,6 +339,16 @@ void Encoder::encodeInteger(const Step& step)
         return;
     }
 
+    case RotR: {
+        IntegerSources sources = integerSourcesOrConstant(*this, step);
+        RELEASE_ASSERT(sources.constant);
+        if (is32)
+            m_jit.rotateRight32(sources.left, integerConstant32Of(sources.constant), destination);
+        else
+            m_jit.rotateRight64(sources.left, integerConstant32Of(sources.constant), destination);
+        return;
+    }
+
     case Clz: {
         GPRReg source = integerSourceInRegister(*this, step);
         if (is32)

@@ -84,6 +84,10 @@ public:
     uint32_t wordsOfScratchArea() const { return m_wordsOfScratchArea; }
     void generate(CCallHelpers&, const ArgumentLocations&, unsigned bytesBelowFrameRecord);
     bool hasFailed() const { return m_hasFailed; }
+    uint32_t numberOfRawSlotsOfScopesRead() const { return m_numberOfRawSlotsOfScopesRead; }
+    uint32_t numberOfNumbersToldByTheirWord() const { return m_numberOfNumbersToldByTheirWord; }
+    uint32_t numberOfReadsThatAskTheirSite() const { return m_numberOfReadsThatAskTheirSite; }
+    void countReadThatAsksItsSite() { ++m_numberOfReadsThatAskTheirSite; }
     Opcode opcodeThatFailed() const { return m_opcodeThatFailed; }
 
     BuildContext& build() { return m_build; }
@@ -231,6 +235,7 @@ public:
     void generateArray(const BodyValue&);
     void generateArrayIntrinsic(const BodyValue&);
     void generateClass(const BodyValue&);
+    bool classRecordCreatesMemberDefinedBy(const BodyValue&);
     void generateCollectionIntrinsic(const BodyValue&);
     void generateEngineIntrinsic(const BodyValue&);
     void generateEval(const BodyValue&);
@@ -363,6 +368,9 @@ private:
     std::span<const BlockID> m_blocksNeverEntered;
     uint32_t m_wordsOfScratchArea { 0 };
     bool m_hasFailed { false };
+    uint32_t m_numberOfRawSlotsOfScopesRead { 0 };
+    uint32_t m_numberOfNumbersToldByTheirWord { 0 };
+    uint32_t m_numberOfReadsThatAskTheirSite { 0 };
     Opcode m_opcodeThatFailed { Opcode::Undefined };
 };
 

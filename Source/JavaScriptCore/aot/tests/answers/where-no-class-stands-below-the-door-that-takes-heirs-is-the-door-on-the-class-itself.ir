@@ -1,0 +1,346 @@
+# WHERE THE PROGRAM HAS NO CLASS BELOW THE CLASS ASKED, `$isPlainHeirOf` IS `$isPlainInstanceOf`, AND A `$findsDeclaredMember` THAT NAMES ITS CLASS COSTS WHAT THE ONE WITHOUT A CLASS COSTS.
+# The door that takes heirs begins the guards of the class asked in front of itself (a byte loaded and tested), because an object that a class BELOW has made does not prove that they have begun: a deed on the prototype of the class asked in front of its arming would be heard by nobody (the last group).
+# Where no class below is taken, an object of the one shape proves it, as for the door on the class itself: nothing is built (HEIRS), and a deed in front of the first object is seen at the arming that the first object brings (the second group).
+# AN HEIR THAT THE COMPILER DOES NOT SEE (a class made at run time, another new.target, an ordinary object that the maker fills) has a shape that is not among the receivers: it is turned away to the long road by both doors alike. An object of the class laid below an EMPTY object keeps its yes: plain objects in between that hide no member are in the contract.
+# A row `a && b && c` of questions asks the guards of the row by one test. Each question that names its class reads the binding anew: two reads of one module variable name one class (ROW: as WITHOUT).
+# function Base() { this.state = 1; }
+# Base.prototype.end = function () { return 1; };
+# Base.prototype.start = function () { return 2; };
+# Base.prototype.pause = function () { return 3; };
+# function Other() { this.state = 1; }
+# Other.prototype.end = function () { return 1; };
+# class Below extends Other { }
+# function askItself(object) { return $isPlainInstanceOf(object, Base) ? "yes " + object.state : "no " + object.state; }            in a file of the library
+# function askHeirs(object) { return $isPlainHeirOf(object, Base) ? "yes " + object.state : "no " + object.state; }            in a file of the library
+# function askOther(object) { return $isPlainHeirOf(object, Other) ? "yes " + object.state : "no " + object.state; }            in a file of the library
+# function keepsWithoutClass(object) { return $isPlainInstanceOf(object, Base) && $findsDeclaredMember(object, "end") && $findsDeclaredMember(object, "start") && $findsDeclaredMember(object, "pause"); }            in a file of the library
+# function keepsWithClass(object) { return $isPlainInstanceOf(object, Base) && $findsDeclaredMember(object, "end", Base) && $findsDeclaredMember(object, "start", Base) && $findsDeclaredMember(object, "pause", Base); }            in a file of the library
+# const Bases = keep(Base), Others = keep(Other), Belows = keep(Below), itself = keep(askItself), heirs = keep(askHeirs), others = keep(askOther), without = keep(keepsWithoutClass), withClass = keep(keepsWithClass);
+# print(itself(new Bases()), "|", heirs(new Bases()), "|", without(new Bases()), "|", withClass(new Bases()), "|", others(new Belows()));
+# OPTIONS: mechanisms=all
+# RUN(HEIRS): walk f4
+# HEIRS-NOT: BeginMemberGuards
+# HEIRS: = IsPlainInstanceOf v0 {{*}}receivers=[L2]
+# RUN(WITHHEIR): walk f5
+# WITHHEIR: = BeginMemberGuards layout=L0
+# WITHHEIR: = IsPlainInstanceOf v0 {{*}}receivers=[L0, L1]
+# RUN(WITHOUT): walk f6
+# WITHOUT-COUNT-2: = AreMembersUnchanged
+# WITHOUT-NOT: = AreMembersUnchanged
+# RUN(ROW): walk f7
+# ROW: = AreMembersUnchanged conditions=[{layout=L2 key="end"}, {layout=L2 key="start"}]
+# ROW: = AreMembersUnchanged conditions=[{layout=L2 key="pause"}]
+# ROW-NOT: = AreMembersUnchanged
+# RUN(QUIET): run-in-shell keep = function (x) { if (x.name === "") Object.defineProperty(x.prototype, "state", { get() { return 7; }, set(value) { }, configurable: true }); return x; };
+# QUIET: yes 1 | yes 1 | true | true | yes 1
+# QUIET-NEXT: exited with 0
+# RUN(DEEDINFRONTOFTHEFIRSTOBJECT): run-in-shell keep = function (x) { if (x.name === "Base") Object.defineProperty(x.prototype, "state", { get() { return 7; }, set(value) { }, configurable: true }); return x; };
+# DEEDINFRONTOFTHEFIRSTOBJECT: no 7 | no 7 | false | false | yes 1
+# DEEDINFRONTOFTHEFIRSTOBJECT-NEXT: exited with 0
+# RUN(DEEDONACLASSWHOSEHEIRALONEMAKESOBJECTS): run-in-shell keep = function (x) { if (x.name === "Other") Object.defineProperty(x.prototype, "state", { get() { return 7; }, set(value) { }, configurable: true }); return x; };
+# DEEDONACLASSWHOSEHEIRALONEMAKESOBJECTS: yes 1 | yes 1 | true | true | no 7
+# DEEDONACLASSWHOSEHEIRALONEMAKESOBJECTS-NEXT: exited with 0
+# RUN(ANHEIRMADEATRUNTIME): run-in-shell keep = x => x.name === "Base" ? class extends x { } : x;
+# ANHEIRMADEATRUNTIME: no 1 | no 1 | false | false | yes 1
+# ANHEIRMADEATRUNTIME-NEXT: exited with 0
+# RUN(MADEUNDERANOTHERNEWTARGET): run-in-shell keep = x => x.name === "Base" ? function () { function O() { } Object.setPrototypeOf(O.prototype, x.prototype); return Reflect.construct(x, [], O); } : x;
+# MADEUNDERANOTHERNEWTARGET: no 1 | no 1 | false | false | yes 1
+# MADEUNDERANOTHERNEWTARGET-NEXT: exited with 0
+# RUN(LAIDBELOWANEMPTYOBJECT): run-in-shell keep = x => x.name === "Base" ? function () { return Object.setPrototypeOf(new x(), Object.create(x.prototype)); } : x;
+# LAIDBELOWANEMPTYOBJECT: yes 1 | yes 1 | true | true | yes 1
+# LAIDBELOWANEMPTYOBJECT-NEXT: exited with 0
+# RUN(ANORDINARYOBJECTTHATTHEMAKERFILLS): run-in-shell keep = x => x.name === "Base" ? function Sub() { x.call(this); Object.setPrototypeOf(this, Object.create(x.prototype)); } : x;
+# ANORDINARYOBJECTTHATTHEMAKERFILLS: no 1 | no 1 | false | false | yes 1
+# ANORDINARYOBJECTTHATTHEMAKERFILLS-NEXT: exited with 0
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Other" module=m0 position=184 constructor=f2 fields=[{key="state" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=184 ownFieldCount=1
+layout L1 kind=Instance name="Below" module=m0 position=276 base=L0 constructor=f12 fields=[{key="state" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}] supertypes=[L0] flags=[HasHeritage] place=276
+layout L2 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="state" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=0 ownFieldCount=1
+variable g0 name="Base" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="Other" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable] place=2
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=39
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f6 @0
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f7 @0
+    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} @0
+    v10 = GetModuleVariable variable=g0 @36
+    v11 = PropGet v10 key="prototype" @36
+    v12 = NewClosure function=f8 @57
+    PropSet v11, v12 key="end" @41
+    v14 = GetModuleVariable variable=g0 @84
+    v15 = PropGet v14 key="prototype" @84
+    v16 = NewClosure function=f9 @107
+    PropSet v15, v16 key="start" @89
+    v18 = GetModuleVariable variable=g0 @134
+    v19 = PropGet v18 key="prototype" @134
+    v20 = NewClosure function=f10 @157
+    PropSet v19, v20 key="pause" @139
+    v22 = GetModuleVariable variable=g1 @221
+    v23 = PropGet v22 key="prototype" @221
+    v24 = NewClosure function=f11 @243
+    PropSet v23, v24 key="end" @227
+    v26 = GetModuleVariable variable=g1 @290
+    v27 = ResolveHeritage v26 @290
+    v28 = NewClosure function=f12 @270
+    v29 = NewClass v28, v26, v27 layout=L1 @270
+    PutModuleVariable v29 variable=g2 @270
+    v31 = FinishClass v29 layout=L1 @270
+    v32 = Convert v31 declared={type=f12 flags=[IsFromCompiler]} @270
+    v33 = Convert v31 declared={type=f12 flags=[IsFromCompiler]} @270
+    v34 = Builtin builtin=GlobalThis @1079
+    v35 = PropGet v34 key="keep" [isFreeName] @1079
+    v36 = GetModuleVariable variable=g0 @1084
+    v37 = Call v35, -, v36 calleeName="keep" @1079
+    v38 = Builtin builtin=GlobalThis @1100
+    v39 = PropGet v38 key="keep" [isFreeName] @1100
+    v40 = GetModuleVariable variable=g1 @1105
+    v41 = Call v39, -, v40 calleeName="keep" @1100
+    v42 = Builtin builtin=GlobalThis @1122
+    v43 = PropGet v42 key="keep" [isFreeName] @1122
+    v44 = Call v43, -, v33 calleeName="keep" @1122
+    v45 = Builtin builtin=GlobalThis @1144
+    v46 = PropGet v45 key="keep" [isFreeName] @1144
+    v47 = Call v46, -, v1 calleeName="keep" @1144
+    v48 = Builtin builtin=GlobalThis @1169
+    v49 = PropGet v48 key="keep" [isFreeName] @1169
+    v50 = Call v49, -, v3 calleeName="keep" @1169
+    v51 = Builtin builtin=GlobalThis @1194
+    v52 = PropGet v51 key="keep" [isFreeName] @1194
+    v53 = Call v52, -, v5 calleeName="keep" @1194
+    v54 = Builtin builtin=GlobalThis @1220
+    v55 = PropGet v54 key="keep" [isFreeName] @1220
+    v56 = Call v55, -, v7 calleeName="keep" @1220
+    v57 = Builtin builtin=GlobalThis @1257
+    v58 = PropGet v57 key="keep" [isFreeName] @1257
+    v59 = Call v58, -, v9 calleeName="keep" @1257
+    v60 = Builtin builtin=GlobalThis @1279
+    v61 = PropGet v60 key="print" [isFreeName] @1279
+    v62 = Construct v37 calleeName="Bases" @1296
+    v63 = Call v47, -, v62 calleeName="itself" @1285
+    v64 = String string="|" @1306
+    v65 = Construct v37 calleeName="Bases" @1321
+    v66 = Call v50, -, v65 calleeName="heirs" @1311
+    v67 = String string="|" @1331
+    v68 = Construct v37 calleeName="Bases" @1348
+    v69 = Call v56, -, v68 calleeName="without" @1336
+    v70 = String string="|" @1358
+    v71 = Construct v37 calleeName="Bases" @1377
+    v72 = Call v59, -, v71 calleeName="withClass" @1363
+    v73 = String string="|" @1387
+    v74 = Construct v44 calleeName="Belows" @1403
+    v75 = Call v53, -, v74 calleeName="others" @1392
+    v76 = Call v61, -, v63, v64, v66, v67, v69, v70, v72, v73, v75 calleeName="print" @1279
+    v77 = Undefined @1279
+    Return v77 @1279
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=1 @31
+    PropSet v0, v1 key="state" @18
+    v3 = Undefined @18
+    Return v3 @18
+}
+function f2 name="Other" module=m0 position=184 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1 @216
+    PropSet v0, v1 key="state" @203
+    v3 = Undefined @203
+    Return v3 @203
+}
+function f3 name="askItself" module=m2 position=300 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @336
+    v2 = Undefined @336
+    v3 = GetModuleVariable variable=g0 @363
+    v4 = IsPlainInstanceOf v0, v3 @336
+    v5 = ToBoolean v4 @336
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @336
+  b1(v6):
+    v7 = String string="yes " @371
+    v8 = PropGet v0 key="state" @380
+    v9 = Add v7, v8 @380
+    Jump -> next b3(v9) @380
+  b2(v10):
+    v11 = String string="no " @395
+    v12 = PropGet v0 key="state" @403
+    v13 = Add v11, v12 @403
+    Jump -> next b3(v13) @403
+  b3(v14):
+    Return v14 @403
+}
+function f4 name="askHeirs" module=m2 position=419 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @454
+    v2 = Undefined @454
+    v3 = GetModuleVariable variable=g0 @477
+    v4 = IsPlainHeirOf v0, v3 @454
+    v5 = ToBoolean v4 @454
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @454
+  b1(v6):
+    v7 = String string="yes " @485
+    v8 = PropGet v0 key="state" @494
+    v9 = Add v7, v8 @494
+    Jump -> next b3(v9) @494
+  b2(v10):
+    v11 = String string="no " @509
+    v12 = PropGet v0 key="state" @517
+    v13 = Add v11, v12 @517
+    Jump -> next b3(v13) @517
+  b3(v14):
+    Return v14 @517
+}
+function f5 name="askOther" module=m2 position=533 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @568
+    v2 = Undefined @568
+    v3 = GetModuleVariable variable=g1 @591
+    v4 = IsPlainHeirOf v0, v3 @568
+    v5 = ToBoolean v4 @568
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @568
+  b1(v6):
+    v7 = String string="yes " @600
+    v8 = PropGet v0 key="state" @609
+    v9 = Add v7, v8 @609
+    Jump -> next b3(v9) @609
+  b2(v10):
+    v11 = String string="no " @624
+    v12 = PropGet v0 key="state" @632
+    v13 = Add v11, v12 @632
+    Jump -> next b3(v13) @632
+  b3(v14):
+    Return v14 @632
+}
+function f6 name="keepsWithoutClass" module=m2 position=648 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @692
+    v2 = Undefined @692
+    v3 = GetModuleVariable variable=g0 @719
+    v4 = IsPlainInstanceOf v0, v3 @692
+    v5 = ToBoolean v4 @692
+    Branch v5 -> taken b1(| 0), notTaken b6(| 0) @692
+  b1(v6):
+    v7 = Undefined @728
+    v8 = Undefined @728
+    v9 = String string="end" @757
+    v10 = FindsDeclaredMember v0 key="end" @728
+    v11 = ToBoolean v10 @692
+    Branch v11 -> taken b2(| 0), notTaken b5(| 0) @692
+  b2(v12):
+    v13 = Undefined @767
+    v14 = Undefined @767
+    v15 = String string="start" @796
+    v16 = FindsDeclaredMember v0 key="start" @767
+    v17 = ToBoolean v16 @692
+    Branch v17 -> taken b3(| 0), notTaken b4(| 0) @692
+  b3(v18):
+    v19 = Undefined @808
+    v20 = Undefined @808
+    v21 = String string="pause" @837
+    v22 = FindsDeclaredMember v0 key="pause" @808
+    Return v22 @808
+  b4(v23):
+    Jump -> next b7(v23) @692
+  b5(v24):
+    Jump -> next b7(v24) @692
+  b6(v25):
+    Jump -> next b7(v25) @692
+  b7(v26):
+    Return v26 @808
+}
+function f7 name="keepsWithClass" module=m2 position=849 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @890
+    v2 = Undefined @890
+    v3 = GetModuleVariable variable=g0 @917
+    v4 = IsPlainInstanceOf v0, v3 @890
+    v5 = ToBoolean v4 @890
+    Branch v5 -> taken b1(| 0), notTaken b6(| 0) @890
+  b1(v6):
+    v7 = Undefined @926
+    v8 = Undefined @926
+    v9 = String string="end" @955
+    v10 = GetModuleVariable variable=g0 @962
+    v11 = FindsDeclaredMember v0, v10 key="end" @926
+    v12 = ToBoolean v11 @890
+    Branch v12 -> taken b2(| 0), notTaken b5(| 0) @890
+  b2(v13):
+    v14 = Undefined @971
+    v15 = Undefined @971
+    v16 = String string="start" @1000
+    v17 = GetModuleVariable variable=g0 @1009
+    v18 = FindsDeclaredMember v0, v17 key="start" @971
+    v19 = ToBoolean v18 @890
+    Branch v19 -> taken b3(| 0), notTaken b4(| 0) @890
+  b3(v20):
+    v21 = Undefined @1018
+    v22 = Undefined @1018
+    v23 = String string="pause" @1047
+    v24 = GetModuleVariable variable=g0 @1056
+    v25 = FindsDeclaredMember v0, v24 key="pause" @1018
+    Return v25 @1018
+  b4(v26):
+    Jump -> next b7(v26) @890
+  b5(v27):
+    Jump -> next b7(v27) @890
+  b6(v28):
+    Jump -> next b7(v28) @890
+  b7(v29):
+    Return v29 @1018
+}
+function f8 module=m2 position=57 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=1 @78
+    Return v0 @78
+}
+function f9 module=m2 position=107 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=2 @128
+    Return v0 @128
+}
+function f10 module=m2 position=157 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=3 @178
+    Return v0 @178
+}
+function f11 module=m2 position=243 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=1 @264
+    Return v0 @264
+}
+function f12 name="Below" module=m0 position=276 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @276
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @276
+    v5 = Convert v4 declared={type=L1} @276
+    Return v5 @276
+}
+function f13 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f13 visibility=Private

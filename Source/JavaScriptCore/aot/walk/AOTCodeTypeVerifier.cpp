@@ -18,7 +18,9 @@
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTTypeText.h"
+#include "MathCommon.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <optional>
 #include <wtf/BitVector.h>
@@ -39,6 +41,64 @@ static constexpr OpcodeSet opcodesHandedTheirObjectByTypeVerifier = []() constev
 static constexpr bool isTypedByResultRuleForTypeVerifier(Opcode opcode)
 {
     return resultRuleOf(opcode) != ResultRule::None && opcode != Opcode::Parameter && opcode != Opcode::Narrowed && !opcodesThatStateTypes.contains(opcode);
+}
+
+static constexpr OpcodeSet operatorsTriedOnNumbersByTypeVerifier {
+    Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Negate, Opcode::Increment, Opcode::Decrement,
+    Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift, Opcode::URShift
+};
+
+static constexpr OpcodeSet accessesByKeyOfAnyKindForTypeVerifier { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete };
+
+static double numberThatOperatorMakesForTypeVerifier(Opcode opcode, double left, double right)
+{
+    switch (opcode) {
+    case Opcode::Add:
+        return left + right;
+    case Opcode::Sub:
+        return left - right;
+    case Opcode::Mul:
+        return left * right;
+    case Opcode::Div:
+        return left / right;
+    case Opcode::Mod:
+        return std::fmod(left, right);
+    case Opcode::Negate:
+        return -left;
+    case Opcode::Increment:
+        return left + 1;
+    case Opcode::Decrement:
+        return left - 1;
+    case Opcode::BitAnd:
+        return toInt32(left) & toInt32(right);
+    case Opcode::BitOr:
+        return toInt32(left) | toInt32(right);
+    case Opcode::BitXor:
+        return toInt32(left) ^ toInt32(right);
+    case Opcode::BitNot:
+        return ~toInt32(left);
+    case Opcode::LShift:
+        return static_cast<int32_t>(toUInt32(left) << (toUInt32(right) & 31));
+    case Opcode::RShift:
+        return toInt32(left) >> (toUInt32(right) & 31);
+    case Opcode::URShift:
+        return toUInt32(left) >> (toUInt32(right) & 31);
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+static Vector<double, 5> integersTriedByTypeVerifier(const Type& operand)
+{
+    Vector<double, 5> tried;
+    if (!(operand.primitives & Primitive::Integer))
+        return tried;
+    Range written = operand.integers.intersectWith(Range::exact());
+    for (int64_t integer : { written.minimum, written.maximum, int64_t { -1 }, int64_t { 0 }, int64_t { 1 } }) {
+        if (written.contains(integer))
+            tried.append(static_cast<double>(integer));
+    }
+    return tried;
 }
 
 namespace {
@@ -65,7 +125,6 @@ public:
     TypeID readByNameOffObjectsOf(TypeLevel level, LayoutID layout, PropertyKeyID key) const final { return m_positionsOfWalk.readByNameOffObjectsOf(level, layout, key); }
     LayoutID classAbove(LayoutID classLayout) const final { return m_positionsOfWalk.classAbove(classLayout); }
     TypeID property(TypeLevel level, ObjectID object, PropertyKeyID key) const final { return m_positionsOfWalk.property(level, object, key); }
-    TypeID contents(TypeLevel level, ObjectID object, ContentsSlot slot) const final { return m_positionsOfWalk.contents(level, object, slot); }
     TypeID result(TypeLevel level, FunctionID function, uint32_t resultIndex) const final { return m_positionsOfWalk.result(level, function, resultIndex); }
     TypeID resultOfBodyThatNeverSuspends(TypeLevel level, FunctionID function) const final { return m_positionsOfWalk.resultOfBodyThatNeverSuspends(level, function); }
     TypeID entryParameter(TypeLevel level, FunctionID function, uint32_t entryParameterIndex) const final { return m_positionsOfWalk.entryParameter(level, function, entryParameterIndex); }
@@ -142,9 +201,11 @@ private:
     TypeID typeOfResultAskedFor(const Operation& resultAt);
     TypeID typeByResultRule(ValueID, const Operation&);
     void verifyTypeReadFromPayload(BlockID, ValueID, const Operation&);
+    void verifyThatTypeHoldsWhatOperatorMakes(BlockID, ValueID, const Operation&);
     void deriveOperation(BlockID, ValueID);
     void deriveConstants();
     void deriveOperations(BlockID);
+    void verifyEndBehindCheck(BlockID);
 
     TypeID typeLaidDownAtEntry(unsigned entryParameterIndex) const;
     TypeID entryParameterTypeFromArrivals(unsigned entryParameterIndex) const;
@@ -484,7 +545,7 @@ TypeID CodeTypeVerifier::typeByResultRule(ValueID id, const Operation& operation
 }
 
 static constexpr OpcodeSet opcodesWhosePayloadIsHeldByTypeVerifier {
-    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
+    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::GetValueAtSiteOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
 };
 static_assert([]() consteval {
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -502,6 +563,7 @@ void CodeTypeVerifier::verifyTypeReadFromPayload(BlockID block, ValueID id, cons
     case Opcode::GetHeapFrameWord:
         return;
     case Opcode::GetStaticFieldOrAbsent:
+    case Opcode::GetValueAtSiteOrAbsent:
         if (!m_types.isSubset(m_types.withPrimitives(TypeTable::anything, Primitive::Absent), stated))
             fail(block, id, "the payload says more of what a lookup finds than that it is a value or absent"_s);
         return;
@@ -518,11 +580,53 @@ void CodeTypeVerifier::verifyTypeReadFromPayload(BlockID block, ValueID id, cons
     }
 }
 
+void CodeTypeVerifier::verifyThatTypeHoldsWhatOperatorMakes(BlockID block, ValueID id, const Operation& operation)
+{
+    bool isBinary = numberOfNamedOperandsOf(operation.opcode) == 2;
+    if (!m_operandTypes[0] || (isBinary && !m_operandTypes[1]))
+        return;
+    Vector<double, 5> onLeft = integersTriedByTypeVerifier(m_types.at(m_operandTypes[0]));
+    Vector<double, 5> onRight = isBinary ? integersTriedByTypeVerifier(m_types.at(m_operandTypes[1])) : Vector<double, 5> { 0 };
+    for (double left : onLeft) {
+        for (double right : onRight) {
+            double made = numberThatOperatorMakesForTypeVerifier(operation.opcode, left, right);
+            if (m_types.isSubset(m_types.number(made), operation.type))
+                continue;
+            StringPrintStream out;
+            printPlace(out, block, id);
+            out.print(": the record says "_s);
+            printTypeInFailure(out, operation.type);
+            out.print(isBinary ? ", and its operands may hold "_s : ", and its operand may hold "_s, static_cast<int64_t>(left));
+            if (isBinary)
+                out.print(" and "_s, static_cast<int64_t>(right));
+            out.print(", of which the operator makes "_s);
+            if (std::isnan(made))
+                out.print("NaN"_s);
+            else if (isTrackedInteger(made))
+                out.print(static_cast<int64_t>(made));
+            else
+                out.print(made);
+            m_failure = out.toString();
+            return;
+        }
+    }
+}
+
 void CodeTypeVerifier::deriveOperation(BlockID block, ValueID id)
 {
     const Operation& operation = m_code.at(id);
     if (!collectTypesOfOperands(block, id, operation, m_operandTypes))
         return;
+    if (Operation::opcodesWithKeyIsIntegral.contains(operation.opcode) && operation.keyIsIntegral()) {
+        ValueID key = accessesByKeyOfAnyKindForTypeVerifier.contains(operation.opcode) ? operation.propertyOperand() : operation.positionOperand();
+        if (!m_types.at(m_derivedTypes[key.index()]).isNumberWithoutFraction())
+            return fail(block, id, "a key is said to be integral, and its type holds more than numbers without a fraction"_s, key);
+    }
+    if (operatorsTriedOnNumbersByTypeVerifier.contains(operation.opcode) && operation.type) {
+        verifyThatTypeHoldsWhatOperatorMakes(block, id, operation);
+        if (hasFailed())
+            return;
+    }
 
     TypeID derived;
     if (operation.opcode == Opcode::Narrowed)
@@ -541,6 +645,26 @@ void CodeTypeVerifier::deriveOperation(BlockID block, ValueID id)
         noteAccessToHeapWord(block, id, operation);
 }
 
+void CodeTypeVerifier::verifyEndBehindCheck(BlockID id)
+{
+    const Block& block = m_code.at(id);
+    ValueID last = m_code.lastOperationOf(id);
+    if (!last || !block.hasEnded() || block.terminator.kind != TerminatorKind::Unreachable)
+        return;
+    const Operation& check = m_code.at(last);
+    if (check.opcode != Opcode::CheckProof || isNeverType(check.checkedType()))
+        return;
+    ValueID asked = check.valueOperand();
+    if (m_code.at(asked).opcode == Opcode::Box)
+        asked = m_code.at(asked).valueOperand();
+    const Operation& value = m_code.at(asked);
+    if (!m_code.isConstant(asked) && (value.representation == Representation::JSValue || holdsCells(value.representation)))
+        return;
+    TypeID said = m_code.isConstant(asked) || value.representation == Representation::Void ? value.type : widestTypeOf(value.representation);
+    if (!said || !isNeverType(m_types.intersectionOf(said, check.checkedType())))
+        fail(id, last, "a block ends behind a check that what comes might pass"_s, asked);
+}
+
 void CodeTypeVerifier::deriveConstants()
 {
     for (uint32_t index = 0; index < m_code.numberOfValues() && !hasFailed(); ++index) {
@@ -556,6 +680,8 @@ void CodeTypeVerifier::deriveOperations(BlockID block)
         m_operationsOfBlock.append(id);
     for (size_t index = m_operationsOfBlock.size(); index-- && !hasFailed();)
         deriveOperation(block, m_operationsOfBlock[index]);
+    if (!hasFailed())
+        verifyEndBehindCheck(block);
 }
 
 bool CodeTypeVerifier::takesEntryParametersOfFunction() const

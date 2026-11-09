@@ -1,0 +1,9 @@
+# places that say what the order of the requests says already are not written
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 1
+
+module m0 path="main" displayPath="main" requests=[{target=m1 isDynamicStarExport=true completes=true starPlace=0}, {target=m2 isDynamicStarExport=true completes=true starPlace=1}]
+module m1 path="first" displayPath="first"
+module m2 path="second" displayPath="second"
+module m3 path="third" displayPath="third"
+entry module=m0

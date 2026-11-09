@@ -1,0 +1,63 @@
+# a block may be called rare because it was built small, not because it is seldom run: every block of the closed copy of a loop is rare, and that copy runs on every turn
+# once the front of the loop has failed. Guesses are shut in such a copy, so the walk builds no test for no then in front of the resolution of a promise:
+# there the operation keeps its form in line, the question and the store. As a call of the run time it cost 145 instructions more on every turn.
+# async function wrap(x) { return x; }
+# function mixWords(list, holders, kept, n, k) { for (let i = 0; i < n; i++) { list[i & 7] = (list[i & 7] + k + i) >>> 0; kept[i & 7] = wrap(holders[i & 7]); } return list[3]; }  sink(mixWords);
+# OPTIONS: report=Flow mechanisms=all
+# RUN: bytes-by-form Body
+# CHECK-NOT: the build failed
+# CHECK-NOT: ResolvePromise {{*}} RareBlock
+# CHECK: ResolvePromise NeedsTest Anywhere Open 1
+# CHECK-NOT: ResolvePromise {{*}} RareBlock
+# CHECK-NOT: not named:
+# CHECK: every form is named
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="wrap" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="mixWords" module=m0 length=5 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|Array<undefined|null|Promise> flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|string|Array, v2: undefined|null|Array<undefined|null|Promise>, v3: anything, v4: anything):
+    v5 = Integer
+    v6 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v6)
+  b1(v7):
+    LoopHint
+    v9 = Less v7, v3
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Integer integer=7
+    v11 = BitAnd v7, v10
+    v12 = Integer integer=7
+    v13 = BitAnd v7, v12
+    v14 = ElemGet v0, v13
+    v15 = Add v14, v4
+    v16 = Add v15, v7
+    v17 = Integer
+    v18 = URShift v16, v17
+    ElemSet v0, v11, v18
+    v20 = Integer integer=7
+    v21 = BitAnd v7, v20
+    v22 = NewClosure function=f1
+    v23 = Integer integer=7
+    v24 = BitAnd v7, v23
+    v25 = ElemGet v1, v24
+    v26 = Call v22, -, v25 calleeName="wrap"
+    ElemSet v2, v21, v26
+    v28 = Increment v7
+    v29 = Convert v28 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v29)
+  b3():
+    v30 = Integer integer=3
+    v31 = ElemGet v0, v30
+    Return v31
+}

@@ -45,17 +45,18 @@ function f4 name="later" flags=[IsAsync] results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral statements = R"JS(
+static constexpr ASCIILiteral statements = COUNTED_CALLS(R"("PrepareBoundFunctionAllocation")") R"JS(
+const prepared = () => countsCalls ? ", " + countedCalls() : "";
 const describe = bound => [bound.name, bound.length, typeof bound, Object.getOwnPropertyNames(bound).sort().join("+")].join(" ");
 globalThis.publish = (bindThis, bindThree, sum, later) => {
-    print("host function: " + describe(bindThis(Math.max, null)));
-    print("async function: " + describe(bindThis(later, null)));
-    print("object: " + (() => { try { return bindThis({ bind: Function.prototype.bind }, null); } catch (error) { return error.constructor.name; } })());
+    print("host function: " + describe(bindThis(Math.max, null)) + prepared());
+    print("async function: " + describe(bindThis(later, null)) + prepared());
+    print("object: " + (() => { try { return bindThis({ bind: Function.prototype.bind }, null); } catch (error) { return error.constructor.name; } })() + prepared());
     const boundSum = bindThis(sum, null);
-    print("bound function: " + describe(bindThis(boundSum, null)));
+    print("bound function: " + describe(bindThis(boundSum, null)) + prepared());
     for (let i = 0; i < 3; i++)
-        print("closure: " + describe(bindThis(sum, "a")) + ", " + bindThis(sum, "a")("b", "c", "d", "e"));
-    print("three arguments: " + describe(bindThree(sum, "a", "b", "c", "d")) + ", " + bindThree(sum, "a", "b", "c", "d")("e"));
+        print("closure: " + describe(bindThis(sum, "a")) + ", " + bindThis(sum, "a")("b", "c", "d", "e") + prepared());
+    print("three arguments: " + describe(bindThree(sum, "a", "b", "c", "d")) + ", " + bindThree(sum, "a", "b", "c", "d")("e") + prepared());
     sum.extra = 1;
     print("closure with a property: " + describe(bindThis(sum, "a")) + ", " + bindThis(sum, "a")("b", "c", "d", "e"));
 };
@@ -74,6 +75,7 @@ static void testBindFoundByName()
         "three arguments: bound sum 1 function length+name, abcde\n"
         "closure with a property: bound sum 4 function length+name, abcde\n"_s,
         { }, statements);
+    AOT_TEST_CHECK(outputOfProgramInShell(programText, { }, statements, { "--aotCountsPath=/dev/null"_s }, waysToCompilePrograms[0]) == "host function: bound max 2 function length+name, 0\nasync function: bound later 0 function length+name, 0\nobject: TypeError, 0\nbound function: bound bound sum 4 function length+name, 1\nclosure: bound sum 4 function length+name, abcde, 1\nclosure: bound sum 4 function length+name, abcde, 1\nclosure: bound sum 4 function length+name, abcde, 1\nthree arguments: bound sum 1 function length+name, abcde, 1\nclosure with a property: bound sum 4 function length+name, abcde\n"_s);
 }
 
 static constexpr ASCIILiteral programTextOfCallsByValue = R"IR(# LIBRARY: own
@@ -105,9 +107,20 @@ function f3 name="callWithTwo" parameters=[{type=anything}, {type=anything}, {ty
 )IR"_s;
 
 static constexpr ASCIILiteral statementsComparingWithHostFunctions = R"JS(
+const thenOfPromises = Promise.prototype.then;
+const stateOf = promise => {
+    let state = "pending";
+    thenOfPromises.call(promise, value => { state = "fulfilled " + show(value); }, reason => { state = "rejected " + show(reason); });
+    drainMicrotasks();
+    return state;
+};
 const show = value => {
     if (typeof value === "string")
         return JSON.stringify(value);
+    if (value instanceof Promise)
+        return String(value.constructor.name) + "<" + stateOf(value) + ">";
+    if (typeof value === "function" && value.seen)
+        return "handler" + show(value.seen);
     if (Object.is(value, -0))
         return "-0";
     if (Array.isArray(value))
@@ -210,6 +223,24 @@ globalThis.publish = (...calls) => {
 
     const testers = [() => /a/, () => /a/g, () => /a/y, () => /(b)c/, () => /\ud83d/u, atLastIndex(/a/g, 1), atLastIndex(/a/g, 100), atLastIndex(/a/y, -1), atLastIndex(/a/g, "3"), atLastIndex(/a/, { valueOf: () => { throw new RangeError(); } }), atLastIndex(/a/g, { valueOf: () => { throw new RangeError(); } }), () => Object.freeze(/a/g), () => Object.freeze(/z/g), withOwnExec, () => new Pattern("a"), () => ({ exec: () => key }), () => key, () => "a", () => null];
     each("RegExp.prototype.test", RegExp.prototype.test, testers, ["", "a", "abcabc", rope("xx", "abc")(), "\u{1f600}", "own", 5, null, undefined, key, symbolKey].map(value => [value]));
+
+    const later = settle => () => new Promise((resolve, reject) => { thenOfPromises.call(Promise.resolve(), () => settle(resolve, reject)); });
+    const promises = [() => Promise.resolve(1), () => Promise.reject(2), () => new Promise(() => { }), later(resolve => resolve(3)), later((resolve, reject) => reject(4)), later(resolve => resolve(Promise.reject(5))),
+        () => { const made = Promise.resolve(6); made.then(() => { }); return made; }, () => { const made = later(resolve => resolve(7))(); made.then(() => { }); return made; },
+        () => Object.assign(Promise.resolve(8), { extra: 1 }), () => new (class Below extends Promise { })(resolve => resolve(9)), () => Object.assign(Promise.resolve(10), { then: () => "own" }),
+        () => Object.assign(Promise.resolve(11), { constructor: { [Symbol.species]: class Other extends Promise { } } }), () => Object.assign(Promise.reject(12), { constructor: undefined }),
+        () => Object.setPrototypeOf(Promise.resolve(13), { }), () => ({ then: () => "thenable" }), () => key, () => 1, () => undefined];
+    const handlerThat = answer => fresh(() => {
+        const handler = value => { handler.seen.push(value); return answer(value); };
+        return Object.assign(handler, { seen: [] });
+    });
+    const handlers = [handlerThat(value => value + 100), handlerThat(value => { throw value; }), handlerThat(value => Promise.resolve(value)), handlerThat(value => Promise.reject(value)), handlerThat(() => ({ then: resolve => resolve("thenable") })),
+        handlerThat(() => { }), fresh(() => Math.abs), fresh(() => (value => value).bind(null)), fresh(() => new Proxy(value => value, { })), fresh(() => class { }), undefined, null, 1, "a", key];
+    const bothKinds = () => {
+        each("Promise.prototype.then", thenOfPromises, promises, [[], ...handlers.map(handler => [handler]), ...handlers.flatMap(first => handlers.slice(0, 3).concat([undefined]).map(second => [first, second]))]);
+        each("Promise.prototype.catch", Promise.prototype.catch, promises, [[], ...handlers.map(handler => [handler]), [handlers[0], handlers[1]]]);
+    };
+    bothKinds();
 
     print("done");
 };

@@ -66,26 +66,26 @@ namespace JSC {
 @end
 */
 
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetInt8);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetInt16);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetInt32);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetUint8);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetUint16);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetUint32);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetInt8);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetInt16);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetInt32);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetUint8);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetUint16);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetUint32);
 static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetFloat16);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetFloat32);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetFloat64);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetFloat32);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetFloat64);
 static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetBigInt64);
 static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncGetBigUint64);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetInt8);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetInt16);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetInt32);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetUint8);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetUint16);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetUint32);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetInt8);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetInt16);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetInt32);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetUint8);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetUint16);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetUint32);
 static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetFloat16);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetFloat32);
-static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetFloat64);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetFloat32);
+JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetFloat64);
 static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetBigInt64);
 static JSC_DECLARE_HOST_FUNCTION(dataViewProtoFuncSetBigUint64);
 static JSC_DECLARE_HOST_FUNCTION(dataViewProtoGetterByteLength);

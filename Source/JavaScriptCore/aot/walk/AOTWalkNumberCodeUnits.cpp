@@ -30,7 +30,7 @@ Reference codeUnitBesideCharCode(Walker& walker, Reference number)
     return codeUnitOfCharCodeInSight(walker, number);
 }
 
-Reference codeUnitBesideCharacter(Walker& walker, Reference character)
+Reference codePointBesideCharacter(Walker& walker, Reference character)
 {
     TypeID id = character.isValue() ? walker.typeOf(character) : TypeID();
     if (!id)
@@ -38,7 +38,7 @@ Reference codeUnitBesideCharacter(Walker& walker, Reference character)
     Type type = walker.types().at(id);
     if (type.isNever() || !type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined))
         return { };
-    return codeUnitOfCharacterInSight(walker, character);
+    return codePointOfCharacterInSight(walker, character);
 }
 
 static bool isNeverNegativeInCodeUnits(Walker& walker, Reference integer)

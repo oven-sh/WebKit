@@ -63,8 +63,24 @@ StubSignature callConventionSignatureWithCount()
     return signature;
 }
 
-StubSignature signatureOfCallValue(StubKey) { return callConventionSignature({ }); }
-StubSignature signatureOfCallValueWithoutThis(StubKey) { return callConventionSignature({ }); }
+StubSignature signatureOfCallValue(StubKey)
+{
+    StubSignature signature = callConventionSignature({ });
+    if constexpr (isX86_64()) {
+        static_assert(!isX86_64() || thisGPR == GPRInfo::returnValueGPR);
+        signature.filledOutOfResultInFront = calleeGPR;
+        signature.movedIntoResultInFront = gprOf(StubRegister::A2);
+    }
+    return signature;
+}
+
+StubSignature signatureOfCallValueWithoutThis(StubKey)
+{
+    StubSignature signature = callConventionSignature({ });
+    if constexpr (isX86_64())
+        signature.filledOutOfResultInFront = calleeGPR;
+    return signature;
+}
 StubSignature signatureOfCallValueCell(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueCellWithoutThis(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueFunctionOfEngine(StubKey) { return callConventionSignature({ }); }
@@ -76,14 +92,6 @@ StubSignature signatureOfCallBoundFunction(StubKey) { return callConventionSigna
 StubSignature signatureOfConstructValue(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfCallEngineCallee(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfCallEngineFunction(StubKey) { return callConventionSignatureWithCount(); }
-
-StubSignature signatureOfCallResolvedValue(StubKey)
-{
-    StubSignature signature = callConventionSignature({ });
-    signature.addOperand(valueEntryGPR);
-    return signature;
-}
-
 
 StubSignature signatureOfResolveCallValue(StubKey)
 {
@@ -367,6 +375,10 @@ static void emitCallNotPlainClosure(StubAssembler& jit, const CallRegisters& reg
     loadStructure(jit, calleeGPR, registers.word);
     jit.loadPtr(Address(registers.word, Structure::classInfoOffset()), registers.scratch);
     isBoundFunction.append(jit.branchPtr(CCallHelpers::Equal, registers.scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionClassInfo))));
+    for (Entry classInfo : { Entry::BooleanConstructorClassInfo, Entry::NumberConstructorClassInfo, Entry::StringConstructorClassInfo }) {
+        jit.loadRuntimePointer(classInfo, registers.word);
+        jit.linkToStub(jit.branchPtr(CCallHelpers::Equal, registers.scratch, registers.word), callInternalFunction(CodeSpecializationKind::CodeForCall, count));
+    }
     if (jit.options().imageHasWebAssembly) {
         jit.loadRuntimePointer(Entry::WebAssemblyFunctionClassInfo, registers.word);
         isFunctionOfEngine.append(jit.branchPtr(CCallHelpers::Equal, registers.scratch, registers.word));
@@ -414,10 +426,20 @@ void generateCallValue(StubAssembler& jit)
     jit.move(TrustedImm32(count), countGPR);
     jit.jumpToStub(callEngineFunction());
 
-    jit.bindEntry(callValueWithoutThis(count, jit.callPosition()));
-    jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-    jit.bindEntry(callValue(count, jit.callPosition()));
-    jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
+    if constexpr (isX86_64()) {
+        jit.bindEntryBehindItsHead(callValueWithoutThis(count, jit.callPosition()));
+        jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
+        jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
+        Jump isNoCell = jit.jump();
+        jit.bindEntryBehindItsHead(callValue(count, jit.callPosition()));
+        jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
+        isNoCell.link(&jit);
+    } else {
+        jit.bindEntry(callValueWithoutThis(count, jit.callPosition()));
+        jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
+        jit.bindEntry(callValue(count, jit.callPosition()));
+        jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
+    }
     jit.callOperationAndReturn(Entry::operationAOTThrowUnlessCallable, { .returns = OperationCall::Returns::Void, .secondArgumentIn = calleeGPR });
 }
 
@@ -1093,18 +1115,26 @@ void generateResolveCallValue(StubAssembler& jit)
     loadStructure(jit, calleeGPR, word);
     jit.loadPtr(Address(word, Structure::classInfoOffset()), word);
     isResolvedAtEachCall.append(jit.branchPtr(CCallHelpers::Equal, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionClassInfo))));
+    for (Entry classInfo : { Entry::BooleanConstructorClassInfo, Entry::NumberConstructorClassInfo, Entry::StringConstructorClassInfo }) {
+        jit.loadRuntimePointer(classInfo, scratch);
+        Jump isAnotherClass = jit.branchPtr(CCallHelpers::NotEqual, word, scratch);
+        jit.returnStubAddress(callInternalFunction(CodeSpecializationKind::CodeForCall, count));
+        isAnotherClass.link(&jit);
+    }
+    if (jit.options().imageHasWebAssembly) {
+        jit.loadRuntimePointer(Entry::WebAssemblyFunctionClassInfo, scratch);
+        isResolvedAtEachCall.append(jit.branchPtr(CCallHelpers::Equal, word, scratch));
+    }
     jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), word);
     isResolvedAtEachCall.append(jit.branchTestPtr(CCallHelpers::NonZero, word, TrustedImm32(JSFunction::rareDataTag)));
-    isResolvedAtEachCall.append(jit.branchIfType(word, NativeExecutableType));
+    Jump isNative = jit.branchIfType(word, NativeExecutableType);
     jit.returnStubAddress(callValueFunctionOfEngine(count));
+
+    isNative.link(&jit);
+    jit.returnStubAddress(callHostFunction(count));
 
     isResolvedAtEachCall.link(&jit);
     jit.returnStubAddress(callValue(count));
-}
-
-void generateCallResolvedValue(StubAssembler& jit)
-{
-    jit.farJump(jit.operand(0), JSEntryPtrTag);
 }
 
 } } // namespace JSC::AOT

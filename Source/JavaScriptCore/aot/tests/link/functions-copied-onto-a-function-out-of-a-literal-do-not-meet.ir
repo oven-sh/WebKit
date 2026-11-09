@@ -1,0 +1,39 @@
+# function Holder() {} Object.assign(Holder, { used, unused }); Holder.used()
+# The literal is written for the call: it spells the stores that the copy makes: Holder.used = used; Holder.unused = unused.
+# If the copy read "any field of the source", the two functions would meet at one node, be lost, and go to unseen code with the target: both would be reached.
+# The controls stand beside this file: functions-copied-onto-a-function-out-of-*.ir.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known one-callee
+# CHECK: function f3 unreached
+
+layout L0 fields=[{key="used" declared={type=anything}}, {key="unused" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v1, v2 layout=L0 fields=[0, 1]
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectAssign
+    v6 = Call v5, v4, v0, v3 calleeKey="assign" calleeName="Object.assign"
+    v7 = PropGet v0 key="used"
+    v8 = Call v7, v0 calleeKey="used"
+    Return v8
+}
+function f1 name="Holder" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="used" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="unused" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

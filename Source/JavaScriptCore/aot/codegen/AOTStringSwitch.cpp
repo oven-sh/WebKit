@@ -243,6 +243,16 @@ private:
 
         static_assert(maxLengthOfTextComparedInPlace <= mostCharactersWrittenDown);
         m_out.appendTo(needsStub);
+        if (generator().isInLoop(m_terminator.block())) {
+            build().statistics().count(StatisticID::SwitchesThatAskLengthsOfRopesInFront);
+            unsigned shortest = cases[0]->text.length();
+            unsigned longest = shortest;
+            for (const SwitchCase* switchCase : cases) {
+                shortest = std::min(shortest, switchCase->text.length());
+                longest = std::max(longest, switchCase->text.length());
+            }
+            m_strings.continueIf(belowOrEqual(sub(m_strings.lengthOf(string), word32(static_cast<int32_t>(shortest))), word32(static_cast<int32_t>(longest - shortest))), m_otherwise);
+        }
         Pointer answer(callStub(m_terminator, narrowCharactersOfString(), { string.value() }).first);
         Word32 lengthWrittenDown(loadBytes(m_out, sizeof(uint32_t), m_out.address(m_heaps.characters8.atAnyIndex(), answer.value(), OBJECT_OFFSETOF(NarrowCharactersOfString, length))));
         goOnWith(Pointer(m_out.add(answer.value(), m_out.constIntPtr(OBJECT_OFFSETOF(NarrowCharactersOfString, characters)))), lengthWrittenDown);

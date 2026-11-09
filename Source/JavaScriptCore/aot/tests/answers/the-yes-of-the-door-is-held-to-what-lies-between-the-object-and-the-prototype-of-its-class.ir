@@ -1,0 +1,29 @@
+# BEHIND THE YES OF `$isPlainInstanceOf` THE LIBRARY's OWN TEXT LEAVES READS OUT: it does not look for a private name that it knows it has not stored, because the yes promises that nobody laid the name between the object and the prototype of its class.
+# No record stands there for any net to ask, and the yes and the guards behind it read one record of the run time.
+# Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) and under testing=CheckWalkAtRunTime the yes is held to the objects themselves: each object between the object and the first prototype of a class above it is asked, by an inquiry, under the name of each field of the object's layout. 3841 says "nothing, answered by the yes of the door".
+# RUN(EMIT): emit f3 mechanisms=all testing=CheckWalkAtRunTime
+# EMIT: = Const32(528129)
+# RUN(HARDENED): emit f3 mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: = Const32(528129)
+# RUN(BARE): emit f3 mechanisms=all
+# BARE-NOT: = Const32(528129)
+# What lies between under another name is no matter of the door's.
+# RUN(OTHERNAME): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.send = function () { }; Object.setPrototypeOf(response, Object.create(upper)); }; later = function () { };
+# OTHERNAME: yes 1 undefined | yes 1 undefined
+# OTHERNAME-NEXT: yes 1 undefined | yes 1 undefined
+# OTHERNAME-NEXT: yes 1 undefined | yes 1 undefined
+# OTHERNAME-NEXT: yes 1 number | yes 1 undefined | nothing caught
+# OTHERNAME-NEXT: exited with 0
+# The lie, testing=GuardsAndFactsAreTakenToHold: the door takes its guards to hold. By itself it says yes in silence, and the read behind it finds the slot empty and answers undefined where the language finds the function: plain says "no function".
+# RUN(BITES): run-in-shell mechanisms=all testing=GuardsAndFactsAreTakenToHold keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.type = function () { }; Object.setPrototypeOf(response, Object.create(upper)); }; later = function () { };
+# BITES: yes 1 undefined | yes 1 undefined
+# BITES-NEXT: yes 1 undefined | yes 1 undefined
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.type = function () { }; Object.setPrototypeOf(response, Object.create(upper)); }; later = function () { };
+# ASKEDLIE: yes 1 undefined | yes 1 undefined
+# ASKEDLIE-NEXT: AOT: the yes to the question whether an object is a plain instance of its class promises that nothing lies between the object and the prototype of its class under the name of a field, and an object between them, asked under the name type, answers a value. This is a bug in Bun.
+# ASKEDLIE: crashed with
+# RUN(HARDENEDLIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.type = function () { }; Object.setPrototypeOf(response, Object.create(upper)); }; later = function () { };
+# HARDENEDLIE: yes 1 undefined | yes 1 undefined
+# HARDENEDLIE-NEXT: AOT: the yes to the question whether an object is a plain instance of its class promises that nothing lies between the object and the prototype of its class under the name of a field, and an object between them, asked under the name type, answers a value. This is a bug in Bun.
+# HARDENEDLIE: crashed with
+# PROGRAM-OF: whatever-lies-between-an-object-and-its-prototype-under-the-name-of-a-field-ends-the-door.ir

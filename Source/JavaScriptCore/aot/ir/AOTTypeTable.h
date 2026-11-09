@@ -173,6 +173,7 @@ public:
 
     Type at(TypeID) const;
     const Type& typeKeptAt(TypeID) const;
+    JS_EXPORT_PRIVATE const Type& typeKeptBeforeFreezeAt(TypeID) const;
     static Type typeInID(TypeID);
     static constexpr uint32_t positionInProgramOf(TypeID id) { return id.bits() - (static_cast<uint32_t>(IDHome::Program) << idHomeShift); }
     TypeID typeOfLiteralString(StringID string) const { return string.index() < m_typesOfLiteralStrings.size() ? m_typesOfLiteralStrings[string.index()] : TypeID(); }
@@ -188,6 +189,8 @@ public:
     SetView<PropertyKeyID, KeySetID> at(KeySetID set) const { return SetView<PropertyKeyID, KeySetID>(m_keySets.viewOf(set.bits())); }
     std::span<const ClassPart> at(ClassPartsID) const;
     const PropertyKey& at(PropertyKeyID) const;
+    JS_EXPORT_PRIVATE void keepAddressesOfPropertyKeys();
+    JS_EXPORT_PRIVATE void keepAddressesOfTypes();
 
     TypeID typeOfWireIndex(uint32_t index) const { return m_typeOfWireIndex[index]; }
     std::span<const TypeID> typesOfWireIndexes() const LIFETIME_BOUND { return m_typeOfWireIndex.span(); }
@@ -216,7 +219,13 @@ public:
     }
     std::optional<PropertyKeyID> find(const PropertyKey&) const;
 
-    ProvenInEveryVersion provenTypeOf(const DeclaredType&) const;
+    ALWAYS_INLINE ProvenInEveryVersion provenTypeOf(const DeclaredType& declared) const
+    {
+        if (std::optional<ProvenInEveryVersion> established = declared.established())
+            return *established;
+        return provenTypeOfWhatIsOnlyExpected(declared);
+    }
+    ProvenInEveryVersion provenTypeOfWhatIsOnlyExpected(const DeclaredType&) const;
 
     void beginKeepingMemosAtRest();
     void invalidateMemosAtRest();
@@ -254,7 +263,7 @@ private:
 
     std::span<const ClassPart> classPartsKeptAt(ClassPartsID) const;
     const PropertyKey& propertyKeyKeptAt(PropertyKeyID) const;
-    const PropertyKey& propertyKeyOnceFrozenAt(uint32_t position) const;
+    const PropertyKey& propertyKeyFoundByAddressAt(uint32_t position) const;
 
     struct MemosOfArena {
         IDPairMemo types;
@@ -277,6 +286,8 @@ private:
     std::unique_ptr<SharedAnswers> m_sharedAnswers;
     InternedRecords<Type> m_types;
     Vector<const Type*> m_typesOnceFrozen;
+    uint32_t m_numberOfTypesFoundByAddress { 0 };
+    std::array<uintptr_t, numberOfInternedSegments> m_addressesOfPositionZeroInTypeSegments { };
     std::atomic<unsigned> m_numberOfRoundsWithoutAdditions { 0 };
     IDSetTable m_layoutSets { IDSetForm::ChunksWithLazyList, 0 };
     IDSetTable m_objectSets { IDSetForm::ListsAndChunks, wordsOfObjectSetSummary };
@@ -284,7 +295,7 @@ private:
     IDSetTable m_keySets { IDSetForm::ListsAndChunks, 0 };
     InternedWordLists m_classParts;
     InternedRecords<PropertyKey> m_propertyKeys;
-    uint32_t m_numberOfPropertyKeysOnceFrozen { 0 };
+    uint32_t m_numberOfPropertyKeysFoundByAddress { 0 };
     std::array<uintptr_t, numberOfInternedSegments> m_addressesOfPositionZeroInKeySegments { };
     uint32_t m_numberOfKeysWithStableNumbers { UINT32_MAX };
     Vector<uint8_t> m_locationBitsOfKeys;
@@ -297,8 +308,7 @@ ALWAYS_INLINE const Type& TypeTable::typeKeptAt(TypeID id) const
     uint32_t position = positionInProgramOf(id);
     if (position < m_typesOnceFrozen.size()) [[likely]]
         return *m_typesOnceFrozen[position];
-    RELEASE_ASSERT(liesInProgram(id));
-    return m_types.at(position);
+    return typeKeptBeforeFreezeAt(id);
 }
 
 ALWAYS_INLINE Type TypeTable::typeInID(TypeID id)
@@ -325,7 +335,7 @@ inline std::span<const ClassPart> TypeTable::at(ClassPartsID id) const
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-ALWAYS_INLINE const PropertyKey& TypeTable::propertyKeyOnceFrozenAt(uint32_t position) const
+ALWAYS_INLINE const PropertyKey& TypeTable::propertyKeyFoundByAddressAt(uint32_t position) const
 {
     return *reinterpret_cast<const PropertyKey*>(m_addressesOfPositionZeroInKeySegments.data()[internedSegmentOf(position)] + static_cast<uintptr_t>(position) * sizeof(PropertyKey));
 }
@@ -334,8 +344,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 ALWAYS_INLINE const PropertyKey& TypeTable::at(PropertyKeyID key) const
 {
-    if (key.bits() < m_numberOfPropertyKeysOnceFrozen) [[likely]]
-        return propertyKeyOnceFrozenAt(key.bits());
+    if (key.bits() < m_numberOfPropertyKeysFoundByAddress) [[likely]]
+        return propertyKeyFoundByAddressAt(key.bits());
     return propertyKeyKeptAt(key);
 }
 

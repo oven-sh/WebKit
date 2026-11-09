@@ -2,12 +2,12 @@
 # function add(a, b) { return a + b; }  function less(a, b) { return a - b; }  function big(a, b) { return a * b; }  add(1, 2);  add("a", 1);  less(1, 2);  less("7", 1);  big(2n, 3n);  big(2, 3);
 # RUN: link functions mechanisms=all
 # CHECK: function f1 {{*}}result=number|string returns
-# CHECK-NEXT: parameter 0 {{*}}proven=i32|string
-# CHECK-NEXT: parameter 1 {{*}}proven=i32
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]|string
+# CHECK-NEXT: parameter 1 {{*}}proven=int[0, 2147483647]
 # CHECK: function f2 {{*}}result=number returns
-# CHECK-NEXT: parameter 0 {{*}}proven=i32|string
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]|string
 # CHECK: function f3 {{*}}result=number|bigint returns
-# CHECK-NEXT: parameter 0 {{*}}proven=i32|bigint
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]|bigint
 
 variable g0 name="add" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="less" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]

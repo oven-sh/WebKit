@@ -12,17 +12,20 @@
 #include "AOTClassPrototype.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
+#include "AOTCompiledStructure.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectWords.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
@@ -96,18 +99,39 @@ static JSObject* createExtraPropertiesWithElement(Instance* instance, uint32_t i
     return JSFinalObject::createWithButterfly(vm, instance->realm.extraPropertiesWithElementsStructure, butterfly);
 }
 
-static constexpr uint32_t maxIndexOfFirstElementStoredContiguously = 7;
 
-bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
+static void rememberStructureWithFirstElement(Instance* instance, const CompiledStructure& before, const CompiledStructure& after, const JSObject& extra)
+{
+    Structure* withElements = instance->realm.extraPropertiesWithElementsStructure;
+    if (extra.structure() != withElements || !before.extraPropertiesSlot() || before.hasOtherPrototype() || before.hasKeyOrderOfOneObject())
+        return;
+    if (before.storedPrototype() != JSValue(instance->realm.objectPrototype) || before.typeInfoBlob() != after.typeInfoBlob())
+        return;
+    EncodedJSValue inPlaceOfPrototype = std::bit_cast<EncodedJSValue>(withElements);
+    std::span { instance->objects.prototypeTransitions, numberOfPrototypeTransitions }[indexOfPrototypeTransition(before.id().bits(), inPlaceOfPrototype)] = { inPlaceOfPrototype, before.id().bits(), after.id().bits() };
+}
+
+enum class ElementStore : bool { Defines, Sets };
+
+template<ElementStore store>
+static ALWAYS_INLINE bool tryStoreElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
 {
     Object* compiled = compiledObjectOrNull(object);
-    if (!compiled || compiled->isNotExtensible() || compiled->structure()->mayBePrototype() || compiled->layout().isClass())
+    if (!compiled || compiled->isNotExtensible() || compiled->structure()->mayBePrototype())
         return false;
     VM& vm = *instance->vm;
     JSObject* extra = compiled->extraProperties();
     if (extra && (!is<JSFinalObject>(extra) || extra->inSparseIndexingMode() || isCopyOnWrite(extra->indexingMode()) || extra->structure()->hasImmutableIndexedProperties()))
         return false;
+    bool isThere = extra && extra->canGetIndexQuickly(index);
+    if (!isThere) {
+        if (store == ElementStore::Sets && compiled->needsSlowPutIndexing())
+            return false;
+        if (!(compiled->layout().isClass() ? compiled->mayAddExtraProperty(vm, Identifier::from(vm, index)) : admitsMutation(vm, *compiled, ObjectMutation::AddProperty)))
+            return true;
+    }
     if (!extra) {
+        const CompiledStructure* before = WTF::opaque(&compiled->compiledStructure());
         if (index <= maxIndexOfFirstElementStoredContiguously)
             extra = createExtraPropertiesWithElement(instance, index, value);
         else {
@@ -115,11 +139,26 @@ bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint
             extra->putDirectIndex(instance->globalObject, index, value, 0, PutDirectIndexShouldThrow);
         }
         compiled->adoptExtraProperties(vm, extra);
+        rememberStructureWithFirstElement(instance, *before, compiled->compiledStructure(), *extra);
+        ensureStillAliveHere(before);
         return true;
     }
-    extra->putDirectIndex(instance->globalObject, index, value, 0, PutDirectIndexShouldThrow);
-    compiled->didChangeExtraProperties(vm);
+    StructureID structureBefore = extra->structureID();
+    if (!isThere || !extra->trySetIndexQuickly(vm, index, value))
+        extra->putDirectIndex(instance->globalObject, index, value, 0, PutDirectIndexShouldThrow);
+    if (extra->structureID() != structureBefore)
+        compiled->didChangeExtraProperties(vm);
     return true;
+}
+
+bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
+{
+    return tryStoreElementOfCompiledObject<ElementStore::Defines>(instance, object, index, value);
+}
+
+bool trySetElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
+{
+    return tryStoreElementOfCompiledObject<ElementStore::Sets>(instance, object, index, value);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDefineById, void, (Instance* instance, EncodedJSValue encodedObject, uint32_t name, EncodedJSValue value))
@@ -260,6 +299,8 @@ static NEVER_INLINE Object::LeavingProperty redefinedBy(JSGlobalObject* globalOb
 static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
 {
     VM& vm = globalObject->vm();
+    if (isPreparedBeforeLookups(vm, name.uid()))
+        return false;
     Object* compiled = compiledObjectOrNull(object);
     if (object->type() == SlimClosureType && !parseIndex(name) && ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(vm, name))
         uncheckedDowncast<SlimClosure>(object)->reify(vm);

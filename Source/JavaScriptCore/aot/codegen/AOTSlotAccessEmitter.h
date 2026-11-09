@@ -39,6 +39,8 @@ public:
 
     CellPointer baseOfSlot(CellPointer, const FieldAccess&);
     CellPointer baseOfSlot(CellPointer, const FieldAccess&, LayoutSetID receivers);
+    std::optional<CellPointer> baseOfSlotWhereOneTableTellsShapeAndDistance(CellPointer, const FieldAccess&, LayoutSetID receivers, bool refusesMarkedObjects, LBasicBlock whereShapeIsNoReceiver);
+    LayoutSetID layoutsThatTestAgainstEveryShapeLetThrough(ValueID) const;
 
     struct CreationByDefinition {
         bool isEmitted { false };
@@ -54,6 +56,7 @@ public:
     bool tryPutSlotOrAddByStub(const ValueContext&, CellPointer, const FieldAccess&, Operand stored);
     uint64_t granuleBitsWithFieldsBehind(const FieldAccess&) const;
     void markCellIfMarkerReplacesRawValue(CellPointer, const FieldAccess&, ValueID stored);
+    void askObjectWhatStandsInWayOfStore(const ValueContext&, CellPointer);
     std::optional<KeyOrderStep> testLikeliestKeyOrderStep(CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys);
     void takeKeyOrderStepOr(CellPointer, const std::optional<KeyOrderStep>&, NOESCAPE const Invocable<void()> auto& otherwise);
     void listCreatedFields(CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys, bool isExpectedToCreate, NOESCAPE const Invocable<void()> auto& listIfMissing);
@@ -65,6 +68,7 @@ private:
     FieldAccess fieldAccessOf(const ValueContext&, bool isStore) const;
     LayoutSetID setOfMembersWithField(const FieldAccess&);
     Operand readSlot(const ValueContext&, CellPointer, const FieldAccess&, bool absentIsUndefined);
+    void askObjectAgainWhatReadAnswered(const ValueContext&, CellPointer, Operand read, bool readsEmptySlotAsUndefined);
     std::optional<CellPointer> loadHalfOfAccessorInSlot(const ValueContext&, ptrdiff_t offsetInGetterSetter);
     void readDeferringSlot(const ValueContext&, bool readsEmptySlotAsUndefined);
     CellPointer makeDeferredClosure(const ValueContext&, CellPointer, const FieldAccess&);
@@ -88,12 +92,14 @@ private:
 
     Word32 distanceBehindLowestOffset(CellPointer cell, const FieldAccess& access) { return distanceBehindLowestOffset(cell, access, setOfMembersWithField(access)); }
     Word32 distanceBehindLowestOffset(CellPointer, const FieldAccess&, LayoutSetID setOfMembers);
+    std::optional<size_t> findOffsetsByShape(const FieldAccess&, LayoutSetID setOfMembers);
 
     struct OffsetsByShape {
         DistancesByShape distances;
         uint32_t constant { 0 };
         uint32_t tableSize { 0 };
         uint32_t numberOfSites { 0 };
+        LayoutSetID membersLaidIn;
     };
     Vector<OffsetsByShape, 2> m_offsetsByShape;
     UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_offsetsByShapeOfKeyAndMembers;
