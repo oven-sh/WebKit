@@ -449,22 +449,32 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionThatMayWait, static N
 // (Only signals. A finalizer between next(counter) and queue.put() in queue.put(next(counter)) is more than code is used to.)
 // Not after the call of __enter__ by a `with`, or of __aenter__ by an `async with`: what a handler raises there would leave what has been entered without its __exit__. The signal
 // waits for the next place, which is in the statement.
+static bool isCallOfEnter(VM& vm, CallFrame* nativeFrame)
+{
+    void* caller = nativeFrame->callerFrameOrEntryFrame();
+    if (!caller || caller == vm.topEntryFrame)
+        return false;
+    auto* callFrame = static_cast<CallFrame*>(caller);
+    CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() || callFrame->isZombieFrame() ? nullptr : callFrame->codeBlock();
+    if (!codeBlock || !codeBlock->unlinkedCodeBlock()->isPython())
+        return false;
+    auto marks = std::ranges::equal_range(codeBlock->unlinkedCodeBlock()->pythonMarks(), callFrame->bytecodeIndex().offset(), { }, &PythonMark::offset);
+    return std::ranges::any_of(marks, [](const PythonMark& mark) {
+        return mark.kind() == PythonMark::NoLine && mark.value() == callOfEnterMark;
+    });
+}
+
+bool hasSignalsToHandle(JSGlobalObject*); // PySignal.cpp
+
+// The trap that brings a call here stands for more than signals, and until the next safe point: a thread that waits for the GIL, calls that are owed, a signal that is for another thread to
+// handle. So the marks are searched only if a handler would be called. That is asked once: a signal that comes behind the question waits for the next look. (checkOnlySignals() would ask
+// again, and handle it, whatever call this is. What is left of it without a signal is the question for a thread that is being stopped.)
 static NEVER_INLINE bool checkSignalsAfterCall(JSGlobalObject* globalObject, CallFrame* nativeFrame)
 {
-    VM& vm = getVM(globalObject);
-    void* caller = nativeFrame->callerFrameOrEntryFrame();
-    if (caller && caller != vm.topEntryFrame) {
-        auto* callFrame = static_cast<CallFrame*>(caller);
-        CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() || callFrame->isZombieFrame() ? nullptr : callFrame->codeBlock();
-        if (codeBlock && codeBlock->unlinkedCodeBlock()->isPython()) {
-            auto marks = std::ranges::equal_range(codeBlock->unlinkedCodeBlock()->pythonMarks(), callFrame->bytecodeIndex().offset(), { }, &PythonMark::offset);
-            bool entersWith = std::ranges::any_of(marks, [](const PythonMark& mark) {
-                return mark.kind() == PythonMark::NoLine && mark.value() == callOfEnterMark;
-            });
-            if (entersWith)
-                return true;
-        }
-    }
+    if (!hasSignalsToHandle(globalObject))
+        return !runtime(globalObject).threads().throwIfStopping();
+    if (isCallOfEnter(getVM(globalObject), nativeFrame))
+        return true;
     return checkOnlySignals(globalObject);
 }
 

@@ -411,6 +411,12 @@ bool checkSignals(JSGlobalObject* globalObject)
     return checkOnlySignals(globalObject);
 }
 
+// Whether checkOnlySignals() would call handlers.
+bool hasSignalsToHandle(JSGlobalObject* globalObject)
+{
+    return s_signalState.isTripped.load(std::memory_order_relaxed) && signalGlobalObjectOfHandlers(globalObject);
+}
+
 bool checkOnlySignals(JSGlobalObject* globalObject)
 {
     if (runtime(globalObject).threads().throwIfStopping()) [[unlikely]]
@@ -1349,6 +1355,7 @@ void initializeSignalModule(JSGlobalObject* globalObject, PyModule* module)
 
 // FIXME: Signals on Windows.
 bool checkSignals(JSGlobalObject* globalObject) { return !runtime(globalObject).threads().throwIfHostEndsWhatRuns(); }
+bool hasSignalsToHandle(JSGlobalObject*) { return false; }
 bool checkOnlySignals(JSGlobalObject*) { return true; }
 bool signalMayEndWait(JSGlobalObject*) { return false; }
 unsigned signalsArrivedOnThread() { return 0; }
