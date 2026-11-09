@@ -3600,7 +3600,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     bool isLeftToHost = isLeftToHostAsFarAsIsKnown(module);
     bool wasGivenUpOnByRequireOfItself = !hasComeToItsJob && referrer && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) {
         return pair.required == module && pair.mocked == module && pair.call == callOfFactoryThatHasNotSettled(module);
-    }) && host().wroteFactoryThatHasNotSettled(realm, fileOf(referrer), module);
+    }) && host().wroteFactoryThatHasNotSettled && host().wroteFactoryThatHasNotSettled(realm, fileOf(referrer), module);
     if (!isLeftToHost && ((isMadeByOwnFactory && isFetchedBehindItsFactory(module)) || wasGivenUpOnByRequireOfItself)) [[unlikely]]
         RELEASE_AND_RETURN(scope, importModuleItselfWithoutLoader(module));
     if (!isLeftToHost && !hasComeToItsJob && referrer && !m_importOfFactorysOwnHasItsText && !m_requiresThatGaveUp.isEmpty() && isImportOfFactorysOwnBehindRequireThatGaveUp(module, referrer)) [[unlikely]]
@@ -3689,10 +3689,16 @@ JSPromise* Modules::importAsFactorysOwnOnceTextHasCome(ModuleID module, ModuleID
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer call;
+    call.append(jsNumber(module.index()));
+    call.append(jsNumber(referrer.index()));
+    JSArray* heldCall = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), call);
+    RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     JSPromise* textHasCome = JSPromise::create(vm, realm->promiseStructure());
     JSPromise* answer = JSPromise::create(vm, realm->promiseStructure());
     JSFunction* goOn = JSFunction::create(vm, realm, 2, String(), continueImportOfFactorysOwn, ImplementationVisibility::Private);
-    textHasCome->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), answer, jsNumber(static_cast<double>(module.index()) * 4294967296.0 + referrer.index()));
+    textHasCome->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), answer, heldCall);
     holdText(textHasCome, module, ensureRecord(module), std::nullopt, m_turnOfTexts);
     return answer;
 }
@@ -7033,8 +7039,8 @@ JSC_DEFINE_HOST_FUNCTION(importByKeyBehindFactories, (JSGlobalObject* realm, Cal
 
 JSC_DEFINE_HOST_FUNCTION(continueImportOfFactorysOwn, (JSGlobalObject* realm, CallFrame* callFrame))
 {
-    uint64_t both = static_cast<uint64_t>(callFrame->argument(1).asNumber());
-    return JSValue::encode(modulesOf(realm)->continueImportAsFactorysOwn(ModuleID(static_cast<uint32_t>(both >> 32)), ModuleID(static_cast<uint32_t>(both))));
+    JSArray* heldCall = asArray(callFrame->argument(1));
+    return JSValue::encode(modulesOf(realm)->continueImportAsFactorysOwn(ModuleID(heldCall->getIndexQuickly(0).asUInt32()), ModuleID(heldCall->getIndexQuickly(1).asUInt32())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(continueImportWithModuleItself, (JSGlobalObject* realm, CallFrame* callFrame))

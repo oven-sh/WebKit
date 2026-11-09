@@ -1,3 +1,4 @@
+import { collectNativeReads, type NativeReads } from "./check-host-uses.ts";
 import { GeneratorError, Problems } from "./declarations.ts";
 import { hashOfHostBindings } from "./emit-cpp-bindings.ts";
 import { collectArrayDeclarations } from "./emit-cpp-ids.ts";
@@ -29,7 +30,6 @@ import {
   type ModelLayout,
   type ModelLayoutField,
   type ModelModule,
-  type ModelName,
   type ModelRealmStructure,
   type ModelSlot,
   type TableModel,
@@ -287,30 +287,6 @@ function formatRealmStructure({ getter, names }: ModelRealmStructure, realmStruc
     ["findInitialStructure", `[](JSGlobalObject* realm) -> Structure* { return realm->${getter}(); }`],
     ["names", realmStructureNames.add(names.map(name => formatName(name)))],
   ]);
-}
-
-interface NativeReads {
-  readsEveryExport: boolean;
-  names: Map<number, ModelName>;
-  namesWithAnotherUseThanKeepingMembers: Set<number>;
-}
-
-function collectNativeReads(model: TableModel): Map<ModelModule, NativeReads> {
-  const reads = new Map<ModelModule, NativeReads>();
-  const loads = [...model.builtins.flatMap(builtin => builtin.attachments.moduleLoads), ...model.startup.loads];
-  for (const { module, exports } of loads) {
-    let read = reads.get(module);
-    if (read === undefined)
-      reads.set(module, (read = { readsEveryExport: false, names: new Map(), namesWithAnotherUseThanKeepingMembers: new Set() }));
-    if (exports === null) read.readsEveryExport = true;
-    else
-      for (const { name, uses } of exports) {
-        read.names.set(name.number, name);
-        const membersAloneAreKept = !!uses?.length && uses.every(use => use.read === "Kept" && use.path.length > 0);
-        if (!membersAloneAreKept) read.namesWithAnotherUseThanKeepingMembers.add(name.number);
-      }
-  }
-  return reads;
 }
 
 function formatModule(
