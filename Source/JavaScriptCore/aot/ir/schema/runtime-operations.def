@@ -210,7 +210,7 @@ runtime GetNamespaceOfModuleItself : JSCell* (uint32_t module) ; unknownCode
 runtime IsNamespaceOfModule : size_t (JSCell* cell, uint32_t module) ; none ; leaf
 runtime ImportModule : EncodedJSValue (uint32_t module, EncodedJSValue options, uint32_t referrer) ; unknownCode
 runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
-runtime RecordRequire : void (uint32_t module, uint32_t referrer) ; unknownCode
+runtime RecordRequire : void (uint32_t module, uint32_t referrer, uint32_t byMadeRequire) ; unknownCode
 runtime RequireIfHeldForImport : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime WasLoadedSynchronously : size_t (uint32_t module) ; reads(ExternalState) writes(ExternalState)
 runtime SeesMockOf : size_t (uint32_t module, uint32_t referrer, uint32_t reader, uint32_t thatKeepsNamesOfOriginal) ; reads(ExternalState) writes(ExternalState)

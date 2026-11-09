@@ -697,7 +697,7 @@ void Modules::forgetWhatFileRequired(ModuleID file)
         ways->numberOfChildrenShown = 0;
     }
     m_recordedRequires.removeIf([&](const auto& recorded) {
-        return recorded.key >> 32 == static_cast<uint64_t>(file.index()) + 1;
+        return (recorded.key << 1) >> 33 == static_cast<uint64_t>(file.index()) + 1;
     });
 }
 
@@ -4496,7 +4496,7 @@ NEVER_INLINE void Modules::lookAtExportsOfModuleObject(ModuleID module, RequireA
 }
 
 template<Modules::RequireAnsweredBy answeredBy>
-void Modules::recordRequire(ModuleID target, ModuleID referrer)
+void Modules::recordRequire(ModuleID target, ModuleID referrer, bool isByMadeRequire)
 {
     if constexpr (answeredBy == RequireAnsweredBy::CompiledCode) {
         if (m_goesModuleByModule) [[unlikely]]
@@ -4530,7 +4530,8 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
                 required->firstRequirerOutsideImage.set(*this, objectOfRunThatThrew);
         }
     }
-    uint64_t pair = (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
+    bool isChildOfOtherObject = isByMadeRequire && data(referrer).kind == ModuleKind::CommonJs;
+    uint64_t pair = static_cast<uint64_t>(isChildOfOtherObject) << 63 | (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
     auto recorded = m_recordedRequires.add(pair, isEvicted(target) ? RecordedRequire::BegunAndLeftToHost : RecordedRequire::Begun);
     if (recorded.isNewEntry) {
         findWhetherExportsVariableIsTakenOffModuleObject(referrer);
@@ -4569,13 +4570,13 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         recorded.iterator->value = RecordedRequire::Returned;
         if (!m_isMainCommonJSModuleDecided)
             decideMainCommonJSModule(std::nullopt);
-        if (!isListedByHost)
+        if (!isListedByHost && !isChildOfOtherObject)
             ensureWaysTo(referrer).requiredModules.append(target);
         findWhetherExportsVariableIsTakenOffModuleObject(referrer);
         lookAtExportsOfModuleObject(target, answeredBy);
         RETURN_IF_EXCEPTION(scope, void());
         LoadedModule* requirer = loadedIfExists(referrer);
-        if (requirer && requirer->requirer && host().showChildren)
+        if (requirer && requirer->requirer && host().showChildren && !isChildOfOtherObject)
             RELEASE_AND_RETURN(scope, host().showChildren(m_instance.globalObject, requirer->requirer, nullptr));
         return;
     }
@@ -4588,7 +4589,7 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
             requirer = loadedIfExists(referrer);
             objectOfRequired = objectThatStandsForModuleIfMade(target);
         }
-        if (requirer && requirer->requirer && objectOfRequired && !isEvicted(target) && host().showChildren) {
+        if (requirer && requirer->requirer && objectOfRequired && !isEvicted(target) && host().showChildren && !isChildOfOtherObject) {
             host().showChildren(m_instance.globalObject, requirer->requirer, objectOfRequired);
             RETURN_IF_EXCEPTION(scope, void());
         }
@@ -4601,8 +4602,8 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
     }
 }
 
-template void Modules::recordRequire<Modules::RequireAnsweredBy::CompiledCode>(ModuleID, ModuleID);
-template void Modules::recordRequire<Modules::RequireAnsweredBy::RunTime>(ModuleID, ModuleID);
+template void Modules::recordRequire<Modules::RequireAnsweredBy::CompiledCode>(ModuleID, ModuleID, bool);
+template void Modules::recordRequire<Modules::RequireAnsweredBy::RunTime>(ModuleID, ModuleID, bool);
 
 void Modules::recordRequireFromOutsideImage(ModuleID target, JSObject* moduleObjectOfRequirer)
 {

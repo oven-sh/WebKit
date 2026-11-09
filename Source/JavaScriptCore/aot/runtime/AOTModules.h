@@ -1107,7 +1107,7 @@ public:
     void mockWhatRequireCacheHolds(ModuleID, JSObject* exports);
     void letGoOfMockInRequireCache(ModuleID);
     enum class RequireAnsweredBy : bool { CompiledCode, RunTime };
-    template<RequireAnsweredBy> void recordRequire(ModuleID, ModuleID referrer);
+    template<RequireAnsweredBy> void recordRequire(ModuleID, ModuleID referrer, bool isByMadeRequire = false);
     void noteModuleObjectHeldByCompiledCode(ModuleID);
     void noteExportsStoredThroughModuleObject(ModuleID, JSValue exports);
     bool findWhetherExportsVariableIsTakenOffModuleObject(ModuleID);

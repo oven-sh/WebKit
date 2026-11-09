@@ -201,7 +201,7 @@ void StraightEmitter::generateModule(const BodyValue& value)
         return;
     case Opcode::RecordRequire:
         if (!plan().moduleEvaluation().recordsNothingThatIsSeen(value.module()))
-            callOperation(value, RuntimeOperation::RecordRequire, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()) });
+            callOperation(value, RuntimeOperation::RecordRequire, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), StraightArgument::word(value.byMadeRequire()) });
         return;
     case Opcode::WasLoadedSynchronously:
         callOperation(value, RuntimeOperation::WasLoadedSynchronously, { moduleIndexInStraightForm(value.module()) });

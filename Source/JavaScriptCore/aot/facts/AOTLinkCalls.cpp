@@ -6981,6 +6981,23 @@ static bool namesSameObjectsAndFunctionsInLinkCalls(LinkType first, LinkType sec
     return first == second;
 }
 
+bool LinkFlow::describeNodeOfSharedCall(PrintStream& out, FlowNodeID id) const
+{
+    if (!m_stateOfLinkCalls)
+        return false;
+    for (const auto& shared : m_stateOfLinkCalls->sharedCalls) {
+        size_t place = shared->nodes.find(id);
+        if (place == notFound && shared->result != id && shared->thrown != id)
+            continue;
+        out.print("(", place != notFound ? "operand" : shared->result == id ? "result" : "thrown");
+        if (place != notFound)
+            out.print(" ", place);
+        out.print(" of the shared call ", shared->index, ")");
+        return true;
+    }
+    return false;
+}
+
 void LinkFlow::wakeEverySleeperToSeeThatNothingGrows()
 {
     if (!m_stateOfLinkCalls)
@@ -7104,7 +7121,7 @@ void LinkFlow::callObserved(const FlowObserver& observer, const LinkType& told)
         return;
     uint32_t numberOfCallObserved = firstCallOfFunction[observer.function.index()] + observer.record;
     bool isEnteredNoMore = state.callsOfUnseen[numberOfCallObserved] == StateOfLinkCalls::hasGivenUpInSight || (state.callsOfUnseen[numberOfCallObserved] && !state.callsThatEnterMembersOfTable[numberOfCallObserved]);
-    if (isEnteredNoMore && namesSameObjectsAndFunctionsInLinkCalls(told, typeObservedBefore()) && told.holdsUnseenInSight() == typeObservedBefore().holdsUnseenInSight())
+    if (isEnteredNoMore && namesSameObjectsAndFunctionsInLinkCalls(told, typeObservedBefore()) && told.holdsUnseenInSight() == typeObservedBefore().holdsUnseenInSight() && (told.holdsUnseen == typeObservedBefore().holdsUnseen || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CallsThatEnteredUnseenCodeDoNotHearTheUnknownCome)))
         return;
     if (!std::exchange(state.callsToResolve[firstCallOfFunction[observer.function.index()] + observer.record], 1))
         state.observersToResolve[laneOfObserversOf(observer.function)].append(observer);

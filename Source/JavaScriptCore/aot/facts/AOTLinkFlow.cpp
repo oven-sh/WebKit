@@ -3802,6 +3802,8 @@ void LinkFlow::receiveInLane(unsigned index)
             after.setOfClasses = 0;
         if (after == before && after.hasSameShadowsAs(before))
             continue;
+        if (m_breachesOfClosure) [[unlikely]]
+            noteBreachOfClosure({ .node = node, .before = before, .after = after });
         m_nodes[node.index()].type = after;
         if (!m_isOnWorklist.quickSet(node.index())) {
             lane.worklist.append(node);
@@ -4470,6 +4472,14 @@ Vector<BreachOfClosure> LinkFlow::findBreachesOfClosure()
     for (size_t index : BitVector(m_lostFunctionsTied))
         tieInLostFunction(FunctionID(index));
     wakeEverySleeperToSeeThatNothingGrows();
+    m_holdsBack = true;
+    m_tellsObservers = true;
+    while (resolveCallsThatWereTold())
+        takeNotesOfPassOnOneThread();
+    m_tellsObservers = false;
+    settle();
+    m_holdsBack = false;
+    takeInWhatWasHeldBack();
     flow();
 
     for (const SetOfFlow& set : sets) {
@@ -4554,6 +4564,49 @@ void FlowObserver::dump(PrintStream& out) const
     out.print(names[static_cast<size_t>(kind)], " ", record, " of f", function.index());
 }
 
+void LinkFlow::describeWhatWasMadeOnDemand(PrintStream& out, FlowNodeID id) const
+{
+    auto printKey = [&](PropertyKeyID key) {
+        if (!key)
+            return;
+        Vector<char16_t> buffer;
+        out.print(" under \"", program.strings.viewOf(program.at(key).text, buffer), "\"");
+    };
+    for (const auto& [word, place] : m_placesOfAppendedFields) {
+        const AppendedField& field = m_appendedFields[place];
+        if (field.node != id && field.storedThroughItsLayout != id)
+            continue;
+        out.print(field.node == id ? "(born beside the fields of L" : "(stored through its layout beside the fields of L", word >> 32);
+        printKey(field.key);
+        out.print(")");
+        return;
+    }
+    auto printIfListed = [&](const Vector<uint32_t>& nodes, size_t nodesOfLayout, size_t which, ASCIILiteral what) {
+        for (size_t place = which; place < nodes.size(); place += nodesOfLayout) {
+            if (nodes[place] != id.index())
+                continue;
+            out.print("(", what, " L", place / nodesOfLayout, ")");
+            return true;
+        }
+        return false;
+    };
+    if (printIfListed(m_nodesBesideFields, 2, 0, "found beside the fields of"_s) || printIfListed(m_nodesBesideFields, 2, 1, "stored beside the fields of"_s)
+        || printIfListed(m_nodesFoundUnderNamesThatNoNumberSpells, 1, 0, "found under names that no number spells beside the fields of"_s)
+        || printIfListed(m_nodesStoredUnderUnknownNames, 1, 0, "stored under unknown names on"_s) || printIfListed(m_nodesStoredUnderNumbers, 1, 0, "stored under numbers on"_s))
+        return;
+    static constexpr ASCIILiteral kinds[] { "read through family"_s, "laid through family"_s, "any field read of L"_s, "any field stored of L"_s, "any field read of family"_s, "any field stored of family"_s, "any field read of set"_s, "element read of set"_s, "any field stored of set"_s, "element stored of set"_s, "found beside fields"_s, "laid on closures"_s, "any field defined on L"_s, "what stands above"_s, "what stands below"_s, "laid on constructor functions from"_s };
+    static_assert(std::size(kinds) == static_cast<size_t>(NodeOnDemand::LaidOnConstructorFunctionsFrom) + 1);
+    for (const auto& [word, node] : m_nodesOnDemand) {
+        if (node != id.index())
+            continue;
+        out.print("(", kinds[word >> 60], " ", (word >> 32) & ((1u << 28) - 1));
+        printKey(PropertyKeyID::fromBits(static_cast<uint32_t>(word)));
+        out.print(")");
+        return;
+    }
+    describeNodeOfSharedCall(out, id);
+}
+
 void LinkFlow::describe(PrintStream& out, FlowNodeID id) const
 {
     size_t node = id.index();
@@ -4582,6 +4635,7 @@ void LinkFlow::describe(PrintStream& out, FlowNodeID id) const
     }
     if (node >= m_nodesOfFunctions[numberOfFunctions].firstParameter) {
         out.print("madeOnDemand", node - m_nodesOfFunctions[numberOfFunctions].firstParameter);
+        describeWhatWasMadeOnDemand(out, id);
         return;
     }
     size_t function = std::ranges::upper_bound(m_nodesOfFunctions, static_cast<uint32_t>(node), { }, &NodesOfFunction::firstParameter) - m_nodesOfFunctions.begin() - 1;

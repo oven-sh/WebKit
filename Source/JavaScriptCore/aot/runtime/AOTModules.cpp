@@ -5598,10 +5598,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* i
     OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).require(ModuleID(module), ModuleID(referrer))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTRecordRequire, void, (Instance* instance, uint32_t module, uint32_t referrer))
+JSC_DEFINE_JIT_OPERATION(operationAOTRecordRequire, void, (Instance* instance, uint32_t module, uint32_t referrer, uint32_t byMadeRequire))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRecordRequire);
-    modulesOf(*instance).recordRequire<Modules::RequireAnsweredBy::CompiledCode>(ModuleID(module), ModuleID(referrer));
+    modulesOf(*instance).recordRequire<Modules::RequireAnsweredBy::CompiledCode>(ModuleID(module), ModuleID(referrer), byMadeRequire);
     OPERATION_RETURN(scope);
 }
 

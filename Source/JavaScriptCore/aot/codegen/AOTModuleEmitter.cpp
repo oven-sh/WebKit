@@ -168,7 +168,7 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
 
 void ModuleEmitter::generateRecordRequire(const ValueContext& value)
 {
-    callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()) });
+    callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()), word32(value->byMadeRequire()) });
 }
 
 void ModuleEmitter::generateAreLoaderFunctionsStored(const ValueContext& value)
