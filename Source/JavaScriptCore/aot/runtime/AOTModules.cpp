@@ -4315,7 +4315,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         noteAskForForm(module);
     if (m_mocks) [[unlikely]]
         noteAskForKey(module, m_moduleThatWroteImportThatAsks, LoadByName::Import);
-    if (text == TextOfImport::MayComeLater && isHeldBySweepUnderWay(module)) [[unlikely]]
+    if (text == TextOfImport::MayComeLater && (isHeldBySweepUnderWay(module) || m_mockWhoseOriginalIsEvaluated == module)) [[unlikely]]
         return startImportInLaterTurn(module, referrerAsyncOrder);
     runDataFileAgainForImport(module, caller == ImportCaller::Host ? ImportAnsweredBy::Loader : ImportAnsweredBy::Build);
     if (scope.exception()) [[unlikely]] {
@@ -4443,7 +4443,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         bool isBuiltinModuleThatLoaderHas = isBuiltinModule && !isBuiltinModuleNewToLoader(module);
         bool isCalledByProgram = caller == ImportCaller::CompiledCode;
         bool hasBegun = status(module) >= ModuleStatus::Evaluating || status(fileOf(module)) >= ModuleStatus::Evaluating;
-        bool isNoPartOfLoad = isCalledByProgram && !(isCommonJSFileOrFace(module) && (hasBegun || data(fileOf(module)).mayBeImportedWhileItRuns()));
+        bool isNoPartOfLoad = isCalledByProgram && !m_goesModuleByModule && !(isCommonJSFileOrFace(module) && (hasBegun || data(fileOf(module)).mayBeImportedWhileItRuns()));
         SetForScope noSynchronousLoad(vm.m_synchronousModuleQueueSetAside, isNoPartOfLoad ? vm.m_synchronousModuleQueue : vm.m_synchronousModuleQueueSetAside);
         if (isCalledByProgram && (!isBuiltinModule || isBuiltinModuleThatLoaderHas) && loaderOnlyHandsOverNamespace(module)) {
             JSPromise* promise = promiseForCaller();
@@ -8058,10 +8058,37 @@ std::optional<ModuleID> ModuleRecord::fileToWaitFor(JSGlobalObject* globalObject
     return modules ? modules->fileToWaitFor(key) : std::nullopt;
 }
 
+bool ModuleRecord::hasLoadAroundAskedFor(JSGlobalObject* globalObject, const Identifier& key)
+{
+    Modules* modules = modulesOf(globalObject);
+    return modules && modules->hasLoadAroundAskedFor(key);
+}
+
 bool ModuleRecord::isFileBeingHandedToLoader(JSGlobalObject* globalObject, const Identifier& key)
 {
     Modules* modules = modulesOf(globalObject);
     return modules && modules->isFileBeingHandedToLoader(key);
+}
+
+bool ModuleRecord::waitsForFileBeingHandedToLoader(JSGlobalObject* globalObject, const Identifier& key, bool& queuesStep)
+{
+    Modules* modules = modulesOf(globalObject);
+    return modules && modules->waitsForFileBeingHandedToLoader(key, queuesStep);
+}
+
+bool Modules::waitsForFileBeingHandedToLoader(const Identifier& key, bool& queuesStep)
+{
+    std::optional<ModuleID> asked = findByKey(key);
+    if (!asked || !isCommonJSFileOrFace(*asked))
+        return false;
+    ModuleStatus statusOfFile = status(fileOf(*asked));
+    if (statusOfFile == ModuleStatus::Evaluated || (statusOfFile != ModuleStatus::Failed && !m_fileBeingHandedToLoader))
+        return false;
+    ModuleRecord* record = m_records.get(*asked);
+    if (!record)
+        return false;
+    queuesStep = record->takesPlaceInQueueOf(m_activeSynchronousLoad);
+    return true;
 }
 
 JSPromise* ModuleRecord::deferRequest(JSGlobalObject* globalObject, ModuleID file, ModuleLoadingContext* context, bool useImportMap)

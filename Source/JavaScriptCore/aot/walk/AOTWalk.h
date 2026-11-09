@@ -888,7 +888,7 @@ public:
     bool textNamesHolderOfCopyAtWork(ValueID written) const;
     bool isHolderOfCopyAtWork(Reference) const;
     bool isBeingWalked(FunctionID) const;
-    bool bodyAtWorkCallsItself() const;
+    bool bodyAtWorkCallsItself() const { return bodyOfFrameCallsItself(m_frames.last()); }
     TypeID typeThatCounterIsHeldTo(BlockID inputHead, uint32_t parameter) const;
     bool linkComesRoundThatMayBearMark(BlockID head, uint32_t parameter, Reference comesRound);
     TypeID typeAskedOfWhatOtherCodeBringsRound(BlockID head, TypeID ofParameter, TypeID comingRound);
@@ -3165,6 +3165,7 @@ private:
     void takeNamesOntoEdge(OpenEdge&, size_t frameIndex);
     void takeNamesOfWay(BlockID inputBlock, NamesOfWay&&);
     void forgetNamesOfWay(Frame&);
+    bool bodyOfFrameCallsItself(const Frame&) const;
     bool isNamedByWaysInto(const Frame&, ValueID, BlockID inputBlock) const;
     Reference nameBroughtByWay(const Frame&, ValueID) const;
     ALWAYS_INLINE Reference referenceBoundIn(const Frame& frame, ValueID input) const

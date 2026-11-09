@@ -381,7 +381,7 @@ void readListsOfStableBindingsInFrontOfLoop(Walker& walker, BlockID inputHead)
                 continue;
             TypeID widest = widestTypeOfOperation(walker, read);
             bool isHandedOver = operation.opcode() == Opcode::Call;
-            if (isHandedOver && widest && !hasKind(walker.types(), walker.types().withoutNullish(widest), OperandKind::Array))
+            if (isHandedOver && widest && (isNeverType(walker.types().withoutNullish(widest)) || !hasKind(walker.types(), walker.types().withoutNullish(widest), OperandKind::Array)))
                 continue;
             if (!widest || (walker.types().at(widest).primitives & Primitive::Unspecified))
                 continue;

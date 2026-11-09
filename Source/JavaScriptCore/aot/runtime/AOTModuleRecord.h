@@ -83,6 +83,8 @@ public:
     void didReplaceRecordInRegistry();
     static std::optional<ModuleID> fileToWaitFor(JSGlobalObject*, const Identifier& key);
     static bool isFileBeingHandedToLoader(JSGlobalObject*, const Identifier& key);
+    static bool hasLoadAroundAskedFor(JSGlobalObject*, const Identifier& key);
+    static bool waitsForFileBeingHandedToLoader(JSGlobalObject*, const Identifier& key, bool& queuesStep);
     static JSPromise* deferRequest(JSGlobalObject*, ModuleID file, ModuleLoadingContext*, bool useImportMap);
     static void didRequestModule(JSGlobalObject*, const Identifier& key, JSCell* payload);
     static void didSettleLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
@@ -107,6 +109,7 @@ public:
     bool runsWhenLoaded() const { return m_runsWhenLoaded; }
     void setRunsInItsTurn() { m_runsInItsTurn = true; }
     bool takeRunsInItsTurn() { return std::exchange(m_runsInItsTurn, false); }
+    bool takesPlaceInQueueOf(uint32_t synchronousLoad) { return std::exchange(m_synchronousLoadWhoseQueueHoldsStep, synchronousLoad) != synchronousLoad; }
     bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
     void setHasRequestThatFindsNothing() { m_hasRequestThatFindsNothing = true; }
@@ -178,6 +181,7 @@ private:
     bool m_isHeldByLoader { false };
     bool m_runsWhenLoaded { false };
     bool m_runsInItsTurn { false };
+    uint32_t m_synchronousLoadWhoseQueueHoldsStep { std::numeric_limits<uint32_t>::max() };
     bool m_isRequestedByWalkedModule { false };
     bool m_hasRequestThatFindsNothing { false };
     bool m_keepsToModule { false };

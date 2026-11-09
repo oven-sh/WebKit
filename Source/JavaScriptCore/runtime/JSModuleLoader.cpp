@@ -948,6 +948,10 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                         fetchSynchronously(globalObject, fetchPromise, resolved, moduleReferrer(referrerKey), RefPtr { moduleRequest.m_attributes }, scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
 #if ENABLE(AOT)
+                // AOT-compiled code may run a CommonJS file before the loader reaches it. If that file threw, or is still running while compiled code hands this synchronous load to the loader, queue its fetch-settled step again (once per load) instead of taking it now, as if the fetch were still pending.
+                } else if (bool queuesStep = false; vm.hasCompiledCode() && fetchPromise->status() == JSPromise::Status::Fulfilled && AOT::ModuleRecord::waitsForFileBeingHandedToLoader(globalObject, resolved, queuesStep)) {
+                    if (queuesStep)
+                        fetchPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryFetchSettled, modulePromise, mapEntry);
                 // Compiled code has begun the file ahead of this load, and the file still runs: this is the step in which it runs, which ends when the file does.
                 } else if (vm.hasCompiledCode() && AOT::ModuleRecord::isFileBeingHandedToLoader(globalObject, resolved)) {
 #endif
@@ -1053,6 +1057,12 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
+#if ENABLE(AOT)
+        // An enclosing load already requested this module, so it is one step ahead of modules requested for the first time. AOT-compiled code may have run that enclosing load before the loader did, so the loader may have no entry that records the request.
+        if (vm.hasCompiledCode() && vm.synchronousModuleQueue() && promise->status() == JSPromise::Status::Fulfilled && AOT::ModuleRecord::hasLoadAroundAskedFor(globalObject, resolved))
+            mapEntry->ensureFetchPromise(globalObject)->fulfill(vm, promise->result());
+        else
+#endif
         mapEntry->ensureFetchPromise(globalObject)->pipeFrom(vm, promise);
     }
     JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);

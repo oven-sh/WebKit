@@ -689,6 +689,10 @@ JSValue Modules::importModuleItselfBesideMock(ModuleID module, JSValue answerOfI
     bool hasBegun = hasRunItself(module);
     JSPromise* underWay = evaluationOfRecordSetAside(module);
     RETURN_IF_EXCEPTION(scope, { });
+    if (hasBegun && !underWay) {
+        underWay = evaluationUnderWayBelow(module);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (!hasBegun || underWay || status(module) == ModuleStatus::EvaluatingAsync) {
         if (!hasBegun) {
             oweBodyBesideMock(module);

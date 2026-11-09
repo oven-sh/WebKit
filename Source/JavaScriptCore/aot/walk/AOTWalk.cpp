@@ -2885,13 +2885,12 @@ bool callsItselfByItsOwnText(const Program& program, const BodyIndex& index, Fun
     return callsItself;
 }
 
-bool Walker::bodyAtWorkCallsItself() const
+bool Walker::bodyOfFrameCallsItself(const Frame& frame) const
 {
-    const Frame& frame = m_frames.last();
     if (!frame.index)
         return false;
     if (!frame.bodyCallsItself)
-        frame.bodyCallsItself = callsItselfByItsOwnText(program(), *frame.index, currentFunction()) || callsItselfUnderNameThatStatementLaysOnPrototype(*this, *frame.index, currentFunction());
+        frame.bodyCallsItself = callsItselfByItsOwnText(program(), *frame.index, frame.function) || callsItselfUnderNameThatStatementLaysOnPrototype(*this, *frame.index, frame.function);
     return *frame.bodyCallsItself;
 }
 
@@ -3908,6 +3907,8 @@ Reference Walker::askFieldOfScopeInFrontOfTypedCopy(const Draft& draft, const Ef
             count(StatisticID::FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies);
             return found;
         }
+        if (isNeverType(m_types.withoutPrimitives(typeOf(found), Primitive::Absent)))
+            return { };
         Draft test(Opcode::TypeTest, draft.origin());
         test.setValueOperand(found);
         test.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
@@ -3939,7 +3940,10 @@ Reference Walker::askVariableInFrontOfTypedCopy(const Draft& draft, uint32_t out
         Draft read(draft);
         read.setGivesWordAsItLies(true);
         found = build(WTF::move(read));
-        if (!found || !found.isValue() || isUnreachable() || !m_types.at(m_types.withoutPrimitives(typeOf(found), wordThatVariableIsBornWithInWalk(program(), draft.variable()))).isJavaScriptValue())
+        if (!found || !found.isValue() || isUnreachable())
+            return { };
+        TypeID stored = m_types.withoutPrimitives(typeOf(found), wordThatVariableIsBornWithInWalk(program(), draft.variable()));
+        if (isNeverType(stored) || !m_types.at(stored).isJavaScriptValue())
             return { };
         Draft test(Opcode::TypeTest, draft.origin());
         test.setValueOperand(found);
@@ -4313,6 +4317,8 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
     if (!hasNoEffects && ((steps & Step::isToldToPolls) || (effects.mayCollect && has(Mechanism::Handlers) && !m_openLoops.isEmpty())))
         noteRecordBuiltForPolls(id, draft, effects);
     if (proven && isNeverType(proven)) {
+        if (std::ranges::any_of(m_openLoops, [&](const auto& loop) { return loop.blockInFront == m_block; }))
+            count(StatisticID::BlocksInFrontOfOpenLoopsEndedByWhatIsNever);
         endAsUnreachable(m_origin);
         return { };
     }
@@ -7175,8 +7181,12 @@ void Walker::walkBlock(BlockID inputBlock)
     });
     const BodyIndex& index = *m_frames.last().index;
     BodyBlock block = index.block(inputBlock);
-    if (!frameIndex && !m_pendingBlocks.isEmpty())
-        m_pendingBlocks.shrink(0);
+    if (!frameIndex && !m_pendingBlocks.isEmpty()) {
+        if (m_frames[0].loopsBeingBuiltTwice.isEmpty())
+            m_pendingBlocks.shrink(0);
+        else
+            letGoOfPendingBlocksThatHaveEnded();
+    }
     if (!m_openLoops.isEmpty() && !m_walksCleanupBesideCopyOfLoop) {
         const OpenLoop& newest = m_openLoops.last();
         if (newest.frame > frameIndex || (newest.frame == frameIndex && inputBlock.index() > index.loop(newest.loop).last.index()))

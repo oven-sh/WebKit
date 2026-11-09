@@ -156,6 +156,8 @@ String nameOfCompiledCallee(JSCell* cell)
 
 std::span<const uint32_t> offsetsOfNarrowReferences(const Structure* structure)
 {
+    if (!MarkedBlock::isAtomAligned(structure))
+        return { };
     if (!structure->isCompiledStructure() || !uncheckedDowncast<CompiledStructure>(structure)->describesObject())
         return { };
     std::span<const uint32_t> table = inlineReferenceTableOf(uncheckedDowncast<CompiledStructure>(structure)->layout());

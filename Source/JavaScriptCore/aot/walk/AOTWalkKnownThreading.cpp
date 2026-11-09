@@ -108,15 +108,7 @@ public:
 
 private:
     Walker::Frame& frame() { return m_walker.m_frames[m_frameIndex]; }
-    bool bodyOfFrameCallsItself()
-    {
-        const Walker::Frame& ofPlace = frame();
-        if (!ofPlace.index)
-            return false;
-        if (!ofPlace.bodyCallsItself)
-            ofPlace.bodyCallsItself = callsItselfByItsOwnText(m_walker.program(), *ofPlace.index, ofPlace.function);
-        return *ofPlace.bodyCallsItself;
-    }
+    bool bodyOfFrameCallsItself() { return m_walker.bodyOfFrameCallsItself(frame()); }
     uint32_t firstValue() const { return m_block.firstValue().index(); }
     bool operationsMayBeWalkedAgain(uint32_t begin, uint32_t end);
     bool terminatorMayBeWalkedAgain();

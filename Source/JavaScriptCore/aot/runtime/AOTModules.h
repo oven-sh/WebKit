@@ -972,6 +972,7 @@ public:
     void evaluateModuleInRecord(ModuleID);
     bool beginModuleInRecord(ModuleID);
     bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, FilesBehindFactories = FilesBehindFactories::Run);
+    bool hasOuterLoadAskedFor(ModuleID);
     Vector<uint32_t, 16> placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places);
     AbstractModuleRecord* recordOfRequestedModule(ModuleID);
     void queueJobsThatWaitForLoader();
@@ -1059,6 +1060,8 @@ public:
     void evaluateRootThatWaitedForFile(ModuleID root);
     std::optional<ModuleID> fileToWaitFor(const Identifier& key);
     bool isFileBeingHandedToLoader(const Identifier& key) { return m_fileBeingHandedToLoader && hasKey(*m_fileBeingHandedToLoader, key); }
+    bool hasLoadAroundAskedFor(const Identifier& key);
+    bool waitsForFileBeingHandedToLoader(const Identifier& key, bool& queuesStep);
     JSPromise* deferRequest(ModuleID file, ModuleLoadingContext*, bool useImportMap);
     bool hasDeferredLoads() const { return !m_deferredRequests.isEmpty() || !m_deferredImports.isEmpty(); }
     void didRequestModule(const Identifier& key, JSCell* payload);
@@ -1561,11 +1564,15 @@ private:
         bool isSynchronousLoadInHandsOfLoader() const { return fileHandedToLoader && !load; }
         BitVector requested { };
         Vector<ModuleID> importersOfNextLevel { };
+        BitVector askedForByOuterLoads { };
+        bool knowsWhatOuterLoadsAskedFor { false };
     };
     std::optional<ModuleID> fileOrFaceEvaluatedIn(const FilesBeingRun&) const;
     bool isBegunForStatement(ModuleID fileOrFace) const;
     bool hasLoaderAskedFor(FilesBeingRun&, ModuleID file);
+    void gatherWhatOuterLoadsAskedFor(FilesBeingRun&);
     bool hasSynchronousLoadFetched(ModuleID file);
+    bool forgetRunWhoseFailureLoaderHasYetToStore(ModuleID file);
     bool takeThrowBehindFetch(ModuleID fileOrFace);
     void makeRecordWithoutExports(ModuleID face);
     void handGraphToLoader(FilesBeingRun&, std::optional<ModuleID> finishedFile = std::nullopt);

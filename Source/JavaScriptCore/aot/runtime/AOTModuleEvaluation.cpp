@@ -713,6 +713,17 @@ bool Modules::hasSynchronousLoadFetched(ModuleID file)
     return entry && entry->status() == ModuleRegistryEntry::Status::Fetching && !entry->record();
 }
 
+bool Modules::forgetRunWhoseFailureLoaderHasYetToStore(ModuleID file)
+{
+    std::optional<ModuleID> face = data(file).kind == ModuleKind::CommonJs ? m_table.faceOfFile(file) : std::nullopt;
+    ModuleRegistryEntry* entry = face ? loader()->registryEntry(moduleKey(*face)) : nullptr;
+    if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetching)
+        return false;
+    forgetRunThatThrew(file);
+    recordIfExists(file)->setEvaluationError(*m_instance.vm, JSValue());
+    return true;
+}
+
 bool Modules::takeThrowBehindFetch(ModuleID fileOrFace)
 {
     LoadedModule* loaded = loadedIfExists(fileOf(fileOrFace));
@@ -966,6 +977,8 @@ bool Modules::beginModuleInRecord(ModuleID module)
     if (isRunningFilesAheadOfLoader(module))
         return false;
     ModuleStatus moduleStatus = status(module);
+    if (moduleStatus == ModuleStatus::Failed && forgetRunWhoseFailureLoaderHasYetToStore(module)) [[unlikely]]
+        moduleStatus = status(module);
     if (moduleStatus == ModuleStatus::Evaluated || moduleStatus == ModuleStatus::EvaluatingAsync) {
         BitVector isPassed;
         scope.release();
@@ -1284,6 +1297,45 @@ void Modules::resumeDeferredLoadsOfFinishedFiles()
     }
 }
 
+void Modules::gatherWhatOuterLoadsAskedFor(FilesBeingRun& files)
+{
+    Vector<FilesBeingRun*, 8> loads;
+    for (FilesBeingRun* load = &files; load->outer && !load->knowsWhatOuterLoadsAskedFor; load = load->outer)
+        loads.append(load);
+    for (FilesBeingRun* load : loads | std::views::reverse) {
+        FilesBeingRun& outer = *load->outer;
+        load->knowsWhatOuterLoadsAskedFor = true;
+        load->askedForByOuterLoads = outer.askedForByOuterLoads;
+        if (!outer.fileHandedToLoader && hasLoaderAskedFor(outer, fileOf(outer.root)))
+            load->askedForByOuterLoads.merge(outer.requested);
+    }
+}
+
+bool Modules::hasLoadAroundAskedFor(const Identifier& key)
+{
+    FilesBeingRun* around = m_innermostFilesBeingRun;
+    if (around && m_fileBeingHandedToLoader)
+        around = around->outer;
+    std::optional<ModuleID> asked = around ? findByKey(key) : std::nullopt;
+    if (!asked)
+        return false;
+    if (!around->knowsWhatOuterLoadsAskedFor)
+        gatherWhatOuterLoadsAskedFor(*around);
+    ModuleID file = fileOf(*asked);
+    return around->askedForByOuterLoads.get(file.index()) || (!around->fileHandedToLoader && hasLoaderAskedFor(*around, file));
+}
+
+bool Modules::hasOuterLoadAskedFor(ModuleID module)
+{
+    FilesBeingRun& files = *m_innermostFilesBeingRun;
+    if (!files.knowsWhatOuterLoadsAskedFor)
+        gatherWhatOuterLoadsAskedFor(files);
+    if (files.askedForByOuterLoads.get(fileOf(module).index()))
+        return true;
+    ModuleRegistryEntry* entry = loader()->registryEntry(moduleKey(module));
+    return entry && entry->status() == ModuleRegistryEntry::Status::Fetching && !entry->record();
+}
+
 Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places)
 {
     enum class State : uint8_t { Unrequested, Requested, Fetched, Made, Recorded, Settled };
@@ -1294,9 +1346,10 @@ Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID r
     auto stateOf = [&](ModuleID module) {
         if (auto found = states.find(module.index()); found != states.end())
             return found->value;
-        if (isCommonJSFileOrFace(module))
-            return hasNotBegunAsFile(module) ? State::Unrequested : State::Recorded;
-        return isNotLoaded(module) && !isMocked(module) ? State::Unrequested : State::Settled;
+        bool isFile = isCommonJSFileOrFace(module);
+        if (isFile ? !hasNotBegunAsFile(module) : !isNotLoaded(module) || isMocked(module))
+            return isFile ? State::Recorded : State::Settled;
+        return hasOuterLoadAskedFor(module) ? State::Requested : State::Unrequested;
     };
     Vector<std::pair<Job, ModuleID>, 64> jobs;
     Vector<ModuleID, 32> toWalk;
@@ -1601,6 +1654,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             if (statusAtStart == ModuleStatus::Failed || vm.isTerminationException(exception) || !wasImportedWhileItRan(m_table.fileBehindFace(imported).value_or(imported))) {
                 if (error == ErrorOfImportedFile::IsLeftToLoader && !vm.isTerminationException(exception)) {
                     TRY_CLEAR_EXCEPTION(scope, didRunFile);
+                    if (jobs == JobsOfImportedFiles::StepsOfLoaderWaitForLoader && imported != fileOf(imported) && status(imported) != ModuleStatus::Failed)
+                        setFailed(imported, exception->value());
                     if (numberOfJobsThatWouldWait(jobs) != numberOfJobs)
                         holdJobsBehind(numberOfJobs, imported, jobs);
                     m_rootWhoseFilesRanAhead = root;
@@ -4009,8 +4064,11 @@ void Modules::evaluateCommonJS(ModuleID module)
     ModuleStatus moduleStatus = status(module);
     if (moduleStatus == ModuleStatus::Evaluating || moduleStatus == ModuleStatus::Evaluated)
         return;
-    if (moduleStatus == ModuleStatus::Failed)
-        RELEASE_AND_RETURN(scope, throwEvaluationError(module));
+    if (moduleStatus == ModuleStatus::Failed) {
+        if (!forgetRunWhoseFailureLoaderHasYetToStore(module))
+            RELEASE_AND_RETURN(scope, throwEvaluationError(module));
+        moduleStatus = status(module);
+    }
     RELEASE_ASSERT(moduleStatus == ModuleStatus::Unlinked || moduleStatus == ModuleStatus::Linked);
     unbindModuleObjectOfRunThatThrew(module);
     RETURN_IF_EXCEPTION(scope, void());
