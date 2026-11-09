@@ -582,6 +582,9 @@ JSValue JSInjectedScriptHost::getInternalProperties(JSGlobalObject* globalObject
             RETURN_IF_EXCEPTION(scope, JSValue());
             JSValue thisObject = jsScope->get(globalObject, vm.propertyNames->builtinNames().thisPrivateName());
             RETURN_IF_EXCEPTION(scope, JSValue());
+            // |this| of a derived constructor has no value before super() returns. As DebuggerScope does for a variable without a value, say undefined.
+            if (!thisObject)
+                thisObject = jsUndefined();
             array->putDirectIndex(globalObject, index++, constructInternalProperty(globalObject, "boundThis"_s, thisObject));
             RETURN_IF_EXCEPTION(scope, JSValue());
             return array;
