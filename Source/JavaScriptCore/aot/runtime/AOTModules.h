@@ -426,6 +426,7 @@ public:
         m_importsBehindFactoriesHaveYetToGoOn |= !m_modulesWhoseFactoryRuns.get(module.index());
     }
     bool standsForLoadsInFlight(ModuleID module) const { return m_modulesWithMockThatStandsForLoadsInFlight.get(module.index()); }
+    bool isAskedByLoadThatRequireLeft(ModuleID mocked) const { return m_loadLeftByRequireThatGoesOn && reachedByStatements(*m_loadLeftByRequireThatGoesOn, AtMock::Stops).get(mocked.index()); }
     void didGoOnBehindFactories() { m_importsBehindFactoriesHaveYetToGoOn = false; }
     bool letsMockOverModuleThatHasRunStandForLoadInFlight(ModuleID module, bool wasLaidOverMockOfPreload)
     {
@@ -2297,6 +2298,7 @@ private:
     BitVector m_modulesWithLoadEndedByMock;
     ModuleID m_moduleThatRequireAsksFor;
     bool m_walkGoesOnPastFactoriesThatHaveNotSettled { false };
+    std::optional<ModuleID> m_loadLeftByRequireThatGoesOn;
     bool m_letsGoOfMocksAtLinkFromSource { false };
     ModuleID m_moduleThatRequires;
     ModuleID m_targetOfRequireRecordedAhead;
@@ -2310,6 +2312,8 @@ private:
     ModuleID m_moduleThatImportThatAsksNames;
     uint32_t m_momentOfImportThatAsks { 0 };
     uint32_t m_momentOfHeldImport { 0 };
+    bool m_isHeldImportWrittenByBodyBelowFileAskedFor { false };
+    bool m_isImportThatAsksWrittenByBodyBelowFileAskedFor { false };
     ModuleID m_moduleThatImportAskedForWhenFactoryBegan;
     JSValue m_stateOfWaitOfImportThatAsks;
     BitVector m_mockedModulesWithErrorKeptByLoader;
@@ -2485,7 +2489,7 @@ private:
     void followImportsOfModulesThatHaveRun();
     void followImportsAnewAtNextQuestion();
     void evaluateModulesOwedBelow(ModuleID root, bool hasImporterThatRan = false);
-    void evaluateModuleOwed(ModuleID);
+    bool evaluateModuleOwed(ModuleID);
     void passModuleThatHasRun(ModuleID, BitVector& isPassed);
     bool isSomethingDueWhereModulesArePassed() const { return !m_modulesOwedToImportersThatRan.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || !m_modulesThatLayMocksAgain.isEmpty(); }
     void letGoOfMocksThatEndedBelow(ModuleID root);

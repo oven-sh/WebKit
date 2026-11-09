@@ -316,7 +316,7 @@ bool Modules::isAskedForByOwnFactory(ModuleID module)
 {
     if (!isMocked(module) || data(module).isOfLibrary() || !data(module).hasExportTable() || data(module).isFaceOfFile()) [[likely]]
         return false;
-    if (m_modulesWhoseFactoryRuns.get(module.index()))
+    if (m_modulesWhoseFactoryRuns.get(module.index()) && !(m_isImportThatAsksWrittenByBodyBelowFileAskedFor && m_moduleThatImportThatAsksNames == module))
         return true;
     return !mockInPlace(module) && !m_modulesWithMockToRun.get(module.index()) && host().isCalledFromFactoryThatWaits && host().isCalledFromFactoryThatWaits(m_instance.globalObject, module);
 }

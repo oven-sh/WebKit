@@ -2316,15 +2316,18 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         if (isRest) {
             m_block = { };
             m_state.clear();
+            PendingBlock* pending = findPendingBlock(startOfRest);
+            size_t numberOfArrivals = pending ? pending->numberOfArrivals : 0;
+            size_t numberOfEdges = 0;
+            m_code.forEachEdgeIntoSoFar(startOfRest, [&](const Edge&) {
+                ++numberOfEdges;
+            });
+            if (!numberOfEdges)
+                continue;
             continueIn(startOfRest);
-            if (isUnreachable()) {
-                bool someFrontLeadsHere = false;
-                m_code.forEachEdgeIntoSoFar(startOfRest, [&](const Edge&) {
-                    someFrontLeadsHere = true;
-                });
-                if (!someFrontLeadsHere)
-                    continue;
+            if (numberOfEdges > numberOfArrivals) {
                 m_block = startOfRest;
+                m_state.clear();
             }
         } else {
             m_block = start.block;

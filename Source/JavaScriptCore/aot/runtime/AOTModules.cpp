@@ -3498,6 +3498,7 @@ void Modules::goOnWithImportOfMockedModule(JSArray* heldCall)
     }
     m_importOfMockedModuleHasComeToItsJob = true;
     m_momentOfHeldImport = heldCall->getIndexQuickly(4).asUInt32();
+    m_isHeldImportWrittenByBodyBelowFileAskedFor = heldCall->getIndexQuickly(5).asBoolean();
     m_modulesOfHeldImports.removeFirst(ModuleID(heldCall->getIndexQuickly(1).asUInt32()));
     JSValue referrer = heldCall->getIndexQuickly(2);
     JSPromise* loaded = import(ModuleID(heldCall->getIndexQuickly(1).asUInt32()), referrer.isUndefined() ? ModuleID() : ModuleID(referrer.asUInt32()));
@@ -3517,6 +3518,8 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     SetForScope momentOfImportThatAsks(m_momentOfImportThatAsks, momentOfCall);
 
     bool hasComeToItsJob = std::exchange(m_importOfMockedModuleHasComeToItsJob, false);
+    bool isWrittenByBodyBelow = hasComeToItsJob ? m_isHeldImportWrittenByBodyBelowFileAskedFor : referrer && isMocked(module) && status(fileOf(referrer)) == ModuleStatus::Evaluating && importsByStatements(module, fileOf(referrer));
+    SetForScope isImportThatAsksWrittenByBodyBelowFileAskedFor(m_isImportThatAsksWrittenByBodyBelowFileAskedFor, isWrittenByBodyBelow);
     endMocksThatStoodForLoadsInFlight();
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (standsForLoadsInFlight(module) && m_modulesWithMockToRun.get(module.index()) && !isEvaluatedByLoader(module) && haveLoadsInFlightTakenAnswerThatStandsOn(module)) [[unlikely]] {
@@ -3524,7 +3527,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
     bool hasMockToRun = (m_modulesWithMockToRun.get(module.index()) || m_modulesWithMockToRun.get(fileOf(module).index())) && !m_modulesWithMockThatAsksAgain.get(module.index()) && !m_modulesWithMockThatAsksAgain.get(fileOf(module).index()) && !m_instance.vm->synchronousModuleQueue();
-    if (!hasComeToItsJob && (hasMockToRun || m_mockWhoseOriginalIsEvaluated == module) && options.isUndefined()) [[unlikely]] {
+    if (!hasComeToItsJob && (hasMockToRun || m_mockWhoseOriginalIsEvaluated == module || (isWrittenByBodyBelow && m_modulesWhoseFactoryRuns.get(module.index()))) && options.isUndefined()) [[unlikely]] {
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
         MarkedArgumentBuffer call;
         call.append(jsNumber(3));
@@ -3532,6 +3535,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         call.append(referrer ? jsNumber(referrer.index()) : jsUndefined());
         call.append(promise);
         call.append(jsNumber(momentOfCall));
+        call.append(jsBoolean(isWrittenByBodyBelow));
         JSArray* heldCall = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), call);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         m_modulesOfHeldImports.append(module);

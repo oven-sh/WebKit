@@ -3086,7 +3086,14 @@ void Modules::didSettleFactoryThatRequireLeft(unsigned number)
     ModuleID required = m_waitsThatRequiresLeft[left].required;
     bool isForgotten = !m_waitsThatRequiresLeft[left].keepsError;
     didGoOnBehindFactories();
-    runMocksBelow(required);
+    for (const auto& call : m_waitsThatRequiresLeft[left].callsOfFactories) {
+        if (callOfFactoryThatHasNotSettled(call.first) != call.second && m_modulesWithMockToRun.get(call.first.index()) && m_mockedModulesWithErrorKeptByLoader.get(call.first.index()))
+            dropErrorsOfLoadsEndedByMockOf(call.first);
+    }
+    {
+        SetForScope loadLeftByRequireThatGoesOn(m_loadLeftByRequireThatGoesOn, std::optional(required));
+        runMocksBelow(required);
+    }
     Exception* thrown = scope.exception();
     if (thrown && (vm.isTerminationException(thrown) || !scope.tryClearException()))
         return;

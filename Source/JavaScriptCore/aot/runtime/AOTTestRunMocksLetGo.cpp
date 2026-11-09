@@ -321,19 +321,20 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
     }
 }
 
-void Modules::evaluateModuleOwed(ModuleID module)
+bool Modules::evaluateModuleOwed(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (!m_modulesOwedToImportersThatRan.get(module.index()))
-        return;
+        return false;
     if (ModuleID file = fileOf(module); m_modulesWithMockToRun.get(file.index())) {
         scope.release();
-        m_factoryOverModuleOwedHasNotSettled |= runMocksBelow(file, RootOfLoad::IsImportedByStatement);
-        return;
+        bool factoryHasNotSettled = runMocksBelow(file, RootOfLoad::IsImportedByStatement);
+        m_factoryOverModuleOwedHasNotSettled |= factoryHasNotSettled;
+        return factoryHasNotSettled;
     }
     if (callOfFactoryThatHasNotSettled(fileOf(module))) {
         m_factoryOverModuleOwedHasNotSettled = true;
-        return;
+        return true;
     }
     m_modulesOwedToImportersThatRan.clear(module.index());
     auto staysOwedWhereItFails = makeScopeExit([&] {
@@ -343,20 +344,21 @@ void Modules::evaluateModuleOwed(ModuleID module)
     followImportsAnewAtNextQuestion();
     ModuleStatus statusAtStart = status(module);
     if ((statusAtStart >= ModuleStatus::Evaluating && statusAtStart != ModuleStatus::Failed) || mockInPlace(module))
-        return;
+        return false;
     const ModuleData& moduleData = data(module);
     if (moduleData.capturesExportsBehindEvaluation()) {
         captureExportsBehindEvaluation(module);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, false);
     }
     if (!moduleData.hasExportTable() || (statusAtStart == ModuleStatus::Unlinked && moduleData.reachesUncompiledCode() && !moduleData.hasTopLevelAwait()))
-        RELEASE_AND_RETURN(scope, evaluateSynchronously(module, SynchronousEvaluationReason::Require));
+        RELEASE_AND_RETURN(scope, (evaluateSynchronously(module, SynchronousEvaluationReason::Require), false));
     JSPromise* evaluation = evaluate(module, std::nullopt, nullptr);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, false);
     if (evaluation->status() == JSPromise::Status::Rejected) {
         evaluation->markAsHandled();
         throwException(m_instance.globalObject, scope, evaluation->result());
     }
+    return false;
 }
 
 void Modules::passModuleThatHasRun(ModuleID root, BitVector& isPassed)
@@ -370,6 +372,7 @@ void Modules::passModuleThatHasRun(ModuleID root, BitVector& isPassed)
         uint32_t nextRequest;
     };
     Vector<ModuleOnPath, 16> path;
+    bool factoryHasNotSettled = false;
     auto enter = [&](ModuleID module) {
         if (isPassed.quickSet(module.index()) || isEvicted(module))
             return;
@@ -408,7 +411,9 @@ void Modules::passModuleThatHasRun(ModuleID root, BitVector& isPassed)
             continue;
         }
         if (m_modulesOwedToImportersThatRan.get(imported.index())) {
-            evaluateModuleOwed(imported);
+            if (factoryHasNotSettled && !m_walkGoesOnPastFactoriesThatHaveNotSettled)
+                continue;
+            factoryHasNotSettled = evaluateModuleOwed(imported);
             RETURN_IF_EXCEPTION(scope, void());
             continue;
         }
