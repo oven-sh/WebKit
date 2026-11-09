@@ -10827,13 +10827,13 @@ void checkEncodingsFollowPolicy()
         jit.signExtend32To64(CCallHelpers::TrustedImm32(-5), X86Registers::eax);
     });
     checkSizes(3, 3, [](CCallHelpers& jit) {
-        jit.test32(X86Registers::edx, CCallHelpers::TrustedImm32(0x10));
+        jit.test32(CCallHelpers::NonZero, X86Registers::edx, CCallHelpers::TrustedImm32(0x10));
     });
     checkSizes(6, 4, [](CCallHelpers& jit) {
-        jit.test32(X86Registers::edi, CCallHelpers::TrustedImm32(0x10));
+        jit.test32(CCallHelpers::NonZero, X86Registers::edi, CCallHelpers::TrustedImm32(0x10));
     });
     checkSizes(7, 4, [](CCallHelpers& jit) {
-        jit.test32(X86Registers::r10, CCallHelpers::TrustedImm32(0x10));
+        jit.test32(CCallHelpers::NonZero, X86Registers::r10, CCallHelpers::TrustedImm32(0x10));
     });
 
     for (const AssemblerPolicy& policy : { longEncodings, shortEncodings }) {
