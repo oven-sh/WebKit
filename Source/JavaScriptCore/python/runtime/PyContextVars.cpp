@@ -97,6 +97,49 @@ bool exitContext(JSGlobalObject* globalObject, JSValue self)
     return true;
 }
 
+OutermostContextScope::OutermostContextScope(JSGlobalObject* globalObject)
+    : m_globalObject(globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    JSValue current = rt.currentContext();
+    if (!current || !PyRecord::from(current)->number) [[likely]]
+        return;
+    m_current = current;
+    auto before = [&](PyRecord* context) {
+        JSValue previous = context->get(ContextPrevious);
+        // It is made when it is first asked for, and nobody had yet when the first was entered.
+        if (!previous) {
+            previous = newContext(globalObject, nullptr);
+            context->set(rt.vm(), ContextPrevious, previous);
+        }
+        return PyRecord::from(previous);
+    };
+    // The one that is not entered. But a program that has got hold of that one (gc hands it out) may have entered it on top of the others: then all are entered, the way back is a circle, and it is where
+    // the circle is come into. (Two walk, one at twice the pace; if they meet, it is as far from there as from the start.)
+    PyRecord* start = PyRecord::from(current);
+    PyRecord* slow = start;
+    PyRecord* fast = start;
+    do {
+        for (unsigned i = 0; i < 2; ++i) {
+            fast = before(fast);
+            if (!fast->number) {
+                rt.setCurrentContext(fast);
+                return;
+            }
+        }
+        slow = before(slow);
+    } while (slow != fast);
+    for (slow = start; slow != fast; fast = before(fast))
+        slow = before(slow);
+    rt.setCurrentContext(slow);
+}
+
+OutermostContextScope::~OutermostContextScope()
+{
+    if (m_current) [[unlikely]]
+        runtime(m_globalObject).setCurrentContext(m_current);
+}
+
 static JSValue contextRun(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     Runtime& rt = runtime(globalObject);

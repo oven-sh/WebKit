@@ -20,6 +20,20 @@ bool isContext(JSGlobalObject*, JSValue);
 bool enterContext(JSGlobalObject*, JSValue context);
 bool exitContext(JSGlobalObject*, JSValue context);
 
+// For what runs on top of whatever the thread happens to be doing, and is not called by that: for its length the thread is in the context in which it was before it entered any. What is set there is
+// there for the next such, and for the program outside every context.
+class OutermostContextScope {
+    WTF_MAKE_NONCOPYABLE(OutermostContextScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    explicit OutermostContextScope(JSGlobalObject*);
+    ~OutermostContextScope();
+
+private:
+    JSGlobalObject* m_globalObject;
+    JSValue m_current; // Empty: the thread has entered none.
+};
+
 // contextvars.ContextVar(name)
 JSValue newContextVariable(JSGlobalObject*, ASCIILiteral name);
 // variable.get(), but for the default. Empty, without an exception: it has no value in the context the thread is in.

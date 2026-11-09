@@ -11,6 +11,7 @@
 #include "InternalFieldTuple.h"
 #include "JSCInlines.h"
 #include "MarkedVector.h"
+#include "PyContextVars.h"
 #include "PyHooks.h"
 #include "PyPosix.h"
 #include <limits.h>
@@ -234,6 +235,8 @@ static NEVER_INLINE int waitInHost(JSGlobalObject* globalObject, WaitFunction fu
 {
     Runtime::EventLoopPositionScope position(runtime(globalObject), true);
     NoAsyncContextScope nothingIsCurrent(globalObject);
+    // So with the variables of Python's: what the loop calls is not called by whoever waits.
+    OutermostContextScope inNobodysContext(globalObject);
     // Not for a mere look, which sleeps nowhere.
     std::optional<JSLock::EmbedderThreadWaitsInEventLoop> waits;
     if (request.timeout) {
