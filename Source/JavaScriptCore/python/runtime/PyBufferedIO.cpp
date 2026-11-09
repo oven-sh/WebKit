@@ -705,24 +705,32 @@ JSValue BufferedStream::readline(int64_t limit)
     if (failed(scope, checkClosed("readline of closed file"_s)))
         return { };
 
-    // The line may be in the buffer already.
-    int64_t count = readAhead();
-    if (limit >= 0 && count > limit)
-        count = limit;
-    const uint8_t* start = buffer() + s.position;
-    if (auto* newline = count ? static_cast<const uint8_t*>(memchr(start, '\n', count)) : nullptr)
-        count = newline - start + 1;
-    else if (count != limit)
-        start = nullptr;
-    if (start) {
-        JSValue result = PyBytes::create(globalObject, std::span<const uint8_t> { start, static_cast<size_t>(count) });
+    // The line may be in the buffer already. False: it is not, and `count` is how much of it is.
+    int64_t count;
+    const uint8_t* start;
+    JSValue result;
+    auto isInBuffer = [&] {
+        count = readAhead();
+        if (limit >= 0 && count > limit)
+            count = limit;
+        start = buffer() + s.position;
+        if (auto* newline = count ? static_cast<const uint8_t*>(memchr(start, '\n', count)) : nullptr)
+            count = newline - start + 1;
+        else if (count != limit)
+            return false;
+        result = PyBytes::create(globalObject, std::span<const uint8_t> { start, static_cast<size_t>(count) });
         s.position += count;
+        return true;
+    };
+    if (isInBuffer())
         return result;
-    }
 
     BufferedLock lock(*this);
     if (failed(scope, !!lock))
         return { };
+    // That may have waited, and whoever held the lock has filled the buffer anew, or moved in it.
+    if (isInBuffer())
+        return result;
     Vector<uint8_t, 256> line;
     if (count > 0) {
         line.append(std::span<const uint8_t> { buffer() + s.position, static_cast<size_t>(count) });
