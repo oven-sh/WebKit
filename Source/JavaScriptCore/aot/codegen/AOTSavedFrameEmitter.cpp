@@ -21,6 +21,7 @@
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSavedFrame.h"
+#include "AOTSort.h"
 #include "AOTStubCatalog.h"
 #include "AOTTypeTestEmitter.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -599,7 +600,7 @@ bool SavedFrameEmitter::layOutHeapFrame()
     auto placeOfDefinition = [&](ValueID id) {
         return m_placesOfBlocks[m_code.blockOf(id).index()];
     };
-    std::ranges::stable_sort(kept, { }, placeOfDefinition);
+    AOT::stableSort(kept, { }, placeOfDefinition);
     uint32_t nextTraced = 0;
     uint32_t nextRaw = m_numberOfTracedWords;
     for (ValueID id : kept) {
@@ -703,7 +704,7 @@ void SavedFrameEmitter::giveWordsWhoseLivesAreApartOnePlace(uint32_t numberOfWor
         Vector<uint32_t, 64> byBegin;
         for (uint32_t word = firstWord; word < endOfWords; ++word)
             byBegin.append(word);
-        std::ranges::stable_sort(byBegin, { }, [&](uint32_t word) { return lives[word].begin; });
+        AOT::stableSort(byBegin, { }, [&](uint32_t word) { return lives[word].begin; });
         Vector<std::pair<uint64_t, uint32_t>, 64> endsOfPlaces;
         uint32_t numberOfPlaces = firstPlace;
         for (uint32_t word : byBegin) {
@@ -998,21 +999,27 @@ ValueID SavedFrameEmitter::forEachValueReadInStretch(BlockID block, ValueID yiel
 {
     const Block& written = m_code.at(block);
     std::span<const ValueID> values = m_code.valuesOf(block);
-    if (yieldInFront)
-        values = values.subspan(std::ranges::find(values, yieldInFront) - values.begin() + 1);
-    else
+    size_t place = 0;
+    if (yieldInFront) {
+        place = m_placeBehindSuspensionFoundLast;
+        if (!place || place > values.size() || values[place - 1] != yieldInFront)
+            place = std::ranges::find(values, yieldInFront) - values.begin() + 1;
+    } else
         read(written.subject);
-    for (ValueID id : values) {
+    for (; place < values.size(); ++place) {
+        ValueID id = values[place];
         const Operation& operation = operationAt(id);
         if ((m_keepsWordsInMachineFrame || operation.opcode != Opcode::YieldBySavingFrame) && operation.traits().maySuspend()) {
             operation.forEachOperand([&](ValueID operand, uint32_t) {
                 read(operand);
             });
+            m_placeBehindSuspensionFoundLast = place + 1;
             return id;
         }
         if (operation.opcode == Opcode::YieldBySavingFrame) {
             read(operation.generatorOperand());
             read(operation.valueOperand());
+            m_placeBehindSuspensionFoundLast = place + 1;
             return id;
         }
         if (operation.opcode == Opcode::Narrowed)

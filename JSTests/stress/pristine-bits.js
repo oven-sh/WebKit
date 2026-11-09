@@ -73,9 +73,9 @@ let effects = {
     both: [
         "a.foo = 1", "a.foo = 1; delete a.foo", "a.foo = 1; Object.defineProperty(a, 'foo', { enumerable: false })", "a.foo = 1; a.bar = 2",
         "a.index = 0", "a.index = 0; a.input = 'a'", "a.index = 0; a.input = 'a'; a.groups = undefined", "a.groups = undefined", "a.indices = 1",
-        "a[100000] = 1", "a.push('a')", "a.push(1.5, { })", "Object.create(a)", "Object.preventExtensions(a)",
+        "a[100000] = 1", "a.push('a')", "a.push(1.5, { })", "Object.create(a)", "Object.preventExtensions(a)", "a[Symbol()] = 1", "a[Symbol('x')] = 1",
     ],
-    elements: ["a.map = 1", "a.constructor = 1", "a.hasOwnProperty = 1", "a[Symbol()] = 1", "a[Symbol.iterator] = function () { }", "a.then = 1", "a.toJSON = 1", "a.foo = 1; a.map = 1"],
+    elements: ["a.map = 1", "a.constructor = 1", "a.hasOwnProperty = 1", "a[Symbol.for('x')] = 1", "a[Symbol.iterator] = function () { }", "a.then = 1", "a.toJSON = 1", "a.foo = 1; a.map = 1"],
     names: ["a['-1'] = 1", "a['1.5'] = 1", "a.foo = 1; a['-1'] = 1"],
     none: [
         "Object.setPrototypeOf(a, null)", "Object.setPrototypeOf(a, Object.prototype)", "Object.setPrototypeOf(a, Object.create(Array.prototype))",
@@ -102,7 +102,7 @@ function compile(realm, statements) {
 }
 
 // Inline caches filled after the mark: a transition that loses a bit is not cached in any tier.
-for (let [statements, expected] of [["a.tag = 1; a.other = 1", "both"], ["a.tag = 1; a.index = 1", "both"], ["a.tag = 1; a.map = 1", "elements"], ["a.tag = 1; a.then = 1", "elements"], ["a.tag = 1; a['-1'] = 1", "names"]]) {
+for (let [statements, expected] of [["a.tag = 1; a.other = 1", "both"], ["a.tag = 1; a.index = 1", "both"], ["a.tag = 1; a[globalThis.programSymbol ??= Symbol('x')] = 1", "both"], ["a.tag = 1; a.map = 1", "elements"], ["a.tag = 1; a.then = 1", "elements"], ["a.tag = 1; a[Symbol.for('x')] = 1", "elements"], ["a.tag = 1; a['-1'] = 1", "names"]]) {
     let store = compile(realm, statements), create = realm.eval(createArrayOfStrings);
     for (let i = 0; i < testLoopCount; ++i)
         shouldBe(bits(store(create())), expected, statements);
@@ -128,6 +128,7 @@ function markLate(statements, expected) {
 markLate("a.tag = 1; a.other = 1", "both");
 markLate("a.tag = 1; delete a.tag", "both");
 markLate("a.tag = 1; a.other = 1; a.third = 1", "both");
+markLate("a.tag = 1; a[globalThis.programSymbol ??= Symbol('x')] = 1", "both");
 markLate("a.tag = 1; a.map = 1", "elements");
 markLate("a.tag = 1; a.other = 1; a.then = 1", "elements");
 markLate("a.tag = 1; a[Symbol.iterator] = 1", "elements");

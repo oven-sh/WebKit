@@ -430,8 +430,9 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     }
     m_state = State::Running;
     JSValue result = enterSavedFrame(vm, *Instance::owning(m_savedFrame), m_savedFrame, mode, value);
-    if (scope.exception()) [[unlikely]] {
-        didEnd();
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        if (!vm.isTerminationException(exception))
+            didEnd();
         return { };
     }
     bool isDone = m_state == State::Running;

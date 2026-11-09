@@ -18,9 +18,7 @@
 #include "AOTTypeArena.h"
 #include <algorithm>
 #include <optional>
-#include <ranges>
 #include <span>
-#include <tuple>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -78,22 +76,45 @@ static FieldInOwnKeyPlan classifyFieldInCopiesOwnKeys(const Walker& walker, Layo
     return FieldInOwnKeyPlan::Listed;
 }
 
-static bool canPlanOwnKeysOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID layout)
-{
-    const Program& program = walker.program();
-    const Plan& plan = walker.plan();
-    if (!isFoundByShapeTest(program.at(layout)) || !plan.isInUse(layout) || !orderWordTellsOwnKeysOf(walker, layout))
-        return false;
+namespace {
 
-    const PlannedLayout& planned = plan.layout(layout);
-    for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
-        if (planned.slots[field].hasStorage() && !canLeaveSlot(planned.slots[field].representation))
+struct KeptByCopiesOwnKeys final : Walker::KeptForBuild {
+    struct ArmsOfLayout {
+        Vector<OwnKeyOrder, 2> arms;
+        bool everyExpectedOrderHasArm { false };
+    };
+    HashMap<uint64_t, ArmsOfLayout> armsOfLayouts;
+    HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> whetherOwnKeysCanBePlanned;
+};
+
+} // anonymous namespace
+
+static KeptByCopiesOwnKeys& keptByCopiesOwnKeys(Walker& walker)
+{
+    std::unique_ptr<Walker::KeptForBuild>& kept = walker.keptByCopiesOwnKeys();
+    if (!kept)
+        kept = makeUniqueWithoutFastMallocCheck<KeptByCopiesOwnKeys>();
+    return static_cast<KeptByCopiesOwnKeys&>(*kept);
+}
+
+static bool canPlanOwnKeysOfLayoutInCopiesOwnKeys(Walker& walker, LayoutID layout)
+{
+    return keptByCopiesOwnKeys(walker).whetherOwnKeysCanBePlanned.ensure(layout.index(), [&] {
+        const Program& program = walker.program();
+        const Plan& plan = walker.plan();
+        if (!isFoundByShapeTest(program.at(layout)) || !plan.isInUse(layout) || !orderWordTellsOwnKeysOf(walker, layout))
             return false;
-        PropertyKeyID key = plan.slots().keyOf(program, { layout, field });
-        if (key && program.at(key).kind == PropertyKeyKind::Text && (program.isIndexLike(key) || program.nameClassOf(key) == NameClass::Proto))
-            return false;
-    }
-    return true;
+
+        const PlannedLayout& planned = plan.layout(layout);
+        for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
+            if (planned.slots[field].hasStorage() && !canLeaveSlot(planned.slots[field].representation))
+                return false;
+            PropertyKeyID key = plan.slots().keyOf(program, { layout, field });
+            if (key && program.at(key).kind == PropertyKeyKind::Text && (program.isIndexLike(key) || program.nameClassOf(key) == NameClass::Proto))
+                return false;
+        }
+        return true;
+    }).iterator->value;
 }
 
 static std::optional<OwnKeyOrder> ownKeysAmongCreatedFieldsInCopiesOwnKeys(const Walker& walker, LayoutID layout, std::span<const FieldIndex> created, size_t mostFields = std::numeric_limits<size_t>::max())
@@ -207,7 +228,7 @@ static Vector<uint32_t, 2> countsAtWhichMakersStopInCopiesOwnKeys(const Walker& 
     return counts;
 }
 
-static bool findArmsOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID layout, unsigned mostArms, size_t mostFields, OwnKeyPlan& plan)
+static bool findArmsOfLayoutInCopiesOwnKeys(Walker& walker, LayoutID layout, unsigned mostArms, size_t mostFields, OwnKeyPlan& plan)
 {
     if (!canPlanOwnKeysOfLayoutInCopiesOwnKeys(walker, layout))
         return false;
@@ -263,30 +284,16 @@ static bool findArmsOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID layou
     return everyStopOfMakersHasArm.value_or(hasList && everyListHasArm);
 }
 
-namespace {
-
-struct KeptByCopiesOwnKeys final : Walker::KeptForBuild {
-    struct ArmsOfLayout {
-        Vector<OwnKeyOrder, 2> arms;
-        bool everyExpectedOrderHasArm { false };
-    };
-    HashMap<uint64_t, ArmsOfLayout> armsOfLayouts;
-};
-
-} // anonymous namespace
-
 static bool appendOrdersOfLayoutInCopiesOwnKeys(Walker& walker, LayoutID layout, unsigned mostArms, size_t mostFields, OwnKeyPlan& plan)
 {
     static_assert(mostArmsOfOwnKeyWalk < 4);
     RELEASE_ASSERT(plan.orders.size() <= mostArms && mostArms <= mostArmsOfOwnKeyWalk);
     unsigned room = mostArms - static_cast<unsigned>(plan.orders.size());
+    mostFields = std::min<size_t>(mostFields, walker.plan().layout(layout).numberOfFields());
     if (mostFields > std::numeric_limits<uint16_t>::max())
         return findArmsOfLayoutInCopiesOwnKeys(walker, layout, mostArms, mostFields, plan);
-    std::unique_ptr<Walker::KeptForBuild>& kept = walker.keptByCopiesOwnKeys();
-    if (!kept)
-        kept = makeUniqueWithoutFastMallocCheck<KeptByCopiesOwnKeys>();
     uint64_t key = (static_cast<uint64_t>(layout.index()) + 1) << 32 | static_cast<uint64_t>(mostFields) << 8 | room << 1 | walker.isInLoop();
-    const KeptByCopiesOwnKeys::ArmsOfLayout& found = static_cast<KeptByCopiesOwnKeys&>(*kept).armsOfLayouts.ensure(key, [&] {
+    const KeptByCopiesOwnKeys::ArmsOfLayout& found = keptByCopiesOwnKeys(walker).armsOfLayouts.ensure(key, [&] {
         OwnKeyPlan ofLayoutAlone;
         bool everyExpectedOrderHasArm = findArmsOfLayoutInCopiesOwnKeys(walker, layout, room, mostFields, ofLayoutAlone);
         return KeptByCopiesOwnKeys::ArmsOfLayout { WTF::move(ofLayoutAlone.orders), everyExpectedOrderHasArm };
@@ -328,26 +335,6 @@ static LayoutID layoutWrittenOfSourceInCopiesOwnKeys(Walker& walker, ValueID sou
     return layoutThatNamesFamily(walker, written);
 }
 
-static bool isWrittenEarlierInCopiesOwnKeys(const Program& program, LayoutID first, LayoutID second)
-{
-    const Layout& one = program.at(first);
-    const Layout& other = program.at(second);
-    auto placeOf = [](const Layout& layout) {
-        return std::tuple(!layout.module, layout.module ? layout.module.index() : 0u, layout.position);
-    };
-    if (placeOf(one) != placeOf(other))
-        return placeOf(one) < placeOf(other);
-    auto namesOf = [&](const Layout& layout) {
-        return layout.fields | std::views::transform([&](const Field& field) {
-            StringID text = field.key ? program.at(field.key).text : StringID();
-            return text ? program.string(text) : std::span<const uint8_t>();
-        });
-    };
-    return std::ranges::lexicographical_compare(namesOf(one), namesOf(other), [](std::span<const uint8_t> name, std::span<const uint8_t> otherName) {
-        return std::ranges::lexicographical_compare(name, otherName);
-    });
-}
-
 static bool listLayoutsInCopiesOwnKeys(Walker& walker, TypeID listed, ValueID source, unsigned mostArms, size_t mostFields, Vector<LayoutID, mostArmsOfOwnKeyWalk>& layouts, bool& hasMoreLayouts)
 {
     if (!listed)
@@ -365,17 +352,15 @@ static bool listLayoutsInCopiesOwnKeys(Walker& walker, TypeID listed, ValueID so
     }
     if (written)
         layouts.append(written);
-    Vector<LayoutID, 8> others;
     for (LayoutID member : membersOf(walker.types(), type.layouts)) {
-        if (member != written && walker.plan().isInUse(member))
-            others.append(member);
+        if (member == written || !walker.plan().isInUse(member))
+            continue;
+        if (layouts.size() == mostArms) {
+            hasMoreLayouts = true;
+            break;
+        }
+        layouts.append(member);
     }
-    std::ranges::stable_sort(others, [&](LayoutID first, LayoutID second) {
-        return isWrittenEarlierInCopiesOwnKeys(walker.program(), first, second);
-    });
-    size_t room = mostArms - std::min<size_t>(mostArms, layouts.size());
-    hasMoreLayouts |= others.size() > room;
-    layouts.append(others.span().first(std::min(room, others.size())));
     return !layouts.isEmpty();
 }
 
@@ -455,7 +440,8 @@ bool goOnWhereObjectHasOwnKeys(Walker& walker, Reference& object, const OwnKeyOr
     if (!goOnWhereTestPassesInCopiesOwnKeys(walker, walker.build(WTF::move(hasNothingElse)), waysOut.whereTestFails))
         return false;
     walker.state().noteFactsOfCell(object, FactOfCell::NoFieldOutsideSlot);
-    return true;
+    walker.checkFactsRememberedOfCell(object, origin);
+    return !walker.isUnreachable();
 }
 
 bool goOnWhereObjectHasOwnKeys(Walker& walker, Reference& object, const OwnKeyOrder& order, bool layoutIsProven, Origin origin, BlockID whereTestFails)

@@ -1,0 +1,60 @@
+# const area = a => a.u * a.v; function walked(list) { let sum = 0; for (let i = 0; i < list.length; i++) sum += area(list[i]); return sum; }   and somewhere the file writes { u, v }.
+# Nobody says what `a` is. The front end writes what it guesses by the names used alone: `undefined|null|number|string|symbol|bigint|L0 [IsExpected]`: whoever has the names (what FLOWS into a parameter reads `undefined|null|L0`).
+# A record out of JSON.parse has the names and is no L0: the test fails in every turn. Its failing side was rare and left the copy for a call of the helper: in every turn a call, and behind it the same test once more.
+# Now, in a loop, where the copy of a helper of one block leaves for that reason the helper is walked in line once more, in rare blocks that keep their sites, and there no layout is guessed at such a parameter:
+# the passing side keeps its one exit, behind which all the rest of the copy is typed.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK-NOT: [isNeverInlined]
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.after = () => { print(walked([make(2, 3), make(4, 5)]), walked(JSON.parse('[{"u":2,"v":3},{"v":5,"u":4},{"u":1,"v":1,"w":0}]')), walked([make(2, 3), { u: 4, get v() { return 6; } }, 7, "text"])); };
+# SHELL: 26 27 NaN
+# SHELL-NEXT: exited with 0
+
+layout L0 module=m0 position=5 fields=[{key="u" declared={type=undefined|number flags=[IsExpected]}}, {key="v" declared={type=undefined|number flags=[IsExpected]}}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="walked"
+    v3 = NewClosure function=f3
+    PropSet v1, v3 key="make"
+    v5 = PropGet v1 key="after"
+    v6 = Call v5, -
+    v7 = Undefined
+    Return v7
+}
+function f1 name="walked" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    v3 = NewClosure function=f2
+    Jump -> next b1(v1, v2)
+  b1(v4: anything, v5: number):
+    LoopHint
+    v7 = PropGet v0 key="length"
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = ElemGet v0, v5 @11
+    v10 = Call v3, -, v9 @12
+    v11 = Add v4, v10 @13
+    v12 = Increment v5
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v4
+}
+function f2 name="area" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+    v1 = PropGet v0 key="u" @21
+    v2 = PropGet v0 key="v" @22
+    v3 = Mul v1, v2 @23
+    Return v3
+}
+function f3 name="make" module=m0 position=30 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1] @31
+    Return v2
+}

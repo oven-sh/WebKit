@@ -54,6 +54,7 @@ public:
     }
     void noteNumberOfInt32Element(Number number) { m_numbersOfInt32Elements.add(number.value()); }
     Integer widen(Word32, Range);
+    Word32 lowHalfOfIntegerToldInsideInt32(Integer);
     Word32 narrow(Integer value) { return low32(value); }
     enum class BitsOfInt32 : uint8_t { All, Lowest };
     static constexpr unsigned numberOfLowestBits = numberOfLowestBitsOfInt32;
@@ -110,6 +111,7 @@ private:
     Operand unboxOptional(Boxed, const Type&, Representation);
     Number unboxDoubleThatIsAsked(Boxed);
     void stopUnlessBoxHolds(Boxed, TypeID kinds);
+    void stopUnlessToldRangeHolds(Condition);
 
     bool m_boxesNumbersByStub { false };
     Place m_placeThatBoxesByStub { Place::Anywhere };

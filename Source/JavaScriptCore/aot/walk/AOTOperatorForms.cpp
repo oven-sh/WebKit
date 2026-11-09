@@ -11,6 +11,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
@@ -236,7 +237,7 @@ static OperatorForm chooseAdditionForm(const Program& program, const OperandsOfF
     return chooseConcatenationForm(program, operands);
 }
 
-static OperatorForm chooseBitwiseForm(Opcode opcode, const OperandsOfForm& operands)
+static ALWAYS_INLINE OperatorForm chooseBitwiseForm(Opcode opcode, const OperandsOfForm& operands)
 {
     if (operands.areBoth(&Type::isInt32))
         return OperatorForm::Integers;
@@ -287,12 +288,12 @@ static OperatorForm chooseRelationForm(const OperandsOfForm& operands)
     return OperatorForm::Generic;
 }
 
-static bool isInt32AndBoxedValue(const OperandOfForm& integer, const OperandOfForm& other)
+static ALWAYS_INLINE bool isInt32AndBoxedValue(const OperandOfForm& integer, const OperandOfForm& other)
 {
     return integer.isInt32() && representationOf(other) == Representation::JSValue;
 }
 
-static OperatorForm chooseStrictEqualityForm(const OperandsOfForm& operands)
+static ALWAYS_INLINE OperatorForm chooseStrictEqualityForm(const OperandsOfForm& operands)
 {
     if (operands.areBoth(&Type::isInteger))
         return OperatorForm::Integers;
@@ -335,7 +336,7 @@ static OperatorForm chooseLooseEqualityForm(const OperandsOfForm& operands)
     return OperatorForm::Generic;
 }
 
-OperatorForm chooseComparisonForm(const Program&, const TypeArena& types, Opcode opcode, OperatorTypes operandTypes)
+ALWAYS_INLINE_INTO_OTHER_FILES OperatorForm chooseComparisonForm(const Program&, const TypeArena& types, Opcode opcode, OperatorTypes operandTypes)
 {
     RELEASE_ASSERT(comparisonsWithForm.contains(opcode));
     checkOperandsOfForm(opcode, operandTypes);
@@ -449,7 +450,7 @@ OperatorChoice chooseOperatorForm(const Program& program, TypeArena& types, Opco
     return choice;
 }
 
-bool isLegalOperatorForm(Opcode opcode, OperatorForm form)
+ALWAYS_INLINE_INTO_OTHER_FILES bool isLegalOperatorForm(Opcode opcode, OperatorForm form)
 {
     switch (form) {
     case OperatorForm::Unselected:

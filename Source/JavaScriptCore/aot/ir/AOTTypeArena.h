@@ -45,6 +45,8 @@ enum class AnswerKeptInArena : uint8_t {
     RecordsThatFileWrites = 110,
     UnitMayMentionFunctions = 111,
     LiteralsWithoutNames = 112,
+    ReadFindsFieldWithoutWrittenType = 113,
+    LayoutsThatStayWithCompiledCode = 114,
 };
 
 enum class MakerOfType : uint8_t {
@@ -96,6 +98,15 @@ public:
     const ObjectTable& objects() const { return m_table.objects(); }
     const Program* program() const { return m_table.program(); }
     ArenaKeeps keeps() const { return m_keeps; }
+    struct TypeTakenAtEntry {
+        uint32_t function { UINT32_MAX };
+        uint32_t entryParameter { 0 };
+        uint32_t known { 0 };
+        uint32_t epoch { 0 };
+        TypeID taken;
+    };
+    TypeTakenAtEntry& typeTakenLastAtEntry(uint32_t function, uint32_t entryParameter) LIFETIME_BOUND { return m_typesTakenLastAtEntries[(function * 8 + entryParameter) % m_typesTakenLastAtEntries.size()]; }
+    uint32_t epoch() const { return m_epoch; }
     size_t numberMadeAndKeptToItself() const
     {
         return m_types.size() + m_firstWordOfClassParts.size() + m_propertyKeys.size() + m_madeTexts.size() + m_layoutSets.untyped().numberMadeAndKeptToItself() + m_objectSets.untyped().numberMadeAndKeptToItself()
@@ -186,6 +197,9 @@ public:
     SetOfRound setOfRound(ObjectSetID set) { return !set || holdsOneMember(set) ? SetOfRound { set.bits(), false } : setOfRoundOverSeveral(set); }
     std::optional<WordsOfRound> rememberedRound(uint8_t question, size_t numberOfWords, SetOfRound, uint32_t second);
     void rememberRound(uint8_t question, size_t numberOfWords, uint8_t typesAmongWords, SetOfRound, uint32_t second, const WordsOfRound&);
+    static constexpr size_t fewestElementsOfArrayWhoseContentsAreKeptForBuild = 8;
+    std::optional<TypeID> rememberedContentsOfArrayInData(DataID);
+    void rememberContentsOfArrayInData(DataID, TypeID);
 
     TypeID typeMadeBefore(MakerOfType, uint32_t first, uint32_t second) const;
     void noteTypeMade(MakerOfType, uint32_t first, uint32_t second, TypeID made, bool internedNothingInThread);
@@ -256,6 +270,7 @@ private:
 
     TypeTable& m_table;
     const ArenaKeeps m_keeps;
+    std::array<TypeTakenAtEntry, 64> m_typesTakenLastAtEntries;
     bool m_keepsTypesMade { false };
     bool m_someAnythingOfSeedLiesInThread { false };
     uint32_t m_epoch { 1 };

@@ -16,7 +16,7 @@ inline ArrayJoin ArrayConcat ArrayShift ArrayPop ArraySlice ArraySplice ArrayUns
 inline ArrayIterator(IterationKind) ; Allocates ; family ArrayBuiltin ; optionalSlowPath
 inline ArrayPush ; GrowsArray ; family ArrayStorageBuiltin
 inline ArrayIsArray ; none ; family ArrayStorageBuiltin
-inline ArrayLength ; reads(ArrayStorage) ; family ArrayStorageBuiltin ; optionalSlowPath
+inline ArrayLength ; reads(ArrayStorage, ArrayLengths) ; family ArrayStorageBuiltin ; optionalSlowPath
 inline TypedArrayLength TypedArrayByteLength TypedArrayByteOffset ; reads(TypedArrayStorage) ; family ArrayBufferViewBuiltin
 inline TypedArrayWithLength ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
 inline TypedArraySet ; reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) ; family ArrayBufferViewBuiltin
@@ -43,7 +43,13 @@ inline Atomics(AtomicsOperation) ; Allocates reads(TypedArrayStorage, TypedArray
 inline BufferAccess(AccessDirection, UInt8, NumberKind, Endianness) ; asOverload ; family BufferBuiltin
 inline BufferCopy ; reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) ; family BufferBuiltin
 inline CallNumberConstructor NumberToString ParseInt ; asOverload ; family MathBuiltin
-inline MathAbs MathFloor MathCeil MathTrunc MathRound MathFround MathF16Round MathSqrt MathPow MathMin MathMax MathImul MathClz32 MathSign MathFunction(MathFunctionKind) MathATan2 MathHypot IsNaN IsFinite NumberIsNaN NumberIsFinite NumberIsInteger NumberIsSafeInteger ; none ; family MathBuiltin ; optionalSlowPath
+inline MathAbs MathFloor MathCeil MathTrunc MathRound MathFround ; none ; family MathBuiltin ; optionalSlowPath ; reckonsInLine
+inline MathF16Round ; none ; family MathBuiltin ; optionalSlowPath
+inline MathSqrt ; none ; family MathBuiltin ; optionalSlowPath ; reckonsInLine
+inline MathPow ; none ; family MathBuiltin ; optionalSlowPath
+inline MathMin MathMax MathImul MathClz32 MathSign ; none ; family MathBuiltin ; optionalSlowPath ; reckonsInLine
+inline MathFunction(MathFunctionKind) MathATan2 MathHypot ; none ; family MathBuiltin ; optionalSlowPath
+inline IsNaN IsFinite NumberIsNaN NumberIsFinite NumberIsInteger NumberIsSafeInteger ; none ; family MathBuiltin ; optionalSlowPath ; reckonsInLine
 inline MathRandom ; UsesRuntime reads(ExternalState) writes(ExternalState) ; family MathBuiltin ; optionalSlowPath
 inline DateGetField(DateField, TimeZone) DateToISOString ; asOverload ; family DateBuiltin
 inline DateNow ; reads(ExternalState) writes(ExternalState) ; family DateBuiltin ; optionalSlowPath

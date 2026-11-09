@@ -493,6 +493,47 @@ void ElementAccessEmitter::generateGetArrayStorage(const ValueContext& value)
     define(value, elementsOf(in<CellPointer>(value->arrayOperand())).butterfly);
 }
 
+void ElementAccessEmitter::generateGetArrayRoom(const ValueContext& value)
+{
+    define(value, vectorLength(elementsOf(in<CellPointer>(value->arrayOperand()))));
+}
+
+void ElementAccessEmitter::generateExtendArrayLength(const ValueContext& value)
+{
+    ArrayElements elements = elementsOf(value, in<CellPointer>(value->arrayOperand()));
+    Integer position = indexInsideLength(value->positionOperand());
+    if (testsEveryPosition()) {
+        stopUnlessInside(value, equal(position, publicLength(elements)));
+        stopUnlessInside(value, below(position, vectorLength(elements)));
+    }
+    setPublicLength(elements, add(position, integer(1)));
+}
+
+void ElementAccessEmitter::generateSetArrayLength(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    Integer length = integerOf(value->lengthOperand());
+    StubKey stub = setArrayLength(value->mode() == ECMAMode::Sloppy);
+    build().statistics().count(StatisticID::LengthsStoredIntoProvenLists);
+    if (!generator().takesOpenForm(value, StateOfKnowledge::Always)) {
+        callStub(value, stub, { array.value(), length.value() });
+        return;
+    }
+    using Asked = ListWhoseLengthIsStoredWithoutRunTime;
+    LBasicBlock otherwise = newBlock();
+    LBasicBlock done = newBlock();
+    branchUnless(belowOrEqual(sub(indexingMode(array, IndexingShapeAndWritabilityMask), Asked::firstKind), Asked::lastKind - Asked::firstKind), otherwise);
+    branchUnless(isZero(bitAnd(loadField<Word32>(loadStructure(array), m_heaps.Structure_bitField), word32(Asked::bitsThatItsStructureMayNotHave))), otherwise);
+    branchUnless(equal(publicLength(elementsOf(array)), length), otherwise);
+    m_out.jump(done);
+
+    m_out.appendTo(otherwise);
+    callStub(value, stub, { array.value(), length.value() }, { .isOnRarePath = true });
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+}
+
 bool ElementAccessEmitter::testsEveryPosition()
 {
     return testsEveryPositionUnder(build().options().testing) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition);
@@ -529,7 +570,15 @@ void ElementAccessEmitter::stopUnlessInside(const ValueContext& access, Conditio
     emitter<ThrowEmitter>().requireOrStopAtFalseProof(access, isInside, std::nullopt, ProofSource::WhatIsRemembered);
 }
 
-void ElementAccessEmitter::stopWhereHoleWouldBeStored(const ValueContext& store, const ArrayStorageForm& form, Operand rawElement)
+void ElementAccessEmitter::holdElementToldToBeThere(const ValueContext& read, Condition isThere, StatisticID counted)
+{
+    if (!testsEveryPosition())
+        return;
+    stopUnlessInside(read, isThere);
+    build().statistics().count(counted);
+}
+
+void ElementAccessEmitter::stopWhereHoleWouldBeStored(const OperationContext& store, const ArrayStorageForm& form, Operand rawElement)
 {
     if (emittersCheckProofs())
         emitter<ThrowEmitter>().requireOrStopAtFalseProof(store, logicalNot(isHole(form, rawElement)), std::nullopt, ProofSource::OtherOperation);
@@ -570,6 +619,8 @@ ArrayElements ElementAccessEmitter::elementsOf(const ValueContext& access, CellP
     std::optional<Pointer> storage = inOptional<Pointer>(access->storageOperand());
     if (!storage)
         return elementsOf(array);
+    if (AOT::hasFlag(build().options().lies, Wire::TestingLie::StoragesFromInFrontAreTakenOneWordFurther))
+        storage = offsetBy(*storage, sizeof(EncodedJSValue));
     if (testsEveryPosition())
         stopUnlessInside(access, equal(*storage, elementsOf(askedAnew(array)).butterfly));
     return { array, *storage };
@@ -596,7 +647,7 @@ LengthTest ElementAccessEmitter::testLength(Integer index, const ArrayElements& 
 static bool liesInsideLength(const CodeGenerator& generator, const ValueContext& access)
 {
     if (access.opcode() == Opcode::IsElementPresent)
-        return access->isInBounds();
+        return access->isInBounds() || generator.liesInsideByQuestionInFrontOfTurnsLaidOut(access.id());
     return access.opcode() == Opcode::GetArrayElement && (access->isInBounds() || access->isPresent() || generator.liesInsideByQuestionInFrontOfTurnsLaidOut(access.id()));
 }
 
@@ -654,14 +705,16 @@ Operand ElementAccessEmitter::readElementInsideLength(const ValueContext& value,
         LBasicBlock holdsValue = newBlock();
         m_out.branch(this->isHole(form, rawElement).value(), rareEdge(isHole), normalEdge(holdsValue));
         m_out.appendTo(holdsValue);
-    }
+    } else if (!readsHoleAsNaN(value))
+        holdElementToldToBeThere(value, logicalNot(this->isHole(form, rawElement)));
     return convertRawElement(value, form, rawElement, value.representation(), typeIDOf(value.id()));
 }
 
 const PlacedSlot* ElementAccessEmitter::extraPropertiesWordOfReadByPosition(const ValueContext& read)
 {
     Type receiver = typeOf(read->objectOperand());
-    if (!receiver.hasObjects() || !receiver.layouts || !receiver.hasOnlyLayouts() || receiver.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow) || !typeOf(read->propertyOperand()).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+    Type key = typeOf(read->propertyOperand());
+    if (!receiver.hasObjects() || !receiver.layouts || !receiver.hasOnlyLayouts() || receiver.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow) || !key.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull) || (key.isInteger() && key.integers.maximum < 0))
         return nullptr;
     const PlacedSlot* found = nullptr;
     for (LayoutID layout : membersOf(types(), receiver)) {
@@ -713,6 +766,15 @@ Boxed ElementAccessEmitter::readBoxedElement(const ValueContext& value, const Ar
     return rawElement;
 }
 
+bool ElementAccessEmitter::asksTruthOfRawElement(ValueID read)
+{
+    const Operation& operation = generator().code().at(read);
+    if (operation.opcode != Opcode::GetArrayElement || findArrayStorageForm(operation.arrayStorage()) || operation.level() != KnowledgeLevel::Proven || !operation.isInBounds() || operation.asksCellWhereNothingIsFound() || operation.readsHoleAsNaN())
+        return false;
+    std::optional<ArrayStorage> found = generator().kindOfListFoundInFrontOfTurnsLaidOut(operation.arrayOperand());
+    return found && holdsOnlyNumbers(*found);
+}
+
 void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
 {
     if (!accessToElementsHasCode(Opcode::GetArrayElement, value->arrayStorage(), value->admitsInt32Storage(), false)) {
@@ -722,6 +784,14 @@ void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
     }
     if (liesInsideLength(generator(), value))
         holdPositionInsideList(value);
+    if (value.isBranchCondition()) {
+        static_assert(!static_cast<uint32_t>(JSValue::ValueEmpty));
+        const ArrayStorageForm& form = arrayStorageFormOf(*kindOfListFoundInFrontOfTurns(value, value->arrayOperand()));
+        Operand raw = loadRawElement(form, elementsOf(value, in<CellPointer>(value->arrayOperand())), indexInsideLength(value->positionOperand()));
+        branch(form.kind == ArrayStorage::Double ? isNeitherZeroNorNaN(raw.as<Number>()) : isNotZero(low32(raw.as<Boxed>())), value.branchTargets());
+        build().statistics().count(StatisticID::TruthsAskedOfRawElementsInTurnsLaidOut);
+        return;
+    }
     if (GuessedAccessEmitter::testsForItself(value)) {
         emitter<GuessedAccessEmitter>().generateElementRead(value);
         return;
@@ -732,6 +802,8 @@ void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
     RELEASE_ASSERT(!form || !value->asksCellWhereNothingIsFound());
     holdKindOfList(value);
+    if (std::optional<ArrayStorage> found = !form && value->level() == KnowledgeLevel::Proven && value->isInBounds() && !value->asksCellWhereNothingIsFound() ? kindOfListFoundInFrontOfTurns(value, value->arrayOperand()) : std::nullopt)
+        form = findArrayStorageForm(*found);
     if (!form)
         readWithAnyStorage(value);
     else if (value->admitsInt32Storage())
@@ -749,6 +821,11 @@ void ElementAccessEmitter::readInsideLength(const ValueContext& value, const Arr
     Integer index = indexInsideLength(value->positionOperand());
     if (findsElement(value)) {
         define(value, readNumberInsideLength(value, form, elements, index, nullptr));
+        return;
+    }
+
+    if (form.element == Representation::JSValue && value.representation() == Representation::JSValue && generator().leavesHoleToTestBehind(value)) {
+        define(value, convertRawElement(value, form, loadRawElement(form, elements, index), Representation::JSValue, typeIDOf(value.id())));
         return;
     }
 
@@ -807,6 +884,8 @@ void ElementAccessEmitter::readWithOneArmInLine(const ValueContext& value, const
         Operand element = loadRawElement(doubles, elements, test.indexInside);
         if (!findsElement(value))
             branchUnless(logicalNot(isHole(doubles, element)), outOfLine);
+        else if (!readsHoleAsNaN(value))
+            holdElementToldToBeThere(value, logicalNot(isHole(doubles, element)), StatisticID::ElementsToldToBeThereHeldInArmsForDoublesOfReadsThatNameNoStorage);
         join.add(convertElementThatHasBeenAsked(value, doubles, element, representation, typeIDOf(value.id())));
     }
 
@@ -964,6 +1043,8 @@ Operand ElementAccessEmitter::readNumberInsideLength(const ValueContext& value, 
     if (generator().asksBehindTurnsWhetherElementIsThere(value.id())) {
         if (!value->isPresent())
             generator().noteBoxedWordOfElementInTurns(rawElement.value());
+        else
+            holdElementToldToBeThere(value, isNotEmpty(rawElement), StatisticID::ElementsToldToBeThereHeldWhereTurnsAskBehindThem);
         Word32 word = unboxInt32Element(rawElement);
         generator().noteWordOfElementInTurnLaidOut(value.id(), word.value());
         Number number = toNumber(word);
@@ -1086,12 +1167,15 @@ Integer ElementAccessEmitter::indexOfPresenceTest(const ValueContext& test, LBas
 void ElementAccessEmitter::branchOnElementPresence(const ValueContext& value, const ArrayStorageForm* form, const ArrayElements& elements, Integer index, BranchTargets targets)
 {
     LengthTest test = testLength(value, index, elements);
+    Integer inside = test.indexInside;
     if (!liesInsideLength(generator(), value)) {
         LBasicBlock isInBounds = newBlock();
         branch(test.isInside, { normalEdge(isInBounds), targets.notTaken });
         m_out.appendTo(isInBounds);
+        if (inside.value()->opcode() == Machine::ZExt32)
+            inside = Integer(m_out.extendWordThatIsNotNegative(inside.value()->child(0)));
     }
-    branch(form ? isHole(*form, loadRawElement(*form, elements, test.indexInside)) : isEmpty(loadBoxedElement(elements, test.indexInside)), targets.swapped());
+    branch(form ? isHole(*form, loadRawElement(*form, elements, inside)) : isEmpty(loadBoxedElement(elements, inside)), targets.swapped());
 }
 
 void ElementAccessEmitter::branchOnPresentElement(const ValueContext& test, const ArrayStorageForm& form, BranchTargets targets)
@@ -1186,6 +1270,42 @@ void ElementAccessEmitter::generateIsElementInStorage(const ValueContext& value)
     });
 }
 
+void ElementAccessEmitter::generateGetElementInStorageOrAbsent(const ValueContext& value)
+{
+    LBasicBlock isAbsent = newBlock();
+    LBasicBlock holdsDoubles = newBlock();
+    LBasicBlock holdsValues = newBlock();
+    Join<Boxed> join(m_out);
+    Integer position = indexOrElse(value->positionOperand(), false, isAbsent);
+    Operand operand = get(value->objectOperand());
+    if (!operand.is<CellPointer>()) {
+        branchUnless(isCell(operand.as<Boxed>()), isAbsent);
+        if (typeOf(value->objectOperand()).primitives & Primitive::Absent)
+            branchUnless(isNotEmpty(operand.as<Boxed>()), isAbsent);
+    }
+    CellPointer object = operand.is<CellPointer>() ? operand.as<CellPointer>() : unboxCell(operand.as<Boxed>());
+    static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape && !(IndexingShapeMask & 1));
+    Word32 shape = indexingMode(object, IndexingShapeMask);
+    branchUnless(belowOrEqual(sub(shape, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), isAbsent);
+    ArrayElements elements = elementsOf(object);
+    LengthTest test = testLength(position, elements);
+    branchUnless(test.isInside, isAbsent);
+    m_out.branch(equal(shape, word32(DoubleShape)).value(), normalEdge(holdsDoubles), normalEdge(holdsValues));
+
+    m_out.appendTo(holdsValues);
+    join.add(loadBoxedElement(elements, test.indexInside));
+
+    m_out.appendTo(holdsDoubles);
+    const ArrayStorageForm& doubles = arrayStorageFormOf(ArrayStorage::Double);
+    Operand number = loadRawElement(doubles, elements, test.indexInside);
+    branchUnless(logicalNot(isHole(doubles, number)), isAbsent);
+    join.add(boxRawElement(doubles, number));
+
+    m_out.appendTo(isAbsent);
+    join.add(boxedConstant(JSValue()));
+    define(value, join.finish());
+}
+
 void ElementAccessEmitter::generateGetStringLength(const ValueContext& value)
 {
     StringEmitter& strings = emitter<StringEmitter>();
@@ -1201,7 +1321,17 @@ void ElementAccessEmitter::generateGetStringCodeUnit(const ValueContext& value)
     Word32 position = strings.word32Of(value->positionOperand());
     if (testsEveryPosition())
         stopUnlessInside(value, below(position, view.length));
-    define(value, strings.codeUnitAt(view, position));
+    ValueID wholeNumber = value->positionOperand();
+    while (opcodesThatGiveSameValue.contains(opcodeOf(wholeNumber)))
+        wholeNumber = operationAt(wholeNumber).operand(0);
+    bool isAddressedByWholeNumber = generator().isLayingOutTurns() && !m_code.isConstant(wholeNumber) && representationOf(wholeNumber) == Representation::Int64
+        && representationOf(value->positionOperand()) == Representation::Int32 && typeOf(value->positionOperand()).integers.minimum >= 0
+        && position.value()->opcode() == Machine::Trunc && position.value()->child(0) == in<Integer>(wholeNumber).value();
+    if (isAddressedByWholeNumber && testsEveryPosition())
+        stopUnlessInside(value, below(in<Integer>(wholeNumber), zeroExtended(view.length)));
+    if (isAddressedByWholeNumber)
+        build().statistics().count(StatisticID::CodeUnitsAddressedByWholeNumbers);
+    define(value, strings.codeUnitAt(view, position, isAddressedByWholeNumber ? std::optional(in<Integer>(wholeNumber)) : std::nullopt));
 }
 
 void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& value)
@@ -1221,6 +1351,8 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
 
 void ElementAccessEmitter::generateReserveArrayRoom(const ValueContext& value)
 {
+    if (std::exchange(generator().m_reservationThatBirthHasServed, ValueID()) == value.id())
+        return;
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Number room = in<Number>(value->roomOperand());
     if (!generator().paysForCodeInLine(value.block()) && value->heldOperands().empty()) {

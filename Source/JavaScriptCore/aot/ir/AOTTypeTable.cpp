@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTDeclaredType.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTThreads.h"
 #include <algorithm>
 #include <array>
@@ -344,7 +345,7 @@ template<typename Record>
 InternedRecords<Record>::~InternedRecords() = default;
 
 template<typename Record>
-const Record& InternedRecords<Record>::at(uint32_t position) const
+ALWAYS_INLINE_INTO_OTHER_FILES const Record& InternedRecords<Record>::at(uint32_t position) const
 {
     return m_shards[0].recordsOfAllShards.at(position);
 }

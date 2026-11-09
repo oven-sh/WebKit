@@ -23,6 +23,7 @@ enum class PureOperation : uint16_t {
     BoxNumber,
     ResolveCallTarget,
     ReadFieldInExtension,
+    ReadFieldInExtensionInLine,
     ModuleNamespace,
     ModuleBuiltinCell,
     SingletonClosure,

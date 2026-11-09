@@ -757,6 +757,82 @@ static void testSideWordsKeepSegmentsOfUsualSizeAlone()
     AOT_TEST_CHECK(words.allocate(8) == inUsualSegment);
 }
 
+static void testElementsOutsideViewsOutliveWritesIntoViews()
+{
+    Reference list = valueOfWalkStateTests(1);
+    Reference other = valueOfWalkStateTests(2);
+    Reference key = valueOfWalkStateTests(20);
+    auto stateBehind = [&](AbstractHeapSet written) {
+        WalkState state;
+        state.noteElement(list, key, valueOfWalkStateTests(10));
+        state.noteElementsLieOutsideViews(list);
+        state.noteElement(other, key, valueOfWalkStateTests(11));
+        WalkState shared = state;
+        state.invalidate(effectsThatWriteInWalkStateTests(written));
+        AOT_TEST_CHECK(shared.element(list, key) == valueOfWalkStateTests(10) && shared.element(other, key) == valueOfWalkStateTests(11));
+        return state;
+    };
+    for (AbstractHeapSet written : { AbstractHeapSet { AbstractHeap::TypedArrayElements }, AbstractHeapSet { AbstractHeap::TypedArrayStorage }, AbstractHeapSet { AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage, AbstractHeap::ObjectFields } }) {
+        WalkState state = stateBehind(written);
+        AOT_TEST_CHECK(state.element(list, key) == valueOfWalkStateTests(10));
+        AOT_TEST_CHECK(!state.element(other, key));
+    }
+    for (AbstractHeapSet written : { AbstractHeapSet { AbstractHeap::Elements }, AbstractHeapSet { AbstractHeap::ArrayStorage }, AbstractHeapSet { AbstractHeap::TypedArrayElements, AbstractHeap::Elements } }) {
+        WalkState state = stateBehind(written);
+        AOT_TEST_CHECK(!state.element(list, key));
+        AOT_TEST_CHECK(!state.element(other, key));
+    }
+
+    for (bool otherBearsMark : { false, true }) {
+        WalkState one;
+        one.noteElement(list, key, valueOfWalkStateTests(10));
+        one.noteElementsLieOutsideViews(list);
+        WalkState arriving;
+        arriving.noteElement(list, key, valueOfWalkStateTests(10));
+        if (otherBearsMark)
+            arriving.noteElementsLieOutsideViews(list);
+        one.meetWith(arriving);
+        AOT_TEST_CHECK(one.element(list, key) == valueOfWalkStateTests(10));
+        one.invalidate(effectsThatWriteInWalkStateTests({ AbstractHeap::TypedArrayElements }));
+        AOT_TEST_CHECK(!!one.element(list, key) == otherBearsMark);
+    }
+
+    {
+        WalkState revived;
+        revived.noteSlot(other, fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(1));
+        revived.noteElement(list, key, valueOfWalkStateTests(10));
+        revived.noteElementsLieOutsideViews(list);
+        revived.invalidate(effectsThatWriteInWalkStateTests({ AbstractHeap::Elements }));
+        AOT_TEST_CHECK(!revived.element(list, key));
+        revived.noteElement(list, key, valueOfWalkStateTests(12));
+        revived.invalidate(effectsThatWriteInWalkStateTests({ AbstractHeap::TypedArrayElements }));
+        AOT_TEST_CHECK(!revived.element(list, key));
+    }
+
+    constexpr uint32_t numberOfHolders = 96;
+    WalkState large;
+    auto holderAt = [](uint32_t place) { return valueOfWalkStateTests(1000 + place); };
+    auto noteAll = [&] {
+        for (uint32_t place = 0; place < numberOfHolders; ++place) {
+            large.noteSlot(holderAt(place), fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(1));
+            large.noteElement(holderAt(place), key, valueOfWalkStateTests(2000 + place));
+            if (place & 1)
+                large.noteElementsLieOutsideViews(holderAt(place));
+        }
+    };
+    for (uint32_t round = 0; round < 4000; ++round) {
+        noteAll();
+        large.invalidate(effectsThatWriteInWalkStateTests({ AbstractHeap::TypedArrayElements }));
+        for (uint32_t place = 0; place < numberOfHolders; ++place)
+            AOT_TEST_CHECK((large.element(holderAt(place), key) == valueOfWalkStateTests(2000 + place)) == !!(place & 1) && (!!large.element(holderAt(place), key)) == !!(place & 1));
+        if (round & 1) {
+            large.invalidate(effectsThatWriteInWalkStateTests({ AbstractHeap::Elements }));
+            for (uint32_t place = 0; place < numberOfHolders; ++place)
+                AOT_TEST_CHECK(!large.element(holderAt(place), key));
+        }
+    }
+}
+
 std::span<const NativeTest> walkStateTests()
 {
     static constexpr NativeTest tests[] {
@@ -767,6 +843,7 @@ std::span<const NativeTest> walkStateTests()
         { "walk-state/a-list-takes-the-room-of-a-former-list-and-nothing-that-it-held"_s, testListTakesRoomOfFormerListAndNothingThatItHeld },
         { "walk-state/records-keep-their-segments-where-a-unit-is-forgotten"_s, testRecordsKeepTheirSegmentsWhereUnitIsForgotten },
         { "walk-state/side-words-keep-segments-of-the-usual-size-alone"_s, testSideWordsKeepSegmentsOfUsualSizeAlone },
+        { "walk-state/elements-outside-views-outlive-writes-into-views"_s, testElementsOutsideViewsOutliveWritesIntoViews },
     };
     return tests;
 }

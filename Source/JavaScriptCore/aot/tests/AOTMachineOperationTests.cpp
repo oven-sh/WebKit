@@ -1792,6 +1792,58 @@ static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWithoutCode()
     }
 }
 
+static unsigned operationTestNumberOfRegistersZeroed(TestProcedure& test)
+{
+    std::span<const uint8_t> code = test.linkedCode();
+    unsigned result = 0;
+    for (size_t offset = 0; offset + 3 <= code.size(); ++offset) {
+        uint8_t registers = code[offset + 2];
+        result += code[offset] == 0x0f && code[offset + 1] == 0x57 && registers >= 0xc0 && ((registers >> 3) & 7) == (registers & 7);
+    }
+    return result;
+}
+
+static void testMachineOperationsThatKeepRestOfDestination()
+{
+    if (!isX86_64())
+        return;
+    enum class Shape : uint8_t { OperandLivesOn, OperandDies, BlockHasWrittenDestination, OperandLiesInMemory };
+    auto zeroed = [](Shape shape, bool changesWidth) {
+        TestProcedure test;
+        Output& out = test.out();
+        LValue value = test.argumentFPR(0);
+        auto made = [&](LValue operand) {
+            return changesWidth ? out.fround(operand) : out.doubleSqrt(operand);
+        };
+        if (shape == Shape::OperandLiesInMemory) {
+            out.ret(out.doubleMul(value, out.doubleSqrt(out.loadDouble(out.address(test.heaps().argumentBuffer, test.argumentGPR(0), 0)))));
+            compileOrFail(test);
+            double inMemory = 2.25;
+            AOT_TEST_CHECK(test.call<double>(&inMemory, 4.0) == 6.0);
+            return operationTestNumberOfRegistersZeroed(test);
+        }
+        if (shape == Shape::OperandDies)
+            out.ret(made(value));
+        else if (shape == Shape::OperandLivesOn)
+            out.ret(out.doubleMul(value, made(value)));
+        else {
+            LValue square = out.doubleMul(value, value);
+            LValue sum = out.doubleAdd(square, value);
+            out.ret(out.doubleMul(sum, made(sum)));
+        }
+        compileOrFail(test);
+        double expected = shape == Shape::OperandDies ? (changesWidth ? 2.25 : 1.5) : shape == Shape::OperandLivesOn ? (changesWidth ? 2.25 * 2.25 : 2.25 * 1.5) : (changesWidth ? 7.3125 * 7.3125 : 7.3125 * std::sqrt(7.3125));
+        AOT_TEST_CHECK(test.call<double>(2.25) == expected);
+        return operationTestNumberOfRegistersZeroed(test);
+    };
+    AOT_TEST_CHECK(zeroed(Shape::OperandLivesOn, false) == 1);
+    AOT_TEST_CHECK(!zeroed(Shape::OperandDies, false));
+    AOT_TEST_CHECK(!zeroed(Shape::BlockHasWrittenDestination, false));
+    AOT_TEST_CHECK(!zeroed(Shape::OperandLiesInMemory, false));
+    AOT_TEST_CHECK(zeroed(Shape::OperandLivesOn, true) >= 1);
+    AOT_TEST_CHECK(!zeroed(Shape::OperandDies, true));
+}
+
 static std::span<const NativeTest> listOfMachineOperationTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1802,6 +1854,7 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/conversions"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfConversion> },
         { "machine/operations/numbers/arithmetic"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfNumberArithmetic> },
         { "machine/operations/numbers/unary"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnOneNumber> },
+        { "machine/operations/numbers/what-keeps-the-rest-of-its-destination-does-not-wait-for-an-earlier-block"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatKeepRestOfDestination> },
         { "machine/operations/comparisons/int32"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<int32_t>> },
         { "machine/operations/comparisons/double"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<double>> },
         { "machine/operations/comparisons/bit-tests"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatTestBits> },

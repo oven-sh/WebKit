@@ -9,6 +9,7 @@
 
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
+#include "AOTSort.h"
 #include "AOTThinSummary.h"
 #include <algorithm>
 #include <span>
@@ -21,7 +22,7 @@ class LayoutsByNames {
 public:
     LayoutsByNames() = default;
 
-    LayoutsByNames(const Program& program, const ThinSummaries& summaries, const LinkTables& linked)
+    LayoutsByNames(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
     {
         size_t numberOfLayouts = program.layouts.size();
         listWhoWritesLayouts(program, summaries);
@@ -69,7 +70,12 @@ public:
                 pairs.append(holder | key.index());
             size_t firstPairAbove = pairs.size();
             size_t steps = 0;
-            for (LayoutID current(index); current && steps < numberOfLayouts; current = program.at(current).base, ++steps) {
+            auto above = [&](LayoutID current) {
+                const Layout& below = program.at(current);
+                bool parentIsValue = !below.base && below.has(LayoutFlags::HasHeritage) && current.index() < held.layouts.size();
+                return parentIsValue ? held.layouts[current.index()].heritage : below.base;
+            };
+            for (LayoutID current(index); current && steps < numberOfLayouts; current = above(current), ++steps) {
                 for (uint64_t name : namesAbove.span().subspan(firstNameAboveOfLayout[current.index()], firstNameAboveOfLayout[current.index() + 1] - firstNameAboveOfLayout[current.index()]))
                     pairs.append(holder | static_cast<uint32_t>(name));
             }
@@ -116,6 +122,8 @@ public:
             return { };
         std::span<const uint32_t> fewest = holdersOf(names[0]);
         for (PropertyKeyID name : names.subspan(1)) {
+            if (fewest.empty())
+                break;
             if (std::span<const uint32_t> holders = holdersOf(name); holders.size() < fewest.size())
                 fewest = holders;
         }
@@ -143,9 +151,9 @@ public:
         LayoutID record;
         auto place() const { return std::pair(function, parameter); }
     };
-    std::span<const RecordOfDeclaredParameter> recordsOfDeclaredParameter(ModuleID module, uint32_t startOfText, uint32_t parameter) const
+    std::span<const RecordOfDeclaredParameter> recordsOfDeclaredParameter(ModuleID module, uint32_t positionOfFunction, uint32_t parameter) const
     {
-        auto found = std::ranges::equal_range(m_recordsOfDeclaredParameters, std::pair(static_cast<uint64_t>(module.index()) << 32 | startOfText, parameter), { }, &RecordOfDeclaredParameter::place);
+        auto found = std::ranges::equal_range(m_recordsOfDeclaredParameters, std::pair(static_cast<uint64_t>(module.index()) << 32 | positionOfFunction, parameter), { }, &RecordOfDeclaredParameter::place);
         return { found.begin(), found.end() };
     }
 
@@ -159,6 +167,7 @@ public:
 
     bool isNameOfSomeInstance(PropertyKeyID name) const { return m_isNameOfSomeInstance.get(name.index()); }
     bool isNameOfSomeLayout(PropertyKeyID name) const { return !holdersOf(name).empty(); }
+    bool severalLayoutsHold(PropertyKeyID name) const { return holdersOf(name).size() > 1; }
 
     bool isInUse(LayoutID layout) const { return static_cast<size_t>(layout.index()) + 1 < m_firstNameOfLayout.size() && m_firstNameOfLayout[layout.index()] < m_firstNameOfLayout[layout.index() + 1]; }
 
@@ -170,6 +179,16 @@ public:
             return true;
         std::span<const uint32_t> namesOfLayout = m_names.span().subspan(m_firstNameOfLayout[layout.index()], m_firstNameOfLayout[layout.index() + 1] - m_firstNameOfLayout[layout.index()]);
         return std::ranges::all_of(names, [&](PropertyKeyID name) { return std::ranges::binary_search(namesOfLayout, name.index()); });
+    }
+
+    bool hasAnyOf(LayoutID layout, std::span<const PropertyKeyID> ascending) const
+    {
+        if (static_cast<size_t>(layout.index()) + 1 >= m_firstNameOfLayout.size())
+            return false;
+        std::span<const uint32_t> namesOfLayout = m_names.span().subspan(m_firstNameOfLayout[layout.index()], m_firstNameOfLayout[layout.index() + 1] - m_firstNameOfLayout[layout.index()]);
+        if (namesOfLayout.size() < ascending.size())
+            return std::ranges::any_of(namesOfLayout, [&](uint32_t name) { return std::ranges::binary_search(ascending, name, { }, &PropertyKeyID::index); });
+        return std::ranges::any_of(ascending, [&](PropertyKeyID name) { return std::ranges::binary_search(namesOfLayout, name.index()); });
     }
 
     LayoutID findOnlyHolderAmong(PropertyKeyID name, std::span<const LayoutID> ascending) const
@@ -194,6 +213,30 @@ public:
             only = layout;
         }
         return only;
+    }
+
+    template<size_t inlineCapacity>
+    bool appendHoldersAmongUnlessMoreThan(size_t most, PropertyKeyID name, std::span<const LayoutID> ascending, Vector<LayoutID, inlineCapacity>& found) const
+    {
+        std::span<const uint32_t> holders = holdersOf(name);
+        if (holders.size() < ascending.size()) {
+            for (uint32_t holder : holders) {
+                if (!std::ranges::binary_search(ascending, holder, { }, [](LayoutID layout) { return layout.index(); }))
+                    continue;
+                if (found.size() == most)
+                    return false;
+                found.append(LayoutID(holder));
+            }
+            return true;
+        }
+        for (LayoutID layout : ascending) {
+            if (!isInUse(layout) || !has(layout.index(), name))
+                continue;
+            if (found.size() == most)
+                return false;
+            found.append(layout);
+        }
+        return true;
     }
 
     template<size_t inlineCapacity>
@@ -278,7 +321,7 @@ private:
         }
         std::ranges::sort(recordsByNames);
         for (const DeclaredRecord& declared : program.declaredRecords) {
-            uint64_t function = static_cast<uint64_t>(declared.module.index()) << 32 | declared.start;
+            uint64_t function = static_cast<uint64_t>(declared.module.index()) << 32 | declared.position;
             m_recordsOfDeclaredParameters.append({ function, declared.parameter, LayoutID() });
             auto isDeclared = [&](const Field& field) { return std::ranges::binary_search(declared.names, field.key); };
             uint64_t wordOfNames = 0;
@@ -290,7 +333,7 @@ private:
                     m_recordsOfDeclaredParameters.append({ function, declared.parameter, LayoutID(found.holder) });
             }
         }
-        std::ranges::stable_sort(m_recordsOfDeclaredParameters, { }, &RecordOfDeclaredParameter::place);
+        AOT::stableSort(m_recordsOfDeclaredParameters, { }, &RecordOfDeclaredParameter::place);
     }
 
     static void layRows(Vector<uint64_t>& pairs, size_t rowCount, Vector<uint32_t>& firstOfRow, Vector<uint32_t>& members)

@@ -67,6 +67,14 @@ inline std::unique_ptr<const Typed::CompileInputs> createCompileInputs(const Pre
     });
 }
 
+template<typename Switches>
+Typed::Mechanisms withoutMechanismsThatOptionsWithhold(Typed::Mechanisms mechanisms, Switches testing)
+{
+    if (AOT::hasFlag(testing, Wire::TestingSwitch::KeepsCellsOutOfFrames))
+        mechanisms.remove(Typed::Mechanism::CellsInFrames);
+    return mechanisms;
+}
+
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgramWithMechanisms(std::span<const uint8_t> program, const Wire::CompileOptions&, Typed::Mechanisms);
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileParsedProgramWithMechanisms(std::unique_ptr<Typed::Program>, BuildContext&, Typed::Mechanisms);
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileParsedProgramWithChangedPlan(std::unique_ptr<Typed::Program>, BuildContext&, void (*changePlan)(Typed::Plan&), Typed::Mechanisms);

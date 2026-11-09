@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineDescription.h"
 #include "AOTMachineEncoderPairsOfLoads.h"
 #include "AOTMachineFrameForms.h"
@@ -504,7 +505,7 @@ void OrderOfWriting::findPieces()
     }
 }
 
-void OrderOfWriting::writePiece(Piece& piece)
+ALWAYS_INLINE_INTO_OTHER_FILES void OrderOfWriting::writePiece(Piece& piece)
 {
     piece.isPlaced = true;
     m_somethingIsPlaced = true;
@@ -1014,7 +1015,7 @@ void Encoder::encodeExecute(const Step& step)
     encodeExecuteInline(step);
 }
 
-ALWAYS_INLINE void Encoder::encodeExecuteInline(const Step& step)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeExecuteInline(const Step& step)
 {
     ASSERT(step.kind == StepKind::Execute);
     Operation* operation = step.operation;
@@ -1153,6 +1154,11 @@ ALWAYS_INLINE void Encoder::encodeExecuteInline(const Step& step)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+void Encoder::failBecauseSlotThatNoStepReadsIsRead(SpillIndex spill) const
+{
+    m_proc.fail(FailureKind::SpillSlotLacksItsValue, m_allocation.spills()[spill].value);
+}
+
 void Encoder::storeToSpill(const Operation* value)
 {
     SpillIndex spill = m_allocation.spillOf(value);
@@ -1164,7 +1170,7 @@ void Encoder::storeToSpill(const Operation* value)
     RELEASE_ASSERT(m_frameIsSetUp);
     ASSERT(m_allocation.spills()[spill].width == widthOf(value->type()));
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::StoreBehindDefinition));
-    MacroAssembler::Address address = addressOf(Location::spill(spill));
+    MacroAssembler::Address address = addressOf(Location::spill(spill), MemoryOfEncodedMove::IsWritten);
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     switch (value->type().kind()) {
     case Int32:
@@ -1186,7 +1192,7 @@ void Encoder::storeToSpill(const Operation* value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& place)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& place)
 {
     for (Operation* phi : block->phis()) {
         if (m_allocation.isSpilled(phi) && !m_liveness.isDropped(phi))
@@ -1203,7 +1209,7 @@ void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& pl
     storeToSpill(last);
 }
 
-void Encoder::setUpFrame(const Block* block)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::setUpFrame(const Block* block)
 {
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::FrameSetup));
@@ -1229,7 +1235,7 @@ void Encoder::leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWord
     noteOrigin(originOfUser, operationOfUser);
 }
 
-void Encoder::startOrEndFrameRange(bool isSetUp)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::startOrEndFrameRange(bool isSetUp)
 {
     ASSERT(m_frameRangeIsOpen != isSetUp);
     m_frameRangeIsOpen = isSetUp;

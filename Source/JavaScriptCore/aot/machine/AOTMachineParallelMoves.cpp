@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTMachineAllocation.h"
+#include "AOTInliningAcrossFiles.h"
 
 #if ENABLE(AOT)
 
@@ -370,7 +371,7 @@ ALWAYS_INLINE void ParallelMoveResolver::perform(uint32_t moveIndex)
         release(source);
 }
 
-ALWAYS_INLINE void ParallelMoveResolver::release(Source& source)
+ALWAYS_INLINE_INTO_OTHER_FILES void ParallelMoveResolver::release(Source& source)
 {
     if (source.isReleased)
         return;
@@ -442,7 +443,7 @@ ALWAYS_INLINE void ParallelMoveResolver::breakCycle(uint32_t first)
     ASSERT(m_states[first].isDone && m_states[last].isDone);
 }
 
-ALWAYS_INLINE Step& ParallelMoveResolver::append(StepKind kind, const PendingMove& move, Location destination, Location source)
+ALWAYS_INLINE_INTO_OTHER_FILES Step& ParallelMoveResolver::append(StepKind kind, const PendingMove& move, Location destination, Location source)
 {
     RegisterMask written = destination.isRegister() ? maskOf(destination.reg()) : 0;
     switch (kind) {

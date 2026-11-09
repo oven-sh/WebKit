@@ -196,7 +196,7 @@ static bool memberCapturesAtMostEnvironmentOfClassObject(const Typed::Program& p
     return environmentOfClassObject && captures.size() == 1 && captures[0].written() == program.at(layout.constructor).captures[0].written();
 }
 
-static MethodData describeMemberInClassRecord(const TableEncoder& encoder, LayoutID classLayout, LayoutID environmentOfClassObject, const Typed::ClassMember& member, Typed::MemberCreation creation)
+static MethodData describeMemberInClassRecord(const TableEncoder& encoder, LayoutID classLayout, LayoutID environmentOfClassObject, const Typed::ClassMember& member, Typed::MemberCreation creation, bool holdsOneFunction)
 {
     const Typed::Program& program = encoder.program;
     bool takesEnvironment = member.function && program.at(member.function).captures.size() > encoder.plan.promotedEnvironments().numberOfRemovedCapturesOf(member.function);
@@ -204,7 +204,7 @@ static MethodData describeMemberInClassRecord(const TableEncoder& encoder, Layou
     method.name = member.key ? nameInClassRecord(encoder, member.key, "a member in the record of"_s, classLayout) : 0;
     method.kindBits = static_cast<uint32_t>(member.kind);
     method.flags = (member.key ? 0 : methodHasComputedName) | (takesEnvironment ? methodTakesEnvironment : 0);
-    if (!member.key || !encoder.facts.linked().memberHoldsOneFunction(program, classLayout, member.side, member.key, member.function))
+    if (!holdsOneFunction)
         method.flags |= methodMayBeStoredOver;
     method.function = FunctionID().index();
     switch (creation) {
@@ -309,11 +309,19 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
     if (classConstructor || layout.has(Typed::LayoutFlags::IsOfCreatedObject)) {
         std::span<const Typed::ClassMember> members = encoder.facts.membersOf(classLayout);
         parts.methods.reserveInitialCapacity(members.size());
+        bool answerHangsOnFunction = layout.has(Typed::LayoutFlags::IsConstructorFunction);
+        UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> namesThatHoldOneFunction;
         for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
+            namesThatHoldOneFunction.clear();
             for (size_t index = 0; index < members.size(); ++index) {
-                if (members[index].side != side)
+                const Typed::ClassMember& member = members[index];
+                if (member.side != side)
                     continue;
-                parts.methods.append(describeMemberInClassRecord(encoder, classLayout, environment, members[index], creationOfMemberInClassRecord(creation, index)));
+                auto ask = [&] {
+                    return encoder.facts.linked().memberHoldsOneFunction(program, classLayout, side, member.key, member.function);
+                };
+                bool holdsOneFunction = member.key && (answerHangsOnFunction ? ask() : namesThatHoldOneFunction.ensure(member.key.bits(), ask).iterator->value);
+                parts.methods.append(describeMemberInClassRecord(encoder, classLayout, environment, member, creationOfMemberInClassRecord(creation, index), holdsOneFunction));
                 ++(side == ClassSide::Static ? data.numberOfStaticMethods : data.numberOfMethods);
             }
         }
@@ -337,10 +345,8 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
         encoder.fail("ProvenParentOfClassHasNoRecord"_s, classLayout);
     if (isRankedAmongClassRecords(encoder, classLayout) && parent.layout && program.at(parent.layout).kind == LayoutKind::Instance)
         parts.parentThatListsClass = parent.layout;
-    BuiltinID builtinParent = Typed::builtinParentNamedByClassRecord(program, encoder.facts, classLayout);
     data.base = (parent.isProven ? parent.layout : LayoutID()).index();
     data.expectedBase = (parent.isProven ? LayoutID() : parent.layout).index();
-    data.builtinBase = builtinParent ? builtinParent.index() : LayoutData::noBase;
     data.classConstructor = classConstructor.value_or(FunctionID()).index();
     data.environment = environment.index();
     data.numberOfStaticFields = static_cast<uint32_t>(parts.staticFields.size());

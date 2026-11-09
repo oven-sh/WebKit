@@ -97,7 +97,7 @@ static Reference compareCharacterWithTextForStringComparisons(Walker& walker, Op
     return compareInOrderForStringComparisons(walker, opcode, codeUnit, integerForStrings(walker, *unit), characterIsOnLeft, origin);
 }
 
-static Reference compareByCodeUnitForStringComparisons(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
+static ALWAYS_INLINE Reference compareByCodeUnitForStringComparisons(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
 {
     for (uint32_t side = 0; side < 2; ++side) {
         Reference subject = side ? right : left;
@@ -157,7 +157,7 @@ static Reference buildTestForEmptyStringForStringComparisons(Walker& walker, Ref
     return passesForEmptyString && isNotEmpty ? buildNegationForStrings(walker, isNotEmpty, origin) : isNotEmpty;
 }
 
-static std::optional<int64_t> integerKnownForStringComparisons(const Walker& walker, Reference reference)
+static ALWAYS_INLINE std::optional<int64_t> integerKnownForStringComparisons(const Walker& walker, Reference reference)
 {
     Type type = walker.types().at(walker.typeOf(reference));
     if (!type.isInteger() || !type.integers.isSingleValue())
@@ -286,8 +286,6 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
     Reference length = walker.isInLoop() ? lengthSharedByComparisonsForStringComparisons(walker, value, subject, text, origin) : Reference();
     if (walker.isUnreachable())
         return true;
-    if (!flat && !length)
-        return false;
     if (length && !types.at(walker.typeOf(length)).integers.contains(lengthOfTextForStrings(walker, text))) {
         walker.bind(value.id(), booleanForStringComparisons(walker, false));
         return true;
@@ -301,6 +299,12 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
     if (flat)
         comparison.setFlatOperand(flat);
     comparison.setLiteral(text);
+    if (!flat && !length) {
+        if (!(walker.comparisonWithTextLeavesLoop(comparison)))
+            return false;
+        walker.count(StatisticID::ComparisonsWithTextsThatStandInFrontOfLoops);
+        comparison.setHasLeftLoop(true);
+    }
     if (Reference answer = walker.build(WTF::move(comparison)))
         walker.bind(value.id(), answer);
     return true;

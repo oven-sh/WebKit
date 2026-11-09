@@ -63,6 +63,17 @@ public:
         m_words.swap(other.m_words);
         std::swap(m_size, other.m_size);
     }
+    template<typename Functor> void forEachMemberNotIn(const SharedSetOfNumbers& other, const Functor& functor) const
+    {
+        if (!m_size)
+            return;
+        m_words.forEachStretchNotSharedWith(other.m_words, [&](uint32_t begin, uint32_t end) {
+            for (uint32_t word = begin; word < end; ++word) {
+                for (uint64_t bits = m_words[word] & ~(word < other.m_words.size() ? other.m_words[word] : 0); bits; bits &= bits - 1)
+                    functor(word * bitsOfWord + static_cast<uint32_t>(std::countr_zero(bits)));
+            }
+        });
+    }
 
 private:
     static constexpr uint32_t bitsOfWord = 64;
@@ -190,7 +201,7 @@ public:
         if (m_held)
             ++m_held->numberOfOwners;
         else
-            m_marks.kinds &= programIsWhole;
+            m_marks.kinds &= keptWhereNothingIsHeld;
         if (!other.m_answers.isEmpty())
             m_answers = other.m_answers;
     }
@@ -199,7 +210,7 @@ public:
         , m_marks(other.m_marks)
         , m_program(other.m_program)
     {
-        other.m_marks.kinds &= programIsWhole;
+        other.m_marks.kinds &= keptWhereNothingIsHeld;
         if (!other.m_answers.isEmpty())
             m_answers.swap(other.m_answers);
     }
@@ -219,7 +230,7 @@ public:
             m_answers = other.m_answers;
         m_marks = other.m_marks;
         if (m_held != other.m_held)
-            m_marks.kinds &= programIsWhole;
+            m_marks.kinds &= keptWhereNothingIsHeld;
         if (!(m_marks.kinds & programIsWhole)) [[unlikely]]
             noteWhetherProgramIsWhole();
         return *this;
@@ -393,6 +404,14 @@ public:
         return newest && (m_held->m_filterOfValuesWithCheckedNames & bitOfValueWithCheckedName(value)) ? checkedNameHeldFrom(newest) : Reference();
     }
     static uint64_t bitOfValueWithCheckedName(Reference value) { return 1ull << (value.bits() * 0x9e3779b1u >> 26); }
+    template<typename Functor> void forEachValueWithCheckedNameThatIsNotHeldBy(const WalkState& other, const Functor& functor) const
+    {
+        if (!hasCheckedNames() || !other.hasCheckedNames())
+            return;
+        m_held->m_checkedNames.forEachMemberNotIn(other.m_held->m_checkedNames, [&](uint32_t number) {
+            functor(m_program.numbers->checkedName(number).value);
+        });
+    }
     bool hasCheckedNames() const { return mayHold(Kinds::checkedNames); }
     Reference valueNamedAnewBy(Reference name) const
     {
@@ -559,6 +578,11 @@ public:
             m_marks.kinds |= Kinds::places;
         }
     }
+    void noteElementsLieOutsideViews(Reference object)
+    {
+        if (mayHoldPlaceOf(object))
+            heldToWrite().noteElementsLieOutsideViews(object);
+    }
     bool remembersPlaces() const { return !m_program.numbers || m_program.numbers->remembersPlaces(); }
     Reference slot(Reference object, FieldReference field) const { return valueOfPlace(PlaceKind::Slot, object, field.layout.index(), field.field); }
     Reference variable(VariableID variable) const { return valueOfPlace(PlaceKind::Variable, Reference(), variable.index(), 0); }
@@ -587,13 +611,16 @@ public:
     static constexpr uint32_t placesWereWrittenInTurn = 1u << 31;
     bool nothingWasDoneInTurn(uint32_t numberOfTurn) const { return numberOfTurn && m_marks.turnInWhichNothingWasDone == numberOfTurn; }
     static constexpr uint32_t storesOfTurnCanBePutBack = 1u << 30;
-    static constexpr uint32_t bitsOfTurnBesideStores = 15;
-    static constexpr uint32_t mostStoresToPutBack = (1u << 15) - 1;
-    static constexpr uint32_t turnOfMark(uint32_t mark) { return mark & storesOfTurnCanBePutBack ? mark & ((1u << bitsOfTurnBesideStores) - 1) : mark & ~placesWereWrittenInTurn; }
+    static constexpr uint32_t turnOfMark(uint32_t mark) { return mark & ~(placesWereWrittenInTurn | storesOfTurnCanBePutBack); }
     bool noOtherCodeRanInTurn(uint32_t numberOfTurn) const { return numberOfTurn && turnOfMark(m_marks.turnInWhichNothingWasDone) == numberOfTurn; }
     bool allThatWasDoneInTurnCanBePutBack(uint32_t numberOfTurn) const { return noOtherCodeRanInTurn(numberOfTurn) && !(m_marks.turnInWhichNothingWasDone & placesWereWrittenInTurn); }
-    uint32_t newestStoreToPutBack() const { return m_marks.turnInWhichNothingWasDone & storesOfTurnCanBePutBack ? (m_marks.turnInWhichNothingWasDone & ~storesOfTurnCanBePutBack) >> bitsOfTurnBesideStores : 0; }
-    void noteStoreToPutBack(uint32_t numberOfTurn, uint32_t store) { m_marks.turnInWhichNothingWasDone = storesOfTurnCanBePutBack | store << bitsOfTurnBesideStores | numberOfTurn; }
+    uint32_t newestStoreToPutBack() const { return m_marks.turnInWhichNothingWasDone & storesOfTurnCanBePutBack ? (m_marks.kinds & placeOfNewestStoreToPutBack) >> shiftOfPlaceOfNewestStoreToPutBack : 0; }
+    void noteStoreToPutBack(uint32_t numberOfTurn, uint32_t store)
+    {
+        RELEASE_ASSERT(numberOfTurn < storesOfTurnCanBePutBack && store <= placeOfNewestStoreToPutBack >> shiftOfPlaceOfNewestStoreToPutBack);
+        m_marks.turnInWhichNothingWasDone = storesOfTurnCanBePutBack | numberOfTurn;
+        m_marks.kinds = (m_marks.kinds & ~placeOfNewestStoreToPutBack) | store << shiftOfPlaceOfNewestStoreToPutBack;
+    }
     void noteHeadOfTurn(uint32_t numberOfTurn) { m_marks.turnInWhichNothingWasDone = numberOfTurn; }
     void noteSomethingWasDoneInTurn() { m_marks.turnInWhichNothingWasDone = 0; }
     uint32_t markOfTurn() const { return m_marks.turnInWhichNothingWasDone; }
@@ -603,6 +630,11 @@ public:
     {
         if (!m_marks.turnInWhichNothingWasDone || (m_marks.turnInWhichNothingWasDone & placesWereWrittenInTurn))
             m_marks.turnInWhichNothingWasDone = numberOfCopy;
+    }
+    void giveMarkOfTurnBackBehindCopy(uint32_t numberOfCopy, uint32_t markInFrontOfCopy)
+    {
+        if (!(m_marks.turnInWhichNothingWasDone & storesOfTurnCanBePutBack) && (m_marks.turnInWhichNothingWasDone & ~placesWereWrittenInTurn) == numberOfCopy)
+            m_marks.turnInWhichNothingWasDone = markInFrontOfCopy;
     }
     void noteWhatOperationDoes(const Effects& effects)
     {
@@ -688,6 +720,9 @@ private:
         static constexpr uint32_t records = shapes | freshObjects | places | factsOfCells;
     };
     static constexpr uint32_t programIsWhole = 1u << 31;
+    static constexpr uint32_t shiftOfPlaceOfNewestStoreToPutBack = 8;
+    static constexpr uint32_t placeOfNewestStoreToPutBack = (programIsWhole - 1) & ~((1u << shiftOfPlaceOfNewestStoreToPutBack) - 1);
+    static constexpr uint32_t keptWhereNothingIsHeld = programIsWhole | placeOfNewestStoreToPutBack;
     static constexpr uint64_t programIsWholeAmongMarks = static_cast<uint64_t>(programIsWhole) << 32;
 
     enum class PlaceKind : uint8_t { Slot, Variable, EnvironmentField, Element, GuardOfStores, GuardOfReads };
@@ -711,6 +746,7 @@ private:
         bool isFresh { false };
         bool hasEnded { false };
         bool isListedAsFreshWithElements { false };
+        bool elementsLieOutsideViews { false };
     };
     struct Place {
         static constexpr uint8_t entireHeap = 64;
@@ -794,6 +830,7 @@ private:
         void noteEnvironmentField(const ProgramOfState&, Reference environment, FieldReference, Reference value);
         void noteElement(Reference object, Reference index, Reference value);
         void noteElementWithNaNForHole(Reference object, Reference index, Reference value);
+        void noteElementsLieOutsideViews(Reference object);
         void invalidateAliasedSlots(const ProgramOfState&, Reference object, FieldReference, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject, NOESCAPE const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone);
         void meetWith(const Held&, RecordsLastMet*);
         void endWhatIsWritten(const ProgramOfState&, const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject*);
@@ -842,6 +879,7 @@ private:
         struct WhatEnds {
             bool shapes { false };
             bool elements { false };
+            bool sparesElementsOutsideViews { false };
             OptionSet<FactOfCell> facts;
             uint64_t slots { 0 };
             uint64_t variables { 0 };
@@ -851,6 +889,8 @@ private:
             const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>* mayEndGuard { nullptr };
             VariableID variableWrittenAlone;
             const WriterOfOneObject* writerOfOneObject { nullptr };
+            const ProgramOfState* program { nullptr };
+            const MemoryLocation* writtenAlone { nullptr };
         };
         bool goesByLists()
         {
@@ -983,7 +1023,7 @@ private:
         if (!!(m_marks.kinds & programIsWhole) != m_program.isWhole())
             return false;
         if (!m_held)
-            return !(m_marks.kinds & ~programIsWhole);
+            return !(m_marks.kinds & ~keptWhereNothingIsHeld);
         return !!(m_marks.kinds & Kinds::checkedNames) == !m_held->m_checkedNames.isEmpty()
             && (m_marks.kinds & Kinds::shapes || !m_held->m_numberOfShapes)
             && (m_marks.kinds & Kinds::freshObjects || !m_held->m_numberOfFreshHolders)

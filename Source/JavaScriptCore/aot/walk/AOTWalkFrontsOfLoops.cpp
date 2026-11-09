@@ -19,7 +19,7 @@ void Walker::layFrontOfQuietTurns(OpenLoop& loop, BlockID inputHead)
     if (m_numberOfCopiesBuiltForSize || isUnreachable() || isUnderHandler() || hasTextsInStringBuilders() || m_code.at(m_block).handler)
         return;
     std::span<const ValueID> parameters = m_code.at(loop.head).parameters();
-    if (loop.entering.span().size() != parameters.size())
+    if (loop.recordsEntering().size() != parameters.size())
         return;
     if (m_triesOfLoops.isEmpty() || m_triesOfLoops.last().frameIndex != m_frames.size() - 1 || m_triesOfLoops.last().inputHead != inputHead)
         return;

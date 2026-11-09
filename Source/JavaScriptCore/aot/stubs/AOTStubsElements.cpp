@@ -974,14 +974,17 @@ static JSType typeOfExpectedView(ExpectedElements expected)
         return Int32ArrayType;
     case ExpectedElements::Uint8Array:
         return Uint8ArrayType;
+    case ExpectedElements::Float64Array:
+        return Float64ArrayType;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, ExpectedElements expected, GPRReg index, std::optional<GPRReg> value, JumpList& miss)
+static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, ExpectedElements expected, GPRReg index, std::optional<GPRReg> value, FPRReg numberScratch, JumpList& miss)
 {
     const GPRReg base = registers.base;
     const GPRReg storage = registers.storage;
+    const FPRReg number = registers.number;
 
     miss.append(jit.branchIfNotCell(base));
     miss.append(jit.branch8(CCallHelpers::NotEqual, Address(base, JSCell::typeInfoTypeOffset()), TrustedImm32(typeOfExpectedView(expected))));
@@ -996,8 +999,24 @@ static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegi
         case ExpectedElements::Uint8Array:
             jit.load8(BaseIndex(storage, index, CCallHelpers::TimesOne), storage);
             break;
+        case ExpectedElements::Float64Array:
+            jit.loadDouble(BaseIndex(storage, index, CCallHelpers::TimesEight), number);
+            returnBoxedDouble(jit, registers, PureDouble::purify(jit, number, number), numberScratch);
+            return;
         }
         returnBoxedInt32(jit, registers);
+        return;
+    }
+    if (expected == ExpectedElements::Float64Array) {
+        Jump isInt32 = jit.branch64(CCallHelpers::AboveOrEqual, *value, numberTag);
+        miss.append(jit.branchTest64(CCallHelpers::Zero, *value, numberTag));
+        unboxDouble(jit, *value, registers.type, number);
+        jit.storeDouble(number, BaseIndex(storage, index, CCallHelpers::TimesEight));
+        jit.returnToCaller();
+        isInt32.link(&jit);
+        jit.convertInt32ToDouble(*value, number);
+        jit.storeDouble(number, BaseIndex(storage, index, CCallHelpers::TimesEight));
+        jit.returnToCaller();
         return;
     }
     miss.append(jit.branch64(CCallHelpers::Below, *value, numberTag));
@@ -1008,6 +1027,8 @@ static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegi
     case ExpectedElements::Uint8Array:
         jit.store8(*value, BaseIndex(storage, index, CCallHelpers::TimesOne));
         break;
+    case ExpectedElements::Float64Array:
+        RELEASE_ASSERT_NOT_REACHED();
     }
     jit.returnToCaller();
 }
@@ -1015,6 +1036,7 @@ static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegi
 static void emitEntriesExpecting(StubAssembler& jit, ExpectedElements expected, std::optional<GPRReg> value, StubKey atIndex, StubKey takesEverythingAtIndex, StubKey takesEverything)
 {
     const ElementRegisters registers = allocateElementRegisters(jit);
+    const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
     auto goOnToStub = [&](JumpList& miss, StubKey stub) {
         if (value)
             checkStubOperands(stub, { registers.base, registers.key, *value });
@@ -1026,14 +1048,14 @@ static void emitEntriesExpecting(StubAssembler& jit, ExpectedElements expected, 
 
     JumpList missAtIndex;
     jit.bindEntry(atIndex);
-    accessExpectedElementAndReturn(jit, registers, expected, registers.key, value, missAtIndex);
+    accessExpectedElementAndReturn(jit, registers, expected, registers.key, value, numberScratch, missAtIndex);
     goOnToStub(missAtIndex, takesEverythingAtIndex);
 
     JumpList miss;
     jit.bindEntry(jit.key());
     miss.append(jit.branch64(CCallHelpers::Below, registers.key, numberTag));
     jit.signExtend32ToPtr(registers.key, registers.index);
-    accessExpectedElementAndReturn(jit, registers, expected, registers.index, value, miss);
+    accessExpectedElementAndReturn(jit, registers, expected, registers.index, value, numberScratch, miss);
     goOnToStub(miss, takesEverything);
 }
 

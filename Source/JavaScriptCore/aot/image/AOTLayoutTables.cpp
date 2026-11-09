@@ -82,7 +82,7 @@ static constexpr bool isPrivateNameKindForLayoutRecord(PropertyKeyKind kind)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-static FieldOfLayoutRecord describeFieldOfLayoutRecord(const TableInputs& inputs, Typed::FieldReference reference, const Typed::FieldFacts& facts)
+static ALWAYS_INLINE FieldOfLayoutRecord describeFieldOfLayoutRecord(const TableInputs& inputs, Typed::FieldReference reference, const Typed::FieldFacts& facts)
 {
     const Typed::Program& program = inputs.program;
     FieldOfLayoutRecord field { { }, { }, facts.formOfValue };

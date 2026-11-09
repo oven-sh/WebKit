@@ -466,10 +466,21 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
             setLayoutOfObjectRecord(m_records[constructedObjectOf(constructor).index()], LayoutID(index), mayHaveLayoutBelow.quickGet(index));
     }
 
-    Vector<uint8_t> isModuleOfLibrary(numberOfModules, [&](size_t index) -> uint8_t {
+    auto isCommonJSFileThatExports = [&](uint32_t index) {
+        return program.modules[index].kind == ModuleKind::CommonJs && program.modules[index].exportsVariable;
+    };
+    Vector<uint32_t> modulesOfLibrary;
+    Vector<uint32_t> commonJSFilesThatExport;
+    Vector<uint32_t> modulesThatBodiesName;
+    for (uint32_t index = 0; index < numberOfModules; ++index) {
         const Module& module = program.modules[index];
-        return module.kind == ModuleKind::RuntimeSource || module.flags.contains(ModuleFlags::IsLibrary);
-    });
+        if (module.kind == ModuleKind::RuntimeSource || module.flags.contains(ModuleFlags::IsLibrary))
+            modulesOfLibrary.append(index);
+        if (isCommonJSFileThatExports(index))
+            commonJSFilesThatExport.append(index);
+        if (modulesNamedByModuleBuiltins.get(index))
+            modulesThatBodiesName.append(index);
+    }
     uint32_t numberOfBuiltins = m_builtins.builtinCount();
     for (uint32_t index = 0; index < numberOfBuiltins; ++index) {
         BuiltinID builtin(index);
@@ -477,12 +488,9 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
             continue;
         bool isMadeForLibraryAlone = m_builtins.isUnder(builtin, Builtins::NativeFunctions);
         bool isMadeForCommonJSFilesAlone = m_builtins.isUnder(builtin, Builtins::ModuleObject);
-        for (uint32_t module = 0; module < numberOfModules; ++module) {
-            if (isMadeForLibraryAlone && !isModuleOfLibrary[module])
-                continue;
-            if (isMadeForCommonJSFilesAlone && (program.modules[module].kind != ModuleKind::CommonJs || !program.modules[module].exportsVariable))
-                continue;
-            if (!isMadeForLibraryAlone && !isMadeForCommonJSFilesAlone && !modulesNamedByModuleBuiltins.get(module))
+        const Vector<uint32_t>& modulesItIsMadeFor = isMadeForLibraryAlone ? modulesOfLibrary : isMadeForCommonJSFilesAlone ? commonJSFilesThatExport : modulesThatBodiesName;
+        for (uint32_t module : modulesItIsMadeFor) {
+            if (isMadeForLibraryAlone && isMadeForCommonJSFilesAlone && !isCommonJSFileThatExports(module))
                 continue;
             m_moduleBuiltins.append({ builtin, ModuleID(module) });
         }

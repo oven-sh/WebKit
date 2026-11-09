@@ -168,6 +168,7 @@ export default b.declarations(
 
   builtinObjects(
     "AsyncDisposableStack",
+    "Boolean",
     "DisposableStack",
     "Iterator",
     "Map",
@@ -208,6 +209,7 @@ export default b.declarations(
     "createDisposableResource",
     "everyFrom",
     "filterFrom",
+    "filterTruthy",
     "findFrom",
     "findIndexFrom",
     "flatIntoArray",
@@ -251,6 +253,11 @@ export default b.declarations(
     arrayStorageInt32: [1, "Int32"],
     arrayStorageDouble: [2, "Double"],
     arrayStorageContiguous: [3, "Contiguous"],
+  }),
+  b.intrinsic("mostArgumentsReservedOnStack", "Value", {
+    intrinsic: "Int",
+    value: 65535,
+    cppExpression: "defaultLimitValue(LimitID::MaxReservedStackArguments, hostArchitecture())",
   }),
   enumerators("Typed::GeneratorStepCheck", { generatorStepCheckIsGenerator: [1, "IsGenerator"] }),
   enumerators("Typed::GeneratorStepStatus", {

@@ -65,6 +65,15 @@
 # RUN(ADDEDACCESSOR): run-in-shell keep = x => x; change = function (table) { Object.defineProperty(table, "other", { get() { return 9; }, configurable: true }); };
 # ADDEDACCESSOR: yes undefined undefined | yes undefined | yes undefined undefined
 # ADDEDACCESSOR-NEXT: no | no | yes undefined undefined
+# RUN(ADDEDACCESSORASBEFORE): run-in-shell kept = []; keep = x => (kept.push(x), x); change = function (table) { Object.defineProperty(kept[0](), "other", { get() { return 9; }, configurable: true }); Object.defineProperty(table, "other", { get() { return 9; }, configurable: true }); };
+# ADDEDACCESSORASBEFORE: yes undefined undefined | yes undefined | yes undefined undefined
+# ADDEDACCESSORASBEFORE-NEXT: no | no | yes undefined undefined
+# RUN(THIRDNAMEANACCESSORASBEFORE): run-in-shell kept = []; keep = x => (kept.push(x), x); change = function (table) { for (const each of [kept[0](), table]) { each.more = 1; each.evenMore = 2; each.yetMore = 3; Object.defineProperty(each, "other", { get() { return 9; }, configurable: true }); } };
+# THIRDNAMEANACCESSORASBEFORE: yes undefined undefined | yes undefined | yes undefined undefined
+# THIRDNAMEANACCESSORASBEFORE-NEXT: no | no | yes undefined undefined
+# RUN(FIVEVALUESASBEFORE): run-in-shell kept = []; keep = x => (kept.push(x), x); change = function (table) { for (const each of [kept[0](), table]) for (const name of ["a", "b", "c", "d", "other"]) Object.defineProperty(each, name, { value: name, writable: true, enumerable: true, configurable: true }); };
+# FIVEVALUESASBEFORE: yes undefined undefined | yes undefined | yes undefined undefined
+# FIVEVALUESASBEFORE-NEXT: yes undefined other | no | yes undefined undefined
 # RUN(ADDEDSETTER): run-in-shell keep = x => x; change = function (table) { Object.defineProperty(table, "more", { set(value) { }, configurable: true }); };
 # ADDEDSETTER: yes undefined undefined | yes undefined | yes undefined undefined
 # ADDEDSETTER-NEXT: no | no | yes undefined undefined

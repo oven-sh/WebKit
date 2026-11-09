@@ -252,7 +252,7 @@ bool ClosureTable::hasSingletonClosure(FunctionID function) const
 
 void ClosureTable::didCreateClosureFor(FunctionID function, JSCell* cell)
 {
-    m_state.objects->classes.didRegisterClosure();
+    m_state.objects->classes.didRegisterClosure(function);
     if (!m_tables.kindOfFunction(function.index()).isInRuntimeModule)
         m_state.instance.closureTable.cards = m_writtenRegions.cards();
     uint32_t number = cellNumberOf(m_tables, function);
@@ -268,15 +268,23 @@ void ClosureTable::didCreateClosureFor(FunctionID function, JSCell* cell)
 
 void ClosureTable::registerClassObject(Closure* closure)
 {
-    m_state.objects->classes.didRegisterClosure();
     FunctionID function = m_state.objects->classes.functionOfOwnClosure(*closure);
+    m_state.objects->classes.didRegisterClosure(function);
     if (!closureIfCreated(function) && !m_state.objects->classes.tryHoldClassObjectWhileReached(function, closure))
         didCreateClosureFor(function, closure);
 }
 
+void ClosureTable::registerFirstClassObject(Closure* closure, FunctionID constructor, const LayoutData& classLayout)
+{
+    ASSERT(constructor == m_state.objects->classes.functionOfOwnClosure(*closure) && !closureIfCreated(constructor));
+    m_state.objects->classes.didRegisterClosure(constructor);
+    if (!m_state.objects->classes.tryHoldClassObjectWhileReached(classLayout, constructor, closure))
+        didCreateClosureFor(constructor, closure);
+}
+
 void ClosureTable::registerClosureOfMember(FunctionID function, JSCell* closure)
 {
-    m_state.objects->classes.didRegisterClosure();
+    m_state.objects->classes.didRegisterClosure(function);
     ASSERT(hasCellFor(function) && !closureIfCreated(function));
     if (!m_state.objects->classes.tryHoldClassObjectWhileReached(function, closure))
         didCreateClosureFor(function, closure);

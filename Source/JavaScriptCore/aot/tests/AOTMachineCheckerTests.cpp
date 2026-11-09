@@ -36,7 +36,7 @@ namespace JSC { namespace AOT { namespace Machine {
 static bool checkerReportedFailureAt(const Procedure& procedure, FailureKind kind, std::initializer_list<const Operation*> operations)
 {
     const std::optional<Failure>& failure = procedure.failure();
-    return failure && failure->kind == kind && std::ranges::any_of(operations, [&](const Operation* operation) {
+    return failure && failure->kind == kind && failure->check.line && StringView::fromLatin1(failure->check.file).startsWith("AOTMachine"_s) && !StringView::fromLatin1(failure->check.function).startsWith("fail"_s) && std::ranges::any_of(operations, [&](const Operation* operation) {
         return failure->operation == operation->index() && failure->origin == operation->origin();
     });
 }
@@ -214,6 +214,11 @@ static void checkerRefusesReadThatNoDefinitionDominates()
         Procedure& procedure = test.procedure();
         AOT_TEST_CHECK(validate(procedure) != readsAcrossArms);
         AOT_TEST_CHECK(readsAcrossArms ? checkerReportedFailureAt(procedure, FailureKind::MalformedProcedure, { reader }) : !procedure.failure());
+        if (readsAcrossArms) {
+            StringPrintStream said;
+            printFailure(said, procedure);
+            AOT_TEST_CHECK(said.toString().startsWith("MalformedProcedure, by the check in "_s) && said.toString().contains(" at AOTMachineValidate.cpp:"_s));
+        }
     }
 }
 
@@ -485,6 +490,171 @@ static void checkerRefusesRareRegionThatDoesNotSave()
     expectCheckerRefusal(test, checkAllocation, FailureKind::SpillSlotLacksItsValue, { arm.coldReader });
 }
 
+static void checkerRefusesHeadOfFramedPartThatDoesNotSaveWhatIsReadBehindMeetingOfHeads()
+{
+    for (bool rareHeadLies : { true, false }) {
+        TestProcedure test;
+        Output& out = test.out();
+        Operation* selector = test.argumentGPR(0);
+        unsigned numberOfCalleeSaves = 0;
+        forEachRegister(registerFileFor(test.procedure().traits()).calleeSavedIn(Bank::GP), [&](Reg) {
+            ++numberOfCalleeSaves;
+        });
+        Vector<Operation*> values = defineValues(test, test.argumentGPR(1), numberOfCalleeSaves + 3, Int64);
+        Block* slow = out.newBlock();
+        Block* guard = out.newBlock();
+        Block* returning = out.newBlock();
+        Block* head = out.newBlock();
+        Block* meeting = out.newBlock();
+        out.branch(out.testNonZero64(selector, 2), rareEdge(slow), normalEdge(guard));
+        out.appendTo(guard);
+        out.branch(out.testNonZero64(selector, 1), normalEdge(returning), normalEdge(head));
+        out.appendTo(returning);
+        out.ret(selector);
+        out.appendTo(head);
+        appendPatchForCheckerTest(out, Void, { }, callerSavedRegistersForCheckerTest(test));
+        out.jump(normalEdge(meeting));
+        out.appendTo(slow);
+        appendPatchForCheckerTest(out, Void, { }, callerSavedRegistersForCheckerTest(test));
+        out.jump(normalEdge(meeting));
+        out.appendTo(meeting);
+        appendPatchForCheckerTest(out, Void, { }, callerSavedRegistersForCheckerTest(test));
+        Operation* sum = values[0];
+        for (size_t index = 1; index < values.size(); ++index)
+            sum = out.add(sum, values[index]);
+        out.ret(sum);
+        prepareForCheckerTest(test);
+
+        Allocation& allocation = test.procedure().allocationForTesting();
+        AOT_CHECKER_TEST_CHECK(test, allocation.isHeadOfFramedPart(head) && allocation.isHeadOfFramedPart(slow) && allocation.isInFramedPart(meeting) && !allocation.isHeadOfFramedPart(meeting));
+        bool hasLied = false;
+        for (Allocation::HeadOfFramedPart& lying : allocation.headsOfFramedPartForTesting()) {
+            if (lying.block != (rareHeadLies ? slow : head))
+                continue;
+            AOT_CHECKER_TEST_CHECK(test, lying.beginOfSteps < lying.endOfSteps && allocation.step(lying.endOfSteps - 1).kind == StepKind::Save);
+            --lying.endOfSteps;
+            hasLied = true;
+        }
+        AOT_CHECKER_TEST_CHECK(test, hasLied);
+        AOT_CHECKER_TEST_CHECK(test, !checkAllocation(test.procedure()));
+        AOT_CHECKER_TEST_CHECK(test, test.procedure().failure() && (test.procedure().failure()->kind == FailureKind::RegisterLacksItsValue || test.procedure().failure()->kind == FailureKind::SpillSlotLacksItsValue));
+    }
+}
+
+struct CheckerTestThreeHeads {
+    Block* first { nullptr };
+    Block* second { nullptr };
+    Block* third { nullptr };
+    uint32_t saveAtThirdOfWhatOthersSave { UINT32_MAX };
+};
+
+static std::optional<CheckerTestThreeHeads> buildHeadEnteredOutOfOtherPartsForCheckerTest(TestProcedure& test)
+{
+    Output& out = test.out();
+    Operation* selector = test.argumentGPR(0);
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    RegisterMask everyRegister = file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP);
+    Operation* value = defineValues(test, test.argumentGPR(1), 1, Int64)[0];
+    auto appendCallAndReadInRegisterThatNoCallerCountsOn = [&] {
+        appendPatchForCheckerTest(out, Void, { }, everyRegister);
+        PatchOperation* reader = out.patch(Void);
+        reader->append(value, ValueRep::reg(GPRInfo::argumentGPR2));
+        reader->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+    };
+    CheckerTestThreeHeads heads { out.newBlock(), out.newBlock(), out.newBlock() };
+    Block* usual = out.newBlock();
+    Block* other = out.newBlock();
+    Block* returningFromUsual = out.newBlock();
+    Block* returningFromOther = out.newBlock();
+    out.branch(out.testNonZero64(selector, 1), unlikelyEdge(other), normalEdge(usual));
+    out.appendTo(usual);
+    out.branch(out.testNonZero64(selector, 2), normalEdge(returningFromUsual), normalEdge(heads.first));
+    out.appendTo(returningFromUsual);
+    out.ret(selector);
+    out.appendTo(other);
+    out.branch(out.testNonZero64(selector, 4), normalEdge(returningFromOther), normalEdge(heads.second));
+    out.appendTo(returningFromOther);
+    out.ret(selector);
+    out.appendTo(heads.first);
+    appendCallAndReadInRegisterThatNoCallerCountsOn();
+    out.jump(normalEdge(heads.third));
+    out.appendTo(heads.second);
+    appendCallAndReadInRegisterThatNoCallerCountsOn();
+    out.jump(normalEdge(heads.third));
+    out.appendTo(heads.third);
+    appendPatchForCheckerTest(out, Void, { }, everyRegister);
+    out.ret(out.add(value, 1));
+    prepareForCheckerTest(test);
+
+    const Allocation& allocation = test.procedure().allocation();
+    auto savesAtItsHead = [&](const Block* block, Location slot) {
+        const Allocation::HeadOfFramedPart& head = allocation.headOfFramedPartAbove(block);
+        for (uint32_t index = head.beginOfSteps; index < head.endOfSteps; ++index) {
+            if (allocation.step(index).destination == slot)
+                return true;
+        }
+        return false;
+    };
+    bool everyOneIsHead = !allocation.needsFrameAheadOfFramedPart() && allocation.headsOfFramedPart().size() == 3
+        && allocation.isHeadOfFramedPart(heads.first) && allocation.isHeadOfFramedPart(heads.second) && allocation.isHeadOfFramedPart(heads.third);
+    if (everyOneIsHead) {
+        const Allocation::HeadOfFramedPart& third = allocation.headOfFramedPartAbove(heads.third);
+        for (uint32_t index = third.beginOfSteps; index < third.endOfSteps && heads.saveAtThirdOfWhatOthersSave == UINT32_MAX; ++index) {
+            Location slot = allocation.step(index).destination;
+            if (allocation.step(index).kind == StepKind::Save && savesAtItsHead(heads.first, slot) && savesAtItsHead(heads.second, slot))
+                heads.saveAtThirdOfWhatOthersSave = index;
+        }
+    }
+    bool hasShape = heads.saveAtThirdOfWhatOthersSave != UINT32_MAX;
+    AOT_CHECKER_TEST_CHECK(test, hasShape || !isX86_64());
+    if (!hasShape)
+        return std::nullopt;
+    AOT_CHECKER_TEST_CHECK(test, checkSavesAtHeads(test.procedure()) && !test.procedure().failure());
+    return heads;
+}
+
+static void checkerOfSavesAtHeadsRefusesHeadEnteredOutOfOtherPartsThatDoesNotSave()
+{
+    TestProcedure test;
+    std::optional<CheckerTestThreeHeads> heads = buildHeadEnteredOutOfOtherPartsForCheckerTest(test);
+    if (!heads)
+        return;
+
+    Allocation& allocation = test.procedure().allocationForTesting();
+    bool hasLied = false;
+    for (Allocation::HeadOfFramedPart& lying : allocation.headsOfFramedPartForTesting()) {
+        if (lying.block != heads->third)
+            continue;
+        std::swap(allocation.stepsForTesting()[heads->saveAtThirdOfWhatOthersSave], allocation.stepsForTesting()[lying.endOfSteps - 1]);
+        --lying.endOfSteps;
+        hasLied = true;
+    }
+    AOT_CHECKER_TEST_CHECK(test, hasLied);
+    AOT_CHECKER_TEST_CHECK(test, !checkSavesAtHeads(test.procedure()));
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().failure() && test.procedure().failure()->kind == FailureKind::SpillSlotLacksItsValue);
+}
+
+static void checkerOfSavesAtHeadsPassesSlotThatWasEmptiedAndIsMovedOn()
+{
+    TestProcedure test;
+    std::optional<CheckerTestThreeHeads> heads = buildHeadEnteredOutOfOtherPartsForCheckerTest(test);
+    if (!heads)
+        return;
+
+    Allocation& allocation = test.procedure().allocationForTesting();
+    Location slot = allocation.step(heads->saveAtThirdOfWhatOthersSave).destination;
+    const BlockSteps& range = allocation.stepsOf(heads->third);
+    bool isReadBehindFirstStep = false;
+    for (uint32_t index = range.begin + 1; index < range.end; ++index)
+        isReadBehindFirstStep |= std::ranges::find(allocation.step(index).sources, slot) != std::ranges::end(allocation.step(index).sources);
+    AOT_CHECKER_TEST_CHECK(test, isReadBehindFirstStep);
+    Step empties { StepKind::ClearSpill };
+    empties.destination = slot;
+    empties.operation = allocation.step(heads->saveAtThirdOfWhatOthersSave).operation;
+    allocation.stepsForTesting()[range.begin] = empties;
+    AOT_CHECKER_TEST_CHECK(test, checkSavesAtHeads(test.procedure()) && !test.procedure().failure());
+}
+
 static void checkerRefusesTwoLiveSpillsInOneSlot()
 {
     TestProcedure test;
@@ -506,6 +676,7 @@ static void checkerRefusesPatchWithoutTheFrameItNeeds()
     Output& out = test.out();
     PatchOperation* patch = appendPatchForCheckerTest(out, Int64, { test.argumentGPR(0) });
     patch->setRunsWithoutFrame(true);
+    patch->setShowsRegistersToCollector(true);
     out.ret(patch);
     prepareForCheckerTest(test);
     AOT_CHECKER_TEST_CHECK(test, !test.procedure().frame().hasFrame());
@@ -545,6 +716,28 @@ static void checkerFindsOwnerOfStorageThatLandingPadReads()
     AOT_CHECKER_TEST_CHECK(test, order.headOf(landingPad) < order.headOf(continuation) && test.procedure().allocation().isSpilled(owner));
 }
 
+static void checkerRefusesInnerPointerWhoseOwnerPatchOverwrites()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    AbstractHeap storageOfOwner(test.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::HoldsInnerPointer });
+    Operation* owner = out.opaque(test.argumentGPR(0));
+    Operation* storage = out.loadPtr(out.address(storageOfOwner, owner));
+    PatchOperation* safepoint = appendPatchForCheckerTest(out, Void, { });
+    out.ret(out.load64(out.address(test.heaps().argumentBuffer, storage, 2 * sizeof(uint64_t))));
+    AOT_CHECKER_TEST_CHECK(test, safepoint->effects.mayCollect && storage->has(OperationFlag::IsInnerPointer));
+    prepareForCheckerTest(test);
+
+    const Allocation& allocation = test.procedure().allocation();
+    const Reg registerOfOwner = allocation.registerAtDefinitionOf(owner);
+    PatchAssignment& assignment = patchAssignmentForCheckerTest(test, safepoint);
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().liveness().of(owner).has(ValueFlag::IsKeptForCollector) && !allocation.isSpilled(owner));
+    AOT_CHECKER_TEST_CHECK(test, registerOfOwner.isSet() && (assignment.usedRegisters & maskOf(registerOfOwner)));
+
+    assignment.usedRegisters &= ~maskOf(registerOfOwner);
+    expectCheckerRefusal(test, checkReferences, FailureKind::InnerPointerWithoutOwner, { storage });
+}
+
 static void checkerRefusesNarrowReferenceWithoutPointer()
 {
     for (bool isMarkedBeforeAllocation : { true, false }) {
@@ -567,6 +760,67 @@ static void checkerRefusesNarrowReferenceWithoutPointer()
 
         reference->markAsNarrowReference();
         expectCheckerRefusal(test, checkReferences, FailureKind::NarrowReferenceWithoutPointer, { reference, safepoint });
+    }
+}
+
+enum class DamageToPointerKeptInRareBlock : uint8_t {
+    IsNotKept,
+    IsKeptBehindSafepoint,
+    IsKeptInBlockInFrontAlone,
+};
+
+static void checkerRefusesRareSafepointOutsideFramedPartWithoutPointerKeptAheadOfItInItsBlock()
+{
+    for (DamageToPointerKeptInRareBlock damage : { DamageToPointerKeptInRareBlock::IsNotKept, DamageToPointerKeptInRareBlock::IsKeptBehindSafepoint, DamageToPointerKeptInRareBlock::IsKeptInBlockInFrontAlone }) {
+        TestProcedure test;
+        Output& out = test.out();
+        RegisterMask callerSaved = registerFileFor(test.procedure().traits()).allocatableIn(Bank::GP) & ~registerFileFor(test.procedure().traits()).calleeSaved;
+        Operation* argument = test.argumentGPR(0);
+        Operation* reference = out.opaque(out.castToInt32(argument));
+        reference->markAsNarrowReference();
+        Block* slow = out.newBlock();
+        Block* slowOn = out.newBlock();
+        Block* guard = out.newBlock();
+        Block* returning = out.newBlock();
+        Block* calling = out.newBlock();
+        out.branch(out.testNonZero64(argument, 2), rareEdge(slow), normalEdge(guard));
+        out.appendTo(slow);
+        PatchOperation* first = appendPatchForCheckerTest(out, Void, { }, callerSaved);
+        out.branch(out.testNonZero64(out.zeroExtPtr(reference), 8), normalEdge(slowOn), normalEdge(guard));
+        out.appendTo(slowOn);
+        PatchOperation* second = appendPatchForCheckerTest(out, Void, { }, callerSaved);
+        out.jump(guard);
+        out.appendTo(guard);
+        out.branch(out.testNonZero64(out.zeroExtPtr(reference), 1), normalEdge(returning), normalEdge(calling));
+        out.appendTo(returning);
+        out.ret(out.constInt64(5));
+        out.appendTo(calling);
+        appendPatchForCheckerTest(out, Void, { }, callerSaved);
+        out.ret(out.zeroExtPtr(reference));
+        prepareForCheckerTest(test);
+
+        Procedure& procedure = test.procedure();
+        const Allocation& allocation = procedure.allocation();
+        AOT_CHECKER_TEST_CHECK(test, first->effects.mayCollect && procedure.frame().coverage() == FrameCoverage::FramedPart && procedure.order().of(slow).isRare() && procedure.order().of(slowOn).isRare());
+        AOT_CHECKER_TEST_CHECK(test, !allocation.isInFramedPart(slow) && !allocation.isInFramedPart(slowOn));
+        const Block* damaged = damage == DamageToPointerKeptInRareBlock::IsKeptInBlockInFrontAlone ? slowOn : slow;
+        const PatchOperation* safepoint = damaged == slow ? first : second;
+        std::span<Step> steps = procedure.allocationForTesting().stepsForTesting();
+        const BlockSteps& range = allocation.stepsOf(damaged);
+        uint32_t keeps = range.end;
+        uint32_t executes = range.end;
+        for (uint32_t index = range.begin; index < range.end; ++index) {
+            if (steps[index].kind == StepKind::KeepPointer && steps[index].operation == reference)
+                keeps = index;
+            if (steps[index].kind == StepKind::Execute && steps[index].operation == safepoint)
+                executes = index;
+        }
+        AOT_CHECKER_TEST_CHECK(test, keeps < executes && executes < range.end);
+        if (damage == DamageToPointerKeptInRareBlock::IsKeptBehindSafepoint)
+            std::swap(steps[keeps], steps[executes]);
+        else
+            steps[keeps].operation = nullptr;
+        expectCheckerRefusal(test, checkReferences, FailureKind::NarrowReferenceWithoutPointer, { reference });
     }
 }
 
@@ -684,10 +938,15 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/landing-pad-reads-a-caller-saved-register"_s, Machine::checkerRefusesLandingPadThatReadsCallerSavedRegister },
         { "machine-checker/rare-region-does-not-restore"_s, Machine::checkerRefusesRareRegionThatDoesNotRestore },
         { "machine-checker/rare-region-does-not-save"_s, Machine::checkerRefusesRareRegionThatDoesNotSave },
+        { "machine-checker/a-head-of-the-framed-part-does-not-save-what-is-read-behind-the-meeting-of-heads"_s, Machine::checkerRefusesHeadOfFramedPartThatDoesNotSaveWhatIsReadBehindMeetingOfHeads },
+        { "machine-checker/a-head-entered-out-of-other-parts-that-does-not-save-is-refused-where-saves-at-heads-alone-are-checked"_s, Machine::checkerOfSavesAtHeadsRefusesHeadEnteredOutOfOtherPartsThatDoesNotSave },
+        { "machine-checker/a-slot-that-was-emptied-and-is-moved-on-passes-where-saves-at-heads-alone-are-checked"_s, Machine::checkerOfSavesAtHeadsPassesSlotThatWasEmptiedAndIsMovedOn },
         { "machine-checker/two-live-spills-in-one-slot"_s, Machine::checkerRefusesTwoLiveSpillsInOneSlot },
         { "machine-checker/patch-without-the-frame-it-needs"_s, Machine::checkerRefusesPatchWithoutTheFrameItNeeds },
         { "machine-checker/owner-of-storage-that-a-landing-pad-reads"_s, Machine::checkerFindsOwnerOfStorageThatLandingPadReads },
+        { "machine-checker/an-inner-pointer-whose-owner-the-patch-overwrites"_s, Machine::checkerRefusesInnerPointerWhoseOwnerPatchOverwrites },
         { "machine-checker/narrow-reference-without-its-pointer"_s, Machine::checkerRefusesNarrowReferenceWithoutPointer },
+        { "machine-checker/rare-safepoint-outside-the-framed-part-without-the-pointer-kept-ahead-of-it-in-its-block"_s, Machine::checkerRefusesRareSafepointOutsideFramedPartWithoutPointerKeptAheadOfItInItsBlock },
         { "machine-checker/shifted-narrow-reference-without-its-pointer"_s, Machine::checkerRefusesShiftedNarrowReferenceWithoutPointer },
         { "machine-checker/frame-address-read-late-by-a-suspension"_s, Machine::checkerRefusesFrameAddressReadLateBySuspension },
         { "machine-checker/operand-that-is-not-taken-back"_s, Machine::checkerRefusesOperandThatIsNotTakenBack },

@@ -731,7 +731,7 @@ void RehearsalOfRegExpTexts::notePlaceFilled()
     payForPlacesMadeOutOfCharacters(1, 1);
 }
 
-void RehearsalOfRegExpTexts::noteRoomMadeIn(JSObject* holder, uint64_t placesBefore, uint64_t placesInEntriesBefore)
+ALWAYS_INLINE void RehearsalOfRegExpTexts::noteRoomMadeIn(JSObject* holder, uint64_t placesBefore, uint64_t placesInEntriesBefore)
 {
     uint64_t places = placesWithRoomIn(holder);
     uint64_t made = places > placesBefore ? nextLength(elementsOf(holder)) + holder->structure()->outOfLineCapacity() : 0;
@@ -1219,7 +1219,7 @@ void RehearsalOfRegExpTexts::noteHandedToCodeThatNobodyKnows(std::span<const JSV
     }
 }
 
-JSValue RehearsalOfRegExpTexts::inHandsOfProgram(JSValue value)
+ALWAYS_INLINE JSValue RehearsalOfRegExpTexts::inHandsOfProgram(JSValue value)
 {
     if (!value || !value.isCallable() || value.inherits<JSNativeStdFunction>() || value.inherits<ProxyObject>())
         return value;

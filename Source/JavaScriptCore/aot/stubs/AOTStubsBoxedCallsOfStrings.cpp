@@ -194,6 +194,19 @@ void emitStringPiece(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunc
     };
     jit.loadPtr(Address(thisGPR, JSString::offsetOfValue()), length);
     loadStringLength(jit, thisGPR, length, length);
+    if (!takesLength) {
+        JumpList isClamped;
+        if (count == 2) {
+            jit.zeroExtend32ToWord(argumentGPR(1), end);
+            isClamped.append(jit.branch32(CCallHelpers::Above, end, length));
+        } else
+            jit.move(length, end);
+        jit.zeroExtend32ToWord(argumentGPR(0), start);
+        isClamped.append(jit.branch32(CCallHelpers::Above, start, end));
+        jit.move(thisGPR, string);
+        jit.jumpToStub(substring());
+        isClamped.link(&jit);
+    }
     if (count != 2)
         jit.move(length, end);
     else if (!takesLength)

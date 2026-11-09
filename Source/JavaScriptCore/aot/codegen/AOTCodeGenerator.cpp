@@ -18,19 +18,23 @@
 #include "AOTEffectsNet.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTElementAccessEmitter.h"
+#include "AOTElementEmitterAllocation.h"
 #include "AOTEntryEmitter.h"
 #include "AOTHintEmitter.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPrimitiveEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSavedFrameEmitter.h"
+#include "AOTSchemaInlineBuiltins.h"
 #include "AOTStringEmitter.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeIDs.h"
 #include <algorithm>
 #include <type_traits>
 #include <wtf/BitVector.h>
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
@@ -129,6 +133,8 @@ GenerationResult CodeGenerator::run()
                     }
                 }
             }
+            if (loop && loop->storesIntoSlots)
+                build().statistics().count(StatisticID::LoopsLaidOutWhoseTurnsStoreIntoSlots);
             if (loop && !loop->viewsAskedForKind.isEmpty())
                 layOutTurnsForEachKindOfView(*loop);
             else if (loop) {
@@ -152,7 +158,51 @@ GenerationResult CodeGenerator::run()
                     RELEASE_ASSERT(m_hasFailed || !m_ringOfLoopLaidOut);
                     RELEASE_ASSERT(m_hasFailed || !m_layoutsInRow);
                 };
-                if (!loop->boundsAskedInFront.isEmpty()) {
+                if (std::ranges::any_of(loop->listsAskedForKind, &ListAskedForKind::otherKindsAreNotAsked)) {
+                    const Edge& back = code().at(code().at(loop->turn.last()).terminator.next());
+                    auto findSumsAnew = [&](CountedLoop& changed) {
+                        changed.sumsOfIntegers.shrink(0);
+                        changed.sumsAreTakenOverBehindStretches = false;
+                        findSumsOfIntegers(changed, back);
+                    };
+                    bool onlyTruthIsAsked = std::ranges::all_of(loop->turn, [&](BlockID inTurn) {
+                        std::span<const ValueID> values = code().valuesOf(inTurn);
+                        return std::ranges::all_of(values, [&](ValueID read) {
+                            const Operation& operation = code().at(read);
+                            if (operation.opcode != Opcode::GetArrayElement || !std::ranges::any_of(loop->listsAskedForKind, [&](const ListAskedForKind& asked) { return asked.otherKindsAreNotAsked && asked.list == operation.arrayOperand(); }))
+                                return true;
+                            ValueID test = code().at(inTurn).terminator.kind == TerminatorKind::Branch ? testReadByBranchAlone(inTurn, code().at(inTurn).terminator) : ValueID();
+                            return test && values.size() >= 2 && values.back() == test && values[values.size() - 2] == read && opcodeOf(test) == Opcode::ToBoolean && code().at(test).form() == OperatorForm::Generic && code().at(test).valueOperand() == read && code().useCountOf(read) == 1;
+                        });
+                    });
+                    if (onlyTruthIsAsked) {
+                        CountedLoop forWholeNumbers = *loop;
+                        for (ListAskedForKind& asked : forWholeNumbers.listsAskedForKind) {
+                            if (asked.otherKindsAreNotAsked)
+                                asked.kind = ArrayStorage::Int32;
+                        }
+                        forWholeNumbers.mayComeBack = false;
+                        forWholeNumbers.boundsAskedInFront.shrink(0);
+                        findSumsAnew(forWholeNumbers);
+                        build().statistics().count(StatisticID::LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked);
+                        layOutForEveryKind(forWholeNumbers);
+                    }
+                    CountedLoop forDoubles = *loop;
+                    forDoubles.mayComeBack = loop->mayComeBack && loop->boundsAskedInFront.isEmpty();
+                    forDoubles.layoutWithoutQuestionFollows = forDoubles.mayComeBack;
+                    forDoubles.boundsAskedInFront.shrink(0);
+                    findSumsAnew(forDoubles);
+                    if (forDoubles.mayComeBack)
+                        layOutTurns(forDoubles);
+                    else
+                        layOutForEveryKind(forDoubles);
+                    loop->listsAskedForKind.removeAllMatching([](const ListAskedForKind& asked) {
+                        return asked.otherKindsAreNotAsked;
+                    });
+                    askKindsReadWhereLoopIsComeBackTo(*loop);
+                    findSumsAnew(*loop);
+                }
+                if (!m_hasFailed && !loop->boundsAskedInFront.isEmpty()) {
                     CountedLoop behindBounds = *loop;
                     behindBounds.mayComeBack = false;
                     build().statistics().count(StatisticID::LoopsLaidOutBehindBoundsOfMaskedKeys);
@@ -166,7 +216,7 @@ GenerationResult CodeGenerator::run()
             if (m_hasFailed)
                 return GenerationResult::Failed;
         }
-        generateBlock(id, block);
+        [[clang::always_inline]] generateBlock(id, block);
         new (NotNull, &m_scopeAtEndOfBlock[id.index()]) ScopeFork(m_out.forkScope());
     }
     for (LBasicBlock leftOut : m_blocksLeftOut)
@@ -180,7 +230,7 @@ GenerationResult CodeGenerator::run()
     return m_hasFailed ? GenerationResult::Failed : GenerationResult::Generated;
 }
 
-ALWAYS_INLINE bool CodeGenerator::leavesOutBlockThatNothingLeadsTo(BlockID id)
+ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::leavesOutBlockThatNothingLeadsTo(BlockID id)
 {
     if (m_nextBlockGoesOnHere)
         return false;
@@ -590,7 +640,7 @@ void CodeGenerator::numberDominatorTree()
     }
 }
 
-ALWAYS_INLINE bool CodeGenerator::dominates(BlockID home, BlockID user)
+ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::dominates(BlockID home, BlockID user)
 {
     if (m_dominatorsByPlace.empty()) {
         BlockID above = user;
@@ -621,7 +671,7 @@ ALWAYS_INLINE bool CodeGenerator::dominates(BlockID home, BlockID user)
     return m_subtreesByPlace[placeOfUser].first - subtreeOfHome.first < subtreeOfHome.size;
 }
 
-ALWAYS_INLINE bool CodeGenerator::goesOnBehindJump(size_t positionInOrder) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::goesOnBehindJump(size_t positionInOrder) const
 {
     if (!positionInOrder)
         return false;
@@ -811,7 +861,7 @@ void CodeGenerator::followNumbersOutOfBytes()
     }
 }
 
-ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Terminator& terminator) const
+ALWAYS_INLINE_INTO_OTHER_FILES ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Terminator& terminator) const
 {
     if (terminator.kind != TerminatorKind::Branch)
         return { };
@@ -824,7 +874,7 @@ ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Ter
     return condition;
 }
 
-ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchBehindJumpAlone(BlockID id, const Block& block) const
+ALWAYS_INLINE_INTO_OTHER_FILES ValueID CodeGenerator::testReadByBranchBehindJumpAlone(BlockID id, const Block& block) const
 {
     if (block.terminator.kind != TerminatorKind::Jump)
         return { };
@@ -834,7 +884,7 @@ ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchBehindJumpAlone(BlockID id,
     return testReadByBranchAlone(id, code().at(behind).terminator);
 }
 
-ALWAYS_INLINE bool CodeGenerator::isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const
 {
     if ((call.opcode != Opcode::Call && call.opcode != Opcode::CallDirect) || index + 1 == valuesOfBlock.size())
         return false;
@@ -912,7 +962,7 @@ NEVER_INLINE void CodeGenerator::dispatchWatched(const ValueContext& context)
         m_records.formsSaid.leave(siteOfUser, m_proc.numberOfOperations());
 }
 
-ALWAYS_INLINE void CodeGenerator::generate(const ValueContext& context)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generate(const ValueContext& context)
 {
     const OperationContext* user = std::exchange(m_operation, &context);
     Machine::Origin originOfUser = m_out.origin();
@@ -959,7 +1009,7 @@ ALWAYS_INLINE void CodeGenerator::generate(const ValueContext& context)
     RELEASE_ASSERT(hasResults(index));
 }
 
-ALWAYS_INLINE void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& operation, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& operation, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind)
 {
     if (!m_sumsOfIntegers.isEmpty() && addToSumOfIntegers(id)) [[unlikely]]
         return;
@@ -976,6 +1026,10 @@ ALWAYS_INLINE void CodeGenerator::generateValue(BlockID block, ValueID id, const
         m_slotOfScopeOfClosureRead = scope;
         return;
     }
+    if (operation.opcode == Opcode::NewArray && !operationsBehind.empty() && !m_keepsValuesInHeapFrame && ArrayAllocationEmitter(*this).isLeftToSpreadRightBehind(block, id, operation, operationsBehind)) [[unlikely]] {
+        m_literalLeftToSpreadRightBehind = id;
+        return;
+    }
     if (operation.traits().mayThrow())
         m_isAheadOfWhatMayThrow = false;
     ValueContext context(block, id, operation, handlerOf(block));
@@ -984,7 +1038,33 @@ ALWAYS_INLINE void CodeGenerator::generateValue(BlockID block, ValueID id, const
     generate(context);
 }
 
-ALWAYS_INLINE void CodeGenerator::generateTerminator(BlockID id, const Block& block, bool generatesCondition)
+std::span<const std::pair<ValueID, ValueID>> CodeGenerator::usersOfLiteralInBlock(BlockID block, ValueID literal)
+{
+    auto indexOfLiteral = [](const std::pair<ValueID, ValueID>& use) {
+        return use.first.index();
+    };
+    if (m_blockWhoseUsersOfLiteralsAreListed != block) {
+        m_blockWhoseUsersOfLiteralsAreListed = block;
+        m_usersOfLiteralsInBlock.shrink(0);
+        for (ValueID user : code().valuesOf(block)) {
+            for (ValueID operand : code().at(user).operands()) {
+                if (operand && code().at(operand).opcode == Opcode::NewArray)
+                    m_usersOfLiteralsInBlock.append({ operand, user });
+            }
+        }
+        std::ranges::stable_sort(m_usersOfLiteralsInBlock, { }, indexOfLiteral);
+    }
+    auto users = std::ranges::equal_range(m_usersOfLiteralsInBlock, literal.index(), { }, indexOfLiteral);
+    return { users.begin(), users.end() };
+}
+
+LValue CodeGenerator::bearLiteralAsWritten(BlockID block, ValueID literal)
+{
+    generateValue(block, literal, code().at(literal), false, { });
+    return m_values[literal.index()];
+}
+
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateTerminator(BlockID id, const Block& block, bool generatesCondition)
 {
     RELEASE_ASSERT(block.hasEnded() && !m_operation);
     const Terminator& terminator = block.terminator;
@@ -1020,10 +1100,16 @@ void CodeGenerator::generateBranchCondition(const TerminatorContext& terminator,
 
 NEVER_INLINE ValueID CodeGenerator::readLeftToBranchOnItsTruthSlow(BlockID id, std::span<const ValueID> values, ValueID test)
 {
-    if (code().at(id).isInLoop || m_headOfTurnsLaidOut || code().handlerOf(id))
+    if (code().handlerOf(id))
         return { };
     const Operation& asked = code().at(test);
     ValueID read = values[values.size() - 2];
+    if (m_headOfTurnsLaidOut) {
+        bool asksTruthOfRead = asked.opcode == Opcode::ToBoolean && asked.form() == OperatorForm::Generic && asked.valueOperand() == read && code().useCountOf(read) == 1;
+        return asksTruthOfRead && emitter<ElementAccessEmitter>().asksTruthOfRawElement(read) ? read : ValueID();
+    }
+    if (code().at(id).isInLoop)
+        return { };
     if (code().useCountOf(read) == 1 && code().onlyUserOf(read) == test && emitter<AccessEmitter>().integerThatLengthIsAskedFor(id, read, test))
         return read;
     if (asked.opcode != Opcode::ToBoolean || asked.form() != OperatorForm::Generic || asked.valueOperand() != read || code().useCountOf(read) != 1)
@@ -1121,9 +1207,40 @@ void CodeGenerator::generateReturnedCall(const TerminatorContext& terminator, Va
 
 static constexpr OpcodeSet operationsThatThrowWhateverComes { Opcode::ThrowNewError, Opcode::ThrowModuleFailure, Opcode::ThrowNotIterable };
 
+bool CodeGenerator::leavesHoleToTestBehind(const ValueContext& read)
+{
+    BlockID home = read.block();
+    const Block& block = code().at(home);
+    if (!isX86_64() || m_keepsValuesInHeapFrame || m_headOfTurnsLaidOut || !block.isInLoop || block.handler)
+        return false;
+    ValueID test = testReadByBranchAlone(home, block.terminator);
+    if (!test || code().at(test).opcode != Opcode::TypeTest || !code().at(test).asksInFull() || code().at(test).valueOperand() != read.id() || inputs().types.at(code().at(test).testedType()).primitives)
+        return false;
+    std::span<const ValueID> values = code().valuesOf(block);
+    size_t place = std::ranges::find(values, read.id()) - values.begin();
+    for (ValueID behind : values.subspan(std::min(place + 1, values.size()))) {
+        const Operation& operation = code().at(behind);
+        if (behind != test && (operation.opcode != Opcode::CheckProof || !operation.isLeftToTestBehind() || operation.valueOperand() != read.id()))
+            return false;
+    }
+    const Edge& failing = code().at(block.terminator.notTaken());
+    const Block& whereItFails = code().at(failing.to);
+    if (m_singlePredecessors[failing.to.index()] != home || !failing.arguments().empty() || whereItFails.handler || whereItFails.terminator.kind != TerminatorKind::Unreachable)
+        return false;
+    m_elementsWhoseHolesAreLeftToTestsBehind.set(read.id().index());
+    m_elementsMadePresentAtHeadsOfBlocks.add(failing.to.index(), read.id());
+    return true;
+}
+
 void CodeGenerator::generateBlock(BlockID id, const Block& block)
 {
     std::span<const ValueID> values = code().valuesOf(block);
+    LValue* elementMadePresent = nullptr;
+    LValue elementAsRead = nullptr;
+    auto takeElementAsReadAgain = makeScopeExit([&] {
+        if (elementMadePresent)
+            *elementMadePresent = elementAsRead;
+    });
     m_blockOfCachedHandler = id;
     m_cachedHandler = handlerEdgeOf(id, block);
     if (m_followsNumbersOutOfBytes)
@@ -1136,6 +1253,13 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         m_out.appendTo(blockFor(id));
     m_out.setOrigin(Machine::Origin());
     m_isAheadOfWhatMayThrow = true;
+    if (!m_elementsMadePresentAtHeadsOfBlocks.isEmpty()) [[unlikely]] {
+        if (auto made = m_elementsMadePresentAtHeadsOfBlocks.find(id.index()); made != m_elementsMadePresentAtHeadsOfBlocks.end()) {
+            elementMadePresent = &m_values[made->value.index()];
+            elementAsRead = *elementMadePresent;
+            *elementMadePresent = m_out.select(m_out.isZero64(elementAsRead), m_out.constInt64(JSValue::encode(jsUndefined())), elementAsRead);
+        }
+    }
     if (m_mayLendCells && block.isHandlerBlock()) [[unlikely]]
         emitter<CellAllocationEmitter>().clearWhatWasLentUnderHandler(id);
     if (m_keepsValuesInHeapFrame) [[unlikely]]
@@ -1251,7 +1375,13 @@ static constexpr OpcodeSet operationsOfTurnsLaidOut {
     Opcode::ToNumber, Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift, Opcode::URShift,
     Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::StrictEq, Opcode::Eq, Opcode::TypeTest,
     Opcode::GetStringCodeUnit, Opcode::GetTypedArrayElement, Opcode::GetArrayElement, Opcode::IsElementPresent,
+    Opcode::ShapeTest, Opcode::GetSlot,
 };
+static constexpr AbstractHeapSet heapsThatTurnsLaidOutReadOffObjects { AbstractHeap::ObjectFields, AbstractHeap::ShapeWords };
+static_assert(declaredBoundOf(Opcode::ShapeTest).reads.containsOnly(heapsThatTurnsLaidOutReadOffObjects) && declaredBoundOf(Opcode::GetSlot).reads.containsOnly(heapsThatTurnsLaidOutReadOffObjects));
+static_assert(!declaredBoundOf(Opcode::PutTypedArrayElement).writes.containsAny(heapsThatTurnsLaidOutReadOffObjects) && !declaredBoundOf(Opcode::PutContiguousIndex).writes.containsAny(heapsThatTurnsLaidOutReadOffObjects) && !declaredBoundOf(Opcode::PutDoubleIndex).writes.containsAny(heapsThatTurnsLaidOutReadOffObjects));
+static_assert(!declaredBoundOf(Opcode::PutModuleVariable).writes.containsAny(heapsThatTurnsLaidOutReadOffObjects) && !declaredBoundOf(Opcode::PutEnvironmentField).writes.containsAny(heapsThatTurnsLaidOutReadOffObjects));
+static_assert(!declaredBoundOf(Opcode::ExtendArrayLength).writes.containsAny(heapsThatTurnsLaidOutReadOffObjects));
 
 bool CodeGenerator::leavesKindToTurnsLaidOut(BlockID block, ValueID id, const Operation& operation) const
 {
@@ -1325,7 +1455,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     if (std::ranges::any_of(parameters, [&](ValueID parameter) { return isCarriedBoxed(parameter); }))
         return std::nullopt;
     const Edge& intoTurn = code().at(blockThatAsks.terminator.taken());
-    if (!intoTurn.arguments().empty() || positionOfAsking + 1 == m_order.size() || m_order[positionOfAsking + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != asking)
+    if (!intoTurn.arguments().empty() || positionOfAsking + 1 == m_order.size() || m_order[positionOfAsking + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != asking || code().valuesOf(intoTurn.to).size() > mostOperationsInTurnLaidOut)
         return std::nullopt;
 
     unsigned numberOfPlaces = 0;
@@ -1350,6 +1480,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     auto leadsBack = [&](const Block& block) {
         return block.terminator.kind == TerminatorKind::Jump && code().at(block.terminator.next()).to == head;
     };
+    bool admitsStoresIntoSlots = true;
     auto mayBelongToTurn = [&](BlockID id) {
         const Block& block = code().at(id);
         if (!block.isInLoop || block.isLoopHead || code().handlerOf(id) || block.subject || block.isEntry || block.isHandlerBlock() || block.frequency != blockOfHead.frequency)
@@ -1374,13 +1505,38 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                     return false;
                 continue;
             }
+            if (operation.opcode == Opcode::ExtendArrayLength) {
+                if (!leadsBack(block))
+                    return false;
+                continue;
+            }
             if (operation.opcode == Opcode::PutModuleVariable || operation.opcode == Opcode::PutEnvironmentField) {
                 if (!leadsBack(block) || opcodeOf(operation.valueOperand()) != Opcode::Box)
                     return false;
                 continue;
             }
+            if (operation.opcode == Opcode::PutSlot) {
+                if (!admitsStoresIntoSlots || operation.level() != KnowledgeLevel::Proven || !typeOf(operation.valueOperand()).isNumber())
+                    return false;
+                continue;
+            }
+            if (operation.opcode == Opcode::IsSlotFilled && operation.level() == KnowledgeLevel::Proven)
+                continue;
             if (operation.opcode == Opcode::ToNumber && (operation.form() == OperatorForm::Generic || !typeOf(operation.valueOperand()).isNumberOrNullish()))
                 return false;
+            if (operation.opcode == Opcode::CheckProof && operation.isLeftToTestBehind())
+                continue;
+            if (operation.opcode == Opcode::ToBoolean) {
+                ValueID read = operation.valueOperand();
+                const Operation& element = code().at(read);
+                if (operation.form() != OperatorForm::Generic || code().isConstant(read) || code().blockOf(read) != id || code().useCountOf(read) != 1 || element.opcode != Opcode::GetArrayElement)
+                    return false;
+                if (element.arrayStorage() != ArrayStorage::Other || element.level() != KnowledgeLevel::Proven || !element.isInBounds() || element.asksCellWhereNothingIsFound() || representationOf(read) != Representation::JSValue)
+                    return false;
+                continue;
+            }
+            if (operation.opcode == Opcode::CallInline && reckonsInLine(operation.inlineBuiltin()) && traits.isPure())
+                continue;
             if (!operationsOfTurnsLaidOut.contains(operation.opcode) || traits.mayWriteWhatIsSeen())
                 return false;
         }
@@ -1440,6 +1596,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         unsigned numberOfOperations = 0;
         loop.holesLeaveTurns = true;
         loop.storesIntoLists = false;
+        loop.storesIntoSlots = false;
         listsReadInTurn.shrink(0);
         listsThatTakeRawDoubles.shrink(0);
         unsigned numberOfBlocksThatHoldOperations = 0;
@@ -1457,7 +1614,8 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                     return false;
                 if (operation.opcode == Opcode::GetStringCodeUnit && opcodeOf(operation.stringOperand()) == Opcode::FlattenString && !loop.flatStrings.contains(operation.stringOperand()))
                     loop.flatStrings.append(operation.stringOperand());
-                loop.holesLeaveTurns &= operation.opcode != Opcode::PutTypedArrayElement;
+                loop.holesLeaveTurns &= operation.opcode != Opcode::PutTypedArrayElement && operation.opcode != Opcode::PutSlot;
+                loop.storesIntoSlots |= operation.opcode == Opcode::PutSlot;
                 bool storesIntoList = operation.opcode == Opcode::PutContiguousIndex || operation.opcode == Opcode::PutDoubleIndex;
                 loop.storesIntoLists |= storesIntoList;
                 loop.holesLeaveTurns &= !storesIntoList;
@@ -1477,6 +1635,11 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                 if (operation.opcode == Opcode::GetArrayElement && operation.level() == KnowledgeLevel::Proven && !operation.isInBounds() && !operation.isPresent() && !operation.lengthOperands().empty()) {
                     if (std::optional<int64_t> most = mostOfKeyCutByWrittenMask(operation.positionOperand()))
                         loop.boundsAskedInFront.append({ value, operation.lengthOperands()[0], *most });
+                }
+                if (operation.opcode == Opcode::GetArrayElement && operation.arrayStorage() == ArrayStorage::Other && operation.level() == KnowledgeLevel::Proven && operation.isInBounds() && !operation.asksCellWhereNothingIsFound() && representationOf(value) == Representation::JSValue && (typeOf(value).primitives & Primitive::Number) && !code().isConstant(operation.arrayOperand())) {
+                    if (!std::ranges::any_of(loop.listsAskedForKind, [&](const ListAskedForKind& asked) { return asked.list == operation.arrayOperand(); }))
+                        loop.listsAskedForKind.append({ operation.arrayOperand(), ArrayStorage::Double, false, true, true });
+                    continue;
                 }
                 if (operation.opcode != Opcode::GetArrayElement || !operation.admitsInt32Storage() || code().isConstant(operation.arrayOperand()))
                     continue;
@@ -1498,11 +1661,26 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                 bool mayHoldFraction = !!(typeOf(value).primitives & Primitive::Number & ~Primitive::NumberWithoutFraction);
                 loop.listsAskedForKind.append({ list, mayHoldFraction ? ArrayStorage::Double : ArrayStorage::Int32 });
             }
+            if (loop.storesIntoSlots && code().at(blockAt(place)).terminator.kind != TerminatorKind::Jump)
+                return false;
+        }
+        for (unsigned place = 0; loop.storesIntoSlots && place < *placeOfLast; ++place) {
+            unsigned numberOfBlocksOfTurnLedTo = 0;
+            if (isInTurn[place]) {
+                forEachPlaceLedTo(place, [&](unsigned target) {
+                    numberOfBlocksOfTurnLedTo += isInTurn[target];
+                });
+            }
+            if (isInTurn[place] && numberOfBlocksOfTurnLedTo != 1)
+                return false;
         }
         return true;
     };
-    if (!findTurn(placesLookedAtFirst, false) && !findTurn(placesLookedAtBehindHead, true))
-        return std::nullopt;
+    if (!findTurn(placesLookedAtFirst, false) && !findTurn(placesLookedAtBehindHead, true)) {
+        admitsStoresIntoSlots = false;
+        if (!findTurn(placesLookedAtFirst, false) && !findTurn(placesLookedAtBehindHead, true))
+            return std::nullopt;
+    }
     auto isAmong = [&](ValueID list, const auto& lists) {
         return std::ranges::any_of(lists, [&](ValueID other) { return other == list || (wordOf(list) && wordOf(other) == wordOf(list)); });
     };
@@ -1610,18 +1788,57 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     loop.mostTurns = (countsUp ? bounds.maximum - counters.minimum : counters.maximum - bounds.minimum) / std::abs(loop.step) + 1;
     if (loop.mostTurns < static_cast<int64_t>(turnsLaidOut))
         return std::nullopt;
+    if (loop.step == 1 && loop.relation == Opcode::Less && counters.minimum >= 0) {
+        auto holdAgainstBound = [&](ValueID length) {
+            if (!loop.lengthsHeldAgainstBound.contains(length))
+                loop.lengthsHeldAgainstBound.append(length);
+        };
+        auto isLengthFromInFront = [&](ValueID length) {
+            return !isMadeInLoop(length) && typeOf(length).isInteger() && typeOf(length).integers.minimum >= 0 && (representationOf(length) == Representation::Int32 || representationOf(length) == Representation::Int64);
+        };
+        for (BlockID block : loop.turn) {
+            for (ValueID value : code().valuesOf(block)) {
+                const Operation& operation = code().at(value);
+                bool testsItsPosition = operation.opcode == Opcode::IsElementPresent ? !operation.isInBounds() : operation.opcode == Opcode::GetArrayElement && operation.level() == KnowledgeLevel::Proven && !operation.isInBounds() && !operation.isPresent();
+                if (!testsItsPosition || operation.lengthOperands().empty() || !isLengthFromInFront(operation.lengthOperands()[0]) || integerHandedOnBy(operation.positionOperand()) != loop.counter)
+                    continue;
+                loop.accessesUnderCounterBelowBound.append(value);
+                holdAgainstBound(operation.lengthOperands()[0]);
+            }
+            const Terminator& end = code().at(block).terminator;
+            if (end.kind != TerminatorKind::Branch || !loop.turn.contains(code().at(end.edge(0)).to) || loop.turn.contains(code().at(end.edge(1)).to) || code().at(end.edge(1)).to == head)
+                continue;
+            const Operation& relation = code().at(end.conditionOperand());
+            if (relation.opcode != Opcode::Less || relation.form() != OperatorForm::Integers || integerHandedOnBy(relation.operand(0)) != loop.counter || !isLengthFromInFront(relation.operand(1)))
+                continue;
+            loop.relationsOfCounterBelowBound.append(end.conditionOperand());
+            holdAgainstBound(relation.operand(1));
+        }
+    }
     if (!findStoresOfWhatComesRound(loop, back))
         return std::nullopt;
     loop.asking = asking;
     loop.mayComeBack = !m_keepsValuesInHeapFrame && loop.storesOfWhatComesRound.isEmpty() && loop.mostTurns >= fewestTurnsOfLoopComeBackTo && (someUnusualTurnComesRound(loop) || someHoleLeavesTurn(loop)) && loop.viewsAskedForKind.isEmpty();
     loop.mayComeBack &= !loop.storesIntoLists;
-    if (loop.mayComeBack && loop.listsAskedForKind.isEmpty() && !loop.listsWhoseKindIsRead.isEmpty()) {
-        loop.secondTurnsGoByKindsRead = loop.listsWhoseKindIsRead.size() > 1;
-        for (ValueID list : std::exchange(loop.listsWhoseKindIsRead, { }))
-            loop.listsAskedForKind.append({ list, ArrayStorage::Double });
+    if (loop.mayComeBack && loop.listsAskedForKind.isEmpty() && loop.listsWhoseKindIsRead.isEmpty()) {
+        BlockID head = m_order[positionOfHead];
+        code().forEachEdgeIntoSoFar(head, [&](const Edge& edge) {
+            if (edge.to == head && edge.from != head && m_scopeAtEndOfBlock[edge.from.index()].block && code().at(edge.from).isInLoop)
+                loop.mayComeBack = false;
+        });
     }
+    askKindsReadWhereLoopIsComeBackTo(loop);
     findSumsOfIntegers(loop, back);
     return loop;
+}
+
+void CodeGenerator::askKindsReadWhereLoopIsComeBackTo(CountedLoop& loop)
+{
+    if (!loop.mayComeBack || !loop.listsAskedForKind.isEmpty() || loop.listsWhoseKindIsRead.isEmpty())
+        return;
+    loop.secondTurnsGoByKindsRead = loop.listsWhoseKindIsRead.size() > 1;
+    for (ValueID list : std::exchange(loop.listsWhoseKindIsRead, { }))
+        loop.listsAskedForKind.append({ list, ArrayStorage::Double });
 }
 
 static_assert(!operationsOfTurnsLaidOut.contains(Opcode::GetModuleVariable) && !operationsOfTurnsLaidOut.contains(Opcode::GetEnvironmentField));
@@ -1767,7 +1984,7 @@ bool CodeGenerator::addToSumOfIntegers(ValueID id)
 
 bool CodeGenerator::liesInsideByQuestionInFrontOfTurnsLaidOut(ValueID read) const
 {
-    return std::ranges::contains(m_boundsAskedInFrontOfTurnsLaidOut, read, &BoundAskedInFront::read);
+    return std::ranges::contains(m_boundsAskedInFrontOfTurnsLaidOut, read, &BoundAskedInFront::read) || std::ranges::contains(m_accessesUnderCounterBelowBoundOfTurnsLaidOut, read);
 }
 
 std::optional<int64_t> CodeGenerator::mostOfKeyCutByWrittenMask(ValueID key) const
@@ -1991,7 +2208,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     LBasicBlock writtenHead = ring ? ring->writtenHead : isLastInRow ? m_layoutsInRow->headBehindAll : m_out.newBlock();
     LBasicBlock leaving = comesBack ? m_out.newBlock() : nullptr;
     LBasicBlock intoWritten = ring ? ring->intoWritten : comesBack ? m_out.newBlock() : writtenHead;
-    LBasicBlock otherKind = comesBack && !ring && (!loop.listsAskedForKind.isEmpty() || loop.turnsForWideTextsFollow) ? m_out.newBlock() : nullptr;
+    LBasicBlock otherKind = comesBack && (loop.layoutWithoutQuestionFollows || ((!ring || ring->nextMayOpenAnother) && (loop.asksListsForAnotherKind() || loop.turnsForWideTextsFollow))) ? m_out.newBlock() : nullptr;
     using Values = Vector<LValue, 8>;
     Values phisOfEntry;
     Values phisOfTurns;
@@ -2205,6 +2422,21 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             m_out.appendTo(holds);
             build().statistics().count(StatisticID::RelationsOfTurnsAskedOnceInFrontOfTurnsLaidOut);
         }
+        if (ring || countIsAsked) {
+            RELEASE_ASSERT(std::ranges::all_of(loop.lengthsHeldAgainstBound, [&](ValueID length) {
+                return m_lengthsHeldAgainstBoundByLayoutThatAsked.contains(length);
+            }));
+        } else
+            m_lengthsHeldAgainstBoundByLayoutThatAsked = loop.lengthsHeldAgainstBound;
+        for (ValueID asked : loop.lengthsHeldAgainstBound) {
+            if (ring || countIsAsked)
+                break;
+            LBasicBlock holds = m_out.newBlock();
+            LValue fallsShort = m_out.lessThan(m_out.zeroExt(get(asked).value, Machine::Int64), bound->type() == Machine::Int32 ? m_out.signExt32To64(bound) : bound);
+            m_out.branch(takesQuestionsToHold ? m_out.opaque(m_out.booleanFalse) : fallsShort, normalEdge(tooFewForAnyLayout()), normalEdge(holds));
+            m_out.appendTo(holds);
+            build().statistics().count(StatisticID::LengthsHeldAgainstBoundInFrontOfTurnsLaidOut);
+        }
         for (ValueID string : loop.flatStrings) {
             std::optional<Condition> hasWidth = emitter<StringEmitter>().findWidth(string, !loop.asksTextsForWide);
             if (!hasWidth || hasWidth->value()->hasInt())
@@ -2292,6 +2524,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     m_listsAskedForKindInFrontOfTurnsLaidOut = loop.listsAskedForKind.span();
     m_boundsAskedInFrontOfTurnsLaidOut = loop.boundsAskedInFront.span();
     m_relationsAskedInFrontOfTurnsLaidOut = loop.relationsAskedInFront;
+    m_relationsAskedInFrontOfTurnsLaidOut.appendVector(loop.relationsOfCounterBelowBound);
+    m_accessesUnderCounterBelowBoundOfTurnsLaidOut = loop.accessesUnderCounterBelowBound.span();
     m_viewsAskedForKindInFrontOfTurnsLaidOut = loop.viewsAskedForKind.span();
     m_kindOfViewFoundInFrontOfTurnsLaidOut = loop.kindAskedOfView;
     m_holesLeaveTurnsLaidOut = loop.holesLeaveTurns;
@@ -2369,6 +2603,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     m_listsAskedForKindInFrontOfTurnsLaidOut = { };
     m_boundsAskedInFrontOfTurnsLaidOut = { };
     m_relationsAskedInFrontOfTurnsLaidOut.shrink(0);
+    m_accessesUnderCounterBelowBoundOfTurnsLaidOut = { };
     m_viewsAskedForKindInFrontOfTurnsLaidOut = { };
     m_kindsReadInFrontOfTurnsLaidOut.shrink(0);
     m_holesLeaveTurnsLaidOut = false;
@@ -2489,7 +2724,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         m_limitOfWrittenLoop = LimitOfWrittenLoop { loop.asking, loop.relation, loop.step, indexOfCounter, bound, limit, paidIntoWritten, paidUpTo, entry, phisOfEntry, phisOfWrittenHead };
     }
     if (otherKind)
-        m_ringOfLoopLaidOut = RingOfLoopLaidOut { entry, otherKind, intoWritten, writtenHead, bound, lastStart, limit, paidIntoWritten, paidUpTo, phisOfHead, phisOfEntry, phisIntoWritten, phisOfWrittenHead };
+        m_ringOfLoopLaidOut = RingOfLoopLaidOut { entry, otherKind, intoWritten, writtenHead, bound, lastStart, limit, paidIntoWritten, paidUpTo, phisOfHead, phisOfEntry, phisIntoWritten, phisOfWrittenHead, loop.layoutWithoutQuestionFollows };
 }
 
 void CodeGenerator::declareAccessesSlow(const OperationContext& context)
@@ -2533,6 +2768,16 @@ BlockEdge CodeGenerator::edgeTo(const TerminatorContext& terminator, uint32_t ta
     if (m_keepsValuesInHeapFrame && emitter<SavedFrameEmitter>().clearsWordsOnWayBackAlong(edge)) [[unlikely]]
         return edgeThatPassesArguments(terminator, edge, declaredResults);
     return target;
+}
+
+std::optional<BlockEdge> CodeGenerator::edgeThatBringsNothing(EdgeID id)
+{
+    const Edge& edge = code().at(id);
+    const Block& blockAtEnd = code().at(edge.to);
+    LBasicBlock block = m_blocks[edge.to.index()];
+    if (!block || isLayingOutTurns() || m_keepsValuesInHeapFrame || !edge.arguments().empty() || !blockAtEnd.parameters().empty())
+        return std::nullopt;
+    return BlockEdge(block, edgeClassLeadingTo(blockAtEnd.frequency));
 }
 
 NEVER_INLINE BlockEdge CodeGenerator::edgeLeavingTurnLaidOut(const Block& blockAtEnd)
@@ -2597,7 +2842,7 @@ NEVER_INLINE void CodeGenerator::failToPassArgument(ValueID parameter, Represent
         fail(ValueContext(code().blockOf(parameter), parameter, code().at(parameter), nullptr), InternalErrorKind::UnsupportedConversion, forms);
 }
 
-ALWAYS_INLINE void CodeGenerator::passArgument(ValueID parameter, Operand argument)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::passArgument(ValueID parameter, Operand argument)
 {
     Representation representationOfParameter = isCarriedBoxed(parameter) ? Representation::JSValue : representationOf(parameter);
     if (!isSameWord(argument.representation, representationOfParameter)) [[unlikely]] {
@@ -2692,7 +2937,7 @@ void CodeGenerator::verifyThatKeptValueIsNamedInThisStretch(ValueID id)
         fail(*m_operation, InternalErrorKind::InvalidSuspension, makeString('v', id.index(), " ("_s, nameOf(opcodeOf(id)), ") has a word in the machine frame and is read as another stretch named it"_s));
 }
 
-void CodeGenerator::verifyThatDefinitionDominates(ValueID id, BlockID home, BlockID user)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::verifyThatDefinitionDominates(ValueID id, BlockID home, BlockID user)
 {
     if (dominates(home, user)) [[likely]] {
         if (m_userOfHomesProven != user) {
@@ -2776,7 +3021,7 @@ Operand CodeGenerator::makeInWantedForm(ValueID id, const Operation& operation, 
     return emitter<ConstantEmitter>().zeroOf(wanted);
 }
 
-Operand CodeGenerator::makeConstant(ValueID id, const Operation& constant)
+ALWAYS_INLINE_INTO_OTHER_FILES Operand CodeGenerator::makeConstant(ValueID id, const Operation& constant)
 {
     static constexpr OpcodeSet constantsWithoutCode { Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double };
 
@@ -2838,7 +3083,7 @@ void CodeGenerator::defineParameter(ValueID parameter, Operand operand)
         passArgument(parameter, operand);
 }
 
-void CodeGenerator::defineParameterAsPassed(ValueID parameter, Operand passed)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::defineParameterAsPassed(ValueID parameter, Operand passed)
 {
     RELEASE_ASSERT(opcodeOf(parameter) == Opcode::Parameter);
     Representation representation = representationOf(parameter);

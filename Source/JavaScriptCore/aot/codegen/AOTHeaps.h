@@ -56,6 +56,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTInstance_moduleValues, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_globalBindings, 0, Mutable, RuntimeState) \
     v(AOTInstance_siteCaches, 0, OutsideDeclaredEffects, RuntimeState) \
+    v(AOTInstance_arrayProfiles, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTPropertyCaches_front, 0, Mutable, RuntimeState) \
     v(AOTClassToken_knownStructures, JSCellButterfly::offsetOfData() + ClassToken::knownStructuresSlot * sizeof(EncodedJSValue), OutsideDeclaredEffects, RuntimeState) \
     v(AOTClassToken_records, 0, OutsideDeclaredEffects, RuntimeState) \
@@ -96,6 +97,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(DateInstance_internalNumber, DateInstance::offsetOfInternalNumber(), Mutable, InternalFields) \
     v(DateInstance_cachedGregorianDateTime, DateInstance::offsetOfCachedGregorianDateTime(), Mutable, InternalFields) \
     v(DateInstance_cachedGregorianDateTimeUTC, DateInstance::offsetOfCachedGregorianDateTimeUTC(), Mutable, InternalFields) \
+    v(GetterSetter_getter, GetterSetter::offsetOfGetter(), Mutable, RuntimeState) \
     v(InlineWatchpointSet_data, InlineWatchpointSet::offsetOfData(), Mutable, RuntimeState) \
     v(JSArrayBufferView_byteOffset, JSArrayBufferView::offsetOfByteOffset(), Mutable, TypedArrayStorage) \
     v(JSArrayBufferView_length, JSArrayBufferView::offsetOfLength(), Mutable, TypedArrayStorage) \

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImage.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTLimits.h"
 #include "AOTOperationScope.h"
@@ -607,7 +608,7 @@ static ALWAYS_INLINE bool narrowColumnHolds(JSValue value)
     return value.isCell() ? !(bits & (MarkedBlock::atomSize - 1)) : bits < minCell32;
 }
 
-ALWAYS_INLINE std::optional<unsigned> CompactTable::hashIfAbsent(JSValue key) const
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<unsigned> CompactTable::hashIfAbsent(JSValue key) const
 {
     if (key.isString()) {
         if (tryFindQuickly(asString(key)).result != QuickLookup::Absent)
@@ -625,7 +626,7 @@ ALWAYS_INLINE std::optional<unsigned> CompactTable::hashIfAbsent(JSValue key) co
     return found ? std::nullopt : std::optional(hash);
 }
 
-ALWAYS_INLINE bool CompactTable::tryAddQuickly(JSGlobalObject* globalObject, JSValue key, JSValue value)
+ALWAYS_INLINE_INTO_OTHER_FILES bool CompactTable::tryAddQuickly(JSGlobalObject* globalObject, JSValue key, JSValue value)
 {
     if (!hasNarrowKeys() || m_used == m_capacity || !key.isCell() || !narrowColumnHolds(key) || (m_valueWidth == Width::Narrow && !narrowColumnHolds(value)))
         return false;
@@ -685,7 +686,7 @@ static ALWAYS_INLINE bool tryShareCharactersOfEqual(JSRopeString* piece, StringI
     return true;
 }
 
-ALWAYS_INLINE void CompactTable::resolveSubstringKey(JSRopeString* key) const
+ALWAYS_INLINE_INTO_OTHER_FILES void CompactTable::resolveSubstringKey(JSRopeString* key) const
 {
     StringImpl& base = *key->substringBase()->tryGetValueImpl();
     unsigned offset = key->substringOffset();
@@ -1039,7 +1040,7 @@ std::optional<uint32_t> CompactTable::findInImage(JSGlobalObject* globalObject, 
     return entries.find(image, StringView { impl }, impl.hash());
 }
 
-ALWAYS_INLINE std::optional<uint32_t> CompactTable::findInline(std::span<const Latin1Character> characters) const
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> CompactTable::findInline(std::span<const Latin1Character> characters) const
 {
     if (isInImage())
         return findCharactersInImage(*vm().aotState().image, tableInImage(), characters);

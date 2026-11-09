@@ -53,6 +53,9 @@ enum class DeclaredAs : uint8_t { NotCompiled, Function, AsyncFunction, Generato
 
 JS_EXPORT_PRIVATE DeclaredAs declaredAs(JSCell*);
 JS_EXPORT_PRIVATE bool awaitsByItself(JSCell*);
+JS_EXPORT_PRIVATE bool mayAskForOwnOriginal(JSCell*);
+JS_EXPORT_PRIVATE Vector<String> originalsAskedFor(JSCell*);
+JS_EXPORT_PRIVATE String pathOfFileThatDeclares(JSCell*);
 JS_EXPORT_PRIVATE String closureDeclaredName(JSObject*);
 JS_EXPORT_PRIVATE bool belongsToBuiltinModule(JSCell*);
 JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);

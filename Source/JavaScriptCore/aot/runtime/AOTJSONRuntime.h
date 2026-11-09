@@ -68,11 +68,25 @@ public:
         }
         return findRecordPlan(vm, ordinaryStructure);
     }
+    struct RecordBesideNames {
+        const ObjectBuilderPlan* plan { nullptr };
+        Structure* structure { nullptr };
+        unsigned numberOfNamesInRecord { 0 };
+        Structure* structureOfNamesBeyondRecord { nullptr };
+        CompiledStructure* structureWithNamesBeyondRecord { nullptr };
+    };
+    RecordBesideNames* recordBesideNamesFor(Structure* ordinaryStructure)
+    {
+        uint32_t id = ordinaryStructure->id().bits();
+        CachedRecordPlan& cached = (*m_recordPlanCache)[recordPlanCacheIndex(id)];
+        return cached.ordinaryStructureID == id && cached.besideNames.plan ? &cached.besideNames : nullptr;
+    }
 
 private:
     struct CachedRecordPlan {
         uint32_t ordinaryStructureID { 0 };
         RecordPlan recordPlan;
+        RecordBesideNames besideNames;
     };
     struct RecordPlanForNames {
         Vector<RefPtr<UniquedStringImpl>, 8> names;
@@ -86,7 +100,12 @@ private:
     static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
 
     RecordPlan findRecordPlan(VM&, Structure*);
-    const ObjectBuilderPlan* findOrCreateRecordPlan(VM&, Structure*);
+    struct RecordPlanFound {
+        const ObjectBuilderPlan* plan { nullptr };
+        unsigned numberOfNamesInRecord { 0 };
+        bool hasNamesBeyondRecord { false };
+    };
+    RecordPlanFound findOrCreateRecordPlan(VM&, Structure*);
     void forgetRecordPlansNotFoundLately(VM&);
 
     uint8_t* begin(void* stackPointer, size_t length);

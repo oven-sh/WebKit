@@ -205,7 +205,6 @@ JS_EXPORT_PRIVATE void checkPlan(const Program&, const Facts&, const Plan&, Buil
 
 JS_EXPORT_PRIVATE Vector<CodeUnit> unitsNamedOutsideCode(const Program&, const Facts&, const Plan&);
 
-BuiltinID builtinParentNamedByClassRecord(const Program&, const Facts&, LayoutID);
 
 struct ParentInClassRecord {
     LayoutID layout;

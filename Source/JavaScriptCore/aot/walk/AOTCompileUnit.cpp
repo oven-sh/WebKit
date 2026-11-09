@@ -56,6 +56,8 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .showsPositionsTakenToLieInsideToVerifier = build.validates() && !sourcesOfProofsCheckedUnder(options.testing) && !testsEveryPositionUnder(options.testing),
         .leavesOutReadsBehindTestsOfLengths = AOT::hasFlag(options.testing, Wire::TestingSwitch::ReadsBehindTestsOfLengthsAreLeftOut),
         .takesVariablesThatBoundToBeAsInFront = AOT::hasFlag(options.testing, Wire::TestingSwitch::VariablesThatBoundAreTakenToBeAsInFront),
+        .takesStorageAndLengthsToBeAsInFront = AOT::hasFlag(options.testing, Wire::TestingSwitch::StorageAndLengthsAreTakenToBeAsInFront),
+        .namesOperandsOfRowsByWhatTheirVariablesHoldNow = AOT::hasFlag(options.testing, Wire::TestingSwitch::OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow),
         .takesDividendsOfReciprocalsToFit32Bits = AOT::hasFlag(options.testing, Wire::TestingSwitch::DividendsOfReciprocalsAreTakenToFit32Bits),
         .roundsBoundsOfCountersTheOtherWay = AOT::hasFlag(options.testing, Wire::TestingSwitch::BoundsOfCountersAreRoundedTheOtherWay),
         .takesGuardsAndFactsToHold = AOT::hasFlag(options.testing, Wire::TestingSwitch::GuardsAndFactsAreTakenToHold),
@@ -64,6 +66,8 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .takesNumbersStoredIntoListsOfDoublesToBeNoNaN = AOT::hasFlag(options.testing, Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN),
         .takesOneRowToSpeakForAll = AOT::hasFlag(options.testing, Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake),
         .takesNothingToBeDoneToFreshLists = AOT::hasFlag(options.testing, Wire::TestingSwitch::NothingIsDoneToFreshLists),
+        .typedTurnsPassStoresIntoListsOver = AOT::hasFlag(options.lies, Wire::TestingLie::TypedTurnsPassStoresIntoListsOver),
+        .takesBoundFunctionsToBindOneMore = AOT::hasFlag(options.lies, Wire::TestingLie::BoundFunctionsAreTakenToBindOneMore),
         .sweepTurnsBranchThatDecidesIntoJump = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepTurnsBranchThatDecidesIntoJump),
         .sweepLetsGoEdgeThatIsTaken = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepLetsGoEdgeThatIsTaken),
         .takesCalleesToKeepNothing = AOT::hasFlag(options.testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded),
@@ -81,6 +85,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .shufflesExpectedTypes = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleExpectedTypes),
         .failsGuesses = AOT::hasFlag(options.testing, Wire::TestingSwitch::FailGuesses),
         .turnsForgetWhatWasDone = RowThatSaysLess::decode(options.rowThatSaysLess).kind == KindOfEffectsRow::MarkOfTurns,
+        .notesRowsOfLoopsThatSayLess = RowThatSaysLess::decode(options.rowThatSaysLess).kind == KindOfEffectsRow::RowOfLoop,
         .netOfEffectsWatchesTurns = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime) || RowThatSaysLess::decode(options.rowThatSaysLess).kind == KindOfEffectsRow::MarkOfTurns,
         .shufflesChoices = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleChoices),
         .judgesInt32Promises = !AOT::hasFlag(options.testing, Wire::TestingSwitch::IgnoreExpectedTypes) && !AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleExpectedTypes) && !AOT::hasFlag(options.testing, Wire::TestingSwitch::GiveLinkMore),
@@ -89,6 +94,12 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .periodOfUnitsWalkedThatWay = options.periodOfUnitsWalkedThatWay,
         .periodOfHearingsThatCutWalks = options.periodOfHearingsThatCutWalks,
         .phaseOfHearingsThatCutWalks = options.phaseOfHearingsThatCutWalks,
+        .takesValuesThatComeLaterForOthersThanWhatIsMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere),
+        .takesReceiversOfMethodsOfListsToBeMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ReceiversOfMethodsOfListsAreTakenToBeMadeHere),
+        .takesElementsBesideSumsToComeOffListsOfNumbers = AOT::hasFlag(options.lies, Wire::TestingLie::ElementsBesideSumsAreTakenToComeOffListsOfNumbers),
+        .takesIterablesOfPatternsToStayAsMade = AOT::hasFlag(options.lies, Wire::TestingLie::IterablesOfPatternsAreTakenToStayAsMade),
+        .passesGuardOfNameOverAtCallsThroughSuper = AOT::hasFlag(options.lies, Wire::TestingLie::GuardOfNameIsPassedOverAtCallsThroughSuper),
+        .passesGuardOfLinkOverAtCallsThroughSuper = AOT::hasFlag(options.lies, Wire::TestingLie::GuardOfLinkIsPassedOverAtCallsThroughSuper),
     };
 }
 
@@ -130,7 +141,6 @@ static std::span<const uint32_t> arenaIDsInUnitMentionKey(NumberSpace space, std
     case NumberSpace::ClosureCell:
     case NumberSpace::Allocation:
     case NumberSpace::Request:
-    case NumberSpace::AtomOfComparedText:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
     case NumberSpace::MethodSelector:
@@ -250,7 +260,7 @@ static bool isAllocationOfUnitForEffectsAgainstLink(const Code& code, ValueID va
     if (parametersAsked.contains(value))
         return true;
     parametersAsked.append(value);
-    size_t place = std::ranges::find(block.parameters(), value) - block.parameters().begin();
+    size_t place = block.placeOfParameter(value);
     for (EdgeID edge = block.firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
         std::span<const ValueID> arguments = code.at(edge).arguments();
         if (place >= arguments.size() || !isAllocationOfUnitForEffectsAgainstLink(code, arguments[place], parametersAsked))
@@ -314,7 +324,7 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
         const Operation& operation = code.at(value);
         if (operation.opcode != Opcode::Parameter || !operation.block() || !code.at(operation.block()).isEntry)
             return false;
-        size_t place = std::ranges::find(code.at(operation.block()).parameters(), value) - code.at(operation.block()).parameters().begin();
+        size_t place = code.at(operation.block()).placeOfParameter(value);
         return place < 32 && (parametersCalled >> place & 1);
     };
     for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
@@ -492,9 +502,17 @@ private:
         }
         if (conversionsOfForm.contains(record.opcode))
             return liesWithin(record.operand(0), bound, call);
+        if (record.opcode == Opcode::Narrowed && !record.narrowsHolderOfOperand() && !record.narrowsOtherResultOfOperand()) {
+            ValueID behind = record.operand(0);
+            TypeID ofValueBehind = behind && !m_code.isConstant(behind) ? m_code.at(behind).type : TypeID();
+            if (!ofValueBehind || !m_types.at(ofValueBehind).isJavaScriptValue())
+                return false;
+            TypeID takenAway = m_types.differenceOf(ofValueBehind, record.type);
+            return isNeverType(m_types.intersectionOf(takenAway, record.type)) && liesWithin(behind, m_types.unionOf(bound, takenAway), call);
+        }
         if (record.opcode != Opcode::Parameter || m_code.at(record.block()).isEntry || m_code.at(record.block()).isHandlerBlock())
             return false;
-        if (!m_parametersBeingAsked.add(value.index()).isNewEntry)
+        if (!m_parametersBeingAsked.add(static_cast<uint64_t>(value.index()) << 32 | bound.index()).isNewEntry)
             return true;
         std::span<const ValueID> parameters = m_code.at(record.block()).parameters();
         size_t place = std::ranges::find(parameters, value) - parameters.begin();
@@ -576,7 +594,7 @@ private:
     const Code& m_code;
     std::span<const Walker::ArrivalHeld> m_held;
     const PositionTypes* m_whatFunctionsHandBack;
-    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parametersBeingAsked;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_parametersBeingAsked;
 };
 
 } // anonymous namespace
@@ -586,12 +604,12 @@ String findCallThatHandsOverWhatItsUnitHasNotLeft(const WalkInputs& inputs, Type
     return JudgeOfCalls(inputs, types, code, arrivalsHeld, whatFunctionsHandBack).run();
 }
 
-static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code& code)
+static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, TypeArena& types, const Code& code)
 {
     CodeUnit unit = code.unit();
     if (!walksInputBody(unit.role) || !(code.opcodesOfValues().contains(Opcode::PutModuleVariable) || code.opcodesOfValues().contains(Opcode::PutEnvironmentField)))
         return { };
-    if (inputs.options.takesCalleesToKeepNothing)
+    if (inputs.options.takesCalleesToKeepNothing && (inputs.options.sourcesOfProofsChecked & bitOfSourceOfProofs(ProofSource::Lifetime)))
         return { };
     const LinkTables& tables = inputs.facts.linked();
     for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
@@ -601,6 +619,8 @@ static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code&
         ValueID stored = rootOfCellInSweptCode(code, operation.valueOperand());
         const Operation& made = code.at(stored);
         if (made.opcode != Opcode::Parameter || !code.at(made.block()).isEntry)
+            continue;
+        if (FunctionID function = singleFunctionOf(types, types.at(code.at(operation.valueOperand()).type)); function && !closuresOfFunctionMayBeLent(inputs.program, function))
             continue;
         std::span<const ValueID> parameters = code.at(made.block()).parameters();
         size_t entryParameter = std::ranges::find(parameters, stored) - parameters.begin();
@@ -626,7 +646,7 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
     }
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::OpcodeNotInForm;
-        brokenRule = findStoreOfWhatCallerMayLend(inputs, code);
+        brokenRule = findStoreOfWhatCallerMayLend(inputs, types, code);
     }
     if (brokenRule.isNull())
         return true;
@@ -773,61 +793,65 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WayOfWalking way)
     }
     m_walker->handOverArrivals();
     m_build.diagnostics().append(m_walker->takeReports());
-    m_build.statistics().count(StatisticID::OperationsSwept, swept.operationsSwept);
-    m_build.statistics().count(StatisticID::BranchesThatDecideNothing, swept.branchesThatDecideNothing);
-    m_build.statistics().count(StatisticID::DoorsDroppedWithTheirValues, swept.doorsDroppedWithTheirValues);
+    Statistics::CountersOfThread counters = m_build.statistics().countersOfCurrentThread();
+    counters.count(StatisticID::OperationsSwept, swept.operationsSwept);
+    counters.count(StatisticID::BranchesThatDecideNothing, swept.branchesThatDecideNothing);
+    counters.count(StatisticID::DoorsDroppedWithTheirValues, swept.doorsDroppedWithTheirValues);
     if (swept.birthsMoved)
-        m_build.statistics().count(StatisticID::BirthsLaidWhereCellsAreNeeded, swept.birthsMoved);
-    m_build.statistics().count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
-    m_build.statistics().count(StatisticID::ValuesWalkedAndKept, m_walker->numberOfValuesWalkedAndKept());
-    m_build.statistics().count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
-    m_build.statistics().count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
-    m_build.statistics().count(StatisticID::LoopsWalkedAgainWithoutAskingSums, m_walker->numberOfRowsWhoseSumsAreNotAsked());
-    m_build.statistics().count(StatisticID::WalksOfLoopsCutShort, m_walker->numberOfWalksOfLoopsCutShort());
-    m_build.statistics().count(StatisticID::PurchasesOfLoopsThatFailed, m_walker->numberOfPurchasesOfLoopsThatFailed());
-    m_build.statistics().count(StatisticID::OperationsBuilt, code.numberOfValues());
-    m_build.statistics().count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);
+        counters.count(StatisticID::BirthsLaidWhereCellsAreNeeded, swept.birthsMoved);
+    counters.count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
+    counters.count(StatisticID::ValuesWalkedAndKept, m_walker->numberOfValuesWalkedAndKept());
+    counters.count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
+    counters.count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
+    counters.count(StatisticID::LoopsWalkedAgainWithoutAskingSums, m_walker->numberOfRowsWhoseSumsAreNotAsked());
+    counters.count(StatisticID::LoopsWalkedAgainWithKeysReadOffLook, m_walker->numberOfRowsWhoseKeysAreReadOffLook());
+    counters.count(StatisticID::WalksOfLoopsCutShort, m_walker->numberOfWalksOfLoopsCutShort());
+    counters.count(StatisticID::FirstTriesOfLoopsThatStartFromTheirOwnText, m_walker->numberOfFirstTriesOfLoopsThatStartFromTheirOwnText());
+    counters.count(StatisticID::FirstTriesOfLoopsWhoseOwnTextWasRefuted, m_walker->numberOfFirstTriesOfLoopsWhoseOwnTextWasRefuted());
+    counters.count(StatisticID::PurchasesOfLoopsThatFailed, m_walker->numberOfPurchasesOfLoopsThatFailed());
+    counters.count(StatisticID::OperationsBuilt, code.numberOfValues());
+    counters.count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);
     if (uint32_t guesses = m_walker->numberOfGuessesOpened()) {
-        m_build.statistics().count(StatisticID::TestsThatRejoin, guesses);
-        m_build.statistics().count(StatisticID::LoopsBuiltTwice, m_walker->numberOfLoopsBuiltTwice());
-        m_build.statistics().count(StatisticID::TurnsThatBeginAgain, m_walker->numberOfTurnsThatBeginAgain());
-        m_build.statistics().count(StatisticID::StoresPutBackWhereTurnsBeginAgain, m_walker->numberOfStoresPutBack());
-        m_build.statistics().count(StatisticID::EmptySlotsTakenAsCases, m_walker->numberOfEmptySlotsTakenAsCases());
+        counters.count(StatisticID::TestsThatRejoin, guesses);
+        counters.count(StatisticID::LoopsBuiltTwice, m_walker->numberOfLoopsBuiltTwice());
+        counters.count(StatisticID::TurnsThatBeginAgain, m_walker->numberOfTurnsThatBeginAgain());
+        counters.count(StatisticID::StoresPutBackWhereTurnsBeginAgain, m_walker->numberOfStoresPutBack());
+        counters.count(StatisticID::EmptySlotsTakenAsCases, m_walker->numberOfEmptySlotsTakenAsCases());
     }
     if (uint32_t assignments = m_walker->numberOfAssignmentsWrittenOut())
-        m_build.statistics().count(StatisticID::AssignmentsWrittenOutFieldByField, assignments);
+        counters.count(StatisticID::AssignmentsWrittenOutFieldByField, assignments);
     if (uint32_t joins = m_walker->numberOfJoinsWalkedForEachWay())
-        m_build.statistics().count(StatisticID::JoinsWalkedOnceForEachWay, joins);
+        counters.count(StatisticID::JoinsWalkedOnceForEachWay, joins);
     if (uint32_t questions = m_walker->numberOfQuestionsOfTruthAnsweredByWays())
-        m_build.statistics().count(StatisticID::QuestionsOfTruthAnsweredByWays, questions);
+        counters.count(StatisticID::QuestionsOfTruthAnsweredByWays, questions);
     if (uint32_t callees = m_walker->numberOfCalleesTestedForFunctionsWrittenForTheirFields())
-        m_build.statistics().count(StatisticID::CalleesTestedForFunctionsWrittenForTheirFields, callees);
+        counters.count(StatisticID::CalleesTestedForFunctionsWrittenForTheirFields, callees);
     if (uint32_t questions = m_walker->numberOfQuestionsForPlainInstancesLeftAsWritten())
-        m_build.statistics().count(StatisticID::QuestionsForPlainInstancesLeftAsWritten, questions);
+        counters.count(StatisticID::QuestionsForPlainInstancesLeftAsWritten, questions);
     if (uint32_t questions = m_walker->numberOfQuestionsByNameLeftAsWritten())
-        m_build.statistics().count(StatisticID::QuestionsByNameLeftAsWritten, questions);
+        counters.count(StatisticID::QuestionsByNameLeftAsWritten, questions);
     if (uint32_t objects = m_walker->numberOfObjectsMetAsOne())
-        m_build.statistics().count(StatisticID::ObjectsOfSeveralWaysMetAsOne, objects);
+        counters.count(StatisticID::ObjectsOfSeveralWaysMetAsOne, objects);
     static_assert(static_cast<unsigned>(StatisticID::ProofsThatNoTestTells) - static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) == numberOfEnumerators<ProofSource>);
     for (unsigned source = 0; source < numberOfEnumerators<ProofSource>; ++source) {
         if (uint32_t checked = m_walker->numberOfProofsChecked(static_cast<ProofSource>(source)))
-            m_build.statistics().count(static_cast<StatisticID>(static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) + source), checked);
+            counters.count(static_cast<StatisticID>(static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) + source), checked);
     }
     if (inputs.options.checksProofs) {
-        m_build.statistics().count(StatisticID::ProofsThatNoTestTells, m_walker->numberOfProofsThatNoTestTells());
-        m_build.statistics().count(StatisticID::FreshCellsLeftAloneAtReturns, m_walker->numberOfFreshCellsLeftAloneAtReturns());
+        counters.count(StatisticID::ProofsThatNoTestTells, m_walker->numberOfProofsThatNoTestTells());
+        counters.count(StatisticID::FreshCellsLeftAloneAtReturns, m_walker->numberOfFreshCellsLeftAloneAtReturns());
     }
     if (uint32_t answered = m_walker->numberOfChecksThatWalkAnswers())
-        m_build.statistics().count(StatisticID::ChecksThatWalkAnswers, answered);
+        counters.count(StatisticID::ChecksThatWalkAnswers, answered);
     if (uint32_t told = m_walker->numberOfProofsThatFormTells())
-        m_build.statistics().count(StatisticID::ProofsThatFormTells, told);
+        counters.count(StatisticID::ProofsThatFormTells, told);
     if (uint32_t doors = m_walker->numberOfDoorsThatCanNeverPass())
-        m_build.statistics().count(StatisticID::DoorsThatCanNeverPass, doors);
+        counters.count(StatisticID::DoorsThatCanNeverPass, doors);
 
     if (inputs.options.takesNotes && notesAreTakenOfCompileUnit(unit.role)) {
         WalkNotes notes = notesOfSweptCode(m_types, code, AOT::hasFlag(m_build.options().reports, Wire::ReportSet::AccessCounts));
         if (unit.role != CodeRole::ParameterGuard)
-            m_build.statistics().count(StatisticID::ValuesInDouble, notes.numberOfValuesInDouble);
+            counters.count(StatisticID::ValuesInDouble, notes.numberOfValuesInDouble);
         if (!notes.notes.isEmpty())
             m_notes.append(WTF::move(notes));
     }
@@ -1019,7 +1043,7 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputOperationsThatHandOn | OpcodeSet {
         Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::BigInt, Opcode::Builtin, Opcode::NativeBinding,
-        Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::TypeTest, Opcode::ThrowModuleFailure, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::RequireModule,
+        Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::TypeTest, Opcode::IsLinkedBelow, Opcode::ThrowModuleFailure, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::RequireModule,
         Opcode::NewClosure, Opcode::NewRegExp, Opcode::NewClass, Opcode::NewClassToken, Opcode::ResolveHeritage, Opcode::DefineMethod, Opcode::FinishClass,
     };
     if ((unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body) || (inputs.facts.isTakenToRunOnce(unit.function) && !isBodyWrittenInAnotherFile(inputs.program, unit.function)))
@@ -1033,7 +1057,7 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
     if (hasReadsVerifiedAtRunTime(inputs, index))
         return false;
     if (unit.role != CodeRole::Body)
-        return !index.opcodes().contains(Opcode::Builtin) && !looksUnderKeyThatHasPreparation(inputs, unit.function, index);
+        return !someLoopGivesSlowVersionSomethingToReckon(index) && !index.opcodes().contains(Opcode::Builtin) && !looksUnderKeyThatHasPreparation(inputs, unit.function, index);
     if (!inputs.program.at(unit.function).isModuleBody())
         return false;
     return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper;

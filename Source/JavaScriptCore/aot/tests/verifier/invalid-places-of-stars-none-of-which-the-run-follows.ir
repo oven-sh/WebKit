@@ -1,0 +1,8 @@
+# places are for the run, which walks the stars that it follows: a module none of whose stars it follows bears none
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 1
+
+module m0 path="main" displayPath="main" requests=[{target=m1 completes=true starPlace=1}, {target=m2 completes=true starPlace=0}]
+module m1 path="first" displayPath="first"
+module m2 path="second" displayPath="second"
+entry module=m0

@@ -954,7 +954,7 @@ bool LinkFlow::CopiesOfMembers::holdsAccessor(LayoutID layout, FlowNodeID node) 
     if (!m_flow.layoutsWithKnownAccessors.get(layout.index()))
         return false;
     return std::ranges::any_of(m_flow.accessorsLaidInFields, [&](const AccessorLaidInField& laid) {
-        return m_flow.field(laid.field) == node;
+        return (laid.appendedKey ? m_flow.findAppendedField(laid.field.layout, laid.appendedKey) : m_flow.field(laid.field)) == node;
     });
 }
 

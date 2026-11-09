@@ -2,15 +2,16 @@
 # As in of-a-module-that-native-code-loads-what-the-row-lists-leaves.ir, but the program nowhere names process.nextTick, so Link takes the load by native code for out of reach. The module is in the
 # program all the same. What the table lists as read by native code leaves whether or not Link has the load in reach: when native code loads is a thing that Link has been wrong about, and the stop at
 # run time asks the table, which knows of no reach.
+# Of `whileHooked` the row says more than that it is read: native code takes `push` off it and keeps that in a cell which rows alone call. Link follows that cell to what lies under `push`, so `whileHooked` and its record stay.
 # LIBRARY: own
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link layouts fields functions mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK: layout L0 changes=[] stays-with-compiled-code
-# CHECK-NOT: layout L2 {{*}}stays-with-compiled-code
+# CHECK: layout L2 changes=[] stays-with-compiled-code
 # CHECK-NOT: field L0.0 "nextTick" proven
 # CHECK: field L0.1 "queueTick1" proven=f4 writers-known written-at-construction-alone filled
-# CHECK-NOT: field L0.3 "whileHooked" proven
+# CHECK: field L0.3 "whileHooked" proven=L2 writers-known written-at-construction-alone filled
 # CHECK-NOT: function f3 {{*}}callers-known
 # CHECK-NOT: function f3 unreached
 

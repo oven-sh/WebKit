@@ -902,6 +902,8 @@ void Object::ensureStructureForExtraProperties(VM& vm)
         return;
     JSCell::setStructure(vm, updatedStructure);
     state().propertyCaches->forgetFieldExits();
+    if (!wasDictionary)
+        state().propertyCaches->forgetAddedExtraProperties();
 }
 
 bool Object::ensureStructureForExtraPropertiesIfNeeded(VM& vm, JSCell* cell)

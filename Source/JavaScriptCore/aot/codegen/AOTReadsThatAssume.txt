@@ -5,7 +5,7 @@ JSString_value | codegen/AOTHeaps.h | 1 | the declaration of the heap
 JSString_value | codegen/AOTPrimitiveEmitter.h | 1 | isRopeString(): it is the test
 JSString_value | codegen/AOTStringBuiltinEmitter.cpp | 1 | is8Bit() tests the rope bit next to the load: the flat side alone reads through the word, the other side reads the width off the word itself
 JSString_value | codegen/AOTStringEmitter.cpp | 7 | implOfFlatString() takes a FlatStringCell; viewOfFlatString() is listed below; three test the rope bit next to the load; one reads behind the stub that has resolved the rope in place, or off the base of a substring, which is flat; one reads what FlattenString has just made
-JSString_value | codegen/AOTStringEmitterComparisons.cpp | 2 | one only compares the word with the address of an atom; one tests the rope bit next to the load
+JSString_value | codegen/AOTStringEmitterComparisons.cpp | 1 | tests the rope bit next to the load
 JSString_value | codegen/AOTStringSwitch.cpp | 1 | tests the rope bit next to the load
 viewOfFlatString | builtins/AOTMathBuiltinEmitterNumbers.cpp | 1 | behind isRopeString() of the same cell
 viewOfFlatString | codegen/AOTStringBuiltinEmitter.cpp | 5 | each behind isRopeString() of the same cell

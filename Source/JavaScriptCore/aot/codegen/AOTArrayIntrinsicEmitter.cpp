@@ -153,7 +153,12 @@ void ArrayIntrinsicEmitter::generateGetContiguousIndex(const ValueContext& value
 
 Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext& value, const ArrayElements& storage, const ArrayStorageForm& form, AccessVouchedFor access)
 {
-    Integer index = integerOperand(value->positionOperand());
+    Operand position = get(value->positionOperand());
+    Integer index = position.representation == Representation::Int32 ? Integer(m_out.extendWordThatIsNotNegative(position.as<Word32>().value())) : integerOperand(value->positionOperand());
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::VouchedPositionsAreTakenOneFurther) || (access == AccessVouchedFor::Reads && AOT::hasFlag(build().options().testing, Wire::TestingSwitch::VouchedReadsAreTakenOneFurther))) [[unlikely]] {
+        Integer further = add(index, integer(1));
+        index = select(below(further, elements().vectorLength(storage)), further, index);
+    }
     if (elements().testsEveryPosition()) {
         bool writes = access == AccessVouchedFor::Writes;
         Word32 mode = elements().indexingMode(elements().askedAnew(storage.array), writes ? IndexingShapeAndWritabilityMask : arrayStorageTestMask);
@@ -167,6 +172,23 @@ Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext&
     return index;
 }
 
+Integer ArrayIntrinsicEmitter::countThatLibraryVouchesFor(const ValueContext& value, Integer count, const ArrayElements& asked, const ArrayElements& vouchedFor, AccessVouchedFor access)
+{
+    bool isTakenFurther = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::VouchedPositionsAreTakenOneFurther);
+    if (isTakenFurther) [[unlikely]] {
+        Integer further = add(count, integer(1));
+        count = select(logicalAnd(belowOrEqual(further, elements().vectorLength(asked)), belowOrEqual(further, elements().vectorLength(vouchedFor))), further, count);
+    }
+    if (elements().testsEveryPosition())
+    {
+        bool writes = access == AccessVouchedFor::Writes;
+        Word32 mode = elements().indexingMode(elements().askedAnew(vouchedFor.array), writes ? IndexingShapeAndWritabilityMask : arrayStorageTestMask);
+        elements().stopUnlessInside(value, writes ? elements().hasWritableShape(mode, contiguous) : elements().hasShape(mode, contiguous));
+        elements().stopUnlessInside(value, belowOrEqual(count, elements().publicLength(vouchedFor)));
+    }
+    return count;
+}
+
 void ArrayIntrinsicEmitter::generateGetOwnContiguousIndex(const ValueContext& value)
 {
     if (standsBehindTestThatFoundElement(value, value->arrayOperand(), value->positionOperand())) {
@@ -176,6 +198,8 @@ void ArrayIntrinsicEmitter::generateGetOwnContiguousIndex(const ValueContext& va
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements storage = elements().elementsOf(value, array);
     Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage, contiguous, AccessVouchedFor::Reads))));
+    if (elements().testsEveryPosition())
+        elements().stopUnlessInside(value, isNotEmpty(element));
     ensureStillAliveHere(array);
     defineAs(value, element, typeOf(value.id()));
 }
@@ -191,7 +215,10 @@ void ArrayIntrinsicEmitter::generateGetOwnInt32Index(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements storage = elements().elementsOf(value, array);
-    define(value, Word32(m_out.load32(elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage, int32s, AccessVouchedFor::Reads)))));
+    TypedPointer place = elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage, int32s, AccessVouchedFor::Reads));
+    if (elements().testsEveryPosition())
+        elements().stopUnlessInside(value, isInt32(Boxed(m_out.load64(place))));
+    define(value, Word32(m_out.load32(place)));
 }
 
 void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& value)
@@ -200,7 +227,10 @@ void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& va
     ValueID stored = value->valueOperand();
     Boxed rawElement = in<Boxed>(stored);
     ArrayElements storage = elements().elementsOf(value, array);
-    m_out.store64(rawElement.value(), elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage, contiguous, AccessVouchedFor::Writes)));
+    Integer position = positionThatLibraryVouchesFor(value, storage, contiguous, AccessVouchedFor::Writes);
+    if (elements().testsEveryPosition())
+        elements().stopUnlessInside(value, logicalOr(elements().hasWritableShape(elements().indexingMode(elements().askedAnew(storage.array), IndexingShapeAndWritabilityMask), contiguous), isInt32(rawElement)));
+    m_out.store64(rawElement.value(), elements().elementOfUnknownForm(storage, position));
     barrierAfterStore(value, array, typeOf(stored));
 }
 
@@ -208,7 +238,11 @@ void ArrayIntrinsicEmitter::generatePutOwnDoubleIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements storage = elements().elementsOf(value, array);
-    elements().storeRawElement(doubles, storage, positionThatLibraryVouchesFor(value, storage, doubles, AccessVouchedFor::Writes), in<Number>(value->valueOperand()));
+    Number number = in<Number>(value->valueOperand());
+    Integer position = positionThatLibraryVouchesFor(value, storage, doubles, AccessVouchedFor::Writes);
+    if (!value->putsBackWhatTurnStored())
+        elements().stopWhereHoleWouldBeStored(value, doubles, number);
+    elements().storeRawElement(doubles, storage, position, number);
 }
 
 void ArrayIntrinsicEmitter::generatePutOwnInt32Index(const ValueContext& value)
@@ -217,7 +251,10 @@ void ArrayIntrinsicEmitter::generatePutOwnInt32Index(const ValueContext& value)
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements storage = elements().elementsOf(value, array);
     Integer index = positionThatLibraryVouchesFor(value, storage, int32s, AccessVouchedFor::Writes);
-    m_out.store32(low32(integerOperand(value->valueOperand())).value(), elements().elementOfUnknownForm(storage, index));
+    TypedPointer place = elements().elementOfUnknownForm(storage, index);
+    if (elements().testsEveryPosition())
+        elements().stopUnlessInside(value, isInt32(Boxed(m_out.load64(place))));
+    m_out.store32(low32(integerOperand(value->valueOperand())).value(), place);
 }
 
 void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArrayStorageForm& form)
@@ -363,12 +400,17 @@ void ArrayIntrinsicEmitter::newArrayOfHoles(const ValueContext& value, Integer l
     ArrayAllocationEmitter allocation(generator());
     std::optional<Pointer> profile;
     if (value->opcode == Opcode::NewArrayLike && value->remembersStorageAtSite() && !flags)
-        profile = allocation.profileOfListsOfLengthAtSite(value, form);
+        profile = allocation.profileOfListsOfLengthAtSite(value.origin(), form);
+    bool takesAnyValueAtFirst = profile && value->takesAnyValueAtFirst() && !hasArrayStorageForm(value->arrayStorage());
+    if (takesAnyValueAtFirst) {
+        static_assert(ArrayAllocationProfile::shapeMask == 0xffu << ArrayAllocationProfile::shapeShift && !(ArrayAllocationProfile::shapeShift % 8));
+        branchUnless(Condition(m_out.notZero32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_arrayProfiles, profile->value(), OBJECT_OFFSETOF(ArrayAllocationProfile, word) + ArrayAllocationProfile::shapeShift / 8)))), slowPath);
+    }
     join.add(profile ? allocation.allocateArrayOfHolesAtSite(value, length, form, *profile, slowPath) : allocation.allocateArrayOfHoles(value, length, form, slowPath, ElementsBelowLength::Cleared, LengthIsSetBy::Caller));
 
     m_out.appendTo(slowPath);
     if (profile)
-        join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHolesAtSite, { *profile, sourceOrNull(source), length, word32(form.indexingType) }, { .isOnRarePath = true }));
+        join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHolesAtSite, { *profile, sourceOrNull(source), length, word32(takesAnyValueAtFirst ? ArrayWithUndecided : form.indexingType) }, { .isOnRarePath = true }));
     else
         join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { sourceOrNull(source), length, word32(form.indexingType), word32(flags) }, { .isOnRarePath = true }));
     CellPointer array = join.finish();
@@ -418,6 +460,11 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Integer index = integerOperand(value->positionOperand());
     ValueID stored = value->valueOperand();
+    if (const Operation& born = m_code.at(rootOfCellInSweptCode(m_code, value->arrayOperand())); !hasArrayStorageForm(value->arrayStorage()) && born.opcode == Opcode::NewArrayLike && born.remembersStorageAtSite()) {
+        const ArrayStorageForm* seed = findArrayStorageForm(born.arrayStorage());
+        define(value, elements().tryStoreElement(value, array, index, stored, true, ArrayAllocationEmitter(generator()).profileOfListsOfLengthAtSite(born.origin(), seed ? *seed : int32s)));
+        return;
+    }
     const ArrayStorageForm* formOfList = findFormOfListFilled(value);
     const ArrayStorageForm& form = formOfList ? *formOfList : contiguous;
     LBasicBlock otherwise = newBlock();
@@ -443,6 +490,38 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
         m_out.appendTo(holdsNoIntegers);
         branchUnless(elements().hasWritableShape(mode, doubles), otherwise);
         storeInForm(doubles);
+
+        m_out.appendTo(otherwise);
+        isStored.add(boolean(false));
+        define(value, isStored.finish());
+        return;
+    }
+    if (!formOfList && get(stored).is<Boxed>() && (typeOf(stored).primitives & Primitive::Integer) && !typeOf(stored).isNumber()) {
+        LBasicBlock holdsAnything = newBlock();
+        LBasicBlock holdsNoCells = newBlock();
+        Join<Condition> isStored(m_out);
+        Boxed word = get(stored).as<Boxed>();
+        Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+        branch(elements().hasWritableShape(mode, contiguous), { normalEdge(holdsAnything), normalEdge(holdsNoCells) });
+
+        m_out.appendTo(holdsAnything);
+        {
+            ArrayElements found = elements().elementsOf(array);
+            branchUnless(below(index, elements().publicLength(found)), otherwise);
+            elements().storeRawElement(contiguous, found, index, Operand(word));
+            barrierAfterStore(value, array, typeOf(stored));
+            isStored.add(boolean(true));
+        }
+
+        m_out.appendTo(holdsNoCells);
+        {
+            branchUnless(elements().hasWritableShape(mode, int32s), otherwise);
+            branchUnless(isInt32(word), otherwise);
+            ArrayElements found = elements().elementsOf(array);
+            branchUnless(below(index, elements().publicLength(found)), otherwise);
+            elements().storeRawElement(int32s, found, index, Operand(word));
+            isStored.add(boolean(true));
+        }
 
         m_out.appendTo(otherwise);
         isStored.add(boolean(false));
@@ -525,7 +604,7 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
         ArrayElements from = elements().elementsOf(source);
         ArrayElements to = elements().elementsOf(array);
         branchUnless(belowOrEqual(count, elements().publicLength(from)), otherwise);
-        forEachPositionBelow(count, [&](Integer position) {
+        forEachPositionBelow(countThatLibraryVouchesFor(value, count, from, to, AccessVouchedFor::Writes), [&](Integer position) {
             LBasicBlock mayBeGap = newBlock();
             LBasicBlock isValue = newBlock();
             Boxed word(m_out.load64(elements().elementOfUnknownForm(from, position)));
@@ -547,7 +626,7 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
         ArrayElements from = elements().elementsOf(source);
         ArrayElements to = elements().elementsOf(array);
         branchUnless(belowOrEqual(count, elements().publicLength(from)), otherwise);
-        forEachPositionBelow(count, [&](Integer position) {
+        forEachPositionBelow(countThatLibraryVouchesFor(value, count, from, to, AccessVouchedFor::Writes), [&](Integer position) {
             Number number = elements().loadRawElement(doubles, from, position).as<Number>();
             branchUnless(equal(number, number), otherwise);
             m_out.store64(elements().boxRawElement(doubles, number).value(), elements().elementOfUnknownForm(to, position));
@@ -586,8 +665,13 @@ void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
         ArrayElements from = elements().elementsOf(source);
         ArrayElements to = elements().elementsOf(array);
         branchUnless(belowOrEqual(count, elements().publicLength(to)), otherwise);
-        forEachPositionBelow(count, [&](Integer position) {
-            m_out.store64(m_out.load64(elements().elementOfUnknownForm(from, position)), elements().elementOfUnknownForm(to, position));
+        forEachPositionBelow(countThatLibraryVouchesFor(value, count, to, from, AccessVouchedFor::Reads), [&](Integer position) {
+            Boxed word(m_out.load64(elements().elementOfUnknownForm(from, position)));
+            if (elements().testsEveryPosition()) {
+                elements().stopUnlessInside(value, isNotEmpty(word));
+                elements().stopUnlessInside(value, logicalOr(elements().hasWritableShape(mode, contiguous), isInt32(word)));
+            }
+            m_out.store64(word.value(), elements().elementOfUnknownForm(to, position));
         });
         ensureStillAliveHere(source);
         emitter<BarrierEmitter>().barrier(value, array);
@@ -600,7 +684,7 @@ void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
         ArrayElements from = elements().elementsOf(source);
         ArrayElements to = elements().elementsOf(array);
         branchUnless(belowOrEqual(count, elements().publicLength(to)), otherwise);
-        forEachPositionBelow(count, [&](Integer position) {
+        forEachPositionBelow(countThatLibraryVouchesFor(value, count, to, from, AccessVouchedFor::Reads), [&](Integer position) {
             Boxed word(m_out.load64(elements().elementOfUnknownForm(from, position)));
             branchUnless(isNumber(word), otherwise);
             Number number = select(isInt32(word), toNumber(unboxInt32(word)), unboxDouble(word));

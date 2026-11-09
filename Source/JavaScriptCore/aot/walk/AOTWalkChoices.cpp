@@ -163,7 +163,7 @@ static bool fieldIsPlainPropertyInChoices(const Walker& walker, FieldReference f
 static PropertyKeyID keyDefinedBehindAllocationInChoices(const Walker& walker, FieldReference field)
 {
     const Program& program = walker.program();
-    bool onlyFactsSayAccessor = walker.facts().field(field).facts.contains(FieldFact::IsAccessor) && walker.facts().field(field).formOfValue.isEmpty()
+    bool onlyFactsSayAccessor = walker.facts().field(field).facts.contains(FieldFact::IsAccessor)
         && field.field < program.at(field.layout).fields.size() && fieldAt(program, declarationOf(program, field)).form.isEmpty();
     if (!onlyFactsSayAccessor && !fieldIsPlainPropertyInChoices(walker, field))
         return { };
@@ -477,7 +477,7 @@ static bool tableOfImageHoldsObjectInChoices(Walker& walker, const DataNode::Obj
     for (const DataMember& member : object.members) {
         if (member.value.is<DataNode::Hole>())
             return false;
-        std::optional<FieldIndex> field = isCompiledObject ? plan.slots().findField(program, layout, member.key) : std::nullopt;
+        std::optional<FieldIndex> field = isCompiledObject && !hasNamedMemberOutsideFields ? plan.slots().findField(program, layout, member.key) : std::nullopt;
         if (!field) {
             NameClass nameClass = program.nameClassOf(member.key);
             if (program.at(member.key).kind != PropertyKeyKind::Text || nameClass == NameClass::Proto)
@@ -485,7 +485,7 @@ static bool tableOfImageHoldsObjectInChoices(Walker& walker, const DataNode::Obj
             hasNamedMemberOutsideFields |= nameClass != NameClass::Index;
             continue;
         }
-        if (hasNamedMemberOutsideFields || !tableOfImageTakesMemberInChoices(walker, { layout, *field }, member.value))
+        if (!tableOfImageTakesMemberInChoices(walker, { layout, *field }, member.value))
             return false;
         fields.append(*field);
     }
@@ -658,6 +658,17 @@ static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
     bool holdsNumbersAsWritten = list.contents() && holdsOnlyNumbers(arrayStorageHolding(walker.types(), list.contents()));
     if (list.contents() && !walker.types().at(list.contents()).isAnything() && !holdsNumbersAsWritten)
         return;
+    if (ArrayStorage asked = walker.storageAskedOfLiteralBeingBorn(); holdsOnlyNumbers(asked)) {
+        bool everyElementFits = std::ranges::all_of(list.variadicOperands(), [&](Reference element) {
+            TypeID proven = walker.typeOf(element);
+            return proven && walker.types().at(proven).isNumber() && (asked != ArrayStorage::Int32 || walker.types().at(proven).isInt32());
+        });
+        if (everyElementFits) {
+            list.setArrayStorage(asked);
+            walker.count(StatisticID::LiteralsOfNumbersBornForWhatLoopStores);
+            return;
+        }
+    }
     bool numbersAreWritten = holdsNumbersAsWritten && walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked);
     bool isOnlyHandedOn = list.inputValueGiven && walker.currentBodyIndex().hasOneUse(list.inputValueGiven);
     if (!numbersAreWritten && !isOnlyHandedOn)
@@ -686,7 +697,7 @@ static unsigned widthOfStorageInChoices(ArrayStorage storage)
 }
 static_assert(arrayStorageForms[0].kind == ArrayStorage::Int32 && arrayStorageForms[1].kind == ArrayStorage::Double && arrayStorageForms[2].kind == ArrayStorage::Contiguous);
 
-ArrayStorage askBirthOfListForStorage(Walker& walker, Reference list, ArrayStorage wanted)
+ArrayStorage askBirthOfListForStorage(Walker& walker, Reference list, ArrayStorage wanted, bool widerListRefusesStore)
 {
     if (!list || !list.isValue() || !walker.has(Mechanism::TypedOperations))
         return ArrayStorage::Other;
@@ -696,8 +707,11 @@ ArrayStorage askBirthOfListForStorage(Walker& walker, Reference list, ArrayStora
         return ArrayStorage::Other;
     if (born.sourceOperand() && !walker.types().at(walker.code().at(born.sourceOperand()).type).isUndefinedOrNull())
         return born.arrayStorage();
-    if (widthOfStorageInChoices(wanted) > widthOfStorageInChoices(born.arrayStorage()))
+    if (widthOfStorageInChoices(wanted) > widthOfStorageInChoices(born.arrayStorage())) {
+        if (widerListRefusesStore && !hasArrayStorageForm(born.arrayStorage()) && born.remembersStorageAtSite())
+            walker.code().letListForgetStorageAtSite(root);
         walker.code().bearListWithStorage(root, wanted);
+    }
     return born.arrayStorage();
 }
 
@@ -723,7 +737,7 @@ static bool stepsElementOfListItselfInChoices(Walker& walker, Reference list, Re
     return readsListItself && restAreIntegers;
 }
 
-ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, Reference stored)
+ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, Reference stored, bool widerListRefusesStore)
 {
     if (!stored || isNeverType(walker.typeOf(stored)))
         return askBirthOfListForStorage(walker, list, ArrayStorage::Other);
@@ -734,10 +748,10 @@ ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, R
     if (type.isNumberWithoutFraction() && type.primitives & Primitive::Integer)
         taking = ArrayStorage::Int32;
     else if (type.isNumber())
-        taking = ArrayStorage::Double;
+        taking = list && list.isValue() && walker.runOverBoxedValuesTakesFirst(rootOfCellInSweptCode(walker.code(), list.id())) ? ArrayStorage::Contiguous : ArrayStorage::Double;
     else if (!(type.primitives & Primitive::Number))
         taking = ArrayStorage::Contiguous;
-    ArrayStorage born = askBirthOfListForStorage(walker, list, taking);
+    ArrayStorage born = askBirthOfListForStorage(walker, list, taking, widerListRefusesStore);
     if (born == ArrayStorage::Int32 && taking == ArrayStorage::Int32 && !type.isInt32()) {
         ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
         if (!walker.code().at(root).remembersStorageAtSite()) {
@@ -762,11 +776,24 @@ static void chooseStorageOfListBeingFilledInChoices(Walker& walker, Draft& store
     Reference stored = store.valueOperand();
     if (!list || !stored)
         return;
-    ArrayStorage born = askBirthOfListForStorageThatTakes(walker, list, stored);
+    ArrayStorage born = askBirthOfListForStorageThatTakes(walker, list, stored, store.opcode == Opcode::TryPutByValDirect);
     if (store.opcode != Opcode::TryPutByValDirect)
         return;
     if (hasArrayStorageForm(born) || !isBornHereWithoutSourceInChoices(walker, list)) {
+        if (walker.depthOfCopies() && holdsOnlyNumbers(born) && isBornHereWithoutSourceInChoices(walker, list) && !walker.types().at(walker.typeOf(stored)).isNumber()) {
+            walker.count(StatisticID::StoresOfCopiedRunsThatTakeListsAsTheyAre);
+            return;
+        }
         store.setArrayStorage(born);
+        return;
+    }
+    if (walker.depthOfCopies()) {
+        ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
+        if (!walker.code().at(root).remembersStorageAtSite()) {
+            walker.code().letListRememberStorageAtSite(root, true);
+            walker.count(StatisticID::ListsFilledByCopiedRunsThatRememberStorageAtSite);
+        }
+        walker.count(StatisticID::StoresOfCopiedRunsThatTakeListsAsTheyAre);
         return;
     }
     Reference position = store.positionOperand();
@@ -1016,6 +1043,20 @@ static void stepForInInChoices(Walker& walker, Draft& step)
     step.setValuesOperands(std::array { isDone, key });
 }
 
+static void nameClassOfSuperBaseInChoices(Walker& walker, Draft& draft)
+{
+    Reference home = draft.homeOperand();
+    if (draft.homeKind() != HomeObjectKind::ClassPrototype || !home)
+        return;
+    Type type = walker.types().at(walker.typeOf(home));
+    FunctionID constructor = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
+    LayoutID classLayout = constructor ? classOfClassObject(walker.program(), constructor) : LayoutID();
+    if (!classLayout || !walker.plan().hasClassRecord(classLayout) || !walker.facts().isEvaluatedAtMostOnce(classLayout))
+        return;
+    draft.setLayout(classLayout);
+    walker.count(StatisticID::BasesOfSuperReadOffRecordsOfClasses);
+}
+
 void Walker::chooseConservativeFieldsOfOpcodeThatNeedsChoices(Draft& draft)
 {
     Opcode opcode = draft.opcode;
@@ -1050,6 +1091,10 @@ void Walker::chooseConservativeFieldsOfOpcodeThatNeedsChoices(Draft& draft)
     }
     if (opcode == Opcode::ForInOpen) {
         openForInInChoices(*this, draft);
+        return;
+    }
+    if (opcode == Opcode::GetSuperBase) {
+        nameClassOfSuperBaseInChoices(*this, draft);
         return;
     }
     if (opcode == Opcode::ForInStep) {

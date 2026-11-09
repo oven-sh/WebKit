@@ -1,5 +1,5 @@
 # Link has followed all that arrives at the parameter: lists, or Sets, that nobody else gets hold of and that keep the names, the prototype and the storage of their making in every run.
-# So where the iteration opens the word is held against the object, one bit of its cell and a stop by name, and nothing else is asked: no step and no close has an arm of the protocol, the cleanup is gone, a pattern reads by index, and a spread copies the elements in one piece.
+# So where the iteration opens the word is held against the object, one bit of its cell and a stop by name, and nothing else is asked: no step and no close has an arm of the protocol, the cleanup is gone, a pattern reads under its written places without asking the length (past the end a read finds nothing and gives undefined, as the protocol does), and a spread copies the elements in one piece.
 # function total(list) { let sum = 0; for (const item of list) sum = keep(item); return sum; }    function firstTwo(list) { const [a, b] = list; return a; }
 # function copy(list) { return [0, ...list]; }    function members(set) { for (const member of set) keep(member); }    function listed(set) { return [...set]; }
 # RUN: walk f1 f2 f3 f4 f5 mechanisms=all
@@ -8,7 +8,7 @@
 # CHECK: = GetArrayLength
 # CHECK: = GetArrayElement {{*}}level=Proven
 # CHECK-LABEL: code f2:Body
-# CHECK: = GetArrayLength
+# CHECK-NOT: = GetArrayLength
 # CHECK: = GetArrayElement {{*}}level=Proven
 # CHECK-LABEL: code f3:Body
 # CHECK: = AppendElements

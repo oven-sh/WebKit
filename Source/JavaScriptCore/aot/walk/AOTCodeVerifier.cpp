@@ -82,7 +82,7 @@ private:
     const Plan* m_plan;
 };
 
-static constexpr OpcodeSet accessesToListsInCodeVerifier { Opcode::HasContiguousIndex, Opcode::IsElementPresent, Opcode::GetArrayElement, Opcode::PutArrayElement };
+static constexpr OpcodeSet accessesToListsInCodeVerifier { Opcode::HasContiguousIndex, Opcode::IsElementPresent, Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::PutContiguousIndex, Opcode::PutDoubleIndex };
 
 class CodeVerifier {
     WTF_MAKE_NONCOPYABLE(CodeVerifier);
@@ -1214,6 +1214,13 @@ void CodeVerifier::verifyNarrowed(BlockID block, ValueID id, const Operation& na
         tested = valueBeforeConversions(tested);
     if (tested && narrowed.narrowsHolderOfOperand())
         tested = holderOfSlotRead(tested);
+    if (tested && narrowed.narrowsTermOfOperand()) {
+        const Operation& sum = m_code.at(tested);
+        bool isTerm = sum.opcode == Opcode::Add && !narrowed.narrowsHolderOfOperand() && (valueBeforeConversions(sum.operand(0)) == value) != (valueBeforeConversions(sum.operand(1)) == value);
+        if (!isTerm)
+            return fail(block, id, "the value of a Narrowed is no term of the sum that its test has looked at"_s, test);
+        return;
+    }
     if (tested != value)
         return fail(block, id, "the value of a Narrowed is not what its test has looked at"_s, test);
 }
@@ -1531,9 +1538,10 @@ bool CodeVerifier::isLengthOfView(ValueID length, ValueID view, BlockID block)
     if (std::optional<ListsMade> made = listsMadeUnder(view, block))
         return m_code.at(length).opcode == Opcode::NewArray || (m_code.at(length).opcode == Opcode::Integer && m_code.at(length).integer() >= 0 && static_cast<uint64_t>(m_code.at(length).integer()) <= made->leastLength);
     const Operation& maker = m_code.at(cellBehindNames(view));
-    if (maker.opcode != Opcode::CallInline || maker.inlineBuiltin() != InlineBuiltin::TypedArrayWithLength || !maker.numberOfOperands())
+    bool isListBornWithLength = maker.opcode == Opcode::NewArrayLike;
+    if (!isListBornWithLength && (maker.opcode != Opcode::CallInline || maker.inlineBuiltin() != InlineBuiltin::TypedArrayWithLength || !maker.numberOfOperands()))
         return false;
-    ValueID given = valueBeforeConversions(maker.operand(maker.numberOfOperands() - 1));
+    ValueID given = valueBeforeConversions(isListBornWithLength ? maker.lengthOperand() : maker.operand(maker.numberOfOperands() - 1));
     ValueID counted = valueBeforeConversions(length);
     return given == counted || (m_code.at(given).opcode == Opcode::Integer && m_code.at(counted).opcode == Opcode::Integer && m_code.at(given).integer() == m_code.at(counted).integer());
 }
@@ -1814,7 +1822,7 @@ void CodeVerifier::verifyMakerOfClosure(BlockID block, ValueID id, const Operati
         return;
     if (made.closureForm() != ClosureForm::Slim && made.closureForm() != ClosureForm::Full)
         return fail(block, id, "a closure of the frame has a form that has no cell of its own"_s);
-    if (m_program.at(made.function()).calleeParameterIndex())
+    if (!closuresOfFunctionMayBeLent(m_program, made.function()))
         return fail(block, id, "a closure that its own function names lies in the frame"_s);
     bool isCoroutine = m_program.at(m_code.function()).isCoroutine();
     if (isBodyOfCoroutine(m_code.role(), isCoroutine) || (isCoroutine && walksInputBody(m_code.role())))

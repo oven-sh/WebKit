@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementEmitterAllocation.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTNumbering.h"
 #include "AOTOperationData.h"
@@ -277,7 +278,7 @@ CellPointer ConstantEmitter::makeConstantAtSite(const OperationContext* context,
     return CellPointer(patch);
 }
 
-FormAtPlace ConstantEmitter::formOfConstantsWithCellsAt(const OperationContext& context)
+ALWAYS_INLINE_INTO_OTHER_FILES FormAtPlace ConstantEmitter::formOfConstantsWithCellsAt(const OperationContext& context)
 {
     constexpr StateOfKnowledge always = StateOfKnowledge::Always;
     static_assert(formByLoopAlone(Opcode::KeyConstant, always, true).form == formByLoopAlone(Opcode::String, always, true).form && formByLoopAlone(Opcode::KeyConstant, always, false).form == formByLoopAlone(Opcode::String, always, false).form);
@@ -412,7 +413,7 @@ void ConstantEmitter::branchOnIsBuiltinCell(LValue boxedValueOrCell, BuiltinID i
     m_out.branch(m_out.notZero64(word), targets.notTaken, rareEdge(isNotMade));
 
     m_out.appendTo(isNotMade);
-    CellPointer made = callWithoutSite<CellPointer>(RuntimeOperation::BuiltinCell, { numberOf(m_mentions.builtinCell(key)) }, { .pureFunction = pureFunction(PureOperation::BuiltinCell, key.encoded()), .isOnRarePath = true });
+    CellPointer made = callWithoutSite<CellPointer>(RuntimeOperation::BuiltinCell, { numberOf(m_mentions.builtinCell(key)) }, { .pureFunction = pureFunction(PureOperation::BuiltinCell, key.encoded()), .isOnRarePath = true, .runsCodeOfHost = true });
     m_out.branch(m_out.equal(boxedValueOrCell, made.value()), targets.taken, targets.notTaken);
 }
 

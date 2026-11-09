@@ -404,11 +404,45 @@ static void testBinaryOperationsOnNumbers()
     }
 
     const uint64_t seven = encoded(jsNumber(7));
-    for (uint64_t value : { encoded(jsUndefined()), encoded(jsBoolean(true)), string.address() }) {
-        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { value, seven });
-        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { seven, value });
-        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, false), Entry::operationAOTValueMul, { value, seven });
-        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, true), Entry::operationAOTValueMul, { value, seven });
+    for (uint64_t other : { seven, encoded(jsNumber(2.5)), encoded(jsBoolean(true)), encoded(jsUndefined()) }) {
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { string.address(), other });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { other, string.address() });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, false), Entry::operationAOTValueMul, { string.address(), other });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, true), Entry::operationAOTValueMul, { other, string.address() });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Div, false), Entry::operationAOTValueDiv, { string.address(), other });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Div, false), Entry::operationAOTValueDiv, { other, string.address() });
+        const std::pair<BinaryOperator, Entry> operatorsOfTwoForms[] = { { BinaryOperator::Add, Entry::operationAOTValueAdd }, { BinaryOperator::Sub, Entry::operationAOTValueSub }, { BinaryOperator::Less, Entry::operationAOTCompareLess }, { BinaryOperator::LessEq, Entry::operationAOTCompareLessEq }, { BinaryOperator::Greater, Entry::operationAOTCompareGreater }, { BinaryOperator::GreaterEq, Entry::operationAOTCompareGreaterEq } };
+        for (auto [operation, entry] : operatorsOfTwoForms) {
+            for (bool isAfterInt32Check : { false, true }) {
+                checkLeftToOperation(runner, binaryOperation(operation, isAfterInt32Check), entry, { string.address(), other });
+                checkLeftToOperation(runner, binaryOperation(operation, isAfterInt32Check), entry, { other, string.address() });
+            }
+        }
+    }
+
+    constexpr double notANumber = std::numeric_limits<double>::quiet_NaN();
+    const std::pair<uint64_t, double> valuesThatAreNoCells[] = { { encoded(jsUndefined()), notANumber }, { encoded(jsNull()), 0 }, { encoded(jsBoolean(true)), 1 }, { encoded(jsBoolean(false)), 0 }, { encoded(jsNumber(2.5)), 2.5 }, { encoded(jsNumber(-0.0)), -0.0 }, { encoded(jsNaN()), notANumber }, { encoded(jsNumber(-1)), -1 }, { encoded(jsNumber(7)), 7 } };
+    for (auto [left, leftAsNumber] : valuesThatAreNoCells) {
+        for (auto [right, rightAsNumber] : valuesThatAreNoCells) {
+            const std::pair<BinaryOperator, double> arithmetic[] = { { BinaryOperator::Add, leftAsNumber + rightAsNumber }, { BinaryOperator::Sub, leftAsNumber - rightAsNumber }, { BinaryOperator::Mul, leftAsNumber * rightAsNumber }, { BinaryOperator::Div, leftAsNumber / rightAsNumber }, { BinaryOperator::Mod, std::fmod(leftAsNumber, rightAsNumber) } };
+            for (auto [operation, expected] : arithmetic) {
+                for (bool isAfterInt32Check : { false, true }) {
+                    if (isAfterInt32Check && !hasFormAfterInt32Check(operation))
+                        continue;
+                    StubRun run = runner.run(binaryOperation(operation, isAfterInt32Check), { left, right });
+                    AOT_TEST_CHECK(!run.calledOperation && (std::isnan(expected) ? isNumberInCanonicalForm(run.result, expected) : isNumberInCanonicalFormWithSign(run.result, expected)));
+                }
+            }
+            const std::pair<BinaryOperator, bool> relations[] = { { BinaryOperator::Less, leftAsNumber < rightAsNumber }, { BinaryOperator::LessEq, leftAsNumber <= rightAsNumber }, { BinaryOperator::Greater, leftAsNumber > rightAsNumber }, { BinaryOperator::GreaterEq, leftAsNumber >= rightAsNumber } };
+            for (auto [operation, expected] : relations) {
+                for (bool isAfterInt32Check : { false, true }) {
+                    if (isAfterInt32Check && !hasFormAfterInt32Check(operation))
+                        continue;
+                    StubRun run = runner.run(binaryOperation(operation, isAfterInt32Check), { left, right });
+                    AOT_TEST_CHECK(!run.calledOperation && static_cast<uint32_t>(run.result) == static_cast<uint32_t>(expected));
+                }
+            }
+        }
     }
 }
 
@@ -438,7 +472,9 @@ static void testBinaryOperationsWithDouble()
 {
     constexpr double number = 6.5;
     constexpr uint64_t bitsOfNumber = std::bit_cast<uint64_t>(number);
-    const uint64_t undefined = encoded(jsUndefined());
+    FakeString string("7"_s, CharacterWidth::Is8Bit);
+    const uint64_t cell = string.address();
+    const std::pair<uint64_t, double> valuesThatAreNoCells[] = { { encoded(jsNull()), 0 }, { encoded(jsBoolean(true)), 1 }, { encoded(jsBoolean(false)), 0 } };
 
     StubRunner runner;
     for (const OperatorWithDouble& operatorWithDouble : operatorsWithDouble) {
@@ -451,11 +487,19 @@ static void testBinaryOperationsWithDouble()
                 AOT_TEST_CHECK(!run.calledOperation && run.result == std::bit_cast<uint64_t>(expected));
             }
 
+            for (auto [other, otherAsNumber] : valuesThatAreNoCells) {
+                double expected = numberIsOnRight ? operatorWithDouble.apply(otherAsNumber, number) : operatorWithDouble.apply(number, otherAsNumber);
+                StubRun run = runner.run(key, { bitsOfNumber, other, side });
+                AOT_TEST_CHECK(!run.calledOperation && run.result == std::bit_cast<uint64_t>(expected));
+            }
+            StubRun ofUndefined = runner.run(key, { bitsOfNumber, encoded(jsUndefined()), side });
+            AOT_TEST_CHECK(!ofUndefined.calledOperation && std::isnan(std::bit_cast<double>(ofUndefined.result)));
+
             runner.recordCallsOf(operatorWithDouble.entry);
-            StubRun run = runner.run(key, { bitsOfNumber, undefined, side });
-            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == undefined && static_cast<uint32_t>(run.recordedArguments[1]) == side);
+            StubRun run = runner.run(key, { bitsOfNumber, cell, side });
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == cell && static_cast<uint32_t>(run.recordedArguments[1]) == side);
             runner.install(operatorWithDouble.entry, negateNumberBesideValue);
-            AOT_TEST_CHECK(runner.run(key, { bitsOfNumber, undefined, side }).result == std::bit_cast<uint64_t>(-number));
+            AOT_TEST_CHECK(runner.run(key, { bitsOfNumber, cell, side }).result == std::bit_cast<uint64_t>(-number));
             runner.countCallsOf(operatorWithDouble.entry);
         }
     }
@@ -979,6 +1023,247 @@ static void testCreatedFieldsInOrdersOfImage()
     AOT_TEST_CHECK(object.create(orderWordOf(0, 0) | orderWordHasFieldOutsideSlot, slotKeys[0]) && object.orderWord() == (orderWordOf(0, 1) | orderWordHasFieldOutsideSlot));
     object.forgetTransitions();
     object.forgetRuns();
+}
+
+struct ExtensionGivenByOperation {
+    uint32_t* extensionWord;
+    uint32_t wordOfExtension;
+};
+static ExtensionGivenByOperation* extensionGivenByOperation;
+
+static UGPRPair JIT_OPERATION_ATTRIBUTES giveExtensionByOperation(Instance* instance, uint64_t object, uint64_t granuleBits)
+{
+    StubEnvironment& environment = StubEnvironment::of(instance);
+    ++environment.numberOfOperationCalls;
+    ++environment.numberOfRecordedCalls;
+    environment.recordedArguments = { object, granuleBits, 0, 0, 0 };
+    *extensionGivenByOperation->extensionWord = extensionGivenByOperation->wordOfExtension;
+    return makeUGPRPair(0, 0);
+}
+
+static void testFirstFieldInExtensionOfObjectWithoutOne()
+{
+    constexpr uint32_t offsetOfExtensionWord = offsetOfFirstField;
+    constexpr uint32_t offsetInExtension = offsetOfFirstExtensionSlot + 2 * extensionGranuleSize;
+    constexpr uint32_t slotKey = slotKeyFor(offsetInExtension, true);
+    constexpr uint64_t granuleBit = granuleBitOf(offsetInExtension);
+    constexpr uint32_t orderBefore = orderWordOf(0, 0);
+    constexpr uint32_t orderAfter = orderWordOf(0, 1);
+    constexpr uint64_t untouched = 0xabababababababab;
+    const StubKey store = putSlotOrAdd(PlaceOfCreatedSlot::OutOfLine, SlotRepresentation::JSValue);
+    const uint64_t value = JSValue::encode(jsNumber(42));
+    StubRunner runner;
+    ObjectWithKeyOrder object(runner);
+    Instance& instance = runner.instance();
+
+    struct {
+        ExtensionLayoutData extensionData { };
+        LayoutData layout { };
+    } withExtensionData;
+    static_assert(offsetof(decltype(withExtensionData), layout) == sizeof(ExtensionLayoutData));
+    withExtensionData.layout = object.layout;
+    withExtensionData.layout.hasExtensionData = true;
+    object.inStructure<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &withExtensionData.layout;
+    object.inStructure<uint32_t>(CompiledStructure::offsetOfExtensionSlot()) = SlotData::create(offsetOfExtensionWord, SlotRepresentation::Cell32).encoded();
+    object.publish(orderBefore, slotKey, orderAfter);
+
+    struct {
+        FakeObject<minExtensionSize> empty;
+        FakeObject<minExtensionSize> given;
+    } extensions;
+    FakeObject<minExtensionSize>& emptyExtension = extensions.empty;
+    FakeObject<2 * minExtensionSize> room;
+    FakeAllocator allocator { minExtensionSize };
+    FakeObject<CompleteSubspace::offsetOfAllocatorForSizeStep() + (extensionCellSizeFor(maxGranulesOfExtensionFromStub) / MarkedSpace::sizeStep + 1) * sizeof(void*)> space;
+    void*& allocatorInSpace = space.at<void*>(CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(minExtensionSize) * sizeof(void*));
+    allocatorInSpace = &allocator;
+    instance.allocation.cagedAuxiliarySpace = space.bytes.data();
+    instance.cellCageBase = emptyExtension.address() - offsetOfEmptyExtensionInCage;
+    instance.barrierThreshold = blackThreshold;
+    const uint32_t wordOfRoom = static_cast<uint32_t>((room.address() - offsetOfEmptyExtensionInCage) >> cell32Shift);
+    uint32_t& extensionWord = object.object.at<uint32_t>(offsetOfExtensionWord);
+    ExtensionGivenByOperation given { &extensionWord, static_cast<uint32_t>((extensions.given.address() - emptyExtension.address()) >> cell32Shift) };
+    extensionGivenByOperation = &given;
+
+    auto begin = [&] {
+        object.orderWord() = orderBefore;
+        object.object.at<uint8_t>(JSCell::cellStateOffset()) = static_cast<uint8_t>(CellState::DefinitelyWhite);
+        extensionWord = 0;
+        extensions.given.at<uint64_t>(offsetOfExtensionGranuleBits) = granuleBit;
+        extensions.given.at<uint64_t>(offsetOfFirstExtensionSlot) = 0;
+        for (size_t offset = 0; offset < 2 * minExtensionSize; offset += sizeof(uint64_t))
+            room.at<uint64_t>(offset) = untouched;
+        allocator.makeRoomAt(room.address(), minExtensionSize);
+    };
+    auto isStoredInLine = [&] {
+        runner.install(Entry::operationAOTEnsureExtensionGranules, giveExtensionByOperation);
+        StubRun run = runner.run(store, { object.object.address(), value }, slotKey);
+        runner.countCallsOf(Entry::operationAOTEnsureExtensionGranules);
+        if (run.numberOfRecordedCalls) {
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == object.object.address() && run.recordedArguments[1] == granuleBit);
+            AOT_TEST_CHECK(extensionWord == given.wordOfExtension && extensions.given.at<uint64_t>(offsetOfFirstExtensionSlot) == value && object.orderWord() == orderAfter);
+            AOT_TEST_CHECK(room.at<uint64_t>(offsetOfExtensionGranuleBits) == untouched && room.at<uint64_t>(offsetOfFirstExtensionSlot) == untouched);
+            return false;
+        }
+        AOT_TEST_CHECK(extensionWord == wordOfRoom && !allocator.hasRoom() && object.orderWord() == orderAfter);
+        AOT_TEST_CHECK(room.at<uint64_t>(offsetOfExtensionGranuleBits) == granuleBit && room.at<uint64_t>(offsetOfFirstExtensionSlot) == value);
+        AOT_TEST_CHECK(room.at<uint64_t>(minExtensionSize) == untouched && !emptyExtension.at<uint64_t>(offsetOfExtensionGranuleBits));
+        return true;
+    };
+
+    begin();
+    AOT_TEST_CHECK(isStoredInLine());
+
+    begin();
+    allocator.makeRoomAt(0, 0);
+    AOT_TEST_CHECK(!isStoredInLine());
+    begin();
+    allocatorInSpace = nullptr;
+    AOT_TEST_CHECK(!isStoredInLine());
+    allocatorInSpace = &allocator;
+    begin();
+    withExtensionData.extensionData.granulesOfFirstExtensionLow = static_cast<uint32_t>(granuleBit << 1);
+    AOT_TEST_CHECK(!isStoredInLine());
+    withExtensionData.extensionData.granulesOfFirstExtensionLow = static_cast<uint32_t>(granuleBit);
+    begin();
+    AOT_TEST_CHECK(isStoredInLine());
+    withExtensionData.extensionData.granulesOfFirstExtensionLow = 0;
+
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    constexpr uint32_t budget = 81;
+    begin();
+    runner.setCountsInstructions(true);
+    StubRun run = runner.run(store, { object.object.address(), value }, slotKey);
+    runner.setCountsInstructions(false);
+    AOT_TEST_CHECK(!run.calledOperation && run.instructionsInStubs && extensionWord == wordOfRoom);
+    if (*run.instructionsInStubs != budget)
+        dataLogLn("the first field in the extension of an object without one: ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+    AOT_TEST_CHECK(*run.instructionsInStubs <= budget);
+#endif
+}
+
+static void testGrowthOfExtensions()
+{
+    constexpr uint32_t offsetOfExtensionWord = offsetOfFirstField;
+    constexpr unsigned mostGranules = maxGranulesOfExtensionFromStub;
+    constexpr size_t sizeOfRoom = extensionCellSizeFor(mostGranules) + minExtensionSize;
+    constexpr uint64_t untouched = 0xabababababababab;
+    const StubKey grow(StubFamily::AllocateExtensionSlow);
+    StubRunner runner;
+    Instance& instance = runner.instance();
+
+    struct {
+        ExtensionLayoutData extensionData { };
+        LayoutData layout { };
+    } withExtensionData;
+    withExtensionData.layout.hasExtensionData = true;
+    FakeObject<sizeof(CompiledStructure)> structure;
+    structure.at<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &withExtensionData.layout;
+    structure.at<uint32_t>(CompiledStructure::offsetOfExtensionSlot()) = SlotData::create(offsetOfExtensionWord, SlotRepresentation::Cell32).encoded();
+
+    FakeObject<offsetOfFirstField + 2 * sizeof(uint64_t)> owner;
+    FakeObject<sizeOfRoom> extension;
+    FakeObject<sizeOfRoom> room;
+    FakeObject<CompleteSubspace::offsetOfAllocatorForSizeStep() + (sizeOfRoom / MarkedSpace::sizeStep + 1) * sizeof(void*)> space;
+    auto allocatorFor = [&](size_t bytes) -> void*& {
+        return space.at<void*>(CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(bytes) * sizeof(void*));
+    };
+    instance.allocation.cagedAuxiliarySpace = space.bytes.data();
+    instance.prefix().structureIDBase = structure.address() & ~static_cast<uint64_t>(UINT32_MAX);
+    instance.cellCageBase = MarkedBlockCage::baseOf(std::bit_cast<const void*>(static_cast<uintptr_t>(extension.address() - offsetOfEmptyExtensionInCage)));
+    owner.setHeader(static_cast<uint32_t>(structure.address()), CompiledObjectType);
+    uint32_t& extensionWord = owner.at<uint32_t>(offsetOfExtensionWord);
+    auto wordOf = [&](auto& cell) {
+        return MarkedBlockCage::encode(instance.cellCageBase, std::bit_cast<JSCell*>(cell.address() - offsetOfEmptyExtensionInCage));
+    };
+    auto valueOf = [](unsigned granule) {
+        return 0x0101010101010101ULL * (granule + 1);
+    };
+
+    auto growsTo = [&](uint64_t held, uint64_t added) {
+        const uint64_t all = held | added;
+        const unsigned numberHeld = std::popcount(held);
+        const size_t bytesHeld = held ? extensionCellSizeFor(numberHeld) : 0;
+        const size_t bytes = extensionCellSizeFor(std::popcount(all));
+        for (size_t offset = 0; offset < sizeOfRoom; offset += sizeof(uint64_t)) {
+            extension.at<uint64_t>(offset) = offset < bytesHeld ? 0 : untouched;
+            room.at<uint64_t>(offset) = untouched;
+        }
+        extension.at<uint64_t>(offsetOfExtensionGranuleBits) = held ? held : untouched;
+        unsigned place = 0;
+        for (unsigned granule = 0; granule < maxExtensionGranules; ++granule) {
+            if (held >> granule & 1)
+                extension.at<uint64_t>(offsetOfFirstExtensionSlot + place++ * extensionGranuleSize) = valueOf(granule);
+        }
+        extensionWord = held ? wordOf(extension) : 0;
+        FakeAllocator allocator { static_cast<uint32_t>(bytes) };
+        allocator.makeRoomAt(room.address(), bytes);
+        allocatorFor(bytes) = &allocator;
+        runner.recordCallsOf(Entry::operationAOTEnsureExtensionGranules);
+        StubRun run = runner.run(grow, { owner.address(), added });
+        runner.countCallsOf(Entry::operationAOTEnsureExtensionGranules);
+        allocatorFor(bytes) = nullptr;
+        AOT_TEST_CHECK(!run.numberOfRecordedCalls);
+
+        const bool staysInPlace = allocator.hasRoom();
+        AOT_TEST_CHECK(!staysInPlace || bytes == bytesHeld);
+        auto& cell = staysInPlace ? extension : room;
+        AOT_TEST_CHECK(extensionWord == wordOf(cell) && cell.template at<uint64_t>(offsetOfExtensionGranuleBits) == all);
+        place = 0;
+        for (unsigned granule = 0; granule < maxExtensionGranules; ++granule) {
+            if (all >> granule & 1)
+                AOT_TEST_CHECK(cell.template at<uint64_t>(offsetOfFirstExtensionSlot + place++ * extensionGranuleSize) == (held >> granule & 1 ? valueOf(granule) : 0));
+        }
+        for (size_t offset = offsetOfFirstExtensionSlot + place * extensionGranuleSize; offset < sizeOfRoom; offset += sizeof(uint64_t))
+            AOT_TEST_CHECK(cell.template at<uint64_t>(offset) == (offset < bytes ? 0 : untouched));
+        if (!staysInPlace && held)
+            AOT_TEST_CHECK(extension.at<uint64_t>(offsetOfExtensionGranuleBits) == held && extension.at<uint64_t>(offsetOfFirstExtensionSlot) == valueOf(std::countr_zero(held)));
+        return !staysInPlace;
+    };
+
+    for (bool isFenced : { false, true }) {
+        instance.mutatorShouldBeFenced = isFenced;
+        for (unsigned numberHeld = 0; numberHeld < mostGranules; ++numberHeld) {
+            uint64_t held = 0;
+            for (unsigned index = 0; index < numberHeld; ++index)
+                held |= 1ULL << (4 * index + 2);
+            const unsigned above = 4 * numberHeld + 2;
+            const bool hasRoom = numberHeld && extensionCellSizeFor(numberHeld + 1) == extensionCellSizeFor(numberHeld);
+            AOT_TEST_CHECK(growsTo(held, 1ULL << above) == !hasRoom);
+            AOT_TEST_CHECK(growsTo(held, 1ULL << (maxExtensionGranules - 1)) == !hasRoom);
+            AOT_TEST_CHECK(growsTo(held, 1) == (!hasRoom || (isFenced && numberHeld)));
+            if (numberHeld > 1)
+                AOT_TEST_CHECK(growsTo(held, 1ULL << (4 * (numberHeld / 2) + 1)) == (!hasRoom || isFenced));
+            if (numberHeld + 2 <= mostGranules) {
+                growsTo(held, 3ULL << above);
+                growsTo(held, 1ULL << above | 1);
+                growsTo(held, 1ULL << (above + 3) | 1ULL << above);
+            }
+            if (numberHeld + 3 <= mostGranules && numberHeld)
+                growsTo(held, 1ULL << above | 1ULL << 3 | 1);
+        }
+    }
+    instance.mutatorShouldBeFenced = false;
+
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    for (auto [numberHeld, budget] : { std::pair { 3u, 106u }, std::pair { 5u, 126u } }) {
+        uint64_t held = (1ULL << numberHeld) - 1;
+        const size_t bytes = extensionCellSizeFor(numberHeld + 1);
+        growsTo(held, 1ULL << numberHeld);
+        extensionWord = wordOf(extension);
+        FakeAllocator allocator { static_cast<uint32_t>(bytes) };
+        allocator.makeRoomAt(room.address(), bytes);
+        allocatorFor(bytes) = &allocator;
+        runner.setCountsInstructions(true);
+        StubRun run = runner.run(grow, { owner.address(), 1ULL << numberHeld });
+        runner.setCountsInstructions(false);
+        allocatorFor(bytes) = nullptr;
+        AOT_TEST_CHECK(!run.calledOperation && run.instructionsInStubs && extensionWord == wordOf(room));
+        if (*run.instructionsInStubs != budget)
+            dataLogLn("an extension of ", numberHeld, " granules grows by one above them: ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+        AOT_TEST_CHECK(*run.instructionsInStubs <= budget);
+    }
+#endif
 }
 
 static void testCreatedFieldsOfObjectsWithExtraProperties()
@@ -1642,6 +1927,8 @@ std::span<const NativeTest> stubRuntimeTests()
         { "stubs/slim-closures-with-more-captures-than-registers"_s, ImageTests::whenExecutable<testSlimClosuresWithMoreCapturesThanRegisters> },
         { "stubs/typed-arrays-with-length"_s, ImageTests::whenExecutable<testTypedArraysWithLength> },
         { "stubs/created-fields-in-orders-of-the-image"_s, ImageTests::whenExecutable<testCreatedFieldsInOrdersOfImage> },
+        { "stubs/growth-of-extensions"_s, ImageTests::whenExecutable<testGrowthOfExtensions> },
+        { "stubs/first-field-in-the-extension-of-an-object-without-one"_s, ImageTests::whenExecutable<testFirstFieldInExtensionOfObjectWithoutOne> },
         { "stubs/created-fields-of-objects-with-extra-properties"_s, ImageTests::whenExecutable<testCreatedFieldsOfObjectsWithExtraProperties> },
         { "stubs/created-fields-of-slots-known-to-the-caller"_s, ImageTests::whenExecutable<testCreatedFieldsOfSlotsKnownToCaller> },
         { "stubs/binary-operation-string-order"_s, ImageTests::whenExecutable<testBinaryOperationStringOrder> },

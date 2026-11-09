@@ -9,7 +9,7 @@
 # CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
 # CHECK: = HasLayoutPrototype {{*}}hasNoFieldOutsideSlot
 # CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
-# CHECK: [[closed]]() frequency=Rare isInLoop=true:
+# CHECK: [[closed]]() frequency=Rare isInLoop=true keepsSitesThoughRare=true:
 # CHECK-NEXT: = PropGet {{*}}key="limit"
 # CHECK-NEXT: = PropGet {{*}}key="label"
 # CHECK: = GetSlotOrUndefined {{*}}key="limit"

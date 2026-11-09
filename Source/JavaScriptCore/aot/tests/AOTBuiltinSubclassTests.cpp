@@ -7,12 +7,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
+#include "AOTBuiltinTable.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
 #include "AOTShellProgramTestSupport.h"
+#include "AOTState.h"
+#include "AOTVMState.h"
 #include "DeferGCInlines.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
@@ -594,6 +598,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PropSet v8, v33 key="ninth" mode=Strict
     v35 = Construct v7
     PropSet v8, v35 key="tenth" mode=Strict
+    v37 = Construct v7
+    PropSet v8, v37 key="eleventh" mode=Strict
+    v39 = Construct v7
+    PropSet v8, v39 key="twelfth" mode=Strict
+    v41 = Construct v7
+    PropSet v8, v41 key="thirteenth" mode=Strict
     Return
 }
 function f1 name="Registry" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
@@ -685,12 +695,34 @@ static void checkWhichStructuresTellHeirs(LoadedProgram& program)
     AOT_TEST_CHECK(refusesEveryWrite->makePropertiesImmutable(vm));
     AOT_TEST_CHECK(isRefused(refusesEveryWrite));
 
+    JSObject* hidesMemberOfBase = handedOver("eleventh"_s);
+    hidesMemberOfBase->putDirect(vm, Identifier::fromString(vm, "get"_s), jsNumber(1));
+    AOT_TEST_CHECK(isRefused(hidesMemberOfBase));
+
+    JSObject* hidesMemberAboveBase = handedOver("twelfth"_s);
+    hidesMemberAboveBase->putDirect(vm, vm.propertyNames->toString, jsNumber(1));
+    AOT_TEST_CHECK(isRefused(hidesMemberAboveBase));
+
+    JSObject* hidesNoMember = handedOver("thirteenth"_s);
+    hidesNoMember->putDirect(vm, Identifier::fromString(vm, "extra"_s), jsNumber(1));
+    AOT_TEST_CHECK(hidesNoMember->structureID() != asConstructed->structureID());
+    AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, hidesNoMember, displacements) && displacements == asConstructorStores);
+
     Structure* watched = asConstructed->structure();
     AOT_TEST_CHECK(!watched->isWatchingReplacement());
     watched->startWatchingPropertyForReplacements(vm, Identifier::fromString(vm, "hits"_s));
     AOT_TEST_CHECK(watched->isWatchingReplacement() && isRefused(asConstructed));
     watched->didReplaceProperty(firstOutOfLineOffset);
     AOT_TEST_CHECK(!watched->isWatchingReplacement());
+    AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, asConstructed, displacements) && displacements == asConstructorStores);
+
+    JSObject* classPrototype = classes.classPrototypeIfExists(*classLayout);
+    JSValue prototypeOfBase = classPrototype->getPrototypeDirect();
+    AOT_TEST_CHECK(prototypeOfBase == JSValue(program.state().builtinCells->lockedObjects().get(BuiltinTable::singleton().at(BuiltinClasses::Map).prototype.index())));
+    vm.aotState().nativeTestChangesObjectsUnseen = true;
+    AOT_TEST_CHECK(classPrototype->methodTable()->setPrototype(classPrototype, realm, constructEmptyObject(realm), true) && !scope.exception());
+    AOT_TEST_CHECK(asConstructed->getPrototypeDirect() == JSValue(classPrototype) && isRefused(asConstructed));
+    AOT_TEST_CHECK(classPrototype->methodTable()->setPrototype(classPrototype, realm, prototypeOfBase, true) && !scope.exception());
     AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, asConstructed, displacements) && displacements == asConstructorStores);
 }
 

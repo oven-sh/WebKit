@@ -119,6 +119,10 @@ public:
     // The embedder additionally guarantees record()'s [[LoadedModules]] is complete and every module reachable from
     // it is registered the same way, i.e. what a settled loadPromise means.
     void markLoaded() { ASSERT(m_record); m_isLoaded = true; }
+#if ENABLE(AOT)
+    bool isLoadPromiseOfSynchronousLoad() const { return m_isLoadPromiseOfSynchronousLoad; }
+    void setIsLoadPromiseOfSynchronousLoad(bool isOfSynchronousLoad) { m_isLoadPromiseOfSynchronousLoad = isOfSynchronousLoad; }
+#endif
     bool isLoaded() const;
     // loadPromise(), materializing it first for an entry that was markLoaded().
     JSPromise* loadedPromise(JSGlobalObject*);
@@ -147,6 +151,9 @@ private:
     Status m_status { Status::New };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isLoaded { false };
+#if ENABLE(AOT)
+    bool m_isLoadPromiseOfSynchronousLoad { false };
+#endif
 #endif
 };
 

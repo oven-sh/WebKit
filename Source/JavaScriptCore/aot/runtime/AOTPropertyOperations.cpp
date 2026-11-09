@@ -138,6 +138,8 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
         RELEASE_AND_RETURN(scope, putAndCache({ instance, identifier, name }, base.asCell(), value, mode));
     PutPropertySlot slot(base, mode == PutMode::Strict, PutPropertySlot::PutById);
     if (Object* object = compiledObjectOrNull(base)) {
+        if (const FieldReturn* back = instance->state->propertyCaches->findFieldReturn(object->structureID(), name); back && object->tryRepeat(vm, *back, value))
+            return;
         const FieldData* field = object->fieldNamed(*instance->state, identifier);
         if (field && object->hasExtraProperties() && !object->read(*field))
             object->ensureStructureForExtraProperties(vm);
@@ -305,19 +307,24 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByNameSloppy, size_t, (Instance* inst
     OPERATION_RETURN(scope, deleteByName(instance, base, uid, false));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetSuperBase, EncodedJSValue, (Instance* instance, EncodedJSValue home, uint32_t homeKind))
+static ALWAYS_INLINE EncodedJSValue baseOfSuper(Instance* instance, VM& vm, EncodedJSValue home, Typed::HomeObjectKind homeKind, Entry entry)
 {
-    constexpr Entry entry = Entry::operationAOTGetSuperBase;
-    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSObject* homeObject = objectArgument(home, entry);
-    if (static_cast<Typed::HomeObjectKind>(homeKind) == Typed::HomeObjectKind::ClassPrototype) {
+    if (homeKind == Typed::HomeObjectKind::ClassPrototype) {
         Closure* classObject = cellArgument<Closure>(homeObject, entry);
         homeObject = objectArgument(JSValue::encode(classObject->prototypeProperty(vm)), entry);
         instance->state->objects->classes.rememberPlaceOfPrototypeProperty(vm, classObject, homeObject);
     }
     if (homeObject->structure()->typeInfo().overridesGetPrototype()) [[unlikely]]
         crashOnWrongOperand(entry);
-    OPERATION_RETURN(scope, JSValue::encode(homeObject->getPrototypeDirect()));
+    return JSValue::encode(homeObject->getPrototypeDirect());
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetSuperBase, EncodedJSValue, (Instance* instance, EncodedJSValue home, uint32_t homeKind))
+{
+    constexpr Entry entry = Entry::operationAOTGetSuperBase;
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
+    OPERATION_RETURN(scope, baseOfSuper(instance, vm, home, static_cast<Typed::HomeObjectKind>(homeKind), entry));
 }
 
 static JSObject* checkSuperBase(JSGlobalObject* globalObject, VM& vm, JSValue base, const Identifier* member = nullptr)
@@ -328,18 +335,38 @@ static JSObject* checkSuperBase(JSGlobalObject* globalObject, VM& vm, JSValue ba
     return base.getObject();
 }
 
+static ALWAYS_INLINE EncodedJSValue propertyThroughSuperById(Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Identifier& identifier = identifierAt(instance, name);
+    JSObject* parent = checkSuperBase(globalObject, vm, JSValue::decode(base), &identifier);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (instance->state->propertyCaches->findByKey(parent->structure(), identifier.impl(), SlotAccess::Read)) {
+        if (JSValue found = JSValue::decode(operationAOTGetGeneric(instance, parent, identifier.impl())))
+            return JSValue::encode(found);
+        RELEASE_AND_RETURN(scope, JSValue::encode(getWithoutCaches(instance, parent, identifier, JSValue::decode(receiver))));
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(getAndCache({ instance, identifier, name }, parent, JSValue::decode(receiver))));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTGetSuperPropertyById, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetSuperPropertyById);
-    const Identifier& identifier = identifierAt(instance, name);
-    JSObject* parent = checkSuperBase(globalObject, vm, JSValue::decode(base), &identifier);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (instance->state->propertyCaches->findByKey(parent->structure(), identifier.impl(), SlotAccess::Read)) {
-        if (JSValue found = JSValue::decode(operationAOTGetGeneric(instance, parent, identifier.impl())))
-            OPERATION_RETURN(scope, JSValue::encode(found));
-        OPERATION_RETURN(scope, JSValue::encode(getWithoutCaches(instance, parent, identifier, JSValue::decode(receiver))));
+    OPERATION_RETURN(scope, propertyThroughSuperById(instance, base, receiver, name));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTGetSuperPropertyOfClassById, EncodedJSValue, (Instance* instance, EncodedJSValue classObject, EncodedJSValue receiver, uint32_t name))
+{
+    constexpr Entry entry = Entry::operationAOTGetSuperPropertyOfClassById;
+    AOT_OPERATION_BEGIN(instance, entry);
+    EncodedJSValue base;
+    {
+        DeferGCForAWhile deferGC(vm);
+        base = baseOfSuper(instance, vm, classObject, Typed::HomeObjectKind::ClassPrototype, entry);
     }
-    OPERATION_RETURN(scope, JSValue::encode(getAndCache({ instance, identifier, name }, parent, JSValue::decode(receiver))));
+    OPERATION_RETURN(scope, propertyThroughSuperById(instance, base, receiver, name));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperGet, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue key, EncodedJSValue receiver))

@@ -18,7 +18,8 @@
 namespace JSC { namespace AOT {
 
 enum class PresenceQuestion : uint8_t { In, HasOwn };
-enum class InstanceOfOperand : uint8_t { Constructor, Prototype, NameSeenByScripts, NameOfGlobalObject, PrototypeThatIsBuiltin };
+enum class InstanceOfOperand : uint8_t { Constructor, Prototype, PrototypeUnlessTrapped, NameSeenByScripts, NameOfGlobalObject, PrototypeThatIsBuiltin };
+constexpr int32_t answerOfChainWalkAtTrap = 2;
 enum class SlotExit : uint8_t { Miss, Uncached };
 enum class SlotFinisher : uint8_t { ReadField, CallGetter, StoreField, CreateField, CallSetterStrict, CallSetterSloppy, GrowStorage };
 enum class SlotInGranule : uint8_t { Word64, Word32At0, Word32At4, ByteAt0, ByteAt1, ByteAt2, ByteAt3, ByteAt4, ByteAt5, ByteAt6, ByteAt7 };
@@ -72,16 +73,24 @@ enum class WayBehindSite : uint8_t { AfterMiss, WithoutMiss, OfFieldLeftOut, Aft
 struct ReadAtSiteForm {
     ReceiverAtSite receiver;
     NameAtSite name;
+    SiteUse use;
+    bool asksNoShapeUnderNameOfField;
 };
 struct ReadBehindSiteForm {
     WayBehindSite way;
     NameAtSite name;
+    SiteUse use;
 };
+struct ReadAnswerAtSiteForm {
+    bool asksTruth;
+    SiteUse use;
+};
+constexpr SiteUse useOfReadInUpperHalfOfForms(bool isInUpperHalf) { return isInUpperHalf ? SiteUse::ReadUnderNameOfField : SiteUse::Read; }
 constexpr StubKey readAtSite(ReceiverAtSite receiver, NameAtSite name = NameAtSite::IsAnyName) { return StubKey(StubFamily::ReadAtSite).withForm(static_cast<uint8_t>(receiver) + 2 * static_cast<uint8_t>(name)); }
-constexpr ReadAtSiteForm readAtSiteFormOf(StubKey key) { return { static_cast<ReceiverAtSite>(key.form() % 2), static_cast<NameAtSite>(key.form() / 2) }; }
+constexpr ReadAtSiteForm readAtSiteFormOf(StubKey key) { return { static_cast<ReceiverAtSite>(key.form() % 2), static_cast<NameAtSite>(key.form() / 2 % 2), useOfReadInUpperHalfOfForms(key.form() / 4), key.form() / 4 == 2 }; }
 constexpr StubKey readTruthAtSite(ReceiverAtSite receiver) { return readAtSite(receiver).withFamily(StubFamily::ReadTruthAtSite); }
-constexpr StubKey readTruthAtSiteAskingStructureFirst(ReceiverAtSite receiver) { return readAtSite(receiver).withFamily(StubFamily::ReadTruthAtSiteAskingStructureFirst); }
-constexpr StubKey readAtSiteAskingStructureFirst(ReceiverAtSite receiver) { return readAtSite(receiver).withFamily(StubFamily::ReadAtSiteAskingStructureFirst); }
+constexpr StubKey readAtSiteAskingStructureFirst(ReceiverAtSite receiver, SiteUse use = SiteUse::Read, bool asksNoShape = false) { return StubKey(StubFamily::ReadAtSiteAskingStructureFirst).withForm(static_cast<uint8_t>(receiver) + 4 * (use == SiteUse::ReadUnderNameOfField) * (1 + asksNoShape)); }
+constexpr StubKey readTruthAtSiteAskingStructureFirst(ReceiverAtSite receiver, SiteUse use = SiteUse::Read, bool asksNoShape = false) { return readAtSiteAskingStructureFirst(receiver, use, asksNoShape).withFamily(StubFamily::ReadTruthAtSiteAskingStructureFirst); }
 struct ReadAtSiteRunningNoCodeForm {
     ReceiverAtSite receiver;
     bool asksShapeFirst;
@@ -90,24 +99,25 @@ constexpr StubKey readAtSiteRunningNoCode(ReceiverAtSite receiver, bool asksShap
 constexpr ReadAtSiteRunningNoCodeForm readAtSiteRunningNoCodeFormOf(StubKey key) { return { static_cast<ReceiverAtSite>(key.form() % 2), key.form() < 2 }; }
 static_assert(exists(readAtSiteRunningNoCode(ReceiverAtSite::IsCell, false)) && readAtSiteRunningNoCode(ReceiverAtSite::IsCell, false).form() + 1u == descriptorOf(StubFamily::ReadAtSiteRunningNoCode).numberOfForms);
 constexpr StubKey readAtSiteUnlessAsMade() { return readAtSite(ReceiverAtSite::IsCell).withFamily(StubFamily::ReadAtSiteUnlessAsMade); }
-static_assert(descriptorOf(StubFamily::ReadAtSiteAskingStructureFirst).numberOfForms == descriptorOf(StubFamily::ReadAtSite).numberOfForms);
+static_assert(descriptorOf(StubFamily::ReadAtSiteAskingStructureFirst).numberOfForms == 3 * descriptorOf(StubFamily::ReadAtSite).numberOfForms && descriptorOf(StubFamily::ReadTruthAtSiteAskingStructureFirst).numberOfForms == 3 * descriptorOf(StubFamily::ReadTruthAtSite).numberOfForms);
 constexpr uint8_t numberOfWaysBehindSite = 4;
-constexpr StubKey readBehindSite(WayBehindSite way, NameAtSite name = NameAtSite::IsAnyName) { return StubKey(StubFamily::ReadBehindSite).withForm(static_cast<uint8_t>(way) + numberOfWaysBehindSite * static_cast<uint8_t>(name)); }
-constexpr StubKey readAnswerAtSite(bool asksTruth, unsigned number) { return StubKey(StubFamily::ReadAnswerAtSite).withForm(asksTruth).withCount(number); }
+constexpr StubKey readBehindSite(WayBehindSite way, NameAtSite name, SiteUse use) { return StubKey(StubFamily::ReadBehindSite).withForm(static_cast<uint8_t>(way) + numberOfWaysBehindSite * (static_cast<uint8_t>(name) + 2 * (use == SiteUse::ReadUnderNameOfField))); }
+constexpr StubKey readAnswerAtSite(bool asksTruth, unsigned number, SiteUse use) { return StubKey(StubFamily::ReadAnswerAtSite).withForm(asksTruth + 2 * (use == SiteUse::ReadUnderNameOfField)).withCount(number); }
+constexpr ReadAnswerAtSiteForm readAnswerAtSiteFormOf(StubKey key) { return { !!(key.form() % 2), useOfReadInUpperHalfOfForms(key.form() / 2) }; }
 constexpr std::array<StubKey, SiteAnswers::formMask + 1> answerHandlerKeys(AnswerHandlerTable table)
 {
     std::array<StubKey, SiteAnswers::formMask + 1> keys { };
     for (unsigned bits = 0; bits < keys.size(); ++bits) {
         unsigned number = bits;
         for (unsigned index = 0; isOfFurtherAnswers(table) && index < WideSiteAnswers::formsOfFurtherAnswersWithIndex.size(); ++index) {
-            if (bits == SiteAnswers::bitsOf(SiteUse::Read, WideSiteAnswers::formsOfFurtherAnswersWithIndex[index]))
+            if (bits == SiteAnswers::bitsOf(siteUseOf(table), WideSiteAnswers::formsOfFurtherAnswersWithIndex[index]))
                 number = static_cast<unsigned>(keys.size()) + index;
         }
-        keys[bits] = readAnswerAtSite(asksTruth(table), number);
+        keys[bits] = readAnswerAtSite(asksTruth(table), number, siteUseOf(table));
     }
     return keys;
 }
-constexpr ReadBehindSiteForm readBehindSiteFormOf(StubKey key) { return { static_cast<WayBehindSite>(key.form() % numberOfWaysBehindSite), static_cast<NameAtSite>(key.form() / numberOfWaysBehindSite) }; }
+constexpr ReadBehindSiteForm readBehindSiteFormOf(StubKey key) { return { static_cast<WayBehindSite>(key.form() % numberOfWaysBehindSite), static_cast<NameAtSite>(key.form() / numberOfWaysBehindSite % 2), useOfReadInUpperHalfOfForms(key.form() / numberOfWaysBehindSite / 2) }; }
 constexpr StubKey readSizeOfTableAtSite() { return StubKey(StubFamily::ReadSizeOfTableAtSite); }
 constexpr StubKey readLengthAtSite(bool asksStructureFirst) { return StubKey(StubFamily::ReadLengthAtSite).withForm(asksStructureFirst); }
 constexpr uint8_t numberOfSetsLentAtSite = 3;
@@ -138,6 +148,10 @@ constexpr StubKey putByIdHashed(PutMode mode) { return StubKey(StubFamily::PutBy
 constexpr StubKey putByIdOfSymbolOfRealm(PutMode mode) { return StubKey(StubFamily::PutByIdOfSymbolOfRealm).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdBehindFieldTable(PutMode mode) { return StubKey(StubFamily::PutByIdBehindFieldTable).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdAtSite(PutMode mode, NameAtSite name = NameAtSite::IsAnyName) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(static_cast<unsigned>(name)); }
+constexpr StubKey putByIdAtSiteAskingNoTableOfFields(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(2); }
+constexpr StubKey putByIdAtSiteOfOtherStructure(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(3); }
+constexpr bool storeAtSiteAsksTableOfFields(StubKey key) { return key.count() < 2; }
+constexpr bool storeAtSiteComesBehindComparedStructure(StubKey key) { return key.count() == 3; }
 constexpr StubKey putKnownField(PutMode mode) { return StubKey(StubFamily::PutKnownField).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putKnownFieldThatTakesAnyValue(PutMode mode) { return putKnownField(mode).withCount(1); }
 constexpr StubKey putKnownFieldAcceptingAnyNumber(PutMode mode) { return putKnownField(mode).withCount(2); }
@@ -304,9 +318,10 @@ constexpr StubKey slotCannot(SlotFinisher finisher, SlotOrigin origin)
 constexpr StubKey callGetterOfAnswer(CallerFrame callerFrame) { return StubKey(StubFamily::CallGetterOfAnswer).withCallerFrame(callerFrame); }
 constexpr StubKey getterByAccessTable() { return StubKey(StubFamily::GetterByAccessTable); }
 constexpr StubKey getterAtSite() { return StubKey(StubFamily::GetterAtSite); }
+constexpr StubKey getByValCachedOrOwnAccessor() { return StubKey(StubFamily::GetByValCachedOrOwnAccessor); }
 constexpr StubKey findsNoExtraPropertyAtSite() { return StubKey(StubFamily::FindsNoExtraPropertyAtSite); }
 
-constexpr std::optional<StubKey> siblingUnderNameWithColumn(StubKey key)
+ALWAYS_INLINE constexpr std::optional<StubKey> siblingUnderNameWithColumn(StubKey key)
 {
     switch (key.family()) {
     case StubFamily::GetByIdCheckingColumn:
@@ -340,7 +355,7 @@ static_assert([] {
         tryGetSuperById(), getSuperBaseOfClass(),
         instanceOf(InstanceOfOperand::PrototypeThatIsBuiltin),
         callMethodById(0),
-        readAtSite(ReceiverAtSite::IsCell, NameAtSite::HasColumn), readAnswerAtSite(true, 0), readBehindSite(WayBehindSite::AfterHitOfFurtherAnswer, NameAtSite::HasColumn), callMethodAtSite(0, 0, NameAtSite::HasColumn), callMethodAtSite(1, numberOfSetsLentAtSite, NameAtSite::HasColumn),
+        readAtSite(ReceiverAtSite::IsCell, NameAtSite::HasColumn), readAnswerAtSite(true, 0, SiteUse::ReadUnderNameOfField), readBehindSite(WayBehindSite::AfterHitOfFurtherAnswer, NameAtSite::HasColumn, SiteUse::ReadUnderNameOfField), callMethodAtSite(0, 0, NameAtSite::HasColumn), callMethodAtSite(1, numberOfSetsLentAtSite, NameAtSite::HasColumn),
         getByIdOfCell(), getByIdAtSite(), getByIdOfObjectAtSite(), putByIdAtSite(PutMode::Sloppy),
         putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdOfSymbolOfRealm(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define), putValueThatSlotRefuses(PutMode::Define),
         didCreateField(), didCreateFieldOfSlot(), putSlotOrAdd(PlaceOfCreatedSlot::OutOfLine, SlotRepresentation::JSValue), putSlotOrAddAtKeyInRegister(SlotRepresentation::JSValue),

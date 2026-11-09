@@ -73,7 +73,17 @@ Operation* Numbering::findPurePatch(const NumberingKeyOfPurePatch& key) const
     for (uint32_t link = m_buckets[hash & (m_buckets.size() - 1)]; link > m_floor; link = m_log[link - 1].previousInBucket) {
         const Entry& entry = m_log[link - 1];
         ASSERT(entry.previousInBucket < link);
-        if (entry.hash != hash || !matches(key, entry))
+        if (entry.hash != hash)
+            continue;
+        if (entry.operation->opcode() == Phi && !key.operands.empty()) {
+            const ReadThatPhiStandsFor* read = readThatPhiStandsFor(entry.operation);
+            if (!read || entry.operation->type() != key.type || entry.payload != key.id || key.operands.size() != 1 || read->operand != key.operands[0])
+                continue;
+            if (entry.clock <= m_timeOfLastSuspension || entry.clock <= timeOfLastWriteTo(read->heap))
+                return nullptr;
+            return entry.operation;
+        }
+        if (!matches(key, entry))
             continue;
 
         Operation* operation = entry.operation;
@@ -120,6 +130,26 @@ void Numbering::addInPlaceOfPurePatch(const NumberingKeyOfPurePatch& key, Operat
 
     appendToLog(phi, hashOf(key), key.id);
     ASSERT(matches(key, m_log.last()));
+}
+
+void Numbering::addInPlaceOfReadOfMemory(const NumberingKeyOfPurePatch& key, Operation* phi, HeapIndex heap)
+{
+    RELEASE_ASSERT(key.operands.size() == 1 && phi->opcode() == Phi && phi->type() == key.type);
+    if (m_savesFrameOnSuspend && isAddressInFrame(key.operands[0]))
+        return;
+
+    ++m_numberOfEntriesThatWritesEnd;
+    m_readsThatPhisStandFor.append(m_arena, ReadThatPhiStandsFor { phi, key.operands[0], heap });
+    appendToLog(phi, hashOf(key), key.id);
+}
+
+const Numbering::ReadThatPhiStandsFor* Numbering::readThatPhiStandsFor(const Operation* phi) const
+{
+    for (uint32_t index = m_readsThatPhisStandFor.size(); index--;) {
+        if (m_readsThatPhisStandFor[index].phi == phi)
+            return &m_readsThatPhisStandFor[index];
+    }
+    return nullptr;
 }
 
 void Numbering::didWriteListedHeaps(std::span<const HeapIndex> list)

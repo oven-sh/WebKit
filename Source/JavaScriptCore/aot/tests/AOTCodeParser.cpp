@@ -63,6 +63,7 @@ struct BlockInCodeText {
     BlockFrequency frequency { BlockFrequency::Normal };
     bool isInLoop { false };
     bool isLoopHead { false };
+    bool keepsSitesThoughRare { false };
     bool hasHandler { false };
     bool hasTerminator { false };
     bool hasOperations { false };
@@ -1365,6 +1366,8 @@ void CodeTextParser::scanHead()
             block.isInLoop = parseBool();
         else if (acceptField("isLoopHead"_s))
             block.isLoopHead = parseBool();
+        else if (acceptField("keepsSitesThoughRare"_s))
+            block.keepsSitesThoughRare = parseBool();
         else if (acceptField("entry"_s)) {
             if (block.entry != absentInCodeText)
                 fail(makeString('b', number, " is two entries, and Code takes a block for one at the most"_s));
@@ -1553,6 +1556,8 @@ void CodeTextParser::addBlocks()
         }
         if (block.isInLoop || block.isLoopHead)
             m_code.setLoopMarks(id, block.isInLoop, block.isLoopHead);
+        if (block.keepsSitesThoughRare)
+            m_code.markRareBlockThatKeepsSites(id);
         if (block.hasHandler)
             block.handlerEdge = m_code.addHandlerEdge(id);
     }

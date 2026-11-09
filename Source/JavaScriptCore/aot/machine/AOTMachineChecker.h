@@ -18,6 +18,7 @@ bool validateBehindBlockPasses(Procedure&);
 JS_EXPORT_PRIVATE bool checkThatDefinitionsDominateUses(Procedure&);
 
 bool checkAllocation(Procedure&);
+bool checkSavesAtHeads(Procedure&);
 
 bool checkFrame(Procedure&);
 

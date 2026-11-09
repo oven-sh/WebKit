@@ -215,6 +215,24 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayRoom, void, (Instance*
         array->butterfly()->setPublicLength(publicLength);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTSetArrayLength, void, (Instance* instance, JSCell* cell, uint32_t length))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetArrayLength);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTSetArrayLength);
+    PutPropertySlot slot(array, true);
+    array->methodTable()->put(array, globalObject, vm.propertyNames->length, jsNumber(length), slot);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetArrayLengthInSloppyCode, void, (Instance* instance, JSCell* cell, uint32_t length))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetArrayLengthInSloppyCode);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTSetArrayLengthInSloppyCode);
+    PutPropertySlot slot(array, false);
+    array->methodTable()->put(array, globalObject, vm.propertyNames->length, jsNumber(length), slot);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendElements);
@@ -266,6 +284,54 @@ JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned public
     *std::bit_cast<uint64_t*>(cell) = cellHeaderFor(structure);
     vm.mutatorFence();
     return std::bit_cast<JSArray*>(cell);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfList, JSCell*, (Instance* instance, JSCell* cell, uint32_t capacityAndKind))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfList);
+    JSArray* list = cellArgument<JSArray>(cell, Entry::operationAOTNewArrayOfList);
+    unsigned capacity = capacityAndKind >> 1;
+    IndexingType kindOfList = list->indexingType();
+    if (hasDouble(kindOfList)) {
+        size_t count = list->butterfly()->publicLength();
+        bool holdsValues = capacityAndKind & 1 || std::ranges::any_of(std::span { list->butterfly()->contiguousDouble().data(), count }, [](double fraction) {
+            return fraction != fraction;
+        });
+        Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(holdsValues ? ArrayWithContiguous : ArrayWithDouble);
+        if (capacity < count || capacity > maxHoleArrayCapacity || (holdsValues ? !hasContiguous(structure->indexingType()) : !hasDouble(structure->indexingType())) || structure->outOfLineCapacity())
+            OPERATION_RETURN(scope, nullptr);
+        JSArray* array = tryCreateArrayWithStorage(vm, structure, count, capacity);
+        if (!array)
+            OPERATION_RETURN(scope, nullptr);
+        for (size_t index = 0; index < count; ++index) {
+            double fraction = list->butterfly()->contiguousDouble().atUnsafe(index);
+            if (!holdsValues)
+                array->butterfly()->contiguousDouble().atUnsafe(index) = fraction;
+            else
+                array->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(fraction != fraction ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, fraction));
+        }
+        vm.mutatorFence();
+        OPERATION_RETURN(scope, array);
+    }
+    if (!hasInt32(kindOfList) && !hasContiguous(kindOfList))
+        OPERATION_RETURN(scope, nullptr);
+    std::span<const WriteBarrier<Unknown>> elements { list->butterfly()->contiguous().data(), list->butterfly()->publicLength() };
+    if (capacity < elements.size() || capacity > maxHoleArrayCapacity)
+        OPERATION_RETURN(scope, nullptr);
+    bool isContiguous = capacityAndKind & 1 || std::ranges::any_of(elements, [](const WriteBarrier<Unknown>& element) {
+        return !element || !element.get().isInt32();
+    });
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(isContiguous ? ArrayWithContiguous : ArrayWithInt32);
+    if ((isContiguous ? !hasContiguous(structure->indexingType()) : !hasInt32(structure->indexingType())) || structure->outOfLineCapacity())
+        OPERATION_RETURN(scope, nullptr);
+    JSArray* array = tryCreateArrayWithStorage(vm, structure, elements.size(), capacity);
+    if (!array)
+        OPERATION_RETURN(scope, nullptr);
+    elements = { list->butterfly()->contiguous().data(), elements.size() };
+    for (size_t index = 0; index < elements.size(); ++index)
+        array->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(elements[index] ? elements[index].get() : jsUndefined());
+    vm.mutatorFence();
+    OPERATION_RETURN(scope, array);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* values))
@@ -489,7 +555,22 @@ static void startWindow(ArrayAllocationProfile& profile)
     std::ranges::fill(profile.largestLengths, 0);
 }
 
-void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull)
+static IndexingType narrowestShapeThatHoldsContentsOf(JSArray* array)
+{
+    IndexingType shape = Int32Shape;
+    Butterfly* butterfly = array->butterfly();
+    for (unsigned position = 0; position < butterfly->publicLength(); ++position) {
+        JSValue value = butterfly->contiguous().at(array, position).get();
+        if (!value || value.isInt32())
+            continue;
+        if (!value.isDouble() || value.asDouble() != value.asDouble())
+            return ContiguousShape;
+        shape = DoubleShape;
+    }
+    return shape;
+}
+
+void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull, bool readsContentsAtFirst)
 {
     if (!lastArrayOrNull) {
         if (profile.intervalDoublings)
@@ -497,6 +578,8 @@ void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* last
         return;
     }
     IndexingType shape = lastArrayOrNull->indexingType() & IndexingShapeMask;
+    if (readsContentsAtFirst && !profile.shape() && shape == ContiguousShape)
+        shape = narrowestShapeThatHoldsContentsOf(lastArrayOrNull);
     if (shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape) {
         if (!profile.shape())
             profile.set(profile.capacity(), Int32Shape);

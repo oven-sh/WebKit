@@ -127,6 +127,7 @@ public:
     FactRows<ClassMember> membersOfClass;
     Vector<uint32_t> placesOfMembersOfClassByKey;
     BitVector layoutsThatParsersMayMake;
+    LayoutSetID layoutsThatStayWithCompiledCode;
 
     BitVector modulesWhosePathNoOperationReads;
     struct FunctionGivenToVariable {
@@ -311,7 +312,6 @@ private:
     FactTables m_tables;
 };
 
-BuiltinID builtinParentNamedByClassRecord(const Program&, const Facts&, LayoutID);
 
 struct InputsOfProgramFacts {
     const Program& program;

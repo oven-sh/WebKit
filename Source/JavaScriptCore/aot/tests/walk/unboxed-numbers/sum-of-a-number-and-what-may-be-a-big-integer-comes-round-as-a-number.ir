@@ -1,14 +1,18 @@
 # function sum(a, b, n) { if (typeof n !== "number" || (n | 0) !== n) return n; let total = 0; for (let i = 0; i < n; i++) total += a * b; return total; }
-# Of what nobody knows the product is a number or a big integer. A number and a big integer do not mix: the sum throws. So the sum is a number wherever it answers, and comes round raw.
-# Beside the number the product is expected to be one: the test stands in line, and what fails it is a big integer, for which the sum throws: nothing rejoins.
+# What the product of a loop reckons with comes from in front of the loop and nobody knows it: it is expected to be a number, so the body takes numbers at its entry, the product is made once in front
+# of the loop and the sum comes round raw. In the slow version the product is a number or a big integer; a number and a big integer do not mix: the sum throws. So there too the sum is a number
+# wherever it answers, and comes round raw.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
+# CHECK: ([[a]]: number @Double{{*}}, [[b]]: number @Double
+# CHECK: [[product]]: number @Double = Mul [[a]], [[b]] form=Numbers
 # CHECK: ([[sum]]: number @Double, {{*}}) isInLoop=true isLoopHead=true:
-# CHECK: [[product]]: number|bigint @JSValue = Mul
-# CHECK: = TypeTest [[product]] testedType=number
-# CHECK: = Add [[sum]], {{*}}form=Numbers
-# CHECK: never @JSValue = Add
-# CHECK-NEXT: Unreachable
+# CHECK: = Add [[sum]], [[product]] form=Numbers
+# RUN(SLOW): walk f1:SlowBody mechanisms=all
+# SLOW-LABEL: code f1:SlowBody
+# SLOW: ([[sum]]: number @Double, {{*}}) isLoopHead=true:
+# SLOW: [[product]]: number|bigint @JSValue = Mul
+# SLOW: number @JSValue = Add {{*}}, [[product]] form=Generic
 # RUN(SHELL): run-in-shell globalThis.sink = sum => { print(sum(2, 3, 3)); print(sum("2", { valueOf() { return 4; } }, 3)); try { sum(2n, 3n, 3); } catch (error) { print(error.name); } print(sum(2n, 3n, 0)); };
 # SHELL: 18
 # SHELL-NEXT: 24

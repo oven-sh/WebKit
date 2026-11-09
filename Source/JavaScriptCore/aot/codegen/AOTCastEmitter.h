@@ -39,6 +39,8 @@ private:
     const TypeTestPlan& planFor(ValueID operand, TypeID to) { return typeTestPlanFor(typeIDOf(operand), representationOf(operand), to); }
     ValueID unboxingBehindTestForInt32(const ValueContext& test);
     bool tryBranchOnInt32AndHandItOn(const ValueContext& test, Operand);
+    ValueID unboxingToDoubleBehindTestForNumber(const ValueContext& test);
+    bool tryBranchOnNumberAndHandItOn(const ValueContext& test, Operand);
 
     struct IntegerHandedOn {
         ValueID unboxing;

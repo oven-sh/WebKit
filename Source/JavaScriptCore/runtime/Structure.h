@@ -440,6 +440,7 @@ public:
     bool isPristine() const { return typeInfo().hasPristineNames(); }
     JS_EXPORT_PRIVATE bool tryMarkPristine(VM&);
     bool clearsPristineBitsOf(const Structure& previous) const { return (previous.isPristine() && !isPristine()) || (previous.hasPristineElements() && !hasPristineElements()); }
+    static bool isSymbolThatNothingProbes(UniquedStringImpl* uid) { return uid->isSymbol() && !uid->isStatic() && !static_cast<SymbolImpl*>(uid)->isRegistered() && !static_cast<SymbolImpl*>(uid)->isPrivate(); }
 
     bool hasFrozenElementsInPlace() const { return transitionKind() == TransitionKind::FreezeElementsInPlace; }
 

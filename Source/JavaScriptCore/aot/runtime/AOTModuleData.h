@@ -53,6 +53,8 @@ struct ModuleData {
         ExportsStayInCompiledCode = 1 << 5,
         IsEntryPoint = 1 << 6,
         KeepsError = 1 << 7,
+        BodyMayRunAgain = 1 << 7,
+        IsDataFoundByName = 1 << 7,
         HasDeferredRequest = 1 << 8,
         IsModuleToImports = 1 << 8,
         HasValue = 1 << 9,
@@ -106,7 +108,9 @@ struct ModuleData {
     bool hasDynamicStarExport() const { return kind != ModuleKind::CommonJs && has(Flag::HasDynamicStarExport); }
     bool exportsStayInCompiledCode() const { return kind == ModuleKind::CommonJs && has(Flag::ExportsStayInCompiledCode); }
     bool isEntryPoint() const { return has(Flag::IsEntryPoint); }
-    bool keepsError() const { return has(Flag::KeepsError); }
+    bool keepsError() const { return kind != ModuleKind::CommonJs || has(Flag::KeepsError); }
+    bool bodyOfESModuleMayRunAgain() const { return kind == ModuleKind::SourceText && has(Flag::BodyMayRunAgain); }
+    bool isDataFoundByName() const { return kind == ModuleKind::Data && has(Flag::IsDataFoundByName); }
     bool hasDeferredRequest() const { return kind != ModuleKind::CommonJs && has(Flag::HasDeferredRequest); }
     bool isModuleToImports() const { return kind == ModuleKind::CommonJs && has(Flag::IsModuleToImports); }
     bool hasValue() const { return has(Flag::HasValue); }
@@ -364,7 +368,8 @@ struct ExportStatementData {
     uint32_t requiredName;
     uint32_t exportName : 31;
     uint32_t dropsExportIfAbsent : 1;
-    uint32_t specifier;
+    uint32_t specifier : 31;
+    uint32_t isOfStar : 1;
 
     StringID exportNameString() const { return StringID(exportName); }
     StringID specifierString() const { return StringID(specifier); }
@@ -392,10 +397,22 @@ struct NameOfStatementData {
     StringID nameString() const { return StringID(name); }
 };
 
+struct OriginalAskedForData {
+    uint32_t function;
+    uint32_t specifier;
+};
+
 struct StarAsWrittenData {
     uint32_t module;
     uint32_t target;
+    uint32_t place : 31;
+    uint32_t isFollowed : 1;
+};
+
+struct WriterOfExportData {
+    uint32_t module;
     uint32_t place;
+    uint32_t writer;
 };
 
 struct ModuleFailureData {
@@ -508,7 +525,9 @@ static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatement
 static_assert(sizeof(AmbiguousExportData) == 8 && isImageRecord<AmbiguousExportData>);
 static_assert(sizeof(SourceStampData) == 12 && isImageRecord<SourceStampData>);
 static_assert(sizeof(NameOfStatementData) == 8 && isImageRecord<NameOfStatementData>);
+static_assert(sizeof(OriginalAskedForData) == 8 && isImageRecord<OriginalAskedForData>);
 static_assert(sizeof(StarAsWrittenData) == 12 && isImageRecord<StarAsWrittenData>);
+static_assert(sizeof(WriterOfExportData) == 12 && isImageRecord<WriterOfExportData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
 static_assert(sizeof(StateOfLibraryModuleData) == 12 && isImageRecord<StateOfLibraryModuleData>);
@@ -566,6 +585,7 @@ private:
     v(moduleFailures, ModuleFailureData) \
     v(namesOfStatements, NameOfStatementData) \
     v(starsAsWritten, StarAsWrittenData) \
+    v(writersOfExports, WriterOfExportData) \
     v(modulesByPath, uint16_t) \
     v(modulesByHashOfPath, uint32_t) \
     v(firstModulesByHashOfPath, uint16_t) \
@@ -576,6 +596,8 @@ private:
     v(modulesReachedUnderOtherNames, uint32_t) \
     v(modulesThatDependOnMoreThanSource, uint32_t) \
     v(asyncFunctionsWithoutAwait, uint32_t) \
+    v(functionsThatMayAskForOwnOriginal, uint32_t) \
+    v(originalsAskedFor, OriginalAskedForData) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \
     v(stateOfLibraryModules, StateOfLibraryModuleData) \

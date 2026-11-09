@@ -14,7 +14,13 @@ namespace JSC { namespace AOT { namespace Typed {
 void findGrowingTexts(Walker&, BlockID inputHead, const LoopPreview&, Vector<GrowingText, 2>&);
 
 bool mayKeepTextsInStringBuilders(const Walker&);
-bool isTextInStringBuilder(const Walker&, Reference);
+ALWAYS_INLINE bool isTextInStringBuilder(const Walker& walker, Reference reference)
+{
+    if (!reference.isValue())
+        return false;
+    TypeID type = walker.code().at(reference.id()).type;
+    return type && !holdsOnlyPrimitives(type) && walker.types().at(type).isOpaque(OpaqueKind::StringBuilder);
+}
 TextInStringBuilder* findTextNamedBy(Walker&, ValueID input);
 bool isNameOfTextInStringBuilder(Walker&, ValueID input);
 

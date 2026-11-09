@@ -60,6 +60,7 @@ struct GeneratorWalkedInConsumer {
 bool callMayEnterCopyOfBody(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> handedOver);
 Vector<Reference, 8> buildEntryArgumentsOfCopy(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> handedOver);
 bool operationsFitWindowOfCallWrittenInLoop(const Walker&, uint64_t numberOfOperations);
+bool calleeIsCopiedInLoopsAlone(const Walker&, FunctionID callee, size_t numberOfOperands);
 bool nobodyLooksAboveGeneratorsOf(const Walker&, FunctionID generatorFunction, uint32_t* numberOfListedCalls);
 
 } } } // namespace JSC::AOT::Typed

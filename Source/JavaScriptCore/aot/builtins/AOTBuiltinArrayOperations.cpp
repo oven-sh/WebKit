@@ -9,10 +9,14 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinOperationSupport.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTSortedStorage.h"
+#include "AOTState.h"
 #include "ArrayPrototypeInlines.h"
 #include "ButterflyInlines.h"
 #include "DeferTermination.h"
@@ -27,6 +31,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/Atomics.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
 
@@ -248,7 +253,18 @@ static ALWAYS_INLINE bool precedesInDefaultOrder(const StringImpl& first, const 
     return is_lt(codePointCompare(StringView { first }, StringView { second }));
 }
 
-static bool trySortStrings(JSGlobalObject* globalObject, JSArray* array)
+SortedStorage& SortedStorage::ensure(State& state)
+{
+    if (SortedStorage* storage = state.instance.realm.sortedStorage) [[likely]]
+        return *storage;
+    SortedStorage* storage = state.tableArena.allocate<SortedStorage>(1);
+    storage->cageBase = state.instance.vm->heap.cage().base();
+    state.caches->addClearedEachCollection("sorted storage"_s, asMutableByteSpan(std::span { storage->entries }));
+    state.instance.realm.sortedStorage = storage;
+    return *storage;
+}
+
+static bool trySortStrings(JSGlobalObject* globalObject, State& state, JSArray* array)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -258,6 +274,15 @@ static bool trySortStrings(JSGlobalObject* globalObject, JSArray* array)
     unsigned length = butterfly.publicLength();
     if (length > maxLengthOfInsertionSortedArray)
         return false;
+    JSCellButterfly* shared = isCopyOnWrite(array->indexingMode()) && !JSCellButterfly::isOutsideHeap(&butterfly) ? JSCellButterfly::fromButterfly(&butterfly) : nullptr;
+    if (const SortedStorage* known = shared ? state.instance.realm.sortedStorage : nullptr) {
+        if (JSCellButterfly* sorted = known->tryFind(shared)) {
+            countEvent(vm, RuntimeCounterID::SortedStorageLaidUnderListsAgain);
+            if (sorted != shared)
+                array->setButterfly(vm, sorted->toButterfly());
+            return true;
+        }
+    }
 
     const WriteBarrier<Unknown>* elements = butterfly.contiguous().data();
     std::array<EncodedJSValue, maxLengthOfInsertionSortedArray> sorted;
@@ -291,8 +316,18 @@ static bool trySortStrings(JSGlobalObject* globalObject, JSArray* array)
         sorted[position] = JSValue::encode(element);
         impls[position] = impl;
     }
-    if (isSorted)
+    if (isSorted) {
+        if (shared)
+            SortedStorage::ensure(state).remember(shared, shared);
         return true;
+    }
+    if (JSCellButterfly* made = shared ? JSCellButterfly::tryCreate(vm, WTF::opaque(shared->structure()), length) : nullptr) {
+        for (unsigned i = 0; i < length; ++i)
+            made->setIndex(vm, i, JSValue::decode(sorted[i]));
+        array->setButterfly(vm, made->toButterfly());
+        SortedStorage::ensure(state).remember(shared, made);
+        return true;
+    }
     RELEASE_AND_RETURN(scope, array->appendMemcpy(globalObject, vm, 0, ArrayWithContiguous, std::span<const EncodedJSValue> { sorted }.first(length)));
 }
 
@@ -300,7 +335,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySortInDefaultOrder, EncodedJSValue, (I
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySortInDefaultOrder);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySortInDefaultOrder);
-    bool isSorted = trySortStrings(globalObject, array);
+    bool isSorted = trySortStrings(globalObject, *instance->state, array);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (isSorted)
         OPERATION_RETURN(scope, JSValue::encode(array));
@@ -519,6 +554,8 @@ static JSArray* tryInsertItemFast(JSGlobalObject* globalObject, VM& vm, JSArray*
     if (length >= butterfly->vectorLength())
         return nullptr;
     unsigned from = start.asInt32() < 0 ? static_cast<unsigned>(std::max<int64_t>(static_cast<int64_t>(length) + start.asInt32(), 0)) : std::min<unsigned>(start.asInt32(), length);
+    if (length - from > MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        return nullptr;
     WriteBarrier<Unknown>* elements = butterfly->contiguous().data();
     for (unsigned index = array->isPristine() ? length : from; index < length; ++index) {
         if (!elements[index]) [[unlikely]]

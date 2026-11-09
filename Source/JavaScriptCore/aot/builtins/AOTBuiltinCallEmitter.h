@@ -45,6 +45,7 @@ public:
     bool canShareRegExpLiteral(const Operation& literal) const;
     void generateGetBuiltinValue(const ValueContext&);
     void generateGetWatchedBuiltinValue(const ValueContext&);
+    void generateGetWatchedBuiltinValueOrAbsent(const ValueContext&);
     void generateInitializeBuiltin(const ValueContext&);
 
     Boxed callBuiltinFunction(const OperationContext&, BuiltinOverloadID, std::optional<Boxed> receiver, std::span<const Boxed> arguments);
@@ -66,6 +67,7 @@ private:
     Integer divide(Integer dividend, Range dividends, Integer divisor, Range divisors);
     Integer roundedQuotient(QuotientRounding, Integer dividend, Range dividends, Integer divisor, Range divisors);
     Integer remainderByConstant(Integer dividend, Range dividends, int64_t magnitudeOfDivisor);
+    void holdOperandsOfDivisionToToldRanges(const ValueContext&, Integer dividend, Range dividends, Integer divisor, Range divisors);
     struct LowHalfOfRemainder {
         LValue reciprocal { nullptr };
         LValue base { nullptr };

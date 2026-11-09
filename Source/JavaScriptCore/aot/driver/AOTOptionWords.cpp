@@ -145,19 +145,27 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::EmittersAloneTestEveryPosition:
     case Wire::TestingSwitch::QuestionsInFrontOfTurnsLaidOutAreTakenToHold:
     case Wire::TestingSwitch::EnoughTurnsAreTakenToBeLeftForTurnsLaidOut:
+    case Wire::TestingSwitch::ShapeTestsInTurnsLaidOutAreTakenToPass:
     case Wire::TestingSwitch::CallsMadeInFrontOfTurnsAreMadeAgainInThem:
     case Wire::TestingSwitch::EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands:
     case Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN:
+    case Wire::TestingSwitch::ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad:
+    case Wire::TestingSwitch::OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow:
     // A false bound on purpose, for the red control of that: isKnownToLieInsideList().
     case Wire::TestingSwitch::PositionsAreTakenToLieInside:
     case Wire::TestingSwitch::ReadsBehindTestsOfLengthsAreLeftOut:
     case Wire::TestingSwitch::VariablesThatBoundAreTakenToBeAsInFront:
+    case Wire::TestingSwitch::StorageAndLengthsAreTakenToBeAsInFront:
+    case Wire::TestingSwitch::VouchedPositionsAreTakenOneFurther:
+    case Wire::TestingSwitch::VouchedReadsAreTakenOneFurther:
     case Wire::TestingSwitch::GuardsAndFactsAreTakenToHold:
     case Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake:
     case Wire::TestingSwitch::NothingIsDoneToFreshLists:
     case Wire::TestingSwitch::FencesBehindLateStoresAreLeftOut:
     case Wire::TestingSwitch::DividendsOfReciprocalsAreTakenToFit32Bits:
     case Wire::TestingSwitch::BoundsOfCountersAreRoundedTheOtherWay:
+    case Wire::TestingSwitch::EqualIntegersAreTakenToBeLess:
+    case Wire::TestingSwitch::MarkedObjectsAreTakenToBearNoMark:
     case Wire::TestingSwitch::Int32sGoIntoListsInTheBoxesTheyCameIn:
     case Wire::TestingSwitch::SweepTurnsBranchThatDecidesIntoJump:
     case Wire::TestingSwitch::SweepLetsGoEdgeThatIsTaken:
@@ -176,8 +184,14 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::GiveLinkMore:
     case Wire::TestingSwitch::ShuffleChoices:
     case Wire::TestingSwitch::OrderBlocksAgain:
+    case Wire::TestingSwitch::SavesAtHeadsThatPatchesAloneReadAreLeftOut:
+    case Wire::TestingSwitch::SpillsThatStepsReadAreTakenToBeReadByNone:
     case Wire::TestingSwitch::WalksUnitsBy:
     case Wire::TestingSwitch::CutWalksOfLoopsShort:
+    case Wire::TestingSwitch::NobodyWakesSleepersOfSharedCalls:
+    case Wire::TestingSwitch::PortersTakeWhatIsOfTheMemberForTheUnknown:
+    case Wire::TestingSwitch::ReadsThroughFamiliesAreTiedMemberByMember:
+    case Wire::TestingSwitch::ReadsByKeyOffFilledRecordsAreListed:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -294,6 +308,8 @@ static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
         found.row = static_cast<uint16_t>(builtin);
     } else if (matchesName(kind, "MarkOfTurns"_s) && row == "all"_s)
         found.kind = Typed::KindOfEffectsRow::MarkOfTurns;
+    else if (matchesName(kind, "RowOfLoop"_s) && row == "all"_s)
+        found.kind = Typed::KindOfEffectsRow::RowOfLoop;
     else
         return std::nullopt;
     bool speaksOfResult = found.part == Typed::PartOfEffects::RangeOfResult || found.part == Typed::PartOfEffects::KindOfResult || found.part == Typed::PartOfEffects::ContentsOfResult;
@@ -341,6 +357,12 @@ static std::optional<String> applyTesting(Wire::CompileOptions& options, const O
 {
     return forEachListedName(word.key, value, [&](StringView written) -> std::optional<String> {
         auto [name, numbers] = splitOptionText(written, ':');
+        if (auto lie = findMember<Wire::TestingLie>(name)) {
+            if (numbers)
+                return makeString(name, " takes no number"_s);
+            addFlag(options.lies, *lie);
+            return std::nullopt;
+        }
         auto testingSwitch = findMember<Wire::TestingSwitch>(name);
         if (!testingSwitch || !engineHonorsTestingSwitch(*testingSwitch))
             return unknownNameSentence(word.noun, name);
@@ -386,6 +408,8 @@ static void listTestingSwitches(PrintStream& out)
         if (engineHonorsTestingSwitch(testingSwitch))
             listValue(out, nameOf(testingSwitch));
     }
+    for (Wire::TestingLie lie : allMembersOf<Wire::TestingLie>)
+        listValue(out, nameOf(lie));
 }
 
 static bool engineHonorsCheck(Wire::CheckSet check)

@@ -91,6 +91,8 @@ struct WalkOptions {
     bool showsPositionsTakenToLieInsideToVerifier { false };
     bool leavesOutReadsBehindTestsOfLengths { false };
     bool takesVariablesThatBoundToBeAsInFront { false };
+    bool takesStorageAndLengthsToBeAsInFront { false };
+    bool namesOperandsOfRowsByWhatTheirVariablesHoldNow { false };
     bool takesDividendsOfReciprocalsToFit32Bits { false };
     bool roundsBoundsOfCountersTheOtherWay { false };
     bool takesGuardsAndFactsToHold { false };
@@ -99,6 +101,8 @@ struct WalkOptions {
     bool takesNumbersStoredIntoListsOfDoublesToBeNoNaN { false };
     bool takesOneRowToSpeakForAll { false };
     bool takesNothingToBeDoneToFreshLists { false };
+    bool typedTurnsPassStoresIntoListsOver { false };
+    bool takesBoundFunctionsToBindOneMore { false };
     bool sweepTurnsBranchThatDecidesIntoJump { false };
     bool sweepLetsGoEdgeThatIsTaken { false };
     bool handlerEdgesTakeWhatStandsIn { false };
@@ -118,6 +122,7 @@ struct WalkOptions {
     bool shufflesExpectedTypes { false };
     bool failsGuesses { false };
     bool turnsForgetWhatWasDone { false };
+    bool notesRowsOfLoopsThatSayLess { false };
     bool netOfEffectsWatchesTurns { false };
     bool shufflesChoices { false };
     bool judgesInt32Promises { true };
@@ -126,6 +131,12 @@ struct WalkOptions {
     uint32_t periodOfUnitsWalkedThatWay { 0 };
     uint32_t periodOfHearingsThatCutWalks { 0 };
     uint32_t phaseOfHearingsThatCutWalks { 0 };
+    bool takesValuesThatComeLaterForOthersThanWhatIsMadeHere { false };
+    bool takesReceiversOfMethodsOfListsToBeMadeHere { false };
+    bool takesElementsBesideSumsToComeOffListsOfNumbers { false };
+    bool takesIterablesOfPatternsToStayAsMade { false };
+    bool passesGuardOfNameOverAtCallsThroughSuper { false };
+    bool passesGuardOfLinkOverAtCallsThroughSuper { false };
     PrintStream* explainsClosedAccessesTo { nullptr };
 };
 

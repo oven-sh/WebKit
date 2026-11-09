@@ -61,6 +61,13 @@ PureDoubleBits PureDoubleBits::branchIfNotFinite(StubAssembler& jit, GPRReg bits
     return PureDoubleBits(bits);
 }
 
+PureDoubleBits PureDoubleBits::branchIfNaN(StubAssembler& jit, GPRReg bits, GPRReg scratch, GPRReg holdsInfinityDoubled, Jump& isNaN)
+{
+    jit.lshift64(bits, TrustedImm32(1), scratch);
+    isNaN = jit.branch64(CCallHelpers::Above, scratch, holdsInfinityDoubled);
+    return PureDoubleBits(bits);
+}
+
 static void subtractNumberTag(StubAssembler& jit, GPRReg bitsAndResult)
 {
     jit.withNumberTag([&](auto tag) {
@@ -380,6 +387,13 @@ Jump branchIfWatchpointSetIsNotWatched(StubAssembler& jit, Address set, GPRReg s
     jit.or32(TrustedImm32(InlineWatchpointSet::IsThinFlag), scratch);
     isThin.link(&jit);
     return jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(InlineWatchpointSet::encodeState(IsWatched))));
+}
+
+void branchUnlessAccessorPair(CCallHelpers& jit, GPRReg word, JumpList& isNoPair)
+{
+    isNoPair.append(jit.branchTest64(CCallHelpers::Zero, word));
+    isNoPair.append(jit.branchIfNotCell(word));
+    isNoPair.append(jit.branch8(CCallHelpers::NotEqual, Address(word, JSCell::typeInfoTypeOffset()), TrustedImm32(GetterSetterType)));
 }
 
 Jump branchIfNotFunctionType(CCallHelpers& jit, GPRReg cell, GPRReg scratch)

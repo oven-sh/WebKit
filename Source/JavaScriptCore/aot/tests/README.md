@@ -176,11 +176,12 @@ TYPES: f<n>
 <P>-NOT: p
 <P>-LABEL: p
 <P>-COUNT-<n>: p
-DIAGNOSTIC: <UserDiagnosticKind or InternalErrorKind> [ <count> ]
+DIAGNOSTIC: <UserDiagnosticKind or InternalErrorKind> [ f<n> ] [ <count> ]
 STATISTIC: <StatisticID> ( = | >= | <= ) <n>
 LIBRARY: own
 TODO: <owner>: <what is lost>
 HANGS-ON-ORDER: <owner>: <what differs>
+AS-USERS-BUILD: <why>
 REPEAT: <name> = ( <first>..<last> | <word> { <word> } ) { ; <name> = .. }
 END REPEAT
 PROGRAM-OF: <file>
@@ -242,6 +243,14 @@ the image lacks, as it refuses the host's (`answers/text-of-an-engine-built-in-t
 **`JSC-OPTIONS`** sets JSC options in the process that runs the commands, and only while the file runs. The shell of `run-in-shell` is
 another process and takes its own options.
 
+**`AS-USERS-BUILD`** leaves out `check=VerifyEachStage`, which the commands of every other file run under: they run with the checks of a
+build of a user alone. For the red control of a check that runs in every build: under the runner's own check the failure would be found
+whether or not that check ran. The line says why. The file's own `OPTIONS: check=..` and `JSC-OPTIONS: --verifyAOTMachineCode=..` are errors beside it.
+Where the checks are on from outside (a `check=` word of the command line, `verifyAOTMachineCode` of the process, a `testaot` with assertions or
+the sanitizer) the file would show nothing: it is not run, `NOT RUN, not as users build here: <what turns them on>: AS-USERS-BUILD: <why>` is printed,
+and it counts among the passed, as a file does whose `REQUIRES` leaves out every run. The files that bear the line are listed in
+`test/aot/the-tests-that-run-as-users-build-are-listed.test.ts`.
+
 **`TYPES`** names the function whose parameters give types their short names. `t<k>`, in an argument, is the declared type
 of parameter k of that function. Without the line it is `f0`.
 
@@ -260,7 +269,8 @@ With or without an architecture, it takes these words:
   parameter) is no pin of a build under a testing word, which may ask more.
 
 **`DIAGNOSTIC`.** A run must report exactly the diagnostic kinds listed. Kinds are compared by name, never by message, and warnings and notes
-count too. A kind listed without a count must be reported at least once. With no `DIAGNOSTIC` line, the run must report no
+count too. A kind listed without a count must be reported at least once. With `f<n>` only what is reported of that function is counted:
+a diagnostic of the kind in another function does not satisfy the line. With no `DIAGNOSTIC` line, the run must report no
 diagnostic. A program that does not parse or verify is not a failure by itself: the command does not run, and the `DIAGNOSTIC`
 lines alone decide. `# RUN: verify` with `# DIAGNOSTIC: <InternalErrorKind>` is how to test the verifier.
 
@@ -696,6 +706,8 @@ those words of operand 0 are others behind it. This is a bug in Bun.`
 - `testing=RowSaysLess:<Operation|RuntimeOperation|Stub|Builtin|Callee>/<row>/<RunsOtherCode|Throws|ThrowsByRule|Collects|a heap|WhatIsSeen>` lays one row false, for the red controls (`WhatIsSeen`: every write that anybody sees):
   `answers/false-rows-of-effects-are-stopped-by-name.ir`. `RowSaysLess:Builtin/<row>/RangeOfResult` is no part of the effects: the row writes the least integer of its range alone:
   Bun's `test/aot/from-source/walk/typed-operations/a-row-that-writes-too-narrow-a-range-changes-no-answer-of-a-call.ir` and `a-number-beyond-what-the-door-of-a-call-asks-stops-by-name.ir` beside it.
+  `RowSaysLess:RowOfLoop/all/WhatIsSeen`: every row that is noted as the one that a kept walk of a loop was walked under says that the loop does nothing: the red control of `check=LastWalksOfLoopsAlone`:
+  Bun's `test/aot/from-source/walk/loop-invariants/a-row-noted-falsely-for-the-kept-walk-of-a-loop-stops-the-build-by-name.ir`.
   `RowSaysLess:Callee/f<n>/TestsOfGuard`: the emitter lets every test of the `ParameterGuard` of the function pass; the walk, the judge of calls and `Validate` see a right guard.
   `RowSaysLess:Callee/f<n>/ShapesOfField`: where the emitter plans, in that function, how far a field lies by the shape of the cell, the class whose shapes reach highest is left out; `/MiddleShapesOfField`: the one in the middle: Bun's `test/aot/from-source/machine/a-table-of-distances-by-shape-has-a-bound.ir`.
   `/KindOfResult`: the row writes null alone, for the record's type and for Link. `/ContentsOfResult`: what its result holds, in its slots and under the names that the row writes, is null alone: for Link, which alone takes that for proven (of a holder's own type the proven level reads no contents):

@@ -49,6 +49,8 @@ namespace AOT {
 
 class Image;
 struct CaseConversions;
+struct QuotedTexts;
+struct SortedStorage;
 struct ImageFunction;
 struct ImageRegExp;
 struct ImageStringRecord;
@@ -238,6 +240,8 @@ struct RealmWords {
     const void* keysOfPairs;
     uint64_t keyOfPairMask;
     CaseConversions* caseConversions;
+    QuotedTexts* quotedTexts;
+    SortedStorage* sortedStorage;
     MicrotaskQueue* microtaskQueue;
     JSCell* functionOfEngineOverCompiledFunction;
     JSCell* compiledFunctionUnderFunctionOfEngine;

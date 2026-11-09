@@ -1236,9 +1236,50 @@ static void testInstructionsInFrontOfMethodOfTableAtSite()
 #endif
 }
 
+template<uint32_t budget>
+static void testMethodOfNextClassAtSite()
+{
+    Collections collections(StubOptions { .hasOneInstance = true, .targetFeatures = CPUFeatureSet::buildTarget() });
+    std::array<uint16_t, 1> nameOfSite { 0 };
+    collections.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data());
+    FakeTable table(collections.heap, 4, Width::Narrow, Width::Wide);
+    Vector<StringKey> keys = appendStringKeys(collections, table, 3, false);
+    auto createAsMade = [&](JSType type, unsigned structureFlags, uint64_t storage) {
+        uint64_t owner = collections.createOwner(type, storage);
+        std::bit_cast<FakeCell*>(static_cast<uintptr_t>(owner))->flags = static_cast<uint8_t>(structureFlags | IsPristine);
+        return owner;
+    };
+    uint64_t set = createAsMade(JSSetType, JSSet::StructureFlags, table.address());
+    uint64_t map = createAsMade(JSMapType, JSMap::StructureFlags, table.address());
+    uint64_t emptySet = createAsMade(JSSetType, JSSet::StructureFlags, 0);
+    for (BoxedCallForm door : { BoxedCallForm::MapHas, BoxedCallForm::SetHas }) {
+        for (uint64_t owner : { set, map, emptySet }) {
+            if (door == BoxedCallForm::SetHas && owner == map)
+                continue;
+            for (const StringKey& key : keys) {
+                StubRun run = collections.runner.runCall(callMethodOfBuiltinClassAtSite(door, 1), 0, owner, { key.cell }, 0);
+                AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsBoolean(owner != emptySet)));
+            }
+        }
+    }
+    StubRun got = collections.runner.runCall(callMethodOfBuiltinClassAtSite(BoxedCallForm::MapGet, 1), 0, map, { keys[1].cell }, 0);
+    AOT_TEST_CHECK(!got.calledOperation && got.result == keys[1].value);
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    collections.runner.setCountsInstructions(true);
+    StubRun alone = collections.runner.run(setHas(KeyComparison::AnyValue), { set, keys[0].cell });
+    StubRun throughDoor = collections.runner.runCall(callMethodOfBuiltinClassAtSite(BoxedCallForm::MapHas, 1), 0, set, { keys[0].cell }, 0);
+    AOT_TEST_CHECK(alone.instructionsInStubs && throughDoor.instructionsInStubs);
+    uint32_t inFront = *throughDoor.instructionsInStubs - *alone.instructionsInStubs;
+    if (inFront != budget)
+        dataLogLn("in front of the has of a set called at a site: ", inFront, " instructions, the budget is ", budget);
+    AOT_TEST_CHECK(inFront <= budget);
+#endif
+}
+
 std::span<const NativeTest> stubCollectionTests()
 {
     static constexpr NativeTest tests[] = {
+        { "stubs/collections/the-has-of-a-set-called-at-a-site-through-the-door-of-maps"_s, ImageTests::whenExecutable<testMethodOfNextClassAtSite<8>> },
         { "stubs/collections/instructions-in-front-of-the-get-of-a-map-called-at-a-site"_s, ImageTests::whenExecutable<testInstructionsInFrontOfMethodOfTableAtSite<6>> },
         { "stubs/collections/string-keys"_s, ImageTests::whenExecutable<testStringKeys> },
         { "stubs/collections/strings-beside-other-keys"_s, ImageTests::whenExecutable<testStringsBesideOtherKeys> },

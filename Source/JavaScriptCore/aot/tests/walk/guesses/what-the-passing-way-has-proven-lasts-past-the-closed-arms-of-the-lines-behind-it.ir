@@ -25,7 +25,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v8 = PropGet v7 key="parse"
     v9 = String string="{}"
     v10 = Call v8, v7, v9 calleeKey="parse"
-    v11 = NewArray v6, v10, v6 contents=undefined|null|L0
+    v11 = NewArray v6, v10, v6 contents=undefined|null|L0 holes=[3]
     v12 = Integer
     Jump -> next b1(v12)
   b1(v13: number):

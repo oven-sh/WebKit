@@ -12,6 +12,7 @@ v(StackStringBuilderAppendString, CalledByCode, (), SlowPathRecurs, 0, 0, AllISA
 v(DistinctStringsAreEqual, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringsAreEqual)
 v(CompareStrings, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), CompareStrings)
 v(FindCharacter8, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), FindCharacter8)
+v(FindText8, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), FindText8)
 
 v(ConcatenateKeyOfPair, CalledByCode, (Key, Name), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ConcatenateKeyOfPair)
 v(IntegerToString, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), IntegerToString)

@@ -666,10 +666,12 @@ struct SiteCacheState {
     uint16_t missesLeft;
 };
 
-enum class SiteUse : uint8_t { Read, Call, AbsenceAmongExtraProperties };
+enum class SiteUse : uint8_t { Read, Call, AbsenceAmongExtraProperties, ReadUnderNameOfField };
+constexpr bool isRead(SiteUse use) { return use == SiteUse::Read || use == SiteUse::ReadUnderNameOfField; }
 static constexpr uint32_t tablesAreFiledForSiteWithoutAnswers = 1u << 8;
 static constexpr uint32_t stubOfSiteFollowsFurtherAnswers = 1u << 9;
 static constexpr uint32_t visitorHitFurtherAnswer = 1u << 10;
+static constexpr uint32_t stubJumpsToArmOfAnswer = 1u << 11;
 static constexpr uint16_t indexOfSiteAnswersThatHoldNothing = 2;
 
 struct alignas(16) SiteAnswers {
@@ -690,10 +692,12 @@ struct alignas(16) SiteAnswers {
         OwnInt32InCell,
         OwnFieldInExtension,
         Nothing = 15,
+        ExtraGetterInCellAtCall = OwnValueInCell,
+        ExtraGetterInStorageAtCall = LengthOfTypedArray,
     };
     static constexpr uint32_t formMask = 15;
     static constexpr unsigned indexShiftInOperandOfExtraValue = 8;
-    static constexpr Form mostCommonForm(SiteUse use) { return use == SiteUse::Read ? Form::OwnValueInStorage : use == SiteUse::Call ? Form::ValueInStorageOfHolder : Form::Nothing; }
+    static constexpr Form mostCommonForm(SiteUse use) { return use == SiteUse::Read ? Form::OwnValueInStorage : use == SiteUse::ReadUnderNameOfField ? Form::OwnFieldInCell : use == SiteUse::Call ? Form::ValueInStorageOfHolder : Form::Nothing; }
     static constexpr uint32_t bitsOf(SiteUse use, Form form) { return static_cast<uint32_t>(form) ^ static_cast<uint32_t>(mostCommonForm(use)); }
     static constexpr Form formOf(SiteUse use, uint32_t key) { return static_cast<Form>((key & formMask) ^ static_cast<uint32_t>(mostCommonForm(use))); }
 
@@ -786,12 +790,12 @@ struct alignas(16) SiteAnswers {
         return Answer { bits | bitsOf(use, form), operand };
     }
     static constexpr SiteAnswers forPlacesWithout() { return { { keyOfNoShape, 0 }, { 0, 0 } }; }
-    static constexpr Answer withoutKey(SiteUse use, bool isFirst, uint32_t operand = 0) { return { use == SiteUse::Read && isFirst ? keyOfNoShape : 0, operand }; }
+    static constexpr Answer withoutKey(SiteUse use, bool isFirst, uint32_t operand = 0) { return { isRead(use) && isFirst ? keyOfNoShape : 0, operand }; }
     bool holdsShape() const { return first.isByShape() && first.key != keyOfNoShape; }
     bool isEmpty() const { return (!first.key || first.key == keyOfNoShape) && !second.key; }
 
-    Answer& newestByStructure(SiteUse use) { return use == SiteUse::Read ? second : first; }
-    Answer& besideNewestByStructure(SiteUse use) { return use == SiteUse::Read ? first : second; }
+    Answer& newestByStructure(SiteUse use) { return isRead(use) ? second : first; }
+    Answer& besideNewestByStructure(SiteUse use) { return isRead(use) ? first : second; }
 
     Answer first;
     Answer second;
@@ -847,7 +851,7 @@ static_assert(sizeof(WideSiteAnswers) == 64 && !OBJECT_OFFSETOF(WideSiteAnswers,
 static_assert(SiteAnswers::keyOfNoShape == (compiledObjectShapeBit | SiteAnswers::bitsOf(SiteUse::Call, SiteAnswers::Form::Nothing)) && !SiteAnswers::looksLikeKeyByShape(SiteAnswers::keyOfNoShape));
 static_assert(SiteAnswers::looksLikeKeyByShape(shapeWordOf(1)) && SiteAnswers::looksLikeKeyByShape(shapeWordOf(Number24::max)) && SiteAnswers::looksLikeKeyByShape(shapeWordOf(1) ^ SiteAnswers::bitTurnedForFieldInExtension) && SiteAnswers::looksLikeKeyByShape(shapeWordOf(Number24::max) ^ SiteAnswers::bitTurnedForEncodedByteInCell));
 static_assert(!SiteAnswers::looksLikeKeyByShape(0x80000040u) && !SiteAnswers::looksLikeKeyByShape(0xc0000040u) && !SiteAnswers::looksLikeKeyByShape(0xf8000040u) && !SiteAnswers::looksLikeKeyByShape(0xfe000040u) && SiteAnswers::looksLikeKeyByShape(0xff000040u) && SiteAnswers::looksLikeKeyByShape(0xbf000040u));
-static_assert(!SiteAnswers::bitsOf(SiteUse::Read, SiteAnswers::Form::OwnValueInStorage) && !SiteAnswers::bitsOf(SiteUse::Call, SiteAnswers::Form::ValueInStorageOfHolder));
+static_assert(!SiteAnswers::bitsOf(SiteUse::Read, SiteAnswers::Form::OwnValueInStorage) && !SiteAnswers::bitsOf(SiteUse::ReadUnderNameOfField, SiteAnswers::Form::OwnFieldInCell) && !SiteAnswers::bitsOf(SiteUse::Call, SiteAnswers::Form::ValueInStorageOfHolder));
 static_assert(SiteAnswers::formOf(SiteUse::Call, SiteAnswers::bitsOf(SiteUse::Call, SiteAnswers::Form::OwnValueInCell)) == SiteAnswers::Form::OwnValueInCell);
 
 struct CustomAccessorRecord {

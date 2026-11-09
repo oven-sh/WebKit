@@ -214,10 +214,30 @@ public:
         uint32_t endOfSteps { 0 };
     };
     std::span<const HeadOfFramedPart> headsOfFramedPart() const { return m_headsOfFramedPart.span(); }
+    std::span<HeadOfFramedPart> headsOfFramedPartForTesting() { return m_headsOfFramedPart.span(); }
     bool hasFramedPart() const { return !m_headsOfFramedPart.isEmpty(); }
+    bool recordsWhatCheckersRead() const { return m_recordsWhatCheckersRead; }
+    bool leavesOutSavesAtHeads() const { return m_leavesOutSavesAtHeads; }
     bool isInFramedPart(const Block* block) const { return m_isInFramedPart.get(block->index()); }
     const HeadOfFramedPart& headOfFramedPartAbove(const Block* block) const { return m_headsOfFramedPart[m_headAboveBlock[block->index()]]; }
     bool isHeadOfFramedPart(const Block* block) const { return isInFramedPart(block) && headOfFramedPartAbove(block).block == block; }
+    struct FurtherHeadOfFramedPart {
+        uint32_t head { 0 };
+        uint32_t rest { UINT32_MAX };
+    };
+    uint32_t furtherHeadsOfFramedPartAbove(const Block* block) const { return m_setOfHeadsAboveBlock.isEmpty() ? UINT32_MAX : m_setOfHeadsAboveBlock[block->index()]; }
+    std::span<const FurtherHeadOfFramedPart> furtherHeadsOfFramedPart() const { return m_setsOfHeads.span(); }
+    template<typename Functor>
+    bool everyHeadOfFramedPartAbove(const Block* block, const Functor& functor) const
+    {
+        if (!functor(headOfFramedPartAbove(block)))
+            return false;
+        for (uint32_t further = furtherHeadsOfFramedPartAbove(block); further != UINT32_MAX; further = m_setsOfHeads[further].rest) {
+            if (!functor(m_headsOfFramedPart[m_setsOfHeads[further].head]))
+                return false;
+        }
+        return true;
+    }
     const Block* onlyHeadOfFramedPart() const { return m_headsOfFramedPart.size() == 1 ? m_headsOfFramedPart[0].block : nullptr; }
     bool needsFrameAheadOfFramedPart() const { return m_needsFrameAheadOfFramedPart; }
     bool writesMemoryAheadOfFramedPart() const { return m_writesMemoryAheadOfFramedPart; }
@@ -244,6 +264,8 @@ private:
     uint64_t m_numberOfBlocksReachedBySearchesForWays { 0 };
     bool m_needsFrameOutsideRareRegions { false };
     bool m_needsFrameAheadOfFramedPart { false };
+    bool m_recordsWhatCheckersRead { false };
+    bool m_leavesOutSavesAtHeads { false };
     bool m_writesMemoryAheadOfFramedPart { false };
     bool m_holdsPatchThatFollowsFrameSetup { false };
     bool m_holdsPatchThatCountsOnStackCheck { false };
@@ -253,6 +275,8 @@ private:
     ArenaVector<HeadOfFramedPart> m_headsOfFramedPart;
     BitSpan m_isInFramedPart;
     ArenaVector<uint32_t> m_headAboveBlock;
+    ArenaVector<uint32_t> m_setOfHeadsAboveBlock;
+    ArenaVector<FurtherHeadOfFramedPart> m_setsOfHeads;
 };
 
 Allocation* allocateRegisters(Procedure&);

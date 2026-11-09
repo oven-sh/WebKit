@@ -76,6 +76,8 @@ struct LinkContext {
     macro(JSValue, exportsWhenVariableAndModuleObjectAgreed) \
     macro(Structure*, structureOfModuleObjectLastLookedAt) \
     macro(JSObject*, objectMadeByRequire) \
+    macro(JSObject*, standInForModuleObject) \
+    macro(JSObject*, moduleObjectOfRunThatThrew) \
     macro(JSObject*, objectMadeByRequireBeforeMockInPlace) \
     macro(JSValue, exportsGivenToObjectMadeByRequire) \
     macro(JSObject*, firstRequirerOutsideImage) \
@@ -90,6 +92,7 @@ struct LinkContext {
     macro(JSObject*, variablesBeforeMock) \
     macro(JSValue, valueBeforeMock) \
     macro(JSValue, exportsBehindEntryOfProgram) \
+    macro(JSValue, exportsOfRunUnderKeyOfOriginal) \
     macro(JSObject*, moduleObjectBehindEntryOfProgram) \
     macro(JSObject*, mockInPlace) \
     macro(JSObject*, recordBeforeMockInPlace) \
@@ -106,6 +109,7 @@ struct LinkContext {
     macro(JSValue, handedOnInPlaceOfNamespace) \
     macro(JSObject*, handedOnByMocks) \
     macro(JSValue, errorKeptByLoader) \
+    macro(JSValue, errorOfImportThatFailedUnderMock) \
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
     macro(JSObject*, deferredExportsSource) \
@@ -183,17 +187,48 @@ public:
     void willMock(ModuleID);
     void goModuleByModuleFromNowOn();
     void didEndMock(ModuleID);
+    void didFinishTestsOfFile() { m_areTestsOfFileDone = true; }
     void didBeginTestFile()
     {
         m_filesThatRanBeforeTestFile = filesThatHaveRun();
+        m_dataFilesThatRanBeforeTestFile = dataFilesThatHaveRun();
+        m_filesWhoseKeyIsOfThisTestFile.clearAll();
+        m_filesWhoseKeyMockHasEmptied.clearAll();
         if (!std::exchange(m_hasBegunTestFile, true))
             m_filesThatRanInPreload = m_filesThatRanBeforeTestFile;
+        for (BitVector* letGo : { &m_modulesThatLoaderLetGo, &m_importersOfMockThatEnded }) {
+            letGo->exclude(m_loadedInPreload);
+            letGo->exclude(m_filesThatRanInPreload);
+        }
         m_rootsOfImportsBehindFactories.clear();
+        m_failuresOfFactories.clear();
+        m_loadsThatFailedForWantOfMock.clear();
+        m_areTestsOfFileDone = false;
         m_rootsOfImportsThatHaveGoneOn.clear();
+        m_waitsThatRequiresLeft.clear();
+        m_filesThatRanBesideMockThatOnlyWaited.clearAll();
+        m_filesWhoseRequireThrewBesideFactories.clearAll();
+        m_rootsOfImportsThatFailedUnderMocks.clearAll();
+        m_mocksWhoseEntryProgramDeleted.clearAll();
+        m_mocksOfPreloadThatCameBackBeforeAnyImport.clearAll();
         m_modulesWithNoNamesOwedBelow.clearAll();
         forgetEndedMocksOfEarlierTestFiles();
+        m_linksOfLoadsThatMayFail.clear();
     }
     BitVector filesThatHaveRun();
+    BitVector dataFilesThatHaveRun();
+    bool wasLoadedAheadOfThisTestFile(ModuleID);
+    void didLeaveLoaderInThisTestFile(ModuleID module) { m_dataFilesThatRanBeforeTestFile.clear(module.index()); }
+    void noteThatKeyIsOfThisTestFile(ModuleID module) { m_filesWhoseKeyIsOfThisTestFile.set(module.index()); }
+    bool isKeyOfThisTestFile(ModuleID module) const { return m_filesWhoseKeyIsOfThisTestFile.get(module.index()); }
+    void noteThatMockHasEmptiedKey(ModuleID file) { m_filesWhoseKeyMockHasEmptied.set(file.index()); }
+    void noteThatKeyIsFilledAgain(ModuleID file) { m_filesWhoseKeyMockHasEmptied.clear(file.index()); }
+    void noteAskForKey(ModuleID fileOrFace, ModuleID asker, LoadByName way)
+    {
+        if (ModuleID file = fileOf(fileOrFace); m_filesWhoseKeyMockHasEmptied.get(file.index()) && !isGivenOriginalBesideMock(file, asker, way))
+            noteThatKeyIsOfThisTestFile(file);
+    }
+    bool isGivenOriginalBesideMock(ModuleID file, ModuleID asker, LoadByName);
     void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
     bool isMocked(ModuleID module) const { return m_mocks && m_mocks->modules.get(module.index()); }
     bool hasMockThatWaitsOrRuns(ModuleID file) const { return m_modulesWithMockThatWaited.get(file.index()) && !m_modulesWithMockInPlace.get(file.index()); }
@@ -209,6 +244,7 @@ public:
     struct AnswersKept {
         uint32_t timesMocksInPlaceWereWritten;
         bool isShut { false };
+        bool isPassedBy { false };
         UncheckedKeyHashMap<std::pair<AbstractModuleRecord*, RefPtr<UniquedStringImpl>>, AbstractModuleRecord::Resolution> resolutions { };
         UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> isLeftOut { };
         BitVector namesBehindStarsAreInTables { };
@@ -219,12 +255,12 @@ public:
             return nullptr;
         if (m_answersKept->timesMocksInPlaceWereWritten != m_numberOfMocksInPlace.timesWritten()) [[unlikely]]
             dropAnswersKept();
-        return m_answersKept->isShut ? nullptr : m_answersKept;
+        return m_answersKept->isShut || m_answersKept->isPassedBy ? nullptr : m_answersKept;
     }
     void dropAnswersKept(bool shuts = true) const
     {
         if (m_answersKept) [[unlikely]]
-            *m_answersKept = { m_numberOfMocksInPlace.timesWritten(), shuts || m_answersKept->isShut };
+            *m_answersKept = { m_numberOfMocksInPlace.timesWritten(), shuts || m_answersKept->isShut, m_answersKept->isPassedBy };
     }
     class KeepsAnswers {
     public:
@@ -238,6 +274,25 @@ public:
         AnswersKept m_answers;
         SetForScope<AnswersKept*> m_scope;
     };
+    class AsksAnew {
+    public:
+        explicit AsksAnew(Modules& modules)
+            : m_scope(modules.m_answersKept ? modules.m_answersKept->isPassedBy : m_nothingIsKept, true)
+        {
+        }
+
+    private:
+        bool m_nothingIsKept { false };
+        SetForScope<bool> m_scope;
+    };
+    Vector<std::pair<ModuleID, ModuleRecord*>, 2>& originalsBeingAsked() { return m_originalsBeingAsked; }
+    struct OriginalAnswered {
+        unsigned depth;
+        ModuleID module;
+        UniquedStringImpl* name;
+        bool isShown;
+    };
+    Vector<OriginalAnswered, 4>& originalsAnswered() { return m_originalsAnswered; }
     bool someMockIsSeen() const { return m_numberOfMocksInPlace || !m_endedMocks.isEmpty(); }
     bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
     bool setMockInPlaceOfLibraryModule(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
@@ -246,21 +301,30 @@ public:
     ModuleRecord* ensureRecordSetAside(ModuleID);
     void forgetAnswersThatName(ModuleRecord*);
     JSPromise* evaluationOfRecordSetAside(ModuleID);
-    bool bodySetAsideWaitsForItsMock(ModuleID);
+    bool bodySetAsideWaitsForItsMock(ModuleID, std::optional<ModuleID> loadThatCalledFactory);
+    bool bodySetAsideCallsImportNow(ModuleID);
+    JSPromise* evaluationOnceBodySetAsideHasGoneOn(ModuleID, std::optional<ModuleID> loadThatCalledFactory);
+    void decideWhetherBodySetAsideWaits(JSArray* asked);
+    void noteImportThatBodySetAsideMayAwait(ModuleID imported, std::optional<int64_t> orderOfCaller, JSPromise*);
+    void letGoOfImportsThatHaveSettled();
     struct ImportCalledByBodySetAside {
-        ModuleID caller;
         ModuleID imported;
+        std::optional<int64_t> orderOfCaller;
         Strong<JSPromise> promise;
     };
     Vector<ImportCalledByBodySetAside, 2> m_importsCalledByBodiesSetAside;
+    size_t m_sizeAtWhichSettledImportsAreLetGo { 0 };
     std::optional<std::pair<ModuleID, ModuleID>> m_importThatBodySetAsideCallsNow;
     bool willLeaveModuleAlone(ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt, bool evenIfItsBodyThrew);
     bool isGraphRunning() const { return m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_instance.vm->synchronousModuleQueue(); }
-    bool hasLinkedImporterYetToRun(ModuleID, std::optional<ModuleID> askingAsHostNamesIt) const;
+    bool hasLinkedImporterYetToRun(ModuleID, std::optional<ModuleID> askingAsHostNamesIt, bool onlyOfProject = false) const;
     bool keepsStatusOfRunBeforeLoadThatRuns(ModuleID) const;
     BitVector modulesThatWerePassedWithoutStatus() const;
     uint32_t momentOfFirstMockInTestFile(ModuleID);
     void noteEndOfLoadedMock(ModuleID);
+    void noteEndOfMockWhoseFactoryWasNeverCalled(ModuleID);
+    void noteEndOfMockThatOnlyWaited(ModuleID);
+    bool takeWhetherFactoryWasCalled(ModuleID module) { return m_modulesWhoseFactoryWasCalled.clear(module.index()); }
     void countMocksAnewBehindLoad(ModuleID);
     bool isLeftAloneByMock(ModuleID fileOrFace) const { return !m_mocksOverModulesThatHaveRun.isEmpty() && m_mocksOverModulesThatHaveRun.contains(m_table.fileBehindFace(fileOrFace).value_or(fileOrFace)); }
     void didSetAsideModuleLeftAlone(ModuleID module, bool whoeverLoadedIt)
@@ -279,21 +343,29 @@ public:
     bool keepsMockThatStandsWhileAnotherWaits(ModuleID mocked, ModuleID importer) const;
     LoadedUnderStandingMock loadedUnderStandingMockThatImportersKeep(ModuleID fileOrModule);
     bool keepsEndedMockWhereItIsAskedForAgain(ModuleID fileOrModule, ModuleID importer) const;
+    bool seesEndedMockLaidInPreload(ModuleID fileOrModule, ModuleID importer) const;
+    bool isImportedByModuleLinkedInThisTestFile(ModuleID fileOrModule, ModuleID module) const;
     bool bringBackMockKeptByImportersOfThisTestFile(ModuleID fileOrModule);
-    JSObject* mockSeenBy(ModuleID mocked, ModuleID importer) const;
+    JSObject* mockSeenBy(ModuleID mocked, ModuleID importer, ModuleID reader = { }) const;
+    bool seesMockThatKeepsNamesOfOriginal(ModuleID mocked, ModuleID importer, ModuleID reader) const;
     JSObject* endedMockSeenBy(ModuleID mocked, ModuleID importer) const;
     bool keepsEndedMockOf(ModuleID) const;
     bool keepsSomeEndedMock() const { return !m_endedMocks.isEmpty(); }
+    bool isNamedByEndedMockBelow(ModuleID, const Identifier&);
     bool hasEndedMockWhereNamesAreCollected(ModuleID module) const { return m_collectionOfNamesBehindStars && keepsEndedMockOf(module); }
     std::optional<bool> endedMockHasNameAsSeenBy(ModuleID mocked, ModuleID holder, const Identifier&);
     std::optional<bool> isLeftOutInViewOf(ModuleID importer, ModuleID mocked, unsigned exportIndex) const;
-    JSObject* namespaceSeenBy(ModuleID module, ModuleID importer);
+    JSObject* namespaceSeenBy(ModuleID module, ModuleID importer, ModuleID reader = { });
     std::optional<unsigned> indexOfEndedMockSeenAt(ModuleID fileOrModule, uint32_t moment) const;
-    std::optional<unsigned> indexOfEndedMockSeenBy(ModuleID fileOrModule, ModuleID importer) const;
+    std::optional<unsigned> indexOfEndedMockSeenBy(ModuleID fileOrModule, ModuleID importer, ModuleID reader = { }) const;
+    uint32_t momentLinkedAsOf(ModuleID importer, ModuleID reader) const;
     JSObject* endedMock(ModuleID fileOrModule, std::optional<unsigned> index) const;
     uint32_t momentLinked(ModuleID importer) const;
     void forgetEndedMocksOfEarlierTestFiles();
     void noteLoadedAnew(ModuleID, ModuleID root);
+    void forgetLinksInRefusedLoadsThatCameTo(ModuleID mocked);
+    void bringBackLinksOfLoadThatFailed(ModuleID root);
+    void letLinksOfLoadStand(ModuleID root);
     void linkAnewWhoeverReadsEndedMockBelow(ModuleID root);
     JSValue handedOnInPlaceOfNamespace(const ModuleExportData&) const;
     bool tryReplaceNamespaceHandedOn(ModuleID handedOn, JSValue);
@@ -328,20 +400,40 @@ public:
     void letGoOfMockThatEndedSlow(ModuleID);
     bool letGoOfMockOfLibraryModuleAtNextLoad(ModuleID);
     void letGoOfMocksThatEnded();
+    void letGoOfMocksThatEndedAtAndBelow(ModuleID root);
+    bool someMockThatEndedWaits() const { return !m_modulesWithMockToLetGo.isEmpty(); }
     bool hasMockThatEnded(ModuleID module) const { return m_modulesWithMockToLetGo.get(module.index()); }
     bool loadComesToModuleWhoseMockEnded(ModuleID) const;
     bool hasMockOfLibraryModule(ModuleID module) const { return m_libraryModulesWithMock.get(module.index()); }
     bool wasLoadedInThisTestFile(ModuleID) const;
     enum class ImportersLetGo : bool { All, AllButThoseThatThisTestFileLinkedToModule };
     void letGoOfImportersOf(ModuleID mocked, ImportersLetGo);
-    void letGoOfModuleLoadedAsMock(ModuleID module)
+    void evictFilesRequiredWithOriginalWhileFactoryRan(ModuleID mocked)
     {
-        if (auto mock = m_mocksOverModulesThatHaveRun.find(module); mock != m_mocksOverModulesThatHaveRun.end() && (mock->value.didFileRunBesideMock || mock->value.wasLoadedInThisTestFile))
+        m_filesRequiredWithOriginalWhileFactoryRan.removeAllMatching([&](const auto& pair) {
+            if (pair.second != mocked)
+                return false;
+            if (wouldBeEvicted(fileOf(pair.first)))
+                evict(pair.first);
+            else
+                letGoOfImportersOf(mocked, ImportersLetGo::All);
+            return true;
+        });
+    }
+    Vector<std::pair<ModuleID, ModuleID>> m_filesRequiredWithOriginalWhileFactoryRan;
+    void tellThatFileDidNotRunAgain(ModuleID);
+    void tellThatFailureStayedBehindMock(ModuleID);
+    void tellOfFilesThatStayedLoadedBelow(ModuleID root);
+    void letGoOfModuleLoadedAsMock(ModuleID module, bool endBringsBackWhatWasSetAside)
+    {
+        if (auto mock = m_mocksOverModulesThatHaveRun.find(module); mock != m_mocksOverModulesThatHaveRun.end() && (mock->value.didFileRunBesideMock || (mock->value.wasLoadedInThisTestFile && endBringsBackWhatWasSetAside)))
             return;
         m_modulesThatLoaderLetGo.set(module.index());
         m_importersOfMockThatEnded.set(module.index());
     }
     bool wasLetGoByLoader(ModuleID module) const { return m_modulesThatLoaderLetGo.get(module.index()); }
+    void letGoOfESModulesThatThrew();
+    void forgetFailuresOfExportsThatBuildFoundAbsent();
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
     void evaluateModulesOwedBelowOriginal(ModuleID);
     bool hasMockEndedThatWalksPassedOver() const
@@ -356,18 +448,27 @@ public:
     bool isHiddenInModuleItself(ModuleID, unsigned index) const;
     JSValue readExportOfModuleItself(ModuleID, unsigned index);
     bool hasMockLaidOver(ModuleID) const;
+    bool hasMockLaidOverFileThatHadRun(ModuleID) const;
     LoadedBy whoLoaded(ModuleID);
+    LoadedBy whoFetched(ModuleID);
     void didEmptyKeyOfMockInPlace(ModuleID fileOrModule);
     void noteAskUnderMockInPlace(ModuleID fileOrModule);
+    void noteRequireOfMockLaidInPreload(ModuleID fileOrFace);
+    bool wasRequiredUnderMockLaidInPreload(ModuleID file);
     LoadedBy whoLoadedMockInPlaceAnew(ModuleID fileOrModule);
     bool isKeyOfMockInPlaceEmpty(ModuleID fileOrModule) { return mockInPlace(fileOrModule) && ensureLoaded(moduleWithExportsOf(fileOrModule)).nextAskLoadsMockInPlace; }
     void willRunBodyOfRecord(ModuleID, ModuleRecord*);
     void keepExportsBehindEntryOfProgram(ModuleID);
+    void parkRunUnderKeyOfOriginal(ModuleID file);
+    void takeBackRunUnderKeyOfOriginal(ModuleID file);
     void forgetExportsBehindEntryOfProgram(ModuleID);
     JSValue exportsBehindEntryOfProgram(ModuleID) const;
+    JSValue askForExportsBehindEntryOfProgram(ModuleID);
     JSObject* moduleObjectBehindEntryOfProgram(ModuleID) const;
     bool liesUnderKeyOfOriginal(ModuleID file) const { return m_filesUnderKeyOfOriginal.get(file.index()); }
     void setLiesUnderKeyOfOriginal(ModuleID file, bool ran) { m_filesUnderKeyOfOriginal.set(file.index(), ran); }
+    bool didOriginalComeBackUnderOwnKey(ModuleID file) const { return m_filesWhoseOriginalCameBackUnderOwnKey.get(file.index()); }
+    void setOriginalCameBackUnderOwnKey(ModuleID file, bool cameBack) { m_filesWhoseOriginalCameBackUnderOwnKey.set(file.index(), cameBack); }
     JSValue exportsThatMockWasLaidOver(ModuleID file) const;
     void takeNamesOfMockInPlace(ModuleID, JSObject* mock);
     void letRecordAnswerByMock(ModuleRecord*, JSObject* mock);
@@ -376,6 +477,7 @@ public:
         JSObject* mock;
         Identifier name;
         ModuleID mocked;
+        bool lacksName { false };
     };
     std::optional<AnswerOfMock> mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn, MockOfModule ofPassingOn = MockOfModule::Answers) const;
     std::optional<AnswerOfMock> mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData& passedOn, MockOfModule ofPassingOn) const;
@@ -383,7 +485,7 @@ public:
         ModuleID module;
         unsigned index;
     };
-    const Vector<std::optional<PlaceOfExport>>& whoHandsOnEntriesThatStarsLaidInto(ModuleID) const;
+    const Vector<Vector<PlaceOfExport, 1>>& whoHandsOnEntriesThatStarsLaidInto(ModuleID) const;
     enum class MocksAskedFor : uint8_t { All, ThoseThatAddNames };
     bool isMockedInItsImage(ModuleID, MocksAskedFor = MocksAskedFor::All);
     bool isMockedInItsImageSlow(ModuleID, MocksAskedFor);
@@ -401,6 +503,11 @@ public:
         BitVector isAnswered;
         BitVector isLeftOut;
         unsigned ringsMet { 0 };
+        static constexpr unsigned noRing = std::numeric_limits<unsigned>::max();
+        Vector<ModuleID, 16> path;
+        Vector<Vector<size_t, 2>, 16> answersThatHangOnPlaceOfPath;
+        Vector<unsigned> outermostRingOfAnswer;
+        unsigned outermostRing { noRing };
     };
     bool namesBehindStarsAreInTables(ModuleID module) const
     {
@@ -459,7 +566,10 @@ public:
         mutable Box<BitVector> m_reached;
     };
     MocksBelowRoot mocksBelow(ModuleID root) const { return { m_table, m_mocks, root, isMocked(root) && (m_modulesThatRanBesideMock.get(root.index()) || runsBesideMockFor(root, std::nullopt)) }; }
+    bool isLinkedBelow(ModuleID module, ModuleID root) const { return !mocksBelow(root).hides(module) && (!isMocked(module) || mocksBelow(module).rootRunsBesideItsMock()); }
     bool hasBegunToLoad(ModuleID) const;
+    bool hasOnlyBeenLinked(ModuleID);
+    bool wasMockLaidOverFailureOf(ModuleID) const;
     bool hostAnswersInPlaceOf(ModuleID, LoadByName);
     bool isKeptInRequireCache(ModuleID) const;
     bool isInRequireCache(ModuleID) const;
@@ -474,10 +584,13 @@ public:
     void endMockOfLibraryModule(ModuleID);
     void createDynamicExports(ModuleID, JSCellButterfly*& names, JSObject*& capturedValues, JSObject*& liveSources);
     void takeNamesBehindFollowedStarsAnew();
+    void noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displacesEarlierMock, bool setsModuleAside);
+    bool isESModuleThatThrew(ModuleID) const;
     void keepWhatMockIsLaidOver(ModuleID);
     void didLayMock() { m_moduleWithMockBeingLaid = std::nullopt; }
     void endMockLaidOverFile(ModuleID);
-    JSValue exportsBeforeMock(ModuleID);
+    enum class OwedBelowOriginal : bool { IsPaid, StaysOwed };
+    JSValue exportsBeforeMock(ModuleID, bool evenIfItsBodyThrew = false, OwedBelowOriginal = OwedBelowOriginal::IsPaid, bool* readOfNameThrew = nullptr);
     JSObject* namespaceOfFileThatRanAheadOfMock(ModuleID);
     void letGoOfNamespaceOfFileThatRanAheadOfMock(ModuleID);
     bool runMockThatWaits(ModuleID);
@@ -491,27 +604,62 @@ public:
     bool wasLoadedWhenMockWasMade(ModuleID);
     void forgetLoadThatFailed(ModuleID file);
     bool importsModuleWhoseMockWaits(ModuleID root);
-    bool runBodyOfLinkedModuleAheadOfMock(ModuleID);
+    bool runBodyOfLinkedModuleAheadOfMock(ModuleID, bool leavesModuleAlone);
     JSPromise* evaluationUnderWay(ModuleID, bool hasWaitedForTurn);
-    bool isImportedByGraphUnderEvaluation(ModuleID);
+    JSPromise* evaluationUnderWayBelow(ModuleID file);
+    bool isImportedByGraphUnderEvaluation(ModuleID, bool forMockThatLeavesModulesAlone = false);
+    void forgetLoadsRefusedByCheckOfNames(ModuleID mocked);
+    bool wasPulledInByLoadThatFailed(ModuleID) const;
+    bool isRootOfImportThatFailed(ModuleID module) const { return m_rootsOfCallsOfImport.get(module.index()) && status(module) == ModuleStatus::Failed; }
+    bool wasLinkedAheadOfFailure(ModuleID root, ModuleID) const;
+    std::optional<ModuleFailureID> failureByAbsentExport(ModuleID) const;
     bool runBodyOfImportedModuleAheadOfMock(ModuleID);
     JSObject* packageItselfBesideMock(ModuleID);
     void runBodyOfRequiredFileAheadOfMock(ModuleID);
     bool isLoaderInMiddleOfGraph() const;
     bool isImportedByModuleThatRequireAnswered(ModuleID) const;
     void keepErrorOfLoad(ModuleID root, JSValue error, const ScopedLambda<bool(ModuleID)>& endedLoad);
+    void keepErrorOfFactoryThatRequireLeft(ModuleID required, JSValue error);
+    void didSettleFactoryThatRequireLeft(unsigned number);
+    void didFailFactoryThatRequireLeft(unsigned number, JSValue error);
+    unsigned hearFactoriesBelowLoadThatRequireLeft(ModuleID required, unsigned number);
+    bool isWaitThatRequireLeftKept(ModuleID required) const { return m_waitsThatRequiresLeft.containsIf([&](const auto& left) { return left.required == required && left.keepsError; }); }
     void dropErrorOfLoadEndedByMock(ModuleID);
     void dropErrorOfMockKeptByLoader(ModuleID);
     void dropErrorsOfLoadsEndedByMockOf(ModuleID mocked);
+    void noteImportFailedUnderMock(ModuleID root, JSValue error);
+    bool hasFailedUnderMockThatStands(ModuleID root);
+    void letRootsOfFailedImportsGoWithWhatIsReset();
+    void forgetImportFailedUnderMock(ModuleID root);
+    enum class FailedImports : bool { AreEvictedWithEntry, LoseEntryThatEvictsThem };
+    void settleImportsThatFailedUnder(ModuleID mocked, FailedImports);
     void dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& isMocked);
+    Vector<ModuleID, 8> failedLoadsThatEndOfMockEvicts(const ScopedLambda<bool(ModuleID)>& isMocked);
     void dropErrorsOfLoadsEndedByMocks();
+    void dropFailuresThatEvictionTakesOut()
+    {
+        dropErrorsOfLoadsEndedByMocks();
+        m_loadsThatFailedForWantOfMock.clear();
+    }
+    void letLoadsThatRequiresLeftAboveKeepNoError(ModuleID);
+    void letLoadsThatRequiresLeftKeepNoError()
+    {
+        for (WaitThatRequireLeft& left : m_waitsThatRequiresLeft)
+            left.keepsError = false;
+    }
     void takeFailedLoadsOutOfLoader(const ScopedLambda<bool(ModuleID)>& isMocked);
+    JSValue errorOfModuleThatRanBesideMock(ModuleID module) const
+    {
+        const LoadedModule* loaded = loadedIfExists(module);
+        return loaded ? loaded->errorOfModuleThatRanBesideMock.get() : JSValue();
+    }
     JSValue errorOfLoadEndedByMock(ModuleID module) const { return m_modulesWithLoadEndedByMock.get(module.index()) ? loadedIfExists(module)->errorKeptByLoader.get() : JSValue(); }
     bool mockFailedBehindImportStatement(ModuleID);
     void willFetchBehindTurn(ModuleID);
     std::optional<ModuleID> loadOfFetch(ModuleID fetched);
     JSPromise* factoryThatFetchWaitsFor(ModuleID fetched, JSValue& state);
     std::optional<ModuleID> loadThatAsks() const { return m_moduleThatImportAsksFor ? std::optional(fileOf(m_moduleThatImportAsksFor)) : m_moduleThatLoaderFetches; }
+    std::optional<ImportThatAsks> importThatAsks() const { return m_moduleThatWroteImportThatAsks ? std::optional(ImportThatAsks { fileOf(m_moduleThatWroteImportThatAsks), fileOf(m_moduleThatImportThatAsksNames), m_momentOfImportThatAsks }) : std::nullopt; }
     bool runMocksBelowModuleThatLoaderFetches(ModuleID);
     bool runMocksBelowModuleThatLoaderFetchesSlow(ModuleID);
     bool isFetchedForImportStatement(ModuleID) const;
@@ -527,6 +675,10 @@ public:
     bool mocksWaitToBeLaidAgain() const;
     enum class AtMock : bool { GoesOn, Stops };
     BitVector reachedByStatements(ModuleID root, AtMock) const;
+    void listImportersAndRequirers();
+    void noteRequireThatRunTimeAnswers(ModuleID target, ModuleID referrer);
+    BitVector modulesThatTakeNamesOf(std::span<const ModuleID> files);
+    BitVector modulesThatTakeNamesOf(ModuleID file) { return modulesThatTakeNamesOf(std::span(&file, 1)); }
     bool importsByStatements(ModuleID importer, ModuleID imported) const;
     enum class MockState : uint8_t { None, Waits, Runs, InPlace, InPlaceWhileAnotherWaits, InPlaceOverModuleThatHasRun, Fills, LaidOver, Failed, Ended, EndedWhileAnotherWaits, NoneOfThem };
     MockState mockState(ModuleID);
@@ -535,8 +687,9 @@ public:
     void noteCallOfMock(ModuleID fileOrModule, bool importersKeepMockThatStands = false);
     void letMockWaitBehindLateFailure(ModuleID);
     bool requireAsksFor(ModuleID module) const { return m_moduleThatRequireAsksFor == module; }
+    String pathOfModuleThatRequires(ModuleID required) const { return requireAsksFor(required) && m_moduleThatRequires && m_table.hasFilePath(m_moduleThatRequires) ? m_table.pathText(m_moduleThatRequires) : String(); }
     bool importAsksFor(ModuleID module) const { return m_moduleThatImportAsksFor && fileOf(m_moduleThatImportAsksFor) == fileOf(module); }
-    BitVector modulesThatLoadLeadsTo(ModuleID root) const;
+    BitVector modulesThatLoadLeadsTo(ModuleID root, LoadOf = LoadOf::WhatStandsForModule) const;
     bool importThatWaitedAsksFor(ModuleID module) const { return m_stateOfWaitOfImportThatAsks && importAsksFor(module); }
     JSValue stateOfWaitOfImportThatAsks() const { return m_stateOfWaitOfImportThatAsks; }
     void forgetCallOfMock(ModuleID fileOrModule);
@@ -549,6 +702,7 @@ public:
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
     static void storeValue(JSGlobalObject*, JSObject* table, unsigned number, JSValue);
+    static void removeValue(JSGlobalObject*, JSObject* table, unsigned number);
     JSObject* moduleNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions = true);
     bool mayExport(ModuleID, UniquedStringImpl* name) const;
     JSObject* importMeta(ModuleID);
@@ -563,6 +717,7 @@ public:
     void throwExportNotFound(const RequiredNameData&);
     bool dropExportThatFindsNothing(ModuleID importer, const RequiredNameData&);
     void throwExportAmbiguous(const RequiredNameData&);
+    bool isAskedForByStar(const RequiredNameData&) const;
     String pathOfExporterAsLoaderNamesIt(const RequiredNameData&);
     void didRequestFromHost(ModuleID module)
     {
@@ -606,11 +761,21 @@ public:
     void keepFilesThatHaveRun();
     void bringBackKeptFiles(const WTF::Function<void(const String&)>&);
     void forgetEvaluation(ModuleID);
+    bool hasFailedRunThatMayBeForgotten(ModuleID) const;
+    bool hasFailedWithoutMock(ModuleID module) const { return hasFailedRunThatMayBeForgotten(module) && !m_modulesThatRanBesideMock.get(module.index()) && !errorOfModuleThatRanBesideMock(module); }
+    bool hasFailedWithPackageThatStaysFailed(ModuleID root);
+    void forgetFailedRunOfESModuleThatMayRunAgain(ModuleID);
+    void forgetFailedRunsOfESModulesThatMayRunAgain();
+    void makeESModuleReadyToRunAgain(ModuleID);
     void forgetRunThatThrew(ModuleID);
+    void leaveModuleObjectToRunThatThrew(ModuleID);
+    void unbindModuleObjectOfRunThatThrew(ModuleID);
+    void forgetWhatFileRequired(ModuleID);
     void didMakeTemplateObject(ModuleID, uint32_t offsetOfCell);
     void forgetRunOfLibraryModule(ModuleID);
     JSValue executeForLoader(ModuleID);
     bool wouldBeEvicted(ModuleID);
+    bool isLoadInFlight(ModuleID module) const { return status(fileOf(module)) == ModuleStatus::EvaluatingAsync; }
     bool wasLoadedByImport(ModuleID);
     bool mayBeEvicted(ModuleID module) const
     {
@@ -657,6 +822,7 @@ public:
     BitVector modulesThatHaveRun();
     bool isLeftToHost(ModuleID);
     bool isLeftToHostAsFarAsIsKnown(ModuleID);
+    bool isLoadedByRequireAloneAndPatchedOnceFactorySettles(ModuleID);
     bool isChangedOutOfSightOfBuild(StringView path) const;
     bool isTextNamedByProgram(StringView url) const;
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_runsUncompiledCode && !m_hostRunsCopiesFromDisk && !isAskingHost(); }
@@ -671,10 +837,16 @@ public:
     bool refusesOriginalsBesideMocks() const { return m_refusesOriginalsBesideMocks; }
     void refuseToShowExportsOf(ModuleID);
     void refuseToHandOutExportOf(ModuleID, StringView name);
+    std::optional<std::pair<ModuleID, unsigned>> exportThatStaysInBehindIndirectEntries(ModuleID, unsigned index);
     enum class OriginalIsAskedBy : uint8_t { Statement, CallOfImport };
     bool importsOriginalBesideMock(ModuleID mocked, ModuleID importer, OriginalIsAskedBy = OriginalIsAskedBy::Statement) const;
     bool statementsHoldOriginalBehindEndOfMock(ModuleID mocked, ModuleID importer) const;
+    bool leadsToWhatIsImported(ModuleID imported, ModuleID importer) const;
+    bool mayGetNameFromMock(ModuleID exporter, ModuleID importer) const { return !data(exporter).isESModuleOfProgram() || data(exporter).isFaceOfFile() || data(exporter).hasDynamicStarExport() || seesMockOf(exporter, importer); }
+    bool isOfPackage(ModuleID) const;
+    bool wasLoadedUnderKeyOfOriginal(ModuleID fileOrModule) const;
     bool keepsOriginalUnderLaterMock(ModuleID fileOrModule, ModuleID importer) const;
+    bool isLinkedToOriginalOf(ModuleID fileOrModule, ModuleID importer) const;
     void didLeaveOriginalUnderKeyOfOriginal(ModuleID fileOrModule);
     void noteWhereOriginalLiesBehindEndOfMock(ModuleID fileOrModule);
     bool hasImporterBelowThatGetsOriginal(ModuleID root, ModuleID fileOrFace) const;
@@ -687,7 +859,7 @@ public:
     JSValue requireModuleItselfBesideMock(ModuleID);
     uint64_t callOfFactoryThatHasNotSettled(ModuleID, bool* refusesEveryRequire = nullptr) const;
     void noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp = true);
-    JSValue answerRequireWhileFactoryHasNotSettled(ModuleID target);
+    JSValue answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleID requirer);
     void oweBodyBesideMock(ModuleID);
     void letLoadsInFlightKeepRecordOf(ModuleID);
     bool isKeptByLoadsInFlight(ModuleID module) const { return m_modulesKeptByLoadsInFlight.get(module.index()); }
@@ -715,6 +887,11 @@ public:
 
     JSPromise* evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* = nullptr, bool isLinked = false);
     void evaluateSynchronously(ModuleID, SynchronousEvaluationReason);
+    void leaveStepsOfLoaderToJobs();
+    void waitForFactoriesThatRequireLeft(ModuleID required);
+    void refuseRequireAgain(ModuleID asked, ModuleID above);
+    BitVector modulesThatRequireWouldFetch(ModuleID root) const;
+    bool stillWaitsForWhatItGaveUpOn(ModuleID required) const;
     void innerModuleEvaluation(ModuleID root, EvaluationContext&);
     void gatherAsynchronousTransitiveDependencies(ModuleID, OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen);
     bool readyForSyncExecution(ModuleID, VisitedModuleRecords& seen);
@@ -745,6 +922,9 @@ public:
     void runFileThatWaitsForItsTurn(ModuleID);
     bool isAskedForBehindLoadInFlight(ModuleID fileOrFace);
     void captureExportsAgain(ModuleID);
+    void takeCopiesAnewWhereMockCallAloneTookThem(ModuleID face);
+    void captureExportsAgainKeepingWhatGettersGave(ModuleID face);
+    JSObject* standInWhoseGettersAreTheirCopies(JSValue exports, JSObject* copies);
     bool forgetCapturedExports(ModuleID);
     void exportWhatMockNamesAlone(ModuleID file, bool hasRun);
     bool exportsWhatMockNamesAlone(ModuleID) const;
@@ -815,6 +995,7 @@ public:
     bool importsFileThatRunsAhead(ModuleID root) const;
     void evaluateRootThatWaitedForFile(ModuleID root);
     std::optional<ModuleID> fileToWaitFor(const Identifier& key);
+    bool isFileBeingHandedToLoader(const Identifier& key) { return m_fileBeingHandedToLoader && hasKey(*m_fileBeingHandedToLoader, key); }
     JSPromise* deferRequest(ModuleID file, ModuleLoadingContext*, bool useImportMap);
     bool hasDeferredLoads() const { return !m_deferredRequests.isEmpty() || !m_deferredImports.isEmpty(); }
     void didRequestModule(const Identifier& key, JSCell* payload);
@@ -884,7 +1065,9 @@ public:
     JSObject* mainModuleObject(ModuleID);
     JSObject* parentModuleObject(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
+    bool keepsModuleObjectToItself(ModuleID module) const { return !mayHandOutModuleObject(module) || data(module).exportsStayInCompiledCode(); }
     bool forEachNewChild(ModuleID, const ScopedLambda<void(JSObject*)>&);
+    JSObject* prototypeOfModuleObjects() const { return m_prototypeOfModuleObjects; }
     void dropNewChildren(ModuleID);
     enum class NamedByBuild : uint8_t { No, FileOfImage, WhatLiesOutsideImage };
     JSValue requireSpecifier(JSValue specifier, ModuleID referrer, NamedByBuild);
@@ -897,6 +1080,13 @@ public:
     Vector<ModuleID, 2> m_rootsOfImportsBehindFactories;
     Vector<ModuleID, 2> m_rootsOfImportsThatHaveGoneOn;
     void didGoOnBehindFactories(ModuleID root);
+    JSValue errorOfFactoryThatFailedWhileCallWaited(ModuleID root, uint32_t momentCallBeganToWait) const;
+    JSValue takeErrorOfFactoryThatFailedWhileCallWasHeldForItsText(ModuleID asked);
+    void keepFailureOfFactoryForCallsHeldForTheirTexts(ModuleID mocked, JSValue error);
+    bool isImportHeldThatAsksForMockOf(ModuleID asked) const { return m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && !each.failureForWantOfMockThatTakesOriginal && fileOf(each.module) == fileOf(asked); }); }
+    bool hasLoadInFlightAskedForOriginalOf(ModuleID asked) const { return m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && each.hasLoadAskedForOriginal && !each.failureForWantOfMockThatTakesOriginal && fileOf(each.module) == fileOf(asked); }); }
+    bool isSomeImportHeldThatAsksForMockOfItsFile() const { return m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself; }); }
+    bool isSomeCallHeldForItsText() const { return m_numberOfTextsThatHaveCome < m_textsThatWait.size() || !m_callsToMakeAgain.isEmpty() || !m_textsOnTheirWay.isEmpty(); }
     void didSettleImportBehindFactories(ModuleID root);
     void holdMockThatStandsUntilImportSettles(ModuleID root, JSPromise*);
     bool isImportHeld(ModuleID module) const
@@ -904,7 +1094,7 @@ public:
         return m_modulesOfHeldImports.containsIf([&](ModuleID held) { return fileOf(held) == fileOf(module); });
     }
     enum class ImportCaller : bool { CompiledCode, Host };
-    enum class TextOfImport : bool { MayComeLater, HasCome };
+    enum class TextOfImport : uint8_t { MayComeLater, HasCome, HasComeAndCallStoppedForOriginal };
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr, JSValue stateOfWait = JSValue(), std::optional<bool> answerOfWalkAlreadyMade = std::nullopt);
     JSPromise* rejectImportWithErrorOfLoad(ModuleID, ImportCaller);
     void startImportWhoseTextHasCome(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext);
@@ -922,12 +1112,31 @@ public:
     std::optional<uint32_t> turnOfFirstTextThatWaits() const { return m_textsThatWait.isEmpty() ? std::nullopt : std::optional(m_textsThatWait[m_numberOfTextsThatHaveCome].turnOfCall); }
     bool deliverFirstTextThatWaits();
     bool deliverFirstTextInLine();
-    void tellHostOfImport(JSPromise*, const String& path);
+    void tellHostOfImport(JSPromise*, const String& path, std::optional<ModuleID> file = std::nullopt);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&, JSValue stateOfWait = { });
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error, JSValue asyncContext);
+    JSPromise* behindStepsOfImportThatWaitsFor(JSPromise* evaluation, ModuleID);
+    void noteChangeOfMockUnderCallsOfImport(ModuleID);
+    void noteCallOfImportUnderMock(JSPromise*, ModuleID);
+    void didTakeFirstStepOfCallOfImportSlow(JSPromise*);
+    enum class DeedOnMock : bool { Ends, LaysAnother };
+    void noteDeedOnMockUnderCallsOfImportSlow(ModuleID, DeedOnMock);
+    void takeFirstStepsOfCallsOfImportThrough(unsigned serial);
+    void didTakeFirstStepOfCallOfImport(JSPromise* promise)
+    {
+        if (!m_callsOfImportThatHaveTakenNoStep.isEmpty()) [[unlikely]]
+            didTakeFirstStepOfCallOfImportSlow(promise);
+    }
+    void noteDeedOnMockUnderCallsOfImport(ModuleID module, DeedOnMock deed)
+    {
+        if (!m_callsOfImportThatHaveTakenNoStep.isEmpty()) [[unlikely]]
+            noteDeedOnMockUnderCallsOfImportSlow(module, deed);
+    }
+    void forgetNamespacesKeptForCallsOfImport();
+    JSObject* takeNamespaceKeptForCallOfImport(JSPromise*);
 
     enum class RecordHolder : uint8_t { Anyone, Loader };
     ModuleRecord* exposeRecord(ModuleID, RecordHolder = RecordHolder::Anyone);
@@ -978,6 +1187,11 @@ private:
         bool wasRequiredByHost { false };
         bool hasMockLaidOver { false };
         bool hadRunWhenMockWasLaid { false };
+        uint32_t momentImportFailedUnderMock { 0 };
+        bool hadThrownWhenMockWasMade { false };
+        bool holdsValueOfMockThatEnded { false };
+        bool hadThrownWhenMockWasLaid { false };
+        bool keepsFailureThatMockTakesOut { false };
         Vector<ModuleID> namespacesReplacedByMock;
         Vector<ModuleID> mocksThatReplaceNamespace;
         bool capturedFieldsAreOfESModule { false };
@@ -988,6 +1202,7 @@ private:
         bool wasLoadedSynchronouslyWhileItRan { false };
         bool wasFetchedWhileItRan { false };
         bool isAnsweredWithNamespace { false };
+        bool hasFirstRequireOfRunThatThrew { false };
         bool bindsEarlierCapture { false };
         bool didDropError { false };
         bool exportsWhatMockNamesAlone { false };
@@ -996,6 +1211,8 @@ private:
         bool hadRunAheadOfMocksThatNameAlone { false };
         bool wasRequiredUnderMockInPlace { false };
         bool wasImportedUnderMockInPlace { false };
+        bool wasRequiredUnderMockLaidInPreload { false };
+        bool wasImportedUnderMockLaidInPreload { false };
         uint32_t momentOfTestFileThatLoadedItUnderMockInPlace { 0 };
         bool nextAskLoadsMockInPlace { false };
         uint32_t momentOfTestFileThatLoadedMockInPlaceAnew { 0 };
@@ -1008,6 +1225,7 @@ private:
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
         std::optional<uint32_t> synchronousLoadCountAtStart;
+        bool beganInsideSynchronousLoad { false };
     };
 
     struct WaysToModule {
@@ -1045,6 +1263,7 @@ private:
     StoredModuleStatus storedStatus(ModuleID) const;
     bool isLinkedWithLeader(ModuleID) const;
     void setStoredStatus(ModuleID, StoredModuleStatus);
+    void unsettleForLinks(ModuleID);
     ModuleStatus statusInRecord(ModuleID) const;
     void setStatus(ModuleID, ModuleStatus);
     void setFailed(ModuleID, JSValue error);
@@ -1145,6 +1364,9 @@ private:
     void noteFirstRequestFromHost(ModuleID);
     void noteLoadOfGraph(ModuleID root);
     JSObject* moduleObjectMadeByRequire(ModuleID);
+    JSObject* objectThatStandsForModule(ModuleID);
+    JSObject* objectThatStandsForModuleIfMade(ModuleID);
+    void notePrototypeOfModuleObjects(JSObject* freshModuleObject);
     enum class FormThatAnswers : bool { TheOneAskedFor, TheOneThatLoaderFinds };
     JSValue answerRequire(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer, FormThatAnswers = FormThatAnswers::TheOneAskedFor);
     bool standsForFileOutsideImage(ModuleID) const;
@@ -1158,6 +1380,7 @@ private:
     bool isMockedLibraryModule(ModuleID);
     JSValue loadEvictedFile(ModuleID, ModuleID referrer = { });
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
+    JSValue whatRequireMakesOfNamespace(JSObject* namespaceObject);
     void willRequireESModule(ModuleID);
     void markNamespaceAsRequired(ModuleID);
 
@@ -1222,15 +1445,20 @@ private:
     };
     NumberOfMocksInPlace m_numberOfMocksInPlace;
     AnswersKept* m_answersKept { nullptr };
+    Vector<std::pair<ModuleID, ModuleRecord*>, 2> m_originalsBeingAsked;
+    Vector<OriginalAnswered, 4> m_originalsAnswered;
     BitVector m_modulesWithMockInPlace;
     mutable Vector<uint64_t> m_modulesSettledForLinks;
     const EvaluationInProgress* m_innermostEvaluation { nullptr };
     uint32_t m_synchronousLoadCount { 0 };
     uint32_t m_activeSynchronousLoad { 0 };
     Structure* m_namespaceStructure { nullptr };
+    JSObject* m_prototypeOfModuleObjects { nullptr };
+    JSObject* m_errorsOfExportsThatBuildFoundAbsent { nullptr };
+    Vector<ModuleFailureID> m_failuresByExportsThatBuildFoundAbsent;
     Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
-    enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain, BegunAndMadeObjectOfESModule, ReturnedAndNotListed };
+    enum class RecordedRequire : uint8_t { Begun, BegunAndLeftToHost, Returned, BegunAgain, BegunAndMadeObjectOfESModule, ReturnedAndNotListed };
     UncheckedKeyHashMap<uint64_t, RecordedRequire> m_recordedRequires;
     std::optional<ModuleID> m_mainCommonJSModule;
     bool m_isMainCommonJSModuleDecided { false };
@@ -1254,6 +1482,7 @@ private:
         Vector<ModuleID> importersOfNextLevel { };
     };
     std::optional<ModuleID> fileOrFaceEvaluatedIn(const FilesBeingRun&) const;
+    bool isBegunForStatement(ModuleID fileOrFace) const;
     bool hasLoaderAskedFor(FilesBeingRun&, ModuleID file);
     void handGraphToLoader(FilesBeingRun&, std::optional<ModuleID> finishedFile = std::nullopt);
     void handSynchronousLoadToLoader(FilesBeingRun&);
@@ -1322,7 +1551,15 @@ private:
     BitVector m_modulesOfQueuedImports;
     BitVector m_modulesWithMockToRun;
     std::optional<ModuleID> m_importWhoseMocksRunWhenItsTextHasCome;
-    Vector<ModuleID, 2> m_importsWhoseMocksRunWhenTheirTextsHaveCome;
+    struct ImportWhoseMocksRunWhenItsTextHasCome {
+        ModuleID module;
+        bool asksForMockOfFileItself { false };
+        bool hasWalkedAheadOfItsText { false };
+        bool hasLoadAskedForOriginal { false };
+        Strong<JSPromise> failureForWantOfMockThatTakesOriginal;
+        uint32_t momentOfCall { 0 };
+    };
+    Vector<ImportWhoseMocksRunWhenItsTextHasCome, 2> m_importsWhoseMocksRunWhenTheirTextsHaveCome;
     bool mocksRunWhenTextOfImportHasCome(ModuleID);
     bool mocksRunWhereLoaderFetchesThem(ModuleID);
     BitVector m_modulesFetchedForStatementsBehindTurns;
@@ -1377,8 +1614,9 @@ private:
 
     private:
         const void* m_madeAt;
-        bool m_isForFileOfImage { true };
+        uintptr_t m_isForFileOfImage { true };
     };
+    static_assert(std::has_unique_object_representations_v<RequestToHost>);
     RequestToHost m_isAskingHost;
     Vector<RequestToHost, 4> m_requestsToHostSetAside;
     std::optional<ModuleID> m_rootThatCompiledCodeLoads;
@@ -1442,7 +1680,7 @@ private:
             auto found = m_byRoot.find(root);
             if (found == m_byRoot.end())
                 return;
-            for (LoadInFlight* load : found->value)
+            for (LoadInFlight* load : found->value.loads)
                 functor(*load);
         }
         LoadInFlight* find(JSPromise* promise) const { return m_byPromise.get(promise); }
@@ -1475,7 +1713,7 @@ private:
             load.numberOfFilesRunAtCall = m_numberOfFilesRun;
             load.number = m_numberAtPlaceZero + m_inOrder.size();
             m_inOrder.append(WTF::move(owned));
-            m_byRoot.add(root, Vector<LoadInFlight*, 1> { }).iterator->value.append(&load);
+            m_byRoot.add(root, LoadsOfRoot { }).iterator->value.loads.append(&load);
             if (!m_byPromise.add(promise, &load).isNewEntry || settling == SettlingOfLoad::IsLookedFor)
                 m_promisesThatNobodyTellsOf.append(&load);
             ++m_numberBeingLoaded;
@@ -1485,11 +1723,16 @@ private:
 
         void didLoad(ModuleID root)
         {
-            forEachOfRoot(root, [&](LoadInFlight& load) {
-                if (!load.isLoaded && !load.isKnownToBeSettled)
+            auto found = m_byRoot.find(root);
+            if (found == m_byRoot.end())
+                return;
+            LoadsOfRoot& ofRoot = found->value;
+            for (; ofRoot.numberLoaded < ofRoot.loads.size(); ++ofRoot.numberLoaded) {
+                LoadInFlight& load = *ofRoot.loads[ofRoot.numberLoaded];
+                if (!load.isKnownToBeSettled)
                     didEndLoading(load);
                 load.isLoaded = true;
-            });
+            }
         }
 
         void didRunFile()
@@ -1568,8 +1811,11 @@ private:
         void takeOut(LoadInFlight& load)
         {
             auto ofRoot = m_byRoot.find(load.root);
-            ofRoot->value.removeFirst(&load);
-            if (ofRoot->value.isEmpty())
+            size_t place = ofRoot->value.loads.find(&load);
+            ofRoot->value.loads.removeAt(place);
+            if (place < ofRoot->value.numberLoaded)
+                --ofRoot->value.numberLoaded;
+            if (ofRoot->value.loads.isEmpty())
                 m_byRoot.remove(ofRoot);
             if (auto ofPromise = m_byPromise.find(load.promise.get()); ofPromise != m_byPromise.end() && ofPromise->value == &load)
                 m_byPromise.remove(ofPromise);
@@ -1587,7 +1833,11 @@ private:
         Vector<std::unique_ptr<LoadInFlight>, 2> m_inOrder;
         size_t m_firstPlace { 0 };
         uint64_t m_numberAtPlaceZero { 0 };
-        UncheckedKeyHashMap<ModuleID, Vector<LoadInFlight*, 1>> m_byRoot;
+        struct LoadsOfRoot {
+            Vector<LoadInFlight*, 1> loads;
+            size_t numberLoaded { 0 };
+        };
+        UncheckedKeyHashMap<ModuleID, LoadsOfRoot> m_byRoot;
         UncheckedKeyHashMap<JSPromise*, LoadInFlight*> m_byPromise;
         mutable Vector<LoadInFlight*, 2> m_promisesThatNobodyTellsOf;
         mutable Vector<LoadInFlight*, 2> m_settled;
@@ -1676,6 +1926,9 @@ private:
     BitVector m_filesLoadedByRequire;
     BitVector m_filesThatRanInPreload;
     BitVector m_filesThatRanBeforeTestFile;
+    BitVector m_dataFilesThatRanBeforeTestFile;
+    BitVector m_filesWhoseKeyIsOfThisTestFile;
+    BitVector m_filesWhoseKeyMockHasEmptied;
     BitVector m_filesWithKnownLoad;
     BitVector m_filesLoadedSynchronously;
     BitVector m_filesWhoseNextLoadIsFirst;
@@ -1694,6 +1947,7 @@ private:
         bool isGivenItNoMore;
         uint32_t timesMocked;
         bool staysUnderKeyOfOriginal { false };
+        bool isGivenByHost { false };
     };
     mutable UncheckedKeyHashMap<uint64_t, GotOriginal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersThatGotOriginal;
     mutable UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersThatGotMock;
@@ -1708,6 +1962,8 @@ private:
         BitVector passed;
         Strong<JSPromise> original { };
         bool loadHasWaitedForOriginal { false };
+        bool mockHasFactory { false };
+        bool isLeftWhenSweepEnds { false };
     };
     Vector<ImportersEnteredAboveMock, 2> m_importersEnteredAboveMocks;
     std::optional<ModuleID> m_rootWhoseLoadIsSwept;
@@ -1738,6 +1994,7 @@ private:
             m_modulesThatRanBesideMockAlone.clear(module.index());
     }
     BitVector m_modulesOwedBesideMock;
+    BitVector m_modulesWhoseFailedRunWasForgotten;
     BitVector m_modulesThatOwnFactoryMayLoad;
     BitVector m_filesWhoseOriginalRuns;
     std::optional<ModuleID> m_moduleWhoseOwnNamespaceIsMade;
@@ -1745,6 +2002,8 @@ private:
     BitVector m_modulesLoadedBesideGroups;
     Vector<uint32_t> m_momentsOfLoads;
     BitVector m_loadedInPreload;
+    BitVector m_modulesLoadedAsMocksAlone;
+    BitVector m_libraryModulesAskedForInPreload;
     bool m_hasBegunTestFile { false };
     struct MockOverModuleThatHasRun {
         uint32_t momentLaid;
@@ -1757,15 +2016,28 @@ private:
         bool isSetAside { false };
         bool didFileRunBesideMock { false };
         bool wasLoadedInThisTestFile { false };
+        BitVector filesThatHadRun { };
+        bool wasLaidOverFailure { false };
     };
     Vector<std::pair<ModuleID, JSObject*>, 4> m_namespacesBeingMade;
+    size_t m_outermostNamespaceReadWhileBeingMade { notFound };
+    struct NamespaceThatLacksNames {
+        ModuleID module;
+        JSObject* object;
+        size_t outermostRead;
+    };
+    Vector<NamespaceThatLacksNames, 4> m_namespacesThatLackNames;
     Vector<std::pair<JSObject*, UniquedStringImpl*>, 4> m_namesBeingReadOffListers;
     struct CollectionOfNamesBehindStars {
         Vector<std::pair<JSObject*, IdentifierSet>, 1> namesOfEndedMocks;
     };
     CollectionOfNamesBehindStars* m_collectionOfNamesBehindStars { nullptr };
     UncheckedKeyHashMap<ModuleID, MockOverModuleThatHasRun> m_mocksOverModulesThatHaveRun;
+    std::span<const uint32_t> requiredNamesOfStatementsThatExport(ModuleID, const String& exportName) const;
+    mutable UncheckedKeyHashMap<ModuleID, UncheckedKeyHashMap<String, Vector<uint32_t, 1>>> m_requiredNamesOfStatementsByExportName;
     BitVector m_facesThatTookCopiesForMock;
+    JSObject* m_copiesThatGettersGave { nullptr };
+    std::optional<ModuleID> m_faceWhoseGettersKeepTheirCopies;
     struct FirstMockInTestFile {
         uint32_t moment;
         uint32_t momentOfTestFile;
@@ -1778,6 +2050,34 @@ private:
         ModuleID rootOfLoad;
     };
     UncheckedKeyHashMap<ModuleID, MomentLoadedAnew> m_momentsLoadedAnew;
+    UncheckedKeyHashMap<ModuleID, Vector<uint32_t, 2>> m_earlierMomentsLoadedAnew;
+    struct LinksBeforeLoad {
+        Vector<std::pair<ModuleID, std::optional<MomentLoadedAnew>>, 8> moments;
+        BitVector modulesThatLoaderLetGo;
+        BitVector importersOfMockThatEnded;
+        LinksBeforeLoad* outer { nullptr };
+    };
+    LinksBeforeLoad* m_linksBeforeLoadInFlight { nullptr };
+    UncheckedKeyHashMap<ModuleID, uint32_t> m_momentsLinkedInRefusedLoads;
+    enum class LinksOfLoad : bool { AreForgotten, AreMetByLaterLoads };
+    void bringBackLinks(const LinksBeforeLoad&, LinksOfLoad);
+    struct LoadThatMayFail {
+        ModuleID root;
+        bool hadRun;
+    };
+    struct LinksOfLoadThatMayFail {
+        ModuleID root;
+        LinksBeforeLoad before;
+        Vector<LoadThatMayFail, 2> loadsThatMayFail;
+        bool isHeldBy(ModuleID load) const { return loadsThatMayFail.containsIf([&](const LoadThatMayFail& each) { return each.root == load; }); }
+    };
+    Vector<LinksOfLoadThatMayFail, 1> m_linksOfLoadsThatMayFail;
+    LinksOfLoadThatMayFail* linksOfLoadWalkedFor(ModuleID root);
+    bool reachesWhatLoadLinkedAnew(const LinksOfLoadThatMayFail&, ModuleID root);
+    void meetLinksOfLoadsThatMayFail(ModuleID root);
+    bool holdsLinksOfLoadThatMayFail(ModuleID root) const;
+    void hearWhetherImportThatLinkedAnewFails(ModuleID root, JSPromise*);
+    void hearWhetherImportUnderMockFails(ModuleID root, JSPromise*);
     struct EndedMock {
         uint32_t momentLaid;
         uint32_t momentEnded;
@@ -1785,14 +2085,27 @@ private:
         bool wasLaidInPreload;
         BitVector exportsLeftOut;
         bool isKeptWhereImporterIsAskedForAgain { false };
+        std::optional<unsigned> placeOfMockThatWasPatched { };
     };
     UncheckedKeyHashMap<ModuleID, Vector<EndedMock, 2>> m_endedMocks;
+    UncheckedKeyHashMap<ModuleID, Vector<unsigned, 2>> m_endedMocksToAskAbout;
+    void didGiveUpMomentLinked(uint32_t moment);
+    void didGiveUpLinksBeforeLoad(const LinksBeforeLoad&);
+    UncheckedKeyHashMap<uint32_t, Vector<std::pair<ModuleID, unsigned>, 1>> m_endedMocksSeenByMomentLinked;
+    struct MomentSomeModuleMayLookAt {
+        uint32_t moment;
+        uint32_t momentLinked;
+    };
+    static const MomentSomeModuleMayLookAt* firstBetween(std::span<const MomentSomeModuleMayLookAt> sorted, uint32_t from, uint32_t until);
+    Vector<MomentSomeModuleMayLookAt, 16> momentsAtWhichSomeModuleMayLook(uint32_t since) const;
+    void letGoOfEndedMocksNobodySees();
     struct MomentMockWasLaid {
         uint32_t moment { 0 };
         uint32_t momentOfTestFile { 0 };
         bool isInPreload { false };
         bool hadNamespace { false };
         bool importersKeepMockThatStands { false };
+        bool importsWrapWhatRequireMapHolds { false };
     };
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsWaitingMocksWereLaid;
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsStandingMocksWereLaid;
@@ -1801,9 +2114,11 @@ private:
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsMocksOfPreloadWereLaid;
     MomentMockWasLaid momentOfNow();
     std::optional<unsigned> keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid, uint32_t momentEnded = 0, BitVector&& exportsLeftOut = { });
+    JSObject* withNamesOfPatchedMock(JSObject* patched, JSObject* patch);
     void keepNamespacesMadeUnder(ModuleID fileOrModule, ModuleID module, JSObject* endedMock, std::optional<unsigned> ended);
     JSValue wordWhereNoMockStands(ModuleID fileOrModule) const;
     void noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool leavesEarlierMockToItsImporters);
+    void letGoOfEndedMocksLaidInPreload(ModuleID fileOrModule);
     void keepMockThatStoodInPlace(ModuleID fileOrModule, ModuleID module, JSObject* endedMock, BitVector&& exportsLeftOut);
     void bringBackNamespaceKeptFor(ModuleID fileOrModule, JSObject* mock);
     void giveBackNamespacesHandedOn(LoadedModule& mocked);
@@ -1811,6 +2126,7 @@ private:
     BitVector m_namespacesReplacedByMock;
     std::optional<UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>>> m_modulesThatHandOnNamespaces;
     BitVector m_modulesOwedToImportersThatRan;
+    std::optional<ModuleID> m_moduleWhoseBodyMockCallRan;
     BitVector m_modulesWithNothingOwedBelow;
     Vector<ModuleID, 4> m_mockedModulesPassedOverByWalks;
     BitVector m_modulesWithMockToLetGo;
@@ -1819,12 +2135,18 @@ private:
     bool m_importsBehindFactoriesHaveYetToGoOn { false };
     bool m_endsMocksThatStandForLoadsInFlight { false };
     BitVector m_modulesWhoseMockOfPreloadIsPatched;
+    BitVector m_mocksOfPreloadThatCameBackBeforeAnyImport;
     BitVector m_modulesThatLoaderLetGo;
     BitVector m_importersOfMockThatEnded;
     BitVector m_modulesLoadedAnewWhoseNamesAreOwed;
     BitVector m_modulesWithNoNamesOwedBelow;
     Vector<Vector<uint32_t, 2>> m_importersByStatement;
-    mutable UncheckedKeyHashMap<ModuleID, Vector<std::optional<PlaceOfExport>>> m_whoHandsOnEntriesThatStarsLaid;
+    Vector<Vector<uint32_t, 2>> m_requirers;
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_requirersThatRunTimeAnswered;
+    UncheckedKeyHashSet<uint64_t> m_requiresThatRunTimeAnswered;
+    Vector<Vector<uint32_t, 2>> m_takersOfNames;
+    BitVector m_filesThatStayLoadedAboveMock;
+    mutable UncheckedKeyHashMap<ModuleID, Vector<Vector<PlaceOfExport, 1>>> m_whoHandsOnEntriesThatStarsLaid;
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
     std::optional<ModuleID> m_rootWhoseFilesRun;
     struct DeferredRequest {
@@ -1843,14 +2165,47 @@ private:
         Strong<Unknown> asyncContext;
     };
     Vector<DeferredImport> m_deferredImports;
+    struct CallOfImportUnderMock {
+        Strong<JSPromise> promise;
+        ModuleID module;
+        Strong<JSObject> namespaceBeforeImportChangedMock;
+        unsigned serial { 0 };
+    };
+    UncheckedKeyHashMap<JSPromise*, CallOfImportUnderMock> m_callsOfImportUnderMocks;
+    unsigned m_numberOfCallsOfImportWithNamespaceKept { 0 };
+    unsigned m_numberOfCallsOfImportMadeUnderMocks { 0 };
+    Deque<std::pair<unsigned, JSPromise*>> m_callsOfImportThatHaveTakenNoStep;
+    struct LastDeedOnMock {
+        unsigned lastCallInFrontOfIt { 0 };
+        bool bringsBackFileThatHadRun { false };
+        Strong<JSObject> mock;
+        Strong<JSObject> viewOfMock;
+    };
+    UncheckedKeyHashMap<ModuleID, LastDeedOnMock> m_lastDeedsOnMocksUnderCallsOfImport;
     BitVector m_modulesThatHadRunWhenMocked;
     BitVector m_modulesWhoseFactoryRuns;
+    BitVector m_modulesWhoseFactoryWasCalled;
+    struct FailureOfFactory {
+        ModuleID mocked;
+        Strong<Unknown> error;
+        uint32_t moment { 0 };
+        Vector<ModuleID, 2> rootsThatWaitedForOriginal;
+    };
+    Vector<FailureOfFactory> m_failuresOfFactories;
     Vector<ModuleID, 2> m_importsMadeByOwnFactory;
     BitVector m_modulesWithMockThatAsksAgain;
     BitVector m_modulesThatLayMocksAgain;
     BitVector m_modulesWithLoadEndedByMock;
     ModuleID m_moduleThatRequireAsksFor;
+    bool m_walkGoesOnPastFactoriesThatHaveNotSettled { false };
+    bool m_letsGoOfMocksAtLinkFromSource { false };
+    ModuleID m_moduleThatRequires;
     ModuleID m_moduleThatImportAsksFor;
+    ModuleID m_moduleThatWroteImportThatAsks;
+    ModuleID m_moduleThatImportThatAsksNames;
+    uint32_t m_momentOfImportThatAsks { 0 };
+    uint32_t m_momentOfHeldImport { 0 };
+    ModuleID m_moduleThatImportAskedForWhenFactoryBegan;
     JSValue m_stateOfWaitOfImportThatAsks;
     BitVector m_mockedModulesWithErrorKeptByLoader;
     bool m_loaderMayHoldLoadsThatFactoryEnded { false };
@@ -1864,9 +2219,24 @@ private:
         friend bool operator==(const RequireThatGaveUp&, const RequireThatGaveUp&) = default;
     };
     Vector<RequireThatGaveUp> m_requiresThatGaveUp;
+    struct WaitThatRequireLeft {
+        ModuleID required;
+        Strong<JSPromise> wait;
+        bool keepsError;
+        unsigned number;
+        unsigned factoriesYetToSettle;
+        BitVector fetchedAsThemselves;
+    };
+    bool wasFetchedAsItselfByLoadThatRequireLeft(ModuleID root, ModuleID module) const;
+    Vector<WaitThatRequireLeft> m_waitsThatRequiresLeft;
+    unsigned m_numberOfWaitsThatRequiresHaveLeft { 0 };
+    BitVector m_filesWhoseRequireThrewBesideFactories;
     BitVector m_modulesLoadedBeforeMockThatWaited;
     BitVector m_filesThatRanAheadOfMock;
+    BitVector m_filesThatRanBesideMockThatOnlyWaited;
+    BitVector m_modulesAskedForOwnNames;
     BitVector m_filesUnderKeyOfOriginal;
+    BitVector m_filesWhoseOriginalCameBackUnderOwnKey;
     uint32_t m_stepsOfLoader { 0 };
     UncheckedKeyHashMap<ModuleID, uint64_t> m_loadsThatHoldModules;
     uint64_t m_numberOfNextLoadToGoThrough { 0 };
@@ -1900,12 +2270,15 @@ private:
         std::optional<uint32_t> stepsOfLoaderAtCall;
         uint32_t momentOfCall;
         Strong<Unknown> asyncContext { };
+        ModuleID moduleThatWroteCall { };
+        uint32_t momentOfCallAmongFactories { 0 };
     };
     Deque<TextOnItsWay, 2> m_textsOnTheirWay;
     bool m_canJobsOfFileTellWhenTextsCome { false };
     std::optional<uint32_t> m_stepsOfLoaderAtCallWhoseTextHasCome;
     std::optional<uint32_t> m_momentOfCallWhoseTextHasCome;
     void forgetMockLaidBehindCallWhoseTextHasCome(ModuleID);
+    void walkInPlaceOfCallsHeldForTextOf(ModuleID file);
     uint32_t m_turnOfTexts { 0 };
     uint32_t m_numberOfTextsAskedFor { 0 };
     UncheckedKeyHashMap<ModuleID, uint32_t> m_turnsInWhichTextsCame;
@@ -1938,6 +2311,21 @@ private:
     void runJobOfRound(ModuleID moduleOfJob);
     Deque<TextThatWaits, 2> m_callsToMakeAgain;
     Strong<JSPromise> m_promiseOfJobThatMakesCallsAgain;
+    Strong<JSPromise> m_promiseOfJobInWhichLoadAsksForOriginal;
+    void letLoadInFlightAskForOriginal(ModuleID);
+    void bookImportWhoseMocksRunWhenItsTextHasCome(ModuleID);
+    bool hasLoaderSettledOriginalOf(ModuleID mocked);
+    JSPromise* takeFailureOfLoadForWantOfMock(ModuleID);
+    bool m_areTestsOfFileDone { false };
+    Vector<std::pair<ModuleID, Strong<JSPromise>>, 1> m_loadsThatFailedForWantOfMock;
+    JSPromise* loadThatFailedForWantOfMock(ModuleID module) const
+    {
+        for (const auto& load : m_loadsThatFailedForWantOfMock) {
+            if (load.first == module)
+                return load.second.get();
+        }
+        return nullptr;
+    }
     uint32_t m_jobsBehindDelivery { 0 };
     void runJobThatMakesCallsAgain(ModuleID moduleOfJob);
     void makeCallAgain(TextThatWaits&);
@@ -1970,6 +2358,10 @@ private:
     void leaveToHost(ModuleID file);
     void takeBackFromHost(std::span<const ModuleID> files);
     BitVector m_keysWithoutEntryBehindMock;
+    BitVector m_rootsOfImportsThatFailedUnderMocks;
+    BitVector m_rootsOfCallsOfImport;
+    BitVector m_modulesWhoseFailedLoadNothingEvicts;
+    BitVector m_mocksWhoseEntryProgramDeleted;
     BitVector m_keysWithFalsyEntryOfProgram;
     bool isChangedOnDisk(ModuleID file);
     void dropTextThatHostHoldsItself(ModuleID file);
@@ -2035,6 +2427,12 @@ ALWAYS_INLINE StoredModuleStatus Modules::storedStatus(ModuleID module) const
     return static_cast<StoredModuleStatus>(std::min(stored, static_cast<uint8_t>(StoredModuleStatus::Evaluating)));
 }
 
+ALWAYS_INLINE void Modules::unsettleForLinks(ModuleID module)
+{
+    m_modulesSettledForLinks[module.index() / 64] &= ~(1ull << (module.index() % 64));
+    ++m_linkEpoch;
+}
+
 ALWAYS_INLINE void Modules::setStoredStatus(ModuleID module, StoredModuleStatus status)
 {
     RELEASE_ASSERT(module.index() < m_storedStatuses.size());
@@ -2043,6 +2441,8 @@ ALWAYS_INLINE void Modules::setStoredStatus(ModuleID module, StoredModuleStatus 
     m_storedStatuses[module.index()] = static_cast<uint8_t>(status);
     if (status == StoredModuleStatus::InRecord)
         didChangeStatusInRecord(module);
+    else if (status == StoredModuleStatus::Unlinked)
+        unsettleForLinks(module);
 }
 
 ALWAYS_INLINE ModuleStatus Modules::status(ModuleID module) const

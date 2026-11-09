@@ -136,18 +136,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHolesAtSite, JSCell*, (Instance
     uint64_t distanceToLastArray = instance->arrays.distanceFromProfileToLastArray;
     RELEASE_ASSERT(address >= statics && distanceToLastArray >= sizeof(ArrayAllocationProfile));
     RELEASE_ASSERT(address + distanceToLastArray + ArrayAllocationProfile::sizeOfLastArrayWord <= statics + instance->tables().instanceSizes.sizeOfStatics);
-    RELEASE_ASSERT(seedIndexingType == ArrayWithInt32 || seedIndexingType == ArrayWithDouble);
+    RELEASE_ASSERT(seedIndexingType == ArrayWithUndecided || seedIndexingType == ArrayWithInt32 || seedIndexingType == ArrayWithDouble);
     auto& profile = *reinterpret_cast<ArrayAllocationProfile*>(address);
     auto& lastArray = *reinterpret_cast<JSArray**>(address + distanceToLastArray);
 
     bool isReviewed = !(profile.word & ArrayAllocationProfile::countMask);
     profile.word -= ArrayAllocationProfile::oneAllocation;
     if (isReviewed) {
-        reviewArrayAllocationProfile(profile, lastArray);
+        reviewArrayAllocationProfile(profile, lastArray, seedIndexingType == ArrayWithUndecided);
         profile.startInterval();
         lastArray = nullptr;
     }
     IndexingType shape = std::max<IndexingType>(profile.shape(), seedIndexingType & IndexingShapeMask);
+    if (shape == UndecidedShape)
+        shape = ContiguousShape;
     JSArray* array = bearArrayWithHoles(globalObject, vm, scope, source, length, IsArray | shape, 0);
     if (isReviewed && array)
         lastArray = array;

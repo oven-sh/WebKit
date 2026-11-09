@@ -16,6 +16,7 @@
 #include "AOTConvention.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTFrameMapEmitter.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubBodyConvention.h"
@@ -150,7 +151,7 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     return placed;
 }
 
-void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params)
+ALWAYS_INLINE_INTO_OTHER_FILES void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params)
 {
     RegisterSet released = params.value()->registersToRelease();
     if (released.isEmpty())

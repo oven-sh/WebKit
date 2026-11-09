@@ -9,6 +9,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableRealm.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTHostEntriesTestSupport.h"
@@ -303,6 +304,22 @@ static void testMemberLookup()
     });
 }
 
+static void testMembersAskedByByteAlone()
+{
+    AOT_TEST_CHECK(table().at(hostBuiltin("ObjectPrototype__proto__"_s)).mutability == BuiltinMutability::AlwaysLocked && !isMemberAskedByByteAlone(table(), hostBuiltin("ObjectPrototype__proto__"_s)));
+    AOT_TEST_CHECK(isMemberAskedByByteAlone(table(), hostBuiltin("AbortSignalPrototypeAborted"_s)));
+    AOT_TEST_CHECK(isMemberAskedByByteAlone(table(), hostBuiltin("AbortControllerPrototypeSignal"_s)));
+    AOT_TEST_CHECK(!isMemberAskedByByteAlone(table(), Builtins::ArrayPrototypePush));
+    AOT_TEST_CHECK(!isMemberAskedByByteAlone(table(), Builtins::ObjectPrototype));
+    forEachBuiltin([&](BuiltinID id, const Builtin& builtin) {
+        AOT_TEST_CHECK(builtin.kind != BuiltinKind::Accessor || !builtin.flags.contains(BuiltinFlag::IsCompilerHelper));
+        if (!isMemberAskedByByteAlone(table(), id))
+            return;
+        AOT_TEST_CHECK(builtin.kind == BuiltinKind::Accessor && builtin.holder && builtin.name);
+        AOT_TEST_CHECK(cellThatNamesMemberAskedByItsByte(table(), id) == BuiltinCellKey::getter(id) && !BuiltinCellKey::getter(id).hasCell(table()));
+    });
+}
+
 static void testMemberMissingOnTargetIsNotFound()
 {
     BuiltinID member = hostBuiltin("ProcessCwd"_s);
@@ -568,8 +585,8 @@ static void testAttachmentsAreFoundByEntry()
     for (const BuiltinNumberConstant& record : attachments.numberConstants)
         AOT_TEST_CHECK(table().numberOf(record.builtin).has_value());
 
-    AOT_TEST_CHECK(table().featureUsesOf(Builtins::MathMax).empty() && table().moduleLoadsOf(Builtins::MathMax).empty() && table().calledFunctionsOf(Builtins::MathMax).empty());
-    AOT_TEST_CHECK(!table().unseenCodeOf(Builtins::MathMax) && !table().at(Builtins::MathMax).flags.contains(BuiltinFlag::RunsUnseenCode) && !table().boxedCallStubOf(Builtins::Math));
+    AOT_TEST_CHECK(table().featureUsesOf(Builtins::MathAbs).empty() && table().moduleLoadsOf(Builtins::MathAbs).empty() && table().calledFunctionsOf(Builtins::MathAbs).empty());
+    AOT_TEST_CHECK(!table().unseenCodeOf(Builtins::MathAbs) && !table().at(Builtins::MathAbs).flags.contains(BuiltinFlag::RunsUnseenCode) && !table().boxedCallStubOf(Builtins::Math));
 }
 
 static void testHostUsesOfStartupLoads()
@@ -770,6 +787,7 @@ std::span<const NativeTest> builtinTableTests()
         { "builtin-table/classes-and-slots"_s, testClassesAndSlots },
         { "builtin-table/class-relations"_s, testClassRelations },
         { "builtin-table/member-lookup"_s, testMemberLookup },
+        { "builtin-table/members-asked-by-their-byte-alone"_s, testMembersAskedByByteAlone },
         { "builtin-table/member-missing-on-target-is-not-found"_s, testMemberMissingOnTargetIsNotFound },
         { "builtin-table/mutability-follows-the-lock"_s, testMutabilityFollowsTheLock },
         { "builtin-table/locked-objects"_s, testLockedObjects },

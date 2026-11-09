@@ -485,7 +485,7 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     const BuiltinTable& builtins = check.program.builtins();
     std::span<const uint32_t> openedNames = tables.openedNames();
     bool everyMemberExists = std::ranges::all_of(tables.constantAndUnlockedBuiltinMembers().first(tables.numberOfWordsBelow(ProgramTables::openedName)), [&](uint32_t member) {
-        return builtins.contains(BuiltinID(member & ~ProgramTables::unlockedBuiltinMember));
+        return builtins.contains(BuiltinID(member & ~(ProgramTables::unlockedBuiltinMember | ProgramTables::memberAskedByByteAlone)));
     });
     bool everyOpenedNameExists = !(openedNames.size() % 2);
     for (size_t index = 0; everyOpenedNameExists && index < openedNames.size(); index += 2)
@@ -495,6 +495,10 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     checkAscending(tables.constantBuiltinMembers(), [&](uint32_t member) {
         return std::pair { builtins.at(BuiltinID(member)).holder, BuiltinID(member) };
     }, "constantAndUnlockedBuiltinMembers"_s);
+    checkAscending(tables.membersAskedByByteAlone(), std::identity { }, "constantAndUnlockedBuiltinMembers"_s);
+    check.expect(std::ranges::all_of(tables.membersAskedByByteAlone(), [&](uint32_t member) {
+        return isMemberAskedByByteAlone(builtins, BuiltinID(member & ~ProgramTables::memberAskedByByteAlone));
+    }), "BuiltinMemberIsNotAskedByByteAlone"_s);
     checkAscending(tables.unlockedBuiltinMembers(), std::identity { }, "constantAndUnlockedBuiltinMembers"_s);
     check.expect(std::ranges::none_of(tables.constantBuiltinMembers(), [&](uint32_t member) {
         return ProgramTables::isUnlocked(tables.unlockedBuiltinMembers(), member);
@@ -512,6 +516,7 @@ static void checkRowsNamedByNumber(const JoinedTables& check)
     };
     expectRows(std::ranges::equal(tables.builtinCells(), numbers.builtinCells(), { }, { }, &BuiltinCellKey::encoded), "builtinCells"_s);
     expectRows(std::ranges::equal(tables.eagerBuiltinCells(), numbers.eagerBuiltinCells()), "eagerBuiltinCells"_s);
+    expectRows(std::ranges::equal(tables.membersAskedByByteAlone(), numbers.membersAskedByByteAlone(), { }, [](uint32_t member) { return member & ~ProgramTables::memberAskedByByteAlone; }, &BuiltinID::index), "constantAndUnlockedBuiltinMembers"_s);
     expectRows(std::ranges::equal(tables.bigIntConstants(), numbers.bigIntConstants(), { }, { }, numberOfString), "bigIntConstants"_s);
     expectRows(std::ranges::equal(tables.keyCellIdentifiers(), numbers.keyCells(), { }, { }, numberOfKey), "keyCellIdentifiers"_s);
     bool namesEveryGlobalBinding = std::ranges::equal(tables.globalBindings(), numbers.globalBindings(), { }, [](uint32_t word) { return word & GlobalBindings::identifierMask; }, [&](const PlacedGlobalBinding& binding) { return numberOfKey(binding.key); });

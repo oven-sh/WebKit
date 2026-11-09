@@ -13,6 +13,7 @@
 #include "AOTCellFormat.h"
 #include "AOTIRProgram.h"
 #include "AOTRowsOfLayouts.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
@@ -58,7 +59,7 @@ void Layout::indexFields()
         if (!isInTable)
             m_staticFieldsByKey.append(IndexedField { key, i });
     }
-    std::ranges::stable_sort(m_staticFieldsByKey.mutableSpan().subspan(staticFieldTableSize()), { }, &IndexedField::key);
+    AOT::stableSort(m_staticFieldsByKey.mutableSpan().subspan(staticFieldTableSize()), { }, &IndexedField::key);
 }
 
 Vector<uint32_t, 4> Layout::indexedStaticFieldsThatMayMatch(PropertyKeyID key) const

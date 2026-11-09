@@ -33,7 +33,7 @@ namespace JSC { namespace AOT {
 static constexpr std::array gatheredSpacesThatCountFunctions { NumberSpace::Name, NumberSpace::NameOfText };
 static_assert(std::ranges::all_of(gatheredSpacesThatCountFunctions, hasOneIDAsKey));
 
-static constexpr std::array gatheredSpacesThatKeepFirstFunction { NumberSpace::Name, NumberSpace::NameOfText, NumberSpace::AtomOfComparedText, NumberSpace::String, NumberSpace::StringCell, NumberSpace::KeyCell };
+static constexpr std::array gatheredSpacesThatKeepFirstFunction { NumberSpace::Name, NumberSpace::NameOfText, NumberSpace::String, NumberSpace::StringCell, NumberSpace::KeyCell };
 static_assert(std::ranges::all_of(gatheredSpacesThatKeepFirstFunction, hasOneIDAsKey));
 static_assert(std::ranges::all_of(gatheredSpacesThatCountFunctions, [](NumberSpace space) { return std::ranges::contains(gatheredSpacesThatKeepFirstFunction, space); }), "functions are counted unit by unit");
 static_assert(FunctionByModule { .position = UINT32_MAX, .function = FunctionID(0u) } < FunctionByModule { }, "a minimum over functions starts at no function");
@@ -234,7 +234,6 @@ private:
             }
             add(NumberSpace::Name, key.subspan(key.size() - 2, 1));
             return;
-        case NumberSpace::AtomOfComparedText:
         case NumberSpace::ShownString:
         case NumberSpace::AtomOfString:
         case NumberSpace::Name:

@@ -241,6 +241,7 @@ void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)
     Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Void);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->setRunsWithoutFrame(true);
+    patchpoint->setShowsRegistersToCollector(true);
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(context);
     patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const Machine::PatchParameters& params) {
         if (!params.frameIsSetUp())
@@ -261,6 +262,7 @@ void HintEmitter::emitPoll(const ValueContext& value)
     bool leavesOwedError = m_code.marksOf(value.id()).contains(SweepMark::LeavesOwedError);
     if (hasFaultingLoopPolls) {
         patchpoint->setRunsWithoutFrame(!isARM64());
+        patchpoint->setShowsRegistersToCollector(true);
         patchpoint->setGenerator([records = &m_records, site, leavesOwedError](CCallHelpers& jit, const Machine::PatchParameters& params) {
             emitFaultingLoad(jit, params, records, site, leavesOwedError);
         });

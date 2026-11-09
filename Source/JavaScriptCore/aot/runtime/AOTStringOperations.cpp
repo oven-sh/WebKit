@@ -11,6 +11,7 @@
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTCaseConversions.h"
 #include "AOTGrowingText.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTImageText.h"
 #include "AOTInstance.h"
@@ -20,6 +21,8 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPropertyCachesStringKeys.h"
+#include "AOTQuotedTexts.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
 #include "AOTUnwinding.h"
@@ -2109,7 +2112,26 @@ static NEVER_INLINE JSString* quoteStringInEngine(JSGlobalObject* globalObject, 
     return jsString(vm, WTF::move(text));
 }
 
-static JSString* quoteString(JSGlobalObject* globalObject, JSString* string)
+QuotedTexts& QuotedTexts::ensure(State& state)
+{
+    if (QuotedTexts* texts = state.instance.realm.quotedTexts) [[likely]]
+        return *texts;
+    QuotedTexts* texts = state.tableArena.allocate<QuotedTexts>(1);
+    texts->cageBase = state.instance.vm->heap.cage().base();
+    state.caches->addClearedEachCollection("quoted texts"_s, asMutableByteSpan(std::span { texts->entries }));
+    state.instance.realm.quotedTexts = texts;
+    return *texts;
+}
+
+void QuotedTexts::remember(const StringImpl& text, const JSString* quoted)
+{
+    if (std::bit_cast<uintptr_t>(quoted) - cageBase >= MarkedBlockCage::maxSize)
+        return;
+    unsigned hash = text.existingHash();
+    entries[hash % numberOfEntries] = static_cast<uint64_t>(hash) << 32 | MarkedBlockCage::encode(cageBase, quoted);
+}
+
+static JSString* quoteString(JSGlobalObject* globalObject, State& state, JSString* string)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2136,7 +2158,10 @@ static JSString* quoteString(JSGlobalObject* globalObject, JSString* string)
             if (!hasEscapes) [[likely]] {
                 quoted.front() = '"';
                 quoted.back() = '"';
-                return jsNontrivialString(vm, String { impl.releaseNonNull() });
+                JSString* result = jsNontrivialString(vm, String { impl.releaseNonNull() });
+                if (const StringImpl* text = string->tryGetValueImpl(); text && QuotedTexts::canRemember(*text))
+                    QuotedTexts::ensure(state).remember(*text, result);
+                return result;
             }
             if (characters.size() <= maxLengthOfStringEscapedHere) {
                 if (JSString* text = tryQuoteStringWithEscapes(vm, characters)) [[likely]]
@@ -2150,13 +2175,13 @@ static JSString* quoteString(JSGlobalObject* globalObject, JSString* string)
     RELEASE_AND_RETURN(scope, quoteStringInEngine(globalObject, string));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTJSONStringifyPrimitive, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES stringifyPrimitive(Instance* instance, EncodedJSValue encodedValue)
 {
     constexpr Entry entry = Entry::operationAOTJSONStringifyPrimitive;
     AOT_OPERATION_BEGIN(instance, entry);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isCell())
-        OPERATION_RETURN(scope, quoteString(globalObject, cellArgument<JSString>(value.asCell(), entry)));
+        OPERATION_RETURN(scope, quoteString(globalObject, *instance->state, cellArgument<JSString>(value.asCell(), entry)));
     if (value.isNumber())
         OPERATION_RETURN(scope, numberToJSONText(vm, value));
     if (value.isBoolean())
@@ -2164,6 +2189,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTJSONStringifyPrimitive, JSCell*, (Instance*
     if (!value.isNull()) [[unlikely]]
         crashOnWrongOperand(entry);
     OPERATION_RETURN(scope, vm.smallStrings.nullString());
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTJSONStringifyPrimitive, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
+{
+    if (const QuotedTexts* texts = instance->realm.quotedTexts; texts && JSValue::decode(encodedValue).isString()) {
+        const StringImpl* text = asString(JSValue::decode(encodedValue))->tryGetValueImpl();
+        if (JSString* quoted = text && QuotedTexts::canRemember(*text) ? texts->tryFind(*text) : nullptr) {
+            if (instance->vm->aotState().counts) [[unlikely]]
+                countEvent(*instance->vm, RuntimeCounterID::QuotedTextsHandedOutAgain);
+            return { quoted, nullptr };
+        }
+    }
+    [[clang::musttail]] return stringifyPrimitive(instance, encodedValue);
 }
 
 } } // namespace JSC::AOT

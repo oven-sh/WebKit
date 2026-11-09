@@ -186,6 +186,7 @@ public:
     JS_EXPORT_PRIVATE Operation* findPurePatch(const PureFunction&, Type, std::span<Operation* const> operands);
     JS_EXPORT_PRIVATE void recordPurePatch(PatchOperation*);
     JS_EXPORT_PRIVATE void recordInPlaceOfPurePatch(const PureFunction&, Operation* phi);
+    JS_EXPORT_PRIVATE void recordInPlaceOfReadOfMemory(const PureFunction&, Operation* phi, Operation* operand, const AbstractHeap&);
 
     JS_EXPORT_PRIVATE void jump(Edge);
     JS_EXPORT_PRIVATE bool tryToLeadBranchPastEmptyBlock(Edge);

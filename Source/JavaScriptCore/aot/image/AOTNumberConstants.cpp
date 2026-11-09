@@ -42,6 +42,7 @@ namespace {
 struct NumberedBuiltinCells {
     Vector<BuiltinCellKey> cells;
     Vector<uint32_t> eagerCells;
+    Vector<BuiltinID> membersAskedByByteAlone;
 };
 
 } // anonymous namespace
@@ -117,14 +118,6 @@ static void appendCellsNamedByTypeRecords(const Typed::Program& program, std::sp
     }
 }
 
-static void appendParentsNamedByClassRecords(const Typed::Program& program, const Typed::Facts& facts, Vector<BuiltinCellKey>& cells)
-{
-    for (unsigned index = 0; index < program.layouts.size(); ++index) {
-        if (BuiltinID parent = Typed::builtinParentNamedByClassRecord(program, facts, LayoutID(index)))
-            cells.append(BuiltinCellKey::object(parent));
-    }
-}
-
 static bool isLockedLocationOfBuiltinCell(const BuiltinTable& builtins, BuiltinID member)
 {
     return builtins.at(member).mutability == BuiltinMutability::AlwaysLocked || builtins.isLocationOfLockedObject(member);
@@ -168,8 +161,16 @@ static NumberedBuiltinCells numberBuiltinCellsOfImage(const NumberingInputs& inp
         if (std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(static_cast<uint32_t>(encoded), builtins))
             cells.append(*key);
     }
+    Vector<BuiltinID> membersAskedByByteAlone;
+    for (BuiltinCellKey key : cells) {
+        if (key.kind() != BuiltinCellKey::Kind::Getter || key.hasCell(builtins))
+            continue;
+        if (isMemberAskedByByteAlone(builtins, key.builtin()))
+            membersAskedByByteAlone.append(key.builtin());
+        else
+            RELEASE_ASSERT(program.admitsReplacedBuiltins);
+    }
     appendCellsNamedByTypeRecords(program, collectTypesWithRecord(program, mentions, tables).span(), cells);
-    appendParentsNamedByClassRecords(program, facts, cells);
     sortBuiltinCellsAndRemoveKeysWithoutCell(builtins, cells);
 
     Vector<BuiltinCellKey> eagerCells;
@@ -192,7 +193,7 @@ static NumberedBuiltinCells numberBuiltinCellsOfImage(const NumberingInputs& inp
     Vector<uint32_t> placesOfEagerCells = eagerCells.map([&](BuiltinCellKey key) {
         return static_cast<uint32_t>(std::ranges::lower_bound(cells, key.encoded(), { }, &BuiltinCellKey::encoded) - cells.begin());
     });
-    return { WTF::move(cells), WTF::move(placesOfEagerCells) };
+    return { WTF::move(cells), WTF::move(placesOfEagerCells), WTF::move(membersAskedByByteAlone) };
 }
 
 static Vector<PropertyKeyID> listKeyCellsOfImage(const Typed::Program& program, const GatheredMentions& mentions)
@@ -350,6 +351,7 @@ void ImageNumbersBuilder::numberConstants()
     }
     numbers.m_builtinCells = WTF::move(builtinCells.cells);
     numbers.m_eagerBuiltinCells = WTF::move(builtinCells.eagerCells);
+    numbers.m_membersAskedByByteAlone = WTF::move(builtinCells.membersAskedByByteAlone);
 
     numbers.m_keyCells = listKeyCellsOfImage(program, mentions);
     numbers.m_keyCellNumbersPlusOne.fill(0, program.types.numberOfPropertyKeys());

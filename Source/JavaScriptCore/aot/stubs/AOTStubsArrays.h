@@ -77,6 +77,7 @@ constexpr StubKey newCopyOnWriteArray(ArrayElementKind kind, SharedElements elem
 constexpr StubKey newEmptyArray(EmptyArray array) { return StubKey(StubFamily::NewEmptyArray).withForm(static_cast<uint8_t>(array)); }
 constexpr StubKey newEmptyArrayWithCapacity() { return StubKey(StubFamily::NewEmptyArrayWithCapacity); }
 constexpr StubKey newArrayFromBuffer() { return StubKey(StubFamily::NewArrayFromBuffer); }
+constexpr StubKey newArrayOfList(bool isContiguous) { return StubKey(StubFamily::NewArrayOfList).withForm(isContiguous); }
 constexpr StubKey newArrayWithLength(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayWithLength).withForm(static_cast<uint8_t>(kind)); }
 constexpr StubKey newArrayOfHolesSlow() { return StubKey(StubFamily::NewArrayOfHolesSlow); }
 constexpr StubKey newArrayOfLength(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayOfLength).withForm(static_cast<uint8_t>(kind)); }
@@ -99,6 +100,12 @@ constexpr StubKey destructureIterable() { return StubKey(StubFamily::Destructure
 constexpr StubKey arrayPutAtIndex(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtIndex).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey arrayPutAtNumber(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtNumber).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey reserveArrayRoom() { return StubKey(StubFamily::ReserveArrayRoom); }
+struct ListWhoseLengthIsStoredWithoutRunTime {
+    static constexpr IndexingType firstKind = ArrayWithUndecided;
+    static constexpr IndexingType lastKind = ArrayWithContiguous;
+    static constexpr uint32_t bitsThatItsStructureMayNotHave = Structure::s_anyImmutablePropertiesBits;
+};
+constexpr StubKey setArrayLength(bool isInSloppyCode) { return StubKey(StubFamily::SetArrayLength).withForm(isInSloppyCode); }
 constexpr StubKey arrayGetAtIndex(ArrayRead read = ArrayRead::OfListAsMade) { return StubKey(StubFamily::ArrayGetAtIndex).withForm(static_cast<uint8_t>(read)); }
 constexpr StubKey arrayGetAtNumber() { return StubKey(StubFamily::ArrayGetAtNumber); }
 constexpr StubKey arrayIndexOfString(SearchedElements elements) { return StubKey(StubFamily::ArrayIndexOfString).withForm(static_cast<uint8_t>(elements)); }

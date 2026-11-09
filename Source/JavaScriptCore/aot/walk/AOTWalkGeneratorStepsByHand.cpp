@@ -25,8 +25,6 @@ bool canWaitForStepOfAsyncGenerator(Walker&);
 Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Reference goesByDriver, Origin);
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
-extern const OpcodeSet opcodesThatAnswerFromStepWrittenByHandTakes;
-constinit const OpcodeSet opcodesThatAnswerFromStepWrittenByHandTakes { Opcode::PropGet, Opcode::TypeTest };
 
 namespace {
 

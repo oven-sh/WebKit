@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTSlotPlan.h"
 #include <bit>
 #include <optional>
@@ -18,6 +19,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr AbstractHeapSet heapsUnderElementsInWalkState { AbstractHeap::Elements, AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage };
+static constexpr AbstractHeapSet heapsUnderElementsOutsideViewsInWalkState { AbstractHeap::Elements, AbstractHeap::ArrayStorage };
 static constexpr AbstractHeapSet heapsUnderPlacesInWalkState = heapsUnderElementsInWalkState | AbstractHeapSet { AbstractHeap::ObjectFields, AbstractHeap::EnvironmentFields, AbstractHeap::ModuleVariables, AbstractHeap::MemberGuards };
 static constexpr AbstractHeapSet heapsUnderElementsOutsideObjectsInWalkState = heapsUnderElementsInWalkState - perObjectHeaps;
 static_assert(perObjectHeaps.containsAll(heapsUnderPlacesInWalkState - heapsUnderElementsOutsideObjectsInWalkState - AbstractHeapSet { AbstractHeap::ModuleVariables, AbstractHeap::MemberGuards }));
@@ -311,7 +313,7 @@ void WalkState::takeHeldOfOwn()
     m_held = new Held(*m_held);
 }
 
-void WalkState::shareWhatIsHeldBy(const WalkState& other)
+ALWAYS_INLINE_INTO_OTHER_FILES void WalkState::shareWhatIsHeldBy(const WalkState& other)
 {
     if (other.holdsNothing()) {
         if (m_held)
@@ -363,7 +365,7 @@ NEVER_INLINE void WalkState::takeMarksOfStateWithoutWholeProgram(WalkState& othe
 
 void WalkState::dropWhatIsHeld()
 {
-    m_marks.kinds &= programIsWhole;
+    m_marks.kinds &= keptWhereNothingIsHeld;
     if (m_held->numberOfOwners == 1) {
         m_held->clear();
         return;
@@ -431,7 +433,7 @@ PropertyKeyID WalkState::Held::keyOfSlot(const ProgramOfState& program, FieldRef
     return program.slots ? program.slots->keyOf(*program.program, field) : PropertyKeyID();
 }
 
-uint8_t WalkState::Held::bitOfSlot(const ProgramOfState& program, FieldReference field)
+ALWAYS_INLINE_INTO_OTHER_FILES uint8_t WalkState::Held::bitOfSlot(const ProgramOfState& program, FieldReference field)
 {
     PropertyKeyID key = keyOfSlot(program, field);
     return key ? bitOf(program, MemoryLocation::objectField(key)) : Place::entireHeap;
@@ -444,7 +446,10 @@ bool WalkState::Held::liesBesideWhatIsWritten(const ProgramOfState& program, con
     switch (place.kind) {
     case PlaceKind::Slot: {
         PropertyKeyID key = writtenAlone->heap() == AbstractHeap::ObjectFields ? keyOfSlot(program, FieldReference { LayoutID(place.first), place.second }) : PropertyKeyID();
-        return key && program.program->types.compareByContent(key, writtenAlone->key()) != 0;
+        if (!key || key == writtenAlone->key())
+            return false;
+        const TypeTable& types = program.program->types;
+        return (types.hasStableNumber(key) && types.hasStableNumber(writtenAlone->key())) || types.compareByContent(key, writtenAlone->key()) != 0;
     }
     case PlaceKind::Variable:
         return writtenAlone->heap() == AbstractHeap::ModuleVariables && place.first != writtenAlone->variable().index();
@@ -478,7 +483,7 @@ NEVER_INLINE auto WalkState::Held::findRecordOfHolderThatHasNotEndedInTable(Refe
     return found && !found->hasEnded ? found : nullptr;
 }
 
-ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfHolder(Reference object) const
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findRecordOfHolder(Reference object) const
 {
     if (!mayHaveRecordOf(object))
         return none;
@@ -491,13 +496,13 @@ ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfHolder(Reference object) con
     return none;
 }
 
-ALWAYS_INLINE uint32_t WalkState::Held::findHolder(Reference object) const
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findHolder(Reference object) const
 {
     uint32_t position = findRecordOfHolder(object);
     return position != none && !m_holders[position].hasEnded ? position : none;
 }
 
-ALWAYS_INLINE auto WalkState::Held::findRecordOfHolderThatHasNotEnded(Reference object) const -> const Holder*
+ALWAYS_INLINE_INTO_OTHER_FILES auto WalkState::Held::findRecordOfHolderThatHasNotEnded(Reference object) const -> const Holder*
 {
     if (!m_tableOfHolders.isEmpty())
         return findRecordOfHolderThatHasNotEndedInTable(object);
@@ -524,7 +529,7 @@ void WalkState::Held::fillTableOfPlaces()
     }
 }
 
-uint32_t WalkState::Held::findOrAddHolder(Reference object)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findOrAddHolder(Reference object)
 {
     uint32_t position = findRecordOfHolder(object);
     if (position != none) {
@@ -535,6 +540,7 @@ uint32_t WalkState::Held::findOrAddHolder(Reference object)
             record.layoutsOfSlots = LayoutsOfSlots::None;
             record.kindsOfPlaces = 0;
             record.maskOfPlaces = 0;
+            record.elementsLieOutsideViews = false;
             ++m_numberOfHolders;
             listAsReachedByEffects(position);
         }
@@ -561,7 +567,7 @@ NEVER_INLINE uint32_t WalkState::Held::findRecordOfPlaceInTable(uint32_t holder,
     });
 }
 
-ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findRecordOfPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
 {
     if (!m_tableOfPlaces.isEmpty())
         return findRecordOfPlaceInTable(holder, kind, first, second);
@@ -573,7 +579,7 @@ ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfPlace(uint32_t holder, Place
     return none;
 }
 
-ALWAYS_INLINE uint32_t WalkState::Held::findPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
 {
     uint32_t position = findRecordOfPlace(holder, kind, first, second);
     return position != none && m_places[position].value ? position : none;
@@ -767,6 +773,7 @@ void WalkState::Held::letLeave(uint32_t holder)
     countAmongReachedByEffects(m_holders[holder]);
     if (m_lists) [[unlikely]]
         listWhatHangsOn(holder);
+    endHolderIfNothingHangsOn(holder);
 }
 
 void WalkState::Held::countAmongReachedByEffects(const Holder& holder)
@@ -788,14 +795,14 @@ void WalkState::Held::countNoLongerAmongReachedByEffects(const Holder& holder)
     m_numberOfElementsReachedByEffects -= holder.numberOfElements;
 }
 
-void WalkState::Held::listAsReachedByEffects(uint32_t holder)
+ALWAYS_INLINE_INTO_OTHER_FILES void WalkState::Held::listAsReachedByEffects(uint32_t holder)
 {
     ASSERT(m_holders[holder].placeAmongReachedByEffects == none);
     m_holders.mutableAt(holder).placeAmongReachedByEffects = m_holdersReachedByEffects.size();
     m_holdersReachedByEffects.append(holder);
 }
 
-void WalkState::Held::takeOffListOfReachedByEffects(uint32_t holder)
+ALWAYS_INLINE_INTO_OTHER_FILES void WalkState::Held::takeOffListOfReachedByEffects(uint32_t holder)
 {
     uint32_t place = std::exchange(m_holders.mutableAt(holder).placeAmongReachedByEffects, none);
     uint32_t numberLeft = m_holdersReachedByEffects.size() - 1;
@@ -1070,7 +1077,7 @@ Vector<Reference, 8> WalkState::listFreshObjects() const
     return fresh;
 }
 
-bool WalkState::Held::letLeaveIfFresh(Reference object)
+ALWAYS_INLINE_INTO_OTHER_FILES bool WalkState::Held::letLeaveIfFresh(Reference object)
 {
     uint32_t holder = findHolder(object);
     if (holder == none || !m_holders[holder].isFresh)
@@ -1135,6 +1142,13 @@ void WalkState::Held::noteElementWithNaNForHole(Reference object, Reference inde
         return Place::entireHeap;
     });
     dropEndedRecordsIfMany();
+}
+
+void WalkState::Held::noteElementsLieOutsideViews(Reference object)
+{
+    uint32_t holder = findHolder(object);
+    if (holder != none && !m_holders[holder].elementsLieOutsideViews)
+        m_holders.mutableAt(holder).elementsLieOutsideViews = true;
 }
 
 void WalkState::Held::noteStoresPassAbove(LayoutID classLayout, PropertyKeyID key, Reference test)
@@ -1289,6 +1303,11 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
     auto holderIsWritten = [&](const Place& place) {
         return isWritten(place.holder);
     };
+    auto isWrittenAmong = [&](uint64_t written) {
+        return [&, written](const Place& place) {
+            return isWritten(place.holder) && !(ends.writtenAlone && liesBesideWhatIsWritten(*ends.program, place, written, ends.writtenAlone));
+        };
+    };
 
     const WriterOfOneObject* writer = ends.writerOfOneObject;
     if (writer && (ends.shapes || ends.elements || !ends.facts.isEmpty())) {
@@ -1362,7 +1381,8 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
     if (ends.slots) {
         bool writesOneLayout = writer;
         Vector<uint32_t, 16> foundToBeOfLayoutAlone;
-        auto slotStays = staysBehindWrite(ends.slots, holderIsWritten);
+        auto slotIsWritten = isWrittenAmong(ends.slots);
+        auto slotStays = staysBehindWrite(ends.slots, slotIsWritten);
         auto goThroughSlotsOf = [&](uint32_t list) {
             m_lists->goThroughPlaces(Lists::firstListOfSlots + list, Lists::entryByBit, [&](uint32_t position) {
                 if (!slotStays(position))
@@ -1408,12 +1428,17 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
         });
     }
     if (ends.elements && !writer) {
-        goThroughHolders(Lists::listOfElements, [](const Holder& record) {
-            return !!record.numberOfElements;
-        }, [&](uint32_t holder) {
+        m_lists->goThroughHolders(Lists::listOfElements, [&](uint32_t holder) {
+            const Holder& record = m_holders[holder];
+            if (record.hasEnded || record.isFresh || !record.numberOfElements)
+                return false;
+            if (!isWritten(holder) || (ends.sparesElementsOutsideViews && record.elementsLieOutsideViews))
+                return true;
             endPlacesOf(holder, ListOfPlaces::Elements, [](const Place&) {
                 return true;
             });
+            holdersThatLostSomething.append(holder);
+            return false;
         });
     }
     for (uint32_t holder : holdersThatLostSomething)
@@ -1622,7 +1647,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
                 written |= writtenOfKind(kind);
         }
         bool endsPlacesOfHolder = written & record.maskOfPlaces;
-        bool endsElementsOfHolder = endsElements && record.firstElement != none;
+        bool endsElementsOfHolder = endsElements && record.firstElement != none && (!record.elementsLieOutsideViews || writes.containsAny(heapsUnderElementsOutsideViewsInWalkState));
         bool endsFactsOfHolder = record.factsOfCell.containsAny(factsEnded);
         uint32_t numberOfPlaces = record.numberOfPlaces;
         if (endsShapes && record.shape)
@@ -1649,8 +1674,8 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     };
     if (reachesSomething && goesByLists()) [[unlikely]] {
         bool namesOneVariable = writtenAlone && writtenAlone->heap() == AbstractHeap::ModuleVariables && variablesWritten == Typed::maskOf(*program.program, *writtenAlone);
-        endByLists({ .shapes = endsShapes, .elements = endsElements, .facts = factsEnded, .slots = slotsWritten, .variables = variablesWritten,
-            .environmentFields = environmentFieldsWritten, .guards = guardsWritten, .variableWrittenAlone = namesOneVariable ? writtenAlone->variable() : VariableID() });
+        endByLists({ .shapes = endsShapes, .elements = endsElements, .sparesElementsOutsideViews = !writes.containsAny(heapsUnderElementsOutsideViewsInWalkState), .facts = factsEnded, .slots = slotsWritten, .variables = variablesWritten,
+            .environmentFields = environmentFieldsWritten, .guards = guardsWritten, .variableWrittenAlone = namesOneVariable ? writtenAlone->variable() : VariableID(), .program = &program, .writtenAlone = writtenAlone });
     } else if (reachesSomething)
         forEachHolderReachedByEffects(endWhatHangsOn);
 
@@ -1728,7 +1753,7 @@ bool leavesDeadZoneForGood(const Program& program, VariableID id)
     return loaderEntersBodyAtMostOnce(program.at(variable.module));
 }
 
-void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
+ALWAYS_INLINE_INTO_OTHER_FILES void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
 {
     if (!other.m_size) {
         clear();
@@ -1766,8 +1791,9 @@ void WalkState::meetWith(const WalkState& other, RecordsLastMet* last)
     if (&other == this)
         return;
     m_answers.meetWith(other.m_answers);
-    if (m_marks.turnInWhichNothingWasDone != other.m_marks.turnInWhichNothingWasDone) {
-        bool storesOfBothCanBePutBack = !((m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone) & placesWereWrittenInTurn) && newestStoreToPutBack() == other.newestStoreToPutBack();
+    if (uint32_t newest = newestStoreToPutBack(); m_marks.turnInWhichNothingWasDone != other.m_marks.turnInWhichNothingWasDone || newest != other.newestStoreToPutBack()) {
+        bool storesOfBothCanBePutBack = !((m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone) & placesWereWrittenInTurn) && newest == other.newestStoreToPutBack();
+        m_marks.kinds = (m_marks.kinds & ~placeOfNewestStoreToPutBack) | newest << shiftOfPlaceOfNewestStoreToPutBack;
         m_marks.turnInWhichNothingWasDone = turnOfMark(m_marks.turnInWhichNothingWasDone) != turnOfMark(other.m_marks.turnInWhichNothingWasDone) ? 0
             : storesOfBothCanBePutBack ? m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone
             : turnOfMark(m_marks.turnInWhichNothingWasDone) | placesWereWrittenInTurn;
@@ -1872,6 +1898,8 @@ void WalkState::Held::meetWith(const Held& other, RecordsLastMet* last)
             if (record.shape != same.shape)
                 endShape(holder);
             endFactsOfCell(holder, factsKnownHereAlone);
+            if (record.elementsLieOutsideViews && !same.elementsLieOutsideViews)
+                m_holders.mutableAt(holder).elementsLieOutsideViews = false;
             if (leaves)
                 letLeave(holder);
         }

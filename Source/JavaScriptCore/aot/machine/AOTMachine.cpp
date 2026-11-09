@@ -5,12 +5,14 @@
 
 #include "config.h"
 #include "AOTMachine.h"
+#include "AOTInliningAcrossFiles.h"
 
 #if ENABLE(AOT)
 
 #include <algorithm>
 #include <atomic>
 #include <limits>
+#include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Vector.h>
 
@@ -136,7 +138,7 @@ void PatchOperation::markChildAsLetGoByCallee(unsigned child)
     m_childrenLetGoByCallee.append(m_procedure.arena(), child);
 }
 
-void PatchOperation::leaveOperandsWhereTheyLie()
+ALWAYS_INLINE_INTO_OTHER_FILES void PatchOperation::leaveOperandsWhereTheyLie()
 {
     RELEASE_ASSERT(m_opcode == Patch && bringsOperandsToTheirRegisters() && m_registersToBringOperandsTo.isEmpty());
     if (numGPScratchRegisters)
@@ -231,14 +233,14 @@ Procedure::Procedure(Arena& arena, const HeapTree& heapTree, const ProcedureTrai
     m_operations.reserve(arena, 64);
 }
 
-void Procedure::fail(FailureKind kind, const Operation* operation)
+void Procedure::fail(FailureKind kind, const Operation* operation, PlaceOfCheck check)
 {
     if (m_failure)
         return;
     if (operation)
-        m_failure = Failure { kind, operation->origin(), operation->index() };
+        m_failure = Failure { kind, operation->origin(), operation->index(), check };
     else
-        m_failure = Failure { kind, Origin(), UINT32_MAX };
+        m_failure = Failure { kind, Origin(), UINT32_MAX, check };
 }
 
 void Procedure::noteRoomThatBuildingLeaves(ListThatBuildingLeaves list, void* room, size_t bytes)
@@ -258,6 +260,49 @@ void Procedure::letGoOfWhatBuildingLeaves()
 NEVER_INLINE Block* Procedure::addBlock()
 {
     return addBlockInline();
+}
+
+NEVER_INLINE Block* Procedure::addBlockThatOnlyJumps()
+{
+    return addBlockWithRoomForOperations<1>();
+}
+
+static bool wayLeadsFromEntrypointInto(const Procedure& procedure, const Block* asked)
+{
+    BitVector isReached(procedure.numberOfBlocks());
+    Vector<const Block*, 16> toLookAt;
+    auto reach = [&](const Block* block) {
+        if (!isReached.set(block->index()))
+            toLookAt.append(block);
+    };
+    for (const Entrypoint& entrypoint : procedure.entrypoints())
+        reach(entrypoint.block);
+    while (!toLookAt.isEmpty()) {
+        const Block* block = toLookAt.takeLast();
+        if (block == asked)
+            return true;
+        for (const Edge& edge : block->successors())
+            reach(edge.block());
+    }
+    return false;
+}
+
+void Procedure::stopAtStoreOverLoadThatStands(const Operation* store)
+{
+    if (wayLeadsFromEntrypointInto(*this, store->owner()))
+        fail(FailureKind::MalformedProcedure, store);
+    else
+        m_storesOverLoadsWhereNoWayLed.append(m_arena, store);
+}
+
+void Procedure::stopAtStoresThatWayLeadsToAfterAll()
+{
+    for (const Operation* store : m_storesOverLoadsWhereNoWayLed) {
+        if (wayLeadsFromEntrypointInto(*this, store->owner())) {
+            fail(FailureKind::MalformedProcedure, store);
+            return;
+        }
+    }
 }
 
 Block* Procedure::addEntrypoint(uint16_t id)
@@ -305,7 +350,8 @@ static uint32_t machineCoreHashOfConstantData(std::span<const uint8_t> bytes, ui
     for (; bytesLeft; --bytesLeft, ++cursor)
         hash = (hash ^ *cursor) * 16777619u;
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    return static_cast<uint32_t>(hash >> 32) ^ static_cast<uint32_t>(hash);
+    hash = (hash ^ hash >> 32) * 0x9E3779B97F4A7C15ull;
+    return static_cast<uint32_t>(hash >> 32);
 }
 
 // The encoder calls this wherever it materializes a double, so the cost of a call must not grow with the number of constants.

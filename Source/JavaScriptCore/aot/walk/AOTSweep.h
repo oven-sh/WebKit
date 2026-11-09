@@ -360,6 +360,7 @@ bool newArrayFencesBeforeHandingCellOn(const Operation& newArray);
 bool stubOfMethodEntersFunctionsThatOnlyCallFirstArgument(const Program&, const Facts&, BuiltinID method);
 bool unitMayLendWhatItMakes(const Program&, CodeUnit);
 String findMarkOfSweepThatNothingCovers(const SweepInputs&, Code&);
+bool closuresOfFunctionMayBeLent(const Program&, FunctionID);
 bool closureHasCellThatMayBeLent(const Program&, ClosureForm, FunctionID);
 bool functionEnteredOnlyCallsWhatArrivesAt(const Facts&, CodeRole, uint32_t numberOfBoundArguments, FunctionID, uint32_t position);
 

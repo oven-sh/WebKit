@@ -17,6 +17,7 @@ struct AccessorLaidInField {
     FieldReference field;
     FunctionID function;
     bool isGetter { true };
+    PropertyKeyID appendedKey;
 
     friend constexpr auto operator<=>(const AccessorLaidInField&, const AccessorLaidInField&) = default;
 };

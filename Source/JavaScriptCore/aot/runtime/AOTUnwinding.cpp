@@ -248,7 +248,8 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
                 }
                 break;
             case StubFrameKind::GeneratorBody:
-                completeGeneratorLeftByThrow(callFrame);
+                if (!isTermination)
+                    completeGeneratorLeftByThrow(callFrame);
                 break;
             case StubFrameKind::AsyncGeneratorBody:
                 asyncGeneratorBodyFrameLeft = place.callee;
@@ -308,7 +309,7 @@ CompiledUnwindResult unwindRunOfThrow(VM& vm, Instance& instanceThatThrows, cons
 CompiledUnwindResult unwindCompiledFrames(VM& vm, const CompiledFrameIterator& frames, VMEntryRecord& record, bool isTermination)
 {
     const int8_t* bufferSlots = bufferSlotsByRegisterIndex();
-    if (CallFrame* stubFrame = frames.generatorStubFrameLeft())
+    if (CallFrame* stubFrame = frames.generatorStubFrameLeft(); stubFrame && !isTermination)
         completeGeneratorLeftByThrow(stubFrame);
     if (CallFrame* stubFrame = frames.engineCalleeStubFrameLeft())
         copyStubSavedRegisters(record, bufferSlots, stubFrame, EngineCalleeFrame::savedRegisters);

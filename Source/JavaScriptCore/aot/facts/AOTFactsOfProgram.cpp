@@ -15,6 +15,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTDiagnostics.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
 #include "AOTLargeList.h"
 #include "AOTLocalesPassedAtCalls.h"
@@ -55,7 +56,7 @@ static bool isObjectOfClassInProgramFacts(const BuiltinTable& builtins, BuiltinI
     return builtins.isObjectOfClass(canonical);
 }
 
-static BuiltinID objectAnsweredByBindingInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
+static ALWAYS_INLINE BuiltinID objectAnsweredByBindingInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
 {
     if (builtins.at(canonical).kind != BuiltinKind::NativeBinding)
         return canonical;
@@ -150,7 +151,7 @@ static bool standsForObjectInProgramFacts(const BuiltinTable& builtins, BuiltinI
     return isObjectKind(entry.kind) || entry.memberCount;
 }
 
-static bool mayHoldObjectInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
+static ALWAYS_INLINE bool mayHoldObjectInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
 {
     if (standsForObjectInProgramFacts(builtins, canonical))
         return true;
@@ -490,6 +491,38 @@ static constexpr OpcodeSet accessesUnderComputedKeysInProgramFacts { Opcode::Ele
 static constexpr OpcodeSet readsOfVariablesInProgramFacts { Opcode::CheckInitialized, Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
 static constexpr OpcodeSet operatorsOnNumbersAloneInProgramFacts = operatorsOfKinds({ OperatorKind::Multiplicative }) | allRelations | OpcodeSet { Opcode::Sub, Opcode::Increment, Opcode::Decrement };
 static constexpr OpcodeSet operationsThatTellOfNumbersInProgramFacts = allBitwiseOperators | operatorsOnNumbersAloneInProgramFacts | storesUnderConstantKeysInProgramFacts | accessesUnderComputedKeysInProgramFacts | OpcodeSet { Opcode::Call, Opcode::NewObject };
+struct StepOfLookInProgramFacts {
+    static constexpr uint16_t isText = 1u << 0;
+    static constexpr uint16_t isData = 1u << 1;
+    static constexpr uint16_t definesUnderName = 1u << 2;
+    static constexpr uint16_t storesUnderName = 1u << 3;
+    static constexpr uint16_t makesObject = 1u << 4;
+    static constexpr uint16_t tellsOfNumbers = 1u << 5;
+    static constexpr uint16_t readsUnderName = 1u << 6;
+    static constexpr uint16_t callsByValue = 1u << 7;
+    static constexpr uint16_t loadsOrEvaluates = 1u << 8;
+    static constexpr uint16_t readsModuleVariable = 1u << 9;
+    static constexpr uint16_t takenInLibraryToo = loadsOrEvaluates | readsModuleVariable;
+};
+static constexpr std::array<uint16_t, numberOfOpcodes> stepsOfLookByOpcodeInProgramFacts = []() consteval {
+    std::array<uint16_t, numberOfOpcodes> steps { };
+    auto take = [&](OpcodeSet operations, uint16_t step) {
+        operations.forEach([&](Opcode opcode) {
+            steps[static_cast<unsigned>(opcode)] |= step;
+        });
+    };
+    take({ Opcode::String }, StepOfLookInProgramFacts::isText);
+    take({ Opcode::Data }, StepOfLookInProgramFacts::isData);
+    take({ Opcode::PropDefine }, StepOfLookInProgramFacts::definesUnderName);
+    take({ Opcode::PropSet }, StepOfLookInProgramFacts::storesUnderName);
+    take({ Opcode::NewObject }, StepOfLookInProgramFacts::makesObject);
+    take(operationsThatTellOfNumbersInProgramFacts, StepOfLookInProgramFacts::tellsOfNumbers);
+    take({ Opcode::PropGet }, StepOfLookInProgramFacts::readsUnderName);
+    take(callsByValueInProgramFacts, StepOfLookInProgramFacts::callsByValue);
+    take(loadsAndEvaluationsInProgramFacts, StepOfLookInProgramFacts::loadsOrEvaluates);
+    take({ Opcode::GetModuleVariable }, StepOfLookInProgramFacts::readsModuleVariable);
+    return steps;
+}();
 static constexpr OperandUses usesThatOnlyWriteOnOperandInProgramFacts {
     OperandUse::Inspects, OperandUse::Returns, OperandUse::WritesContents, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor,
 };
@@ -541,7 +574,7 @@ private:
     BuiltinID builtinThatLinkLedToAt(ValueID value) const { return value && !m_builtinThatLinkLedToOfValue.isEmpty() ? m_builtinThatLinkLedToOfValue[value.index()] : BuiltinID(); }
     void followAsComeByThroughLink(ValueID, BuiltinID canonicalAbove);
     const BuiltinCondition* lightFormAt(ValueID value) const { return builtinAt(value) ? m_rows.lightFormOf(m_builtins, m_builtins.canonicalID(builtinAt(value))) : nullptr; }
-    bool isFollowed(ValueID value) const { return builtinAt(value) || originOfURL(value) || holderOfMethodServed(value) || classOfPartAt(value); }
+    ALWAYS_INLINE bool isFollowed(ValueID value) const { return builtinAt(value) || originOfURL(value) || holderOfMethodServed(value) || classOfPartAt(value); }
     BodyValue valueBehindCasts(ValueID value) const { return m_index.value(m_index.valueBehindCasts(value)); }
 
     void note(Finding::Kind, uint8_t detail, uint32_t subject, uint32_t key, const Witness&);
@@ -556,6 +589,7 @@ private:
     void handOn(ValueID from, ValueID to);
     bool passOn(ValueID argument, ValueID parameter, const BodyBlock& from);
 
+    ALWAYS_INLINE uint32_t stepsOf(Opcode opcode) const { return stepsOfLookByOpcodeInProgramFacts[static_cast<unsigned>(opcode)] & m_stepsTaken; }
     void look(const BodyValue&);
     void noteBuiltinsSpelledIn(StringID, bool standsInData, const BodyValue&);
     void noteBuiltinsSpelledIn(const DataNode&, const BodyValue&);
@@ -610,6 +644,7 @@ private:
     const FunctionID m_id;
     const Function& m_function;
     const bool m_isOfProgram;
+    const uint16_t m_stepsTaken { static_cast<uint16_t>(m_isOfProgram ? UINT16_MAX : StepOfLookInProgramFacts::takenInLibraryToo) };
     bool m_readsOffNodeVm { false };
     const BodyIndex& m_index;
     const ThinSummary& m_summary;
@@ -936,7 +971,7 @@ void BodyLookOfProgramFacts::accessMemberOfPartOfClass(const BodyValue& value, B
     }
 }
 
-PropertyKeyID BodyLookOfProgramFacts::wellKnownSymbolThatReadGoesBy(const BodyValue& value) const
+ALWAYS_INLINE PropertyKeyID BodyLookOfProgramFacts::wellKnownSymbolThatReadGoesBy(const BodyValue& value) const
 {
     if (value.opcode() != Opcode::ElemGet)
         return { };
@@ -1890,20 +1925,22 @@ void BodyLookOfProgramFacts::noteModuleSpelledBy(PropertyKeyID id, const BodyVal
     }
 }
 
-void BodyLookOfProgramFacts::look(const BodyValue& value)
+ALWAYS_INLINE void BodyLookOfProgramFacts::look(const BodyValue& value)
 {
     Opcode opcode = value.opcode();
-    if (m_isOfProgram && opcode == Opcode::String)
+    using Step = StepOfLookInProgramFacts;
+    const uint32_t steps = stepsOf(opcode);
+    if (steps & Step::isText)
         noteBuiltinsSpelledIn(value.as<Opcode::String>().string(), false, value);
-    if (m_isOfProgram && opcode == Opcode::Data) {
+    if (steps & Step::isData) {
         if (DataID data = value.as<Opcode::Data>().data())
             noteBuiltinsSpelledIn(m_program.at(data).root, value);
     }
-    if (m_isOfProgram && opcode == Opcode::PropDefine)
+    if (steps & Step::definesUnderName)
         noteModuleSpelledBy(value.as<Opcode::PropDefine>().key(), value);
-    if (m_isOfProgram && opcode == Opcode::PropSet)
+    if (steps & Step::storesUnderName)
         noteModuleSpelledBy(value.as<Opcode::PropSet>().key(), value);
-    if (m_isOfProgram && opcode == Opcode::NewObject && !m_rows.modulesOfLibrary.isEmpty()) {
+    if ((steps & Step::makesObject) && !m_rows.modulesOfLibrary.isEmpty()) {
         auto allocation = value.as<Opcode::NewObject>();
         if (allocation.layout()) {
             const Layout& layout = m_program.at(allocation.layout());
@@ -1913,25 +1950,25 @@ void BodyLookOfProgramFacts::look(const BodyValue& value)
             }
         }
     }
-    if (m_isOfProgram && operationsThatTellOfNumbersInProgramFacts.contains(opcode))
+    if (steps & Step::tellsOfNumbers)
         noteWhatIsToldOfNumbers(value);
-    if (loadsAndEvaluationsInProgramFacts.contains(opcode))
+    if (steps & Step::loadsOrEvaluates)
         lookAtLoad(value);
-    if (opcode == Opcode::PropGet && m_isOfProgram && (m_builtinOfValue.isEmpty() || !builtinAt(value.operand(0)))) {
+    if ((steps & Step::readsUnderName) && (m_builtinOfValue.isEmpty() || !builtinAt(value.operand(0)))) {
         PropertyKeyID key = value.as<Opcode::PropGet>().key();
         if (key && m_program.builtinNameOf(key) && !m_namesReadOffUnknownValues.contains(key)) {
             m_namesReadOffUnknownValues.append(key);
             note(Finding::Kind::NameReadOffUnknownValue, 0, key.index(), witnessAt(value));
         }
     }
-    if (m_isOfProgram && callsByValueInProgramFacts.contains(opcode) && !m_index.isParameter(value.operand(0))) {
+    if ((steps & Step::callsByValue) && !m_index.isParameter(value.operand(0))) {
         BodyValue callee = m_index.value(value.operand(0));
         if (callee.opcode() == Opcode::ElemGet) {
             BuiltinClassID classOfReceiver = m_index.isParameter(callee.operand(0)) ? BuiltinClassID() : classOfWrittenPrimitiveInProgramFacts(m_index.value(callee.operand(0)).opcode());
             note(Finding::Kind::CallUnderComputedKey, 0, classOfReceiver ? classOfReceiver.index() : Wire::none, witnessAt(callee));
         }
     }
-    if (opcode == Opcode::GetModuleVariable) {
+    if (steps & Step::readsModuleVariable) {
         if (BuiltinID held = builtinHeldBy(value.as<Opcode::GetModuleVariable>().variable())) {
             if (m_builtinOfValue.isEmpty())
                 m_builtinOfValue.fill(BuiltinID(), m_index.numberOfValues());
@@ -1974,9 +2011,7 @@ void BodyLookOfProgramFacts::look(const BodyValue& value)
     } else if (callsByValueInProgramFacts.contains(opcode))
         lookAtCall(value);
 
-    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (operandIndex == operandAccountedFor || !isFollowed(operand))
-            return;
+    auto lookAtOperandThatIsFollowed = [&](ValueID operand, uint32_t operandIndex) NEVER_INLINE {
         Fate fate = fateOf(value, operandIndex);
         noteFate(operand, fate, value);
         if (fate == Fate::IsInspected && lightFormAt(operand)) {
@@ -1993,10 +2028,14 @@ void BodyLookOfProgramFacts::look(const BodyValue& value)
             m_builtinOfValue[value.id().index()] = builtinAt(operand);
             m_mayBeSomethingElse.set(value.id().index());
         }
+    };
+    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) ALWAYS_INLINE_LAMBDA {
+        if (operandIndex != operandAccountedFor && isFollowed(operand))
+            lookAtOperandThatIsFollowed(operand, operandIndex);
     });
 }
 
-void BodyLookOfProgramFacts::lookAtEnd(const BodyBlock& block)
+ALWAYS_INLINE void BodyLookOfProgramFacts::lookAtEnd(const BodyBlock& block)
 {
     BodyTerminator terminator = block.terminator();
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -2005,14 +2044,14 @@ void BodyLookOfProgramFacts::lookAtEnd(const BodyBlock& block)
         bool isInspected = (terminator.operandUses(operandIndex) - OperandUses { OperandUse::Inspects }).isEmpty();
         noteFate(operand, isInspected ? Fate::IsInspected : Fate::IsLetGo, terminator);
     });
-    block.forEachOutgoingEdge([&](BodyTarget target, bool isHandlerEdge) {
+    block.forEachOutgoingEdge([&](BodyTarget target, bool isHandlerEdge) ALWAYS_INLINE_LAMBDA {
         std::span<const ValueID> arguments = target.arguments();
         for (uint32_t position = 0; position < arguments.size(); ++position) {
             if (isFollowed(arguments[position]) && (isHandlerEdge || !passOn(arguments[position], m_index.block(target.block()).parameter(position), block)))
                 noteFate(arguments[position], Fate::IsLetGo, terminator);
         }
     });
-    m_index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& result) {
+    m_index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& result) ALWAYS_INLINE_LAMBDA {
         if (!isFollowed(result.subject))
             return;
         if (result.test && !result.isOnTakenEdge && m_index.opcodeOf(result.test) == Opcode::ToBoolean && !originOfURL(result.subject))
@@ -2040,8 +2079,10 @@ void BodyLookOfProgramFacts::run()
             continue;
         }
         BodyBlock block = m_index.block(BlockID(number));
-        for (BodyValue value : block.values())
-            look(value);
+        for (BodyValue value : block.values()) {
+            if (stepsOf(value.opcode()) || !m_builtinOfValue.isEmpty())
+                look(value);
+        }
         if (!m_builtinOfValue.isEmpty())
             lookAtEnd(block);
     }
@@ -3180,6 +3221,7 @@ public:
         if (mayPassOperands)
             m_namesCalledWithOperands.set(key.index());
     }
+    void noteNameCalledByNativeCodeOffUnseenObjects(PropertyKeyID key) { m_namesCalledByNativeCodeOffUnseenObjects.set(key.index()); }
     void noteNameSpelledByProgram(PropertyKeyID key) { m_namesSpelledByProgram.set(key.index()); }
     void noteReadUnderKeyNobodyKnows() { m_readsUnderComputedKeys = true; }
     void noteReadUnderKeyNobodyKnowsOff(BuiltinID canonicalHolder)
@@ -3270,14 +3312,21 @@ public:
     Vector<ModuleID> takeModulesSpelledInTexts() { return std::exchange(m_modulesSpelledInTexts, { }); }
     BitVector letInNamesFromRunTime();
     BitVector builtinsThatCodeInSightUses() const;
-    bool programLetsUnseenCodeRun() const
+    template<typename Functor>
+    bool programLetsUnseenCodeRunWhere(const Functor& counts) const
     {
         return std::ranges::any_of(m_program.unseenCode, [&](const UnseenCodeRecord& record) {
             if (!admitsUnknownJavaScriptInProgramFacts(record.cause))
                 return false;
             if (record.witness.function == Wire::none)
                 return record.cause == UnseenCodeCause::OptionAdmitsCode;
-            return !isLibraryCode(m_source, m_source.at(FunctionID(record.witness.function)));
+            return !isLibraryCode(m_source, m_source.at(FunctionID(record.witness.function))) && counts(record.witness);
+        });
+    }
+    bool programLetsUnseenCodeRun() const
+    {
+        return programLetsUnseenCodeRunWhere([](const Witness&) {
+            return true;
         });
     }
 
@@ -3294,6 +3343,8 @@ private:
 
     void noteObjectsMayExist(BuiltinClassID);
     void noteTypeIsMade(BuiltinTypeID, BuiltinOrigin);
+    void noteClassesBelowWhoseFeaturesMakerNames(BuiltinID maker, BuiltinTypeID);
+    void noteRowOfHostNames(BuiltinClassID);
     void noteWhatRowsMake(BuiltinID canonical);
     void noteKeysThatRowNames(const BuiltinOverload&);
     uint16_t stateOfRowsOf(BuiltinID canonical) const;
@@ -3357,6 +3408,7 @@ private:
     bool mayThrowByItself(const BodyIndex&, const BodyValue&) const;
     bool bodyMayLeave(FunctionID, ThrowsOfOperations = ThrowsOfOperations::AreLeftOut);
     Vector<ModuleID> evaluationOrder() const;
+    bool throwInFrontMayBeSurvived(const Witness&);
     bool everyRunComesTo(const Witness&);
     std::optional<UserDiagnosticKind> refusalOf(const BodyIndex&, const Witness&, BuiltinID holder, PropertyKeyID, BuiltinPropertyActionKind, ValueID brought, bool throwsWhereRefused);
     std::optional<UserDiagnosticKind> refusalOfWriteAt(const Witness&, BuiltinID followed = { });
@@ -3452,6 +3504,8 @@ private:
     BitVector m_namesRead;
     BitVector m_namesCalled;
     BitVector m_namesCalledWithOperands;
+    BitVector m_namesCalledByNativeCodeOffUnseenObjects;
+    BitVector m_classesThatRowsOfHostName;
     BitVector m_namesSpelledByProgram;
     bool m_readsUnderComputedKeys { false };
     bool m_readsUnderNamesThatLoopsGave { false };
@@ -3923,6 +3977,8 @@ void BuilderOfProgramFacts::noteTypeIsMade(BuiltinTypeID type, BuiltinOrigin ori
     for (const BuiltinTypePart& part : made.parts) {
         if (part.builtinClass)
             noteObjectsMayExist(part.builtinClass);
+        if (part.builtinClass && origin == BuiltinOrigin::Host)
+            noteRowOfHostNames(part.builtinClass);
         if (part.kind == BuiltinTypePartKind::Layout) {
             for (const BuiltinLayoutField& field : m_builtins.at(part.layout).fields)
                 noteTypeIsMade(field.type, origin);
@@ -3930,6 +3986,40 @@ void BuilderOfProgramFacts::noteTypeIsMade(BuiltinTypeID type, BuiltinOrigin ori
         for (const BuiltinSlotContents& contents : part.contents) {
             if (!m_builtins.at(contents.slot).holdsWhatIsThrown)
                 noteTypeIsMade(contents.type, origin);
+        }
+    }
+}
+
+void BuilderOfProgramFacts::noteRowOfHostNames(BuiltinClassID builtinClass)
+{
+    if (m_classesThatRowsOfHostName.set(builtinClass.index()))
+        return;
+    BuiltinID prototype = m_builtins.at(builtinClass).prototype;
+    if (prototype && m_isLookedThrough.quickGet(m_builtins.canonicalID(prototype).index()))
+        m_holdersToLookThrough.append(m_builtins.canonicalID(prototype));
+}
+
+void BuilderOfProgramFacts::noteClassesBelowWhoseFeaturesMakerNames(BuiltinID maker, BuiltinTypeID type)
+{
+    std::span<const BuiltinFeatureUse> named = m_builtins.featureUsesOf(maker);
+    if (!type || named.empty())
+        return;
+    for (const BuiltinTypePart& part : m_builtins.at(type).parts) {
+        if (!part.builtinClass || part.isOfClassItself || !m_builtins.hasClassBelow(part.builtinClass))
+            continue;
+        for (uint32_t index = 0; index < m_builtins.classCount(); ++index) {
+            BuiltinClassID below(index);
+            const BuiltinClass& record = m_builtins.at(below);
+            if (record.origin != BuiltinOrigin::Host || !record.prototype || below == part.builtinClass || !m_builtins.isSameOrSubclassOf(below, part.builtinClass))
+                continue;
+            std::span<const BuiltinFeatureUse> needed = m_builtins.featureUsesOf(m_builtins.canonicalID(record.prototype));
+            bool makerNamesThem = !needed.empty() && std::ranges::all_of(needed, [&](const BuiltinFeatureUse& line) {
+                return std::ranges::contains(named, line.feature, &BuiltinFeatureUse::feature);
+            });
+            if (makerNamesThem) {
+                noteObjectsMayExist(below);
+                noteRowOfHostNames(below);
+            }
         }
     }
 }
@@ -4066,7 +4156,7 @@ void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
         });
         if (mayPrintWhatNobodyKnows || mayDescribeWhatNobodyKnows)
             noteObjectHandedToFormatter(true);
-        if (mayBeHandedWhatNobodyKnows && overload.mode == BuiltinCallMode::Call && handsOutPrototypeOfOperandInProgramFacts(m_builtins, overload))
+        if (mayBeHandedWhatNobodyKnows && (overload.mode == BuiltinCallMode::Call || overload.mode == BuiltinCallMode::Get) && handsOutPrototypeOfOperandInProgramFacts(m_builtins, overload))
             m_climberMayBeHandedWhatNobodyKnows = true;
         const RuntimeFunctionEntry* code = findRuntimeFunction(m_source, overload.code.implementation.function);
         bool programHoldsCode = code && code->function;
@@ -4092,6 +4182,7 @@ void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
         auto answers = overload.flow.transfers | std::views::filter(goesIntoResult);
         bool answersWhatTableDescribes = !answers.empty() && std::ranges::all_of(answers, isOfCellThatTableDescribes, &BuiltinTransfer::from);
         noteTypeIsMade(overload.result.type, answersWhatTableDescribes ? BuiltinOrigin::Engine : origin);
+        noteClassesBelowWhoseFeaturesMakerNames(canonical, overload.result.type);
         for (const BuiltinResultProperty& property : overload.result.properties)
             noteTypeIsMade(property.type, origin);
         for (const BuiltinTransfer& transfer : overload.flow.transfers)
@@ -4188,6 +4279,7 @@ void BuilderOfProgramFacts::take(const LookupsPastProgramObjects& lookups)
     m_namesRead.merge(lookups.namesRead);
     m_namesCalled.merge(lookups.namesCalled);
     m_namesCalledWithOperands.merge(lookups.namesCalledWithOperands);
+    m_namesCalledByNativeCodeOffUnseenObjects.merge(lookups.namesCalledByNativeCodeOffUnseenObjects);
     m_namesSpelledByProgram.merge(lookups.namesSpelledByProgram);
     for (size_t index : lookups.builtinsRead)
         noteReadOfMember(BuiltinID(static_cast<uint32_t>(index)));
@@ -4378,7 +4470,7 @@ void BuilderOfProgramFacts::noteObjectHandedToFormatter(bool isWalked)
         m_holdersToLookThrough.append(BuiltinID(static_cast<uint32_t>(index)));
 }
 
-bool BuilderOfProgramFacts::formatterWalksPrototype(BuiltinID canonicalHolder) const
+ALWAYS_INLINE bool BuilderOfProgramFacts::formatterWalksPrototype(BuiltinID canonicalHolder) const
 {
     BuiltinClassID builtinClass = m_classOfPrototype[canonicalHolder.index()];
     return m_formattersAreHandedObjects && builtinClass && m_builtins.formatterWalksInstancesOf(builtinClass) && formatterMayComeByWhatStandsBelow(canonicalHolder);
@@ -4440,6 +4532,8 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
         noteGettersThatFormatterRuns(canonicalHolder);
     if (mayHoldObjectInProgramFacts(m_builtins, canonicalHolder) && !m_builtins.at(objectAnsweredByBindingInProgramFacts(m_builtins, canonicalHolder)).flags.containsAny({ BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject }) && !liesInModuleThatProgramHolds(canonicalHolder) && (m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index()) || m_readsUnderNamesThatLoopsGave || !m_namesRead.isEmpty()))
         m_objectsMayHaveMethodCalledWithStartupLoads = true;
+    BuiltinClassID classOfHolder = m_classOfPrototype[canonicalHolder.index()];
+    bool isOfClassThatRowsOfHostName = classOfHolder && m_classesThatRowsOfHostName.get(classOfHolder.index());
     for (BuiltinID member : m_builtins.membersOf(canonicalHolder)) {
         BuiltinName name = m_builtins.at(member).name;
         if (!name)
@@ -4449,7 +4543,8 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
         bool isNamedByCode = isRead || (key && m_namesCalled.get(key.index()));
         bool isKeyThatFormattersAloneLookUnder = std::ranges::contains(m_builtins.namesOfHostMethodsCallingStartupLoads(), name);
         bool isSymbolThatNativeCodeMayLookUnder = m_builtins.isSymbolName(name) && (isKeyThatFormattersAloneLookUnder ? m_formattersMayCallMethodsOfInstances && formatterMayComeByWhatStandsBelow(canonicalHolder) : !m_keysReadOnlyByRowsThatNameThem.get(name.index()) || m_keysNamedByRowsThatMayRun.get(name.index()));
-        bool isNamed = isNamedByCode || (m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index())));
+        bool isCalledOffWhatRowsOfHostName = key && isOfClassThatRowsOfHostName && m_namesCalledByNativeCodeOffUnseenObjects.get(key.index());
+        bool isNamed = isNamedByCode || isCalledOffWhatRowsOfHostName || (m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index())));
         bool canBeListed = m_builtins.at(member).canBeListed && !m_builtins.isSymbolName(name);
         bool isReadUnderComputedKeys = m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index());
         bool isHandedOnByWordOfProgram = isRead || m_readsUnderComputedKeys || (m_readsUnderNamesThatLoopsGave && (canBeListed || m_loopsMayGiveAnyName));
@@ -4470,7 +4565,7 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
         if (!isNamedByCode && !isHandedOn && name == keysOfSpecies[0] && m_builtins.findMember(canonical, keysOfSpecies[1]).outcome == BuiltinMemberLookup::Outcome::Absent)
             continue;
         m_isOutOfSight.quickSet(canonical.index());
-        bool nativeCodeMayNameIt = m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index()));
+        bool nativeCodeMayNameIt = isCalledOffWhatRowsOfHostName || (m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index())));
         if (isHandedOn || nativeCodeMayNameIt || !key || unseenCodeCanRun() || m_namesCalledWithOperands.get(key.index()))
             m_mayBeHandedOperandsNobodyKnows.quickSet(canonical.index());
         if ((isNamedByCode || isReadUnderComputedKeys) && m_builtins.at(canonical).origin == BuiltinOrigin::Engine)
@@ -5032,6 +5127,12 @@ bool BuilderOfProgramFacts::codeThatNobodyNamesMayLeave()
     return *m_codeThatNobodyNamesMayLeave;
 }
 
+static bool operandMayRunCodeInProgramFacts(Opcode opcode, uint32_t operandIndex)
+{
+    operandIndex = std::min(operandIndex, numberOfNamedOperandsOf(opcode));
+    return !protocolsOf(opcode, operandIndex).isEmpty() || operandUsesOf(opcode, operandIndex).containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly });
+}
+
 bool BuilderOfProgramFacts::mayLeave(FunctionID id, const BodyIndex& index, const BodyValue& value, ThrowsOfOperations throwsOfOperations)
 {
     Opcode opcode = value.opcode();
@@ -5046,8 +5147,15 @@ bool BuilderOfProgramFacts::mayLeave(FunctionID id, const BodyIndex& index, cons
     };
     if (effectRuleOf(opcode) == EffectRule::Operator)
         return isHandedCode(0) && codeThatNobodyNamesMayLeave();
-    if ((effectRuleOf(opcode) == EffectRule::Declared && declaredBoundOf(opcode).alwaysCompletes()) || opcode == Opcode::RequireBuiltinModule)
-        return false;
+    if ((effectRuleOf(opcode) == EffectRule::Declared && declaredBoundOf(opcode).alwaysCompletes()) || opcode == Opcode::RequireBuiltinModule) {
+        bool isHandedCodeThatItRuns = false;
+        if (operandsMayRunCode(opcode)) {
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                isHandedCodeThatItRuns |= operand && operandMayRunCodeInProgramFacts(opcode, operandIndex) && !holdsNoCodeOfProgram(index, operand);
+            });
+        }
+        return isHandedCodeThatItRuns && codeThatNobodyNamesMayLeave();
+    }
     if (opcode == Opcode::RequireDynamic)
         return true;
     bool waits = opcode == Opcode::Await || opcode == Opcode::Yield || opcode == Opcode::InitialYield
@@ -5131,8 +5239,15 @@ bool BuilderOfProgramFacts::mayThrowByItself(const BodyIndex& index, const BodyV
     if ((opcode == Opcode::DefineGetter || opcode == Opcode::DefineSetter || (opcode == Opcode::DefineMethod && !value.operand(OperandIndex::DefineMethod::computedKey))) && isMadeHere(value.operand(0)))
         return false;
     switch (effectRuleOf(opcode)) {
-    case EffectRule::Declared:
-        return declaredBoundOf(opcode).mayThrowByRule();
+    case EffectRule::Declared: {
+        bool mayRunCodeThatThrows = declaredBoundOf(opcode).mayThrowByRule();
+        if (!mayRunCodeThatThrows && operandsMayRunCode(opcode)) {
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                mayRunCodeThatThrows |= operand && operandMayRunCodeInProgramFacts(opcode, operandIndex) && !holdsNoCodeOfProgram(index, operand);
+            });
+        }
+        return mayRunCodeThatThrows;
+    }
     case EffectRule::Operator: {
         bool mayRefuseOperand = false;
         value.forEachOperand([&](ValueID operand, uint32_t) {
@@ -5233,6 +5348,71 @@ Vector<ModuleID> BuilderOfProgramFacts::evaluationOrder() const
     return order;
 }
 
+bool BuilderOfProgramFacts::throwInFrontMayBeSurvived(const Witness& site)
+{
+    const BodyIndex& indexOfSite = *m_inputs.bodies.find(FunctionID(site.function));
+    BlockID blockOfSite = indexOfSite.blockOf(ValueID(site.value));
+    auto cannotRunInFrontOfSite = [&](FunctionID function, ValueID value) {
+        if (function.index() != site.function)
+            return false;
+        BlockID block = indexOfSite.blockOf(value);
+        if (block != blockOfSite)
+            return indexOfSite.strictlyDominates(blockOfSite, block);
+        bool isBehindSite = false;
+        for (BodyValue other : indexOfSite.block(block).values()) {
+            isBehindSite |= other.id().index() == site.value;
+            if (other.id() == value)
+                return isBehindSite;
+        }
+        return false;
+    };
+    auto isMarked = [&](BuiltinID named) {
+        return named && m_builtins.has(BuiltinMark::MayLayListenerForUncaughtExceptions, m_builtins.canonicalID(named));
+    };
+    auto laysListener = [&](const BodyIndex& index, const BodyValue& value) {
+        switch (value.opcode()) {
+        case Opcode::Builtin:
+            return isMarked(value.as<Opcode::Builtin>().builtin());
+        case Opcode::ModuleBuiltin:
+            return isMarked(value.as<Opcode::ModuleBuiltin>().builtin());
+        case Opcode::PropGet: {
+            BuiltinID holder = value.as<Opcode::PropGet>().isFreeName() ? BuiltinID() : builtinReadByPath(index, value.as<Opcode::PropGet>().objectOperand());
+            return holder && isMarked(memberFoundOnInProgramFacts(m_source, holder, value.as<Opcode::PropGet>().key()));
+        }
+        case Opcode::ElemGet: {
+            BuiltinID holder = builtinReadByPath(index, value.as<Opcode::ElemGet>().objectOperand());
+            if (!holder)
+                return false;
+            holder = objectAnsweredByBindingInProgramFacts(m_builtins, m_builtins.canonicalID(holder));
+            return std::ranges::any_of(m_builtins.marked(BuiltinMark::MayLayListenerForUncaughtExceptions), [&](const BuiltinMarkedEntry& entry) {
+                BuiltinName name = m_builtins.at(entry.builtin).name;
+                return name && m_builtins.findMember(holder, name).outcome == BuiltinMemberLookup::Outcome::Found;
+            });
+        }
+        default:
+            return false;
+        }
+    };
+    bool unseenCodeMayRunInFront = programLetsUnseenCodeRunWhere([&](const Witness& witness) {
+        return !cannotRunInFrontOfSite(FunctionID(witness.function), ValueID(witness.value));
+    });
+    if (unseenCodeMayRunInFront)
+        return true;
+    for (uint32_t number = 0; number < m_source.functions.size(); ++number) {
+        FunctionID id(number);
+        const BodyIndex* index = isReached(id) && !isLibraryCode(m_source, m_source.at(id)) ? m_inputs.bodies.find(id) : nullptr;
+        if (!index)
+            continue;
+        for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
+            for (BodyValue value : index->block(BlockID(block)).values()) {
+                if (laysListener(*index, value) && !cannotRunInFrontOfSite(id, value.id()))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
 {
     FunctionID id(site.function);
@@ -5272,7 +5452,7 @@ bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
         if (module.body && !isLibraryCode(m_source, m_source.at(module.body)) && bodyMayLeave(module.body, ThrowsOfOperations::Count))
             return false;
     }
-    return true;
+    return !throwInFrontMayBeSurvived(site);
 }
 
 template<typename Functor>
@@ -6101,6 +6281,14 @@ void BuiltinsInReach::noteNameCalled(PropertyKeyID key, bool mayPassOperands)
     m_builder->noteNameCalled(key, mayPassOperands);
 }
 
+void BuiltinsInReach::noteNameCalledByNativeCodeOffUnseenObjects(PropertyKeyID key)
+{
+    if (m_linked->lookups.namesCalledByNativeCodeOffUnseenObjects.set(key.index()))
+        return;
+    m_wasToldSomethingNew = true;
+    m_builder->noteNameCalledByNativeCodeOffUnseenObjects(key);
+}
+
 void BuiltinsInReach::noteNameSpelledByProgram(PropertyKeyID key)
 {
     if (m_linked->lookups.namesSpelledByProgram.set(key.index()))
@@ -6406,11 +6594,6 @@ void BuiltinsInReach::noteClimbFromLostBuiltins()
     m_wasToldSomethingNew |= !std::exchange(m_linked->lookups.climbsFromLostBuiltins, true);
 }
 
-void BuiltinsInReach::noteOperandsHandedToCalleeNobodyKnows()
-{
-    m_wasToldSomethingNew |= !std::exchange(m_linked->lookups.handsOperandsToCalleesNobodyKnows, true);
-}
-
 void BuiltinsInReach::noteClimbFromUnseenObjects()
 {
     m_wasToldSomethingNew |= !std::exchange(m_linked->lookups.climbsFromUnseenObjects, true);
@@ -6478,7 +6661,7 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
     if (!std::exchange(m_wasToldSomethingNew, false))
         return;
     m_builder->settle();
-    if (m_linked->lookups.handsOperandsToCalleesNobodyKnows && m_builder->climberMayBeHandedWhatNobodyKnows()) {
+    if (m_builder->climberMayBeHandedWhatNobodyKnows()) {
         if (!std::exchange(m_linked->lookups.climbsFromUnseenObjects, true))
             m_builder->settle();
     }

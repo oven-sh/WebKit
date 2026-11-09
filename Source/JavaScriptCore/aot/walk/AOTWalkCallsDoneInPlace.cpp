@@ -292,6 +292,8 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
     forwarded.inputValueGiven = written.inputValueGiven;
     if (constructs ? constructForwardedDirectly(walker, call, forwarded) : callForwardedDirectly(walker, call, forwarded) || callBuiltinForwarded(walker, call, forwarded))
         return true;
+    if (goOverListInPlaceOfCallOfBuiltin(walker, call, forwarded))
+        return true;
     if (Reference result = walker.build(WTF::move(forwarded)))
         walker.bind(call.id(), result);
     return true;
@@ -715,6 +717,23 @@ static std::optional<uint32_t> numberOfBoundArgumentsThatLinkWrites(Walker& walk
     return static_cast<uint32_t>(std::min<int64_t>(written.integers.minimum, UINT32_MAX));
 }
 
+static bool readsBindOffItsOwnReceiver(Walker& walker, const BodyValue& call)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto operation = call.as<Opcode::Call>();
+    ValueID read = index.valueBehindCasts(operation.calleeOperand());
+    if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet || !operation.thisValueOperand())
+        return false;
+    if (index.value(read).key() != walker.program().keyOf(BuiltinNames::bind) || index.valueBehindCasts(index.value(read).objectOperand()) != index.valueBehindCasts(operation.thisValueOperand()))
+        return false;
+    Reference receiver = walker.referenceOf(operation.thisValueOperand());
+    TypeID proven = receiver ? walker.typeOf(receiver) : TypeID();
+    if (!proven)
+        return false;
+    const Type& known = walker.types().at(proven);
+    return known.anyObject || known.anyFunction || known.hasOnlyClosures();
+}
+
 static std::optional<uint32_t> numberOfArgumentsBoundInSight(Walker& walker, ValueID callee, const ClassPart& expected)
 {
     TypeID bound = expected.writtenContentsAt(walker.program().builtins(), ContentsSlot::Element);
@@ -722,7 +741,7 @@ static std::optional<uint32_t> numberOfArgumentsBoundInSight(Walker& walker, Val
         return 0;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID made = index.valueBehindCasts(callee);
-    if (!made || index.isParameter(made) || index.opcodeOf(made) != Opcode::Call)
+    if (!made || index.isParameter(made) || index.opcodeOf(made) != Opcode::Call || !readsBindOffItsOwnReceiver(walker, index.value(made)))
         return numberOfBoundArgumentsThatLinkWrites(walker, expected);
     size_t passed = index.value(made).as<Opcode::Call>().argumentsOperands().size();
     return passed ? static_cast<uint32_t>(passed - 1) : 0;
@@ -862,8 +881,10 @@ bool callTargetOfBoundFunctionBehindTests(Walker& walker, const BodyValue& call)
         Walker::InFrontOfTypedCopy inFront(walker, goOnWhere(test));
         return buildProofBehindTestForStrings(walker, value, test, OperandIndex::TypeTest::value, origin);
     };
+    static constexpr uint32_t positionOfFirstArgument = 2;
+    bool countIsHeldInFront = false;
     auto wordOf = [&](Reference function, uint32_t position) {
-        Walker::InFrontOfTypedCopy inFront(walker, standsInFront(function));
+        Walker::InFrontOfTypedCopy inFront(walker, standsInFront(function) && (countIsHeldInFront || position < positionOfFirstArgument));
         Draft word(Opcode::GetWordOfBoundFunction, origin);
         walker.chooseConservativeFields(word);
         word.setFunctionOperand(function);
@@ -889,7 +910,7 @@ bool callTargetOfBoundFunctionBehindTests(Walker& walker, const BodyValue& call)
     }
     if (!hasCount)
         return true;
-    goOnWhere(hasCount);
+    countIsHeldInFront = goOnWhere(hasCount);
     Reference word = wordOf(bound, 0);
     Reference isTarget = word ? askType(word, types.forFunction(target)) : Reference();
     if (!isTarget)
@@ -897,7 +918,7 @@ bool callTargetOfBoundFunctionBehindTests(Walker& walker, const BodyValue& call)
     Reference closure = proveBehind(word, isTarget);
     Vector<Reference, 8> passed;
     Reference thisValue = wordOf(bound, 1);
-    for (uint32_t position = 0; position < expected->numberOfBoundArguments; ++position) {
+    for (uint32_t position = 0; position < expected->numberOfBoundArguments + (walker.takesBoundFunctionsToBindOneMore() && expected->numberOfBoundArguments < JSBoundFunction::maxEmbeddedArgs); ++position) {
         Reference argument = wordOf(bound, 2 + position);
         if (TypeID seen = argument ? primitivesSeenToArriveAtParameter(walker, target, position, argument) : TypeID()) {
             Reference isAsSeen = askType(argument, seen);

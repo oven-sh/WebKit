@@ -107,6 +107,7 @@ heap ExternalState observable ordered
 heap AllocatorState
 heap RuntimeState ordered
 heap CalleesInFrames observable ordered
+heap ArrayLengths observable ordered perObject
 
 effects CreatesConstant = reads(AllocatorState) writes(AllocatorState)
 effects Allocates = reads(AllocatorState) writes(AllocatorState) collects

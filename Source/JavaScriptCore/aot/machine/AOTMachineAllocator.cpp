@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineCallsOnWays.h"
+#include "AOTSort.h"
 #include <algorithm>
 #include <cstring>
 #include <memory>
@@ -266,7 +268,7 @@ static void orderByGainFromCalleeSaves(const Allocator& allocator, std::span<Val
 {
     for (ValueThatAsksForCalleeSave& one : asking)
         one.gain = allocator.numberOfReadsThatWordWouldReload(one.value, endOfWhereTheyAreKept);
-    std::ranges::stable_sort(asking, std::ranges::greater { }, &ValueThatAsksForCalleeSave::gain);
+    AOT::stableSort(asking, std::ranges::greater { }, &ValueThatAsksForCalleeSave::gain);
 }
 
 static NEVER_INLINE void bindArgumentRegistersOfEntry(Allocator& allocator, Block* entry)
@@ -491,6 +493,7 @@ Allocator::Allocator(Procedure& proc, Allocation& allocation)
 void Allocator::run()
 {
     findFramedPart();
+    m_allocation.m_recordsWhatCheckersRead = m_proc.checksAllocation() || (m_allocation.hasFramedPart() && m_proc.numberOfInnerPointersAcrossSafepoints());
     const std::optional<Failure>& failure = m_proc.failure();
     for (Block* block : m_order.blocksInOrder()) {
         allocateBlock(block);
@@ -589,9 +592,21 @@ void Allocator::run()
     m_isAheadOfFramedPart = false;
     if (m_allocation.usedCalleeSaves())
         noteFrameUse();
+    checkThatNoWayOnReadsWhatHintsReleased();
+    if (m_proc.failure())
+        return;
     findSpillsThatNoStepReads();
     settleFramedPart();
     findGapsAheadOfLandingPads();
+}
+
+bool Allocator::isReadByMoreThanSteps(const SpillFacts& facts) const
+{
+    if (facts.isSaveInRareRegion || facts.isPointerBesideNarrowReference || facts.livesAcrossSuspension || facts.isSharedByPhis)
+        return true;
+    const ValueFacts& factsOfValue = m_valueFacts[facts.value->index()];
+    return factsOfValue.has(ValueFlag::LivesIntoLandingPad) || factsOfValue.has(ValueFlag::LivesAcrossSuspension)
+        || (factsOfValue.has(ValueFlag::IsKeptForCollector) && !m_proc.traits().takesValuesKeptForCollectorToBeReadByStepsAlone);
 }
 
 void Allocator::findSpillsThatNoStepReads()
@@ -601,14 +616,13 @@ void Allocator::findSpillsThatNoStepReads()
         return;
     for (SpillIndex index = 0; index < spills.size(); ++index) {
         SpillFacts& facts = spills[index];
-        if (facts.isRead || !facts.value || facts.isSaveInRareRegion || facts.isPointerBesideNarrowReference || facts.livesAcrossSuspension || facts.isSharedByPhis)
+        if ((facts.isRead && !m_proc.traits().takesSpillsThatStepsReadToBeReadByNone) || !facts.value)
             continue;
-        const ValueFacts& value = m_valueFacts[facts.value->index()];
-        facts.isReadByNoStep = !value.has(ValueFlag::LivesIntoLandingPad) && !value.has(ValueFlag::LivesAcrossSuspension) && !value.has(ValueFlag::IsKeptForCollector);
+        facts.isReadByNoStep = !isReadByMoreThanSteps(facts);
     }
 }
 
-ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
+ALWAYS_INLINE_INTO_OTHER_FILES void Allocator::allocateBlock(Block* block)
 {
     Allocation& allocation = m_allocation;
     const BlockPlace& place = m_order.places()[block->index()];
@@ -945,7 +959,7 @@ NEVER_INLINE void Allocator::passReadOfOwnerOfInnerPointer(const Operation* inne
     passUse(owner, position);
 }
 
-ALWAYS_INLINE Location Allocator::defineResultWithFacts(Operation* operation, const ValueFacts& facts, RegisterMask allowed, RegisterMask avoided, Reg preferred)
+ALWAYS_INLINE_INTO_OTHER_FILES Location Allocator::defineResultWithFacts(Operation* operation, const ValueFacts& facts, RegisterMask allowed, RegisterMask avoided, Reg preferred)
 {
     Bank bank = bankOf(operation->type());
     RegisterMask candidates = allowed & ~avoided & m_file.allocatableIn(bank);
@@ -1133,7 +1147,7 @@ static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, 
     return true;
 }
 
-ALWAYS_INLINE bool Allocator::defineResultBehindLeaves(Operation* operation, unsigned traits, unsigned fusedChildren, RegisterMask operandRegisters, Location& firstSource, Location secondSource, Position position, Location& destination)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operation* operation, unsigned traits, unsigned fusedChildren, RegisterMask operandRegisters, Location& firstSource, Location secondSource, Position position, Location& destination)
 {
     const Type type = operation->type();
     if (type == Void)
@@ -1658,17 +1672,37 @@ Location Allocator::defineResult(Operation* operation, RegisterMask allowed, Reg
     return defineResultWithFacts(operation, m_valueFacts[operation->index()], allowed, avoided, preferred);
 }
 
-void Allocator::enterFramedPart()
+void Allocator::keepPointersThatWait(Position endOfWhatWaysLeadTo)
 {
-    ASSERT(!m_order.of(m_block).isRare());
     auto everyWayHasDefined = [&](const Operation* reference) {
         return dominates(reference->endsBlock() ? reference->owner()->successor(0).block() : reference->owner(), m_block);
     };
     for (ReferenceWhosePointerWaits& waiting : m_referencesWhosePointersWaitForFramedPart) {
         Operation* reference = waiting.reference;
-        if (stateOf(reference).registers || (m_allocation.isSpilled(reference) && isLiveBehind(reference, m_position) && !isDeadOnEveryPathFrom(reference, m_block, m_headOfBlock) && everyWayHasDefined(reference)))
+        if (!isLiveBehind(reference, m_position))
+            continue;
+        const ValueFacts& facts = m_liveness.of(reference);
+        if (endOfWhatWaysLeadTo != noPosition && !facts.has(ValueFlag::IsKeptForCollector)) {
+            bool isReadOnSomeWay = false;
+            for (uint32_t use = facts.firstUse; use && !isReadOnSomeWay; use = m_liveness.use(use).next) {
+                Position read = m_liveness.use(use).position;
+                isReadOnSomeWay = read > m_position && read < endOfWhatWaysLeadTo;
+            }
+            if (!isReadOnSomeWay)
+                continue;
+        }
+        bool liesInMemory = m_allocation.isSpilled(reference) || (stateOf(reference).saveInRareRegion != noSpill && wayHasSavedInRareRegion(m_block, reference));
+        if (stateOf(reference).registers || (liesInMemory && !isDeadOnEveryPathFrom(reference, m_block, m_headOfBlock) && everyWayHasDefined(reference)))
             waiting.pointer = keepPointerBesideAllocatedReference(*this, reference, waiting.pointer);
     }
+}
+
+void Allocator::enterFramedPart()
+{
+    keepPointersThatWait(noPosition);
+
+    if (m_order.of(m_block).isRare())
+        return;
 
     std::array<ValueThatAsksForCalleeSave, 64> asking;
     unsigned numberAsking = 0;

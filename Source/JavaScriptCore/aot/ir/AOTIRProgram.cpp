@@ -415,10 +415,12 @@ std::span<const LayoutID> Program::viewsAbove(LayoutID id) const
 
 std::span<const Program::FieldWrittenAbove> Program::fieldsWrittenAbove(LayoutID id, PropertyKeyID key) const
 {
-    const Vector<uint32_t>& first = m_derivedTables.firstFieldWrittenAbove;
-    if (!id || id.index() + 1 >= first.size())
+    const Vector<uint32_t>& rows = m_derivedTables.rowOfFieldsWrittenAbove;
+    if (!id || id.index() >= rows.size() || rows[id.index()] == UINT32_MAX)
         return { };
-    std::span<const FieldWrittenAbove> ofLayout = m_derivedTables.fieldsWrittenAbove.subspan(first[id.index()], first[id.index() + 1] - first[id.index()]);
+    const Vector<uint32_t>& first = m_derivedTables.firstFieldWrittenAbove;
+    uint32_t row = rows[id.index()];
+    std::span<const FieldWrittenAbove> ofLayout = m_derivedTables.fieldsWrittenAbove.subspan(first[row], first[row + 1] - first[row]);
     auto found = std::ranges::lower_bound(ofLayout, key, { }, &FieldWrittenAbove::key);
     auto behindFound = found;
     while (behindFound != ofLayout.end() && behindFound->key == key)
@@ -492,40 +494,59 @@ void Program::indexViews(const ParallelLoops& loops)
         return entry.view;
     });
 
-    struct FieldOfLayout {
-        uint32_t layout;
-        FieldWrittenAbove field;
-    };
-    Vector<FieldOfLayout> fieldsOfLayouts = collectInParallel<FieldOfLayout>(loops, numberOfLayouts, [&](unsigned index, Vector<FieldOfLayout>& found) {
-        std::span<const LayoutID> views = viewsAbove(LayoutID(index));
-        if (views.size() < fewestViewsIndexedByKey)
-            return;
-        size_t firstOfLayout = found.size();
-        for (LayoutID view : views) {
-            const Vector<Field>& fields = layouts[view.index()].fields;
-            for (uint32_t field = 0; field < fields.size(); ++field) {
-                if (fields[field].key && !fields[field].flags.contains(FieldFlags::IsInherited))
-                    found.append({ index, { fields[field].key, view, field } });
-            }
-        }
-        std::span<FieldOfLayout> ofLayout = found.mutableSpan().subspan(firstOfLayout);
-        AOT::stableSort(ofLayout, { }, [](const FieldOfLayout& entry) {
-            return entry.field.key;
-        });
-        auto repeated = std::ranges::unique(ofLayout, [](const FieldOfLayout& a, const FieldOfLayout& b) {
-            return a.field.key == b.field.key && a.field.view == b.field.view;
-        });
-        found.shrink(firstOfLayout + (repeated.begin() - ofLayout.begin()));
+    Vector<uint32_t> layoutsWithRows;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (viewsAbove(LayoutID(index)).size() >= fewestViewsIndexedByKey)
+            layoutsWithRows.append(index);
+    }
+    AOT::stableSort(layoutsWithRows, [&](uint32_t a, uint32_t b) {
+        return std::ranges::lexicographical_compare(viewsAbove(LayoutID(a)), viewsAbove(LayoutID(b)));
     });
+    Vector<uint32_t>& rowOf = m_derivedTables.rowOfFieldsWrittenAbove;
+    rowOf.fill(UINT32_MAX, numberOfLayouts);
+    Vector<uint32_t> firstLayoutOfRow;
+    for (uint32_t index : layoutsWithRows) {
+        if (firstLayoutOfRow.isEmpty() || !std::ranges::equal(viewsAbove(LayoutID(firstLayoutOfRow.last())), viewsAbove(LayoutID(index))))
+            firstLayoutOfRow.append(index);
+        rowOf[index] = static_cast<uint32_t>(firstLayoutOfRow.size() - 1);
+    }
+    auto numberOfRows = static_cast<uint32_t>(firstLayoutOfRow.size());
     Vector<uint32_t>& firstField = m_derivedTables.firstFieldWrittenAbove;
-    firstField.fill(0, numberOfLayouts + 1);
-    for (const FieldOfLayout& entry : fieldsOfLayouts)
-        ++firstField[entry.layout + 1];
-    for (uint32_t index = 0; index < numberOfLayouts; ++index)
-        firstField[index + 1] += firstField[index];
-    m_derivedTables.fieldsWrittenAbove = fieldsOfLayouts.map([](const FieldOfLayout& entry) {
-        return entry.field;
+    firstField.fill(0, numberOfRows + 1);
+    ChunksOfIndices division = divideIntoChunks(numberOfRows);
+    Vector<Vector<FieldWrittenAbove>> chunks(division.size());
+    forEachIndexInParallel(loops, division.size(), [&](unsigned chunk) {
+        Vector<FieldWrittenAbove>& found = chunks[chunk];
+        size_t mostFields = 0;
+        for (unsigned row = division.firstIndexOf[chunk]; row < division.firstIndexOf[chunk + 1]; ++row) {
+            for (LayoutID view : viewsAbove(LayoutID(firstLayoutOfRow[row])))
+                mostFields += layouts[view.index()].fields.size();
+        }
+        found.reserveInitialCapacity(mostFields);
+        for (unsigned row = division.firstIndexOf[chunk]; row < division.firstIndexOf[chunk + 1]; ++row) {
+            std::span<const LayoutID> views = viewsAbove(LayoutID(firstLayoutOfRow[row]));
+            size_t firstOfLayout = found.size();
+            for (LayoutID view : views) {
+                const Vector<Field>& fields = layouts[view.index()].fields;
+                for (uint32_t field = 0; field < fields.size(); ++field) {
+                    if (fields[field].key && !fields[field].flags.contains(FieldFlags::IsInherited))
+                        found.append({ fields[field].key, view, field });
+                }
+            }
+            std::span<FieldWrittenAbove> ofLayout = found.mutableSpan().subspan(firstOfLayout);
+            AOT::stableSort(ofLayout, { }, [](const FieldWrittenAbove& entry) {
+                return entry.key;
+            });
+            auto repeated = std::ranges::unique(ofLayout, [](const FieldWrittenAbove& a, const FieldWrittenAbove& b) {
+                return a.key == b.key && a.view == b.view;
+            });
+            found.shrink(firstOfLayout + (repeated.begin() - ofLayout.begin()));
+            firstField[row + 1] = static_cast<uint32_t>(found.size() - firstOfLayout);
+        }
     });
+    for (uint32_t row = 0; row < numberOfRows; ++row)
+        firstField[row + 1] += firstField[row];
+    m_derivedTables.fieldsWrittenAbove = joinChunks<FieldWrittenAbove>(loops, WTF::move(chunks));
 }
 
 void Program::internBuiltinNameKeys()

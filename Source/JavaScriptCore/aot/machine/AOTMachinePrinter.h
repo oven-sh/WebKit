@@ -15,6 +15,7 @@ namespace JSC { namespace AOT { namespace Machine {
 
 void printProcedure(PrintStream&, const Procedure&);
 void printOperation(PrintStream&, const Procedure&, const Operation*);
+void printFailure(PrintStream&, const Procedure&);
 
 void printOrder(PrintStream&, const Procedure&);
 void printLiveness(PrintStream&, const Procedure&);

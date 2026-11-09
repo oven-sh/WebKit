@@ -112,6 +112,7 @@ public:
         static constexpr unsigned mostOperandsDigested = 6;
         std::array<Digest, 14> digests { };
         unsigned numberOfDigests { 0 };
+        Vector<std::pair<VariableID, LValue>, 4> wordsOfVariablesInFront;
     };
     void beginWatchOfOperation(const ValueContext&, WatchOfEffects&);
     void endWatchOfEffects(const OperationContext&, const WatchOfEffects&, LValue behind);
@@ -186,7 +187,10 @@ private:
     void digestInFrontOfCall(WatchOfEffects&, uint32_t operandIndex, LValue cell, VariableID = { });
     void digestVariablesThatUnitReads(const Effects&, WatchOfEffects&);
     LValue loadVariableForEffectsNet(VariableID);
+    LValue loadWordOfVariableForEffectsNet(VariableID);
+    void keepWordsOfVariablesThatUnitStores(WatchOfEffects&);
     std::optional<Vector<VariableID, 8>> m_variablesThatUnitReads;
+    std::optional<Vector<VariableID, 8>> m_variablesThatUnitStores;
     LValue readWordForEffectsNet(ptrdiff_t offsetInInstance, std::optional<ptrdiff_t> offsetBehindPointer, LValue behind);
     LValue readCollectionsForEffectsNet(LValue behind);
     Vector<std::pair<ValueID, std::unique_ptr<WatchOfEffects>>, 2> m_watchesOfWhatMayRunAgain;

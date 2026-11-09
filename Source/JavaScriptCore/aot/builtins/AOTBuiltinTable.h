@@ -761,8 +761,9 @@ enum class BuiltinMark : uint8_t {
     IsDeletedWhenModuleOfLibraryLoads,
     PassesOverListWhereItTakesRecordOfHandlers,
     AsksOptionsForListedNamesAlone,
+    MayLayListenerForUncaughtExceptions,
 };
-static_assert(static_cast<unsigned>(BuiltinMark::AsksOptionsForListedNamesAlone) < 64);
+static_assert(static_cast<unsigned>(BuiltinMark::MayLayListenerForUncaughtExceptions) < 64);
 constexpr uint64_t bitOfMark(BuiltinMark mark) { return 1ull << static_cast<unsigned>(mark); }
 
 struct BuiltinMarkedEntry {
@@ -879,6 +880,12 @@ struct BuiltinTableRuntime {
     std::span<const BuiltinRealmStructure> realmStructures { };
 };
 
+enum class AnswerAboutBuiltinClass : uint8_t {
+    HasLockedPrototypeChain = 1 << 0,
+    HasClassBelowThatMayHavePristineInstances = 1 << 1,
+    HasClassBelow = 1 << 2,
+};
+
 struct BuiltinTableData {
     std::span<const Builtin> builtins { };
     std::span<const BuiltinPackedOverload> overloads { };
@@ -892,6 +899,7 @@ struct BuiltinTableData {
     BuiltinTableTokens tokens { };
     BuiltinTableAttachments attachments { };
     BuiltinTableRuntime runtime { };
+    std::span<const OptionSet<AnswerAboutBuiltinClass>> answersAboutClasses { };
 };
 
 extern const BuiltinTableData builtinTableData;
@@ -995,6 +1003,7 @@ public:
 
     BuiltinClassID receiverClassOf(BuiltinID) const;
     bool isSameOrSubclassOf(BuiltinClassID, BuiltinClassID ancestor) const;
+    bool hasClassBelow(BuiltinClassID) const;
     bool isObjectOfClass(BuiltinID canonical) const;
     TypedArrayType typedArrayTypeOf(BuiltinClassID) const;
     BuiltinClassID typedArrayClassOf(BuiltinClassID) const;
@@ -1094,6 +1103,14 @@ private:
     friend class BuiltinTableOfBuild;
 
     void appendComponent(StringBuilder&, BuiltinName) const;
+    bool everyLinkOfPrototypeChainIsLocked(BuiltinClassID) const;
+    ALWAYS_INLINE std::optional<bool> answerKeptAbout(BuiltinClassID builtinClass, AnswerAboutBuiltinClass answer) const
+    {
+        if (m_data.answersAboutClasses.empty() || !builtinClass)
+            return std::nullopt;
+        RELEASE_ASSERT(builtinClass.index() < m_data.answersAboutClasses.size());
+        return m_data.answersAboutClasses[builtinClass.index()].contains(answer);
+    }
 
     const BuiltinTableData& m_data;
 };
@@ -1112,6 +1129,7 @@ public:
 private:
     void lockByNames(BuiltinID wholeObject);
     void lockEveryWholeObjectByNames();
+    void answerQuestionsAboutClasses();
 
     BuiltinTableData m_data;
     Vector<Builtin> m_builtins;
@@ -1121,6 +1139,7 @@ private:
     Vector<Vector<BuiltinName>> m_closedSymbols;
     Vector<BuiltinID> m_unlockedMembers;
     Vector<BuiltinID> m_membersWhoseLockIsLeftToProgram;
+    Vector<OptionSet<AnswerAboutBuiltinClass>> m_answersAboutClasses;
     BuiltinTable m_table;
 };
 

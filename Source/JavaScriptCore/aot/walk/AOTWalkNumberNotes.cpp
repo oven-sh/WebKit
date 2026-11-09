@@ -25,7 +25,7 @@ void prepareOperandsForFormNumbers(Walker&, Draft&);
 
 bool hasMechanismsOfNumberForms(const Walker& walker)
 {
-    return walker.has(Mechanism::TypedOperations) && walker.has(Mechanism::UnboxedNumbers);
+    return walker.reckonsOnWhatItHasBuilt() && walker.has(Mechanism::UnboxedNumbers);
 }
 
 static PrimitiveKnownToFolding onlyValueOfTypeInNumberForms(const Type& type)

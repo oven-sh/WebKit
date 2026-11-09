@@ -10,6 +10,7 @@
 
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTWalk.h"
 #include <algorithm>
@@ -59,7 +60,7 @@ static TypeID copyTypeBetweenArenasOfArrivals(const TypeArena& from, TypeArena& 
     return to.intern(parts);
 }
 
-static TypeID joinSettledForArrivals(const TypeArena& types, TypeID joined)
+static ALWAYS_INLINE TypeID joinSettledForArrivals(const TypeArena& types, TypeID joined)
 {
     return types.at(joined).isAnything() ? TypeTable::anything : joined;
 }
@@ -190,7 +191,7 @@ TypeID Arrivals::leftAt(TypeArena& types, FunctionID function, uint32_t entryPar
     return copyTypeBetweenArenasOfArrivals(m_joins, types, joined);
 }
 
-TypeID Arrivals::askedByDoorsOfCapture(TypeArena& types, FunctionID id, uint32_t entryParameter) const
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID Arrivals::askedByDoorsOfCapture(TypeArena& types, FunctionID id, uint32_t entryParameter) const
 {
     const Function& function = m_program.at(id);
     if (entryParameter >= function.numberOfEntryParameters() || function.entryParameterKind(entryParameter) != EntryParameter::Capture)

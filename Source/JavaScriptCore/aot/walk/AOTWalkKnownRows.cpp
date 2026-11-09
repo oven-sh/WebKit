@@ -15,6 +15,7 @@
 #include "AOTEffectsOfOperations.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTPlan.h"
 #include "AOTSchemaInlineBuiltins.h"
@@ -250,6 +251,47 @@ static bool loopReadsOffResultFirstForKnownRows(Walker& walker, ValueID value)
     }
 }
 
+static bool numbersAreSeenToArriveAtFunctionHandedForKnownRows(Walker& walker, const BodyValue& call)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto arguments = call.as<Opcode::Call>().argumentsOperands();
+    ValueID handed = arguments.empty() ? ValueID() : index.valueBehindCasts(arguments[0]);
+    if (!handed || index.isParameter(handed) || index.opcodeOf(handed) != Opcode::NewClosure)
+        return false;
+    TypeArena& types = walker.types();
+    return std::ranges::any_of(walker.facts().linked().parametersOf(index.value(handed).function()), [&](const LinkedParameter& parameter) {
+        TypeID arriving = parameter.writtenOrSeenToArrive();
+        TypeID there = arriving ? types.withoutNullish(arriving) : TypeID();
+        return there && !isNeverType(there) && types.at(there).isNumber();
+    });
+}
+
+static bool runOverBoxedValuesTakesResultFirstForKnownRows(Walker& walker, ValueID value)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (;;) {
+        std::optional<BodyUser> user = index.firstUser(value);
+        if (!user || user->kind != BodyUseKind::Operand)
+            return false;
+        BodyValue reader = index.value(user->value);
+        if (opcodesThatStateTypes.contains(reader.opcode())) {
+            value = user->value;
+            continue;
+        }
+        if (reader.opcode() != Opcode::PropGet || reader.operand(0) != value)
+            return false;
+        ValueID taker = index.onlyUsingValue(reader.id());
+        if (!taker || index.opcodeOf(taker) != Opcode::Call || index.value(taker).as<Opcode::Call>().calleeOperand() != reader.id())
+            return false;
+        if (numbersAreSeenToArriveAtFunctionHandedForKnownRows(walker, index.value(taker)))
+            return false;
+        BuiltinID member = findMemberOnObjectAsMade(walker, walker.types().builtinClass(BuiltinClasses::Array), reader.key());
+        FunctionID entered = member ? findLibraryFunctionsBehindBuiltin(walker, walker.types().forBuiltin(walker.program().builtins().canonicalID(member))).enteredByValue : FunctionID();
+        const BodyIndex* text = entered ? walker.facts().bodies().find(entered) : nullptr;
+        return text && text->opcodes().contains(Opcode::HasContiguousIndex);
+    }
+}
+
 static void holdResultToRowsForKnownRows(Walker& walker, const BodyValue& call, TypeID byRows)
 {
     TypeArena& types = walker.types();
@@ -312,8 +354,12 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     }
     TypeID resultByRows = loopReadsOffResultFirstForKnownRows(walker, call.id()) ? findTypeOfResultOfRowsReachedBy(walker, call) : TypeID();
     FunctionID reached = enteredByValue && mayCopy == MayCopyFunctionCalledDirectly::Yes ? findLibraryFunctionOfRowsReachedBy(walker, call) : FunctionID();
-    walker.noteThatCopyMakesNewList(reached && reached != function ? function : FunctionID(), written.thisValueOperand());
-    bool isBuilt = callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), mayCopy);
+    bool makesNewList = reached && reached != function;
+    FunctionID calledWhereNoCopyIsMade;
+    if (const BodyIndex* ofRows = makesNewList ? walker.facts().bodies().find(reached) : nullptr; ofRows && ofRows->opcodes().contains(Opcode::HasContiguousIndex))
+        calledWhereNoCopyIsMade = std::exchange(function, reached);
+    walker.noteThatCopyMakesNewList(makesNewList ? function : FunctionID(), written.thisValueOperand(), runOverBoxedValuesTakesResultFirstForKnownRows(walker, call.id()));
+    bool isBuilt = callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), mayCopy, calledWhereNoCopyIsMade);
     walker.noteThatCopyMakesNewList({ }, { });
     if (isBuilt) {
         walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);
@@ -322,7 +368,7 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     return isBuilt;
 }
 
-bool isPrivateAliasOfBuiltinMember(const Program& program, PropertyKeyID key)
+ALWAYS_INLINE_INTO_OTHER_FILES bool isPrivateAliasOfBuiltinMember(const Program& program, PropertyKeyID key)
 {
     if (!key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::EnginePrivateName)
         return false;

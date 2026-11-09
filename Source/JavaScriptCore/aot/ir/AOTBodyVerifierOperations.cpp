@@ -11,6 +11,7 @@
 #include "AOTDeclaredFunctionsInScopes.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLayout.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaResultRules.h"
@@ -307,7 +308,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::LoopHint: case Opcode::ReleaseHint:
     case Opcode::ResolveHeritage: case Opcode::NewClassToken: case Opcode::GetConstructPrototype:
     case Opcode::IteratorOpen: case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::ForInOpen: case Opcode::ForInStep: case Opcode::ReadScope:
-    case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule: case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy:
+    case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule: case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::IsLinkedBelow: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy:
     case Opcode::AreLoaderFunctionsStored: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure: case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic:
     case Opcode::IsConstructor: case Opcode::ReadsIteratorOfListUnseen: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ToLength:
     case Opcode::ThrowNewError: case Opcode::ResumeGenerator: case Opcode::StepGenerator: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator:
@@ -331,25 +332,26 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::IsEnumeratorCurrent:
     case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetSlotSetter: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
     case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::PropHasOwn:
-    case Opcode::TryCopyFields: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetCachedGetter: case Opcode::GetValueAtSiteOrAbsent:
+    case Opcode::TryCopyFields: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetCachedGetter: case Opcode::ElemGetOrOwnAccessor: case Opcode::GetGetterOfAccessorOrUndefined: case Opcode::GetValueAtSiteOrAbsent: case Opcode::GetOwnValueUnderKeyOrAbsent:
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
     case Opcode::ElemGetByKeyParts:
     case Opcode::ReserveArrayRoom: case Opcode::ConvertToDoubleStorage:
+    case Opcode::GetArrayRoom: case Opcode::ExtendArrayLength: case Opcode::SetArrayLength:
     case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::AppendValuesOfMap:
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
-    case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
+    case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::GetElementInStorageOrAbsent: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
     case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest:
     case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
     case Opcode::CallBuiltin: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ReciprocalOfDivisor: case Opcode::RemainderByReciprocal: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewSetFromData: case Opcode::NewMapFromData:
     case Opcode::NewFormatterWithPattern: case Opcode::SetUpFormatterWithOptions: case Opcode::FormatDateWithPattern: case Opcode::FormatNumberWithPattern: case Opcode::NewArgumentList: case Opcode::NewArrayOfGiven:
-    case Opcode::SharedRegExpLiteral: case Opcode::GetBuiltinValue: case Opcode::GetWatchedBuiltinValue: case Opcode::InitializeBuiltin:
+    case Opcode::SharedRegExpLiteral: case Opcode::GetBuiltinValue: case Opcode::GetWatchedBuiltinValue: case Opcode::GetWatchedBuiltinValueOrAbsent: case Opcode::InitializeBuiltin:
     case Opcode::DestructureIterable: case Opcode::AppendIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray: case Opcode::RequireLengthFitsList: case Opcode::CreateAsyncFromSyncIterator:
     case Opcode::ThrowNotIterable:
     case Opcode::NewGenerator: case Opcode::NewGeneratorOfLibrary: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype:
     case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
     case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::GetHeapFrameWord: case Opcode::PutHeapFrameWord: case Opcode::NewHeapWords:
     case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements:
-    case Opcode::HasInPrototypeChain:
+    case Opcode::HasInPrototypeChain: case Opcode::FindInPrototypeChainUnlessTrapped:
     case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::EvaluateRequiredModule: case Opcode::EnterBodyThatRunsOnce:
     case Opcode::NumberOrNaN:
     case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: case Opcode::IntegerBound: case Opcode::FulfillFreshPromise:
@@ -476,7 +478,7 @@ void BodyVerifier::verifyOperandDefinitionsOneByOne(const BodyBlock& block, cons
     });
 }
 
-void BodyVerifier::verifyNumberOfVariadicOperands(const BodyBlock& block, const BodyValue& value)
+ALWAYS_INLINE_INTO_OTHER_FILES void BodyVerifier::verifyNumberOfVariadicOperands(const BodyBlock& block, const BodyValue& value)
 {
     size_t expectedNumber = 0;
     if (value.opcode() == Opcode::NewObject)

@@ -55,6 +55,7 @@ public:
     void generateInstanceOf(const ValueContext&);
     bool leaveOperandToInstanceOf(const ValueContext& read, InstanceOfOperand, NumberedImmediate);
     void generateHasInPrototypeChain(const ValueContext&);
+    void generateFindInPrototypeChainUnlessTrapped(const ValueContext&);
     void generateToBoolean(const ValueContext&);
     void generateLogicalNot(const ValueContext&);
     void generateTypeOf(const ValueContext&);

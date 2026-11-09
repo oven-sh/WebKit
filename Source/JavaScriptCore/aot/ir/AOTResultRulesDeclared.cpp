@@ -72,7 +72,7 @@ static std::span<const LayoutID> layoutsOfSetInResultRules(const TypingContext& 
     return singleElementSpan(onlyMember);
 }
 
-static TypeID tryTypeHeldInSlot(const TypingContext& context, FieldReference reference)
+static ALWAYS_INLINE TypeID tryTypeHeldInSlot(const TypingContext& context, FieldReference reference)
 {
     if (TypeID known = context.positions.slot(context.level, reference.layout, reference.field))
         return known;
@@ -103,7 +103,7 @@ TypeID tryTypeWrittenAbove(const TypingContext& context, LayoutID layout, Proper
     const Program& program = context.program;
     FieldReadUnion written { context };
     bool isWritten = false;
-    auto add = [&](LayoutID view, uint32_t field) {
+    auto add = [&](LayoutID view, uint32_t field) ALWAYS_INLINE_LAMBDA {
         const Field& record = program.at(view).fields[field];
         if (record.form.contains(FieldForm::IsAccessor) || record.flags.contains(FieldFlags::IsMethod))
             return false;
@@ -139,7 +139,7 @@ static TypeID tryTypeReadFromSlot(const TypingContext& context, FieldReference r
     return isNeverType(found) || !context.types.isSubset(found, held) ? held : found;
 }
 
-static std::optional<FieldReference> findFieldOfSlotAccess(const TypingContext& context, LayoutID layout, PropertyKeyID key)
+static ALWAYS_INLINE std::optional<FieldReference> findFieldOfSlotAccess(const TypingContext& context, LayoutID layout, PropertyKeyID key)
 {
     if (std::optional<FieldReference> declared = findField(context.program, layout, key))
         return declared;
@@ -189,7 +189,7 @@ TypeID tryTypeOfProvenHalfInSlot(const TypingContext& context, LayoutSetID recei
     if (!receivers || !holdsOneMember(receivers))
         return { };
     for (LayoutID receiver : membersOf(context.types, receivers)) {
-        if (std::optional<FieldReference> field = findField(context.program, receiver, key))
+        if (std::optional<FieldReference> field = findFieldOfSlotAccess(context, receiver, key))
             return context.positions.halfOfAccessorOfField(context.level, field->layout, field->field, isSetter);
     }
     return { };
@@ -222,7 +222,7 @@ static bool isAccessorOfLayout(const Program& program, LayoutID layout, Property
     return field && fieldAt(program, *field).form.contains(FieldForm::IsAccessor);
 }
 
-static TypeID tryProvenTypeFoundAboveObjects(const TypingContext& context, const Type& receiver, PropertyKeyID key)
+static ALWAYS_INLINE TypeID tryProvenTypeFoundAboveObjects(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
     auto askEachLayout = [&]() -> TypeID {
         TypeID foundByAll;
@@ -244,7 +244,7 @@ static TypeID tryProvenTypeFoundAboveObjects(const TypingContext& context, const
     return context.positions.askedOfEachLayout(PositionTypes::QuestionOfEachLayout::FoundAboveObjects, context.level, receiver.layouts, key, scopedLambda<TypeID()>(askEachLayout));
 }
 
-static TypeID tryProvenTypeReadOffLayouts(const TypingContext& context, const Type& receiver, PropertyKeyID key)
+static ALWAYS_INLINE TypeID tryProvenTypeReadOffLayouts(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
     auto askEachLayout = [&]() -> TypeID {
         FieldReadUnion read { context };
@@ -260,7 +260,7 @@ static TypeID tryProvenTypeReadOffLayouts(const TypingContext& context, const Ty
     return context.positions.askedOfEachLayout(PositionTypes::QuestionOfEachLayout::ReadByNameOffObjects, context.level, receiver.layouts, key, scopedLambda<TypeID()>(askEachLayout));
 }
 
-static TypeID tryProvenTypeFoundAbovePrimitives(const TypingContext& context, const Type& receiver, PropertyKeyID key)
+static ALWAYS_INLINE TypeID tryProvenTypeFoundAbovePrimitives(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
     const BuiltinTable& builtins = context.program.builtins();
     BuiltinClassID builtinClass = receiver.hasObjects() || liesInThread(key) ? BuiltinClassID() : primitiveClassOf(static_cast<uint16_t>(receiver.primitives & ~Primitive::UndefinedOrNull));
@@ -280,7 +280,7 @@ static TypeID tryProvenTypeFoundAbovePrimitives(const TypingContext& context, co
     return object ? context.positions.property(context.level, object, key) : TypeID();
 }
 
-static TypeID tryProvenTypeOfFieldRead(const TypingContext& context, const Type& receiver, PropertyKeyID key)
+static ALWAYS_INLINE TypeID tryProvenTypeOfFieldRead(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
     if (!receiver.isJavaScriptValue())
         return { };

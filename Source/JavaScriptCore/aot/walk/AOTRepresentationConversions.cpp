@@ -152,7 +152,7 @@ static constexpr std::optional<Opcode> conversionStepFromJSValue(Representation 
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-static constexpr std::optional<Opcode> singleConversionStep(Representation from, Representation to)
+static ALWAYS_INLINE constexpr std::optional<Opcode> singleConversionStep(Representation from, Representation to)
 {
     using enum Representation;
     switch (from) {

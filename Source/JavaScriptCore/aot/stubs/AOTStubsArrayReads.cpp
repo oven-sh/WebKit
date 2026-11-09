@@ -83,9 +83,9 @@ void generateArrayGetAtIndex(StubAssembler& jit)
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
     jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    Jump isDoubleShape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
     Jump isContiguousShape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ContiguousShape));
     Jump isInt32Shape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(Int32Shape));
-    Jump isDoubleShape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
     isAbsent.append(jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(UndecidedShape)));
     static_assert(SlowPutArrayStorageShape > ArrayStorageShape && SlowPutArrayStorageShape == IndexingShapeMask - 2);
     callsOperation.append(jit.branch32(CCallHelpers::Below, shape, TrustedImm32(ArrayStorageShape)));

@@ -28,6 +28,7 @@ enum class ConcatenatedKeyForm : uint8_t { Key, Name };
 constexpr StubKey concatenateKeyOfPair(ConcatenatedKeyForm form) { return StubKey(StubFamily::ConcatenateKeyOfPair).withForm(static_cast<uint8_t>(form)); }
 constexpr StubKey substring() { return StubKey(StubFamily::Substring); }
 constexpr StubKey findCharacter8() { return StubKey(StubFamily::FindCharacter8); }
+constexpr StubKey findText8() { return StubKey(StubFamily::FindText8); }
 
 constexpr StubKey concatenate(unsigned count)
 {

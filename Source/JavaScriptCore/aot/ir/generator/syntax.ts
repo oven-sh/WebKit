@@ -331,6 +331,7 @@ export interface InlineSyntax {
   readonly effects: EffectsSyntax;
   readonly family: Name;
   readonly hasOptionalSlowPath: boolean;
+  readonly reckonsInLine: boolean;
 }
 
 export type OptionWordActionSyntax =

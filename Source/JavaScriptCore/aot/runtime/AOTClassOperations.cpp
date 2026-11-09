@@ -63,8 +63,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewClass, JSCell*, (Instance* instance, uin
     Closure* closure = cellArgument<Closure>(objectArgument(constructor, entry), entry);
     const LayoutData& classLayout = classLayoutAt(classes, requestAt<NewClassRequest>(instance, request).classIndex);
     RELEASE_ASSERT(closure->function() == FunctionID(classLayout.classData().classConstructor));
-    closure = classes.classObjectForEvaluation(closure, classLayout);
-    classes.defineClass(globalObject, closure, classLayout, JSValue::decode(heritage), JSValue::decode(prototypeParent));
+    closure = classes.defineClassWhereItIsEvaluated(globalObject, closure, classLayout, JSValue::decode(heritage), JSValue::decode(prototypeParent));
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, closure);
 }

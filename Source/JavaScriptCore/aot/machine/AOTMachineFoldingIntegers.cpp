@@ -62,7 +62,7 @@ static ALWAYS_INLINE IntegerRange integerRangeOf(const Operation* operation, uns
     return computeIntegerRange(operation, levelsOfChildren);
 }
 
-static IntegerRange computeIntegerRange(const Operation* operation, unsigned levelsOfChildren)
+static ALWAYS_INLINE IntegerRange computeIntegerRange(const Operation* operation, unsigned levelsOfChildren)
 {
     Type type = operation->type();
     IntegerRange widest = widestIntegerRangeOf(type);

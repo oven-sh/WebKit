@@ -138,6 +138,7 @@ struct PlannedLayout {
     std::optional<FieldIndex> environmentOfDeferredClosures;
     BitVector fieldsThatHoldRawValuesFromBirth;
     bool mayBearMark { false };
+    Vector<FieldIndex> fieldsHeldFilled;
 };
 
 inline size_t PlannedLayout::findAppendedKey(PropertyKeyID key) const
@@ -451,6 +452,11 @@ public:
 
     bool someSlotUnderKeyHoldsMark(PropertyKeyID key) const { return m_parts.keysOfSlotsThatHoldMarks.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_parts.keysWithColumn; }
+    bool someLayoutHasField(PropertyKeyID key) const
+    {
+        std::span<const uint32_t> first = m_parts.firstModuleThatWritesFieldUnder.span();
+        return static_cast<size_t>(key.index()) + 1 >= first.size() || first[key.index()] != first[key.index() + 1];
+    }
     bool someLayoutWrittenInHasField(ModuleID module, PropertyKeyID key) const
     {
         std::span<const uint32_t> first = m_parts.firstModuleThatWritesFieldUnder.span();

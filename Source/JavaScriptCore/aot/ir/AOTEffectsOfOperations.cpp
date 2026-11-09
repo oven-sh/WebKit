@@ -785,15 +785,9 @@ static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode 
 }
 
 template<typename Operation>
-Effects effectsOf(const TypingContext& context, const Operation& operation, OperandTypes operandTypes, TypeID result, const Effects* foundByCaller)
+static NEVER_INLINE Effects effectsThatHangOnOperandsOf(const TypingContext& context, const Operation& operation, OperandTypes operandTypes, TypeID result, const Effects* foundByCaller)
 {
     Opcode opcode = opcodeOf(operation);
-    if (!foundByCaller && opcodesByWhatOperandsDeclare().haveEffectsOfRow.contains(opcode)) {
-        if (opcodesWithPureRow.contains(opcode))
-            return Effects::none();
-        return effectsOfEveryOperationWith(opcode);
-    }
-
     if (testsItsOwnGuess(operation)) {
         Effects bound = declaredBoundOf(*genericOperationOf(opcode));
         if (!opcodesWithBoundInsideThatOfGenericOperation.contains(opcode))
@@ -813,6 +807,18 @@ Effects effectsOf(const TypingContext& context, const Operation& operation, Oper
     if (foundByCaller && opcode == Opcode::GetBuiltinValue)
         effects.intersect(*foundByCaller);
     return effects;
+}
+
+template<typename Operation>
+Effects effectsOf(const TypingContext& context, const Operation& operation, OperandTypes operandTypes, TypeID result, const Effects* foundByCaller)
+{
+    Opcode opcode = opcodeOf(operation);
+    if (!foundByCaller && opcodesByWhatOperandsDeclare().haveEffectsOfRow.contains(opcode)) {
+        if (opcodesWithPureRow.contains(opcode))
+            return Effects::none();
+        return effectsOfEveryOperationWith(opcode);
+    }
+    return effectsThatHangOnOperandsOf(context, operation, operandTypes, result, foundByCaller);
 }
 
 template<typename Terminator>

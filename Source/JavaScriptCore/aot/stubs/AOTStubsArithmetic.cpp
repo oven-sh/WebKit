@@ -17,6 +17,8 @@
 #include "AOTStubsValues.h"
 #include "JSCJSValueInlines.h"
 #include "JSString.h"
+#include "PureNaN.h"
+#include <bit>
 #include <limits>
 
 namespace JSC { namespace AOT {
@@ -237,19 +239,112 @@ static void emitInt32Case(StubAssembler& jit, const BinaryRegisters& registers, 
     slow.append(jit.jump());
 }
 
-static void emitDoubleCase(StubAssembler& jit, const BinaryRegisters& registers, BinaryOperator operation, JumpList& slow)
+static void convertWhatIsNeitherCellNorNumber(StubAssembler& jit, GPRReg value, GPRReg scratch, FPRReg result)
 {
-    slow.append(jit.branchTest64(CCallHelpers::Zero, registers.left, numberTag));
-    slow.append(jit.branchTest64(CCallHelpers::Zero, registers.right, numberTag));
-    toDouble(jit, registers.left, registers.scratch, registers.leftNumber);
-    toDouble(jit, registers.right, registers.scratch, registers.rightNumber);
-    if (isComparison(operation)) {
-        jit.compareDouble(comparisonOf(operation).ofDoubles, registers.leftNumber, registers.rightNumber, registers.left);
-        jit.returnToCaller();
-        return;
+    Jump isUndefined = jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueUndefined));
+    jit.compare64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueTrue), scratch);
+    jit.convertInt32ToDouble(scratch, result);
+    Jump isConverted = jit.jump();
+    isUndefined.link(&jit);
+    jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), scratch);
+    jit.move64ToDouble(scratch, result);
+    isConverted.link(&jit);
+}
+
+static void convertWhatIsNoCell(StubAssembler& jit, GPRReg value, GPRReg scratch, FPRReg result)
+{
+    Jump isNoNumber = jit.branchTest64(CCallHelpers::Zero, value, numberTag);
+    toDouble(jit, value, scratch, result);
+    Jump isConverted = jit.jump();
+    isNoNumber.link(&jit);
+    convertWhatIsNeitherCellNorNumber(jit, value, scratch, result);
+    isConverted.link(&jit);
+}
+
+static bool hasWayOfTwoTexts(BinaryOperator operation)
+{
+    return operation == BinaryOperator::Add || isComparison(operation);
+}
+
+template<typename Finish>
+static Label emitWaysToDoubles(StubAssembler& jit, const BinaryRegisters& registers, JumpList& leftIsNoInt32, bool convertsWhatIsNoCell, JumpList& slow, const Finish& finish)
+{
+    const GPRReg left = registers.left;
+    const GPRReg right = registers.right;
+    const bool leftWasAsked = !leftIsNoInt32.empty();
+    JumpList leftIsInt32BesideAnything;
+    JumpList leftIsInt32BesideNumber;
+    if (leftWasAsked) {
+        leftIsInt32BesideAnything.append(jit.branch64(CCallHelpers::AboveOrEqual, left, numberTag));
+        leftIsNoInt32.link(&jit);
     }
-    emitOnDoubles(jit, operation, registers.leftNumber, registers.rightNumber);
-    boxResultOfArithmeticAndReturn(jit, registers.leftNumber, registers.rightNumber, registers.scratch, registers.left);
+    Jump leftIsNoNumber = jit.branchTest64(CCallHelpers::Zero, left, numberTag);
+    JumpList rightIsNoNumber;
+    rightIsNoNumber.append(jit.branchTest64(CCallHelpers::Zero, right, numberTag));
+    if (!leftWasAsked)
+        leftIsInt32BesideNumber.append(jit.branch64(CCallHelpers::AboveOrEqual, left, numberTag));
+    Jump rightIsInt32 = jit.branch64(CCallHelpers::AboveOrEqual, right, numberTag);
+    unboxDouble(jit, left, left, registers.leftNumber);
+    unboxDouble(jit, right, right, registers.rightNumber);
+    Label bothAreConverted = jit.label();
+    finish();
+
+    rightIsInt32.link(&jit);
+    unboxDouble(jit, left, left, registers.leftNumber);
+    jit.convertInt32ToDouble(right, registers.rightNumber);
+    finish();
+
+    leftIsInt32BesideAnything.link(&jit);
+    if (leftWasAsked)
+        rightIsNoNumber.append(jit.branchTest64(CCallHelpers::Zero, right, numberTag));
+    leftIsInt32BesideNumber.link(&jit);
+    jit.convertInt32ToDouble(left, registers.leftNumber);
+    Jump bothAreInt32 = jit.branch64(CCallHelpers::AboveOrEqual, right, numberTag);
+    unboxDouble(jit, right, right, registers.rightNumber);
+    finish();
+    bothAreInt32.link(&jit);
+    jit.convertInt32ToDouble(right, registers.rightNumber);
+    finish();
+
+    if (!convertsWhatIsNoCell) {
+        slow.append(leftIsNoNumber);
+        slow.append(rightIsNoNumber);
+        return bothAreConverted;
+    }
+    leftIsNoNumber.link(&jit);
+    slow.append(jit.branchIfCell(left));
+    convertWhatIsNeitherCellNorNumber(jit, left, registers.scratch, registers.leftNumber);
+    Jump rightIsNoNumberBehindLeft = jit.branchTest64(CCallHelpers::Zero, right, numberTag);
+    toDouble(jit, right, registers.scratch, registers.rightNumber);
+    finish();
+    rightIsNoNumber.link(&jit);
+    toDouble(jit, left, registers.scratch, registers.leftNumber);
+    rightIsNoNumberBehindLeft.link(&jit);
+    slow.append(jit.branchIfCell(right));
+    convertWhatIsNeitherCellNorNumber(jit, right, registers.scratch, registers.rightNumber);
+    finish();
+    return bothAreConverted;
+}
+
+static void emitDoubleCaseThatConverts(StubAssembler& jit, const BinaryRegisters& registers, BinaryOperator operation, JumpList& leftIsNoInt32, JumpList& slow)
+{
+    emitWaysToDoubles(jit, registers, leftIsNoInt32, true, slow, [&] {
+        emitOnDoubles(jit, operation, registers.leftNumber, registers.rightNumber);
+        boxResultOfArithmeticAndReturn(jit, registers.leftNumber, registers.rightNumber, registers.scratch, registers.left);
+    });
+}
+
+static Label emitDoubleCase(StubAssembler& jit, const BinaryRegisters& registers, BinaryOperator operation, JumpList& leftIsNoInt32, JumpList& slow)
+{
+    return emitWaysToDoubles(jit, registers, leftIsNoInt32, false, slow, [&] {
+        if (isComparison(operation)) {
+            jit.compareDouble(comparisonOf(operation).ofDoubles, registers.leftNumber, registers.rightNumber, registers.left);
+            jit.returnToCaller();
+            return;
+        }
+        emitOnDoubles(jit, operation, registers.leftNumber, registers.rightNumber);
+        boxResultOfArithmeticAndReturn(jit, registers.leftNumber, registers.rightNumber, registers.scratch, registers.left);
+    });
 }
 
 static void emitDoubleToInt32(StubAssembler& jit, FPRReg number, GPRReg result, JumpList& isOutsideInt64)
@@ -349,18 +444,24 @@ void generateBinaryOperation(StubAssembler& jit)
         jit.allocateScratch(FPRInfo::fpRegT1),
     };
     JumpList notBothInt32;
+    JumpList leftIsNoInt32;
     JumpList slow;
 
     if (!isAfterInt32Check && operation != BinaryOperator::Div) {
-        notBothInt32.append(jit.branch64(CCallHelpers::Below, registers.left, numberTag));
+        leftIsNoInt32.append(jit.branch64(CCallHelpers::Below, registers.left, numberTag));
         notBothInt32.append(jit.branch64(CCallHelpers::Below, registers.right, numberTag));
         emitInt32Case(jit, registers, operation, notBothInt32);
     }
     notBothInt32.link(&jit);
-    if (hasDoubleCase(operation))
-        emitDoubleCase(jit, registers, operation, slow);
-    else
+    Label bothAreConverted;
+    if (hasWayOfTwoTexts(operation))
+        bothAreConverted = emitDoubleCase(jit, registers, operation, leftIsNoInt32, slow);
+    else if (hasDoubleCase(operation))
+        emitDoubleCaseThatConverts(jit, registers, operation, leftIsNoInt32, slow);
+    else {
+        leftIsNoInt32.link(&jit);
         emitBitCase(jit, registers, operation, slow);
+    }
     slow.link(&jit);
     if (operation == BinaryOperator::Add) {
         jit.allocateScratch(StubRegister::T13);
@@ -370,6 +471,15 @@ void generateBinaryOperation(StubAssembler& jit)
     }
     if (isComparison(operation))
         emitStringOrder(jit, registers, operation);
+    if (hasWayOfTwoTexts(operation)) {
+        JumpList isCell;
+        isCell.append(jit.branchIfCell(registers.left));
+        isCell.append(jit.branchIfCell(registers.right));
+        convertWhatIsNoCell(jit, registers.left, registers.scratch, registers.leftNumber);
+        convertWhatIsNoCell(jit, registers.right, registers.scratch, registers.rightNumber);
+        jit.jump().linkTo(bothAreConverted, &jit);
+        isCell.link(&jit);
+    }
     callBinaryOperation(jit, binaryOperations[static_cast<uint8_t>(operation)]);
 }
 
@@ -417,6 +527,7 @@ void generateBinaryWithDouble(StubAssembler& jit)
 
     Jump notNumber = jit.branchTest64(CCallHelpers::Zero, value, numberTag);
     toDouble(jit, value, scratch, other);
+    Label isConverted = jit.label();
     if (numberIsOnRight) {
         emitOnDoubles(jit, operation, other, number);
         jit.moveDouble(other, number);
@@ -425,6 +536,10 @@ void generateBinaryWithDouble(StubAssembler& jit)
     jit.returnToCaller();
 
     notNumber.link(&jit);
+    Jump isCell = jit.branchIfCell(value);
+    convertWhatIsNeitherCellNorNumber(jit, value, scratch, other);
+    jit.jump().linkTo(isConverted, &jit);
+    isCell.link(&jit);
     jit.callOperationAndReturn(entry, { .returns = OperationCall::Returns::Double });
 }
 

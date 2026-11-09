@@ -198,23 +198,26 @@ static BitVector lostBuiltinsInTestRunsOfProgram(const Program& program, const L
     return lost;
 }
 
-static Vector<NameAddedByTests> takeNamesFoundInTestRunsOfProgram(const Program& program, LinkTables& tables)
+static Vector<NameAddedByTests> takeNamesFoundInTestRunsOfProgram(const Program& program, const ParallelLoops& loops, LinkTables& tables)
 {
     Vector<NameAddedByTests> names = std::exchange(tables.namesAddedByTests, { });
     const LookupsPastProgramObjects& lookups = tables.lookups;
     if (lookups.namesWrittenThroughLostBuiltinsBesideProduct.isEmpty() || lookups.lostBuiltins.isEmpty())
         return names;
-    BitVector lost = lostBuiltinsInTestRunsOfProgram(program, lookups);
-    for (size_t keyIndex : lookups.namesWrittenThroughLostBuiltinsBesideProduct) {
-        PropertyKeyID key(keyIndex);
-        if (program.at(key).kind != PropertyKeyKind::Text)
-            continue;
-        for (size_t holderIndex : lost) {
-            BuiltinID holder(static_cast<uint32_t>(holderIndex));
-            if (holderTakesNameInTestRun(program, holder, key))
-                names.append(NameAddedByTests { holder, program.at(key).text });
-        }
+    Vector<BuiltinID> lost;
+    for (size_t index : lostBuiltinsInTestRunsOfProgram(program, lookups))
+        lost.append(BuiltinID(static_cast<uint32_t>(index)));
+    Vector<PropertyKeyID> keys;
+    for (size_t index : lookups.namesWrittenThroughLostBuiltinsBesideProduct) {
+        if (program.at(PropertyKeyID(index)).kind == PropertyKeyKind::Text)
+            keys.append(PropertyKeyID(index));
     }
+    names.appendVector(collectInParallel<NameAddedByTests>(loops, static_cast<unsigned>(keys.size()), [&](unsigned index, Vector<NameAddedByTests>& found) {
+        for (BuiltinID holder : lost) {
+            if (holderTakesNameInTestRun(program, holder, keys[index]))
+                found.append(NameAddedByTests { holder, program.at(keys[index]).text });
+        }
+    }));
     sortNamesInTestRunsOfProgram(names);
     return names;
 }
@@ -226,8 +229,8 @@ void openNamesFoundByLink(Program& program, BuildContext& build, LinkTables& lin
     Vector<NameAddedByTests> followed = linked.namesAddedByTests;
     followed.appendVector(held.namesAddedByTests);
     sortNamesInTestRunsOfProgram(followed);
-    Vector<NameAddedByTests> opened = takeNamesFoundInTestRunsOfProgram(program, linked);
-    Vector<NameAddedByTests> leftShut = takeNamesFoundInTestRunsOfProgram(program, held);
+    Vector<NameAddedByTests> opened = takeNamesFoundInTestRunsOfProgram(program, build.parallelLoops(), linked);
+    Vector<NameAddedByTests> leftShut = takeNamesFoundInTestRunsOfProgram(program, build.parallelLoops(), held);
     leftShut.removeAllMatching([&](const NameAddedByTests& added) {
         return std::ranges::binary_search(opened, added);
     });

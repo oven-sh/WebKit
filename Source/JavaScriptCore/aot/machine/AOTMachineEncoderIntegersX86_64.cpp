@@ -184,7 +184,7 @@ static ALWAYS_INLINE X86IntegerOperand takeX86IntegerOperand(Encoder& encoder, c
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static X86IntegerOperand takeFirstX86IntegerOperand(Encoder& encoder, const Step& step)
+static ALWAYS_INLINE X86IntegerOperand takeFirstX86IntegerOperand(Encoder& encoder, const Step& step)
 {
     LeafCursor cursor(step);
     return takeX86IntegerOperand(encoder, step.operation, 0, cursor);
@@ -291,7 +291,7 @@ static void applyX86IntegerInstruction(CCallHelpers& jit, X86IntegerInstruction 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void applyX86IntegerImmediate(CCallHelpers& jit, X86IntegerInstruction instruction, Width width, int64_t constant, GPRReg source, GPRReg destination)
+static ALWAYS_INLINE void applyX86IntegerImmediate(CCallHelpers& jit, X86IntegerInstruction instruction, Width width, int64_t constant, GPRReg source, GPRReg destination)
 {
     bool is32 = width == Width32;
     RELEASE_ASSERT(is32 || isRepresentableAs<int32_t>(constant));
@@ -674,7 +674,7 @@ static void encodeX86PopulationCount(Encoder& encoder, const Step& step)
         jit.countPopulation64(gpr, destination);
 }
 
-static void encodeX86ScaledSum(Encoder& encoder, const Step& step)
+static ALWAYS_INLINE void encodeX86ScaledSum(Encoder& encoder, const Step& step)
 {
     LeafCursor cursor(step);
     AddressForm form = encoder.resolveScaledSum(step.operation, cursor);

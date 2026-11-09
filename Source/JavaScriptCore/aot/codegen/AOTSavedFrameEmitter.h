@@ -145,6 +145,7 @@ private:
     LValue m_heapFrame { nullptr };
     uint32_t m_stretchOfHeapFrame { 0 };
     bool m_standsAtStartOfStretch { false };
+    mutable size_t m_placeBehindSuspensionFoundLast { 0 };
     bool m_heapFrameHoldsBelowItsStretch { true };
     uint32_t m_numberOfStretches { 1 };
     uint32_t m_stretch { 1 };

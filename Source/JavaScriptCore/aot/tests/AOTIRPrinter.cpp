@@ -755,6 +755,7 @@ void MemoryLocation::dump(PrintStream& out, const Program& program) const
     case AbstractHeap::AllocatorState:
     case AbstractHeap::RuntimeState:
     case AbstractHeap::CalleesInFrames:
+    case AbstractHeap::ArrayLengths:
         RELEASE_ASSERT_NOT_REACHED();
     }
     out.print("]"_s);

@@ -16,7 +16,7 @@ struct FactTables;
 struct Function;
 
 void writeCoroutinesOfLink(const Program&, const LinkFlow&, TypeArena&, LinkTables&);
-void forEachFunctionNamedByCoroutinesCalledBy(const LinkTables&, TypeReader, FunctionID referrer, const ScopedLambda<void(FunctionID)>&);
+void forEachFunctionNamedByCoroutinesCalledBy(const Program&, const LinkTables&, FunctionID referrer, const ScopedLambda<void(FunctionID)>&);
 
 constexpr bool slotSpeaksOfBodyOfCoroutine(SlotOfContents slot) { return slot == SlotOfContents::returnedAlone(); }
 

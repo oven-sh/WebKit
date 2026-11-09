@@ -226,6 +226,7 @@ static void allocatorSplitsEdgeThatGetsMoves()
     exchange->append(second, ValueRep::reg(first->argumentReg()));
     exchange->appendSomeRegister(buffer);
     exchange->setRunsWithoutFrame(true);
+    exchange->setShowsRegistersToCollector(true);
     exchange->setGenerator([](CCallHelpers& jit, const PatchParameters& parameters) {
         jit.store64(parameters[0].gpr(), CCallHelpers::Address(parameters[2].gpr()));
         jit.store64(parameters[1].gpr(), CCallHelpers::Address(parameters[2].gpr(), sizeof(uint64_t)));
@@ -668,6 +669,44 @@ static std::optional<uint64_t> allocationTestInstructionsForEdgesWithMovesIntoOn
     return instructions;
 }
 
+static std::optional<uint64_t> allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(unsigned number)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue selector = test.argumentGPR(0);
+    LValue base = test.argumentGPR(1);
+    Vector<LValue> readBehindEveryOtherBlock;
+    for (unsigned index = 0; index < 12; ++index)
+        readBehindEveryOtherBlock.append(out.opaque(out.add(base, out.constInt64(index))));
+    Vector<LBasicBlock> blocks = allocationTestAppendSwitch(test, selector, number + 1);
+    for (unsigned index = 0; index < number; ++index) {
+        out.appendTo(blocks[index]);
+        LValue value = out.opaque(out.add(selector, out.constInt64(index)));
+        LBasicBlock returns = out.newBlock();
+        out.jump(returns);
+        out.appendTo(returns);
+        out.ret(value);
+    }
+    out.appendTo(blocks[number]);
+    LValue sum = out.int64Zero;
+    for (LValue value : readBehindEveryOtherBlock)
+        sum = out.add(sum, value);
+    out.ret(sum);
+    return instructionsOfCurrentThreadIn([&] {
+        prepareOrFail(test);
+    });
+}
+
+static void allocatorWorkGrowsAsValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWaysDo()
+{
+    constexpr unsigned number = 2000;
+    std::optional<uint64_t> smallest = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(number);
+    std::optional<uint64_t> middle = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(4 * number);
+    std::optional<uint64_t> large = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(16 * number);
+    AOT_TEST_CHECK(growsAsSizeDoes(smallest, middle));
+    AOT_TEST_CHECK(growsAsSizeDoes(middle, large));
+}
+
 static void allocatorWorkGrowsAsEdgesWithMovesIntoOneBlockDo()
 {
     constexpr unsigned numberOfEdges = 10000;
@@ -708,6 +747,53 @@ static void allocatorWorkGrowsAsGuardsAheadOfFramedPartDo()
     constexpr unsigned numberOfGuards = 5000;
     std::optional<uint64_t> smaller = allocationTestInstructionsForGuardsAheadOfFramedPart(numberOfGuards);
     std::optional<uint64_t> large = allocationTestInstructionsForGuardsAheadOfFramedPart(4 * numberOfGuards);
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
+static std::optional<uint64_t> allocationTestInstructionsForRareWaysBackInBehindHeadOfFramedPart(unsigned numberOfGuards)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue selector = test.argumentGPR(0);
+    LValue value = test.argumentGPR(1);
+    LBasicBlock head = out.newBlock();
+    Vector<LBasicBlock> rareWays;
+    Vector<LBasicBlock> meetings;
+    for (unsigned number = 0; number < numberOfGuards; ++number) {
+        rareWays.append(out.newBlock());
+        meetings.append(out.newBlock());
+    }
+    Vector<LBasicBlock> guards = allocationTestAppendSwitch(test, selector, numberOfGuards);
+    for (unsigned number = 0; number < numberOfGuards; ++number) {
+        out.appendTo(guards[number]);
+        out.branch(out.testNonZero64(value, number + 1), rareEdge(rareWays[number]), normalEdge(head));
+    }
+    out.appendTo(head);
+    allocationTestAppendCall(test, nullptr);
+    out.jump(normalEdge(meetings[0]));
+    for (unsigned number = 0; number < numberOfGuards; ++number) {
+        out.appendTo(meetings[number]);
+        allocationTestAppendCall(test, nullptr);
+        if (number + 1 < numberOfGuards)
+            out.jump(normalEdge(meetings[number + 1]));
+        else
+            out.ret(selector);
+        out.appendTo(rareWays[number]);
+        allocationTestAppendCall(test, nullptr);
+        out.jump(normalEdge(meetings[number]));
+    }
+    std::optional<uint64_t> instructions = instructionsOfCurrentThreadIn([&] {
+        prepareOrFail(test);
+    });
+    AOT_TEST_CHECK(test.procedure().order().of(meetings.last()).predecessors.size() == 2);
+    return instructions;
+}
+
+static void allocatorWorkGrowsAsRareWaysBackInBehindHeadOfFramedPartDo()
+{
+    constexpr unsigned numberOfGuards = 2000;
+    std::optional<uint64_t> smaller = allocationTestInstructionsForRareWaysBackInBehindHeadOfFramedPart(numberOfGuards);
+    std::optional<uint64_t> large = allocationTestInstructionsForRareWaysBackInBehindHeadOfFramedPart(4 * numberOfGuards);
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
@@ -848,6 +934,90 @@ static void allocatorKeepsValuesAcrossCallInCalleeSavedRegisters()
         AOT_ALLOCATION_TEST_CHECK(test, test.call<Word>(words.data(), &numberOfCalls) == allocationTestMixedAll(std::span<const Word>(words).first(count)));
         AOT_ALLOCATION_TEST_CHECK(test, numberOfCalls == 1);
     }
+}
+
+static void allocatorDefinesArmThatDiesInSelectWhereResultIsWanted()
+{
+    uint64_t noted = 0;
+    TestProcedure test;
+    Output& out = test.out();
+    LValue selector = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LValue whenOdd = out.load64(allocationTestWordAt(test, buffer, 0));
+    LValue otherwise = out.load64(allocationTestWordAt(test, buffer, 1));
+    LValue chosen = out.select(out.testNonZero64(selector, 1), whenOdd, otherwise);
+    PatchOperation* reader = out.patch(Void);
+    reader->append(chosen, ValueRep::reg(GPRInfo::argumentGPR5));
+    reader->setGenerator([place = &noted](CCallHelpers& jit, const PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        AOT_TEST_CHECK(params.size() == 1 && params[0] == ValueRep::reg(GPRInfo::argumentGPR5));
+        GPRReg address = jit.scratchRegister();
+        jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+        jit.store64(GPRInfo::argumentGPR5, CCallHelpers::Address(address));
+    });
+    out.ret(selector);
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    const Reg wanted = Reg(GPRInfo::argumentGPR5);
+    AOT_ALLOCATION_TEST_CHECK(test, chosen->opcode() == Select && allocation.registerAtDefinitionOf(chosen) == wanted && !text.count("move"_s, chosen));
+    if (isX86_64())
+        AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(whenOdd) == wanted || allocation.registerAtDefinitionOf(otherwise) == wanted);
+
+    for (uint64_t isOdd : { 0u, 1u }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(isOdd, words.data()) == isOdd);
+        AOT_ALLOCATION_TEST_CHECK(test, noted == words[isOdd ? 0 : 1]);
+    }
+}
+
+static void allocatorLeavesRegisterThatSelectInLoopWantsToArmMadeInLoop()
+{
+    uint64_t noted = 0;
+    TestProcedure test;
+    Output& out = test.out();
+    LValue turns = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LValue madeAhead = out.load64(allocationTestWordAt(test, buffer, 0));
+    LBasicBlock head = out.newBlock();
+    LBasicBlock end = out.newBlock();
+    ValueFromBlock firstTurns = out.anchor(turns);
+    out.jump(head);
+
+    out.appendTo(head);
+    LValue turnsLeft = out.phi(Int64, firstTurns);
+    LValue madeInLoop = out.load64(allocationTestWordAt(test, buffer, 1));
+    LValue chosen = out.select(out.testNonZero64(turnsLeft, 1), madeAhead, madeInLoop);
+    PatchOperation* reader = out.patch(Void);
+    reader->append(chosen, ValueRep::reg(GPRInfo::argumentGPR5));
+    reader->setGenerator([place = &noted](CCallHelpers& jit, const PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        AOT_TEST_CHECK(params.size() == 1 && params[0] == ValueRep::reg(GPRInfo::argumentGPR5));
+        GPRReg address = jit.scratchRegister();
+        jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+        jit.store64(GPRInfo::argumentGPR5, CCallHelpers::Address(address));
+    });
+    LValue nextTurnsLeft = out.sub(turnsLeft, out.constInt64(1));
+    out.addIncomingToPhi(turnsLeft, out.anchor(nextTurnsLeft));
+    out.branch(out.notZero64(nextTurnsLeft), normalEdge(head), normalEdge(end));
+
+    out.appendTo(end);
+    out.ret(nextTurnsLeft);
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    const Reg wanted = Reg(GPRInfo::argumentGPR5);
+    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().order().of(head).loop != noLoop && test.procedure().order().of(madeAhead->owner()).loop == noLoop);
+    AOT_ALLOCATION_TEST_CHECK(test, chosen->opcode() == Select && allocation.registerAtDefinitionOf(chosen) == wanted && !text.count("move"_s, chosen));
+    if (isX86_64())
+        AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(madeAhead) != wanted && allocation.registerAtDefinitionOf(madeInLoop) == wanted);
+
+    std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+    AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(uint64_t { 4 }, words.data()) && noted == words[0]);
+    words[0] = ~words[0];
+    AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(uint64_t { 3 }, words.data()) && noted == words[0]);
 }
 
 static void allocatorLeavesPhiWhereCallInItsBlockTakesIt()
@@ -3736,7 +3906,9 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/edge-that-gets-moves-is-split"_s, Machine::allocatorSplitsEdgeThatGetsMoves },
         { "machine-allocation/operands-of-a-rare-patch-stay-where-they-lie"_s, Machine::allocatorLeavesOperandsOfRarePatchWhereTheyLie },
         { "machine-allocation/work-grows-as-the-edges-with-moves-into-one-block-do"_s, Machine::allocatorWorkGrowsAsEdgesWithMovesIntoOneBlockDo },
+        { "machine-allocation/work-grows-as-the-values-that-outlive-their-block-and-the-blocks-that-ask-what-lives-on-their-ways-do"_s, Machine::allocatorWorkGrowsAsValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWaysDo },
         { "machine-allocation/work-grows-as-the-guards-ahead-of-the-framed-part-do"_s, Machine::allocatorWorkGrowsAsGuardsAheadOfFramedPartDo },
+        { "machine-allocation/work-grows-as-the-rare-ways-back-in-behind-the-head-of-the-framed-part-do"_s, Machine::allocatorWorkGrowsAsRareWaysBackInBehindHeadOfFramedPartDo },
         { "machine-allocation/work-grows-as-the-edges-of-a-switch-that-get-moves-do"_s, Machine::allocatorWorkGrowsAsEdgesOfSwitchThatGetMovesDo },
         { "machine-allocation/operands-of-a-patch-that-ends-the-function-stay-where-they-lie"_s, Machine::allocatorLeavesOperandsOfPatchThatEndsFunctionWhereTheyLie },
         { "machine-allocation/nothing-is-kept-where-the-generator-makes-a-constant"_s, Machine::allocatorKeepsNothingWhereGeneratorMakesConstant },
@@ -3756,6 +3928,8 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/each-loop-around-a-block-is-asked-in-turn"_s, Machine::allocatorAsksEachLoopAroundBlockInTurn },
         { "machine-allocation/sum-comes-round-in-its-register-past-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/value-for-a-phi-is-made-in-the-register-of-the-phi"_s, Machine::allocatorDefinesValueInRegisterOfPhiWhoseHeadIsFixed },
+        { "machine-allocation/an-arm-that-dies-in-a-select-is-made-where-the-result-is-wanted"_s, Machine::allocatorDefinesArmThatDiesInSelectWhereResultIsWanted },
+        { "machine-allocation/the-register-that-a-select-in-a-loop-wants-is-left-to-the-arm-made-in-the-loop"_s, Machine::allocatorLeavesRegisterThatSelectInLoopWantsToArmMadeInLoop },
         { "machine-allocation/a-phi-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesPhiWhereCallInItsBlockTakesIt },
         { "machine-allocation/an-argument-that-lives-across-a-call-takes-its-home-where-it-is-defined"_s, Machine::allocatorGivesArgumentThatLivesAcrossCallItsHomeWhereItIsDefined },
         { "machine-allocation/an-argument-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesArgumentWhereCallInItsBlockTakesIt },

@@ -585,31 +585,51 @@ static void runInProcessWithCage()
 
 #if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
 static constexpr ASCIILiteral markStackTest = "heap-cage/cage/mark-stack-that-cannot-grow-says-why"_s;
+static constexpr ASCIILiteral lastWordsOnStructuresTest = "heap-cage/cage/last-words-on-structures-take-no-memory"_s;
 
-static void testMarkStackThatCannotGrowSaysWhy()
+static void saysLastWordsWithNothingLeft(ASCIILiteral test, ASCIILiteral lastWords, const Invocable<void()> auto& findNoMemory)
 {
     if (MarkedBlockCage::isEnabled()) {
         AOT_TEST_CHECK(MarkedBlockCage::require().has_value() && MarkedBlockCage::isRequired());
         void* taken = nullptr;
-        for (size_t size : { 64 * MB, MB, 64 * KB, 4 * KB, KB, static_cast<size_t>(256), static_cast<size_t>(64), static_cast<size_t>(16) }) {
+        auto takeAllOfSize = [&](size_t size) {
             void* block;
             while (tryFastMalloc(size).getValue(block)) {
                 *static_cast<void**>(block) = taken;
                 taken = block;
             }
-        }
-        MarkStackArray stack;
+        };
+        for (size_t size : { 64 * MB, MB, 64 * KB, 4 * KB })
+            takeAllOfSize(size);
+        for (size_t size = KB; size; size -= 16)
+            takeAllOfSize(size);
+        findNoMemory();
         return;
     }
 
     ChildProcessLauncher launcher("/bin/sh"_s, { });
-    Vector<String> arguments { "-c"_s, "ulimit -c 0 && ulimit -v 2097152 && exec \"$0\" \"$@\""_s, String(programPath()), String(nativeSubcommandName), String(singleProcessFlag), String(markStackTest), "--useAOT=true"_s };
+    Vector<String> arguments { "-c"_s, "ulimit -c 0 && ulimit -v 2097152 && exec \"$0\" \"$@\""_s, String(programPath()), String(nativeSubcommandName), String(singleProcessFlag), String(test), "--useAOT=true"_s };
     ChildProcessResult result = launcher.run(arguments.span());
-    if (!result.exitedWith(EXIT_FAILURE) || !result.output.contains("FATAL: out of memory. The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s)) {
+    if (!result.exitedWith(EXIT_FAILURE) || !result.output.contains(lastWords)) {
         dataLogLn(result.output);
         dataLogLn("The process under a limit on address space ", result.description());
-        failNativeTest(__FILE__, __LINE__, markStackTest.characters());
+        failNativeTest(__FILE__, __LINE__, test.characters());
     }
+}
+
+static void testMarkStackThatCannotGrowSaysWhy()
+{
+    saysLastWordsWithNothingLeft(markStackTest, "FATAL: out of memory. The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s, [] {
+        MarkStackArray stack;
+    });
+}
+
+static void testLastWordsOnStructuresTakeNoMemory()
+{
+    saysLastWordsWithNothingLeft(lastWordsOnStructuresTest, "FATAL: out of memory. The limit on address space (ulimit -v) leaves this executable "_s, [] {
+        MarkedBlockCage::logExhaustion(MarkedBlockCage::ExhaustedHeap::Structures);
+        _exit(EXIT_FAILURE);
+    });
 }
 #endif
 
@@ -1525,6 +1545,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/off-without-compiled-code"_s, testCageIsOffWithoutCompiledCode },
 #if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
         { markStackTest, testMarkStackThatCannotGrowSaysWhy },
+        { lastWordsOnStructuresTest, testLastWordsOnStructuresTakeNoMemory },
         { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-threw"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatThrew> },
         { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-stays"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatStays> },
         { "heap-cage/cage/shared-reserve-holds-large-cells-of-several-cages"_s, runInProcessWithSharedRange<checkSharedReserveHoldsLargeCellsOfSeveralCages> },

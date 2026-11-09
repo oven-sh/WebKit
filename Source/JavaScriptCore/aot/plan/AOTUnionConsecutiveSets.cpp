@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTSort.h"
 #include <algorithm>
 #include <array>
@@ -125,7 +126,7 @@ uint32_t ConsecutiveSets::Tree::addNode(Kind kind)
     return node;
 }
 
-uint32_t ConsecutiveSets::Tree::parentOf(uint32_t node)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t ConsecutiveSets::Tree::parentOf(uint32_t node)
 {
     uint32_t parent = at(node).parent;
     if (parent == none || at(parent).kind != Kind::AbsorbedQ)

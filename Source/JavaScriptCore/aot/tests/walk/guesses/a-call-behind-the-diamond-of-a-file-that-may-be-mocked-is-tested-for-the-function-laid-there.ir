@@ -37,10 +37,10 @@ function f2 name="caller" module=m0 length=1 thisType={type=anything} parameters
   b1():
     Jump -> next b4()
   b2():
-    v3 = SeesMockOf module=m1 referrer=m0
+    v3 = SeesMockOf module=m1 referrer=m0 reader=m0
     Branch v3 -> taken b3(), notTaken b4()
   b3():
-    v4 = MockSeenBy module=m1 referrer=m0
+    v4 = MockSeenBy module=m1 referrer=m0 reader=m0
     v5 = PropGet v4 key="one"
     Jump -> next b5(v5)
   b4():

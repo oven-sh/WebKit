@@ -145,6 +145,7 @@ void generateStoreSlot(StubAssembler& jit)
         jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
     };
     auto callSetter = [&](GPRReg getterSetter) {
+        branchUnlessAccessorPair(jit, getterSetter, miss);
         const SlotOperation operation = traits.operation;
         RELEASE_ASSERT(operation == SlotOperation::StoreStrict || operation == SlotOperation::StoreSloppy);
         const SlotFinisher finisher = operation == SlotOperation::StoreStrict ? SlotFinisher::CallSetterStrict : SlotFinisher::CallSetterSloppy;
@@ -354,6 +355,14 @@ void generateStoreSlot(StubAssembler& jit)
             arm.uncached.append(exits.wasAbsent);
             arm.uncached.append(exits.wasAbsentAndIsNotAccepted);
             arm.uncached.append(hasNoStorage);
+        }
+        if (origin == SlotOrigin::ByVal && !createsField && accessOf(traits.operation) == SlotAccess::Store) {
+            JumpList isNotRepeated;
+            exits.cannot.link(&jit);
+            exits.cannot.clear();
+            isNotRepeated.append(slot.branchIfFlag(jit, Slot::isOutOfLine));
+            repeatFieldExitFoundBySlotAndReturn(jit, { .object = receiver, .value = value, .addressOfSlot = r.field.address, .exit = r.scratch, .scratch = r.type, .extra = r.secondScratch }, isNotRepeated);
+            exits.cannot.append(isNotRepeated);
         }
         linkToSlotCannot(jit, exits.cannot, table, createsField ? SlotFinisher::CreateField : SlotFinisher::StoreField, slot);
         linkToUncachedExit(arm);

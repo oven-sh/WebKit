@@ -42,7 +42,34 @@ std::optional<PassedTest> Walker::findWhatHoldsPositionInsideList(Reference list
     Reference length = recordNotedInKnownElements(findKnown(*this, KnownNote::LengthOfList, list));
     std::optional<PassedTest> fromZeroUp = length ? findWhatHoldsFromZeroUp(position) : std::nullopt;
     std::optional<PassedTest> below = fromZeroUp ? findWhatHoldsBelow(position, length) : std::nullopt;
-    return below ? showPositionInsideBehindTests(list, position, length, *fromZeroUp, *below) : std::nullopt;
+    if (below)
+        return showPositionInsideBehindTests(list, position, length, *fromZeroUp, *below);
+    return fromZeroUp ? showPositionInsideBehindTestOfSum(list, position, length) : std::nullopt;
+}
+
+std::optional<PassedTest> Walker::showPositionInsideBehindTestOfSum(Reference list, Reference position, Reference length)
+{
+    if (!list.isRecord() || !position.isValue() || !length.isRecord())
+        return std::nullopt;
+    for (ValueID term = position.id(); term && !m_code.isConstant(term);) {
+        const Operation& record = m_code.at(term);
+        if (record.opcode == Opcode::Narrowed && record.narrowsTermOfOperand()) {
+            GroundsOfPosition grounds { .view = list.id(), .position = position.id(), .length = length.id(), .isBelow = record.testOperand(), .isBelowAnswersYes = record.isOnTakenEdge() };
+            if (std::optional<PassedTest> shown = showPositionInside(grounds))
+                return shown;
+        }
+        if (opcodesThatGiveSameValue.contains(record.opcode) || record.opcode == Opcode::Increment) {
+            term = record.operand(0);
+            continue;
+        }
+        if (record.opcode != Opcode::Add)
+            return std::nullopt;
+        bool firstIsWritten = m_code.isConstant(record.operand(0));
+        if (firstIsWritten == m_code.isConstant(record.operand(1)))
+            return std::nullopt;
+        term = record.operand(firstIsWritten);
+    }
+    return std::nullopt;
 }
 
 bool isKnownToLieInsideList(Walker& walker, Reference list, Reference position)
@@ -68,10 +95,23 @@ static constexpr AbstractHeapSet heapsUnderStorageOfListInKnownElements {
 static_assert(perObjectHeaps.containsAll(heapsUnderStorageOfListInKnownElements));
 static constexpr unsigned shiftOfLengthInKnownElements = 32;
 
+void noteLengthThatListIsBornWith(Walker& walker, Reference list)
+{
+    if (!walker.has(Mechanism::TypedOperations) || !list || !list.isValue() || walker.code().at(list.id()).opcode != Opcode::NewArrayLike)
+        return;
+    ValueID length = walker.code().at(list.id()).lengthOperand();
+    Reference born = walker.code().isConstant(length) ? Reference::constant(length) : Reference::value(length);
+    const Type& type = walker.types().at(walker.typeOf(born));
+    if (!type.isInteger() || !type.integers.isSubsetOf(Range { 0, UINT32_MAX }))
+        return;
+    noteKnown(walker, KnownNote::LengthOfList, list, { }, 0, placesUnderLengthsOfLists, born.bits());
+}
+
 void noteStorageOfListMade(Walker& walker, Reference list)
 {
     if (!walker.has(Mechanism::TypedOperations) || !list || !list.isValue())
         return;
+    noteLengthThatListIsBornWith(walker, list);
     const Code& code = walker.code();
     const Operation& made = code.at(list.id());
     ArrayStorage storage = ArrayStorage::Other;

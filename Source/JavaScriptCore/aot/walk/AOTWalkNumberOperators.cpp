@@ -181,8 +181,10 @@ static Reference buildBitsOfNumberInNumberOperators(Walker& walker, Opcode conve
 {
     Type type = walker.types().at(walker.typeOf(number));
     Range leftAsTheyAre = conversion == Opcode::ToUint32 ? Range::uint32() : Range::int32();
-    if (type.isInteger() && type.integers.isSubsetOf(leftAsTheyAre) && walker.has(Mechanism::Folding))
+    if (type.isInteger() && type.integers.isSubsetOf(leftAsTheyAre) && walker.has(Mechanism::Folding)) {
+        walker.checkRawNumberThatFoldRestsOn(number, origin);
         return number;
+    }
     if (conversion == Opcode::ToUint32 && !type.isInteger()) {
         number = buildConversionInNumberOperators(walker, Opcode::ToInt32, number, origin);
         if (!number)
@@ -191,10 +193,8 @@ static Reference buildBitsOfNumberInNumberOperators(Walker& walker, Opcode conve
     return buildConversionInNumberOperators(walker, conversion, number, origin);
 }
 
-static bool convertOperandsOfBitOperatorOnce(Walker& walker, Origin origin, std::span<Reference> operands)
+static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Origin origin, std::span<Reference> operands)
 {
-    if (!walker.isInLoop())
-        return false;
     TypeArena& types = walker.types();
     for (Reference operand : operands) {
         if (!types.at(walker.typeOf(operand)).isNumberLike())
@@ -206,6 +206,8 @@ static bool convertOperandsOfBitOperatorOnce(Walker& walker, Origin origin, std:
         Reference number = operands[operandIndex];
         Type type = types.at(walker.typeOf(number));
         if (!(type.primitives & Primitive::Double))
+            continue;
+        if (!walker.isInLoop() && opcode == Opcode::BitAnd && isMaskOfLowestBitsOfInt32(types.at(walker.typeOf(operands[1 - operandIndex]))))
             continue;
         hasConverted = true;
         if (!type.isNumber())
@@ -252,7 +254,7 @@ static bool buildBitOperator(Walker& walker, const BodyValue& value, OperandsInN
 
     std::array<Reference, 2> taken { operands[0].reference, operands[1].reference };
     std::span<Reference> takenByOperator = std::span(taken).first(numberOfOperands);
-    takesOtherOperands |= convertOperandsOfBitOperatorOnce(walker, origin, takenByOperator);
+    takesOtherOperands |= convertOperandsOfBitOperatorOnce(walker, opcode, origin, takenByOperator);
     if (!takesOtherOperands)
         return false;
     return buildOnOperandsInNumberOperators(walker, value, takenByOperator);

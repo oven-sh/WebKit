@@ -18,6 +18,7 @@
 #include "AOTModuleNamespace.h"
 #include "AOTModules.h"
 #include "AOTObject.h"
+#include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTPrimitives.h"
 #include "AOTProgramIdentifiers.h"
@@ -35,6 +36,7 @@
 #include "PropertySlot.h"
 #include "PutPropertySlot.h"
 #include <wtf/Atomics.h>
+#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT {
 
@@ -293,6 +295,28 @@ static ExtraPropertyLookup lookUpExtraProperty(VM& vm, const CompiledStructure& 
     return lookup;
 }
 
+[[noreturn]] static NEVER_INLINE void stopAtExtraPropertiesOfAnotherStructure(JSGlobalObject* realm, Object& object, ASCIILiteral whatIsDoneHere)
+{
+    JSObject* extraProperties = object.extraProperties();
+    StringPrintStream reason;
+    reason.print("AOT: where ", whatIsDoneHere, ", the properties that an object holds beside its fields are not laid out as the structure of the object says: it names structure ", object.compiledStructure().extraPropertiesStructureID().bits(), ", they have ", extraProperties ? extraProperties->structureID().bits() : 0, ".");
+    dataLogLn(reason.toString(), " This is a bug in Bun.");
+    ASCIICString text = reason.toASCIICString();
+    if (auto* stopWithReport = moduleHostOf(realm).stopWithReport)
+        stopWithReport(text.span());
+    CRASH();
+}
+
+void holdExtraPropertiesToStructureThatIsNamed(JSGlobalObject* realm, Object& object, ASCIILiteral whatIsDoneHere)
+{
+    StructureID named = object.compiledStructure().extraPropertiesStructureID();
+    if (!named)
+        return;
+    JSObject* extraProperties = object.extraProperties();
+    if (!extraProperties || extraProperties->structureID() != named) [[unlikely]]
+        stopAtExtraPropertiesOfAnotherStructure(realm, object, whatIsDoneHere);
+}
+
 static PropertyAnswer classifyExtraPropertyRead(const ReadQuery& query, Object& object)
 {
     VM& vm = query.globalObject->vm();
@@ -343,7 +367,7 @@ static PropertyAnswer classifyFieldRead(const ReadQuery& query, Object& object, 
         return uncacheableOnce(SlotAccess::Read);
     if (mayExistWithoutStorage) {
         bool findsPlainValue = walk.result == ChainWalkResult::Found && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && isValidOffset(walk.offset);
-        if (walk.firstObjectWithEmptySlot || (walk.result != ChainWalkResult::Absent && !findsPlainValue))
+        if (isAccessor || walk.firstObjectWithEmptySlot || (walk.result != ChainWalkResult::Absent && !findsPlainValue))
             return answer;
         nameInheritedProperty(answer, walk);
         answer.emptySlotMayBeUndefined = true;
@@ -531,6 +555,8 @@ PropertyAnswer classifyRead(const ReadQuery& query)
         return classifyAbsentClosurePrototype(query);
     bool isOwn = !slot.isUnset() && slot.slotBase() == receiver;
     if (structure->isCompiledStructure()) {
+        if (isCompiledObject(receiver) && receiver->structure() == structure)
+            holdExtraPropertiesToStructureThatIsNamed(query.globalObject, *uncheckedDowncast<Object>(receiver), "a read is answered"_s);
         if (Object::structureGuaranteesAbsence(structure, uid))
             return isOwn ? PropertyAnswer::uncacheable(access) : classifyReadAboveReceiver(query);
         if (!isCompiledObject(receiver) || receiver->structure() != structure)
@@ -831,18 +857,31 @@ static bool leavesFieldOut(State& state, const LayoutData& layout, uint32_t orde
     return !WTF::find16(listed.data(), layout.indexOf(field), listed.size());
 }
 
+static bool hasMovedBetweenSlotAndExtraProperties(const StoreQuery& query, const Object& object, const CompiledStructure& before, const FieldData& field)
+{
+    VM& vm = query.globalObject->vm();
+    if (!field.canLeaveSlot() || before.mayBePrototype() || object.compiledStructure().storedPrototype() != before.storedPrototype())
+        return false;
+    if (!object.isInSlot(field))
+        return livesInExtraProperties(vm, object, field);
+    return lookUpExtraProperty(vm, before, query.uid, ChainWalkMode::MayAllocate).result == ExtraPropertyLookupResult::Found;
+}
+
 static PropertyAnswer classifyFieldStore(const StoreQuery& query, Object& object, const FieldData& field)
 {
     SlotAccess access = accessFor(query.mode);
     const CompiledStructure* before = compiledObjectStructureOrNull(query.structureBefore);
-    if (!before || &before->layout() != &object.layout() || (object.structure() != before && !query.slot.isCacheableSetter()))
+    if (!before || &before->layout() != &object.layout())
+        return uncacheableOnce(access);
+    bool hasMoved = object.structure() != before && !query.slot.isCacheableSetter();
+    if (hasMoved && !hasMovedBetweenSlotAndExtraProperties(query, object, *before, field))
         return uncacheableOnce(access);
     if (field.flags & fieldAttributeFlags || field.slot.representation() == SlotRepresentation::DeferredClosure)
         return PropertyAnswer::uncacheable(access);
     PropertyAnswer answer { .kind = PropertyAnswerKind::Field, .access = access, .isOwn = true, .field = &field };
     answer.undefinedNeedsNoStorage = field.flags & fieldMayExistWithoutStorage && object.state().objects->layouts.slotAdmits(field, jsUndefined());
     answer.fieldTakesAnyValue = access == SlotAccess::Store && !field.isOutOfLine() && field.slot.representation() == SlotRepresentation::JSValue && object.state().objects->layouts.typeOf(field).takesEveryValue();
-    if (!field.canLeaveSlot() || before->mayBePrototype())
+    if (!field.canLeaveSlot() || before->mayBePrototype() || hasMoved)
         return answer;
     ExtraPropertyLookup amongExtraProperties = lookUpExtraProperty(query.globalObject->vm(), *before, query.uid, ChainWalkMode::MayAllocate);
     if (amongExtraProperties.result == ExtraPropertyLookupResult::Found && object.structure() == before)

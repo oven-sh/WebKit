@@ -1042,6 +1042,65 @@ static void testNestDeeperThanTriesGoIsWalkedLittleMoreThanOneThatIsNot()
     AOT_TEST_CHECK(walksOfLoopsForGrowthTests(loopsInsideOneAnotherRoundSumForGrowthTests(1200), 0) <= 4 * 1200);
 }
 
+static String loopsInsideOneAnotherOverHoldersOfTheirOwnForGrowthTests(unsigned numberOfLoops)
+{
+    constexpr ASCIILiteral asCounter = " declared={type=i32 flags=[IsExpected]}\n"_s;
+    constexpr ASCIILiteral asSum = " declared={type=number flags=[IsExpected]}\n"_s;
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 length="_s, 3 * numberOfLoops, " thisType={type=anything} parameters=["_s);
+    for (unsigned holder = 0; holder < 3 * numberOfLoops; ++holder)
+        text.append(holder ? ", "_s : ""_s, "{type=undefined|null|Array<number> flags=[IsExpected]}"_s);
+    text.append("] results=[{type=anything}] {\n  b0("_s);
+    for (unsigned holder = 0; holder < 3 * numberOfLoops; ++holder)
+        text.append(holder ? ", v"_s : "v"_s, holder, ": undefined|null|Array<number>"_s);
+    unsigned value = 3 * numberOfLoops;
+    text.append("):\n    v"_s, value, " = Integer\n    v"_s, value + 1, " = Convert v"_s, value, asSum, "    v"_s, value + 2, " = Integer\n    v"_s, value + 3, " = Convert v"_s, value + 2, asCounter);
+    text.append("    Jump -> next b1(v"_s, value + 1, ", v"_s, value + 3, ")\n"_s);
+    value += 4;
+    Vector<unsigned> sums;
+    Vector<unsigned> counters;
+    auto blockBehind = [&](unsigned loop) {
+        return loop ? 3 * numberOfLoops - loop : 3 * numberOfLoops;
+    };
+    for (unsigned loop = 0; loop < numberOfLoops; ++loop) {
+        unsigned sum = value;
+        unsigned counter = value + 1;
+        sums.append(sum);
+        counters.append(counter);
+        text.append("  b"_s, 2 * loop + 1, "(v"_s, sum, ", v"_s, counter, "):\n    LoopHint\n    v"_s, value + 3, " = PropGet v"_s, 3 * loop, " key=\"length\"\n    v"_s, value + 4, " = Less v"_s, counter, ", v"_s, value + 3, '\n');
+        text.append("    Branch v"_s, value + 4, " -> taken b"_s, 2 * loop + 2, "(), notTaken b"_s, blockBehind(loop), "()\n  b"_s, 2 * loop + 2, "():\n"_s);
+        text.append("    v"_s, value + 5, " = ElemGet v"_s, 3 * loop, ", v"_s, counter, "\n    v"_s, value + 6, " = Integer integer=2\n    v"_s, value + 7, " = Mul v"_s, value + 5, ", v"_s, value + 6, '\n');
+        text.append("    v"_s, value + 8, " = ElemGet v"_s, 3 * loop + 1, ", v"_s, counter, "\n    v"_s, value + 9, " = Add v"_s, value + 7, ", v"_s, value + 8, '\n');
+        text.append("    ElemSet v"_s, 3 * loop + 2, ", v"_s, counter, ", v"_s, value + 9, " mode=Sloppy\n"_s);
+        value += 11;
+        if (loop + 1 < numberOfLoops) {
+            text.append("    v"_s, value, " = Integer\n    v"_s, value + 1, " = Convert v"_s, value, asCounter, "    Jump -> next b"_s, 2 * loop + 3, "(v"_s, sum, ", v"_s, value + 1, ")\n"_s);
+            value += 2;
+            continue;
+        }
+        text.append("    v"_s, value, " = ElemGet v"_s, 3 * loop + 2, ", v"_s, counter, "\n    v"_s, value + 1, " = Add v"_s, sum, ", v"_s, value, "\n    v"_s, value + 2, " = Convert v"_s, value + 1, asSum);
+        text.append("    v"_s, value + 3, " = Increment v"_s, counter, "\n    v"_s, value + 4, " = Convert v"_s, value + 3, asCounter, "    Jump -> next b"_s, 2 * loop + 1, "(v"_s, value + 2, ", v"_s, value + 4, ")\n"_s);
+        value += 5;
+    }
+    for (unsigned loop = numberOfLoops - 1; loop--;) {
+        text.append("  b"_s, blockBehind(loop + 1), "():\n    v"_s, value, " = Increment v"_s, counters[loop], "\n    v"_s, value + 1, " = Convert v"_s, value, asCounter);
+        text.append("    Jump -> next b"_s, 2 * loop + 1, "(v"_s, sums[loop + 1], ", v"_s, value + 1, ")\n"_s);
+        value += 2;
+    }
+    text.append("  b"_s, 3 * numberOfLoops, "():\n    Return v"_s, sums[0], "\n}\n"_s);
+    return text.toString();
+}
+
+static void testNestOfLoopsOverHoldersOfTheirOwnIsWalkedNoMoreThanItWas()
+{
+    AOT_TEST_CHECK(walksOfLoopsForGrowthTests(loopsInsideOneAnotherOverHoldersOfTheirOwnForGrowthTests(2), 0) <= 770);
+    AOT_TEST_CHECK(walksOfLoopsForGrowthTests(loopsInsideOneAnotherOverHoldersOfTheirOwnForGrowthTests(4), 0) <= 5500);
+    AOT_TEST_CHECK(walksOfLoopsForGrowthTests(loopsInsideOneAnotherOverHoldersOfTheirOwnForGrowthTests(8), 0) <= 41000);
+}
+
 static void testScratchRealmHasItsRoomWhereverQuestionStands()
 {
     runOnBuildThread([&] {
@@ -1764,6 +1823,7 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/the-walk-grows-as-the-loops-up-to-one-bound-do"_s, testWalkGrowsAsLoopsUpToOneBoundDo },
         { "growth-of-work/a-nest-of-loops-is-walked-alike-whatever-room-its-stack-has"_s, testNestOfLoopsIsWalkedAlikeWhateverRoomStackHas },
         { "growth-of-work/a-nest-round-a-sum-that-is-deeper-than-tries-go-is-walked-little-more-than-one-that-is-not"_s, testNestDeeperThanTriesGoIsWalkedLittleMoreThanOneThatIsNot },
+        { "growth-of-work/a-nest-of-loops-over-holders-of-their-own-is-walked-no-more-than-it-was"_s, testNestOfLoopsOverHoldersOfTheirOwnIsWalkedNoMoreThanItWas },
         { "growth-of-work/the-scratch-realm-has-its-room-wherever-a-question-stands"_s, testScratchRealmHasItsRoomWhereverQuestionStands },
         { "growth-of-work/the-walk-grows-as-the-early-returns-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfOneOfThreeElements, 1000> },
         { "growth-of-work/the-walk-grows-as-the-early-returns-behind-guesses-of-their-own-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfElementOfItsOwn, 150> },

@@ -10,6 +10,7 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTHeldOperands.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPlan.h"
 #include "AOTRepresentation.h"
 #include "AOTSort.h"
@@ -30,7 +31,7 @@ static constexpr OpcodeSet interiorPointersInSweptCode = [] {
     return opcodes;
 }();
 
-static bool liesInPlaceThatSweepMayClear(const Code& code, ValueID value)
+static ALWAYS_INLINE bool liesInPlaceThatSweepMayClear(const Code& code, ValueID value)
 {
     return value && !code.isConstant(value) && code.isNeeded(value) && holdsCells(code.at(value).representation);
 }
@@ -403,7 +404,7 @@ void Sweep::beginFollowingLiveness()
     m_liveness->operationsThatSuspend.ensureSize(numberOfValues);
 }
 
-void Sweep::followIfEnvironmentIsHandedBack(ValueID id)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::followIfEnvironmentIsHandedBack(ValueID id)
 {
     const Code& code = *m_code;
     LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(id).type);
@@ -424,7 +425,7 @@ static bool holdsEnvironmentsWithoutMarkingThemInSweptCode(const Operation& hold
     return mayLieInFrame || holder.opcode == Opcode::Results;
 }
 
-void Sweep::noteIfMayHoldEnvironmentInFrame(ValueID id)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::noteIfMayHoldEnvironmentInFrame(ValueID id)
 {
     const Code& code = *m_code;
     if (holdsEnvironmentsWithoutMarkingThemInSweptCode(code.at(rootOfCellInSweptCode(code, id))))
@@ -489,7 +490,7 @@ void Sweep::noteValueHeldByCopiedBody(ValueID value)
     m_holdsHintsBehindCopiedBodies = true;
 }
 
-ALWAYS_INLINE void Sweep::noteReadForLiveness(ValueID read, BlockID block, ValueID reader)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::noteReadForLiveness(ValueID read, BlockID block, ValueID reader)
 {
     const Code& code = *m_code;
     for (ValueID value = read; value; value = ownerOfSweptPointer(code, value)) {
