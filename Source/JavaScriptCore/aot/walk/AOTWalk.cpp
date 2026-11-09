@@ -3880,7 +3880,10 @@ bool Walker::holdsListOrWordThatVariableIsBornWith(const Draft& draft, TypeID pr
     if (draft.opcode != Opcode::GetModuleVariable || draft.givesWordAsItLies() || plan().variable(draft.variable()).function)
         return false;
     uint16_t word = wordThatVariableIsBornWithInWalk(program(), draft.variable());
-    return word && (m_types.at(proven).primitives & word) && hasKind(m_types, m_types.withoutPrimitives(proven, word), OperandKind::Array);
+    if (!word || !(m_types.at(proven).primitives & word))
+        return false;
+    TypeID stored = m_types.withoutPrimitives(proven, word);
+    return !isNeverType(stored) && hasKind(m_types, stored, OperandKind::Array);
 }
 
 Reference Walker::askFieldOfScopeInFrontOfTypedCopy(const Draft& draft, const Effects& effects, TypeID proven)
@@ -6630,7 +6633,7 @@ size_t Walker::findFramesUpToHandlersBelow() const
 bool Walker::isWhatHeadNamesForHandler(size_t frameIndex, ValueID argument, Reference handed)
 {
     const Frame& frame = m_frames[frameIndex];
-    if (frame.blockOfNamesForHandler != frame.block || hasTextsInStringBuilders())
+    if (frame.blockOfNamesForHandler != frame.block || frame.namesForHandlerWereNotedInFrontOfHead != frame.standsInFrontOfHead || hasTextsInStringBuilders())
         return true;
     if (m_generatorsWalkedInConsumers.containsIf([&](const GeneratorWalkedInConsumer& walked) { return walked.frameOfConsumer == frameIndex; }))
         return true;
@@ -7121,6 +7124,7 @@ void Walker::noteStateAtHeadForHandler()
     BodyTarget target = frame.index->block(frame.block).handler();
     if (m_inputs.options.verifiesCode) [[unlikely]] {
         frame.blockOfNamesForHandler = frame.block;
+        frame.namesForHandlerWereNotedInFrontOfHead = frame.standsInFrontOfHead;
         frame.namesForHandler.shrink(0);
         for (ValueID argument : target.arguments())
             frame.namesForHandler.append({ argument, referenceBoundIn(frame, argument) });

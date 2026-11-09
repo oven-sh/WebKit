@@ -2273,6 +2273,7 @@ private:
         bool takeStateOfHandler(BlockID handler, WalkState&);
         HashMap<uint64_t, std::unique_ptr<AccessUnderProvenKey>> accessesUnderProvenKeys;
         BlockID blockOfNamesForHandler;
+        bool namesForHandlerWereNotedInFrontOfHead { false };
         Vector<std::pair<ValueID, Reference>> namesForHandler;
     };
 

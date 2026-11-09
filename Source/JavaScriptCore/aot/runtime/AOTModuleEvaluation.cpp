@@ -1384,7 +1384,7 @@ Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID r
     return inOrder;
 }
 
-bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles jobs, ErrorOfImportedFile error, ModuleGraphLoadingState* load)
+bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles jobs, ErrorOfImportedFile error, ModuleGraphLoadingState* load, FilesBehindFactories behindFactories)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1538,6 +1538,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             continue;
         }
         if (mocks.hides(imported)) [[unlikely]]
+            continue;
+        if (ModuleID file = fileOf(imported); behindFactories == FilesBehindFactories::AreLeftOut && isMocked(file) && !mockInPlace(file) && callOfFactoryThatHasNotSettled(file)) [[unlikely]]
             continue;
         bool isOwedBesideMock = mockInPlace(imported) && hasImporterBelowThatGetsOriginal(root, imported);
         ModuleStatus statusAtStart = status(imported);
@@ -3831,6 +3833,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             loadsOfFactories.emplace(vm);
         SetForScope walkGoesOnPastFactoriesThatHaveNotSettled(m_walkGoesOnPastFactoriesThatHaveNotSettled, !!loadsOfFactories);
         bool factoryHasNotSettled = runMocksBelow(target);
+        if (factoryHasNotSettled && !scope.exception()) [[unlikely]]
+            evaluateImportedCommonJSFiles(target, JobsOfImportedFiles::StayQueued, ErrorOfImportedFile::IsThrown, nullptr, FilesBehindFactories::AreLeftOut);
         if (loadsOfFactories) [[unlikely]] {
             if (!scope.exception())
                 JSModuleLoader::drainSynchronousModuleQueue(m_instance.globalObject);

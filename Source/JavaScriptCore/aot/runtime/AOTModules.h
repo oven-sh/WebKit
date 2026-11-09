@@ -60,6 +60,7 @@ static_assert(static_cast<uint8_t>(ModuleStatus::Evaluated) == static_cast<uint8
 enum class SynchronousEvaluationReason : uint8_t { Require, DeferredNamespace };
 enum class JobsOfImportedFiles : uint8_t { StayQueued, WaitForLoader, StepsOfLoaderWaitForLoader };
 enum class ErrorOfImportedFile : uint8_t { IsThrown, IsLeftToLoader };
+enum class FilesBehindFactories : uint8_t { Run, AreLeftOut };
 
 struct LinkContext {
     ModuleLinkingStack& stack;
@@ -969,7 +970,7 @@ public:
     JSValue callBodyOfModuleEnteredByLoader(ModuleID module) { return callBodyUnderOwnMark(module, false); }
     void evaluateModuleInRecord(ModuleID);
     bool beginModuleInRecord(ModuleID);
-    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr);
+    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, FilesBehindFactories = FilesBehindFactories::Run);
     Vector<uint32_t, 16> placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places);
     AbstractModuleRecord* recordOfRequestedModule(ModuleID);
     void queueJobsThatWaitForLoader();
