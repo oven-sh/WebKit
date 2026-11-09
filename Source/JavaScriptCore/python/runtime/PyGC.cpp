@@ -131,6 +131,11 @@ static bool isSlotOfPublicObject(Runtime::Slot slot)
     return slot == Runtime::Slot::GCGarbage || slot == Runtime::Slot::GCCallbacks || slot == Runtime::Slot::LazyModules;
 }
 
+// A part is memory: a container that the runtime has made to be kept in a field of its owner, of one or of several of a kind (contexts that are copies of one another share a dict). No program has it but by way of gc.
+// THE ONE EMPTY TUPLE IS AN OBJECT LIKE ANY OTHER, WHICH EVERY PROGRAM HAS. Where it lies in such a field it stands for nothing: a deque has no buffer, a frame has ended without variables. There it is passed over as a part
+// is, and that is all: its holder does not refer to it. (It is the only container that the runtime hands round: what else lies in such fields has been made for them.)
+static bool standsForNothing(Runtime& rt, JSCell* part) { return part == rt.emptyTuple(); }
+
 // function(part, hasPartsInIt) for what the object keeps in fields of its own.
 template<typename Function>
 static void forEachPartInFields(JSCell* cell, const Function& function)
@@ -989,7 +994,7 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
         };
         Vector<Candidate> candidates;
         UncheckedKeyHashMap<JSCell*, size_t> places;
-        // To the marker no cell says so of these, nor to get_referents(): their own tp_traverse has said it. They come first.
+        // To the marker no cell says so of these: their own tp_traverse has said it, which is CPython's question already, and is not put again. They come first.
         Vector<JSCell*> found;
         if (CApi::isSetUpFor(runtime(globalObject))) {
             CApi::forEachInstanceThatRefersTo(args.positional(), [&](JSCell* instance) {
@@ -1198,7 +1203,8 @@ static bool forEachReferent(JSGlobalObject* globalObject, JSCell* object, const 
             }
             ownCodeHasNamedType |= cell == type && i >= saidByCellItself;
             if (parts.contains(cell)) {
-                if (depth < 2 && forEachReferent(globalObject, cell, sink, depth + 1, isForMirror))
+                // (For the mirror the part counts itself too. A program may have come by one, by the namespace of a class through the proxy that is its __dict__, and ask who refers to it.)
+                if ((isForMirror && !standsForNothing(rt, cell) && sink(cell)) || (depth < 2 && forEachReferent(globalObject, cell, sink, depth + 1, isForMirror)))
                     return true;
                 continue;
             }
