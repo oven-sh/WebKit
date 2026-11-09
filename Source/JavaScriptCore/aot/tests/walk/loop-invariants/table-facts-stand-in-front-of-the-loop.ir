@@ -39,6 +39,7 @@
 # takes them in place of reading the table, testing its kind and computing its columns at every turn. The table that comes round in a parameter of the
 # head stays as it entered: no step reads it again. The loop is walked once as it is written, which shows what its turns do, and then on the facts.
 # A loop whose turns store into a collection (grow: set.add writes CollectionEntries) or call what may do anything (tell) steps the table as it is written.
+# REQUIRES: entries-of-bun
 # RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+LoopInvariants+DirectCalls+Arrivals+EscapeAnalysis
 # CHECK-LABEL: code f1:Body
 # CHECK: = IsPristine {{*}}builtinClass=Set

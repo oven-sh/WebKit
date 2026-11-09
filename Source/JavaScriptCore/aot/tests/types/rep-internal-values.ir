@@ -26,6 +26,7 @@
 # CHECK-NEXT: opaque(BuilderCursor): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(ViewVector): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(ArrayStoragePointer): RawWord legal [RawWord]
+# CHECK-NEXT: opaque(CollectionColumnPointer): RawWord legal [RawWord]
 # CHECK-NEXT: laws hold
 
 module m0 path="main.js" displayPath="main.js"
