@@ -52,7 +52,20 @@ static_assert(static_cast<unsigned>(ConstantKind::CellTemplate) + 1 == numberOfC
 
 static constexpr uint16_t primaryEntry = 0;
 static constexpr uint16_t entryInFrontOfStub = 1;
+static constexpr uint16_t entryInFrontOfStubThatDoesTwoMoves = 2;
 static constexpr unsigned sizeOfMoveInFrontOfStub = isX86_64() ? 3 : 4;
+
+constexpr unsigned sizeOfHeadOfStub(uint16_t entry)
+{
+    switch (entry) {
+    case entryInFrontOfStub:
+        return sizeOfMoveInFrontOfStub;
+    case entryInFrontOfStubThatDoesTwoMoves:
+        return 2 * sizeOfMoveInFrontOfStub;
+    default:
+        return 0;
+    }
+}
 
 struct CodeSymbol {
     friend constexpr bool operator==(const CodeSymbol&, const CodeSymbol&) = default;

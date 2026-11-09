@@ -1585,6 +1585,7 @@ void BlockOrderBuilder::findLoopsWithSideEntrances()
     const BlockPlace* const places = m_places.begin();
     Block* const* const blocksInOrder = m_blocksInOrder.begin();
     Loop* const loops = m_loops.begin();
+    uint32_t* const loopAroundThatMayLackMark = m_arena.allocateArray<uint32_t>(m_loops.size());
     for (const Loop& outermost : m_loops) {
         if (outermost.parent != noLoop)
             continue;
@@ -1596,8 +1597,21 @@ void BlockOrderBuilder::findLoopsWithSideEntrances()
                 first = places[place.predecessors.front()->index()].orderIndex;
                 last = places[place.predecessors.back()->index()].orderIndex;
             }
-            for (uint32_t loop = place.isLoopHead ? loops[place.loop].parent : place.loop; loop != noLoop && (first < loops[loop].firstBlock || last >= loops[loop].endBlock); loop = loops[loop].parent)
+            uint32_t innermost = place.isLoopHead ? loops[place.loop].parent : place.loop;
+            if (innermost == noLoop || (first >= loops[innermost].firstBlock && last < loops[innermost].endBlock))
+                continue;
+            for (uint32_t loop = innermost;; loop = loops[loop].parent) {
+                while (loop != noLoop && loops[loop].hasSideEntrance) {
+                    uint32_t around = loopAroundThatMayLackMark[loop];
+                    if (around != noLoop && loops[around].hasSideEntrance)
+                        around = loopAroundThatMayLackMark[loop] = loopAroundThatMayLackMark[around];
+                    loop = around;
+                }
+                if (loop == noLoop || (first >= loops[loop].firstBlock && last < loops[loop].endBlock))
+                    break;
                 loops[loop].hasSideEntrance = true;
+                loopAroundThatMayLackMark[loop] = loops[loop].parent;
+            }
         }
     }
 }
@@ -1618,6 +1632,11 @@ NEVER_INLINE void BlockOrderBuilder::placeLoops()
     for (Loop& loop : m_loops) {
         loop.begin = placeOf(m_blocksInOrder[loop.firstBlock]).head;
         loop.end = loop.endBlock < m_blocksInOrder.size() ? placeOf(m_blocksInOrder[loop.endBlock]).head : m_end;
+        if (loop.parent == noLoop)
+            continue;
+        const Loop& parent = m_loops[loop.parent];
+        bool isInRunOfParent = parent.endBlock == loop.endBlock && placeOf(m_blocksInOrder[parent.firstBlock]).rareRegion == placeOf(m_blocksInOrder[loop.firstBlock]).rareRegion;
+        loop.loopAroundOutsideRun = isInRunOfParent ? parent.loopAroundOutsideRun : loop.parent;
     }
 }
 

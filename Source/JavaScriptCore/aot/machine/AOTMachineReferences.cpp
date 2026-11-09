@@ -63,6 +63,7 @@ static constexpr CollectorRuleForm collectorRuleFormOf(Opcode opcode)
     case BitXor:
     case SShr:
     case ZShr:
+    case RotR:
     case Clz:
     case PopCount:
     case Abs:
@@ -109,11 +110,11 @@ static constexpr CollectorRuleForm collectorRuleFormOf(Opcode opcode)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-static void keepAliveForCollector(BackwardScan& scan, Operation* value, Position until)
+static void keepAliveForCollector(BackwardScan& scan, Operation* value, Position until, bool landingPadReadsPointer)
 {
     if (scan.m_liveness.isFused(value)) {
         forEachLeaf(scan.m_liveness, value, [&](const Operation*, unsigned, Operation* leaf) {
-            keepAliveForCollector(scan, leaf, until);
+            keepAliveForCollector(scan, leaf, until, landingPadReadsPointer);
         });
         return;
     }
@@ -121,6 +122,8 @@ static void keepAliveForCollector(BackwardScan& scan, Operation* value, Position
         return;
     scan.noteValueKeptForCollector(value, until);
     scan.set(value, ValueFlag::IsKeptForCollector);
+    if (landingPadReadsPointer)
+        scan.set(value, ValueFlag::LivesIntoLandingPad);
     Position lastUse = scan.facts(value).lastUse;
     if (lastUse == noPosition || lastUse < until)
         scan.addUse(value, until);
@@ -136,7 +139,7 @@ static constexpr unsigned maxStepsFromWordToNarrowReference = 5;
 static void keepNarrowReferencesBehindWord(BackwardScan& scan, Operation* word, Position until, unsigned stepsLeft)
 {
     if (word->isNarrowReference()) {
-        keepAliveForCollector(scan, word, until);
+        keepAliveForCollector(scan, word, until, false);
         return;
     }
     if (!stepsLeft || !word->type().isInt())
@@ -170,10 +173,10 @@ static NEVER_INLINE void applyCollectorRulesToMarkedValue(BackwardScan& scan, Op
             scan.m_proc.noteInnerPointerAcrossSafepoint();
         switch (collectorRuleFormOf(operation->opcode())) {
         case CollectorRuleForm::Load:
-            keepAliveForCollector(scan, operation->lastChild(), lastUse);
+            keepAliveForCollector(scan, operation->lastChild(), lastUse, own.has(ValueFlag::LivesIntoLandingPad));
             break;
         case CollectorRuleForm::Sum:
-            keepAliveForCollector(scan, operation->child(0), lastUse);
+            keepAliveForCollector(scan, operation->child(0), lastUse, own.has(ValueFlag::LivesIntoLandingPad));
             break;
         case CollectorRuleForm::BitsOfFirstChild:
         case CollectorRuleForm::Other:

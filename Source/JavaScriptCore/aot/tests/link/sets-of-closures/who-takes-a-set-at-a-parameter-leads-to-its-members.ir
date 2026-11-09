@@ -1,0 +1,38 @@
+# Two closures that have met and are only called are not lost, so nothing of theirs is in the queue from the start. A caller may know which of the two it passes, and what it has proven of its argument is proven of the parameter: `pass` may come to mention either, and it may mention only what it leads to.
+# function a() {}  function b() {}  function pass(f) { return f; }  pass(a); pass(b)();
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: referrers f0, f3
+# CHECK: function f2 callers-known
+# CHECK: referrers f0, f3
+# CHECK: function f3 callers-known one-callee {{*}} takes-arrivals
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: in-queue-from-start
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v2, -, v0 calleeName="pass"
+    v4 = Call v2, -, v1 calleeName="pass"
+    v5 = Call v4, -
+    v6 = Undefined
+    Return v6
+}
+function f1 name="a" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="b" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="pass" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

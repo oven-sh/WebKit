@@ -115,7 +115,7 @@ static bool addOptionsOfDataThatCallAloneSeesInStringFormatters(Walker& walker, 
 {
     if (call.call.opcode() != Opcode::Call && call.call.opcode() != Opcode::Construct)
         return false;
-    std::span<const ValueID> written = call.call.argumentsOperands();
+    std::span<const ValueID> written = call.writtenArguments();
     if (written.size() != 2)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();

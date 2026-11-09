@@ -27,6 +27,8 @@ public:
     void generateCallBuiltin(const ValueContext&);
     void generateDivideIntegers(const ValueContext&);
     void generateRemainderOfIntegers(const ValueContext&);
+    void generateReciprocalOfDivisor(const ValueContext&);
+    void generateRemainderByReciprocal(const ValueContext&);
     void generateToInt32(const ValueContext&);
     void generateToUint32(const ValueContext&);
     void generateToIntegerOrInfinity(const ValueContext&);
@@ -37,6 +39,7 @@ public:
     void generateFormatDateWithPattern(const ValueContext&);
     void generateFormatNumberWithPattern(const ValueContext&);
     void generateNewArgumentList(const ValueContext&);
+    void generateNewArrayOfGiven(const ValueContext&);
     CellPointer sharedRegExpLiteral(const ValueContext& at, const Operation& literal);
     void generateSharedRegExpLiteral(const ValueContext&);
     bool canShareRegExpLiteral(const Operation& literal) const;
@@ -46,7 +49,7 @@ public:
 
     Boxed callBuiltinFunction(const OperationContext&, BuiltinOverloadID, std::optional<Boxed> receiver, std::span<const Boxed> arguments);
     CellPointer builtinCell(const OperationContext&, BuiltinCellKey);
-    Boxed builtinValue(const OperationContext&, BuiltinCellKey, RuntimeOperation fills = RuntimeOperation::FillBuiltinValue);
+    Boxed builtinValue(const OperationContext&, BuiltinCellKey, RuntimeOperation fills = RuntimeOperation::FillBuiltinValue, const ValueContext* heldAgainstItsRow = nullptr);
     void stopUnlessNativeResultIsAsWritten(const ValueContext&, Boxed result, BuiltinID called, bool constructs);
 
 private:
@@ -63,6 +66,14 @@ private:
     Integer divide(Integer dividend, Range dividends, Integer divisor, Range divisors);
     Integer roundedQuotient(QuotientRounding, Integer dividend, Range dividends, Integer divisor, Range divisors);
     Integer remainderByConstant(Integer dividend, Range dividends, int64_t magnitudeOfDivisor);
+    struct LowHalfOfRemainder {
+        LValue reciprocal { nullptr };
+        LValue base { nullptr };
+        uint64_t offset { 0 };
+        LValue lowHalf { nullptr };
+    };
+    LowHalfOfRemainder m_lowHalfOfLastRemainder;
+    LValue lowHalfOfProductWithReciprocal(LValue reciprocal, LValue dividend);
     Word32 int32BitsOf(ValueID number, bool givesOnlyLowestBits);
 };
 

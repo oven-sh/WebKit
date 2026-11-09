@@ -49,7 +49,7 @@ static void testStructureIDWithTopBitIsRemembered()
 {
     using Form = SiteAnswers::Form;
     for (uint32_t bits : { 0x00004040u, 0x40004040u, 0x80004040u, 0xc0004040u, 0xe0004040u, 0xf8004040u, 0xfe004040u }) {
-        for (SiteUse use : { SiteUse::Read, SiteUse::Call }) {
+        for (SiteUse use : { SiteUse::Read, SiteUse::Call, SiteUse::AbsenceAmongExtraProperties }) {
             std::optional<SiteAnswers::Answer> answer = SiteAnswers::tryByStructure(use, std::bit_cast<StructureID>(bits), Form::OwnValueInCell, 16);
             AOT_TEST_CHECK(answer && answer->isByStructure() && !answer->isByShape());
             AOT_TEST_CHECK(answer->structureID().bits() == bits && SiteAnswers::formOf(use, answer->key) == Form::OwnValueInCell);

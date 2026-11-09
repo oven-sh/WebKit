@@ -34,10 +34,15 @@
 namespace JSC { namespace AOT {
 
 static_assert(descriptorOf(StubFamily::NewArrayWithLength).numberOfForms == static_cast<unsigned>(ArrayElementKind::Contiguous) + 1);
+static_assert(descriptorOf(StubFamily::NewArrayOfLength).numberOfForms == static_cast<unsigned>(ArrayElementKind::Contiguous) + 1);
+static_assert(std::is_same_v<decltype(&operationAOTNewArrayWithHoles), OperationReturnType<JSCell*> (JIT_OPERATION_ATTRIBUTES *)(Instance*, JSCell*, uint64_t, uint32_t, uint32_t)>);
+static_assert(std::is_same_v<decltype(&operationAOTNewArrayOfGiven), OperationReturnType<JSCell*> (JIT_OPERATION_ATTRIBUTES *)(Instance*, EncodedJSValue)>);
 static_assert(descriptorOf(StubFamily::NewEmptyArrayAtSite).numberOfForms == static_cast<unsigned>(ArrayElementKind::Contiguous) + 1);
 static_assert(std::is_same_v<decltype(&operationAOTNewArrayAtReviewedSite), OperationReturnType<JSCell*> (JIT_OPERATION_ATTRIBUTES *)(Instance*, void*, uint32_t)>);
+static_assert(static_cast<unsigned>(ArrayElementKind::Int32) == 0 && static_cast<unsigned>(ArrayElementKind::Double) == 1 && descriptorOf(StubFamily::NewArrayWithLengthAtSite).numberOfForms == 2);
+static_assert(std::is_same_v<decltype(&operationAOTNewArrayWithLengthAtReviewedSite), JSCell* (JIT_OPERATION_ATTRIBUTES *)(Instance*, void*, uint32_t)>);
 
-enum class HoleArrayOperand : uint8_t { None, LengthAndCapacity, Capacity };
+enum class HoleArrayOperand : uint8_t { None, LengthAndCapacity, Capacity, Length };
 
 static void emitLoadAllocatorForCapacity(StubAssembler& jit, GPRReg capacity, GPRReg scratch, GPRReg allocator)
 {
@@ -59,6 +64,7 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
         case HoleArrayOperand::None:
             return { jit.allocateScratch(StubRegister::T9), InvalidGPRReg };
         case HoleArrayOperand::LengthAndCapacity:
+        case HoleArrayOperand::Length:
             return { jit.clobberOperand(0), jit.allocateScratch(StubRegister::T14) };
         case HoleArrayOperand::Capacity:
             return { jit.clobberOperand(0), InvalidGPRReg };
@@ -72,6 +78,7 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
 
     JumpList slowPath;
     JumpList callerSlowPath;
+    JumpList isLeftToOperation;
     bool hasAllocatorInInstance = operand == HoleArrayOperand::None && ShortArrayWords::indexOfAllocator(fixedCapacity) < ShortArrayWords::numberOfAllocators;
     switch (operand) {
     case HoleArrayOperand::None:
@@ -82,6 +89,10 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
         callerSlowPath.append(branchIfHavingABadTime(jit));
         break;
     case HoleArrayOperand::Capacity:
+        break;
+    case HoleArrayOperand::Length:
+        isLeftToOperation.append(jit.branch64(CCallHelpers::Above, allocator, TrustedImm32(maxHoleArrayCapacity)));
+        isLeftToOperation.append(branchIfHavingABadTime(jit));
         break;
     }
     switch (operand) {
@@ -102,6 +113,11 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
     case HoleArrayOperand::Capacity:
         jit.or32(TrustedImm32(1), allocator, capacity);
         slowPath.append(jit.branch32(CCallHelpers::Above, capacity, TrustedImm32(maxHoleArrayCapacity)));
+        emitLoadAllocatorForCapacity(jit, capacity, scratch, allocator);
+        break;
+    case HoleArrayOperand::Length:
+        jit.move(allocator, length);
+        jit.or32(TrustedImm32(1), allocator, capacity);
         emitLoadAllocatorForCapacity(jit, capacity, scratch, allocator);
         break;
     }
@@ -167,6 +183,26 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
         jit.branchPtr(CCallHelpers::Below, cursor, capacity).linkTo(fillByPairs, &jit);
         break;
     }
+    case HoleArrayOperand::Length: {
+        const GPRReg cursor = allocator;
+        jit.store32(length, Address(array, offsetOfLength));
+        jit.store32(capacity, Address(array, offsetOfCapacity));
+        jit.move(hole, scratch);
+        jit.store64(scratch, Address(storage));
+        jit.getEffectiveAddress(BaseIndex(storage, capacity, CCallHelpers::TimesEight), capacity);
+        jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), storage, cursor);
+        Jump hasRoomForOne = jit.branchPtr(CCallHelpers::AboveOrEqual, cursor, capacity);
+        Label fillByPairs = jit.label();
+#if CPU(ARM64)
+        jit.storePair64(scratch, scratch, CCallHelpers::PostIndexAddress(cursor, 2 * sizeof(EncodedJSValue)));
+#else
+        jit.storePair64(scratch, scratch, cursor, TrustedImm32(0));
+        jit.addPtr(TrustedImm32(2 * sizeof(EncodedJSValue)), cursor);
+#endif
+        jit.branchPtr(CCallHelpers::Below, cursor, capacity).linkTo(fillByPairs, &jit);
+        hasRoomForOne.link(&jit);
+        break;
+    }
     }
     jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(indexingType)), scratch);
     jit.storePair64(scratch, storage, array, TrustedImm32(0));
@@ -174,6 +210,19 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
     jit.returnToCaller();
 
     emitLateRefill(jit, refill, slowPath);
+    if (!isLeftToOperation.empty()) {
+        isLeftToOperation.link(&jit);
+        jit.move(TrustedImm32(0), scratch);
+        OperationCall call {
+            .returns = OperationCall::Returns::Value,
+            .saves = OperationCall::Saves::CallerSavedRegisters,
+            .secondArgumentIn = scratch,
+            .thirdArgumentIn = allocator,
+        };
+        call.constantArguments[0] = OperationCall::ConstantArgument { operationArgumentGPR(3), static_cast<uint32_t>(indexingType) };
+        call.constantArguments[1] = OperationCall::ConstantArgument { operationArgumentGPR(4), 0 };
+        jit.callOperationAndReturn(Entry::operationAOTNewArrayWithHoles, call);
+    }
     if (!callerSlowPath.empty()) {
         callerSlowPath.link(&jit);
         if (operand == HoleArrayOperand::None && indexingType == ArrayWithDouble) {
@@ -195,6 +244,7 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
         jit.move(TrustedImm32(fixedCapacity << holeArrayCapacityShift), lengthAndCapacity);
         break;
     case HoleArrayOperand::LengthAndCapacity:
+    case HoleArrayOperand::Length:
         jit.lshift32(capacity, TrustedImm32(holeArrayCapacityShift), lengthAndCapacity);
         jit.or32(length, lengthAndCapacity);
         break;
@@ -267,6 +317,58 @@ void generateNewArrayFrontEnd(StubAssembler& jit)
     jit.tailCallOperation(Entry::RawNewArray, OperationCall::FirstArgument::Instance);
 }
 
+StubSignature signatureOfNewArrayFromBuffer(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9), gprOf(StubRegister::T14) }); }
+
+void generateNewArrayFromBuffer(StubAssembler& jit)
+{
+    static_assert(maxHoleArrayCapacity & 1 && maxHoleArrayCapacity < 1u << capacityShiftInArrayLiteralCount);
+    const GPRReg count = jit.clobberOperand(0);
+    const GPRReg values = jit.operand(1);
+    const GPRReg array = jit.result();
+    const GPRReg allocator = jit.allocateScratch(StubRegister::T11);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
+    const GPRReg storage = allocator;
+    constexpr int32_t offsetOfWordInFront = -static_cast<int32_t>(sizeof(EncodedJSValue));
+    RELEASE_ASSERT(noOverlap(count, values, array, allocator, scratch));
+
+    JumpList callsOperation;
+    jit.zeroExtend32ToWord(count, count);
+    callsOperation.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(maxHoleArrayCapacity)));
+    callsOperation.append(branchIfHavingABadTime(jit));
+    jit.or32(TrustedImm32(1), count, scratch);
+    emitLoadAllocatorForCapacity(jit, scratch, scratch, allocator);
+    callsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, array, allocator, scratch, callsOperation);
+
+    jit.addPtr(TrustedImm32(sizeof(JSArray)), array, storage);
+    jit.or32(TrustedImm32(1), count, scratch);
+    jit.store32(count, Address(storage, 0));
+    jit.store32(scratch, Address(storage, sizeof(uint32_t)));
+    jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
+    jit.store64(TrustedImm32(0), BaseIndex(storage, scratch, CCallHelpers::TimesEight, offsetOfWordInFront));
+    Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
+    Label copy = jit.label();
+    jit.load64(BaseIndex(values, count, CCallHelpers::TimesEight, offsetOfWordInFront), scratch);
+    jit.store64(scratch, BaseIndex(storage, count, CCallHelpers::TimesEight, offsetOfWordInFront));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), count).linkTo(copy, &jit);
+    isEmpty.link(&jit);
+    jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), scratch);
+    jit.storePair64(scratch, storage, array, TrustedImm32(0));
+    fenceAfterAllocation(jit);
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    Jump hasValues = jit.branchTest32(CCallHelpers::NonZero, count);
+    jit.move(TrustedImm32(1 << capacityShiftInArrayLiteralCount), count);
+    hasValues.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTNewArray, {
+        .returns = OperationCall::Returns::Value,
+        .saves = OperationCall::Saves::CallerSavedRegisters,
+        .secondArgumentIn = count,
+        .thirdArgumentIn = values,
+    });
+}
+
 void emitEmptyArrayOfHoles(StubAssembler& jit, EmptyArray form)
 {
     switch (form) {
@@ -291,7 +393,15 @@ void emitEmptyArrayOfHoles(StubAssembler& jit, EmptyArray form)
 
 StubSignature signatureOfNewEmptyArrayWithCapacity(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9) }); }
 StubSignature signatureOfNewArrayWithLength(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9) }); }
-StubSignature signatureOfNewEmptyArrayAtSite(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9) }); }
+StubSignature signatureOfNewEmptyArrayAtSite(StubKey)
+{
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::T9) });
+#if CPU(X86_64)
+    return signature.fillingKeptRegisterInFront(X86Registers::edx);
+#else
+    return signature;
+#endif
+}
 
 void generateNewEmptyArrayWithCapacity(StubAssembler& jit)
 {
@@ -308,6 +418,31 @@ void generateNewEmptyArrayWithCapacity(StubAssembler& jit)
 void generateNewArrayWithLength(StubAssembler& jit)
 {
     emitArrayOfHoles(jit, indexingTypeOf(static_cast<ArrayElementKind>(jit.key().form())), HoleArrayOperand::LengthAndCapacity);
+}
+
+StubSignature signatureOfNewArrayOfLength(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9) }); }
+
+void generateNewArrayOfLength(StubAssembler& jit)
+{
+    emitArrayOfHoles(jit, indexingTypeOf(static_cast<ArrayElementKind>(jit.key().form())), HoleArrayOperand::Length);
+}
+
+StubSignature signatureOfNewArrayOfGiven(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9) }); }
+
+void generateNewArrayOfGiven(StubAssembler& jit)
+{
+    const GPRReg given = jit.clobberOperand(0);
+    RELEASE_ASSERT(signatureOfNewArrayOfLength(newArrayOfLength(ArrayElementKind::Int32)).operands[0] == Reg(given));
+    Jump isNoInt32 = jit.branchIfNotInt32(given);
+    jit.signExtend32ToPtr(given, given);
+    jit.jumpToStub(newArrayOfLength(ArrayElementKind::Int32));
+
+    isNoInt32.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTNewArrayOfGiven, {
+        .returns = OperationCall::Returns::Value,
+        .saves = OperationCall::Saves::CallerSavedRegisters,
+        .secondArgumentIn = given,
+    });
 }
 
 
@@ -378,6 +513,41 @@ void generateNewEmptyArrayAtSite(StubAssembler& jit)
         .saves = OperationCall::Saves::CallerSavedRegisters,
         .secondArgumentIn = profile,
         .thirdArgumentIn = scratch,
+    });
+}
+
+StubSignature signatureOfNewArrayWithLengthAtSite(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9), gprOf(StubRegister::T12) }); }
+
+void generateNewArrayWithLengthAtSite(StubAssembler& jit)
+{
+    static_assert(ArrayAllocationProfile::shapeShift == 8 && ArrayAllocationProfile::shapeMask == 0xff00);
+    const ArrayElementKind seed = static_cast<ArrayElementKind>(jit.key().form());
+    const GPRReg lengthAndCapacity = jit.clobberOperand(0);
+    const GPRReg profile = jit.clobberOperand(1);
+    const GPRReg shape = jit.allocateScratch(StubRegister::T11);
+    const Address wordInProfile(profile, OBJECT_OFFSETOF(ArrayAllocationProfile, word));
+    RELEASE_ASSERT(lengthAndCapacity == gprOf(StubRegister::T9) && noOverlap(lengthAndCapacity, profile, shape));
+
+    Jump isNotDueForReview = jit.branchAdd32(CCallHelpers::Carry, TrustedImm32(-static_cast<int32_t>(ArrayAllocationProfile::oneAllocation)), wordInProfile);
+    Jump isDueForReview = jit.jump();
+    isNotDueForReview.link(&jit);
+
+    jit.load16(wordInProfile, shape);
+    jit.urshift32(TrustedImm32(ArrayAllocationProfile::shapeShift), shape);
+    for (ArrayElementKind kind : { ArrayElementKind::Int32, ArrayElementKind::Double }) {
+        if (indexingShapeOf(kind) >= indexingShapeOf(seed))
+            jit.linkToStub(jit.branch32(CCallHelpers::BelowOrEqual, shape, TrustedImm32(indexingShapeOf(kind))), newArrayWithLength(kind));
+    }
+    jit.jumpToStub(newArrayWithLength(ArrayElementKind::Contiguous));
+
+    isDueForReview.link(&jit);
+    jit.or32(TrustedImm32(static_cast<int32_t>(indexingTypeOf(seed)) << seedShiftBesideLengthAndCapacity), lengthAndCapacity);
+    jit.callOperationAndReturn(Entry::operationAOTNewArrayWithLengthAtReviewedSite, {
+        .returns = OperationCall::Returns::Value,
+        .saves = OperationCall::Saves::CallerSavedRegisters,
+        .checksException = false,
+        .secondArgumentIn = profile,
+        .thirdArgumentIn = lengthAndCapacity,
     });
 }
 

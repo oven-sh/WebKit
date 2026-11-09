@@ -41,6 +41,7 @@ import type {
   SharingMode,
   TargetPlatform,
   TypedResultForm,
+  WordOfCell,
 } from "./vocabulary.ts";
 
 export const builtinFlags = [
@@ -535,6 +536,7 @@ export interface ModelBuiltin {
   constant: ModelConstant | null;
   isAddedAtFirstRead: boolean;
   isAddedAsEnumerable: boolean;
+  canBeListed: boolean;
   isCreatedInSomeRuns: boolean;
   namesFoundAbove: readonly ModelName[];
   hostNumber: number;
@@ -553,6 +555,7 @@ export interface ModelSlot {
   internalField: number | null;
   holdsWhatStepsHandOut: boolean;
   holdsWhatIsThrown: boolean;
+  wordOfCell: WordOfCell;
 }
 
 export interface ModelTypeName {
@@ -578,6 +581,7 @@ export interface ModelClass {
   isNeverPristine: boolean;
   pristineTest: PristineTest;
   hasClosureInstances: boolean;
+  isFollowedBesideUnseenObject: boolean;
   instancesAreEntries: boolean;
   keepsStructuresOfClassesBelow: boolean;
   definesCharactersOnNewInstances: boolean;

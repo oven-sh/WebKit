@@ -118,7 +118,7 @@ static void emitCallMethodById(StubAssembler& jit, unsigned lentArguments)
     jit.jumpToStub(callsValue);
 
     hasForm.link(&jit);
-    readByFormOfAnswerInAccessTable(jit, thisGPR, calleeGPR, place, calleeGPR, readsByStub, readsByStub, [&] {
+    readByFormOfAnswerInAccessTable(jit, thisGPR, calleeGPR, place, calleeGPR, readsByStub, [&] {
         jit.jumpToStub(callsValue);
     });
 
@@ -165,6 +165,7 @@ void generateTryGetSuperById(StubAssembler& jit)
     JumpList needsGenericRead;
 
     needsGenericRead.append(jit.branchIfNotCell(R0));
+    needsGenericRead.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
     Label hasHolder = jit.label();
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
     loadFrontCell(jit, SlotAccess::Read, { structureID, name, row, cell, scratch });

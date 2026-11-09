@@ -20,6 +20,8 @@ inline constexpr uint8_t sweptBlockNeedsNoHandler = 1 << 2;
 inline constexpr uint8_t sweptBlockHandsOverArguments = 1 << 3;
 inline constexpr uint8_t sweptHandlerWasLookedAt = 1 << 4;
 inline constexpr uint8_t sweptHandlerOnlyThrowsOutOfUnit = 1 << 5;
+inline constexpr uint8_t sweptBlockDoesNothing = 1 << 6;
+inline constexpr uint8_t sweptBranchDecidesNothing = 1 << 7;
 
 inline EdgeID handlerOfSweptBlock(const Block& block, uint8_t state)
 {
@@ -29,7 +31,7 @@ inline EdgeID handlerOfSweptBlock(const Block& block, uint8_t state)
 inline bool isSweptEdgeTaken(const Code& code, const uint8_t* statesOfBlocks, EdgeID id, const Edge& edge)
 {
     uint8_t state = statesOfBlocks[edge.from.index()];
-    if (!(state & sweptBlockIsReached))
+    if (!(state & sweptBlockIsReached) || edge.isOpen())
         return false;
     return !(state & sweptBlockHasGivenUpHandler) || code.at(edge.from).handler != id;
 }

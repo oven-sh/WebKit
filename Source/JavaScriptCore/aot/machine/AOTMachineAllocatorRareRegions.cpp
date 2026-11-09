@@ -146,13 +146,13 @@ Location Allocator::memoryLocationOf(const Operation* value) const
     SpillIndex spill = m_allocation.spillOf(value);
     ASSERT(m_isAheadOfFramedPart == isAheadOfFramedPart(m_block));
     if (spill != noSpill && (!m_isAheadOfFramedPart || spillHoldsValueIn(m_block, value)))
-        return Location::spill(spill);
+        return placeToReadIn(spill);
     SpillIndex save = m_values[value->index()].saveInRareRegion;
     if (save != noSpill && (spill == noSpill || wayHasSavedInRareRegion(m_block, value)))
         return Location::spill(save);
     if (spill != noSpill) {
         giveUpFramedPartForReadOfSpill();
-        return Location::spill(spill);
+        return placeToReadIn(spill);
     }
 
     m_proc.fail(FailureKind::RegisterLacksItsValue, value);
@@ -847,7 +847,7 @@ void Allocator::findGapsAheadOfLandingPads()
     uint32_t firstBlockWhereRangeBegins = numberOfBlocks;
     for (SpillIndex spill = 0; spill < numberOfSpills; ++spill) {
         const SpillFacts& facts = spills[spill];
-        if (facts.end < headOfFirstLandingPad || facts.livesAcrossSuspension || facts.isPointerBesideNarrowReference || facts.isSaveInRareRegion || facts.isStoredAtHeadOfFramedPart || facts.end <= facts.begin)
+        if (facts.end < headOfFirstLandingPad || facts.isPointerBesideNarrowReference || facts.isSaveInRareRegion || facts.isStoredAtHeadOfFramedPart || facts.end <= facts.begin)
             continue;
         if (facts.value->opcode() == Phi && (!m_allocation.registerAtDefinitionOf(facts.value).isSet() || m_allocation.isWrittenByEdges(facts.value)))
             continue;

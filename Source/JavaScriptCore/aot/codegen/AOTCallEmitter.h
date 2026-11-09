@@ -39,7 +39,6 @@ struct ConventionCall {
     std::span<const LValue> stubOperands { };
     LValue callee { nullptr };
     LValue thisValue { nullptr };
-    LValue count { nullptr };
     std::span<const LValue> arguments { };
     uint64_t argumentsLetGo { 0 };
 };
@@ -65,6 +64,7 @@ public:
     void defineResultOfCallByValue(const ValueContext&, Boxed result);
     static CallPosition positionOf(const OperationContext& context) { return context.origin().isTailCall ? CallPosition::Tail : CallPosition::Ordinary; }
     Boxed callByConvention(const OperationContext&, const ConventionCall&, const CallOptions& = { });
+    Boxed callAddressByConvention(const OperationContext&, Pointer address, const ConventionCall&, const CallOptions& = { });
     Boxed constructValue(const OperationContext&, ConstructSyntax, Boxed callee, Boxed newTarget, std::span<const ValueID> arguments, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
     Boxed superConstructWithArray(const OperationContext&, Boxed parent, Boxed newTarget, CellPointer list);
     Operand callDirect(const OperationContext&, CodeUnit, std::span<const Operand> arguments, const CallOptions& = { });

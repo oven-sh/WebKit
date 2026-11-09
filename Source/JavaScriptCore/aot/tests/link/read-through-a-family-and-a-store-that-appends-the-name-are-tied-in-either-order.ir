@@ -6,7 +6,7 @@
 #   function put(t: B, w: unknown) { (third(t) as any).x = w; }
 #   function run(n) { const o = makeB(n); const found = read(n > 1 ? makeA(n) : n > 0 ? o : makeC(n)); put(o, "laid"); return found; }
 # RUN: link functions mechanisms=all
-# CHECK: function f4 {{*}}result=undefined|i32|string
+# CHECK: function f4 {{*}}result=undefined|int[0, 2147483647]|string
 
 module m0 path="late.ts" displayPath="late.ts" body=f0
 entry module=m0

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTCompileOptions.h"
 #include "AOTEffects.h"
 #include "AOTStubDescriptor.h"
@@ -17,6 +18,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/BitSet.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -41,6 +43,8 @@ struct StubOptions {
     bool checksProofs { false };
     bool checksWalk { false };
     bool methodsOfBuiltinsMayBeReplaced { false };
+    bool callsNumberOrStringByValue { true };
+    WTF::BitSet<numberOfBuiltinBoxedStubs> boxedCallsOutOfReach { };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
     uint32_t maxNameInFieldTable { UINT16_MAX };
     CPUFeatureSet targetFeatures;

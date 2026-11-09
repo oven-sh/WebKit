@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTCallingConventions.h"
 #include "AOTCodeLayout.h"
+#include "AOTStubsCallAdapters.h"
 #include "AOTFunctionTables.h"
 #include "AOTImage.h"
 #include "AOTLinkedFunctions.h"
@@ -188,7 +189,10 @@ static Vector<uint64_t> encodeClosureWords(const FunctionTableInputs& inputs, Bu
             RELEASE_ASSERT(codeOffset && !(codeOffset % imageFunctionAlignment));
             entry = code.entry;
         } else if (auto fused = std::ranges::lower_bound(fusedCallEntries, numbers.unitOf(function), { }, &FusedCallEntry::unitIndex); fused != fusedCallEntries.end() && fused->unitIndex == numbers.unitOf(function)) {
-            std::optional<uint32_t> positionOfTarget = fused->unit.role == Typed::CodeRole::GenericCallEntry ? inputs.functions.positionOfCodeAt(fused->placeOfTarget) : inputs.functions.positionOfUnit(fused->unit, fused->unitIndex);
+            bool startsModule = inputs.plan.conventions().callEntryIsNumberOfModuleStart(fused->unit.function);
+            if (startsModule)
+                codeOffset = inputs.layout.sharedCodeCopies[0] + inputs.sharedCode.blob.offsetOf(startModuleThatRunTimeNames()).value();
+            std::optional<uint32_t> positionOfTarget = startsModule ? std::nullopt : fused->unit.role == Typed::CodeRole::GenericCallEntry ? inputs.functions.positionOfCodeAt(fused->placeOfTarget) : inputs.functions.positionOfUnit(fused->unit, fused->unitIndex);
             std::optional<uint32_t> offsetInTarget = positionOfTarget ? inputs.functions[*positionOfTarget].body.offsetOfEntry(Typed::fusedCallEntry) : std::nullopt;
             if (offsetInTarget)
                 codeOffset = inputs.layout.bodyStarts[*positionOfTarget] + *offsetInTarget;

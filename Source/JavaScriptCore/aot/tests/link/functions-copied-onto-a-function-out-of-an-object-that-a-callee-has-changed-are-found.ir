@@ -1,0 +1,44 @@
+# function Holder() {} function change(object) { object.unused = unused } const source = { used }; change(source); Object.assign(Holder, source); Holder.unused()
+# A control of functions-copied-onto-a-function-out-of-a-literal-do-not-meet.ir: the object has left the body in front of the copy: what the body wrote into it is not all that it holds.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f3 unreached
+
+layout L0 fields=[{key="used" declared={type=anything}}, {key="unused" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f4
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = Call v2, -, v3
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectAssign
+    v7 = Call v6, v5, v0, v3 calleeKey="assign" calleeName="Object.assign"
+    v8 = PropGet v0 key="unused"
+    v9 = Call v8, v0 calleeKey="unused"
+    Return v9
+}
+function f1 name="Holder" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="used" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="unused" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f4 name="change" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f3
+    PropSet v0, v1 key="unused"
+    v3 = Undefined
+    Return v3
+}

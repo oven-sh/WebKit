@@ -9,6 +9,7 @@
 
 #include "AOTStubRunner.h"
 #include "AOTClosureWord.h"
+#include "AOTRuntimeType.h"
 #include "AOTSlimClosure.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsClosures.h"
@@ -286,6 +287,112 @@ static void testClosuresThatPassTheCheckOfAProof()
         for (uint64_t closure : { asCreated.address(), changed.address() })
             AOT_TEST_CHECK(!runner.run(key, { closure, wordsWith(0) }).calledOperation);
     });
+
+    struct alignas(16) FakeFullClosure {
+        uint64_t address() const { return std::bit_cast<uintptr_t>(this); }
+
+        uint32_t structureID { 0 };
+        uint8_t indexingTypeAndMisc { 0 };
+        uint8_t type { CompiledClosureType };
+        uint8_t flags { 0 };
+        uint8_t cellState { 0 };
+        std::array<uint64_t, 7> words { };
+    };
+    static_assert(offsetOfClosureEntry % sizeof(uint64_t) == 0 && offsetOfClosureEntry < sizeof(FakeFullClosure));
+    auto fullClosureOf = [](uint32_t closureNumber) {
+        FakeFullClosure closure;
+        closure.words[offsetOfClosureEntry / sizeof(uint64_t) - 1] = static_cast<uint64_t>(ClosureWord::encodeUpperHalf(0, closureNumber, { })) << 32 | 9;
+        return closure;
+    };
+    FakeFullClosure full = fullClosureOf(number);
+    FakeFullClosure fullOfOtherFunction = fullClosureOf(otherNumber);
+    forEachRegisterVariant(checkProofOfClosure(), [&](StubKey key) {
+        AOT_TEST_CHECK(!runner.run(key, { full.address(), wordsWith(0) }).calledOperation);
+        AOT_TEST_CHECK(runner.run(key, { fullOfOtherFunction.address(), wordsWith(KindsOfProof::primitives) }).calledOperation);
+    });
+    JSGlobalObject* realm = std::exchange(runner.instance().globalObject, std::bit_cast<JSGlobalObject*>(static_cast<uintptr_t>(16)));
+    forEachRegisterVariant(checkProofOfClosure(), [&](StubKey key) {
+        AOT_TEST_CHECK(runner.run(key, { full.address(), wordsWith(KindsOfProof::primitives) }).calledOperation);
+        AOT_TEST_CHECK(!runner.run(key, { asCreated.address(), wordsWith(0) }).calledOperation);
+    });
+    runner.instance().globalObject = realm;
+}
+
+static void testTypesInTablesThatPassTheCheckOfAProof()
+{
+    namespace Primitive = Typed::Primitive;
+    struct alignas(16) FakeCell {
+        uint64_t address() const { return std::bit_cast<uintptr_t>(this); }
+
+        uint32_t structureID { 0 };
+        uint8_t indexingTypeAndMisc { 0 };
+        uint8_t type;
+        uint8_t flags { 0 };
+        uint8_t cellState { 0 };
+    };
+    static_assert(OBJECT_OFFSETOF(FakeCell, type) == JSCell::typeInfoTypeOffset());
+    auto bitsOf = [](JSValue value) {
+        return static_cast<uint64_t>(JSValue::encode(value));
+    };
+
+    constexpr uint32_t zeroOrWhole = 64;
+    constexpr uint32_t fromOneToNine = 128;
+    constexpr uint32_t listOrNumber = 192;
+    alignas(8) std::array<uint8_t, 256> tables { };
+    auto lay = [&](uint32_t offset, const auto& record) {
+        memcpy(tables.data() + offset, &record, sizeof(record));
+    };
+    lay(zeroOrWhole, RuntimeType { Primitive::Undefined | Primitive::False | Primitive::Integer | Primitive::WholeNumber | Primitive::String, RuntimeType::hasIntegerRange, 0, 0, 0 });
+    lay(zeroOrWhole + sizeof(RuntimeType), std::array<int64_t, 2> { 0, 0 });
+    lay(fromOneToNine, RuntimeType { Primitive::Integer, RuntimeType::hasIntegerRange, 0, 0, 0 });
+    lay(fromOneToNine + sizeof(RuntimeType), std::array<int64_t, 2> { 1, 9 });
+    lay(listOrNumber, RuntimeType { Primitive::Number, 0, 1, 1, 0 });
+    lay(listOrNumber + sizeof(RuntimeType), RuntimeCellTest::cellTypeIs(ArrayType, DerivedArrayType));
+
+    FakeCell string { .type = StringType };
+    FakeCell symbol { .type = SymbolType };
+    FakeCell list { .type = ArrayType };
+    FakeCell derivedList { .type = DerivedArrayType };
+    FakeCell plainObject { .type = FinalObjectType };
+    FakeCell cellOfNoKind { .type = CellType };
+    struct Case {
+        uint32_t type;
+        uint32_t kinds;
+        Vector<uint64_t> passInStub;
+        Vector<uint64_t> areLeftToRunTime;
+    };
+    const Case cases[] = {
+        { zeroOrWhole, Primitive::Undefined | Primitive::False | Primitive::String,
+            { bitsOf(jsUndefined()), bitsOf(jsBoolean(false)), string.address(), bitsOf(jsNumber(0)) },
+            { bitsOf(jsNumber(1)), bitsOf(jsNumber(-1)), bitsOfDouble(-0.0), bitsOfDouble(0.5), bitsOfDouble(PNaN), bitsOf(jsNull()), bitsOf(jsBoolean(true)), bitsOf(JSValue()), symbol.address(), plainObject.address(), cellOfNoKind.address(), static_cast<uint64_t>(JSValue::ValueNull | 1) } },
+        { zeroOrWhole, Primitive::Undefined | Primitive::False | Primitive::String | Primitive::Absent,
+            { bitsOf(JSValue()) },
+            { } },
+        { fromOneToNine, 0,
+            { bitsOf(jsNumber(1)), bitsOf(jsNumber(9)) },
+            { bitsOf(jsNumber(0)), bitsOf(jsNumber(10)), bitsOf(jsNumber(-1)), bitsOfDouble(1.5), bitsOf(jsUndefined()), string.address() } },
+        { listOrNumber, KindsOfProof::everyNumber,
+            { bitsOf(jsNumber(7)), bitsOfDouble(0.5), list.address(), derivedList.address() },
+            { plainObject.address(), string.address(), cellOfNoKind.address(), bitsOf(jsUndefined()), bitsOf(JSValue()) } },
+    };
+
+    StubCatalog catalog(StubOptions { });
+    StubRunner runner;
+    runner.instance().image.tables = reinterpret_cast<const ProgramTables*>(tables.data());
+    runner.recordCallsOf(Entry::operationAOTStopUnlessValueHasType);
+    forEachRegisterVariant(checkProofOfType(), [&](StubKey key) {
+        for (GPRReg reg : allocatableGPRs)
+            AOT_TEST_CHECK(!containsRegister(catalog.summaryOf(key).clobbered, reg));
+        for (const Case& tried : cases) {
+            uint64_t words = KindsOfProof::withSource(tried.kinds, Typed::ProofSource::Contents);
+            for (uint64_t value : tried.passInStub)
+                AOT_TEST_CHECK(!runner.run(key, { value, words, tried.type }).calledOperation);
+            for (uint64_t value : tried.areLeftToRunTime) {
+                StubRun run = runner.run(key, { value, words, tried.type });
+                AOT_TEST_CHECK(run.calledOperation && run.recordedArguments[0] == words && run.recordedArguments[1] == tried.type && run.recordedArguments[2] == value);
+            }
+        }
+    });
 }
 
 static void testStrictEqualityInBothForms()
@@ -378,6 +485,7 @@ std::span<const NativeTest> stubValueTests()
         { "stubs/to-boolean/doubles"_s, ImageTests::whenExecutable<testTruthinessOfDoubles> },
         { "stubs/check-proof-of-kinds/a-value-passes-where-its-kind-is-among-them-and-nowhere-else"_s, ImageTests::whenExecutable<testKindsThatPassTheCheckOfAProof> },
         { "stubs/check-proof-of-closure/the-closure-asked-for-passes-and-no-other-object"_s, ImageTests::whenExecutable<testClosuresThatPassTheCheckOfAProof> },
+        { "stubs/check-proof-of-type/what-the-record-accepts-passes-and-the-rest-is-left-to-the-run-time"_s, ImageTests::whenExecutable<testTypesInTablesThatPassTheCheckOfAProof> },
         { "stubs/equal/strict-in-the-register-and-in-the-flags"_s, ImageTests::whenExecutable<testStrictEqualityInBothForms> },
     };
     return tests;

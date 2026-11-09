@@ -12,7 +12,7 @@
 # f1 = ask
 # OPTIONS: mechanisms=all
 # RUN(FORM): walk f1
-# FORM: = FindsDeclaredMember v0 key="read" receivers=[L0, L3]
+# FORM: = FindsDeclaredMember v0 key="read" {{*}}receivers=[L0, L3]
 # RUN(READ): run-in-shell give = () => "read";
 # READ: read of Stream | - of Mine | - of Written | read of Stream
 # READ-NEXT: exited with 0

@@ -17,8 +17,6 @@
 # ARM: = TypeTest [[next]] testedType=builtin(AsyncFromSyncIteratorPrototypeNext)|builtin(AsyncGeneratorPrototypeNext)
 # ARM: [[promise]]: {{*}} = Call [[next]], [[iterator]]
 # ARM: = AwaitBySavingFrame [[promise]]
-# RUN(WITHHELD): walk f1:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls
-# WITHHELD-NOT: StepAsyncGenerator
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -661,11 +661,14 @@ public:
     std::span<const unsigned> childrenLetGoByCallee() const { return m_childrenLetGoByCallee.span(); }
     void setSharesLatePath(bool value) { setBit(SharesLatePath, value); }
     bool sharesLatePath() const { return bit(SharesLatePath); }
+    bool failsWhenPredicateIsZero() const { return bit(FailsWhenPredicateIsZero); }
     void setBringsOperandsToTheirRegisters(bool value) { setBit(BringsOperandsToTheirRegisters, value); }
     bool bringsOperandsToTheirRegisters() const { return bit(BringsOperandsToTheirRegisters); }
     JS_EXPORT_PRIVATE void leaveOperandsWhereTheyLie();
     void setRegisterThatCalleeFillsOutOfResult(Reg reg) { m_registerThatCalleeFillsOutOfResult = reg; }
     Reg registerThatCalleeFillsOutOfResult() const { return m_registersToBringOperandsTo.isEmpty() ? m_registerThatCalleeFillsOutOfResult : Reg(); }
+    void setRegisterThatCalleeMovesIntoResult(Reg reg) { m_registerThatCalleeMovesIntoResult = reg; }
+    Reg registerThatCalleeMovesIntoResult() const { return m_registerThatCalleeMovesIntoResult; }
     void setLeavesMoveOutOfResultToCallee(bool value) { setBit(LeavesMoveOutOfResultToCallee, value); }
     bool leavesMoveOutOfResultToCallee() const { return bit(LeavesMoveOutOfResultToCallee); }
 
@@ -694,6 +697,7 @@ private:
         FindsOperandsInFrameWithoutRecord = 1 << 8,
         LeavesMoveOutOfResultToCallee = 1 << 9,
         TestsStackAheadOfFramedPart = 1 << 10,
+        FailsWhenPredicateIsZero = 1 << 11,
     };
 
     struct SuccessorClobber {
@@ -717,6 +721,7 @@ private:
 
     bool bit(Bit bit) const { return m_bits & bit; }
     void setBit(Bit bit, bool value) { m_bits = value ? m_bits | bit : m_bits & ~bit; }
+    void setFailsWhenPredicateIsZero(bool value) { setBit(FailsWhenPredicateIsZero, value); }
 
     Procedure& m_procedure;
     ArenaVector<Operation*> m_operands;
@@ -725,6 +730,7 @@ private:
     ArenaVector<unsigned> m_childrenLetGoByCallee;
     ArenaVector<Reg> m_registersToBringOperandsTo;
     Reg m_registerThatCalleeFillsOutOfResult;
+    Reg m_registerThatCalleeMovesIntoResult;
     RegisterMask m_earlyClobbered { 0 };
     RegisterMask m_lateClobbered { 0 };
     RegisterMask m_registersToRelease { 0 };
@@ -1085,6 +1091,7 @@ public:
     std::span<const FrameRange> frameRanges() const { return m_frameRanges.span(); }
     std::span<const RangeOfOrigin> rangesOfOrigins() const { return m_rangesOfOrigins.span(); }
     uint32_t numberOfOperationsEncoded() const { return m_numberOfOperationsEncoded; }
+    uint32_t numberOfSwitchWindowsToldByBits() const { return m_numberOfSwitchWindowsToldByBits; }
     uint32_t numberOfInnerPointersAcrossSafepoints() const { return m_numberOfInnerPointersAcrossSafepoints; }
     void noteInnerPointerAcrossSafepoint() { ++m_numberOfInnerPointersAcrossSafepoints; }
     uint32_t numberOfTrapsTakenOver() const { return m_numberOfTrapsTakenOver; }
@@ -1173,6 +1180,7 @@ private:
     ArenaVector<FrameRange> m_frameRanges;
     ArenaVector<RangeOfOrigin> m_rangesOfOrigins;
     uint32_t m_numberOfOperationsEncoded { 0 };
+    uint32_t m_numberOfSwitchWindowsToldByBits { 0 };
     uint32_t m_numberOfInnerPointersAcrossSafepoints { 0 };
     uint32_t m_numberOfTrapsTakenOver { 0 };
     MacroAssembler::Label m_rareCodeStart;

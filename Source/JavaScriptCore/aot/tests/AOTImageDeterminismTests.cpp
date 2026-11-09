@@ -410,7 +410,7 @@ static Vector<CompiledCode> codeOfProgramWithTexts(const TestBuild& build, SizeO
     return result;
 }
 
-static String readQuotedText(const ProgramTables& tables, uint32_t module, LineColumn place)
+static String readQuotedText(const ProgramTables& tables, std::span<const uint8_t> textOfQuotes, uint32_t module, LineColumn place)
 {
     std::tuple wanted { module, static_cast<uint32_t>(place.line), static_cast<uint32_t>(place.column) };
     std::span<const QuotedTextGroupData> groups = tables.quotedTextGroups();
@@ -432,7 +432,7 @@ static String readQuotedText(const ProgramTables& tables, uint32_t module, LineC
         column = row.isOnSameLine ? column + row.columnChange : row.column;
         start += row.startChange;
         if (line == place.line && column == place.column)
-            return String(byteCast<Latin1Character>(tables.textOfQuotes().subspan(static_cast<size_t>(start), row.length)));
+            return String(byteCast<Latin1Character>(textOfQuotes.subspan(static_cast<size_t>(start), row.length)));
     }
     return { };
 }
@@ -449,28 +449,99 @@ static size_t sizeOfDistinctTexts(SizeOfProgramWithTexts size, String (*textAt)(
     return result;
 }
 
+static size_t mostBytesOfPackedText(size_t sizeOfText)
+{
+    return sizeOfText;
+}
+
+static size_t packTextOfSevenBits(std::span<uint8_t> packed, std::span<const uint8_t> text)
+{
+    uint32_t held = 0;
+    unsigned numberOfBitsHeld = 0;
+    size_t written = 0;
+    for (uint8_t byte : text) {
+        if (byte >> 7)
+            return 0;
+        held |= static_cast<uint32_t>(byte) << numberOfBitsHeld;
+        for (numberOfBitsHeld += 7; numberOfBitsHeld >= 8; numberOfBitsHeld -= 8, held >>= 8)
+            packed[written++] = static_cast<uint8_t>(held);
+    }
+    if (numberOfBitsHeld)
+        packed[written++] = static_cast<uint8_t>(held);
+    return written;
+}
+
+static void unpackTextOfSevenBits(std::span<uint8_t> text, std::span<const uint8_t> packed)
+{
+    uint32_t held = 0;
+    unsigned numberOfBitsHeld = 0;
+    size_t read = 0;
+    for (uint8_t& byte : text) {
+        if (numberOfBitsHeld < 7) {
+            held |= static_cast<uint32_t>(packed[read++]) << numberOfBitsHeld;
+            numberOfBitsHeld += 8;
+        }
+        byte = held & 127;
+        held >>= 7;
+        numberOfBitsHeld -= 7;
+    }
+    AOT_TEST_CHECK(read == packed.size());
+}
+
+static Vector<uint8_t> unpackBlocksOfText(const uint8_t* packed, std::span<const uint32_t> ends, uint32_t sizeOfText)
+{
+    AOT_TEST_CHECK(ends.size() == (sizeOfText + sizeOfBlockOfText - 1) / sizeOfBlockOfText);
+    Vector<uint8_t> text;
+    text.grow(sizeOfText);
+    for (uint32_t block = 0; block < ends.size(); ++block) {
+        uint32_t first = block ? ends[block - 1] : 0;
+        size_t offset = static_cast<size_t>(block) * sizeOfBlockOfText;
+        unpackTextOfSevenBits(text.mutableSpan().subspan(offset, std::min<size_t>(sizeOfBlockOfText, sizeOfText - offset)), { packed + first, ends[block] - first });
+    }
+    return text;
+}
+
+static Vector<uint8_t> functionTextOf(const ProgramTables& tables, const FunctionTexts& texts, uint32_t sizeOfText)
+{
+    if (!texts.numberOfBlocks)
+        return Vector<uint8_t>(std::span { tables.at<uint8_t>(texts.textOffset), sizeOfText });
+    AOT_TEST_CHECK(texts.sizeOfText == sizeOfText);
+    return unpackBlocksOfText(tables.at<uint8_t>(texts.textOffset), { tables.at<uint32_t>(texts.endsOfBlocksOffset), texts.numberOfBlocks }, sizeOfText);
+}
+
+static Vector<uint8_t> textOfQuotesOf(const ProgramTables& tables)
+{
+    std::span<const uint32_t> blocks = tables.blocksOfTextOfQuotes();
+    if (blocks.empty())
+        return Vector<uint8_t>(tables.textOfQuotes());
+    AOT_TEST_CHECK(blocks.back() == tables.textOfQuotes().size());
+    return unpackBlocksOfText(tables.textOfQuotes().data(), blocks.subspan(1), blocks[0]);
+}
+
 static void checkTextsReadBack(const TestImage& image, SizeOfProgramWithTexts size)
 {
     const ProgramTables& tables = image.image->programTables();
     uint32_t groupsInModule = (size.functionsInModule + rowsInGroupOfQuotedTexts - 1) / rowsInGroupOfQuotedTexts;
     AOT_TEST_CHECK(tables.quotedTextGroups().size() == size.numberOfModules * groupsInModule);
-    AOT_TEST_CHECK(tables.textOfQuotes().size() == sizeOfDistinctTexts(size, quotedTextAt));
+    Vector<uint8_t> textOfQuotes = textOfQuotesOf(tables);
+    AOT_TEST_CHECK(textOfQuotes.size() == sizeOfDistinctTexts(size, quotedTextAt));
     for (uint32_t function = 1; function <= size.numberOfFunctions(); ++function) {
         uint32_t module = size.moduleOf(function);
-        AOT_TEST_CHECK(readQuotedText(tables, module, lineColumnOfPlace(size.placeOf(function))) == quotedTextAt(module, size.placeOf(function)));
+        AOT_TEST_CHECK(readQuotedText(tables, textOfQuotes.span(), module, lineColumnOfPlace(size.placeOf(function))) == quotedTextAt(module, size.placeOf(function)));
     }
-    AOT_TEST_CHECK(readQuotedText(tables, 0, lineColumnOfPlace(size.functionsInModule)).isNull());
-    AOT_TEST_CHECK(readQuotedText(tables, size.numberOfModules, lineColumnOfPlace(0)).isNull());
+    AOT_TEST_CHECK(readQuotedText(tables, textOfQuotes.span(), 0, lineColumnOfPlace(size.functionsInModule)).isNull());
+    AOT_TEST_CHECK(readQuotedText(tables, textOfQuotes.span(), size.numberOfModules, lineColumnOfPlace(0)).isNull());
 
     AOT_TEST_CHECK(tables.functionTexts().size() == 1);
     const FunctionTexts& texts = tables.functionTexts()[0];
     AOT_TEST_CHECK(texts.numberOfEntries == size.numberOfFunctions());
     std::span entries { tables.at<FunctionTextEntry>(texts.entriesOffset), texts.numberOfEntries };
+    Vector<uint8_t> textOfFunctions = functionTextOf(tables, texts, static_cast<uint32_t>(sizeOfDistinctTexts(size, functionTextAt)));
     uint32_t endOfText = 0;
     for (uint32_t function = 1; function <= size.numberOfFunctions(); ++function) {
         const FunctionTextEntry& entry = entries[function - 1];
         AOT_TEST_CHECK(tables.sourceFunctionOf(entry.function) == function);
-        String text(std::span { tables.at<Latin1Character>(texts.textOffset) + entry.start, entry.end - entry.start });
+        String text(byteCast<Latin1Character>(textOfFunctions.span().subspan(entry.start, entry.end - entry.start)));
         AOT_TEST_CHECK(text == functionTextAt(size.moduleOf(function), size.placeOf(function)));
         endOfText = std::max<uint32_t>(endOfText, entry.end);
     }
@@ -481,6 +552,18 @@ static void testTextsOfSeveralModulesReadBack()
 {
     TestBuild build(textOfProgramWithTexts(fewTexts), { });
     checkTextsReadBack(builtImage(build, codeOfProgramWithTexts(build, fewTexts)), fewTexts);
+}
+
+static void testTextsReadBackOutOfBlocksThatTheHostCompressed()
+{
+    for (SizeOfProgramWithTexts size : { fewTexts, manyTexts }) {
+        TestBuild build(textOfProgramWithTexts(size), { });
+        build.context().setFunctionTexts({ .mostBytesCompressed = mostBytesOfPackedText, .compress = packTextOfSevenBits });
+        TestImage image = builtImage(build, codeOfProgramWithTexts(build, size));
+        AOT_TEST_CHECK(image.image->programTables().functionTexts()[0].numberOfBlocks >= (size.numberOfFunctions() == manyTexts.numberOfFunctions() ? 2u : 1u));
+        AOT_TEST_CHECK(image.image->programTables().blocksOfTextOfQuotes().size() >= (size.numberOfFunctions() == manyTexts.numberOfFunctions() ? 3u : 2u));
+        checkTextsReadBack(image, size);
+    }
 }
 
 static Vector<uint8_t> bytesOfImageWithLongLists(unsigned threadCount, const HostThreadPool* hostPool)
@@ -856,6 +939,7 @@ std::span<const NativeTest> determinismTests()
         { "image/determinism/mentions-in-two-arrival-orders"_s, testMentionsInTwoArrivalOrders },
         { "image/determinism/types-born-in-two-orders"_s, testTypesBornInTwoOrders },
         { "image/determinism/texts-of-several-modules-read-back"_s, testTextsOfSeveralModulesReadBack },
+        { "image/determinism/texts-read-back-out-of-blocks-that-the-host-compressed"_s, testTextsReadBackOutOfBlocksThatTheHostCompressed },
         { "image/determinism/lists-longer-than-a-range"_s, testListsLongerThanRange },
         { "image/determinism/records-of-many-layouts"_s, testRecordsOfManyLayouts },
         { "image/determinism/records-of-many-layouts-of-a-validating-build"_s, testRecordsOfManyLayoutsOfValidatingBuild },

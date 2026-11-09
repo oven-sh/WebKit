@@ -204,6 +204,7 @@ public:
     void align();
     void alignWhatStandsBehind(unsigned size);
     void bindEntry(StubKey entry) { bindEntryAt(entry, label()); }
+    void bindEntryBehindItsHead(StubKey);
     Label bindReturnLabel(StubFrameKind);
 
     void returnToCaller();
@@ -307,8 +308,9 @@ private:
 
     void storePreservedRegisters(std::span<const GPRReg>);
     void loadPreservedRegisters(std::span<const GPRReg>);
-    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep = { });
-    void loadSavedRegisters(const SavedRegisterArea&);
+    enum class StackPointerAfterLoads : bool { IsMovedBack, IsLeftToEpilogue };
+    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep = { }, unsigned bytesLeftFreeAbove = 0);
+    void loadSavedRegisters(const SavedRegisterArea&, StackPointerAfterLoads = StackPointerAfterLoads::IsMovedBack);
 
     void loadEntry(Entry, GPRReg);
     void loadCalledOperation(const CalledOperation&, GPRReg function);
@@ -352,6 +354,7 @@ private:
     Vector<BoundReturnLabel> m_boundReturnLabels;
     HashMap<uint64_t, Label> m_entryLabels;
     Label m_headOfBody;
+    Vector<StubKey, 2> m_entriesBehindTheirHeads;
     Vector<PendingJump> m_pendingJumps;
     Vector<PendingCall> m_pendingCalls;
     Vector<PendingStubAddress> m_pendingStubAddresses;

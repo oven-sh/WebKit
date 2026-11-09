@@ -404,8 +404,12 @@ void BuilderOfEntries::refuseCall()
     call.setCalleeOperand(closure());
     call.setThisValueOperand(thisValue());
     call.setIsNeverInlined(true);
-    build(WTF::move(call));
-    endAsUnreachable();
+    Reference refusal = build(WTF::move(call));
+    if (m_walker.checksProofsOf(ProofSource::EntryParameter)) {
+        endAsUnreachable();
+        return;
+    }
+    returnResultOf(refusal);
 }
 
 void BuilderOfEntries::refuseUnlessConstructing(Reference newTarget)
@@ -498,6 +502,12 @@ bool BuilderOfEntries::buildGenericEntry()
         throwInPlaceOfEntering();
         return !m_walker.hasFailed();
     }
+    if (m_walker.arrivals().entriesAreClosed(m_unit.function)) {
+        m_walker.count(StatisticID::EntriesThatNobodyEnters);
+        m_walker.buildCheckOfProof(thisValue(), TypeTable::never, TypeTable::anything, ProofSource::EntryParameter, m_origin);
+        endAsUnreachable();
+        return !m_walker.hasFailed();
+    }
 
     ValuesHandedOnByEntries values;
     values.closure = closure();
@@ -541,7 +551,14 @@ bool BuilderOfEntries::buildParameterGuard()
 {
     CodeUnit fastVersion = m_conventions.entryBehindGuardOf(m_unit.function);
     CodeUnit slowVersion { m_unit.function, CodeRole::SlowBody };
+    ArgumentLocations locations = m_conventions.locationsOf(m_program, m_unit);
     takeParameters([&](unsigned index) {
+        if (!m_walker.checksWalk() || !m_walker.checksProofsOf(ProofSource::EntryParameter))
+            return m_walker.typeArrivingAtEntryParameter(index);
+        TypeID withoutCallers = m_walker.facts().typeBelievedOfEntryParameter(m_types, m_unit.function, index, TypeID());
+        Representation form = locations.parameters[index].representation;
+        if (form == Representation::JSValue || form == Representation::Cell || !m_types.at(withoutCallers).isJavaScriptValue())
+            return withoutCallers;
         return m_walker.typeArrivingAtEntryParameter(index);
     });
     RELEASE_ASSERT(m_parameters.size() == m_function.numberOfEntryParameters());

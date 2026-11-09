@@ -17,7 +17,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 OpcodeSet StraightEmitter::opcodesOfRuntimeIntrinsics()
 {
-    return { Opcode::RequireBuiltinModule, Opcode::NativeBinding, Opcode::LinkTimeConstant, Opcode::HasJSType, Opcode::FindsDeclaredMember, Opcode::FindsNoMember, Opcode::IsPlainInstanceOf, Opcode::IsPlainHeirOf, Opcode::GetInternalField, Opcode::PutInternalField };
+    return { Opcode::RequireBuiltinModule, Opcode::NativeBinding, Opcode::LinkTimeConstant, Opcode::HasJSType, Opcode::FindsDeclaredMember, Opcode::FindsNoMember, Opcode::IsPlainInstanceOf, Opcode::IsPlainHeirOf, Opcode::IsAsBorn, Opcode::IsAsBornExceptForAddedNames, Opcode::IsPrototypeChainPlain, Opcode::GetInternalField, Opcode::PutInternalField };
 }
 
 static CCallHelpers::Address internalFieldInStraightForm(GPRReg object, const BodyValue& value)
@@ -79,6 +79,9 @@ void StraightEmitter::generateRuntimeIntrinsic(const BodyValue& value)
     case Opcode::FindsNoMember:
     case Opcode::IsPlainInstanceOf:
     case Opcode::IsPlainHeirOf:
+    case Opcode::IsAsBorn:
+    case Opcode::IsAsBornExceptForAddedNames:
+    case Opcode::IsPrototypeChainPlain:
         jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), takeResultRegister());
         define(value);
         return;

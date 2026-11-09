@@ -273,7 +273,11 @@ StubSignature signatureOfClosureOfTable(StubKey)
 {
     StubSignature signature = StubSignature::withGPRResult({ });
     signature.immediate = operationArgumentGPR(1);
+#if CPU(X86_64)
+    return signature.fillingKeptRegisterInFront(X86Registers::ecx);
+#else
     return signature;
+#endif
 }
 
 static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg number, GPRReg scratch)
@@ -531,8 +535,34 @@ void generateCheckProofOfClosure(StubAssembler& jit)
 #endif
     jit.returnToCaller();
 
-    isNoObject.link(&jit);
     isNotChanged.link(&jit);
+    compareCellTypeOnFlags(jit, value, CompiledClosureType, scratch);
+    Jump isNoClosure = jit.branchOnFlags(CCallHelpers::NotEqual);
+    jit.pushToSave(words);
+#if CPU(X86_64)
+    compareRealmOnFlags(jit, value, words, InvalidGPRReg);
+    Jump isOfOtherRealm = jit.branchOnFlags(CCallHelpers::NotEqual);
+    loadNumberOfFullClosure(jit, value, words);
+    jit.xor32(Address(sp), words);
+    jit.and32(TrustedImm32(ClosureWord::functionMask), words);
+    jit.compareOnFlags32(words, TrustedImm32(0));
+    isOfOtherRealm.link(&jit);
+    jit.popToRestore(words);
+    Jump isOtherFullClosure = jit.branchOnFlags(CCallHelpers::NotEqual);
+#else
+    compareRealmOnFlags(jit, value, scratch, words);
+    jit.popToRestore(words);
+    JumpList isOtherFullClosure;
+    isOtherFullClosure.append(jit.branchOnFlags(CCallHelpers::NotEqual));
+    loadNumberOfFullClosure(jit, value, scratch);
+    jit.xor32(words, scratch);
+    isOtherFullClosure.append(jit.branchTest32(CCallHelpers::NonZero, scratch, TrustedImm32(ClosureWord::functionMask)));
+#endif
+    jit.returnToCaller();
+
+    isNoObject.link(&jit);
+    isNoClosure.link(&jit);
+    isOtherFullClosure.link(&jit);
     hasOtherNumber.link(&jit);
     swapHalves();
     isNoCell.link(&jit);

@@ -32,7 +32,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySpeciesCreate, EncodedJSValue, (Instan
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySpeciesCreate);
     uint64_t length = truncateDoubleToUint64(JSValue::decode(encodedLength).asNumber());
-    std::pair<SpeciesConstructResult, JSObject*> speciesResult = speciesConstructArray(globalObject, cellArgument<JSObject>(array, Entry::operationAOTArraySpeciesCreate), length);
+    JSObject* source = cellArgument<JSObject>(array, Entry::operationAOTArraySpeciesCreate);
+    std::pair<SpeciesConstructResult, JSObject*> speciesResult = speciesConstructArray(globalObject, source, length);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (speciesResult.first == SpeciesConstructResult::CreatedObject)
         OPERATION_RETURN(scope, JSValue::encode(speciesResult.second));
@@ -42,7 +43,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySpeciesCreate, EncodedJSValue, (Instan
     }
     if (length >= MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH) [[unlikely]]
         OPERATION_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(length))));
-    JSArray* list = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), static_cast<unsigned>(length));
+    IndexingType kind = !length ? ArrayWithContiguous : hasDouble(source->indexingType()) ? ArrayWithDouble : ArrayWithInt32;
+    JSArray* list = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(kind), static_cast<unsigned>(length));
     if (!list) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         OPERATION_RETURN(scope, encodedJSValue());

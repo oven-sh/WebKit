@@ -71,6 +71,9 @@ public:
     }
 
     void generateSubstring(const ValueContext&);
+    void generateSubstringOrUndefined(const ValueContext&);
+    void generateBoundsOfStringSplit(const ValueContext&);
+    void generateNewStringSplitArray(const ValueContext&);
     void generateFlattenString(const ValueContext&);
     void generateStringRange(const ValueContext&);
     void generateStringOrder(const ValueContext&);
@@ -85,6 +88,7 @@ public:
     void generateStringRangeEqualsLiteral(const ValueContext&);
     void generateStringRangeToNumber(const ValueContext&);
     void generateStringRangeParseInt(const ValueContext&);
+    void generateFindStringRangeInMap(const ValueContext&);
     CharacterView viewOfRange(const ValueContext&);
 
     void continueIf(Condition, BlockEdge otherwise);
@@ -97,8 +101,13 @@ public:
     Word32 lengthOf(CellPointer string);
     CharacterView viewOf(const OperationContext&, ValueID string);
     CharacterView viewOfFlatString(CellPointer flat);
-    std::optional<Condition> findNarrow(ValueID flatString);
-    void forgetStringsFoundNarrow() { m_flagsFoundNarrow.shrink(0); }
+    bool widthIsFoundAtRun(ValueID flatString);
+    std::optional<Condition> findWidth(ValueID flatString, bool isNarrow);
+    void forgetWidthsFound()
+    {
+        m_flagsFoundNarrow.shrink(0);
+        m_flagsFoundWide.shrink(0);
+    }
     std::optional<FlatStringCell> flatStringByType(ValueID string);
     Pointer implOfFlatString(FlatStringCell);
     CharacterView viewOfString(const OperationContext&, CellPointer string);
@@ -171,6 +180,7 @@ private:
     };
     UncheckedKeyHashMap<LValue, OpenedString> m_openedStrings;
     Vector<LValue, 2> m_flagsFoundNarrow;
+    Vector<LValue, 2> m_flagsFoundWide;
 };
 
 template<typename T>

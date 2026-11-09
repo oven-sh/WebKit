@@ -181,7 +181,7 @@ public:
     template<typename T> requires std::is_arithmetic_v<T>
     LValue make(Opcode opcode, LValue left, T right)
     {
-        bool isShift = opcode == Shl || opcode == SShr || opcode == ZShr;
+        bool isShift = opcode == Shl || opcode == SShr || opcode == ZShr || opcode == RotR;
         return make(opcode, left, constant(isShift ? Type(Int32) : left->type(), right));
     }
     template<typename T> requires std::is_arithmetic_v<T>
@@ -551,6 +551,22 @@ static void testMachineFoldingOfShifts()
         { foldingTestAnyText, [](FoldingTest& v) { return v.make(ZShr, v.make(Shl, v.a, 31), 31); } },
         { foldingTestAnyText, [](FoldingTest& v) { return v.make(Shl, v.make(ZShr, v.a, 3), 3); } },
         { foldingTestAnyText, [](FoldingTest& v) { return v.make(Shl, v.make(SShr, v.i, 3), 3); } },
+
+        { "RotR(i, Const32(7))"_s, [](FoldingTest& v) { return v.make(BitOr, v.make(ZShr, v.i, 7), v.make(Shl, v.i, 25)); } },
+        { "RotR(i, Const32(27))"_s, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.i, 5), v.make(ZShr, v.i, 27)); } },
+        { "RotR(i, Const32(31))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(Shl, v.i, 1), v.make(ZShr, v.i, 31)); } },
+        { "RotR(i, Const32(16))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(ZShr, v.i, 16), v.make(Shl, v.i, 16)); } },
+        { "RotR(a, Const32(1))"_s, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.a, 63), v.make(ZShr, v.a, 1)); } },
+        { "RotR(a, Const32(32))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(ZShr, v.a, 32), v.make(Shl, v.a, 32)); } },
+        { "RotR(a, Const32(59))"_s, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.a, 5), v.make(ZShr, v.a, 59)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.i, 5), v.make(ZShr, v.i, 26)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.i, 5), v.make(SShr, v.i, 27)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.i, 5), v.make(ZShr, v.j, 27)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.a, 5), v.make(ZShr, v.a, 27)); } },
+        { "i"_s, [](FoldingTest& v) { return v.make(RotR, v.i, 32); }, FoldingTestAnswers::NotCompared },
+        { "RotR(i, Const32(1))"_s, [](FoldingTest& v) { return v.make(RotR, v.i, 33); }, FoldingTestAnswers::NotCompared },
+        { "Const32(-2147483648)"_s, [](FoldingTest& v) { return v.make(RotR, v.int32(1), 1); }, FoldingTestAnswers::NotCompared },
+        { "Const64(-9223372036854775808)"_s, [](FoldingTest& v) { return v.make(RotR, v.int64(1), 1); }, FoldingTestAnswers::NotCompared },
 
         { foldingTestTextOnARM64("Shl(a, j)"_s), [](FoldingTest& v) { return v.make(Shl, v.a, v.make(BitAnd, v.j, 63)); } },
         { foldingTestTextOnARM64("Shl(i, j)"_s), [](FoldingTest& v) { return v.make(Shl, v.i, v.make(BitAnd, v.j, 31)); } },
@@ -1010,6 +1026,14 @@ static void testMachineFoldingOfNumbers()
         { "ConstFloat(-0)"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.number(-0.0)); } },
         { "f"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.make(FloatToDouble, v.f)); } },
         { "FloatToDouble(DoubleToFloat(x))"_s, [](FoldingTest& v) { return v.make(FloatToDouble, v.make(DoubleToFloat, v.x)); } },
+        { "Add(f, DoubleToFloat(y))"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.make(Add, v.make(FloatToDouble, v.f), v.make(FloatToDouble, v.make(DoubleToFloat, v.y)))); } },
+        { "Sub(f, DoubleToFloat(y))"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.make(Sub, v.make(FloatToDouble, v.f), v.make(FloatToDouble, v.make(DoubleToFloat, v.y)))); } },
+        { "Mul(f, DoubleToFloat(y))"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.make(Mul, v.make(FloatToDouble, v.f), v.make(FloatToDouble, v.make(DoubleToFloat, v.y)))); } },
+        { "Div(f, DoubleToFloat(y))"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.make(Div, v.make(FloatToDouble, v.f), v.make(FloatToDouble, v.make(DoubleToFloat, v.y)))); } },
+        { "Sqrt(f)"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.make(Sqrt, v.make(FloatToDouble, v.f))); } },
+        { "Mul(f, ConstFloat(0.5))"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.make(Mul, v.make(FloatToDouble, v.f), 0.5)); } },
+        { "DoubleToFloat(Mul(FloatToDouble(f), ConstDouble(0.1)))"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.make(Mul, v.make(FloatToDouble, v.f), 0.1)); } },
+        { "DoubleToFloat(Add(y, FloatToDouble(f)))"_s, [](FoldingTest& v) { return v.make(DoubleToFloat, v.make(Add, v.make(FloatToDouble, v.f), v.y)); } },
         { "x"_s, [](FoldingTest& v) { return v.cast(v.cast(v.x, Int64), Double); } },
         { "BitwiseCast(x)"_s, [](FoldingTest& v) { return v.cast(v.x, Int64); } },
     };

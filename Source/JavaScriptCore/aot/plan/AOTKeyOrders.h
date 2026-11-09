@@ -41,6 +41,7 @@ struct KeyOrderParts {
     Vector<uint32_t> firstFieldOfOrder;
     Vector<FieldIndex> fields;
     Vector<KeyOrderSource> sourceOfField;
+    Vector<uint8_t> someMakerStopsBehindField;
 };
 
 class KeyOrders {
@@ -50,6 +51,7 @@ public:
         : m_parts(WTF::move(parts))
     {
         RELEASE_ASSERT(m_parts.sourceOfField.size() == m_parts.fields.size());
+        RELEASE_ASSERT(m_parts.someMakerStopsBehindField.size() == m_parts.fields.size());
         indexFirstContinuations();
     }
 
@@ -68,6 +70,11 @@ public:
     {
         uint32_t index = m_parts.firstOrderOfLayout[layout.index()] + order;
         return m_parts.sourceOfField.span().subspan(m_parts.firstFieldOfOrder[index], m_parts.firstFieldOfOrder[index + 1] - m_parts.firstFieldOfOrder[index]);
+    }
+    std::span<const uint8_t> whereMakersStop(LayoutID layout, uint32_t order) const LIFETIME_BOUND
+    {
+        uint32_t index = m_parts.firstOrderOfLayout[layout.index()] + order;
+        return m_parts.someMakerStopsBehindField.span().subspan(m_parts.firstFieldOfOrder[index], m_parts.firstFieldOfOrder[index + 1] - m_parts.firstFieldOfOrder[index]);
     }
 
     JS_EXPORT_PRIVATE std::optional<uint32_t> findOrderWord(LayoutID, std::span<const FieldIndex> fieldsWithStorage) const;

@@ -25,6 +25,7 @@ struct RowsOfSlotPlan {
     std::span<const uint8_t> widths { };
     const BitVector* layoutsThatRepeatTheirBases { nullptr };
     std::span<const LayoutID> nearestLayoutsAboveThatDoNotRepeat { };
+    bool haveFinalWidths { false };
 };
 struct LayoutsBelowTheirBases {
     static constexpr uint32_t isNotTouched = UINT32_MAX;

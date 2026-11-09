@@ -81,7 +81,7 @@ static std::optional<HalvesOfKnownEffects> findHalvesGivenArgumentsForKnownEffec
         if (!arriving)
             return std::nullopt;
         if (isTakenAsExpected) {
-            TypeID expected = parameter < parameters.size() ? parameters[parameter].expected : TypeID();
+            TypeID expected = parameter < parameters.size() ? parameters[parameter].writtenOrSeenToArrive() : TypeID();
             if (!expected || !types.isSubset(arriving, expected))
                 return std::nullopt;
         }

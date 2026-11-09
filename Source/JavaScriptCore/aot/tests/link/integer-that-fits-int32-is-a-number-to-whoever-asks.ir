@@ -2,12 +2,12 @@
 # function fixed(n) { return n.toFixed(2); }  function letter(text, i) { return text.charAt(i); }  function at(list, i) { return list[i]; }  function only(n) { return typeof n === "number" ? n : "none"; }  fixed(5);  letter("a", 5);  at(["a"], 0);  only(5);
 # RUN: link functions mechanisms=all
 # CHECK: function f1 {{*}}result=string returns
-# CHECK-NEXT: parameter 0 {{*}}proven=i32
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]
 # CHECK: function f2 {{*}}result=string returns
-# CHECK: parameter 1 {{*}}proven=i32
+# CHECK: parameter 1 {{*}}proven=int[0, 2147483647]
 # CHECK: function f3 {{*}}result=undefined|string returns
-# CHECK: parameter 1 {{*}}proven=i32
-# CHECK: function f4 {{*}}result=i32|string returns
+# CHECK: parameter 1 {{*}}proven=int[0, 2147483647]
+# CHECK: function f4 {{*}}result=int[0, 2147483647]|string returns
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

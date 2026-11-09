@@ -344,7 +344,11 @@ export function numberModel(builder: ModelBuilder, types: TypeInterner): TableMo
     ),
     closedKeys: Object.freeze(
       builtins
-        .filter(holder => holder.flags.includes("HasLockedMembers") || isConstructorWithoutLock(holder))
+        .filter(
+          holder =>
+            (holder.flags.includes("HasLockedMembers") && holder.prototype.link !== "Unknown") ||
+            isConstructorWithoutLock(holder),
+        )
         .map(holder =>
           isConstructorWithoutLock(holder)
             ? namesOfCallsClosedOn(holder, names)

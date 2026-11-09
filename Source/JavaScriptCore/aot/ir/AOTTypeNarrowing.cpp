@@ -605,6 +605,13 @@ TypeID narrowByOtherwise(const TypingContext& context, TypeID source, std::span<
     return narrowByTest(context, source, types.forLayouts(layoutsOfCases.span()), EdgeSide::NotTaken);
 }
 
+static TypeID typeOfObjectsWithStructureOfClass(TypeArena& types, TypeID source, LayoutID classLayout)
+{
+    TypeID instances = types.forLayout(classLayout);
+    TypeID passing = types.intersectionOf(source, instances);
+    return types.at(passing).hasObjects() && types.isSubset(passing, instances) ? passing : instances;
+}
+
 template<typename Holder> static constexpr bool isCursorOverInput = std::is_same_v<Holder, BodyValue> || std::is_same_v<Holder, BodyTerminator>;
 
 template<typename Test>
@@ -620,6 +627,7 @@ static TypeID typeThatTestAsksFor(TypeArena& types, const Test& test)
             return types.forLayoutSet(test.layouts());
         break;
     case Opcode::IsPlainInstanceOf:
+    case Opcode::FindsDeclaredMember:
         if constexpr (!isCursorOverInput<Test>)
             return types.forLayoutSet(test.receivers());
         break;
@@ -643,9 +651,9 @@ TypeID typeOfEdgeResult(const TypingContext& context, const Test& test, OperandT
         if constexpr (!isCursorOverInput<Test>) {
             if (opcode == Opcode::ShapeTest && side == EdgeSide::NotTaken && test.refusesMarkedObjects())
                 return source;
-            if (opcode == Opcode::IsPlainInstanceOf && (side == EdgeSide::NotTaken || !test.receivers()))
+            if ((opcode == Opcode::IsPlainInstanceOf || opcode == Opcode::FindsDeclaredMember) && (side == EdgeSide::NotTaken || !test.receivers()))
                 return source;
-        } else if (opcode == Opcode::IsPlainInstanceOf)
+        } else if (opcode == Opcode::IsPlainInstanceOf || opcode == Opcode::FindsDeclaredMember)
             return source;
         return narrowByTest(context, source, typeThatTestAsksFor(context.types, test), side);
     case Proof::Truthiness:
@@ -665,6 +673,12 @@ TypeID typeOfEdgeResult(const TypingContext& context, const Test& test, OperandT
         return narrowByComparison(context, opcode, !narrowedOperandIndex, source, operandsOfTest[narrowedOperandIndex ? 0 : 1], side);
     case Proof::NotNullish:
         return narrowByNotNullish(context.types, source, side);
+    case Proof::StructureOfClass:
+        if constexpr (!isCursorOverInput<Test>) {
+            if (side == EdgeSide::Taken)
+                return typeOfObjectsWithStructureOfClass(context.types, source, test.layout());
+        }
+        return source;
     case Proof::None:
     case Proof::CaseValue:
     case Proof::SlotFilled:

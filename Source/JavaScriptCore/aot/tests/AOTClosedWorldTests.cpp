@@ -28,8 +28,8 @@ using Flags = OptionSet<ImageFlag>;
 
 static constexpr Flags refusesOriginals { ImageFlag::RefusesOriginalsBesideMocks };
 static constexpr Flags closed = refusesOriginals;
-static constexpr Flags runsText = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName };
-static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
+static constexpr Flags runsText = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::LetsGlobalObjectGo };
+static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LetsGlobalObjectGo };
 static constexpr Flags findsModulesByName = refusesOriginals | Flags { ImageFlag::LoadsModulesByName };
 static constexpr Flags loadsCodeFromOutside = runsModuleFromOutside | Flags { ImageFlag::LoadsCodeOutsideImage };
 static constexpr Flags runsTextThatLoadsCode = runsOnlyCodeOfImage ? runsText : loadsCodeFromOutside;

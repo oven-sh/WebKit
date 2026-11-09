@@ -123,9 +123,8 @@ NEVER_INLINE StringImpl& ImageText::createLazyHeader(uint32_t number) const
 
 #endif
 
-StringImpl* ImageText::headerOf(StringID string) const
+StringImpl* ImageText::headerOf(ImageStringWord word) const
 {
-    ImageStringWord word = m_strings[string.index()];
     RELEASE_ASSERT_WITH_MESSAGE(word.hasText(), "AOT: the image has no text for this string because nothing referenced it at build time");
     RELEASE_ASSERT(word.hasHeader());
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
@@ -137,9 +136,9 @@ StringImpl* ImageText::headerOf(StringID string) const
 #endif
 }
 
-String ImageText::createStringWithoutHeader(StringID string) const
+String ImageText::createStringWithoutHeader(ImageStringWord word) const
 {
-    StringView characters = view(string);
+    StringView characters = view(word);
     if (characters.isEmpty())
         return emptyString();
     if (characters.is8Bit())
@@ -147,9 +146,8 @@ String ImageText::createStringWithoutHeader(StringID string) const
     return StringImpl::createWithoutCopying(characters.span16());
 }
 
-StringView ImageText::view(StringID string) const
+StringView ImageText::view(ImageStringWord word) const
 {
-    ImageStringWord word = m_strings[string.index()];
     RELEASE_ASSERT_WITH_MESSAGE(word.hasText(), "AOT: the image has no text for this string because nothing referenced it at build time");
     ImageLongString range { 0, 0 };
     if (!word.hasHeader())
@@ -166,9 +164,8 @@ StringView ImageText::view(StringID string) const
     return StringView(byteCast<Latin1Character>(m_text.subspan(range.offset, range.length)));
 }
 
-unsigned ImageText::hash(StringID string) const
+unsigned ImageText::hash(ImageStringWord word) const
 {
-    ImageStringWord word = m_strings[string.index()];
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     if (word.hasIdentifierNumber()) {
         const ImageStringHeader& header = headerAt(word.number());
@@ -180,7 +177,7 @@ unsigned ImageText::hash(StringID string) const
         return words[ImageListedString::numberOfWords(ImageListedString::read(words))];
     }
     if (!word.hasHeader())
-        return view(string).hash();
+        return view(word).hash();
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     const ImageStringRecord& record = m_stringRecords[word.number()];
     return record.hasText() ? record.hash() : StringImpl::empty()->hash();
@@ -194,19 +191,19 @@ bool ImageText::equals(StringID string, StringView text) const
     return hasText(string) && view(string) == text;
 }
 
-String ImageText::createString(StringID string) const
+String ImageText::createString(ImageStringWord word) const
 {
-    if (!hasHeader(string))
-        return createStringWithoutHeader(string);
-    StringImpl* header = headerOf(string);
+    if (!hasHeader(word))
+        return createStringWithoutHeader(word);
+    StringImpl* header = headerOf(word);
     return header ? String(*header) : emptyString();
 }
 
-String ImageText::createAtom(StringID string) const
+String ImageText::createAtom(ImageStringWord word) const
 {
-    if (!hasHeader(string))
-        return AtomString(createStringWithoutHeader(string)).string();
-    StringImpl* header = headerOf(string);
+    if (!hasHeader(word))
+        return AtomString(createStringWithoutHeader(word)).string();
+    StringImpl* header = headerOf(word);
     if (!header)
         return emptyString();
     if (header->isAtom())

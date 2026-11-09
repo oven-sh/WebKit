@@ -13,6 +13,7 @@
 #include "AOTIRProgram.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTVector.h"
+#include "PageCount.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -142,14 +143,37 @@ static TypeID refinedTypeOfSuperBase(const TypingContext& context, HomeObjectKin
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool holdsViewsOfNumbersAlone(const TypingContext& context, TypeID view)
+{
+    if (!view || holdsOnlyPrimitives(view))
+        return false;
+    Type type = context.types.at(view);
+    if (!type.isObject() || !type.hasOnlyClassObjects())
+        return false;
+    const BuiltinTable& builtins = context.program.builtins();
+    return std::ranges::all_of(classPartsOf(context.types, type), [&](const ClassPart& part) {
+        TypedArrayType kind = builtins.typedArrayTypeOf(part.builtinClass);
+        return isTypedView(kind) && !isBigInt(kind);
+    });
+}
+
 template<typename Operation>
-static TypeID refinedTypeOfTypedArrayElement(const TypingContext& context, const Operation& read, TypeID upperBound)
+static TypeID refinedTypeOfTypedArrayElement(const TypingContext& context, const Operation& read, TypeID view, TypeID upperBound)
 {
     RELEASE_ASSERT(context.level == TypeLevel::Expected || !testsItsOwnGuess(read));
-    if (!isTypedView(read.typedArrayType()))
+    if (!isTypedView(read.typedArrayType()) && !holdsViewsOfNumbersAlone(context, view))
         return upperBound;
-    TypeID element = elementTypeOf(read.typedArrayType());
+    TypeID element = isTypedView(read.typedArrayType()) ? elementTypeOf(read.typedArrayType()) : TypeID(TypeTable::number);
     return read.isInsideView() ? element : context.types.withPrimitives(element, Primitive::Undefined);
+}
+
+static_assert(maxTypedArrayLength == MAX_ARRAY_BUFFER_SIZE);
+
+static TypeID refinedTypeOfTypedArrayLength(TypeArena& types, TypedArrayType type, TypeID upperBound)
+{
+    if (!isTypedView(type))
+        return upperBound;
+    return types.integer({ 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE >> logElementSize(type)) });
 }
 
 static TypeID refinedTypeOfConversion(TypeArena& types, Opcode opcode, TypeID operandID, TypeID upperBound)
@@ -216,12 +240,16 @@ static TypeID refinedTypeOfOperation(const TypingContext& context, const Operati
         return refinedTypeOfQuotient(types, operands[OperandIndex::DivideIntegers::dividend], operands[OperandIndex::DivideIntegers::divisor], operation.rounding(), upperBound);
     case Opcode::RemainderOfIntegers:
         return refinedTypeOfWholeRemainder(types, operands[OperandIndex::RemainderOfIntegers::dividend], operands[OperandIndex::RemainderOfIntegers::divisor], upperBound);
+    case Opcode::RemainderByReciprocal:
+        return refinedTypeOfWholeRemainder(types, operands[OperandIndex::RemainderByReciprocal::dividend], operands[OperandIndex::RemainderByReciprocal::divisor], upperBound);
     case Opcode::IntegerBound:
         return refinedTypeOfIntegerBound(types, operands[OperandIndex::IntegerBound::number], upperBound);
     case Opcode::GetStringLength:
         return refinedTypeOfStringLength(context, operands[OperandIndex::GetStringLength::string], upperBound);
     case Opcode::GetTypedArrayElement:
-        return refinedTypeOfTypedArrayElement(context, operation, upperBound);
+        return refinedTypeOfTypedArrayElement(context, operation, operands[OperandIndex::GetTypedArrayElement::view], upperBound);
+    case Opcode::GetTypedArrayLength:
+        return refinedTypeOfTypedArrayLength(types, operation.typedArrayType(), upperBound);
     case Opcode::GetSuperBase:
         return refinedTypeOfSuperBase(context, operation.homeKind(), operands[OperandIndex::GetSuperBase::home], upperBound);
     default:

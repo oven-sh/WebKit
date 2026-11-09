@@ -263,6 +263,7 @@ public:
     static constexpr unsigned waysPerSet = 4;
 
     ALWAYS_INLINE AssignmentPlan* planFor(VM&, JSObject* target, JSObject* extraProperties, const AssignmentSource&);
+    ALWAYS_INLINE AssignmentPlan* planFromSecondCopyOn(VM&, JSObject* target, JSObject* extraProperties, const AssignmentSource&);
     CopyOfTwoPlan* planForCopyOfTwo(VM&, JSGlobalObject*, const AssignmentSource* first, const AssignmentSource* second);
     ALWAYS_INLINE void didRunAsBefore(AssignmentPlan&);
     ALWAYS_INLINE AssignmentPlan* recentPlan(StructureID target, StructureID source, uint32_t sourceOrderWord, uint32_t excludedRunNumberPlusOne) { return m_recentPlans[recentIndex(target, source, sourceOrderWord, excludedRunNumberPlusOne)]; }
@@ -374,6 +375,16 @@ ALWAYS_INLINE AssignmentPlan* AssignmentPlanCache::planFor(VM& vm, JSObject* tar
     if (AssignmentPlan* plan = find(targetID, extraPropertiesID, source, hash)) [[likely]]
         return plan;
     return makePlan(vm, target, extraProperties, source, hash);
+}
+
+ALWAYS_INLINE AssignmentPlan* AssignmentPlanCache::planFromSecondCopyOn(VM& vm, JSObject* target, JSObject* extraProperties, const AssignmentSource& source)
+{
+    StructureID targetID = target->structureID();
+    StructureID extraPropertiesID = extraProperties ? extraProperties->structureID() : StructureID();
+    uint32_t hash = hashFor(targetID, extraPropertiesID, source);
+    if (AssignmentPlan* plan = find(targetID, extraPropertiesID, source, hash)) [[likely]]
+        return plan;
+    return isSecondCopy(hash) ? makePlan(vm, target, extraProperties, source, hash) : nullptr;
 }
 
 ALWAYS_INLINE MappedCopy& AssignmentPlanCache::mappedCopyAt(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)

@@ -179,6 +179,21 @@ static bool matchesOnlyWhole8BitSubjects(const Yarr::YarrPattern& pattern)
     return consumesOnly8BitCharacters(*pattern.m_body, refersToGroup(*pattern.m_body) ? LookaroundContents::Checked : LookaroundContents::Ignored);
 }
 
+static uint64_t groupsPresentInEveryMatch(const Yarr::PatternDisjunction& disjunction)
+{
+    if (disjunction.m_alternatives.size() != 1)
+        return 0;
+    uint64_t groups = 0;
+    for (const Yarr::PatternTerm& term : disjunction.m_alternatives[0]->m_terms) {
+        if (term.type != Yarr::PatternTerm::Type::ParenthesesSubpattern || term.parentheses.isCopy || term.quantityMinCount != 1 || term.quantityMaxCount != 1)
+            continue;
+        if (term.capture() && term.parentheses.subpatternId < 64)
+            groups |= uint64_t(1) << term.parentheses.subpatternId;
+        groups |= groupsPresentInEveryMatch(*term.parentheses.disjunction);
+    }
+    return groups;
+}
+
 RegExpSummary summarizeRegExp(StringView pattern, OptionSet<Yarr::Flags> flags, unsigned parenthesesDepthLimit)
 {
     RegExpSummary summary;
@@ -212,6 +227,7 @@ RegExpSummary summarizeRegExp(StringView pattern, OptionSet<Yarr::Flags> flags, 
     RELEASE_ASSERT(summary.numSubpatterns == yarrPattern.m_numSubpatterns);
     summary.minimumSize = yarrPattern.m_body->m_minimumSize;
     summary.numDuplicateNamedCaptureGroups = yarrPattern.m_numDuplicateNamedCaptureGroups;
+    summary.groupsPresentInEveryMatch = yarrPattern.m_numDuplicateNamedCaptureGroups ? 0 : groupsPresentInEveryMatch(*yarrPattern.m_body);
     summary.specificPattern = yarrPattern.m_specificPattern;
     summary.matchesOnlyWhole8BitSubjects = matchesOnlyWhole8BitSubjects(yarrPattern);
     summary.namedGroups = sortedNamedGroups(yarrPattern);

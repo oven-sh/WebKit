@@ -81,14 +81,28 @@ struct WalkState::Held::Lists {
     static constexpr uint32_t firstListByLayout = listOfGuards + 1;
     static constexpr uint32_t firstLayoutOfList = firstListByLayout + listsByLayout;
     static constexpr uint32_t severalLayouts = notListed;
-    static constexpr uint32_t headsOfPlaces = firstLayoutOfList + listsByLayout;
-    static constexpr uint32_t entriesOfPlace = 2;
+    static constexpr uint32_t firstListByLayoutAlone = firstLayoutOfList + listsByLayout;
+    static constexpr uint32_t firstLayoutOfListAlone = firstListByLayoutAlone + listsByLayout;
+    static constexpr uint32_t firstListOfAnchors = firstLayoutOfListAlone + listsByLayout;
+    static constexpr uint32_t headsOfPlaces = firstListOfAnchors + listsOfOneHeap;
+    static constexpr uint32_t entriesOfPlace = 3;
     static constexpr uint32_t entryByBit = 0;
     static constexpr uint32_t entryByLayout = 1;
+    static constexpr uint32_t entryInChain = 2;
+    static constexpr uint32_t standsInChain = notListed - 1;
 
     static constexpr uint32_t listOfShapes = 8 * sizeof(OptionSet<FactOfCell>::StorageType);
     static constexpr uint32_t listOfElements = listOfShapes + 1;
     static constexpr uint32_t listsOfHolders = listOfElements + 1;
+    static constexpr uint32_t listOfHoldersNotAsked = listsOfHolders;
+    static constexpr uint32_t listOfWideHolders = listOfHoldersNotAsked + 1;
+    static constexpr uint32_t headsOfHolders = listOfWideHolders + 1;
+    static constexpr uint32_t entryByClass = listsOfHolders;
+    static constexpr uint32_t entriesOfHolder = listsOfHolders + 1;
+    static constexpr uint32_t wordsOfChainOfHolders = 3;
+    static constexpr uint32_t wordOfLayout = 0;
+    static constexpr uint32_t wordOfNewCells = 1;
+    static constexpr uint32_t wordOfFirstHolder = 2;
 
     static uint32_t listOf(FactOfCell fact) { return std::countr_zero(static_cast<OptionSet<FactOfCell>::StorageType>(fact)); }
 
@@ -119,9 +133,15 @@ struct WalkState::Held::Lists {
     }
 
     bool addPlace(uint32_t list, uint32_t whichEntry, uint32_t place) { return add(places, list, headsOfPlaces + place * entriesOfPlace + whichEntry, place); }
-    void addHolder(uint32_t list, uint32_t holder) { add(holders, list, listsOfHolders + holder * listsOfHolders + list, holder); }
+    static uint32_t entryOfHolder(uint32_t holder, uint32_t whichEntry) { return headsOfHolders + holder * entriesOfHolder + whichEntry; }
+    void addHolderByClass(uint32_t list, uint32_t holder) { add(holders, list, entryOfHolder(holder, entryByClass), holder); }
+    void addHolder(uint32_t list, uint32_t holder)
+    {
+        add(holders, list, entryOfHolder(holder, list), holder);
+        addHolderByClass(listOfHoldersNotAsked, holder);
+    }
     void goThroughPlaces(uint32_t list, uint32_t whichEntry, NOESCAPE const Invocable<bool(uint32_t place)> auto& stays) { goThrough(places, list, headsOfPlaces + whichEntry, entriesOfPlace, stays); }
-    void goThroughHolders(uint32_t list, NOESCAPE const Invocable<bool(uint32_t holder)> auto& stays) { goThrough(holders, list, listsOfHolders + list, listsOfHolders, stays); }
+    void goThroughHolders(uint32_t list, NOESCAPE const Invocable<bool(uint32_t holder)> auto& stays) { goThrough(holders, list, headsOfHolders + list, entriesOfHolder, stays); }
     void goThroughPlacesUnder(uint32_t firstList, uint64_t written, NOESCAPE const Invocable<bool(uint32_t place)> auto& stays)
     {
         if (!written)
@@ -131,8 +151,121 @@ struct WalkState::Held::Lists {
         goThroughPlaces(firstList + Place::entireHeap, entryByBit, stays);
     }
 
+    void goThroughHoldersByClass(uint32_t list, NOESCAPE const Invocable<bool(uint32_t holder)> auto& stays) { goThrough(holders, list, headsOfHolders + entryByClass, entriesOfHolder, stays); }
+
+    static uint32_t entryOf(uint32_t place, uint32_t whichEntry) { return headsOfPlaces + place * entriesOfPlace + whichEntry; }
+    static unsigned hashOfChain(uint32_t layout, uint32_t bit) { return WTF::pairIntHash(layout, bit); }
+
+    uint32_t findAnchor(const auto& records, uint32_t layout, uint32_t bit) const
+    {
+        if (!numberOfAnchors)
+            return none;
+        return findInTable(anchors, hashOfChain(layout, bit), [&](uint32_t position) {
+            return records[position].first == layout && records[position].bit == bit;
+        });
+    }
+    void sortOut(const auto& records, uint32_t place)
+    {
+        if (entryOf(place, entryInChain) >= places.size())
+            places.grow(notListed, entryOf(place, entryInChain) + 1);
+        ASSERT(places[entryOf(place, entryByBit)] == notListed && places[entryOf(place, entryInChain)] == notListed);
+        uint32_t layout = records[place].first;
+        uint32_t bit = records[place].bit;
+        uint32_t anchor = findAnchor(records, layout, bit);
+        if (anchor != none) {
+            places.mutableAt(entryOf(place, entryByBit)) = standsInChain;
+            places.mutableAt(entryOf(place, entryInChain)) = std::exchange(places.mutableAt(entryOf(anchor, entryInChain)), place);
+            return;
+        }
+        addPlace(firstListOfAnchors + bit, entryByBit, place);
+        places.mutableAt(entryOf(place, entryInChain)) = none;
+        ++numberOfAnchors;
+        if (numberOfAnchors * 2 <= anchors.size()) {
+            addToTable(anchors, hashOfChain(layout, bit), place);
+            return;
+        }
+        anchors.fill(none, roundUpToPowerOfTwo(numberOfAnchors * 4));
+        for (uint32_t list = 0; list < listsOfOneHeap; ++list) {
+            for (uint32_t listed = places[firstListOfAnchors + list]; listed != none; listed = places[entryOf(listed, entryByBit)])
+                addToTable(anchors, hashOfChain(records[listed].first, records[listed].bit), listed);
+        }
+    }
+    void goThroughChain(uint32_t anchor, NOESCAPE const Invocable<bool(uint32_t place)> auto& stays)
+    {
+        stays(anchor);
+        uint32_t entryOfPrevious = entryOf(anchor, entryInChain);
+        for (uint32_t place = places[entryOfPrevious]; place != none;) {
+            uint32_t entry = entryOf(place, entryInChain);
+            uint32_t next = places[entry];
+            if (stays(place))
+                entryOfPrevious = entry;
+            else {
+                places.mutableAt(entry) = notListed;
+                places.mutableAt(entryOf(place, entryByBit)) = notListed;
+                places.mutableAt(entryOfPrevious) = next;
+            }
+            place = next;
+        }
+    }
+    void goThroughChainsOf(uint32_t bit, NOESCAPE const Invocable<bool(uint32_t place)> auto& stays)
+    {
+        for (uint32_t anchor = places[firstListOfAnchors + bit]; anchor != none; anchor = places[entryOf(anchor, entryByBit)])
+            goThroughChain(anchor, stays);
+    }
+
+    uint32_t findChainOfHolders(ClassOfHolder sought) const
+    {
+        if (!numberOfChainsOfHolders)
+            return none;
+        return findInTable(tableOfChainsOfHolders, hashOfChain(sought.layoutAlone.index(), sought.isNewCellItself), [&](uint32_t chain) {
+            return chainsOfHolders[chain * wordsOfChainOfHolders + wordOfLayout] == sought.layoutAlone.index() && chainsOfHolders[chain * wordsOfChainOfHolders + wordOfNewCells] == sought.isNewCellItself;
+        });
+    }
+    void addToChainOfHolders(ClassOfHolder classOfHolder, uint32_t holder)
+    {
+        ASSERT(holders[entryOfHolder(holder, entryByClass)] == notListed);
+        uint32_t chain = findChainOfHolders(classOfHolder);
+        if (chain == none) {
+            chain = numberOfChainsOfHolders++;
+            chainsOfHolders.grow(none, numberOfChainsOfHolders * wordsOfChainOfHolders);
+            chainsOfHolders.mutableAt(chain * wordsOfChainOfHolders + wordOfLayout) = classOfHolder.layoutAlone.index();
+            chainsOfHolders.mutableAt(chain * wordsOfChainOfHolders + wordOfNewCells) = classOfHolder.isNewCellItself;
+            if (numberOfChainsOfHolders * 2 <= tableOfChainsOfHolders.size())
+                addToTable(tableOfChainsOfHolders, hashOfChain(classOfHolder.layoutAlone.index(), classOfHolder.isNewCellItself), chain);
+            else {
+                tableOfChainsOfHolders.fill(none, roundUpToPowerOfTwo(numberOfChainsOfHolders * 4));
+                for (uint32_t listed = 0; listed < numberOfChainsOfHolders; ++listed)
+                    addToTable(tableOfChainsOfHolders, hashOfChain(chainsOfHolders[listed * wordsOfChainOfHolders + wordOfLayout], chainsOfHolders[listed * wordsOfChainOfHolders + wordOfNewCells]), listed);
+            }
+        }
+        holders.mutableAt(entryOfHolder(holder, entryByClass)) = std::exchange(chainsOfHolders.mutableAt(chain * wordsOfChainOfHolders + wordOfFirstHolder), holder);
+    }
+    void goThroughChainOfHolders(uint32_t chain, NOESCAPE const Invocable<bool(uint32_t holder)> auto& stays)
+    {
+        uint32_t previous = none;
+        for (uint32_t holder = chainsOfHolders[chain * wordsOfChainOfHolders + wordOfFirstHolder]; holder != none;) {
+            uint32_t entry = entryOfHolder(holder, entryByClass);
+            uint32_t next = holders[entry];
+            if (stays(holder))
+                previous = holder;
+            else {
+                holders.mutableAt(entry) = notListed;
+                if (previous == none)
+                    chainsOfHolders.mutableAt(chain * wordsOfChainOfHolders + wordOfFirstHolder) = next;
+                else
+                    holders.mutableAt(entryOfHolder(previous, entryByClass)) = next;
+            }
+            holder = next;
+        }
+    }
+
     Table places;
     Table holders;
+    Table anchors;
+    Table chainsOfHolders;
+    Table tableOfChainsOfHolders;
+    uint32_t numberOfAnchors { 0 };
+    uint32_t numberOfChainsOfHolders { 0 };
 };
 
 WalkState::Held::Held(const Held& other)
@@ -153,6 +286,7 @@ WalkState::Held::Held(const Held& other)
     , m_maskOfPlacesReachedByEffects(other.m_maskOfPlacesReachedByEffects)
     , m_filterOfHolders(other.m_filterOfHolders)
     , m_checkedNames(other.m_checkedNames)
+    , m_filterOfValuesWithCheckedNames(other.m_filterOfValuesWithCheckedNames)
     , m_bindingsPastDeadZone(other.m_bindingsPastDeadZone)
     , m_builtinsRead(other.m_builtinsRead)
     , m_tableOfHolders(other.m_tableOfHolders)
@@ -198,6 +332,25 @@ Reference WalkState::checkedNameHeldFrom(uint32_t place) const
     return { };
 }
 
+void WalkState::nameAnew(Reference value, Reference name)
+{
+    RELEASE_ASSERT(m_program.numbers);
+    Held& held = heldToWrite();
+    if (hasCheckedNames() && (held.m_filterOfValuesWithCheckedNames & bitOfValueWithCheckedName(value))) {
+        for (uint32_t place = m_program.numbers->newestCheckedNameOf(value); place; place = m_program.numbers->checkedName(place - 1).older) {
+            if (!held.m_checkedNames.contains(place - 1))
+                continue;
+            held.m_checkedNames.remove(place - 1);
+            break;
+        }
+    }
+    uint32_t number = m_program.numbers->addCheckedName(value, name);
+    m_program.numbers->rememberNumberThatNames(name, number);
+    held.m_checkedNames.add(number);
+    held.m_filterOfValuesWithCheckedNames |= bitOfValueWithCheckedName(value);
+    m_marks.kinds |= Kinds::checkedNames;
+}
+
 NEVER_INLINE void WalkState::takeMarksOfStateWithoutWholeProgram(WalkState& other)
 {
     Marks marks = m_marks;
@@ -233,18 +386,19 @@ void WalkState::dropAllRecords()
         return;
     m_held = new Held;
     m_held->m_checkedNames = shared->m_checkedNames;
+    m_held->m_filterOfValuesWithCheckedNames = shared->m_filterOfValuesWithCheckedNames;
     m_held->m_bindingsPastDeadZone = shared->m_bindingsPastDeadZone;
     m_held->m_builtinsRead = shared->m_builtinsRead;
 }
 
-void WalkState::endWhatIsWritten(const Effects& effects)
+void WalkState::endWhatIsWritten(const Effects& effects, const MemoryLocation* writtenAlone)
 {
     if (effects.mayRunOtherCode()) {
         endWhatIsNotFresh();
         return;
     }
     if (writesInPlace() || m_held->restsOnHeapsAmong(effects.writes)) {
-        heldToWrite().endWhatIsWritten(effects);
+        heldToWrite().endWhatIsWritten(m_program, effects, writtenAlone);
         noteKindsOfRecordsLeft();
     }
 }
@@ -267,17 +421,41 @@ uint8_t WalkState::Held::bitOf(const ProgramOfState& program, const MemoryLocati
     return std::has_single_bit(mask) ? static_cast<uint8_t>(std::countr_zero(mask)) : Place::entireHeap;
 }
 
-uint8_t WalkState::Held::bitOfSlot(const ProgramOfState& program, FieldReference field)
+PropertyKeyID WalkState::Held::keyOfSlot(const ProgramOfState& program, FieldReference field)
 {
     if (!program.program || !field.layout)
-        return Place::entireHeap;
+        return { };
     const Layout& layout = program.program->at(field.layout);
-    PropertyKeyID key;
     if (field.field < layout.fields.size())
-        key = layout.fields[field.field].key;
-    else if (program.slots)
-        key = program.slots->keyOf(*program.program, field);
+        return layout.fields[field.field].key;
+    return program.slots ? program.slots->keyOf(*program.program, field) : PropertyKeyID();
+}
+
+uint8_t WalkState::Held::bitOfSlot(const ProgramOfState& program, FieldReference field)
+{
+    PropertyKeyID key = keyOfSlot(program, field);
     return key ? bitOf(program, MemoryLocation::objectField(key)) : Place::entireHeap;
+}
+
+bool WalkState::Held::liesBesideWhatIsWritten(const ProgramOfState& program, const Place& place, uint64_t written, const MemoryLocation* writtenAlone)
+{
+    if (!writtenAlone || written != place.mask())
+        return false;
+    switch (place.kind) {
+    case PlaceKind::Slot: {
+        PropertyKeyID key = writtenAlone->heap() == AbstractHeap::ObjectFields ? keyOfSlot(program, FieldReference { LayoutID(place.first), place.second }) : PropertyKeyID();
+        return key && program.program->types.compareByContent(key, writtenAlone->key()) != 0;
+    }
+    case PlaceKind::Variable:
+        return writtenAlone->heap() == AbstractHeap::ModuleVariables && place.first != writtenAlone->variable().index();
+    case PlaceKind::EnvironmentField:
+        return writtenAlone->heap() == AbstractHeap::EnvironmentFields && (place.first != writtenAlone->environmentLayout().index() || place.second != writtenAlone->environmentFieldIndex());
+    case PlaceKind::Element:
+    case PlaceKind::GuardOfStores:
+    case PlaceKind::GuardOfReads:
+        break;
+    }
+    return false;
 }
 
 NEVER_INLINE uint32_t WalkState::Held::findRecordOfHolderInTable(Reference object) const
@@ -620,10 +798,12 @@ void WalkState::Held::listAsReachedByEffects(uint32_t holder)
 void WalkState::Held::takeOffListOfReachedByEffects(uint32_t holder)
 {
     uint32_t place = std::exchange(m_holders.mutableAt(holder).placeAmongReachedByEffects, none);
-    uint32_t last = m_holdersReachedByEffects.takeLast();
+    uint32_t numberLeft = m_holdersReachedByEffects.size() - 1;
+    uint32_t last = m_holdersReachedByEffects[numberLeft];
+    m_holdersReachedByEffects.shrink(numberLeft);
     if (last == holder)
         return;
-    m_holdersReachedByEffects[place] = last;
+    m_holdersReachedByEffects.mutableAt(place) = last;
     m_holders.mutableAt(last).placeAmongReachedByEffects = place;
 }
 
@@ -641,7 +821,7 @@ void WalkState::Held::forEachHolderReachedByEffects(NOESCAPE const Invocable<voi
     OptionSet<FactOfCell> facts;
     uint16_t kindsOfPlaces = 0;
     uint64_t maskOfPlaces = 0;
-    for (size_t index = 0; index < m_holdersReachedByEffects.size();) {
+    for (uint32_t index = 0; index < m_holdersReachedByEffects.size();) {
         uint32_t holder = m_holdersReachedByEffects[index];
         functor(holder);
         const Holder& record = m_holders[holder];
@@ -862,6 +1042,22 @@ Vector<WalkState::SlotOfObject, 8> WalkState::listSlotsOf(Reference object) cons
     return slots;
 }
 
+Vector<WalkState::ElementOfObject, 8> WalkState::listElementsOf(Reference object) const
+{
+    Vector<ElementOfObject, 8> elements;
+    if (!mayHoldPlaceOf(object))
+        return elements;
+    uint32_t holder = m_held->findHolder(object);
+    if (holder == none)
+        return elements;
+    for (uint32_t position = m_held->m_holders[holder].firstElement; position != none; position = m_held->m_places[position].next) {
+        const Place& place = m_held->m_places[position];
+        if (place.value && place.kind == PlaceKind::Element && !place.second)
+            elements.append({ Reference::fromBits(place.first), place.value });
+    }
+    return elements;
+}
+
 Vector<Reference, 8> WalkState::listFreshObjects() const
 {
     Vector<Reference, 8> fresh;
@@ -932,6 +1128,15 @@ void WalkState::Held::noteElement(Reference object, Reference index, Reference v
     dropEndedRecordsIfMany();
 }
 
+void WalkState::Held::noteElementWithNaNForHole(Reference object, Reference index, Reference value)
+{
+    ASSERT(object && index && value);
+    notePlace(PlaceKind::Element, object, index.bits(), 1, value, [] {
+        return Place::entireHeap;
+    });
+    dropEndedRecordsIfMany();
+}
+
 void WalkState::Held::noteStoresPassAbove(LayoutID classLayout, PropertyKeyID key, Reference test)
 {
     notePlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits(), test, [] {
@@ -973,10 +1178,10 @@ void WalkState::Held::makeLists()
     m_lists = new Lists;
     m_lists->places.fill(none, Lists::headsOfPlaces);
     m_lists->places.grow(Lists::notListed, Lists::headsOfPlaces + m_places.size() * Lists::entriesOfPlace);
-    m_lists->holders.fill(none, Lists::listsOfHolders);
-    m_lists->holders.grow(Lists::notListed, Lists::listsOfHolders + m_holders.size() * Lists::listsOfHolders);
-    for (uint32_t holder : m_holdersReachedByEffects)
-        listWhatHangsOn(holder);
+    m_lists->holders.fill(none, Lists::headsOfHolders);
+    m_lists->holders.grow(Lists::notListed, Lists::headsOfHolders + m_holders.size() * Lists::entriesOfHolder);
+    for (uint32_t index = 0; index < m_holdersReachedByEffects.size(); ++index)
+        listWhatHangsOn(m_holdersReachedByEffects[index]);
 }
 
 void WalkState::Held::dropLists()
@@ -1065,8 +1270,8 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
             return false;
         });
     };
-    auto goThroughPlaces = [&](uint32_t firstList, uint64_t written, const auto& mayEnd) {
-        m_lists->goThroughPlacesUnder(firstList, written, [&](uint32_t position) {
+    auto staysBehindWrite = [&](uint64_t written, const auto& mayEnd) {
+        return [&, written](uint32_t position) {
             const Place& place = m_places[position];
             uint32_t holder = place.holder;
             if (!place.value || m_holders[holder].isFresh)
@@ -1076,29 +1281,119 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
             endPlace(position);
             holdersThatLostSomething.append(holder);
             return false;
-        });
+        };
+    };
+    auto goThroughPlaces = [&](uint32_t firstList, uint64_t written, const auto& mayEnd) {
+        m_lists->goThroughPlacesUnder(firstList, written, staysBehindWrite(written, mayEnd));
     };
     auto holderIsWritten = [&](const Place& place) {
         return isWritten(place.holder);
     };
 
-    if (ends.shapes) {
+    const WriterOfOneObject* writer = ends.writerOfOneObject;
+    if (writer && (ends.shapes || ends.elements || !ends.facts.isEmpty())) {
+        auto hasWhatListsOfHoldersHold = [&](uint32_t holder) {
+            const Holder& record = m_holders[holder];
+            return !record.hasEnded && !record.isFresh && (record.shape || !record.factsOfCell.isEmpty() || record.numberOfElements);
+        };
+        Vector<uint32_t, 16> holdersToAsk;
+        m_lists->goThroughHoldersByClass(Lists::listOfHoldersNotAsked, [&](uint32_t holder) {
+            if (hasWhatListsOfHoldersHold(holder))
+                holdersToAsk.append(holder);
+            return false;
+        });
+        for (uint32_t holder : holdersToAsk) {
+            Reference object = m_holders[holder].object;
+            ClassOfHolder classOfHolder = object ? writer->classOf(object) : ClassOfHolder();
+            if (classOfHolder.layoutAlone)
+                m_lists->addToChainOfHolders(classOfHolder, holder);
+            else
+                m_lists->addHolderByClass(Lists::listOfWideHolders, holder);
+        }
+        auto staysBehindWriter = [&](uint32_t holder) {
+            if (!hasWhatListsOfHoldersHold(holder))
+                return false;
+            if (!isWritten(holder))
+                return true;
+            bool lostSomething = false;
+            if (ends.shapes && m_holders[holder].shape) {
+                endShape(holder);
+                lostSomething = true;
+            }
+            if (m_holders[holder].factsOfCell.containsAny(ends.facts)) {
+                endFactsOfCell(holder, ends.facts);
+                lostSomething = true;
+            }
+            if (ends.elements && m_holders[holder].numberOfElements) {
+                endPlacesOf(holder, ListOfPlaces::Elements, [](const Place&) {
+                    return true;
+                });
+                lostSomething = true;
+            }
+            if (lostSomething)
+                holdersThatLostSomething.append(holder);
+            return hasWhatListsOfHoldersHold(holder);
+        };
+        auto goThroughChainOf = [&](bool newCellsThemselves) {
+            if (uint32_t chain = m_lists->findChainOfHolders({ writer->classOfRoot.layoutAlone, newCellsThemselves }); chain != none)
+                m_lists->goThroughChainOfHolders(chain, staysBehindWriter);
+        };
+        m_lists->goThroughHoldersByClass(Lists::listOfWideHolders, staysBehindWriter);
+        goThroughChainOf(false);
+        if (!writer->classOfRoot.isNewCellItself)
+            goThroughChainOf(true);
+        else if (uint32_t own = findHolder(writer->root); own != none)
+            staysBehindWriter(own);
+    }
+    if (ends.shapes && !writer) {
         goThroughHolders(Lists::listOfShapes, [](const Holder& record) {
             return !!record.shape;
         }, [&](uint32_t holder) {
             endShape(holder);
         });
     }
-    for (FactOfCell fact : ends.facts) {
+    for (FactOfCell fact : writer ? OptionSet<FactOfCell>() : ends.facts) {
         goThroughHolders(Lists::listOf(fact), [&](const Holder& record) {
             return record.factsOfCell.contains(fact);
         }, [&](uint32_t holder) {
             endFactsOfCell(holder, ends.facts);
         });
     }
-    goThroughPlaces(Lists::firstListOfSlots, ends.slots, holderIsWritten);
+    if (ends.slots) {
+        bool writesOneLayout = writer;
+        Vector<uint32_t, 16> foundToBeOfLayoutAlone;
+        auto slotStays = staysBehindWrite(ends.slots, holderIsWritten);
+        auto goThroughSlotsOf = [&](uint32_t list) {
+            m_lists->goThroughPlaces(Lists::firstListOfSlots + list, Lists::entryByBit, [&](uint32_t position) {
+                if (!slotStays(position))
+                    return false;
+                if (!writesOneLayout || !writer->isOfLayoutAlone(m_holders[m_places[position].holder].object, LayoutID(m_places[position].first)))
+                    return true;
+                foundToBeOfLayoutAlone.append(position);
+                return false;
+            });
+            if (!writesOneLayout)
+                m_lists->goThroughChainsOf(list, slotStays);
+            else if (uint32_t anchor = m_lists->findAnchor(m_places, writer->classOfRoot.layoutAlone.index(), list); anchor != none)
+                m_lists->goThroughChain(anchor, slotStays);
+        };
+        for (uint64_t bits = ends.slots; bits; bits &= bits - 1)
+            goThroughSlotsOf(std::countr_zero(bits));
+        goThroughSlotsOf(Place::entireHeap);
+        for (uint32_t position : foundToBeOfLayoutAlone)
+            m_lists->sortOut(m_places, position);
+    }
     goThroughPlaces(Lists::firstListOfEnvironmentFields, ends.environmentFields, holderIsWritten);
-    goThroughPlaces(Lists::firstListOfVariables, ends.variables, holderIsWritten);
+    if (ends.variableWrittenAlone) {
+        uint32_t holder = findHolder(Reference());
+        uint32_t written = holder != none ? findPlace(holder, PlaceKind::Variable, ends.variableWrittenAlone.index(), 0) : none;
+        if (written != none) {
+            endPlace(written);
+            holdersThatLostSomething.append(holder);
+        }
+        m_lists->goThroughPlaces(Lists::firstListOfVariables + Place::entireHeap, Lists::entryByBit, staysBehindWrite(ends.variables, holderIsWritten));
+    } else
+        goThroughPlaces(Lists::firstListOfVariables, ends.variables, holderIsWritten);
     if (ends.guards) {
         m_lists->goThroughPlaces(Lists::listOfGuards, Lists::entryByBit, [&](uint32_t position) {
             const Place& place = m_places[position];
@@ -1112,7 +1407,7 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
             return false;
         });
     }
-    if (ends.elements) {
+    if (ends.elements && !writer) {
         goThroughHolders(Lists::listOfElements, [](const Holder& record) {
             return !!record.numberOfElements;
         }, [&](uint32_t holder) {
@@ -1125,7 +1420,7 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
         endHolderIfNothingHangsOn(holder);
 }
 
-void WalkState::Held::invalidateAliasedSlotsByLists(uint32_t own, uint8_t bit, FieldReference field, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject)
+void WalkState::Held::invalidateAliasedSlotsByLists(uint32_t own, uint8_t bit, FieldReference field, bool storesIntoLayoutAlone, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject, NOESCAPE const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone)
 {
     uint32_t layout = field.layout.index();
     Vector<uint32_t, 16> holdersThatLostSomething;
@@ -1154,42 +1449,63 @@ void WalkState::Held::invalidateAliasedSlotsByLists(uint32_t own, uint8_t bit, F
         return place.first == layout && place.second == field.field;
     };
     auto endSameFieldIn = [&](uint32_t list) {
-        m_lists->goThroughPlaces(list, Lists::entryByBit, [&](uint32_t position) {
+        auto staysBesideStore = [&](uint32_t position) {
             return endIf(position, isSameField);
-        });
+        };
+        m_lists->goThroughPlaces(Lists::firstListOfSlots + list, Lists::entryByBit, staysBesideStore);
+        if (uint32_t anchor = m_lists->findAnchor(m_places, layout, list); anchor != none)
+            m_lists->goThroughChain(anchor, staysBesideStore);
     };
     if (bit == Place::entireHeap) {
         for (uint32_t list = 0; list < Lists::listsOfOneHeap; ++list)
-            endSameFieldIn(Lists::firstListOfSlots + list);
+            endSameFieldIn(list);
     } else {
-        endSameFieldIn(Lists::firstListOfSlots + bit);
-        endSameFieldIn(Lists::firstListOfSlots + Place::entireHeap);
+        endSameFieldIn(bit);
+        endSameFieldIn(Place::entireHeap);
     }
 
-    for (uint32_t byLayout = 0; byLayout < Lists::listsByLayout; ++byLayout) {
-        if (m_lists->places[Lists::firstListByLayout + byLayout] == none || m_lists->places[Lists::firstLayoutOfList + byLayout] == layout)
-            continue;
-        bool someStay = false;
-        uint32_t layoutOfList = none;
-        m_lists->goThroughPlaces(Lists::firstListByLayout + byLayout, Lists::entryByLayout, [&](uint32_t position) {
-            bool stays = endIf(position, [&](const Place& place) {
-                return place.first != layout;
+    Vector<uint32_t, 16> foundToBeOfLayoutAlone;
+    auto goThroughListsByLayout = [&](uint32_t firstList, uint32_t firstLayout, bool sortsOut) {
+        for (uint32_t byLayout = 0; byLayout < Lists::listsByLayout; ++byLayout) {
+            if (m_lists->places[firstList + byLayout] == none || m_lists->places[firstLayout + byLayout] == layout)
+                continue;
+            bool someStay = false;
+            uint32_t layoutOfList = none;
+            m_lists->goThroughPlaces(firstList + byLayout, Lists::entryByLayout, [&](uint32_t position) {
+                bool stays = endIf(position, [&](const Place& place) {
+                    return place.first != layout;
+                });
+                if (stays && sortsOut && isOfLayoutAlone(m_holders[m_places[position].holder].object, LayoutID(m_places[position].first))) {
+                    foundToBeOfLayoutAlone.append(position);
+                    return false;
+                }
+                if (stays) {
+                    uint32_t layoutOfPlace = m_places[position].first;
+                    layoutOfList = !someStay || layoutOfList == layoutOfPlace ? layoutOfPlace : Lists::severalLayouts;
+                    someStay = true;
+                }
+                return stays;
             });
-            if (stays) {
-                uint32_t layoutOfPlace = m_places[position].first;
-                layoutOfList = !someStay || layoutOfList == layoutOfPlace ? layoutOfPlace : Lists::severalLayouts;
-                someStay = true;
-            }
-            return stays;
-        });
-        if (m_lists->places[Lists::firstLayoutOfList + byLayout] != layoutOfList)
-            m_lists->places.mutableAt(Lists::firstLayoutOfList + byLayout) = layoutOfList;
+            if (m_lists->places[firstLayout + byLayout] != layoutOfList)
+                m_lists->places.mutableAt(firstLayout + byLayout) = layoutOfList;
+        }
+    };
+    goThroughListsByLayout(Lists::firstListByLayout, Lists::firstLayoutOfList, true);
+    if (!storesIntoLayoutAlone)
+        goThroughListsByLayout(Lists::firstListByLayoutAlone, Lists::firstLayoutOfListAlone, false);
+    for (uint32_t position : foundToBeOfLayoutAlone) {
+        uint32_t layoutOfPlace = m_places[position].first;
+        uint32_t byLayout = layoutOfPlace % Lists::listsByLayout;
+        bool wasEmpty = m_lists->places[Lists::firstListByLayoutAlone + byLayout] == none;
+        m_lists->addPlace(Lists::firstListByLayoutAlone + byLayout, Lists::entryByLayout, position);
+        if (wasEmpty || m_lists->places[Lists::firstLayoutOfListAlone + byLayout] != layoutOfPlace)
+            m_lists->places.mutableAt(Lists::firstLayoutOfListAlone + byLayout) = wasEmpty ? layoutOfPlace : Lists::severalLayouts;
     }
     for (uint32_t holder : holdersThatLostSomething)
         endHolderIfNothingHangsOn(holder);
 }
 
-void WalkState::Held::invalidateAliasedSlots(const ProgramOfState& program, Reference object, FieldReference field, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject)
+void WalkState::Held::invalidateAliasedSlots(const ProgramOfState& program, Reference object, FieldReference field, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject, NOESCAPE const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone)
 {
     if (!m_numberOfPlaces)
         return;
@@ -1204,7 +1520,7 @@ void WalkState::Held::invalidateAliasedSlots(const ProgramOfState& program, Refe
         return;
     }
     if (goesByLists()) [[unlikely]] {
-        invalidateAliasedSlotsByLists(own, bitOfSlot(program, field), field, mayBeSameObject);
+        invalidateAliasedSlotsByLists(own, bitOfSlot(program, field), field, isOfLayoutAlone(object, field.layout), mayBeSameObject, isOfLayoutAlone);
         dropEndedRecordsIfMany();
         return;
     }
@@ -1256,7 +1572,7 @@ bool WalkState::Held::restsOnHeapsAmong(const LocationMasks& writes) const
         || (m_numberOfHoldersWithFactsOfCell && !factsOfCellEndedBy(writes).isEmpty());
 }
 
-void WalkState::Held::endWhatIsWritten(const Effects& effects)
+void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effects& effects, const MemoryLocation* writtenAlone)
 {
     if (effects.mayRunOtherCode()) {
         endWhatIsNotFresh();
@@ -1318,7 +1634,7 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects)
             uint16_t kindsLeft = 0;
             uint64_t maskLeft = 0;
             endPlacesOf(holder, ListOfPlaces::AllButElements, [&](const Place& place) {
-                if (writtenOfKind(place.kind) & place.mask())
+                if ((writtenOfKind(place.kind) & place.mask()) && !liesBesideWhatIsWritten(program, place, writtenOfKind(place.kind), writtenAlone))
                     return true;
                 kindsLeft |= 1 << static_cast<unsigned>(place.kind);
                 maskLeft |= place.mask();
@@ -1332,8 +1648,9 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects)
             endPlacesOf(holder, ListOfPlaces::Elements, endsAlways);
     };
     if (reachesSomething && goesByLists()) [[unlikely]] {
+        bool namesOneVariable = writtenAlone && writtenAlone->heap() == AbstractHeap::ModuleVariables && variablesWritten == Typed::maskOf(*program.program, *writtenAlone);
         endByLists({ .shapes = endsShapes, .elements = endsElements, .facts = factsEnded, .slots = slotsWritten, .variables = variablesWritten,
-            .environmentFields = environmentFieldsWritten, .guards = guardsWritten });
+            .environmentFields = environmentFieldsWritten, .guards = guardsWritten, .variableWrittenAlone = namesOneVariable ? writtenAlone->variable() : VariableID() });
     } else if (reachesSomething)
         forEachHolderReachedByEffects(endWhatHangsOn);
 
@@ -1357,7 +1674,7 @@ void WalkState::Held::endWhatIsNotFresh()
         return;
     }
     while (!m_holdersReachedByEffects.isEmpty())
-        endHolder(m_holdersReachedByEffects.last());
+        endHolder(m_holdersReachedByEffects[m_holdersReachedByEffects.size() - 1]);
     dropEndedRecordsIfMany();
 }
 
@@ -1394,6 +1711,7 @@ void WalkState::Held::clear()
     if (!holdsNoRecord())
         dropAllRecords();
     m_checkedNames.clear();
+    m_filterOfValuesWithCheckedNames = 0;
     m_bindingsPastDeadZone.clear();
     m_builtinsRead.clear();
 }
@@ -1448,8 +1766,12 @@ void WalkState::meetWith(const WalkState& other, RecordsLastMet* last)
     if (&other == this)
         return;
     m_answers.meetWith(other.m_answers);
-    if (m_marks.turnInWhichNothingWasDone != other.m_marks.turnInWhichNothingWasDone)
-        m_marks.turnInWhichNothingWasDone = ((m_marks.turnInWhichNothingWasDone ^ other.m_marks.turnInWhichNothingWasDone) & ~placesWereWrittenInTurn) ? 0 : m_marks.turnInWhichNothingWasDone | placesWereWrittenInTurn;
+    if (m_marks.turnInWhichNothingWasDone != other.m_marks.turnInWhichNothingWasDone) {
+        bool storesOfBothCanBePutBack = !((m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone) & placesWereWrittenInTurn) && newestStoreToPutBack() == other.newestStoreToPutBack();
+        m_marks.turnInWhichNothingWasDone = turnOfMark(m_marks.turnInWhichNothingWasDone) != turnOfMark(other.m_marks.turnInWhichNothingWasDone) ? 0
+            : storesOfBothCanBePutBack ? m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone
+            : turnOfMark(m_marks.turnInWhichNothingWasDone) | placesWereWrittenInTurn;
+    }
     if (m_held == other.m_held || holdsNothing())
         return;
     if (other.holdsNothing()) {
@@ -1465,6 +1787,7 @@ void WalkState::meetWith(const WalkState& other, RecordsLastMet* last)
 void WalkState::Held::meetWith(const Held& other, RecordsLastMet* last)
 {
     m_checkedNames.keepMembersOf(other.m_checkedNames);
+    m_filterOfValuesWithCheckedNames = m_checkedNames.isEmpty() ? 0 : m_filterOfValuesWithCheckedNames & other.m_filterOfValuesWithCheckedNames;
     m_bindingsPastDeadZone.keepMembersOf(other.m_bindingsPastDeadZone);
     m_builtinsRead.keepMembersOf(other.m_builtinsRead);
     if (holdsNoRecord())

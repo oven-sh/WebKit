@@ -732,11 +732,16 @@ static NEVER_INLINE bool isSettledByMock(VM& vm, bool someRecordHasLiveExports, 
         auto* compiled = dynamicDowncast<AOT::ModuleRecord>(found.moduleRecord);
         return (compiled && compiled->standsForMock()) || (someRecordHasLiveExports && found.isLiveExport(vm));
     };
-    return (isOfMock(first) || isOfMock(second)) && !first.isSameBinding(second);
+    bool isOfEndedMock = (first.isOfEndedMock || second.isOfEndedMock) && !first.cameThroughEntryFromStar && !second.cameThroughEntryFromStar;
+    return (isOfEndedMock || isOfMock(first) || isOfMock(second)) && !first.isSameBinding(second);
 }
 #endif
 
+#if ENABLE(AOT)
+auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const ResolveQuery& root, AOT::ModuleRecord* leaderOfRoot) -> Resolution
+#else
 auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const ResolveQuery& root) -> Resolution
+#endif
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -984,6 +989,9 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     struct Task {
         ResolveQuery query;
         Type type;
+#if ENABLE(AOT)
+        AOT::ModuleRecord* leader { nullptr };
+#endif
     };
 
     auto typeString = [] (Type type) -> const char* {
@@ -1053,6 +1061,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     // If there is ambiguity, return "false". When the "false" is returned, we should make the result "ambiguous".
 #if ENABLE(AOT)
     bool wasSettledByMock = false;
+    bool wasAnsweredByEndedMock = false;
 #endif
     auto mergeToCurrentTop = [&] (const Resolution& resolution) -> bool {
         if (resolution.type == Resolution::Type::NotFound)
@@ -1084,7 +1093,11 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
         query.moduleRecord->cacheResolution(query.exportName.get(), resolution);
     };
 
+#if ENABLE(AOT)
+    pendingTasks.append(Task { root, Type::Query, leaderOfRoot });
+#else
     pendingTasks.append(Task { root, Type::Query });
+#endif
     while (!pendingTasks.isEmpty()) {
         const Task task = pendingTasks.takeLast();
         const ResolveQuery& query = task.query;
@@ -1113,14 +1126,36 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             }
 #endif
 
+#if ENABLE(AOT)
+            // Such a record has no `export *` of its own, so no ring passes it, and two roads to it may get two answers.
+            auto* compiled = vm.hasCompiledCode() ? dynamicDowncast<AOT::ModuleRecord>(moduleRecord) : nullptr;
+            bool answersByLeader = compiled && compiled->answersByWhoLedToIt();
+            // A module whose mock has ended answers each further road too, in the view of who led there. Its own stars were followed on the first.
+            bool isFurtherRoad = !answersByLeader && !resolveSet.add(task.query).isNewEntry;
+            if (isFurtherRoad && !(compiled && compiled->keepsEndedMock()))
+                continue;
+#else
             if (!resolveSet.add(task.query).isNewEntry)
                 continue;
+#endif
 
 #if ENABLE(AOT)
-            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleRecord)) {
+            if (compiled) {
+                // What a compiled record keeps is the whole answer for it, as resolveExportByName() hands it out.
+                std::optional<Resolution> kept = compiled->someMockStandsInPlace() || answersByLeader || isFurtherRoad ? std::nullopt : moduleRecord->tryGetCachedResolution(query.exportName.get());
+                if (const Resolution* keptForNow = kept || answersByLeader || isFurtherRoad ? nullptr : compiled->resolutionKept(query.exportName.get()))
+                    kept = *keptForNow;
+                if (kept) {
+                    foundStarLinks = true;
+                    if (!mergeToCurrentTop(*kept))
+                        return Resolution::ambiguous();
+                    continue;
+                }
                 Vector<AbstractModuleRecord*, 8> starTargets;
-                Resolution resolution = compiled->resolveOwnExport(globalObject, Identifier::fromUid(vm, query.exportName.get()), starTargets);
+                Resolution resolution = compiled->resolveOwnExport(globalObject, Identifier::fromUid(vm, query.exportName.get()), starTargets, task.leader);
+                RELEASE_ASSERT(!answersByLeader || starTargets.isEmpty());
                 RETURN_IF_EXCEPTION(scope, Resolution::error());
+                wasAnsweredByEndedMock |= resolution.isOfEndedMock;
                 switch (resolution.type) {
                 case Resolution::Type::Error:
                     return Resolution::error();
@@ -1130,9 +1165,11 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                 case Resolution::Type::Resolved:
                     if (!mergeToCurrentTop(resolution))
                         return Resolution::ambiguous();
+                    if (isFurtherRoad)
+                        starTargets.clear();
                     foundStarLinks |= !starTargets.isEmpty();
                     while (!starTargets.isEmpty())
-                        pendingTasks.append(Task { ResolveQuery(starTargets.takeLast(), query.exportName.get()), Type::QueryViaStarExport });
+                        pendingTasks.append(Task { ResolveQuery(starTargets.takeLast(), query.exportName.get()), Type::QueryViaStarExport, compiled });
                     continue;
                 }
             }
@@ -1258,8 +1295,13 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 #endif
 #if ENABLE(AOT)
     if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(root.moduleRecord); compiled && frames[0].type == Resolution::Type::Resolved) {
-        if (compiled->someMockStandsInPlace() || compiled->mayOutlive(frames[0].moduleRecord) || frames[0].moduleRecord->hasLiveExports() || wasSettledByMock)
+        if (compiled->someMockStandsInPlace() || compiled->mayOutlive(frames[0].moduleRecord) || frames[0].moduleRecord->hasLiveExports() || wasSettledByMock || wasAnsweredByEndedMock) {
+            if (!wasSettledByMock && !wasAnsweredByEndedMock)
+                compiled->keepResolution(root.exportName.get(), frames[0]);
             return frames[0];
+        }
+        if (auto* named = dynamicDowncast<AOT::ModuleRecord>(frames[0].moduleRecord))
+            named->retain();
     }
 #endif
     //  1. The starting point is always cacheable.
@@ -1267,6 +1309,16 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
         cacheResolutionForQuery(root, frames[0]);
     return frames[0];
 }
+
+#if ENABLE(AOT)
+auto AbstractModuleRecord::resolveExportLedBy(JSGlobalObject* globalObject, const Identifier& exportName, AOT::ModuleRecord* leader) -> Resolution
+{
+    auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this);
+    if (!compiled || !compiled->answersByWhoLedToIt()) [[likely]]
+        return resolveExport(globalObject, exportName);
+    return resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl()), leader);
+}
+#endif
 
 auto AbstractModuleRecord::resolveExport(JSGlobalObject* globalObject, const Identifier& exportName) -> Resolution
 {

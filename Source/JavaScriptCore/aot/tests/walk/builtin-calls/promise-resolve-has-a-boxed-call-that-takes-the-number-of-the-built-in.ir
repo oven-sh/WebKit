@@ -1,0 +1,40 @@
+# Promise.resolve has a boxed call: the call goes to that stub with the number of the built-in's cell, and the function itself is fetched only where the stub leaves for the host function
+# function wrap(x) { return Promise.resolve(x); }
+# RUN: emit f1 mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: NumberOf(
+# What it answers, by name and by value, is what the host answers: a promise as made is handed back itself; what is no thenable comes in a fulfilled promise; a thenable, a promise with a constructor of its own and another `this` go to the host.
+# RUN(RUNS): run-in-shell drive = function (wrap, wrapBy) { const made = Promise.resolve(1); print(wrap(made) === made); print(wrapBy(Promise.resolve, Promise, made) === made); function Other(executor) { executor(value => { this.value = value; }, () => {}); } const other = wrapBy(Promise.resolve, Other, made); print(other === made); print(other instanceof Other); print(other.value === made); const own = Promise.resolve(3); own.constructor = Other; print(wrap(own) === own); try { wrapBy(Promise.resolve, 5, 1); } catch (error) { print(error.constructor.name); } const seen = []; for (const value of [7, "text", undefined, null, { id: 1 }, [1], { then(f) { seen.push("then called"); f("from then"); } }]) wrap(value).then(given => seen.push(typeof given + " " + String(given))); Promise.resolve().then(() => 0).then(() => 0).then(() => 0).then(() => print(seen.join(" | "))); };
+# RUNS: true
+# RUNS-NEXT: true
+# RUNS-NEXT: false
+# RUNS-NEXT: true
+# RUNS-NEXT: true
+# RUNS-NEXT: false
+# RUNS-NEXT: TypeError
+# RUNS-NEXT: number 7 | string text | undefined undefined | object null | object [object Object] | object 1 | then called | string from then
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="drive" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="wrap" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Promise" [isFreeName]
+    v3 = PropGet v2 key="resolve"
+    v4 = Call v3, v2, v0 calleeKey="resolve" calleeName="Promise.resolve"
+    Return v4
+}
+function f2 name="wrapBy" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, v1, v2
+    Return v3
+}

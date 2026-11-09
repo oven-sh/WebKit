@@ -359,6 +359,7 @@ public:
     bool frameMayChangeOnEdge(const Block* from, const Block* target);
     Block* splitEdge(Block* from, unsigned successorIndex, const Snapshot& endOfFrom);
     Position findFirstReadFromHeadOf(const Block*, const Operation* value);
+    bool firstCallBehindHeadReadsValueElsewhere(const Block* target, Reg, const Operation* value);
     bool listsRegistersAtHeadOf(const Block* block) const { return m_proc.checksAllocation() || m_order.of(block).isRare() || m_allocation.isHeadOfFramedPart(block); }
     ArenaVector<std::span<const RegisterBinding>>& registersAtHeads() { return m_allocation.m_registersAtHead; }
     Snapshot takeSnapshot();
@@ -375,6 +376,10 @@ public:
     void noteOperandTakenBack(const Operation* sum, OperandTakenBack, Location otherOperand);
 
     void chooseRegistersKeptThroughLoop(const Loop&, bool movesMayWriteRegisters);
+    const Block* headOfLoopThatBlockOnlyLeadsBackTo(const Block*) const;
+    void dropWhatBlockThatLeadsBackNeitherReadsNorHandsOn(const Block*, const Block* headOfLoop);
+    void holdWhatHeadOfLoopHolds(const Block*, const Block* headOfLoop, Position limitOfDefinitions);
+    Reg takeRegisterOfValueThatLoopReadsBehindPhi(const Loop&, const Operation* phi);
     bool isReadInside(const Operation* value, const Loop&) const;
     void bringInWhatLoopReads(const Loop&, Position limitOfDefinitions);
     bool isKeptThroughLoopAround(Reg, const Operation* value, Position) const;
@@ -396,6 +401,7 @@ public:
     RegisterMask clearPlacesOfValuesHandedTo(Operation* released, Position);
     void findBlocksThatLeadToReadsOf(const Operation* value);
     bool isReadOnSomeWayFromHeadOf(const Operation* value, const Block*);
+    bool dominatesSomeReadBelowDefinitionOf(const Block*, const Operation* value);
     bool isHeldAtHeadThatWayLeadsBackTo(const Operation* value) const;
     bool isReadOnSomeWayOn(const Operation* value, Position);
     RegisterMask registersWhereReleasedValueMayHaveWaited() const;
@@ -414,6 +420,12 @@ public:
     RegisterMask registersWhereCallInBlockTakesWhatLiesThere(const Block*) const;
     unsigned numberOfReadsThatWordWouldReload(const Operation*, Position end) const;
     void findFramedPart();
+    void findSpillsThatNoStepReads();
+    ALWAYS_INLINE Location placeToReadIn(SpillIndex spill) const
+    {
+        m_allocation.m_spills[spill].isRead = true;
+        return Location::spill(spill);
+    }
     void settleFramedPart();
     void standIn(const Block* block)
     {
@@ -524,8 +536,17 @@ public:
     void letEdgesWritePhi(Operation* phi, SpillIndex, const BlockPlace& placeOfHead);
     ArenaVector<Reg> m_hints;
     ArenaVector<Position> m_knownReadsOutsideRareRegions;
+    struct WhetherHeadAroundHolds {
+        uint32_t loopWhoseHeadHolds { noLoop };
+        uint32_t loopFromWhichNoHeadHolds { noLoop };
+        RegisterMask registersHeld { 0 };
+        RegisterMask registersNotHeld { 0 };
+    };
+    ArenaVector<WhetherHeadAroundHolds> m_whetherHeadsAroundHold;
     BitSpan m_hasPassedOnHintsOfPhis;
     ArenaVector<uint32_t> m_firstReadsNotKnownOutOfReach;
+    uint64_t m_numberOfLaterReadsAskedWhetherTheyCount { 0 };
+    ArenaVector<uint32_t> m_lastReadsThatCounted;
     struct FirstReadFromHead {
         Position head { noPosition };
         Position read { noPosition };
@@ -535,6 +556,7 @@ public:
     mutable ArenaVector<std::span<const uint32_t>> m_listsOfReads;
     ArenaVector<uint32_t> m_lastSearchThatReachedBlock;
     uint32_t m_numberOfSearchesForWays { 0 };
+    size_t m_numberOfBlocksReachedBySearchesForWays { 0 };
     const Operation* m_valueOfLastSearchForWays { nullptr };
     ArenaVector<uint32_t> m_firstLoopsWhoseHeadsAreNotJudged;
     Position m_positionOfLastQuestionForLoopNotJudged { noPosition };

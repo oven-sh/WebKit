@@ -23,7 +23,7 @@ public:
 
     CellPointer newPromise(const OperationContext&);
     Condition hasPromiseStructure(CellPointer);
-    void fulfillWithoutBarrier(CellPointer promise, Boxed value);
+    void fulfillWithoutBarrier(CellPointer promise, Boxed value, bool mayStoreCell);
     void fulfillAtStore(const ValueContext& store, CellPointer promise, Boxed value, const Type& valueType);
 };
 

@@ -4,7 +4,7 @@
 # RUN: link functions fields layouts mechanisms=all
 # CHECK: function f1 callers-known one-callee
 # CHECK-NEXT: parameter 0 {{*}}proven=Array
-# CHECK: function f2 callers-known one-callee {{*}}result=undefined|true|i32|string
+# CHECK: function f2 callers-known one-callee {{*}}result=undefined|true|int[0, 2147483647]|string
 # CHECK: function f3 callers-known one-callee {{*}}result=undefined|L0
 # CHECK: field L0.0 "x" proven=string writers-known written-at-construction-alone
 # CHECK: layout L0 changes=[]

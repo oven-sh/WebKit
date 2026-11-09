@@ -23,6 +23,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTState.h"
 #include "ArrayStorage.h"
 #include "DeferGCInlines.h"
@@ -97,6 +98,17 @@ static JSValue readFieldGeneric(Instance* instance, Object* object, UniquedStrin
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetGeneric, EncodedJSValue, (Instance* instance, JSCell* base, UniquedStringImpl* uid))
 {
     LeafOperationScope leaf(*instance->vm);
+    if (Object* object = compiledObjectOrNull(base))
+        return JSValue::encode(readFieldGeneric(instance, object, uid));
+    return JSValue::encode(readGeneric(asObject(base), uid).value);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadRunningNoCode, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key))
+{
+    if (!base->isObject())
+        return JSValue::encode(JSValue());
+    LeafOperationScope leaf(*instance->vm);
+    UniquedStringImpl* uid = instance->state->propertyCaches->nameOf(key).uid;
     if (Object* object = compiledObjectOrNull(base))
         return JSValue::encode(readFieldGeneric(instance, object, uid));
     return JSValue::encode(readGeneric(asObject(base), uid).value);
@@ -749,11 +761,22 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
     }
     if (atom || !nameWithSameLength)
         return nullptr;
+    countEvent(vm, RuntimeCounterID::LongKeysComparedWithNames);
     if (!isEqualToName(string, *nameWithSameLength))
         return nullptr;
-    static thread_local const JSString* lastKeyCompared;
-    if (std::exchange(lastKeyCompared, string) == string && string->tryGetValueImpl())
+    if (string->isRope()) {
+        if (string->is8Bit() == nameWithSameLength->is8Bit())
+            static_cast<const JSRopeString*>(string)->resolveBySharing(*nameWithSameLength);
+        return nameWithSameLength;
+    }
+    VMState::KeysComparedLastWithLongNames& comparedLast = vm.aotState().keysComparedLastWithLongNames;
+    if (uint64_t version = vm.heap.mutatorExecutionVersion(); std::exchange(comparedLast.versionOfHeap, version) != version)
+        comparedLast.byName.clear();
+    auto added = comparedLast.byName.add(nameWithSameLength, string);
+    if (!added.isNewEntry && std::exchange(added.iterator->value, string) == string) {
+        comparedLast.byName.remove(added.iterator);
         string->toExistingAtomString(globalObject);
+    }
     return nameWithSameLength;
 }
 

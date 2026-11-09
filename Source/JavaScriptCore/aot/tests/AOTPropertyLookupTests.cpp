@@ -351,6 +351,37 @@ static JSString* createKeyWithoutAtom(VM& vm)
     return key;
 }
 
+static void testLastIndexOfRegExps(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Realms& realms = program.realms();
+    const Identifier& lastIndex = vm.propertyNames->lastIndex;
+
+    for (ASCIILiteral source : { "/a/g"_s, "/a/"_s, "new RegExp('a', 'y')"_s, "Object.assign(/a/g, { extra: 1 })"_s, "Object.freeze(/a/g)"_s, "new (class extends RegExp { get lastIndex() { return 7; } })('a')"_s }) {
+        JSObject* regExp = realms.object(program.realm(), source);
+        PropertyAnswer answer = readAndClassify(program, regExp, lastIndex);
+        AOT_TEST_CHECK_FOR_SOURCE(isOwn(answer, PropertyAnswerKind::LastIndexOfRegExp, invalidOffset), source);
+        Slot slot = slotFor(answer, regExp->structure());
+        AOT_TEST_CHECK_FOR_SOURCE(slot.kind == Slot::Kind::ArrayLength && slot.has(Slot::isLastIndexOfRegExp) && !slot.payloadBits(), source);
+    }
+    Slot lengthOfList = slotFor(readAndClassify(program, realms.object(program.realm(), "[1, 2]"_s), vm.propertyNames->length), realms.object(program.realm(), "[1, 2]"_s)->structure());
+    AOT_TEST_CHECK(lengthOfList.kind == Slot::Kind::ArrayLength && !lengthOfList.has(Slot::isLastIndexOfRegExp));
+
+    for (ASCIILiteral source : { "Object.create(/a/g)"_s, "({ lastIndex: 3 })"_s, "({ })"_s, "[1]"_s, "(function () { })"_s })
+        AOT_TEST_CHECK_FOR_SOURCE(readAndClassify(program, realms.object(program.realm(), source), lastIndex).kind != PropertyAnswerKind::LastIndexOfRegExp, source);
+    AOT_TEST_CHECK(readAndClassify(program, realms.object(program.realm(), "/a/g"_s), vm.propertyNames->length).kind != PropertyAnswerKind::LastIndexOfRegExp);
+}
+
+static void testEachPlaceOfAnswersWaitsByStateOfItsOwn()
+{
+    BitVector taken(SiteCacheState::numberOfStates);
+    for (uint32_t place = 0; place < SiteCacheState::numberOfStates; ++place) {
+        uint32_t offset = SiteCacheState::offsetOfStateOf(SiteCacheState::keyOfPlaceOfAnswers(place));
+        AOT_TEST_CHECK(!(offset % sizeof(SiteCacheState)) && offset / sizeof(SiteCacheState) < SiteCacheState::numberOfStates);
+        AOT_TEST_CHECK(!taken.quickSet(offset / sizeof(SiteCacheState)));
+    }
+}
+
 static void testIndexesAreNotNames(LoadedProgram& program)
 {
     struct KeyText {
@@ -841,6 +872,8 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/other-prototype"_s, withProgram<testOtherPrototype> },
         { "property-lookup/other-base"_s, withProgram<testOtherBase> },
         { "property-lookup/length-of-typed-arrays"_s, withProgram<testLengthOfTypedArrays> },
+        { "property-lookup/last-index-of-regexps"_s, withProgram<testLastIndexOfRegExps> },
+        { "property-lookup/each-place-of-answers-waits-by-a-state-of-its-own"_s, testEachPlaceOfAnswersWaitsByStateOfItsOwn },
         { "property-lookup/indexes-are-not-names"_s, withProgram<testIndexesAreNotNames> },
         { "property-lookup/absence-filter-names-what-stops-stores"_s, withProgram<testAbsenceFilterNamesWhatStopsStores> },
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },

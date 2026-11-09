@@ -15,6 +15,7 @@ const compilerDirectories = [
   "walk",
 ];
 const runtimeHeadersWithNamedOffsets = ["runtime/AOTAsyncAwaitConditions.h"];
+const instanceLayoutHeader = "runtime/AOTInstanceLayout.h";
 const factsFile = "AOTRuntimeFactsOfLayouts.def";
 const includesFile = "AOTRuntimeFactsOfLayoutsIncludes.h";
 const leftOutFile = "aot/image/AOTRuntimeFactsLeftOut.txt";
@@ -138,11 +139,29 @@ function collectRuntimeFacts(javaScriptCore: string): RuntimeFacts {
       }
     });
   }
+  forEachLineWithGuard(readFileSync(join(javaScriptCore, "aot", instanceLayoutHeader), "utf8"), (line, guard) => {
+    const constant = /^    static constexpr \w+ (\w+) = /.exec(line);
+    if (!constant) return;
+    const text = `InstanceLayout::${constant[1]}`;
+    owners.set(text, "InstanceLayout");
+    if (!guards.has(text)) guards.set(text, new Set());
+    guards.get(text)!.add(guard);
+  });
   const headers = new Set(filesUnder(javaScriptCore, path => path.endsWith(".h")).map(path => basename(path)));
+  const headersDeclaring = new Map<string, string[]>();
+  for (const path of filesUnder(join(javaScriptCore, "aot"), path => path.endsWith(".h") && isCompilerSource(path))) {
+    if (path.replaceAll("\\", "/").includes("/tests/")) continue;
+    for (const [, name] of readFileSync(path, "utf8").matchAll(/^(?:struct|class) (?:[A-Z_]+ )?(\w+)\b[^;]*$/gm)) {
+      headersDeclaring.set(name!, [...(headersDeclaring.get(name!) ?? []), basename(path)]);
+    }
+  }
   const includes = new Set<string>();
   for (const owner of owners.values()) {
     for (const part of owner.replace(/<.*/, "").split("::")) {
-      for (const header of [`${part}.h`, `AOT${part}.h`]) if (headers.has(header)) includes.add(header);
+      const named = [`${part}.h`, `AOT${part}.h`, `Yarr${part}.h`].filter(header => headers.has(header));
+      const declaring = named.length ? [] : (headersDeclaring.get(part) ?? []);
+      if (declaring.length > 1) throw new Error(`${part} is declared in ${declaring.join(" and in ")}`);
+      for (const header of [...named, ...declaring]) includes.add(header);
     }
   }
   const byGuard = new Map<string, string[]>();

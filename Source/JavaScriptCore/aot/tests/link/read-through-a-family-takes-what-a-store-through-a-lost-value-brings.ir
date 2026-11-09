@@ -6,7 +6,7 @@
 #   function pick(flag, one: unknown, two: unknown) { return flag ? one : two; }
 #   function run(n) { const o = makeB(n); (pick(n > 0, o, makeOther(n)) as any).x = "laid"; return read(n > 1 ? makeA(n) : n > 0 ? o : makeC(n)); }
 # RUN: link functions mechanisms=all
-# CHECK: function f4 {{*}}result=undefined|i32|string
+# CHECK: function f4 {{*}}result=undefined|int[0, 2147483647]|string
 
 module m0 path="lost.ts" displayPath="lost.ts" body=f0
 entry module=m0

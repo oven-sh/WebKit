@@ -17,8 +17,8 @@
 # TRUTH-NOT: = PropGet
 # RUN(UNCHECKED): walk f2 mechanisms=none+TypedOperations+Guesses
 # UNCHECKED-LABEL: code f2:Body
-# UNCHECKED-NOT: GetSlotOrUndefined
-# UNCHECKED: = PropGet
+# UNCHECKED: = GetSlotOrUndefined {{*}}key="x"{{*}}level=Expected
+# UNCHECKED-NOT: = PropGet
 
 layout L0 name="Options" module=m0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] ownFieldCount=2
 module m0 path="main.ts" displayPath="main.ts" body=f0

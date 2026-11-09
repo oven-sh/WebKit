@@ -10,6 +10,7 @@
 
 #include "AOTIRProgram.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkStrings.h"
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -47,6 +48,8 @@ static Opcode formInFrameInTextBuilderParts(Opcode form)
         return Opcode::StackStringBuilderAppendNumber;
     case Opcode::StringBuilderAppendBoolean:
         return Opcode::StackStringBuilderAppendBoolean;
+    case Opcode::StringBuilderAppendCodeUnit:
+        return Opcode::StackStringBuilderAppendCodeUnit;
     case Opcode::StringBuilderAppendString:
         return Opcode::StackStringBuilderAppendString;
     case Opcode::StringBuilderAppendStringOrNullish:
@@ -106,6 +109,46 @@ static void buildPartInTextBuilderParts(Walker& walker, TextInStringBuilder& tex
     walker.build(WTF::move(part));
 }
 
+static Reference codeUnitThatTextIsMadeOfInTextBuilderParts(Walker& walker, Reference part, Origin origin)
+{
+    Reference root = rootForStrings(walker, part);
+    if (!root.isValue())
+        return { };
+    const Operation& made = walker.code().at(root.id());
+    if (made.opcode != Opcode::CallInline || made.inlineBuiltin() != InlineBuiltin::StringFromCharCode || made.argumentsOperands().size() != 1)
+        return { };
+    Reference number = referenceToRecordForStrings(walker, made.argumentsOperands()[0]);
+    if (!walker.types().at(walker.typeOf(number)).isNumber())
+        return { };
+    return buildOperatorForStrings(walker, Opcode::BitAnd, number, integerForStrings(walker, UINT16_MAX), origin);
+}
+
+static bool appendCharacterByItsCodeUnitInTextBuilderParts(Walker& walker, TextInStringBuilder& text, Reference name, Reference part, const Type& type, Origin origin)
+{
+    if (!type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined))
+        return false;
+    Reference codeUnit = codePointOfCharacterInSight(walker, part);
+    if (!codeUnit)
+        codeUnit = codeUnitThatTextIsMadeOfInTextBuilderParts(walker, part, origin);
+    if (!codeUnit)
+        return false;
+    Range units = walker.types().at(walker.typeOf(codeUnit)).integers;
+    if (units.isSubsetOf(Range { 0, UINT16_MAX })) {
+        buildPartInTextBuilderParts(walker, text, name, Opcode::StringBuilderAppendCodeUnit, codeUnit, { }, origin);
+        return true;
+    }
+    if (!units.isSubsetOf(Range { -1, UINT16_MAX }) || handlerInForceReadsTextInStringBuilder(walker, text))
+        return false;
+    bool isUndefinedOutside = walker.types().at(walker.code().at(rootForStrings(walker, part).id()).type).primitives & Primitive::Undefined;
+    Reference isInside = buildOperatorForStrings(walker, Opcode::LessEq, integerForStrings(walker, 0), codeUnit, origin);
+    return buildArmsForStrings(walker, isInside, BlockFrequency::Unlikely, [&](std::span<Reference>) {
+        buildPartInTextBuilderParts(walker, text, name, Opcode::StringBuilderAppendCodeUnit, buildProofBehindTestForStrings(walker, codeUnit, isInside, OperandIndex::LessEq::right, origin), { }, origin);
+    }, [&](std::span<Reference>) {
+        if (isUndefinedOutside)
+            buildPartInTextBuilderParts(walker, text, name, Opcode::StringBuilderAppendConstant, { }, walker.program().strings.textOfUndefined(), origin);
+    }, { });
+}
+
 static void appendPartInTextBuilderParts(Walker& walker, TextInStringBuilder& text, Reference name, Reference part, Origin origin)
 {
     if (!part || !part.isRecord()) {
@@ -129,6 +172,8 @@ static void appendPartInTextBuilderParts(Walker& walker, TextInStringBuilder& te
         type = walker.types().at(walker.typeOf(part));
     }
 
+    if (appendCharacterByItsCodeUnitInTextBuilderParts(walker, text, name, part, type, origin))
+        return;
     Opcode form = narrowestFormInTextBuilderParts(type);
     if (const Operation& record = walker.code().at(part.id()); form == Opcode::StringBuilderAppendNumber && record.opcode == Opcode::Unbox && part.isValue()) {
         Reference boxed = Reference::value(record.valueOperand());

@@ -14,6 +14,7 @@
 #include "AOTImage.h"
 #include "AOTImageText.h"
 #include "AOTInstance.h"
+#include "AOTJSONTextWriter.h"
 #include "AOTLimits.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
@@ -74,12 +75,54 @@ static ALWAYS_INLINE bool canRepresent(uint32_t character)
     return !(character >> (8 * sizeof(CharacterType)));
 }
 
+static ALWAYS_INLINE size_t findLatin1Character(const Latin1Character* characters, size_t length, Latin1Character character, size_t start)
+{
+    static_assert(std::endian::native == std::endian::little);
+    constexpr size_t stride = SIMD::stride<uint8_t>;
+    constexpr size_t stridesSearchedHere = 4;
+    const uint8_t* bytes = byteCast<uint8_t>(characters);
+    if (start >= length)
+        return notFound;
+    size_t i = start;
+    if (length - i >= stride) {
+        auto sought = SIMD::splat<uint8_t>(character);
+        size_t lastStride = length - stride;
+        for (size_t end = i + stridesSearchedHere * stride; i <= lastStride && i < end; i += stride) {
+            if (auto found = SIMD::findFirstNonZeroIndex(SIMD::equal(SIMD::load(bytes + i), sought)))
+                return i + *found;
+        }
+        if (i <= lastStride)
+            return WTF::find(unsafeMakeSpan(characters, length), character, i);
+        if (i == length)
+            return notFound;
+        auto found = SIMD::findFirstNonZeroIndex(SIMD::equal(SIMD::load(bytes + lastStride), sought));
+        return found ? lastStride + *found : notFound;
+    }
+    if (length - i >= sizeof(uint64_t)) {
+        constexpr uint64_t lowBits = 0x0101010101010101ULL;
+        for (size_t place : { i, length - sizeof(uint64_t) }) {
+            uint64_t differences = WTF::unalignedLoad<uint64_t>(bytes + place) ^ lowBits * character;
+            if (uint64_t found = (differences - lowBits) & ~differences & lowBits << 7)
+                return place + std::countr_zero(found) / 8;
+        }
+        return notFound;
+    }
+    for (; i < length; ++i) {
+        if (bytes[i] == character)
+            return i;
+    }
+    return notFound;
+}
+
 template<typename CharacterType>
 static ALWAYS_INLINE size_t findCharacter(const CharacterType* characters, uint32_t length, uint32_t character, uint32_t start)
 {
     if (!canRepresent<CharacterType>(character))
         return notFound;
-    return WTF::find(unsafeMakeSpan(characters, length), static_cast<CharacterType>(character), start);
+    if constexpr (std::is_same_v<CharacterType, Latin1Character>)
+        return findLatin1Character(characters, length, static_cast<Latin1Character>(character), start);
+    else
+        return WTF::find(unsafeMakeSpan(characters, length), static_cast<CharacterType>(character), start);
 }
 
 template<typename CharacterType>
@@ -88,6 +131,163 @@ static ALWAYS_INLINE size_t reverseFindCharacter(const CharacterType* characters
     if (position < 0 || !length || !canRepresent<CharacterType>(character))
         return notFound;
     return WTF::reverseFind(unsafeMakeSpan(characters, length), static_cast<CharacterType>(character), std::min<unsigned>(position, length - 1));
+}
+
+constexpr uint32_t longestTextComparedAtEveryPlace = 32;
+constexpr uint32_t charactersComparedWithoutCount = 16;
+
+template<typename CharacterType>
+class TextReadBackwards {
+public:
+    TextReadBackwards(const CharacterType* characters, size_t length)
+        : m_last(characters + length - 1)
+    {
+    }
+
+    CharacterType operator[](size_t index) const { return *(m_last - index); }
+
+private:
+    const CharacterType* m_last;
+};
+
+template<typename Sought>
+static intptr_t lastOfLeftPart(Sought sought, intptr_t length, bool greaterComesFirst, intptr_t& period)
+{
+    intptr_t last = -1;
+    intptr_t candidate = 0;
+    intptr_t offset = 1;
+    period = 1;
+    while (candidate + offset < length) {
+        auto ofCandidate = sought[candidate + offset];
+        auto ofBest = sought[last + offset];
+        if (ofCandidate == ofBest) {
+            if (offset != period)
+                ++offset;
+            else {
+                candidate += period;
+                offset = 1;
+            }
+        } else if (greaterComesFirst ? ofCandidate > ofBest : ofCandidate < ofBest) {
+            candidate += offset;
+            offset = 1;
+            period = candidate - last;
+        } else {
+            last = candidate++;
+            offset = 1;
+            period = 1;
+        }
+    }
+    return last;
+}
+
+template<typename Text, typename Sought>
+static size_t findInLinearTime(Text text, size_t length, Sought sought, size_t soughtLength, size_t start)
+{
+    const intptr_t end = soughtLength;
+    intptr_t periodOfOne;
+    intptr_t periodOfOther;
+    intptr_t one = lastOfLeftPart(sought, end, false, periodOfOne);
+    intptr_t other = lastOfLeftPart(sought, end, true, periodOfOther);
+    const intptr_t lastOfLeft = std::max(one, other);
+    intptr_t period = one > other ? periodOfOne : periodOfOther;
+
+    bool leftPartComesAgain = true;
+    for (intptr_t i = 0; i <= lastOfLeft && leftPartComesAgain; ++i)
+        leftPartComesAgain = sought[i] == sought[i + period];
+    if (!leftPartComesAgain)
+        period = std::max(lastOfLeft + 1, end - lastOfLeft - 1) + 1;
+
+    const intptr_t lastPlace = length - soughtLength;
+    intptr_t lastKnownToAgree = -1;
+    for (intptr_t place = start; place <= lastPlace;) {
+        intptr_t i = std::max(lastOfLeft, lastKnownToAgree) + 1;
+        while (i < end && sought[i] == text[place + i])
+            ++i;
+        if (i < end) {
+            place += i - lastOfLeft;
+            lastKnownToAgree = -1;
+            continue;
+        }
+        i = lastOfLeft;
+        while (i > lastKnownToAgree && sought[i] == text[place + i])
+            --i;
+        if (i <= lastKnownToAgree)
+            return place;
+        place += period;
+        if (leftPartComesAgain)
+            lastKnownToAgree = end - period - 1;
+    }
+    return notFound;
+}
+
+template<typename CharacterType, typename OtherCharacterType>
+static ALWAYS_INLINE size_t findWhereStringMayStart(std::span<const CharacterType> starts, const OtherCharacterType* other, uint32_t otherLength, size_t i)
+{
+    CharacterType first = other[0];
+    if constexpr (std::is_same_v<CharacterType, Latin1Character>) {
+        constexpr size_t stride = SIMD::stride<uint8_t>;
+        const uint8_t* firsts = byteCast<uint8_t>(starts.data());
+        const uint8_t* lasts = firsts + otherLength - 1;
+        auto firstOfText = SIMD::splat<uint8_t>(first);
+        auto lastOfText = SIMD::splat<uint8_t>(other[otherLength - 1]);
+        for (; i + stride <= starts.size(); i += stride) {
+            if (auto found = SIMD::findFirstNonZeroIndex(SIMD::bitAnd(SIMD::equal(SIMD::load(firsts + i), firstOfText), SIMD::equal(SIMD::load(lasts + i), lastOfText))))
+                return i + *found;
+        }
+        while (i < starts.size() && starts[i] != first)
+            ++i;
+        return i < starts.size() ? i : notFound;
+    } else
+        return WTF::find(starts, first, i);
+}
+
+template<typename CharacterType, typename OtherCharacterType>
+static ALWAYS_INLINE bool longStringStandsAt(const CharacterType* place, const OtherCharacterType* other, uint32_t otherLength, bool& wasComparedFar)
+{
+    wasComparedFar = WTF::equal(place, unsafeMakeSpan(other, charactersComparedWithoutCount));
+    return wasComparedFar && WTF::equal(place + charactersComparedWithoutCount, unsafeMakeSpan(other + charactersComparedWithoutCount, otherLength - charactersComparedWithoutCount));
+}
+
+template<typename CharacterType, typename OtherCharacterType>
+static NEVER_INLINE size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES findLongString(const CharacterType* characters, uint32_t length, const OtherCharacterType* other, uint32_t otherLength, uint32_t start)
+{
+    auto starts = unsafeMakeSpan(characters, length - otherLength + 1);
+    uint64_t comparedInVain = 0;
+    for (size_t i = start;; ++i) {
+        i = findWhereStringMayStart(starts, other, otherLength, i);
+        bool wasComparedFar = false;
+        if (i == notFound || longStringStandsAt(characters + i, other, otherLength, wasComparedFar))
+            return i;
+        if (!wasComparedFar)
+            continue;
+        comparedInVain += otherLength;
+        if (comparedInVain > 2 * (i - start) + 4 * static_cast<uint64_t>(otherLength))
+            return findInLinearTime(characters, length, other, otherLength, i + 1);
+    }
+}
+
+template<typename CharacterType, typename OtherCharacterType>
+static NEVER_INLINE size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES reverseFindLongString(const CharacterType* characters, uint32_t length, const OtherCharacterType* other, uint32_t otherLength, int32_t position)
+{
+    size_t start = std::min<size_t>(std::max(position, 0), length - otherLength);
+    auto starts = unsafeMakeSpan(characters, start + 1);
+    uint64_t comparedInVain = 0;
+    for (size_t i = start;; --i) {
+        i = WTF::reverseFind(starts, static_cast<CharacterType>(other[0]), i);
+        bool wasComparedFar = false;
+        if (i == notFound || longStringStandsAt(characters + i, other, otherLength, wasComparedFar))
+            return i;
+        if (!i)
+            return notFound;
+        if (!wasComparedFar)
+            continue;
+        comparedInVain += otherLength;
+        if (comparedInVain > 2 * (start - i) + 4 * static_cast<uint64_t>(otherLength)) {
+            size_t end = i - 1 + otherLength;
+            size_t fromEnd = findInLinearTime(TextReadBackwards(characters, end), end, TextReadBackwards(other, otherLength), otherLength, 0);
+            return fromEnd == notFound ? notFound : end - otherLength - fromEnd;
+        }
+    }
 }
 
 template<typename CharacterType>
@@ -99,6 +299,8 @@ static ALWAYS_INLINE size_t findString(const CharacterType* characters, uint32_t
         return start;
     if (otherLength > length - start)
         return notFound;
+    if (otherLength > longestTextComparedAtEveryPlace)
+        return findLongString(characters, length, other, otherLength, start);
     CharacterType first = other[0];
     auto rest = unsafeMakeSpan(other + 1, otherLength - 1);
     auto starts = unsafeMakeSpan(characters, length - otherLength + 1);
@@ -134,15 +336,16 @@ static ALWAYS_INLINE size_t findString(const CharacterType* characters, uint32_t
     }
 }
 
-template<typename CharacterType>
-static ALWAYS_INLINE size_t reverseFindString(const CharacterType* characters, uint32_t length, const CharacterType* other, uint32_t otherLength, int32_t position)
+static ALWAYS_INLINE size_t reverseFindString(const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, int32_t position)
 {
     if (otherLength > length)
         return notFound;
+    if (otherLength > longestTextComparedAtEveryPlace)
+        return reverseFindLongString(characters, length, other, otherLength, position);
     unsigned start = std::min<unsigned>(std::max(position, 0), length - otherLength);
     if (!otherLength)
         return start;
-    CharacterType first = other[0];
+    Latin1Character first = other[0];
     auto rest = unsafeMakeSpan(other + 1, otherLength - 1);
     for (size_t i = start;; --i) {
         if (characters[i] == first && WTF::equal(characters + i + 1, rest))
@@ -150,6 +353,111 @@ static ALWAYS_INLINE size_t reverseFindString(const CharacterType* characters, u
         if (!i)
             return notFound;
     }
+}
+
+static NEVER_INLINE size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES reverseFindCharacterFarFromStart(const Latin1Character* characters, uint32_t length, Latin1Character character, int32_t position)
+{
+    return reverseFindCharacter(characters, length, character, position);
+}
+
+static ALWAYS_INLINE size_t reverseFindStringOrCharacter(const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, int32_t position)
+{
+    constexpr int32_t leastPlacesSearchedByVectors = 32;
+    if (otherLength == 1 && position >= leastPlacesSearchedByVectors && length > leastPlacesSearchedByVectors)
+        return reverseFindCharacterFarFromStart(characters, length, other[0], position);
+    return reverseFindString(characters, length, other, otherLength, position);
+}
+
+template<typename OtherCharacterType>
+static ALWAYS_INLINE size_t reverseFindString(const char16_t* characters, uint32_t length, const OtherCharacterType* other, uint32_t otherLength, int32_t position)
+{
+    if (otherLength > length)
+        return notFound;
+    if (otherLength > longestTextComparedAtEveryPlace)
+        return reverseFindLongString(characters, length, other, otherLength, position);
+    unsigned start = std::min<unsigned>(std::max(position, 0), length - otherLength);
+    if (!otherLength)
+        return start;
+    char16_t first = other[0];
+    auto rest = unsafeMakeSpan(other + 1, otherLength - 1);
+    auto starts = unsafeMakeSpan(characters, start + 1);
+    for (size_t i = start;; --i) {
+        i = WTF::reverseFind(starts, first, i);
+        if (i == notFound || WTF::equal(characters + i + 1, rest))
+            return i;
+        if (!i)
+            return notFound;
+    }
+}
+
+template<typename CharacterType>
+static ALWAYS_INLINE size_t findSeparators(const CharacterType* characters, uint32_t length, uint32_t separator, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds)
+{
+    uint32_t count = countAndWhetherAllAreCounted & 0x7fffffff;
+    uint32_t numberOfPieces = 0;
+    uint32_t start = 0;
+    while (numberOfPieces < count) {
+        size_t found = findCharacter(characters, length, separator, start);
+        bounds[2 * numberOfPieces] = start;
+        bounds[2 * numberOfPieces + 1] = found == notFound ? length : static_cast<uint32_t>(found);
+        ++numberOfPieces;
+        if (found == notFound) {
+            for (uint32_t absent = 2 * numberOfPieces; absent < 2 * count; ++absent)
+                bounds[absent] = UINT32_MAX;
+            return numberOfPieces;
+        }
+        start = static_cast<uint32_t>(found) + 1;
+    }
+    if (!(countAndWhetherAllAreCounted >> 31))
+        return numberOfPieces;
+    size_t behind = 1;
+    if (canRepresent<CharacterType>(separator)) {
+        for (uint32_t position = start; position < length; ++position)
+            behind += characters[position] == static_cast<CharacterType>(separator);
+    }
+    return numberOfPieces + behind;
+}
+
+extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringFindSeparators8(const Latin1Character* characters, uint32_t length, uint32_t separator, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds)
+{
+    return findSeparators(characters, length, separator, countAndWhetherAllAreCounted, bounds);
+}
+
+extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringFindSeparators16(const char16_t* characters, uint32_t length, uint32_t separator, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds)
+{
+    return findSeparators(characters, length, separator, countAndWhetherAllAreCounted, bounds);
+}
+
+template<typename CharacterType>
+static ALWAYS_INLINE size_t findLongSeparators(const CharacterType* characters, uint32_t length, uint32_t text, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds)
+{
+    StringView subject { std::span { characters, length } };
+    StringView separator = textOf(text);
+    uint32_t count = countAndWhetherAllAreCounted & 0x7fffffff;
+    bool allAreCounted = countAndWhetherAllAreCounted >> 31;
+    uint32_t numberOfPieces = 0;
+    size_t start = 0;
+    for (size_t found = 0; found != notFound && (numberOfPieces < count || allAreCounted); ++numberOfPieces) {
+        found = subject.find(separator, start);
+        if (numberOfPieces < count) {
+            bounds[2 * numberOfPieces] = static_cast<uint32_t>(start);
+            bounds[2 * numberOfPieces + 1] = found == notFound ? length : static_cast<uint32_t>(found);
+        }
+        start = found + separator.length();
+    }
+    for (uint32_t absent = 2 * numberOfPieces; absent < 2 * count; ++absent)
+        bounds[absent] = UINT32_MAX;
+    return numberOfPieces;
+}
+
+extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringFindLongSeparators8(const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds)
+{
+    return findLongSeparators(characters, length, text, countAndWhetherAllAreCounted, bounds);
+}
+
+extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringFindLongSeparators16(const char16_t* characters, uint32_t length, uint32_t text, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds)
+{
+    return findLongSeparators(characters, length, text, countAndWhetherAllAreCounted, bounds);
 }
 
 extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringFindCharacter8(const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start)
@@ -184,7 +492,7 @@ extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringFind16(con
 
 extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringReverseFind8(const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, int32_t position)
 {
-    return reverseFindString(characters, length, other, otherLength, position);
+    return reverseFindStringOrCharacter(characters, length, other, otherLength, position);
 }
 
 extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringReverseFind16(const char16_t* characters, uint32_t length, const char16_t* other, uint32_t otherLength, int32_t position)
@@ -192,12 +500,37 @@ extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringReverseFin
     return reverseFindString(characters, length, other, otherLength, position);
 }
 
+static ALWAYS_INLINE bool blockIsASCII(const Latin1Character* block)
+{
+    auto word = [&](size_t index) ALWAYS_INLINE_LAMBDA {
+        return WTF::unalignedLoad<uint64_t>(block + index * sizeof(uint64_t));
+    };
+    return !((word(0) | word(1) | word(2) | word(3) | word(4) | word(5) | word(6) | word(7)) & 0x8080808080808080ULL);
+}
+
 extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringUTF8Length8(const Latin1Character* characters, uint32_t length)
 {
     static_assert(std::endian::native == std::endian::little);
     constexpr uint64_t highBits = 0x8080808080808080ULL;
+    constexpr uint32_t blockLength = 8 * sizeof(uint64_t);
     size_t result = length;
     uint32_t i = 0;
+    if (length >= blockLength) {
+        uint32_t lastBlock = length - blockLength;
+        while (true) {
+            while (i <= lastBlock && blockIsASCII(characters + i))
+                i += blockLength;
+            if (i > lastBlock)
+                break;
+#if COMPILER(CLANG)
+#pragma clang loop unroll(disable)
+#endif
+            for (uint32_t end = i + blockLength; i < end; i += sizeof(uint64_t))
+                result += std::popcount(WTF::unalignedLoad<uint64_t>(characters + i) & highBits);
+        }
+        if (i == length || blockIsASCII(characters + lastBlock))
+            return result;
+    }
     for (; i + sizeof(uint64_t) <= length; i += sizeof(uint64_t))
         result += std::popcount(WTF::unalignedLoad<uint64_t>(characters + i) & highBits);
     uint32_t rest = length - i;
@@ -266,7 +599,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringReverseFindLiteral8, size_t,
     StringView other = textOf(text);
     if (!other.is8Bit()) [[unlikely]]
         return StringView(std::span { characters, length }).reverseFind(other, std::max(position, 0));
-    return operationAOTStringReverseFind8(characters, length, other.span8().data(), other.length(), position);
+    return reverseFindString(characters, length, other.span8().data(), other.length(), position);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConcat, JSCell*, (Instance* instance, JSCell* left, JSCell* right))
@@ -369,16 +702,30 @@ static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringH
     OPERATION_RETURN(scope, standsAt(globalObject, base, argument, position));
 }
 
+static ALWAYS_INLINE bool areFlatAndNoWiderThanSubject(const StringImpl* base, const StringImpl* argument)
+{
+    return base && argument && (argument->is8Bit() || !base->is8Bit());
+}
+
+static ALWAYS_INLINE bool flatStringHasAt(const StringImpl& base, const StringImpl& argument, unsigned position)
+{
+    if (!argument.is8Bit())
+        return WTF::equal(base.span16().data() + position, argument.span16());
+    if (base.is8Bit())
+        return WTF::equal(base.span8().data() + position, argument.span8());
+    return WTF::equal(base.span16().data() + position, argument.span8());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStringHasAt, size_t, (Instance* instance, JSCell* string, JSCell* other, int32_t position))
 {
     const StringImpl* base = uncheckedDowncast<JSString>(string)->tryGetValueImpl();
     const StringImpl* argument = uncheckedDowncast<JSString>(other)->tryGetValueImpl();
-    if (base && argument && base->is8Bit() && argument->is8Bit()) [[likely]] {
+    if (areFlatAndNoWiderThanSubject(base, argument)) [[likely]] {
         unsigned length = base->length();
         unsigned otherLength = argument->length();
         if (position < 0 || otherLength > length || static_cast<unsigned>(position) > length - otherLength)
             return { false, nullptr };
-        return { WTF::equal(base->span8().data() + position, argument->span8()), nullptr };
+        return { flatStringHasAt(*base, *argument, position), nullptr };
     }
     [[clang::musttail]] return stringHasAtGeneric(instance, string, other, position);
 }
@@ -391,6 +738,8 @@ static ALWAYS_INLINE size_t findNarrowStringInWideOne(const char16_t* characters
         return start;
     if (otherLength > length - start)
         return notFound;
+    if (otherLength > longestTextComparedAtEveryPlace)
+        return findLongString(characters, length, other, otherLength, start);
     auto starts = unsafeMakeSpan(characters, length - otherLength + 1);
     for (size_t i = start;; ++i) {
         i = WTF::find(starts, static_cast<char16_t>(other[0]), i);
@@ -489,10 +838,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringEndsWith, EncodedJSValue, (Instance* 
 {
     const StringImpl* base = uncheckedDowncast<JSString>(string)->tryGetValueImpl();
     const StringImpl* argument = uncheckedDowncast<JSString>(other)->tryGetValueImpl();
-    if (base && argument && base->is8Bit() && argument->is8Bit()) [[likely]] {
+    if (areFlatAndNoWiderThanSubject(base, argument)) [[likely]] {
         unsigned length = base->length();
         unsigned otherLength = argument->length();
-        return { JSValue::encode(jsBoolean(otherLength <= length && WTF::equal(base->span8().data() + (length - otherLength), argument->span8()))), nullptr };
+        return { JSValue::encode(jsBoolean(otherLength <= length && flatStringHasAt(*base, *argument, length - otherLength))), nullptr };
     }
     [[clang::musttail]] return stringEndsWithGeneric(instance, string, other);
 }
@@ -522,13 +871,25 @@ static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringL
     OPERATION_RETURN(scope, characters->reverseFind(otherCharacters, start));
 }
 
+static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringLastIndexOfInWideText(Instance* instance, JSCell* cell, JSCell* otherCell, int32_t position)
+{
+    const StringImpl* base = uncheckedDowncast<JSString>(cell)->tryGetValueImpl();
+    const StringImpl* argument = uncheckedDowncast<JSString>(otherCell)->tryGetValueImpl();
+    if (base && argument && !base->is8Bit()) {
+        if (argument->is8Bit())
+            return { reverseFindString(base->span16().data(), base->length(), argument->span8().data(), argument->length(), position), nullptr };
+        return { reverseFindString(base->span16().data(), base->length(), argument->span16().data(), argument->length(), position), nullptr };
+    }
+    [[clang::musttail]] return stringLastIndexOfGeneric(instance, cell, otherCell, position);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStringLastIndexOf, size_t, (Instance* instance, JSCell* cell, JSCell* otherCell, int32_t position))
 {
     const StringImpl* base = uncheckedDowncast<JSString>(cell)->tryGetValueImpl();
     const StringImpl* argument = uncheckedDowncast<JSString>(otherCell)->tryGetValueImpl();
     if (base && argument && base->is8Bit() && argument->is8Bit()) [[likely]]
-        return { reverseFindString(base->span8().data(), base->length(), argument->span8().data(), argument->length(), position), nullptr };
-    [[clang::musttail]] return stringLastIndexOfGeneric(instance, cell, otherCell, position);
+        return { reverseFindStringOrCharacter(base->span8().data(), base->length(), argument->span8().data(), argument->length(), position), nullptr };
+    [[clang::musttail]] return stringLastIndexOfInWideText(instance, cell, otherCell, position);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfLiteral, size_t, (Instance* instance, JSCell* string, uint32_t text, int32_t fromIndex))
@@ -587,6 +948,16 @@ static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringL
     OPERATION_RETURN(scope, characters->reverseFind(other, start));
 }
 
+static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringLastIndexOfLiteralInWideText(Instance* instance, JSCell* cell, uint32_t text, int32_t position)
+{
+    if (const StringImpl* impl = uncheckedDowncast<JSString>(cell)->tryGetValueImpl(); impl && !impl->is8Bit()) {
+        StringView other = textOf(text);
+        if (other.is8Bit()) [[likely]]
+            return { reverseFindString(impl->span16().data(), impl->length(), other.span8().data(), other.length(), position), nullptr };
+    }
+    [[clang::musttail]] return stringLastIndexOfLiteralGeneric(instance, cell, text, position);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStringLastIndexOfLiteral, size_t, (Instance* instance, JSCell* cell, uint32_t text, int32_t position))
 {
     if (const StringImpl* impl = uncheckedDowncast<JSString>(cell)->tryGetValueImpl(); position <= 0 && impl && impl->is8Bit()) {
@@ -597,7 +968,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringLastIndexOfLiteral, size_t, (Instance
             return { WTF::equal(impl->span8().data(), other.span8()) ? 0 : notFound, nullptr };
         }
     }
-    [[clang::musttail]] return stringLastIndexOfLiteralGeneric(instance, cell, text, position);
+    [[clang::musttail]] return stringLastIndexOfLiteralInWideText(instance, cell, text, position);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteralInRegister, size_t, (Instance*, JSCell* cell, uint64_t text))
@@ -787,6 +1158,45 @@ static ALWAYS_INLINE Latin1Character convertLatin1Character(Latin1Character char
     return static_cast<Latin1Character>(letterCase == LetterCase::Lower ? character + 0x20 : character - 0x20);
 }
 
+struct EndsOfShortText {
+    static ALWAYS_INLINE EndsOfShortText load(const uint8_t* from, size_t size)
+    {
+        if (size >= 8)
+            return { WTF::unalignedLoad<uint64_t>(from), WTF::unalignedLoad<uint64_t>(from + size - 8) };
+        if (size >= 4)
+            return { WTF::unalignedLoad<uint32_t>(from), WTF::unalignedLoad<uint32_t>(from + size - 4) };
+        return { WTF::unalignedLoad<uint16_t>(from), WTF::unalignedLoad<uint16_t>(from + size - 2) };
+    }
+    ALWAYS_INLINE void store(uint8_t* to, size_t size) const
+    {
+        if (size >= 8) {
+            WTF::unalignedStore<uint64_t>(to, first);
+            WTF::unalignedStore<uint64_t>(to + size - 8, last);
+        } else if (size >= 4) {
+            WTF::unalignedStore<uint32_t>(to, static_cast<uint32_t>(first));
+            WTF::unalignedStore<uint32_t>(to + size - 4, static_cast<uint32_t>(last));
+        } else {
+            WTF::unalignedStore<uint16_t>(to, static_cast<uint16_t>(first));
+            WTF::unalignedStore<uint16_t>(to + size - 2, static_cast<uint16_t>(last));
+        }
+    }
+    bool isASCII() const { return !((first | last) & 0x8080808080808080ull); }
+    friend bool operator==(const EndsOfShortText&, const EndsOfShortText&) = default;
+
+    uint64_t first;
+    uint64_t last;
+};
+
+template<LetterCase letterCase>
+static ALWAYS_INLINE uint64_t convertASCIIBytes(uint64_t bytes)
+{
+    constexpr uint64_t ones = 0x0101010101010101ull;
+    constexpr uint64_t firstLetter = letterCase == LetterCase::Lower ? 'A' : 'a';
+    uint64_t atLeastFirst = bytes + ones * (0x80 - firstLetter);
+    uint64_t aboveLast = bytes + ones * (0x80 - firstLetter - 26);
+    return bytes ^ ((atLeastFirst & ~aboveLast & ones * 0x80) >> 2);
+}
+
 template<LetterCase letterCase>
 static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm, State& state, JSString* string)
 {
@@ -800,70 +1210,87 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
         auto view = string->view(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
         auto tryConvertLatin1 = [&](auto span) ALWAYS_INLINE_LAMBDA -> JSString* {
-            auto* characters = span.data();
+            const uint8_t* characters = byteCast<uint8_t>(span.data());
             size_t length = span.size();
-            unsigned isNotASCII = 0;
-            unsigned changes = 0;
             constexpr size_t stride = SIMD::stride<uint8_t>;
-            size_t lengthInStrides = length - length % stride;
-            if (lengthInStrides) {
-                auto seen = SIMD::splat<uint8_t>(0);
-                auto changed = SIMD::splat<uint8_t>(0);
-                for (size_t i = 0; i < lengthInStrides; i += stride) {
-                    auto loaded = SIMD::load(byteCast<uint8_t>(characters) + i);
-                    seen = SIMD::bitOr(seen, loaded);
-                    changed = SIMD::bitOr(changed, asciiLettersOfOtherCase<letterCase>(loaded));
+            if (!length)
+                return string;
+            if (length == 1) {
+                if (!isASCII(characters[0]) && letterCase == LetterCase::Upper)
+                    return nullptr;
+                Latin1Character converted = convertLatin1Character<letterCase>(characters[0]);
+                return converted == characters[0] ? string : vm.smallStrings.singleCharacterString(converted);
+            }
+            auto make = [&](auto&& writeTo) ALWAYS_INLINE_LAMBDA -> JSString* {
+                if (length <= CaseConversions::maxLengthOfRememberedString) {
+                    std::array<Latin1Character, CaseConversions::maxLengthOfRememberedString> converted;
+                    writeTo(byteCast<uint8_t>(converted.data()));
+                    CaseConversions& conversions = CaseConversions::ensure(state);
+                    JSString* result = conversions.convertedString(vm, std::span<const Latin1Character> { converted }.first(length));
+                    conversions.remember(string, rememberedCase, result);
+                    return result;
                 }
-                isNotASCII = SIMD::isNonZero(SIMD::bitAnd(seen, SIMD::splat<uint8_t>(0x80)));
-                changes = SIMD::isNonZero(changed);
+                std::span<Latin1Character> buffer;
+                Ref impl = StringImpl::createUninitialized(length, buffer);
+                writeTo(byteCast<uint8_t>(buffer.data()));
+                return jsString(vm, String { WTF::move(impl) });
+            };
+            if (length < stride) {
+                EndsOfShortText ends = EndsOfShortText::load(characters, length);
+                if (ends.isASCII()) [[likely]] {
+                    EndsOfShortText converted { convertASCIIBytes<letterCase>(ends.first), convertASCIIBytes<letterCase>(ends.last) };
+                    if (converted == ends)
+                        return string;
+                    return make([&](uint8_t* to) ALWAYS_INLINE_LAMBDA {
+                        converted.store(to, length);
+                    });
+                }
+                if (letterCase == LetterCase::Upper)
+                    return nullptr;
+                bool changes = false;
+                for (size_t i = 0; i < length; ++i)
+                    changes |= isLetterOfOtherCase<letterCase>(characters[i]);
+                if (!changes)
+                    return string;
+                return make([&](uint8_t* to) ALWAYS_INLINE_LAMBDA {
+                    for (size_t i = 0; i < length; ++i)
+                        to[i] = convertLatin1Character<letterCase>(characters[i]);
+                });
             }
-            for (size_t i = lengthInStrides; i < length; ++i) {
-                isNotASCII |= characters[i] & ~0x7f;
-                changes |= isLetterOfOtherCase<letterCase>(characters[i]);
-            }
+            auto forEachStride = [&](auto&& take) ALWAYS_INLINE_LAMBDA {
+                size_t offset = 0;
+                for (; offset + stride <= length; offset += stride)
+                    take(offset);
+                if (offset < length)
+                    take(length - stride);
+            };
+            auto seen = SIMD::splat<uint8_t>(0);
+            auto changed = SIMD::splat<uint8_t>(0);
+            forEachStride([&](size_t offset) ALWAYS_INLINE_LAMBDA {
+                auto loaded = SIMD::load(characters + offset);
+                seen = SIMD::bitOr(seen, loaded);
+                changed = SIMD::bitOr(changed, asciiLettersOfOtherCase<letterCase>(loaded));
+            });
+            bool isNotASCII = SIMD::isNonZero(SIMD::bitAnd(seen, SIMD::splat<uint8_t>(0x80)));
             if (isNotASCII && letterCase == LetterCase::Upper)
                 return nullptr;
-            if (isNotASCII && !changes) {
-                auto changed = SIMD::splat<uint8_t>(0);
-                for (size_t i = 0; i < lengthInStrides; i += stride)
-                    changed = SIMD::bitOr(changed, accentedCapitals(SIMD::load(byteCast<uint8_t>(characters) + i)));
-                changes = SIMD::isNonZero(changed);
-            }
-            if (!changes)
-                return string;
-            if (length == 1)
-                return vm.smallStrings.singleCharacterString(convertLatin1Character<letterCase>(characters[0]));
-            if (length <= CaseConversions::maxLengthOfRememberedString) {
-                std::array<Latin1Character, CaseConversions::maxLengthOfRememberedString> converted;
-                for (size_t i = 0; i < length; ++i)
-                    converted[i] = convertLatin1Character<letterCase>(characters[i]);
-                CaseConversions& conversions = CaseConversions::ensure(state);
-                JSString* result = conversions.convertedString(vm, std::span<const Latin1Character> { converted }.first(length));
-                conversions.remember(string, rememberedCase, result);
-                return result;
-            }
-            std::span<Latin1Character> buffer;
-            Ref impl = StringImpl::createUninitialized(length, buffer);
-            Latin1Character* converted = buffer.data();
-            auto convertStrides = [&](auto lettersOfOtherCase) ALWAYS_INLINE_LAMBDA {
-                for (size_t i = 0; i < lengthInStrides; i += stride) {
-                    auto loaded = SIMD::load(byteCast<uint8_t>(characters) + i);
-                    auto difference = SIMD::bitAnd(lettersOfOtherCase(loaded), SIMD::splat<uint8_t>(0x20));
-                    SIMD::store(letterCase == LetterCase::Lower ? SIMD::bitOr(loaded, difference) : SIMD::sub(loaded, difference), byteCast<uint8_t>(converted) + i);
-                }
-            };
             if (isNotASCII) {
-                convertStrides([](auto loaded) ALWAYS_INLINE_LAMBDA {
-                    return SIMD::bitOr(asciiLettersOfOtherCase<letterCase>(loaded), accentedCapitals(loaded));
-                });
-            } else {
-                convertStrides([](auto loaded) ALWAYS_INLINE_LAMBDA {
-                    return asciiLettersOfOtherCase<letterCase>(loaded);
+                forEachStride([&](size_t offset) ALWAYS_INLINE_LAMBDA {
+                    changed = SIMD::bitOr(changed, accentedCapitals(SIMD::load(characters + offset)));
                 });
             }
-            for (size_t i = lengthInStrides; i < length; ++i)
-                converted[i] = convertLatin1Character<letterCase>(characters[i]);
-            return jsString(vm, String { WTF::move(impl) });
+            if (!SIMD::isNonZero(changed))
+                return string;
+            return make([&](uint8_t* to) ALWAYS_INLINE_LAMBDA {
+                forEachStride([&](size_t offset) ALWAYS_INLINE_LAMBDA {
+                    auto loaded = SIMD::load(characters + offset);
+                    auto letters = asciiLettersOfOtherCase<letterCase>(loaded);
+                    if (isNotASCII)
+                        letters = SIMD::bitOr(letters, accentedCapitals(loaded));
+                    auto difference = SIMD::bitAnd(letters, SIMD::splat<uint8_t>(0x20));
+                    SIMD::store(letterCase == LetterCase::Lower ? SIMD::bitOr(loaded, difference) : SIMD::sub(loaded, difference), to + offset);
+                });
+            });
         };
         if (JSString* converted = view->is8Bit() ? tryConvertLatin1(view->span8()) : nullptr)
             return converted;
@@ -871,9 +1298,10 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
     auto characters = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     String converted = letterCase == LetterCase::Lower ? characters->convertToLowercaseWithoutLocale() : characters->convertToUppercaseWithoutLocale();
-    if (converted.impl() == characters->impl())
-        return string;
-    return jsString(vm, WTF::move(converted));
+    JSString* result = converted.impl() == characters->impl() ? string : jsString(vm, WTF::move(converted));
+    if (characters->length() > CaseConversions::maxLengthOfRememberedString)
+        CaseConversions::ensure(state).remember(string, rememberedCase, result);
+    return result;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringToLowerCase, JSCell*, (Instance* instance, JSCell* cell))
@@ -1280,45 +1708,78 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringSplitString, JSCell*, (Instance* inst
     OPERATION_RETURN(scope, stringSplitFast(globalObject, string, separator, limit));
 }
 
+static ALWAYS_INLINE void copyShortString(std::span<const Latin1Character> characters, Latin1Character* to)
+{
+    const Latin1Character* from = characters.data();
+    size_t size = characters.size();
+    if (size >= 8) {
+        uint64_t first = WTF::unalignedLoad<uint64_t>(from);
+        uint64_t last = WTF::unalignedLoad<uint64_t>(from + size - 8);
+        WTF::unalignedStore<uint64_t>(to, first);
+        WTF::unalignedStore<uint64_t>(to + size - 8, last);
+        return;
+    }
+    if (size >= 4) {
+        uint32_t first = WTF::unalignedLoad<uint32_t>(from);
+        uint32_t last = WTF::unalignedLoad<uint32_t>(from + size - 4);
+        WTF::unalignedStore<uint32_t>(to, first);
+        WTF::unalignedStore<uint32_t>(to + size - 4, last);
+        return;
+    }
+    if (size) {
+        Latin1Character first = from[0];
+        Latin1Character middle = from[size / 2];
+        Latin1Character last = from[size - 1];
+        to[0] = first;
+        to[size / 2] = middle;
+        to[size - 1] = last;
+    }
+}
+
 struct ShortKeyCharacters {
     std::span<const Latin1Character> span() const LIFETIME_BOUND { return std::span { characters }.first(length); }
 
-    std::array<Latin1Character, StringKeyCache::maxCachedKeyLength> characters;
+    std::array<Latin1Character, StringKeyCache::maxCachedKeyLength + maxJSONIntegerLength> characters;
     size_t length { 0 };
     bool hasRopePart { false };
+    bool mayBeIndex { true };
 };
 static_assert(StringKeyCache::maxCachedKeyLength >= StringKeyCache::minReadableBytes);
 
 static ALWAYS_INLINE bool tryWriteShortKey(std::span<const EncodedJSValue> primitives, ShortKeyCharacters& key)
 {
-    size_t length = 0;
+    constexpr size_t mostCharactersCopiedByWords = 16;
+    Latin1Character* cursor = key.characters.data();
+    Latin1Character* const limit = cursor + StringKeyCache::maxCachedKeyLength;
     for (EncodedJSValue encoded : primitives) {
         JSValue primitive = JSValue::decode(encoded);
-        std::span<Latin1Character> room = std::span { key.characters }.subspan(length);
         if (primitive.isString()) {
             JSString* string = asString(primitive);
-            uint32_t partLength = string->length();
-            if (partLength > room.size() || !string->is8Bit())
+            size_t size = string->length();
+            if (size > static_cast<size_t>(limit - cursor) || !string->is8Bit())
                 return false;
-            if (const StringImpl* impl = string->tryGetValueImpl()) [[likely]]
-                memcpySpan(room, impl->span8());
-            else {
-                string->resolveToBuffer(room.first(partLength));
+            if (const StringImpl* impl = string->tryGetValueImpl()) [[likely]] {
+                std::span<const Latin1Character> from = impl->span8();
+                if (size > mostCharactersCopiedByWords) [[unlikely]]
+                    memcpy(cursor, from.data(), size);
+                else
+                    copyShortString(from, cursor);
+                key.mayBeIndex &= !size || isASCIIDigit(from.back());
+            } else {
+                string->resolveToBuffer(std::span<Latin1Character> { cursor, size });
                 key.hasRopePart = true;
             }
-            length += partLength;
+            cursor += size;
             continue;
         }
         std::optional<int32_t> integer = primitive.tryGetAsInt32();
         if (!integer)
             return false;
-        unsigned partLength = lengthOfIntegerAsString(*integer);
-        if (partLength > room.size())
+        cursor = appendJSONInteger(cursor, *integer);
+        if (cursor > limit)
             return false;
-        writeIntegerToBuffer(*integer, room.first(partLength));
-        length += partLength;
     }
-    key.length = length;
+    key.length = cursor - key.characters.data();
     return true;
 }
 
@@ -1453,7 +1914,7 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
             keys.lastLookupByParts().countAndKinds = 0;
         JSString* key;
         unsigned hash;
-        switch (keys.findKeyForText(characters.span(), key, hash)) {
+        switch (keys.findKeyForText(characters.span(), key, hash, characters.mayBeIndex)) {
         case StringKeyCache::Lookup::Found:
             if (keys.lastLookupByParts().countAndKinds)
                 keys.cacheKeyByParts(keys.lastLookupByParts(), key);
@@ -1518,8 +1979,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcatenate, JSCell*, (Instance* instance, 
     AOT_MUST_TAIL_CALL return concatenateShortStringKey(instance, count, parts, isLikelyKey);
 }
 
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES makeTextOfIntegerInFrontOfNothing(Instance* instance, uint32_t, const EncodedJSValue* parts, uint32_t)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatenate);
+    OPERATION_RETURN(scope, static_cast<JSCell*>(instance->state->stringKeys->textOfInt32(vm, JSValue::decode(parts[0]).asInt32())));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTConcatenatePair, JSCell*, (Instance* instance, uint32_t isLikelyKey, const EncodedJSValue* parts, uint32_t))
 {
+    if (JSValue first = JSValue::decode(parts[0]); first.isInt32() && first.asInt32() >= 0 && parts[1] == JSValue::encode(instance->vm->smallStrings.emptyString()))
+        AOT_MUST_TAIL_CALL return makeTextOfIntegerInFrontOfNothing(instance, isLikelyKey, parts, 0);
     instance->state->stringKeys->lastLookupByParts().takePair(parts[0], parts[1]);
     AOT_MUST_TAIL_CALL return concatenateShortStringKey(instance, 2, parts, isLikelyKey);
 }
@@ -1602,28 +2071,6 @@ static ALWAYS_INLINE bool shortStringNeedsEscapeInJSON(std::span<const Latin1Cha
     for (size_t i = 0; i < size; ++i)
         found |= !!WTF::escapedFormsForJSON[from[i]];
     return found;
-}
-
-static ALWAYS_INLINE void copyShortString(std::span<const Latin1Character> characters, Latin1Character* to)
-{
-    const Latin1Character* from = characters.data();
-    size_t size = characters.size();
-    if (size >= 8) {
-        uint64_t first = WTF::unalignedLoad<uint64_t>(from);
-        uint64_t last = WTF::unalignedLoad<uint64_t>(from + size - 8);
-        WTF::unalignedStore<uint64_t>(to, first);
-        WTF::unalignedStore<uint64_t>(to + size - 8, last);
-        return;
-    }
-    if (size >= 4) {
-        uint32_t first = WTF::unalignedLoad<uint32_t>(from);
-        uint32_t last = WTF::unalignedLoad<uint32_t>(from + size - 4);
-        WTF::unalignedStore<uint32_t>(to, first);
-        WTF::unalignedStore<uint32_t>(to + size - 4, last);
-        return;
-    }
-    for (size_t i = 0; i < size; ++i)
-        to[i] = from[i];
 }
 
 template<typename CharacterType>

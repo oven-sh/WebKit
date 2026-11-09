@@ -521,7 +521,7 @@ bool FrameChecker::checkPlaces()
         CellRange cells;
         if (!findCells(m_frame.offsetFromFPOf(spill), byteSize, byteSize, cells))
             return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
-        if (facts.hasGap() && (facts.livesAcrossSuspension || facts.beginOfGap <= facts.begin || facts.endOfGap < facts.beginOfGap || facts.end <= facts.endOfGap))
+        if (facts.hasGap() && (facts.beginOfGap <= facts.begin || facts.endOfGap < facts.beginOfGap || facts.end <= facts.endOfGap))
             return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
         for (Cell cell = cells.begin; cell < cells.end; ++cell) {
             if (m_isHeldThroughout.get(cell))
@@ -605,7 +605,7 @@ bool FrameChecker::checkSuspensions()
         for (; suspension != suspensions.end() && suspension->late - 1 <= facts.end; ++suspension) {
             if (!m_allocation.spillsHeldAt(suspension->index).get(spill))
                 continue;
-            if (!facts.livesAcrossSuspension || suspension->patch->frameWordsDeadAcrossSuspension()->get(wordHolding(offset)))
+            if (!facts.livesAcrossSuspension || facts.isInGap(suspension->late - 1) || facts.isInGap(suspension->late) || suspension->patch->frameWordsDeadAcrossSuspension()->get(wordHolding(offset)))
                 return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
             if (!isClearedAt(suspension->patch, wordHolding(offset)))
                 continue;

@@ -7,8 +7,8 @@
 # A type that is only written proves nothing: the stub is entered at its head.
 # RUN(DECLARED): bytes f2:Body mechanisms=all
 # DECLARED-LABEL: unit f2:Body
-# DECLARED-NOT: ProvenBuiltinClass
-# DECLARED: Stub CallMethodOfBuiltinClass{{*}}.MapGet count 1
+# DECLARED-NOT: Stub CallMethodOfProven
+# DECLARED: Stub CallMethodOfTable.MapGetAnyValue immediate (Name "get")
 # RUN(ANSWERS): run-in-shell globalThis.sink = (late, declared) => { let held; print(late({ k: 1 }, map => { })[0].get(1)); print(late({ get k() { held.set = () => { print("own"); }; return 2; } }, map => { held = map; })[0].has(2)); print(late({ k: 3 }, map => { map.set = () => { print("own at the read"); }; })[0].has(3)); print(declared(new Map([[1, "a"]]), 1)); print(declared({ get() { return "likeness"; } }, 1)); };
 # ANSWERS: 1
 # ANSWERS-NEXT: true

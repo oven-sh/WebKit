@@ -18,7 +18,9 @@
 #include "AOTTypeArena.h"
 #include <algorithm>
 #include <optional>
+#include <ranges>
 #include <span>
+#include <tuple>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -94,7 +96,7 @@ static bool canPlanOwnKeysOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID
     return true;
 }
 
-static std::optional<OwnKeyOrder> ownKeysAmongCreatedFieldsInCopiesOwnKeys(const Walker& walker, LayoutID layout, std::span<const FieldIndex> created)
+static std::optional<OwnKeyOrder> ownKeysAmongCreatedFieldsInCopiesOwnKeys(const Walker& walker, LayoutID layout, std::span<const FieldIndex> created, size_t mostFields = std::numeric_limits<size_t>::max())
 {
     OwnKeyOrder order { layout, { }, { } };
     order.created.append(created);
@@ -111,6 +113,8 @@ static std::optional<OwnKeyOrder> ownKeysAmongCreatedFieldsInCopiesOwnKeys(const
             if (slot.representation == SlotRepresentation::DeferredClosure)
                 return std::nullopt;
             order.fields.append(field);
+            if (order.fields.size() > mostFields)
+                return std::nullopt;
             break;
         }
         }
@@ -203,7 +207,7 @@ static Vector<uint32_t, 2> countsAtWhichMakersStopInCopiesOwnKeys(const Walker& 
     return counts;
 }
 
-static bool appendOrdersOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID layout, unsigned mostArms, OwnKeyPlan& plan)
+static bool findArmsOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID layout, unsigned mostArms, size_t mostFields, OwnKeyPlan& plan)
 {
     if (!canPlanOwnKeysOfLayoutInCopiesOwnKeys(walker, layout))
         return false;
@@ -212,48 +216,170 @@ static bool appendOrdersOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID l
     size_t firstArmOfLayout = plan.orders.size();
     bool hasList = false;
     bool everyListHasArm = true;
-    for (uint32_t number = 0; number < keyOrders.numberOfOrdersOf(layout); ++number) {
-        std::span<const FieldIndex> order = keyOrders.order(layout, number);
-        for (uint32_t count : countsAtWhichMakersStopInCopiesOwnKeys(walker, layout, order)) {
-            std::span<const FieldIndex> created = order.first(count);
-            bool hasArmAlready = std::ranges::any_of(plan.orders.span().subspan(firstArmOfLayout), [&](const OwnKeyOrder& earlier) {
-                return std::ranges::equal(earlier.created, created);
-            });
-            if (hasArmAlready)
-                continue;
-            if (plan.orders.size() == mostArms)
-                return false;
-            hasList = true;
-            std::optional<OwnKeyOrder> arm = keyOrders.findOrderWord(layout, created) ? ownKeysAmongCreatedFieldsInCopiesOwnKeys(walker, layout, created) : std::nullopt;
-            if (arm && arm->fields.size() <= mostFieldsOfOwnKeyWalk)
-                plan.orders.append(WTF::move(*arm));
-            else
-                everyListHasArm = false;
+    auto addArmWhereThereIsRoom = [&](std::span<const FieldIndex> created) {
+        bool hasArmAlready = std::ranges::any_of(plan.orders.span().subspan(firstArmOfLayout), [&](const OwnKeyOrder& earlier) {
+            return std::ranges::equal(earlier.created, created);
+        });
+        if (hasArmAlready)
+            return true;
+        if (plan.orders.size() == mostArms)
+            return false;
+        hasList = true;
+        std::optional<OwnKeyOrder> arm = keyOrders.findOrderWord(layout, created) ? ownKeysAmongCreatedFieldsInCopiesOwnKeys(walker, layout, created, mostFields) : std::nullopt;
+        if (arm)
+            plan.orders.append(WTF::move(*arm));
+        else
+            everyListHasArm = false;
+        return true;
+    };
+
+    uint32_t numberOfOrders = keyOrders.numberOfOrdersOf(layout);
+    if (walker.isInLoop()) {
+        Vector<uint32_t, 16> lastStopTakenOfOrders;
+        for (bool someOrderHasStop = true; someOrderHasStop;) {
+            someOrderHasStop = false;
+            for (uint32_t number = 0; number < numberOfOrders; ++number) {
+                std::span<const uint8_t> whereMakersStop = keyOrders.whereMakersStop(layout, number);
+                if (lastStopTakenOfOrders.size() == number)
+                    lastStopTakenOfOrders.append(static_cast<uint32_t>(whereMakersStop.size()) + 1);
+                uint32_t count = lastStopTakenOfOrders[number] ? lastStopTakenOfOrders[number] - 1 : 0;
+                while (count && !whereMakersStop[count - 1])
+                    --count;
+                lastStopTakenOfOrders[number] = count;
+                someOrderHasStop |= !!count;
+                if (count && !addArmWhereThereIsRoom(keyOrders.order(layout, number).first(count)))
+                    return false;
+            }
         }
     }
-    return hasList && everyListHasArm;
+    std::optional<bool> everyStopOfMakersHasArm = hasList ? std::optional<bool>(everyListHasArm) : std::nullopt;
+    for (uint32_t number = 0; number < numberOfOrders; ++number) {
+        std::span<const FieldIndex> order = keyOrders.order(layout, number);
+        for (uint32_t count : countsAtWhichMakersStopInCopiesOwnKeys(walker, layout, order)) {
+            if (!addArmWhereThereIsRoom(order.first(count)))
+                return everyStopOfMakersHasArm.value_or(false);
+        }
+    }
+    return everyStopOfMakersHasArm.value_or(hasList && everyListHasArm);
 }
 
-static bool listLayoutsInCopiesOwnKeys(Walker& walker, TypeID listed, unsigned mostArms, Vector<LayoutID, mostArmsOfOwnKeyWalk>& layouts, bool& hasMoreLayouts)
+namespace {
+
+struct KeptByCopiesOwnKeys final : Walker::KeptForBuild {
+    struct ArmsOfLayout {
+        Vector<OwnKeyOrder, 2> arms;
+        bool everyExpectedOrderHasArm { false };
+    };
+    HashMap<uint64_t, ArmsOfLayout> armsOfLayouts;
+};
+
+} // anonymous namespace
+
+static bool appendOrdersOfLayoutInCopiesOwnKeys(Walker& walker, LayoutID layout, unsigned mostArms, size_t mostFields, OwnKeyPlan& plan)
+{
+    static_assert(mostArmsOfOwnKeyWalk < 4);
+    RELEASE_ASSERT(plan.orders.size() <= mostArms && mostArms <= mostArmsOfOwnKeyWalk);
+    unsigned room = mostArms - static_cast<unsigned>(plan.orders.size());
+    if (mostFields > std::numeric_limits<uint16_t>::max())
+        return findArmsOfLayoutInCopiesOwnKeys(walker, layout, mostArms, mostFields, plan);
+    std::unique_ptr<Walker::KeptForBuild>& kept = walker.keptByCopiesOwnKeys();
+    if (!kept)
+        kept = makeUniqueWithoutFastMallocCheck<KeptByCopiesOwnKeys>();
+    uint64_t key = (static_cast<uint64_t>(layout.index()) + 1) << 32 | static_cast<uint64_t>(mostFields) << 8 | room << 1 | walker.isInLoop();
+    const KeptByCopiesOwnKeys::ArmsOfLayout& found = static_cast<KeptByCopiesOwnKeys&>(*kept).armsOfLayouts.ensure(key, [&] {
+        OwnKeyPlan ofLayoutAlone;
+        bool everyExpectedOrderHasArm = findArmsOfLayoutInCopiesOwnKeys(walker, layout, room, mostFields, ofLayoutAlone);
+        return KeptByCopiesOwnKeys::ArmsOfLayout { WTF::move(ofLayoutAlone.orders), everyExpectedOrderHasArm };
+    }).iterator->value;
+    plan.orders.appendVector(found.arms);
+    return found.everyExpectedOrderHasArm;
+}
+
+static LayoutID layoutWrittenOfSourceInCopiesOwnKeys(Walker& walker, ValueID source)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    const Program& program = walker.program();
+    TypeID written;
+    for (ValueID definition = source; definition && !written;) {
+        if (index.isParameter(definition)) {
+            const Function& function = program.at(walker.currentFunction());
+            if (const DeclaredType* parameter = index.blockOf(definition) == entryBlock && definition.index() < function.numberOfEntryParameters() ? function.declaredEntryParameter(definition.index()) : nullptr)
+                written = parameter->written();
+            break;
+        }
+        BodyValue operation = index.value(definition);
+        switch (operation.opcode()) {
+        case Opcode::Convert:
+            written = operation.as<Opcode::Convert>().declared().written();
+            definition = operation.operand(0);
+            break;
+        case Opcode::CheckInitialized:
+            definition = operation.operand(0);
+            break;
+        case Opcode::GetModuleVariable:
+            written = program.at(operation.as<Opcode::GetModuleVariable>().variable()).declared.written();
+            definition = { };
+            break;
+        default:
+            definition = { };
+            break;
+        }
+    }
+    return layoutThatNamesFamily(walker, written);
+}
+
+static bool isWrittenEarlierInCopiesOwnKeys(const Program& program, LayoutID first, LayoutID second)
+{
+    const Layout& one = program.at(first);
+    const Layout& other = program.at(second);
+    auto placeOf = [](const Layout& layout) {
+        return std::tuple(!layout.module, layout.module ? layout.module.index() : 0u, layout.position);
+    };
+    if (placeOf(one) != placeOf(other))
+        return placeOf(one) < placeOf(other);
+    auto namesOf = [&](const Layout& layout) {
+        return layout.fields | std::views::transform([&](const Field& field) {
+            StringID text = field.key ? program.at(field.key).text : StringID();
+            return text ? program.string(text) : std::span<const uint8_t>();
+        });
+    };
+    return std::ranges::lexicographical_compare(namesOf(one), namesOf(other), [](std::span<const uint8_t> name, std::span<const uint8_t> otherName) {
+        return std::ranges::lexicographical_compare(name, otherName);
+    });
+}
+
+static bool listLayoutsInCopiesOwnKeys(Walker& walker, TypeID listed, ValueID source, unsigned mostArms, size_t mostFields, Vector<LayoutID, mostArmsOfOwnKeyWalk>& layouts, bool& hasMoreLayouts)
 {
     if (!listed)
         return false;
     Type type = walker.types().at(listed);
     if (!type.isJavaScriptValue() || type.primitives || !type.hasOnlyLayouts() || type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return false;
-    for (LayoutID member : membersOf(walker.types(), type.layouts)) {
-        if (!walker.plan().isInUse(member))
-            continue;
-        if (layouts.size() == mostArms) {
-            hasMoreLayouts = true;
-            break;
-        }
-        layouts.append(member);
+    LayoutID written = holdsOneMember(type.layouts) ? LayoutID() : layoutWrittenOfSourceInCopiesOwnKeys(walker, source);
+    if (written && (!walker.plan().isInUse(written) || !walker.types().layoutSets().contains(type.layouts, written)))
+        written = { };
+    if (OwnKeyPlan ofWritten; written) {
+        appendOrdersOfLayoutInCopiesOwnKeys(walker, written, mostArms, mostFields, ofWritten);
+        if (ofWritten.orders.isEmpty())
+            written = { };
     }
+    if (written)
+        layouts.append(written);
+    Vector<LayoutID, 8> others;
+    for (LayoutID member : membersOf(walker.types(), type.layouts)) {
+        if (member != written && walker.plan().isInUse(member))
+            others.append(member);
+    }
+    std::ranges::stable_sort(others, [&](LayoutID first, LayoutID second) {
+        return isWrittenEarlierInCopiesOwnKeys(walker.program(), first, second);
+    });
+    size_t room = mostArms - std::min<size_t>(mostArms, layouts.size());
+    hasMoreLayouts |= others.size() > room;
+    layouts.append(others.span().first(std::min(room, others.size())));
     return !layouts.isEmpty();
 }
 
-OwnKeyPlan planOwnKeyWalk(Walker& walker, ValueID source, Reference built)
+OwnKeyPlan planOwnKeyWalk(Walker& walker, ValueID source, Reference built, size_t mostFields)
 {
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !built || !built.isValue())
         return { };
@@ -266,11 +392,11 @@ OwnKeyPlan planOwnKeyWalk(Walker& walker, ValueID source, Reference built)
 
     OwnKeyPlan plan;
     plan.isDeclared = true;
-    bool layoutsAreListedByProof = listLayoutsInCopiesOwnKeys(walker, proven, mostArms, layouts, hasMoreLayouts);
+    bool layoutsAreListedByProof = listLayoutsInCopiesOwnKeys(walker, proven, source, mostArms, mostFields, layouts, hasMoreLayouts);
     if (!layoutsAreListedByProof) {
         ExpectationOfValue expectation = findExpectation(walker, source);
         TypeID expected = expectation.type ? types.withoutNullish(expectation.type) : TypeID();
-        if (!expected || !proven || !types.overlap(proven, expected) || !listLayoutsInCopiesOwnKeys(walker, expected, mostArms, layouts, hasMoreLayouts))
+        if (!expected || !proven || !types.overlap(proven, expected) || !listLayoutsInCopiesOwnKeys(walker, expected, source, mostArms, mostFields, layouts, hasMoreLayouts))
             return { };
         plan.isDeclared = expectation.isDeclared;
     }
@@ -278,7 +404,7 @@ OwnKeyPlan planOwnKeyWalk(Walker& walker, ValueID source, Reference built)
 
     plan.hasArmForEveryExpectedOrder = !hasMoreLayouts;
     for (LayoutID layout : layouts)
-        plan.hasArmForEveryExpectedOrder &= appendOrdersOfLayoutInCopiesOwnKeys(walker, layout, mostArms, plan);
+        plan.hasArmForEveryExpectedOrder &= appendOrdersOfLayoutInCopiesOwnKeys(walker, layout, mostArms, mostFields, plan);
     if (plan.orders.isEmpty())
         return { };
     return plan;

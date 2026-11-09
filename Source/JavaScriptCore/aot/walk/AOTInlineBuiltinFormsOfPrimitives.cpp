@@ -116,7 +116,7 @@ bool PrimitiveFormChooser::startsWithNumbers(unsigned count) const
 
 InlineForm PrimitiveFormChooser::numberConstructorForm() const
 {
-    if (numberOfArguments() != 1 || !isValue(argument(0)))
+    if (numberOfArguments() != 1 || !isValue(argument(0)) || !m_types.isSubset(argument(0), TypeTable::anything))
         return InlineForm::Call;
     if (isString(argument(0)) || isNumber(argument(0)))
         return InlineForm::Whole;

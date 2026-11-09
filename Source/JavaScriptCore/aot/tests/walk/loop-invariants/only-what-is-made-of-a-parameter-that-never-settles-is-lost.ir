@@ -1,9 +1,9 @@
-# what still grows in the second walk goes to the tops of its kinds: a sum with a value of which nothing is known is a number or a text, and with that on its left it may be a BigInt too. The next walk finds that it holds.
+# what still grows in the second walk goes to the tops of its kinds: a sum with a value of which nothing is known is a number or a text, and with that on its left it still is: neither turns into a BigInt. The next walk finds that it holds.
 # Each turn hands a text on by one parameter. A parameter that only takes what another parameter of the head held takes that one's type with it, so `b`, `c` and `d` settle together with `a`, and nothing is lost: each holds 0 or "t" and nothing else ever
 # function run(n, x) { let s = 0, a = 0, b = 0, c = 0, d = 0; for (let i = 0; i < n; i++) { s = s + x; d = c; c = b; b = a; a = "t"; } return [s, a, b, c, d]; }
 # RUN: walk f1 mechanisms=none+TypedOperations
 # CHECK-LABEL: code f1:Body
-# CHECK: ([[s]]: number|string|bigint {{*}}, [[a]]: 0|"t" {{*}}, [[b]]: 0|"t" {{*}}, [[c]]: 0|"t" {{*}}, [[d]]: 0|"t" {{*}}, [[i]]: int[0, 2147483647] {{*}}isLoopHead=true
+# CHECK: ([[s]]: number|string {{*}}, [[a]]: 0|"t" {{*}}, [[b]]: 0|"t" {{*}}, [[c]]: 0|"t" {{*}}, [[d]]: 0|"t" {{*}}, [[i]]: int[0, 2147483647] {{*}}isLoopHead=true
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

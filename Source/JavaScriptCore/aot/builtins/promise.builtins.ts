@@ -53,7 +53,10 @@ const pristineCatch = (onRejected: b.TableType, contents: Contents) =>
 
 const resolveImplementation = b.inline("PromiseResolve", { otherwise: b.hostCall });
 
-const elementProtocols = [b.runsTransitively("Iterate", "Thenable"), b.contentsOfContentsOnlyStored];
+const elementProtocols = [
+  b.runsTransitively("Iterate", "Thenable", b.named("constructor")),
+  b.contentsOfContentsOnlyStored,
+];
 const adoptedElement = b.settled("iterable");
 const settlementRecord = b.union(
   b.ordinaryObjectOf("PromiseFulfilledResult"),
@@ -150,6 +153,7 @@ export default b.declarations(
           writes: [promiseState],
           requiresHolderAsThis: true,
           privateAlias: true,
+          boxedCallStub: "PromiseResolve",
           implementation: resolveImplementation,
         },
         {
@@ -213,7 +217,13 @@ export default b.declarations(
     },
     proto: {
       then: [
-        { ...pristineThen(b.callable, b.callable, { value: eitherHandlerResult }), privateAlias: true },
+        {
+          ...pristineThen(b.callable, b.callable, { value: eitherHandlerResult }),
+          privateAlias: true,
+          length: 2,
+          boxedCallStub: "PromiseThen",
+          nativeSymbols: ["promiseProtoFuncThen"],
+        },
         pristineThen(b.callable, b.any.optional, { value: b.callbackResult("onFulfilled") }),
         pristineThen(b.any, b.callable, { value: valueOrHandlerResult }),
         pristineThen(b.any.optional, b.any.optional, { value: settledValue, reason: settledReason }),
@@ -230,7 +240,12 @@ export default b.declarations(
         },
       ],
       catch: [
-        pristineCatch(b.callable, { value: valueOrHandlerResult }),
+        {
+          ...pristineCatch(b.callable, { value: valueOrHandlerResult }),
+          length: 1,
+          boxedCallStub: "PromiseCatch",
+          nativeSymbols: ["promiseProtoFuncCatch"],
+        },
         pristineCatch(b.any.optional, { value: settledValue, reason: settledReason }),
         {
           ...operandCodeEffects,

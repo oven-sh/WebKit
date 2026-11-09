@@ -5,9 +5,9 @@
 # RUN: summary f1
 # CHECK: uses-first f3 at {{*}}, f4 at
 # RUN(LINK): link variables mechanisms=all
-# LINK: variable g2 proven=i32|absent
+# LINK: variable g2 proven=int[0, 2147483647]|absent
 # LINK-NOT: variable g2 {{*}}filled
-# LINK: variable g3 proven=i32|absent
+# LINK: variable g3 proven=int[0, 2147483647]|absent
 # LINK-NOT: variable g3 {{*}}filled
 # RUN(NONE): run-in-shell mechanisms=none globalThis.choice = false; globalThis.attempt = f => { try { return f(); } catch (error) { return error.name; } };
 # NONE: ReferenceError

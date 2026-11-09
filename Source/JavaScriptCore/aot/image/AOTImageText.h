@@ -231,16 +231,22 @@ public:
 
     uint32_t numberOfStrings() const { return static_cast<uint32_t>(m_strings.size()); }
     uint32_t numberOfIdentifiers() const { return static_cast<uint32_t>(m_identifiers.size()); }
-    uint32_t numberOfStringConstants() const { return static_cast<uint32_t>(m_stringConstants.size() / 2); }
+    uint32_t numberOfStringConstants() const { return static_cast<uint32_t>(m_stringConstants.size()); }
 
     bool hasText(StringID string) const { return m_strings[string.index()].hasText(); }
     bool isAtom(StringID string) const { return m_strings[string.index()].isAtom(); }
-    JS_EXPORT_PRIVATE StringView view(StringID) const;
-    JS_EXPORT_PRIVATE unsigned hash(StringID) const;
+    ImageStringWord wordOf(StringID string) const { return m_strings[string.index()]; }
+    StringView view(StringID string) const { return view(wordOf(string)); }
+    unsigned hash(StringID string) const { return hash(wordOf(string)); }
     JS_EXPORT_PRIVATE bool equals(StringID, StringView) const;
-    JS_EXPORT_PRIVATE String createString(StringID) const;
-    JS_EXPORT_PRIVATE String createAtom(StringID) const;
-    StringImpl* tryGetHeader(StringID) const;
+    String createString(StringID string) const { return createString(wordOf(string)); }
+    String createAtom(StringID string) const { return createAtom(wordOf(string)); }
+    StringImpl* tryGetHeader(StringID string) const { return tryGetHeader(wordOf(string)); }
+    JS_EXPORT_PRIVATE StringView view(ImageStringWord) const;
+    JS_EXPORT_PRIVATE unsigned hash(ImageStringWord) const;
+    JS_EXPORT_PRIVATE String createString(ImageStringWord) const;
+    JS_EXPORT_PRIVATE String createAtom(ImageStringWord) const;
+    StringImpl* tryGetHeader(ImageStringWord) const;
 
     const ImageIdentifierWord& identifier(uint32_t number) const { return m_identifiers[number]; }
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
@@ -257,12 +263,12 @@ public:
 #else
     UniquedStringImpl* identifierAtoms() const { return reinterpret_cast<UniquedStringImpl*>(const_cast<ImageStringHeader*>(m_stringHeaders.data())); }
 #endif
-    StringID stringConstant(uint32_t number) const { return StringID(m_stringConstants[numberOfStringConstants() + number]); }
+    ImageStringWord stringConstant(uint32_t number) const { return { m_stringConstants[number] }; }
     bool hasListedHash(StringID string) const { return m_strings[string.index()].hasListedHash(); }
 
 private:
-    bool hasHeader(StringID string) const { return !m_strings[string.index()].hasText() || m_strings[string.index()].hasHeader(); }
-    StringImpl* headerOf(StringID) const;
+    static bool hasHeader(ImageStringWord word) { return !word.hasText() || word.hasHeader(); }
+    StringImpl* headerOf(ImageStringWord) const;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     ImageLongString rangeFor(const ImageStringRecord&) const;
     JS_EXPORT_PRIVATE StringImpl& createLazyHeader(uint32_t number) const;
@@ -271,7 +277,7 @@ private:
 
     static constexpr size_t lazyHeadersAlignment = 2 * MB;
 #endif
-    String createStringWithoutHeader(StringID) const;
+    String createStringWithoutHeader(ImageStringWord) const;
 
     std::span<const ImageStringWord> m_strings;
     std::span<const uint32_t> m_listedStrings;
@@ -332,9 +338,8 @@ inline std::optional<uint32_t> ImageText::lazyHeaderNumber(const StringImpl& str
 }
 #endif
 
-inline StringImpl* ImageText::tryGetHeader(StringID string) const
+inline StringImpl* ImageText::tryGetHeader(ImageStringWord word) const
 {
-    ImageStringWord word = m_strings[string.index()];
     if (!word.hasHeader())
         return nullptr;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
