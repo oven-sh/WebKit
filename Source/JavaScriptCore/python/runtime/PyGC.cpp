@@ -952,7 +952,9 @@ private:
         if (!from || !m_objects.contains(to)) [[likely]]
             return;
         Locker locker { m_lock };
-        m_found.append(from);
+        // Each cell once, however often it refers to one of them. The marker tells of every reference, and what is done with a cell that has been found may go through all of it (HeapView::objectOf() of a tuple).
+        if (m_cellsFound.add(from).isNewEntry)
+            m_found.append(from);
     }
     void analyzePropertyNameEdge(JSCell* from, JSCell* to, UniquedStringImpl*) final { analyzeEdge(from, to, RootMarkReason::None); }
     void analyzeVariableNameEdge(JSCell* from, JSCell* to, UniquedStringImpl*) final { analyzeEdge(from, to, RootMarkReason::None); }
@@ -964,6 +966,7 @@ private:
     UncheckedKeyHashSet<JSCell*> m_objects;
     Lock m_lock;
     Vector<JSCell*> m_found;
+    UncheckedKeyHashSet<JSCell*> m_cellsFound;
 };
 
 static bool refersToOneOf(JSGlobalObject*, JSCell* object, bool wasSeenItself, std::span<const JSValue>);
