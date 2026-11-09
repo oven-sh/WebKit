@@ -6940,6 +6940,8 @@ bool CallInLinkCalls::mayFind(const LinkType& objects, PropertyKeyID key, uint8_
             LinkType found = heldAt(node);
             return found == primitivesForLinkCalls(found.primitives);
         };
+        if (ModuleID module = m_program.at(layout).namespaceOf; module && std::ranges::any_of(m_program.at(module).requests, &ModuleRequest::isDynamicStarExport))
+            return true;
         std::optional<FieldReference> field = findField(m_program, layout, key);
         bool answersWithPrimitivesAlone = primitivesAnswerNothing && field && fieldAt(m_program, *field).form.isEmpty() && holdsPrimitivesAlone(m_flow.field(*field));
         bool membersAnswer = m_flow.findMembers(layout, ClassSide::Prototype, key).mayAnswer() && !(m_methodsOfClassesAnswerNothing && findsMethodsAlone(layout, key));

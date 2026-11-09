@@ -2690,8 +2690,11 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 VariableID place = index.value(called).variable();
                 TypeID closures = facts().linked().variables[place.index()].isFilled ? fewClosuresWhoseCopiesPayInLoop(*this, facts().held().variable(place).proven, operation.argumentsOperands().size()) : TypeID();
                 TypeID proven = m_positionsOfBuild->variable(TypeLevel::Proven, place);
-                if (closures && !(proven && m_types.isSubset(proven, closures)) && !variablesAskedInFront.containsIf([&](const VariableAskedInFrontOfLoop& other) { return other.variable == place; }) && index.loopOf(member) == loop && BlocksThatEveryTurnPasses(index, loop).contains(member))
+                if (closures && !(proven && m_types.isSubset(proven, closures)) && !variablesAskedInFront.containsIf([&](const VariableAskedInFrontOfLoop& other) { return other.variable == place; }) && index.loopOf(member) == loop && BlocksThatEveryTurnPasses(index, loop).contains(member)) {
                     variablesAskedInFront.append({ place, closures });
+                    if (program().at(place).module != program().at(currentFunction()).module)
+                        functionsOfOtherFilesAskedInFront.append(place);
+                }
                 continue;
             }
             if (operation.opcode() != Opcode::GetModuleVariable)
@@ -3415,7 +3418,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         if (!read && !isUnreachable()) {
             Draft inFront = draftOfReadOf(field);
             inFront.setFollowsItsStore(false);
-            if (isOfAnotherFile)
+            if (isOfAnotherFile || (field.variable && !m_state.isPastDeadZone(field.variable) && leavesOutWordThatVariableIsBornWith(inFront, resultTypeOf(inFront))))
                 inFront.setGivesWordAsItLies(true);
             read = build(WTF::move(inFront));
         }
