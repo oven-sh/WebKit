@@ -1685,14 +1685,30 @@ static std::optional<uint8_t> flagsOfReceiverAsItsClassMakesIt(const BoxedCallHa
     }
 }
 
-static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCallHandler& handler, MethodIsRead methodIsRead, GPRReg scratch, JumpList& looksUp, std::optional<StubKey> entryForProvenClass = std::nullopt, GPRReg receiver = thisGPR)
+struct LooksBehindFirstLook {
+    const BoxedCallHandler& next;
+    JumpList isNoCell { };
+    JumpList isOfNextClassAndAsMade { };
+    JumpList isCompiledObject { };
+};
+
+static bool isKnownAsMadeByOneCompare(const StubAssembler& jit, const BoxedCallHandler& handler)
+{
+    return flagsOfReceiverAsItsClassMakesIt(handler) && !jit.options().methodsOfBuiltinsMayBeReplaced && jit.options().hasOneInstance;
+}
+
+static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCallHandler& handler, MethodIsRead methodIsRead, GPRReg scratch, JumpList& looksUp, std::optional<StubKey> entryForProvenClass = std::nullopt, GPRReg receiver = thisGPR, LooksBehindFirstLook* looksBehind = nullptr)
 {
     JumpList isOfClassAndAsMade;
     if (handler.receiverTypes) {
-        looksUp.append(jit.branchIfNotCell(receiver));
+        (looksBehind ? looksBehind->isNoCell : looksUp).append(jit.branchIfNotCell(receiver));
         static_assert(JSCell::typeInfoFlagsOffset() == JSCell::typeInfoTypeOffset() + 1);
-        if (std::optional<uint8_t> flags = flagsOfReceiverAsItsClassMakesIt(handler); flags && !jit.options().methodsOfBuiltinsMayBeReplaced && jit.options().hasOneInstance)
-            isOfClassAndAsMade.append(jit.branch16(CCallHelpers::Equal, Address(receiver, JSCell::typeInfoTypeOffset()), TrustedImm32(handler.receiverTypes->first | *flags << 8)));
+        if (isKnownAsMadeByOneCompare(jit, handler))
+            isOfClassAndAsMade.append(jit.branch16(CCallHelpers::Equal, Address(receiver, JSCell::typeInfoTypeOffset()), TrustedImm32(handler.receiverTypes->first | *flagsOfReceiverAsItsClassMakesIt(handler) << 8)));
+        if (looksBehind) {
+            looksBehind->isOfNextClassAndAsMade.append(jit.branch16(CCallHelpers::Equal, Address(receiver, JSCell::typeInfoTypeOffset()), TrustedImm32(looksBehind->next.receiverTypes->first | *flagsOfReceiverAsItsClassMakesIt(looksBehind->next) << 8)));
+            looksBehind->isCompiledObject.append(jit.branchTest8(CCallHelpers::NonZero, Address(receiver, offsetOfShapeWord + 3), TrustedImm32(compiledObjectShapeBit >> 24)));
+        }
         looksUp.append(jit.branchIfNotType(receiver, *handler.receiverTypes));
     }
     if (entryForProvenClass)
@@ -1802,11 +1818,8 @@ void generateCallMethodThatMayBeUnread(StubAssembler& jit)
     jit.bindEntry(jit.key());
     JumpList callsValue;
     if (servesCallsByName(handler.form, count) && handler.receiverTypes) {
-        if (receiverOfBoxedCallIsObject(handler.form) && handler.emit != emitFunctionBind)
-            callsValue.append(branchIfNotPristine(jit, thisGPR));
         const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
-        branchIfMethodMayHaveBeenReplaced(jit, handler.form, scratch, callsValue);
-        askAgainWhatReceiverFinds(jit, handler.form, MethodIsRead::AtTheCall);
+        branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::InFrontOfTheCallUnlessReceiverFindsIt, scratch, callsValue);
         handler.emit(jit, scratch, callsValue);
         callsValue.link(&jit);
     }
@@ -1920,6 +1933,41 @@ static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsSha
 
     jit.bindEntry(entryAtSite);
     JumpList isOtherReceiver;
+    const BoxedCallHandler* handlerOfNext = next ? &boxedCallHandlers[static_cast<unsigned>(*next)] : nullptr;
+    const bool asksNextClassAtOnce = !patternIsShared && handlerOfNext && handlerOfNext->emit == emitJumpToTarget && servesCallsByName(*next, count) && isKnownAsMadeByOneCompare(jit, handler) && isKnownAsMadeByOneCompare(jit, *handlerOfNext)
+        && handler.receiverTypes->first == handler.receiverTypes->last && handlerOfNext->receiverTypes->first == handlerOfNext->receiverTypes->last && handler.receiverTypes->first != CompiledObjectType && handlerOfNext->receiverTypes->first != CompiledObjectType;
+    if (asksNextClassAtOnce) {
+        LooksBehindFirstLook looksBehind { *handlerOfNext };
+        branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::AtTheCall, calleeGPR, isOtherReceiver, std::nullopt, thisGPR, &looksBehind);
+        if (handlerNeverMisses) {
+            JumpList missesAtSite;
+            handler.emit(jit, name, missesAtSite);
+            RELEASE_ASSERT(missesAtSite.empty());
+        } else {
+            jit.or32(TrustedImm32(INT32_MIN), name);
+            jit.jump().linkTo(receiverFindsBuiltin, &jit);
+        }
+        std::optional<BoxedCallForm> behindNext = formAskedBehind(*next);
+        const StubKey forReceiversOfNeitherClass = behindNext ? callMethodOfBuiltinClassAtSite(*behindNext, count) : callMethodAtSite(count);
+        JumpList leavesDoors = looksBehind.isNoCell;
+        leavesDoors.append(looksBehind.isCompiledObject);
+
+        looksBehind.isOfNextClassAndAsMade.link(&jit);
+        askAgainWhatReceiverFinds(jit, *next, MethodIsRead::AtTheCall);
+        branchUnlessPasses(jit, handlerOfNext->firstArgument, argumentGPR(0), calleeGPR, leavesDoors);
+        const StubKey target = handlerOfNext->target;
+        if (const GPRReg owner = signatureOf(target).operands[0].gpr(); owner != thisGPR) {
+            jit.recordClobbers(RegisterSet { owner });
+            jit.move(thisGPR, owner);
+        }
+        jit.jumpToStub(target);
+
+        jit.linkToStub(leavesDoors, callMethodAtSite(count));
+        isOtherReceiver.link(&jit);
+        jit.linkToStub(jit.branchIfNotType(thisGPR, handlerOfNext->receiverTypes->first), forReceiversOfNeitherClass);
+        jit.jumpToStub(forOtherReceiversAtSite);
+        return;
+    }
     branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::AtTheCall, calleeGPR, isOtherReceiver);
     if (handlerNeverMisses) {
         JumpList missesAtSite;

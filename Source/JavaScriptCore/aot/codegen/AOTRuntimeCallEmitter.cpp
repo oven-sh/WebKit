@@ -14,6 +14,7 @@
 #include "AOTEffectsNet.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTHeaps.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPureOperations.h"
 #include "AOTSavedFrameEmitter.h"
 #include "AOTStaticsEmitter.h"
@@ -860,7 +861,7 @@ PatchEffectsMemo& RuntimeCallEmitter::patchEffectsMemo()
     return *m_patchEffectsMemo;
 }
 
-ALWAYS_INLINE void RuntimeCallEmitter::fillRequest(CallRequest& request, StubKey key, std::span<const LValue> operands, const CallOptions& options, std::optional<BranchTargets> targets, std::optional<Origin> firstRead) const
+ALWAYS_INLINE_INTO_OTHER_FILES void RuntimeCallEmitter::fillRequest(CallRequest& request, StubKey key, std::span<const LValue> operands, const CallOptions& options, std::optional<BranchTargets> targets, std::optional<Origin> firstRead) const
 {
     const StubCatalog& catalog = inputs().stubCatalog;
     uint32_t traits = (targets ? 0 : StubCallTraits::returns)
@@ -990,6 +991,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     patchpoint->setNeedsFrameRecord(shape->needsFrameRecord);
     patchpoint->setFindsOperandsInFrameWithoutRecord(true);
     patchpoint->setRunsWithoutFrame(!hasSite && !neverReturns && shape->leavesCallerWithoutFrame);
+    RELEASE_ASSERT(!patchpoint->runsWithoutFrame() || !calleeMayCollect);
 
     bool receiverIsInAnyRegister = shape->receiverIsInAnyRegister;
     bool resultIsInAnyRegister = shape->resultIsInAnyRegister;
@@ -1095,6 +1097,7 @@ void RuntimeCallEmitter::beginWatchOfWhatMayRunAgain(const ValueContext& beginni
     auto watch = makeUniqueWithoutFastMallocCheck<WatchOfEffects>();
     beginWatchOfEffects(beginning, effects, EntersCompiledCode::Yes, 0, *watch);
     digestVariablesThatUnitReads(effects, *watch);
+    keepWordsOfVariablesThatUnitStores(*watch);
     watch->deedsInFront = readWordForEffectsNet(AOT_INSTANCE_OFFSET(effectsNet.operationsThatDidSomething), std::nullopt, nullptr);
     watch->loudDeedsInFront = readWordForEffectsNet(AOT_INSTANCE_OFFSET(effectsNet.operationsThatRanOtherCode), std::nullopt, nullptr);
     m_watchesOfWhatMayRunAgain.append({ beginning.id(), WTF::move(watch) });
@@ -1114,26 +1117,48 @@ void RuntimeCallEmitter::endWatchOfWhatRunsAgain(const ValueContext& end, ValueI
         } else
             upToHere.loudDeedsInFront = nullptr;
         endWatchOfEffects(end, upToHere, nullptr);
+        if (end.opcode() == Opcode::TurnBeginsAgain) {
+            for (auto [variable, inFront] : watch->wordsOfVariablesInFront) {
+                uint32_t part = static_cast<uint32_t>(PartOfEffects::Writes) | speaksOfValueOfVariableInEffectsNet | (variable.index() & (variableInEffectsNet - 1)) << 16;
+                stopAtFalseEffects(end, upToHere.rows, m_out.equal(inFront, loadWordOfVariableForEffectsNet(variable)), part, m_out.int64Zero);
+            }
+        }
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool fillsCellBornAboveInItsBlock(const Code& code, const ValueContext& context)
+static bool fillsCellBornAboveInItsBlock(const Code& code, ValueID store)
 {
-    if (!storesThatMoveWithBirthsInSweep.contains(context.opcode()) || !context->operand(0))
+    const Operation& operation = code.at(store);
+    if (!storesThatMoveWithBirthsInSweep.contains(operation.opcode) || !operation.operand(0))
         return false;
-    ValueID cell = rootOfCellInSweptCode(code, context->operand(0));
-    if (code.isConstant(cell) || !birthsThatSweepMayMove.contains(code.at(cell).opcode) || code.at(cell).block() != context.block())
+    ValueID cell = rootOfCellInSweptCode(code, operation.operand(0));
+    if (code.isConstant(cell) || !birthsThatSweepMayMove.contains(code.at(cell).opcode) || code.at(cell).block() != operation.block())
         return false;
     bool standsBehindBirth = false;
-    for (ValueID each : code.valuesOf(context.block())) {
-        if (each == context.id())
+    for (ValueID each : code.valuesOf(operation.block())) {
+        if (each == store)
             return standsBehindBirth;
         if (each == cell)
             standsBehindBirth = true;
         else if (standsBehindBirth && code.at(each).opcode == Opcode::BeginsWhatMayRunAgain)
             return false;
+    }
+    return false;
+}
+
+static bool someStoreIntoFieldWasCounted(const Code& code, const Operation& putBack)
+{
+    ValueID cell = rootOfCellInSweptCode(code, putBack.operand(0));
+    for (uint32_t block = 0; block < code.numberOfBlocks(); ++block) {
+        for (ValueID each : code.valuesOf(BlockID(block))) {
+            const Operation& store = code.at(each);
+            if ((store.opcode != Opcode::PutSlot && store.opcode != Opcode::PutSlotOrAdd) || (store.opcode == Opcode::PutSlot && store.putsBackWhatTurnStored()) || store.key() != putBack.key())
+                continue;
+            if (rootOfCellInSweptCode(code, store.operand(0)) == cell && !code.writesWhatTurnHasMade(each) && !fillsCellBornAboveInItsBlock(code, each))
+                return true;
+        }
     }
     return false;
 }
@@ -1149,14 +1174,15 @@ RuntimeCallEmitter::DeedsInFrontOfQuietCall RuntimeCallEmitter::countDeedOf(cons
             return { };
         return { readWordForEffectsNet(all, std::nullopt, nullptr), readWordForEffectsNet(loud, std::nullopt, nullptr) };
     }
-    if (endsOfWatches.contains(context.opcode()) || m_code.writesWhatTurnHasMade(context.id()) || fillsCellBornAboveInItsBlock(m_code, context))
+    bool putsFieldBack = context.opcode() == Opcode::PutSlot && context->putsBackWhatTurnStored();
+    if (putsFieldBack ? !someStoreIntoFieldWasCounted(m_code, m_code.at(context.id())) : endsOfWatches.contains(context.opcode()) || m_code.writesWhatTurnHasMade(context.id()) || fillsCellBornAboveInItsBlock(m_code, context.id()))
         return { };
     Machine::PatchOperation* count = m_out.patchpoint(Machine::Void);
     count->effects = Machine::Effects::none();
     count->effects.writesLocalState = true;
     count->setRunsWithoutFrame(true);
     count->clobber(RegisterSet::macroClobberedGPRs());
-    int32_t step = (context.opcode() == Opcode::PutSlot || context.opcode() == Opcode::PutOwnDoubleIndex) && context->putsBackWhatTurnStored() ? -1 : 1;
+    int32_t step = (context.opcode() == Opcode::PutSlot || context.opcode() == Opcode::PutOwnDoubleIndex || context.opcode() == Opcode::PutPropertyOfHeir) && context->putsBackWhatTurnStored() ? -1 : 1;
     count->setGenerator([all, loud, step, runsOtherCode = traits.mayRunOtherCode()](CCallHelpers& jit, const Machine::PatchParameters&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.add64(CCallHelpers::TrustedImm32(step), CCallHelpers::Address(instanceGPR, all));
@@ -1336,6 +1362,31 @@ LValue RuntimeCallEmitter::loadVariableForEffectsNet(VariableID variable)
 {
     Machine::DeclaredAccessesSuspension suspension(m_out);
     return emitter<StaticsEmitter>().loadVariable(variable).value;
+}
+
+LValue RuntimeCallEmitter::loadWordOfVariableForEffectsNet(VariableID variable)
+{
+    LValue held = loadVariableForEffectsNet(variable);
+    if (held->type() == Machine::Double)
+        return m_out.bitCast(held, Machine::Int64);
+    return held->type() == Machine::Int32 ? m_out.zeroExtPtr(held) : held;
+}
+
+void RuntimeCallEmitter::keepWordsOfVariablesThatUnitStores(WatchOfEffects& watch)
+{
+    if (!m_variablesThatUnitStores) {
+        m_variablesThatUnitStores.emplace();
+        for (uint32_t index = 0; index < m_code.numberOfValues(); ++index) {
+            const Operation& operation = m_code.at(ValueID(index));
+            if (operation.opcode != Opcode::PutModuleVariable || !operation.block())
+                continue;
+            PlannedVariable planned = m_plan.variable(operation.variable());
+            if (planned.hasWordInStatics() && planned.encoding == VariableEncoding::Plain && !m_variablesThatUnitStores->contains(operation.variable()))
+                m_variablesThatUnitStores->append(operation.variable());
+        }
+    }
+    for (VariableID variable : *m_variablesThatUnitStores)
+        watch.wordsOfVariablesInFront.append({ variable, loadWordOfVariableForEffectsNet(variable) });
 }
 
 void RuntimeCallEmitter::digestVariablesThatUnitReads(const Effects& effects, WatchOfEffects& watch)
@@ -1553,7 +1604,7 @@ Machine::PatchOperation* RuntimeCallEmitter::createCallPatchpoint(const Operatio
     return patchpoint;
 }
 
-void RuntimeCallEmitter::finishCallPatchpoint(const OperationContext& context, Machine::PatchOperation* patchpoint, uint32_t site, const CallPatchpointRequest& request)
+ALWAYS_INLINE_INTO_OTHER_FILES void RuntimeCallEmitter::finishCallPatchpoint(const OperationContext& context, Machine::PatchOperation* patchpoint, uint32_t site, const CallPatchpointRequest& request)
 {
     if ((request.effects.mayThrow || request.effects.mayCollect) && ExceptionEmitter::unwindsWithinFunction(context))
         emitter<ExceptionEmitter>().attachLandingPad(context, patchpoint, site, !request.neverReturns);

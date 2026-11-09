@@ -19,10 +19,6 @@ void LinkFlow::noteBirthsOf(FunctionID id)
         for (const HalfOfAccessorInSummary& half : summary.halvesOfAccessorsNotLaid)
             (half.isGetter ? gettersThatMayBeAbsent : settersThatMayBeAbsent).set(m_firstFieldOfLayout[half.field.layout.index()] + half.field.field);
     }
-    for (FieldReference field : summary.fieldsLeftEmpty) {
-        if (summary.fieldsFilledAtEndAlone.isEmpty() || !std::ranges::binary_search(summary.fieldsFilledAtEndAlone, field))
-            cells.append(m_firstFieldOfLayout[field.layout.index()] + field.field);
-    }
     for (FieldReference field : summary.fieldsEmptyAtEndAlone)
         cells.append(m_firstFieldOfLayout[field.layout.index()] + field.field);
 
@@ -33,11 +29,22 @@ void LinkFlow::noteBirthsOf(FunctionID id)
             cells.append(m_firstFieldOfLayout[made.index()] + field);
         });
     }
-    if (cells.isEmpty())
+    if (cells.isEmpty() && summary.fieldsHeldOfLayoutsLeftEmpty.isEmpty())
         return;
     LockerOfWhatIsShared locker(*this);
     for (uint32_t cell : cells)
         fieldsNotOfBirth.set(cell);
+    summary.forEachLayoutLeftEmpty([&](LayoutID layout, std::span<const uint32_t> fieldsHeld) {
+        Vector<uint32_t>& fieldsOfBirthSoFar = m_fieldsOfBirthSoFar.ensure(layout.index(), [&] {
+            return Vector<uint32_t>(program.at(layout).fields.size(), [](size_t field) { return static_cast<uint32_t>(field); });
+        }).iterator->value;
+        fieldsOfBirthSoFar.removeAllMatching([&](uint32_t field) {
+            if (std::ranges::binary_search(fieldsHeld, field) || std::ranges::binary_search(summary.fieldsFilledAtEndAlone, FieldReference { layout, field }))
+                return false;
+            fieldsNotOfBirth.set(m_firstFieldOfLayout[layout.index()] + field);
+            return true;
+        });
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

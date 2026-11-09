@@ -402,6 +402,7 @@ static void answerByFieldRecordAndReturn(StubAssembler& jit, ObjectLookupQuestio
         isAccessor.link(&jit);
         const GPRReg getterSetter = r.uid;
         loadGetterSetterInField(jit, registers.field.address, registers.field.representation, getterSetter, exits.isAbsent);
+        branchUnlessAccessorPair(jit, getterSetter, isUnknown);
         callGetterAndReturn(jit, r.receiver, getterSetter, isUnknown);
     } else {
         JumpList isPresent;

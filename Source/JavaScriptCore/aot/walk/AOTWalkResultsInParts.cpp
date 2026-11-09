@@ -11,6 +11,7 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTOpcodeSets.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRegExpSummary.h"
@@ -419,7 +420,7 @@ bool buildSplitInParts(Walker& walker, const CallByOneRow& call)
     return true;
 }
 
-static const NotesOfResultInParts* partsOfListThatIsOnlyTakenApart(Walker& walker, Reference name)
+static ALWAYS_INLINE const NotesOfResultInParts* partsOfListThatIsOnlyTakenApart(Walker& walker, Reference name)
 {
     std::unique_ptr<Walker::KeptForBuild>& keptByStrings = walker.keptByStrings();
     if (!keptByStrings || !name || !name.isValue())
@@ -450,7 +451,7 @@ Reference partOfListThatIsOnlyTakenApart(Walker& walker, Reference name, Referen
     return { };
 }
 
-static Reference wholeBesidePartsNamedBy(Walker& walker, Reference name)
+static ALWAYS_INLINE Reference wholeBesidePartsNamedBy(Walker& walker, Reference name)
 {
     if (!name || !name.isValue() || !walker.state().holdsFreshObjects())
         return { };
@@ -461,7 +462,7 @@ static Reference wholeBesidePartsNamedBy(Walker& walker, Reference name)
     return code.at(cell).opcode == Opcode::NewRegExpMatchArray || code.at(cell).opcode == Opcode::NewStringSplitArray ? Reference::value(cell) : Reference();
 }
 
-Reference propertyOfResultTakenInParts(Walker& walker, Reference name, PropertyKeyID key)
+ALWAYS_INLINE_INTO_OTHER_FILES Reference propertyOfResultTakenInParts(Walker& walker, Reference name, PropertyKeyID key)
 {
     bool isOnlyTakenApart = partsOfListThatIsOnlyTakenApart(walker, name);
     Reference whole = wholeBesidePartsNamedBy(walker, name);

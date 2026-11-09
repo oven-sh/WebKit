@@ -38,6 +38,8 @@ struct ModuleLists {
     Vector<SourceStampData> sourceStamps;
 };
 
+Vector<WriterOfExportData> listWritersOfExports(const TableInputs&);
+
 struct LoopBesideOthers {
     unsigned count;
     ScopedLambda<void(unsigned index)> body;

@@ -16,6 +16,7 @@
 #include "ArrayBufferSharingMode.h"
 #include "JSType.h"
 #include <optional>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -58,9 +59,16 @@ struct TypeTestPlan {
     bool everyNonCellPasses() const { return !(failingPrimitives & ~cellPrimitives) && !integers; }
 };
 
+struct KindsInLayoutSet {
+    bool holdsNamespace { false };
+    bool mayHaveShapes { false };
+};
+using KindsInLayoutSets = UncheckedKeyHashMap<LayoutSetID, KindsInLayoutSet>;
+
 struct TypeTestContext {
     const Plan& plan;
     bool programHasOneInstance;
+    KindsInLayoutSets* kindsInSetsOutsideThread { nullptr };
 };
 
 bool holdsOnlyCompiledObjects(TypeReader, const Plan&, const Type&);

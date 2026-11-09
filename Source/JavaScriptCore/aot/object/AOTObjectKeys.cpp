@@ -10,6 +10,7 @@
 
 #include "AOTClassPrototype.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTKeyOrderTable.h"
 #include "AOTObjectInternal.h"
@@ -579,7 +580,7 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
         rememberStepOfKeyOrder(state, *this, structureBefore, before, index, StructureTable::KindOfStep::Creates);
 }
 
-ALWAYS_INLINE bool Object::trySetNumberedKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Object::trySetNumberedKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
 {
     const LayoutData& layout = this->layout();
     ASSERT(!hasKeyOrderOfItsOwn());

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTHeapCacheRegistry.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTJSONTextWriter.h"
 #include "AOTOperationArguments.h"
@@ -456,7 +457,7 @@ RefPtr<StringImpl> StringBuilderStorage::tryShareOrGiveAwayBuffer(bool mayGiveBu
     return impl;
 }
 
-ALWAYS_INLINE JSString* StringBuilderStorage::copyBufferToString(JSGlobalObject* globalObject)
+ALWAYS_INLINE_INTO_OTHER_FILES JSString* StringBuilderStorage::copyBufferToString(JSGlobalObject* globalObject)
 {
     ASSERT(m_position > 1);
     std::span<Latin1Character> output;
@@ -654,7 +655,7 @@ JSString* StringBuilderStorage::toString(JSGlobalObject* globalObject, Instance&
     return string;
 }
 
-ALWAYS_INLINE std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFinishWithCachedKey(Instance& instance, JSString*& key, unsigned& hash)
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFinishWithCachedKey(Instance& instance, JSString*& key, unsigned& hash)
 {
     if (!holdsOnlyShortTextInOwnBuffer() || m_limit < StringKeyCache::minReadableBytes || m_position > StringKeyCache::maxCachedKeyLength) [[unlikely]]
         return std::nullopt;
@@ -666,7 +667,7 @@ ALWAYS_INLINE std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFin
     return lookup;
 }
 
-ALWAYS_INLINE JSString* StringBuilderStorage::finishWithNewKey(JSGlobalObject* globalObject, Instance& instance, unsigned hash)
+ALWAYS_INLINE_INTO_OTHER_FILES JSString* StringBuilderStorage::finishWithNewKey(JSGlobalObject* globalObject, Instance& instance, unsigned hash)
 {
     JSString* key = instance.state->stringKeys->makeKey(*instance.vm, std::span<const Latin1Character> { m_characters, m_position }, hash);
     if (!key) [[unlikely]]

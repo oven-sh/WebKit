@@ -53,7 +53,7 @@ public:
     using iterator = T*;
     using const_iterator = const T*;
 
-    ListOfUnit() = default;
+    ListOfUnit() { }
     ListOfUnit(std::initializer_list<T> elements) { append(std::span<const T>(elements.begin(), elements.size())); }
     explicit ListOfUnit(std::span<const T> elements) { append(elements); }
     ListOfUnit(const ListOfUnit& other) { append(other.span()); }
@@ -410,7 +410,7 @@ public:
         : m_bits(std::exchange(other.m_bits, 0))
     {
     }
-    ~RarePartOfUnit() { release(); }
+    ALWAYS_INLINE ~RarePartOfUnit() { release(); }
 
     RarePartOfUnit& operator=(const RarePartOfUnit& other)
     {
@@ -464,7 +464,7 @@ private:
             m_bits = reinterpret_cast<uintptr_t>(new (NotNull, WTF::VectorBufferMalloc::malloc(sizeof(Part))) Part(*other.part()));
     }
 
-    void release()
+    ALWAYS_INLINE void release()
     {
         if (!m_bits)
             return;

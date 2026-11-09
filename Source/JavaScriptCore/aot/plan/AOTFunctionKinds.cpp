@@ -28,7 +28,7 @@ Representation closureCaptureRepresentationOf(const Program& program, const Call
     return conventions.parameterRepresentation(program, { function, CodeRole::Body }, capture);
 }
 
-static Vector<Representation, 8> formsOfClosureCaptureWords(const Program& program, const CallingConventions& conventions, FunctionID function)
+static ALWAYS_INLINE Vector<Representation, 8> formsOfClosureCaptureWords(const Program& program, const CallingConventions& conventions, FunctionID function)
 {
     return Vector<Representation, 8>(program.at(function).captures.size(), [&](size_t capture) {
         return closureCaptureRepresentationOf(program, conventions, function, static_cast<unsigned>(capture));

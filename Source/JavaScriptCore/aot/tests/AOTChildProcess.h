@@ -35,6 +35,8 @@ String temporaryFolder();
 
 void installTrapReporter();
 
+inline constexpr const char* crashRequestVariable = "TESTAOT_CRASH_ON_REQUEST";
+
 inline constexpr ASCIILiteral lineAfterChildProcess = "a child process has ended"_s;
 
 void printLineAfterEachChildProcess();

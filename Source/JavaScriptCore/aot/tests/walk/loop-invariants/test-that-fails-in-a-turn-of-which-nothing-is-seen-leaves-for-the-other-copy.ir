@@ -4,9 +4,10 @@
 # the sum comes round as a raw number, the element is read and tested once, and the length and the storage of the list stand in front of the loop.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: [[entry]]({{*}}: number @Double, {{*}}) frequency=Rare:
-# CHECK: frequency=Rare isLoopHead=true:
-# CHECK: = PropGet {{*}}key="price"
+# The other copy opens guesses of its own and is no rare code: one element of another shape sends all the turns that are left there. It is printed first; its entry stands behind it.
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: = GetSlot {{*}}key="price" {{*}}level=Expected
+# CHECK: [[entry]]({{*}}: number @Double, {{*}}):
 # CHECK: = GetArrayLength
 # CHECK: = GetArrayStorage
 # CHECK: ([[sum]]: number @Double, {{*}}) isInLoop=true isLoopHead=true:

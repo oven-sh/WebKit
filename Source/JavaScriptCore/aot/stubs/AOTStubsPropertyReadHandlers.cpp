@@ -139,6 +139,7 @@ void generateReadSlot(StubAssembler& jit)
         RELEASE_ASSERT_NOT_REACHED();
     };
     auto callGetter = [&](GPRReg getterSetter) {
+        branchUnlessAccessorPair(jit, getterSetter, miss);
         const StubSignature finisher = signatureOfSlotCannot(slotCannot(SlotFinisher::CallGetter, origin));
         RELEASE_ASSERT(finisher.operands[finisher.numberOfOperands - 1] == Reg(getterSetter));
         RegisterSet lostToEveryCaller;

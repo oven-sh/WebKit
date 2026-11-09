@@ -33,12 +33,12 @@ public:
     {
     }
 
-    bool standOutOfOrder() const { return !m_asWritten.empty(); }
+    bool placesAreWritten() const { return !m_asWritten.empty(); }
     size_t numberOfPlaces() const { return m_asWritten.empty() ? m_requests.size() : m_asWritten.size(); }
     std::optional<ModuleRequestData> at(size_t place) const
     {
         if (!m_asWritten.empty()) [[unlikely]]
-            return ModuleRequestData::create(m_asWritten[place].target, false, true);
+            return m_asWritten[place].isFollowed ? std::optional(ModuleRequestData::create(m_asWritten[place].target, false, true)) : std::nullopt;
         return m_requests[place].isDynamicStarExport ? std::optional(m_requests[place]) : std::nullopt;
     }
 
@@ -134,6 +134,7 @@ public:
     std::span<const NameOfStatementData> namesOfStatements(ModuleID) const;
     bool listsNamesOfStatements() const { return !m_tables->namesOfStatements().empty(); }
     std::span<const StarAsWrittenData> starsAsWritten(ModuleID) const;
+    std::optional<ModuleID> writerOfExport(ModuleID, unsigned place) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;
 

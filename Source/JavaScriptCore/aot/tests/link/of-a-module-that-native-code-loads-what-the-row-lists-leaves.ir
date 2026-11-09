@@ -3,17 +3,18 @@
 # The record and what lies under its other names stay with compiled code. If the whole record left because native code loads the module, as it did, `queueTick1` would be anything in every module that takes it
 # out of the record, each call of it would go by value, and `ring` would be an object that nobody describes.
 # The control: of-a-module-that-native-code-loads-a-name-that-is-no-field-takes-the-record-along.ir.
+# Of `whileHooked` the row says more than that it is read: native code takes `push` off it and keeps that in a cell which rows alone call. Link follows that cell to what lies under `push`, so `whileHooked` and its record stay.
 # LIBRARY: own
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link layouts fields variables functions modules mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK: layout L0 changes=[] stays-with-compiled-code
 # CHECK: layout L1 changes=[] stays-with-compiled-code
-# CHECK-NOT: layout L2 {{*}}stays-with-compiled-code
+# CHECK: layout L2 changes=[] stays-with-compiled-code
 # CHECK-NOT: field L0.0 "nextTick" proven
 # CHECK: field L0.1 "queueTick1" proven=f4 writers-known written-at-construction-alone filled
 # CHECK: field L0.2 "ring" proven=L1 writers-known written-at-construction-alone filled
-# CHECK-NOT: field L0.3 "whileHooked" proven
+# CHECK: field L0.3 "whileHooked" proven=L2 writers-known written-at-construction-alone filled
 # CHECK: variable g0 proven=f4 writers-known written-at-construction-alone filled
 # CHECK: variable g1 proven=L1 writers-known written-at-construction-alone filled
 # CHECK-NOT: function f3 {{*}}callers-known

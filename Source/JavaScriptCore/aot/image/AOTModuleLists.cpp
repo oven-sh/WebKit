@@ -590,7 +590,9 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::RunsAgain), Flag::RunsAgainAfterThrow },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsModuleToImports), Flag::IsModuleToImports },
         { module.kind == ModuleKind::CommonJs && module.exportsVariable && inputs.facts.linked().exportsThatStayIn.get(module.exportsVariable.index()), Flag::ExportsStayInCompiledCode },
-        { module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError), Flag::KeepsError },
+        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::KeepsError), Flag::KeepsError },
+        { module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::RunsAgain), Flag::BodyMayRunAgain },
+        { module.kind == ModuleKind::Data && module.flags.contains(ModuleFlags::IsFoundByName), Flag::IsDataFoundByName },
         { isEntered && entry.bodyFunction() && entryOfModuleBodyLeadsToStart(inputs, module.body), Flag::EvaluatesItself },
         { hasValue, Flag::HasValue },
         { isBundlerHelper, Flag::IsLibraryCodeWithFilePath },
@@ -629,6 +631,23 @@ static bool isExportDescribedInModuleLists(const TableInputs& inputs, const Type
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+Vector<WriterOfExportData> listWritersOfExports(const TableInputs& inputs)
+{
+    Vector<WriterOfExportData> writers;
+    const Typed::Program& program = inputs.program;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        uint32_t place = 0;
+        for (const Typed::ModuleExport& moduleExport : program.modules[index].exports) {
+            if (!isExportDescribedInModuleLists(inputs, moduleExport))
+                continue;
+            if (moduleExport.writer)
+                writers.append({ index, place, moduleExport.writer.index() });
+            ++place;
+        }
+    }
+    return writers;
 }
 
 template<typename Numbers>
@@ -705,7 +724,7 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
         return;
     for (const Typed::RequiredName& requiredName : module.requiredNames) {
         if (requiredName.specifier)
-            lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), numbers.shownString(requiredName.exportName), requiredName.dropsExportIfAbsent, numbers.shownString(requiredName.specifier) });
+            lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), numbers.shownString(requiredName.exportName), requiredName.dropsExportIfAbsent, numbers.shownString(requiredName.specifier), requiredName.isAskedForByStar });
         lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, numbers.nameOfText(requiredName.name, "what another module must export for"_s, id) });
     }
 }

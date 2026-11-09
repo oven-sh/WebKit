@@ -19,6 +19,7 @@
 #include "AOTProgramVerifier.h"
 #include "AOTSchemaEnums.h"
 #include "AOTTestFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSCConfig.h"
@@ -82,12 +83,15 @@ static void appendFailure(Vector<TestFailure>& failures, const RunDirective& run
     failures.append(TestFailure { line, makeString(run.command, ": "_s, sentence...) });
 }
 
-static size_t countOf(const Diagnostics& diagnostics, const DiagnosticName& name)
+static size_t countOf(const Diagnostics& diagnostics, const DiagnosticName& name, std::optional<FunctionID> function)
 {
+    auto isCounted = [&](const auto& reported, auto kind) {
+        return reported.kind == kind && (!function || reported.function == *function);
+    };
     return WTF::switchOn(name, [&](UserDiagnosticKind kind) -> size_t {
-        return std::ranges::count(diagnostics.userDiagnostics(), kind, &UserDiagnostic::kind);
+        return std::ranges::count_if(diagnostics.userDiagnostics(), [&](const UserDiagnostic& reported) { return isCounted(reported, kind); });
     }, [&](InternalErrorKind kind) -> size_t {
-        return std::ranges::count(diagnostics.internalErrors(), kind, &InternalError::kind);
+        return std::ranges::count_if(diagnostics.internalErrors(), [&](const InternalError& reported) { return isCounted(reported, kind); });
     });
 }
 
@@ -113,11 +117,12 @@ struct UnexpectedDiagnostics {
 static void compareDiagnostics(const TestFile& file, const RunDirective& run, const Diagnostics& diagnostics, Vector<TestFailure>& failures)
 {
     for (const ExpectedDiagnostic& expected : file.diagnostics) {
-        size_t count = countOf(diagnostics, expected.kind);
+        size_t count = countOf(diagnostics, expected.kind, expected.function);
+        String place = expected.function ? makeString(" of f"_s, expected.function->index()) : emptyString();
         if (!count)
-            appendFailure(failures, run, expected.line, "expected diagnostic "_s, nameOf(expected.kind), ", none was reported"_s);
+            appendFailure(failures, run, expected.line, "expected diagnostic "_s, nameOf(expected.kind), place, ", none was reported"_s);
         else if (expected.count && *expected.count != count)
-            appendFailure(failures, run, expected.line, "expected "_s, *expected.count, " of "_s, nameOf(expected.kind), ", got "_s, count);
+            appendFailure(failures, run, expected.line, "expected "_s, *expected.count, " of "_s, nameOf(expected.kind), place, ", got "_s, count);
     }
 
     UnexpectedDiagnostics unexpected { file, run, failures };
@@ -235,6 +240,7 @@ static bool runOneDirective(const TestFile& file, const RunDirective& run, const
     }
 
     runOnBuildThread([&] {
+        ScopeOfTestThatRunsAsUsersBuild scopeOfChecks(!!file.asUsersBuild);
         BuildContext build(options);
         Vector<String> notesForFailure;
         String output = runCommand(*command, file, words, build, options, &notesForFailure);
@@ -315,6 +321,19 @@ static void reportTablesThatHangOnOrder(const TestFile& file, const Wire::Compil
         failures.append(TestFailure { file.hangsOnOrder->line, "Link's tables are the same in every order of the worklist: remove the HANGS-ON-ORDER line"_s });
 }
 
+static ASCIILiteral findWhatTurnsChecksOnFromOutside(const TestVariant& variant)
+{
+    if (ASSERT_ENABLED)
+        return "this testaot has assertions"_s;
+    if (ASAN_ENABLED)
+        return "this testaot has the sanitizer"_s;
+    if (Options::verifyAOTMachineCode())
+        return "verifyAOTMachineCode is set for the process"_s;
+    if (variant.optionWords.containsIf([](const String& word) { return word.startsWith("check="_s); }))
+        return "the command line asks for a check"_s;
+    return { };
+}
+
 Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const TestVariant& variant, std::optional<TestTodo>* todo, const String& folder)
 {
     TestFile file = parseTestFile(WTF::move(text), hostArchitecture(), folder);
@@ -335,7 +354,23 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
 
     Vector<TestFailure> failures;
     Wire::CompileOptions options = makeOptionsOfTestedProgram();
-    RELEASE_ASSERT(!applyOptionWord(options, "check=VerifyEachStage"_s));
+    if (file.asUsersBuild) {
+        for (const OptionWord& optionWord : file.optionWords) {
+            if (optionWord.word.startsWith("check="_s))
+                failures.append(TestFailure { optionWord.line, "a file with an AS-USERS-BUILD line asks for no check"_s });
+        }
+        for (const OptionWord& option : file.jscOptions) {
+            if (option.word.contains("verifyAOTMachineCode"_s))
+                failures.append(TestFailure { option.line, "a file with an AS-USERS-BUILD line does not set verifyAOTMachineCode"_s });
+        }
+        if (ASCIILiteral obstacle = findWhatTurnsChecksOnFromOutside(variant); !obstacle.isNull() && failures.isEmpty()) {
+            dataLogLn("NOT RUN, not as users build here: ", obstacle, ": AS-USERS-BUILD: ", file.asUsersBuild->reason);
+            if (todo)
+                *todo = std::nullopt;
+            return { };
+        }
+    } else
+        RELEASE_ASSERT(!applyOptionWord(options, "check=VerifyEachStage"_s));
     std::optional<Mechanisms> mechanismsAskedFor;
     auto applyWord = [&](const String& word, unsigned line) {
         std::optional<String> sentence = isMechanismsWord(word) ? applyMechanismsWordAskedFor(mechanismsAskedFor, word) : applyOptionWord(options, word);

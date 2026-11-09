@@ -105,6 +105,8 @@ struct SharedRoutine {
         MatchCodePointAgainstClassTable,
         ClearCaptures,
         FindFirstOfClass,
+        FindFirstOfTwoUnits,
+        FindFirstPairOfUnits,
         CanonicalEquivalence,
     };
 
@@ -146,13 +148,28 @@ struct SharedRoutine {
         friend bool operator==(const FindFirstOfClass&, const FindFirstOfClass&) = default;
     };
 
+    struct FindFirstOfTwoUnits {
+        CharSize charSize;
+
+        friend bool operator==(const FindFirstOfTwoUnits&, const FindFirstOfTwoUnits&) = default;
+    };
+
+    struct FindFirstPairOfUnits {
+        CharSize charSize;
+        uint8_t distance;
+        bool foldsCaseOfFirst;
+        bool foldsCaseOfSecond;
+
+        friend bool operator==(const FindFirstPairOfUnits&, const FindFirstPairOfUnits&) = default;
+    };
+
     struct CanonicalEquivalence {
         CanonicalMode mode;
 
         friend bool operator==(const CanonicalEquivalence&, const CanonicalEquivalence&) = default;
     };
 
-    using Payload = Variant<MatchSet, ReadCodePoint, SlowCodePointRead, MatchCodePointAgainstClassTable, ClearCaptures, FindFirstOfClass, CanonicalEquivalence>;
+    using Payload = Variant<MatchSet, ReadCodePoint, SlowCodePointRead, MatchCodePointAgainstClassTable, ClearCaptures, FindFirstOfClass, FindFirstOfTwoUnits, FindFirstPairOfUnits, CanonicalEquivalence>;
 
     Kind kind() const;
 
@@ -164,6 +181,9 @@ struct SharedRoutine {
 void add(Hasher&, const SharedRoutine&);
 bool canGenerateSharedRoutine(const SharedRoutine&);
 void generateSharedRoutine(CCallHelpers&, const SharedRoutine&, CodeAddressing&);
+inline constexpr unsigned unitsInVectorOfTwoUnitsSearch = 16;
+MacroAssembler::Jump emitTestOfVectorForTwoUnits(CCallHelpers&, CharSize, bool unitsDiffer, int32_t unitsInFrontOfIndex);
+void emitAdvanceToUnitFoundInVector(CCallHelpers&);
 
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
 void emitReadSurrogatePair(CCallHelpers&, MacroAssembler::RegisterID resultReg, MacroAssembler::JumpList& slowCases);

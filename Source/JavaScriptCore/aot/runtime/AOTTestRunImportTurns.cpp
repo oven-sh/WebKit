@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTModuleNamespace.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "JSCInlines.h"
@@ -18,6 +19,7 @@
 #include "ModuleRegistryEntry.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -36,10 +38,17 @@ static void settleAsLoaderDoesInImportTurns(JSGlobalObject* realm, JSPromise* pr
         promiseOfProgram->resolve(realm, vm, loaded);
 }
 
-void Modules::tellHostOfImport(JSPromise* promise, const String& path)
+void Modules::tellHostOfImport(JSPromise* promise, const String& path, std::optional<ModuleID> file)
 {
-    if (auto* didStartImport = host().didStartImport; didStartImport && promise->status() == JSPromise::Status::Pending)
-        didStartImport(m_instance.globalObject, promise, path);
+    auto* didStartImport = host().didStartImport;
+    if (!didStartImport || promise->status() != JSPromise::Status::Pending)
+        return;
+    std::optional<BitVector> reached;
+    didStartImport(m_instance.globalObject, promise, path, [&](ModuleID module) {
+        if (file && !reached)
+            reached = modulesThatLoadLeadsTo(*file);
+        return reached && reached->quickGet(module.index());
+    });
 }
 
 bool Modules::isTextReadOnOtherThread(ModuleID file)
@@ -121,6 +130,7 @@ void Modules::forgetTextsThatWait()
     m_numberOfTextsThatHaveCome = 0;
     m_callsToMakeAgain.clear();
     m_promiseOfJobThatMakesCallsAgain.clear();
+    m_promiseOfJobInWhichLoadAsksForOriginal.clear();
     m_promiseOfJobOfRound.clear();
     m_isJobOfRoundQueued = false;
 }
@@ -170,10 +180,20 @@ void Modules::makeCallAgain(TextThatWaits& text)
         return;
     }
     SetForScope momentOfCall(m_momentOfCallWhoseTextHasCome, text.momentOfCall);
+    bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(text.module);
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, text.caller, TextOfImport::HasCome, promise);
+    bool walkFiledLinks = !wasHeldBeforeWalk && holdsLinksOfLoadThatMayFail(text.module);
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);
+        if (walkFiledLinks)
+            bringBackLinksOfLoadThatFailed(text.module);
         return;
+    }
+    if (walkFiledLinks) [[unlikely]] {
+        if (loaded->status() == JSPromise::Status::Rejected)
+            bringBackLinksOfLoadThatFailed(text.module);
+        else
+            hearWhetherImportThatLinkedAnewFails(text.module, loaded);
     }
     scope.release();
     if (loaded != promise)
@@ -188,8 +208,111 @@ void Modules::forgetMockLaidBehindCallWhoseTextHasCome(ModuleID file)
     auto laid = m_momentsWaitingMocksWereLaid.find(file);
     if (laid == m_momentsWaitingMocksWereLaid.end() || laid->value.moment <= *momentOfCall)
         return;
+    if (m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && !each.failureForWantOfMockThatTakesOriginal && fileOf(each.module) == file; }))
+        return;
+    if (m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == file && above.original; }))
+        return;
     forgetMockThatWaits(file);
     forgetCallOfMock(file);
+}
+
+void Modules::bookImportWhoseMocksRunWhenItsTextHasCome(ModuleID module)
+{
+    VM& vm = *m_instance.vm;
+    bool asksForMockOfFileItself = needsOriginalAheadOfFactory(module) || needsOriginalAheadOfFactory(fileOf(module));
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome.append({ module, asksForMockOfFileItself });
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome.last().momentOfCall = vm.aotState().momentOfLoads;
+    if (!asksForMockOfFileItself)
+        return;
+    if (hasLoaderSettledOriginalOf(fileOf(module))) {
+        m_importsWhoseMocksRunWhenTheirTextsHaveCome.last().hasLoadAskedForOriginal = true;
+        return;
+    }
+    if (!m_promiseOfJobInWhichLoadAsksForOriginal)
+        m_promiseOfJobInWhichLoadAsksForOriginal.set(vm, JSPromise::create(vm, m_instance.globalObject->promiseStructure()));
+    queueStepOfImportInImportTurns(m_promiseOfJobInWhichLoadAsksForOriginal.get(), module, 4);
+}
+
+JSPromise* Modules::takeFailureOfLoadForWantOfMock(ModuleID module)
+{
+    JSPromise* loadOnRecord = m_areTestsOfFileDone ? nullptr : loadThatFailedForWantOfMock(module);
+    size_t place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.module == module && each.failureForWantOfMockThatTakesOriginal && (loadOnRecord || !m_momentOfCallWhoseTextHasCome || each.momentOfCall == *m_momentOfCallWhoseTextHasCome); });
+    if (place == notFound)
+        return loadOnRecord;
+    JSPromise* failed = m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].failureForWantOfMockThatTakesOriginal.get();
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome.removeAt(place);
+    return failed;
+}
+
+void Modules::letLoadInFlightAskForOriginal(ModuleID module)
+{
+    auto isBookingThatAsksNow = [&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.module == module && each.asksForMockOfFileItself && !each.hasLoadAskedForOriginal; };
+    size_t place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf(isBookingThatAsksNow);
+    if (place == notFound)
+        return;
+    if (m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].hasWalkedAheadOfItsText) {
+        m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].hasLoadAskedForOriginal = true;
+        return;
+    }
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSPromise* failed = loadThatFailedForWantOfMock(module);
+    if (!failed) {
+        Identifier file = moduleKey(fileOf(module));
+        loader()->resolve(realm, Identifier::fromString(vm, makeString('\0', file.string())), file, nullptr, true);
+        if (scope.exception()) {
+            failed = rejectedPromiseWithPendingException(realm, scope);
+            failed->markAsHandled();
+            m_loadsThatFailedForWantOfMock.append({ module, Strong<JSPromise>(vm, failed) });
+        }
+        place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf(isBookingThatAsksNow);
+        if (place == notFound)
+            return;
+    }
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].hasLoadAskedForOriginal = true;
+    if (!failed)
+        return;
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].failureForWantOfMockThatTakesOriginal.set(vm, failed);
+    auto isTextOfCall = [&, momentOfCall = m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].momentOfCall](const auto& text) { return text.module == module && text.momentOfCall == momentOfCall && !(text.promise->flags() & JSPromise::isFirstResolvingFunctionCalledFlag); };
+    JSPromise* promiseOfCall = nullptr;
+    for (const TextOnItsWay& text : m_textsOnTheirWay) {
+        if (!promiseOfCall && !text.requested && isTextOfCall(text))
+            promiseOfCall = text.promise.get();
+    }
+    for (const TextThatWaits& text : textsThatWait()) {
+        if (!promiseOfCall && !text.requestedRecord && isTextOfCall(text))
+            promiseOfCall = text.promise.get();
+    }
+    if (promiseOfCall)
+        RELEASE_AND_RETURN(scope, promiseOfCall->resolve(realm, vm, failed));
+}
+
+void Modules::walkInPlaceOfCallsHeldForTextOf(ModuleID file)
+{
+    size_t place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && !each.hasWalkedAheadOfItsText && fileOf(each.module) == file; });
+    if (place == notFound)
+        return;
+    ModuleID asked = m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].module;
+    if (!needsOriginalAheadOfFactory(asked) && !needsOriginalAheadOfFactory(file))
+        return;
+    for (ImportWhoseMocksRunWhenItsTextHasCome& each : m_importsWhoseMocksRunWhenTheirTextsHaveCome)
+        each.hasWalkedAheadOfItsText |= fileOf(each.module) == file;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+    {
+        SetForScope moduleThatProgramImportsNow(m_moduleThatProgramImportsNow, std::optional(asked));
+        SetForScope moduleThatImportAsksFor(m_moduleThatImportAsksFor, asked);
+        SetForScope stateOfWaitOfImportThatAsks(m_stateOfWaitOfImportThatAsks, JSValue());
+        runMocksBelow(asked);
+    }
+    Exception* exception = scope.exception();
+    if (!exception)
+        return;
+    JSValue error = exception->value();
+    if (!scope.tryClearException())
+        return;
+    noteImportFailedUnderMock(asked, error);
+    keepFailureOfFactoryForCallsHeldForTheirTexts(file, error);
 }
 
 void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)
@@ -206,6 +329,105 @@ void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)
     }
     if (!m_callsToMakeAgain.isEmpty())
         queueStepOfImportInImportTurns(m_promiseOfJobThatMakesCallsAgain.get(), moduleOfJob, 1);
+}
+
+void Modules::noteChangeOfMockUnderCallsOfImport(ModuleID module)
+{
+    bool isChangedByImport = m_moduleThatImportAsksFor && (m_modulesWhoseFactoryRuns.isEmpty() || m_modulesWhoseFactoryRuns.get(module.index()) || m_moduleThatImportAsksFor != m_moduleThatImportAskedForWhenFactoryBegan);
+    if (!isChangedByImport)
+        m_lastDeedsOnMocksUnderCallsOfImport.remove(fileOf(module));
+    if (m_numberOfCallsOfImportWithNamespaceKept == (isChangedByImport ? m_callsOfImportUnderMocks.size() : 0))
+        return;
+    JSObject* namespaceHeld = isChangedByImport ? namespaceIfCreated(module, ModulePhase::Evaluation) : nullptr;
+    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks.values()) {
+        if (call.module != module)
+            continue;
+        if (!isChangedByImport) {
+            if (call.namespaceBeforeImportChangedMock)
+                --m_numberOfCallsOfImportWithNamespaceKept;
+            call.namespaceBeforeImportChangedMock.clear();
+        } else if (!call.namespaceBeforeImportChangedMock) {
+            if (JSObject* namespaceObject = namespaceHeld) {
+                ++m_numberOfCallsOfImportWithNamespaceKept;
+                call.namespaceBeforeImportChangedMock.set(*m_instance.vm, namespaceObject);
+            }
+        }
+    }
+}
+
+void Modules::noteCallOfImportUnderMock(JSPromise* promise, ModuleID module)
+{
+    unsigned serial = ++m_numberOfCallsOfImportMadeUnderMocks;
+    m_callsOfImportUnderMocks.add(promise, CallOfImportUnderMock { Strong<JSPromise>(*m_instance.vm, promise), moduleWithExportsOf(module), { }, serial });
+    m_callsOfImportThatHaveTakenNoStep.append({ serial, promise });
+}
+
+void Modules::didTakeFirstStepOfCallOfImportSlow(JSPromise* promise)
+{
+    auto call = m_callsOfImportUnderMocks.find(promise);
+    if (call != m_callsOfImportUnderMocks.end())
+        takeFirstStepsOfCallsOfImportThrough(call->value.serial);
+}
+
+void Modules::takeFirstStepsOfCallsOfImportThrough(unsigned serial)
+{
+    while (!m_callsOfImportThatHaveTakenNoStep.isEmpty() && m_callsOfImportThatHaveTakenNoStep.first().first <= serial) {
+        auto found = m_callsOfImportUnderMocks.find(m_callsOfImportThatHaveTakenNoStep.takeFirst().second);
+        if (found == m_callsOfImportUnderMocks.end())
+            continue;
+        CallOfImportUnderMock& call = found->value;
+        auto deed = m_lastDeedsOnMocksUnderCallsOfImport.find(fileOf(call.module));
+        if (deed == m_lastDeedsOnMocksUnderCallsOfImport.end() || call.serial > deed->value.lastCallInFrontOfIt)
+            continue;
+        if (call.namespaceBeforeImportChangedMock) {
+            call.namespaceBeforeImportChangedMock.clear();
+            --m_numberOfCallsOfImportWithNamespaceKept;
+        }
+        if (deed->value.bringsBackFileThatHadRun || !deed->value.mock)
+            continue;
+        if (!deed->value.viewOfMock) {
+            ModuleNamespace* view = ModuleNamespace::create(*m_instance.vm, namespaceStructure(true), call.module, ModulePhase::Evaluation, { });
+            view->setMockOfView(*m_instance.vm, deed->value.mock.get());
+            deed->value.viewOfMock.set(*m_instance.vm, view);
+        }
+        call.namespaceBeforeImportChangedMock.set(*m_instance.vm, deed->value.viewOfMock.get());
+        ++m_numberOfCallsOfImportWithNamespaceKept;
+    }
+    if (m_callsOfImportThatHaveTakenNoStep.isEmpty())
+        m_lastDeedsOnMocksUnderCallsOfImport.clear();
+}
+
+void Modules::noteDeedOnMockUnderCallsOfImportSlow(ModuleID module, DeedOnMock kind)
+{
+    LastDeedOnMock& deed = m_lastDeedsOnMocksUnderCallsOfImport.ensure(fileOf(module), [] { return LastDeedOnMock { }; }).iterator->value;
+    if (!deed.mock) {
+        if (JSObject* mock = mockInPlace(moduleWithExportsOf(module)))
+            deed.mock.set(*m_instance.vm, mock);
+    }
+    deed.lastCallInFrontOfIt = m_numberOfCallsOfImportMadeUnderMocks;
+    deed.bringsBackFileThatHadRun = kind == DeedOnMock::Ends && (isLeftAloneByMock(module) || hasMockLaidOverFileThatHadRun(module));
+}
+
+void Modules::forgetNamespacesKeptForCallsOfImport()
+{
+    m_lastDeedsOnMocksUnderCallsOfImport.clear();
+    if (!m_numberOfCallsOfImportWithNamespaceKept)
+        return;
+    m_numberOfCallsOfImportWithNamespaceKept = 0;
+    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks.values())
+        call.namespaceBeforeImportChangedMock.clear();
+}
+
+JSObject* Modules::takeNamespaceKeptForCallOfImport(JSPromise* importPromise)
+{
+    auto call = m_callsOfImportUnderMocks.find(importPromise);
+    if (call == m_callsOfImportUnderMocks.end())
+        return nullptr;
+    JSObject* namespaceObject = call->value.namespaceBeforeImportChangedMock.get();
+    if (namespaceObject)
+        --m_numberOfCallsOfImportWithNamespaceKept;
+    m_callsOfImportUnderMocks.remove(call);
+    return namespaceObject;
 }
 
 void Modules::queueJobOfRound(ModuleID moduleOfJob)

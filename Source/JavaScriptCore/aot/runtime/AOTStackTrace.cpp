@@ -1168,6 +1168,13 @@ String sourceURLOf(ModuleID module)
     return module ? pathOfFileOfModule(module) : emptyString();
 }
 
+String pathOfFileThatDeclares(JSCell* compiledFunction)
+{
+    std::optional<FunctionID> function = functionOf(compiledFunction);
+    std::optional<SourcePosition> definition = function ? FunctionDescription(*function).definition() : std::nullopt;
+    return definition ? sourceURLOf(definition->source) : String();
+}
+
 String sourceProviderURLOf(ModuleID module)
 {
     return module ? sourceProviderURL(module) : emptyString();

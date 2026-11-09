@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineFolding.h"
 #include "AOTSlotRepresentation.h"
 #include <algorithm>
@@ -609,7 +610,7 @@ static ALWAYS_INLINE bool fuseIntoAccess(ValueFacts* values, const Operation* ac
     return fuseAddressOfAccess(values, access, address, numberOfChildren);
 }
 
-static bool fuseScaledIndexBelow(ValueFacts* values, const Operation* sum)
+static ALWAYS_INLINE bool fuseScaledIndexBelow(ValueFacts* values, const Operation* sum)
 {
     ASSERT(!values[sum->index()].has(ValueFlag::IsFused));
     if (sum->opcode() != Add || sum->type() != Int64)
@@ -1395,7 +1396,7 @@ static bool parseSumTestedByOverflow(const Operation* branch, SumTestedByOverflo
     return true;
 }
 
-bool mayTestSumByOverflow(const Operation* branch)
+ALWAYS_INLINE_INTO_OTHER_FILES bool mayTestSumByOverflow(const Operation* branch)
 {
     if (!branchMayReadSumOfExtendedWords(branch))
         return false;

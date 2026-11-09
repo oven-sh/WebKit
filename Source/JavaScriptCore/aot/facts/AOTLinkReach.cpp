@@ -232,6 +232,7 @@ private:
     void handOutRecordsOfInternalFiles();
     bool handsBackRecordThatStaysAsBorn(ModuleID);
     Vector<ModuleID> m_modulesThatNativeCodeReadsNamesOff;
+    Vector<std::pair<RuntimeModuleID, BuiltinName>> m_exportsThatHostOnlyKeepsWhereLinkFollows;
     bool m_hasEnteredLoaderFunctionsForTestRun { false };
     bool m_hasEnteredLoaderFunctionsForValueOfHost { false };
     void enterWhatUndeclaredNativeCodeCalls();
@@ -473,7 +474,7 @@ void StateOfLinkReach::takeWhatLanesLeft()
     }
 }
 
-void StateOfLinkReach::takeWhatLaneLeft(Left what, uint32_t index)
+ALWAYS_INLINE void StateOfLinkReach::takeWhatLaneLeft(Left what, uint32_t index)
 {
     switch (what) {
     case Left::LayoutEscapes:
@@ -1170,11 +1171,17 @@ void StateOfLinkReach::escapeExportsOf(ModuleID first)
                 m_flow.note(LinkFlow::Note::ExportIsShown, exported.variable.index());
                 m_flow.addEdge(m_flow.variable(exported.variable), m_flow.unseen());
             }
+            if (exported.kind == ModuleExportKind::Namespace && exported.module)
+                m_flow.noteLossOfObjectOfBuiltinModule(exported.module);
+            if (exported.kind == ModuleExportKind::Indirect && exported.module && exported.importName)
+                m_flow.noteLossOfExportOfBuiltinModule(exported.module, exported.importName);
             add(exported.module);
         }
         for (const ModuleRequest& request : module.requests) {
-            if (request.isDynamicStarExport)
-                add(request.target);
+            if (!request.isDynamicStarExport)
+                continue;
+            m_flow.noteLossOfObjectOfBuiltinModule(request.target);
+            add(request.target);
         }
     }
 }
@@ -1183,6 +1190,7 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
 {
     const BuiltinTable& builtins = m_program.builtins();
     m_modulesWhoseValueStaysInSight = BitVector(m_program.modules.size());
+    m_exportsThatHostOnlyKeepsWhereLinkFollows = exportsThatHostOnlyKeepsWhereLinkFollows(builtins);
     bool libraryRunsCompiledAlone = refusedCodeOf(m_program).codeOutsideImage && std::ranges::none_of(m_program.modules, [](const Module& module) {
         return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
     });
@@ -1196,11 +1204,11 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
     BitVector isAskedFor = modulesThatHostAsksFor(m_program);
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         const Module& module = m_program.modules[index];
-        if (!libraryRunsCompiledAlone && module.kind != ModuleKind::RuntimeSource)
+        if (!refusedCodeOf(m_program).codeOutsideImage && module.kind != ModuleKind::RuntimeSource)
             continue;
         if (module.kind == ModuleKind::CommonJs) {
             bool isReadBySitesAlone = module.body && module.exportsVariable && module.requireResult == RequireResult::ModuleExports && module.syntheticExports.isEmpty();
-            bool hostLooksForNamesAlone = isReadBySitesAlone && !m_program.admitsInspector && std::ranges::contains(m_program.entries, ModuleID(index), &Entry::module)
+            bool hostLooksForNamesAlone = isReadBySitesAlone && libraryRunsCompiledAlone && !m_program.admitsInspector && std::ranges::contains(m_program.entries, ModuleID(index), &Entry::module)
                 && !m_flow.summaries.at(module.body).namesThatHostLooksFor.isEmpty();
             if (isReadBySitesAlone && !m_showsWaysBetweenModuleObjects && !module.flags.containsAny(flagsOfModulesHandedOut - ModuleFlags::RunsAgain) && (!isAskedFor.get(index) || hostLooksForNamesAlone))
                 m_modulesWhoseValueStaysInSight.quickSet(index);
@@ -1514,6 +1522,8 @@ void StateOfLinkReach::letGoWhatNativeCodeReadsOffModules()
             for (BuiltinName name : m_program.builtins().at(module.runtimeModule).exportsReadByNativeCode) {
                 PropertyKeyID key = m_program.keyOf(name);
                 std::optional<FieldReference> field = key ? findField(m_program, holder, key) : std::nullopt;
+                if (field && m_exportsThatHostOnlyKeepsWhereLinkFollows.contains(std::pair { module.runtimeModule, name }))
+                    continue;
                 if (field)
                     escapeField(*field);
                 else
@@ -1922,6 +1932,9 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             break;
         }
     }
+    std::span<const uint32_t> placesOfWrittenLists = summary.placesOfWrittenLists.span();
+    for (uint32_t head = 1; !placesOfWrittenLists.empty() && head < placesOfWrittenLists[0]; head += 2 + placesOfWrittenLists[head + 1])
+        m_flow.noteListIsWritten(siteAt(id, classInstances.span(), placesOfWrittenLists[head]), id, head + 2, placesOfWrittenLists[head + 1]);
     if (m_flow.isGivenMore) [[unlikely]]
         giveMoreToNodesOf(id);
 
@@ -2401,6 +2414,15 @@ void LinkFlow::arriveFromSource(FlowNodeID node, FamilyID family)
 
 void LinkFlow::arriveFromSource(FlowNodeID node, const LinkType& type)
 {
+    if (type.objects != LinkType::Objects::Set && type.objects != LinkType::Objects::Layout && type.objects != LinkType::Objects::Family) [[likely]] {
+        arrive(node, type);
+        return;
+    }
+    arriveObjectsFromSource(node, type);
+}
+
+NEVER_INLINE void LinkFlow::arriveObjectsFromSource(FlowNodeID node, const LinkType& type)
+{
     if (type.objects == LinkType::Objects::Set) {
         LinkType rest = type;
         rest.objects = LinkType::Objects::None;
@@ -2408,10 +2430,6 @@ void LinkFlow::arriveFromSource(FlowNodeID node, const LinkType& type)
         arrive(node, rest);
         for (LayoutID member : layoutsOfSet(type))
             stateOfLinkReach().arriveFromSource(node, typeOfObjectsForLinkReach(member));
-        return;
-    }
-    if (type.objects != LinkType::Objects::Layout && type.objects != LinkType::Objects::Family) {
-        arrive(node, type);
         return;
     }
     LinkType arriving = type;

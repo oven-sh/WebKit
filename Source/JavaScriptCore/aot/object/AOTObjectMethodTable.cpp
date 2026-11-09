@@ -32,6 +32,7 @@
 #include "ProxyObject.h"
 #include "TopExceptionScope.h"
 #include "TypeError.h"
+#include <wtf/Scope.h>
 
 namespace JSC { namespace AOT {
 
@@ -55,9 +56,9 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
             return;
         crashOnImpossibleMutation(vm, *this, field, mutationOf(reason));
     }
-    if (reason == SlotExitReason::Redefinition) {
+    if (reason != SlotExitReason::Delete) {
         const FieldExit* exit = state().propertyCaches->findFieldExit(structureID(), field.name);
-        if (exit && exit->isDefinition && exit->attributes == leaving.attributes && tryRepeat(vm, *exit, leaving.valueOrAccessor))
+        if (exit && exit->isDefinition == (reason == SlotExitReason::Redefinition) && exit->attributes == leaving.attributes && tryRepeat(vm, *exit, leaving.valueOrAccessor))
             return;
     }
     if (!admitsMutation(vm, *this, field, mutationOf(reason)))
@@ -141,6 +142,22 @@ bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
     return true;
 }
 
+static bool tryUndoAdditionOfLastProperty(VM& vm, JSObject* extra, UniquedStringImpl* name, PropertyOffset& offset)
+{
+    Structure* structure = extra->structure();
+    Structure* previous = structure->previousID();
+    if (!previous || structure->isDictionary() || structure->transitionKind() != TransitionKind::PropertyAddition || structure->transitionPropertyName() != name)
+        return false;
+    offset = structure->transitionOffset();
+    if (!isInlineOffset(offset) || previous->isDictionary() || previous->inlineCapacity() != structure->inlineCapacity() || previous->typeInfoBlob() != structure->typeInfoBlob())
+        return false;
+    structure->didTransitionFromThisStructureWithoutFiringWatchpoint();
+    structure->fireStructureTransitionWatchpoint(nullptr);
+    extra->setStructure(vm, previous);
+    extra->locationForOffset(offset)->clear();
+    return true;
+}
+
 bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
 {
     JSObject* extra = extraProperties();
@@ -156,13 +173,45 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
     if (!tryStore(vm, field, value))
         return false;
     forgetPlacesOfPositionedKeys(state());
-    {
+    FieldReturn back { .markedCopyOfField = field, .field = &field, .structureBefore = structureID(), .extraPropertiesBefore = extra->structureID(), .orderWord = orderWord(), .name = field.name };
+    bool isUndone = tryUndoAdditionOfLastProperty(vm, extra, name, back.offset);
+    if (!isUndone) {
         VM::DeletePropertyModeScope ignoreConfigurable(vm, VM::DeletePropertyMode::IgnoreConfigurable);
         DeletePropertySlot slot;
         JSObject::deleteProperty(extra, structure()->realm(), name, slot);
     }
     didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name);
+    if (!isUndone || attributes || field.isPrivate() || field.isAccessor() || structure()->mayBePrototype() || orderWord() != back.orderWord)
+        return true;
+    if (!layout().extraPropertiesSlot() || orderOf(orderWord()) >= layout().numberOfOrders)
+        return true;
+    back.markedCopyOfField.flags |= fieldRecordIsCopyInFieldReturn;
+    back.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
+    back.structureAfter = structureID();
+    back.extraPropertiesAfter = extra->structureID();
+    state().propertyCaches->remember(back);
+    return true;
+}
+
+bool Object::tryRepeat(VM& vm, const FieldReturn& back, JSValue value)
+{
+    if (structureID() != back.structureBefore || orderWord() != back.orderWord)
+        return false;
+    JSObject* extra = extraPropertiesIfMade(*this);
+    if (!extra || extra->structureID() != back.extraPropertiesBefore)
+        return false;
+    auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(back.structureAfter.decode()));
+    Structure* extraStructureAfter = WTF::opaque(back.extraPropertiesAfter.decode());
+    PropertyOffset offset = back.offset;
+    if (!tryStore(vm, *back.field, value))
+        return false;
+    forgetPlacesOfPositionedKeys(state());
+    extra->setStructure(vm, extraStructureAfter);
+    extra->locationForOffset(offset)->clear();
+    JSCell::setStructure(vm, structureAfter);
+    ensureStillAliveHere(structureAfter);
+    ensureStillAliveHere(extraStructureAfter);
     return true;
 }
 
@@ -194,7 +243,7 @@ bool Object::hasAccessorAmongExtraProperties() const
 
 void Object::tryFinishBirth()
 {
-    if (bearsMark() && !(orderWord() & orderWordHasFieldOutsideSlot) && hasEveryFieldOfBirth() && !hasAccessorAmongExtraProperties())
+    if (bearsMark() && !(orderWord() & orderWordHasFieldOutsideSlot) && !hasAccessorAmongExtraProperties() && hasEveryFieldOfBirth())
         setBearsMark(false);
 }
 
@@ -261,20 +310,20 @@ static bool defineExtraProperty(Object* object, JSGlobalObject* globalObject, Pr
     if (!exists && object->isNotExtensible())
         return typeError(globalObject, scope, shouldThrow, NonExtensibleObjectPropertyDefineError);
     if (parseIndex(name) && !object->isFrozen() && (descriptor.isAccessorDescriptor() || !(descriptor.writablePresent() ? descriptor.writable() : exists)) && !admitsMutation(vm, *object, ObjectMutation::RedefineProperty))
-        return false;
+        RELEASE_AND_RETURN(scope, false);
     if (!exists) {
         if (!object->mayAddExtraProperty(vm, name))
-            return false;
+            RELEASE_AND_RETURN(scope, false);
         extra = object->ensureExtraProperties(vm);
         RELEASE_ASSERT(extra);
     }
     bool interceptedIndexedAccesses = interceptsIndexedAccesses(*object);
-    scope.release();
-    bool isDefined = extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow);
-    object->didChangeExtraProperties(vm);
-    didChangeOwnProperties(vm, *object, exists ? VM::StructureChainIntegrityEvent::Change : VM::StructureChainIntegrityEvent::Add, name.uid());
-    didChangeIndexedProperties(vm, *object, interceptedIndexedAccesses);
-    return isDefined;
+    auto tells = makeScopeExit([&] {
+        object->didChangeExtraProperties(vm);
+        didChangeOwnProperties(vm, *object, exists ? VM::StructureChainIntegrityEvent::Change : VM::StructureChainIntegrityEvent::Add, name.uid());
+        didChangeIndexedProperties(vm, *object, interceptedIndexedAccesses);
+    });
+    RELEASE_AND_RETURN(scope, extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow));
 }
 
 static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, const FieldData& field, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
@@ -284,12 +333,12 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
     FieldProperty current = findFieldProperty(vm, *object, field);
     if (current && !current.isInSlot) {
         JSObject* extra = object->extraProperties();
-        bool isDefined = extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow);
-        RETURN_IF_EXCEPTION(scope, false);
-        object->tryMoveFieldBackToSlot(vm, field);
-        object->didChangeExtraProperties(vm);
-        didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Change, name.uid());
-        return isDefined;
+        auto tells = makeScopeExit([&] {
+            object->tryMoveFieldBackToSlot(vm, field);
+            object->didChangeExtraProperties(vm);
+            didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Change, name.uid());
+        });
+        RELEASE_AND_RETURN(scope, extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow));
     }
 
     if (!current) {
@@ -483,7 +532,7 @@ bool Object::tryDefineAccessorsOfLiteral(VM& vm, JSGlobalObject* globalObject, s
         (isGetter ? made.slots[place].getter : made.slots[place].setter) = static_cast<uint8_t>(index);
     }
     for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots) {
-        if (!slot.isFilledBefore && slot.getter == AccessorDefinitionPlan::noDefinition && !layouts.objectHasType(layouts.typeOf(*slot.field), globalObject->nullGetterFunction()))
+        if (!slot.isFilledBefore && slot.getter == AccessorDefinitionPlan::noDefinition && !slot.field->getterIsProven && !layouts.objectHasType(layouts.typeOf(*slot.field), globalObject->nullGetterFunction()))
             return false;
     }
     for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots.span()) {
@@ -540,6 +589,13 @@ bool Object::tryRepeat(VM& vm, const AddedExtraProperty& added, JSValue value)
     auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(added.structureAfter.decode()));
     Structure* extraStructureAfter = WTF::opaque(added.extraPropertiesAfter.decode());
     PropertyOffset offset = added.offset;
+    if (!isInlineOffset(offset) || added.attributes & PropertyAttribute::Accessor) [[unlikely]] {
+        if (added.attributes & PropertyAttribute::Accessor && !perCellBit())
+            setBearsMark(true);
+        countEvent(vm, RuntimeCounterID::NamesAddedOutOfLineOrAsAccessorsAsBefore);
+        if (extra)
+            extra->growOutOfLineStorageForTransition(vm, extraStructureAfter);
+    }
     if (extra) {
         extra->putDirectOffset(vm, offset, value);
         extra->setStructure(vm, extraStructureAfter);
@@ -562,10 +618,10 @@ bool Object::tryDefineAsOnTheLastObject(VM& vm, PropertyName name, const Propert
     return added && added->attributes == (descriptor.attributes() & ~PropertyAttribute::Accessor) && tryRepeat(vm, *added, descriptor.value() ? descriptor.value() : jsUndefined());
 }
 
-bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
+bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueOrAccessor, unsigned attributes, MemoryOfAddedNames memory)
 {
     State& state = this->state();
-    const AddedExtraProperty* seen = state.propertyCaches->findAddedExtraProperty(structureID(), name.uid());
+    const AddedExtraProperty* seen = memory == MemoryOfAddedNames::IsAsked ? state.propertyCaches->findAddedExtraProperty(structureID(), name.uid()) : nullptr;
     if (seen && seen->attributes == attributes && tryRepeat(vm, *seen, valueOrAccessor))
         return true;
     if (isNotExtensible())
@@ -578,7 +634,8 @@ bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueO
     bool isFirst = !extra;
     if (isFirst)
         extra = constructEmptyObject(vm, Instance::of(structure()->realm())->realm.emptyExtraPropertiesStructure);
-    if (!extra->tryPutDirectByExistingTransition(vm, name, valueOrAccessor, attributes))
+    bool followsEarlierObject = extra->tryPutDirectByExistingTransition(vm, name, valueOrAccessor, attributes);
+    if (!followsEarlierObject)
         putProperty(vm, extra, name, { valueOrAccessor, attributes });
     if (isFirst)
         adoptExtraProperties(vm, extra);
@@ -586,14 +643,13 @@ bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueO
         didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
 
-    if (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue) || hadOtherCellInPlaceOfExtraProperties || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || isInFrame())
+    if (!followsEarlierObject || attributes & PropertyAttribute::CustomAccessorOrValue || hadOtherCellInPlaceOfExtraProperties || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || isInFrame())
         return true;
     Structure* extraStructure = extra->structure();
-    if (orderWord() != (added.orderWordBefore | orderWordHasExtraProperties) || structure()->mayBePrototype() || extraStructure->isDictionary())
+    if (orderWord() != (added.orderWordBefore | orderWordHasExtraProperties) || structure()->mayBePrototype() || extraStructure->isDictionary() || extraStructure->transitionPropertyName() != name.uid())
         return true;
-    unsigned attributesFound;
-    added.offset = extraStructure->get(vm, name, attributesFound);
-    if (!isValidOffset(added.offset) || !isInlineOffset(added.offset) || attributesFound != attributes)
+    added.offset = extraStructure->transitionOffset();
+    if (!isValidOffset(added.offset) || (isFirst && !isInlineOffset(added.offset)))
         return true;
     added.structureAfter = structureID();
     added.extraPropertiesAfter = extraStructure->id();
@@ -1047,6 +1103,11 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (field && object->orderWord() & orderWordHasFieldOutsideSlot && slot.thisValue() == JSValue(object)) {
+        const FieldReturn* back = object->state().propertyCaches->findFieldReturn(object->structureID(), field->name);
+        if (back && object->tryRepeat(vm, *back, value))
+            return true;
+    }
     bool isWritableInSlot = field && !(field->flags & (fieldIsReadOnly | fieldIsAccessor)) && !(object->orderWord() & orderWordIntegrityBits);
     if (isWritableInSlot && slot.thisValue() == JSValue(object) && object->readInline(*field) && object->tryStore(vm, *field, value))
         return true;
@@ -1058,8 +1119,12 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
         RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, name, value, slot));
     }
     if (slot.thisValue() != JSValue(object) || parseIndex(name)) [[unlikely]] {
-        if (slot.thisValue() == JSValue(object) && trySetElementUnderIndexName(object, name, value))
-            return true;
+        if (slot.thisValue() == JSValue(object)) {
+            bool isStored = trySetElementUnderIndexName(object, name, value);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isStored)
+                return true;
+        }
         RELEASE_AND_RETURN(scope, ordinarySet(globalObject, object, name, value, slot));
     }
     if (field) {
@@ -1167,19 +1232,22 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
     if (!field)
         place = object->placeOfExtraKey(name);
     StructureID extraStructureBefore = extra->structureID();
-    bool isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
-    RETURN_IF_EXCEPTION(scope, false);
-    slot.disableCaching();
-    if (!isDeleted)
-        return false;
-    if (field)
-        removeFieldFromKeyOrder(vm, state, *object, *field);
-    if (extra->structureID() != extraStructureBefore)
-        object->didChangeExtraProperties(vm);
-    if (!field)
-        object->didRemoveExtraKey(vm, state, place);
-    didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, name.uid());
-    return true;
+    bool isDeleted = false;
+    auto tells = makeScopeExit([&] {
+        slot.disableCaching();
+        if (!isDeleted)
+            return;
+        if (field)
+            removeFieldFromKeyOrder(vm, state, *object, *field);
+        if (extra->structureID() != extraStructureBefore)
+            object->didChangeExtraProperties(vm);
+        if (!field)
+            object->didRemoveExtraKey(vm, state, place);
+        didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, name.uid());
+    });
+    isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
+    scope.release();
+    return isDeleted;
 }
 
 bool Object::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
@@ -1191,10 +1259,13 @@ bool Object::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, u
     if (!extra)
         return true;
     VM& vm = globalObject->vm();
-    bool isDeleted = extra->methodTable()->deletePropertyByIndex(extra, globalObject, index);
-    object->didChangeExtraProperties(vm);
-    if (isDeleted)
-        didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, nullptr);
+    bool isDeleted = false;
+    auto tells = makeScopeExit([&] {
+        object->didChangeExtraProperties(vm);
+        if (isDeleted)
+            didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, nullptr);
+    });
+    isDeleted = extra->methodTable()->deletePropertyByIndex(extra, globalObject, index);
     return isDeleted;
 }
 

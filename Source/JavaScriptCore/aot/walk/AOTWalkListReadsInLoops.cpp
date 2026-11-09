@@ -12,6 +12,7 @@
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTOperandKinds.h"
@@ -20,11 +21,13 @@
 #include "AOTTypeArena.h"
 #include "AOTTypedArrayKinds.h"
 #include "AOTWalkBlocksThatEveryTurnPasses.h"
+#include "AOTWalkCountersOfLoops.h"
 #include "AOTWalkKnown.h"
 #include "AOTWalkStrings.h"
 #include "AOTWalkTextBuilders.h"
 #include "JSString.h"
 #include <array>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -113,16 +116,23 @@ static bool holdsBoxedValuesOfEitherKind(const ListTestedInFrontOfLoop& tested)
     return tested.storage == ArrayStorage::Contiguous && tested.admitsInt32Storage;
 }
 
-bool leavesListsTestedInFrontOfLoopAsTheyAre(const Effects& effects)
+static bool writesWhatLiesUnderListsReadInLoops(const Walker& walker, const Effects& effects)
 {
-    return !effects.mayRunOtherCode() && !effects.writes.containsAny(heapsUnderListsReadInLoops);
+    if (walker.takesStorageAndLengthsToBeAsInFront())
+        return effects.writes.containsAny(heapsUnderListsReadInLoops - AbstractHeapSet { AbstractHeap::ArrayStorage });
+    return effects.writes.containsAny(heapsUnderListsReadInLoops);
+}
+
+bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker& walker, const Effects& effects)
+{
+    return !effects.mayRunOtherCode() && !writesWhatLiesUnderListsReadInLoops(walker, effects);
 }
 
 bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker& walker, const Effects& effects, std::span<const ListTestedInFrontOfLoop> lists, const Walker::ObjectsMadeHereThatLoopMentions& mentioned)
 {
     if (effects.mayRunOtherCode())
         return false;
-    if (!effects.writes.containsAny(heapsUnderListsReadInLoops))
+    if (!writesWhatLiesUnderListsReadInLoops(walker, effects))
         return true;
     return effects.writesObjectsMadeHereAlone && std::ranges::all_of(lists, [&](const ListTestedInFrontOfLoop& list) {
         std::optional<Walker::IsItselfMentioned> other = walker.isOtherThanRestOf(mentioned, list.name);
@@ -132,7 +142,7 @@ bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker& walker, const Effects
 
 bool leavesListsTestedInFrontOfLoopAsTheyAre(Walker& walker, const Effects& effects, std::span<const ListTestedInFrontOfLoop> lists, BlockID inputHead)
 {
-    if (leavesListsTestedInFrontOfLoopAsTheyAre(effects))
+    if (leavesListsTestedInFrontOfLoopAsTheyAre(walker, effects))
         return true;
     return !effects.mayRunOtherCode() && effects.writesObjectsMadeHereAlone && leavesListsTestedInFrontOfLoopAsTheyAre(walker, effects, lists, walker.objectsMadeHereThatLoopMentions(inputHead));
 }
@@ -197,25 +207,20 @@ static Reference nameThatEntersLoopInListReadsInLoops(Walker&, const BodyIndex&,
 
 static Reference valueThatStateHoldsInSlotReadInTurnInListReadsInLoops(Walker& walker, const BodyIndex& index, ValueID enters, uint32_t firstValueOfLoop)
 {
-    if (index.isParameter(enters) || index.opcodeOf(enters) != Opcode::PropGet || index.value(enters).isFreeName())
+    if (index.isParameter(enters) || (index.opcodeOf(enters) != Opcode::PrivateGet && (index.opcodeOf(enters) != Opcode::PropGet || index.value(enters).isFreeName())))
         return { };
     BodyValue read = index.value(enters);
+    PropertyKeyID key = keyOfAccessToSlot(walker.program(), read);
     LoopID loop = index.loopOf(index.blockOf(enters));
     while (LoopID around = loop ? index.loop(loop).parent : LoopID())
         loop = around;
-    if (!loop)
+    if (!loop || walker.textOfOutermostLoopStoresUnderNameInCurrentBody(loop, key))
         return { };
-    for (BlockID member : index.membersOf(loop)) {
-        for (BodyValue operation : index.block(member).values()) {
-            if (operation.opcode() == Opcode::PropSet && !operation.isFreeName() && operation.key() == read.key())
-                return { };
-        }
-    }
     Reference holder = nameThatEntersLoopInListReadsInLoops(walker, index, read.objectOperand(), firstValueOfLoop);
     TypeID type = holder && holder.isValue() ? walker.typeOf(holder) : TypeID();
     if (!type || !walker.types().at(type).isObject() || !walker.types().at(type).hasOnlyLayouts())
         return { };
-    std::optional<FieldReference> field = findField(walker.program(), membersOf(walker.types(), walker.types().at(type))[0], read.key());
+    std::optional<FieldReference> field = findField(walker.program(), membersOf(walker.types(), walker.types().at(type))[0], key);
     return field ? walker.state().slot(holder, *field) : Reference();
 }
 
@@ -227,6 +232,8 @@ static Reference nameThatEntersLoopInListReadsInLoops(Walker& walker, const Body
     if (enters.index() < firstValueOfLoop)
         return walker.referenceOf(enters);
     ValueID read = readOfVariableInLoopInListReadsInLoops(index, enters, firstValueOfLoop);
+    if (!read && !index.isParameter(enters) && index.opcodeOf(enters) == Opcode::ElemGet && walker.standsInCopyOfLoopBuiltForEachMember())
+        return rowFoundUnderKeyInFrontOfLoop(walker, index.value(enters));
     if (!read)
         return valueThatStateHoldsInSlotReadInTurnInListReadsInLoops(walker, index, enters, firstValueOfLoop);
     if (Reference made = index.opcodeOf(read) == Opcode::GetModuleVariable ? objectOfVariablePutOff(walker, index.value(read).variable()) : Reference())
@@ -285,6 +292,7 @@ void readListsOfStableBindingsInFrontOfLoop(Walker& walker, BlockID inputHead)
         return;
     const Program& program = walker.program();
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    WhatReadsFromInFrontOfLoopFind foundFromInFront;
     std::optional<BitVector> holdersComparedWithCharacters;
     auto loopComparesElementWithCharacters = [&](const BodyValue& read) {
         if (!holdersComparedWithCharacters)
@@ -295,7 +303,7 @@ void readListsOfStableBindingsInFrontOfLoop(Walker& walker, BlockID inputHead)
         for (BodyValue operation : index.block(member).values()) {
             Vector<ValueID, 4> lists;
             ValueID holderThatNamesLeadFrom;
-            if (readsListFoundByReadFromInFront(program, index, operation, firstValueOfLoop))
+            if (readsListFoundByReadFromInFront(program, index, operation, firstValueOfLoop, foundFromInFront))
                 lists.append(operation.objectOperand());
             if ((holderThatNamesLeadFrom = holderOffVariableThatNamesLeadFromInListReadsInLoops(walker, index, operation, firstValueOfLoop)))
                 lists.append(holderThatNamesLeadFrom);
@@ -367,7 +375,7 @@ void readListsOfStableBindingsInFrontOfLoop(Walker& walker, BlockID inputHead)
                 walker.count(StatisticID::CapturedListsReadInFrontOfLoops);
                 continue;
             }
-            if (!numberReadOutOfVariableStays(walker, variable) || valueOfStableBinding(walker, read))
+            if (!numberReadOutOfVariableStays(walker, variable) || valueOfStableBinding(walker, read) || (program.at(variable).initialization != VariableInitialization::Uninitialized && walker.state().variable(variable)))
                 continue;
             if (!isHolder && program.at(variable).module != program.at(walker.currentFunction()).module && !walker.state().isPastDeadZone(variable))
                 continue;
@@ -380,7 +388,7 @@ void readListsOfStableBindingsInFrontOfLoop(Walker& walker, BlockID inputHead)
             bool mayBeInDeadZone = isHolderOfAnotherFile || (walker.types().at(widest).primitives & (isHolder ? Primitive::Absent | Primitive::Undefined : Primitive::Absent));
             if (mayBeInDeadZone && isHolder && walker.state().variable(variable))
                 continue;
-            if (mayBeInDeadZone && !isHolder && (isHandedOver || (!loopReckonsWithElementRead(walker, operation) && !loopComparesElementWithCharacters(operation)) || walker.state().variable(variable) || !walker.types().saysNothing(walker.types().withoutPrimitives(widest, Primitive::Absent))))
+            if (mayBeInDeadZone && !isHolder && (isHandedOver || (!loopReckonsWithElementRead(walker, operation) && !loopComparesElementWithCharacters(operation) && !(member == inputHead && operation.opcode() == Opcode::PropGet && bodyOnlyMeasuresVariable(program, index, variable))) || walker.state().variable(variable) || !walker.types().saysNothing(walker.types().withoutPrimitives(widest, Primitive::Absent))))
                 continue;
             Draft draft = walker.draftOf(read);
             walker.chooseConservativeFields(draft);
@@ -391,7 +399,8 @@ void readListsOfStableBindingsInFrontOfLoop(Walker& walker, BlockID inputHead)
             Reference held = walker.build(WTF::move(draft));
             if (!held)
                 return;
-            if (mayBeInDeadZone)
+            bool mayHoldUndefinedStill = program.at(variable).initialization != VariableInitialization::Uninitialized && (walker.types().at(widest).primitives & Primitive::Undefined);
+            if (mayBeInDeadZone || mayHoldUndefinedStill)
                 walker.state().noteVariable(variable, held);
             else
                 noteValueOfStableBinding(walker, variable, held);
@@ -407,6 +416,17 @@ bool storesIntoListTestedInFrontOfLoop(Walker& walker, const BodyIndex& index, c
     return name && std::ranges::any_of(lists, [&](const ListTestedInFrontOfLoop& list) {
         return list.isWritable && list.name == name;
     });
+}
+
+Reference literalThatCallPushesOntoInEveryTurn(Walker& walker, const BodyValue& call, BlockID inputHead)
+{
+    if (call.opcode() != Opcode::Call || !call.as<Opcode::Call>().thisValueOperand() || call.as<Opcode::Call>().argumentsOperands().size() != 1 || walker.state().answers().isEmpty())
+        return { };
+    Reference list = walker.referenceOf(walker.currentBodyIndex().valueBehindCasts(call.as<Opcode::Call>().thisValueOperand()));
+    if (!list || !list.isValue())
+        return { };
+    std::optional<uint64_t> noted = findKnown(walker, KnownNote::PushFillsLiteralFromItsEnd, list, { }, inputHead.index());
+    return noted && *noted == (call.id().index() | static_cast<uint64_t>(walker.currentFunction().index()) << 32) ? list : Reference();
 }
 
 std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker& walker, const BodyValue& read)
@@ -717,10 +737,119 @@ static bool buildPlainVectorOfNumbersInListReadsInLoops(Walker& walker, const Bo
     return true;
 }
 
+static Draft questionForKindOfStorageInListReadsInLoops(Walker&, const ListTestedInFrontOfLoop&, Origin);
+OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
+
+static bool storeIntoVectorAskedInFrontOfTypedCopy(Walker& walker, const BodyValue& value)
+{
+    constexpr Walker::TurnOfTypedCopy turn = Walker::TurnOfTypedCopy::HasRunNoOtherCode;
+    if (!walker.has(Mechanism::Folding) || !walker.isInLoop() || walker.state().answers().isEmpty())
+        return false;
+    Draft written = walker.draftOf(value);
+    ValueID birth = written.arrayOperand() && written.arrayOperand().isValue() ? rootOfCellInSweptCode(walker.code(), written.arrayOperand().id()) : ValueID();
+    bool remembered = birth && walker.code().at(birth).opcode == Opcode::NewArrayLike && walker.code().at(birth).remembersStorageAtSite();
+    walker.chooseConservativeFields(written);
+    if (written.opcode != Opcode::TryPutByValDirect)
+        return false;
+    Reference list = written.arrayOperand();
+    Reference position = written.positionOperand();
+    Reference stored = written.valueOperand();
+    bool goesByKind = written.arrayStorage() == ArrayStorage::Double && stored && walker.typeOf(stored) && walker.types().at(walker.typeOf(stored)).isNumber();
+    if (written.arrayStorage() != ArrayStorage::Contiguous && !goesByKind)
+        return false;
+    auto staysTyped = [&] {
+        if (goesByKind && remembered && walker.code().at(birth).remembersStorageAtSite())
+            walker.code().letListForgetStorageAtSite(birth);
+        return false;
+    };
+    bool mayBeNaN = goesByKind && !canStoreWithoutConversion(walker.types(), ArrayStorage::Double, walker.typeOf(stored));
+    if (mayBeNaN && !walker.mayBeginTurnAgainInClosedCopy())
+        return staysTyped();
+    ArrayStorage kindAsked = goesByKind ? ArrayStorage::Other : ArrayStorage::Contiguous;
+    if (!list || !list.isValue() || !position || !stored || !walker.standsInFrontOfTypedCopy(list, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(list, turn))
+        return staysTyped();
+    std::optional<PassedTest> inside = walker.findWhatHoldsPositionInsideList(list, position);
+    if (!inside)
+        return staysTyped();
+    Origin origin = written.origin();
+    origin.isTailCall = false;
+    std::optional<ListTestedInFrontOfLoop> tested = findNoteInListReadsInLoops(walker, list);
+    if (!tested) {
+        ListTestedInFrontOfLoop asked { list, kindAsked, false, true, true };
+        Reference test;
+        {
+            Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+            test = walker.build(questionForKindOfStorageInListReadsInLoops(walker, asked, origin));
+        }
+        if (!test || !walker.branchInFrontOfTypedCopy(test, true, turn))
+            return staysTyped();
+        walker.noteGuessOpened();
+        walker.noteListAskedInFrontOfTypedCopy();
+        noteListTestedInListReadsInLoops(walker, asked);
+        tested = asked;
+    }
+    if (!tested->isWritable || tested->storage != kindAsked || tested->admitsInt32Storage)
+        return staysTyped();
+    if (mayBeNaN) {
+        Draft isItself(Opcode::StrictEq, origin);
+        walker.chooseConservativeFields(isItself);
+        isItself.setLeftOperand(stored);
+        isItself.setRightOperand(stored);
+        isItself.setForm(formAllowedForTypedOperator(walker, isItself));
+        Reference test = walker.build(WTF::move(isItself));
+        if (!test)
+            return true;
+        BlockID passed = walker.addBlock();
+        BlockID failed = walker.addBlock(BlockFrequency::Rare);
+        walker.branch(test, passed, failed);
+        walker.continueIn(failed);
+        if (!walker.isUnreachable())
+            walker.beginTurnAgainInClosedCopy();
+        walker.continueIn(passed);
+        walker.noteGuessOpened();
+        if (walker.isUnreachable() || walker.hasFailed())
+            return true;
+    }
+    Draft store(Opcode::PutContiguousIndex, origin);
+    walker.chooseConservativeFields(store);
+    store.setArrayOperand(list);
+    store.setPositionOperand(position);
+    store.setValueOperand(stored);
+    store.setIsInBounds(*inside);
+    if (goesByKind) {
+        store.setGoesByKindOfStorage(true);
+        walker.count(StatisticID::NumbersStoredByKindOfStorageInCopiedRuns);
+        if (remembered && !walker.code().at(birth).remembersStorageAtSite())
+            walker.code().letListRememberStorageAtSite(birth);
+    }
+    if (Reference storage = storageOfListFromInFrontOfLoop(walker, *tested, origin))
+        store.setStorageOperand(storage);
+    walker.build(WTF::move(store));
+    Draft isStored(Opcode::Boolean, origin);
+    isStored.setBoolean(true);
+    walker.bind(value.id(), walker.constant(WTF::move(isStored)));
+    return true;
+}
+
+static Reference storageOfListThatTurnsLeaveAsItIsInListReadsInLoops(Walker& walker, const ListTestedInFrontOfLoop& tested, Origin origin)
+{
+    constexpr Walker::TurnOfTypedCopy turn = Walker::TurnOfTypedCopy::HasRunNoOtherCode;
+    if (!walker.standsInFrontOfTypedCopy(tested.name, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(tested.name, turn))
+        return { };
+    Draft storage(Opcode::GetArrayStorage, origin);
+    walker.chooseConservativeFields(storage);
+    storage.setArrayOperand(tested.name);
+    walker.count(StatisticID::StoragesTakenFromInFrontOfTurnsThatFillWhatIsMadeHere);
+    Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+    return walker.build(WTF::move(storage));
+}
+
 bool askPlainVectorBehindRowOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
     if (!walker.has(Mechanism::TypedOperations))
         return false;
+    if (value.opcode() == Opcode::TryPutByValDirect)
+        return storeIntoVectorAskedInFrontOfTypedCopy(walker, value);
     std::optional<ListTestedInFrontOfLoop> tested = walker.state().answers().isEmpty() ? std::nullopt : findNoteInListReadsInLoops(walker, walker.referenceOf(value.arrayOperand()));
     if (buildPlainVectorOfNumbersInListReadsInLoops(walker, value, tested))
         return true;
@@ -729,6 +858,8 @@ bool askPlainVectorBehindRowOfItsOpcodes(Walker& walker, const BodyValue& value)
     Draft draft = walker.draftOf(value);
     Reference storage = storageOfListFromInFrontOfLoop(walker, *tested, draft.origin());
     if (!storage)
+        storage = storageOfListThatTurnsLeaveAsItIsInListReadsInLoops(walker, *tested, draft.origin());
+    if (!storage)
         return false;
     draft.setStorageOperand(storage);
     std::optional<PassedTest> inside = value.opcode() == Opcode::HasContiguousIndex ? walker.findWhatHoldsPositionInsideList(draft.arrayOperand(), draft.positionOperand()) : std::nullopt;
@@ -736,6 +867,30 @@ bool askPlainVectorBehindRowOfItsOpcodes(Walker& walker, const BodyValue& value)
         draft.setIsInBounds(*inside);
     walker.bind(value.id(), walker.build(WTF::move(draft)));
     return true;
+}
+
+bool Walker::textOfOutermostLoopStoresUnderNameInCurrentBody(LoopID outermost, PropertyKeyID name)
+{
+    const BodyIndex& index = currentBodyIndex();
+    const Vector<uint64_t>& stored = m_namesStoredInOutermostLoops.ensure(&index, [&] {
+        Vector<uint64_t> found;
+        if (!index.holdsAnyOf(OpcodeSet { Opcode::PropSet, Opcode::PrivateSet }))
+            return found;
+        for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
+            LoopID loop = index.loopOf(BlockID(block));
+            while (LoopID around = loop ? index.loop(loop).parent : LoopID())
+                loop = around;
+            if (!loop)
+                continue;
+            for (BodyValue operation : index.block(BlockID(block)).values()) {
+                if (operation.opcode() == Opcode::PrivateSet || (operation.opcode() == Opcode::PropSet && !operation.isFreeName()))
+                    found.append(static_cast<uint64_t>(loop.index()) << 32 | keyOfAccessToSlot(program(), operation).index());
+            }
+        }
+        std::ranges::sort(found);
+        return found;
+    }).iterator->value;
+    return std::ranges::binary_search(stored, static_cast<uint64_t>(outermost.index()) << 32 | name.index());
 }
 
 const BitVector& Walker::valuesTakenForKeysInCurrentBody()
@@ -800,6 +955,29 @@ static bool isFreshInListReadsInLoops(Walker& walker, Reference name)
     return !walker.code().isConstant(cell) && walker.state().isFresh(Reference::value(cell));
 }
 
+static bool isWrittenEmptyInListReadsInLoops(Walker& walker, const BodyIndex& index, ValueID list)
+{
+    ValueID written = list ? index.valueBehindCasts(list) : ValueID();
+    if (!written || index.isParameter(written))
+        return false;
+    if (index.opcodeOf(written) == Opcode::NewArray)
+        return index.value(written).as<Opcode::NewArray>().holes().empty() && index.value(written).as<Opcode::NewArray>().elementsOperands().empty();
+    if (index.opcodeOf(written) != Opcode::Data)
+        return false;
+    const auto* data = walker.program().at(index.value(written).as<Opcode::Data>().data()).root.tryAs<DataNode::Array>();
+    return data && !data->elements.size();
+}
+
+static bool isBornEmptyInListReadsInLoops(Walker& walker, const BodyIndex& index, ValueID list, Reference name)
+{
+    if (isWrittenEmptyInListReadsInLoops(walker, index, list))
+        return true;
+    if (!name.isValue())
+        return false;
+    const auto& born = walker.code().at(rootOfCellInSweptCode(walker.code(), name.id()));
+    return born.opcode == Opcode::NewArray && born.holes().empty() && born.elementsOperands().empty();
+}
+
 static ArrayStorage kindThatHoldsWhatIsWrittenInListReadsInLoops(Walker&, TypeID list);
 
 static constexpr OpcodeSet numberConstantsInListReadsInLoops { Opcode::Double, Opcode::Integer };
@@ -821,7 +999,7 @@ static TypeID expectedOfRowThatIsNotBuiltInListReadsInLoops(Walker& walker, Valu
     return expected;
 }
 
-static bool readsRowOfNumbersThatTurnFindsInListedList(Walker& walker, const BodyIndex& index, const BodyValue& operation, uint32_t firstValueOfLoop, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses = { })
+static ALWAYS_INLINE bool readsRowOfNumbersThatTurnFindsInListedList(Walker& walker, const BodyIndex& index, const BodyValue& operation, uint32_t firstValueOfLoop, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses = { })
 {
     ValueID row = operation.opcode() == Opcode::ElemGet ? index.valueBehindCasts(operation.objectOperand()) : ValueID();
     if (!row || row.index() < firstValueOfLoop || index.isParameter(row) || index.opcodeOf(row) != Opcode::ElemGet)
@@ -845,7 +1023,10 @@ static bool readsRowOfNumbersThatTurnFindsInListedList(Walker& walker, const Bod
     if (!part || part->builtinClass != BuiltinClasses::Array)
         return false;
     TypeID rows = part->expectedContentsAt(walker.program().builtins(), ContentsSlot::Element).predicted();
-    return rows && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(rows)));
+    if (rows && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(rows))))
+        return true;
+    TypeID expected = expectedOfRowThatIsNotBuiltInListReadsInLoops(walker, row);
+    return expected && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(expected)));
 }
 
 bool turnsReadRowsOfNumbersThatTheyFind(Walker& walker, BlockID inputHead, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses)
@@ -867,6 +1048,7 @@ static bool turnMayAppendToTextInListReadsInLoops(Walker& walker, BlockID inputH
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    WhatReadsFromInFrontOfLoopFind foundFromInFront;
     BitVector numbersMadeOfNumbers;
     auto isNumberBehindTestsOfLists = [&](ValueID operand) {
         ValueID root = index.valueBehindCasts(operand);
@@ -888,7 +1070,7 @@ static bool turnMayAppendToTextInListReadsInLoops(Walker& walker, BlockID inputH
                 return true;
             size_t placeOfList = entersLoop.index() - preview.firstValue;
             TypeID listInRow = entersLoop.index() >= preview.firstValue && placeOfList < preview.typesOfValues.size() ? preview.typesOfValues[placeOfList] : TypeID();
-            if (listInRow && readsListFoundByReadFromInFront(walker.program(), index, index.value(root), firstValueOfLoop) && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, walker.types().withoutNullish(listInRow))))
+            if (listInRow && readsListFoundByReadFromInFront(walker.program(), index, index.value(root), firstValueOfLoop, foundFromInFront) && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, walker.types().withoutNullish(listInRow))))
                 return true;
         }
         ValueID step = root.index() >= firstValueOfLoop && !index.isParameter(root) && index.opcodeOf(root) == Opcode::ResultAt ? index.value(root).operand(0) : ValueID();
@@ -919,18 +1101,22 @@ static bool turnMayAppendToTextInListReadsInLoops(Walker& walker, BlockID inputH
     return false;
 }
 
-static constexpr OpcodeSet readsThatMayFindSameInEveryTurn { Opcode::PropGet, Opcode::ElemGet, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
+static constexpr OpcodeSet readsThatMayFindSameInEveryTurn { Opcode::PropGet, Opcode::ElemGet, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture, Opcode::PrivateGet, Opcode::Call };
 
-static bool takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(const BodyIndex& index, const BodyValue& read, uint32_t firstValueOfLoop)
+static bool takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(const BodyIndex& index, const BodyValue& read, uint32_t firstValueOfLoop, WhatReadsFromInFrontOfLoopFind& known)
 {
     if (read.opcode() == Opcode::PropGet && read.isFreeName())
+        return false;
+    if (known.found.get(read.id().index() - firstValueOfLoop))
+        return true;
+    if (known.refused.get(read.id().index() - firstValueOfLoop))
         return false;
     bool takesOnlyThat = true;
     read.forEachOperand([&](ValueID operand, uint32_t) {
         if (!takesOnlyThat || operand.index() < firstValueOfLoop)
             return;
         ValueID source = index.valueBehindCasts(operand);
-        if (read.opcode() == Opcode::PropGet && source && source.index() >= firstValueOfLoop && !index.isParameter(source) && index.opcodeOf(source) == Opcode::CheckInitialized)
+        if ((read.opcode() == Opcode::PropGet || read.opcode() == Opcode::ElemGet || read.opcode() == Opcode::PrivateGet || read.opcode() == Opcode::Call) && source && source.index() >= firstValueOfLoop && !index.isParameter(source) && index.opcodeOf(source) == Opcode::CheckInitialized)
             source = index.valueBehindCasts(index.value(source).operand(0));
         if (!source || source.index() < firstValueOfLoop) {
             takesOnlyThat = !!source;
@@ -941,13 +1127,14 @@ static bool takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(const BodyIndex&
             return;
         }
         Opcode made = index.opcodeOf(source);
-        takesOnlyThat = numberConstantsInListReadsInLoops.contains(made)
-            || ((readsThatMayFindSameInEveryTurn.contains(made) || operatorsThatMakeNumbersOfNumbers.contains(made)) && takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(index, index.value(source), firstValueOfLoop));
+        takesOnlyThat = numberConstantsInListReadsInLoops.contains(made) || made == Opcode::String
+            || ((readsThatMayFindSameInEveryTurn.contains(made) || operatorsThatMakeNumbersOfNumbers.contains(made)) && takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(index, index.value(source), firstValueOfLoop, known));
     });
+    (takesOnlyThat ? known.found : known.refused).set(read.id().index() - firstValueOfLoop);
     return takesOnlyThat;
 }
 
-bool readsListFoundByReadFromInFront(const Program& program, const BodyIndex& index, const BodyValue& operation, uint32_t firstValueOfLoop)
+bool readsListFoundByReadFromInFront(const Program& program, const BodyIndex& index, const BodyValue& operation, uint32_t firstValueOfLoop, WhatReadsFromInFrontOfLoopFind& known)
 {
     bool readsList = operation.opcode() == Opcode::ElemGet || operation.opcode() == Opcode::ElemSet || (operation.opcode() == Opcode::PropGet && !operation.isFreeName() && operation.key() == program.keyOf(BuiltinNames::length));
     if (!readsList)
@@ -957,7 +1144,43 @@ bool readsListFoundByReadFromInFront(const Program& program, const BodyIndex& in
         source = index.valueBehindCasts(index.value(source).operand(0));
     if (!source || source.index() < firstValueOfLoop || index.isParameter(source) || !readsThatMayFindSameInEveryTurn.contains(index.opcodeOf(source)))
         return false;
-    return takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(index, index.value(source), firstValueOfLoop);
+    return takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(index, index.value(source), firstValueOfLoop, known);
+}
+
+bool textOfLoopOnlyFillsListAndReadsAnother(Walker& walker, BlockID inputHead, ValueID made)
+{
+    const Code& code = walker.code();
+    bool readsAnother = false;
+    for (uint64_t pair : walker.holdersFromInFrontThatLoopReadsUnderIndexes(inputHead)) {
+        Reference read = walker.referenceOf(ValueID(static_cast<uint32_t>(pair)));
+        if (!read || !read.isValue())
+            continue;
+        if (rootOfCellInSweptCode(code, read.id()) == made)
+            return false;
+        readsAnother = true;
+    }
+    return readsAnother;
+}
+
+static bool someListedListIsReceiverOfMethodInListReadsInLoops(Walker& walker, BlockID inputHead, std::span<const ListTestedInFrontOfLoop> lists)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    const Code& code = walker.code();
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() != Opcode::PropGet || operation.isFreeName() || operation.key() == walker.program().keyOf(BuiltinNames::length))
+                continue;
+            ValueID input = index.valueBehindCasts(operation.objectOperand());
+            Reference receiver = input.index() < firstValueOfLoop ? walker.referenceOf(input) : Reference();
+            if (!receiver || !receiver.isValue())
+                continue;
+            ValueID root = rootOfCellInSweptCode(code, receiver.id());
+            if (std::ranges::any_of(lists, [&](const ListTestedInFrontOfLoop& list) { return list.name.isValue() && rootOfCellInSweptCode(code, list.name.id()) == root; }))
+                return true;
+        }
+    }
+    return false;
 }
 
 static bool rowFindsListsLeftAsTheyAreInListReadsInLoops(Walker& walker, BlockID inputHead, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses, std::span<const Reference> proofs)
@@ -975,12 +1198,15 @@ static bool rowFindsListsLeftAsTheyAreInListReadsInLoops(Walker& walker, BlockID
             known = walker.typeOf(built);
         return known ? known : TypeID(TypeTable::anything);
     };
+    WhatReadsFromInFrontOfLoopFind foundFromInFront;
     bool sitesMayAnswer = !walker.someCallStaysInTurnOfRow() && someReadThatAsksItsSiteIsReckonedWith(walker, walker.operationsThatRanOtherCodeOfRow(), TypesOfInputs(typeInRow));
     for (ValueID ran : walker.operationsThatRanOtherCodeOfRow()) {
         if (!ran)
             return false;
         BodyValue operation = index.value(ran);
         if (stepsViewByIndexAlone(walker, index, operation) || stepsTextByIndexAlone(walker, index, operation))
+            continue;
+        if (operation.opcode() == Opcode::ElemGet && walker.standsInCopyOfLoopBuiltForEachMember() && rowFoundUnderKeyInFrontOfLoop(walker, operation))
             continue;
         bool readsList = false;
         bool isStore = operation.opcode() == Opcode::ElemSet;
@@ -1001,12 +1227,14 @@ static bool rowFindsListsLeftAsTheyAreInListReadsInLoops(Walker& walker, BlockID
             if (const Walker::IterationByIndex* stepped = findListSteppedByIndexAlone(walker, index, index.value(step)))
                 readsList = std::ranges::any_of(lists, [&](const ListTestedInFrontOfLoop& list) { return list.name == stepped->list; });
         }
-        if (readsList || effectRuleOf(operation.opcode()) == EffectRule::Operator || readsListFoundByReadFromInFront(walker.program(), index, operation, firstValueOfLoop) || readsRowOfNumbersThatTurnFindsInListedList(walker, index, operation, firstValueOfLoop, lists))
+        if (readsList || effectRuleOf(operation.opcode()) == EffectRule::Operator || readsListFoundByReadFromInFront(walker.program(), index, operation, firstValueOfLoop, foundFromInFront) || readsRowOfNumbersThatTurnFindsInListedList(walker, index, operation, firstValueOfLoop, lists))
             continue;
         if (!walker.looksAskOnlyWhetherTurnsRunOtherCode(inputHead) || !guessesMayTypeOperationInCleanTurn(walker, operation, TypesOfInputs(typeInRow), sitesMayAnswer))
             return false;
     }
     if (walker.previewOutOfRow() && turnMayAppendToTextInListReadsInLoops(walker, inputHead, *walker.previewOutOfRow(), lists, guesses, proofs))
+        return false;
+    if (!leavesListsTestedInFrontOfLoopAsTheyAre(walker, walker.effectsOfQuietDraftsOfRow()) && someListedListIsReceiverOfMethodInListReadsInLoops(walker, inputHead, lists))
         return false;
     return leavesListsTestedInFrontOfLoopAsTheyAre(walker, walker.effectsOfQuietDraftsOfRow(), lists, inputHead);
 }
@@ -1066,6 +1294,14 @@ static bool onlyUserStoresWhatIsReadIntoListInListReadsInLoops(const BodyIndex& 
     return user && index.opcodeOf(user) == Opcode::ElemSet && index.value(user).valueOperand() == name;
 }
 
+static bool elementIsOnlyReadByKeyInListReadsInLoops(const BodyIndex& index, const BodyValue& read)
+{
+    if (read.opcode() != Opcode::ElemGet)
+        return false;
+    ValueID user = index.onlyUsingValue(read.id());
+    return user && index.opcodeOf(user) == Opcode::ElemGet && index.value(user).objectOperand() == read.id();
+}
+
 static ArrayStorage kindWrittenOrSeenByLinkInListReadsInLoops(const TypeArena& types, ArrayStorage written, TypeID seenByLink)
 {
     if (written != ArrayStorage::Other || !seenByLink || types.at(seenByLink).isAnything())
@@ -1104,6 +1340,28 @@ static Reference lesserOfIntegersInListReadsInLoops(Walker& walker, Reference on
     arms.append(Walker::ArmThatMeets { takesOther, { other } });
     Reference lesser;
     return walker.letArmsMeet(arms.span(), walker.addBlock(), singleElementSpan(lesser)) ? lesser : Reference();
+}
+
+static Reference bearLiteralAgainBehindItsRoom(Walker& walker, const BodyIndex& index, ValueID written, Reference list, BlockID inputHead)
+{
+    if (!walker.has(Mechanism::EscapeAnalysis) || !written || index.isParameter(written) || index.opcodeOf(written) != Opcode::NewArray || !list.isValue() || walker.referenceBoundTo(written) != list)
+        return { };
+    const Operation& born = walker.code().at(list.id());
+    if (born.opcode != Opcode::NewArray || born.storage() != AllocationStorage::Heap || born.literalStorage() != ArrayLiteralStorage::Fresh || !born.holes().empty() || born.elementsOperands().empty())
+        return { };
+    BlockID home = index.blockOf(written);
+    BodyTerminator end = index.terminator(home);
+    if (home.index() >= inputHead.index() || end.kind() != TerminatorKind::Jump || end.targets()[0].block() != inputHead)
+        return { };
+    std::optional<BodyUser> first = index.firstUser(written);
+    if (!first || (first->kind == BodyUseKind::Operand ? index.blockOf(first->value).index() : first->block.index()) < inputHead.index())
+        return { };
+    buildFreshObject(walker, index.value(written));
+    Reference again = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(written);
+    if (!again || !again.isValue() || again == list || walker.code().at(again.id()).opcode != Opcode::NewArray)
+        return { };
+    walker.count(StatisticID::LiteralsBornBehindWhatReckonsTheirRoom);
+    return again;
 }
 
 void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::span<const Reference> entering)
@@ -1253,9 +1511,15 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
     };
 
     Vector<Reference, 2> lists;
+    Vector<ValueID, 2> namesOfLists;
+    Vector<Reference, 2> listsFilledTwiceInATurn;
     Vector<Reference, 2> listsPushedOnto;
+    Vector<std::pair<Reference, ValueID>, 2> pushesWhoseAnswerNobodyReads;
+    Vector<std::pair<ValueID, ValueID>, 2> readsOffListsFromInFront;
+    bool everyStoreStandsBehindTestOfHead = true;
     for (BlockID member : index.membersOf(loop)) {
         bool standsInEveryTurn = std::ranges::all_of(blocksThatComeRound, [&](BlockID last) { return index.dominates(member, last); });
+        bool standsBehindTestOfHead = member != inputHead && test.taken().block() != inputHead && index.dominates(test.taken().block(), member);
         for (BodyValue operation : index.block(member).values()) {
             if (listWhoseLengthIsRead(operation.id()))
                 continue;
@@ -1270,11 +1534,17 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
                 }
                 if (!isPlainPrimitive(isPlainPrimitive, call.argumentsOperands()[0], 6))
                     countAloneEndsLoop = false;
+                everyStoreStandsBehindTestOfHead &= standsBehindTestOfHead;
                 Reference list = walker.referenceOf(input);
-                if (!lists.contains(list))
+                if (!lists.contains(list)) {
                     lists.append(list);
+                    namesOfLists.append(input);
+                } else
+                    listsFilledTwiceInATurn.append(list);
                 if (!listsPushedOnto.contains(list))
                     listsPushedOnto.append(list);
+                if (index.isUnused(operation.id()) && standsBehindTestOfHead && index.loopOf(member) == loop)
+                    pushesWhoseAnswerNobodyReads.append({ list, operation.id() });
                 continue;
             }
             if (operation.opcode() == Opcode::ElemSet) {
@@ -1285,14 +1555,20 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
                     countAloneEndsLoop = false;
                     continue;
                 }
+                everyStoreStandsBehindTestOfHead &= standsBehindTestOfHead;
                 if (position != counter && !listsPushedOnto.contains(list))
                     listsPushedOnto.append(list);
-                if (!lists.contains(list))
+                if (!lists.contains(list)) {
                     lists.append(list);
+                    namesOfLists.append(input);
+                } else
+                    listsFilledTwiceInATurn.append(list);
                 continue;
             }
+            if (ValueID read = operation.opcode() == Opcode::ElemGet ? index.valueBehindCasts(operation.objectOperand()) : ValueID(); read && read.index() < firstValueOfLoop && !readsOffListsFromInFront.containsIf([&](const auto& known) { return known.first == read; }))
+                readsOffListsFromInFront.append({ read, operation.id() });
             Effects declared = declaredEffectsOfOperation(walker.program(), operation.opcode(), operation);
-            if (!declared.mayThrow.byRule() && !declared.mayRunOtherCode()) {
+            if (!declared.mayThrow.byRule() && !declared.mayRunOtherCode() && !operandsMayRunCode(operation.opcode())) {
                 if (!declared.writes.containsOnly(heapsWhoseWritesNobodySees))
                     countAloneEndsLoop = false;
                 continue;
@@ -1366,7 +1642,8 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
             value = walker.code().at(value).valueOperand();
         return value;
     };
-    for (Reference list : lists) {
+    for (size_t place = 0; place < lists.size(); ++place) {
+        Reference list = lists[place];
         if (!countAloneEndsLoop) {
             room = roomOfLiteralFilledFromItsEnd(list);
             if (walker.isUnreachable())
@@ -1382,6 +1659,24 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
             continue;
         if (Type asked = types.at(walker.typeOf(room)); isBornWithLength && asked.isInteger() && asked.integers.isSingleValue() && types.at(walker.code().at(born.lengthOperand()).type).isInteger() && types.at(walker.code().at(born.lengthOperand()).type).integers == asked.integers)
             continue;
+        if (namesAskedInFront.isEmpty() && textsJoined.isEmpty() && types.at(walker.typeOf(room)).isInteger() && !listsFilledTwiceInATurn.contains(list)) {
+            if (countAloneEndsLoop && listsPushedOnto.contains(list) && born.opcode == Opcode::NewArray) {
+                Reference turnsLeft = buildOperatorOnIntegersOfLoop(walker, Opcode::Sub, room, entering[placeOfCounter], origin);
+                Reference filled = turnsLeft ? buildOperatorOnIntegersOfLoop(walker, Opcode::Add, turnsLeft, integerWritten(static_cast<int64_t>(born.elementsOperands().size())), origin) : Reference();
+                if (walker.isUnreachable())
+                    return;
+                if (filled && types.at(walker.typeOf(filled)).isInteger())
+                    room = filled;
+            }
+            size_t placeOfRead = readsOffListsFromInFront.findIf([&](const auto& known) { return known.first == namesOfLists[place]; });
+            TypeID seenByLink = placeOfRead != notFound && !listsPushedOnto.contains(list) && born.opcode == Opcode::NewArray && integersThatEnter == Range::one(static_cast<int64_t>(born.elementsOperands().size())) ? walker.facts().linked().resultOfReadByKey(walker.currentFunction(), readsOffListsFromInFront[placeOfRead].second) : TypeID();
+            bool holdsNumbers = seenByLink && (types.at(seenByLink).primitives & Primitive::Number) && types.at(seenByLink).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined | Primitive::Absent);
+            SetForScope storageAsked(walker.storageAskedOfLiteralBeingBorn(), !holdsNumbers ? ArrayStorage::Other : types.at(seenByLink).isInt32OrNullish() ? ArrayStorage::Int32 : types.at(seenByLink).primitives & Primitive::FractionalNumber ? ArrayStorage::Double : ArrayStorage::Other);
+            if (Reference again = bearLiteralAgainBehindItsRoom(walker, index, namesOfLists[place], list, inputHead))
+                list = again;
+            if (walker.isUnreachable())
+                return;
+        }
         Draft reserve(Opcode::ReserveArrayRoom, origin);
         walker.chooseConservativeFields(reserve);
         reserve.setArrayOperand(list);
@@ -1404,6 +1699,20 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
             held.append(written(lengthJoinedOfTheRest));
         reserve.setVariadicOperands(held.span());
         walker.build(WTF::move(reserve));
+        ValueID literal = namesOfLists[place];
+        bool isBornForThisEntry = !index.isParameter(literal) && (index.opcodeOf(literal) == Opcode::NewArray || index.opcodeOf(literal) == Opcode::Data) && index.loopOf(index.blockOf(literal)) == index.loop(loop).parent;
+        const Operation& filled = walker.code().at(rootOfCellInSweptCode(walker.code(), list.id()));
+        bool isFilledFromItsEnd = filled.opcode == Opcode::NewArray && filled.holes().empty() && integersThatEnter == Range::one(static_cast<int64_t>(filled.elementsOperands().size()));
+        size_t placeOfPush = pushesWhoseAnswerNobodyReads.findIf([&](const auto& push) { return push.first == lists[place]; });
+        bool fillsLiteralFromItsEnd = !walker.isUnreachable() && isBornForThisEntry && isFilledFromItsEnd && (!listsPushedOnto.contains(lists[place]) || placeOfPush != notFound) && !listsFilledTwiceInATurn.contains(lists[place]);
+        if (fillsLiteralFromItsEnd && placeOfPush != notFound) {
+            noteKnown(walker, KnownNote::PushFillsLiteralFromItsEnd, list, { }, inputHead.index(), LocationMasks(), pushesWhoseAnswerNobodyReads[placeOfPush].second.index() | static_cast<uint64_t>(walker.currentFunction().index()) << 32);
+            walker.noteLoopWhosePushFillsLiteral(inputHead);
+        }
+        if (fillsLiteralFromItsEnd)
+            noteKnown(walker, KnownNote::LoopFillsLiteralFromItsEnd, list, { }, inputHead.index(), LocationMasks(), (placeOfCounter + 1) | static_cast<uint64_t>(walker.currentFunction().index()) << 32);
+        if (fillsLiteralFromItsEnd && countAloneEndsLoop && everyStoreStandsBehindTestOfHead && types.at(walker.typeOf(roomByCount)).isInteger())
+            noteKnown(walker, KnownNote::LengthThatLoopFillsLiteralTo, list, { }, inputHead.index(), LocationMasks(), roomByCount.bits());
     }
 }
 
@@ -1447,6 +1756,24 @@ static void forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(Walker& walker
     }
 }
 
+bool copyOfCalleeReadsUnderKeyWhatNobodyKnows(Walker& walker, const BodyValue& call, uint32_t firstValueOfLoop)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), call.id());
+    if (!callee || !lookReadsCopyOfCalleeInListReadsInLoops(walker, call, callee))
+        return false;
+    bool readsIt = false;
+    forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(walker, callee, call.as<Opcode::Call>().argumentsOperands(), 2, Opcode::ElemGet, [&](ValueID argument, ValueID, FunctionID reader, ValueID read) {
+        if (reader != callee || walker.facts().bodies().at(reader).blockOf(read) != BlockID(0u))
+            return;
+        ValueID variable = argument.index() < firstValueOfLoop ? ValueID() : readOfVariableInLoopInListReadsInLoops(index, argument, firstValueOfLoop);
+        Reference inFront = argument.index() < firstValueOfLoop ? walker.referenceOf(argument) : Reference();
+        TypeID known = inFront ? walker.typeOf(inFront) : variable ? widestTypeOfOperation(walker, index.value(variable)) : TypeID();
+        readsIt |= known && walker.types().saysNothing(known);
+    });
+    return readsIt;
+}
+
 static bool storesNumberInCopyOfCalleeInListReadsInLoops(Walker& walker, FunctionID writer, ValueID value, unsigned depth)
 {
     const BodyIndex& body = walker.facts().bodies().at(writer);
@@ -1478,7 +1805,7 @@ static bool surelyEndsWhatIsShownOfListsInListReadsInLoops(Walker& walker, const
         if (known && countsOnTurnsThatBeginAgain && lookReadsCopyOfCalleeInListReadsInLoops(walker, operation, known))
             return false;
         if (FunctionID callee = known)
-            return !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnReturn()) || !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnThrow());
+            return !leavesListsTestedInFrontOfLoopAsTheyAre(walker, linked.function(callee).effectsOnReturn()) || !leavesListsTestedInFrontOfLoopAsTheyAre(walker, linked.function(callee).effectsOnThrow());
         TypeID callee = typeInLook(operation.as<Opcode::Call>().calleeOperand());
         return !callee || !singleBuiltinOf(types, types.at(callee));
     }
@@ -1522,6 +1849,19 @@ static TypeID typeThatCalleeTakesOfElementInListReadsInLoops(Walker& walker, con
     return { };
 }
 
+static TypeID elementsThatLinkProvesOfReceiverInListReadsInLoops(Walker& walker, const BodyIndex& index, Reference list)
+{
+    auto [caller, call] = walker.callThatFrameAtWorkCopies();
+    std::optional<unsigned> ofThis = walker.program().at(walker.currentFunction()).thisParameterIndex();
+    if (!call || !ofThis || !list || !list.isValue() || *ofThis >= index.block(entryBlock).numberOfParameters())
+        return { };
+    Reference receiver = walker.referenceOf(index.block(entryBlock).parameter(*ofThis));
+    if (!receiver || !receiver.isValue() || rootOfCellInSweptCode(walker.code(), receiver.id()) != rootOfCellInSweptCode(walker.code(), list.id()))
+        return { };
+    const LinkedContentsAtOperation* contents = walker.facts().linked().contentsAtOperation(caller, call);
+    return contents ? contents->value : TypeID();
+}
+
 static bool isReadOfBodyInListReadsInLoops(const BodyIndex& index, const BodyValue& read)
 {
     return read.id().index() < index.numberOfValues() && index.value(read.id()).words() == read.words();
@@ -1542,9 +1882,11 @@ static ValueID valueThatStepHandsOutInListReadsInLoops(const BodyIndex& index, c
     return { };
 }
 
-ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
+static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses, bool keysOfReadsTakeNotes, bool& someReadHasNotedKey, std::optional<BitVector>& namesOfCountersAskedInFront)
 {
     ListsReadInLoop found;
+    WhatReadsFromInFrontOfLoopFind foundFromInFront;
+    bool someListIsTakenForNotedKey = false;
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::Folding))
         return found;
 
@@ -1566,6 +1908,17 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
         return input.index() >= preview.firstValue && place < preview.typesOfValues.size() ? preview.typesOfValues[place] : TypeID();
     };
 
+    auto typeOfKeyInLook = [&](ValueID key) -> TypeID {
+        TypeID seen = typeInLook(key);
+        if (!seen || types.at(seen).isInteger() || !(types.at(seen).primitives & Primitive::Integer) || key.index() < firstValueOfLoop || walker.keysAreReadOffLookInRow())
+            return seen;
+        if (!namesOfCountersAskedInFront)
+            namesOfCountersAskedInFront = namesOfCountersAskedForInt32InFrontOfLoop(walker, inputHead, entering);
+        if (!namesOfCountersAskedInFront->get(key.index() - firstValueOfLoop))
+            return seen;
+        walker.noteKeyTakenForCounterAskedInFront();
+        return TypeTable::int32;
+    };
     BitVector numbersBehindListsFound;
     auto isNumberBehindListsFound = [&](ValueID value) {
         TypeID seen = typeInLook(value);
@@ -1582,6 +1935,60 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
         ValueID made = index.valueBehindCasts(value);
         return made && made.index() >= firstValueOfLoop && wholeNumbersBehindListsFound.get(made.index() - firstValueOfLoop);
     };
+    struct JoinAwaited {
+        BlockID block;
+        uint32_t edgesSeen;
+    };
+    Vector<JoinAwaited, 8> joinsAwaited;
+    auto placeOfJoinAwaited = [&](BlockID block) {
+        for (size_t place = joinsAwaited.size(); place--;) {
+            if (joinsAwaited[place].block == block)
+                return place;
+        }
+        return notFound;
+    };
+    BitVector parametersThatMeetWhatIsNoNumber;
+    BitVector parametersThatMeetWhatIsNoWholeNumber;
+    auto noteWhatEdgesHandOn = [&](BlockID from) {
+        for (BodyTarget target : index.terminator(from).targets()) {
+            if ((target.arguments().empty() && target.proofs().empty()) || target.block().index() <= from.index() || !index.isInLoop(target.block(), loop))
+                continue;
+            BodyBlock reached = index.block(target.block());
+            if (!reached.numberOfParameters() || reached.firstParameter().index() < firstValueOfLoop)
+                continue;
+            if (size_t place = placeOfJoinAwaited(target.block()); place != notFound)
+                ++joinsAwaited[place].edgesSeen;
+            else
+                joinsAwaited.append({ target.block(), 1 });
+            for (uint32_t position = 0; position < reached.numberOfParameters(); ++position) {
+                uint32_t place = reached.parameter(position).index() - firstValueOfLoop;
+                ValueID handedOn = position < target.arguments().size() ? target.arguments()[position] : index.valueNarrowedInto(reached.parameter(position));
+                if (!handedOn || !isNumberBehindListsFound(handedOn))
+                    parametersThatMeetWhatIsNoNumber.set(place);
+                else if (!isWholeNumberBehindListsFound(handedOn))
+                    parametersThatMeetWhatIsNoWholeNumber.set(place);
+            }
+        }
+    };
+    auto noteNumbersThatMeetInParametersOf = [&](BlockID join) {
+        size_t awaited = joinsAwaited.isEmpty() ? notFound : placeOfJoinAwaited(join);
+        if (awaited == notFound)
+            return;
+        uint32_t edgesSeen = joinsAwaited[awaited].edgesSeen;
+        joinsAwaited[awaited] = joinsAwaited.last();
+        joinsAwaited.removeLast();
+        if (index.isLoopHead(join) || index.isEnteredByHandlerEdge(join) || edgesSeen != index.numberOfIncomingEdges(join) || index.numberOfIncomingEdges(join) >= UINT16_MAX)
+            return;
+        BodyBlock block = index.block(join);
+        for (uint32_t position = 0; position < block.numberOfParameters(); ++position) {
+            uint32_t place = block.parameter(position).index() - firstValueOfLoop;
+            if (parametersThatMeetWhatIsNoNumber.get(place))
+                continue;
+            numbersBehindListsFound.set(place);
+            if (!parametersThatMeetWhatIsNoWholeNumber.get(place))
+                wholeNumbersBehindListsFound.set(place);
+        }
+    };
     auto noteNumberBehindListsFound = [&](const BodyValue& operation, bool isWhole) {
         numbersBehindListsFound.set(operation.id().index() - firstValueOfLoop);
         if (isWhole)
@@ -1596,6 +2003,27 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
         ValueID id = read.id();
         return readThatAsksItsSiteIsReckonedWithAsNumber(walker, id, TypesOfInputs(typeInLook));
     };
+    BitVector wholeNumbersThatKeysOfReadsTake;
+    auto isWholeNumberThatKeyOfReadTakes = [&](ValueID value) {
+        ValueID made = index.valueBehindCasts(value);
+        return made && made.index() >= firstValueOfLoop && wholeNumbersThatKeysOfReadsTake.get(made.index() - firstValueOfLoop);
+    };
+    auto isWholeNumberForKeyOfRead = [&](ValueID value) {
+        return isWholeNumberThatKeyOfReadTakes(value) || isWholeNumberBehindListsFound(value);
+    };
+    auto noteWholeNumberThatKeyOfReadTakes = [&](const BodyValue& operation) {
+        wholeNumbersThatKeysOfReadsTake.set(operation.id().index() - firstValueOfLoop);
+    };
+    BitVector numbersThatComeOfLengthsAndRemainders;
+    auto comesOfLengthOrRemainder = [&](ValueID value) {
+        ValueID made = index.valueBehindCasts(value);
+        return made && made.index() >= firstValueOfLoop && numbersThatComeOfLengthsAndRemainders.get(made.index() - firstValueOfLoop);
+    };
+    auto noteThatComesOfLengthOrRemainder = [&](const BodyValue& operation) {
+        noteWholeNumberThatKeyOfReadTakes(operation);
+        numbersThatComeOfLengthsAndRemainders.set(operation.id().index() - firstValueOfLoop);
+    };
+    bool nothingElseIsGuessedInFront = guesses.isEmpty();
     auto isListedForReadByKey = [&](Reference name) {
         size_t place = found.lists.findIf([&](const ListTestedInFrontOfLoop& list) {
             return list.name == name;
@@ -1624,15 +2052,21 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
     Vector<Reference, 2> listsOfUnknownContents;
     Vector<Reference, 2> listsAskedForOneStorage;
     Vector<Reference, 2> listsThatTakeMoreThanInt32s;
+    Vector<Reference, 2> listsThatCopiesOfCalleesStoreIntoUncounted;
+    Vector<Reference, 2> listsTakenUnderCountersAskedInFront;
+    Vector<Reference, 2> listsReachedUnderCountersAskedInFront;
     auto entersLoopAsNumber = [&](ValueID value) {
         ValueID made = index.valueBehindCasts(value);
         std::optional<uint32_t> place = made ? index.block(inputHead).indexOfParameter(made) : std::nullopt;
         TypeID entered = place && *place < entering.size() && entering[*place] ? ownTypeInListReadsInLoops(walker, entering[*place]) : TypeID();
-        return entered && types.at(entered).isNumber();
+        if (!entered || types.at(entered).isNumber())
+            return !!entered;
+        return !walker.sumsAreNotAskedInRow() && *place < preview.typesOfParameters.size() && isNumberCarriedBesideTextOrBigInt(walker, entering[*place], preview.typesOfParameters[*place]);
     };
     auto expectNumbersWhereElementIsTakenForNumber = [&](const BodyValue& operation) {
         static constexpr OpcodeSet operatorsThatTakeNumbers = operatorsThatMakeNumbers | allBitwiseOperators;
-        bool takesTextsToo = operationsThatJoinTexts.contains(operation.opcode()) || allRelations.contains(operation.opcode());
+        bool isEqualityInLoopThatStandsInNoOther = allEqualities.contains(operation.opcode()) && !index.loop(index.loopOf(inputHead)).parent;
+        bool takesTextsToo = operationsThatJoinTexts.contains(operation.opcode()) || allRelations.contains(operation.opcode()) || isEqualityInLoopThatStandsInNoOther;
         if (readsOffListsOfUnknownContents.isEmpty() || !(takesTextsToo || operatorsThatTakeNumbers.contains(operation.opcode())))
             return false;
         Reference taken;
@@ -1658,6 +2092,9 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                 continue;
             list.storage = ArrayStorage::Double;
             list.admitsInt32Storage = true;
+            list.kindMayWellBeAnother = isEqualityInLoopThatStandsInNoOther;
+            if (isEqualityInLoopThatStandsInNoOther)
+                list.kindAskedOtherwise = ArrayStorage::Other;
         }
         listsOfUnknownContents.removeAll(taken);
         readsOffListsOfUnknownContents.removeAllMatching([&](const ReadOffListOfUnknownContents& kept) {
@@ -1707,15 +2144,16 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
     };
 
     BlocksThatEveryTurnPasses passedByEveryTurn(index, loop);
-    BitVector namesThatEveryTurnMentions;
+    Vector<uint32_t, 32> namesThatEveryTurnMentions;
     auto noteThatEveryTurnMentions = [&](Reference name) {
-        if (name && name.isValue())
-            namesThatEveryTurnMentions.set(name.id().index());
+        if (name && name.isValue() && (namesThatEveryTurnMentions.isEmpty() || namesThatEveryTurnMentions.last() != name.id().index()))
+            namesThatEveryTurnMentions.append(name.id().index());
     };
     for (BlockID member : index.membersOf(loop)) {
         BodyBlock block = index.block(member);
         if (block.isHandlerBlock())
             return { };
+        noteNumbersThatMeetInParametersOf(member);
         bool isPassedByEveryTurn = passedByEveryTurn.contains(member);
         for (BodyValue operation : block.values()) {
             if (isPassedByEveryTurn) {
@@ -1729,8 +2167,29 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                 noteNumberBehindListsFound(operation, operation.opcode() == Opcode::Integer && operation.as<Opcode::Integer>().integer() == static_cast<int32_t>(operation.as<Opcode::Integer>().integer()));
             else if (operatorsThatMakeNumbersOfNumbers.contains(operation.opcode()) && isNumberBehindListsFound(operation.operand(0)) && isNumberBehindListsFound(operation.operand(1)))
                 noteNumberBehindListsFound(operation, operation.opcode() != Opcode::Div && isWholeNumberBehindListsFound(operation.operand(0)) && isWholeNumberBehindListsFound(operation.operand(1)));
+            else if (operation.opcode() == Opcode::Negate && isNumberBehindListsFound(operation.operand(0)))
+                noteNumberBehindListsFound(operation, false);
             else if (asksItsSiteAndIsReckonedWith(operation))
                 noteNumberBehindListsFound(operation, false);
+            if ((operatorsThatMakeNumbersOfNumbers.contains(operation.opcode()) || operation.opcode() == Opcode::Mod) && operation.opcode() != Opcode::Div && isWholeNumberForKeyOfRead(operation.operand(0)) && isWholeNumberForKeyOfRead(operation.operand(1))) {
+                if (operation.opcode() == Opcode::Mod || comesOfLengthOrRemainder(operation.operand(0)) || comesOfLengthOrRemainder(operation.operand(1)))
+                    noteThatComesOfLengthOrRemainder(operation);
+                else
+                    noteWholeNumberThatKeyOfReadTakes(operation);
+            }
+            if (Reference pushedOnto = literalThatCallPushesOntoInEveryTurn(walker, operation, inputHead); pushedOnto && walker.looksCountOnTurnsThatBeginAgain(inputHead)) {
+                TypeID pushed = typeInLook(operation.as<Opcode::Call>().argumentsOperands()[0]);
+                bool isListed = found.lists.containsIf([&](const ListTestedInFrontOfLoop& list) { return list.name == pushedOnto; });
+                if (pushed && !isNeverType(pushed) && types.at(pushed).isNumber() && !isListed && !isFreshInListReadsInLoops(walker, pushedOnto)) {
+                    ArrayStorage kindPushedOnto = types.at(pushed).primitives & Primitive::FractionalNumber ? ArrayStorage::Double : ArrayStorage::Int32;
+                    if (!types.isSubset(pushed, TypeTable::int32)) {
+                        bool isWrittenToHoldNumbersAlone = holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(ownTypeInListReadsInLoops(walker, pushedOnto))));
+                        (kindPushedOnto == ArrayStorage::Double && !isWrittenToHoldNumbersAlone ? listsThatTakeMoreThanInt32s : listsAskedForOneStorage).append(pushedOnto);
+                    }
+                    found.lists.append(ListTestedInFrontOfLoop { pushedOnto, kindPushedOnto, false, true });
+                }
+                continue;
+            }
             if (surelyEndsWhatIsShownOfListsInListReadsInLoops(walker, operation, firstValueOfLoop, typeInLook, member != inputHead ? walker.looksCountOnTurnsThatBeginAgain(inputHead) && index.loopOf(member) == loop : walker.looksCountOnTurnsThatBeginAgain(inputHead)))
                 return { };
             if (const Walker::IterationByIndex* stepped = findListSteppedByIndexAlone(walker, index, operation); stepped && stepped->isDeadBehindLoop && stepped->list.isValue()) {
@@ -1764,7 +2223,7 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                 forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(walker, copied, operation.as<Opcode::Call>().argumentsOperands(), 2, Opcode::ElemGet, [&](ValueID argument, ValueID key, FunctionID reader, ValueID read) {
                     ValueID input = valueThatEntersLoopInListReadsInLoops(index, argument, firstValueOfLoop);
                     Reference name = input.index() < firstValueOfLoop ? walker.referenceOf(input) : nameThatEntersLoopInListReadsInLoops(walker, index, input, firstValueOfLoop);
-                    if (!name || !name.isValue() || isFreshInListReadsInLoops(walker, name) || isNotedForReadByKey(name))
+                    if (!name || !name.isValue() || isFreshInListReadsInLoops(walker, name) || isNotedForReadByKey(name) || listsThatCopiesOfCalleesStoreIntoUncounted.contains(name))
                         return;
                     TypeID proven = ownTypeInListReadsInLoops(walker, name);
                     for (const GuessInFrontOfLoop& guess : guesses) {
@@ -1772,7 +2231,7 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                             proven = types.intersectionOf(proven, guess.tested);
                     }
                     TypeID list = types.withoutNullish(proven);
-                    if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeInLook(key))))
+                    if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeOfKeyInLook(key))))
                         return;
                     if (isListedForReadByKey(name))
                         return;
@@ -1791,6 +2250,10 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                     if (written == ArrayStorage::Other)
                         return;
                     bool holdsNumbers = holdsOnlyNumbers(written);
+                    if (!holdsNumbers && key && typeOfKeyInLook(key) != typeInLook(key))
+                        return;
+                    if (key && typeOfKeyInLook(key) != typeInLook(key) && !listsReachedUnderCountersAskedInFront.contains(name))
+                        listsReachedUnderCountersAskedInFront.append(name);
                     found.lists.append(ListTestedInFrontOfLoop { name, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers });
                     if (readerHasLoops)
                         walker.count(StatisticID::ListsReadInLoopsOfCopiesAskedInFrontOfLoops);
@@ -1800,11 +2263,22 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                 forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(walker, copied, operation.as<Opcode::Call>().argumentsOperands(), 2, Opcode::ElemSet, [&](ValueID argument, ValueID key, FunctionID writer, ValueID store) {
                     ValueID input = valueThatEntersLoopInListReadsInLoops(index, argument, firstValueOfLoop);
                     Reference name = input.index() < firstValueOfLoop ? walker.referenceOf(input) : nameThatEntersLoopInListReadsInLoops(walker, index, input, firstValueOfLoop);
-                    if (!name || !name.isValue() || isFreshInListReadsInLoops(walker, name) || !storesNumberInCopyOfCalleeInListReadsInLoops(walker, writer, walker.facts().bodies().at(writer).value(store).valueOperand(), 3))
+                    if (!name || !name.isValue() || isFreshInListReadsInLoops(walker, name))
                         return;
+                    if (!storesNumberInCopyOfCalleeInListReadsInLoops(walker, writer, walker.facts().bodies().at(writer).value(store).valueOperand(), 3)) {
+                        if (!listsThatCopiesOfCalleesStoreIntoUncounted.contains(name))
+                            listsThatCopiesOfCalleesStoreIntoUncounted.append(name);
+                        if (found.lists.removeAllMatching([&](const ListTestedInFrontOfLoop& listed) { return listed.name == name && !listed.isWritable; }))
+                            walker.count(StatisticID::ListsNotListedThatCopiesOfCalleesStoreInto);
+                        return;
+                    }
                     TypeID list = types.withoutNullish(ownTypeInListReadsInLoops(walker, name));
-                    if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeInLook(key))))
+                    if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeOfKeyInLook(key))))
                         return;
+                    if (key && typeOfKeyInLook(key) != typeInLook(key) && isBornEmptyInListReadsInLoops(walker, index, input, name))
+                        return;
+                    if (key && typeOfKeyInLook(key) != typeInLook(key) && !listsReachedUnderCountersAskedInFront.contains(name))
+                        listsReachedUnderCountersAskedInFront.append(name);
                     size_t place = found.lists.findIf([&](const ListTestedInFrontOfLoop& listed) {
                         return listed.name == name;
                     });
@@ -1829,10 +2303,12 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
             bool storesByKey = operation.opcode() == Opcode::ElemSet;
             if (operation.opcode() != Opcode::ElemGet && !storesByKey && !readsLength && !asksPlainVector)
                 continue;
+            if (operation.opcode() == Opcode::ElemGet && walker.standsInCopyOfLoopBuiltForEachMember() && rowFoundUnderKeyInFrontOfLoop(walker, operation))
+                continue;
             ValueID input = valueThatEntersLoopInListReadsInLoops(index, asksPlainVector ? operation.arrayOperand() : operation.objectOperand(), firstValueOfLoop);
             Reference nameReadInTurn = input.index() >= firstValueOfLoop ? nameThatEntersLoopInListReadsInLoops(walker, index, input, firstValueOfLoop) : Reference();
             if (input.index() >= firstValueOfLoop && !nameReadInTurn) {
-                TypeID row = operation.opcode() == Opcode::ElemGet && readsListFoundByReadFromInFront(walker.program(), index, operation, firstValueOfLoop) ? typeInLook(input) : TypeID();
+                TypeID row = operation.opcode() == Opcode::ElemGet && readsListFoundByReadFromInFront(walker.program(), index, operation, firstValueOfLoop, foundFromInFront) ? typeInLook(input) : TypeID();
                 TypeID key = row ? typeInLook(operation.propertyOperand()) : TypeID();
                 if (key && types.at(key).isInteger() && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(row))))
                     noteNumberBehindListsFound(operation, false);
@@ -1855,16 +2331,22 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                 listsAskedForOneStorage.append(name);
             ArrayStorage kindStoredInto = ArrayStorage::Other;
             if (isStore) {
+                TypeID keyOfStore = typeInLook(operation.propertyOperand());
+                ValueID written = index.valueBehindCasts(operation.objectOperand());
+                bool isWrittenInFront = written && !index.isParameter(written) && written.index() < firstValueOfLoop && index.opcodeOf(written) == Opcode::NewArray && !index.value(written).as<Opcode::NewArray>().elementsOperands().empty();
+                if (isWrittenInFront && index.isParameter(index.valueBehindCasts(operation.valueOperand())) && keyOfStore && types.at(keyOfStore).isInteger() && types.at(keyOfStore).integers.minimum >= static_cast<int64_t>(index.value(written).as<Opcode::NewArray>().elementsOperands().size()))
+                    continue;
                 TypeID stored = typeInLook(operation.valueOperand());
                 stored = stored ? types.withoutPrimitives(stored, Primitive::Undefined) : TypeID();
                 if ((!stored || isNeverType(stored) || !types.at(stored).isNumber()) && isNumberBehindListsFound(operation.valueOperand()))
                     stored = isWholeNumberBehindListsFound(operation.valueOperand()) ? TypeTable::int32 : TypeTable::number;
                 if (!stored || isNeverType(stored) || !types.at(stored).isNumber())
                     continue;
-                kindStoredInto = types.at(stored).primitives & Primitive::FractionalNumber ? ArrayStorage::Double : ArrayStorage::Int32;
+                bool takesDoublesInCopyForThem = walker.walksCopyForAnotherKindOfStorage() && !types.isSubset(stored, TypeTable::int32);
+                kindStoredInto = (types.at(stored).primitives & Primitive::FractionalNumber) || takesDoublesInCopyForThem ? ArrayStorage::Double : ArrayStorage::Int32;
                 if (!types.isSubset(stored, TypeTable::int32)) {
                     bool isWrittenToHoldNumbersAlone = holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(ownTypeInListReadsInLoops(walker, name))));
-                    (kindStoredInto == ArrayStorage::Double && !isWrittenToHoldNumbersAlone ? listsThatTakeMoreThanInt32s : listsAskedForOneStorage).append(name);
+                    (kindStoredInto == ArrayStorage::Double && !isWrittenToHoldNumbersAlone && !walker.walksCopyForAnotherKindOfStorage() ? listsThatTakeMoreThanInt32s : listsAskedForOneStorage).append(name);
                 }
             }
             if (isStore && isListed) {
@@ -1881,7 +2363,11 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
             if (isListed && operation.opcode() == Opcode::ElemGet && listsOfUnknownContents.contains(name))
                 readsOffListsOfUnknownContents.append({ operation.id(), name });
             if (isListed) {
+                if (TypeID ownKey = operation.opcode() == Opcode::ElemGet ? typeInLook(operation.propertyOperand()) : TypeID(); ownKey && types.at(ownKey).isInteger())
+                    listsTakenUnderCountersAskedInFront.removeAll(name);
                 found.lists[placeInList].isAskedForItsStorageAlone &= !readsLength;
+                if (readsLength)
+                    noteThatComesOfLengthOrRemainder(operation);
                 TypeID key = operation.opcode() == Opcode::ElemGet && holdsOnlyNumbers(found.lists[placeInList].storage) ? typeInLook(operation.propertyOperand()) : TypeID();
                 if (key && (types.at(key).isInteger() || (types.at(key).isNumber() && walker.looksCountOnTurnsThatBeginAgain(inputHead))))
                     noteNumberBehindListsFound(operation, found.lists[placeInList].storage == ArrayStorage::Int32);
@@ -1896,7 +2382,7 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
             if (BuiltinClassID classOfView = readsLength || asksPlainVector ? BuiltinClassID() : classOfViewInListReadsInLoops(walker, types.withoutNullish(proven))) {
                 bool isReadInLine = hasInlineElementAccess(walker.program().builtins().typedArrayTypeOf(classOfView)) || kindsOfViewsOfNumbersIn(walker.program(), types, types.withoutNullish(proven));
                 bool lengthMayStandInFront = isReadInLine && !walker.effectsOfQuietDraftsOfRow().writes.contains(AbstractHeap::TypedArrayStorage);
-                if (lengthMayStandInFront && viewMayFollowSharedMemoryThatGrows(walker, name) && !isFreshInListReadsInLoops(walker, name) && !findNoteInListReadsInLoops(walker, name)) {
+                if (lengthMayStandInFront && (viewMayFollowSharedMemoryThatGrows(walker, name) || proven != types.withoutNullish(proven)) && !isFreshInListReadsInLoops(walker, name) && !findNoteInListReadsInLoops(walker, name)) {
                     found.lists.append(ListTestedInFrontOfLoop { name, ArrayStorage::Other, false });
                     found.lists.last().isAskedForItsStorageAlone = true;
                 }
@@ -1905,6 +2391,8 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
             if (storesByKey && !isStore)
                 continue;
             if (readsLength) {
+                if (isProvenToBeList(types, types.withoutNullish(proven)))
+                    noteThatComesOfLengthOrRemainder(operation);
                 bool staysAsMadeByLink = readsOffEntryParameterThatStaysAsMade(walker, operation) || receiverStaysAsMadeByLink(walker, operation);
                 auto lengthIsFoundByNote = [&] {
                     return findKnown(walker, KnownNote::LengthOfViewIsFoundAbove, name) && loopTakesInstancesBelowViewForItsLength(walker, inputHead, name);
@@ -1914,18 +2402,33 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                 continue;
             }
             TypeID list = types.withoutNullish(proven);
-            TypeID keyInLook = typeInLook(asksPlainVector ? operation.positionOperand() : operation.propertyOperand());
+            TypeID keyInLook = asksPlainVector ? typeInLook(operation.positionOperand()) : typeOfKeyInLook(operation.propertyOperand());
+            bool keyIsCounterAskedInFront = !asksPlainVector && keyInLook != typeInLook(operation.propertyOperand());
             if (!asksPlainVector && keyInLook && !types.at(keyInLook).isNumber() && isWholeNumberBehindListsFound(operation.propertyOperand()))
+                keyInLook = TypeTable::int32;
+            bool keyIsNoted = operation.opcode() == Opcode::ElemGet && !(keyInLook && types.at(keyInLook).isInteger()) && (nothingElseIsGuessedInFront ? isWholeNumberThatKeyOfReadTakes(operation.propertyOperand()) : comesOfLengthOrRemainder(operation.propertyOperand()));
+            someReadHasNotedKey |= keyIsNoted;
+            bool keyTakesNote = keysOfReadsTakeNotes && keyIsNoted;
+            if (keyTakesNote)
                 keyInLook = TypeTable::int32;
             ValueID keyAsWritten = asksPlainVector ? ValueID() : index.valueBehindCasts(operation.propertyOperand());
             bool keyIsReckonedInTurn = keyAsWritten && keyAsWritten.index() >= firstValueOfLoop && !index.isParameter(keyAsWritten) && operatorsThatReckonKeysInListReadsInLoops.contains(index.opcodeOf(keyAsWritten));
             bool keyIsAskedInTurn = keyIsReckonedInTurn && walker.looksCountOnTurnsThatBeginAgain(inputHead) && keyOfProvenListMayBeAskedForInt32(types, list, keyInLook) && textOfLoopStoresIntoList(name);
             if (!keyIsAskedInTurn && !readTakesIndexOfProvenList(types, list, keyInLook))
                 continue;
+            if (keyIsCounterAskedInFront && operation.opcode() == Opcode::ElemSet && isBornEmptyInListReadsInLoops(walker, index, input, name))
+                continue;
+            if (keyIsCounterAskedInFront && !listsReachedUnderCountersAskedInFront.contains(name))
+                listsReachedUnderCountersAskedInFront.append(name);
             if (isFreshInListReadsInLoops(walker, name))
                 continue;
-            if (asksPlainVector ? !!findNoteInListReadsInLoops(walker, name) : isNotedForReadByKey(name))
+            if ((asksPlainVector ? !!findNoteInListReadsInLoops(walker, name) : isNotedForReadByKey(name)) && !walker.isAskedAtHeadOfTypedCopyAround(name))
                 continue;
+            if (listsThatCopiesOfCalleesStoreIntoUncounted.contains(name)) {
+                walker.count(StatisticID::ListsNotListedThatCopiesOfCalleesStoreInto);
+                continue;
+            }
+            someListIsTakenForNotedKey |= keyTakesNote;
 
             if (isStore) {
                 found.lists.append(ListTestedInFrontOfLoop { name, kindStoredInto, false, true });
@@ -1941,30 +2444,76 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
             if (asksPlainVector) {
                 TypeID taken = written == ArrayStorage::Double || written == ArrayStorage::Other ? typeThatCalleeTakesOfElementInListReadsInLoops(walker, index, loop, typeInLook) : TypeID();
                 bool takesFractions = taken && arrayStorageHolding(types, taken) == ArrayStorage::Double && (types.at(taken).primitives & Primitive::FractionalNumber);
-                std::optional<GuardedReadInListReadsInLoops> guarded = takesFractions ? findGuardedReadInListReadsInLoops(index) : std::nullopt;
-                if (guarded && guarded->test == operation.id())
+                TypeID elements = elementsThatLinkProvesOfReceiverInListReadsInLoops(walker, index, name);
+                bool takesWholeNumbers = !takesFractions && elements && !(types.at(elements).primitives & (Primitive::UndefinedOrNull | Primitive::FractionalNumber)) && holdsOnlyNumbers(arrayStorageHolding(types, elements)) && !index.holdsAnyOf(OpcodeSet { Opcode::TryPutIndex, Opcode::TryPutByValDirect });
+                TypeID besideNullish = elements ? types.withoutNullish(elements) : taken ? types.withoutNullish(taken) : TypeID();
+                bool mayTakeWholeNumbers = !walker.walksCopyForAnotherKindOfStorage() && !takesFractions && !takesWholeNumbers && besideNullish && types.at(besideNullish).isNumberWithoutFraction() && !index.holdsAnyOf(OpcodeSet { Opcode::TryPutIndex, Opcode::TryPutByValDirect });
+                if (takesWholeNumbers)
+                    taken = elements;
+                std::optional<GuardedReadInListReadsInLoops> guarded = takesFractions || takesWholeNumbers || mayTakeWholeNumbers ? findGuardedReadInListReadsInLoops(index) : std::nullopt;
+                bool goesByRowOfNumbers = guarded && guarded->test == operation.id();
+                bool asksForInt32sFirst = goesByRowOfNumbers && (mayTakeWholeNumbers || (!walker.walksCopyForAnotherKindOfStorage() && takesWholeNumbers && arrayStorageHolding(types, taken) != ArrayStorage::Int32));
+                if (goesByRowOfNumbers && (asksForInt32sFirst || (takesWholeNumbers && arrayStorageHolding(types, taken) == ArrayStorage::Int32)))
+                    found.lists.append(ListTestedInFrontOfLoop { name, ArrayStorage::Int32, false, false, false, true });
+                else if (goesByRowOfNumbers)
                     found.lists.append(ListTestedInFrontOfLoop { name, ArrayStorage::Double, !!(types.at(taken).primitives & Primitive::NumberWithoutFraction), false, false, true });
                 else
                     found.lists.append(ListTestedInFrontOfLoop { name, ArrayStorage::Contiguous, true, false, false, holdsOnlyNumbers(written) });
+                found.lists.last().kindMayWellBeAnother = asksForInt32sFirst;
+                found.lists.last().kindAskedOtherwise = mayTakeWholeNumbers ? ArrayStorage::Contiguous : ArrayStorage::Double;
                 continue;
             }
             TypeID seenByLink = walker.facts().linked().resultOfReadByKey(walker.currentFunction(), operation.id());
             written = kindWrittenOrSeenByLinkInListReadsInLoops(types, written, seenByLink);
+            if (written == ArrayStorage::Other && elementIsOnlyReadByKeyInListReadsInLoops(index, operation))
+                written = ArrayStorage::Contiguous;
             bool holdsNumbers = holdsOnlyNumbers(written);
+            if (keyIsCounterAskedInFront && !holdsNumbers && written != ArrayStorage::Other)
+                continue;
+            if (keyIsCounterAskedInFront && !listsTakenUnderCountersAskedInFront.contains(name))
+                listsTakenUnderCountersAskedInFront.append(name);
             bool wholeNumbersAreOnlyStoredOn = seenByLink && types.at(types.withoutNullish(seenByLink)).isNumberWithoutFraction() && onlyUserStoresWhatIsReadIntoListInListReadsInLoops(index, operation);
-            if (seenByLink && (types.at(seenByLink).isInt32OrNullish() || wholeNumbersAreOnlyStoredOn || holdsKeysOfLoopInListReadsInLoops(walker, operation.id(), seenByLink))) {
+            bool holdsInt32sByLink = seenByLink && (types.at(seenByLink).isInt32OrNullish() || holdsKeysOfLoopInListReadsInLoops(walker, operation.id(), seenByLink));
+            if (holdsInt32sByLink || (wholeNumbersAreOnlyStoredOn && !walker.walksCopyForAnotherKindOfStorage())) {
                 found.lists.append(ListTestedInFrontOfLoop { name, ArrayStorage::Int32, false });
+                found.lists.last().kindMayWellBeAnother = !holdsInt32sByLink && !index.loop(index.loopOf(inputHead)).parent;
+                found.lists.last().kindAskedOtherwise = ArrayStorage::Double;
+                found.lists.last().keepsKindWhereNoCopyIsWalkedForAnother = true;
                 noteNumberBehindListsFound(operation, true);
                 continue;
             }
             found.lists.append(ListTestedInFrontOfLoop { name, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers });
             if (holdsNumbers)
                 noteNumberBehindListsFound(operation, false);
-            else if (written == ArrayStorage::Other && (!seenByLink || types.at(seenByLink).isAnything())) {
+            else if (written == ArrayStorage::Other) {
                 listsOfUnknownContents.append(name);
                 readsOffListsOfUnknownContents.append({ operation.id(), name });
             }
         }
+        noteWhatEdgesHandOn(member);
+    }
+    if (someListIsTakenForNotedKey && !rowFindsListsLeftAsTheyAreInListReadsInLoops(walker, inputHead, found.lists.span(), guesses.span(), { }))
+        return findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, false, someReadHasNotedKey, namesOfCountersAskedInFront);
+    found.lists.removeAllMatching([&](const ListTestedInFrontOfLoop& list) {
+        return !holdsOnlyNumbers(list.storage) && listsTakenUnderCountersAskedInFront.contains(list.name);
+    });
+    bool someListIsTakenUnderCounter = found.lists.containsIf([&](const ListTestedInFrontOfLoop& list) {
+        return listsTakenUnderCountersAskedInFront.contains(list.name);
+    });
+    if (someListIsTakenUnderCounter && !rowFindsListsLeftAsTheyAreInListReadsInLoops(walker, inputHead, found.lists.span(), guesses.span(), { })) {
+        found.lists.removeAllMatching([&](const ListTestedInFrontOfLoop& list) {
+            return listsTakenUnderCountersAskedInFront.contains(list.name);
+        });
+    }
+    for (Reference name : listsReachedUnderCountersAskedInFront) {
+        if (!listsTakenUnderCountersAskedInFront.contains(name))
+            listsTakenUnderCountersAskedInFront.append(name);
+    }
+    for (Reference name : listsTakenUnderCountersAskedInFront) {
+        if (!found.lists.containsIf([&](const ListTestedInFrontOfLoop& list) { return list.name == name; }))
+            continue;
+        walker.count(StatisticID::ListsTakenUnderCountersAskedInFrontOfLoops);
+        found.someListIsTakenUnderCounterAskedInFront = true;
     }
     bool turnsStoreIntoLists = found.lists.containsIf([](const ListTestedInFrontOfLoop& list) {
         return list.isWritable;
@@ -1974,6 +2523,7 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
 
     for (ListTestedInFrontOfLoop& list : found.lists) {
         list.turnsStoreIntoLists = turnsStoreIntoLists;
+        list.leavesBirthAsItIs |= walker.walksCopyForAnotherKindOfStorage();
         if (list.isWritable && holdsOnlyNumbers(list.storage) && !listsAskedForOneStorage.contains(list.name)) {
             list.storage = ArrayStorage::Other;
             list.admitsInt32Storage = !listsThatTakeMoreThanInt32s.contains(list.name);
@@ -1995,7 +2545,7 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
         bool isAskedInFrontAnyway = guesses.containsIf([&](const GuessInFrontOfLoop& guess) {
             return guess.value == list.name;
         });
-        return !namesThatEveryTurnMentions.get(list.name.id().index()) && !canFailByKindOfStorageAlone && !isAskedInFrontAnyway;
+        return !namesThatEveryTurnMentions.contains(list.name.id().index()) && !canFailByKindOfStorageAlone && !isAskedInFrontAnyway;
     });
     if (found.lists.isEmpty())
         return { };
@@ -2012,6 +2562,16 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
         guesses.append(GuessInFrontOfLoop { list.name, asked, { }, namesInFrontThatLoopMentions(walker, index, loop, firstValueOfLoop, list.name) });
     }
     return found;
+}
+
+ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
+{
+    bool someReadHasNotedKey = false;
+    std::optional<BitVector> namesOfCountersAskedInFront;
+    ListsReadInLoop found = findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, false, someReadHasNotedKey, namesOfCountersAskedInFront);
+    if (!found.lists.isEmpty() || !someReadHasNotedKey)
+        return found;
+    return findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, true, someReadHasNotedKey, namesOfCountersAskedInFront);
 }
 
 static Draft questionWhetherListIsAsMadeInListReadsInLoops(Walker& walker, Reference list, Origin origin)
@@ -2053,12 +2613,85 @@ static bool isFoundByReadAtSiteInListReadsInLoops(Walker& walker, Reference list
     ValueID held = list.id();
     while (opcodesThatGiveSameValue.contains(code.at(held).opcode))
         held = code.at(held).operand(0);
-    return code.at(held).opcode == Opcode::GetValueAtSiteOrAbsent;
+    return code.at(held).opcode == Opcode::GetValueAtSiteOrAbsent || code.at(held).opcode == Opcode::GetOwnValueUnderKeyOrAbsent || walker.types().saysNothing(code.at(held).type);
+}
+
+static std::optional<ListTestedInFrontOfLoop> askInFrontOfTypedCopyInListReadsInLoops(Walker& walker, const ListTestedInFrontOfLoop& tested, Origin origin, Walker::TurnOfTypedCopy turn, Walker::TurnsThatAsk turnsThatAsk)
+{
+    origin.isTailCall = false;
+    auto passesInFront = [&](Draft&& draft) {
+        Reference test;
+        {
+            Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+            test = walker.build(WTF::move(draft));
+        }
+        return test && walker.branchInFrontOfTypedCopy(test, true, turn, turnsThatAsk);
+    };
+    if (!askWhatListIsAskedInListReadsInLoops(walker, tested, origin, passesInFront))
+        return std::nullopt;
+    walker.noteGuessOpened();
+    walker.noteListAskedInFrontOfTypedCopy();
+    if (turn != Walker::TurnOfTypedCopy::HasDoneNothing)
+        walker.count(StatisticID::ListsAskedInFrontOfTypedCopiesBehindStoresOfTheTurn);
+    noteListTestedInListReadsInLoops(walker, tested);
+    if (tested.written)
+        noteStorageOfWrittenList(walker, tested.name, tested.written);
+    return tested;
+}
+
+static ArrayStorage kindThatTakersOfPatternSpeakForInListReadsInLoops(Walker& walker, const BodyValue& open)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto typeAsBuilt = [&](ValueID input) {
+        Reference built = walker.referenceOf(input);
+        return built ? walker.typeOf(built) : TypeID();
+    };
+    bool someValueIsTaken = false;
+    for (const BodyMentionOfIteration& mention : index.mentionsOfIteration(open.id())) {
+        if (index.opcodeOf(mention.user) != Opcode::IteratorResume)
+            continue;
+        for (BodyValue operation : index.block(mention.block).values()) {
+            if (operation.opcode() != Opcode::ResultAt || operation.as<Opcode::ResultAt>().resultsOperand() != mention.user || operation.as<Opcode::ResultAt>().index() != static_cast<uint32_t>(IteratorResumeResult::Value) || index.isUnused(operation.id()))
+                continue;
+            if (!valueIsOnlyReckonedWithAsNumber(walker, operation.id(), TypesOfInputs(typeAsBuilt)))
+                return ArrayStorage::Contiguous;
+            someValueIsTaken = true;
+        }
+    }
+    return someValueIsTaken ? ArrayStorage::Double : ArrayStorage::Other;
+}
+
+static ArrayStorage kindOfListTakenApartInListReadsInLoops(Walker& walker, const BodyValue& open, Reference list)
+{
+    ArrayStorage written = list && list.isValue() ? kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, ownTypeInListReadsInLoops(walker, list)) : ArrayStorage::Other;
+    if (TypeID expected = written == ArrayStorage::Other ? findExpectation(walker, open.as<Opcode::IteratorOpen>().iterableOperand()).type : TypeID())
+        written = kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, walker.types().withoutNullish(expected));
+    return written == ArrayStorage::Other ? kindThatTakersOfPatternSpeakForInListReadsInLoops(walker, open) : written;
+}
+
+bool listTakenApartIsExpectedToHoldNumbers(Walker& walker, const BodyValue& open, Reference list)
+{
+    return walker.has(Mechanism::Folding) && holdsOnlyNumbers(kindOfListTakenApartInListReadsInLoops(walker, open, list));
+}
+
+std::optional<ListTestedInFrontOfLoop> askListTakenApartInFrontOfTypedCopy(Walker& walker, const BodyValue& open, Reference list)
+{
+    Walker::TurnOfTypedCopy turn = walker.turnInWhichListsAreAskedInFront();
+    if (!walker.has(Mechanism::Folding) || !list || !list.isValue() || !walker.standsInFrontOfTypedCopy(list, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(list, turn))
+        return std::nullopt;
+    if (!isProvenListInListReadsInLoops(walker, list) || isFreshInListReadsInLoops(walker, list))
+        return std::nullopt;
+    ArrayStorage written = kindOfListTakenApartInListReadsInLoops(walker, open, list);
+    if (written == ArrayStorage::Other)
+        return std::nullopt;
+    bool holdsNumbers = holdsOnlyNumbers(written);
+    return askInFrontOfTypedCopyInListReadsInLoops(walker, ListTestedInFrontOfLoop { list, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers }, walker.originOf(open), turn, Walker::TurnsThatAsk::Some);
 }
 
 std::optional<ListTestedInFrontOfLoop> askListInFrontOfTypedCopy(Walker& walker, const BodyValue& read, Reference list, ArrayStorage kindStoredInto, bool goesByKindOfStorage)
 {
-    if (!walker.has(Mechanism::Folding) || !list || !list.isValue() || !walker.standsInFrontOfTypedCopy(list) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(list))
+    Walker::TurnOfTypedCopy turn = walker.turnInWhichListsAreAskedInFront();
+    if (!walker.has(Mechanism::Folding) || !list || !list.isValue() || !walker.standsInFrontOfTypedCopy(list, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(list, turn))
         return std::nullopt;
     if (!isProvenListInListReadsInLoops(walker, list) || isFreshInListReadsInLoops(walker, list))
         return std::nullopt;
@@ -2071,6 +2704,8 @@ std::optional<ListTestedInFrontOfLoop> askListInFrontOfTypedCopy(Walker& walker,
         if (holdsOnlyNumbers(seen) || !(walker.types().at(seenByLink).primitives & Primitive::Number))
             written = seen;
     }
+    if (written == ArrayStorage::Other && kindStoredInto == ArrayStorage::Other && elementIsOnlyReadByKeyInListReadsInLoops(walker.currentBodyIndex(), read))
+        written = ArrayStorage::Contiguous;
     auto typeAsBuilt = [&](ValueID input) {
         Reference built = walker.referenceOf(input);
         return built ? walker.typeOf(built) : TypeID();
@@ -2087,24 +2722,7 @@ std::optional<ListTestedInFrontOfLoop> askListInFrontOfTypedCopy(Walker& walker,
         tested = ListTestedInFrontOfLoop { list, written.storage, false };
         tested.written = written;
     }
-    Origin origin = walker.originOf(read);
-    origin.isTailCall = false;
-    auto passesInFront = [&](Draft&& draft) {
-        Reference test;
-        {
-            Walker::InFrontOfTypedCopy inFront(walker, true);
-            test = walker.build(WTF::move(draft));
-        }
-        return test && walker.branchInFrontOfTypedCopy(test, true, Walker::TurnOfTypedCopy::HasDoneNothing, kindStoredInto == ArrayStorage::Other ? Walker::TurnsThatAsk::Some : Walker::TurnsThatAsk::All);
-    };
-    if (!askWhatListIsAskedInListReadsInLoops(walker, tested, origin, passesInFront))
-        return std::nullopt;
-    walker.noteGuessOpened();
-    walker.noteListAskedInFrontOfTypedCopy();
-    noteListTestedInListReadsInLoops(walker, tested);
-    if (tested.written)
-        noteStorageOfWrittenList(walker, list, tested.written);
-    return tested;
+    return askInFrontOfTypedCopyInListReadsInLoops(walker, tested, walker.originOf(read), turn, kindStoredInto == ArrayStorage::Other ? Walker::TurnsThatAsk::Some : Walker::TurnsThatAsk::All);
 }
 
 bool isExpectedToBeListOfNumbers(Walker& walker, TypeID expected)
@@ -2147,9 +2765,22 @@ Reference askWhetherStorageOfListIsOfKind(Walker& walker, Reference list, ArrayS
     return walker.build(questionForKindOfStorageInListReadsInLoops(walker, ListTestedInFrontOfLoop { list, kind, false, isWritable }, origin));
 }
 
+static constexpr uint32_t wordOfKindOfRowsInListReadsInLoops = 1;
+
+static Reference holderThatRowIsReadOffInListReadsInLoops(Walker& walker, Reference row)
+{
+    const Code& code = walker.code();
+    ValueID held = row.id();
+    while (opcodesThatGiveSameValue.contains(code.at(held).opcode))
+        held = code.at(held).operand(0);
+    return code.at(held).opcode == Opcode::GetArrayElement ? Reference::value(code.at(held).operand(0)) : Reference();
+}
+
 void noteKindOfStorageThatTurnFound(Walker& walker, Reference list, ArrayStorage kind, bool isWritable)
 {
     noteListTestedInListReadsInLoops(walker, ListTestedInFrontOfLoop { list, kind, false, isWritable });
+    if (Reference holder = holderThatRowIsReadOffInListReadsInLoops(walker, list))
+        noteKnown(walker, KnownNote::ListTestedInFrontOfLoop, holder, { }, wordOfKindOfRowsInListReadsInLoops, LocationMasks(heapsUnderListsReadInLoops), static_cast<uint64_t>(kind));
 }
 
 std::optional<ListTestedInFrontOfLoop> askListOfNumbersInTurnOfTypedCopy(Walker& walker, const BodyValue& read, Reference list)
@@ -2157,6 +2788,12 @@ std::optional<ListTestedInFrontOfLoop> askListOfNumbersInTurnOfTypedCopy(Walker&
     if (!turnOfTypedCopyMayAskList(walker, list) || !isProvenListInListReadsInLoops(walker, list) || !isExpectedToBeListOfNumbers(walker, ownTypeInListReadsInLoops(walker, list)))
         return std::nullopt;
     ListTestedInFrontOfLoop tested { list, ArrayStorage::Double, true };
+    if (Reference holder = holderThatRowIsReadOffInListReadsInLoops(walker, list)) {
+        if (std::optional<uint64_t> kind = findKnown(walker, KnownNote::ListTestedInFrontOfLoop, holder, { }, wordOfKindOfRowsInListReadsInLoops); kind && static_cast<ArrayStorage>(*kind) == ArrayStorage::Contiguous) {
+            tested = ListTestedInFrontOfLoop { list, ArrayStorage::Contiguous, false };
+            walker.count(StatisticID::RowsAskedForKindOfRowBesideThem);
+        }
+    }
     Origin origin = walker.originOf(read);
     origin.isTailCall = false;
     auto passesInTurn = [&](Draft&& draft) {
@@ -2170,18 +2807,41 @@ std::optional<ListTestedInFrontOfLoop> askListOfNumbersInTurnOfTypedCopy(Walker&
     return tested;
 }
 
+std::optional<ListTestedInFrontOfLoop> askListTakenApartInTurnOfTypedCopy(Walker& walker, const BodyValue& open, Reference list)
+{
+    if (!turnOfTypedCopyMayAskList(walker, list) || !isProvenListInListReadsInLoops(walker, list))
+        return std::nullopt;
+    ArrayStorage written = kindOfListTakenApartInListReadsInLoops(walker, open, list);
+    if (written == ArrayStorage::Other)
+        return std::nullopt;
+    bool holdsNumbers = holdsOnlyNumbers(written);
+    ListTestedInFrontOfLoop tested { list, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers };
+    Origin origin = walker.originOf(open);
+    origin.isTailCall = false;
+    auto passesInTurn = [&](Draft&& draft) {
+        return goOnWhereTestPassesOrBeginTurnAgainInListReadsInLoops(walker, WTF::move(draft));
+    };
+    if (isListAsMade(walker, list) ? !passesInTurn(questionForKindOfStorageInListReadsInLoops(walker, tested, origin)) : !askWhatListIsAskedInListReadsInLoops(walker, tested, origin, passesInTurn))
+        return std::nullopt;
+    walker.noteGuessOpened();
+    walker.count(StatisticID::ListsAskedInTurnsOfTypedCopies);
+    noteListTestedInListReadsInLoops(walker, tested);
+    return tested;
+}
+
 std::optional<PassedTest> askElementInFrontOfTypedCopy(Walker& walker, const BodyValue& read, const ListTestedInFrontOfLoop& tested, Reference list, Reference position)
 {
     bool isNumber = holdsOnlyNumbers(tested.storage);
     if (!walker.has(Mechanism::Folding) || walker.listsAreStruckInRow() || (tested.storage != ArrayStorage::Contiguous && !isNumber) || tested.isWritable || (isNumber && tested.turnsStoreIntoLists))
         return std::nullopt;
-    if (!walker.standsInFrontOfTypedCopy(list) || !walker.standsInFrontOfTypedCopy(position) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(list) || !(isNumber ? walker.turnsOfTypedCopyStoreIntoNoList() : walker.turnsOfTypedCopyStoreOnlyRawDoublesIntoLists()))
+    Walker::TurnOfTypedCopy turn = isNumber ? Walker::TurnOfTypedCopy::HasDoneNothing : walker.turnInWhichListsAreAskedInFront();
+    if (!walker.standsInFrontOfTypedCopy(list, turn) || !walker.standsInFrontOfTypedCopy(position, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(list, turn) || !(isNumber ? walker.turnsOfTypedCopyStoreIntoNoList() : walker.turnsOfTypedCopyStoreOnlyRawDoublesIntoLists(turn)))
         return std::nullopt;
     Origin origin = walker.originOf(read);
     origin.isTailCall = false;
     Reference isThere;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true);
+        Walker::InFrontOfTypedCopy inFront(walker, true, turn);
         Draft isPresent(Opcode::IsElementPresent, origin);
         walker.chooseConservativeFields(isPresent);
         isPresent.setArrayOperand(list);
@@ -2191,7 +2851,7 @@ std::optional<PassedTest> askElementInFrontOfTypedCopy(Walker& walker, const Bod
         isPresent.setKeyIsIntegral(true);
         isThere = walker.build(WTF::move(isPresent));
     }
-    std::optional<PassedTest> present = isThere ? walker.showElementPresentBehindTest(list, position, walker.goOnInTypedCopyWhereTestInFrontPasses(isThere, true)) : std::nullopt;
+    std::optional<PassedTest> present = isThere ? walker.showElementPresentBehindTest(list, position, walker.goOnInTypedCopyWhereTestInFrontPasses(isThere, true, turn)) : std::nullopt;
     if (!present)
         return std::nullopt;
     walker.noteGuessOpened();
@@ -2294,7 +2954,7 @@ void buildTestsOfListsReadInLoop(Walker& walker, BlockID inputHead, std::span<co
             noteKnown(walker, KnownNote::ViewOverMemoryThatNoOtherThreadGrows, list.name, { }, 0, LocationMasks(), 1);
     }
     for (const ListTestedInFrontOfLoop& list : found.lists) {
-        if ((list.storage != ArrayStorage::Double && hasArrayStorageForm(list.storage)) || !list.isWritable || list.admitsInt32Storage)
+        if (!isConvertedInFrontOfTypedCopy(list))
             continue;
         Draft convert(Opcode::ConvertToDoubleStorage, origin);
         walker.chooseConservativeFields(convert);
@@ -2329,7 +2989,7 @@ void buildTestsOfListsReadInLoop(Walker& walker, BlockID inputHead, std::span<co
         hasKindWritten.setAdmitsInt32Storage(list.admitsInt32Storage);
         hasKindWritten.setIsWritable(list.isWritable);
         Reference holdsKindWritten = walker.build(WTF::move(hasKindWritten));
-        if (!goOnWhereTestPassesInListReadsInLoops(walker, holdsKindWritten, closedStart))
+        if (!goOnWhereTestPassesInListReadsInLoops(walker, holdsKindWritten, list.kindMayWellBeAnother ? found.whereKindIsAnother : closedStart))
             return;
     }
     for (const ListTestedInFrontOfLoop& list : found.lists) {
@@ -2340,6 +3000,26 @@ void buildTestsOfListsReadInLoop(Walker& walker, BlockID inputHead, std::span<co
             noteThatLengthOfViewIsFoundAbove(walker, list.name);
         else if (classOfProvenViewInListReadsInLoops(walker, list.name))
             noteListAsMade(walker, list.name);
+    }
+    for (const ListTestedInFrontOfLoop& list : found.lists) {
+        std::optional<uint64_t> noted = list.isWritable ? findKnown(walker, KnownNote::LoopFillsLiteralFromItsEnd, list.name, { }, inputHead.index()) : std::nullopt;
+        if (!noted || *noted >> 32 != walker.currentFunction().index() || static_cast<uint32_t>(*noted) > entering.size())
+            continue;
+        Reference length = buildLengthOfListInFrontOfLoop(walker, list.name, origin);
+        if (!length || !goOnWhereTestPassesInListReadsInLoops(walker, buildOperatorOnIntegersOfLoop(walker, Opcode::StrictEq, length, entering[static_cast<uint32_t>(*noted) - 1], origin), closedStart))
+            return;
+        noteKnown(walker, KnownNote::ListEndsWhereCounterEntersLoop, list.name, { }, inputHead.index(), LocationMasks(AbstractHeapSet { AbstractHeap::ArrayStorage }), *noted);
+        std::optional<uint64_t> filledTo = findKnown(walker, KnownNote::LengthThatLoopFillsLiteralTo, list.name, { }, inputHead.index());
+        if (!filledTo)
+            continue;
+        Draft room(Opcode::GetArrayRoom, origin);
+        walker.chooseConservativeFields(room);
+        room.setArrayOperand(list.name);
+        Reference roomInFront = walker.build(WTF::move(room));
+        if (!roomInFront || !goOnWhereTestPassesInListReadsInLoops(walker, buildOperatorOnIntegersOfLoop(walker, Opcode::LessEq, Reference::fromBits(static_cast<uint32_t>(*filledTo)), roomInFront, origin), closedStart))
+            return;
+        noteKnown(walker, KnownNote::RoomOfListHoldsEveryTurn, list.name, { }, inputHead.index(), LocationMasks(AbstractHeapSet { AbstractHeap::ArrayStorage }), *noted);
+        walker.count(StatisticID::RoomsAskedOnceForEveryTurnThatLengthensList);
     }
     found.areTested = true;
 }

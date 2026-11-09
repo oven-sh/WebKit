@@ -61,6 +61,10 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
         .mayOmitFrameRecord = isX86_64(),
         .checksAllocation = runsMachineChecks(build),
         .ordersBlocksAsWhenOrderedAgain = hasFlag(build.options().testing, Wire::TestingSwitch::OrderBlocksAgain),
+        .leavesOutSavesThatPatchesAloneRead = hasFlag(build.options().testing, Wire::TestingSwitch::SavesAtHeadsThatPatchesAloneReadAreLeftOut),
+        .takesSpillsThatStepsReadToBeReadByNone = hasFlag(build.options().testing, Wire::TestingSwitch::SpillsThatStepsReadAreTakenToBeReadByNone),
+        .takesValuesKeptForCollectorToBeReadByStepsAlone = hasFlag(build.options().lies, Wire::TestingLie::ValuesKeptForTheCollectorAreTakenToBeReadByStepsAlone),
+        .takesWaysOnToReadNothing = hasFlag(build.options().lies, Wire::TestingLie::WaysOnAreTakenToReadNothing),
         .notesRangesOfOrigins = hasFlag(build.options().reports, ReportSet::Flow) || !build.options().logging.mapFilePath.isNull(),
         .features = build.targetFeatures(),
     };
@@ -113,6 +117,8 @@ static InternalErrorKind internalErrorKindOfMachineFailure(Machine::FailureKind 
         return InternalErrorKind::NarrowReferenceWithoutPointer;
     case Machine::FailureKind::InnerPointerWithoutOwner:
         return InternalErrorKind::InnerPointerWithoutOwner;
+    case Machine::FailureKind::ReleasedValueIsReadOnWayOn:
+        return InternalErrorKind::ReleasedValueIsReadOnWayOn;
     case Machine::FailureKind::NeedsFrameWhereNoneIsSetUp:
         return InternalErrorKind::FrameNeededWhereNoneIsSetUp;
     }
@@ -124,11 +130,7 @@ static void reportFailureOfMachineProcedure(BuildContext& build, const Program& 
     const Machine::Failure& failure = *procedure.failure();
 
     StringPrintStream text;
-    text.print(failure.kind);
-    if (failure.operation < procedure.numberOfOperations()) {
-        text.print(": ");
-        Machine::printOperation(text, procedure, procedure.operationAt(failure.operation));
-    }
+    Machine::printFailure(text, procedure);
 
     InternalError error {
         .kind = internalErrorKindOfMachineFailure(failure.kind),

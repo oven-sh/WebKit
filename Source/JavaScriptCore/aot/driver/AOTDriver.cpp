@@ -523,26 +523,24 @@ void logTimeToEnterEngine(const BuildContext& context, MonotonicTime entered)
     dataLog(toUTF8CString("AOT phase times: ReadAndVerify | enter the engine | wall ", (MonotonicTime::now() - entered).milliseconds(), " ms\n"));
 }
 
-template<typename Switches>
-Typed::Mechanisms withoutMechanismsThatOptionsWithhold(Typed::Mechanisms mechanisms, Switches testing)
-{
-    if (AOT::hasFlag(testing, Wire::TestingSwitch::KeepsCellsOutOfFrames))
-        mechanisms.remove(Typed::Mechanism::CellsInFrames);
-    return mechanisms;
-}
-
 std::unique_ptr<CompileOutput> compileBytesWithBuildDriver(std::span<const uint8_t> program, const Wire::CompileOptions& options, const HostThreadPool* hostPool, const ProgramOwner& owner, Typed::Mechanisms mechanisms)
 {
     MonotonicTime entered = MonotonicTime::now();
     auto output = makeUnique<CompileOutput>();
     runOnBuildThread([&] {
-        BuildContext context(options, hostPool);
-        context.setFunctionTexts(owner.functionTexts);
-        BuildDriver driver(context, *output, owner);
-        driver.setMechanisms(withoutMechanismsThatOptionsWithhold(mechanisms, options.testing));
-        logTimeToEnterEngine(context, entered);
-        driver.read(program);
-        driver.run();
+        RefPtr<BackgroundJobs> jobs;
+        {
+            BuildContext context(options, hostPool);
+            jobs = &context.backgroundJobs();
+            context.setFunctionTexts(owner.functionTexts);
+            BuildDriver driver(context, *output, owner);
+            driver.setMechanisms(withoutMechanismsThatOptionsWithhold(mechanisms, options.testing));
+            logTimeToEnterEngine(context, entered);
+            driver.read(program);
+            driver.run();
+        }
+        if constexpr (ASAN_ENABLED)
+            jobs->waitUntilAllHaveRun();
     });
     return output;
 }

@@ -3,7 +3,7 @@ enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObj
     | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
 }
 flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType IsOfCreatedObject | engine IsDerived }
-flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods IsRequiredAndReadThoughNeverWritten | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
@@ -31,9 +31,9 @@ enum FunctionKind (| engine canBeBound: Bool, isClassConstructor: Bool) {
 }
 flags FunctionFlags {
     IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
-    HasExplicitName IsNakedConstructor IsNamedByComputedKey
+    HasExplicitName IsNakedConstructor IsNamedByComputedKey IsAlwaysInlined
 }
-flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers }
+flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers MayAskForOwnOriginal }
 enum EntryParameter (presentWith: FunctionFlags) {
     Capture(none) This(HasThis) Callee(TakesCallee) NewTarget(HasNewTarget) ArgumentCount(HasArgumentCount) Parameter(none) HiddenRest(HasHiddenRest)
 }
@@ -44,6 +44,7 @@ record Function wire extendedEngine {
     name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 syntax: FunctionSyntax
     enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredCapture> thisType: DeclaredType parameters: Span<DeclaredType>
     results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
+    originalsAskedFor: Span<String>
     | engine capabilities: FunctionCapabilities constructedClass: Layout?
 }
 
@@ -79,14 +80,14 @@ record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<Col
 record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool starPlace: UInt32? }
 record ModuleExport wire {
     name: String kind: ModuleExportKind variable: Variable? module: Module(Target)? importName: String? phase: ImportPhase isFromStarExport: Bool
-    isDroppedWhileEmpty: Bool isLeftOut: Bool
+    isDroppedWhileEmpty: Bool isLeftOut: Bool writer: Module(Referrer)?
 }
 record SyntheticExport wire { name: String variable: Variable? isKnownMember: Bool isReplaceable: Bool }
-record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool }
+record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool isAskedForByStar: Bool }
 record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? endsLoadOf: Module(Referrer)? }
 record AmbiguousExport wire { module: Module(Referrer) name: String }
 record SourceStamp wire { module: Module(Referrer) low: UInt32 high: UInt32 }
-record DeclaredRecord wire { module: Module(Referrer) start: UInt32 parameter: UInt32 names: Span<PropertyKey> sorted }
+record DeclaredRecord wire { module: Module(Referrer) position: UInt32 parameter: UInt32 names: Span<PropertyKey> sorted }
 record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
     externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?

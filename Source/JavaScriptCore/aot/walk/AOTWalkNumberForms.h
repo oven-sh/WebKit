@@ -61,6 +61,8 @@ bool buildNumberRemainderWithItsTest(Walker&, const BodyValue& remainder);
 inline constexpr OpcodeSet opcodesThatBuildNumberFormTakes = allBitwiseOperators | allEqualities | allRelations | OpcodeSet { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow,
     Opcode::LogicalNot, Opcode::ToBoolean };
 AOT_LINK_OF_WALK(buildNumberForm, opcodesThatBuildNumberFormTakes)
+inline constexpr OpcodeSet opcodesThatBuildOperatorOnWhatWalkHasBuiltTakes = opcodesThatBuildNumberFormTakes | opcodesThatBuildTypedOperatorTakes;
+AOT_LINK_OF_WALK(buildOperatorOnWhatWalkHasBuilt, opcodesThatBuildOperatorOnWhatWalkHasBuiltTakes)
 
 
 Reference buildCallOnNumbers(Walker&, const CallByOneRow&);

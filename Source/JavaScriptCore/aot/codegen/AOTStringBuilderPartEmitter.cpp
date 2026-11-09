@@ -10,6 +10,7 @@
 
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTElementAccessEmitter.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsStrings.h"
@@ -147,11 +148,18 @@ void StringBuilderPartEmitter::generateStringBuilderAppendConstant(const ValueCo
     builders().commit(builder, builders().writeBytes(cursor, characters.span()));
 }
 
+void StringBuilderPartEmitter::holdIntegerToldToHaveFewDigits(const ValueContext& value, Integer appended)
+{
+    if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.testsEveryPosition())
+        elements.stopUnlessInside(value, below(appended, StringBuilderEmitter::firstIntegerWrittenByCall));
+}
+
 void StringBuilderPartEmitter::generateStringBuilderAppendInteger(const ValueContext& value)
 {
     CellPointer builder = in<CellPointer>(value->builderOperand());
     Integer appended = integerOf(value->valueOperand());
     if (isProvenToHaveFewDigits(value->valueOperand())) {
+        holdIntegerToldToHaveFewDigits(value, appended);
         appendDigits(value, builder, low32(appended));
         return;
     }
@@ -201,6 +209,7 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const Valu
     Word32 end = strings.word32Of(value->endOperand());
     Word32 length = sub(end, start);
     CharacterView view = strings.viewOf(value, value->stringOperand());
+    strings.holdRangeInside(value, start, end);
     LBasicBlock byCall = newBlock();
     LBasicBlock done = newBlock();
 
@@ -353,6 +362,7 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendInteger(const Val
     PlaceInFrame place = placeInFrameOf(value);
     Integer appended = integerOf(value->valueOperand());
     if (isProvenToHaveFewDigits(value->valueOperand())) {
+        holdIntegerToldToHaveFewDigits(value, appended);
         builders().defineCursorBehindPart(value, place.record, appendDigits(value, place, low32(appended)));
         return;
     }
@@ -402,6 +412,7 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendStringRange(const
     Word32 end = strings.word32Of(value->endOperand());
     Word32 length = sub(end, start);
     CharacterView view = strings.viewOf(value, value->stringOperand());
+    strings.holdRangeInside(value, start, end);
     LBasicBlock byCall = newBlock();
     Join<Pointer> cursor(m_out);
 

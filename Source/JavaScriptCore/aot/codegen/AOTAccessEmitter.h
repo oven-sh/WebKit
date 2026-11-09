@@ -38,7 +38,10 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
+    void generateElemGetOrOwnAccessor(const ValueContext&);
+    void generateGetGetterOfAccessorOrUndefined(const ValueContext&);
     void generateGetValueAtSiteOrAbsent(const ValueContext&);
+    void generateGetOwnValueUnderKeyOrAbsent(const ValueContext&);
     void generateGetPropertyOfHeir(const ValueContext&);
     void generatePutPropertyOfHeir(const ValueContext&);
     void generateElemGet(const ValueContext&);
@@ -58,6 +61,9 @@ public:
     void generateCopyObjectAndDefine(const ValueContext&);
     void generateCopyTwoObjects(const ValueContext&);
     void generateTryCopyFields(const ValueContext&);
+    Vector<FieldIndex, 8> fieldsThatTakeCopyFromOtherLayout(const Operation& copy);
+    void copyFieldsFromOtherLayout(const Operation& copy, CellPointer source, CellPointer target);
+    void noteCopyMadeAtAllocation(ValueID copy);
     void generateGetSuperBase(const ValueContext&);
     void generateSuperGet(const ValueContext&);
     void generateSuperSet(const ValueContext&);
@@ -128,6 +134,7 @@ private:
     Boxed loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure);
     Boxed getMemberAboveLayouts(const ValueContext&, Boxed receiver, Pointer site);
     Boxed getMemberInSlotOrByName(const ValueContext&, Boxed receiver, const PlacedSlot&);
+    bool storeAskingSiteInLine(const ValueContext&, Boxed receiver, Boxed stored, PutMode, Pointer site);
     std::optional<PlacedSlot> findSlotInCellOfEveryReceiver(const Type& receiver, PropertyKeyID);
     Boxed getFreeName(const ValueContext&);
     void putFreeName(const ValueContext&);
@@ -166,6 +173,7 @@ private:
         ValueID pattern;
     };
     std::optional<ReadLeftToCall> m_readLeftToCall;
+    ValueID m_baseOfSuperLeftToRead;
     BitVector m_methodsThatMayBeUnread;
     const bool m_functionComesAgain;
 };

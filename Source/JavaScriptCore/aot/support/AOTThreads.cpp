@@ -412,6 +412,13 @@ size_t BackgroundJobs::numberOfJobsWaiting() const
     return m_jobs.size();
 }
 
+void BackgroundJobs::waitUntilAllHaveRun()
+{
+    Locker locker { m_lock };
+    while (m_isRunning)
+        m_allHaveRun.wait(m_lock);
+}
+
 void BackgroundJobs::runJobs()
 {
     for (;;) {
@@ -420,6 +427,7 @@ void BackgroundJobs::runJobs()
             Locker locker { m_lock };
             if (m_jobs.isEmpty()) {
                 m_isRunning = false;
+                m_allHaveRun.notifyAll();
                 return;
             }
             job = m_jobs.takeFirst();

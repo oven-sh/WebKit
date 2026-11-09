@@ -161,6 +161,7 @@ struct ProgramTables {
     FOR_EACH_AOT_PROGRAM_TABLE(AOT_PROGRAM_TABLE_ACCESSOR)
 #undef AOT_PROGRAM_TABLE_ACCESSOR
 
+    static constexpr uint32_t memberAskedByByteAlone = 1u << 30;
     static constexpr uint32_t unlockedBuiltinMember = 1u << 31;
     static constexpr uint32_t openedName = 3u << 30;
     size_t numberOfWordsBelow(uint32_t mark) const
@@ -168,7 +169,8 @@ struct ProgramTables {
         std::span<const uint32_t> members = constantAndUnlockedBuiltinMembers();
         return std::ranges::lower_bound(members, mark) - members.begin();
     }
-    std::span<const uint32_t> constantBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(unlockedBuiltinMember)); }
+    std::span<const uint32_t> constantBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(memberAskedByByteAlone)); }
+    std::span<const uint32_t> membersAskedByByteAlone() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(unlockedBuiltinMember)).subspan(numberOfWordsBelow(memberAskedByByteAlone)); }
     std::span<const uint32_t> unlockedBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(openedName)).subspan(numberOfWordsBelow(unlockedBuiltinMember)); }
     std::span<const uint32_t> openedNames() const { return constantAndUnlockedBuiltinMembers().subspan(numberOfWordsBelow(openedName)); }
     static bool isUnlocked(std::span<const uint32_t> unlockedBuiltinMembers, uint32_t member) { return std::ranges::binary_search(unlockedBuiltinMembers, member | unlockedBuiltinMember); }

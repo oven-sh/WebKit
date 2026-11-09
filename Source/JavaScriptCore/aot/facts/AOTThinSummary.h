@@ -57,6 +57,8 @@ public:
     static constexpr SlotOfContents mayBeOfClassBelow() { return behindEnumerators(MayBeOfClassBelow); }
     static constexpr SlotOfContents mayBeShorter() { return behindEnumerators(MayBeShorter); }
     static constexpr SlotOfContents isChanged() { return behindEnumerators(IsChanged); }
+    static constexpr bool hasSlotAt(uint32_t place) { return place < nameBit - firstWrittenPlace; }
+    static constexpr SlotOfContents at(uint32_t place) { return fromNumber(firstWrittenPlace + place); }
     static constexpr SlotOfContents internalField(uint32_t index) { return fromNumber(firstInternalField + index); }
     static constexpr SlotOfContents stateOf(BuiltinSlotID slot) { return fromNumber(firstStateSlot + slot.index()); }
     static constexpr SlotOfContents under(PropertyKeyID key) { return fromNumber(nameBit | key.index()); }
@@ -72,8 +74,10 @@ public:
     constexpr bool isUnderName() const { return !!*this && (m_number & nameBit); }
     constexpr PropertyKeyID key() const { return PropertyKeyID(m_number & ~nameBit); }
     constexpr std::optional<ContentsSlot> contentsSlot() const { return m_number < numberOfEnumerators<ContentsSlot> ? std::optional(static_cast<ContentsSlot>(m_number)) : std::nullopt; }
-    constexpr std::optional<BuiltinSlotID> stateSlot() const { return m_number >= firstStateSlot && m_number < nameBit ? std::optional(BuiltinSlotID(m_number - firstStateSlot)) : std::nullopt; }
+    constexpr std::optional<BuiltinSlotID> stateSlot() const { return m_number >= firstStateSlot && m_number < firstWrittenPlace ? std::optional(BuiltinSlotID(m_number - firstStateSlot)) : std::nullopt; }
     constexpr std::optional<uint32_t> indexOfInternalField() const { return m_number >= firstInternalField && m_number < firstStateSlot ? std::optional(m_number - firstInternalField) : std::nullopt; }
+
+    constexpr std::optional<uint32_t> writtenPlace() const { return m_number >= firstWrittenPlace && m_number < nameBit ? std::optional(m_number - firstWrittenPlace) : std::nullopt; }
 
     friend constexpr bool operator==(SlotOfContents, SlotOfContents) = default;
 
@@ -84,6 +88,7 @@ private:
     static constexpr uint32_t firstInternalField = 16;
     static_assert(numberOfEnumerators<ContentsSlot> + numberOfSlotsBehindEnumerators <= firstInternalField);
     static constexpr uint32_t firstStateSlot = 1u << 16;
+    static constexpr uint32_t firstWrittenPlace = 1u << 30;
     static constexpr uint32_t nameBit = 1u << 31;
 
     uint32_t m_number { UINT32_MAX };
@@ -299,7 +304,6 @@ struct SummaryChange {
     bool isUnderNameThatNobodyElseNames { false };
     bool descriptorIsInSight { false };
     bool descriptorLaysNoAccessor { false };
-    bool createsWhatCannotBeConfigured { false };
     bool isEntryWrittenInMap { false };
     bool laysAccessorAsWritten { false };
     bool laysNewValueOfNativeCode { false };
@@ -427,7 +431,9 @@ struct SummaryWithoutLists {
     uint64_t entryParametersCalledInLoops { 0 };
     uint64_t entryParametersLetGo { 0 };
     uint32_t numberOfOperations { 0 };
+    uint32_t numberOfOperationsThatOnlyTurnTruthRound { 0 };
     uint32_t weightOfOperations { 0 };
+    uint32_t weightThatSwitchesSave { 0 };
     uint32_t numberOfOwnCalls { 0 };
     uint32_t numberOfArgumentsOfOwnCalls { 0 };
     OptionSet<SummaryTrait> traits;
@@ -628,7 +634,7 @@ struct ThinSummary : SummaryWithoutLists {
         SummaryList<SummaryMember, 22> members;
         SummaryList<VariableID, 23> functionVariablesStoredInto;
         SummaryList<SummaryConstruction::Part, 24> partsOfConstructions;
-        SummaryList<FieldReference, 25> fieldsLeftEmpty;
+        SummaryList<uint32_t, 25> fieldsHeldOfLayoutsLeftEmpty;
         SummaryList<FieldReference, 26> fieldsFilledAtEndAlone;
         SummaryList<FieldReference, 27> fieldsEmptyAtEndAlone;
         SummaryList<HalfOfAccessorInSummary, 28> halvesOfAccessorsNotLaid;
@@ -659,6 +665,9 @@ struct ThinSummary : SummaryWithoutLists {
         SummaryList<uint64_t, 53> wordsOfEffects;
         SummaryList<uint32_t, 54> namesThatHostLooksFor;
         SummaryList<SummaryCopyOfMembers, 55> copiesOfMembers;
+        SummaryList<uint32_t, 56> placesOfWrittenLists;
+        SummaryList<uint32_t, 57> definitionsByDescriptorInOrderOfSites;
+        SummaryList<uint32_t, 58> callsAtSitesOfCopiesThatSpellStores;
     };
 
     uint64_t layoutsOfOwnWrites() const { return wordsOfEffects.isEmpty() ? 0 : wordsOfEffects[0]; }
@@ -681,6 +690,24 @@ struct ThinSummary : SummaryWithoutLists {
             functor(LayoutID(rest[0]), rest.subspan(2, rest[1]));
             rest = rest.subspan(2 + rest[1]);
         }
+    }
+
+    void forEachLayoutLeftEmpty(NOESCAPE const Invocable<void(LayoutID, std::span<const uint32_t> fieldsHeld)> auto& functor) const
+    {
+        std::span<const uint32_t> rest = fieldsHeldOfLayoutsLeftEmpty.span();
+        while (!rest.empty()) {
+            functor(LayoutID(rest[0]), rest.subspan(2, rest[1]));
+            rest = rest.subspan(2 + rest[1]);
+        }
+    }
+
+    bool leavesEmpty(FieldReference field) const
+    {
+        bool leavesEmpty = false;
+        forEachLayoutLeftEmpty([&](LayoutID layout, std::span<const uint32_t> fieldsHeld) {
+            leavesEmpty |= layout == field.layout && !std::ranges::binary_search(fieldsHeld, field.field);
+        });
+        return leavesEmpty;
     }
 };
 
@@ -712,7 +739,7 @@ struct SummaryBeingMade : SummaryWithoutLists {
     Vector<SummaryMember> members;
     Vector<VariableID> functionVariablesStoredInto;
     Vector<SummaryConstruction::Part> partsOfConstructions;
-    Vector<FieldReference> fieldsLeftEmpty;
+    Vector<uint32_t> fieldsHeldOfLayoutsLeftEmpty;
     Vector<FieldReference> fieldsFilledAtEndAlone;
     Vector<FieldReference> fieldsEmptyAtEndAlone;
     Vector<HalfOfAccessorInSummary> halvesOfAccessorsNotLaid;
@@ -742,6 +769,9 @@ struct SummaryBeingMade : SummaryWithoutLists {
     Vector<LocationMasks, 1> ownWritesOnWaysToReturn;
     Vector<uint32_t> operandsOfOperatorsLeftApart;
     Vector<SummaryCopyOfMembers> copiesOfMembers;
+    Vector<uint32_t> placesOfWrittenLists;
+    Vector<uint32_t> definitionsByDescriptorInOrderOfSites;
+    Vector<uint32_t> callsAtSitesOfCopiesThatSpellStores;
     uint64_t layoutsOfOwnWrites { 0 };
     Effects ownEffects;
     std::optional<Effects> ownEffectsOfOperators;

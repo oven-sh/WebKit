@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTRepresentation.h"
 #include "AOTSort.h"
 #include <algorithm>
@@ -209,7 +210,7 @@ void Sweep::listIncomingEdges()
     }
 }
 
-ALWAYS_INLINE bool Sweep::isTaken(EdgeID id, const Edge& edge) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Sweep::isTaken(EdgeID id, const Edge& edge) const
 {
     return isSweptEdgeTaken(*m_code, m_states, id, edge);
 }
@@ -271,7 +272,7 @@ void Sweep::ensureEdgesThatAreTakenAreListed()
         listEdgesThatAreTaken();
 }
 
-ALWAYS_INLINE bool Sweep::edgesAscendInto(BlockID id, const Block& block)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Sweep::edgesAscendInto(BlockID id, const Block& block)
 {
     if (m_blockThatEdgesAscendInto == id)
         return true;
@@ -295,7 +296,7 @@ void Sweep::forgetHandlersThatAreGone()
     });
 }
 
-ALWAYS_INLINE void Sweep::needArgumentsOn(const Edge& edge)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::needArgumentsOn(const Edge& edge)
 {
     std::span<const ValueID> arguments = edge.arguments();
     if (arguments.empty())
@@ -317,7 +318,7 @@ void Sweep::needArgumentsOn(EdgeID id)
     needArgumentsOn(m_code->at(id));
 }
 
-ALWAYS_INLINE void Sweep::scanRootsOf(const ArraysByValue& arrays, BlockID id, const Block& block)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::scanRootsOf(const ArraysByValue& arrays, BlockID id, const Block& block)
 {
     RELEASE_ASSERT(block.terminator.isSet);
     for (ValueID parameter : block.parameters()) {
@@ -401,7 +402,7 @@ void Sweep::need(ValueID value)
     needInSweep(m_arrays.marks, m_worklist, value);
 }
 
-ALWAYS_INLINE void Sweep::needArgumentsFor(ValueID parameter, const Operation& record)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::needArgumentsFor(ValueID parameter, const Operation& record)
 {
     const Code& code = *m_code;
     BlockID id = record.block();
@@ -467,7 +468,7 @@ bool staysInSweptCodeByItself(const Operation& operation)
     return staysInSweptCodeByItselfByRow(operation, rowOfOpcodeInSweep(operation.opcode));
 }
 
-ALWAYS_INLINE void Sweep::noteNeededOperation(const ArraysByValue& arrays, const uint8_t& stateOfBlock, ValueID value, const Operation& operation)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::noteNeededOperation(const ArraysByValue& arrays, const uint8_t& stateOfBlock, ValueID value, const Operation& operation)
 {
     bool standsBesidePoll = (arrays.marks[value.index()] & leavesOwedErrorMarkOfSweep) && operation.opcode != Opcode::LoopHint;
     if (standsBesidePoll) [[unlikely]]
@@ -484,7 +485,7 @@ ALWAYS_INLINE void Sweep::noteNeededOperation(const ArraysByValue& arrays, const
         noteNeededOperationForLiveness(value, operation);
 }
 
-ALWAYS_INLINE EdgeID Sweep::lastEdgeOfWayThatDoesNothing(EdgeID first) const
+ALWAYS_INLINE_INTO_OTHER_FILES EdgeID Sweep::lastEdgeOfWayThatDoesNothing(EdgeID first) const
 {
     const Code& code = *m_code;
     EdgeID last = first;
@@ -493,7 +494,7 @@ ALWAYS_INLINE EdgeID Sweep::lastEdgeOfWayThatDoesNothing(EdgeID first) const
     return last;
 }
 
-ALWAYS_INLINE bool Sweep::waysOfBranchMeetHavingDoneNothing(const Terminator& branch) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Sweep::waysOfBranchMeetHavingDoneNothing(const Terminator& branch) const
 {
     const Code& code = *m_code;
     const Edge& first = code.at(lastEdgeOfWayThatDoesNothing(branch.taken()));
@@ -630,7 +631,7 @@ void Sweep::letGoEdgeThatIsTaken()
     }
 }
 
-ALWAYS_INLINE void Sweep::visitOperationsOf(BlockID id)
+ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
 {
     Code& code = *m_code;
     Block& block = code.m_blocks[id.index()];

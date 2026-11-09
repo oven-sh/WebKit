@@ -323,20 +323,24 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
     }
     if (!passedInEveryTurn)
         return;
+    using PlaceRead = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
+    Vector<PlaceRead> placesReadInEveryTurn;
+    bool placesReadInEveryTurnAreListed = false;
     auto isReadInEveryTurn = [&](ValueID holder, FieldReference place, VariableID variable) {
-        for (BlockID member : index.membersOf(loop)) {
-            if (!index.isReachable(member) || !index.dominates(member, passedInEveryTurn))
-                continue;
-            for (BodyValue operation : index.block(member).values()) {
-                if (variable && operation.opcode() == Opcode::GetModuleVariable && operation.variable() == variable)
-                    return true;
-                if (variable)
+        if (!std::exchange(placesReadInEveryTurnAreListed, true)) {
+            for (BlockID member : index.membersOf(loop)) {
+                if (!index.isReachable(member) || !index.dominates(member, passedInEveryTurn))
                     continue;
-                if (operation.opcode() == Opcode::GetEnvironmentField && index.valueBehindCasts(operation.environmentOperand()) == holder && operation.layout() == place.layout && operation.field() == place.field)
-                    return true;
+                for (BodyValue operation : index.block(member).values()) {
+                    if (operation.opcode() == Opcode::GetModuleVariable)
+                        placesReadInEveryTurn.append(PlaceRead { 1, operation.variable().index(), 0, 0 });
+                    else if (operation.opcode() == Opcode::GetEnvironmentField)
+                        placesReadInEveryTurn.append(PlaceRead { 0, index.valueBehindCasts(operation.environmentOperand()).index(), operation.layout().index(), operation.field() });
+                }
             }
+            std::ranges::sort(placesReadInEveryTurn);
         }
-        return false;
+        return std::ranges::binary_search(placesReadInEveryTurn, variable ? PlaceRead { 1, variable.index(), 0, 0 } : PlaceRead { 0, holder.index(), place.layout.index(), place.field });
     };
     for (BlockID member : index.membersOf(loop)) {
         for (BodyValue operation : index.block(member).values()) {
@@ -767,11 +771,12 @@ void Walker::endFieldsOfScopesThatTurnsStore(const LoopPreview& look)
     Effects stores = Effects::none();
     for (FieldReference field : look.fieldsOfScopesThatTurnsStore)
         stores.writes.add(program(), MemoryLocation::environmentField(field.layout, field.field));
-    for (Reference scope : scopes)
-        m_state.markEscaped(scope);
+    for (Reference scope : scopes) {
+        for (FieldReference field : std::ranges::equal_range(look.fieldsOfScopesThatTurnsStore, m_code.at(scope.id()).layout(), { }, &FieldReference::layout))
+            m_state.noteEnvironmentField(scope, field, { });
+        m_state.answers().endWhatIsWrittenIn(scope, stores);
+    }
     m_state.invalidate(stores);
-    for (Reference scope : scopes)
-        m_state.noteFresh(scope);
 }
 
 void Walker::enterClosedCopy(BlockID entry, const LoopPreview& look)
@@ -1060,7 +1065,7 @@ void Walker::handBackScopesThatBuildLetsLeave(std::span<const ValueID> mentionsT
     }
 }
 
-void Walker::handScopesKeptAtHeadToPreview(const StoresIntoScopes& stores, std::span<const FreshObjectKeptAtHead> kept, LoopPreview& preview)
+void Walker::handScopesKeptAtHeadToPreview(const BodyIndex& index, BlockID inputHead, const StoresIntoScopes& stores, std::span<const FreshObjectKeptAtHead> kept, LoopPreview& preview)
 {
     Vector<Reference, 2>& scopes = preview.scopesThatTurnsOnlyBorrow;
     scopes.shrink(0);
@@ -1074,15 +1079,38 @@ void Walker::handScopesKeptAtHeadToPreview(const StoresIntoScopes& stores, std::
     scopes.shrink(std::ranges::unique(scopes).begin() - scopes.begin());
     preview.fieldsOfScopesThatTurnsStore = stores.fields;
     preview.fieldsOfScopesThatCallsInTurnsStore = stores.fieldsThatCallsStore;
-    if (stores.areKnown || preview.effects.maySuspend)
+    if (preview.effects.maySuspend)
         return;
-    for (Reference scope : scopes) {
-        LayoutID layout = m_code.at(scope.id()).layout();
-        uint32_t numberOfFields = static_cast<uint32_t>(program().at(layout).fields.size());
-        for (uint32_t index = 0; index < numberOfFields; ++index) {
-            FieldOfScope field { scope, { layout, index }, TypeID(), Representation::JSValue, { }, { m_state.environmentField(scope, { layout, index }) }, { } };
-            if (field.values[0] && mayHandFieldOfScopeToBlock(field))
-                preview.fieldsOfScopesThatTurnsStore.append(field.field);
+    if (stores.everyFieldIsTakenForStored) {
+        for (Reference scope : scopes) {
+            LayoutID layout = m_code.at(scope.id()).layout();
+            uint32_t numberOfFields = static_cast<uint32_t>(program().at(layout).fields.size());
+            for (uint32_t number = 0; number < numberOfFields; ++number) {
+                FieldOfScope field { scope, { layout, number }, TypeID(), Representation::JSValue, { }, { m_state.environmentField(scope, { layout, number }) }, { } };
+                if (field.values[0] && mayHandFieldOfScopeToBlock(field))
+                    preview.fieldsOfScopesThatTurnsStore.append(field.field);
+            }
+        }
+    }
+    if (stores.areKnown || !index.opcodes().contains(Opcode::PutEnvironmentField)) {
+        std::ranges::sort(preview.fieldsOfScopesThatTurnsStore);
+        preview.fieldsOfScopesThatTurnsStore.shrink(std::ranges::unique(preview.fieldsOfScopesThatTurnsStore).begin() - preview.fieldsOfScopesThatTurnsStore.begin());
+        return;
+    }
+    for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
+        if (!index.isReachable(member))
+            continue;
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() != Opcode::PutEnvironmentField)
+                continue;
+            FieldReference place { operation.layout(), operation.field() };
+            for (Reference scope : scopes) {
+                if (m_code.at(scope.id()).layout() != place.layout)
+                    continue;
+                FieldOfScope field { scope, place, TypeID(), Representation::JSValue, { }, { m_state.environmentField(scope, place) }, { } };
+                if (field.values[0] && mayHandFieldOfScopeToBlock(field))
+                    preview.fieldsOfScopesThatTurnsStore.append(place);
+            }
         }
     }
     std::ranges::sort(preview.fieldsOfScopesThatTurnsStore);
@@ -1092,9 +1120,12 @@ void Walker::handScopesKeptAtHeadToPreview(const StoresIntoScopes& stores, std::
 bool Walker::learnWhatTurnsStoreIntoScopes(AnswerOfLoop& answer, const TryOfLoop& tried, bool walkIsWhole)
 {
     StoresIntoScopes& stores = answer.storesIntoScopes;
-    bool wereKnown = stores.areKnown;
+    bool tookEveryField = stores.everyFieldIsTakenForStored;
+    bool wereKnown = stores.areKnown && !tookEveryField;
     if (!tried.keepsScopesAtHead || (!wereKnown && !walkIsWhole))
         return false;
+    stores.everyFieldIsTakenForStored = false;
+    stores.everyFieldWasTakenForStored |= tookEveryField;
     auto add = [](Vector<FieldReference, 4>& fields, const Vector<FieldReference, 4>& found) {
         size_t numberBefore = fields.size();
         fields.appendVector(found);
@@ -1107,8 +1138,10 @@ bool Walker::learnWhatTurnsStoreIntoScopes(AnswerOfLoop& answer, const TryOfLoop
     hasLearnedMore |= add(stores.fieldsThatCallsStore, tried.fieldsOfScopesEnded);
     if (m_headOfRowHandedOn == tried.inputHead && m_frameOfRowHandedOn == tried.frameIndex)
         add(m_storesIntoScopesHandedOn.fields, stores.fields);
-    if (wereKnown)
+    if (wereKnown) {
+        stores.everyFieldIsTakenForStored = hasLearnedMore && !stores.everyFieldWasTakenForStored;
         return hasLearnedMore;
+    }
     BlockID head = inputBlock(tried.frameIndex, tried.inputHead).head;
     auto carried = head ? m_fieldsOfScopesOfHeads.find(head.index()) : m_fieldsOfScopesOfHeads.end();
     return carried != m_fieldsOfScopesOfHeads.end() && std::ranges::any_of(carried->value, [&](const FieldOfScope& field) {

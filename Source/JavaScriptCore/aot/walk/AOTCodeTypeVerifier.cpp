@@ -15,6 +15,7 @@
 #include "AOTRepresentation.h"
 #include "AOTSchemaOperandPositions.h"
 #include "AOTSchemaPayloadPositions.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTTypeText.h"
@@ -545,7 +546,7 @@ TypeID CodeTypeVerifier::typeByResultRule(ValueID id, const Operation& operation
 }
 
 static constexpr OpcodeSet opcodesWhosePayloadIsHeldByTypeVerifier {
-    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::GetValueAtSiteOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
+    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::GetValueAtSiteOrAbsent, Opcode::GetOwnValueUnderKeyOrAbsent, Opcode::GetElementInStorageOrAbsent, Opcode::GetWatchedBuiltinValueOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
 };
 static_assert([]() consteval {
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -564,6 +565,9 @@ void CodeTypeVerifier::verifyTypeReadFromPayload(BlockID block, ValueID id, cons
         return;
     case Opcode::GetStaticFieldOrAbsent:
     case Opcode::GetValueAtSiteOrAbsent:
+    case Opcode::GetOwnValueUnderKeyOrAbsent:
+    case Opcode::GetElementInStorageOrAbsent:
+    case Opcode::GetWatchedBuiltinValueOrAbsent:
         if (!m_types.isSubset(m_types.withPrimitives(TypeTable::anything, Primitive::Absent), stated))
             fail(block, id, "the payload says more of what a lookup finds than that it is a value or absent"_s);
         return;
@@ -1097,7 +1101,7 @@ void CodeTypeVerifier::verifyReadsOfHeapWords()
 {
     if (hasFailed() || m_accessesToHeapWords.isEmpty())
         return;
-    std::ranges::stable_sort(m_accessesToHeapWords, { }, &AccessToHeapWord::word);
+    AOT::stableSort(m_accessesToHeapWords, { }, &AccessToHeapWord::word);
     m_searchThatWentOnInFrontOfBlock.fill(0, m_code.numberOfBlocks());
 
     Vector<TypeID, 4> typesLookedFor;

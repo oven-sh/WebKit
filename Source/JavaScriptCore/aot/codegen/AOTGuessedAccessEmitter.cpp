@@ -50,7 +50,7 @@ static bool isGuessedFormOf(const ValueContext& access, Opcode genericOperation)
 
 static bool guessedAccessFindsSlot(const FieldAccess& access)
 {
-    return access.coverage != FieldAccess::Coverage::NoMember && access.hasLocation && access.slot.hasStorage() && !access.membersWithField.isEmpty();
+    return access.coverage != FieldAccess::Coverage::NoMember && access.hasLocation && access.slot.hasStorage() && !access.slot.holdsAccessor && !access.membersWithField.isEmpty();
 }
 
 static const PlacedSlot* extensionWordOfGuessedAccess(const FieldAccess& access)
@@ -252,6 +252,8 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     } else if (value.opcode() == Opcode::GetSlot && value->holdsDeclaredType()) {
         if (!value->isFilledWhereShapeFits() || !receiverBearsNoMark)
             continueGuessedAccessIf(m_out, slots.holdsDeclaredType(base, slot, location, extensionWord), rareEdge(failure));
+        else if (asksWhatSlotsHold)
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, slots.holdsDeclaredType(base, slot, location, extensionWord), std::nullopt, ProofSource::Field);
         Type loaded = types().at(slot.type ? slot.type : widestTypeOf(Typed::representationOf(slot.representation)));
         loaded.primitives &= ~(Primitive::UndefinedOrNull | Primitive::Absent);
         if (ways) {
@@ -262,14 +264,20 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     } else {
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
         bool asksWhetherSlotIsFilled = value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark;
+        LBasicBlock slotIsEmptyWhereItIsToldFilled = !asksWhetherSlotIsFilled && asksWhatSlotsHold ? newBlock() : nullptr;
         Operand loaded = asksWhetherSlotIsFilled
             ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure))
+            : slotIsEmptyWhereItIsToldFilled ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, rareEdge(slotIsEmptyWhereItIsToldFilled))
             : slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
         if (ways)
             branch(emitter<TruthinessEmitter>().isTruthy(value, loaded, held), ways->targets);
         else
             join->add(foundInSlot(conversions.box(value, loaded, types().at(widestTypeOf(loaded.representation)))));
 
+        if (slotIsEmptyWhereItIsToldFilled) {
+            m_out.appendTo(slotIsEmptyWhereItIsToldFilled);
+            emitter<ThrowEmitter>().stopAtFalseProof(value, std::nullopt, ProofSource::Field);
+        }
         if (slotIsEmpty) {
             m_out.appendTo(slotIsEmpty);
             branchUnless(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit | JSC::IsPristine), failure);
@@ -596,7 +604,8 @@ void GuessedAccessEmitter::storeInProvenListUnderAnyKey(const ValueContext& valu
     Integer index = keyIsRawNumber ? elements.indexOrElse(value->positionOperand(), typeOf(value->positionOperand()).isNumberWithoutFraction(), outOfLine) : signExtended(indexOrElse(in<Boxed>(value->positionOperand()), outOfLine));
     ArrayElements storage = elements.elementsOf(list);
     build().statistics().count(StatisticID::StoresUnderAnyKeyThatRaiseTheLengthInLine);
-    elements.forEachFormByShape(elements.indexingMode(list, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, formsOfGuessedAccess(elements, value), outOfLine, [&](const ArrayStorageForm& form) {
+    ArrayStorageFormList forms = formsOfGuessedAccess(elements, value);
+    elements.forEachFormByShape(elements.indexingMode(list, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, forms, outOfLine, [&](const ArrayStorageForm& form) {
         std::optional<Operand> rawElement = elements.rawElementToStore(form, stored, outOfLine);
         if (!rawElement) {
             m_out.jump(outOfLine);
@@ -611,13 +620,14 @@ void GuessedAccessEmitter::storeInProvenListUnderAnyKey(const ValueContext& valu
         elements.setPublicLength(storage, add(test.indexInside, integer(1)));
         m_out.jump(liesInside);
         m_out.appendTo(liesInside);
+        elements.stopWhereHoleWouldBeStored(value, form, *rawElement);
         elements.storeRawElement(form, storage, test.indexInside, *rawElement);
         if (form.holdsCells && typeOf(stored).hasCells()) {
             Boxed storedElement = rawElement->as<Boxed>();
             emitter<BarrierEmitter>().elementBarrierAfterStore(value, list, singleElementSpan(storedElement));
         }
         m_out.jump(continuation);
-    }, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
+    }, ElementAccessEmitter::FirstForm::IsLikeTheOthers, elements.int32ThatArmOfValuesStoresInEitherKind(stored, forms));
 
     m_out.appendTo(outOfLine);
     if (keyIsRawNumber && !keyIsOptionalNumber && value->mode() == ECMAMode::Strict) {
@@ -712,6 +722,7 @@ void GuessedAccessEmitter::generateElementStore(const ValueContext& value)
             ArrayElements storage = elements.elementsOf(owner);
             LengthTest test = elements.testLength(signExtended(index), storage);
             branchUnless(test.isInside, failure);
+            elements.stopWhereHoleWouldBeStored(value, form, *element);
             elements.storeRawElement(form, storage, test.indexInside, *element);
             if (form.holdsCells && typeOf(storedValue).hasCells()) {
                 Boxed storedElement = element->as<Boxed>();

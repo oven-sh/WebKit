@@ -578,7 +578,7 @@ struct Operation : Instruction {
     BlockID block() const { return blockIndex == noBlock ? BlockID() : BlockID(blockIndex); }
     EffectTraits traits() const { return EffectTraits::fromBits(traitBits); }
 
-    OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
+    ALWAYS_INLINE OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(opcode, operandIndex); }
 
 #include "AOTSchemaOperationGetters.inc"
@@ -621,7 +621,7 @@ struct Terminator : Instruction {
     EdgeID firstEdge;
     uint32_t numberOfEdges { 0 };
 
-    OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(kind, operandIndex); }
+    ALWAYS_INLINE OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(kind, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(kind, operandIndex); }
 
     bool isConditionalBranch() const { return kind == TerminatorKind::Branch || kind == TerminatorKind::TestAndBranch; }
@@ -656,17 +656,27 @@ struct Block {
     bool isLoopHead { false };
     bool isEntry { false };
     bool meetsStepWrittenByHand { false };
+    bool keepsSitesThoughRare { false };
     bool isSealed { false };
     BeliefAheadOfEdges beliefAheadOfEdges { BeliefAheadOfEdges::NoEdgeIsAwaited };
 
     bool isHandlerBlock() const { return role != BlockRole::Ordinary; }
     bool hasEnded() const { return terminator.isSet; }
     std::span<const ValueID> parameters() const LIFETIME_BOUND { return { m_parameters, m_numberOfParameters }; }
+    static constexpr size_t mostParametersSearchedFromFront = 32;
+    ALWAYS_INLINE size_t placeOfParameter(ValueID parameter) const
+    {
+        if (m_numberOfParameters > mostParametersSearchedFromFront) [[unlikely]]
+            return placeAmongManyParameters(parameter);
+        return std::ranges::find(parameters(), parameter) - parameters().begin();
+    }
     EdgeID firstEdgeIn() const { return m_firstEdgeIn; }
 
 private:
     friend class Code;
     friend class Sweep;
+
+    size_t placeAmongManyParameters(ValueID) const;
 
     const ValueID* m_parameters { nullptr };
     uint32_t m_numberOfParameters { 0 };
@@ -915,7 +925,7 @@ struct Draft : DraftWords {
         resetOperandsAndPayload(freshWordsOf(newOpcode));
     }
 
-    OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
+    ALWAYS_INLINE OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(opcode, operandIndex); }
     void restOn(const PassedTest& passed)
     {
@@ -943,7 +953,7 @@ struct TerminatorDraft : DraftWords {
         resetOperandsAndPayload(numberOfNamedOperandsOf(newKind), defaultPayloadOf(newKind));
     }
 
-    OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(kind, operandIndex); }
+    ALWAYS_INLINE OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(kind, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(kind, operandIndex); }
 
 #include "AOTSchemaTerminatorGetters.inc"
@@ -1094,10 +1104,11 @@ public:
     BlockID addBlock(BlockRole = BlockRole::Ordinary, BlockFrequency = BlockFrequency::Normal);
     BlockID addBlockBehindEdge(EdgeID, BlockFrequency, bool isInLoop);
     void setLoopMarks(BlockID, bool isInLoop, bool isLoopHead);
+    void markRareBlockThatKeepsSites(BlockID);
     void noteBeliefAheadOfEdges(BlockID, BeliefAheadOfEdges);
     void makeBlocksRare(uint32_t first, uint32_t end);
     void makeBlockRare(BlockID);
-    void makeBlockUnlikely(BlockID);
+    void makeBlockUnlikely(BlockID, bool thoughRare = false);
     void setSubject(BlockID, ValueID);
     void markMeetingOfStepWrittenByHand(BlockID);
     void setParameters(BlockID, std::span<const ValueID>);
@@ -1111,7 +1122,8 @@ public:
     void leadJumpPastBlockThatJumps(BlockID);
     void leaveCheckOfProofToTestBehind(ValueID);
     void bearListWithStorage(ValueID, ArrayStorage);
-    void letListRememberStorageAtSite(ValueID);
+    void letListRememberStorageAtSite(ValueID, bool takesAnyValueAtFirst = false);
+    void letListForgetStorageAtSite(ValueID);
     ValueID append(BlockID, const Draft&, TypeID proven, EffectTraits);
     void noteEffectsBelieved(ValueID, const Effects&);
     void noteTestsPassedFor(ValueID, const PassedTest&);

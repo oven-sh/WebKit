@@ -105,9 +105,11 @@ static Vector<uint32_t> listConstantAndUnlockedBuiltinMembers(const TableEncoder
         unlockedMembers.set(member.index());
 
     Vector<uint32_t> words;
-    words.reserveInitialCapacity(constantMembers.size() + unlockedMembers.bitCount() + 2 * program.openedNames.size());
+    words.reserveInitialCapacity(constantMembers.size() + encoder.numbers.membersAskedByByteAlone().size() + unlockedMembers.bitCount() + 2 * program.openedNames.size());
     for (BuiltinID member : constantMembers)
         words.append(member.index());
+    for (BuiltinID member : encoder.numbers.membersAskedByByteAlone())
+        words.append(member.index() | ProgramTables::memberAskedByByteAlone);
     for (size_t member : unlockedMembers)
         words.append(static_cast<uint32_t>(member) | ProgramTables::unlockedBuiltinMember);
     for (const Typed::OpenedName& opened : program.openedNames)

@@ -146,12 +146,18 @@ Reference buildReadOfFieldOfHeir(Walker& walker, Reference name, LayoutID layout
 Reference buildStoreIntoFieldOfHeir(Walker& walker, Reference name, Reference stored, LayoutID layout, uint32_t field, Origin origin)
 {
     origin.isTailCall = false;
+    Reference heldInFrontOfStore = walker.storeIntoElementCanBePutBack() ? buildReadOfFieldOfHeir(walker, name, layout, field, origin) : Reference();
+    if (walker.hasFailed() || walker.isUnreachable())
+        return { };
     Draft store(Opcode::PutPropertyOfHeir, origin);
     store.setObjectOperand(name);
     store.setValueOperand(stored);
     store.setLayout(layout);
     store.setField(field);
+    if (heldInFrontOfStore && walker.storeIntoElementCanBePutBack())
+        walker.noteStoreIntoFieldOfHeirToPutBack(name, layout, field, heldInFrontOfStore);
     Reference built = walker.build(WTF::move(store));
+    walker.takeStoreBeingBuiltToPutBack();
     if (built && !walker.isUnreachable())
         noteKnown(walker, KnownNote::ValueOfFieldOfHeir, { }, name, field, heapsUnderValueOfFieldInHeirsOfBuiltins(walker.program(), layout, field), stored.bits());
     return built;

@@ -174,6 +174,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnPrivateNames, PrivateSet) \
     v(OperationsOnSuper, GetSuperBase) \
     v(OperationsOnSuper, GetSuperPropertyById) \
+    v(OperationsOnSuper, GetSuperPropertyOfClassById) \
     v(OperationsOnSuper, SuperConstruct) \
     v(OperationsOnSuper, SuperConstructList) \
     v(OperationsOnSuper, SuperGet) \
@@ -200,6 +201,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnReExports, TryDefineLiveBinding) \
     v(OperationsOnReExports, TryReExportFields) \
     v(OperationsOnModulesThatFail, AbandonModuleEvaluation) \
+    v(OperationsOnModulesThatFail, IsLinkedBelow) \
     v(OperationsOnModulesThatFail, RecordRequire) \
     v(OperationsOnModulesThatFail, SeesMockOf) \
     v(OperationsOnModulesThatFail, StopLoadingBehindFile) \
@@ -288,6 +290,8 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatChangeArrays, ArraySpeciesCreate) \
     v(OperationsThatChangeArrays, ArraySplice) \
     v(OperationsThatChangeArrays, ArrayUnshift) \
+    v(OperationsThatChangeArrays, SetArrayLength) \
+    v(OperationsThatChangeArrays, SetArrayLengthInSloppyCode) \
     v(OperationsThatSearchArrays, ArrayIndexOfDouble) \
     v(OperationsThatSearchArrays, ArrayIndexOfInt32) \
     v(OperationsThatSearchArrays, ArrayIndexOfString) \
@@ -309,6 +313,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatMakeArrays, NewArrayIterator) \
     v(OperationsThatMakeArrays, NewArrayOfGiven) \
     v(OperationsThatMakeArrays, NewArrayOfHoles) \
+    v(OperationsThatMakeArrays, NewArrayOfList) \
     v(OperationsThatMakeArrays, NewArrayWithHoles) \
     v(OperationsThatMakeArrays, NewArrayWithHolesAtSite) \
     v(OperationsThatMakeArrays, NewArrayWithLengthAtReviewedSite) \

@@ -54,7 +54,7 @@ static PrimitiveKnownToFolding keyKnownWhereverAskedInStringKeys(const Walker& w
     return bound && bound.isRecord() ? primitiveKnownForStrings(walker, bound) : PrimitiveKnownToFolding();
 }
 
-static PropertyKeyID nameOfKnownKeyInStringKeys(const Walker& walker, PrimitiveKnownToFolding key)
+static ALWAYS_INLINE PropertyKeyID nameOfKnownKeyInStringKeys(const Walker& walker, PrimitiveKnownToFolding key)
 {
     const Program& program = walker.program();
     StringID text;

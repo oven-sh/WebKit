@@ -34,6 +34,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(stringTableTests) \
     v(arrayTests) \
     v(idSetTests) \
+    v(sharedArrayTests) \
     v(bodyTests) \
     v(readerTests)
 

@@ -32,6 +32,7 @@
 // The run is entered for a list that has an element: an empty list does not pay for what stands in front of a loop.
 // What a method makes it stores by an operation that takes a list whose vector is writable and has the place; a definition and a store are the same there. Where that says no, the definition as upstream writes it.
 
+$overriddenName = "reduce";
 export function reduceOfList(callback /*, initialValue */)
 {
     "use strict";
@@ -118,7 +119,8 @@ export function reduce(callback /*, initialValue */)
     }
     if (k >= length)
         return accumulator;
-    return $reduceFrom(array, length, callback, accumulator, k);
+    var answer = $reduceFrom(array, length, callback, accumulator, k);
+    return answer;
 }
 
 export function reduceRight(callback /*, initialValue */)
@@ -154,6 +156,7 @@ export function reduceRight(callback /*, initialValue */)
     return accumulator;
 }
 
+$overriddenName = "every";
 export function everyOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -228,9 +231,11 @@ export function every(callback /*, thisArg */)
     }
     if (i >= length)
         return true;
-    return $everyFrom(array, length, callback, thisArg, i);
+    var answer = $everyFrom(array, length, callback, thisArg, i);
+    return answer;
 }
 
+$overriddenName = "forEach";
 export function forEachOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -298,6 +303,7 @@ export function forEach(callback /*, thisArg */)
 }
 
 $alwaysInline;
+$overriddenName = "filter";
 export function filterOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -355,6 +361,29 @@ export function filterFrom(array, length, callback, thisArg, result, i, nextInde
     return result;
 }
 
+$linkTimeConstant;
+$alwaysInline;
+export function filterTruthy(array, length, result)
+{
+    "use strict";
+
+    var nextIndex = 0;
+    var i = 0;
+    if ($isJSArray(array) && $isJSArray(result)) {
+        var end = length >>> 0;
+        for (; i < end && $hasContiguousIndex(array, i); i++) {
+            var kept = $getOwnContiguousIndex(array, i);
+            if (kept) {
+                if (!$tryPutIndex(result, nextIndex, kept))
+                    $putByValDirect(result, nextIndex, kept);
+                ++nextIndex;
+            }
+        }
+    }
+    if (i < length)
+        $filterFrom(array, length, $Boolean, undefined, result, i, nextIndex);
+}
+
 export function filter(callback /*, thisArg */)
 {
     "use strict";
@@ -369,8 +398,12 @@ export function filter(callback /*, thisArg */)
     var result = $newArrayWithSpecies(0, array, length);
 
     var nextIndex = 0;
-    var i = 0;
-    if (length > 0 && $isJSArray(array) && $isJSArray(result)) {
+    var i = nextIndex;
+    if ($isJSArray(array) && $isJSArray(result)) {
+        if (callback === $Boolean) {
+            $filterTruthy(array, length, result);
+            return result;
+        }
         for (; i < length && $hasContiguousIndex(array, i); i++) {
             var kept = $getOwnContiguousIndex(array, i);
             if (callback.$call(thisArg, kept, i, array)) {
@@ -387,6 +420,7 @@ export function filter(callback /*, thisArg */)
     return result;
 }
 
+$overriddenName = "map";
 export function mapOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -400,12 +434,21 @@ export function mapOfList(callback /*, thisArg */)
     var thisArg = $argument(1);
     var result = $newArrayWithSpecies(length, array, length, undefined);
 
-    for (var i = 0; i < length; i++) {
-        if (!(i in array))
-            continue;
-        var mappedValue = callback.$call(thisArg, array[i], i, array);
-        $putByValDirect(result, i, mappedValue);
+    var i = 0;
+    if (length > 0 && $isJSArray(array) && $isJSArray(result)) {
+        for (; i < length && $hasContiguousIndex(array, i); i++) {
+            var made = callback.$call(thisArg, $getOwnContiguousIndex(array, i), i, array);
+            if (!$tryPutByValDirect(result, i, made)) {
+                if (!$tryPutIndex(result, i, made))
+                    $putByValDirect(result, i, made);
+                i++;
+                break;
+            }
+        }
     }
+    if (i >= length)
+        return result;
+    $mapFrom(array, length, callback, thisArg, result, i);
     return result;
 }
 
@@ -461,6 +504,7 @@ export function map(callback /*, thisArg */)
     return result;
 }
 
+$overriddenName = "some";
 export function someOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -531,9 +575,11 @@ export function some(callback /*, thisArg */)
     }
     if (i >= length)
         return false;
-    return $someFrom(array, length, callback, thisArg, i);
+    var answer = $someFrom(array, length, callback, thisArg, i);
+    return answer;
 }
 
+$overriddenName = "find";
 export function findOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -603,7 +649,8 @@ export function find(callback /*, thisArg */)
     }
     if (i >= length)
         return $undefined;
-    return $findFrom(array, length, callback, thisArg, i);
+    var answer = $findFrom(array, length, callback, thisArg, i);
+    return answer;
 }
 
 export function findLast(callback /*, thisArg */)
@@ -631,6 +678,7 @@ export function findLast(callback /*, thisArg */)
     return $undefined;
 }
 
+$overriddenName = "findIndex";
 export function findIndexOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -697,7 +745,8 @@ export function findIndex(callback /*, thisArg */)
     }
     if (i >= length)
         return -1;
-    return $findIndexFrom(array, length, callback, thisArg, i);
+    var answer = $findIndexFrom(array, length, callback, thisArg, i);
+    return answer;
 }
 
 export function findLastIndex(callback /*, thisArg */)

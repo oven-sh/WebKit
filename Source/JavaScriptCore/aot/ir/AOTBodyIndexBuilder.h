@@ -9,6 +9,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTIRFunction.h"
+#include "AOTOpcodeSets.h"
 #include <wtf/MallocSpan.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -49,22 +50,34 @@ struct BodyIndexTable::Worker {
     Vector<BodyMentionOfIteration> mentionsOfIterations;
 };
 
+inline constexpr OpcodeSet opcodesThatMayNameIterationsInBodyIndex {
+    Opcode::IteratorResume, Opcode::IteratorClose, Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::StepAsyncGenerator, Opcode::AwaitBySavingFrame, Opcode::AwaitCallBySavingFrame,
+    Opcode::YieldBySavingFrame, Opcode::AsyncGeneratorYield, Opcode::ReleaseHint
+};
+
 class BodyIndexBuilder {
     WTF_MAKE_NONCOPYABLE(BodyIndexBuilder);
 public:
     BodyIndexBuilder(const Function&, BodyIndexTable::Worker&);
+    BodyIndexBuilder(const Function&, BodyIndexTable&, unsigned worker);
 
     const BodyIndex& run();
+
+    void begin();
+    void fileBlock(BlockID, uint32_t wordOffset, uint32_t firstParameter, uint32_t numberOfParameters, uint32_t numberOfValues);
+    void fileOperation(ValueID, uint32_t wordOffset, Opcode);
+    void fileUse(ValueID used, BodyUseKind, uint32_t user);
+    void fileWhatFewOperationsBring(const BodyValue&, BlockID);
+    void fileTerminator(BlockID, uint32_t wordOffset);
+    void fileEdge(BlockID from, BodyTarget, uint32_t targetIndex, bool isHandlerEdge);
+    void fileProofs(BlockID from, const BodyTerminator&);
+    const BodyIndex& finish();
 
 private:
     using BlockPlace = BodyIndex::BlockPlace;
 
-    void allocate();
     void indexWords();
-    void noteUse(ValueID used, BodyUseKind, uint32_t user);
     void findParametersReadByReleaseHintsAlone();
-    void noteEdge(BlockID from, BodyTarget, uint32_t targetIndex, bool isHandlerEdge);
-    void noteProofs(const BodyBlock& from, const BodyTerminator&);
     void adoptLoops();
     void adoptMentionsOfIterations();
 
@@ -84,7 +97,47 @@ private:
     std::span<uint32_t> m_placesOfValues;
     std::span<uint32_t> m_onlyUsersOfValues;
     std::span<uint8_t> m_usesOfValues;
+    OpcodeSet m_opcodes;
 };
+
+ALWAYS_INLINE void BodyIndexBuilder::fileBlock(BlockID block, uint32_t wordOffset, uint32_t firstParameter, uint32_t numberOfParameters, uint32_t numberOfValues)
+{
+    static_assert(sizeof(Wire::ParameterHead) == sizeof(uint32_t));
+
+    m_worker.valuesGoneOver += numberOfParameters + numberOfValues;
+    BlockPlace& place = m_blocks[block.index()];
+    place.wordOffset = wordOffset;
+    place.firstParameter = firstParameter;
+    uint32_t placeOfParameter = BodyIndex::isParameterBit | (wordOffset + BodyBlock::numberOfHeadWords);
+    for (uint32_t parameter = firstParameter; parameter < firstParameter + numberOfParameters; ++parameter)
+        m_placesOfValues[parameter] = placeOfParameter++;
+}
+
+ALWAYS_INLINE void BodyIndexBuilder::fileOperation(ValueID value, uint32_t wordOffset, Opcode opcode)
+{
+    m_placesOfValues[value.index()] = wordOffset;
+    m_opcodes.add(opcode);
+}
+
+ALWAYS_INLINE void BodyIndexBuilder::fileTerminator(BlockID block, uint32_t wordOffset)
+{
+    m_blocks[block.index()].wordOffsetOfTerminator = wordOffset;
+}
+
+ALWAYS_INLINE void BodyIndexBuilder::fileUse(ValueID used, BodyUseKind kind, uint32_t user)
+{
+    static_assert(static_cast<unsigned>(BodyUseKind::BlockSubject) < (1u << (8 - BodyIndex::bitsOfUseCount)));
+
+    uint8_t& uses = m_usesOfValues[used.index()];
+    uint32_t count = uses & BodyIndex::maxCountedUses;
+    if (!count) {
+        uses = static_cast<uint8_t>(static_cast<unsigned>(kind) << BodyIndex::bitsOfUseCount | 1);
+        m_onlyUsersOfValues[used.index()] = user;
+        return;
+    }
+    if (count < BodyIndex::maxCountedUses)
+        ++uses;
+}
 
 } } } // namespace JSC::AOT::Typed
 

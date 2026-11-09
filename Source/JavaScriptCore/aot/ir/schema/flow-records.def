@@ -1,6 +1,6 @@
 enum InitializationState { | engine Unknown StoredBeforeEveryRead }
 enum ExecutionCount { | engine Unknown AtMostOnce }
-enum BaseState { | engine Unknown None Layout BuiltinClass }
+enum BaseState { | engine Unknown None Layout }
 enum BuiltinLocationState { | engine Unknown Constant }
 
 flags ObjectMutation {

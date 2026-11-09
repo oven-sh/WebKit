@@ -1,0 +1,51 @@
+# function sum(a, b, n) { if (typeof n !== "number" || (n | 0) !== n) return n; const product = a * b; let total = 0; for (let i = 0; i < n; i++) total += product; return total; }
+# Of what nobody knows the product is a number or a big integer; it is made in front of the loop, where nothing asks what it reckons with. A number and a big integer do not mix: the sum throws. So the
+# sum is a number wherever it answers, and comes round raw. Beside the number the product is expected to be one: it is tested, and what fails the test is a big integer, for which the sum throws:
+# nothing rejoins.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[product]]: number|bigint @JSValue = Mul
+# CHECK: ([[sum]]: number @Double, {{*}}) isInLoop=true isLoopHead=true:
+# CHECK: = TypeTest [[product]] testedType=number
+# CHECK: = Add [[sum]], {{*}}form=Numbers
+# CHECK: never @JSValue = Add
+# CHECK-NEXT: Unreachable
+# RUN(SHELL): run-in-shell globalThis.sink = sum => { print(sum(2, 3, 3)); print(sum("2", { valueOf() { return 4; } }, 3)); try { sum(2n, 3n, 3); } catch (error) { print(error.name); } print(sum(2n, 3n, 0)); };
+# SHELL: 18
+# SHELL-NEXT: 24
+# SHELL-NEXT: TypeError
+# SHELL-NEXT: 0
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="sum" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v2 testedType=i32
+    Branch v3 -> taken b1(| 0), notTaken b5()
+  b1(v4):
+    v5 = Mul v0, v1
+    v6 = Integer
+    v7 = Integer
+    Jump -> next b2(v6, v7)
+  b2(v8, v9):
+    LoopHint
+    v11 = Less v9, v4
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v12 = Add v8, v5
+    v13 = Increment v9
+    Jump -> next b2(v12, v13)
+  b4():
+    Return v8
+  b5():
+    Return v2
+}

@@ -13,6 +13,7 @@
 #include "AOTCurrentWork.h"
 #include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstanceLayout.h"
 #include "AOTObjectWords.h"
 #include "AOTOperationData.h"
@@ -59,7 +60,7 @@ static std::optional<uint32_t> unitIndexOfClosureEntry(uint32_t function)
     return static_cast<uint32_t>(index);
 }
 
-static std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers& numbers, NumberSpace space, std::span<const uint32_t> key)
+static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers& numbers, NumberSpace space, std::span<const uint32_t> key)
 {
     if (key.empty() || (hasOneIDAsKey(space) && key.size() != 1))
         return std::nullopt;
@@ -133,7 +134,6 @@ static std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers
     case NumberSpace::Allocation:
     case NumberSpace::Request:
     case NumberSpace::PropertyRun:
-    case NumberSpace::AtomOfComparedText:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
     case NumberSpace::Type:
@@ -215,7 +215,6 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
             return std::nullopt;
         return static_cast<int64_t>(InstanceLayout::offsetOfMethodTable(sizes)) + static_cast<int64_t>(*origin) * static_cast<int64_t>(sizeof(uint32_t));
     }
-    case NumberSpace::AtomOfComparedText:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
     case NumberSpace::Name:
@@ -247,7 +246,7 @@ ImageNumbers::ImageNumbers()
 
 ImageNumbers::~ImageNumbers() = default;
 
-ALWAYS_INLINE std::optional<uint32_t> ImageNumbers::numberOfInLine(NumberSpace space, std::span<const uint32_t> key) const
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInLine(NumberSpace space, std::span<const uint32_t> key) const
 {
     if (key.empty() || (hasOneIDAsKey(space) && key.size() != 1))
         return std::nullopt;
@@ -256,7 +255,6 @@ ALWAYS_INLINE std::optional<uint32_t> ImageNumbers::numberOfInLine(NumberSpace s
     case NumberSpace::Name:
         return m_identifiers->numberOf(PropertyKeyID(key[0]));
     case NumberSpace::NameOfText:
-    case NumberSpace::AtomOfComparedText:
         return m_identifiers->numberOfText(StringID(key[0]));
     case NumberSpace::String:
     case NumberSpace::ShownString:
@@ -395,7 +393,7 @@ std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<cons
     return numberOfInLine(space, key);
 }
 
-std::optional<uint32_t> ImageNumbers::valueOf(const Mention& mention, std::span<const uint32_t> mentionWords, bool asInstanceWord) const
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::valueOf(const Mention& mention, std::span<const uint32_t> mentionWords, bool asInstanceWord) const
 {
     if (asInstanceWord || mention.numberOfWords != 1)
         return valueOfSlowCase(mention, mentionWords, asInstanceWord);
@@ -407,7 +405,6 @@ std::optional<uint32_t> ImageNumbers::valueOf(const Mention& mention, std::span<
         number = m_identifiers->numberOf(PropertyKeyID(id));
         break;
     case NumberSpace::NameOfText:
-    case NumberSpace::AtomOfComparedText:
         number = m_identifiers->numberOfText(StringID(id));
         break;
     case NumberSpace::String:

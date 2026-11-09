@@ -120,6 +120,16 @@ Integer BuiltinCallEmitter::roundedQuotient(QuotientRounding rounding, Integer d
     return sub(truncated, zeroExtended(logicalAnd(isInexact, isNegative)));
 }
 
+void BuiltinCallEmitter::holdOperandsOfDivisionToToldRanges(const ValueContext& value, Integer dividend, Range dividends, Integer divisor, Range divisors)
+{
+    if (!emittersCheckProofs())
+        return;
+    auto liesIn = [&](Integer operand, Range told) {
+        return belowOrEqual(sub(operand, integer(told.minimum)), integer(told.maximum - told.minimum));
+    };
+    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(liesIn(dividend, dividends), liesIn(divisor, divisors)), std::nullopt, ProofSource::OtherOperation);
+}
+
 void BuiltinCallEmitter::generateDivideIntegers(const ValueContext& value)
 {
     Range dividends = typeOf(value->dividendOperand()).integers;
@@ -135,6 +145,7 @@ void BuiltinCallEmitter::generateDivideIntegers(const ValueContext& value)
 
     Integer dividend = integerOperand(value->dividendOperand());
     Integer divisor = integerOperand(value->divisorOperand());
+    holdOperandsOfDivisionToToldRanges(value, dividend, dividends, divisor, divisors);
     const Type& type = typeOf(value.id());
     if (!convertsToInt32) {
         defineAs(value, roundedQuotient(rounding, dividend, dividends, divisor, divisors), type);
@@ -227,6 +238,7 @@ void BuiltinCallEmitter::generateRemainderOfIntegers(const ValueContext& value)
 
     Integer dividend = integerOperand(value->dividendOperand());
     Integer divisor = integerOperand(value->divisorOperand());
+    holdOperandsOfDivisionToToldRanges(value, dividend, dividends, divisor, divisors);
     const Type& type = typeOf(value.id());
 
     std::optional<int64_t> constantDivisor;

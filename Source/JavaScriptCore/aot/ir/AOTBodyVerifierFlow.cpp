@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTVector.h"
@@ -1048,7 +1049,7 @@ void BodyVerifier::verifyEdges()
         fail(InternalErrorKind::InvalidHandler, sourceOfEdgeToHandlerBlock, { }, handlerBlockThatEdgeEnters.index());
 }
 
-ALWAYS_INLINE bool BodyVerifier::verifyEdge(const BodyBlock& from, const BodyTerminator& terminator, TakenByTargets takenByTargets, uint32_t targetIndex, BodyTarget target, const BodyBlock& to)
+ALWAYS_INLINE_INTO_OTHER_FILES bool BodyVerifier::verifyEdge(const BodyBlock& from, const BodyTerminator& terminator, TakenByTargets takenByTargets, uint32_t targetIndex, BodyTarget target, const BodyBlock& to)
 {
     if (target.block() == entryBlock) [[unlikely]] {
         fail(InternalErrorKind::EdgeToEntryBlock, from.id());
@@ -1129,7 +1130,7 @@ void BodyVerifier::verifyBlockRole(const BodyBlock& block)
         fail(InternalErrorKind::InvalidBlockRole, block.id(), subject);
 }
 
-ALWAYS_INLINE bool BodyVerifier::verifyTargetCount(const BodyBlock& block, const BodyTerminator& terminator)
+ALWAYS_INLINE_INTO_OTHER_FILES bool BodyVerifier::verifyTargetCount(const BodyBlock& block, const BodyTerminator& terminator)
 {
     std::optional<uint32_t> numberOfFixedTargets = numberOfFixedTargetsOf(terminator.kind());
     uint64_t expectedNumber = numberOfFixedTargets

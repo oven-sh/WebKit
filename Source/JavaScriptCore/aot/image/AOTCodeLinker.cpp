@@ -187,7 +187,6 @@ struct CodeLinker {
         AOT_NAME_OF_NUMBER_SPACE(Allocation)
         AOT_NAME_OF_NUMBER_SPACE(Request)
         AOT_NAME_OF_NUMBER_SPACE(PropertyRun)
-        AOT_NAME_OF_NUMBER_SPACE(AtomOfComparedText)
         AOT_NAME_OF_NUMBER_SPACE(ShownString)
         AOT_NAME_OF_NUMBER_SPACE(AtomOfString)
         AOT_NAME_OF_NUMBER_SPACE(Type)
@@ -413,8 +412,11 @@ struct CodeLinker {
             bool isApplied;
             if (relocation.space == SymbolSpace::InstanceWord && isFarInstanceWord(distance))
                 isApplied = applyToFarInstanceWord(piece, relocation, distance, numberOfDetoursTaken);
-            else
-                [[clang::always_inline]] isApplied = MacroAssembler::applyRelocation(relocation.kind, code, piece.start + relocation.offset, *target);
+            else {
+                isApplied = withKindAsConstant(relocation.kind, [&](auto kind) ALWAYS_INLINE_LAMBDA {
+                    [[clang::always_inline]] return MacroAssembler::applyRelocation(kind, code, piece.start + relocation.offset, *target);
+                });
+            }
             if (!isApplied) {
                 fail(piece, relocation, "its target is out of reach"_s);
                 continue;

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinOperationSupport.h"
+#include "AOTCheckedSpan.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTImageText.h"
@@ -148,6 +149,64 @@ static ALWAYS_INLINE void findNextMatch(JSGlobalObject* globalObject, RegExp* re
     match = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, source, static_cast<int>(start), &offsets);
 }
 
+class RunOfMatches {
+    WTF_FORBID_HEAP_ALLOCATION;
+    WTF_MAKE_NONCOPYABLE(RunOfMatches);
+public:
+    RunOfMatches(JSGlobalObject* globalObject, VM& vm, RegExp* regExp, JSString* string, StringView source)
+        : m_globalObject(globalObject)
+        , m_vm(vm)
+        , m_regExp(regExp)
+        , m_string(string)
+        , m_source(source)
+    {
+        if (regExp->hasImageCodeFor(source.is8Bit()) && (source.is8Bit() || !regExp->eitherUnicode()))
+            m_context.emplace(vm, regExp, Yarr::MatchFrom::VMThread);
+    }
+
+    ~RunOfMatches()
+    {
+        m_context.reset();
+        if (m_last)
+            m_globalObject->regExpGlobalData().recordMatch(m_vm, m_globalObject, m_regExp, m_string, m_last, false);
+    }
+
+    ALWAYS_INLINE void findNext(MatchResult& match)
+    {
+        if (m_context) [[likely]] {
+            uint64_t start = match.empty() ? advanceStringIndex(m_source, m_source.length(), match.end, m_regExp->eitherUnicode()) : match.end;
+            if (start > m_source.length()) {
+                match = MatchResult::failed();
+                return;
+            }
+            int found = m_source.is8Bit() ? m_regExp->executeImageCode(m_source.span8(), static_cast<unsigned>(start), *m_context) : m_regExp->executeImageCode(m_source.span16(), static_cast<unsigned>(start), *m_context);
+            if (found >= 0) [[likely]] {
+                match = MatchResult(found, m_regExp->ovectorSpan()[1]);
+                m_last = match;
+                return;
+            }
+            if (found == -1) {
+                match = MatchResult::failed();
+                return;
+            }
+            m_context.reset();
+            if (m_last)
+                m_globalObject->regExpGlobalData().recordMatch(m_vm, m_globalObject, m_regExp, m_string, m_last, false);
+            m_last = MatchResult::failed();
+        }
+        findNextMatch(m_globalObject, m_regExp, m_string, m_source, match);
+    }
+
+private:
+    JSGlobalObject* m_globalObject;
+    VM& m_vm;
+    RegExp* m_regExp;
+    JSString* m_string;
+    StringView m_source;
+    std::optional<Yarr::MatchingContextHolder> m_context;
+    MatchResult m_last { MatchResult::failed() };
+};
+
 static void recordLastMatch(JSGlobalObject* globalObject, VM& vm, RegExp* regExp, JSString* string, const Vector<unsigned, 128>& matches)
 {
     globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, MatchResult { matches[matches.size() - 2], matches.last() }, false);
@@ -190,10 +249,11 @@ static JSValue collectMatchesFrom(JSGlobalObject* globalObject, VM& vm, RegExpOb
     RETURN_IF_EXCEPTION(scope, { });
     globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, subject, match, false);
     unsigned count = 0;
+    RunOfMatches run(globalObject, vm, regExp, subject, source);
     do {
         array->putDirectIndex(globalObject, count++, jsSubstringOfResolved(vm, subject, match.start, match.end - match.start));
         RETURN_IF_EXCEPTION(scope, { });
-        findNextMatch(globalObject, regExp, subject, source, match);
+        run.findNext(match);
         RETURN_IF_EXCEPTION(scope, { });
     } while (match);
     return array;
@@ -546,15 +606,18 @@ static JSString* removeEveryMatch(JSGlobalObject* globalObject, VM& vm, JSString
     auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<Range<int32_t>, 64> kept;
     size_t endOfLastMatch = 0;
-    do {
-        if (endOfLastMatch < match.start) {
-            if (!kept.tryConstructAndAppend(endOfLastMatch, match.start)) [[unlikely]]
-                OUT_OF_MEMORY(globalObject, scope);
-        }
-        endOfLastMatch = match.end;
-        findNextMatch(globalObject, regExp, string, source, match);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    } while (match);
+    {
+        RunOfMatches run(globalObject, vm, regExp, string, source);
+        do {
+            if (endOfLastMatch < match.start) {
+                if (!kept.tryConstructAndAppend(endOfLastMatch, match.start)) [[unlikely]]
+                    OUT_OF_MEMORY(globalObject, scope);
+            }
+            endOfLastMatch = match.end;
+            run.findNext(match);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        } while (match);
+    }
     if (!endOfLastMatch)
         return string;
     if (endOfLastMatch < source.length()) {
@@ -570,14 +633,17 @@ static JSString* replaceEveryMatchWithPlainText(JSGlobalObject* globalObject, VM
     Vector<Range<int32_t>, 16> kept;
     size_t endOfLastMatch = 0;
     int matches = 0;
-    do {
-        if (!kept.tryConstructAndAppend(endOfLastMatch, match.start)) [[unlikely]]
-            OUT_OF_MEMORY(globalObject, scope);
-        ++matches;
-        endOfLastMatch = match.end;
-        findNextMatch(globalObject, regExp, string, source, match);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    } while (match);
+    {
+        RunOfMatches run(globalObject, vm, regExp, string, source);
+        do {
+            if (!kept.tryConstructAndAppend(endOfLastMatch, match.start)) [[unlikely]]
+                OUT_OF_MEMORY(globalObject, scope);
+            ++matches;
+            endOfLastMatch = match.end;
+            run.findNext(match);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        } while (match);
+    }
     if (endOfLastMatch < source.length()) {
         if (!kept.tryConstructAndAppend(endOfLastMatch, source.length())) [[unlikely]]
             OUT_OF_MEMORY(globalObject, scope);
@@ -596,7 +662,8 @@ static JSString* replaceEveryMatchWithTemplate(JSGlobalObject* globalObject, VM&
     appendReplacementUsingTemplate(firstReplacement, parts.span(), replacementText, source, offsets, regExp);
     if (firstReplacement.hasOverflowed()) [[unlikely]]
         OUT_OF_MEMORY(globalObject, scope);
-    findNextMatch(globalObject, regExp, string, source, match);
+    RunOfMatches run(globalObject, vm, regExp, string, source);
+    run.findNext(match);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!match) {
         auto resolved = string->value(globalObject);
@@ -616,7 +683,7 @@ static JSString* replaceEveryMatchWithTemplate(JSGlobalObject* globalObject, VM&
         if (result.hasOverflowed()) [[unlikely]]
             OUT_OF_MEMORY(globalObject, scope);
         endOfLastMatch = match.end;
-        findNextMatch(globalObject, regExp, string, source, match);
+        run.findNext(match);
         RETURN_IF_EXCEPTION(scope, nullptr);
     } while (match);
     result.append(source.substring(endOfLastMatch));
@@ -748,7 +815,7 @@ RegExpEntrypoints regExpEntrypointsOf(VM& vm, const ImageRegExp& record)
 {
     RELEASE_ASSERT(record.form() == RegExpRecordForm::Code);
     std::span<const uint8_t> code = vm.aotState().image->regExpCode();
-    return { code.subspan(record.codeFor8Bit).data(), code.subspan(record.codeFor16Bit).data() };
+    return { checkedSubspan(code, record.codeFor8Bit).data(), checkedSubspan(code, record.codeFor16Bit).data() };
 }
 
 static std::span<const uint8_t> detailsOf(VM& vm, const ImageRegExp& record)

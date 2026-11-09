@@ -35,6 +35,7 @@ struct ShapeTestsKeptAcrossUnits {
 
     const ShapeTable* table { nullptr };
     std::array<Entry, 1 << numberOfBits> entries;
+    UncheckedKeyHashMap<LayoutSetID, bool> setsThatMayBearMark;
 };
 
 class ShapeTestEmitter final : public OperationEmitter {
@@ -91,6 +92,7 @@ private:
         uint64_t headOfHashedSet;
     };
     BitSetConstant bitSetConstant(LayoutSetID tested);
+    ShapeTestsKeptAcrossUnits& testsKeptAcrossUnits();
     ShapeTestsKeptAcrossUnits::Entry& entryKeptAcrossUnits(uint64_t testedAndKnown);
 
     LayoutSetID m_setWhoseShapesAreKept;

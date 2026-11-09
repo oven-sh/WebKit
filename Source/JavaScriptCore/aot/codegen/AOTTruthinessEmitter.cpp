@@ -161,7 +161,13 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
         m_out.appendTo(isCellCase);
         CellPointer cell = unboxCell(value);
         Condition isTruthyObject = isObjectCell(cell);
-        m_out.branch(isTruthyObject.value(), targets.taken, rareEdge(otherwise));
+        if (generator().isLayingOutTurns()) {
+            LBasicBlock isOtherCell = newBlock();
+            m_out.branch(isTruthyObject.value(), targets.taken, normalEdge(isOtherCell));
+            m_out.appendTo(isOtherCell);
+            branch(isTruthyCell(cell, type), targets);
+        } else
+            m_out.branch(isTruthyObject.value(), targets.taken, rareEdge(otherwise));
         m_out.appendTo(isOtherCase.block());
     }
     if (expectsSmallValues) {

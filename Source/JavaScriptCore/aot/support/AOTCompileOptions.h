@@ -28,6 +28,7 @@ using Wire::ImageForm;
 using Wire::OutputOptions;
 using Wire::ReferenceWidth;
 using Wire::ReportSet;
+using Wire::TestingLie;
 using Wire::TestingSwitch;
 
 template<typename Flags>
@@ -113,6 +114,7 @@ struct CompileOptions {
     bool asksWhetherLinkFindsLessFromMore { false };
     ReportSet reports { };
     TestingSwitch testing { };
+    TestingLie lies { };
     uint32_t rowThatSaysLess { 0 };
     uint32_t seedOfShuffles { 0 };
     uint32_t periodOfGuessesThatFail { 0 };

@@ -805,7 +805,8 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
-    RETURN_IF_EXCEPTION(scope, false);
+    if (Exception* exception = scope.exception(); exception && !vm.isTerminationException(exception)) [[unlikely]]
+        return false;
     holdClosureToLackingNameSlowCase(vm, closure, name.uid());
     if (classLayout) {
         classes.holdMemberToProof(vm, *classLayout, ClassSide::Static, closure, name.uid());
@@ -866,7 +867,10 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
     if (classLayout && object->getPrototypeDirect() != prototype)
         closure->state().objects->classes.didChangePrototypeLink(*classLayout, ClassSide::Static);
     JSValue prototypeBefore = object->getPrototypeDirect();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool result = Base::setPrototype(object, globalObject, prototype, shouldThrow);
+    if (Exception* exception = scope.exception(); exception && !vm.isTerminationException(exception)) [[unlikely]]
+        return false;
     if (object->getPrototypeDirect() != prototypeBefore)
         holdClosureToItsPrototype(vm, closure);
     if (classLayout)

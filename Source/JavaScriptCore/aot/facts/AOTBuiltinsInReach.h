@@ -59,6 +59,7 @@ public:
     void noteNativeCodeMayHoldObjects();
     void noteNameRead(PropertyKeyID);
     void noteNameCalled(PropertyKeyID, bool mayPassOperands);
+    void noteNameCalledByNativeCodeOffUnseenObjects(PropertyKeyID);
     void noteNameSpelledByProgram(PropertyKeyID);
     void noteReadUnderKeyNobodyKnows();
     void noteReadUnderKeyNobodyKnowsOff(BuiltinID canonicalHolder);
@@ -116,7 +117,6 @@ public:
     void noteReadThroughLostBuiltins(PropertyKeyID);
     void noteClimbFromLostBuiltins();
     void noteClimbFromUnseenObjects();
-    void noteOperandsHandedToCalleeNobodyKnows();
     void noteLost(BuiltinID);
     void noteAtUnseen(BuiltinID);
     void noteOptionThatRunsCodePassed(BuiltinID);

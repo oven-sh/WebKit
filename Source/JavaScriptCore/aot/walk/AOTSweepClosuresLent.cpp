@@ -46,9 +46,14 @@ bool unitMayLendWhatItMakes(const Program& program, CodeUnit unit)
     return !isBodyOfCoroutine(unit.role, isCoroutine) && !(isCoroutine && walksInputBody(unit.role));
 }
 
+bool closuresOfFunctionMayBeLent(const Program& program, FunctionID function)
+{
+    return !program.at(function).calleeParameterIndex();
+}
+
 bool closureHasCellThatMayBeLent(const Program& program, ClosureForm form, FunctionID function)
 {
-    return (form == ClosureForm::Slim || form == ClosureForm::Full) && !program.at(function).calleeParameterIndex();
+    return (form == ClosureForm::Slim || form == ClosureForm::Full) && closuresOfFunctionMayBeLent(program, function);
 }
 
 bool functionEnteredOnlyCallsWhatArrivesAt(const Facts& facts, CodeRole role, uint32_t numberOfBoundArguments, FunctionID function, uint32_t position)

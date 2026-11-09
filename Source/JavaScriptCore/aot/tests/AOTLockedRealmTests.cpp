@@ -227,6 +227,7 @@ constexpr ASCIILiteral scriptsReturningTrue[] = {
 };
 
 constexpr ASCIILiteral pristineArrays[] = {
+    "(a => (a[Symbol('x')] = 1, a))([1, 2])"_s,
     "[]"_s, "[1]"_s, "[1.5]"_s, "['a']"_s, "[, 1]"_s, "[1, 2, 3]"_s, "new Array(5)"_s, "Array.of(1)"_s,
     "(a => (a.push(1), a))([])"_s,
     "(a => (a.push(1, 1.5), a))([])"_s,
@@ -291,6 +292,7 @@ constexpr ASCIILiteral pristineArraysInArrayStorage[] = {
 constexpr ASCIILiteral pristinePromises[] = {
     "Promise.resolve(1)"_s, "new Promise(() => { })"_s, "(async () => { })()"_s,
     "(p => (p.foo = 1, p))(Promise.resolve(1))"_s,
+    "(p => (p[Symbol('x')] = 1, p))(Promise.resolve(1))"_s,
 };
 
 constexpr ASCIILiteral pristineCollectionsAndRegExps[] = {
@@ -300,12 +302,14 @@ constexpr ASCIILiteral pristineCollectionsAndRegExps[] = {
 constexpr ASCIILiteral pristineTypedArrays[] = {
     "new Uint8Array(2)"_s, "new Float64Array(2)"_s, "new Uint8Array(new ArrayBuffer(8), 2)"_s,
     "(u => (u.foo = 1, u))(new Uint8Array(2))"_s,
+    "(u => (u[Symbol('x')] = 1, u))(new Uint8Array(2))"_s,
 };
 
 constexpr ASCIILiteral pristineIterators[] = {
     "[1].values()"_s, "[1][Symbol.iterator]()"_s, "new Map().entries()"_s, "new Set().values()"_s, "'a'[Symbol.iterator]()"_s, "'a'.matchAll(/a/g)"_s,
     "[1].values().map(x => x)"_s, "Iterator.from({ next() { } })"_s,
     "(i => (i.foo = 1, i))([1].values())"_s,
+    "(i => (i[Symbol('x')] = 1, i))([1].values())"_s,
 };
 
 constexpr ASCIILiteral instancesOfOtherClasses[] = {
@@ -318,6 +322,21 @@ constexpr ASCIILiteral nonPristineValues[] = {
     "(a => (a.hasOwnProperty = 1, a))([1, 2])"_s,
     "(a => (a[Symbol.iterator] = function () { }, a))([1, 2])"_s,
     "(a => (a[Symbol.for('x')] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.isConcatSpreadable] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.toPrimitive] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.asyncIterator] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.hasInstance] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.match] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.matchAll] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.replace] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.search] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.species] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.split] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.toStringTag] = 1, a))([1, 2])"_s,
+    "Object.defineProperty([1, 2], Symbol.unscopables, { value: 1 })"_s,
+    "(a => (a[Symbol.dispose ?? Symbol.iterator] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.asyncDispose ?? Symbol.iterator] = 1, a))([1, 2])"_s,
+    "(() => { class Base { constructor(a) { return a; } } class Stamp extends Base { #name = 1; } return new Stamp([1, 2]); })()"_s,
     "(a => (a.toJSON = function () { }, a))([1, 2])"_s,
     "(a => (a.then = function () { }, a))([1, 2])"_s,
     "Object.setPrototypeOf([1, 2], null)"_s,
@@ -345,6 +364,8 @@ constexpr ASCIILiteral nonPristineValues[] = {
 
 constexpr CachedStoreCase cachedStoreCases[] = {
     { "storeTwice(new Function('a', 'a.tag = 1; a.other = 2; return a;'))"_s, true },
+    { "storeTwice((() => { const s = Symbol('x'); return a => { a.tag = 1; a[s] = 2; return a; }; })())"_s, true },
+    { "storeTwice((() => { const s = Symbol.iterator; return a => { a.tag = 1; a[s] = 2; return a; }; })())"_s, false },
     { "storeTwice(new Function('a', 'a.tag = 1; a.map = function () { }; return a;'))"_s, false },
     { "storeTwice(new Function('a', 'a.tag = 1; a.push = function () { }; return a;'))"_s, false },
     { "storeTwice(new Function('a', 'a.tag = 1; a.then = function () { }; return a;'))"_s, false },
@@ -600,6 +621,7 @@ static void testPrototypeGainsNameOfPristineArray()
 {
     Realms realms;
     AOT_TEST_CHECK(isPristine(realms.vm(), realms.evaluate(realms.locked(), "(a => (a.late = 1, Array.prototype.late = 2, a))([1, 2])"_s)));
+    AOT_TEST_CHECK(!isPristine(realms.vm(), realms.evaluate(realms.locked(), "(s => { try { Array.prototype[s] = 1; } catch { return { }; } const a = [1, 2]; a[s] = 1; return a; })(Symbol('x'))"_s)));
 }
 
 static void testOriginalArrayStructuresArePristine()

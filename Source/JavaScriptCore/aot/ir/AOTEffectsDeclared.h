@@ -23,8 +23,8 @@ public:
     {
     }
 
-    void reads(const MemoryLocation& location) { m_effects.reads.add(m_program, location); }
-    void writes(const MemoryLocation& location) { m_effects.writes.add(m_program, location); }
+    ALWAYS_INLINE void reads(const MemoryLocation& location) { m_effects.reads.add(m_program, location); }
+    ALWAYS_INLINE void writes(const MemoryLocation& location) { m_effects.writes.add(m_program, location); }
     void readsAllHeaps() { m_effects.reads = LocationMasks::top(); }
     void throws() { m_effects.mayThrow = true; }
     void collects() { m_effects.mayCollect = true; }

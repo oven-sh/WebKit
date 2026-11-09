@@ -19,8 +19,8 @@ class Walker;
 using DefinitionsInScanOfStrings = ScopedLambda<BodyValue(ValueID)>;
 
 void notePathsOfModulesReadInScan(const BodyValue&, SummaryBeingMade&);
-PropertyKeyID nameKeyOfAccessInScan(const Program&, PrimitiveKnownToFolding held, const BodyValue& definition, NOESCAPE const DefinitionsInScanOfStrings& definitionOf, StringID& beginning);
-StringID textThatValueBeginsWith(const Program&, BodyValue definition, NOESCAPE const DefinitionsInScanOfStrings& definitionOf);
+PropertyKeyID nameKeyOfAccessInScan(const Program&, PrimitiveKnownToFolding held, const BodyValue& definition, NOESCAPE const DefinitionsInScanOfStrings& definitionOf, Vector<uint32_t>& beginningsFound, StringID& beginning);
+StringID textThatValueBeginsWith(const Program&, BodyValue definition, NOESCAPE const DefinitionsInScanOfStrings& definitionOf, Vector<uint32_t>& beginningsFound);
 void finishListsOfStringsInScan(SummaryBeingMade&);
 
 bool keyThatBeginsSoMayNamePrototypeLink(const Program&, const SummaryAccess&);

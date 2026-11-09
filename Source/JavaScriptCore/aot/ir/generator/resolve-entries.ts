@@ -690,6 +690,7 @@ export function resolveInlineBuiltins(scope: Scope, declarations: readonly Decla
         effects,
         family,
         hasOptionalSlowPath: declaration.hasOptionalSlowPath,
+        reckonsInLine: declaration.reckonsInLine,
         location: name.location,
       });
     }

@@ -142,9 +142,11 @@ static void generatePropGet(StraightEmitter& emitter, const BodyValue& value)
     }
     PropertyKeyID key = value.key();
     bool hasStubOfItsOwn = emitter.program().nameClassOf(key) == NameClass::Length || isSymbolOfRealmInStraightForm(emitter, key);
-    if (std::optional<NumberedImmediate> answers = hasStubOfItsOwn ? std::nullopt : answersAtSiteInStraightAccess(emitter, value, key, SiteUse::Read)) {
-        StubKey atSite = namesSizeOfTables(emitter.program(), emitter.facts(), key) ? readSizeOfTableAtSite()
-            : emitter.plan().slots().someLayoutWrittenInHasField(emitter.program().at(emitter.function()).module, key) ? readAtSite(ReceiverAtSite::IsAnyValue) : readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue);
+    const bool readsSizeOfTable = namesSizeOfTables(emitter.program(), emitter.facts(), key);
+    const bool asksShapeFirst = emitter.plan().slots().someLayoutWrittenInHasField(emitter.program().at(emitter.function()).module, key);
+    const SiteUse use = !readsSizeOfTable && !asksShapeFirst && emitter.plan().slots().someLayoutHasField(key) ? SiteUse::ReadUnderNameOfField : SiteUse::Read;
+    if (std::optional<NumberedImmediate> answers = hasStubOfItsOwn ? std::nullopt : answersAtSiteInStraightAccess(emitter, value, key, use)) {
+        StubKey atSite = readsSizeOfTable ? readSizeOfTableAtSite() : asksShapeFirst ? readAtSite(ReceiverAtSite::IsAnyValue) : readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, use);
         emitter.callStub(value, atSite, { value.objectOperand() }, { .numberedImmediate = *answers });
         emitter.define(value);
         emitter.countReadThatAsksItsSite();

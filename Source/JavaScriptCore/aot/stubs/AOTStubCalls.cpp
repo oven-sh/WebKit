@@ -10,6 +10,7 @@
 
 #include "AOTCompiledCode.h"
 #include "AOTImageFormat.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubsPropertyKeys.h"
@@ -114,7 +115,7 @@ StubCalls::StubCalls(const StubCatalog& catalog, RelocationRecorder& relocations
 {
 }
 
-ALWAYS_INLINE StubCalls::ResolvedKey StubCalls::resolveKey(StubKey key, std::optional<uint32_t> immediate) const
+ALWAYS_INLINE_INTO_OTHER_FILES StubCalls::ResolvedKey StubCalls::resolveKey(StubKey key, std::optional<uint32_t> immediate) const
 {
     const RememberedStubKey& remembered = rememberStubKey(m_rememberedKeys, m_catalog, key);
     if (immediate && remembered.bindsImmediate)
@@ -123,7 +124,7 @@ ALWAYS_INLINE StubCalls::ResolvedKey StubCalls::resolveKey(StubKey key, std::opt
     return { key, immediate };
 }
 
-ALWAYS_INLINE StubKey StubCalls::prepare(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate)
+ALWAYS_INLINE_INTO_OTHER_FILES StubKey StubCalls::prepare(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate)
 {
     auto [finalKey, immediateToMove] = resolveKey(key, immediate);
     if (immediateToMove) {
@@ -208,7 +209,7 @@ uint32_t StubCalls::indexOf(Typed::CodeUnit callee)
     return result.iterator->value;
 }
 
-ALWAYS_INLINE uint32_t StubCalls::emitCall(CCallHelpers&, StubKey called, CodeSymbol symbol, const RecordedCall& record)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t StubCalls::emitCall(CCallHelpers&, StubKey called, CodeSymbol symbol, const RecordedCall& record)
 {
     if (m_registerFilledInFrontOfNextCall) [[unlikely]] {
         const StubSignature signature = signatureOf(called);

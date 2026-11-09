@@ -406,6 +406,7 @@ protected:
 #endif
 #if ENABLE(AOT)
     void forgetCachedResolutions() { m_resolutionCache.clear(); }
+    void keepImportAsLinked(UniquedStringImpl* localName, const Resolution&);
 #endif
 
 private:
@@ -462,6 +463,9 @@ private:
     // and (2) if we cache all the attempts the size of the map becomes infinitely large.
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
     Resolutions m_resolutionCache;
+#if ENABLE(AOT)
+    Resolutions m_importsAsLinked;
+#endif
 
 protected:
     WriteBarrier<JSModuleEnvironment> m_moduleEnvironment;

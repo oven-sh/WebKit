@@ -188,9 +188,8 @@ private:
 
     void readTesting(CompileOptions& options)
     {
-        if (m_wire.reserved)
-            reportInvalid(m_wire.reserved);
         options.testing = m_wire.testing;
+        options.lies = m_wire.lies;
         options.recorded.verifiesFastPathAnswers = hasFlag(m_wire.testing, TestingSwitch::CheckWalkAtRunTime);
         if (m_wire.rowThatSaysLess && !hasFlag(m_wire.testing, TestingSwitch::RowSaysLess))
             reportInvalid(m_wire.rowThatSaysLess);

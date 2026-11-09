@@ -152,6 +152,14 @@ static bool listPlacesThatTakeCaptureInLinkCallbacks(const BodyReadInLinkCallbac
     return true;
 }
 
+static bool isHeldAgainstBuiltinInLinkCallbacks(const BodyIndex& index, const BodyValue& comparison, uint32_t operandIndex)
+{
+    if (comparison.opcode() != Opcode::StrictEq)
+        return false;
+    ValueID other = comparison.operand(operandIndex ? 0 : 1);
+    return other && !index.isParameter(other) && index.opcodeOf(other) == Opcode::Builtin;
+}
+
 static bool isOnlyCalledInLinkCallbacks(const BodyReadInLinkCallbacks& body, ValueID parameter, MentionsInLinkCallbacks& found)
 {
     const BodyIndex& index = body.index;
@@ -207,7 +215,7 @@ static bool isOnlyCalledInLinkCallbacks(const BodyReadInLinkCallbacks& body, Val
                     doesMore |= !listPlacesThatTakeCaptureInLinkCallbacks(body, value, operandIndex, found.placesHandedTo);
                 } else if (handsOnInLinkCallbacks(opcode, operandIndex))
                     handsOn = true;
-                else if (!looksInLinkCallbacks.contains(opcode))
+                else if (!looksInLinkCallbacks.contains(opcode) && !isHeldAgainstBuiltinInLinkCallbacks(index, value, operandIndex))
                     doesMore = true;
             });
             if (handsOn)

@@ -135,7 +135,7 @@ static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, V
     if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && !saysNothingInNarrowingOfGuesses(types, typeSeenToArriveInNarrowingOfGuesses(walker, input.index())))
         return false;
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
-    if (names.empty() || walker.onlyLayoutInSightWithAllNames(names, walker.isInLoop() && names.size() > 1) != expected)
+    if (names.empty() || walker.onlyLayoutInSightWithAllNames(names, walker.isInLoop() && names.size() > 1, { }, walker.numberOfLongListOfNamesUsedOff(input, names)) != expected)
         return false;
     if (someCastStatesLayoutInNarrowingOfGuesses(walker, input, expected))
         return false;
@@ -269,7 +269,7 @@ static void cutExpectationByTestedField(Walker& walker, ValueID input, TypeID& f
     }
 }
 
-void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool& isDeclared)
+void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool& isDeclared, bool restsOnNamesUsedAlone)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     TypeArena& types = walker.types();
@@ -293,7 +293,8 @@ void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool
             meetWithWhatWasSeenToArriveInNarrowingOfGuesses(walker, input.index(), found);
         return;
     }
-    if (restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(walker, input, definition, found))
+    bool arrivesAtJoin = definition.isParameter() && index.blockOf(input) != entryBlock && !restsOnNamesUsedAlone;
+    if (!arrivesAtJoin && restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(walker, input, definition, found))
         found = { };
 }
 

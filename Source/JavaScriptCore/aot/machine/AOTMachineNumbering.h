@@ -119,6 +119,7 @@ public:
     }
     JS_EXPORT_PRIVATE void addPurePatch(const NumberingKeyOfPurePatch&, PatchOperation*);
     JS_EXPORT_PRIVATE void addInPlaceOfPurePatch(const NumberingKeyOfPurePatch&, Operation* phi);
+    JS_EXPORT_PRIVATE void addInPlaceOfReadOfMemory(const NumberingKeyOfPurePatch&, Operation* phi, HeapIndex);
 
     void didWrite(HeapIndex heap)
     {
@@ -317,6 +318,12 @@ private:
         return time;
     }
     bool patchWasEndedByWrite(const Entry&) const;
+    struct ReadThatPhiStandsFor {
+        const Operation* phi;
+        const Operation* operand;
+        HeapIndex heap;
+    };
+    const ReadThatPhiStandsFor* readThatPhiStandsFor(const Operation* phi) const;
     JS_EXPORT_PRIVATE void makeTimesOfWrites();
     JS_EXPORT_PRIVATE void didWriteListedHeaps(std::span<const HeapIndex>);
     JS_EXPORT_PRIVATE void growBuckets();
@@ -343,6 +350,7 @@ private:
     std::span<TimesOfWrites> m_timesOfWrites;
     ArenaVector<SuspendedBlock> m_suspendedBlocks;
     ArenaVector<uint32_t> m_placeOfSuspendedBlock;
+    ArenaVector<ReadThatPhiStandsFor> m_readsThatPhisStandFor;
 
     ArenaVector<Entry> m_withoutPosition;
     ArenaVector<uint32_t> m_bucketsWithoutPosition;

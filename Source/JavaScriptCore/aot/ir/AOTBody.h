@@ -291,7 +291,7 @@ public:
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
-    std::optional<uint32_t> writtenPosition() const
+    ALWAYS_INLINE std::optional<uint32_t> writtenPosition() const
     {
         if (writtenPositionRole() != WrittenPositionRole::WhereWritten)
             return std::nullopt;
@@ -341,6 +341,7 @@ private:
     JS_EXPORT_PRIVATE Origin originWithSecondPosition() const;
     ValueID operandFoundByCase(uint32_t operandIndex) const;
     std::span<const ValueID> variadicOperandsFoundByCase() const;
+    std::span<const ValueID> variadicOperandsBy(uint64_t outline) const;
 
     const uint32_t* m_words { nullptr };
     const UnitIDRemap* m_unit { nullptr };

@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLayout.h"
 #include "AOTNameClass.h"
 #include "AOTOperationData.h"
@@ -207,7 +208,7 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    void checkClassParts(ClassPartsID parts)
+    ALWAYS_INLINE void checkClassParts(ClassPartsID parts)
     {
         if (!parts)
             return;
@@ -268,6 +269,8 @@ void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const Functi
         checker.checkRequired(functionType);
     for (BuiltinID member : function.builtinMembers)
         checker.checkRequired(member);
+    for (StringID specifier : function.originalsAskedFor)
+        checker.checkRequired(specifier);
 }
 
 void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const TypeSite& site)
@@ -616,7 +619,7 @@ std::optional<InternalError> findFieldError(const Program& program, LayoutID id,
 
 } // anonymous namespace
 
-bool isValidPropertyKey(const PropertyKey& key)
+ALWAYS_INLINE_INTO_OTHER_FILES bool isValidPropertyKey(const PropertyKey& key)
 {
     bool hasCreationSite = key.module || key.callNumber;
     switch (key.kind) {
@@ -953,9 +956,9 @@ void ProgramVerifier::verifyVariables()
     }
 }
 
-bool ProgramVerifier::runOnModulesNamedInBodies()
+bool ProgramVerifier::runOnModulesNamedInBodies(Vector<MentionInCode>&& mentionsInBodies)
 {
-    verifyModulesNamedInBodies();
+    verifyModulesNamedInBodies(WTF::move(mentionsInBodies));
     return !hasFailed();
 }
 
@@ -964,9 +967,9 @@ bool verifyRecords(const Program& program, BuildContext& build)
     return ProgramVerifier(program, build).run();
 }
 
-bool verifyModulesNamedInBodies(const Program& program, BuildContext& build)
+bool verifyModulesNamedInBodies(const Program& program, BuildContext& build, Vector<MentionInCode>&& mentionsInBodies)
 {
-    return ProgramVerifier(program, build).runOnModulesNamedInBodies();
+    return ProgramVerifier(program, build).runOnModulesNamedInBodies(WTF::move(mentionsInBodies));
 }
 
 } } } // namespace JSC::AOT::Typed

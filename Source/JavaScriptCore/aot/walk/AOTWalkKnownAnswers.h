@@ -408,7 +408,7 @@ public:
     void noteConversion(Reference value, Representation wanted, Reference converted, bool endsAtSuspension);
     Reference findConversion(Reference value, Representation wanted) const;
 
-    void endWhatIsWritten(const Effects& effects, const WalkState& state)
+    ALWAYS_INLINE void endWhatIsWritten(const Effects& effects, const WalkState& state)
     {
         if (!m_held)
             return;
@@ -447,6 +447,8 @@ public:
 
 private:
     struct Held {
+        Held() { }
+
         SetOfAnswersForGood forGood;
         SetOfAnswersForGood untilSuspension;
         SetOfAnswersForGood outcomes;

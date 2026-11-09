@@ -176,6 +176,8 @@ public:
         Range dividends = typeOf(value->leftOperand()).integers;
         bool mayBeNegative = dividends.minimum < 0;
         bool mayOverflow = dividends.minimum <= (std::is_same_v<T, Word32> ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int64_t>::min());
+        if (checksProofs() && !mayOverflow)
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, greaterThanOrEqual(dividend, constant<T>(dividends.minimum)), std::nullopt, ProofSource::OtherOperation);
         auto zeroWithSignOfDividend = [&] {
             return mayBeNegative ? select(lessThan(dividend, constant<T>(0)), number(-0.0), number(0)) : number(0);
         };
@@ -257,8 +259,18 @@ public:
         if (constantWholeDivisor)
             join.add(toNumber(remainderOfNonNegative(nonNegativeIntegerOrElse(dividend, genericPath), integer(*constantWholeDivisor))));
         else {
-            Word32 wholeDividend = nonNegativeInt32OrElse(dividend, genericPath);
-            Word32 wholeDivisor = nonNegativeInt32OrElse(divisor, genericPath);
+#if CPU(ARM64)
+            if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(build().targetFeatures())) {
+                LBasicBlock widerPath = newBlock();
+                Word32 narrowDividend = nonNegativeInt32OrElse(dividend, widerPath);
+                Word32 narrowDivisor = nonNegativeInt32OrElse(divisor, widerPath);
+                branchUnless(isNotZero(narrowDivisor), genericPath);
+                join.add(toNumber(remainderOfNonNegative(narrowDividend, narrowDivisor)));
+                m_out.appendTo(widerPath);
+            }
+#endif
+            Integer wholeDividend = nonNegativeIntegerOrElse(dividend, genericPath);
+            Integer wholeDivisor = nonNegativeIntegerOrElse(divisor, genericPath);
             branchUnless(isNotZero(wholeDivisor), genericPath);
             join.add(toNumber(remainderOfNonNegative(wholeDividend, wholeDivisor)));
         }

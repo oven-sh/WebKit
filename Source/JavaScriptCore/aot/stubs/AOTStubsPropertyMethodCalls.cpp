@@ -109,6 +109,7 @@ static void emitCallMethodById(StubAssembler& jit, unsigned lentArguments)
     loadWordBehindKeyInAccessTable(jit, inTable, OBJECT_OFFSETOF(AccessTable::Read, keyOfOtherAnswer), calleeGPR, spare, isNotInAccessTable);
     Jump hasForm = jit.branchTest64(CCallHelpers::NonZero, calleeGPR, TrustedImm32(AccessTable::answerHasForm));
     jit.load64(Address(calleeGPR), calleeGPR);
+    readsByStub.append(jit.branchTest64(CCallHelpers::Zero, calleeGPR));
     filesNothing.append(jit.branchIfNotCell(calleeGPR));
     loadClosureWordOfThisRealm(jit, calleeGPR, registers, filesNothing);
     jit.move(TrustedImm64(ClosureWord::minWordOfCalleeTaking(count)), registers.scratch);

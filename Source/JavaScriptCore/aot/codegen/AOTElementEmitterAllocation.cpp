@@ -155,7 +155,129 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         site->append(*kindAtSite);
         return newLiteralAtSite(value, formAtSite, site->span());
     }
+    if (std::optional<Integer> room = length && length <= maxInlineArrayLiteralLength ? takeRoomAskedRightBehind(value) : std::nullopt)
+        return newLiteralWithRoom(value, elements, form, *room);
     return newArrayInForm(value, elements, length ? form : formAtSite);
+}
+
+static constexpr OpcodeSet opcodesThatAppendManyToLists { Opcode::AppendElements, Opcode::AppendIterable, Opcode::AppendMembers, Opcode::AppendValuesOfMap };
+
+bool ArrayAllocationEmitter::isLeftToSpreadRightBehind(BlockID block, ValueID literal, const Operation& operation, std::span<const ValueID> behind)
+{
+    if (!generator().paysForCodeInLine(block) || operation.storage() != AllocationStorage::Heap || operation.literalStorage() == ArrayLiteralStorage::ProfiledForRoom)
+        return false;
+    if (!operation.elementsOperands().empty() || !operation.holes().empty())
+        return false;
+    const Operation& spread = operationAt(behind.front());
+    if (spread.opcode != Opcode::AppendElements && (spread.opcode != Opcode::AppendIterable || !spread.readsListsByIndex()))
+        return false;
+    if (spread.arrayOperand() != literal)
+        return false;
+    ArrayStorage kind = storageThatLiteralNames(literal, operation);
+    if (hasArrayStorageForm(kind) && kind != ArrayStorage::Contiguous)
+        return false;
+    std::optional<AppendedBehindSpread> appended = findWhatIsAppendedBehindSpread(block, literal, behind.front());
+    return appended && appended->room < maxHoleArrayCapacity;
+}
+
+auto ArrayAllocationEmitter::findWhatIsAppendedBehindSpread(BlockID block, ValueID literal, ValueID spread) -> std::optional<AppendedBehindSpread>
+{
+    AppendedBehindSpread appended;
+    uint32_t usesSeen = 0;
+    for (auto [used, user] : generator().usersOfLiteralInBlock(block, literal)) {
+        ++usesSeen;
+        if (user == spread)
+            continue;
+        const Operation& operation = operationAt(user);
+        if (operation.opcode != Opcode::AppendElement || operation.arrayOperand() != literal)
+            return opcodesThatAppendManyToLists.contains(operation.opcode) ? std::nullopt : std::optional(appended);
+        ++appended.room;
+        appended.holdsWhatIsNoNumber |= !(typeOf(operation.valueOperand()).primitives & Primitive::Number);
+    }
+    if (uint32_t usesInLaterBlocks = m_code.useCountOf(literal) - usesSeen; usesInLaterBlocks > 1)
+        appended.room += usesInLaterBlocks - 1;
+    return appended;
+}
+
+ArrayStorage ArrayAllocationEmitter::storageThatLiteralNames(ValueID literal, const Operation& operation)
+{
+    if (hasArrayStorageForm(operation.arrayStorage()))
+        return operation.arrayStorage();
+    return arrayStorageDeclaredBy(m_program, m_generator.inputs().types, typeIDOf(literal)).predicted();
+}
+
+void ArrayAllocationEmitter::bearLiteralHoldingList(const ValueContext& spread, LValue iterable, StubKey appendsAsWritten)
+{
+    ValueID literal = std::exchange(generator().m_literalLeftToSpreadRightBehind, ValueID());
+    AppendedBehindSpread appended = findWhatIsAppendedBehindSpread(spread.block(), literal, spread.id()).value();
+    bool isContiguous = appended.holdsWhatIsNoNumber || hasArrayStorageForm(storageThatLiteralNames(literal, operationAt(literal)));
+    build().statistics().count(StatisticID::LiteralsBornHoldingTheListSpreadRightBehind);
+    LBasicBlock isNotServed = newBlock();
+    Join<CellPointer> join(m_out);
+    CellPointer born(callStub(spread, newArrayOfList(isContiguous), { iterable, m_out.constInt64(appended.room) }).first);
+    branchUnless(Condition(m_out.notNull(born.value())), isNotServed);
+    join.add(born);
+
+    m_out.appendTo(isNotServed);
+    CellPointer asWritten(generator().bearLiteralAsWritten(spread.block(), literal));
+    callStub(spread, appendsAsWritten, { asWritten.value(), iterable });
+    join.add(asWritten);
+    generator().nameAgain(literal, join.finish().value());
+}
+
+std::optional<Integer> ArrayAllocationEmitter::takeRoomAskedRightBehind(const ValueContext& value)
+{
+    std::span<const ValueID> behind = value.operationsBehind();
+    if (behind.size() > 1 && operationAt(behind[0]).opcode == Opcode::IntegerToNumber)
+        behind = behind.subspan(1);
+    if (behind.empty())
+        return std::nullopt;
+    const Operation& reservation = operationAt(behind[0]);
+    if (reservation.opcode != Opcode::ReserveArrayRoom || reservation.arrayOperand() != value.id() || !reservation.heldOperands().empty())
+        return std::nullopt;
+    ValueID room = reservation.roomOperand();
+    if (operationAt(room).opcode == Opcode::IntegerToNumber)
+        room = operationAt(room).operand(0);
+    Representation kept = representationOf(room);
+    if (!typeOf(room).isInteger() || (kept != Representation::Int32 && kept != Representation::Int64 && kept != Representation::Double))
+        return std::nullopt;
+    generator().m_reservationThatBirthHasServed = behind[0];
+    build().statistics().count(StatisticID::LiteralsBornWithTheRoomAskedRightBehind);
+    return kept == Representation::Double ? emitter<ConversionEmitter>().toInteger(in<Number>(room)) : integerOf(room);
+}
+
+CellPointer ArrayAllocationEmitter::newLiteralWithRoom(const OperationContext& context, std::span<const ValueID> elements, const ArrayStorageForm& form, Integer room)
+{
+    unsigned length = elements.size();
+    LBasicBlock isBorneByStub = newBlock();
+    LBasicBlock isTooLong = newBlock();
+    LBasicBlock slowPath = newBlock();
+    Join<CellPointer> join(m_out);
+    static_assert(maxInlineArrayLiteralLength < maxHoleArrayCapacity && maxHoleArrayCapacity & 1);
+    branch(greaterThan(room, integer(maxHoleArrayCapacity)), { rareEdge(isTooLong), normalEdge(isBorneByStub) });
+
+    m_out.appendTo(isBorneByStub);
+    RawElements rawElements = rawElementsOf(elements, form, slowPath);
+    if (rawElements.size() != length) {
+        fail(context, InternalErrorKind::OpcodeWithoutCode);
+        return CellPointer(m_out.int64Zero);
+    }
+    Integer written = integer(arrayLiteralVectorLength(length));
+    Integer capacity = bitOr(select(greaterThan(room, written), room, written), integer(1));
+    Integer lengthAndCapacity = bitOr(Integer(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift))), integer(length));
+    CellPointer newArray = callNewArrayWithLength(context, form, lengthAndCapacity);
+    branchUnless(Condition(m_out.notNull(newArray.value())), slowPath);
+    storeElements(context, newArray, form, rawElements.span(), indexesWithoutHoles(length).span());
+    join.add(newArray);
+
+    m_out.appendTo(isTooLong);
+    CellPointer asWritten = newArrayInForm(context, elements, form);
+    callStub(context, reserveArrayRoom(), { asWritten.value(), toNumber(room).value() });
+    join.add(asWritten);
+
+    m_out.appendTo(slowPath);
+    join.add(newArrayOutOfLine(context, elements, form));
+    return join.finish();
 }
 
 CellPointer ArrayAllocationEmitter::newLiteralAtSite(const ValueContext& value, const ArrayStorageForm& form, std::span<const uint32_t> site)
@@ -210,10 +332,10 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     return elementsBelowLength == ElementsBelowLength::NotCleared ? array : setLength(array);
 }
 
-std::optional<Pointer> ArrayAllocationEmitter::profileOfListsOfLengthAtSite(const ValueContext& value, const ArrayStorageForm& seed)
+std::optional<Pointer> ArrayAllocationEmitter::profileOfListsOfLengthAtSite(Origin origin, const ArrayStorageForm& seed)
 {
     static constexpr uint32_t markOfListsOfLength = 8;
-    std::optional<Vector<uint32_t, 12>> site = modulesAndPositionsOf(value);
+    std::optional<Vector<uint32_t, 12>> site = modulesAndPositionsOf(origin);
     if (!site || seed.holdsCells)
         return std::nullopt;
     site->append(markOfListsOfLength | static_cast<uint32_t>(elementKindOfForm(seed)));

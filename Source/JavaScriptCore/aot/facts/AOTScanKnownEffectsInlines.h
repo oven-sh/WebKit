@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLinkKnownEffects.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTTypeRelations.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -22,7 +23,7 @@ static PropertyKeyID keyWrittenAtInScanKnownEffects(const Program& program, cons
     return keyOfOperation;
 }
 
-void ScanOfBody::noteWritesIn(uint32_t block, const LocationMasks& writes)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::noteWritesIn(uint32_t block, const LocationMasks& writes)
 {
     if (writes.isEmpty())
         return;
@@ -87,7 +88,7 @@ const Effects& ScanOfBody::noteOwnEffectsOfOperator(const BodyValue& value, uint
     return noEffectsInScan;
 }
 
-const Effects& ScanOfBody::noteOwnEffects(const BodyValue& value, uint32_t block, std::optional<SummaryAccess::Kind> access, const Effects& effects, Effects& storage)
+ALWAYS_INLINE const Effects& ScanOfBody::noteOwnEffects(const BodyValue& value, uint32_t block, std::optional<SummaryAccess::Kind> access, const Effects& effects, Effects& storage)
 {
     uint32_t traits = traitsOfOpcodeInScan(value.opcode());
     if (access && (traits & RowOfOpcodeInScan::mayCallUnknownCode) && keyWrittenAtInScanKnownEffects(m_program, value, m_keyOfOperation)) {
@@ -104,7 +105,7 @@ const Effects& ScanOfBody::noteOwnEffects(const BodyValue& value, uint32_t block
     return effects;
 }
 
-void ScanOfBody::noteEndOfBlock(const BodyTerminator& terminator, uint32_t block, const Effects& effects)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::noteEndOfBlock(const BodyTerminator& terminator, uint32_t block, const Effects& effects)
 {
     noteWritesIn(block, effects.writes);
     TerminatorKind kind = terminator.kind();

@@ -327,6 +327,123 @@ static void testMachineFrameFormReadsOfRareRegionsDoNotCount()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 21 }, uint64_t { 0 }) == 66);
 }
 
+enum class LastReadOfArgument : uint8_t { InFixedRegister, InSomeRegister, AsColdOperand, ByPhiAtJump, ByReturn };
+
+static Operation* buildFrameFormTestOfArgumentReadBehindCalls(TestProcedure& test, std::span<uint64_t> noted, LastReadOfArgument lastRead)
+{
+    Output& out = test.out();
+    Operation* argument = test.argumentGPR(0);
+    Operation* chooses = lastRead == LastReadOfArgument::ByPhiAtJump ? test.argumentGPR(1) : nullptr;
+    for (unsigned read = 0; read < noted.size(); ++read) {
+        appendCallOfFrameFormTest(test);
+        PatchOperation* reader = out.patch(Void);
+        reader->effects = Effects::none();
+        reader->effects.writesLocalState = true;
+        bool isLast = read + 1 == noted.size();
+        if (isLast && lastRead == LastReadOfArgument::AsColdOperand) {
+            reader->append(argument, ValueRep::ColdAny);
+            reader->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+            continue;
+        }
+        if (isLast && lastRead == LastReadOfArgument::InSomeRegister)
+            reader->appendSomeRegister(argument);
+        else
+            reader->append(argument, ValueRep::reg(GPRInfo::argumentGPR2));
+        reader->setGenerator([place = &noted[read]](CCallHelpers& jit, const PatchParameters& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg address = jit.scratchRegister();
+            jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+            jit.store64(params[0].gpr(), CCallHelpers::Address(address));
+        });
+    }
+    if (lastRead == LastReadOfArgument::ByReturn || lastRead == LastReadOfArgument::ByPhiAtJump)
+        appendCallOfFrameFormTest(test);
+    if (lastRead == LastReadOfArgument::ByReturn)
+        out.ret(argument);
+    else if (lastRead == LastReadOfArgument::ByPhiAtJump) {
+        Block* hands = out.newBlock();
+        Block* other = out.newBlock();
+        Block* join = out.newBlock();
+        out.branch(out.testNonZero64(chooses, out.constInt64(1)), normalEdge(hands), normalEdge(other));
+        out.appendTo(hands);
+        ValueFromBlock handed = out.anchor(argument);
+        out.jump(join);
+        out.appendTo(other);
+        ValueFromBlock constant = out.anchor(out.constInt64(7));
+        out.jump(join);
+        out.appendTo(join);
+        Operation* either = out.phi(Int64, handed);
+        out.addIncomingToPhi(either, constant);
+        out.ret(either);
+    } else
+        out.ret(out.constInt64(7));
+    compileOrFail(test);
+    return argument;
+}
+
+static constexpr uint64_t wordOfArgumentReadBehindCalls = 0x1111222233334444ull;
+
+static bool holdsWordOfArgumentReadBehindCalls(std::span<const uint64_t> noted, size_t number)
+{
+    for (size_t index = 0; index < number; ++index) {
+        if (noted[index] != wordOfArgumentReadBehindCalls)
+            return false;
+    }
+    return true;
+}
+
+static void checkThatArgumentReadBehindCallsTakesNoNewSavedRegister(LastReadOfArgument lastRead)
+{
+    constexpr uint64_t word = wordOfArgumentReadBehindCalls;
+    bool readsOnceMoreBehindPatches = lastRead == LastReadOfArgument::ByPhiAtJump || lastRead == LastReadOfArgument::ByReturn;
+    std::array<uint64_t, 2> noted { };
+    TestProcedure test(traitsOfFrameFormTest(true, false));
+    Operation* argument = buildFrameFormTestOfArgumentReadBehindCalls(test, std::span(noted).first(readsOnceMoreBehindPatches ? 1 : 2), lastRead);
+    AOT_FRAME_FORM_TEST_CHECK(test, !test.procedure().allocation().usedCalleeSaves() && test.procedure().allocation().isSpilled(argument));
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(word, uint64_t { 1 }) == (readsOnceMoreBehindPatches ? word : 7));
+    AOT_FRAME_FORM_TEST_CHECK(test, holdsWordOfArgumentReadBehindCalls(noted, lastRead == LastReadOfArgument::InFixedRegister ? 2 : 1));
+    if (lastRead == LastReadOfArgument::ByPhiAtJump)
+        AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(word, uint64_t { 0 }) == 7);
+}
+
+static void testMachineFrameFormArgumentReadIntoFixedRegistersTakesNoNewSavedRegister()
+{
+    checkThatArgumentReadBehindCallsTakesNoNewSavedRegister(LastReadOfArgument::InFixedRegister);
+}
+
+static void testMachineFrameFormArgumentReadAsColdOperandTakesNoNewSavedRegister()
+{
+    checkThatArgumentReadBehindCallsTakesNoNewSavedRegister(LastReadOfArgument::AsColdOperand);
+}
+
+static void testMachineFrameFormArgumentHandedToPhiAtJumpTakesNoNewSavedRegister()
+{
+    checkThatArgumentReadBehindCallsTakesNoNewSavedRegister(LastReadOfArgument::ByPhiAtJump);
+}
+
+static void testMachineFrameFormArgumentThatIsReturnedTakesNoNewSavedRegister()
+{
+    checkThatArgumentReadBehindCallsTakesNoNewSavedRegister(LastReadOfArgument::ByReturn);
+}
+
+static void testMachineFrameFormArgumentThatSlotServesLessCheaplyTakesSavedRegister()
+{
+    constexpr uint64_t word = wordOfArgumentReadBehindCalls;
+    auto holdsWordIn = holdsWordOfArgumentReadBehindCalls;
+
+    std::array<uint64_t, 2> withOtherRead { };
+    TestProcedure other(traitsOfFrameFormTest(true, false));
+    Operation* readInSomeRegister = buildFrameFormTestOfArgumentReadBehindCalls(other, withOtherRead, LastReadOfArgument::InSomeRegister);
+    AOT_FRAME_FORM_TEST_CHECK(other, std::popcount(other.procedure().allocation().usedCalleeSaves()) == 1 && !other.procedure().allocation().isSpilled(readInSomeRegister));
+    AOT_FRAME_FORM_TEST_CHECK(other, other.call<uint64_t>(word) == 7 && holdsWordIn(withOtherRead, 2));
+
+    std::array<uint64_t, 5> many { };
+    TestProcedure often(traitsOfFrameFormTest(true, false));
+    Operation* readOften = buildFrameFormTestOfArgumentReadBehindCalls(often, many, LastReadOfArgument::InFixedRegister);
+    AOT_FRAME_FORM_TEST_CHECK(often, std::popcount(often.procedure().allocation().usedCalleeSaves()) == 1 && !often.procedure().allocation().isSpilled(readOften));
+    AOT_FRAME_FORM_TEST_CHECK(often, often.call<uint64_t>(word) == 7 && holdsWordIn(many, 5));
+}
+
 static void testMachineFrameFormSecondSavedRegisterOfPairIsFree()
 {
     TestProcedure test(traitsOfFrameFormTest(true, false));
@@ -1024,6 +1141,11 @@ std::span<const NativeTest> machineFrameFormTests()
         { "machine/frame-forms/value-read-twice-behind-a-call-takes-a-saved-register"_s, Machine::testMachineFrameFormValueReadTwiceTakesSavedRegister },
         { "machine/frame-forms/value-that-a-loop-reads-takes-a-saved-register"_s, Machine::testMachineFrameFormValueThatLoopReadsTakesSavedRegister },
         { "machine/frame-forms/reads-of-rare-regions-do-not-count"_s, Machine::testMachineFrameFormReadsOfRareRegionsDoNotCount },
+        { "machine/frame-forms/an-argument-read-into-fixed-registers-takes-no-new-saved-register"_s, Machine::testMachineFrameFormArgumentReadIntoFixedRegistersTakesNoNewSavedRegister },
+        { "machine/frame-forms/an-argument-read-as-a-cold-operand-takes-no-new-saved-register"_s, Machine::testMachineFrameFormArgumentReadAsColdOperandTakesNoNewSavedRegister },
+        { "machine/frame-forms/an-argument-handed-to-a-phi-at-a-jump-takes-no-new-saved-register"_s, Machine::testMachineFrameFormArgumentHandedToPhiAtJumpTakesNoNewSavedRegister },
+        { "machine/frame-forms/an-argument-that-is-returned-takes-no-new-saved-register"_s, Machine::testMachineFrameFormArgumentThatIsReturnedTakesNoNewSavedRegister },
+        { "machine/frame-forms/an-argument-that-a-slot-serves-less-cheaply-takes-a-saved-register"_s, Machine::testMachineFrameFormArgumentThatSlotServesLessCheaplyTakesSavedRegister },
         { "machine/frame-forms/second-saved-register-of-a-pair-is-free"_s, Machine::testMachineFrameFormSecondSavedRegisterOfPairIsFree },
         { "machine/frame-forms/arguments-stored-behind-the-setup-are-pushed"_s, Machine::testMachineFrameFormArgumentsStoredBehindSetupArePushed },
         { "machine/frame-forms/saves-of-a-head-are-pushed"_s, Machine::testMachineFrameFormSavesOfHeadArePushed },

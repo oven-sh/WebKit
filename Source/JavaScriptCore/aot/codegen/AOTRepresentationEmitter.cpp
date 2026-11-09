@@ -74,7 +74,7 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
         break;
     case Opcode::NarrowInteger:
         if (from == Int64 && to == Int32)
-            return conversions.narrow(source.as<Integer>());
+            return conversions.lowHalfOfIntegerToldInsideInt32(source.as<Integer>());
         break;
     case Opcode::Decode:
         if (from == Cell32 && (to == Cell || to == JSValue))

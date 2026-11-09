@@ -122,7 +122,6 @@ struct ClassFacts {
     ExecutionCount evaluations { ExecutionCount::Unknown };
     BaseState baseState { BaseState::Unknown };
     LayoutID base;
-    BuiltinClassID baseClass;
     LayoutID prototypeBase;
 };
 

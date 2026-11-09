@@ -41,6 +41,9 @@ public:
 
     void generateGetArrayLength(const ValueContext&);
     void generateGetArrayStorage(const ValueContext&);
+    void generateGetArrayRoom(const ValueContext&);
+    void generateExtendArrayLength(const ValueContext&);
+    void generateSetArrayLength(const ValueContext&);
     void generateGetArrayElement(const ValueContext&);
     void generatePutArrayElement(const ValueContext&);
     void generateHasArrayElement(const ValueContext&);
@@ -55,6 +58,8 @@ public:
     void generatePutTypedArrayElement(const ValueContext&);
     void generateGetEnumeratorIndexedLength(const ValueContext&);
     void generateIsElementInStorage(const ValueContext&);
+    void generateGetElementInStorageOrAbsent(const ValueContext&);
+    bool asksTruthOfRawElement(ValueID read);
     void generateGetStringLength(const ValueContext&);
     void generateGetStringCodeUnit(const ValueContext&);
 
@@ -64,7 +69,8 @@ public:
     enum class StorageIsWritten : bool { No, Yes };
     void holdKindOfList(const ValueContext& access, StorageIsWritten = StorageIsWritten::No);
     void stopUnlessInside(const ValueContext& access, Condition isInside);
-    void stopWhereHoleWouldBeStored(const ValueContext& store, const ArrayStorageForm&, Operand rawElement);
+    void holdElementToldToBeThere(const ValueContext& read, Condition isThere, StatisticID counted = StatisticID::ElementsToldToBeThereHeldAgainstHoles);
+    void stopWhereHoleWouldBeStored(const OperationContext& store, const ArrayStorageForm&, Operand rawElement);
     void stopUnlessListIsAsMadeWhereNothingIsFound(const ValueContext& access, CellPointer list);
 
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);
@@ -89,6 +95,9 @@ public:
     Integer publicLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength)); }
     Integer vectorLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_vectorLength)); }
     void setPublicLength(const ArrayElements& elements, Integer length) { storeField(elements.butterfly, m_heaps.Butterfly_publicLength, low32(length)); }
+    Word32 publicLengthAsWord(const ArrayElements& elements) { return loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength); }
+    Word32 vectorLengthAsWord(const ArrayElements& elements) { return loadField<Word32>(elements.butterfly, m_heaps.Butterfly_vectorLength); }
+    void setPublicLength(const ArrayElements& elements, Word32 length) { storeField(elements.butterfly, m_heaps.Butterfly_publicLength, length); }
     Integer arrayLength(CellPointer array) { return publicLength(elementsOf(array)); }
 
     TypedPointer elementAt(const ArrayStorageForm&, const ArrayElements&, Integer index);
@@ -118,7 +127,8 @@ public:
     bool hasOnlyExpectedArmInLine(const ValueContext& store);
     using ShapeTest = Condition (ElementAccessEmitter::*)(Word32 mode, const ArrayStorageForm&);
     enum class FirstForm : bool { IsExpected, IsLikeTheOthers };
-    void forEachFormByShape(Word32 mode, ShapeTest, const ArrayStorageFormList&, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>&, FirstForm = FirstForm::IsExpected);
+    void forEachFormByShape(Word32 mode, ShapeTest, const ArrayStorageFormList&, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>&, FirstForm = FirstForm::IsExpected, ValueID int32ThatArmOfValuesStoresInEitherKind = { });
+    ValueID int32ThatArmOfValuesStoresInEitherKind(ValueID stored, const ArrayStorageFormList&);
 
     enum class NaNIndexMode : bool { TakeSlowPath, ProduceOutOfBoundsIndex };
     Integer indexOrElse(ValueID position, bool keyIsIntegral, LBasicBlock isNotAnIndex, NaNIndexMode = NaNIndexMode::TakeSlowPath);
@@ -144,7 +154,7 @@ public:
 
     void appendElement(const ValueContext& store, CellPointer array, ValueID element);
     Boxed appendOutOfLine(const OperationContext&, CellPointer array, ValueID element);
-    Condition tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored);
+    Condition tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored, bool leavesStorageAsItIs = false, std::optional<Pointer> profileOfSite = std::nullopt);
     void widenStorageOfIntegers(CellPointer array, const ArrayStorageForm& wider, LBasicBlock isLeftToOthers);
     void turnIntegersIntoFractions(CellPointer array, const ArrayElements&, LBasicBlock isLeftToOthers);
 

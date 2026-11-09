@@ -53,9 +53,9 @@ private:
         Interval at;
     };
 
-    bool fail(FailureKind kind, const Operation* operation)
+    bool fail(FailureKind kind, const Operation* operation, PlaceOfCheck check = PlaceOfCheck::here())
     {
-        m_proc.fail(kind, operation);
+        m_proc.fail(kind, operation, check);
         m_failed = true;
         return false;
     }
@@ -1143,6 +1143,186 @@ bool AllocationChecker::run()
 bool checkAllocation(Procedure& proc)
 {
     AllocationChecker checker(proc);
+    return checker.run();
+}
+
+namespace {
+
+class CheckerOfSavesAtHeads {
+public:
+    explicit CheckerOfSavesAtHeads(Procedure& proc)
+        : m_proc(proc)
+        , m_allocation(proc.allocation())
+        , m_spills(proc.allocation().spills())
+    {
+    }
+
+    bool run();
+
+private:
+    using SetOfSlots = uint32_t;
+    static constexpr SetOfSlots noSlots = 0;
+    static constexpr SetOfSlots notReached = UINT32_MAX;
+
+    bool isAsked(Location location) const { return location.isSpill() && m_spills[location.spillIndex()].isStoredAtHeadOfFramedPart; }
+    bool isHeld(SpillIndex spill) const { return m_takingThatWrote[spill] == m_taking || std::ranges::binary_search(m_sets[m_heldAtHeadOfBlock], spill); }
+
+    bool read(Location location, const Operation* reader)
+    {
+        if (!isAsked(location) || isHeld(location.spillIndex()))
+            return true;
+        m_proc.fail(FailureKind::SpillSlotLacksItsValue, reader);
+        return false;
+    }
+
+    void write(Location location)
+    {
+        if (!isAsked(location) || isHeld(location.spillIndex()))
+            return;
+        m_takingThatWrote[location.spillIndex()] = m_taking;
+        m_writtenInBlock.append(location.spillIndex());
+    }
+
+    bool runsInFrame(const Block* block) const
+    {
+        const BlockPlace& place = m_proc.order().of(block);
+        return m_allocation.isInFramedPart(block) || (place.isRare() && m_allocation.needsFrameIn(place.rareRegion));
+    }
+
+    bool take(const Step&);
+    bool takeSteps(uint32_t begin, uint32_t end);
+    bool takeBlock(const Block*);
+    SetOfSlots setHeldBehindBlock();
+    SetOfSlots meet(SetOfSlots, SetOfSlots);
+
+    Procedure& m_proc;
+    const Allocation& m_allocation;
+    std::span<const SpillFacts> m_spills;
+    Vector<Vector<SpillIndex, 4>, 8> m_sets;
+    Vector<SetOfSlots, 64> m_heldAtHeads;
+    Vector<uint32_t, 32> m_takingThatWrote;
+    Vector<SpillIndex, 8> m_writtenInBlock;
+    BitVector m_isToBeTaken;
+    SetOfSlots m_heldAtHeadOfBlock { noSlots };
+    uint32_t m_taking { 0 };
+};
+
+bool CheckerOfSavesAtHeads::take(const Step& step)
+{
+    for (Location source : step.sources) {
+        if (!read(source, step.operation))
+            return false;
+    }
+    if (step.patchAssignment != UINT32_MAX) {
+        std::span<const Location> locations = m_allocation.patchAssignment(step.patchAssignment).locations;
+        size_t numberOfResults = std::min<size_t>(m_proc.resultCount(step.operation->type()), locations.size());
+        for (Location operand : locations.subspan(numberOfResults)) {
+            if (!read(operand, step.operation))
+                return false;
+        }
+        for (Location result : locations.first(numberOfResults))
+            write(result);
+    }
+    write(step.destination);
+    return true;
+}
+
+bool CheckerOfSavesAtHeads::takeSteps(uint32_t begin, uint32_t end)
+{
+    for (uint32_t index = begin; index < end; ++index) {
+        if (!take(m_allocation.step(index)))
+            return false;
+    }
+    return true;
+}
+
+bool CheckerOfSavesAtHeads::takeBlock(const Block* block)
+{
+    ++m_taking;
+    m_writtenInBlock.shrink(0);
+    m_heldAtHeadOfBlock = m_heldAtHeads[block->index()];
+    if (m_allocation.isHeadOfFramedPart(block)) {
+        const Allocation::HeadOfFramedPart& head = m_allocation.headOfFramedPartAbove(block);
+        if (!takeSteps(head.beginOfSteps, head.endOfSteps))
+            return false;
+    }
+    const BlockSteps& steps = m_allocation.stepsOf(block);
+    return takeSteps(steps.begin, steps.end) && takeSteps(steps.beginOfEdgeMoves, steps.endOfEdgeMoves) && take(m_allocation.step(steps.terminator));
+}
+
+CheckerOfSavesAtHeads::SetOfSlots CheckerOfSavesAtHeads::setHeldBehindBlock()
+{
+    if (m_writtenInBlock.isEmpty())
+        return m_heldAtHeadOfBlock;
+    std::ranges::sort(m_writtenInBlock);
+    Vector<SpillIndex, 4> held;
+    held.grow(m_sets[m_heldAtHeadOfBlock].size() + m_writtenInBlock.size());
+    std::ranges::merge(m_sets[m_heldAtHeadOfBlock], m_writtenInBlock, held.begin());
+    m_sets.append(WTF::move(held));
+    return m_sets.size() - 1;
+}
+
+CheckerOfSavesAtHeads::SetOfSlots CheckerOfSavesAtHeads::meet(SetOfSlots first, SetOfSlots second)
+{
+    if (first == second)
+        return first;
+    Vector<SpillIndex, 4> heldOnBothWays;
+    heldOnBothWays.grow(std::min(m_sets[first].size(), m_sets[second].size()));
+    heldOnBothWays.shrink(std::ranges::set_intersection(m_sets[first], m_sets[second], heldOnBothWays.begin()).out - heldOnBothWays.begin());
+    if (heldOnBothWays.size() == m_sets[first].size())
+        return first;
+    if (heldOnBothWays.size() == m_sets[second].size())
+        return second;
+    m_sets.append(WTF::move(heldOnBothWays));
+    return m_sets.size() - 1;
+}
+
+bool CheckerOfSavesAtHeads::run()
+{
+    if (std::ranges::none_of(m_spills, [](const SpillFacts& spill) { return spill.isStoredAtHeadOfFramedPart; }))
+        return true;
+
+    m_sets.append(Vector<SpillIndex, 4> { });
+    m_takingThatWrote.fill(0, m_spills.size());
+    m_heldAtHeads.fill(notReached, m_proc.numberOfBlocks());
+    m_isToBeTaken = BitVector(m_proc.numberOfBlocks());
+    for (const Entrypoint& entrypoint : m_proc.entrypoints()) {
+        m_heldAtHeads[entrypoint.block->index()] = noSlots;
+        m_isToBeTaken.quickSet(entrypoint.block->index());
+    }
+
+    bool needsAnotherRound;
+    do {
+        needsAnotherRound = false;
+        for (const Block* block : m_proc.order().blocksInOrder()) {
+            if (!m_isToBeTaken.quickGet(block->index()))
+                continue;
+            m_isToBeTaken.quickClear(block->index());
+            if (!takeBlock(block))
+                return false;
+            SetOfSlots heldBehindBlock = setHeldBehindBlock();
+            for (unsigned index = 0; index < block->numSuccessors(); ++index) {
+                const Block* successor = block->successor(index).block();
+                bool losesFrame = runsInFrame(block) && (!runsInFrame(successor) || m_allocation.isHeadOfFramedPart(successor));
+                SetOfSlots arrives = losesFrame ? noSlots : heldBehindBlock;
+                SetOfSlots heldThere = m_heldAtHeads[successor->index()];
+                SetOfSlots meets = heldThere == notReached ? arrives : meet(heldThere, arrives);
+                if (meets == heldThere)
+                    continue;
+                m_heldAtHeads[successor->index()] = meets;
+                m_isToBeTaken.quickSet(successor->index());
+                needsAnotherRound = true;
+            }
+        }
+    } while (needsAnotherRound);
+    return true;
+}
+
+} // anonymous namespace
+
+bool checkSavesAtHeads(Procedure& proc)
+{
+    CheckerOfSavesAtHeads checker(proc);
     return checker.run();
 }
 

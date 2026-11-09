@@ -120,7 +120,7 @@ static std::optional<std::array<ValueID, 2>> valuesAtOrAboveLesserInSumOverRecor
     if (code.at(met).opcode != Opcode::Parameter || code.at(code.at(met).block()).isLoopHead || code.at(code.at(met).block()).isEntry)
         return std::nullopt;
     const Block& block = code.at(code.at(met).block());
-    size_t position = std::ranges::find(block.parameters(), met) - block.parameters().begin();
+    size_t position = block.placeOfParameter(met);
     std::array<ValueID, 2> brought;
     ValueID relation;
     unsigned ways = 0;

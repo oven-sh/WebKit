@@ -340,6 +340,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTRuntimeRecordTests.cpp
     aot/tests/AOTRuntimeTypeTests.cpp
     aot/tests/AOTSavedFrameTests.cpp
+    aot/tests/AOTSharedArrayTests.cpp
     aot/tests/AOTSharingModeAndNamespaceTests.cpp
     aot/tests/AOTSiteAnswersOfGettersTests.cpp
     aot/tests/AOTSlimClosureTests.cpp

@@ -291,14 +291,20 @@ static void fillFieldTablesForFacts(const Program& program, const LinkTables& li
                 if (facts.formOfValue.contains(FieldForm::IsAccessor))
                     facts.facts.add(FieldFact::IsAccessor);
             }
-            if (const LinkedCell* cell = holdsAccessorsInSlots ? linked.findCellOfField({ id, field }) : nullptr; cell && cell->isFilledByAccessorsAlone)
+            if (const LinkedCell* cell = holdsAccessorsInSlots ? linked.findCellOfField({ id, field }) : nullptr; cell && cell->isFilledByAccessorsAlone) {
                 facts.facts.add(FieldFact::IsAccessor);
+                if (field < numberDeclared)
+                    facts.formOfValue = cell->formThatDefinitionsCreate;
+            } else if (cell && field < numberDeclared && !cell->formThatDefinitionsCreate.contains(FieldForm::IsAccessor))
+                facts.formOfValue = cell->formThatDefinitionsCreate;
+            RELEASE_ASSERT(!facts.formOfValue.contains(FieldForm::IsAccessor) || facts.facts.contains(FieldFact::IsAccessor));
             if (!layout.possibleChanges.contains(LayoutChange::LosesProperty))
                 facts.stability.add(FieldStability::IsNeverDeleted);
             if (!layout.reachesUnseenCode) {
                 bool isDeclaredPlain = field >= numberDeclared ? facts.formOfValue.isEmpty() : fieldAt(program, declarationOf(program, { id, field })).form.isEmpty();
                 const LinkedCell* cell = layout.isRedefinedByLiteralsAlone ? linked.findCellOfField({ id, field }) : nullptr;
-                if (isDeclaredPlain && (!layout.possibleChanges.contains(LayoutChange::GetsAccessor) || (cell && cell->isFilled)))
+                const LinkedCell* own = cell ? cell : linked.findCellOfField({ id, field });
+                if (isDeclaredPlain && (!layout.possibleChanges.contains(LayoutChange::GetsAccessor) || (cell && cell->isFilled) || (own && own->liesBesideWhatDescriptorsDefine)))
                     facts.stability.add(FieldStability::IsNeverRedefined);
             }
             tables.fields.append(facts);
@@ -955,6 +961,19 @@ static void fillTablesOfFunctionsForFacts(const Program& program, const FactsReq
     steps.didFinish("tables of functions"_s);
 }
 
+static LayoutSetID layoutsThatStayWithCompiledCodeForFacts(Program& program, const LinkTables& linked)
+{
+    Vector<LayoutID> staying;
+    for (uint32_t index = 0; index < linked.layouts.size(); ++index) {
+        if (linked.layouts[index].isAllocated && !linked.layouts[index].reachesUnseenCode)
+            staying.append(LayoutID(index));
+    }
+    if (staying.isEmpty())
+        return { };
+    TypeArena types(program.types, ArenaKeeps::InProgram);
+    return types.layoutSets().ofSorted(staying.span());
+}
+
 static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodies& looks, BuildContext& build, Facts::Parts& parts)
 {
     StepTimes steps(build, "facts"_s);
@@ -968,6 +987,8 @@ static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodie
     parts.linked.fieldsStoredCounts = fieldsStoredCountsIn(*looks, program, parts.linked);
     parts.linked.keysStoredWhatIsNoInt32 = keysStoredWhatIsNoInt32In(*looks);
     build.statistics().count(StatisticID::FieldsHeldToWhatIsSeen, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
+    if (parts.mechanisms.contains(Mechanism::Guesses))
+        parts.tables.layoutsThatStayWithCompiledCode = layoutsThatStayWithCompiledCodeForFacts(program, parts.linked);
     steps.didFinish("tables of fields"_s);
 }
 
@@ -989,7 +1010,7 @@ static void indexLayoutsByNamesForFacts(const Program& program, BuildContext& bu
 {
     StepTimes steps(build, "facts"_s);
     if (parts.mechanisms.contains(Mechanism::Guesses))
-        parts.layoutsByNames = LayoutsByNames(program, *parts.summaries, parts.linked);
+        parts.layoutsByNames = LayoutsByNames(program, *parts.summaries, parts.linked, parts.held);
     steps.didFinish("layouts by names"_s);
 }
 

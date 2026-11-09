@@ -36,6 +36,12 @@ void prepareForGeneration(Procedure& procedure)
         return;
     }
 
+    if (procedure.keepsStoresToLookAtAgain()) [[unlikely]] {
+        procedure.stopAtStoresThatWayLeadsToAfterAll();
+        if (procedure.failure())
+            return;
+    }
+
     bool runsChecks = procedure.traits().checksAllocation;
     if (runsChecks && !runCheckBeforeGeneration(procedure, validate))
         return;
@@ -67,7 +73,9 @@ void prepareForGeneration(Procedure& procedure)
         return;
     if (runsChecks && !runCheckBeforeGeneration(procedure, checkAllocation))
         return;
-    if (runsChecks && !runCheckBeforeGeneration(procedure, checkReferences))
+    if (!runsChecks && procedure.allocation().leavesOutSavesAtHeads() && !runCheckBeforeGeneration(procedure, checkSavesAtHeads))
+        return;
+    if (procedure.allocation().recordsWhatCheckersRead() && !runCheckBeforeGeneration(procedure, checkReferences))
         return;
 
     procedure.m_slots = assignSlots(procedure);

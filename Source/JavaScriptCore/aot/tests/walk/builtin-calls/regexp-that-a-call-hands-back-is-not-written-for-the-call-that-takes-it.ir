@@ -1,0 +1,75 @@
+# A literal is written for a call where the operand's own value makes it. A call that hands it back is used once too, but the object behind it has another name: with the shared object in its
+# place the two would differ.
+# function handedBack() { const v = /r/; return Object.is(id(v), v); }   function id(v) { return v; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=f2
+# CHECK: = NewRegExp pattern="r"
+# CHECK-NOT: SharedRegExpLiteral
+# CHECK: inlineBuiltin=ObjectIs
+# function picked(c) { const v = /r/, u = /r/; return Object.is(pick(c, v, u), v); }   function pick(c, a, b) { return c ? a : b; }
+# RUN(PICKED): walk f3 mechanisms=all
+# PICKED-LABEL: code f3:Body
+# PICKED-NOT: SharedRegExpLiteral
+# Written at the call itself it is shared as before: function written(v) { return Object.is(/r/, v); }
+# RUN(WRITTEN): walk f5 mechanisms=all
+# WRITTEN-LABEL: code f5:Body
+# WRITTEN-NOT: = NewRegExp
+# WRITTEN: = SharedRegExpLiteral pattern="r"
+# RUN(ANSWER): run-in-shell globalThis.sink = (handedBack, picked, written) => { print(handedBack, picked, written); };
+# ANSWER: true true false
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f5
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v0, -
+    v6 = Call v1, -, v4
+    v7 = Call v2, -, v4
+    v8 = Call v4, -, v5, v6, v7
+    Return v8
+}
+function f1 name="handedBack" module=m0 position=10 length=0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2 @11
+    v1 = NewRegExp pattern="r" @12
+    v2 = Call v0, -, v1 calleeName="id" @13
+    v3 = Builtin builtin=ObjectIs @14
+    v4 = Call v3, -, v2, v1 calleeName="Object.is" @15
+    Return v4 @16
+}
+function f2 name="id" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0 @21
+}
+function f3 name="picked" module=m0 position=30 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4 @31
+    v2 = NewRegExp pattern="r" @32
+    v3 = NewRegExp pattern="r" @33
+    v4 = Call v1, -, v0, v2, v3 calleeName="pick" @34
+    v5 = Builtin builtin=ObjectIs @35
+    v6 = Call v5, -, v4, v2 calleeName="Object.is" @36
+    Return v6 @37
+}
+function f4 name="pick" module=m0 position=40 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2() @41
+  b1():
+    Return v1 @42
+  b2():
+    Return v2 @43
+}
+function f5 name="written" module=m0 position=50 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewRegExp pattern="r" @51
+    v2 = Builtin builtin=ObjectIs @52
+    v3 = Call v2, -, v1, v0 calleeName="Object.is" @53
+    Return v3 @54
+}

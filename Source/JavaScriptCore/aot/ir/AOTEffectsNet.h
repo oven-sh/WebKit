@@ -12,7 +12,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class KindOfEffectsRow : uint8_t { None, Operation, RuntimeOperation, Stub, Builtin, Callee, Summary, MarkOfTurns };
+enum class KindOfEffectsRow : uint8_t { None, Operation, RuntimeOperation, Stub, Builtin, Callee, Summary, MarkOfTurns, RowOfLoop };
 enum class PartOfEffects : uint8_t { None, RunsOtherCode, Throws, Writes, Collects, ThrowsByRule, RangeOfResult, WritesWhatIsSeen, KindOfResult, ContentsOfResult, TestsOfGuard, ShapesKnown, ShapesOfField, MiddleShapesOfField };
 
 inline constexpr std::array<AbstractHeap, 8> heapsOfDigestInEffectsNet {
@@ -52,6 +52,7 @@ constexpr uint8_t secondLanesNotWrittenInEffectsNet(const Effects& effects)
 inline constexpr uint64_t asksForSecondDigestInEffectsNet = 1ull << 62;
 inline constexpr uint64_t asksForRestOfLastDigestInEffectsNet = 1ull << 60;
 inline constexpr uint32_t speaksOfSecondDigestInEffectsNet = 1u << 15;
+inline constexpr uint32_t speaksOfValueOfVariableInEffectsNet = 1u << 14;
 
 enum class CountInEffectsNet : uint8_t {
     GuardsOfMembersEnded, GuardsOfMembersArmedOrBegun, WatchOverBuiltinsEnded, WordsOfStaticsWritten, VariablesOfModulesStored, StaticFieldsStored, VariablesOfScopesInStaticsStored

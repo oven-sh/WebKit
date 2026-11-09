@@ -13,11 +13,13 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
 #include "AOTPlan.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkListReadsInLoops.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -124,7 +126,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     }
     if (goesByLists()) [[unlikely]] {
         endByLists({ .shapes = endsShapes, .elements = endsElements, .facts = factsEnded, .slots = slotsWritten, .environmentFields = environmentFieldsWritten, .guards = guardsWritten,
-            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard, .writerOfOneObject = writerOfOneObject });
+            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard, .writerOfOneObject = writerOfOneObject, .program = &program, .writtenAlone = writtenAlone });
         dropEndedRecordsIfMany();
         return;
     }
@@ -293,7 +295,7 @@ static bool opcodeMayRunCodeOfOperandsInKnownWriters(Opcode opcode, uint32_t num
     return false;
 }
 
-static bool writesThroughDeclaredOperandInKnownWriters(Opcode opcode, uint32_t declaredIndex, uint32_t numberOfDeclaredOperands)
+static ALWAYS_INLINE bool writesThroughDeclaredOperandInKnownWriters(Opcode opcode, uint32_t declaredIndex, uint32_t numberOfDeclaredOperands)
 {
     if (operandUsesOf(opcode, declaredIndex).containsAny(usesThatWriteOperandInKnownWriters))
         return true;
@@ -335,7 +337,7 @@ static Reference onlyObjectDefinedOnInKnownWriters(Walker& walker, const Draft& 
     return { };
 }
 
-static std::optional<ElementStoreInKnownWriters> findElementStoreWithoutOtherCodeInKnownWriters(const Draft& writer, const Effects& effects)
+static ALWAYS_INLINE std::optional<ElementStoreInKnownWriters> findElementStoreWithoutOtherCodeInKnownWriters(const Draft& writer, const Effects& effects)
 {
     if (writer.opcode == Opcode::PutArrayElement) {
         if (writer.level() != KnowledgeLevel::Proven)
@@ -498,8 +500,40 @@ static std::optional<Vector<uint32_t, 2>> objectsMadeHereInKnownWriters(Walker& 
     return made;
 }
 
+static std::optional<Vector<uint32_t, 2>> listMadeHereThatLoopOnlyFillsInKnownWriters(Walker& walker, Reference receiver)
+{
+    if (walker.takesReceiversOfMethodsOfListsToBeMadeHere()) [[unlikely]]
+        return Vector<uint32_t, 2> { };
+    std::optional<BlockID> head = walker.headOfInnermostTryInFrameOnTop();
+    std::optional<Vector<uint32_t, 2>> made = head ? objectsMadeHereInKnownWriters(walker, ObjectsWrittenAloneInKnownWriters { receiver }) : std::nullopt;
+    if (!made || !textOfLoopOnlyFillsListAndReadsAnother(walker, *head, ValueID(made->first())) || !walker.textOfLoopReckonsWithWhatItReads(*head))
+        return std::nullopt;
+    return made;
+}
+
+std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker& walker, const TerminatorDraft& tried, const Effects& effects)
+{
+    static constexpr std::array methods { InlineBuiltin::ArrayPush, InlineBuiltin::ArrayPop, InlineBuiltin::ArrayShift, InlineBuiltin::ArrayUnshift };
+    if (tried.kind != TerminatorKind::TryCallInline || effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !std::ranges::contains(methods, tried.inlineBuiltin()) || !tried.numberOfOperands() || !tried.operand(0))
+        return std::nullopt;
+    return listMadeHereThatLoopOnlyFillsInKnownWriters(walker, tried.operand(0));
+}
+
+static bool isMethodOfListThatWritesItsReceiverAloneInKnownWriters(const Walker& walker, const Draft& call)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID called = table.canonicalID(table.at(call.overload()).builtin);
+    for (BuiltinID method : { BuiltinID(Builtins::ArrayPrototypePush), BuiltinID(Builtins::ArrayPrototypePop), BuiltinID(Builtins::ArrayPrototypeShift), BuiltinID(Builtins::ArrayPrototypeUnshift) }) {
+        if (table.contains(method) && called == table.canonicalID(method))
+            return true;
+    }
+    return false;
+}
+
 std::optional<Vector<uint32_t, 2>> objectsMadeHereThatAloneAreWritten(Walker& walker, const Draft& draft, const Effects& effects)
 {
+    if (draft.opcode == Opcode::CallBuiltin && !testsItsOwnGuess(draft) && !effects.mayRunOtherCode() && draft.receiverOperand() && isMethodOfListThatWritesItsReceiverAloneInKnownWriters(walker, draft))
+        return listMadeHereThatLoopOnlyFillsInKnownWriters(walker, draft.receiverOperand());
     std::optional<ObjectsWrittenAloneInKnownWriters> written = objectsWrittenAloneByInKnownWriters(walker, draft, effects, findElementStoreWithoutOtherCodeInKnownWriters(draft, effects));
     return written && !written->isEmpty() ? objectsMadeHereInKnownWriters(walker, *written) : std::nullopt;
 }
@@ -657,7 +691,7 @@ bool writerEndsNoGuard(const Walker& walker, const Draft& writer)
     return guardsEndedByInKnownWriters(walker, writer).which == GuardsEndedInKnownWriters::Which::None;
 }
 
-void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
+ALWAYS_INLINE_INTO_OTHER_FILES void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
 {
     bool isPutBack = draft.opcode == Opcode::PutModuleVariable && walker.storeIsPutBackWhereTurnBeginsAgain(draft.variable());
     uint32_t newestStoreInFront = isPutBack ? walker.state().newestStoreToPutBack() : 0;
@@ -672,7 +706,7 @@ void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effe
         noteThatGuardsOfRowHaveBegunInKnownWriters(walker, declaredLayoutOf(walker.program(), draft.layout()));
     }
     static_assert(!declaredBoundOf(Opcode::PutSlot).writes.contains(AbstractHeap::NamedProperties) && !declaredBoundOf(Opcode::PutSlotOrAdd).writes.contains(AbstractHeap::NamedProperties));
-    if (draft.opcode == Opcode::PutDoubleIndex) {
+    if (draft.opcode == Opcode::PutDoubleIndex || draft.opcode == Opcode::PutPropertyOfHeir) {
         if (uint32_t storeToPutBack = walker.takeStoreBeingBuiltToPutBack(); storeToPutBack && !writesWhatTurnHasMade) {
             walker.state().noteStoreToPutBack(walker.numberOfTurnOfTypedCopy(), storeToPutBack);
             walker.keepStateBehindStoreToPutBack(storeToPutBack);

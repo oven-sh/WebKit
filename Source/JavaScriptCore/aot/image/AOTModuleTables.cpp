@@ -49,6 +49,8 @@ struct ModulesListedInChunk {
 struct FunctionsListedInRange {
     Vector<StateOfLibraryModuleData> stateOfLibraryModules;
     Vector<uint32_t> asyncFunctionsWithoutAwait;
+    Vector<uint32_t> functionsThatMayAskForOwnOriginal;
+    Vector<OriginalAskedForData> originalsAskedFor;
 };
 
 struct RequestsThatWalksFollow {
@@ -152,9 +154,11 @@ static Vector<StarAsWrittenData> listStarsAsWritten(const Typed::Program& progra
         size_t first = stars.size();
         for (const Typed::ModuleRequest& request : program.modules[index].requests) {
             if (request.starPlace && !answers.ofModules[request.target.index()].containsAll({ AnswerAboutModule::IsNotWorthVisiting, AnswerAboutModule::IsNeverEvaluated }))
-                stars.append({ index, request.target.index(), *request.starPlace });
+                stars.append({ index, request.target.index(), *request.starPlace, request.isDynamicStarExport });
         }
-        AOT::sort(stars.mutableSpan().subspan(first), { }, &StarAsWrittenData::place);
+        AOT::sort(stars.mutableSpan().subspan(first), [](const StarAsWrittenData& a, const StarAsWrittenData& b) {
+            return a.place < b.place;
+        });
     }
     return stars;
 }
@@ -175,6 +179,10 @@ void nameWhatModuleTablesName(const TableInputs& inputs, const GatheredMentions&
     listModulesOfUncompiledCode(inputs.program, answers, noteString);
     listFailuresForModuleTables(inputs.program, noteString);
     listNamesOfStatements(inputs.program, noteString);
+    for (const Typed::Function& function : inputs.program.functions) {
+        for (StringID specifier : function.originalsAskedFor)
+            noteString(specifier);
+    }
     for (uint32_t place : answers.compiledRuntimeFunctions)
         names.functionsWithClosureCell.set(inputs.program.runtimeFunctions[place].function.index());
 }
@@ -412,6 +420,10 @@ static void listFunctionsForModuleTables(const TableEncoder& encoder, size_t fir
         const Typed::Function& function = program.functions[index];
         if (Typed::isAsyncFunctionWithoutAwait(program, function))
             listed.asyncFunctionsWithoutAwait.append(static_cast<uint32_t>(index));
+        if (function.syntax.contains(Typed::FunctionSyntax::MayAskForOwnOriginal))
+            listed.functionsThatMayAskForOwnOriginal.append(static_cast<uint32_t>(index));
+        for (StringID specifier : function.originalsAskedFor)
+            listed.originalsAskedFor.append({ static_cast<uint32_t>(index), encoder.stringNumber(specifier) });
         uint32_t cell = encoder.numbers.closureCellNumber(FunctionID(static_cast<uint32_t>(index)));
         if (cell && isLibraryModuleWithBodyForModuleTables(program, function.module))
             listed.stateOfLibraryModules.append(StateOfLibraryModuleData::create(function.module.index(), StateOfLibraryModuleData::Kind::Closures, cell, 1));
@@ -584,12 +596,15 @@ void encodeModuleTables(TableEncoder& encoder)
     Vector<ModuleFailureData> moduleFailures = listFailuresForModuleTables(program, numberOfString);
     Vector<NameOfStatementData> namesOfStatements = listNamesOfStatements(program, numberOfString);
     Vector<StarAsWrittenData> starsAsWritten = listStarsAsWritten(program, answers);
+    Vector<WriterOfExportData> writersOfExports = listWritersOfExports(encoder.inputs);
     Vector<UncompiledModuleData> modulesOfUncompiledCode = listModulesOfUncompiledCode(program, answers, numberOfString);
     Vector<uint32_t> modulesThatLoadCompiledFilesAlone = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatLoadCompiledFilesAlone);
     Vector<uint32_t> modulesThatFindBuiltinsReadOnly = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatFindBuiltinsReadOnly);
     Vector<uint32_t> modulesReachedUnderOtherNames = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesReachedUnderOtherNames);
     Vector<uint32_t> modulesThatDependOnMoreThanSource = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatDependOnMoreThanSource);
     Vector<uint32_t> asyncFunctionsWithoutAwait = joinListsForModuleTables(functionsListed, &FunctionsListedInRange::asyncFunctionsWithoutAwait);
+    Vector<uint32_t> functionsThatMayAskForOwnOriginal = joinListsForModuleTables(functionsListed, &FunctionsListedInRange::functionsThatMayAskForOwnOriginal);
+    Vector<OriginalAskedForData> originalsAskedFor = joinListsForModuleTables(functionsListed, &FunctionsListedInRange::originalsAskedFor);
     Vector<CompiledRuntimeModuleData> compiledRuntimeModules = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::runtimeModules);
     AOT::sort(compiledRuntimeModules, { }, &CompiledRuntimeModuleData::registryID);
     Vector<CompiledRuntimeFunctionData> compiledRuntimeFunctions = listCompiledRuntimeFunctions(encoder, answers);
@@ -606,9 +621,9 @@ void encodeModuleTables(TableEncoder& encoder)
     };
     part.reserveRoomFor(roomFor(lists.modules, lists.directories, lists.displayPaths, lists.requests, linkRequests, evaluationRequests, groupsLoadedWithGroups, entryPointLinkPlan,
         lists.exports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
-        moduleFailures, modulesOfUncompiledCode, modulesThatLoadCompiledFilesAlone, modulesThatFindBuiltinsReadOnly, modulesReachedUnderOtherNames, modulesThatDependOnMoreThanSource, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait,
+        moduleFailures, modulesOfUncompiledCode, modulesThatLoadCompiledFilesAlone, modulesThatFindBuiltinsReadOnly, modulesReachedUnderOtherNames, modulesThatDependOnMoreThanSource, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait, functionsThatMayAskForOwnOriginal, originalsAskedFor,
         byPath.modulesByPath, byPath.modulesByHashOfPath, byPath.firstModulesByHashOfPath, byPath.directoriesOfModulesByPath, compiledRuntimeModules, compiledRuntimeFunctions, stateOfLibraryModules,
-        startsOfModules.firstSteps, startsOfModules.steps, namesOfStatements, starsAsWritten));
+        startsOfModules.firstSteps, startsOfModules.steps, namesOfStatements, starsAsWritten, writersOfExports));
     part.setTable(ProgramTableIndex::modules, lists.modules);
     part.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     part.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);
@@ -627,6 +642,7 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::moduleFailures, moduleFailures);
     part.setTable(ProgramTableIndex::namesOfStatements, namesOfStatements);
     part.setTable(ProgramTableIndex::starsAsWritten, starsAsWritten);
+    part.setTable(ProgramTableIndex::writersOfExports, writersOfExports);
     part.setTable(ProgramTableIndex::modulesOfUncompiledCode, modulesOfUncompiledCode);
     part.setTable(ProgramTableIndex::modulesThatLoadCompiledFilesAlone, modulesThatLoadCompiledFilesAlone);
     part.setTable(ProgramTableIndex::modulesThatFindBuiltinsReadOnly, modulesThatFindBuiltinsReadOnly);
@@ -634,6 +650,8 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::modulesThatDependOnMoreThanSource, modulesThatDependOnMoreThanSource);
     part.setTable(ProgramTableIndex::importsOfHeldFiles, followed.importsOfHeldFiles);
     part.setTable(ProgramTableIndex::asyncFunctionsWithoutAwait, asyncFunctionsWithoutAwait);
+    part.setTable(ProgramTableIndex::functionsThatMayAskForOwnOriginal, functionsThatMayAskForOwnOriginal);
+    part.setTable(ProgramTableIndex::originalsAskedFor, originalsAskedFor);
     part.setTable(ProgramTableIndex::modulesByPath, byPath.modulesByPath);
     part.setTable(ProgramTableIndex::modulesByHashOfPath, byPath.modulesByHashOfPath);
     part.setTable(ProgramTableIndex::firstModulesByHashOfPath, byPath.firstModulesByHashOfPath);

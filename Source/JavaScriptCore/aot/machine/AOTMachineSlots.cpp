@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTSavedFrame.h"
 #include "StackAlignment.h"
 #include <algorithm>
@@ -630,7 +631,7 @@ void SlotAssigner::sortSpillsByBegin()
     m_placesOfSpills = m_arena.allocateArray<uint32_t>(numberOfSpills);
 }
 
-ALWAYS_INLINE void SlotAssigner::releasePlacesFreeAt(Position position)
+ALWAYS_INLINE_INTO_OTHER_FILES void SlotAssigner::releasePlacesFreeAt(Position position)
 {
     if (m_endOfNextHold < position)
         releasePlacesOfNextSpillsFreeAt(position);
@@ -666,7 +667,7 @@ NEVER_INLINE void SlotAssigner::releasePlacesOfNextSpillsFreeAt(Position positio
     m_endOfNextHold = next < numberOfSpills ? positionInPlaceSortKey(keys[next]) : noPosition;
 }
 
-ALWAYS_INLINE uint32_t SlotAssigner::takePlace(Part part, Size size, Position begin, Position endOfFirstPart, Position beginBehindGap, Position end)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t SlotAssigner::takePlace(Part part, Size size, Position begin, Position endOfFirstPart, Position beginBehindGap, Position end)
 {
     ArenaVector<PositionsTakenBehindGaps>& taken = m_positionsTakenBehindGaps[part];
     auto isFreeFor = [&](uint32_t distance) {

@@ -284,11 +284,19 @@ public:
     }
     AddressForm resolveAddressSlowCase(const Operation* access, LeafCursor&);
     AddressForm resolveScaledSum(const Operation* sum, LeafCursor&);
-    ALWAYS_INLINE MacroAssembler::Address addressOf(Location memory) const
+    NEVER_INLINE void failBecauseSlotThatNoStepReadsIsRead(SpillIndex) const;
+    ALWAYS_INLINE void noteThatSlotIsRead(SpillIndex spill) const
+    {
+        if (m_allocation.spills()[spill].isReadByNoStep) [[unlikely]]
+            failBecauseSlotThatNoStepReadsIsRead(spill);
+    }
+    ALWAYS_INLINE MacroAssembler::Address addressOf(Location memory, MemoryOfEncodedMove use = MemoryOfEncodedMove::IsRead) const
     {
         switch (memory.kind()) {
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
+            if (use == MemoryOfEncodedMove::IsRead)
+                noteThatSlotIsRead(memory.spillIndex());
             return m_frame.addressInFrame(m_frame.offsetFromFPOf(memory.spillIndex()));
 
         case Location::Outgoing:
@@ -321,7 +329,7 @@ public:
 
     ALWAYS_INLINE void encodePatch(const Step&, PatchOperation*);
     void encodeCheck(const Step&, PatchOperation*);
-    ALWAYS_INLINE ValueRep repOf(const PatchOperation* patch, Location location, const Operation* value) const
+    ALWAYS_INLINE ValueRep repOf(const PatchOperation* patch, Location location, const Operation* value, MemoryOfEncodedMove access = MemoryOfEncodedMove::IsRead) const
     {
         switch (location.kind()) {
         case Location::Register:
@@ -329,6 +337,8 @@ public:
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
             RELEASE_ASSERT(m_frame.hasFrameRecord() || patch->findsOperandsInFrameWithoutRecord());
+            if (access == MemoryOfEncodedMove::IsRead)
+                noteThatSlotIsRead(location.spillIndex());
             return ValueRep::stack(m_frame.offsetFromFPOf(location.spillIndex()));
         case Location::Outgoing:
             RELEASE_ASSERT(m_frameIsSetUp);
@@ -396,6 +406,7 @@ public:
     MacroAssembler::Jump jumpOnOverflow(bool whenItOverflowed);
 
     void encodeNumber(const Step&);
+    bool blockHasWrittenNumberRegisterInFrontOf(const Step&, FPRReg);
 
     void encodeLoad(const Step&);
     void encodeStore(const Step&);
@@ -464,6 +475,9 @@ public:
     uint32_t m_operationOfOrigin { UINT32_MAX };
     const Block* m_blockWithClearedScratchFPR { nullptr };
     unsigned m_offsetBehindClearedScratchFPR { 0 };
+    const Block* m_blockWhoseWrittenNumberRegistersAreNoted { nullptr };
+    const Step* m_firstStepNotLookedAtForNumberRegisters { nullptr };
+    RegisterMask m_numberRegistersWrittenInBlock { 0 };
 };
 
 inline bool encodedMoveIsWide(Width width)
@@ -582,7 +596,7 @@ ALWAYS_INLINE void Encoder::encodeSave(const Step& step)
     checkMemoryOfEncodedMove(*this, step.destination, step.width, MemoryOfEncodedMove::IsWritten);
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination));
+    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination, MemoryOfEncodedMove::IsWritten));
 }
 
 ALWAYS_INLINE bool patchRepAnswersConstraint(const ValueRep& answer, const ValueRep& constraint)
@@ -645,7 +659,7 @@ ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const St
                 RELEASE_ASSERT(patchRegisterAnswersConstraint(*rep, constraint));
                 continue;
             }
-            new (NotNull, rep) ValueRep(repOf(patch, *location, patch));
+            new (NotNull, rep) ValueRep(repOf(patch, *location, patch, MemoryOfEncodedMove::IsWritten));
             RELEASE_ASSERT(patchRepAnswersConstraint(*rep, constraint));
         }
         Operation* const* operand = operands.data() + firstOperand;

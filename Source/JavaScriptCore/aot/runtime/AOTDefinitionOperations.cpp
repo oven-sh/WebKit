@@ -313,10 +313,18 @@ static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* o
         attributes |= PropertyAttribute::Accessor;
     else if (!bits.isWritable)
         attributes |= PropertyAttribute::ReadOnly;
-    if (compiled && !isAccessor) {
-        const AddedExtraProperty* added = compiled->state().propertyCaches->findAddedExtraProperty(structure->id(), name.uid());
-        if (added && added->attributes == attributes && compiled->tryRepeat(vm, *added, bits.hasValue ? valueOrGetter : jsUndefined()))
-            return true;
+    JSValue stored;
+    if (compiled) {
+        PropertyCaches& caches = *Instance::of(structure->realm())->state->propertyCaches;
+        const AddedExtraProperty* added = caches.findAddedExtraProperty(structure->id(), name.uid());
+        if (added && added->attributes == attributes) {
+            if (isAccessor) [[unlikely]] {
+                stored = GetterSetter::create(vm, globalObject, bits.hasGet ? valueOrGetter.getObject() : nullptr, setter.getObject());
+                added = caches.findAddedExtraProperty(structure->id(), name.uid());
+            }
+            if (added && compiled->tryRepeat(vm, *added, isAccessor ? stored : bits.hasValue ? valueOrGetter : jsUndefined()))
+                return true;
+        }
     }
     const FieldData* field = compiled ? compiled->fieldNamed(compiled->state(), name) : nullptr;
     if (field && field->isAccessor() && bits.hasGet && !bits.hasSet && valueOrGetter.isObject() && compiled->tryDefineAbsentGetterInSlot(vm, globalObject, *field, name.uid(), asObject(valueOrGetter), attributes))
@@ -333,11 +341,12 @@ static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* o
             return true;
         }
     }
-    JSValue stored = bits.hasValue ? valueOrGetter : jsUndefined();
-    if (isAccessor)
+    if (!isAccessor)
+        stored = bits.hasValue ? valueOrGetter : jsUndefined();
+    else if (!stored)
         stored = GetterSetter::create(vm, globalObject, bits.hasGet ? valueOrGetter.getObject() : nullptr, setter.getObject());
     if (compiled)
-        return field ? compiled->tryDefineAbsentProperty(vm, field, name, stored, attributes) : compiled->tryAddAbsentExtraProperty(vm, name, stored, attributes);
+        return field ? compiled->tryDefineAbsentProperty(vm, field, name, stored, attributes) : compiled->tryAddAbsentExtraProperty(vm, name, stored, attributes, Object::MemoryOfAddedNames::WasAskedInVain);
     auto holdClosureBehindDefinition = makeScopeExit([&] {
         holdClosureToLackingName(vm, object, name.uid());
     });

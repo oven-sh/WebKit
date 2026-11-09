@@ -14,7 +14,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool storeMayLeaveErrorOwedForPolls(Opcode opcode)
+static ALWAYS_INLINE bool storeMayLeaveErrorOwedForPolls(Opcode opcode)
 {
     if (opcode == Opcode::PropSet)
         return true;

@@ -10,6 +10,7 @@
 #include "AOTLayout.h"
 #include "AOTTypeArena.h"
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT {
@@ -23,6 +24,7 @@ class Program;
 using FamilyID = ID<struct FamilyIDTag>;
 
 enum class SetsThatNoFamilyHolds : bool { Stay, BecomeAnyObject };
+using ContentsWidenedToFamilies = UncheckedKeyHashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
 using SetsOfLayoutsWritten = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
@@ -85,7 +87,7 @@ public:
     }
 
 private:
-    friend TypeID widenedToFamily(TypeArena&, const Families&, TypeID, SetsThatNoFamilyHolds);
+    friend TypeID widenedToFamily(TypeArena&, const Families&, TypeID, SetsThatNoFamilyHolds, ContentsWidenedToFamilies*);
 
     FamilyID smallestFamilyHolding(const TypeArena&, LayoutSetID) const;
 
@@ -102,7 +104,7 @@ private:
     Vector<FamilyID> m_familiesBySet;
 };
 
-TypeID widenedToFamily(TypeArena&, const Families&, TypeID, SetsThatNoFamilyHolds = SetsThatNoFamilyHolds::Stay);
+TypeID widenedToFamily(TypeArena&, const Families&, TypeID, SetsThatNoFamilyHolds = SetsThatNoFamilyHolds::Stay, ContentsWidenedToFamilies* foundAround = nullptr);
 TypeID joinOf(TypeArena&, const Families&, TypeID, TypeID);
 
 } } } // namespace JSC::AOT::Typed

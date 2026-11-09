@@ -309,9 +309,12 @@ Reg Allocator::bringIntoRegister(Operation* value, RegisterMask allowed, Reg pre
 
 SpillIndex Allocator::markSpilled(Operation* value)
 {
-    if (m_isAheadOfFramedPart && isInRareRegion() && isStoredAtHeadsOfFramedPart(value)) {
-        m_allocation.m_needsFrameAheadOfFramedPart = true;
-        m_allocation.m_needsFrameOutsideRareRegions = true;
+    if (m_isAheadOfFramedPart && isStoredAtHeadsOfFramedPart(value)) {
+        const ValueFacts& factsOfValue = m_valueFacts[value->index()];
+        if (isInRareRegion() || isReadByMoreThanSteps(factsOfValue)) {
+            m_allocation.m_needsFrameAheadOfFramedPart = true;
+            m_allocation.m_needsFrameOutsideRareRegions = true;
+        }
     }
     SpillIndex spill = m_allocation.m_spillOfValue[value->index()];
     if (spill != noSpill)

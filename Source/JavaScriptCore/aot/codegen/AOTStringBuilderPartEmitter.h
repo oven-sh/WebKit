@@ -45,6 +45,7 @@ private:
 
     StringBuilderEmitter& builders() { return emitter<StringBuilderEmitter>(); }
     PlaceInFrame placeInFrameOf(const ValueContext& value) { return { builders().recordOf(value), in<Pointer>(value->cursorOperand()) }; }
+    void holdIntegerToldToHaveFewDigits(const ValueContext&, Integer appended);
     bool isProvenToHaveFewDigits(ValueID integer) const
     {
         Type type = typeOf(integer);

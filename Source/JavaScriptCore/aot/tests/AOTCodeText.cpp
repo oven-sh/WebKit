@@ -317,6 +317,8 @@ void CodeTextWriter::writeBlockHead(BlockID id, const Block& block)
         m_printer.field("isInLoop"_s, true);
     if (block.isLoopHead)
         m_printer.field("isLoopHead"_s, true);
+    if (block.keepsSitesThoughRare)
+        m_printer.field("keepsSitesThoughRare"_s, true);
     for (uint32_t entry = m_firstEntryOfBlock[id.index()]; entry != endOfChain; entry = m_nextEntryOfBlock[entry])
         m_printer.field("entry"_s, entry);
     EdgeID handler = m_code.handlerOf(id);

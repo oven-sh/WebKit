@@ -8,10 +8,12 @@
 #if ENABLE(AOT)
 
 #include "AOTBodyIndex.h"
+#include "AOTBodyIndexBuilder.h"
 #include "AOTBodyVerifier.h"
 #include "AOTBuiltinTable.h"
 #include "AOTDiagnostics.h"
 #include "AOTIR.h"
+#include "AOTProgramVerifier.h"
 #include "AOTResultRules.h"
 #include <algorithm>
 #include <optional>
@@ -46,7 +48,10 @@ public:
     void skip(uint32_t numberOfWords);
     uint32_t takeCount(uint32_t minWordsPerElement = 1);
 
+    void fileOperandsIn(BodyIndexBuilder& builder) { m_builder = &builder; }
+    void fileOperandsAs(BodyUseKind, uint32_t user);
     void takeOperand(bool isOptional);
+    void takeOperandThatIsFiledLater();
     void takeVariadicOperands();
     uint32_t takeBlock();
     template<typename IDType> void takeID(bool isOptional);
@@ -73,6 +78,9 @@ private:
     size_t m_offset { 0 };
     size_t m_end;
     bool m_hasFailed { false };
+    BodyIndexBuilder* m_builder { nullptr };
+    BodyUseKind m_kindOfUse { BodyUseKind::Operand };
+    uint32_t m_user { 0 };
 };
 
 class FlowGraphOfVerifiedBody {
@@ -149,6 +157,7 @@ public:
     Vector<BlockID> path;
     Vector<uint32_t> lastLoopHeadsThatReach;
     Vector<BlockID> worklist;
+    std::optional<MentionsInCode> mentionsInCode;
 };
 
 struct MethodDefinitionInBody {
@@ -207,8 +216,8 @@ private:
     template<WordsReport> bool verifyWordsInOrder();
     template<WordsReport report> void verifyWordsOfBlock(CheckedBodyWords<report>&, BlockID, uint32_t& nextValue);
     template<WordsReport report> void verifyWordsOfValue(CheckedBodyWords<report>&, BlockID, ValueID, NoteOnVerifiedValue&);
-    template<WordsReport report> void verifyWordsOfTerminator(CheckedBodyWords<report>&, BlockID, uint32_t endOfValues);
-    template<WordsReport report> void verifyWordsOfTarget(CheckedBodyWords<report>&, BlockID from);
+    template<WordsReport report> void verifyWordsOfTerminator(CheckedBodyWords<report>&, BlockID, BodyTarget handler, uint32_t endOfValues);
+    template<WordsReport report> bool verifyWordsOfTarget(CheckedBodyWords<report>&, BlockID from);
     bool isTargetOfEarlierBlock(uint32_t block) const { return m_scratch.targetsOfEarlierBlocks.span().data()[block / 64] >> (block % 64) & 1; }
     void noteTargetOfEarlierBlock(uint32_t block) { m_scratch.targetsOfEarlierBlocks.mutableSpan().data()[block / 64] |= uint64_t { 1 } << (block % 64); }
     void noteOrderThatMisleadsBodyIndex(InternalErrorKind, BlockID, ValueID = { });
@@ -276,6 +285,7 @@ private:
     bool m_comparesIndexWithPlainComputation { true };
     unsigned m_workerOfTableThatKeepsIndex { 0 };
     const BodyIndex* m_index { nullptr };
+    std::optional<BodyIndexBuilder> m_builderOfIndex;
     Vector<InternalError> m_errors;
     bool m_hasFlowGraph { false };
     bool m_operationsAreVerified { false };
@@ -393,15 +403,36 @@ ALWAYS_INLINE uint32_t CheckedBodyWords<report>::takeCount(uint32_t minWordsPerE
 }
 
 template<WordsReport report>
+ALWAYS_INLINE void CheckedBodyWords<report>::fileOperandsAs(BodyUseKind kind, uint32_t user)
+{
+    if constexpr (report == WordsReport::No) {
+        m_kindOfUse = kind;
+        m_user = user;
+    }
+}
+
+template<WordsReport report>
 ALWAYS_INLINE void CheckedBodyWords<report>::takeOperand(bool isOptional)
 {
     uint32_t word = take();
-    if (word < m_numberOfValues) [[likely]]
+    if (word < m_numberOfValues) [[likely]] {
+        if constexpr (report == WordsReport::No)
+            m_builder->fileUse(ValueID(word), m_kindOfUse, m_user);
         return;
+    }
     if (word != Wire::none)
         fail(InternalErrorKind::IdOutOfRange);
     else if (!isOptional)
         fail(InternalErrorKind::OperandMissing);
+}
+
+template<WordsReport report>
+ALWAYS_INLINE void CheckedBodyWords<report>::takeOperandThatIsFiledLater()
+{
+    uint32_t word = take();
+    if (word < m_numberOfValues) [[likely]]
+        return;
+    fail(word != Wire::none ? InternalErrorKind::IdOutOfRange : InternalErrorKind::OperandMissing);
 }
 
 template<WordsReport report>

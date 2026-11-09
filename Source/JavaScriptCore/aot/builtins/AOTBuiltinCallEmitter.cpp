@@ -25,6 +25,7 @@
 #include "AOTRegExpFlags.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallHost.h"
 #include "AOTStubsPrimitiveFastPaths.h"
@@ -623,6 +624,19 @@ void BuiltinCallEmitter::generateGetBuiltinValue(const ValueContext& value)
 void BuiltinCallEmitter::generateGetWatchedBuiltinValue(const ValueContext& value)
 {
     defineAs(value, builtinValue(value, BuiltinCellKey::value(m_builtins.canonicalID(value->builtin())), RuntimeOperation::FillWatchedBuiltinValue), typeOf(value.id()));
+}
+
+void BuiltinCallEmitter::generateGetWatchedBuiltinValueOrAbsent(const ValueContext& value)
+{
+    BuiltinCellKey key = BuiltinCellKey::value(m_builtins.canonicalID(value->builtin()));
+    if (!key.hasCell(m_builtins)) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        define(value, undefined());
+        return;
+    }
+    Pointer values = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.hostValues));
+    Integer number = zeroExtended(numberOf(m_mentions.builtinCell(key)));
+    defineAs(value, Boxed(m_out.load64(m_out.baseIndex(m_heaps.entire(AbstractHeap::RuntimeState), values.value(), number.value(), ScaleEight))), typeOf(value.id()));
 }
 
 void BuiltinCallEmitter::generateInitializeBuiltin(const ValueContext& value)

@@ -11,7 +11,9 @@
 #include "AOTArrivals.h"
 #include "AOTCallingConventions.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
+#include "AOTSort.h"
 #include <algorithm>
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
@@ -189,7 +191,7 @@ void UnitQueue::orderCycles()
 
     for (uint32_t unit = numberOfFunctions * Typed::numberOfCodeRolesOfOneFunction; unit < m_conventions.numberOfUnits(); ++unit)
         m_unitsBehindRoles.append({ m_conventions.unitAt(unit).function.index(), unit });
-    std::ranges::stable_sort(m_unitsBehindRoles, { }, &UnitBehindRoles::function);
+    AOT::stableSort(m_unitsBehindRoles, { }, &UnitBehindRoles::function);
 }
 
 std::span<const uint32_t> UnitQueue::cyclesNamedBy(uint32_t cycle) const
@@ -218,7 +220,7 @@ bool UnitQueue::isSeedThatWaitsForNobody(Typed::CodeUnit unit) const
     return !m_isSeed.isEmpty() && (m_isSeed[index / bitsInWordOfUnitQueue] >> (index % bitsInWordOfUnitQueue) & 1) && !m_arrivals->takesWhatWasLeft(unit.function);
 }
 
-void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) const
+ALWAYS_INLINE_INTO_OTHER_FILES void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) const
 {
     if (m_isTakingSeeds)
         return;

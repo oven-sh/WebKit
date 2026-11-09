@@ -73,6 +73,7 @@ StubSignature signatureOfGetByValCachedCells(StubKey) { return signatureOfKeyedO
 StubSignature signatureOfGetByValCachedAtPlace(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedBehindPlaces(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedKeepingRegisters(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
+StubSignature signatureOfGetByValCachedOrOwnAccessor(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedCellsKeepingRegisters(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedAtPlaceKeepingRegisters(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedBehindPlacesKeepingRegisters(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
@@ -939,6 +940,7 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
         jit.load64(BaseIndex(getterSetter, header, CCallHelpers::TimesEight), getterSetter);
         hasGetterSetter.link(&jit);
         JumpList cannotCallGetter;
+        branchUnlessAccessorPair(jit, getterSetter, cannotCallGetter);
         callGetterAndReturn(jit, base, getterSetter, cannotCallGetter);
         cannotCallGetter.link(&jit);
         jit.load32(Address(base, JSCell::structureIDOffset()), registers.structureID);
@@ -950,6 +952,7 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
         jit.load32(inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, wordInCellCage)), header);
         jit.load64(BaseIndex(cellCageBaseGPR, header, CCallHelpers::TimesEight), getterSetter);
         JumpList cannotCallGetterAbove;
+        branchUnlessAccessorPair(jit, getterSetter, cannotCallGetterAbove);
         callGetterAndReturn(jit, base, getterSetter, cannotCallGetterAbove);
         cannotCallGetterAbove.link(&jit);
         jit.load32(Address(base, JSCell::structureIDOffset()), registers.structureID);
@@ -1028,6 +1031,28 @@ static void generateGetByValCached(StubAssembler& jit, RegistersOfCaller registe
 void generateGetByValCached(StubAssembler& jit)
 {
     generateGetByValCached(jit, RegistersOfCaller::AreLost);
+}
+
+void generateGetByValCachedOrOwnAccessor(StubAssembler& jit)
+{
+    const KeyedProbeRegisters registers = allocateKeyedProbeRegisters(jit);
+    const GPRReg base = registers.base;
+    const GPRReg header = registers.header;
+    RELEASE_ASSERT(signatureOf(getByVal(false)).operands == jit.signature().operands);
+    jit.linkToStub(jit.branchIfNotCell(registers.key), getByVal(false));
+    jit.load32(Address(base, JSCell::structureIDOffset()), registers.structureID);
+    locateKeyedValuePlace(jit, SlotAccess::Read, registers.key, registers.structureID, registers.entry);
+    jit.linkToStub(jit.branchPtr(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, key)), registers.key), getByValCachedBehindPlaces());
+    jit.add32(TrustedImm32(KeyedValuePlace::getterBit), registers.structureID, header);
+    jit.linkToStub(jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), header), getByValCachedAtPlace());
+    jit.load32SignedExtendTo64(inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, wordIndex)), header);
+    Jump isOutOfLine = jit.branchTest64(CCallHelpers::Signed, header);
+    jit.load64(BaseIndex(base, header, CCallHelpers::TimesEight), base);
+    jit.returnToCaller();
+    isOutOfLine.link(&jit);
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), base);
+    jit.load64(BaseIndex(base, header, CCallHelpers::TimesEight), base);
+    jit.returnToCaller();
 }
 
 void generateGetByValCachedKeepingRegisters(StubAssembler& jit)
@@ -1348,6 +1373,7 @@ void generateGetSuperByVal(StubAssembler& jit)
     Jump isNotGetter = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Getter);
     loadValueBySlot(jit, slotOf(Slot::Kind::Getter), base, registers.uid, registers.structureID, getterSetter);
     Label callGetter = jit.label();
+    branchUnlessAccessorPair(jit, getterSetter, whatIsFiledDoesNotAnswer);
     callGetterAndReturn(jit, receiver, getterSetter, whatIsFiledDoesNotAnswer);
 
     isNotGetter.link(&jit);
@@ -1985,6 +2011,27 @@ static void defineOwnElementAndReturn(StubAssembler& jit, const KeyedProbeRegist
     jit.jump().linkTo(loadStorage, &jit);
 
     isNoArrayOfInt32.link(&jit);
+    Jump holdsNoFractions = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(ArrayWithDouble));
+    const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
+    miss.append(jit.branchIfNotNumber(value));
+    Jump isWhole = jit.branchIfInt32(value);
+    unboxDouble(jit, value, newLength, number);
+    miss.append(jit.branchIfNaN(number));
+    Jump isFraction = jit.jump();
+    isWhole.link(&jit);
+    jit.convertInt32ToDouble(value, number);
+    isFraction.link(&jit);
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    jit.zeroExtend32ToWord(registers.key, index);
+    Jump liesWithinLength = jit.branch32(CCallHelpers::Below, index, Address(storage, Butterfly::offsetOfPublicLength()));
+    miss.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfVectorLength())));
+    jit.add32(TrustedImm32(1), index, newLength);
+    jit.store32(newLength, Address(storage, Butterfly::offsetOfPublicLength()));
+    liesWithinLength.link(&jit);
+    jit.storeDouble(number, BaseIndex(storage, index, CCallHelpers::TimesEight));
+    jit.returnToCaller();
+
+    holdsNoFractions.link(&jit);
     miss.append(branchIfNotCompiledObject(jit, base));
     checkStubOperands(storeElementOfCompiledObject(PutMode::Define), { base, registers.key, value });
     jit.jumpToStub(storeElementOfCompiledObject(PutMode::Define));

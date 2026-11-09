@@ -16,6 +16,7 @@
 #include "AOTControlEmitter.h"
 #include "AOTConvention.h"
 #include "AOTHintEmitter.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineFrame.h"
 #include "AOTStackCheckEmitter.h"
 #include "AOTStubsBoxedCalls.h"
@@ -134,7 +135,7 @@ void CallEmitter::didEmitTailCall()
         m_records.frame.needsStackCheckForTailCalls = true;
 }
 
-const ArgumentLocations& CallEmitter::ownLocations()
+ALWAYS_INLINE_INTO_OTHER_FILES const ArgumentLocations& CallEmitter::ownLocations()
 {
     if (!m_ownLocations)
         m_ownLocations = conventions().locationsOf(m_program, m_unit);

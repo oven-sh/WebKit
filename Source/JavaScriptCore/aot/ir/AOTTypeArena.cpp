@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include <algorithm>
@@ -135,7 +136,7 @@ static void makeWrittenContentsCanonical(ClassPart& part)
     }
 }
 
-static ClassPartsID addClassesOfNamedObjects(TypeArena& arena, ClassPartsID written, ClassPartsID ofNamedObjects)
+static ALWAYS_INLINE ClassPartsID addClassesOfNamedObjects(TypeArena& arena, ClassPartsID written, ClassPartsID ofNamedObjects)
 {
     if (!ofNamedObjects || written == ofNamedObjects)
         return written;
@@ -356,6 +357,7 @@ void TypeArena::reset()
     if (m_epoch == largestEpochOfTypeMemo) {
         m_memoUntilReset.fill(MemoEntry { });
         m_typesMade.fill(MemoEntry { });
+        m_typesTakenLastAtEntries.fill({ });
         m_epoch = 0;
     }
     ++m_epoch;
@@ -671,7 +673,7 @@ NEVER_INLINE void TypeArena::addWhatNamedObjectsBring(Type& type) const
     type.traitsOfNamed = summary.traits;
 }
 
-ALWAYS_INLINE void TypeArena::completeInPlace(Type& type) const
+ALWAYS_INLINE_INTO_OTHER_FILES void TypeArena::completeInPlace(Type& type) const
 {
     type.layouts = type.unnamedLayouts;
     type.classes = type.unnamedClasses;
@@ -858,6 +860,14 @@ public:
     std::array<std::unique_ptr<PartsOfTypeKeptForBuild>, TypeArena::mostWordsOfRound> types;
 };
 
+class TypeKeptForBuild final : public SharedAnswers::Answer {
+public:
+    size_t sizeInBytes() const final { return sizeof(TypeKeptForBuild) + (parts ? parts->sizeInBytes() : 0); }
+
+    TypeID atRest;
+    std::unique_ptr<PartsOfTypeKeptForBuild> parts;
+};
+
 } // anonymous namespace
 
 template<typename SetID>
@@ -1013,6 +1023,29 @@ void TypeArena::rememberRound(uint8_t question, size_t numberOfWords, uint8_t ty
             round->types[index] = partsOfTypeInThread(*this, answers, TypeID::fromBits(words[index]));
     }
     answers.add({ SharedQuestion::RoundOverSet, question, set.word, second }, WTF::move(round));
+}
+
+std::optional<TypeID> TypeArena::rememberedContentsOfArrayInData(DataID data)
+{
+    SharedAnswers* answers = answersThatKeepRounds(*this);
+    const SharedAnswers::Answer* found = answers ? answers->find({ SharedQuestion::ContentsOfArrayInData, data.index() }) : nullptr;
+    if (!found)
+        return std::nullopt;
+    const auto& kept = static_cast<const TypeKeptForBuild&>(*found);
+    return kept.parts ? typeOfPartsKeptForBuild(*this, *answers, *kept.parts) : kept.atRest;
+}
+
+void TypeArena::rememberContentsOfArrayInData(DataID data, TypeID type)
+{
+    SharedAnswers* answers = answersThatKeepRounds(*this);
+    if (!answers)
+        return;
+    auto kept = makeUniqueWithoutFastMallocCheck<TypeKeptForBuild>();
+    if (liesInThread(type))
+        kept->parts = partsOfTypeInThread(*this, *answers, type);
+    else
+        kept->atRest = type;
+    answers->add({ SharedQuestion::ContentsOfArrayInData, data.index() }, WTF::move(kept));
 }
 
 PropertyKeyID TypeArena::intern(const PropertyKey& key)

@@ -62,7 +62,7 @@ using RepresentationRuleSet = EnumeratorBitSet<RepresentationRule, static_cast<u
 } // anonymous namespace
 
 static constexpr OpcodeSet readsAtPositionThatIsAnyNumber {
-    Opcode::IsElementInStorage
+    Opcode::IsElementInStorage, Opcode::GetElementInStorageOrAbsent
 };
 
 static constexpr RepresentationRule representationRuleOf(Opcode opcode)
@@ -104,7 +104,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
         return RepresentationRule::TestOfCellOrValue;
     case Opcode::CallBuiltin: case Opcode::CallInline:
         return RepresentationRule::BuiltinCall;
-    case Opcode::RegExpMatchLiteral: case Opcode::GetBuiltinValue: case Opcode::GetWatchedBuiltinValue: case Opcode::GetSuperBase:
+    case Opcode::RegExpMatchLiteral: case Opcode::GetBuiltinValue: case Opcode::GetWatchedBuiltinValue: case Opcode::GetWatchedBuiltinValueOrAbsent: case Opcode::GetSuperBase:
         return RepresentationRule::BoxedResult;
     case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
         return RepresentationRule::SlotRead;
@@ -143,7 +143,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::ToObject: case Opcode::ToThis: case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::HasArrayStorage: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ReciprocalOfDivisor: case Opcode::RemainderByReciprocal: case Opcode::ToIntegerOrInfinity:
     case Opcode::IntegerBound: case Opcode::StringOrder: case Opcode::StringOrderToCharacter: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::LogicalNot:
     case Opcode::NumberOrNaN:
-    case Opcode::TypeOf: case Opcode::InstanceOf: case Opcode::HasInPrototypeChain: case Opcode::ToPropertyKey:
+    case Opcode::TypeOf: case Opcode::InstanceOf: case Opcode::HasInPrototypeChain: case Opcode::FindInPrototypeChainUnlessTrapped: case Opcode::ToPropertyKey:
     case Opcode::Call: case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::Construct: case Opcode::GetConstructPrototype: case Opcode::CallList: case Opcode::ConstructList: case Opcode::NewArgumentList: case Opcode::NewArrayOfGiven:
     case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::GetMappedArgument: case Opcode::SetMappedArgument: case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest:
     case Opcode::CatchValue: case Opcode::CatchException: case Opcode::NewRuntimeError: case Opcode::NewSuppressedError: case Opcode::LoopHint:
@@ -184,12 +184,13 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
     case Opcode::EvaluateModule: case Opcode::RecordRequire: case Opcode::RequireModule: case Opcode::ImportModule: case Opcode::ModuleNamespace:
     case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::EvaluateRequiredModule: case Opcode::EnterBodyThatRunsOnce:
-    case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy: case Opcode::AreLoaderFunctionsStored: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure:
+    case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::IsLinkedBelow: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy: case Opcode::AreLoaderFunctionsStored: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure:
     case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::CountExecution:
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField:
-    case Opcode::GetCachedGetter: case Opcode::GetValueAtSiteOrAbsent: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
+    case Opcode::GetCachedGetter: case Opcode::ElemGetOrOwnAccessor: case Opcode::GetGetterOfAccessorOrUndefined: case Opcode::GetValueAtSiteOrAbsent: case Opcode::GetOwnValueUnderKeyOrAbsent: case Opcode::GetElementInStorageOrAbsent: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
     case Opcode::RegExpMatchLiteralInParts: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
     case Opcode::BoundsOfStringSplit: case Opcode::NewStringSplitArray:
+    case Opcode::GetArrayRoom: case Opcode::ExtendArrayLength: case Opcode::SetArrayLength:
         return RepresentationRule::BySchema;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -557,6 +558,11 @@ private:
             return type.isInt32() ? Representation::Int32 : Representation::JSValue;
         if (takesNumberAsItIs(operandIndex) && (held == Representation::JSValue || (held == Representation::Int32 && type.isInt32())))
             return Representation::Unchosen;
+        if (allRelations.contains(opcode()) && held == Representation::Int64 && type.isInteger()) {
+            uint32_t otherIndex = operandIndex == leftIndex() ? rightIndex() : leftIndex();
+            if (heldFormAt(otherIndex) == Representation::JSValue && typeAt(otherIndex).isNumber() && typeAt(otherIndex).primitives & Primitive::Integer)
+                return Representation::Unchosen;
+        }
         if (type.isNumber())
             return Representation::Double;
         RELEASE_ASSERT_WITH_MESSAGE(isLegalRepresentation(type, Representation::OptionalDouble), "AOT: an operator in the form Numbers is handed an operand that may be something other than a number, undefined or null: whoever builds it converts a boolean in front (prepareOperandsForFormNumbers)");

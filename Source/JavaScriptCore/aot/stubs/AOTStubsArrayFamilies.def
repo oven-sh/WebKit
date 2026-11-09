@@ -15,6 +15,7 @@ v(NewArrayWithLength, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0,
 v(NewArrayOfLength, CalledByCode, (Int32, Double, Contiguous), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, RuntimeState), NewArrayOfLength)
 v(NewArrayOfGiven, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, RuntimeState), NewArrayOfGiven)
 v(NewArrayFromBuffer, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewArrayFromBuffer)
+v(NewArrayOfList, CalledByCode, (ByWhatItHolds, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState, ArrayStorage) | writes(AllocatorState), NewArrayOfList)
 v(NewArrayOfHolesSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayOfHolesSlow)
 v(NewArrayFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, NewArrayFrontEnd)
 AOT_STUB_FRONT_END(NewArray, NewArrayFrontEnd)
@@ -36,6 +37,7 @@ v(DestructureIterable, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, N
 v(ArrayPutAtIndex, CalledByCode, (Value, Number, ValueInSloppyCode), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPutAtIndex)
 v(ArrayPutAtNumber, CalledByCode, (Value, Number), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPutAtNumber)
 v(ReserveArrayRoom, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReserveArrayRoom)
+v(SetArrayLength, CalledByCode, (InStrictCode, InSloppyCode), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, SetArrayLength)
 
 v(ArrayGetAtIndex, CalledByCode, (OfListAsMade, OfAnyList), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtIndex)
 v(ArrayGetAtNumber, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtNumber)

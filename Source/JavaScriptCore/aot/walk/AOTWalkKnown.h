@@ -43,6 +43,14 @@ enum class KnownNote : uint8_t {
     ElementReadOffFreshList,
     StructureOfClassIsSeen,
     ValueOfFieldOfHeir,
+    LoopFillsLiteralFromItsEnd,
+    ListEndsWhereCounterEntersLoop,
+    LengthThatLoopFillsLiteralTo,
+    PushFillsLiteralFromItsEnd,
+    RoomOfListHoldsEveryTurn,
+    ClassesThatInstanceOfDenied,
+    AnswerOfReadOfSlotThatMayBeEmpty,
+    PieceIsStoredByBodyThatCutIt,
 };
 void noteKnown(Walker&, KnownNote, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension = false);
 std::optional<uint64_t> findKnown(const Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
@@ -77,6 +85,7 @@ ALWAYS_INLINE void endWhatOperationWrites(Walker& walker, const Draft& draft, co
 bool writerEndsNoGuard(const Walker&, const Draft&);
 bool makesNewCell(const Operation&);
 std::optional<Vector<uint32_t, 2>> objectsMadeHereThatAloneAreWritten(Walker&, const Draft&, const Effects&);
+std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker&, const TerminatorDraft&, const Effects&);
 bool mayBeSameObject(Walker&, Reference, Reference);
 bool isOfLayoutAlone(Walker&, Reference, LayoutID);
 
@@ -104,6 +113,7 @@ std::optional<uint32_t> onlyTargetDecidedOnWay(Walker&, const BodyTerminator&);
 bool isKnownToLieBelow(Walker&, Reference value, Reference bound);
 bool isKnownToLieInside(Walker&, Reference position, Reference length);
 void noteStorageOfListMade(Walker&, Reference list);
+void noteLengthThatListIsBornWith(Walker&, Reference list);
 struct WrittenListOfVariable {
     explicit operator bool() const { return !!data; }
 

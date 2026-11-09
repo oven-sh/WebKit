@@ -12,6 +12,7 @@
 #include "AOTDiagnostics.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLimits.h"
 #include "AOTOpcodeSets.h"
 #include "AOTTypedArrayKinds.h"
@@ -141,7 +142,7 @@ static ALWAYS_INLINE ValueID appendRecordToCode(StableArray<Operation, 14>& oper
     return ValueID(operations.append(operation));
 }
 
-ALWAYS_INLINE void Code::fill(Instruction& instruction, const DraftWords& draft)
+ALWAYS_INLINE_INTO_OTHER_FILES void Code::fill(Instruction& instruction, const DraftWords& draft)
 {
     std::span<const Reference> operands = draft.operands();
     std::span<const uint32_t> payload = draft.payload();
@@ -405,7 +406,7 @@ BlockID Code::addBlock(BlockRole role, BlockFrequency frequency)
     return id;
 }
 
-BlockID Code::addBlockBehindEdge(EdgeID edgeID, BlockFrequency frequency, bool isInLoop)
+ALWAYS_INLINE_INTO_OTHER_FILES BlockID Code::addBlockBehindEdge(EdgeID edgeID, BlockFrequency frequency, bool isInLoop)
 {
     RELEASE_ASSERT(!m_isSwept);
     RELEASE_ASSERT(m_blocks.size() < Operation::noBlock);
@@ -437,11 +438,11 @@ void Code::makeBlocksRare(uint32_t first, uint32_t end)
     }
 }
 
-void Code::makeBlockUnlikely(BlockID id)
+void Code::makeBlockUnlikely(BlockID id, bool thoughRare)
 {
     RELEASE_ASSERT(!m_isSwept);
     Block& block = m_blocks[checkedIndexInCode(id, m_blocks.size())];
-    if (block.frequency == BlockFrequency::Normal && !block.isEntry) {
+    if ((block.frequency == BlockFrequency::Normal || (thoughRare && block.frequency == BlockFrequency::Rare)) && !block.isEntry) {
         keepMarksOfOlderBlock(id.index());
         block.frequency = frequencyTakenFor(id.index(), BlockFrequency::Unlikely);
     }
@@ -470,6 +471,12 @@ void Code::noteBeliefAheadOfEdges(BlockID blockID, BeliefAheadOfEdges belief)
     m_blocks[checkedIndexInCode(blockID, m_blocks.size())].beliefAheadOfEdges = belief;
 }
 
+void Code::markRareBlockThatKeepsSites(BlockID blockID)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    m_blocks[checkedIndexInCode(blockID, m_blocks.size())].keepsSitesThoughRare = true;
+}
+
 void Code::markMeetingOfStepWrittenByHand(BlockID blockID)
 {
     RELEASE_ASSERT(!m_isSwept);
@@ -481,6 +488,15 @@ void Code::setSubject(BlockID blockID, ValueID subject)
     RELEASE_ASSERT(!m_isSwept);
     RELEASE_ASSERT(!subject || subject.index() < m_operations.size());
     m_blocks[checkedIndexInCode(blockID, m_blocks.size())].subject = subject;
+}
+
+NEVER_INLINE size_t Block::placeAmongManyParameters(ValueID parameter) const
+{
+    std::span<const ValueID> all = parameters();
+    auto found = std::ranges::lower_bound(all, parameter);
+    if (found != all.end() && *found == parameter)
+        return found - all.begin();
+    return std::ranges::find(all, parameter) - all.begin();
 }
 
 void Code::setParameters(BlockID blockID, std::span<const ValueID> parameters)
@@ -631,7 +647,7 @@ void Code::bearListWithStorage(ValueID list, ArrayStorage storage)
     const_cast<uint32_t&>(word) = encodePayloadWord(storage);
 }
 
-void Code::letListRememberStorageAtSite(ValueID list)
+void Code::letListRememberStorageAtSite(ValueID list, bool takesAnyValueAtFirst)
 {
     RELEASE_ASSERT(!m_isSwept);
     Operation& record = m_operations[checkedIndexInCode(list, m_operations.size())];
@@ -640,6 +656,19 @@ void Code::letListRememberStorageAtSite(ValueID list)
     if (m_keepsChangesToOlderParts)
         m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, list, record });
     record.flags |= *FlagMask::remembersStorageAtSite(Opcode::NewArrayLike);
+    if (takesAnyValueAtFirst)
+        record.flags |= *FlagMask::takesAnyValueAtFirst(Opcode::NewArrayLike);
+}
+
+void Code::letListForgetStorageAtSite(ValueID list)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Operation& record = m_operations[checkedIndexInCode(list, m_operations.size())];
+    RELEASE_ASSERT(record.opcode == Opcode::NewArrayLike);
+    RELEASE_ASSERT(record.remembersStorageAtSite());
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, list, record });
+    record.flags &= ~(*FlagMask::remembersStorageAtSite(Opcode::NewArrayLike) | *FlagMask::takesAnyValueAtFirst(Opcode::NewArrayLike));
 }
 
 ValueID Code::appendParameter(BlockID blockID, TypeID type, Representation representation, Origin origin)
@@ -771,7 +800,7 @@ ValueID Code::addConstant(const Draft& draft, TypeID proven)
     return appendRecordToCode(m_operations, constant);
 }
 
-ValueID Code::addCopyOfConstant(ValueID constant, Representation representation)
+ALWAYS_INLINE_INTO_OTHER_FILES ValueID Code::addCopyOfConstant(ValueID constant, Representation representation)
 {
     RELEASE_ASSERT(!m_isSwept && representation != Representation::Unchosen);
     Operation copy = m_operations[checkedIndexInCode(constant, m_operations.size())];
@@ -850,7 +879,7 @@ void Code::endWithBranch(BlockID blockID, ValueID condition, Origin origin)
     setTerminator(blockID, block, terminator);
 }
 
-ALWAYS_INLINE void Code::appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments)
+ALWAYS_INLINE_INTO_OTHER_FILES void Code::appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments)
 {
     Block& entered = m_blocks[checkedIndexInCode(to, m_blocks.size())];
     RELEASE_ASSERT(!entered.isSealed);
@@ -1137,7 +1166,7 @@ uint32_t Code::addInlineFrame(const InlineFrame& frame)
         m_inlineFrames[0].callee = m_unit.function;
         return 0;
     }
-    RELEASE_ASSERT(!namesFunctionItself || !walksInputBody(m_unit.role));
+    RELEASE_ASSERT(frame.callee || frame.calledBuiltin || !walksInputBody(m_unit.role));
     RELEASE_ASSERT(frame.parent < m_inlineFrames.size());
     RELEASE_ASSERT(m_inlineFrames.size() < mostInlineFramesInCode);
     m_inlineFrames.append(frame);

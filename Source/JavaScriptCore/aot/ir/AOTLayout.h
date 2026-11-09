@@ -139,7 +139,7 @@ inline bool isFoundByShapeTest(const Layout& layout)
 {
     return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance || layout.kind == LayoutKind::Container) && !layout.writtenBuiltinBase && !layout.mayBeOrdinaryObject && !layout.holdsOrdinaryObjects;
 }
-inline bool isKnownByStructureOfClass(const Layout& layout)
+ALWAYS_INLINE bool isKnownByStructureOfClass(const Layout& layout)
 {
     constexpr OptionSet<FieldFlags> flagsOfWhatIsNoPlainProperty { FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden };
     if (layout.kind != LayoutKind::Instance || !layout.writtenBuiltinBase || layout.base || !isDefinedByClass(layout) || layout.isDerived())

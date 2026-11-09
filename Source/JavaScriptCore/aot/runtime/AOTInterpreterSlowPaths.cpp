@@ -92,6 +92,12 @@ static JSValue valueInStorage(const Slot& slot, JSCell* base)
     return valueAtOffset(asObject(slot.has(Slot::isOwn) ? base : slot.holder), slot.offsetInStorage());
 }
 
+static GetterSetter* accessorPairInStorage(const Slot& slot, JSCell* base)
+{
+    JSValue word = valueInStorage(slot, base);
+    return word && word.isCell() ? dynamicDowncast<GetterSetter>(word.asCell()) : nullptr;
+}
+
 static JSValue callCustomGetter(Instance& instance, const Slot& slot, JSCell* base, const Identifier& ident)
 {
     const CustomAccessorRecord& record = instance.state->propertyCaches->tables().customAccessors().at(slot.customAccessor.index);
@@ -107,8 +113,10 @@ static JSValue readBySlot(Instance& instance, const Slot& slot, JSCell* base, co
     switch (slot.kind) {
     case Slot::Kind::Value:
         return valueInStorage(slot, base);
-    case Slot::Kind::Getter:
-        return uncheckedDowncast<GetterSetter>(valueInStorage(slot, base))->callGetter(instance.globalObject, base);
+    case Slot::Kind::Getter: {
+        GetterSetter* pair = accessorPairInStorage(slot, base);
+        return pair ? pair->callGetter(instance.globalObject, base) : JSValue();
+    }
     case Slot::Kind::FarValue:
         return asObject(base)->getDirect(slot.offsetInStorage());
     case Slot::Kind::Absent:
@@ -213,8 +221,8 @@ static void putById(Instance& instance, JSCell* base, const Identifier& ident, J
         putAndCache({ &instance, ident, std::nullopt }, base, value, isStrict ? PutMode::Strict : PutMode::Sloppy);
         return;
     }
-    if (slot->kind == Slot::Kind::Setter) {
-        uncheckedDowncast<GetterSetter>(valueInStorage(*slot, base))->callSetter(instance.globalObject, base, value, isStrict);
+    if (GetterSetter* pair = slot->kind == Slot::Kind::Setter ? accessorPairInStorage(*slot, base) : nullptr) {
+        pair->callSetter(instance.globalObject, base, value, isStrict);
         return;
     }
     if (slot->kind == Slot::Kind::ExtraPropertyAddition && tryAddExtraProperty(instance, *slot, *uncheckedDowncast<Object>(base), value))

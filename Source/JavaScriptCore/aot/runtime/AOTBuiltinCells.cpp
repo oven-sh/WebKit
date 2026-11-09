@@ -132,7 +132,7 @@ BuiltinCells::BuiltinCells(State& state)
     m_instance.builtins.classesWrittenAbove = m_classesWrittenAbove.data();
     zeroSpan(std::span(m_instance.builtins.functionsAsBuilt));
     bool isTestRun = hasFlag(m_instance.options().admitted(), AdmittedCode::ReplacedBuiltins);
-    if (isTestRun || !state.tables.eagerBuiltinCells().empty()) {
+    if (isTestRun || !state.tables.eagerBuiltinCells().empty() || !state.tables.membersAskedByByteAlone().empty()) {
         size_t numberOfBuiltins = BuiltinTable::singleton().builtinCount();
         m_membersWritten = unsafeMakeSpan(state.tableArena.allocate<uint8_t>(numberOfBuiltins), numberOfBuiltins);
         memsetSpan(m_membersWritten, 1);
@@ -1017,9 +1017,7 @@ void didRejectWrite(JSGlobalObject* realm, JSObject* object, UniquedStringImpl* 
         return;
     String holder = BuiltinTable::singleton().textOf(id);
     auto member = [&]() -> String {
-        if (keyOrNull->isSymbol())
-            return makeString(holder, "[Symbol("_s, StringView(keyOrNull), ")]"_s);
-        return id == Builtins::GlobalThis ? String(keyOrNull) : makeString(holder, '.', StringView(keyOrNull));
+        return memberOfLockedBuiltin(id, keyOrNull);
     };
     switch (change) {
     case RejectedWrite::Store:
@@ -1272,6 +1270,11 @@ static BuiltinsToLock findBuiltinsToLock(const BuiltinTable& table, const Progra
             const Builtin& object = table.at(table.canonicalID(above));
             above = object.prototypeLink == BuiltinPrototypeLink::Builtin ? object.inheritsFrom : BuiltinID();
         }
+    }
+    for (uint32_t word : tables.membersAskedByByteAlone()) {
+        BuiltinID holder = table.at(BuiltinID(word & ~ProgramTables::memberAskedByByteAlone)).holder;
+        if (!result.holdersThatTellOfWrites.quickSet(holder.index()))
+            addWithPath(holder);
     }
     if (tables.eagerBuiltinCells().empty())
         return result;

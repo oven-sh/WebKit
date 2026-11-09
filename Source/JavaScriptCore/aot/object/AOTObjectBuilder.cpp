@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedSpan.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
@@ -44,15 +45,15 @@ static size_t numberOfBodyWords(const LayoutData& layout)
 void ObjectBuilderPlan::createInitialBody(uint32_t orderAndCount)
 {
     m_initialBody.fill(0, m_layout.size - sizeof(JSCell));
-    auto slotAt = [&](uint32_t offsetInCell) {
-        return m_initialBody.mutableSpan().subspan(offsetInCell - sizeof(JSCell)).data();
+    auto slotAt = [&](uint32_t offsetInCell, size_t width) {
+        return checkedSubspan(m_initialBody.mutableSpan(), offsetInCell - sizeof(JSCell), width).data();
     };
     for (const FieldData& field : m_layout.fields()) {
         if (!field.isOutOfLine())
-            clearSlot(field.slot.representation(), slotAt(field.slot.offset));
+            clearSlot(field.slot.representation(), slotAt(field.slot.offset, widthOf(field.slot.representation())));
     }
-    *reinterpret_cast<uint32_t*>(slotAt(offsetOfOrderWord)) = orderAndCount;
-    *reinterpret_cast<uint32_t*>(slotAt(offsetOfShapeWord)) = shapeWordOf(m_layout.shape);
+    *reinterpret_cast<uint32_t*>(slotAt(offsetOfOrderWord, sizeof(uint32_t))) = orderAndCount;
+    *reinterpret_cast<uint32_t*>(slotAt(offsetOfShapeWord, sizeof(uint32_t))) = shapeWordOf(m_layout.shape);
 }
 
 void ObjectBuilderPlan::createFastPath()

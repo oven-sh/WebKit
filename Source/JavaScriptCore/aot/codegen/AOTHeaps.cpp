@@ -13,6 +13,7 @@
 #include "CompleteSubspace.h"
 #include "DateInstance.h"
 #include "DirectArguments.h"
+#include "GetterSetter.h"
 #include "JSArrayBufferView.h"
 #include "JSBigInt.h"
 #include "JSBoundFunction.h"
@@ -44,6 +45,7 @@ struct SharedHeap {
 static constexpr SharedHeap sharedHeaps[] = {
     { &AOTHeaps::JSCell_header, { IRHeap::NamedProperties, IRHeap::PrototypeLinks, IRHeap::ArrayStorage } },
     { &AOTHeaps::JSObject_butterfly, { IRHeap::NamedProperties } },
+    { &AOTHeaps::Butterfly_publicLength, { IRHeap::ArrayLengths } },
     { &AOTHeaps::AOTObject_orderWord, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTObject_shapeWord, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTSlimClosure_word, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },

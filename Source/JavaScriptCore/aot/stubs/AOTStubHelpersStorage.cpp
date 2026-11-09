@@ -159,6 +159,72 @@ static void loadAllocatorOfNextVector(StubAssembler& jit, const VectorGrowth& gr
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
 }
 
+#if CPU(X86_64)
+static void loadPair(StubAssembler& jit, BaseIndex from)
+{
+    constexpr FPRReg pair = CCallHelpers::fpTempRegister;
+    if (jit.supportsAVX())
+        jit.m_assembler.vmovups_mr(from.offset, from.base, from.index, from.scale, pair);
+    else
+        jit.m_assembler.movups_mr(from.offset, from.base, from.index, from.scale, pair);
+}
+
+static void storePair(StubAssembler& jit, BaseIndex to)
+{
+    constexpr FPRReg pair = CCallHelpers::fpTempRegister;
+    if (jit.supportsAVX())
+        jit.m_assembler.vmovups_rm(pair, to.offset, to.base, to.index, to.scale);
+    else
+        jit.m_assembler.movups_rm(pair, to.offset, to.base, to.index, to.scale);
+}
+
+static void loadPairOfHoles(StubAssembler& jit, GPRReg array, GPRReg scratch)
+{
+    constexpr FPRReg pair = CCallHelpers::fpTempRegister;
+    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), scratch);
+    jit.and32(TrustedImm32(IndexingShapeMask), scratch);
+    jit.moveZeroToDouble(pair);
+    static_assert(!JSValue::ValueEmpty);
+    Jump holdsNoDoubles = jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(DoubleShape));
+    jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), scratch);
+    jit.move64ToDouble(scratch, pair);
+    if (jit.supportsAVX())
+        jit.m_assembler.vpunpcklqdq_rrr(pair, pair, pair);
+    else
+        jit.m_assembler.punpcklqdq_rr(pair, pair);
+    holdsNoDoubles.link(&jit);
+}
+
+static void fillAndCopyByPairs(StubAssembler& jit, const VectorGrowth& growth, GPRReg vectorLength)
+{
+    static_assert(MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(IndexingHeader) == sizeof(EncodedJSValue));
+    constexpr int32_t elementSize = sizeof(EncodedJSValue);
+    const GPRReg butterfly = growth.butterfly;
+    const GPRReg length = growth.length;
+    const GPRReg storage = growth.storage;
+    const GPRReg index = growth.scratch;
+
+    jit.zeroExtend32ToWord(length, length);
+    loadPairOfHoles(jit, growth.array, growth.scratch);
+    jit.move(vectorLength, index);
+    Label fillPrevious = jit.label();
+    jit.sub64(TrustedImm32(2), index);
+    storePair(jit, BaseIndex(storage, index, CCallHelpers::TimesEight));
+    jit.branch64(CCallHelpers::GreaterThan, index, length).linkTo(fillPrevious, &jit);
+
+    jit.transfer64(BaseIndex(butterfly, length, CCallHelpers::TimesEight, -elementSize), BaseIndex(storage, length, CCallHelpers::TimesEight, -elementSize));
+    jit.and32(TrustedImm32(~1), length, index);
+    Jump hasNoPair = jit.branchTest32(CCallHelpers::Zero, index);
+    Label copyPrevious = jit.label();
+    loadPair(jit, BaseIndex(butterfly, index, CCallHelpers::TimesEight, -2 * elementSize));
+    storePair(jit, BaseIndex(storage, index, CCallHelpers::TimesEight, -2 * elementSize));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), index).linkTo(copyPrevious, &jit);
+    hasNoPair.link(&jit);
+
+    jit.store32(length, Address(storage, Butterfly::offsetOfPublicLength()));
+    jit.store32(vectorLength, Address(storage, Butterfly::offsetOfVectorLength()));
+}
+#else
 static void loadHoleOf(StubAssembler& jit, GPRReg array, GPRReg hole)
 {
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), hole);
@@ -171,6 +237,47 @@ static void loadHoleOf(StubAssembler& jit, GPRReg array, GPRReg hole)
     isLoaded.link(&jit);
 }
 
+static void fillAndCopyByPairs(StubAssembler& jit, const VectorGrowth& growth, GPRReg vectorLength)
+{
+    static_assert(MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(IndexingHeader) == sizeof(EncodedJSValue));
+    constexpr int32_t elementSize = sizeof(EncodedJSValue);
+    constexpr int32_t pairSize = 2 * elementSize;
+    const GPRReg butterfly = growth.butterfly;
+    const GPRReg length = growth.length;
+    const GPRReg storage = growth.storage;
+    const GPRReg end = vectorLength;
+    const GPRReg copied = growth.scratch;
+
+    jit.zeroExtend32ToWord(length, length);
+    jit.store32(length, Address(storage, Butterfly::offsetOfPublicLength()));
+    jit.store32(vectorLength, Address(storage, Butterfly::offsetOfVectorLength()));
+
+    Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, length);
+    jit.transfer64(BaseIndex(butterfly, length, CCallHelpers::TimesEight, -elementSize), BaseIndex(storage, length, CCallHelpers::TimesEight, -elementSize));
+    jit.and32(TrustedImm32(~1), length, end);
+    Jump hasNoPair = jit.branchTest32(CCallHelpers::Zero, end);
+    jit.getEffectiveAddress(BaseIndex(storage, end, CCallHelpers::TimesEight), end);
+    jit.move(storage, copied);
+    Label copyNext = jit.label();
+    jit.transferPair64(CCallHelpers::PostIndexAddress(butterfly, pairSize), CCallHelpers::PostIndexAddress(copied, pairSize));
+    jit.branchPtr(CCallHelpers::Below, copied, end).linkTo(copyNext, &jit);
+    hasNoPair.link(&jit);
+    isEmpty.link(&jit);
+
+    const GPRReg hole = growth.scratch;
+    const GPRReg filled = length;
+    loadHoleOf(jit, growth.array, hole);
+    jit.store64(hole, BaseIndex(storage, length, CCallHelpers::TimesEight));
+    jit.or32(TrustedImm32(1), length);
+    jit.load32(Address(storage, Butterfly::offsetOfVectorLength()), end);
+    jit.getEffectiveAddress(BaseIndex(storage, end, CCallHelpers::TimesEight), end);
+    jit.getEffectiveAddress(BaseIndex(storage, length, CCallHelpers::TimesEight), filled);
+    Label fillNext = jit.label();
+    jit.storePair64(hole, hole, CCallHelpers::PostIndexAddress(filled, pairSize));
+    jit.branchPtr(CCallHelpers::Below, filled, end).linkTo(fillNext, &jit);
+}
+#endif
+
 static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::optional<GPRReg> neededLength, JumpList& slowPath)
 {
     const GPRReg array = growth.array;
@@ -179,7 +286,6 @@ static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::opti
     const GPRReg storage = growth.storage;
     const GPRReg allocator = growth.allocator;
     const GPRReg scratch = growth.scratch;
-    const GPRReg index = length;
     const GPRReg vectorLength = allocator;
     RELEASE_ASSERT(noOverlap(array, butterfly, length, storage, allocator, scratch, instanceGPR));
     RELEASE_ASSERT(!neededLength || noOverlap(*neededLength, array, butterfly, length, storage, allocator, scratch, instanceGPR));
@@ -198,23 +304,7 @@ static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::opti
     jit.sub32(TrustedImm32(sizeof(IndexingHeader)), vectorLength);
     jit.urshift32(TrustedImm32(3), vectorLength);
     jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
-    jit.store32(length, Address(storage, Butterfly::offsetOfPublicLength()));
-    jit.store32(vectorLength, Address(storage, Butterfly::offsetOfVectorLength()));
-
-    Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, index);
-    Label copyPrevious = jit.label();
-    jit.sub32(TrustedImm32(1), index);
-    jit.transfer64(BaseIndex(butterfly, index, CCallHelpers::TimesEight), BaseIndex(storage, index, CCallHelpers::TimesEight));
-    jit.branchTest32(CCallHelpers::NonZero, index).linkTo(copyPrevious, &jit);
-    isEmpty.link(&jit);
-
-    const GPRReg hole = scratch;
-    loadHoleOf(jit, array, hole);
-    jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), index);
-    Label fillNext = jit.label();
-    jit.store64(hole, BaseIndex(storage, index, CCallHelpers::TimesEight));
-    jit.add32(TrustedImm32(1), index);
-    jit.branch32(CCallHelpers::Below, index, vectorLength).linkTo(fillNext, &jit);
+    fillAndCopyByPairs(jit, growth, vectorLength);
     jit.storePtr(storage, Address(array, JSObject::butterflyOffset()));
 }
 

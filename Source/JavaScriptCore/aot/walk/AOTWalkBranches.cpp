@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEffectsOfOperations.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTOpcodeSets.h"
 #include "AOTRepresentationRules.h"
 #include "AOTWalkTextBuilders.h"
@@ -187,7 +188,7 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
     m_state.clear();
 }
 
-bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
 {
     switch (terminator.kind()) {
     case TerminatorKind::Throw:
@@ -273,7 +274,7 @@ bool isUnseenWhenUnused(const Walker& walker, const BodyValue& operation)
     return declaredEffectsOfOperation(walker.program(), opcode, operation).isRemovableWhenUnused();
 }
 
-static bool isPassedUnseenInWalkBranches(const Walker& walker, const BodyIndex& index, BodyBlock block, BodyTarget arriving)
+static ALWAYS_INLINE bool isPassedUnseenInWalkBranches(const Walker& walker, const BodyIndex& index, BodyBlock block, BodyTarget arriving)
 {
     if (index.numberOfIncomingEdges(block.id()) != 1 || block.numberOfParameters() != arriving.numberOfIncomingValues())
         return false;
@@ -339,7 +340,7 @@ bool comeToSamePlace(const BodyIndex& index, const WayBehindTerminator& left, co
     return true;
 }
 
-std::optional<uint32_t> Walker::onlyTargetWhereAllComeToOnePlace(const BodyTerminator& terminator) const
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> Walker::onlyTargetWhereAllComeToOnePlace(const BodyTerminator& terminator) const
 {
     if (terminator.kind() != TerminatorKind::Branch || terminator.numberOfTargets() != 2)
         return std::nullopt;

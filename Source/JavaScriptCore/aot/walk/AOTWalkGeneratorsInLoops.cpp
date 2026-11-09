@@ -709,6 +709,10 @@ void Walker::moveFrame(size_t from, size_t to)
         if (resumption == from)
             resumption = to;
     }
+    for (ExpectationOfArgument& expected : m_expectedOfArgumentsOfCopies) {
+        if (expected.frameOfCopy == from)
+            expected.frameOfCopy = static_cast<uint32_t>(to);
+    }
     for (size_t place = 0; place < m_openLoops.size(); ++place) {
         if (m_openLoops[place].frame == from)
             m_openLoops.changeable(place).frame = static_cast<uint32_t>(to);
@@ -1269,7 +1273,8 @@ void Walker::resumeGeneratorToLeave(size_t place, ResumeMode mode, bool dropsWha
         frame.references = suspended.references;
         frame.references.shrink(suspended.index->numberOfValues());
         if (suspended.valuesBuiltTwice) {
-            for (const Frame::ValuesBuiltTwice::Slot& slot : suspended.valuesBuiltTwice->slots) {
+            for (uint32_t number = 0; number < suspended.valuesBuiltTwice->slots.size(); ++number) {
+                const Frame::ValuesBuiltTwice::Slot& slot = suspended.valuesBuiltTwice->slots[number];
                 if (slot.value.index() < frame.references.size())
                     frame.references.placeOf<NamesOfValues::Writer::LaysFrame>(slot.value.index()) = referenceBoundIn(suspended, slot.value);
             }

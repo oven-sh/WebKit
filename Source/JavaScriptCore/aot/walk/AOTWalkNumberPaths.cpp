@@ -236,6 +236,19 @@ static bool buildNumberPath(Walker& walker, const BodyValue& firstOperator)
     });
     if (!takesTaggedNumber)
         return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (LoopID loop = index.loopOf(index.blockOf(firstOperator.id()))) {
+        ValueID taker = index.onlyUsingValue(firstOperator.id());
+        while (taker && opcodesThatStateTypes.contains(index.opcodeOf(taker)))
+            taker = index.onlyUsingValue(taker);
+        bool givesSameInEveryTurn = taker && allBitwiseOperators.contains(index.opcodeOf(taker));
+        firstOperator.forEachOperand([&](ValueID operand, uint32_t) {
+            ValueID written = index.valueBehindCasts(operand);
+            givesSameInEveryTurn &= !index.isInLoop(index.blockOf(written), loop) || (!index.isParameter(written) && primitiveConstants.contains(index.opcodeOf(written)));
+        });
+        if (givesSameInEveryTurn)
+            return false;
+    }
 
     std::optional<NumberPathInBody> path = findNumberPathInBody(walker, firstOperator);
     if (!path)
@@ -411,6 +424,12 @@ bool buildOperatorBesideOneNumberOfItsOpcodes(Walker& walker, const BodyValue& v
         form = formAllowedForTypedOperator(walker, draft);
         if (walker.hasFailed())
             return false;
+    }
+    if (form == OperatorForm::NumberAndValue && holdOperandBesideNumberToNumberOrBeginTurnAgain(walker, draft, value.id()))
+        form = formAllowedForTypedOperator(walker, draft);
+    else if (Walker::NumberAskedBesideNumber asked = form == OperatorForm::NumberAndValue && !turnedInFront ? walker.askValueBesideNumberForNumber(value) : Walker::NumberAskedBesideNumber()) {
+        draft.setOperand(asked.operandIndex, asked.proven);
+        form = formAllowedForTypedOperator(walker, draft);
     }
     draft.setForm(form);
     Origin origin = draft.origin();

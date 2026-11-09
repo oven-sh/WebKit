@@ -698,7 +698,16 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         }
         out.println();
     }
-    for (FieldReference field : summary.fieldsLeftEmpty) {
+    Vector<FieldReference> fieldsLeftEmpty;
+    summary.forEachLayoutLeftEmpty([&](LayoutID layout, std::span<const uint32_t> fieldsHeld) {
+        for (uint32_t field = 0; field < printer.program().at(layout).fields.size(); ++field) {
+            if (!std::ranges::binary_search(fieldsHeld, field))
+                fieldsLeftEmpty.append(FieldReference { layout, field });
+        }
+    });
+    std::ranges::sort(fieldsLeftEmpty);
+    fieldsLeftEmpty.shrink(std::ranges::unique(fieldsLeftEmpty).begin() - fieldsLeftEmpty.begin());
+    for (FieldReference field : fieldsLeftEmpty) {
         out.print("  leaves-empty "_s);
         printer.print(field.layout);
         out.print("."_s, field.field, " "_s);
@@ -925,6 +934,8 @@ static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell, bool isL
         printer.out().print(" accessor-from-birth"_s);
     if (cell.isOnlyGivenUndefinedByMakers)
         printer.out().print(" only-given-undefined"_s);
+    if (cell.liesBesideWhatDescriptorsDefine)
+        printer.out().print(" beside-what-descriptors-define"_s);
     if (!cell.formThatDefinitionsCreate.isEmpty()) {
         printer.out().print(" form="_s);
         for (auto [flag, word] : { std::pair { FieldForm::IsReadOnly, "read-only"_s }, std::pair { FieldForm::IsNotEnumerable, "not-enumerable"_s }, std::pair { FieldForm::IsNotConfigurable, "not-configurable"_s }, std::pair { FieldForm::IsAccessor, "accessor"_s } }) {
@@ -1153,6 +1164,8 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
             printer.print(expected.getter);
             if (expected.getterIsProven)
                 printer.out().print(" proven"_s);
+            if (expected.getterMayNotBeLaidYet)
+                printer.out().print(" once-laid"_s);
         }
         if (expected.setter) {
             printer.out().print(" setter="_s);
@@ -1169,6 +1182,8 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         printer.print(read.site);
         printer.out().print(" expects getter "_s);
         printer.print(read.getter);
+        if (read.isHeardInLoopsAlone)
+            printer.out().print(" in-loops-alone"_s);
         printer.out().println();
     }
 }

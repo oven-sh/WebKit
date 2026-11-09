@@ -149,6 +149,7 @@ public:
     CallFrame* frameOfImportThatAsksLoader { nullptr };
     bool askerLoadsCompiledFilesAlone { false };
     bool isResolvingImportCall { false };
+    bool isResolvingImportCallWithoutAttributes { false };
     bool requireRunsMocks { false };
     std::unique_ptr<ProgramIdentifiers> identifiers;
     CountedFiles countedFiles;

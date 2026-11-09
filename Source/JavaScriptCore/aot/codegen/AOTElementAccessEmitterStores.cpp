@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAccessEmitter.h"
+#include "AOTArrayAllocationProfile.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementEmitterAllocation.h"
@@ -95,7 +96,7 @@ ArrayStorageFormList ElementAccessEmitter::candidateFormsFor(ValueID stored, Arr
 
 ArrayStorageFormList ElementAccessEmitter::formsOfListOfNumbersFor(ValueID stored, bool hasArmForEveryKind)
 {
-    bool isWhole = representationOf(stored) == Representation::Int32 || representationOf(stored) == Representation::Int64 || typeOf(stored).isNumberWithoutFraction();
+    bool isWhole = representationOf(stored) == Representation::Int32 || representationOf(stored) == Representation::Int64 || typeOf(stored).hasOnlyPrimitives(Primitive::NumberWithoutFraction | Primitive::UndefinedOrNull);
     ArrayStorageFormList forms = candidateFormsFor(stored, isWhole ? ArrayStorage::Int32 : ArrayStorage::Double);
     size_t placeOfAnyValue = forms.findIf([](const ArrayStorageForm* form) {
         return form->holdsCells;
@@ -111,7 +112,8 @@ ArrayStorageFormList ElementAccessEmitter::formsOfListOfNumbersFor(ValueID store
 
 bool ElementAccessEmitter::goesByKindOfListOfNumbers(ValueID list, ValueID stored)
 {
-    return typeOf(stored).isNumber() && isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(list));
+    const Type& type = typeOf(stored);
+    return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull) && isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(list));
 }
 
 ArrayStorageFormList ElementAccessEmitter::formsThatMayHold(ValueID list, ValueID stored)
@@ -129,6 +131,16 @@ ArrayStorageFormList ElementAccessEmitter::formExpectedToHold(ValueID list, Valu
     return forms;
 }
 
+ValueID ElementAccessEmitter::int32ThatArmOfValuesStoresInEitherKind(ValueID stored, const ArrayStorageFormList& forms)
+{
+    if (forms.size() != 1 || forms[0]->kind != ArrayStorage::Contiguous || !typeOf(stored).isInt32())
+        return { };
+    if (representationOf(stored) != Representation::JSValue && representationOf(stored) != Representation::Int32)
+        return { };
+    build().statistics().count(StatisticID::StoresOfInt32ThatAdmitTwoKindsOfStorage);
+    return stored;
+}
+
 bool ElementAccessEmitter::hasOnlyExpectedArmInLine(const ValueContext& store)
 {
     if (store.opcode() != Opcode::PutArrayElement)
@@ -136,13 +148,25 @@ bool ElementAccessEmitter::hasOnlyExpectedArmInLine(const ValueContext& store)
     return !generator().takesFormOfLoops(store);
 }
 
-void ElementAccessEmitter::forEachFormByShape(Word32 mode, ShapeTest hasShapeOf, const ArrayStorageFormList& forms, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>& emitArm, FirstForm firstForm)
+void ElementAccessEmitter::forEachFormByShape(Word32 mode, ShapeTest hasShapeOf, const ArrayStorageFormList& forms, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>& emitArm, FirstForm firstForm, ValueID int32StoredInEitherKind)
 {
     for (const ArrayStorageForm* form : forms) {
         LBasicBlock hasForm = newBlock();
         LBasicBlock hasOtherForm = newBlock();
         bool othersAreRare = form == forms.last() || (firstForm == FirstForm::IsExpected && form == forms.first());
-        m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
+        if (int32StoredInEitherKind && form->kind == ArrayStorage::Contiguous) {
+            LBasicBlock holdsNoValues = newBlock();
+            m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), normalEdge(holdsNoValues));
+            m_out.appendTo(holdsNoValues);
+            bool tagIsAsked = representationOf(int32StoredInEitherKind) == Representation::JSValue;
+            LBasicBlock holdsInt32 = tagIsAsked ? newBlock() : hasForm;
+            m_out.branch((this->*hasShapeOf)(mode, arrayStorageFormOf(ArrayStorage::Int32)).value(), normalEdge(holdsInt32), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
+            if (tagIsAsked) {
+                m_out.appendTo(holdsInt32);
+                m_out.branch(isInt32(in<Boxed>(int32StoredInEitherKind)).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
+            }
+        } else
+            m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
         m_out.appendTo(hasForm);
         emitArm(*form);
         m_out.appendTo(hasOtherForm);
@@ -155,7 +179,7 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
     const Type& type = typeOf(stored);
     Operand operand = get(stored);
     auto numberToStore = [&](Number number) -> Operand {
-        if (!canStoreWithoutConversion(types(), form.kind, typeIDOf(stored)))
+        if (!canStoreWithoutConversion(types(), form.kind, typeIDOf(stored)) && !AOT::hasFlag(build().options().testing, Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN))
             branchUnless(equal(number, number), doesNotFit);
         return number;
     };
@@ -223,6 +247,7 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
 
 void ElementAccessEmitter::replaceElement(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement)
 {
+    stopWhereHoleWouldBeStored(store, form, rawElement);
     storeRawElement(form, elements, index, rawElement);
     if (form.holdsCells && typeOf(store->valueOperand()).hasCells()) {
         Boxed stored = rawElement.as<Boxed>();
@@ -298,11 +323,12 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
     } else {
         Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
         ArrayElements elements = elementsOf(array);
-        forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, formExpectedToHold(value->arrayOperand(), stored), slowPath, [&](const ArrayStorageForm& form) {
+        ArrayStorageFormList forms = formExpectedToHold(value->arrayOperand(), stored);
+        forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, slowPath, [&](const ArrayStorageForm& form) {
             Operand rawElement = *rawElementToStore(form, stored, slowPath);
             storeInVector(value, form, elements, index, rawElement, slowPath);
             m_out.jump(continuation);
-        });
+        }, FirstForm::IsExpected, int32ThatArmOfValuesStoresInEitherKind(stored, forms));
     }
 
     m_out.appendTo(slowPath);
@@ -339,13 +365,14 @@ void ElementAccessEmitter::storeInProvenList(const ValueContext& value, const Ar
             m_out.appendTo(liesInside);
         } else if (!value->isInBounds())
             branchUnless(test.isInside, outOfLine);
+        stopWhereHoleWouldBeStored(value, form, *rawElement);
         storeRawElement(form, elements, test.indexInside, *rawElement);
         if (form.holdsCells && typeOf(stored).hasCells()) {
             Boxed storedElement = rawElement->as<Boxed>();
             emitter<BarrierEmitter>().elementBarrierAfterStore(value, list, singleElementSpan(storedElement));
         }
         m_out.jump(continuation);
-    }, FirstForm::IsLikeTheOthers);
+    }, FirstForm::IsLikeTheOthers, int32ThatArmOfValuesStoresInEitherKind(stored, forms));
 
     m_out.appendTo(outOfLine);
     storeOutOfLine(value, list, NumberBoxing::ByStub);
@@ -419,6 +446,7 @@ void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer 
         branchUnless(below(length, vectorLength(elements)), slowPath);
 
         setPublicLength(elements, add(length, integer(1)));
+        stopWhereHoleWouldBeStored(store, form, rawElement);
         storeRawElement(form, elements, length, rawElement);
         if (form.holdsCells && typeOf(element).hasCells()) {
             Boxed stored = rawElement.as<Boxed>();
@@ -482,7 +510,7 @@ void ElementAccessEmitter::turnIntegersIntoFractions(CellPointer array, const Ar
     m_out.appendTo(done);
 }
 
-Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored)
+Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored, bool leavesStorageAsItIs, std::optional<Pointer> profileOfSite)
 {
     RELEASE_ASSERT(store->valueOperand() == stored);
     LBasicBlock otherwise = newBlock();
@@ -491,11 +519,23 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
     ArrayElements elements = elementsOf(array);
     forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, candidateFormsFor(stored, storageExpectedToHold(representationOf(stored))), otherwise, [&](const ArrayStorageForm& form) {
         Operand rawElement = *rawElementToStore(form, stored, otherwise);
-        storeInVector(store, form, elements, index, rawElement, otherwise);
+        if (leavesStorageAsItIs) {
+            LengthTest test = testLength(index, elements);
+            branchUnless(test.isInside, otherwise);
+            replaceElement(store, form, elements, test.indexInside, rawElement);
+        } else
+            storeInVector(store, form, elements, index, rawElement, otherwise);
         join.add(boolean(true));
     });
 
     m_out.appendTo(otherwise);
+    if (leavesStorageAsItIs) {
+        static_assert(ArrayAllocationProfile::countMask == 0xffffu << ArrayAllocationProfile::allocationCountShift && !(ArrayAllocationProfile::allocationCountShift % 8));
+        if (profileOfSite)
+            m_out.store32As16(m_out.int32Zero, m_out.address(m_heaps.AOTInstance_arrayProfiles, profileOfSite->value(), OBJECT_OFFSETOF(ArrayAllocationProfile, word) + ArrayAllocationProfile::allocationCountShift / 8));
+        join.add(boolean(false));
+        return join.finish();
+    }
     LBasicBlock isLeftToOthers = newBlock();
     const ArrayStorageForm& forInt32 = arrayStorageFormOf(ArrayStorage::Int32);
     const ArrayStorageForm& forAnyValue = arrayStorageFormOf(ArrayStorage::Contiguous);
@@ -539,6 +579,10 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
 
 void ElementAccessEmitter::generateAppendElements(const ValueContext& value)
 {
+    if (generator().m_literalLeftToSpreadRightBehind == value->arrayOperand()) [[unlikely]] {
+        ArrayAllocationEmitter(generator()).bearLiteralHoldingList(value, in<CellPointer>(value->sourceOperand()).value(), appendElements());
+        return;
+    }
     CellPointer array = in<CellPointer>(value->arrayOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
     callStub(value, appendElements(), { array.value(), source.value() });

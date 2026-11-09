@@ -37,12 +37,14 @@ public:
 
     uint32_t numberOfRecordsMade() const { return m_numberOfRecordsMade; }
     uint32_t numberOfOrdinaryObjectsMade() const { return m_numberOfOrdinaryObjectsMade; }
+    uint32_t numberOfTransitionsCached() const { return m_numberOfTransitionsCached; }
 
 private:
     using Cursor = const uint8_t*;
 
     uint32_t m_numberOfRecordsMade { 0 };
     uint32_t m_numberOfOrdinaryObjectsMade { 0 };
+    uint32_t m_numberOfTransitionsCached { 0 };
 
     static constexpr size_t inlineElementCapacity = 32;
 

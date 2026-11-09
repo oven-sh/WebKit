@@ -339,6 +339,10 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                     SyntheticModuleRecord::materializeLazyExport(globalObject, resolution.moduleRecord, resolution.localName);
                     RETURN_IF_EXCEPTION(scope, void());
 #endif
+#if ENABLE(AOT)
+                    if (importedModule->inherits<AOT::ModuleRecord>())
+                        keepImportAsLinked(in.localName.impl(), resolution);
+#endif
                 }
                 break;
             }

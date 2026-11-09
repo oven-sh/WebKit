@@ -61,7 +61,7 @@ struct TableCallInUnionTableCalls {
 
 } // anonymous namespace
 
-static bool isCallOfMethodReadInUnionTableCalls(const BodyIndex& index, const BodyValue& read, ValueID call)
+static ALWAYS_INLINE bool isCallOfMethodReadInUnionTableCalls(const BodyIndex& index, const BodyValue& read, ValueID call)
 {
     auto lookup = read.as<Opcode::PropGet>();
     if (lookup.isFreeName() || !lookup.objectOperand() || !call || index.opcodeOf(call) != Opcode::Call || index.blockOf(call) != index.blockOf(read.id()))
@@ -173,7 +173,7 @@ static void mergeEffectsOfMethodsInUnionTableCalls(Walker& walker, ReceiversOfTa
 
 enum class ArmsMayTakeCallInUnionTableCalls : bool { No, Yes };
 
-static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(Walker& walker, const BodyValue& read, ValueID call, Reference receiver, ArmsMayTakeCallInUnionTableCalls armsMayTakeCall, std::optional<ReceiversOfTableCallInUnionTableCalls>& receiversOfThisCallAlone)
+static ALWAYS_INLINE std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(Walker& walker, const BodyValue& read, ValueID call, Reference receiver, ArmsMayTakeCallInUnionTableCalls armsMayTakeCall, std::optional<ReceiversOfTableCallInUnionTableCalls>& receiversOfThisCallAlone)
 {
     if (isTableRole(walker.unit().role) || !receiver || !receiver.isValue())
         return std::nullopt;
@@ -310,6 +310,7 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
     }
 
     Walker::ArmsThatMeet arms;
+    bool isReadBehind = !index.isUnused(call.id());
     BlockID meeting;
     BlockID withoutRow;
     Reference passes;
@@ -381,14 +382,14 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         walker.bind(written.thisValueOperand(), boundBefore);
         if (walker.hasFailed())
             return true;
-        if (Reference byName = walker.isUnreachable() ? Reference() : walker.referenceOf(call.id()))
-            arms.append({ walker.currentBlock(), { byName } });
+        if (!walker.isUnreachable())
+            arms.append({ walker.currentBlock(), { isReadBehind ? walker.referenceOf(call.id()) : Reference() } });
     }
     if (walker.hasFailed())
         return true;
     walker.bind(read.id(), Reference());
     Reference met;
-    if (walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(&met, 1)))
+    if (walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(&met, 1).first(isReadBehind)))
         walker.bind(call.id(), met);
     return true;
 }

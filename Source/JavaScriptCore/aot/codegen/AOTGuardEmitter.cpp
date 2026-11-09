@@ -18,6 +18,7 @@
 #include "AOTCompiledStructure.h"
 #include "AOTConstantEmitter.h"
 #include "AOTFunctionData.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMemberLookup.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
@@ -74,7 +75,7 @@ Condition GuardEmitter::isPresentCell(Boxed value, const Type& type)
     return isCell(value);
 }
 
-CellPointer GuardEmitter::untestedCell(const OperationContext& context, ValueID id)
+ALWAYS_INLINE_INTO_OTHER_FILES CellPointer GuardEmitter::untestedCell(const OperationContext& context, ValueID id)
 {
     switch (representationOf(id)) {
     case Representation::Cell:
@@ -114,6 +115,10 @@ CellPointer GuardEmitter::cellOrElse(const OperationContext& context, ValueID id
 
 void GuardEmitter::generateShapeTest(const ValueContext& value)
 {
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::ShapeTestsInTurnsLaidOutAreTakenToPass) && generator().isLayingOutTurns()) {
+        defineTest(value, boolean(true));
+        return;
+    }
     ValueID object = value->objectOperand();
     const Type& known = value->asksInFull() ? types().at(TypeTable::anythingOrAbsent) : typeOf(object);
     bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known);
@@ -208,6 +213,8 @@ Condition GuardEmitter::orderWordHasNoBits(const ValueContext& value, uint32_t b
 void GuardEmitter::generateHasNoFieldOutsideSlot(const ValueContext& value)
 {
     defineTestOfCompiledObject(value, [&] {
+        if (value->mayMeetUnfinishedObject())
+            return orderWordHasNoBits(value, orderWordHasFieldOutsideSlot);
         Word32 flags = loadByte(in<CellPointer>(value->objectOperand()), m_heaps.JSCell_typeInfoFlags);
         return hasNoBits(flags, TypeInfoPerCellBit);
     });
@@ -405,8 +412,7 @@ void GuardEmitter::generateGetWordOfBoundFunction(const ValueContext& value)
 void GuardEmitter::generateIsMemberAsBuilt(const ValueContext& value)
 {
     BuiltinID member = value->builtin();
-    if (BuiltinCellKey cell = cellThatNamesMemberAskedByItsByte(BuiltinTable::singleton(), member); cell.hasCell(BuiltinTable::singleton()))
-        m_mentions.builtinCell(cell);
+    m_mentions.builtinCell(cellThatNamesMemberAskedByItsByte(BuiltinTable::singleton(), member));
     Pointer membersWritten = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.membersWritten));
     Word32 wasWritten(m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), membersWritten.value(), member.index())));
     if (!AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckWalkAtRunTime)) {

@@ -167,7 +167,7 @@ public:
         }
     }
 
-    void add(const Program& program, const MemoryLocation& location) { add(location.heap(), location.isEntireHeap() ? entireHeap : Typed::maskOf(program, location)); }
+    ALWAYS_INLINE void add(const Program& program, const MemoryLocation& location) { add(location.heap(), location.isEntireHeap() ? entireHeap : Typed::maskOf(program, location)); }
 
     void add(const MemoryLocation&);
 
@@ -329,6 +329,8 @@ constexpr uint64_t locationMaskOfElementBase(ElementBase base)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+inline constexpr LocationMasks placesUnderLengthsOfLists { AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths } };
+
 template<typename ProgramWithLocationBits>
 ALWAYS_INLINE uint64_t locationMaskIn(const ProgramWithLocationBits& program, const MemoryLocation& location)
 {
@@ -366,6 +368,7 @@ ALWAYS_INLINE uint64_t locationMaskIn(const ProgramWithLocationBits& program, co
     case AbstractHeap::AllocatorState:
     case AbstractHeap::RuntimeState:
     case AbstractHeap::CalleesInFrames:
+    case AbstractHeap::ArrayLengths:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

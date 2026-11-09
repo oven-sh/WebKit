@@ -4,7 +4,7 @@
 # a correlation, 70 since. Every user stands in the read's own block and takes doubles: the read is a double.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: fractional @OptionalDouble = GetArrayElement
+# CHECK: undefined|number @OptionalDouble = GetArrayElement
 # RUN(NEVER): walk f1 mechanisms=all
 # NEVER-NOT: fractional @JSValue = GetArrayElement
 # a user that takes the value itself keeps the box

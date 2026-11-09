@@ -280,7 +280,7 @@ static TypeID typeClaimedByConvertForReplacement(Walker& walker, const DeclaredT
     return targetOfConvert({ walker.program(), walker.types(), PositionTypes::knowingNothing() }, declared);
 }
 
-static void bindOperandInPlaceOfCastForReplacement(Walker& walker, const BodyValue& cast)
+static ALWAYS_INLINE void bindOperandInPlaceOfCastForReplacement(Walker& walker, const BodyValue& cast)
 {
     Reference operand = walker.referenceOf(cast.operand(cast.opcode() == Opcode::NarrowByTest ? OperandIndex::NarrowByTest::left : 0));
     if (cast.opcode() == Opcode::Convert) {
@@ -965,13 +965,10 @@ BodyValue Walker::accessAsWalked(const BodyValue& written, PropertyKeyID* chosen
 
 BodyValue Walker::accessByName(const BodyValue& written, PropertyKeyID key)
 {
-    auto& known = m_frames.last().accessesUnderProvenKeys;
-    for (const std::unique_ptr<AccessUnderProvenKey>& access : known) {
-        if (access->id() == written.id() && access->key() == key)
-            return access->value();
-    }
-    known.append(makeUnique<AccessUnderProvenKey>(written, key));
-    return known.last()->value();
+    uint64_t asked = static_cast<uint64_t>(written.id().index() + 1) << 32 | key.bits();
+    return m_frames.last().accessesUnderProvenKeys.ensure(asked, [&] {
+        return makeUnique<AccessUnderProvenKey>(written, key);
+    }).iterator->value->value();
 }
 
 Walker::KeyOfAccess Walker::compareKeyOfAccessWithSymbol(const BodyValue& written, PropertyKeyID chosen)
@@ -1008,10 +1005,33 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     TypeID proven = key ? typeOf(key) : TypeID();
     if (!proven)
         return KeyOfAccess::IsAnyValue;
+    auto holdsWrittenTextsAlone = [&](const Type& asked) {
+        return asked.isJavaScriptValue() && !asked.hasObjects() && asked.primitives == Primitive::LiteralString && asked.stringLiterals;
+    };
     Type type = m_types.at(proven);
-    if (!type.isJavaScriptValue() || type.hasObjects() || type.primitives != Primitive::LiteralString || !type.stringLiterals)
+    bool textsAreOnlyExpected = false;
+    if (!holdsWrittenTextsAlone(type) && (written.opcode() == Opcode::ElemGet || written.opcode() == Opcode::ElemSet) && isInLoop() && m_opensGuesses && has(Mechanism::Guesses)) {
+        TypeID expected = findExpectation(*this, written.propertyOperand()).type;
+        if (!expected || m_types.withoutNullish(expected) == TypeID(TypeTable::string))
+            expected = textsThatNamesOfHolderSayOfKey(*this, written);
+        TypeID present = expected ? m_types.withoutNullish(expected) : TypeID();
+        auto saysLayouts = [&](TypeID said) {
+            TypeID objects = said ? m_types.withoutNullish(said) : TypeID();
+            return objects && !isNeverType(objects) && m_types.at(objects).hasObjects() && !m_types.at(objects).hasUnboundedUnknown();
+        };
+        Reference holder = referenceOf(written.objectOperand());
+        bool holderIsOfLayouts = holder && (saysLayouts(typeOf(holder)) || saysLayouts(findExpectation(*this, written.objectOperand()).type));
+        const BodyIndex& body = currentBodyIndex();
+        ValueID definition = body.valueBehindCasts(written.propertyOperand());
+        bool isKeyOfForIn = definition && !body.isParameter(definition) && body.opcodeOf(definition) == Opcode::ResultAt && !body.isParameter(body.value(definition).operand(0)) && body.opcodeOf(body.value(definition).operand(0)) == Opcode::ForInStep;
+        if (holderIsOfLayouts && !isKeyOfForIn && present && !isNeverType(present) && holdsWrittenTextsAlone(m_types.at(present)) && m_types.isSubset(present, proven)) {
+            type = m_types.at(present);
+            textsAreOnlyExpected = true;
+        }
+    }
+    if (!holdsWrittenTextsAlone(type))
         return KeyOfAccess::IsAnyValue;
-    if (uint32_t numberOfTexts = m_types.at(type.stringLiterals).size(); numberOfTexts < 2 || numberOfTexts > mostTextsToldApart)
+    if (uint32_t numberOfTexts = m_types.at(type.stringLiterals).size(); numberOfTexts < (textsAreOnlyExpected ? 1 : 2) || numberOfTexts > mostTextsToldApart)
         return KeyOfAccess::IsAnyValue;
     Vector<StringID, mostTextsToldApart> texts;
     bool everyTextIsName = true;
@@ -1022,13 +1042,22 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     });
     if (!everyTextIsName || texts.isEmpty())
         return KeyOfAccess::IsAnyValue;
-    if (texts.size() == 1)
+    if (texts.size() == 1 && !textsAreOnlyExpected)
         return KeyOfAccess::IsAnyValue;
 
     const BodyIndex& index = currentBodyIndex();
     BodyBlock block = index.block(index.blockOf(written.id()));
     uint32_t begin = written.id().index() - block.firstValue().index();
     uint32_t end = begin + 1;
+    if (textsAreOnlyExpected) {
+        ValueID rootOfKey = index.valueBehindCasts(written.propertyOperand());
+        uint32_t limit = limitOfStretchOfArms(*this, block);
+        for (uint32_t place = end; place < limit; ++place) {
+            BodyValue later = index.value(ValueID(block.firstValue().index() + place));
+            if ((later.opcode() == Opcode::ElemGet || later.opcode() == Opcode::ElemSet) && index.valueBehindCasts(later.propertyOperand()) == rootOfKey)
+                end = place + 1;
+        }
+    }
     if (!key.isValue() || !has(Mechanism::Guesses) || !m_opensGuesses || !isInLoop() || end > endOfStretchBeingWalked())
         return KeyOfAccess::IsAnyValue;
 
@@ -1036,7 +1065,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         return typeOf(referenceOf(input));
     };
     for (StringID text : texts) {
-        if (typedFormOf(*this, accessByName(written, nameOfTextThatAccessMayGoBy(*this, written, text)), TypesOfInputs(typeOfInput)) == TypedForm::None)
+        if (!textsAreOnlyExpected && typedFormOf(*this, accessByName(written, nameOfTextThatAccessMayGoBy(*this, written, text)), TypesOfInputs(typeOfInput)) == TypedForm::None)
             return KeyOfAccess::IsAnyValue;
     }
 
@@ -1072,16 +1101,42 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     noteGuessOpened();
     count(StatisticID::AccessesToldApartByTextsOfKey);
     Reference left = key;
-    for (size_t place = 0; place + 1 < texts.size() && !isUnreachable() && !hasFailed(); ++place) {
-        Draft test(Opcode::StringEqualsLiteral, origin);
+    static_assert(OperandIndex::StringEqualsLiteral::string == OperandIndex::ValueEqualsLiteral::value);
+    size_t numberOfTests = textsAreOnlyExpected ? texts.size() : texts.size() - 1;
+    bool comparesInFront = textsAreOnlyExpected && standsInFrontOfTypedCopy(key) && goOnInFrontOfTypedCopyWhereItsFirstTurnBegins();
+    if (textsAreOnlyExpected && !comparesInFront && texts.size() >= 2) {
+        Vector<BlockID, mostTextsToldApart> underNames;
+        for (size_t place = 0; place < texts.size(); ++place)
+            underNames.append(addBlock());
+        BlockID underNoName = addBlock(BlockFrequency::Rare);
+        TerminatorDraft overNames(TerminatorKind::SwitchString, origin);
+        overNames.setSubjectOperand(key);
+        overNames.setStrings(texts.span());
+        endWithSwitchOverOwnBlocks(overNames, underNames.span(), underNoName);
+        for (size_t place = 0; place < texts.size() && !hasFailed(); ++place) {
+            continueIn(underNames[place]);
+            if (!isUnreachable())
+                walkArmWith(constant(PrimitiveKnownToFolding::text(texts[place])));
+        }
+        if (hasFailed())
+            return KeyOfAccess::ArmsHaveWalkedAccess;
+        continueIn(underNoName);
+        numberOfTests = 0;
+    }
+    for (size_t place = 0; place < numberOfTests && !isUnreachable() && !hasFailed(); ++place) {
+        Draft test(textsAreOnlyExpected ? Opcode::ValueEqualsLiteral : Opcode::StringEqualsLiteral, origin);
         chooseConservativeFields(test);
         test.setOperand(0, left);
         test.setLiteral(texts[place]);
-        Reference passes = build(WTF::move(test));
+        Reference passes;
+        {
+            InFrontOfTypedCopy inFront(*this, comparesInFront);
+            passes = build(WTF::move(test));
+        }
         if (!passes)
             return KeyOfAccess::ArmsHaveWalkedAccess;
         BlockID passed = addBlock();
-        BlockID failed = addBlock();
+        BlockID failed = addBlock(textsAreOnlyExpected && place + 1 == numberOfTests ? BlockFrequency::Rare : BlockFrequency::Normal);
         branch(passes, passed, failed);
         continueIn(passed);
         if (Reference narrowed = narrowedBy(left, passes, true))
@@ -1089,11 +1144,16 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         if (hasFailed())
             return KeyOfAccess::ArmsHaveWalkedAccess;
         continueIn(failed);
-        left = narrowedBy(left, passes, false);
+        if (!comparesInFront)
+            left = narrowedBy(left, passes, false);
         if (!left)
             return KeyOfAccess::ArmsHaveWalkedAccess;
     }
-    if (!isUnreachable() && !hasFailed())
+    if (textsAreOnlyExpected && !isUnreachable() && !hasFailed()) {
+        ClosedArm closedArm(*this, true);
+        if (!isUnreachable())
+            walkArmWith(left);
+    } else if (!isUnreachable() && !hasFailed())
         walkArmWith(left);
     if (!hasFailed())
         letArmsMeet(stretch, built, meeting);
@@ -1231,6 +1291,7 @@ static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& creat
     auto operation = created.as<Opcode::ArraySpeciesCreate>();
     Reference length = walker.referenceOf(operation.lengthOperand());
     Reference source = walker.referenceOf(operation.arrayOperand());
+    bool runOverBoxedValuesTakesListFirst = walker.runOverBoxedValuesTakesNewListOfCopyFirst();
     if (!walker.takeWordThatCopyMakesNewList(source) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::TypedOperations))
         return false;
     if (!length || !walker.types().at(walker.typeOf(length)).isInteger())
@@ -1243,7 +1304,11 @@ static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& creat
         list.setRoomOperand(room);
     list.setArrayStorage(ArrayStorage::Other);
     list.inputValueGiven = created.id();
-    walker.bind(created.id(), walker.build(WTF::move(list)));
+    Reference made = walker.build(WTF::move(list));
+    if (runOverBoxedValuesTakesListFirst && made && made.isValue())
+        walker.noteListThatRunOverBoxedValuesTakesFirst(made.id());
+    noteLengthThatListIsBornWith(walker, made);
+    walker.bind(created.id(), made);
     walker.count(StatisticID::NewListsInPlaceOfSpecies);
     return true;
 }

@@ -79,6 +79,7 @@ struct LinkedCell {
     bool isOfBirth { false };
     bool isFilledByAccessorsAlone { false };
     bool holdsAccessorFromBirth { false };
+    bool keepsAccessorOnceLaid { false };
     bool isOnlyGivenUndefinedByMakers { false };
     bool isLeftUndefinedByMakers { false };
     bool isGivenUndefinedOrNullInSight { false };
@@ -86,6 +87,7 @@ struct LinkedCell {
     bool isKeptFromComparisons { false };
     bool isTestedByValue { false };
     OptionSet<FieldForm> formThatDefinitionsCreate;
+    bool liesBesideWhatDescriptorsDefine { false };
 };
 
 inline bool holdsTagThatNarrowSlotForgets(TypeReader types, const LinkedCell& cell)
@@ -238,6 +240,7 @@ struct LinkedGetterAtRead {
     FunctionID function;
     ValueID site;
     FunctionID getter;
+    bool isHeardInLoopsAlone { false };
 
     friend constexpr auto operator<=>(const LinkedGetterAtRead&, const LinkedGetterAtRead&) = default;
 };
@@ -297,6 +300,7 @@ struct LinkedAccessorsOfField {
 
     bool getterIsProven { false };
     bool setterIsProven { false };
+    bool getterMayNotBeLaidYet { false };
     friend constexpr auto operator<=>(const LinkedAccessorsOfField&, const LinkedAccessorsOfField&) = default;
 };
 
@@ -335,6 +339,7 @@ struct LookupsPastProgramObjects {
     BitVector namesRead;
     BitVector namesCalled;
     BitVector namesCalledWithOperands;
+    BitVector namesCalledByNativeCodeOffUnseenObjects;
     BitVector namesSpelledByProgram;
     BitVector builtinsRead;
     BitVector builtinsCalled;
@@ -387,7 +392,6 @@ struct LookupsPastProgramObjects {
     bool writesUnderAnyNameThroughLostBuiltinsBesideProduct { false };
     bool climbsFromLostBuiltins { false };
     bool climbsFromUnseenObjects { false };
-    bool handsOperandsToCalleesNobodyKnows { false };
     bool lostBuiltinsReachUnseen { false };
     bool readsUnderKeysNobodyKnows { false };
     bool readsUnderNamesThatLoopsGave { false };
@@ -509,12 +513,13 @@ struct LinkTables {
     Vector<LinkedMember> membersAboveCreatedLayouts;
     Vector<uint32_t> membersByKey;
     Vector<uint32_t> firstMemberByKeyOfSide;
-    Vector<uint32_t> membersOfLongRowsByKey;
+    Vector<uint32_t> membersByKeyAlongRows;
     Vector<uint32_t> placesOfLayoutsInRows;
     Vector<uint32_t> endsOfLayoutsBelowInRows;
     Vector<uint32_t> numbersOfClassesAbove;
     std::array<BitVector, 2> keysOfMembers;
     Vector<LinkedNameOnPrototype> namesOnPrototypes;
+    Vector<std::pair<FunctionID, PropertyKeyID>> functionsWrittenRightOfNamesOnPrototypes;
     Vector<TaggedMaker> taggedMakers;
     SizeOfLinkFlow sizeOfFlow;
     LookupsPastProgramObjects lookups;
@@ -682,7 +687,7 @@ struct LinkTables {
         });
         return found ? found->callee : FunctionID();
     }
-    std::span<const LinkedCall> callsOf(FunctionID caller) const LIFETIME_BOUND
+    ALWAYS_INLINE std::span<const LinkedCall> callsOf(FunctionID caller) const LIFETIME_BOUND
     {
         RELEASE_ASSERT(firstCallOfCaller.last() == calls.size());
         if (caller.index() + 1 >= firstCallOfCaller.size())
@@ -752,7 +757,8 @@ struct LinkTables {
     bool iterableStaysAsMadeAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(iterablesThatStayAsMade, LinkedReceiverAsMade { function, site }); }
     const LinkedAccessorsOfField* findAccessorsExpectedIn(FieldReference) const LIFETIME_BOUND;
     TypeID caughtAt(FunctionID, BlockID handler) const;
-    void indexMembersByKey(const Program&);
+    enum class AskedByKey : bool { ByLongRowsAlone, ByWalkToo };
+    void indexMembersByKey(const Program&, AskedByKey = AskedByKey::ByLongRowsAlone);
     std::span<const uint32_t> membersUnder(LayoutID classLayout, ClassSide, PropertyKeyID) const LIFETIME_BOUND;
     MemberFound findMember(const Program&, LayoutID, ClassSide, PropertyKeyID) const;
     bool findFunctionsLaidAbove(const Program&, LayoutID, PropertyKeyID, Vector<FunctionID, 4>&) const;
@@ -760,6 +766,13 @@ struct LinkTables {
     bool holderIsChangedInSightAlone(const Program&, LayoutID classLayout, ClassSide) const;
     bool memberHoldsOneFunction(const Program&, LayoutID classLayout, ClassSide, PropertyKeyID, FunctionID written) const;
     std::optional<FindsNothing> findsNothing(const Program&, LayoutID, ClassSide, PropertyKeyID, Of) const;
+    std::span<const uint32_t> membersUnderKeyAlongRows(ClassSide, PropertyKeyID) const;
+    struct StretchOfRows {
+        uint32_t first;
+        uint32_t end;
+        LayoutID layoutAtFirst;
+    };
+    bool someClassAtOrAboveDeclares(const Program&, std::span<const StretchOfRows>, ClassSide, PropertyKeyID, uint32_t& classesAsked) const;
     Vector<LinkedNameOnFunction> namesOnFunctions;
     const LinkedNameOnFunction* findNameOnFunction(FunctionID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool closuresLackName(FunctionID, PropertyKeyID) const;

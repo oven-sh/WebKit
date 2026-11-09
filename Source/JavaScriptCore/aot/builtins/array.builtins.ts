@@ -194,7 +194,7 @@ export default b.declarations(
         getter: arrayLength,
         capability: "none",
         uses: { this: b.inspected },
-        reads: [storage],
+        reads: [storage, "ArrayLengths"],
         implementation: b.inline("ArrayLength"),
         setter: {
           value: b.f64.loose,
