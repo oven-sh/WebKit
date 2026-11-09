@@ -61,6 +61,8 @@
 #include "JSFunctionInlines.h"
 #include "JSLock.h"
 #include "JSModuleLoader.h"
+#include "JSModuleNamespaceObject.h"
+#include "JSModuleRecord.h"
 #include "JSNativeStdFunction.h"
 #include "JSONObject.h"
 #include "JSObjectInlines.h"
@@ -545,6 +547,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallMasquerader);
 static JSC_DECLARE_HOST_FUNCTION(functionHasCustomProperties);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpTypesForAllVariables);
 static JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionTellWhenModuleBodyEnds);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeProfile);
 static JSC_DECLARE_HOST_FUNCTION(functionSetTimeout);
 static JSC_DECLARE_HOST_FUNCTION(functionReleaseWeakRefs);
@@ -937,6 +942,9 @@ private:
         addFunction(vm, "dumpTypesForAllVariables"_s, functionDumpTypesForAllVariables , 0);
 
         addFunction(vm, "drainMicrotasks"_s, functionDrainMicrotasks, 0);
+#if USE(BUN_JSC_ADDITIONS)
+        addFunction(vm, "tellWhenModuleBodyEnds"_s, functionTellWhenModuleBodyEnds, 2);
+#endif
         addFunction(vm, "setTimeout"_s, functionSetTimeout, 2);
         addFunction(vm, "dumpBytecodeProfile"_s, functionDumpBytecodeProfile, 1);
 
@@ -1165,6 +1173,9 @@ private:
 #endif
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
+#if USE(BUN_JSC_ADDITIONS)
+    static void moduleBodyDidEnd(JSGlobalObject*, JSModuleRecord*);
+#endif
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(GlobalObject, JSGlobalObject);
 
@@ -1203,7 +1214,10 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     nullptr, // nativeBinding
 #if ENABLE(AOT)
     &AOT::Shell::moduleHost,
+#else
+    nullptr, // moduleHost
 #endif
+    &moduleBodyDidEnd,
 #endif
 };
 
@@ -3607,6 +3621,34 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks, (JSGlobalObject* globalObject,
     vm.drainMicrotasks();
     return JSValue::encode(jsUndefined());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// tellWhenModuleBodyEnds(namespace, callback): what an embedder does with JSModuleRecord::tellHostWhenBodyEnds(). The callback is
+// called when the body of the module has run to its end. Returns false if that body has ended already.
+JSC_DEFINE_HOST_FUNCTION(functionTellWhenModuleBodyEnds, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* moduleNamespace = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(0));
+    auto* record = moduleNamespace ? dynamicDowncast<JSModuleRecord>(moduleNamespace->moduleRecord()) : nullptr;
+    JSValue callback = callFrame->argument(1);
+    if (!record || !callback.isCallable())
+        return throwVMTypeError(globalObject, scope, "tellWhenModuleBodyEnds takes the namespace object of a source text module and a function"_s);
+    if (!record->hasBodyYetToEnd())
+        return JSValue::encode(jsBoolean(false));
+    record->putDirect(vm, Identifier::fromString(vm, "whenBodyEnds"_s), callback);
+    record->tellHostWhenBodyEnds();
+    return JSValue::encode(jsBoolean(true));
+}
+
+void GlobalObject::moduleBodyDidEnd(JSGlobalObject* globalObject, JSModuleRecord* record)
+{
+    VM& vm = globalObject->vm();
+    JSValue callback = record->getDirect(vm, Identifier::fromString(vm, "whenBodyEnds"_s));
+    call(globalObject, callback, jsUndefined(), ArgList { }, "tellWhenModuleBodyEnds was not given a function"_s);
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(functionDumpBytecodeProfile, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

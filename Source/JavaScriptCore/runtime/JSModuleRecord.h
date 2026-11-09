@@ -84,6 +84,13 @@ public:
     // This record will not run its body (again): it ran to the end, it threw, or a module it depends on did. (Not where a
     // failed link is rolled back: such a record keeps its environment and its executable for the next attempt.)
     void didFinishWithExecutable(VM&);
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether this record is linked and has not finished with its executable: its body has yet to start, is running, or waits at an await.
+    bool hasBodyYetToEnd() const { return !!m_moduleProgramExecutable; }
+    // GlobalObjectMethodTable::moduleBodyDidEnd of the record's realm is called once, when the body has run to its end. A body that
+    // throws ends without that call, and so does one that never runs because a module it depends on failed.
+    void tellHostWhenBodyEnds() { m_tellsHostWhenBodyEnds = true; }
+#endif
 
     // Options::useLazyModuleFunctionDeclarations(). InitializeEnvironment hands over the function declarations it did
     // not instantiate; each is instantiated into its module environment slot when the slot is first read while empty.
@@ -130,6 +137,9 @@ private:
     std::optional<Vector<Identifier>> m_importSlotNames;
     HashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> m_importSlotIndices; // filled with m_importSlotNames
     CodeFeatures m_features;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_tellsHostWhenBodyEnds { false };
+#endif
 
     struct UninstantiatedFunctionDeclarations {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(UninstantiatedFunctionDeclarations);

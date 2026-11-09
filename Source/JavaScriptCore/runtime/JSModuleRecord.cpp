@@ -30,6 +30,7 @@
 #include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
 #include "CodeCache.h"
+#include "GlobalObjectMethodTable.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncGeneratorFunction.h"
@@ -286,8 +287,19 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
         return { };
     }
 
-    if (isTopLevelExecutionFinished())
+    if (isTopLevelExecutionFinished()) {
         didFinishWithExecutable(vm);
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_tellsHostWhenBodyEnds) [[unlikely]] {
+            m_tellsHostWhenBodyEnds = false;
+            JSGlobalObject* realm = this->realm();
+            if (auto* moduleBodyDidEnd = realm->globalObjectMethodTable()->moduleBodyDidEnd) {
+                moduleBodyDidEnd(realm, this);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+        }
+#endif
+    }
 
     RELEASE_AND_RETURN(scope, resultOrAwaitedValue);
 }

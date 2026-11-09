@@ -100,6 +100,10 @@ struct GlobalObjectMethodTable {
     JSValue (*requireBuiltinModule)(JSGlobalObject*, uint32_t id);
     JSValue (*nativeBinding)(JSGlobalObject*, uint32_t index);
     const AOT::ModuleHost* moduleHost { nullptr };
+    // The body of a module that asked for this (JSModuleRecord::tellHostWhenBodyEnds) has run to its end. Nothing that waits for
+    // the module has heard of it: its evaluation promise is not settled, and no module that imports it has run since. What this
+    // throws is the failure of the module.
+    void (*moduleBodyDidEnd)(JSGlobalObject*, JSModuleRecord*) { nullptr };
 #endif
 };
 
