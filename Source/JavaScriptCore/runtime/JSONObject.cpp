@@ -1097,7 +1097,15 @@ inline FastStringifier<CharType, bufferMode>::FastStringifier(JSGlobalObject& gl
     else {
         uint64_t recentLengths = dynamicBufferLengths<CharType>(m_vm);
         unsigned lengthHint = std::min({ static_cast<unsigned>(recentLengths), static_cast<unsigned>(recentLengths >> 32), maxDynamicBufferLengthHint });
+#if USE(BUN_JSC_ADDITIONS)
+        // appendContentOfLongString() asks for six times a piece before it writes one, which upstream's slack does not hold: a result with
+        // a long string near its end grew to twice its length, was copied there, and was copied again when result() gave the room back.
+        // The room of hasRemainingCapacitySlow() for a result like the last, and no more than the length, so that result() keeps the buffer.
+        unsigned slack = std::max<unsigned>(dynamicBufferLengthHintSlack, std::min<unsigned>(lengthHint / 8 + pieceOfLongString * 6, lengthHint));
+        unsigned initialSize = lengthHint > dynamicBufferInlineCapacity ? lengthHint + slack : dynamicBufferInlineCapacity;
+#else
         unsigned initialSize = lengthHint > dynamicBufferInlineCapacity ? lengthHint + dynamicBufferLengthHintSlack : dynamicBufferInlineCapacity;
+#endif
         if (initialSize == dynamicBufferInlineCapacity || !m_dynamicBuffer.tryGrow(initialSize))
             m_dynamicBuffer.grow(dynamicBufferInlineCapacity);
         m_capacity = m_dynamicBuffer.size();

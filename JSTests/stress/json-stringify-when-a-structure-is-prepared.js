@@ -1,6 +1,6 @@
-// Bun: JSON.stringify's fast path prepares a Structure when an object of it comes the second time, not the first.
-// The first two objects of a Structure are written the ordinary way, and the third is the first one that is written
-// from the prepared keys. Every case below has few objects of a Structure, in every order that the rule can tell apart.
+// Bun: JSON.stringify's fast path prepares a Structure where another object of it is likely: for an element of a list of
+// two or more at once, and for any other object when its Structure comes the second time. Upstream prepares every one.
+// Every case below has few objects of a Structure, as elements and as members, in every order that the rule can tell apart.
 // The reference output comes from the general Stringifier, which an identity replacer forces.
 
 const spaces = [undefined, 2, '\t'];
@@ -43,8 +43,8 @@ for (let count = 1; count <= 6; count++) {
     check(`${count} objects two levels down`, { first: list.slice(0, 1), rest: [list.slice(1)], again: list });
 }
 
-// The second object of a Structure is the one whose properties are recorded. A value that is undefined in it, in the
-// one before or in the ones behind.
+// The first or the second object of a Structure is the one whose properties are recorded. A value that is undefined in it,
+// in the one before or in the ones behind, in a list and as members.
 function makeMasked(keys, mask, seed) {
     const object = {};
     for (let i = 0; i < keys.length; i++)
@@ -59,6 +59,7 @@ for (let firstMask = 0; firstMask < 8; firstMask++) {
         for (let mask = 0; mask < 8; mask++)
             list.push(makeMasked(keys, mask, mask + 3));
         check(`undefined masks ${firstMask} and ${secondMask}`, list);
+        check(`undefined masks ${firstMask} and ${secondMask} as members`, Object.fromEntries(list.map((object, i) => ["member" + i, object])));
         // A third object that is recorded where the second one could not be.
         check(`undefined masks ${firstMask} and ${secondMask}, then two whole ones`, [list[0], list[1], makeMasked(keys, 0, 20), makeMasked(keys, 0, 21), makeMasked(keys, 5, 22)]);
     }
@@ -143,4 +144,17 @@ for (const shapes of [1, 2, 255, 256, 257, 700]) {
     check(`big with ${shapes} shapes again`, big);
     check(`small after big with ${shapes} shapes`, makeBig(3, shapes));
     check(`one object after big`, makeShaped(0, 1));
+}
+
+// A result that ends in a long string, written again and again: from the third call on the buffer starts with room for a
+// result like the last two, and the string asks for six times its length before it is written.
+for (const tailLength of [63, 64, 65, 300, 4095, 4096, 4097, 20000]) {
+    for (const unit of ["x", "\u4e2d", "\"", "\u0001"]) {
+        const list = makeBig(1200, 3);
+        list.push(unit.repeat(tailLength));
+        for (let call = 0; call < 3; call++)
+            check(`ends in ${tailLength} times ${JSON.stringify(unit)}, call ${call}`, list);
+        check(`a short result behind it`, makeBig(2, 3));
+        check(`the long string alone`, unit.repeat(tailLength));
+    }
 }
