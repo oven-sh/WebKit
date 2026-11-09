@@ -519,6 +519,9 @@ struct TextIOState {
     bool decoderIsBuiltin { false };
     bool isListedForPendingOutput { false }; // See ioNotePendingOutput().
     uint8_t writeNewlineLength { 0 }; // What "\n" is written as. 0: itself. 1: "\r". 2: "\r\n".
+    // Where a line that is read ends, if neither readUniversal nor readTranslate says so. Beside them, so that the three are never of two calls of setNewline().
+    uint8_t readNewlineLength { 1 };
+    uint8_t readNewline[2] { '\n', 0 };
     TextIOEncoding encoding { TextIOEncoding::Other };
     int64_t chunkSize { 8192 };
     int64_t decodedUsed { 0 }; // How much of the decoded text has been read, in code units.
@@ -532,7 +535,6 @@ enum TextIOField : unsigned {
     TextIOEncodingField, // A str.
     TextIOEncoderField, // Empty: the stream cannot be written to. True: none is needed.
     TextIODecoderField, // Empty: the stream cannot be read from.
-    TextIOReadNewlineField, // A str, or empty for None.
     TextIOErrorsField, // A str.
     TextIODecodedField, // A str that is no rope: text that has been decoded and not all read yet. Or empty.
     TextIOPendingField, // A PyByteStorage, or empty: text that has been encoded and not written yet.
@@ -611,8 +613,8 @@ public:
     // Up to `count` characters of the decoded text, all of it if that is negative. `taken` is how many there were.
     String takeDecoded(int64_t count, int64_t& taken);
     // 1, 0 at the end of the file, or -1 for an exception.
-    int readChunk(int64_t sizeHint);
-    JSValue readline(int64_t limit);
+    int readChunk(int64_t sizeHint, bool isForNext = false);
+    JSValue readline(int64_t limit, bool isForNext = false);
 
     JSValue raiseUnsupported(ASCIILiteral message)
     {
@@ -757,9 +759,12 @@ JSValue TextStream::decode(JSValue bytes, bool isFinal)
 
 bool TextStream::setNewline(const String& newline)
 {
-    set(TextIOReadNewlineField, newline.isNull() ? JSValue() : JSValue(makeStr(vm, newline)));
     s.readUniversal = newline.isEmpty();
     s.readTranslate = newline.isNull();
+    ASSERT(newline.length() <= std::size(s.readNewline));
+    s.readNewlineLength = newline.length();
+    for (unsigned i = 0; i < newline.length(); ++i)
+        s.readNewline[i] = static_cast<uint8_t>(newline[i]);
     s.writeTranslate = newline.isNull() || !newline.isEmpty();
     // With None, "\n" is written as os.linesep, which is "\n".
     s.writeNewlineLength = !s.readUniversal && newline != "\n"_s ? newline.length() : 0;
@@ -1245,6 +1250,8 @@ static JSValue textIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue t
     PyBytes* encoded = nullptr;
     std::span<const uint8_t> bytes;
     bool isASCIICompatible = s.encoding == TextIOEncoding::ASCII || s.encoding == TextIOEncoding::Latin1 || s.encoding == TextIOEncoding::UTF8;
+    // An encoder of the program's may call reconfigure(), which begins a stream anew: that is not for this call to undo.
+    bool encodesItself = s.encoding != TextIOEncoding::Other;
     if (isASCIICompatible && text.is8Bit() && text.containsOnlyASCII())
         bytes = byteCast<uint8_t>(text.span8());
     else {
@@ -1255,7 +1262,7 @@ static JSValue textIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue t
             return raiseTypeError(globalObject, scope, "encoder should return a bytes object, not '"_s, typeName(globalObject, result), '\'');
         bytes = encoded->span();
     }
-    if (s.encoding != TextIOEncoding::Other)
+    if (encodesItself)
         s.encodingStartOfStream = false;
 
     int64_t byteCount = bytes.size();
@@ -1341,7 +1348,7 @@ String TextStream::takeDecoded(int64_t count, int64_t& taken)
 
 // Reads a chunk from the buffer and decodes it. The text replaces what had been decoded before. The decoder is given the whole
 // chunk, some of which it may keep for later.
-int TextStream::readChunk(int64_t sizeHint)
+int TextStream::readChunk(int64_t sizeHint, bool isForNext)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1393,6 +1400,15 @@ int TextStream::readChunk(int64_t sizeHint)
         isAtEnd = false;
 
     if (s.telling) {
+        // next() had turned it off, and the buffer has called flush(), which turns it on again: there is no telling from here. What has been decoded is there for
+        // the next call. CPython fails without an exception: that is a SystemError to whoever called read() or readline(), and the end to whoever called next().
+        if (!decoderBuffer) [[unlikely]] {
+            if (isForNext)
+                raiseStopIteration(globalObject, scope);
+            else
+                raiseSystemError(globalObject, scope, "telling was turned on again while the buffer was read"_s);
+            return -1;
+        }
         PyBytes* nextInput = ioTryNewBytes(globalObject, decoderBuffer->length() + byteCount);
         RETURN_IF_EXCEPTION(scope, -1);
         memcpy(nextInput->mutableData(), decoderBuffer->data(), decoderBuffer->length());
@@ -1460,21 +1476,12 @@ static JSValue textIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
     RELEASE_AND_RETURN(scope, makeStr(globalObject, result));
 }
 
-JSValue TextStream::readline(int64_t limit)
+JSValue TextStream::readline(int64_t limit, bool isForNext)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, checkClosed()) || failed(scope, writeFlush()))
         return { };
-
-    uint8_t newline[2] = { };
-    size_t newlineLength = 0;
-    if (JSValue readNewline = get(TextIOReadNewlineField)) {
-        String text = stringOf(asString(readNewline));
-        newlineLength = text.length();
-        for (size_t i = 0; i < newlineLength; ++i)
-            newline[i] = static_cast<uint8_t>(text[i]);
-    }
 
     // Offsets are in code units; the limit, and `chunked`, which is only kept up if there is a limit, are in characters.
     String line; // Null: none.
@@ -1490,7 +1497,7 @@ JSValue TextStream::readline(int64_t limit)
     while (true) {
         int status = 1;
         while (!get(TextIODecodedField) || !asString(get(TextIODecodedField))->length()) {
-            status = readChunk(0);
+            status = readChunk(0, isForNext);
             if (failed(scope, status >= 0)) {
                 if (ioTrapEINTR(globalObject))
                     continue;
@@ -1518,10 +1525,12 @@ JSValue TextStream::readline(int64_t limit)
             remaining = String();
         }
 
+        // As it is now: the buffer may have called reconfigure().
+        std::span<const uint8_t> newline { s.readNewline, s.readNewlineLength };
         int64_t consumed = 0;
         int64_t found = line.is8Bit()
-            ? ioFindLineEnding<uint8_t>(s.readTranslate, s.readUniversal, { newline, newlineLength }, byteCast<uint8_t>(line.span8()).subspan(start), consumed)
-            : ioFindLineEnding<char16_t>(s.readTranslate, s.readUniversal, { newline, newlineLength }, line.span16().subspan(start), consumed);
+            ? ioFindLineEnding<uint8_t>(s.readTranslate, s.readUniversal, newline, byteCast<uint8_t>(line.span8()).subspan(start), consumed)
+            : ioFindLineEnding<char16_t>(s.readTranslate, s.readUniversal, newline, line.span16().subspan(start), consumed);
         end = start + (found >= 0 ? found : consumed);
         if (limit >= 0 && lengthOf(start, end) + chunked >= limit) {
             end = ioSkipCodePoints(line, start, limit - chunked);
@@ -1588,7 +1597,7 @@ static JSValue textIONext(JSGlobalObject* globalObject, JSValue self)
 
     JSValue line;
     if (stream.s.isExactType)
-        line = stream.readline(-1);
+        line = stream.readline(-1, true);
     else {
         line = callMethod(globalObject, self, rt.names.readline());
         if (!failed(scope, line) && !isStr(line))
