@@ -52,8 +52,13 @@ bool Walker::leavesLoopBeingBuiltTwice(size_t frameIndex, BlockID to) const
     if (!m_generatorsWalkedInConsumers.isEmpty() && leavesRegionOfIteration(frameIndex, to))
         return true;
     const Frame& frame = m_frames[frameIndex];
-    return std::ranges::any_of(frame.loopsBeingBuiltTwice, [&](LoopID loop) {
+    auto isLeft = [&](LoopID loop) {
         return loop.index() < frame.index->numberOfLoops() && !frame.index->isInLoop(to, loop);
+    };
+    if (std::ranges::any_of(frame.loopsBeingBuiltTwice, isLeft))
+        return true;
+    return std::ranges::any_of(m_loopsWhoseOtherCopyMayBeBoughtAnew, [&](const std::pair<size_t, LoopID>& walked) {
+        return walked.first == frameIndex && isLeft(walked.second);
     });
 }
 
@@ -3782,16 +3787,20 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             if (closedCopyIsSharedBehindOtherCopy) {
                 m_closedCopiesShared.last().isAboutToBeTaken = true;
                 m_closedCopiesShared.last().isEnteredOutOfTurns = true;
-            } else
+            } else {
                 m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
+                m_loopsWhoseOtherCopyMayBeBoughtAnew.append({ frameIndex, loop });
+            }
             walkCopyOfLoop(inputHead, enteringClosedCopy.span());
             if (wayAroundBeginsLoop)
                 m_waysIntoClosedCopies[placeOfWayAround].startFromInFront = startOfWayAround;
             if (closedCopyIsSharedBehindOtherCopy) {
                 m_closedCopiesShared.last().isAboutToBeTaken = false;
                 m_closedCopiesShared.last().isEnteredOutOfTurns = false;
-            } else
+            } else {
+                m_loopsWhoseOtherCopyMayBeBoughtAnew.removeLast();
                 m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
+            }
             if (firstPurchaseIsListed)
                 m_loopsBeingBought.append(boughtFirst);
             otherCopyBoughtNothing = !closedCopyIsSharedBehindOtherCopy && m_numberOfLoopsBuiltTwice == builtTwiceInFront;

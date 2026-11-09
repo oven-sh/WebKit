@@ -3692,6 +3692,7 @@ private:
     };
     HolderThatIsNoBuiltin m_holderThatIsNoBuiltin;
     Vector<std::pair<size_t, BlockID>, 2> m_otherCopiesInsideTypedCopies;
+    Vector<std::pair<size_t, LoopID>, 2> m_loopsWhoseOtherCopyMayBeBoughtAnew;
     bool m_isWalkingAccess { false };
     bool m_operationWritesWhatTurnHasMade { false };
     ListPutBackByLog<TextInStringBuilder, 2> m_textsInStringBuilders;
