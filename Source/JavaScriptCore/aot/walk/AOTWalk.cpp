@@ -6968,6 +6968,14 @@ void Walker::enterLoopHead(BlockID inputHead)
     }
     if (!fieldsThatComeRound.isEmpty())
         keepFieldsOfScopesThatLoopWrites(inputHead, fieldsThatComeRound);
+    for (size_t place = m_iterationsByIndex.size(); place-- && m_numberOfIterationsInFrontOfTheirLoops;) {
+        IterationByIndex& iteration = m_iterationsByIndex[place];
+        if (iteration.head || iteration.inputHead != inputHead || iteration.inlineFrame != m_frames[frameIndex].inlineFrame)
+            continue;
+        buildTableFactsInFrontOfLoop(*this, iteration, preview);
+        if (m_hasFailed || isUnreachable())
+            return;
+    }
 
     BlockID head = m_code.addBlock(BlockRole::Ordinary, frequency);
     m_code.setLoopMarks(head, !m_numberOfCopiesBuiltForSize, true);

@@ -75,6 +75,7 @@ runtime AppendElements : void (JSCell* array, JSCell* source) ; RuntimeGrowsArra
 runtime SetArrayLength, SetArrayLengthInSloppyCode : void (JSCell* array, uint32_t length) ; RuntimeGrowsArray writes(ShapeWords, ArrayLengths)
 runtime AppendMembers : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
 runtime AppendValuesOfMap : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
+runtime MoveCollectionTableToHeap : JSCell* (JSCell* collection) ; reads(all) writes(CollectionStorage, AllocatorState, RuntimeState)
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
 runtime ReserveArrayRoom : void (JSCell* array, uint64_t room) ; reads(all) writes(ArrayStorage, AllocatorState, RuntimeState) collects
 runtime ConvertToDoubleStorage : void (JSCell* array) ; reads(all) writes(Elements, ArrayStorage, ShapeWords, AllocatorState, RuntimeState) collects

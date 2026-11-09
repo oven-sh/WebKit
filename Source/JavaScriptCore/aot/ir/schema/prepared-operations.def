@@ -85,6 +85,9 @@ operation GetElementInStorageOrAbsent (object: Any/inspects, position: Number/in
 operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read ; hasKnownValueRule = true ; form = Open
 operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read ; hasOwnFoldingRule = true ; form = Closed
 
+family CollectionIntrinsic Prepared..Placed ; isIntrinsic = true
+engine operation CollectionTableFacts (collection: Object/inspects) [| engine keysProvenWide keysProvenNarrow valuesProvenWide valuesProvenNarrow] -> results(CollectionTableFactsResult: natural(int[0, 2147483647]), natural(CollectionColumnPointer), natural(CollectionColumnPointer), natural(int32), natural(int[0, 2147483647])) ; CreatesConstant reads(CollectionStorage) writes(CollectionStorage) ; runtime = MoveCollectionTableToHeap ; base = collection ; form = Open
+
 family Arguments Prepared..Placed ; boundTo = Frame
 operation GetArgument (argumentIndex: UInt32) -> unknown ; none ; form = Open
 operation GetRestLength (firstArgument: UInt32) -> natural(int[0, 2147483647]) ; none ; form = Open

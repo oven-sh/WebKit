@@ -1083,9 +1083,18 @@ public:
         bool isAsMadeForGood { false };
         bool isDeadBehindLoop { false };
         bool textOrListMayStandInstead { false };
+        // The facts of a Map's or a Set's table, read once in front of the loop that steps it (CollectionTableFacts): what MapNext and SetNext take in place of reading the table at every step.
+        Reference factsUsed;
+        Reference factsKeys;
+        Reference factsValues;
+        Reference factsFlags;
+        // What Link has proven of the keys and the values, as the facts were read: true where every one is a number (a wide word), false where none is (a narrow reference), else unknown.
+        std::optional<bool> factsKeysAreWide;
+        std::optional<bool> factsValuesAreWide;
+        bool hasTableFacts() const { return !!factsKeys; }
         void forEachValueHeld(NOESCAPE const Invocable<void(Reference)> auto& functor) const
         {
-            for (Reference value : { list, position, table, state, iterator, next, wayToStep, goesByDriver, valueBesideKey, keyOfPair, valueOfPair, subject, count, foundAt, keyForAccesses })
+            for (Reference value : { list, position, table, state, iterator, next, wayToStep, goesByDriver, valueBesideKey, keyOfPair, valueOfPair, subject, count, foundAt, keyForAccesses, factsUsed, factsKeys, factsValues, factsFlags })
                 functor(value);
             for (Reference value : takenAtOpen)
                 functor(value);
@@ -4019,6 +4028,7 @@ struct GuessInFrontOfLoop {
     ValueID readOfRowInLoop;
     bool restIsWalkedAsWithoutGuess { false };
 };
+void buildTableFactsInFrontOfLoop(Walker&, Walker::IterationByIndex&, const LoopPreview&);
 Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker&, BlockID inputHead, const LoopPreview&);
 std::optional<GuessInFrontOfLoop> guessAtShapeOfHolderReadByName(Walker&, const BodyValue& read);
 Reference buildTestOfSlotFilledBehindShape(Walker&, const GuessInFrontOfLoop&, Reference shaped, const BodyValue& read);

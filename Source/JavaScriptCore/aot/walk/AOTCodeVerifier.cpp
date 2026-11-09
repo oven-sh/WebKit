@@ -160,6 +160,7 @@ private:
     void verifyArguments(BlockID from, const Edge&, uint32_t place, uint32_t numberOfDeclaredResults, bool isHandlerEdge);
     void verifyNarrowed(BlockID, ValueID, const Operation&);
     void verifyPointerIntoStorage(BlockID, ValueID access, ValueID pointer, Opcode readOfPointer, ValueID owner);
+    void verifyFactsOfTable(BlockID, ValueID access, const Operation& step);
     void verifyFramePointersTakenBy(BlockID, ValueID, const Operation&);
     void verifyFramePointersTakenByEnd(BlockID, const Terminator&);
     void verifyMakerOfClosure(BlockID, ValueID, const Operation&);
@@ -902,6 +903,42 @@ void CodeVerifier::verifyOperation(BlockID block, uint32_t place, ValueID id, co
         verifyPointerIntoStorage(block, id, operation.storageOperand(), Opcode::GetArrayStorage, operation.arrayOperand());
     else if (OperandPosition::vector(opcode))
         verifyPointerIntoStorage(block, id, operation.vectorOperand(), Opcode::GetTypedArrayVector, operation.viewOperand());
+    else if (opcode == Opcode::MapNext || opcode == Opcode::SetNext)
+        verifyFactsOfTable(block, id, operation);
+}
+
+// A step that takes the facts of a table takes all of them, off one CollectionTableFacts of its own collection.
+void CodeVerifier::verifyFactsOfTable(BlockID block, ValueID access, const Operation& step)
+{
+    ValueID used = step.usedOperand();
+    ValueID keys = step.keysOperand();
+    ValueID values = step.opcode == Opcode::MapNext ? step.valuesOperand() : ValueID();
+    ValueID flags = step.flagsOperand();
+    if (!used && !keys && !values && !flags)
+        return;
+    if (!used || !keys || !flags || (step.opcode == Opcode::MapNext && !values))
+        return fail(block, access, "a step takes some facts of its table and not the others"_s);
+    ValueID facts;
+    for (ValueID fact : { used, keys, values, flags }) {
+        if (!fact)
+            continue;
+        const Operation& part = m_code.at(fact);
+        if (part.opcode != Opcode::ResultAt || m_code.at(part.operand(OperandIndex::ResultAt::results)).opcode != Opcode::CollectionTableFacts)
+            return fail(block, access, "a step takes for a fact of its table what no CollectionTableFacts gives"_s, fact);
+        if (facts && part.operand(OperandIndex::ResultAt::results) != facts)
+            return fail(block, access, "a step takes the facts of two tables"_s, fact);
+        facts = part.operand(OperandIndex::ResultAt::results);
+    }
+    ValueID collection = step.opcode == Opcode::MapNext ? step.mapOperand() : step.setOperand();
+    ValueID ownerOfFacts = m_code.at(facts).collectionOperand();
+    if (cellBehindNames(ownerOfFacts) == cellBehindNames(collection))
+        return;
+    Vector<ValueID, 4> stepped;
+    Vector<ValueID, 4> described;
+    collectCellsThatArriveUnder(collection, stepped);
+    collectCellsThatArriveUnder(ownerOfFacts, described);
+    if (stepped != described)
+        fail(block, access, "a step takes the facts of the table of another collection"_s, facts);
 }
 
 ValueID CodeVerifier::cellBehindNames(ValueID id) const

@@ -129,6 +129,89 @@ bool listsAreIteratedUnseen(Walker& walker)
 
 using ContentsStepped = Walker::IterationByIndex::Contents;
 
+// The flags of CollectionTableFacts, MapNext and SetNext that say what Link has proven of the widths of the keys and the values.
+static void setProvenWidthsOfTable(Draft& draft, const Walker::IterationByIndex& iteration)
+{
+    if (iteration.factsKeysAreWide) {
+        draft.setKeysProvenWide(*iteration.factsKeysAreWide);
+        draft.setKeysProvenNarrow(!*iteration.factsKeysAreWide);
+    }
+    if (draft.opcode != Opcode::SetNext && iteration.factsValuesAreWide) {
+        draft.setValuesProvenWide(*iteration.factsValuesAreWide);
+        draft.setValuesProvenNarrow(!*iteration.factsValuesAreWide);
+    }
+}
+
+// THE FACTS OF A TABLE ARE READ ONCE, IN FRONT OF THE LOOP THAT WALKS IT. A step of a Map or a Set (MapNext, SetNext) reads the collection's storage, tests
+// what kind of table it is and how wide its keys and values are, and computes where the keys and the values lie. None of that changes while the turns of the
+// loop write no entry of any collection and run no other code: every row that replaces, grows, shrinks or clears a table writes CollectionEntries, and the
+// writes that a step itself makes (the mark of a walked table, a table of the image moved to the heap) are made here, in front. So CollectionTableFacts
+// stands in front of the loop and the steps take its results, and a step that takes them writes nothing (stepsOfCollectionsWithFactsInFront in
+// AOTEffectsOfOperations.cpp). A try of the loop assumes the effects that the walk found last: the first try, which assumes more, builds the step as
+// it stands without the facts, and the walk that follows it, which knows the turns, builds the step on the facts.
+void buildTableFactsInFrontOfLoop(Walker& walker, Walker::IterationByIndex& iteration, const LoopPreview& preview)
+{
+    if (!walker.has(Mechanism::LoopInvariants) || !walker.has(Mechanism::TypedOperations) || walker.testsEveryPosition())
+        return;
+    if (iteration.contents != ContentsStepped::Map && iteration.contents != ContentsStepped::Set)
+        return;
+    if (iteration.mayGoByProtocol || iteration.isTakenAtOpen || iteration.holdsFlatEntries || iteration.literal || !iteration.table || !iteration.list || !iteration.list.isValue())
+        return;
+    if (iteration.otherForm != Walker::IterationByIndex::OtherForm::None || iteration.isAsync || iteration.hasTableFacts())
+        return;
+    const Effects& turns = preview.effects;
+    if (turns.mayRunOtherCode() || turns.writes.contains(AbstractHeap::CollectionEntries))
+        return;
+    if (walker.isUnreachable())
+        return;
+
+    // A number takes a wide word of the table, a cell a narrow reference: what Link has proven of the contents settles the widths that the steps expect, and the facts leave a table of other widths to the runtime.
+    auto widthOfProven = [&](TypeID proven) -> std::optional<bool> {
+        if (!proven)
+            return std::nullopt;
+        Type contents = walker.types().at(walker.types().withoutPrimitives(proven, Primitive::Undefined | Primitive::Null | Primitive::Boolean));
+        if (contents.isNever())
+            return std::nullopt;
+        if (contents.isNumber())
+            return true;
+        if (!(contents.primitives & Primitive::Number))
+            return false;
+        return std::nullopt;
+    };
+    iteration.factsKeysAreWide = widthOfProven(iteration.contents == ContentsStepped::Map ? iteration.keysProven : iteration.valuesProven);
+    iteration.factsValuesAreWide = iteration.contents == ContentsStepped::Map ? widthOfProven(iteration.valuesProven) : std::nullopt;
+
+    Origin origin = walker.originOfOperation();
+    Draft facts(Opcode::CollectionTableFacts, origin);
+    walker.chooseConservativeFields(facts);
+    facts.setCollectionOperand(iteration.list);
+    setProvenWidthsOfTable(facts, iteration);
+    Reference read = walker.build(WTF::move(facts));
+    if (!read || walker.isUnreachable())
+        return;
+    auto resultAt = [&](CollectionTableFactsResult index) {
+        Draft part(Opcode::ResultAt, origin);
+        part.setResultsOperand(read);
+        part.setIndex(static_cast<uint32_t>(index));
+        return walker.build(WTF::move(part));
+    };
+    Reference used = resultAt(CollectionTableFactsResult::Used);
+    Reference keys = resultAt(CollectionTableFactsResult::Keys);
+    Reference values = iteration.contents == ContentsStepped::Map ? resultAt(CollectionTableFactsResult::Values) : Reference();
+    Reference flags = resultAt(CollectionTableFactsResult::Flags);
+    Reference start = resultAt(CollectionTableFactsResult::Start);
+    if (walker.isUnreachable() || !used || !keys || !flags || !start)
+        return;
+    iteration.factsUsed = used;
+    iteration.factsKeys = keys;
+    iteration.factsValues = values;
+    iteration.factsFlags = flags;
+    // The entries in front of the deleted prefix are all deleted: a walk that begins at the first entry begins behind them.
+    const Code& code = walker.code();
+    if (iteration.position && iteration.position.isConstant() && code.at(iteration.position.id()).opcode == Opcode::Integer && !code.at(iteration.position.id()).integer())
+        iteration.position = start;
+}
+
 namespace {
 
 struct ClassSteppedUnseen {
@@ -1422,6 +1505,7 @@ public:
         next.setOperand(0, entered.list);
         next.setTableOperand(entered.table);
         next.setEntryOperand(entered.position);
+        handTableFactsToStep(next, entered);
         Reference found = build(WTF::move(next));
         BlockID giving = addBlock();
         branch(resultAt(found, MapNextResult::HasEntry), giving, finished);
@@ -1445,7 +1529,7 @@ public:
             given = build(WTF::move(pair));
         }
         m_walker.iterationByIndex(state).position = operatorOnNumbers(Opcode::Increment, resultAt(found, MapNextResult::Entry));
-        m_walker.iterationByIndex(state).table = tableOf(entered.list);
+        m_walker.iterationByIndex(state).table = entered.hasTableFacts() ? entered.table : tableOf(entered.list);
         if (m_walker.isUnreachable())
             return true;
         m_walker.bind(resume.id(), resultsOf(boolean(false), given));
@@ -2259,6 +2343,7 @@ private:
         next.setOperand(0, collection);
         next.setTableOperand(iteration.table);
         next.setEntryOperand(iteration.position);
+        handTableFactsToStep(next, iteration);
         Reference found = build(WTF::move(next));
         BlockID giving = addBlock();
         BlockID ending = addBlock();
@@ -2282,7 +2367,20 @@ private:
         }
         Reference behind = operatorOnNumbers(Opcode::Increment, resultAt(found, MapNextResult::Entry));
         Reference goesOn = boolean(false);
-        endStepThroughTable(iteration, after, goesOn, given, behind, tableOf(collection), key, value);
+        endStepThroughTable(iteration, after, goesOn, given, behind, iteration.hasTableFacts() ? iteration.table : tableOf(collection), key, value);
+    }
+
+    // The table's facts stand in front of the loop (buildTableFactsInFrontOfLoop): the step reads the entries off them and nothing off the table.
+    static void handTableFactsToStep(Draft& next, const Walker::IterationByIndex& iteration)
+    {
+        if (!iteration.hasTableFacts())
+            return;
+        next.setUsedOperand(iteration.factsUsed);
+        next.setKeysOperand(iteration.factsKeys);
+        if (next.opcode == Opcode::MapNext)
+            next.setValuesOperand(iteration.factsValues);
+        next.setFlagsOperand(iteration.factsFlags);
+        setProvenWidthsOfTable(next, iteration);
     }
 
     Reference codeUnitAt(Reference text, Reference position)
@@ -3717,6 +3815,13 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
     }
     if (!iteration.goesByProtocolAlone)
         iteration.inputHead = way.headOfLoopThatSteps;
+    // What Link has proven of the entries is known here, in front of the loop, where the facts of a table are read (buildTableFactsInFrontOfLoop): the first step finds it as well.
+    if (iteration.table && !iteration.keysProven && !iteration.valuesProven) {
+        if (const LinkedContentsAtOperation* contents = walker.facts().linked().contentsAtOperation(walker.currentFunction(), open.id())) {
+            iteration.keysProven = contents->key;
+            iteration.valuesProven = contents->value;
+        }
+    }
     bool secondCopyMayPay = iteration.contents == ContentsStepped::List || iteration.contents == ContentsStepped::Text || (iteration.contents == ContentsStepped::View && hasInlineElementAccess(walker.program().builtins().typedArrayTypeOf(iteration.builtinClass)));
     iteration.isDeadBehindLoop = !iteration.goesByProtocolAlone && way.onlyStepStandsAtHeadOfLoop && secondCopyMayPay && (!iteration.mayGoByProtocol || iteration.state || iteration.isOpenAtEveryStepAndClose);
     if (!walker.isUnreachable())

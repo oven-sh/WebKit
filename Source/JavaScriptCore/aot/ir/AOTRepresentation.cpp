@@ -110,6 +110,7 @@ Representation representationOf(OpaqueKind kind)
     case OpaqueKind::BuilderCursor:
     case OpaqueKind::ViewVector:
     case OpaqueKind::ArrayStoragePointer:
+    case OpaqueKind::CollectionColumnPointer:
         return Representation::RawWord;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -289,6 +290,7 @@ Representation representationWantedBy(OperandKind kind, const Type& operand)
     case OperandKind::BuilderCursor:
     case OperandKind::ViewVector:
     case OperandKind::ArrayStoragePointer:
+    case OperandKind::CollectionColumnPointer:
     case OperandKind::Cursor:
     case OperandKind::KeyOrder:
         return representationOf(*opaqueKindOf(kind));

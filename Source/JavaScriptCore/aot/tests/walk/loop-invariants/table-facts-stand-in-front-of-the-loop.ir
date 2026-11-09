@@ -1,0 +1,281 @@
+# -- source: main.ts
+# type Box = { score: number };
+# function sum(set: Set<number>): number {
+#   let s = 0;
+#   for (const member of set) s += member;
+#   return s;
+# }
+# function scores(map: Map<number, Box>): number {
+#   let s = 0;
+#   for (const [id, box] of map) s += box.score + id;
+#   return s;
+# }
+# function grow(set: Set<number>): number {
+#   let s = 0;
+#   for (const member of set) {
+#     set.add(member + 1);
+#     s += member;
+#   }
+#   return s;
+# }
+# function tell(set: Set<number>, f: () => void): number {
+#   let s = 0;
+#   for (const member of set) {
+#     f();
+#     s += member;
+#   }
+#   return s;
+# }
+# const set = new Set<number>();
+# const map = new Map<number, Box>();
+# for (let i = 0; i < 3; i++) {
+#   set.add(i);
+#   map.set(i, { score: i * 2 });
+# }
+# console.log(sum(set), scores(map), grow(set), tell(set, () => set.add(7)));
+# -- end of source
+# A loop over a Set or a Map whose turns write no entry of any collection and run no other code steps the table on facts that are read once, in front
+# of the loop: CollectionTableFacts gives how many entries the table has used, where its keys and its values lie and how wide they are, and each step
+# takes them in place of reading the table, testing its kind and computing its columns at every turn. The table that comes round in a parameter of the
+# head stays as it entered: no step reads it again. The loop is walked once as it is written, which shows what its turns do, and then on the facts.
+# A loop whose turns store into a collection (grow: set.add writes CollectionEntries) or call what may do anything (tell) steps the table as it is written.
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+LoopInvariants+DirectCalls+Arrivals+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}}builtinClass=Set
+# CHECK: [[facts]]: {{*}} = CollectionTableFacts [[set]]
+# CHECK-NEXT: [[used]]: {{*}} = ResultAt [[facts]]
+# CHECK-NEXT: [[keys]]: {{*}} = ResultAt [[facts]] index=1
+# CHECK-NEXT: [[flags]]: {{*}} = ResultAt [[facts]] index=3
+# CHECK-NEXT: [[start]]: {{*}} = ResultAt [[facts]] index=4
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = SetNext [[set]], {{*}} used=[[used]] keys=[[keys]] flags=[[flags]]
+# CHECK-NOT: = CollectionTable
+# RUN(MAP): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+LoopInvariants+DirectCalls+Arrivals+EscapeAnalysis
+# MAP-LABEL: code f2:Body
+# MAP: [[facts]]: {{*}} = CollectionTableFacts [[map]]
+# MAP: [[values]]: {{*}} = ResultAt [[facts]] index=2
+# MAP: isInLoop=true isLoopHead=true
+# MAP: = MapNext [[map]], {{*}} values=[[values]]
+# MAP-NOT: = CollectionTable
+# RUN(GROW): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+LoopInvariants+DirectCalls+Arrivals+EscapeAnalysis
+# GROW-LABEL: code f3:Body
+# GROW-NOT: CollectionTableFacts
+# GROW: isInLoop=true isLoopHead=true
+# GROW: = SetNext
+# GROW-NOT: used=
+# GROW: = CollectionTable
+# RUN(TELL): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+LoopInvariants+DirectCalls+Arrivals+EscapeAnalysis
+# TELL-LABEL: code f4:Body
+# TELL-NOT: CollectionTableFacts
+# TELL: isInLoop=true isLoopHead=true
+# TELL: = SetNext
+# TELL-NOT: used=
+# TELL: = CollectionTable
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+DirectCalls+Arrivals+EscapeAnalysis
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD-NOT: CollectionTableFacts
+# WITHHELD: = SetNext
+# WITHHELD-NOT: used=
+# WITHHELD: = CollectionTable
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=5 fields=[{key="score" declared={type=number} flags=[IsRequired]}] place=5 ownFieldCount=1
+variable g0 name="set" module=m0 declared={type=undefined|null|absent|Set<number> flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsImmutable] place=8
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=Set @572
+    v9 = Construct v8 calleeName="Set" @572
+    v10 = Convert v9 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @568
+    PutModuleVariable v10 variable=g0 @562
+    v12 = Builtin builtin=Map @603
+    v13 = Construct v12 calleeName="Map" @603
+    v14 = Convert v13 declared={type=undefined|null|Map<number, undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @599
+    v15 = Integer @636
+    v16 = Convert v15 declared={type=number} @636
+    Jump -> next b1(v16) @632
+  b1(v17: number):
+    LoopHint @632
+    v19 = Integer integer=3 @643
+    v20 = Less v17, v19 @643
+    Branch v20 -> taken b2(), notTaken b3() @643
+  b2():
+    v21 = PropGet v10 key="add" @655
+    v22 = Call v21, v10, v17 calleeKey="add" calleeName="set.add" @659
+    v23 = Convert v22 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @655
+    v24 = PropGet v14 key="set" @669
+    v25 = Integer integer=2 @693
+    v26 = Mul v17, v25 @693
+    v27 = Convert v26 declared={type=number} @689
+    v28 = NewObject -, v27 layout=L0 fields=[0] @680
+    v29 = FinishObject v28 @680
+    v30 = Call v24, v14, v17, v29 calleeKey="set" calleeName="map.set" @673
+    v31 = Convert v30 declared={type=undefined|null|Map<number, undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @669
+    v32 = Increment v17 @646
+    v33 = Convert v32 declared={type=number} @646
+    Jump -> next b1(v33) @646
+  b3():
+    v34 = Builtin builtin=GlobalThis @701
+    v35 = PropGet v34 key="console" [isFreeName] @701
+    v36 = Convert v35 declared={type=builtin(Console) flags=[IsExpected]} @701
+    v37 = PropGet v36 key="log" @701
+    v38 = Convert v37 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @701
+    v39 = Call v1, -, v10 calleeName="sum" @713
+    v40 = Call v3, -, v14 calleeName="scores" @723
+    v41 = Call v5, -, v10 calleeName="grow" @736
+    v42 = NewClosure function=f5 @757
+    v43 = Call v7, -, v10, v42 calleeName="tell" @747
+    v44 = Call v38, v36, v39, v40, v41, v43 calleeKey="log" calleeName="console.log" @709
+    v45 = Undefined @701
+    Return v45 @701
+}
+function f1 name="sum" module=m0 position=30 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Set<number>):
+    v1 = Integer @81
+    v2 = Convert v1 declared={type=number} @81
+    v3 = IteratorOpen v0 @86
+    Jump -> next b1(v2) @86
+  b1(v4: number):
+    LoopHint @86
+    v6 = IteratorResume v3 @86
+    v7 = ResultAt v6 @86
+    v8 = ResultAt v6 index=1 @86
+    Branch v7 -> taken b2(), notTaken b3() @86
+  b2():
+    v9 = Convert v4 declared={type=number} @134
+    Return v9 @134
+  b3():
+    Jump -> next b4() @86
+  b4() handler=b5():
+    v10 = Convert v8 declared={type=number flags=[IsExpected]} @86
+    v11 = Add v4, v10 @117
+    v12 = Convert v11 declared={type=number} @112
+    Jump -> next b1(v12) @112
+  b5() role=IterationCleanup subject=v3:
+    v13 = CatchException @86
+    IteratorClose v3 completion=Throw @86
+    Rethrow v13 @86
+}
+function f2 name="scores" module=m0 position=139 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Map<number, undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Map<number, undefined|null|L0>):
+    v1 = Integer @198
+    v2 = Convert v1 declared={type=number} @198
+    v3 = IteratorOpen v0 @203
+    Jump -> next b1(v2) @203
+  b1(v4: number):
+    LoopHint @203
+    v6 = IteratorResume v3 @203
+    v7 = ResultAt v6 @203
+    v8 = ResultAt v6 index=1 @203
+    Branch v7 -> taken b2(), notTaken b3() @203
+  b2():
+    v9 = Convert v4 declared={type=number} @262
+    Return v9 @262
+  b3():
+    Jump -> next b4() @203
+  b4() handler=b8():
+    v10 = Convert v8 declared={type=undefined|null|Array<undefined|null|number|L0> flags=[IsExpected]} @203
+    v11 = IteratorOpen v10 elementCount=2 [isDestructuring] @214
+    Jump -> next b5() @214
+  b5() handler=b7():
+    v12 = IteratorResume v11 stepIndex=0 @214
+    v13 = ResultAt v12 @214
+    v14 = ResultAt v12 index=1 @214
+    v15 = IteratorResume v11 stepIndex=1 @214
+    v16 = ResultAt v15 @214
+    v17 = ResultAt v15 index=1 @214
+    Jump -> next b6() @219
+  b6() handler=b8():
+    IteratorClose v11 @214
+    v19 = PropGet v17 key="score" @237
+    v20 = Add v19, v14 @249
+    v21 = Add v4, v20 @249
+    v22 = Convert v21 declared={type=number} @232
+    Jump -> next b1(v22) @232
+  b7() role=IterationCleanup subject=v11 handler=b8():
+    v23 = CatchException @214
+    IteratorClose v11 completion=Throw @214
+    Rethrow v23 @214
+  b8() role=IterationCleanup subject=v3:
+    v25 = CatchException @203
+    IteratorClose v3 completion=Throw @203
+    Rethrow v25 @203
+}
+function f3 name="grow" module=m0 position=267 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Set<number>):
+    v1 = Integer @319
+    v2 = Convert v1 declared={type=number} @319
+    v3 = IteratorOpen v0 @324
+    Jump -> next b1(v2) @324
+  b1(v4: number):
+    LoopHint @324
+    v6 = IteratorResume v3 @324
+    v7 = ResultAt v6 @324
+    v8 = ResultAt v6 index=1 @324
+    Branch v7 -> taken b2(), notTaken b3() @324
+  b2():
+    v9 = Convert v4 declared={type=number} @407
+    Return v9 @407
+  b3():
+    Jump -> next b4() @324
+  b4() handler=b5():
+    v10 = Convert v8 declared={type=number flags=[IsExpected]} @324
+    v11 = PropGet v0 key="add" @356
+    v12 = Integer integer=1 @373
+    v13 = Add v10, v12 @373
+    v14 = Call v11, v0, v13 calleeKey="add" calleeName="set.add" @360
+    v15 = Convert v14 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @356
+    v16 = Add v4, v10 @386
+    v17 = Convert v16 declared={type=number} @381
+    Jump -> next b1(v17) @381
+  b5() role=IterationCleanup subject=v3:
+    v18 = CatchException @324
+    IteratorClose v3 completion=Throw @324
+    Rethrow v18 @324
+}
+function f4 name="tell" module=m0 position=412 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Set<number>, v1: undefined|null|function):
+    v2 = Integer @479
+    v3 = Convert v2 declared={type=number} @479
+    v4 = IteratorOpen v0 @484
+    Jump -> next b1(v3) @484
+  b1(v5: number):
+    LoopHint @484
+    v7 = IteratorResume v4 @484
+    v8 = ResultAt v7 @484
+    v9 = ResultAt v7 index=1 @484
+    Branch v8 -> taken b2(), notTaken b3() @484
+  b2():
+    v10 = Convert v5 declared={type=number} @551
+    Return v10 @551
+  b3():
+    Jump -> next b4() @484
+  b4() handler=b5():
+    v11 = Convert v9 declared={type=number flags=[IsExpected]} @484
+    v12 = Call v1 calleeName="f" @516
+    v13 = Add v5, v11 @530
+    v14 = Convert v13 declared={type=number} @525
+    Jump -> next b1(v14) @525
+  b5() role=IterationCleanup subject=v4:
+    v15 = CatchException @484
+    IteratorClose v4 completion=Throw @484
+    Rethrow v15 @484
+}
+function f5 module=m0 position=757 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @763
+    v1 = CheckInitialized v0 name="set" @763
+    v2 = PropGet v1 key="add" @763
+    v3 = Integer integer=7 @771
+    v4 = Call v2, v1, v3 calleeKey="add" calleeName="set.add" @767
+    ReturnCall v4 casts=[{declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}}] @767
+}
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

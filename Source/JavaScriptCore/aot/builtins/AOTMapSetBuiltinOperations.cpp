@@ -259,6 +259,22 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetNext, UGPRPair, (Instance* inst
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSSet>(collection, Entry::operationAOTSetNext), JSValue::decode(table), entry, results));
 }
 
+// What CollectionTableFacts calls in front of a loop whose table lies in the image: the table is moved to the heap, as a step would move it. Null where the collection has no storage.
+template<typename Collection>
+static JSCell* tableMovedToHeapForWalk(JSGlobalObject* globalObject, Collection* collection)
+{
+    moveWalkedTableToHeap(globalObject, collection, collection->storage());
+    return collection->storage();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveCollectionTableToHeap, JSCell*, (Instance* instance, JSCell* collection))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTMoveCollectionTableToHeap);
+    if (collection && collection->type() == JSSetType)
+        OPERATION_RETURN(scope, tableMovedToHeapForWalk(globalObject, uncheckedDowncast<JSSet>(collection)));
+    OPERATION_RETURN(scope, tableMovedToHeapForWalk(globalObject, cellArgument<JSMap>(collection, Entry::operationAOTMoveCollectionTableToHeap)));
+}
+
 template<typename Functor>
 static void forEachMemberOfSet(VM& vm, JSSet* set, NOESCAPE const Functor& functor)
 {

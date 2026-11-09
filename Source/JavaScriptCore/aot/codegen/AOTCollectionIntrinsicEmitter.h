@@ -11,11 +11,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+template<typename... Results> class ResultsJoin;
+
 class CollectionIntrinsicEmitter final : public OperationEmitter {
 public:
     explicit CollectionIntrinsicEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateCollectionTable(const ValueContext&);
+    void generateCollectionTableFacts(const ValueContext&);
     void generateMapNext(const ValueContext& value) { generateNext(Collection::Map, value); }
     void generateSetNext(const ValueContext& value) { generateNext(Collection::Set, value); }
     void generateCollectionIteratorClosedMark(const ValueContext&);
@@ -39,8 +42,12 @@ private:
     };
 
     void generateNext(Collection, const ValueContext&);
+    using StepJoin = ResultsJoin<Condition, Word32, Boxed, Boxed, Boxed>;
+    void generateNextOnFacts(Collection, const ValueContext&, TableReader&, StepJoin&, LBasicBlock hasNoEntry, LBasicBlock slowPath);
+    void stepByOperation(Collection, const ValueContext&, TableReader&, StepJoin&, CellPointer owner, Boxed table, Integer start);
     InlineWidths inlineWidthsOf(Collection, ValueID collection);
     Integer movesOfEntriesInCollections();
+    InlineWidths inlineWidthsOf(Collection, const ValueContext&, ValueID collection);
 
     ValueID m_forwardedTableRead;
     LValue m_forwardedTable { nullptr };

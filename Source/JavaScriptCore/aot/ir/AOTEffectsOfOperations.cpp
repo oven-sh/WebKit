@@ -250,6 +250,9 @@ static constexpr OpcodeSet opcodesWithEffectsOfResolvingRopesAlone = [] {
     return opcodes;
 }();
 
+// A step of a Map or a Set that is handed the facts of its table (AOTWalkIteration.cpp, buildTableFactsInFrontOfLoop): CollectionTableFacts moved the table to the heap and set its mark in front of the loop, so the step itself writes nothing of the table.
+static constexpr OpcodeSet stepsOfCollectionsWithFactsInFront { Opcode::MapNext, Opcode::SetNext };
+
 static constexpr OpcodeSet opcodesWithEffectsFittedToOperands = [] {
     OpcodeSet opcodes = opcodesWithEffectsOfResolvingRopesAlone;
     if (effectRuleOf(Opcode::Strcat) == EffectRule::Declared)
@@ -261,6 +264,7 @@ static constexpr OpcodeSet opcodesWithEffectsFittedToOperands = [] {
         opcodes.add(Opcode::NewArrayLike);
     if (effectRuleOf(Opcode::PutArrayElement) == EffectRule::Declared)
         opcodes.add(Opcode::PutArrayElement);
+    opcodes |= stepsOfCollectionsWithFactsInFront;
     return opcodes;
 }();
 
@@ -781,6 +785,8 @@ static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode 
         effects = Effects::none();
         effects.reads = reads;
     }
+    if (stepsOfCollectionsWithFactsInFront.contains(opcode) && operation.keysOperand())
+        effects.writes.remove(AbstractHeapSet { AbstractHeap::CollectionStorage });
     return effects;
 }
 

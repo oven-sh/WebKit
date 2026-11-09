@@ -123,6 +123,7 @@ opaque Cursor KeyOrder engine directCallsOnly
 opaque StringBuilder engine
 opaque FlatString CodeAddress Reciprocal engine functionLocal
 opaque BuilderCursor ViewVector ArrayStoragePointer engine functionLocal interior
+opaque CollectionColumnPointer engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText
 external BuiltinClass : id = BuiltinClassID, crate::builtins::id::BuiltinClass { Array Arguments Map Set Promise RegExp Generator AsyncGenerator BoundFunction } ; namedInText
