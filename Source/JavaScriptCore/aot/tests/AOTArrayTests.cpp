@@ -167,6 +167,44 @@ static void testProfileReviewInterval()
     }
 }
 
+static void testProfileSamplesWalkThroughTheResiduesOfTheInterval()
+{
+    ArrayAllocationProfile profile { };
+    profile.set(3, ContiguousShape);
+    for (unsigned reviews = 0; reviews < window; ++reviews) {
+        profile.reviews = reviews;
+        profile.startInterval();
+        uint32_t allocations = 0;
+        do {
+            profile.word -= ArrayAllocationProfile::oneAllocation;
+            ++allocations;
+        } while (!profile.isDueForReview());
+        AOT_TEST_CHECK(allocations == ArrayAllocationProfile::shortestInterval - reviews);
+    }
+}
+
+static void testProfileLearnsNothingFromListsThatAreStillEmpty()
+{
+    Realms realms;
+    ArrayAllocationProfile allEmpty { };
+    review(realms, allEmpty, ArrayWithContiguous, 0, window);
+    AOT_TEST_CHECK(!allEmpty.capacity() && hasNewWindow(allEmpty));
+
+    ArrayAllocationProfile oneFilled { };
+    review(realms, oneFilled, ArrayWithContiguous, 4);
+    review(realms, oneFilled, ArrayWithContiguous, 0, window - 1);
+    AOT_TEST_CHECK(!oneFilled.capacity() && hasNewWindow(oneFilled));
+
+    ArrayAllocationProfile someShort { };
+    review(realms, someShort, ArrayWithContiguous, 2);
+    review(realms, someShort, ArrayWithContiguous, 0, window - 1);
+    AOT_TEST_CHECK(someShort.capacity() == 3 && hasNewWindow(someShort));
+
+    ArrayAllocationProfile allShort { };
+    review(realms, allShort, ArrayWithContiguous, 1, window);
+    AOT_TEST_CHECK(allShort.capacity() == 1 && hasNewWindow(allShort));
+}
+
 static void testProfileReviewIntervalGrowsWhileNothingChanges()
 {
     Realms realms;
@@ -214,6 +252,8 @@ std::span<const NativeTest> arrayTests()
         { "arrays/forms/store-without-conversion"_s, testFormsStoreWithoutConversion },
         { "arrays/profile/grows-with-the-third-longer-array"_s, testProfileGrowsWithTheThirdLongerArray },
         { "arrays/profile/review-interval"_s, testProfileReviewInterval },
+        { "arrays/profile/samples-walk-through-the-residues-of-the-interval"_s, testProfileSamplesWalkThroughTheResiduesOfTheInterval },
+        { "arrays/profile/learns-nothing-from-lists-that-are-still-empty"_s, testProfileLearnsNothingFromListsThatAreStillEmpty },
         { "arrays/profile/review-interval-grows-while-nothing-changes"_s, testProfileReviewIntervalGrowsWhileNothingChanges },
     };
     return tests;

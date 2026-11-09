@@ -34,7 +34,7 @@ bool Modules::isSomeLoadUnderWay() const
 
 bool Modules::loadComesToModuleWhoseMockEnded(ModuleID module) const
 {
-    return hasMockThatEnded(module) || (data(module).kind == ModuleKind::CommonJs && !isImportedByModuleThatRequireAnswered(module));
+    return hasMockThatEnded(module) || ((data(module).kind == ModuleKind::CommonJs || data(module).kind == ModuleKind::Data) && !isImportedByModuleThatRequireAnswered(module));
 }
 
 void Modules::bringBackMockOfPreloadThatWasPatched(ModuleID fileOrModule)
@@ -52,6 +52,8 @@ void Modules::letGoOfMockAtNextLoad(ModuleID module)
         return;
     }
     m_modulesWithMockToLetGo.set(module.index());
+    m_modulesWithNothingOwedBelow.clearAll();
+    m_modulesWithNoNamesOwedBelow.clearAll();
     m_testFilesInWhichMocksEnded.set(module, m_instance.vm->aotState().momentOfTestFile);
     if (ModuleRecord* record = recordIfExists(module); record && record->hasLiveExports())
         loader()->removeEntryOfRecord(record);
@@ -62,6 +64,8 @@ bool Modules::letGoOfMockOfLibraryModuleAtNextLoad(ModuleID module)
     if (!m_libraryModulesWithMock.get(module.index()) || !exportsWhatMockNamesAlone(module) || isSomeLoadUnderWay() || isLoaderInMiddleOfGraph())
         return false;
     m_modulesWithMockToLetGo.set(module.index());
+    m_modulesWithNothingOwedBelow.clearAll();
+    m_modulesWithNoNamesOwedBelow.clearAll();
     return true;
 }
 
@@ -77,15 +81,21 @@ void Modules::letGoOfMockThatEndedSlow(ModuleID module)
         RELEASE_AND_RETURN(scope, endMockOfLibraryModule(module));
     }
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+    bool ranBesideMock = m_modulesThatRanBesideMock.get(module.index());
     setMockInPlace(module, nullptr, { });
     scope.assertNoExceptionExceptTermination();
-    if (m_modulesWithMockToRun.get(module.index()))
+    if (m_modulesWithMockToRun.get(module.index())) {
         willMock(module);
+        if (ranBesideMock)
+            m_modulesThatRanBesideMock.set(module.index());
+    }
 }
 
 void Modules::letGoOfMocksThatEnded()
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    endMocksThatStandForLoadsInFlight();
+    RETURN_IF_EXCEPTION(scope, void());
     while (!m_modulesWithMockToLetGo.isEmpty()) {
         letGoOfMockThatEnded(ModuleID(*m_modulesWithMockToLetGo.begin()));
         RETURN_IF_EXCEPTION(scope, void());
@@ -130,6 +140,8 @@ void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
             ModuleID importer(index);
             if (asImported.quickGet(imported) && keepsImportersOfTestFile && wasLoadedInThisTestFile(importer))
                 continue;
+            if (asImported.quickGet(imported) && keepsEndedMockWhereItIsAskedForAgain(m_table.fileBehindFace(mocked).value_or(mocked), importer))
+                continue;
             if (seen.quickSet(index))
                 continue;
             bool isLoaded = status(importer) > ModuleStatus::Linked || (data(importer).isESModuleOfProgram() && wasLoadedWithGraph(importer));
@@ -153,15 +165,21 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
         ModuleID module = toVisit.takeLast();
         if (isSeen.quickSet(module.index()))
             continue;
+        std::optional<ModuleID> file = m_table.fileBehindFace(module);
         bool wasLetGo = m_modulesThatLoaderLetGo.clear(module.index());
-        if (std::optional<ModuleID> file = m_table.fileBehindFace(module))
+        if (file)
             wasLetGo |= m_modulesThatLoaderLetGo.clear(file->index());
         if (!wasLetGo && status(module) > ModuleStatus::Linked)
             continue;
-        if (wasLetGo && m_importersOfMockThatEnded.clear(module.index())) {
-            VMState& state = m_instance.vm->aotState();
-            m_momentsLoadedAnew.set(module, MomentLoadedAnew { ++state.momentOfLoads, state.momentOfTestFile, root });
-        }
+        bool sawMockThatEnded = wasLetGo && m_importersOfMockThatEnded.clear(module.index());
+        if (wasLetGo && file)
+            sawMockThatEnded |= m_importersOfMockThatEnded.clear(file->index());
+        auto holdsOriginalOf = [&](const ModuleRequestData& request) {
+            ModuleID imported = fileOf(moduleLoadedBy(request));
+            return isMocked(imported) ? keepsOriginalUnderLaterMock(imported, module) : statementsHoldOriginalBehindEndOfMock(imported, module);
+        };
+        if (sawMockThatEnded && !std::ranges::any_of(m_table.imports(module), holdsOriginalOf))
+            noteLoadedAnew(module, root);
         if (isMocked(module) || mockInPlace(module))
             continue;
         for (const ModuleRequestData& request : m_table.imports(module)) {
@@ -235,6 +253,10 @@ void Modules::passModuleThatHasRun(ModuleID root, BitVector& isPassed)
         if ((request.isRequire && !data(module).isFaceOfFile()) || request.isDeferred)
             continue;
         ModuleID imported = moduleLoadedBy(request);
+        if (!data(module).isFaceOfFile() && keepsEndedMockWhereItIsAskedForAgain(fileOf(imported), module))
+            continue;
+        if (statementsHoldOriginalBehindEndOfMock(fileOf(imported), module))
+            continue;
         letGoOfMockThatEnded(imported);
         RETURN_IF_EXCEPTION(scope, void());
         if (m_modulesOwedToImportersThatRan.get(imported.index())) {

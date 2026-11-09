@@ -34,6 +34,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
@@ -89,6 +90,7 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
         uint32_t end { 0 };
         bool isAsked { false };
         bool hasMemberWithoutKey { false };
+        bool hasMemberUnderKeyThatIsCalled { false };
     };
     Vector<MembersOfClass> membersOfClasses(program.layouts.size());
     BitVector membersThatMayHaveRows(linked.members.size());
@@ -107,6 +109,7 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
                 known.hasMemberWithoutKey = true;
                 continue;
             }
+            known.hasMemberUnderKeyThatIsCalled |= !!numbersOfArgumentsPassedUnderKey[member.key.index()];
             if (numbersOfArgumentsPassedUnderKey[member.key.index()] && member.kind == MethodKind::Method && member.written && isEnteredThroughTable(member.written)
                 && linked.membersUnder(current, ClassSide::Prototype, member.key).size() == 1 && program.at(member.key).kind == PropertyKeyKind::Text)
                 membersThatMayHaveRows.quickSet(place);
@@ -122,7 +125,7 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
         LayoutID current = from;
         for (; current && nearestClassesWithMembers[current.index()] == isNotAsked && classesPassed.size() <= program.layouts.size(); current = program.at(current).base) {
             const MembersOfClass& members = membersOf(current);
-            if (members.first != members.end || program.at(current).has(LayoutFlags::IsConstructorFunction)) {
+            if (members.hasMemberWithoutKey || members.hasMemberUnderKeyThatIsCalled || program.at(current).has(LayoutFlags::IsConstructorFunction)) {
                 nearestClassesWithMembers[current.index()] = current.index();
                 break;
             }
@@ -171,6 +174,8 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
                 if (!membersThatMayHaveRows.quickGet(place))
                     continue;
                 if (keysOfFields.quickGet(member.key.index()) && findField(program, layout, member.key))
+                    continue;
+                if (std::ranges::contains(linked.appendedKeysOf(layout), member.key) || std::ranges::contains(linked.keysAppendedByHeldAloneOf(layout), member.key))
                     continue;
                 auto findsMethodWritten = [&] {
                     return linked.findMember(program, layout, ClassSide::Prototype, member.key).method == member.written;
@@ -253,6 +258,27 @@ static BitVector variablesDescribedToRunTimeByPlan(const Program& program)
     return described;
 }
 
+static Vector<uint32_t> variablesNamedByFunctionsThatBodyCallsInPlan(const Program& program, const Facts& facts, FunctionID body)
+{
+    Vector<uint32_t> named;
+    const ThinSummary& summary = facts.summaries().at(body);
+    for (const SummaryCall& call : summary.calls) {
+        FunctionID called;
+        if (call.callee == SummaryCall::Callee::Binding)
+            called = call.function;
+        else if (call.callee == SummaryCall::Callee::Value && call.subject != noSummaryNode && summary.nodes[call.subject].kind == SummaryNode::Kind::Closure)
+            called = FunctionID(summary.nodes[call.subject].first);
+        if (!called || called == body || program.at(called).module != program.at(body).module)
+            continue;
+        for (const SummaryNode& node : facts.summaries().at(called).nodes) {
+            if (node.kind == SummaryNode::Kind::Variable)
+                named.append(node.first);
+        }
+    }
+    std::ranges::sort(named);
+    return named;
+}
+
 static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, const Facts& facts, const BitVector& variablesDescribedToRunTime, bool checksProofs)
 {
     DeferredDefinitions result;
@@ -272,6 +298,7 @@ static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, con
         if (bodiesOfSeveralModules.quickGet(number))
             continue;
         const BodyIndex* index = nullptr;
+        std::optional<Vector<uint32_t>> namedByCalls;
         for (const SummaryDefinition& definition : facts.summaries().at(body).definitions) {
             const Variable& variable = program.at(definition.variable);
             if (definition.variable.index() >= linked.variables.size() || variablesDescribedToRunTime.quickGet(definition.variable.index()))
@@ -285,6 +312,12 @@ static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, con
             if (!index)
                 break;
             BodyValue made = index->value(definition.made);
+            if (made.opcode() == Opcode::Data) {
+                if (!namedByCalls)
+                    namedByCalls = variablesNamedByFunctionsThatBodyCallsInPlan(program, facts, body);
+                if (std::ranges::binary_search(*namedByCalls, definition.variable.index()))
+                    continue;
+            }
             if (made.opcode() == Opcode::NewClosure)
                 continue;
 
@@ -421,7 +454,8 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
         const Module& module = program.modules[index];
         if (module.kind != ModuleKind::CommonJs)
             parts.modulesWithValue.quickSet(index);
-        if (module.kind == ModuleKind::Runtime || module.kind == ModuleKind::RuntimeSource)
+        bool isCommonJsWithOneNamespace = module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsImportedAsNamespace) && !module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted });
+        if (module.kind == ModuleKind::Runtime || module.kind == ModuleKind::RuntimeSource || isCommonJsWithOneNamespace)
             parts.modulesWithNamespaceWord.quickSet(index);
         if (!module.body || !program.at(module.body).hasBody() || bodyOfModuleOnlyReturns(program.at(module.body).body))
             parts.modulesWhoseBodyIsPassedOver.quickSet(index);
@@ -431,6 +465,10 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
             if (requireReadsModuleValue(program, program.at(request.target)) && requireAddsToRequireCache(program, ModuleID(index), request.target))
                 parts.modulesWithRequireCacheValue.quickSet(request.target.index());
         }
+    }
+    for (const Module& module : program.modules) {
+        if (isFaceOfCommonJSFile(program, module))
+            parts.modulesWithNamespaceWord.quickClear(module.requests[0].target.index());
     }
     parts.modulesWithRequireCacheValue.filter(parts.modulesWithValue);
     parts.modulesWhoseImportsAreNeverMocked = modulesWhoseImportsAreNeverMockedInPlan(program);
@@ -730,9 +768,22 @@ static BitVector globalNamesNeverStoredInPlan(const Program& program, const Fact
     return neverStored;
 }
 
+static BitVector namesOfFieldsWrittenAsOneFunctionInPlan(const Program& program)
+{
+    BitVector names(program.types.numberOfPropertyKeys());
+    for (const Layout& layout : program.layouts) {
+        for (const Field& field : layout.fields) {
+            if (field.key && field.declared.isExpected() && field.declared.written() && singleFunctionOf(TypeReader(program), program.at(field.declared.written())))
+                names.quickSet(field.key.index());
+        }
+    }
+    return names;
+}
+
 static void planWordsOfModulesAndGlobalNames(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts)
 {
     chooseModuleWordsOfPlan(program, parts);
+    parts.namesOfFieldsWrittenAsOneFunction = namesOfFieldsWrittenAsOneFunctionInPlan(program);
     parts.globalNamesNeverStoredByName = globalNamesNeverStoredInPlan(program, facts);
     parts.globalNamesNeverStoredThroughBinding = parts.globalNamesNeverStoredByName;
     parts.functionsWhoseResultsPassNoReturn = functionsWhoseResultsPassNoReturnInPlan(program, facts);
@@ -778,7 +829,7 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
 static bool makesObjectsWithBirthsInPlan(const Program& program, const LinkTables& held, const SlotPlanParts& slots, uint32_t layout)
 {
     LayoutKind kind = program.layouts[layout].kind;
-    bool isRecordThatStaysAsBorn = kind == LayoutKind::Record && !held.layouts[layout].possibleChanges.containsAny({ LayoutChange::LosesProperty, LayoutChange::GetsAccessor });
+    bool isRecordThatStaysAsBorn = kind == LayoutKind::Record && !held.layouts[layout].isDefinedOnByDescriptorsThatLayValuesAlone && !held.layouts[layout].possibleChanges.containsAny({ LayoutChange::LosesProperty, LayoutChange::GetsAccessor });
     return (kind == LayoutKind::Instance || isRecordThatStaysAsBorn) && slots.layouts[layout].holdsCompiledObjects() && !slots.layoutsNeverAllocated.get(layout);
 }
 
@@ -789,7 +840,7 @@ static bool slotMayBeOfBirthInPlan(const PlannedLayout& planned, FieldIndex fiel
         && slot.representation != SlotRepresentation::DeferredClosure && !slot.deferredFunction && planned.environmentOfDeferredClosures != field;
 }
 
-static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, SlotPlanParts& slots)
+static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, const ParallelLoops& loops, SlotPlanParts& slots)
 {
     if (!withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::TypedSlots) || program.admitsInspector)
         return;
@@ -802,9 +853,14 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, S
         FieldReference declaration = declarationOf(program, reference);
         return held.firstFieldOfLayout[declaration.layout.index()] + declaration.field;
     };
-    BitVector isLeftOutBySomeLayout(held.fields.size());
-    BitVector isLookedAtInSomeLayout(held.fields.size());
-    BitVector mayHoldMarkInSomeLayout(held.fields.size());
+    static constexpr uint8_t isLeftOutBySomeLayout = 1 << 0;
+    static constexpr uint8_t isLookedAtInSomeLayout = 1 << 1;
+    static constexpr uint8_t mayHoldMarkInSomeLayout = 1 << 2;
+    Vector<uint8_t> saidOfDeclarations;
+    saidOfDeclarations.fill(0, held.fields.size());
+    auto say = [&](uint32_t declaration, uint8_t what) {
+        AtomicRef(saidOfDeclarations[declaration]).fetch_or(what, std::memory_order_relaxed);
+    };
     BitVector standsInRowOfClasses(numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         const Layout& layout = program.layouts[index];
@@ -817,43 +873,60 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, S
         standsInRowOfClasses.quickSet(index);
         standsInRowOfClasses.quickSet(declaredLayoutOf(program, layout.base).index());
     }
-    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (!makesObjectsWithBirthsInPlan(program, held, slots, index))
-            continue;
-        LayoutID id(index);
-        bool isReadWithoutLook = !linked.layout(id).reachesUnseenCode;
-        for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
-            uint32_t declaration = declarationOfField({ id, field });
-            bool isOfBirth = held.field({ id, field }).isOfBirth || (program.layouts[index].fields[field].flags.contains(FieldFlags::IsInherited) && held.fields[declaration].isOfBirth);
-            bool gainsNamesBySpread = held.recordsThatSpreadsFill.get(index) && held.layout(id).possibleChanges.contains(LayoutChange::GainsProperty);
-            if (!isOfBirth || gainsNamesBySpread || !slotMayBeOfBirthInPlan(slots.layouts[index], field) || standsInRowOfClasses.quickGet(declaredLayoutOf(program, id).index()))
-                isLeftOutBySomeLayout.quickSet(declaration);
-            else if (!isReadWithoutLook || !linked.field({ id, field }).isFilled)
-                isLookedAtInSomeLayout.quickSet(declaration);
-            const PlacedSlot& slot = slots.layouts[index].slots[field];
-            const Field& record = program.layouts[index].fields[field];
-            const Field& origin = record.originLayout && record.originField ? fieldAt(program, { record.originLayout, *record.originField }) : record;
-            TypeID written = origin.declared.written();
-            LinkedCell cell = held.field({ id, field });
-            if (!traitsOf(slot.representation).hasUndefined || !slot.type || !written || program.types.at(written).isAnything() || program.types.at(written).mayBeUndefinedOrNull()
-                || cell.isOnlyGivenUndefinedByMakers || cell.isLeftUndefinedByMakers || cell.isGivenByNoMaker || cell.isGivenUndefinedOrNullInSight || held.recordsThatSpreadsFill.get(index)
-                || (slot.provenType && program.types.at(slot.provenType).mayBeUndefinedOrNull()))
-                mayHoldMarkInSomeLayout.quickSet(declaration);
+    static constexpr uint32_t layoutsInRange = 256;
+    forEachIndexInParallel(loops, (numberOfLayouts + layoutsInRange - 1) / layoutsInRange, [&](unsigned range) {
+        uint32_t endOfRange = std::min(numberOfLayouts, (range + 1) * layoutsInRange);
+        for (uint32_t index = range * layoutsInRange; index < endOfRange; ++index) {
+            if (!makesObjectsWithBirthsInPlan(program, held, slots, index))
+                continue;
+            LayoutID id(index);
+            bool isReadWithoutLook = !linked.layout(id).reachesUnseenCode;
+            for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
+                uint32_t declaration = declarationOfField({ id, field });
+                bool isOfBirth = held.field({ id, field }).isOfBirth || (program.layouts[index].fields[field].flags.contains(FieldFlags::IsInherited) && held.fields[declaration].isOfBirth);
+                bool gainsNamesBySpread = (held.recordsThatSpreadsFill.get(index) || (program.layouts[index].kind == LayoutKind::Record && held.layout(id).isFilledUnderComputedKeys)) && held.layout(id).possibleChanges.contains(LayoutChange::GainsProperty);
+                if (!isOfBirth || gainsNamesBySpread || !slotMayBeOfBirthInPlan(slots.layouts[index], field) || standsInRowOfClasses.quickGet(declaredLayoutOf(program, id).index()))
+                    say(declaration, isLeftOutBySomeLayout);
+                else if (!isReadWithoutLook || !linked.field({ id, field }).isFilled)
+                    say(declaration, isLookedAtInSomeLayout);
+                const PlacedSlot& slot = slots.layouts[index].slots[field];
+                const Field& record = program.layouts[index].fields[field];
+                const Field& origin = record.originLayout && record.originField ? fieldAt(program, { record.originLayout, *record.originField }) : record;
+                TypeID written = origin.declared.written();
+                LinkedCell cell = held.field({ id, field });
+                if (!traitsOf(slot.representation).hasUndefined || !slot.type || !written || program.types.at(written).isAnything() || program.types.at(written).mayBeUndefinedOrNull()
+                    || cell.isOnlyGivenUndefinedByMakers || cell.isLeftUndefinedByMakers || cell.isGivenByNoMaker || cell.isGivenUndefinedOrNullInSight || held.recordsThatSpreadsFill.get(index)
+                    || (slot.provenType && program.types.at(slot.provenType).mayBeUndefinedOrNull()))
+                    say(declaration, mayHoldMarkInSomeLayout);
+            }
         }
-    }
+    });
+
+    Vector<Vector<FieldReference>> fieldsWithRawValuesInRanges;
+    fieldsWithRawValuesInRanges.grow((numberOfLayouts + layoutsInRange - 1) / layoutsInRange);
+    forEachIndexInParallel(loops, static_cast<unsigned>(fieldsWithRawValuesInRanges.size()), [&](unsigned range) {
+        uint32_t endOfRange = std::min(numberOfLayouts, (range + 1) * layoutsInRange);
+        for (uint32_t index = range * layoutsInRange; index < endOfRange; ++index) {
+            if (!makesObjectsWithBirthsInPlan(program, held, slots, index))
+                continue;
+            for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
+                uint32_t declaration = declarationOfField({ LayoutID(index), field });
+                uint8_t said = saidOfDeclarations[declaration];
+                slots.layouts[index].slots[field].isFilledAtBirth = (said & (isLookedAtInSomeLayout | isLeftOutBySomeLayout)) == isLookedAtInSomeLayout;
+                slots.layouts[index].mayBearMark |= slots.layouts[index].slots[field].isFilledAtBirth;
+                if (slots.layouts[index].slots[field].isFilledAtBirth && !(said & mayHoldMarkInSomeLayout)) {
+                    slots.layouts[index].fieldsThatHoldRawValuesFromBirth.set(field);
+                    fieldsWithRawValuesInRanges[range].append({ LayoutID(index), field });
+                }
+            }
+        }
+    });
 
     TypeArena types(program.types, ArenaKeeps::InProgram);
-    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (!makesObjectsWithBirthsInPlan(program, held, slots, index))
-            continue;
-        for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
-            uint32_t declaration = declarationOfField({ LayoutID(index), field });
-            slots.layouts[index].slots[field].isFilledAtBirth = isLookedAtInSomeLayout.quickGet(declaration) && !isLeftOutBySomeLayout.quickGet(declaration);
-            slots.layouts[index].mayBearMark |= slots.layouts[index].slots[field].isFilledAtBirth;
-            if (slots.layouts[index].slots[field].isFilledAtBirth && !mayHoldMarkInSomeLayout.quickGet(declaration)) {
-                slots.layouts[index].fieldsThatHoldRawValuesFromBirth.set(field);
-                slots.layouts[index].slots[field].typeOfRawValue = types.withoutNullish(slots.layouts[index].slots[field].typeInLayoutRecord());
-            }
+    for (const Vector<FieldReference>& fields : fieldsWithRawValuesInRanges) {
+        for (FieldReference reference : fields) {
+            PlacedSlot& slot = slots.layouts[reference.layout.index()].slots[reference.field];
+            slot.typeOfRawValue = types.withoutNullish(slot.typeInLayoutRecord());
         }
     }
 }
@@ -900,9 +973,10 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
         slots.variables = WTF::move(variables);
         slots.classCreation = WTF::move(classCreation);
         build.statistics().count(StatisticID::EnvironmentsPromotedToVariables, parts.promotedEnvironments.layouts.size());
+        build.statistics().count(StatisticID::CapturesOfClassesStoredForGoodPromoted, parts.promotedEnvironments.numberOfCapturesOfClassesStoredForGood);
         holdDoorsToProofsInSlotPlan(program, facts, build.parallelLoops(), slots);
         appendPromotedVariables(parts.promotedEnvironments, slots);
-        markSlotsFilledAtBirthInPlan(program, facts, slots);
+        markSlotsFilledAtBirthInPlan(program, facts, build.parallelLoops(), slots);
         markFieldsHeldFilledInSlotPlan(program, facts.linked(), build.parallelLoops(), slots);
         parts.slots = SlotPlan(WTF::move(slots));
     };
@@ -1056,6 +1130,7 @@ private:
     void addFunctionsThatHostEnters();
     void addInitialFunctionsOfVariables();
     void addFunctionsWithoutReferrers();
+    void addFunctionsThatHoldInt32Promises();
 
     const Program& m_program;
     const Facts& m_facts;
@@ -1161,8 +1236,21 @@ void CollectorOfUnitsNamedOutsideCode::addFunctionsWithoutReferrers()
     }
 }
 
+void CollectorOfUnitsNamedOutsideCode::addFunctionsThatHoldInt32Promises()
+{
+    const LargeList<LinkedFunction>& functions = m_facts.linked().functions;
+    for (uint32_t index = 0; index < functions.size(); ++index) {
+        if (functions[index].isReached && functions[index].holdsInt32Promise)
+            addClosureOf(FunctionID(index));
+    }
+}
+
 void CollectorOfUnitsNamedOutsideCode::addFunctionsThatHostEnters()
 {
+    const LargeList<LinkedFunction>& functions = m_facts.linked().functions;
+    FunctionID sorts = functionThatSorts(m_program);
+    if (sorts && sorts.index() < functions.size() && !functions[sorts.index()].everyCallerIsKnown && m_facts.mayBeReached(sorts))
+        addClosureOf(sorts);
     for (size_t index : m_functionsThatHostEnters) {
         FunctionID function(index);
         if (m_facts.mayBeReached(function))
@@ -1187,6 +1275,7 @@ Vector<CodeUnit> CollectorOfUnitsNamedOutsideCode::collect()
     addFunctionsThatHostEnters();
     addInitialFunctionsOfVariables();
     addFunctionsWithoutReferrers();
+    addFunctionsThatHoldInt32Promises();
 
     AOT::sort(m_units);
     removeRepeatedElements(m_units);

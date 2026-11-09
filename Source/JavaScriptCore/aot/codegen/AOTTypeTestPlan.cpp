@@ -197,6 +197,7 @@ static void appendObjectTestsOfTypeTest(TypeTestPlan& plan, TypeReader reader, c
 
     bool testsDefaultMode = false;
     bool testsSharedMode = false;
+    Vector<JSType, 8> typesOfCells;
     for (const ClassPart& part : classPartsOf(reader, to)) {
         if (!tested.mayBeInstanceOf(part.builtinClass))
             continue;
@@ -205,7 +206,7 @@ static void appendObjectTestsOfTypeTest(TypeTestPlan& plan, TypeReader reader, c
         case BuiltinInstanceTest::None:
             break;
         case BuiltinInstanceTest::JSTypeEquals:
-            append({ .kind = CellTestKind::CellTypeIs, .cellTypes = { builtinClass.type, builtinClass.type } });
+            typesOfCells.append(builtinClass.type);
             break;
         case BuiltinInstanceTest::ClassInfoInherits:
             append({ .kind = CellTestKind::InheritsClassInfo, .builtinClass = builtinClass.id });
@@ -219,6 +220,14 @@ static void appendObjectTestsOfTypeTest(TypeTestPlan& plan, TypeReader reader, c
             break;
         }
         }
+    }
+    std::ranges::sort(typesOfCells);
+    for (size_t first = 0; first < typesOfCells.size();) {
+        size_t last = first;
+        while (last + 1 < typesOfCells.size() && typesOfCells[last + 1] <= typesOfCells[last] + 1)
+            ++last;
+        append({ .kind = CellTestKind::CellTypeIs, .cellTypes = { typesOfCells[first], typesOfCells[last] } });
+        first = last + 1;
     }
     if (testsDefaultMode && testsSharedMode)
         append({ .kind = CellTestKind::CellTypeIs, .cellTypes = arrayBuffers });
@@ -372,6 +381,17 @@ TypeTestPlan computeTypeTestPlan(TypeArena& arena, const TypeTestContext& contex
         restrictTypeTestToRepresentation(plan, arena);
     }
     return plan;
+}
+
+bool recordInTablesTellsType(TypeArena& types, TypeID type)
+{
+    if (!type || liesInThread(type))
+        return false;
+    if ((holdsOnlyPrimitives(type) ? primitivesInID(type) : types.recordOf(type).primitives) & Primitive::Unspecified)
+        return false;
+    if (holdsOnlyPrimitives(type))
+        return true;
+    return types.recordOf(type).isJavaScriptValue() && types.testablePartOf(type) == type;
 }
 
 TypeTestPlan computeTypeTestPlanFromAnything(TypeReader reader, const Type& to)

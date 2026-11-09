@@ -276,11 +276,6 @@ StringID StringTable::codeUnitAt(StringID id, uint64_t position) const
     return codeUnit;
 }
 
-BuiltinName StringTable::builtinName(StringID id) const
-{
-    return m_builtinNames[id.index()];
-}
-
 bool StringTable::isAllASCII(StringID id) const
 {
     return charactersAreAllASCII(byteCast<Latin1Character>((*this)[id]));

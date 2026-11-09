@@ -1,10 +1,11 @@
 # what makes a generator, by itself. No walk runs: the Code is written out.
 # the slow road fills the allocator of generators, the rare data of the closure and the Structure that is remembered there: words of the run time, which the road in line reads. A generator that takes its prototype may make a Structure.
+# an async generator, and a generator that takes its prototype, read `prototype` off the function object: for a function of the library that may run a getter or a trap of the program: they write whatever that writes.
 # RUN: emit-code
 # CHECK-LABEL: unit f1:Body
 # CHECK: = Patch({{*}}Writes:{{*}}AllocatorState, RuntimeState
-# CHECK: = Patch({{*}}Writes:{{*}}AllocatorState, RuntimeState
-# CHECK: = Patch({{*}}Writes:{{*}}AllocatorState, RuntimeState
+# CHECK: = Patch({{*}}Writes:Top
+# CHECK: = Patch({{*}}Writes:Top
 # -- code
 # code f1:Body {
 #   b0(v0: function @JSValue) entry=0:

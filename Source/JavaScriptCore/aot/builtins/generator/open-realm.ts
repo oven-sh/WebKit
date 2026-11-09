@@ -1,4 +1,4 @@
-import { DependencyClosure } from "./dependency-closure.ts";
+import { closureOf } from "./dependency-closure.ts";
 import type { ModelBuiltin, ModelFunction, ModelImplementation, TableModel } from "./model.ts";
 
 export interface OpenRealm {
@@ -75,7 +75,7 @@ function computeOpenRealm(model: TableModel): OpenRealm {
     builtin => isCanonical(builtin) && isOfLanguage(builtin) && !isOutOfReach(builtin),
   );
   const ofLanguage = new Set(language);
-  const host = new DependencyClosure(model).entriesInReachOf(
+  const host = closureOf(model).entriesInReachOf(
     language.flatMap(({ members }) => members.filter(({ origin }) => origin === "Host")),
     builtin => isOutOfReach(builtin) || ofLanguage.has(builtin) || builtin.flags.includes("IsCompilerHelper"),
   );

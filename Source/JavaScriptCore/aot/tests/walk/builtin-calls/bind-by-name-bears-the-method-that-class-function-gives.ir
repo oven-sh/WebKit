@@ -1,0 +1,59 @@
+# `x.bind(..)` on a receiver that nobody knows bears the method that class Function gives, so the stub asks the closure's header first and neither reads the name nor calls a value
+# function binder(f, x) { return f.bind(null, x); }
+# RUN: walk f1 mechanisms=all
+# CHECK: = Call {{*}}calleeKey="bind"{{*}}methodOfReceiverAsMade=FunctionPrototypeBind
+# function binderLate(f, x) { return f.bind(null, x + 1); }: other code may run between the read and the call
+# RUN(LATE): walk f3 mechanisms=all
+# LATE: = Call {{*}}calleeKey="bind"{{*}}methodOfReceiverAsMade=FunctionPrototypeBind
+# What it answers is what the host answers: a closure as created is bound; a `bind` of its own, a method of an object and a function of the shell are asked as written; what is read in front of the arguments stays what is called.
+# RUN(RUNS): run-in-shell drive = function (binder, binderLate, target, other) { for (const bind of [binder, binderLate]) { const bound = bind(target, 5); print(bound(1) + " " + bound.name + " " + bound.length + " " + (Object.getPrototypeOf(bound) === Function.prototype)); print(bind(bind(target, 1), 2)()); print(bind({ bind(receiver, x) { return "method " + x; } }, 7)); print(bind(function made(a) { return a * 2; }, 4)()); try { bind(undefined, 1); } catch (error) { print(error.constructor.name); } } const late = binderLate(target, { valueOf() { target.bind = function () { return "laid too late"; }; return 1; } }); print(typeof late === "function" ? late(1) : late); print(binder(target, 1)); print(binderLate(target, 1)); other.bind = function (receiver, x) { return "own bind " + x; }; print(binder(other, 3)); print(binderLate(other, 3)); };
+# RUNS: 6 bound target 1 true
+# RUNS-NEXT: 3
+# RUNS-NEXT: method 7
+# RUNS-NEXT: 8
+# RUNS-NEXT: TypeError
+# RUNS-NEXT: 7 bound target 1 true
+# RUNS-NEXT: 5
+# RUNS-NEXT: method 8
+# RUNS-NEXT: 10
+# RUNS-NEXT: TypeError
+# RUNS-NEXT: 3
+# RUNS-NEXT: laid too late
+# RUNS-NEXT: laid too late
+# RUNS-NEXT: own bind 3
+# RUNS-NEXT: own bind 4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="drive" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f2
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="binder" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="bind"
+    v3 = Null
+    v4 = Call v2, v0, v3, v1 calleeKey="bind"
+    Return v4
+}
+function f2 name="target" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="binderLate" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="bind"
+    v3 = Null
+    v4 = Integer integer=1
+    v5 = Add v1, v4
+    v6 = Call v2, v0, v3, v5 calleeKey="bind"
+    Return v6
+}

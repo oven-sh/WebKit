@@ -283,7 +283,7 @@ static VariableID findVariableOfStaticFieldInKeyOrdersAccessors(Walker& walker, 
         return { };
     const Layout& record = program.at(classLayout);
     std::optional<uint32_t> field = record.findStaticField(key);
-    if (!field || record.hasStaticFieldWithComputedKey())
+    if (!field)
         return { };
     if (classHolderIsMadeWithName(program, ClassSide::Static, key))
         return { };
@@ -310,7 +310,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
         return false;
     TypeArena& types = walker.types();
     VariableID variable = findVariableOfStaticFieldInKeyOrdersAccessors(walker, walker.typeOf(object), access.key());
-    if (!variable || !shouldOpenGuess(walker, object, walker.typeOf(object), true, 1))
+    if (!variable)
         return false;
 
     const BodyIndex& index = walker.currentBodyIndex();

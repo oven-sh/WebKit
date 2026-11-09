@@ -1,0 +1,92 @@
+# function distance(a: number[], b: number[]) { return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]); }   handed round as a value: nobody knows its callers
+# Without a guard each of the six reads tests for itself through a stub: no stretch of a guess holds two of them (the read off the other list ends it), and outside loops a read that rests on an expectation opens none.
+# A guard pays where the operations that lean on the parameters, times four, reach the size of the body. A read by name that leans spares a test in line; an access by key spares a call: it counts for two. 6 x 2 x 4 = 48 against 34.
+# RUN: walk f1:ParameterGuard mechanisms=all
+# CHECK-LABEL: code f1:ParameterGuard
+# CHECK: = TypeTest {{*}}testedType=Array<number>
+# CHECK: = TypeTest {{*}}testedType=Array<number>
+# CHECK: = CallDirect {{*}}function=f1 role=SlowBody
+# Two reads in a body of the same size do not pay: 2 x 2 x 4 = 16.
+# RUN(FEW): walk f2:ParameterGuard mechanisms=all
+# FEW: the plan has no such unit
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="sink"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="distance" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>):
+    v2 = Builtin builtin=Math
+    v3 = Builtin builtin=MathAbs
+    v4 = Integer
+    v5 = ElemGet v0, v4
+    v6 = Integer
+    v7 = ElemGet v1, v6
+    v8 = Sub v5, v7
+    v9 = Call v3, v2, v8 calleeName="Math.abs"
+    v10 = Convert v9 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v11 = Builtin builtin=Math
+    v12 = Builtin builtin=MathAbs
+    v13 = Integer integer=1
+    v14 = ElemGet v0, v13
+    v15 = Integer integer=1
+    v16 = ElemGet v1, v15
+    v17 = Sub v14, v16
+    v18 = Call v12, v11, v17 calleeName="Math.abs"
+    v19 = Convert v18 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v20 = Add v10, v19
+    v21 = Builtin builtin=Math
+    v22 = Builtin builtin=MathAbs
+    v23 = Integer integer=2
+    v24 = ElemGet v0, v23
+    v25 = Integer integer=2
+    v26 = ElemGet v1, v25
+    v27 = Sub v24, v26
+    v28 = Call v22, v21, v27 calleeName="Math.abs"
+    v29 = Convert v28 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v30 = Add v20, v29
+    v31 = Convert v30 declared={type=number}
+    Return v31
+}
+function f2 name="few" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>):
+    v2 = Builtin builtin=Math
+    v3 = Builtin builtin=MathAbs
+    v4 = Integer
+    v5 = ElemGet v0, v4
+    v6 = Integer
+    v7 = ElemGet v1, v6
+    v8 = Sub v5, v7
+    v9 = Call v3, v2, v8 calleeName="Math.abs"
+    v10 = Convert v9 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v11 = Builtin builtin=Math
+    v12 = Builtin builtin=MathAbs
+    v13 = Integer integer=1
+    v14 = Add v10, v13
+    v15 = Integer integer=1
+    v16 = Add v14, v15
+    v17 = Sub v14, v16
+    v18 = Call v12, v11, v17 calleeName="Math.abs"
+    v19 = Convert v18 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v20 = Add v10, v19
+    v21 = Builtin builtin=Math
+    v22 = Builtin builtin=MathAbs
+    v23 = Integer integer=2
+    v24 = Add v20, v23
+    v25 = Integer integer=2
+    v26 = Add v24, v25
+    v27 = Sub v24, v26
+    v28 = Call v22, v21, v27 calleeName="Math.abs"
+    v29 = Convert v28 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v30 = Add v20, v29
+    v31 = Convert v30 declared={type=number}
+    Return v31
+}

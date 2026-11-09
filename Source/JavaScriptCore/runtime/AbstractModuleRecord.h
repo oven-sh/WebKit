@@ -48,6 +48,11 @@ class JSModuleLoader;
 class JSModuleNamespaceObject;
 class JSMap;
 class JSPromise;
+#if ENABLE(AOT)
+namespace AOT {
+class ModuleRecord;
+}
+#endif
 
 enum class SourceProviderSourceType : uint8_t;
 
@@ -241,7 +246,7 @@ public:
     void dump();
 
     struct Resolution {
-        enum class Type { Resolved, NotFound, Ambiguous, Error };
+        enum class Type : uint8_t { Resolved, NotFound, Ambiguous, Error };
 
 #if ENABLE(AOT)
         Resolution() = default;
@@ -269,6 +274,8 @@ public:
         Type type;
 #if ENABLE(AOT)
         // In the padding in front of the pointer.
+        bool isOfEndedMock { false };
+        bool cameThroughEntryFromStar { false };
         Markable<unsigned> compiledExportIndex;
 #endif
         AbstractModuleRecord* moduleRecord;
@@ -276,6 +283,10 @@ public:
     };
 
     Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
+#if ENABLE(AOT)
+    static_assert(sizeof(Resolution) == 3 * sizeof(void*));
+    Resolution resolveExportLedBy(JSGlobalObject*, const Identifier& exportName, AOT::ModuleRecord* leader);
+#endif
     // requestedModule is set to the module the import names. For a re-export, that isn't the resolution's moduleRecord.
     Resolution resolveImport(JSGlobalObject*, const Identifier& localName, AbstractModuleRecord** requestedModule = nullptr);
     // The same over the by-name entry maps only, never answered from a PrelinkedModuleGraph (a prelinked record builds its maps first).
@@ -399,7 +410,11 @@ protected:
 
 private:
     struct ResolveQuery;
+#if ENABLE(AOT)
+    static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&, AOT::ModuleRecord* leader = nullptr);
+#else
     static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&);
+#endif
     NODELETE std::optional<Resolution> tryGetCachedResolution(UniquedStringImpl* exportName);
     void cacheResolution(UniquedStringImpl* exportName, const Resolution&);
 #if USE(BUN_JSC_ADDITIONS)

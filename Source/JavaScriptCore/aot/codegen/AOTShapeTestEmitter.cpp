@@ -84,14 +84,14 @@ Condition ShapeTestEmitter::bearsNoMark(CellPointer cell)
 
 void ShapeTestEmitter::setMark(CellPointer cell)
 {
-    CodeGenerator::InitializationScope scope(generator());
+    CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
     TypedPointer byteWithMark = m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfByteWithMark);
     m_out.store32As8(bitAnd(Word32(m_out.load8ZeroExt32(byteWithMark)), word32(static_cast<uint8_t>(~byteWithMarkIsUnmarked))).value(), byteWithMark);
 }
 
 void ShapeTestEmitter::clearMark(CellPointer cell)
 {
-    CodeGenerator::InitializationScope scope(generator());
+    CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
     TypedPointer byteWithMark = m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfByteWithMark);
     m_out.store32As8(bitOr(Word32(m_out.load8ZeroExt32(byteWithMark)), word32(byteWithMarkIsUnmarked)).value(), byteWithMark);
 }
@@ -148,6 +148,7 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
 {
     SetForScope wordIsAskedForMark(m_wordIsAskedForMark, marked != MarkedObjects::Pass && marked != MarkedObjects::AreAskedAgain && mayBearMark(tested));
     m_lastTestRefusesMarkedObjects = marked != MarkedObjects::Pass;
+    m_lastTestIsHeldAgainstEveryShape = true;
     WordOfTest word = m_lastTestRefusesMarkedObjects || !mayBearMark(tested) ? WordOfTest::AsItLies : WordOfTest::WithoutMark;
     if (marked == MarkedObjects::AreRefused || marked == MarkedObjects::AreAskedAgain || !known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return passes(cell, tested, testOf(tested), word);
@@ -162,6 +163,7 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
         return passes(cell, tested, testOf(tested), word);
 
     m_lastTestRefusesMarkedObjects = false;
+    m_lastTestIsHeldAgainstEveryShape = false;
     if (uint32_t word = build().options().rowThatSaysLess) [[unlikely]] {
         RowThatSaysLess row = RowThatSaysLess::decode(word);
         if (row.part == PartOfEffects::ShapesKnown && generator().unit().function.index() == row.row) {
@@ -221,6 +223,24 @@ void ShapeTestEmitter::branchOnShapeIn(CellPointer cell, LayoutSetID tested, con
         m_out.appendTo(failsAsItLies);
     }
     branch(hasShapeIn(cell, tested, known, marked), targets);
+}
+
+Vector<ShapeTestEmitter::ShapesOfMember, 8> ShapeTestEmitter::shapesOfMembersOf(LayoutSetID layouts)
+{
+    Vector<ShapesOfMember, 8> listed;
+    for (LayoutID member : membersOf(typeReader(), layouts)) {
+        ShapesOfMember shapesOfMember { member, { } };
+        m_plan.shapes().appendMemberShapes(std::span<const LayoutID>(&member, 1), shapesOfMember.shapes);
+        listed.append(WTF::move(shapesOfMember));
+    }
+    return listed;
+}
+
+Word32 ShapeTestEmitter::distanceOfUnmarkedObjectFromShape(CellPointer cell, LayoutSetID tested, uint32_t shape)
+{
+    SetForScope wordIsAskedForMark(m_wordIsAskedForMark, mayBearMark(tested));
+    m_lastTestRefusesMarkedObjects = true;
+    return add(shapeWordWithMarkOf(cell), shape);
 }
 
 void ShapeTestEmitter::branchOnShapeAmongReceivers(const ValueContext& access, CellPointer cell, LayoutSetID tested, BranchTargets targets)

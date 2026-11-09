@@ -1,0 +1,115 @@
+# If a read under a key that nobody knows met what any object holds beside its fields, the one function of a table would be lost among five others, and it would be expected to be handed what they are handed
+# function f(x) { return x; }  const t = { f }, r = { z: 1 };  r.late0 = .. r.late4 = functions of their own;  run(t, key, 1);  again(r, key, "s");    both: o["to" + key](argument)
+# What lies beside the fields of `r` is found off `r` alone.
+# RUN: link held functions mechanisms=all
+# CHECK: function f1
+# CHECK-NEXT: parameter 0 {{*}}i32
+# CHECK-NOT: string
+# CHECK: function f2
+
+layout L0 module=m0 fields=[{key="f" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="z" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="s"
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="key" [isFreeName]
+    v9 = NewClosure function=f3
+    v10 = NewClosure function=f8
+    v11 = Call v9, -, v6, v10 calleeName="lay0"
+    v12 = NewClosure function=f4
+    v13 = NewClosure function=f9
+    v14 = Call v12, -, v6, v13 calleeName="lay1"
+    v15 = NewClosure function=f5
+    v16 = NewClosure function=f10
+    v17 = Call v15, -, v6, v16 calleeName="lay2"
+    v18 = NewClosure function=f6
+    v19 = NewClosure function=f11
+    v20 = Call v18, -, v6, v19 calleeName="lay3"
+    v21 = NewClosure function=f7
+    v22 = NewClosure function=f12
+    v23 = Call v21, -, v6, v22 calleeName="lay4"
+    v24 = NewClosure function=f2
+    v25 = Call v24, -, v4, v8, v0 calleeName="run"
+    v26 = NewClosure function=f13
+    v27 = Call v26, -, v6, v8, v1 calleeName="again"
+    Return v27
+}
+function f1 name="f" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="run" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = String string="to"
+    v4 = Add v3, v1
+    v5 = ElemGet v0, v4
+    v6 = Call v5, v0, v2
+    Return v6
+}
+function f3 name="lay0" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="late0"
+    v3 = Undefined
+    Return v3
+}
+function f4 name="lay1" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="late1"
+    v3 = Undefined
+    Return v3
+}
+function f5 name="lay2" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="late2"
+    v3 = Undefined
+    Return v3
+}
+function f6 name="lay3" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="late3"
+    v3 = Undefined
+    Return v3
+}
+function f7 name="lay4" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="late4"
+    v3 = Undefined
+    Return v3
+}
+function f8 name="g0" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f9 name="g1" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f10 name="g2" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f11 name="g3" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f12 name="g4" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f13 name="again" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = String string="to"
+    v4 = Add v3, v1
+    v5 = ElemGet v0, v4
+    v6 = Call v5, v0, v2
+    Return v6
+}

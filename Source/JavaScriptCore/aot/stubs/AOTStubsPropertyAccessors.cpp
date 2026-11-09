@@ -11,6 +11,7 @@
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTRuntimeRecords.h"
+#include "AOTStaleAnswers.h"
 #include "AOTStubsCalls.h"
 #include "GetterSetter.h"
 #include "JSCell.h"
@@ -24,18 +25,48 @@ static constexpr unsigned customAccessorRecordShift = 5;
 static_assert(sizeof(CustomAccessorRecord) == 1u << customAccessorRecordShift);
 static_assert(exists(callValue(0)) && exists(callValue(1)));
 
+static void verifyGetterOfPendingRead(StubAssembler& jit, GPRReg receiver, GPRReg accessorOrGetter)
+{
+    if (!jit.options().checksWalk)
+        return;
+    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
+        const GPRReg A0 = jit.savedScratch(StubRegister::A0);
+        const GPRReg A1 = jit.savedScratch(StubRegister::A1);
+        const GPRReg A2 = jit.savedScratch(StubRegister::A2);
+        jit.subPtr(TrustedImm32(2 * sizeof(CPURegister)), sp);
+        jit.storePair64(receiver, accessorOrGetter, sp, TrustedImm32(0));
+        jit.loadPair64(sp, TrustedImm32(0), A1, A2);
+        jit.addPtr(TrustedImm32(2 * sizeof(CPURegister)), sp);
+        jit.move(instanceGPR, A0);
+        jit.move(TrustedImm32(0), jit.savedScratch(StubRegister::A3));
+        jit.move(TrustedImm32(static_cast<int32_t>(kindAndStubOfAnswer(KindOfAnswer::Accessor, StubThatAnswers::GetterOfPendingRead))), jit.savedScratch(StubRegister::A4));
+        jit.callOperation(Entry::operationAOTStopAtStaleAnswer, jit.savedScratch(StubRegister::Operation));
+    });
+}
+
+static void enterGetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg getter, JumpList& cannot);
+
 void callGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg getterSetter, JumpList& cannot)
 {
     const GPRReg getter = jit.reuseScratch(StubRegister::T11);
     RELEASE_ASSERT(noOverlap(receiver, getterSetter, getter, gprOf(StubRegister::T14)));
+    verifyGetterOfPendingRead(jit, receiver, getterSetter);
     jit.loadPtr(Address(getterSetter, GetterSetter::offsetOfGetter()), getter);
-    callGetterFunctionAndReturn(jit, receiver, getter, cannot);
+    enterGetterAndReturn(jit, receiver, getter, cannot);
 }
 
 void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg getter, JumpList& cannot)
 {
+    verifyGetterOfPendingRead(jit, receiver, getter);
+    enterGetterAndReturn(jit, receiver, getter, cannot);
+}
+
+static void enterGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg getter, JumpList& cannot)
+{
     const GPRReg scratch = jit.reuseScratch(StubRegister::T14);
     RELEASE_ASSERT(getter == jit.reuseScratch(StubRegister::T11) && noOverlap(receiver, getter, scratch) && jit.result() == GPRInfo::returnValueGPR);
+    if (jit.options().checksWalk)
+        jit.add32(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.slowPathReadCount)));
 
 #if CPU(X86_64)
     static_assert(ClosureWord::offsetUnit == 1 && ClosureWord::numberOfOffsetBits == 32);
@@ -52,7 +83,16 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
         isNotCommonCase.append(branchIfTopByteRefusesCall(offsetOfSlimClosureWord));
     }
     jit.load32(Address(getter, offsetOfSlimClosureWord), scratch);
-    Jump hasOffsetOfCode = jit.jump();
+
+    Label hasOffsetOfCode = jit.label();
+    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::trapAwareSoftStackLimitWord()));
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = false }, [&] {
+        RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
+        jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
+        jit.move(TrustedImm32(0), countGPR);
+        jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), scratch);
+        jit.call(scratch, JSEntryPtrTag);
+    });
 
     isNotSlim.link(&jit);
     if (jit.options().hasOneInstance)
@@ -60,16 +100,8 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     isNotCommonCase.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0]))));
     isNotCommonCase.append(branchIfTopByteRefusesCall(offsetOfClosureEntry));
     jit.load32(Address(getter, offsetOfClosureEntry), scratch);
+    jit.jump().linkTo(hasOffsetOfCode, &jit);
 
-    hasOffsetOfCode.link(&jit);
-    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::trapAwareSoftStackLimitWord()));
-    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
-        RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
-        jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
-        jit.move(TrustedImm32(0), countGPR);
-        jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), scratch);
-        jit.call(scratch, JSEntryPtrTag);
-    });
     isNotCommonCase.link(&jit);
 #else
     static_assert(ClosureWord::numberOfOffsetBits == 32);
@@ -82,23 +114,24 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     }
     jit.load64(Address(getter, offsetOfSlimClosureWord), scratch);
     (jit.options().hasOneInstance ? isNotSlim : isNotCommonCase).append(jit.branch64(CCallHelpers::LessThan, scratch, minWord));
-    Jump hasWord = jit.jump();
 
-    isNotSlim.link(&jit);
-    jit.load32(Address(getter, JSCell::structureIDOffset()), scratch);
-    isNotCommonCase.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0]))));
-    jit.load64(Address(getter, offsetOfClosureEntry), scratch);
-    isNotCommonCase.append(jit.branch64(CCallHelpers::LessThan, scratch, minWord));
-
-    hasWord.link(&jit);
+    Label hasWord = jit.label();
     isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::trapAwareSoftStackLimitWord()));
-    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = false }, [&] {
         RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
         jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
         jit.move(TrustedImm32(0), countGPR);
         toCodeAddress(jit, scratch, OwnedScratchRegister(jit), StackIsTested::Yes);
         jit.call(scratch, JSEntryPtrTag);
     });
+
+    isNotSlim.link(&jit);
+    jit.load32(Address(getter, JSCell::structureIDOffset()), scratch);
+    isNotCommonCase.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0]))));
+    jit.load64(Address(getter, offsetOfClosureEntry), scratch);
+    isNotCommonCase.append(jit.branch64(CCallHelpers::LessThan, scratch, minWord));
+    jit.jump().linkTo(hasWord, &jit);
+
     isNotCommonCase.link(&jit);
 #endif
     cannot.append(branchIfNotFunctionType(jit, getter, scratch));

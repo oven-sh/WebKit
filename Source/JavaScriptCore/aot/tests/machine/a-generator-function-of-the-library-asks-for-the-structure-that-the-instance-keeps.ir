@@ -1,0 +1,54 @@
+# async function* one(a) { yield a; }  once in a file of the program, once in a module of the library
+# A generator function of a program makes a `prototype` of its own on demand and remembers the structure of its generators beside it. One of the library has none: the member above it answers, and the instance keeps the structure.
+# LIBRARY: own
+# RUN: bytes f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Call Stub NewAsyncGenerator.OfProgram
+# RUN(OTHER): bytes f2:Body mechanisms=all
+# OTHER-LABEL: unit f2:Body
+# OTHER: Call Stub NewAsyncGenerator.OfLibrary
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/Made.ts" displayPath="/$bun/js/engine/Made.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="one" module=m0 flags=[IsAsync, IsGenerator, TakesCallee] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    InitialYield
+    v3 = Await v1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v5
+  b2():
+    Return v5
+  b3():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="one" module=m1 role=Library flags=[IsAsync, IsGenerator, TakesCallee] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    InitialYield
+    v3 = Await v1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v5
+  b2():
+    Return v5
+  b3():
+    v7 = Undefined
+    Return v7
+}

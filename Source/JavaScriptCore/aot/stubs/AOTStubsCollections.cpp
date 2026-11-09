@@ -48,12 +48,16 @@ enum class InsertionPoint : uint8_t { AmongTags, AtSlot };
 
 static StubSignature signatureOfLookup()
 {
+#if CPU(X86_64)
+    return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0) }).fillingOperandInFront(1);
+#else
     return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0) });
+#endif
 }
 
 static KeyComparison keyComparisonOf(const StubAssembler& jit)
 {
-    return static_cast<KeyComparison>(jit.key().form());
+    return keyComparisonOf(jit.key());
 }
 
 template<typename Functor>
@@ -110,6 +114,12 @@ static void emitBarrierAndReturnOwner(StubAssembler& jit, const HashTableRegiste
     jit.move(registers.owner, jit.result());
     jit.emitFunctionEpilogue();
     jit.ret();
+}
+
+static void emitCountMoveOfEntries(StubAssembler& jit, GPRReg scratch)
+{
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+    jit.add64(TrustedImm32(1), Address(scratch, VM::offsetOfAOTState() + OBJECT_OFFSETOF(VMState, movesOfEntriesInCollections)));
 }
 
 static Jump branchIfKeysAreWide(StubAssembler& jit, const HashTableRegisters& registers)
@@ -267,9 +277,8 @@ static void emitAppendToCompactTable(StubAssembler& jit, const HashTableRegister
     emitBarrierAndReturnOwner(jit, registers, table);
 }
 
-static void emitInsert(StubAssembler& jit, CompactTableOwner owner)
+static void emitInsert(StubAssembler& jit, const HashTableRegisters& registers, CompactTableOwner owner)
 {
-    const HashTableRegisters registers = HashTableRegisters::take(jit);
     std::optional<GPRReg> value;
     if (owner == CompactTableOwner::Map)
         value = jit.operand(2);
@@ -305,9 +314,8 @@ static void emitInsert(StubAssembler& jit, CompactTableOwner owner)
     });
 }
 
-static void emitTestForKey(StubAssembler& jit, bool keepsSlot, Entry operation, const Invocable<void(const HashTableRegisters&, JumpList& leftToOperation)> auto& emitAtEntry)
+static void emitTestForKey(StubAssembler& jit, const HashTableRegisters& registers, bool keepsSlot, Entry operation, const Invocable<void(const HashTableRegisters&, JumpList& leftToOperation)> auto& emitAtEntry)
 {
-    const HashTableRegisters registers = HashTableRegisters::take(jit);
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .keepsSlot = keepsSlot, .searchesTablesInImage = !keepsSlot, .asksForPresenceAlone = !keepsSlot }, exits);
     exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
@@ -324,9 +332,9 @@ static void emitTestForKey(StubAssembler& jit, bool keepsSlot, Entry operation, 
     });
 }
 
-static void emitHas(StubAssembler& jit, Entry operation)
+static void emitHas(StubAssembler& jit, const HashTableRegisters& registers, Entry operation)
 {
-    emitTestForKey(jit, false, operation, [](const HashTableRegisters&, JumpList&) { });
+    emitTestForKey(jit, registers, false, operation, [](const HashTableRegisters&, JumpList&) { });
 }
 
 static void emitLookupInWeakTable(StubAssembler& jit, WeakTableLookup lookup)
@@ -373,10 +381,12 @@ static void emitLookupInWeakTable(StubAssembler& jit, WeakTableLookup lookup)
     jit.returnToCaller();
 }
 
-StubSignature signatureOfWeakMapGet(StubKey) { return signatureOfLookup(); }
+StubSignature signatureOfWeakMapGet(StubKey) { return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0) }); }
 StubSignature signatureOfWeakMapHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakSetHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapGet(StubKey) { return signatureOfLookup(); }
+StubSignature signatureOfFindCharactersInMap(StubKey) { return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0), argumentGPR(1) }); }
+StubSignature signatureOfFindKeyInMap(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfSetAdd(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapDelete(StubKey) { return signatureOfLookup(); }
@@ -385,13 +395,35 @@ StubSignature signatureOfMapSet(StubKey) { return StubSignature::withGPRResult({
 StubSignature signatureOfNewMap(StubKey) { return StubSignature::withGPRResult({ }); }
 StubSignature signatureOfNewSet(StubKey) { return StubSignature::withGPRResult({ }); }
 
-void generateMapGet(StubAssembler& jit)
+static void emitLoadValueInImage(StubAssembler& jit, const HashTableRegisters& registers, JumpList& isLeftToOperation)
 {
-    const HashTableRegisters registers = HashTableRegisters::take(jit);
+    const GPRReg word = registers.candidate;
+    jit.load32(Address(registers.table, CompactTable::offsetOfCapacity()), word);
+    jit.add32(registers.entry, word);
+    jit.load64(BaseIndex(registers.keys, word, CCallHelpers::TimesEight), word);
+    Jump isCell = jit.branchIfCell(word);
+    jit.move(word, jit.result());
+    jit.returnToCaller();
+
+    isCell.link(&jit);
+    isLeftToOperation.append(jit.branchTest64(CCallHelpers::Zero, word));
+    isLeftToOperation.append(jit.branchTest64(CCallHelpers::NonZero, word, TrustedImm32(static_cast<int32_t>(DataWord::tagMask))));
+    jit.urshift64(TrustedImm32(DataWord::operandShift), word);
+    jit.load32(BaseIndex(instanceGPR, word, CCallHelpers::TimesFour, static_cast<int32_t>(InstanceLayout::offsetOfStringCells - InstanceLayout::sizeOfStringCell)), word);
+    isLeftToOperation.append(jit.branchTest32(CCallHelpers::Zero, word));
+    decodeCell32(jit, word, jit.result());
+    jit.returnToCaller();
+}
+
+static void emitGet(StubAssembler& jit, const HashTableRegisters& registers)
+{
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = true }, exits);
     if (hasFoundExit(exits))
         emitLoadValueOfCompactTable(jit, registers, exits);
+    emitAtExit(jit, exits.foundInImage, [&] {
+        emitLoadValueInImage(jit, registers, exits.unknown);
+    });
     emitAtExit(jit, exits.absent, [&] {
         returnConstant(jit, jsUndefined());
     });
@@ -400,14 +432,10 @@ void generateMapGet(StubAssembler& jit)
     });
 }
 
-void generateMapHas(StubAssembler& jit) { emitHas(jit, Entry::operationAOTMapHas); }
-void generateMapSet(StubAssembler& jit) { emitInsert(jit, CompactTableOwner::Map); }
-void generateSetAdd(StubAssembler& jit) { emitInsert(jit, CompactTableOwner::Set); }
-
-static void emitDelete(StubAssembler& jit, CompactTableOwner owner)
+static void emitDelete(StubAssembler& jit, const HashTableRegisters& taken, CompactTableOwner owner)
 {
     const bool hasValues = owner == CompactTableOwner::Map;
-    emitTestForKey(jit, true, hasValues ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, [&](const HashTableRegisters& registers, JumpList& leftToOperation) {
+    emitTestForKey(jit, taken, true, hasValues ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, [&](const HashTableRegisters& registers, JumpList& leftToOperation) {
         const GPRReg fourTimesAlive = registers.hash;
         const GPRReg used = registers.candidate;
         jit.load32(Address(registers.table, CompactTable::offsetOfAliveCount()), fourTimesAlive);
@@ -437,11 +465,95 @@ static void emitDelete(StubAssembler& jit, CompactTableOwner owner)
             emitClearInColumn(jit, branchIfValuesAreWide(jit, registers), values, registers.entry);
         }
         jit.sub32(TrustedImm32(1), Address(registers.table, CompactTable::offsetOfAliveCount()));
+        emitCountMoveOfEntries(jit, registers.hash);
     });
 }
 
-void generateMapDelete(StubAssembler& jit) { emitDelete(jit, CompactTableOwner::Map); }
-void generateSetDelete(StubAssembler& jit) { emitDelete(jit, CompactTableOwner::Set); }
+void emitMethodOfTable(StubAssembler& jit, TableMethod method, const HashTableRegisters& registers)
+{
+    switch (method) {
+    case TableMethod::MapDelete: return emitDelete(jit, registers, CompactTableOwner::Map);
+    case TableMethod::MapGet: return emitGet(jit, registers);
+    case TableMethod::MapHas:
+    case TableMethod::SetHas: return emitHas(jit, registers, Entry::operationAOTMapHas);
+    case TableMethod::MapSet: return emitInsert(jit, registers, CompactTableOwner::Map);
+    case TableMethod::SetAdd: return emitInsert(jit, registers, CompactTableOwner::Set);
+    case TableMethod::SetDelete: return emitDelete(jit, registers, CompactTableOwner::Set);
+    }
+}
+
+void generateMapGet(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::MapGet, HashTableRegisters::take(jit)); }
+static void emitReturnPlaceOfEntry(StubAssembler& jit, const HashTableRegisters& registers, JumpList& hasNoValues)
+{
+    const GPRReg values = registers.keys;
+    jit.sub64(registers.table, values);
+    Jump isWide = jit.branchTest8(CCallHelpers::NonZero, Address(registers.table, CompactTable::offsetOfValueWidth()), TrustedImm32(static_cast<int32_t>(CompactTable::Width::Wide)));
+    hasNoValues.append(jit.branchTest8(CCallHelpers::Zero, Address(registers.table, CompactTable::offsetOfValueWidth()), TrustedImm32(static_cast<int32_t>(CompactTable::Width::Narrow))));
+    jit.getEffectiveAddress(BaseIndex(values, registers.entry, CCallHelpers::TimesFour, placeInMapHoldsNarrowValue), jit.result());
+    jit.returnToCaller();
+
+    isWide.link(&jit);
+    jit.getEffectiveAddress(BaseIndex(values, registers.entry, CCallHelpers::TimesEight), jit.result());
+    jit.returnToCaller();
+}
+
+void generateFindKeyInMap(StubAssembler& jit)
+{
+    const HashTableRegisters registers = HashTableRegisters::take(jit);
+    HashTableExits exits;
+    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit) }, exits);
+    if (hasFoundExit(exits)) {
+        const bool everyoneKnowsTheWidth = exits.foundInCompactTable.empty();
+        exits.foundInCompactTable.link(&jit);
+        emitLoadValuesOfCompactTable(jit, registers, registers.keys, &exits.foundAmongNarrowKeys, &exits.foundAmongWideKeys, everyoneKnowsTheWidth);
+        emitReturnPlaceOfEntry(jit, registers, exits.unknown);
+    }
+    emitAtExit(jit, exits.absent, [&] {
+        jit.move(TrustedImm64(placeOfAbsentKeyInMap), jit.result());
+        jit.returnToCaller();
+    });
+    emitAtExit(jit, exits.unknown, [&] {
+        jit.move(TrustedImm64(placeInMapThatIsNotTold), jit.result());
+        jit.returnToCaller();
+    });
+}
+
+void generateFindCharactersInMap(StubAssembler& jit)
+{
+    const HashTableRegisters registers = HashTableRegisters::take(jit);
+    const GPRReg length = jit.operand(2);
+    const GPRReg result = jit.result();
+    HashTableExits exits;
+    emitFindLatin1CharactersInHashTable(jit, registers, length, exits);
+    RELEASE_ASSERT(exits.foundInCompactTable.empty() && exits.foundAmongWideKeys.empty());
+    emitAtExit(jit, exits.foundAmongNarrowKeys, [&] {
+        const GPRReg values = registers.keys;
+        jit.load32(Address(registers.table, CompactTable::offsetOfCapacity()), registers.cursor);
+        jit.getEffectiveAddress(BaseIndex(registers.keys, registers.cursor, CCallHelpers::TimesFour), values);
+        emitReturnPlaceOfEntry(jit, registers, exits.unknown);
+    });
+    emitAtExit(jit, exits.absent, [&] {
+        jit.move(TrustedImm64(placeOfAbsentKeyInMap), result);
+        jit.returnToCaller();
+    });
+    exits.unknown.link(&jit);
+    RELEASE_ASSERT(noOverlap(registers.cursor, registers.entry, registers.candidate, leafArgumentGPR(0), leafArgumentGPR(1), leafArgumentGPR(2)));
+    jit.move(registers.owner, registers.cursor);
+    jit.move(registers.key, registers.entry);
+    jit.move(length, registers.candidate);
+    jit.move(registers.cursor, leafArgumentGPR(0));
+    jit.move(registers.entry, leafArgumentGPR(1));
+    jit.move(registers.candidate, leafArgumentGPR(2));
+    jit.callLeaf(Entry::operationAOTFindCharacters8InMap);
+    jit.move(GPRInfo::returnValueGPR, result);
+    jit.returnToCaller();
+}
+
+void generateMapHas(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::MapHas, HashTableRegisters::take(jit)); }
+void generateMapSet(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::MapSet, HashTableRegisters::take(jit)); }
+void generateSetAdd(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::SetAdd, HashTableRegisters::take(jit)); }
+void generateMapDelete(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::MapDelete, HashTableRegisters::take(jit)); }
+void generateSetDelete(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::SetDelete, HashTableRegisters::take(jit)); }
 
 void generateWeakMapGet(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapGet); }
 void generateWeakMapHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapHas); }
@@ -813,6 +925,7 @@ void generateGrowCompactTable(StubAssembler& jit)
     jit.storeFence();
     jit.storePtr(larger, Address(table, CompactTable::offsetOfUsed()));
     jit.storePtr(larger, Address(owner, offsetOfHashTableStorage()));
+    emitCountMoveOfEntries(jit, registers.candidate);
     Jump fullTableNeedsBarrier = branchIfBarrierIsNeeded(jit, table, registers.candidate);
     Label fullTableIsRemembered = jit.label();
     emitBarrierAndReturnOwner(jit, registers, owner);
@@ -847,8 +960,10 @@ static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry r
     RELEASE_ASSERT(noOverlap(owner, table, entry, results, storage, column, used, word));
     const Address flags(storage, CompactTable::offsetOfKeysShift());
     JumpList callsOperation;
+    JumpList meetsLongRun;
     JumpList hasNoEntry;
     JumpList hasEntry;
+    const GPRReg endOfRead = table;
 
     auto decodeNarrow = [&] {
         Jump isImmediate = jit.branch32(CCallHelpers::Below, word, TrustedImm32(minCell32));
@@ -856,20 +971,37 @@ static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry r
         isImmediate.link(&jit);
     };
     const Address deletedPrefix(owner, JSMap::offsetOfDeletedPrefix());
-    auto findUsedEntry = [&](bool isCompactTable, NOESCAPE const Invocable<Jump()> auto& branchIfAlive) {
+    auto findUsedEntry = [&](bool isCompactTable, NOESCAPE const Invocable<Jump(bool)> auto& branchIfEntryIs) {
+        constexpr bool alive = true;
         Label loop = jit.label();
         hasNoEntry.append(jit.branch32(CCallHelpers::AboveOrEqual, entry, used));
-        Jump isAlive = branchIfAlive();
+        JumpList isAlive;
+        isAlive.append(branchIfEntryIs(alive));
         if (isCompactTable) {
             jit.load32(deletedPrefix, word);
             Jump isBehind = jit.branch32(CCallHelpers::Above, entry, word);
             Jump isAtMark = jit.branch32(CCallHelpers::Equal, entry, word);
             jit.move(word, entry);
             jit.jump().linkTo(loop, &jit);
+
+            isBehind.link(&jit);
+            jit.add32(TrustedImm32(1 + CompactTable::deletedEntriesReadByStub), entry, endOfRead);
+            Jump endsInTable = jit.branch32(CCallHelpers::BelowOrEqual, endOfRead, used);
+            jit.move(used, endOfRead);
+            endsInTable.link(&jit);
+            Label behindPrefix = jit.label();
+            jit.add32(TrustedImm32(1), entry);
+            Jump isAtEndOfRead = jit.branch32(CCallHelpers::AboveOrEqual, entry, endOfRead);
+            branchIfEntryIs(!alive).linkTo(behindPrefix, &jit);
+            isAlive.append(jit.jump());
+
+            isAtEndOfRead.link(&jit);
+            hasNoEntry.append(jit.branch32(CCallHelpers::AboveOrEqual, entry, used));
+            meetsLongRun.append(jit.jump());
+
             isAtMark.link(&jit);
             jit.add32(TrustedImm32(1), word);
             jit.store32(word, deletedPrefix);
-            isBehind.link(&jit);
         }
         jit.add32(TrustedImm32(1), entry);
         jit.jump().linkTo(loop, &jit);
@@ -894,9 +1026,9 @@ static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry r
     jit.load32(Address(storage, CompactTable::offsetOfUsed()), used);
     Jump keysAreWide = jit.branchTest8(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreWide));
 
-    findUsedEntry(true, [&] {
+    findUsedEntry(true, [&](bool alive) {
         jit.load32(BaseIndex(column, entry, CCallHelpers::TimesFour), word);
-        return jit.branchTest32(CCallHelpers::NonZero, word);
+        return jit.branchTest32(alive ? CCallHelpers::NonZero : CCallHelpers::Zero, word);
     });
     decodeNarrow();
     if (hasValues) {
@@ -906,9 +1038,9 @@ static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry r
     Jump hasKey = jit.jump();
 
     keysAreWide.link(&jit);
-    findUsedEntry(true, [&] {
+    findUsedEntry(true, [&](bool alive) {
         jit.load64(BaseIndex(column, entry, CCallHelpers::TimesEight), word);
-        return jit.branchTest64(CCallHelpers::NonZero, word);
+        return jit.branchTest64(alive ? CCallHelpers::NonZero : CCallHelpers::Zero, word);
     });
     if (hasValues) {
         jit.load32(Address(storage, CompactTable::offsetOfCapacity()), used);
@@ -948,10 +1080,10 @@ static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry r
     jit.getEffectiveAddress(BaseIndex(storage, word, CCallHelpers::TimesEight, data + JSMap::Helper::hashTableStartIndex() * wordSize), column);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), deletedValue);
     jit.loadPtr(Address(deletedValue, VM::offsetOfOrderedHashTableDeletedValue()), deletedValue);
-    findUsedEntry(false, [&] {
+    findUsedEntry(false, [&](bool alive) {
         jit.mul32(TrustedImm32(entrySize), entry, position);
         jit.load64(BaseIndex(column, position, CCallHelpers::TimesEight), word);
-        return jit.branch64(CCallHelpers::NotEqual, word, deletedValue);
+        return jit.branch64(alive ? CCallHelpers::NotEqual : CCallHelpers::Equal, word, deletedValue);
     });
     jit.store64(word, Address(results));
     if (hasValues) {
@@ -972,6 +1104,8 @@ static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry r
     jit.move(TrustedImm32(0), jit.result());
     jit.returnToCaller();
 
+    meetsLongRun.link(&jit);
+    jit.move(storage, table);
     callsOperation.link(&jit);
     jit.tailCallOperation(rawOperation, OperationCall::FirstArgument::Instance);
 }

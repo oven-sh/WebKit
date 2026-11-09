@@ -54,14 +54,6 @@ struct AccessTable {
         uint64_t otherAnswer;
     };
 
-    struct Store {
-        static constexpr unsigned sizeShift = 4;
-
-        uint64_t key;
-        uint32_t answer;
-        uint32_t orderWordBitsThatForbid;
-    };
-
     struct Call {
         static constexpr unsigned sizeShift = 5;
 
@@ -76,24 +68,20 @@ struct AccessTable {
 
     std::array<Read, numberOfPlaces> reads;
     std::array<Call, numberOfPlaces> calls;
-    std::array<Store, numberOfPlaces> stores;
     std::array<uint64_t*, maxKeysListed> keysThatDependOnChains;
 };
 
 struct AccessTableWords {
     AccessTable::Read* reads;
-    AccessTable::Store* stores;
     AccessTable::Call* calls;
     uint64_t** keysThatDependOnChains;
     EncodedJSValue undefinedValue;
     uint32_t numberOfKeysThatDependOnChains;
-    uint8_t holdsStoresToUnwatchedStructures;
 
     void publish(AccessTable& table)
     {
         RELEASE_ASSERT(!(reinterpret_cast<uintptr_t>(&table) % AccessTable::alignment));
         reads = table.reads.data();
-        stores = table.stores.data();
         calls = table.calls.data();
         keysThatDependOnChains = table.keysThatDependOnChains.data();
         undefinedValue = JSValue::ValueUndefined;
@@ -106,13 +94,10 @@ struct AccessTableWords {
         for (uint32_t index = 0; index < AccessTable::numberOfPlaces; ++index) {
             if (reads[index].keyOfOwnValue | reads[index].keyOfOtherAnswer)
                 reads[index] = { };
-            if (stores[index].key)
-                stores[index] = { };
             if (calls[index].key)
                 calls[index] = { };
         }
         numberOfKeysThatDependOnChains = 0;
-        holdsStoresToUnwatchedStructures = 0;
     }
 
     void didChangeObjectOnSomeChain()
@@ -130,25 +115,14 @@ struct AccessTableWords {
                 calls[index] = { };
         }
     }
-
-    void didStartWatchingReplacements()
-    {
-        if (!std::exchange(holdsStoresToUnwatchedStructures, 0))
-            return;
-        for (uint32_t index = 0; index < AccessTable::numberOfPlaces; ++index) {
-            if (stores[index].key)
-                stores[index] = { };
-        }
-    }
 };
 
-static_assert(sizeof(AccessTable::Read) == 1u << AccessTable::Read::sizeShift && sizeof(AccessTable::Store) == 1u << AccessTable::Store::sizeShift && sizeof(AccessTable::Call) == 1u << AccessTable::Call::sizeShift);
+static_assert(sizeof(AccessTable::Read) == 1u << AccessTable::Read::sizeShift && sizeof(AccessTable::Call) == 1u << AccessTable::Call::sizeShift);
 static_assert(OBJECT_OFFSETOF(AccessTable::Read, offsetInCell) == OBJECT_OFFSETOF(AccessTable::Read, keyOfOwnValue) + sizeof(uint64_t) && OBJECT_OFFSETOF(AccessTable::Read, otherAnswer) == OBJECT_OFFSETOF(AccessTable::Read, keyOfOtherAnswer) + sizeof(uint64_t));
-static_assert(OBJECT_OFFSETOF(AccessTable::Store, orderWordBitsThatForbid) == OBJECT_OFFSETOF(AccessTable::Store, answer) + sizeof(uint32_t));
 static_assert(OBJECT_OFFSETOF(AccessTable::Call, slotAbove) == OBJECT_OFFSETOF(AccessTable::Call, key) + sizeof(uint64_t) && OBJECT_OFFSETOF(AccessTable::Call, closureWord) == OBJECT_OFFSETOF(AccessTable::Call, callee) + sizeof(void*));
 static_assert(std::is_trivially_default_constructible_v<AccessTableWords> && std::is_trivially_copyable_v<AccessTable>);
 static_assert(!OBJECT_OFFSETOF(AccessTable::Call, key) && sizeof(uint64_t*) == 1u << 3);
-static_assert(!OBJECT_OFFSETOF(AccessTable, reads) && !(OBJECT_OFFSETOF(AccessTable, calls) % sizeof(AccessTable::calls)) && !(OBJECT_OFFSETOF(AccessTable, stores) % sizeof(AccessTable::stores)) && sizeof(AccessTable::reads) == AccessTable::alignment);
+static_assert(!OBJECT_OFFSETOF(AccessTable, reads) && !(OBJECT_OFFSETOF(AccessTable, calls) % sizeof(AccessTable::calls)) && sizeof(AccessTable::reads) == AccessTable::alignment);
 static_assert(AccessTable::keyFor(0x40, 1) == 0x100000040ull && AccessTable::indexFor(0x40, 1) == 2);
 static_assert(!(OBJECT_OFFSETOF(AccessTableWords, undefinedValue) % (1u << AccessTable::answerShift)) && (AccessTable::answerHasForm | AccessTable::valueIsInOwnStorage | AccessTable::valueIsInStorageOfHolder) < 1u << AccessTable::answerShift);
 static_assert(AccessTable::answerOfGetterInOwnStorage(-2) == 0xfffffffffffffff7ull);

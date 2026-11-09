@@ -46,7 +46,7 @@ static bool readOperandsInNumberOperators(Walker& walker, const BodyValue& value
         if (!type || isNeverType(type))
             return false;
         operand.type = walker.types().at(type);
-        operand.known = primitiveKnownInNumberForms(walker, operand.reference);
+        operand.known = primitiveKnownInNumberForms(walker, operand.reference, operand.type);
     }
     return true;
 }
@@ -379,7 +379,7 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
 
     if (allEqualities.contains(opcode) || allRelations.contains(opcode) || opcode == Opcode::ToBoolean) {
         bool somethingIsProven = false;
-        for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode); ++operandIndex)
+        for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode) && !somethingIsProven; ++operandIndex)
             somethingIsProven |= !walker.nothingIsProvenOf(walker.referenceOf(value.operand(operandIndex)));
         if (!somethingIsProven)
             return false;
@@ -390,8 +390,10 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
         return false;
 
     if (arithmeticInNumberOperators.contains(opcode) && walker.has(Mechanism::Folding)) {
-        if (Reference given = valueThatArithmeticGives(walker, opcode, operands))
+        if (Reference given = valueThatArithmeticGives(walker, opcode, operands)) {
+            walker.noteValueThatFoldedArithmeticGives(given);
             return bindInNumberOperators(walker, value, given);
+        }
     }
     if (opcode == Opcode::Pow && operands[0].type.isNumber() && isKnownIntegerInNumberOperators(operands[1].known, 2))
         return bindInNumberOperators(walker, value, buildOperatorInNumberForms(walker, Opcode::Mul, operands[0].reference, operands[0].reference, walker.originOf(value)));

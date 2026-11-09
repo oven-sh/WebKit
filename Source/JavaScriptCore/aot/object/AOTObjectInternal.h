@@ -64,6 +64,33 @@ ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, const FieldDat
         crashOnImpossibleMutation(vm, object, field, mutation);
 }
 
+enum class FrameThatAsks : bool { IsTheTopFrame, IsAboveTheTopFrame };
+bool isAskedByCodeThatInspectorBrought(VM&, const Instance&, FrameThatAsks = FrameThatAsks::IsTheTopFrame);
+bool isAskedByCodeThatInspectorBrought(VM&, const Object&);
+bool refusesMutation(VM&, const Object&, ObjectMutation);
+
+[[nodiscard]] ALWAYS_INLINE bool admitsMutation(VM& vm, const Object& object, ObjectMutation mutation)
+{
+    if (object.layout().impossibleMutations().contains(mutation) && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]] {
+        if (refusesMutation(vm, object, mutation))
+            return false;
+        crashOnImpossibleMutation(vm, object, mutation);
+    }
+    return true;
+}
+
+[[nodiscard]] ALWAYS_INLINE bool admitsMutation(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
+{
+    if (!admitsMutation(vm, object, mutation))
+        return false;
+    if (field.flags & flagOfFieldsThatCannot(mutation) && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]] {
+        if (refusesMutation(vm, object, mutation))
+            return false;
+        crashOnImpossibleMutation(vm, object, field, mutation);
+    }
+    return true;
+}
+
 struct FieldProperty {
     explicit operator bool() const { return !!valueOrAccessor; }
 

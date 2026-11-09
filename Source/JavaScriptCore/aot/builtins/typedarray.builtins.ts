@@ -9,6 +9,8 @@ const lengthOfAnyElementSize = b.int(0, 2 ** 29);
 const indexOrNotFound = b.int(-1, maximumBufferLength);
 const element = b.union(b.f64, b.bigint);
 const elementOrUndefined = b.union(element, b.undefined);
+const elementOfReceiver = b.slot("this", "element");
+const elementOfReceiverOrUndefined = b.union(elementOfReceiver, b.undefined);
 const self = b.operand("this");
 const typedArray = b.instance("TypedArray");
 const typedArrayWithDefaultSpecies = typedArray.pristine("Names");
@@ -118,7 +120,7 @@ const traversal = (returns: b.TableType, result: b.CallbackResultUse, ...receive
           afterwards: "TouchesOnlyWhatRowNames",
           times: "PerElement",
           this: b.operand("thisArg"),
-          args: [elementOrUndefined, bufferLength, self],
+          args: [elementOfReceiverOrUndefined, bufferLength, self],
           result,
         }),
       ],
@@ -142,14 +144,14 @@ const copyingTraversal = (result: b.CallbackResultUse, speciesLookup: SpeciesLoo
 };
 
 const foldCall = (times: b.CallbackTimes, accumulator: b.PlaceLike) =>
-  b.called({ afterwards: "TouchesOnlyWhatRowNames", times, this: b.undefined, args: [accumulator, elementOrUndefined, bufferLength, self], result: "Returned" });
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times, this: b.undefined, args: [accumulator, elementOfReceiverOrUndefined, bufferLength, self], result: "Returned" });
 
 const fold = (name: string) => [
   {
     ...operandCodeEffects,
     args: { callback: b.callable, initialValue: b.notPassed },
     returns: b.union(element, b.callbackResult("callback")),
-    uses: { this: [readsElements], callback: [foldCall("Once", element), foldCall("PerElement", b.result)] },
+    uses: { this: [readsElements], callback: [foldCall("Once", elementOfReceiver), foldCall("PerElement", b.result)] },
     implementation: b.compiled("TypedArrayPrototype", name),
   },
   {
@@ -185,7 +187,7 @@ const sorting = (nativeSymbol: string, returns: b.TableType, receiverUses: reado
       runsOnlyOperandCode: true,
       uses: {
         this: receiverUses,
-        comparator: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [element, element], result: convertedByNativeCode })],
+        comparator: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [elementOfReceiver, elementOfReceiver], result: convertedByNativeCode })],
       },
       implementation: b.hostCall,
     },
@@ -237,19 +239,35 @@ export default b.declarations(
         uses: { this: b.inspected },
         implementation: b.inline("ReturnThis"),
       },
-      from: {
-        this: b.callable,
-        args: { items: b.any, mapper: b.callable.optional, thisArg: b.any.optional },
-        returns: b.callbackResult("this"),
-        ...operandCodeEffects,
-        uses: {
-          this: [constructedByReceiver],
-          items: [convertedItems],
-          mapper: [mapperCall(b.iterated("items")), mapperCall(b.ownValues("items"))],
-          thisArg: b.inspected,
+      from: [
+        {
+          this: b.callable,
+          args: { items: b.union(b.string, b.instance("Array").pristine("Storage", "Names")), mapper: b.callable, thisArg: b.any.optional },
+          returns: b.callbackResult("this"),
+          ...operandCodeEffects,
+          uses: {
+            this: [constructedByReceiver],
+            items: [convertedItems],
+            mapper: [mapperCall(b.iterated("items")), mapperCall(b.ownValues("items"))],
+            thisArg: b.inspected,
+          },
+          isSpecialCase: true,
+          implementation: b.compiled("prelude/iterator-consumers", "viewFrom"),
         },
-        implementation: b.compiled("TypedArrayConstructor", "from"),
-      },
+        {
+          this: b.callable,
+          args: { items: b.any, mapper: b.callable.optional, thisArg: b.any.optional },
+          returns: b.callbackResult("this"),
+          ...operandCodeEffects,
+          uses: {
+            this: [constructedByReceiver],
+            items: [convertedItems],
+            mapper: [mapperCall(b.iterated("items")), mapperCall(b.ownValues("items"))],
+            thisArg: b.inspected,
+          },
+          implementation: b.compiled("TypedArrayConstructor", "from"),
+        },
+      ],
       of: {
         ...operandCodeEffects,
         this: b.callable,

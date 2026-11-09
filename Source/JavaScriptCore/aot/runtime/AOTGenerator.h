@@ -53,7 +53,12 @@ public:
     State state() const { return m_state; }
     SavedFrame* savedFrame() const { return m_savedFrame; }
     void setSavedFrame(VM&, SavedFrame*);
-    void didThrow() { m_state = State::Completed; }
+    void didEnd()
+    {
+        m_state = State::Completed;
+        m_savedFrame = nullptr;
+    }
+    void didThrow() { didEnd(); }
 
     static constexpr int32_t generatorSlotInStubFrame = -1;
 

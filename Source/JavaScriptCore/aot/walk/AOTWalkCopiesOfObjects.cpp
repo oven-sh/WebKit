@@ -33,6 +33,7 @@ enum class KindOfCopyInWalkCopies : uint8_t {
     DefinesOnLiteral,
     MakesObject,
     MakesObjectByStores,
+    DefinesOnObjectThatStands,
 };
 
 struct ObjectCopyInWalkCopies {
@@ -53,16 +54,17 @@ struct CopiedOrderInWalkCopies {
 struct PropertiesInWalkCopies {
     void put(FieldIndex field, Reference value)
     {
-        size_t place = fields.find(field);
-        if (place != notFound) {
-            values[place] = value;
+        if (isListed.get(field)) {
+            values[fields.find(field)] = value;
             return;
         }
+        isListed.set(field);
         fields.append(field);
         values.append(value);
     }
 
     LayoutID layout;
+    BitVector isListed;
     Vector<FieldIndex, 8> fields;
     Vector<Reference, 8> values;
 };
@@ -106,7 +108,7 @@ static std::optional<FieldIndex> findFieldThatTakesInWalkCopies(const ObjectCopy
     LayoutID taker = copy.makesObject() ? layoutOfSource : copy.layoutOfLiteral;
     if (copy.stores() && (isOnObjectPrototype(program.nameClassOf(key)) || !isClosedKey(program, program.builtins().canonicalID(Builtins::ObjectPrototype), key) || !onlyObjectPrototypeStandsAboveObjectsOfInWalkCopies(walker, taker)))
         return std::nullopt;
-    if (copy.makesObject())
+    if (copy.makesObject() || copy.kind == KindOfCopyInWalkCopies::DefinesOnObjectThatStands)
         return isPlainPropertyInWalkCopies(walker, { layoutOfSource, field }) ? std::optional(field) : std::nullopt;
     std::optional<FieldReference> found = findField(program, taker, key);
     if (!found || found->layout != taker || !isPlainPropertyInWalkCopies(walker, *found))
@@ -360,13 +362,37 @@ static Reference buildArmsInWalkCopies(Walker& walker, Reference source, std::sp
 static Reference buildObjectMadeByCopyInWalkCopies(Walker& walker, const Draft& written, const BodyValue& value, const CopiedOrderInWalkCopies& order, Reference source)
 {
     Origin origin = written.origin();
-    if (!order.keys.layout || order.fields.isEmpty()) {
+    auto namesLeftOut = value.as<Opcode::CopyObject>().excludedKeys();
+    if (!order.keys.layout || order.fields.isEmpty() || !namesLeftOut.isEmpty()) {
+        Vector<std::pair<PropertyKeyID, Reference>, 8> definitions;
+        for (FieldIndex field : order.fields) {
+            PropertyKeyID key = keyOfFieldInWalkCopies(walker, order.keys.layout, field);
+            if (std::ranges::contains(namesLeftOut, key))
+                continue;
+            Reference held = valueOfOwnKey(walker, source, order.keys.layout, field, origin);
+            if (!held)
+                return { };
+            definitions.append({ key, held });
+        }
         Draft empty(Opcode::NewDictionary, origin);
         empty.inputValueGiven = value.id();
         empty.expected = written.expected;
-        empty.resultIsReturnedAtOnce = written.resultIsReturnedAtOnce;
+        empty.resultIsReturnedAtOnce = written.resultIsReturnedAtOnce && definitions.isEmpty();
         walker.chooseConservativeFields(empty);
-        return walker.build(WTF::move(empty));
+        Reference rest = walker.build(WTF::move(empty));
+        for (auto [key, held] : definitions) {
+            if (!rest || walker.isUnreachable() || walker.hasFailed())
+                return { };
+            Draft define(Opcode::PropDefine, origin);
+            walker.chooseConservativeFields(define);
+            define.setObjectOperand(rest);
+            define.setKey(key);
+            define.setValueOperand(held);
+            walker.build(WTF::move(define));
+        }
+        if (!namesLeftOut.isEmpty())
+            walker.count(StatisticID::RestsOfPatternsThatAreDefinitionsOneByOne);
+        return rest;
     }
 
     PropertiesInWalkCopies properties;
@@ -396,8 +422,14 @@ bool buildCopyThatMakesObject(Walker& walker, const BodyValue& value)
         return false;
     ObjectCopyInWalkCopies copy { walker, operation.assigns() ? KindOfCopyInWalkCopies::MakesObjectByStores : KindOfCopyInWalkCopies::MakesObject, { } };
 
-    if (!source.isValue() || !operation.excludedKeys().isEmpty() || !operation.excludedOperands().empty())
+    if (!source.isValue() || !operation.excludedOperands().empty())
         return false;
+    bool leavesNamesOut = !operation.excludedKeys().isEmpty();
+    if (leavesNamesOut) {
+        if (operation.assigns() || walker.someFrameWalksStretchInsideAnother() || walker.hasTextsInStringBuilders())
+            return false;
+        copy.kind = KindOfCopyInWalkCopies::DefinesOnObjectThatStands;
+    }
 
     if (std::optional<OwnKeyOrder> listed = ownKeysInSight(walker, source)) {
         CopiedOrderInWalkCopies order;
@@ -409,6 +441,8 @@ bool buildCopyThatMakesObject(Walker& walker, const BodyValue& value)
         }
     }
 
+    if (leavesNamesOut && !walker.isInLoop())
+        return false;
     OwnKeyPlan plan = planOwnKeyWalk(walker, operation.sourceOperand(), source);
     Vector<CopiedOrderInWalkCopies, 2> orders = planCopyByLayoutsInWalkCopies(copy, plan);
     if (orders.isEmpty() || !shouldOpenGuess(walker, source, walker.types().forLayout(orders[0].keys.layout), plan.isDeclared, closedOperationsOfCopyInWalkCopies))
@@ -654,6 +688,169 @@ static bool planFillOfLiteralInWalkCopies(const ObjectCopyInWalkCopies& copy, co
     return type.isJavaScriptValue() && !(type.primitives & (Primitive::Absent | Primitive::Unspecified));
 }
 
+static ValueID literalThatWaysOfCopyMakeAnewInWalkCopies(Walker& walker, const BodyValue& copy)
+{
+    if (!walker.isInLoop() || !walker.opensGuesses() || walker.someFrameWalksStretchInsideAnother())
+        return { };
+    auto spread = copy.as<Opcode::CopyDataProperties>();
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID allocated = spread.targetOperand();
+    while (allocated && !index.isParameter(allocated) && inputOperationsThatOnlyHandOn.contains(index.opcodeOf(allocated)))
+        allocated = index.value(allocated).operand(0);
+    if (!allocated || index.isParameter(allocated) || index.opcodeOf(allocated) != Opcode::NewObject || index.blockOf(allocated) != index.blockOf(copy.id()) || spread.sourceOperand().index() > allocated.index())
+        return { };
+    for (uint32_t id = allocated.index() + 1; id < copy.id().index(); ++id) {
+        if (!inputOperationsThatOnlyHandOn.contains(index.opcodeOf(ValueID(id))))
+            return { };
+    }
+    return walker.armsMayEndWithBranchFrom(allocated) ? allocated : ValueID();
+}
+
+bool walkCopyApartFromSourceWithoutProperties(Walker& walker, const BodyValue& copy)
+{
+    if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::EscapeAnalysis))
+        return false;
+    ValueID input = copy.as<Opcode::CopyDataProperties>().sourceOperand();
+    Reference given = walker.referenceOf(input);
+    if (!given || !given.isValue())
+        return false;
+    TypeArena& types = walker.types();
+    TypeID whole = walker.typeOf(given);
+    TypeID withProperties = types.withoutPrimitives(whole, primitivesWithoutPropertiesToCopy);
+    TypeID without = types.differenceOf(whole, withProperties);
+    if (types.at(withProperties).isNever() || types.at(without).isNever() || types.testablePartOf(without) != without)
+        return false;
+    ValueID literal = literalThatWaysOfCopyMakeAnewInWalkCopies(walker, copy);
+    if (!literal)
+        return false;
+
+    Origin origin = walker.originOf(copy);
+    origin.isTailCall = false;
+    Draft test(Opcode::TypeTest, origin);
+    test.setValueOperand(given);
+    test.setTestedType(without);
+    Reference hasNone = walker.build(WTF::move(test));
+    if (!hasNone || !hasNone.isValue())
+        return false;
+    auto nameSourceOnWay = [&](bool isOnTakenEdge) {
+        Draft narrowed(Opcode::Narrowed, origin);
+        narrowed.setValueOperand(given);
+        narrowed.setTestOperand(hasNone);
+        narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+        narrowed.setIsOnTakenEdge(isOnTakenEdge);
+        walker.bind(input, walker.build(WTF::move(narrowed)));
+    };
+
+    BlockID somethingToCopy = walker.addBlock();
+    walker.count(StatisticID::CopiesWalkedApartFromSourcesWithoutProperties);
+    BlockID nothingToCopy = walker.addBlock();
+    walker.branch(hasNone, nothingToCopy, somethingToCopy);
+    for (bool isOnTakenEdge : { true, false }) {
+        walker.continueIn(isOnTakenEdge ? nothingToCopy : somethingToCopy);
+        nameSourceOnWay(isOnTakenEdge);
+        if (!walker.hasFailed() && !walker.endArmWithBranchFrom(literal))
+            walker.fail("a way of a copy does not walk the end of its block"_s);
+        walker.bind(input, given);
+    }
+    return true;
+}
+
+bool defineOwnKeysOfSourceOnObjectThatStands(Walker& walker, const BodyValue& copy)
+{
+    auto spread = copy.as<Opcode::CopyDataProperties>();
+    if (!walker.has(Mechanism::TypedOperations) || !spread.excludedOperands().empty() || walker.someFrameWalksStretchInsideAnother() || walker.hasTextsInStringBuilders())
+        return false;
+    Reference target = walker.referenceOf(spread.targetOperand());
+    if (!target || !target.isValue())
+        return false;
+    ObjectCopyInWalkCopies planned { walker, KindOfCopyInWalkCopies::DefinesOnObjectThatStands, { } };
+    SourceOfAssignmentInWalkCopies source;
+    source.inBody = spread.sourceOperand();
+    source.built = walker.referenceOf(source.inBody);
+    if (!planSourceOfAssignmentInWalkCopies(planned, source, walker.isInLoop() && walker.opensGuesses()) || !source.order.keys.layout)
+        return false;
+    LayoutID layoutOfTarget = singleLayoutOf(walker.types(), walker.types().at(walker.typeOf(target)));
+    bool bringsName = false;
+    bool targetListsEveryName = layoutOfTarget && std::ranges::all_of(source.order.fields, [&](FieldIndex field) {
+        PropertyKeyID key = keyOfFieldInWalkCopies(walker, source.order.keys.layout, field);
+        if (std::ranges::contains(spread.excludedKeys(), key))
+            return true;
+        bringsName = true;
+        std::optional<FieldReference> listed = findField(walker.program(), layoutOfTarget, key);
+        return listed && listed->layout == layoutOfTarget && isPlainPropertyInWalkCopies(walker, *listed);
+    });
+    if (targetListsEveryName && bringsName)
+        return false;
+
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(copy.id()));
+    uint32_t place = copy.id().index() - block.firstValue().index();
+    Origin origin = walker.originOf(copy);
+    origin.isTailCall = false;
+    BlockID behind;
+    bool goesOn = true;
+    if (!source.isInSight) {
+        walker.noteGuessOpened();
+        BlockID asWritten = walker.addBlock(BlockFrequency::Unlikely);
+        goesOn = goOnWhereObjectHasOwnKeys(walker, source.built, source.order.keys, source.layoutIsProven, origin, asWritten);
+        if (walker.hasFailed())
+            return true;
+        BlockID whereTestsHavePassed = walker.currentBlock();
+        walker.continueIn(asWritten);
+        {
+            Walker::ClosedArm closedArm(walker, true);
+            if (!walker.isUnreachable())
+                walker.walkStretch(block.id(), place, place + 1);
+            if (!walker.isUnreachable() && !walker.hasFailed()) {
+                behind = walker.addBlock();
+                walker.jumpTo(behind, { });
+            }
+        }
+        if (walker.hasFailed())
+            return true;
+        if (goesOn)
+            walker.continueIn(whereTestsHavePassed);
+    }
+
+    Vector<std::pair<PropertyKeyID, Reference>, 8> definitions;
+    for (FieldIndex field : source.order.fields) {
+        if (!goesOn)
+            break;
+        PropertyKeyID key = keyOfFieldInWalkCopies(walker, source.order.keys.layout, field);
+        if (std::ranges::contains(spread.excludedKeys(), key))
+            continue;
+        Reference value = valueOfOwnKey(walker, source.built, source.order.keys.layout, field, origin);
+        if (!value && !walker.isUnreachable() && !walker.hasFailed())
+            walker.fail("an own key that a copy defines has no value, and the way goes on"_s);
+        goesOn = !!value;
+        definitions.append({ key, value });
+    }
+    if (walker.hasFailed())
+        return true;
+    if (goesOn) {
+        walker.count(StatisticID::CopiesThatAreDefinitionsOneByOne);
+        for (auto [key, value] : definitions) {
+            Draft define(Opcode::PropDefine, origin);
+            walker.chooseConservativeFields(define);
+            define.setObjectOperand(target);
+            define.setKey(key);
+            define.setValueOperand(value);
+            walker.build(WTF::move(define));
+            if (walker.isUnreachable() || walker.hasFailed())
+                break;
+        }
+    }
+    if (walker.hasFailed())
+        return true;
+    if (behind) {
+        if (goesOn && !walker.isUnreachable())
+            walker.jumpTo(behind, { });
+        walker.continueIn(behind);
+    }
+    walker.walkStretch(block.id(), place + 1, place + 1);
+    return true;
+}
+
 bool fillLiteralInSight(Walker& walker, const BodyValue& firstCopy)
 {
     if (!walker.has(Mechanism::TypedOperations))
@@ -677,7 +874,7 @@ bool fillLiteralInSight(Walker& walker, const BodyValue& firstCopy)
     for (uint32_t place = placeOfFirstCopy; place < walker.endOfStretchBeingWalked(); ++place) {
         BodyValue next = index.value(ValueID(firstValue + place));
         if (next.opcode() != Opcode::CopyDataProperties && next.opcode() != Opcode::PropDefine) {
-            if (!mayStandBehindCopy(next, target))
+            if (!mayStandBehindCopy(walker, index, next, target))
                 break;
             continue;
         }

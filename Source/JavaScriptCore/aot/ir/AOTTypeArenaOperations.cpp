@@ -377,20 +377,34 @@ bool TypeArena::mayBeSameObject(TypeID a, TypeID b)
     return result;
 }
 
+TypeID TypeArena::numbersAskedBehindCallOfBuiltin(TypeID id)
+{
+    TypeID numbers = intersectionOf(id, TypeTable::number);
+    if (isNeverType(numbers))
+        return numbers;
+    if (isSubset(numbers, TypeTable::int32))
+        return TypeTable::int32;
+    TypeID int32OrLength = integer(Range::int32OrLength());
+    if (isSubset(numbers, int32OrLength))
+        return int32OrLength;
+    return TypeTable::number;
+}
+
 TypeID TypeArena::wholeKindsAndBuiltinClassesOf(TypeID id)
 {
-    static constexpr std::array<uint16_t, 7> kinds { Primitive::Undefined, Primitive::Null, Primitive::Boolean, Primitive::Number, Primitive::AnyString, Primitive::AnySymbol, Primitive::BigInt };
+    static constexpr std::array<uint16_t, 6> kinds { Primitive::Undefined, Primitive::Null, Primitive::Boolean, Primitive::AnyString, Primitive::AnySymbol, Primitive::BigInt };
     Type type = at(id);
     uint16_t primitives = 0;
     for (uint16_t kind : kinds) {
         if (type.primitives & kind)
             primitives |= kind & Primitive::All;
     }
+    TypeID numbers = numbersAskedBehindCallOfBuiltin(id);
     if (!type.hasObjects())
-        return fromPrimitives(primitives);
+        return unionOf(fromPrimitives(primitives), numbers);
     TypeID classes = type.hasOnlyClassObjects() ? intersectionOf(testablePartOf(id), TypeTable::object) : TypeID();
     bool canBeAsked = classes && !isNeverType(classes) && testablePartOf(classes) == classes;
-    return withPrimitives(canBeAsked ? classes : TypeID(TypeTable::object), primitives);
+    return unionOf(withPrimitives(canBeAsked ? classes : TypeID(TypeTable::object), primitives), numbers);
 }
 
 TypeID TypeArena::withPrimitives(TypeID type, uint16_t added)

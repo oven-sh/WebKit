@@ -51,6 +51,8 @@ struct InstanceLayout {
     static constexpr size_t sizeOfSiteAnswers = 16;
     static constexpr unsigned sizeOfIndexOfSiteAnswersShift = 1;
     static constexpr size_t sizeOfIndexOfSiteAnswers = 1 << sizeOfIndexOfSiteAnswersShift;
+    static constexpr uint16_t nameOfSiteStandsBehind = UINT16_MAX;
+    static constexpr uint32_t numbersOfSiteWhoseNameStandsBehind = 3;
     static constexpr size_t offsetOfStringCells = 384 * KB + shiftAboveLoopPollPage;
 #if defined(BUN_HARDENED)
     static constexpr size_t offsetOfWordsWrittenOnce = 16 * KB;

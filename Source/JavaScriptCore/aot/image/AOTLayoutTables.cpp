@@ -137,7 +137,7 @@ static void forEachLayoutRecord(const TableInputs& inputs, NOESCAPE const Invoca
     }
 }
 
-static void forEachDescribedVariableOfEnvironment(const TableInputs& inputs, LayoutID id, bool obfuscates, NOESCAPE const Invocable<void(const Typed::PlacedSlot&, StringID shownName)> auto& functor)
+static void forEachDescribedVariableOfEnvironment(const TableInputs& inputs, LayoutID id, bool obfuscates, NOESCAPE const Invocable<void(const Typed::PlacedSlot&, StringID shownName, bool isVariableOfModule)> auto& functor)
 {
     const Typed::Layout& layout = inputs.program.at(id);
     const Typed::PlannedLayout& planned = inputs.plan.layout(id);
@@ -148,7 +148,7 @@ static void forEachDescribedVariableOfEnvironment(const TableInputs& inputs, Lay
         if (!slot.hasStorage() || !(traits.holdsCell || (traits.hasAbsent && traits.absentBits)))
             continue;
         StringID name = index < layout.fields.size() ? layout.fields[index].variableName : StringID();
-        functor(slot, showsVariables && traits.holdsCell ? name : StringID());
+        functor(slot, showsVariables && traits.holdsCell ? name : StringID(), name && layout.fields[index].declared.has(Typed::PositionFlags::IsVariableOfModule));
     }
 }
 
@@ -183,6 +183,10 @@ static void nameWhatObjectLayoutRecordNames(const TableInputs& inputs, LayoutID 
         return;
     for (const Typed::StaticField& field : layout.staticFields)
         nameKey(field.key);
+    if (Typed::isKnownByStructureOfClass(layout)) {
+        for (const Typed::Field& field : layout.fields)
+            nameKey(field.key);
+    }
     for (const Typed::ClassMember& member : inputs.facts.membersOf(id)) {
         nameKey(member.key);
         nameClosureCell(member.function);
@@ -192,7 +196,7 @@ static void nameWhatObjectLayoutRecordNames(const TableInputs& inputs, LayoutID 
 
 static void nameWhatEnvironmentRecordNames(const TableInputs& inputs, LayoutID id, NamesOfLayoutRecords& names)
 {
-    forEachDescribedVariableOfEnvironment(inputs, id, inputs.options.obfuscates(), [&](const Typed::PlacedSlot&, StringID shownName) {
+    forEachDescribedVariableOfEnvironment(inputs, id, inputs.options.obfuscates(), [&](const Typed::PlacedSlot&, StringID shownName, bool) {
         if (shownName)
             names.strings.set(shownName.index());
     });
@@ -329,6 +333,8 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         data.isKeptFromComparisons = data.isWrittenPrivateName && encoder.facts.linked().field(reference).isKeptFromComparisons;
         data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull) && !slot.provenType;
         data.flags = flagsOfFieldInLayoutRecord(field, facts, slot);
+        if (slot.holdsAccessor && field.key && Typed::takesAccessorsOfLibraryAlone(program, encoder.plan.slots(), id, field.key))
+            data.flags |= fieldTakesAccessorsOfLibraryAlone;
         data.slot = slot.data();
         if (type != typeOfFieldInFront || !offsetOfTypeOfFieldInFront) {
             typeOfFieldInFront = type;
@@ -458,10 +464,12 @@ static LayoutRecordParts collectPartsOfEnvironmentRecord(const TableEncoder& enc
 {
     const Typed::Layout& layout = encoder.program.at(id);
     Vector<VariableData, 8> described;
-    forEachDescribedVariableOfEnvironment(encoder.inputs, id, encoder.obfuscates(), [&](const Typed::PlacedSlot& slot, StringID shownName) {
+    forEachDescribedVariableOfEnvironment(encoder.inputs, id, encoder.obfuscates(), [&](const Typed::PlacedSlot& slot, StringID shownName, bool isVariableOfModule) {
         if (slot.isOutOfLine())
             encoder.fail("VariableOfEnvironmentOutOfLine"_s, id);
-        described.append({ shownName ? encoder.stringNumber(shownName) : VariableData::noName, slot.data() });
+        isVariableOfModule &= !!shownName;
+        RELEASE_ASSERT(!shownName || encoder.stringNumber(shownName) < VariableData::isVariableOfModuleFlag);
+        described.append({ shownName ? encoder.stringNumber(shownName) | (isVariableOfModule ? VariableData::isVariableOfModuleFlag : 0) : VariableData::noName, slot.data() });
     });
 
     LayoutRecordParts parts;
@@ -469,6 +477,7 @@ static LayoutRecordParts collectPartsOfEnvironmentRecord(const TableEncoder& enc
     parts.record = Vector<uint8_t>(FillWith { }, sizeof(EnvironmentData) + described.sizeInBytes(), 0);
     auto& data = reinterpretCastSpanStartTo<EnvironmentData>(parts.record.mutableSpan());
     data.kind = layout.kind;
+    data.moduleAfterNone = Number24(!encoder.obfuscates() && showsVariablesOf(encoder.inputs, layout.module) ? layout.module.index() + 1 : 0);
     data.index = id.index();
     data.name = encoder.shownNameNumber(layout.name);
     data.size = encoder.plan.layout(id).size;
@@ -710,6 +719,7 @@ static uint32_t appendObjectLayoutRecord(TableEncoder& encoder, LayoutID id, con
     if (record.isClass()) {
         record.classData() = classData;
         part.link(offset - parts.prefixSize, &ClassData::subclassesOffset);
+        part.link(offset - parts.prefixSize, &ClassData::propertiesOfHeirsOffset);
         part.linkWords(offset - parts.prefixSize + static_cast<uint32_t>(offsetof(ClassData, namedGuardsOffset)), numberOfClassSides);
     }
     return offset;
@@ -827,14 +837,15 @@ static Vector<ParsedRecordFieldData> collectParsedRecordFields(const TableEncode
         uint32_t shape = records[index].shapeThatParsersMake;
         if (!shape)
             continue;
-        for (const FieldData& field : encoder.firstParts->fieldsOfLayoutRecords[index].fields)
-            keys.append(ParsedRecordFieldData { Number24(field.name), Number24(shape) }.key());
+        const auto& fields = encoder.firstParts->fieldsOfLayoutRecords[index].fields;
+        for (const FieldData& field : fields)
+            keys.append(static_cast<uint64_t>(field.name) << 40 | static_cast<uint64_t>(static_cast<uint16_t>(fields.size())) << 24 | shape);
     }
-    radixSortKeepingEqualKeysInOrder<48>(keys, [](uint64_t key) {
+    radixSortKeepingEqualKeysInOrder<64>(keys, [](uint64_t key) {
         return key;
     });
     return Vector<ParsedRecordFieldData>(keys.size(), [&](size_t index) {
-        return ParsedRecordFieldData { Number24(static_cast<uint32_t>(keys[index] >> 24)), Number24(static_cast<uint32_t>(keys[index]) & Number24::max) };
+        return ParsedRecordFieldData { Number24(static_cast<uint32_t>(keys[index] >> 40)), Number24(static_cast<uint32_t>(keys[index]) & Number24::max) };
     });
 }
 

@@ -796,6 +796,37 @@ void checkNamesGivenTwice(Realms& realms)
     AOT_TEST_CHECK(isFixed("UTC"_s) && isFixed("now"_s) && isFixed("parse"_s) && isFixed("call"_s) && !isFixed("7"_s) && !isFixed("nameNobodyHas"_s));
 }
 
+void checkWriteIsToldOfOnceForEachMember(Realms& realms)
+{
+    class Listener final : public WritesToBuiltinMembers {
+    public:
+        void willWrite(BuiltinID member, UniquedStringImpl*) final { membersTold.append(member); }
+        void willAddNameTo(BuiltinID) final { ++timesToldOfAddedName; }
+
+        Vector<BuiltinID> membersTold;
+        unsigned timesToldOfAddedName { 0 };
+    };
+    VM& vm = realms.vm();
+    const uint32_t fixed[] = { Builtins::DateNow.index() };
+    const uint32_t unlocked[] = { Builtins::DateUTC.index() | ProgramTables::unlockedBuiltinMember };
+    auto numberOf = [](const Listener& listener, BuiltinID member) { return std::ranges::count(listener.membersTold, member); };
+
+    Listener inExecutable;
+    JSObject* object = realms.object(realms.plain(), "({ })"_s);
+    AOT_TEST_CHECK(object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, fixed, &inExecutable).get()));
+    auto refuses = [&](ASCIILiteral name) { return object->structure()->isImmutableProperty(Identifier::fromString(vm, name).impl()); };
+    for (unsigned turn = 0; turn < 3; ++turn)
+        AOT_TEST_CHECK(!refuses("parse"_s) && !refuses("nameNobodyHas"_s) && !refuses("otherNameNobodyHas"_s) && refuses("now"_s) && refuses("UTC"_s));
+    AOT_TEST_CHECK(inExecutable.membersTold.size() == 1 && numberOf(inExecutable, Builtins::DateParse) == 1 && inExecutable.timesToldOfAddedName == 6);
+
+    Listener inTestRun;
+    object = realms.object(realms.plain(), "({ })"_s);
+    AOT_TEST_CHECK(object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, fixed, &inTestRun, unlocked, true).get()));
+    for (unsigned turn = 0; turn < 3; ++turn)
+        AOT_TEST_CHECK(!refuses("parse"_s) && !refuses("UTC"_s) && refuses("now"_s));
+    AOT_TEST_CHECK(numberOf(inTestRun, Builtins::DateParse) == 1 && numberOf(inTestRun, Builtins::DateUTC) == 3);
+}
+
 void checkLockLeavesObjectsWithSameStructure(Realms& realms)
 {
     VM& vm = realms.vm();
@@ -991,6 +1022,7 @@ std::span<const NativeTest> lockedRealmMemberTests()
         { "locked-realm-members/function-prototype"_s, withoutImage<checkFunctionPrototype> },
         { "locked-realm-members/prototypes-of-function-kinds"_s, withoutImage<checkPrototypesOfFunctionKinds> },
         { "locked-realm-members/names-given-twice"_s, withoutImage<checkNamesGivenTwice> },
+        { "locked-realm-members/a-write-is-told-of-once-for-each-member"_s, withoutImage<checkWriteIsToldOfOnceForEachMember> },
         { "locked-realm-members/lock-leaves-objects-with-same-structure"_s, withoutImage<checkLockLeavesObjectsWithSameStructure> },
         { "locked-realm-members/fixed-names-keep-their-offsets-when-the-holder-is-flattened"_s, withoutImage<checkFixedNamesKeepOffsetsWhenFlattened> },
         { "locked-realm-members/pristine-instances"_s, withoutImage<checkPristineInstances> },

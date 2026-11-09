@@ -1,0 +1,300 @@
+# EACH WAY TO LAY THE NAME THAT THE ASKER'S OWN TEXT CAN TAKE ENDS THE NOTE THAT A LOOKUP FOUND NOTHING (a reviewer's program: one writer a function), AND THE ROAD THAT LAYS MANY NAMES AT ONCE MOVES THE KIND THAT A PLACE REMEMBERS.
+# function Meter(level) { this.level = level; this.count = 1; }
+# Meter.prototype.read = function () { return this.level; };
+# function road(object) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing")) return "short " + object.missing; return "full " + object.missing; }
+# function defined(object) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing")) { Object.defineProperty(object, "missing", { value: "defined", configurable: true }); return "short " + object.missing; } return "full " + object.missing; }
+# function given(object, give) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing")) { object.__defineGetter__("missing", give); return "short " + object.missing; } return "full " + object.missing; }
+# function assigned(object) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing")) { Object.assign(object, { missing: "assigned" }); return "short " + object.missing; } return "full " + object.missing; }
+# function reflected(object) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing")) { Reflect.set(object, "missing", "reflected"); return "short " + object.missing; } return "full " + object.missing; }
+# function libraryLays(object) { object.missing = "laid"; }
+# function helped(object) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing")) { libraryLays(object); return "short " + object.missing; } return "full " + object.missing; }
+# drive({ Meter, road, defined, given, assigned, reflected, helped });
+# f3 = road . f4 = defined . f5 = given . f6 = assigned . f7 = reflected . f8 = helped
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f4
+# FORM: = FindsNoMember {{*}}key="missing" {{*}}[asksForNoExtraPropertyUnderKey
+# RUN(WRITERS): run-in-shell drive = function ({ Meter, defined, given, assigned, reflected, helped }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; const give = () => "given"; print(defined(new Meter(1)), given(new Meter(1), give), assigned(new Meter(1)), reflected(new Meter(1)), helped(new Meter(1))); const right = (answer, word) => answer === "full undefined" || answer === "short " + word; let wrong = 0, short = 0; for (let t = 0; t < 12800; t++) { const answers = [defined(extra()), given(extra(), give), assigned(extra()), reflected(extra()), helped(extra())]; ["defined", "given", "assigned", "reflected", "laid"].forEach((word, at) => { if (!right(answers[at], word)) wrong++; if (answers[at] !== "full undefined") short++; }); } print(wrong, short > 30000 ? "the places answer" : "THE PLACES STAY EMPTY: " + short); };
+# WRITERS: short defined short given short assigned short reflected short laid
+# WRITERS-NEXT: 0 the places answer
+# WRITERS-NEXT: exited with 0
+# RUN(BATCH): run-in-shell drive = function ({ Meter, road }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; print(warm(road, extra, "short undefined")); const o = extra(); print(road(o)); Object.assign(o, { a1: 1, a2: 2, a3: 3, missing: "assigned", a4: 4, a5: 5, a6: 6, a7: 7 }); print(road(o), road(extra())); let wrong = 0; for (let t = 0; t < 6400; t++) { const p = extra(); if (road(p) !== "short undefined") wrong++; Object.assign(p, { b1: 1, b2: 2, b3: 3, b4: 4, b5: 5, b6: 6, b7: 7, missing: t }); if (road(p) !== "full " + t) wrong++; } print(wrong); };
+# BATCH: the place answers
+# BATCH-NEXT: short undefined
+# BATCH-NEXT: full assigned short undefined
+# BATCH-NEXT: 0
+# BATCH-NEXT: exited with 0
+
+module m0 path="extras3.js" displayPath="extras3.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}, {key="count" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L2 module=m0 position=1480 fields=[{key="Meter" declared={type=anything} flags=[IsRequired]}, {key="assigned" declared={type=anything} flags=[IsRequired]}, {key="defined" declared={type=anything} flags=[IsRequired]}, {key="given" declared={type=anything} flags=[IsRequired]}, {key="helped" declared={type=anything} flags=[IsRequired]}, {key="reflected" declared={type=anything} flags=[IsRequired]}, {key="road" declared={type=anything} flags=[IsRequired]}] declaredOrder=[0, 6, 2, 3, 1, 5, 4] ownFieldCount=7
+layout L3 module=m0 position=900 fields=[{key="missing" declared={type=anything}}] ownFieldCount=1
+data d0 root=Object{layout=L3 members=[{key="missing" value=String{value="assigned"}}]} module=m0
+variable g0 name="Meter" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="libraryLays" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f6 @0
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f7 @0
+    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f8 @0
+    v11 = Convert v10 declared={type=f8 flags=[IsFromCompiler]} @0
+    v12 = GetModuleVariable variable=g0 @62
+    v13 = PropGet v12 key="prototype" @62
+    v14 = NewClosure function=f9 @85
+    PropSet v13, v14 key="read" @68
+    v16 = Builtin builtin=GlobalThis @1474
+    v17 = PropGet v16 key="drive" [isFreeName] @1474
+    v18 = GetModuleVariable variable=g0 @1482
+    v19 = NewObject -, v18, v1, v3, v5, v7, v9, v11 layout=L2 fields=[0, 6, 2, 3, 1, 5, 4] @1480
+    v20 = FinishObject v19 @1480
+    v21 = Call v17, -, v20 calleeName="drive" @1474
+    v22 = Undefined @1474
+    Return v22 @1474
+}
+function f1 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Integer integer=1 @57
+    PropSet v0, v3 key="count" @44
+    v5 = Undefined @44
+    Return v5 @44
+}
+function f2 name="libraryLays" module=m3 position=1220 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L3):
+    v1 = String string="laid" @1268
+    PropSet v0, v1 key="missing" @1251
+    v3 = Undefined @1251
+    Return v3 @1251
+}
+function f3 name="road" module=m3 position=121 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L3):
+    v1 = Undefined @149
+    v2 = Undefined @149
+    v3 = GetModuleVariable variable=g0 @176
+    v4 = IsPlainInstanceOf v0, v3 @149
+    v5 = ToBoolean v4 @149
+    Branch v5 -> taken b1(| 0), notTaken b3() @149
+  b1(v6):
+    v7 = Undefined @186
+    v8 = Undefined @186
+    v9 = String string="missing" @209
+    v10 = FindsNoMember v0 key="missing" @186
+    v11 = ToBoolean v10 @186
+    Branch v11 -> taken b2(| 0), notTaken b3() @186
+  b2(v12):
+    v13 = String string="short " @228
+    v14 = PropGet v0 key="missing" @239
+    v15 = Add v13, v14 @239
+    Return v15 @239
+  b3():
+    v16 = String string="full " @262
+    v17 = PropGet v0 key="missing" @272
+    v18 = Add v16, v17 @272
+    Return v18 @272
+}
+function f4 name="defined" module=m3 position=290 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L3):
+    v1 = Undefined @321
+    v2 = Undefined @321
+    v3 = GetModuleVariable variable=g0 @348
+    v4 = IsPlainInstanceOf v0, v3 @321
+    v5 = ToBoolean v4 @321
+    Branch v5 -> taken b1(| 0), notTaken b3() @321
+  b1(v6):
+    v7 = Undefined @358
+    v8 = Undefined @358
+    v9 = String string="missing" @381
+    v10 = FindsNoMember v0 key="missing" @358
+    v11 = ToBoolean v10 @358
+    Branch v11 -> taken b2(| 0), notTaken b3() @358
+  b2(v12):
+    v13 = Builtin builtin=Object @395
+    v14 = Builtin builtin=ObjectDefineProperty @395
+    v15 = String string="missing" @425
+    v16 = String string="defined" @445
+    v17 = Boolean boolean=true @470
+    v18 = Convert v17 declared={type=undefined|boolean flags=[IsExpected]} @470
+    v19 = NewObject -, v16 layout=L1 fields=[4] @456
+    PropDefine v19, v18 key="configurable" @456
+    v21 = FinishObject v19 @436
+    v22 = Call v14, v13, v0, v15, v21 calleeName="Object.defineProperty" @402
+    v23 = String string="short " @486
+    v24 = PropGet v0 key="missing" @497
+    v25 = Add v23, v24 @497
+    Return v25 @497
+  b3():
+    v26 = String string="full " @522
+    v27 = PropGet v0 key="missing" @532
+    v28 = Add v26, v27 @532
+    Return v28 @532
+}
+function f5 name="given" module=m3 position=550 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined @585
+    v3 = Undefined @585
+    v4 = GetModuleVariable variable=g0 @612
+    v5 = IsPlainInstanceOf v0, v4 @585
+    v6 = ToBoolean v5 @585
+    Branch v6 -> taken b1(| 0), notTaken b3() @585
+  b1(v7):
+    v8 = Undefined @622
+    v9 = Undefined @622
+    v10 = String string="missing" @645
+    v11 = FindsNoMember v0 key="missing" @622
+    v12 = ToBoolean v11 @622
+    Branch v12 -> taken b2(| 0), notTaken b3() @622
+  b2(v13):
+    v14 = PropGet v0 key="__defineGetter__" @659
+    v15 = String string="missing" @683
+    v16 = Call v14, v0, v15, v1 calleeKey="__defineGetter__" calleeName="object.__defineGetter__" @666
+    v17 = String string="short " @708
+    v18 = PropGet v0 key="missing" @719
+    v19 = Add v17, v18 @719
+    Return v19 @719
+  b3():
+    v20 = String string="full " @744
+    v21 = PropGet v0 key="missing" @754
+    v22 = Add v20, v21 @754
+    Return v22 @754
+}
+function f6 name="assigned" module=m3 position=772 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L3):
+    v1 = Undefined @804
+    v2 = Undefined @804
+    v3 = GetModuleVariable variable=g0 @831
+    v4 = IsPlainInstanceOf v0, v3 @804
+    v5 = ToBoolean v4 @804
+    Branch v5 -> taken b1(| 0), notTaken b3() @804
+  b1(v6):
+    v7 = Undefined @841
+    v8 = Undefined @841
+    v9 = String string="missing" @864
+    v10 = FindsNoMember v0 key="missing" @841
+    v11 = ToBoolean v10 @841
+    Branch v11 -> taken b2(| 0), notTaken b3() @841
+  b2(v12):
+    v13 = Builtin builtin=Object @878
+    v14 = Builtin builtin=ObjectAssign @878
+    v15 = Data data=d0 @900
+    v16 = Call v14, v13, v0, v15 calleeName="Object.assign" @885
+    v17 = String string="short " @933
+    v18 = PropGet v0 key="missing" @944
+    v19 = Add v17, v18 @944
+    Return v19 @944
+  b3():
+    v20 = String string="full " @969
+    v21 = PropGet v0 key="missing" @979
+    v22 = Add v20, v21 @979
+    Return v22 @979
+}
+function f7 name="reflected" module=m3 position=997 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L3):
+    v1 = Undefined @1030
+    v2 = Undefined @1030
+    v3 = GetModuleVariable variable=g0 @1057
+    v4 = IsPlainInstanceOf v0, v3 @1030
+    v5 = ToBoolean v4 @1030
+    Branch v5 -> taken b1(| 0), notTaken b3() @1030
+  b1(v6):
+    v7 = Undefined @1067
+    v8 = Undefined @1067
+    v9 = String string="missing" @1090
+    v10 = FindsNoMember v0 key="missing" @1067
+    v11 = ToBoolean v10 @1067
+    Branch v11 -> taken b2(| 0), notTaken b3() @1067
+  b2(v12):
+    v13 = Builtin builtin=Reflect @1104
+    v14 = Builtin builtin=ReflectSet @1104
+    v15 = String string="missing" @1124
+    v16 = String string="reflected" @1135
+    v17 = Call v14, v13, v0, v15, v16 calleeName="Reflect.set" @1112
+    v18 = String string="short " @1156
+    v19 = PropGet v0 key="missing" @1167
+    v20 = Add v18, v19 @1167
+    Return v20 @1167
+  b3():
+    v21 = String string="full " @1192
+    v22 = PropGet v0 key="missing" @1202
+    v23 = Add v21, v22 @1202
+    Return v23 @1202
+}
+function f8 name="helped" module=m3 position=1278 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L3):
+    v1 = Undefined @1308
+    v2 = Undefined @1308
+    v3 = GetModuleVariable variable=g0 @1335
+    v4 = IsPlainInstanceOf v0, v3 @1308
+    v5 = ToBoolean v4 @1308
+    Branch v5 -> taken b1(| 0), notTaken b3() @1308
+  b1(v6):
+    v7 = Undefined @1345
+    v8 = Undefined @1345
+    v9 = String string="missing" @1368
+    v10 = FindsNoMember v0 key="missing" @1345
+    v11 = ToBoolean v10 @1345
+    Branch v11 -> taken b2(| 0), notTaken b3() @1345
+  b2(v12):
+    v13 = GetModuleVariable variable=g1 @1382
+    v14 = Call v13, -, v0 calleeName="libraryLays" @1382
+    v15 = String string="short " @1410
+    v16 = PropGet v0 key="missing" @1421
+    v17 = Add v15, v16 @1421
+    Return v17 @1421
+  b3():
+    v18 = String string="full " @1446
+    v19 = PropGet v0 key="missing" @1456
+    v20 = Add v18, v19 @1456
+    Return v20 @1456
+}
+function f9 module=m0 position=85 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="level" @106
+    Return v1 @106
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f13 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f13
+runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private

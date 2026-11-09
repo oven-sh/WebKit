@@ -429,7 +429,7 @@ export interface NativeCodeRef {
 
 export type ConditionSpec =
   | { operand: OperandName; isOneOf: readonly string[]; startsWith: readonly string[]; calledOn?: BuiltinPath }
-  | { operand: OperandName; hasProperty: string }
+  | { operand: OperandName; hasProperty: string; startsWith?: readonly string[] }
   | { buildAdmitsRuntimeCode: true }
   | { callRunsOtherCode: true }
   | { objectNobodyKnowsIsWritten: true }
@@ -532,6 +532,9 @@ export const builtinMarks = [
   "InstancesHaveMethodCalledWithStartupLoads",
   "InstancesArePrintedByCodeOfTheirOwn",
   "PrintsWhatHandlersAnswer",
+  "InstancesAreAnswersThatHostTakes",
+  "ResultShowsOperandsToFormatters",
+  "InstancesShowWhatTheirMethodAnswersToFormatters",
   "LoadsCodeWithoutJSAccess",
   "ReadLoadsCodeByName",
   "HoldsPathOfMainModule",
@@ -552,6 +555,8 @@ export const builtinMarks = [
   "LaysOperandAbovePrototype",
   "HandsOutNoOtherHostObject",
   "IsDeletedWhenModuleOfLibraryLoads",
+  "PassesOverListWhereItTakesRecordOfHandlers",
+  "AsksOptionsForListedNamesAlone",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -565,6 +570,7 @@ export interface EntryColumns {
   constructable?: boolean;
   addedAtFirstRead?: boolean;
   addedAsEnumerable?: boolean;
+  canBeListed?: boolean;
   hasSetter?: boolean;
   length?: number;
   nativeSymbols?: readonly string[];
@@ -596,7 +602,11 @@ export interface SlotSpec {
   internalField?: number;
   holdsWhatStepsHandOut?: boolean;
   holdsWhatIsThrown?: boolean;
+  wordOfCell?: WordOfCell;
 }
+
+export const wordsOfCells = ["None", "Followed", "Unfollowed", "MarkedWhereFilled"] as const;
+export type WordOfCell = (typeof wordsOfCells)[number];
 
 export interface TypeNameSpec {
   path: readonly string[];
@@ -621,6 +631,7 @@ export interface ClassColumns {
   isNeverPristine?: boolean;
   pristineTest?: PristineTest;
   hasClosureInstances?: boolean;
+  isFollowedBesideUnseenObject?: boolean;
   instancesAreEntries?: boolean;
   keepsStructuresOfClassesBelow?: boolean;
   definesCharactersOnNewInstances?: boolean;

@@ -1,0 +1,82 @@
+# `x.then(..)` and `x.catch(..)` on a receiver of which nothing is known bear the method that class Promise gives under the key: the site's stub asks the receiver's class and its mark first. A promise keeps its handlers, so the closures are made in the heap and not lent.
+# function one(x) { x.then(() => {}); }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call {{*}}calleeKey="then"{{*}}methodOfReceiverAsMade=PromisePrototypeThen
+# RUN(HEAP): walk f1 mechanisms=all
+# HEAP-NOT: storage=Frame
+# function both(x) { x.then(() => {}, () => {}); }
+# RUN(BOTH): walk f2 mechanisms=all
+# BOTH-LABEL: code f2:Body
+# BOTH-NOT: storage=Frame
+# BOTH: = Call {{*}}calleeKey="then"{{*}}methodOfReceiverAsMade=PromisePrototypeThen
+# function caught(x) { x.catch(() => {}); }
+# RUN(CATCH): walk f3 mechanisms=all
+# CATCH-LABEL: code f3:Body
+# CATCH: = Call {{*}}calleeKey="catch"{{*}}methodOfReceiverAsMade=PromisePrototypeCatch
+# three handlers are no form of the stub
+# function three(x) { x.then(() => {}, () => {}, () => {}); }
+# RUN(THREE): walk f4 mechanisms=all
+# THREE-NOT: methodOfReceiverAsMade
+# What runs: both handlers on a fulfilled promise leave no operation to call; on a pending one the operation is called once; the answers are the host's.
+# RUN(RUNS): run-in-shell --aotCountsPath=/dev/null drive = function (one, both, caught) { const count = () => Number(aotOperationCount("operationAOTPromiseThen")); let before = count(); both(Promise.resolve(1)); print("both on a fulfilled promise: " + (count() - before)); before = count(); both(Promise.reject(2)); print("both on a rejected promise: " + (count() - before)); both({ then(f, g) { print("a then of its own: " + typeof f + " " + typeof g); } }); try { both(5); } catch (error) { print(error.constructor.name); } };
+# RUNS: both on a fulfilled promise: 0
+# RUNS-NEXT: both on a rejected promise: 1
+# RUNS-NEXT: a then of its own: function function
+# RUNS-NEXT: TypeError
+# The driver makes the promises, out of sight of the program. The program hands it Promise: the stubs hold no fast path for a built-in that the program cannot get hold of.
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="drive" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Builtin builtin=Promise
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="one" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="then"
+    v2 = NewClosure function=f5
+    v3 = Call v1, v0, v2 calleeKey="then" calleeName="then"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="both" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="then"
+    v2 = NewClosure function=f5
+    v3 = NewClosure function=f5
+    v4 = Call v1, v0, v2, v3 calleeKey="then" calleeName="then"
+    v5 = Undefined
+    Return v5
+}
+function f3 name="caught" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="catch"
+    v2 = NewClosure function=f5
+    v3 = Call v1, v0, v2 calleeKey="catch" calleeName="catch"
+    v4 = Undefined
+    Return v4
+}
+function f4 name="three" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="then"
+    v2 = NewClosure function=f5
+    v3 = NewClosure function=f5
+    v4 = NewClosure function=f5
+    v5 = Call v1, v0, v2, v3, v4 calleeKey="then" calleeName="then"
+    v6 = Undefined
+    Return v6
+}
+function f5 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

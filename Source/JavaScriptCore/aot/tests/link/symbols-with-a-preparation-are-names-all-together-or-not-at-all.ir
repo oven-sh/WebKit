@@ -6,6 +6,7 @@
 # `o[sometimes]` may be a look under kLenient and goes by value. So no access under a symbol that has a preparation goes by name. The others do.
 # LIBRARY: own
 # RUN: link accesses mechanisms=all
+# STATISTIC: SymbolsWithPreparationThatGoByValue = 2
 # REQUIRES: entries-of-bun
 # CHECK-NOT: access f2
 # CHECK-NOT: access f3

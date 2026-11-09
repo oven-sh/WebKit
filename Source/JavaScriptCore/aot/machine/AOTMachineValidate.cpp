@@ -364,6 +364,8 @@ bool MachineValidator::isLegalPatch(const PatchOperation* patch) const
     unsigned numberOfChildren = patch->numChildren();
     if (patch->opcode() == Check && (type != Void || !numberOfChildren || !patch->child(0)->type().isInt()))
         return false;
+    if (patch->failsWhenPredicateIsZero() && (patch->opcode() != Check || !isComparison(patch->child(0)->opcode()) || patch->child(0)->child(0)->type().isInt()))
+        return false;
     if (!hasLegalTupleIndex(type))
         return false;
 
@@ -451,6 +453,7 @@ bool MachineValidator::hasLegalTypes(const Operation* operation) const
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
         return type.isInt() && type == typeOfChild(0) && typeOfChild(1) == Int32;
     case Clz:
     case PopCount:
@@ -557,7 +560,7 @@ bool MachineValidator::hasInstructionOnTarget(const Operation* operation)
     if (!operation->type().isInt())
         return true;
 #if CPU(X86_64)
-    if (opcode == Shl || opcode == SShr || opcode == ZShr)
+    if (opcode == Shl || opcode == SShr || opcode == ZShr || opcode == RotR)
         return operation->child(1)->hasInt32();
     return opcode != Div && opcode != UDiv && opcode != Mod && opcode != UMod && opcode != MulHigh && opcode != UMulHigh;
 #else

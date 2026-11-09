@@ -1,0 +1,45 @@
+# a promise is resolved in line by asking whether the value has no then and storing it; whatever else comes goes to the run time. Where the walk has asked that question itself
+# and stands on the way of the answer no, the question would be asked a second time, of the same value, with the same answer, and the store behind it would never be reached.
+# The walk marks the operation there, and it is the call of the run time and nothing else: it was 109 bytes a site, and is the 5 of a call. The block's frequency decides nothing.
+# async function member(x) { return x.member; }  async function run(x, n) { for (let i = 0; i < n; i++) x = await member(x); return x; }  sink(run);
+# OPTIONS: report=Flow mechanisms=all-Inlining
+# RUN: bytes-by-form CoroutineBody
+# CHECK-NOT: the build failed
+# CHECK-NOT: ResolvePromise NeedsTest Anywhere Open
+# CHECK: ResolvePromise FailsTest Anywhere Runtime 1 [[call]] [[call]]
+# CHECK-NOT: ResolvePromise NeedsTest Anywhere Open
+# CHECK-NOT: picked by the place: ResolvePromise
+# CHECK-NOT: not named:
+# CHECK: every form is named
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="member" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="member"
+    Return v1
+}
+function f2 name="run" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v0, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v3 calleeName="member"
+    v9 = Await v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}

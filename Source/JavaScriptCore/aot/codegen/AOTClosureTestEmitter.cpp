@@ -270,7 +270,11 @@ Word32 ClosureTestEmitter::upperHalfOfClosureWordOf(FunctionID function)
 
 std::optional<uint32_t> ClosureTestEmitter::mentionOfUpperHalfThatNames(FunctionID function)
 {
-    if (!closureWordNames(function))
+    if (!conventions().exists(conventions().closureEntryOf(function)))
+        return std::nullopt;
+    if (!closureKindOf(function).isSlim)
+        return m_mentions.add(NumberSpace::ClosureFunction, function, static_cast<int32_t>(closureWordMarker));
+    if (!hasOneInstance())
         return std::nullopt;
     return mentionOfUpperHalfOfClosureWordOf(function);
 }

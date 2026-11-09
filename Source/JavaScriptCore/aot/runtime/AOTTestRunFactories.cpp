@@ -14,7 +14,9 @@
 #include "AOTVMState.h"
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
+#include "JSModuleNamespaceObject.h"
 #include "ModuleRegistryEntry.h"
+#include "TopExceptionScope.h"
 #include <ranges>
 
 namespace JSC { namespace AOT {
@@ -85,6 +87,36 @@ bool Modules::importsModuleWhoseMockWaits(ModuleID root)
     return false;
 }
 
+bool Modules::isImportedByGraphUnderEvaluation(ModuleID module)
+{
+    auto hasYetToRun = [&](ModuleID each) {
+        ModuleStatus current = status(each);
+        return current == ModuleStatus::Unlinked || current == ModuleStatus::Linked;
+    };
+    BitVector isReached(m_table.size());
+    Vector<ModuleID, 16> importers;
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        ModuleStatus current = status(ModuleID(index));
+        if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || current == ModuleStatus::Failed)
+            importers.append(ModuleID(index));
+    }
+    while (!importers.isEmpty()) {
+        ModuleID importer = importers.takeLast();
+        if (isReached.quickSet(importer.index()))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (request.isHoisted || request.isDeferred)
+                continue;
+            ModuleID imported = moduleLoadedBy(request);
+            if (imported == module)
+                return true;
+            if (hasYetToRun(imported) && !isMocked(imported) && !m_modulesWithMockToRun.get(imported.index()))
+                importers.append(imported);
+        }
+    }
+    return false;
+}
+
 bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -94,31 +126,7 @@ bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
     };
     if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || !hasYetToRun(module) || isMocked(module) || m_modulesWithMockToRun.get(module.index()))
         return false;
-    auto isImportedByGraphUnderEvaluation = [&] {
-        BitVector isReached(m_table.size());
-        Vector<ModuleID, 16> importers;
-        for (unsigned index = 0; index < m_table.size(); ++index) {
-            ModuleStatus current = status(ModuleID(index));
-            if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || current == ModuleStatus::Failed)
-                importers.append(ModuleID(index));
-        }
-        while (!importers.isEmpty()) {
-            ModuleID importer = importers.takeLast();
-            if (isReached.quickSet(importer.index()))
-                continue;
-            for (const ModuleRequestData& request : m_table.imports(importer)) {
-                if (request.isHoisted || request.isDeferred)
-                    continue;
-                ModuleID imported = moduleLoadedBy(request);
-                if (imported == module)
-                    return true;
-                if (hasYetToRun(imported) && !isMocked(imported) && !m_modulesWithMockToRun.get(imported.index()))
-                    importers.append(imported);
-            }
-        }
-        return false;
-    };
-    if (!isImportedByGraphUnderEvaluation())
+    if (!isImportedByGraphUnderEvaluation(module))
         return !hasRun(module) && !didCaptureExports(module);
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { module };
@@ -144,6 +152,28 @@ bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
     return false;
 }
 
+JSPromise* Modules::evaluationUnderWay(ModuleID module, bool hasWaitedForTurn)
+{
+    if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile())
+        return nullptr;
+    if (status(module) == ModuleStatus::EvaluatingAsync) {
+        JSPromise* evaluation = evaluate(module, std::nullopt, nullptr, nullptr, true);
+        return evaluation && evaluation->status() == JSPromise::Status::Pending ? evaluation : nullptr;
+    }
+    if (hasWaitedForTurn || status(module) != ModuleStatus::Linked || !isImportedByGraphUnderEvaluation(module))
+        return nullptr;
+    constexpr unsigned jobsThatLoaderTakesToAnswerWithModuleThatItHolds = 6;
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    JSPromise* turn = JSPromise::resolvedPromise(realm, jsUndefined());
+    for (unsigned job = 0; job < jobsThatLoaderTakesToAnswerWithModuleThatItHolds; ++job) {
+        JSPromise* next = JSPromise::create(vm, realm->promiseStructure());
+        turn->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), next);
+        turn = next;
+    }
+    return turn;
+}
+
 bool Modules::runBodyOfImportedModuleAheadOfMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -159,6 +189,34 @@ bool Modules::runBodyOfImportedModuleAheadOfMock(ModuleID module)
     evaluateSynchronously(module, SynchronousEvaluationReason::Require);
     RETURN_IF_EXCEPTION(scope, false);
     return true;
+}
+
+JSObject* Modules::packageItselfBesideMock(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || !isMocked(module) || isLeftAloneByMock(module))
+        return nullptr;
+    if (!hasRunItself(module)) {
+        if (hasBegunToLoad(module))
+            return nullptr;
+        VisitedModuleRecords seen;
+        bool isReady = readyForSyncExecution(module, seen);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!isReady)
+            return nullptr;
+        didEndMock(module);
+        evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+        willMock(module);
+        if (status(module) == ModuleStatus::Evaluated || status(module) == ModuleStatus::Failed)
+            m_modulesThatRanBesideMock.set(module.index());
+        if (scope.exception()) [[unlikely]] {
+            setAsideErrorOfModuleThatRanBesideMock(module);
+            return nullptr;
+        }
+    }
+    JSValue own = requireModuleItselfBesideMock(module);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return own ? own.getObject() : nullptr;
 }
 
 void Modules::runBodyOfRequiredFileAheadOfMock(ModuleID module)
@@ -244,9 +302,103 @@ void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
     }
 }
 
+void Modules::endMocksThatStoodForLoadsInFlightSlow()
+{
+    if (m_importsBehindFactoriesHaveYetToGoOn || !m_modulesWhoseFactoryRuns.isEmpty() || m_loadsInFlight.numberBeingLoaded())
+        return;
+    auto leadsToMockThatStands = [&](ModuleID root) {
+        BitVector reached = modulesThatLoadLeadsTo(root);
+        reached.filter(m_modulesWithMockThatStandsForLoadsInFlight);
+        return !reached.isEmpty();
+    };
+    for (ModuleID root : m_rootsOfImportsBehindFactories) {
+        if (leadsToMockThatStands(root))
+            return;
+    }
+    for (const TextThatWaits& text : textsThatWait()) {
+        if (leadsToMockThatStands(text.module))
+            return;
+    }
+    for (const TextOnItsWay& text : m_textsOnTheirWay) {
+        if (leadsToMockThatStands(text.module))
+            return;
+    }
+    for (size_t queued : m_modulesOfQueuedImports) {
+        if (leadsToMockThatStands(ModuleID(queued)))
+            return;
+    }
+    endMocksThatStandForLoadsInFlight();
+}
+
+void Modules::endMocksThatStandForLoadsInFlight()
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    SetForScope endsMocksThatStandForLoadsInFlight(m_endsMocksThatStandForLoadsInFlight, true);
+    m_importsBehindFactoriesHaveYetToGoOn = false;
+    while (!m_modulesWithMockThatStandsForLoadsInFlight.isEmpty()) {
+        endMockThatStandsForLoadsInFlight(ModuleID(*m_modulesWithMockThatStandsForLoadsInFlight.begin()));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+void Modules::endMockThatStandsForLoadsInFlight(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    SetForScope endsMocksThatStandForLoadsInFlight(m_endsMocksThatStandForLoadsInFlight, true);
+    m_modulesWithMockThatStandsForLoadsInFlight.clear(module.index());
+    bool anotherWaits = m_modulesWithMockToRun.get(module.index());
+    bool asksAgain = m_modulesWithMockThatAsksAgain.get(module.index());
+    bool wasLaidOverMockOfPreload = !m_modulesWhoseEndPutOffBringsNoMockOfPreloadBack.get(module.index());
+    m_modulesWhoseEndPutOffBringsNoMockOfPreloadBack.clear(module.index());
+    AOT::didEndMock(m_instance.globalObject, module, OriginalBehindEntryOfProgram::GoesWithPatch, wasLaidOverMockOfPreload);
+    scope.exception();
+    if (anotherWaits)
+        deferMock(module, asksAgain ? AfterFailure::AsksAgain : AfterFailure::KeepsError);
+}
+
+void Modules::didGoOnBehindFactories(ModuleID root)
+{
+    didGoOnBehindFactories();
+    auto numberOf = [&](const Vector<ModuleID, 2>& roots) { return std::ranges::count(roots, root); };
+    if (numberOf(m_rootsOfImportsThatHaveGoneOn) < numberOf(m_rootsOfImportsBehindFactories))
+        m_rootsOfImportsThatHaveGoneOn.append(root);
+}
+
+void Modules::didSettleImportBehindFactories(ModuleID root)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    m_rootsOfImportsBehindFactories.removeFirst(root);
+    if (!m_rootsOfImportsThatHaveGoneOn.removeFirst(root) || m_modulesWithMockThatStandsForLoadsInFlight.isEmpty() || m_loadsInFlight.numberBeingLoaded())
+        return;
+    BitVector taken = modulesThatLoadLeadsTo(root);
+    taken.filter(m_modulesWithMockThatStandsForLoadsInFlight);
+    for (ModuleID other : m_rootsOfImportsThatHaveGoneOn)
+        taken.exclude(modulesThatLoadLeadsTo(other));
+    for (const TextThatWaits& text : textsThatWait())
+        taken.exclude(modulesThatLoadLeadsTo(text.module));
+    for (const TextOnItsWay& text : m_textsOnTheirWay)
+        taken.exclude(modulesThatLoadLeadsTo(text.module));
+    for (size_t queued : m_modulesOfQueuedImports)
+        taken.exclude(modulesThatLoadLeadsTo(ModuleID(queued)));
+    for (size_t module : taken) {
+        endMockThatStandsForLoadsInFlight(ModuleID(module));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+bool Modules::haveLoadsInFlightTakenAnswerThatStandsOn(ModuleID mocked) const
+{
+    return !m_rootsOfImportsBehindFactories.containsIf([&](ModuleID root) {
+        if (fileOf(root) == fileOf(mocked))
+            return !namespaceIfCreated(root, ModulePhase::Evaluation);
+        return status(root) < ModuleStatus::Evaluated && modulesThatLoadLeadsTo(root).get(mocked.index());
+    });
+}
+
 void Modules::forgetMockThatWaits(ModuleID module)
 {
     m_modulesWithMockToRun.clear(module.index());
+    letGoOfNamespaceOfFileThatRanAheadOfMock(module);
     if (!m_modulesWithMockThatWaited.get(module.index()))
         return;
     m_modulesWithMockThatWaited.clear(module.index());
@@ -258,6 +410,10 @@ bool Modules::runMockThatWaitsSlow(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     MockDoor door(this, module, "runMock"_s);
+    if (standsForLoadsInFlight(module)) {
+        endMockThatStandsForLoadsInFlight(module);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     m_modulesWithMockToRun.clear(module.index());
     bool ranAlready = m_modulesWhoseFactoryRuns.set(module.index());
     bool factoryHasNotSettled = host().runMock(m_instance.globalObject, module);
@@ -272,7 +428,8 @@ bool Modules::runMockThatWaitsSlow(ModuleID module)
         }
         return false;
     }
-    m_importsMadeByOwnFactory.removeAll(module);
+    if (!factoryHasNotSettled)
+        m_importsMadeByOwnFactory.removeAll(module);
     return factoryHasNotSettled;
 }
 
@@ -415,6 +572,8 @@ bool Modules::runMocksBelowModuleThatLoaderFetchesSlow(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     MockDoor door(this, module, "the loader fetches it"_s);
+    if (m_mockWhoseOriginalIsEvaluated == module) [[unlikely]]
+        return false;
     evaluateModulesOwedBelow(module);
     RETURN_IF_EXCEPTION(scope, false);
     scope.release();
@@ -423,7 +582,16 @@ bool Modules::runMocksBelowModuleThatLoaderFetchesSlow(ModuleID module)
     bool isAskedForByImportCall = m_instance.vm->aotState().frameOfImportThatAsksLoader;
     if (isAskedForByImportCall)
         dropErrorOfMockKeptByLoader(module);
-    return runMocksBelow(module, !isAskedForByImportCall && isFetchedForImportStatement(module) ? RootOfLoad::IsImportedByStatement : RootOfLoad::BeginsLoad);
+    m_mocksWhoseFactoriesRanInsideTheirFetch.set(module.index(), m_modulesWithMockToRun.get(module.index()));
+    SetForScope moduleThatLoaderFetches(m_moduleThatLoaderFetches, loadOfFetch(module));
+    bool wasFetchedForStatement = m_modulesFetchedForStatementsBehindTurns.get(module.index());
+    m_modulesFetchedForStatementsBehindTurns.clear(module.index());
+    return runMocksBelow(module, wasFetchedForStatement || (!isAskedForByImportCall && isFetchedForImportStatement(module)) ? RootOfLoad::IsImportedByStatement : RootOfLoad::BeginsLoad);
+}
+
+void Modules::willFetchBehindTurn(ModuleID module)
+{
+    m_modulesFetchedForStatementsBehindTurns.set(module.index(), !m_instance.vm->aotState().frameOfImportThatAsksLoader && isFetchedForImportStatement(module));
 }
 
 bool Modules::mockFailedBehindImportStatement(ModuleID module)
@@ -481,6 +649,365 @@ static bool importsItselfByStatementsInTestRunFactories(const ModuleTable& table
     return false;
 }
 
+void Modules::letMockWaitBehindLateFailure(ModuleID module)
+{
+    leaveImportersAbove(module);
+    m_modulesWithMockToRun.set(module.index());
+    if (m_importsMadeByOwnFactory.removeAll(module) && !importsItselfByStatementsInTestRunFactories(m_table, module))
+        m_modulesOwedBesideMock.set(module.index());
+}
+
+bool Modules::isOriginalLeftToHost(ModuleID mocked, const BitVector& held)
+{
+    if (!data(mocked).isESModuleOfProgram() || data(mocked).isFaceOfFile() || !host().evaluateOriginalOfMock)
+        return true;
+    BitVector seen(m_table.size());
+    seen.quickSet(mocked.index());
+    Vector<ModuleID, 16> work { mocked };
+    while (!work.isEmpty()) {
+        for (uint32_t number : m_table.evaluationRequests(work.takeLast())) {
+            ModuleID imported(number);
+            if (held.quickGet(number) || imported == mocked)
+                continue;
+            if (hasMockThatWaitsOrRuns(fileOf(imported)) || m_modulesWithMockToRun.get(imported.index()))
+                return true;
+            if (!seen.quickSet(number) && status(imported) <= ModuleStatus::Linked && !isMocked(imported))
+                work.append(imported);
+        }
+    }
+    return false;
+}
+
+JSObject* Modules::originalThatLoaderHolds(ModuleID mocked)
+{
+    ModuleRegistryEntry* entry = loader()->registryEntry(Identifier::fromString(*m_instance.vm, makeString(m_table.pathText(mocked), "?actual"_s)));
+    auto* record = entry && entry->record() ? dynamicDowncast<CyclicModuleRecord>(entry->record()) : nullptr;
+    if (!record || record->status() != CyclicModuleRecord::Status::Evaluated || record->evaluationError())
+        return nullptr;
+    return record->getModuleNamespace(m_instance.globalObject);
+}
+
+auto Modules::runOriginalInSweep(ModuleID mocked) -> OriginalInSweep
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (hasRunItself(mocked) || hasBegunToLoad(mocked))
+        return OriginalInSweep::HasRun;
+    bool hasFactory = false;
+    JSPromise* evaluation;
+    {
+        SetForScope mockWhoseOriginalIsEvaluated(m_mockWhoseOriginalIsEvaluated, mocked);
+        evaluation = host().evaluateOriginalOfMock(m_instance.globalObject, mocked, hasFactory);
+    }
+    for (ImportersEnteredAboveMock& each : m_importersEnteredAboveMocks) {
+        if (each.mocked == mocked)
+            endPassing(each);
+    }
+    RETURN_IF_EXCEPTION(scope, OriginalInSweep::HasFailed);
+    if (!evaluation)
+        return OriginalInSweep::IsLeftToHost;
+    evaluation->markAsHandled();
+    if (evaluation->status() == JSPromise::Status::Rejected) {
+        throwException(m_instance.globalObject, scope, evaluation->result());
+        return OriginalInSweep::HasFailed;
+    }
+    if (!hasFactory && evaluation->status() == JSPromise::Status::Fulfilled) {
+        bool hasNotSettled = runMockThatWaits(mocked);
+        RETURN_IF_EXCEPTION(scope, OriginalInSweep::HasFailed);
+        if (!hasNotSettled)
+            leaveImportersAbove(mocked);
+        return OriginalInSweep::HasRun;
+    }
+    for (ImportersEnteredAboveMock& each : m_importersEnteredAboveMocks) {
+        if (each.mocked == mocked)
+            each.original = Strong<JSPromise>(vm, evaluation);
+    }
+    return OriginalInSweep::HasRun;
+}
+
+bool Modules::sweepAheadOfFactories(ModuleID root)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    struct Entered {
+        ModuleID module;
+        ModuleNumbers requests;
+        size_t next { 0 };
+        Vector<ModuleID, 4> finished { };
+        bool isHeld { false };
+    };
+    SetForScope rootWhoseLoadIsSwept(m_rootWhoseLoadIsSwept, root);
+    SetForScope moduleThatImportAsksFor(m_moduleThatImportAsksFor, ModuleID());
+    SetForScope stateOfWaitOfImportThatAsks(m_stateOfWaitOfImportThatAsks, JSValue());
+    SetForScope moduleThatProgramImportsNow(m_moduleThatProgramImportsNow, std::nullopt);
+    SetForScope moduleThatLoaderFetches(m_moduleThatLoaderFetches, std::nullopt);
+    BitVector seen(m_table.size());
+    BitVector held(m_table.size());
+    BitVector isOnPath(m_table.size());
+    seen.quickSet(root.index());
+    isOnPath.quickSet(root.index());
+    Vector<Entered, 16> path { Entered { root, m_table.evaluationRequests(root) } };
+
+    auto evaluateNow = [&](ModuleID module) {
+        if (status(module) <= ModuleStatus::Linked) {
+            JSPromise* evaluation = evaluate(module, std::nullopt, nullptr, nullptr);
+            RETURN_IF_EXCEPTION(scope, false);
+            evaluation->markAsHandled();
+        }
+        return status(module) != ModuleStatus::Failed;
+    };
+    auto holdPath = [&] {
+        for (Entered& each : path) {
+            each.isHeld = true;
+            held.quickSet(each.module.index());
+        }
+        for (ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
+            if (above.root == root)
+                above.entered.merge(held);
+        }
+        for (size_t index = 0; index < path.size(); ++index) {
+            for (ModuleID finished : std::exchange(path[index].finished, { })) {
+                bool hasRun = evaluateNow(finished);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!hasRun)
+                    return false;
+            }
+        }
+        return true;
+    };
+    auto fail = [&] {
+        leaveImportersWhere([&](const ImportersEnteredAboveMock& above) { return above.root == root; });
+        return false;
+    };
+    bool hasPassedMock = false;
+    auto endsBehindMockThatWasPassed = [&](std::optional<ModuleID> mockNotReached) {
+        if (!hasPassedMock || (scope.exception() && !scope.tryClearException()))
+            return false;
+        if (mockNotReached)
+            leaveImportersWhere([&](const ImportersEnteredAboveMock& above) { return above.root == root && above.mocked == *mockNotReached; });
+        return true;
+    };
+    auto noteMock = [&](ModuleID mocked) {
+        if (m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == mocked && above.root == root; }))
+            return false;
+        size_t ofAnotherLoad = m_importersEnteredAboveMocks.findIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == mocked && above.original; });
+        Strong<JSPromise> original = ofAnotherLoad == notFound ? Strong<JSPromise>() : m_importersEnteredAboveMocks[ofAnotherLoad].original;
+        m_importersEnteredAboveMocks.append({ mocked, root, BitVector(m_table.size()), BitVector(m_table.size()), WTF::move(original) });
+        return true;
+    };
+
+    if (needsOriginalAheadOfFactory(root)) {
+        if (isOriginalLeftToHost(root, held) || !noteMock(root))
+            return true;
+        OriginalInSweep original = runOriginalInSweep(root);
+        EXCEPTION_ASSERT(!scope.exception() || original == OriginalInSweep::HasFailed);
+        return original == OriginalInSweep::HasFailed ? fail() : true;
+    }
+    while (!path.isEmpty()) {
+        if (path.last().next == path.last().requests.size()) {
+            Entered finished = path.takeLast();
+            isOnPath.quickClear(finished.module.index());
+            if (path.isEmpty() || finished.isHeld)
+                continue;
+            if (!path.last().isHeld) {
+                path.last().finished.append(finished.module);
+                continue;
+            }
+            bool hasRun = evaluateNow(finished.module);
+            if (scope.exception())
+                return fail();
+            if (!hasRun)
+                break;
+            continue;
+        }
+        ModuleID imported(path.last().requests[path.last().next++]);
+        bool isSeen = seen.quickSet(imported.index());
+        if (needsOriginalAheadOfFactory(imported)) {
+            noteMock(imported);
+            bool hasRun = holdPath();
+            if (scope.exception())
+                return fail();
+            if (!hasRun) {
+                if (endsBehindMockThatWasPassed(imported))
+                    break;
+                return fail();
+            }
+            if (!needsOriginalAheadOfFactory(imported)) {
+                fail();
+                RELEASE_AND_RETURN(scope, sweepAheadOfFactories(root));
+            }
+            if (isOriginalLeftToHost(imported, held))
+                break;
+            bool hasBeenEvaluated = m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == imported && above.original; });
+            OriginalInSweep original = hasBeenEvaluated ? OriginalInSweep::HasRun : runOriginalInSweep(imported);
+            EXCEPTION_ASSERT(!scope.exception() || original == OriginalInSweep::HasFailed);
+            if (original == OriginalInSweep::IsLeftToHost)
+                break;
+            if (original == OriginalInSweep::HasFailed) {
+                if (endsBehindMockThatWasPassed(imported))
+                    break;
+                return fail();
+            }
+            hasPassedMock = true;
+            continue;
+        }
+        if (isSeen) {
+            if (!held.quickGet(imported.index()) || isOnPath.quickGet(imported.index()))
+                continue;
+            bool hasRun = holdPath();
+            if (scope.exception())
+                return fail();
+            if (!hasRun) {
+                if (endsBehindMockThatWasPassed(std::nullopt))
+                    break;
+                return fail();
+            }
+            continue;
+        }
+        if (status(imported) == ModuleStatus::Failed) {
+            if (path.last().isHeld)
+                break;
+            path.last().finished.append(imported);
+            continue;
+        }
+        if (isMocked(imported) || status(imported) > ModuleStatus::Linked || !data(imported).isESModuleOfProgram())
+            continue;
+        isOnPath.quickSet(imported.index());
+        path.append(Entered { imported, m_table.evaluationRequests(imported) });
+    }
+    for (ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks)
+        endPassing(above);
+    return true;
+}
+
+bool Modules::loadWaitsForOriginalBelow(ModuleID root) const
+{
+    return m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) {
+        return above.root == root && above.original && (!above.loadHasWaitedForOriginal || above.original->status() == JSPromise::Status::Pending);
+    });
+}
+
+JSPromise* Modules::originalThatLoadWaitsForBelow(ModuleID root)
+{
+    JSPromise* original = nullptr;
+    for (ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
+        if (above.root != root || !above.original)
+            continue;
+        bool isUnderWay = above.original->status() == JSPromise::Status::Pending;
+        if ((isUnderWay || !above.loadHasWaitedForOriginal) && (!original || isUnderWay))
+            original = above.original.get();
+        above.loadHasWaitedForOriginal = true;
+    }
+    return original;
+}
+
+void Modules::evaluateImportersBehindModuleThatHasRun(ModuleID module, BitVector& seen)
+{
+    if (m_importersEnteredAboveMocks.isEmpty() || m_evaluatesImportersBehindModulesThatHaveRun || m_rootWhoseLoadIsSwept) [[likely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    SetForScope evaluatesImporters(m_evaluatesImportersBehindModulesThatHaveRun, true);
+    BitVector importers(m_table.size());
+    for (ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
+        endPassing(above);
+        importers.merge(above.entered);
+    }
+    seen.ensureSize(m_table.size());
+    Vector<ModuleID, 16> work { module };
+    while (!work.isEmpty()) {
+        ModuleID next = work.takeLast();
+        if (seen.quickSet(next.index()) || isMocked(next))
+            continue;
+        if (status(next) > ModuleStatus::Linked) {
+            ModuleNumbers requests = m_table.evaluationRequests(next);
+            for (size_t index = requests.size(); index--;)
+                work.append(ModuleID(requests[index]));
+            continue;
+        }
+        if (!importers.quickGet(next.index()))
+            continue;
+        JSPromise* evaluation = evaluate(next, std::nullopt, nullptr, nullptr);
+        RETURN_IF_EXCEPTION(scope, void());
+        evaluation->markAsHandled();
+    }
+}
+
+void Modules::evaluateImportersBehindModuleThatHasRun(ModuleID module, ModuleID root, const ModuleEvaluationStack& stack, BitVector& seen)
+{
+    bool passesImporters = m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) {
+        return isWalkOfOriginal(above.mocked, root, stack);
+    });
+    if (!passesImporters)
+        evaluateImportersBehindModuleThatHasRun(module, seen);
+}
+
+bool Modules::isHeldBySweepUnderWay(ModuleID module) const
+{
+    return m_rootWhoseLoadIsSwept && m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) {
+        return above.root == m_rootWhoseLoadIsSwept && above.entered.quickGet(module.index());
+    });
+}
+
+bool Modules::isWalkOfOriginal(ModuleID mocked, ModuleID root, const ModuleEvaluationStack& stack) const
+{
+    if (root == mocked)
+        return true;
+    return stack.containsIf([&](AbstractModuleRecord* record) {
+        return originalNamedBy(record->moduleKey()) == mocked;
+    });
+}
+
+bool Modules::passImporterEnteredAboveMock(ModuleID module, ModuleID root, const ModuleEvaluationStack& stack)
+{
+    if (m_importersEnteredAboveMocks.isEmpty() || status(module) != ModuleStatus::Linked) [[likely]]
+        return false;
+    for (ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
+        bool isMockOfOriginalUnderWay = module == above.mocked && m_mockWhoseOriginalIsEvaluated == module;
+        if (!isMockOfOriginalUnderWay && (!above.entered.quickGet(module.index()) || (above.root != m_rootWhoseLoadIsSwept && !isWalkOfOriginal(above.mocked, root, stack))))
+            continue;
+        above.passed.quickSet(module.index());
+        setStatus(module, ModuleStatus::Evaluating);
+        if (ModuleRecord* record = recordIfExists(module))
+            record->setEvaluationStack(nullptr);
+        return true;
+    }
+    return false;
+}
+
+void Modules::endPassing(ImportersEnteredAboveMock& above)
+{
+    for (size_t importer : above.passed) {
+        if (status(ModuleID(importer)) == ModuleStatus::Evaluating)
+            setStatus(ModuleID(importer), ModuleStatus::Linked);
+    }
+    above.passed.clearAll();
+}
+
+template<typename Matches>
+void Modules::leaveImportersWhere(const Matches& matches)
+{
+    m_importersEnteredAboveMocks.removeAllMatching([&](ImportersEnteredAboveMock& above) {
+        if (!matches(above))
+            return false;
+        endPassing(above);
+        return true;
+    });
+}
+
+void Modules::leaveImportersAbove(ModuleID mocked)
+{
+    if (!m_importersEnteredAboveMocks.isEmpty()) [[unlikely]]
+        leaveImportersWhere([&](const ImportersEnteredAboveMock& above) { return above.mocked == mocked; });
+}
+
+void Modules::didBeginWalkOnEmptyStack(ModuleID root)
+{
+    if (m_importersEnteredAboveMocks.isEmpty()) [[likely]]
+        return;
+    leaveImportersWhere([&](const ImportersEnteredAboveMock& above) { return above.root == root; });
+    for (ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks)
+        endPassing(above);
+}
+
 bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
@@ -491,6 +1018,10 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
     }
     if (!m_endedMocks.isEmpty()) [[unlikely]]
         linkAnewWhoeverReadsEndedMockBelow(root);
+    if (!m_modulesLoadedAnewWhoseNamesAreOwed.isEmpty()) [[unlikely]] {
+        checkRequiredNamesOfModulesLoadedAnewBelow(root);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     if (m_modulesWithMockToRun.isEmpty()) [[likely]]
         return false;
     MocksBelowRoot mocks = mocksBelow(root);
@@ -500,11 +1031,19 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
     if (!mayComeToOne)
         return false;
     std::optional<ModuleID> fileOfRoot = m_table.fileBehindFace(root);
+    bool walksInFrontOfMocks = rootOfLoad == RootOfLoad::BeginsLoad && m_modulesWhoseFactoryRuns.isEmpty() && !m_evaluatesSynchronously && !m_rootWhoseLoadIsSwept && !vm.aotState().requireRunsMocks && !vm.synchronousModuleQueue();
+    bool hasCalledOrdinaryFactories = !walksInFrontOfMocks;
+    bool hasPutMockAside = false;
     BitVector reached(m_table.size());
     Vector<ModuleID, 32> work { root };
-    while (!work.isEmpty()) {
+    while (!work.isEmpty() || std::exchange(hasPutMockAside, false)) {
+        if (work.isEmpty()) {
+            hasCalledOrdinaryFactories = true;
+            reached.clearAll();
+            work.append(root);
+        }
         ModuleID module = work.takeLast();
-        if (reached.quickSet(module.index()))
+        if (reached.quickSet(module.index()) || isHeldBySweepUnderWay(module) || m_mockWhoseOriginalIsEvaluated == module)
             continue;
         bool isImportedByStatement = (module != root && module != fileOfRoot) || rootOfLoad == RootOfLoad::IsImportedByStatement;
         JSValue kept = errorOfLoadEndedByMock(module);
@@ -520,8 +1059,26 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
             throwException(m_instance.globalObject, scope, kept);
             return false;
         }
-        if (m_modulesWithMockToRun.get(module.index()) && (isImportedByStatement || !m_modulesOwedBesideMock.get(module.index()))) {
+        bool runsMock = m_modulesWithMockToRun.get(module.index()) && !standsForLoadsInFlight(module) && (isImportedByStatement || !m_modulesOwedBesideMock.get(module.index()));
+        bool isPutAside = runsMock && isImportedByStatement && !hasCalledOrdinaryFactories && m_modulesWithMockThatAsksAgain.get(module.index());
+        hasPutMockAside |= isPutAside;
+        if (runsMock && !isPutAside) {
+            if (walksInFrontOfMocks && m_modulesWithMockThatAsksAgain.get(module.index())) {
+                bool hasRun = sweepAheadOfFactories(root);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!hasRun)
+                    return false;
+                if (loadWaitsForOriginalBelow(root))
+                    return true;
+                if (!m_modulesWithMockToRun.get(module.index())) {
+                    reached.quickClear(module.index());
+                    work.append(module);
+                    continue;
+                }
+            }
             bool factoryHasNotSettled = runMockThatWaits(module);
+            if (!factoryHasNotSettled)
+                leaveImportersAbove(module);
             if (Exception* exception = scope.exception()) [[unlikely]] {
                 if (vm.isTerminationException(exception) || m_modulesWithMockThatAsksAgain.get(module.index()))
                     return false;
@@ -535,35 +1092,67 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
             if (factoryHasNotSettled)
                 return true;
         }
-        if (isMocked(module))
+        if (isMocked(module) && !isPutAside && (module != root || !mocks.rootRunsBesideItsMock()))
             continue;
         for (const ModuleRequestData& request : m_table.requests(module) | std::views::reverse) {
-            if (!request.isHoisted && (!request.isRequire || data(module).isFaceOfFile()) && seesMockOf(moduleLoadedBy(request), module) && !keepsMockThatStandsWhileAnotherWaits(moduleLoadedBy(request), module))
+            if (!request.isHoisted && (!request.isRequire || data(module).isFaceOfFile()) && seesMockOf(moduleLoadedBy(request), module) && !keepsMockThatStandsWhileAnotherWaits(moduleLoadedBy(request), module) && (data(module).isFaceOfFile() || !keepsEndedMockWhereItIsAskedForAgain(fileOf(moduleLoadedBy(request)), module)))
                 work.append(moduleLoadedBy(request));
         }
     }
     return false;
 }
 
+BitVector Modules::modulesThatLoadLeadsTo(ModuleID root) const
+{
+    BitVector reached(m_table.size());
+    bool rootRunsBesideItsMock = mocksBelow(root).rootRunsBesideItsMock();
+    Vector<ModuleID, 32> work { root };
+    while (!work.isEmpty()) {
+        ModuleID next = work.takeLast();
+        if (reached.quickSet(next.index()) || (isMocked(next) && !needsOriginalAheadOfFactory(next) && (next != root || !rootRunsBesideItsMock)))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(next)) {
+            if (!request.isHoisted && seesMockOf(moduleLoadedBy(request), next))
+                work.append(moduleLoadedBy(request));
+        }
+    }
+    return reached;
+}
+
+std::optional<ModuleID> Modules::loadOfFetch(ModuleID fetched)
+{
+    ModuleID file = fileOf(fetched);
+    bool isOrWillBeMocked = isMocked(fetched) || isMocked(file) || m_modulesWithMockToRun.get(fetched.index()) || m_modulesWithMockToRun.get(file.index());
+    return isOrWillBeMocked ? std::nullopt : std::optional(file);
+}
+
+JSPromise* Modules::factoryThatFetchWaitsFor(ModuleID fetched, JSValue& state)
+{
+    SetForScope moduleThatLoaderFetches(m_moduleThatLoaderFetches, loadOfFetch(fetched));
+    return factoryThatWaitsBelow(fetched, FactoryAskedForBy::Loader, state);
+}
+
+bool Modules::tellHostOfRequire(ModuleID required)
+{
+    if (!m_hasBegunTestFile) [[likely]]
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+    JSValue state;
+    JSPromise* factory = factoryThatWaitsBelow(required, FactoryAskedForBy::Require, state);
+    scope.assertNoExceptionExceptTermination();
+    return factory;
+}
+
 JSPromise* Modules::factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy askedBy, JSValue& state)
 {
+    if (JSPromise* original = originalThatLoadWaitsForBelow(root)) [[unlikely]]
+        return original;
     if (!host().factoryThatWaits)
         return nullptr;
     std::optional<BitVector> reached;
     return host().factoryThatWaits(m_instance.globalObject, [&](ModuleID module) {
-        if (!reached) {
-            reached.emplace(m_table.size());
-            Vector<ModuleID, 32> work { root };
-            while (!work.isEmpty()) {
-                ModuleID next = work.takeLast();
-                if (reached->quickSet(next.index()) || isMocked(next))
-                    continue;
-                for (const ModuleRequestData& request : m_table.requests(next)) {
-                    if (!request.isHoisted)
-                        work.append(moduleLoadedBy(request));
-                }
-            }
-        }
+        if (!reached)
+            reached = modulesThatLoadLeadsTo(root);
         return reached->quickGet(module.index());
     }, askedBy, state);
 }
@@ -577,6 +1166,15 @@ void runBodyOfRequiredFileAheadOfMock(JSGlobalObject* realm, ModuleID module)
     modules->runBodyOfRequiredFileAheadOfMock(module);
 }
 
+JSObject* packageItselfBesideMock(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    if (!modules)
+        return nullptr;
+    MockDoor door(modules, module, "packageItselfBesideMock"_s);
+    return modules->packageItselfBesideMock(module);
+}
+
 bool runBodyOfImportedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -584,17 +1182,55 @@ bool runBodyOfImportedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module)
     return modules && modules->runBodyOfImportedModuleAheadOfMock(module);
 }
 
+JSPromise* evaluationUnderWay(JSGlobalObject* realm, ModuleID module, bool hasWaitedForTurn)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->evaluationUnderWay(module, hasWaitedForTurn) : nullptr;
+}
+
 bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, "the mock call"_s);
-    if (modules) {
-        modules->forgetLoadThatFailed(module);
-        modules->countMocksAnewBehindLoad(module);
-        modules->noteCallOfMock(module);
-        modules->dropErrorsOfLoadsEndedByMockOf(module);
-    }
-    return modules && modules->runBodyOfLinkedModuleAheadOfMock(module);
+    if (!modules)
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    if (modules->standsForLoadsInFlight(module))
+        modules->endMocksThatStandForLoadsInFlight();
+    RETURN_IF_EXCEPTION(scope, false);
+    modules->endMocksThatStoodForLoadsInFlight();
+    RETURN_IF_EXCEPTION(scope, false);
+    modules->forgetLoadThatFailed(module);
+    modules->countMocksAnewBehindLoad(module);
+    modules->noteCallOfMock(module);
+    modules->dropErrorsOfLoadsEndedByMockOf(module);
+    RELEASE_AND_RETURN(scope, modules->runBodyOfLinkedModuleAheadOfMock(module));
+}
+
+void letMockStandForLoadsInFlight(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    MockDoor door(modules, module, "the mock is gone behind its factory"_s);
+    if (modules && modules->mockInPlace(module))
+        modules->letMockStandForLoadsInFlight(module);
+}
+
+bool standsForLoadsInFlight(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->standsForLoadsInFlight(module);
+}
+
+bool isImportHeld(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isImportHeld(module);
+}
+
+void endMocksThatStoodForLoadsInFlight(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->endMocksThatStoodForLoadsInFlight();
 }
 
 void dropErrorsOfLoadsEndedByMocks(JSGlobalObject* realm)
@@ -628,7 +1264,19 @@ void layMocksAgainAtNextLoad(JSGlobalObject* realm, ModuleID module, bool waits)
 JSPromise* factoryThatWaitsBelow(JSGlobalObject* realm, ModuleID module, JSValue& state)
 {
     Modules* modules = modulesOf(realm);
-    return modules ? modules->factoryThatWaitsBelow(module, FactoryAskedForBy::Loader, state) : nullptr;
+    return modules ? modules->factoryThatFetchWaitsFor(module, state) : nullptr;
+}
+
+void willFetchBehindTurn(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->willFetchBehindTurn(module);
+}
+
+void fetchDidGoOnBehindFactory(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->didGoOnBehindFactories();
 }
 
 bool mockFailedBehindImportStatement(JSGlobalObject* realm, ModuleID module)

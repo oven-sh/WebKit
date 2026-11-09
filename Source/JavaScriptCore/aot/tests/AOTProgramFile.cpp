@@ -367,6 +367,22 @@ static Program::OwnedBytes readInPieces(const String& path)
     return bytes;
 }
 
+static void takeOptionsWrittenBehindProgram(ProgramFile& file)
+{
+    std::span<const uint8_t> bytes = file.bytes.span();
+    if (bytes.size() < sizeof(Wire::Header))
+        return;
+    size_t sizeOfProgram = reinterpretCastSpanStartTo<Wire::Header>(bytes).sizeInBytes;
+    if (bytes.size() < sizeOfProgram || bytes.size() - sizeOfProgram != sizeof(Wire::CompileOptions))
+        return;
+    Wire::CompileOptions options;
+    memcpySpan(asMutableByteSpan(options), bytes.subspan(sizeOfProgram));
+    if (options.size != sizeof(Wire::CompileOptions))
+        return;
+    file.bytes.realloc(sizeOfProgram);
+    file.options = options;
+}
+
 std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& errors)
 {
     Program::OwnedBytes bytes = readInPieces(path);
@@ -378,8 +394,10 @@ std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& erro
     ProgramFile file;
     file.bytes = WTF::move(bytes);
     file.kind = programKindOf(file.bytes.span());
-    if (file.kind == ProgramFile::Kind::Bytes)
+    if (file.kind == ProgramFile::Kind::Bytes) {
+        takeOptionsWrittenBehindProgram(file);
         return file;
+    }
 
     if (!StringImpl::isValidLength<char16_t>(file.bytes.sizeInBytes())) {
         errors.println(path, " is too large for IR text");

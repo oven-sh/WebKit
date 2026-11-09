@@ -1,5 +1,5 @@
-# By its rows the iteration of a Map hands out entries: each step through the table makes the pair of key and value. The pair meets what the protocol hands out, so the pattern is the one operation that takes a pattern apart.
-# No test stands in front of it: in a loop its own code reads a list as lists are made in line: machine/pattern-in-a-loop-reads-a-list-in-line.ir.
+# By its rows the iteration of a Map hands out entries. Where one pattern of two elements alone takes them, the step through the table makes no pair: key and value go on beside what the protocol hands out,
+# and the pattern asks in its own place what the step asks: the Map: the two parts; anything else: the one operation that takes a pattern apart.
 # function each(map: Map<string, number>) { for (const [key, value] of map) keep(key, value); }
 # RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
 # CHECK-LABEL: code f1:Body
@@ -8,8 +8,11 @@
 # CHECK: [[found]]: {{*}} = MapNext {{*}}, [[table]], [[entry]]
 # CHECK: [[key]]: {{*}} = ResultAt [[found]] index=2
 # CHECK: [[value]]: {{*}} = ResultAt [[found]] index=3
-# CHECK: = NewArray [[key]], [[value]] contents=anything
+# CHECK: Jump -> next {{*}}, [[key]], [[value]])
+# CHECK: = TypeTest {{*}} testedType=Map
 # CHECK: = DestructureIterable {{*}} count=2 [readsListsByIndex]
+# RUN(NOPAIR): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# NOPAIR-NOT: = NewArray
 # RUN(ALONE): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
 # ALONE-NOT: builtinClass=Array
 # ALONE-NOT: = GetArrayElement

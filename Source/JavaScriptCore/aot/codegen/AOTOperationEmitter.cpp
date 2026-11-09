@@ -49,7 +49,7 @@ FieldAccess OperationEmitter::fieldAccessFor(PropertyKeyID key, LayoutSetID rece
 
 ValueID OperationEmitter::definitionOf(ValueID id) const
 {
-    while (id && (opcodeOf(id) == Opcode::Narrowed || opcodeOf(id) == Opcode::AssumeType))
+    while (id && opcodeOf(id) == Opcode::Narrowed)
         id = operationAt(id).valueOperand();
     return id;
 }
@@ -213,8 +213,12 @@ Word32 OperationEmitter::identifierNumber(PropertyKeyID key)
 
 std::optional<Vector<uint32_t, 12>> OperationEmitter::modulesAndPositionsOf(const OperationContext& context) const
 {
+    return modulesAndPositionsOf(context.origin());
+}
+
+std::optional<Vector<uint32_t, 12>> OperationEmitter::modulesAndPositionsOf(Origin origin) const
+{
     std::optional<Vector<uint32_t, 12>> places { std::in_place };
-    Origin origin = context.origin();
     auto frame = origin.inlineFrame;
     auto position = origin.position;
     while (true) {
@@ -249,9 +253,14 @@ std::optional<Pointer> OperationEmitter::siteCacheAddress(const OperationContext
 
 std::optional<NumberedImmediate> OperationEmitter::answersAtSite(const OperationContext& context, PropertyKeyID key, SiteUse use)
 {
+    return answersAtSite(context.origin(), key, use);
+}
+
+std::optional<NumberedImmediate> OperationEmitter::answersAtSite(Origin origin, PropertyKeyID key, SiteUse use)
+{
     if (liesInThread(key))
         return std::nullopt;
-    std::optional<Vector<uint32_t, 12>> places = modulesAndPositionsOf(context);
+    std::optional<Vector<uint32_t, 12>> places = modulesAndPositionsOf(origin);
     if (!places)
         return std::nullopt;
     return NumberedImmediate { m_mentions.siteCache(WTF::move(*places), key, MentionList::firstUseOfSiteAnswers + static_cast<uint32_t>(use)) };

@@ -483,42 +483,9 @@ CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, s
     return join.finish();
 }
 
-void CellAllocationEmitter::copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied)
-{
-    CodeGenerator::InitializationScope scope(generator());
-    LValue end = m_out.shl(zeroExtended(count).value(), 3);
-    ValueFromBlock start = m_out.anchor(m_out.intPtrZero);
-    m_out.jump(copyLoop);
-
-    m_out.appendTo(copyLoop);
-    LValue offset = m_out.phi(Machine::pointerType(), start);
-    m_out.branch(m_out.below(offset, end), normalEdge(copyElement), normalEdge(copied));
-
-    m_out.appendTo(copyElement);
-    LValue element = m_out.load64(TypedPointer(m_heaps.argumentBuffer, m_out.add(buffer.value(), offset)));
-    m_out.store64(element, TypedPointer(m_heaps.indexedContiguousProperties.atAnyIndex(), m_out.add(butterfly.value(), offset)));
-    m_out.addIncomingToPhi(offset, m_out.anchor(m_out.add(offset, m_out.intPtrEight)));
-    m_out.jump(copyLoop);
-
-    m_out.appendTo(copied);
-}
-
 CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& context, Word32 count, Pointer buffer)
 {
-    LBasicBlock slowPath = newBlock();
-    LBasicBlock copyLoop = newBlock();
-    LBasicBlock copyElement = newBlock();
-    LBasicBlock copied = newBlock();
-    Join<CellPointer> join(m_out);
-    auto [array, butterfly] = allocateArray(context, count, bitOr(count, word32(1)), ArrayWithContiguous, slowPath);
-    copyFromBuffer(count, buffer, butterfly, copyLoop, copyElement, copied);
-    emitter<BarrierEmitter>().fenceAfterInitialization(context);
-    join.add(array);
-
-    m_out.appendTo(slowPath);
-    Word32 countOrCapacityOfEmptyArray = select(isZero(count), 1 << capacityShiftInArrayLiteralCount, count);
-    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArray, { countOrCapacityOfEmptyArray, buffer }, { .isOnRarePath = true }));
-    return join.finish();
+    return CellPointer(callStub(context, AOT::newArrayFromBuffer(), { count.value(), buffer.value() }).first);
 }
 
 } } } // namespace JSC::AOT::Typed

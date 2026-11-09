@@ -1,0 +1,110 @@
+# The ramp of an async function makes its promise, and no code of the program has seen it when the call returns: it is as its class makes it, so `work().catch(f)` takes the row of Promise.prototype.catch
+# function run() { work().catch(() => {}); }
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallDirect
+# CHECK: inlineBuiltin=PromiseCatch
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: key="catch"
+# what `then` gives is as made too
+# function chain() { work().then(() => {}).catch(() => {}); }
+# RUN(CHAIN): walk f3 mechanisms=all
+# CHAIN-LABEL: code f3:Body
+# CHAIN: inlineBuiltin=PromiseThen
+# CHAIN: inlineBuiltin=PromiseCatch
+# whoever is handed the promise may lay a member on it
+# function handed(g) { const p = work(); g(p); p.catch(() => {}); }
+# RUN(HANDED): walk f4 mechanisms=all
+# HANDED-NOT: inlineBuiltin=PromiseCatch
+# other code that runs between may reach it by a listener of rejections that nobody handles
+# function between(g) { const p = work(); g(); p.catch(() => {}); }
+# RUN(BETWEEN): walk f5 mechanisms=all
+# BETWEEN-NOT: inlineBuiltin=PromiseCatch
+# a store on the promise itself
+# function stored(g) { const p = work(); p.then = g; p.catch(() => {}); }
+# RUN(STORED): walk f6 mechanisms=all
+# STORED-NOT: inlineBuiltin=PromiseCatch
+
+variable g0 name="work" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f4
+    v5 = NewClosure function=f5
+    v6 = NewClosure function=f6
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="work" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = Await v0
+    v2 = Integer integer=1
+    Return v2
+}
+function f2 name="run" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0, - calleeName="work"
+    v2 = PropGet v1 key="catch"
+    v3 = NewClosure function=f7
+    v4 = Call v2, v1, v3 calleeKey="catch" calleeName="catch"
+    v5 = Undefined
+    Return v5
+}
+function f3 name="chain" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0, - calleeName="work"
+    v2 = PropGet v1 key="then"
+    v3 = NewClosure function=f7
+    v4 = Call v2, v1, v3 calleeKey="then" calleeName="then"
+    v5 = PropGet v4 key="catch"
+    v6 = NewClosure function=f7
+    v7 = Call v5, v4, v6 calleeKey="catch" calleeName="catch"
+    v8 = Undefined
+    Return v8
+}
+function f4 name="handed" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, - calleeName="work"
+    v3 = Call v0, -, v2 calleeName="g"
+    v4 = PropGet v2 key="catch"
+    v5 = NewClosure function=f7
+    v6 = Call v4, v2, v5 calleeKey="catch" calleeName="catch"
+    v7 = Undefined
+    Return v7
+}
+function f5 name="between" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, - calleeName="work"
+    v3 = Call v0, - calleeName="g"
+    v4 = PropGet v2 key="catch"
+    v5 = NewClosure function=f7
+    v6 = Call v4, v2, v5 calleeKey="catch" calleeName="catch"
+    v7 = Undefined
+    Return v7
+}
+function f6 name="stored" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, - calleeName="work"
+    PropSet v2, v0 key="then"
+    v4 = PropGet v2 key="catch"
+    v5 = NewClosure function=f7
+    v6 = Call v4, v2, v5 calleeKey="catch" calleeName="catch"
+    v7 = Undefined
+    Return v7
+}
+function f7 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

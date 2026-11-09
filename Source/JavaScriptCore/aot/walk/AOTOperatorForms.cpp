@@ -385,6 +385,8 @@ static OperatorForm chooseToStringForm(const OperandOfForm& operand)
         bool mayBeNumber = !operand.hasObjects() && operand.primitives & Primitive::Number;
         return mayBeNumber ? OperatorForm::MayBeStringOrNumber : OperatorForm::MayBeString;
     }
+    if (operand.primitives & Primitive::Number && operand.hasOnlyPrimitives(Primitive::Number | Primitive::BigInt))
+        return OperatorForm::MayBeStringOrNumber;
     if (operand.isNumberOrNullish())
         return OperatorForm::NullableNumber;
     return OperatorForm::Generic;

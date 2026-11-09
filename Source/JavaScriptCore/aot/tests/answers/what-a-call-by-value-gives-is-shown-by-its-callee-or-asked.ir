@@ -6,10 +6,10 @@
 # A call by value is typed with the result of the function that its callee is believed to be. Whoever is really entered returns under his own door, not under the believed one's.
 # So the result is shown to be what the function hands back that the callee is SHOWN to be: `mine` is made on the spot: nothing is asked. `pick` comes out of a variable, which is only claimed: the result is asked where it comes back, and a misfit stops by name.
 # RUN(CLAIMED): walk f1 mechanisms=all
-# CLAIMED: [[got]]: i32 @JSValue = CallList
-# CLAIMED-NEXT: CheckProof [[got]] checkedType=i32 {{*}} source=ResultOfOtherCall
+# CLAIMED: [[got]]: int[0, 2147483647] @JSValue = CallList
+# CLAIMED-NEXT: CheckProof [[got]] checkedType=int[0, 2147483647] {{*}} source=ResultOfOtherCall
 # RUN(SHOWN): walk f2 mechanisms=all
-# SHOWN: i32 @JSValue = CallList
+# SHOWN: int[0, 2147483647] @JSValue = CallList
 # SHOWN-NOT: source=ResultOfOtherCall
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 2

@@ -253,6 +253,8 @@ static void testMatchesOfAtoms()
     Matches matches;
     matches.runner.install(Entry::operationAOTStringFindCharacter8, operationAOTStringFindCharacter8);
     matches.runner.install(Entry::operationAOTStringFind8, operationAOTStringFind8);
+    matches.runner.install(Entry::operationAOTRegExpMatchFlatProgram8, operationAOTRegExpMatchFlatProgram8);
+    matches.runner.install(Entry::operationAOTRegExpMatchFlatProgram16, operationAOTRegExpMatchFlatProgram16);
     Ref<StringImpl> text = StringImpl::create("abcdef"_span);
     FakeSubject subject(text.get());
 

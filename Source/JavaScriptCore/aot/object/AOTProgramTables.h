@@ -58,7 +58,6 @@ struct ParsedRecordFieldData {
     Number24 shape;
 
     uint32_t nameNumber() const { return name; }
-    uint64_t key() const { return static_cast<uint64_t>(nameNumber()) << 24 | shape; }
 };
 static_assert(sizeof(ParsedRecordFieldData) == 6 && isImageRecord<ParsedRecordFieldData>);
 
@@ -146,6 +145,7 @@ struct ProgramTables {
     uint32_t numberOfFieldTableRows;
     uint32_t numberOfFieldTableColumns;
     uint32_t numberOfClosureCells;
+    uint32_t sizeOfStructuresOfHeirs;
     ClosureFunctionRangeData closureFunctions;
     TableRange ranges[numberOfProgramTables];
 

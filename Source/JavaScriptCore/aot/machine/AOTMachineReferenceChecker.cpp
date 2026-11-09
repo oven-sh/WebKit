@@ -537,7 +537,7 @@ bool CollectorRulesChecker::checkAcross(const Operation* value, const Safepoint&
 
 bool CollectorRulesChecker::spillHolds(SpillIndex spill, const Operation* value, bool holdsPointer, const Safepoint& safepoint) const
 {
-    if (spill >= m_spills.size() || m_isCleared.get(spill))
+    if (spill >= m_spills.size() || m_isCleared.get(spill) || m_spills[spill].isReadByNoStep)
         return false;
     const SpillFacts& facts = m_spills[spill];
     if (facts.value != value || facts.isPointerBesideNarrowReference != holdsPointer || facts.begin > safepoint.late || safepoint.late > facts.end)

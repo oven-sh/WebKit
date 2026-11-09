@@ -88,6 +88,10 @@ bool Walker::jumpToHandlerInPlaceOfThrow(const BodyTerminator&)
             fail("a handler edge hands on a value that nothing was built for"_s);
             return true;
         }
+        if (m_inputs.options.verifiesCode && !isWhatHeadNamesForHandler(frameIndex, argument, reference)) [[unlikely]] {
+            fail("a handler edge hands on what stands in for a value"_s, InternalErrorKind::HandlerEdgeHandsOnStandIn);
+            return true;
+        }
         arguments.append(reference);
         types.append(type);
     }

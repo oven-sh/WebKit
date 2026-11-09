@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "JSCJSValue.h"
-#include <bit>
 #include <memory>
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
@@ -37,18 +36,18 @@ public:
         m_levels->path.shrink(0);
         m_levels->holders.clear();
     }
-    bool enter(EncodedJSValue holder, void* frame)
+    bool enter(EncodedJSValue holder, unsigned depth)
     {
         ASSERT(isWatching());
         if (!m_levels)
             m_levels = makeUnique<Levels>();
-        while (!m_levels->path.isEmpty() && std::bit_cast<uintptr_t>(m_levels->path.last().frame) <= std::bit_cast<uintptr_t>(frame))
+        while (!m_levels->path.isEmpty() && m_levels->path.last().depth >= depth)
             m_levels->holders.remove(m_levels->path.takeLast().holder);
         if (!m_levels->holders.add(holder).isNewEntry) {
             stop();
             return false;
         }
-        m_levels->path.append(Level { frame, holder });
+        m_levels->path.append(Level { depth, holder });
         --m_numberOfLevelsLeft;
         return true;
     }
@@ -57,7 +56,7 @@ private:
     static constexpr size_t charactersPerWatchedLevel = 64 * KB;
 
     struct Level {
-        void* frame;
+        unsigned depth;
         EncodedJSValue holder;
     };
 

@@ -182,11 +182,10 @@ static bool hasOneClassObjectForInstanceOf(const Walker& walker, LayoutID classL
 static bool recordsExpectNothingUnderNameOnStaticSidesForInstanceOf(const Walker& walker, LayoutID tested, PropertyKeyID key)
 {
     const Program& program = walker.program();
-    const LinkTables& held = walker.facts().held();
     size_t numberOfClassesLeft = program.layouts.size();
     for (LayoutID current = tested; current;) {
         const Layout& layout = program.at(current);
-        if (!numberOfClassesLeft-- || !layout.constructor || !walker.plan().hasClassRecord(current) || layout.mayHaveStaticField(key) || held.findNameOnFunction(layout.constructor, key) || walker.facts().linked().function(layout.constructor).hasInstanceIsDefinedOnClosures)
+        if (!numberOfClassesLeft-- || !layout.constructor || !walker.plan().hasClassRecord(current) || layout.findStaticField(key) || walker.facts().linked().layout(current).namesAreDefinedPastLists[static_cast<size_t>(ClassSide::Static)])
             return false;
         for (const ClassMember& declared : walker.facts().membersOf(current)) {
             if (declared.side == ClassSide::Static && (!declared.key || declared.key == key))
@@ -210,10 +209,7 @@ static bool findsOrdinaryHasInstanceForInstanceOf(const Walker& walker, const Cl
     if (!ordinary || table.canonicalID(ordinary) != Builtins::FunctionPrototypeSymbolHasInstance)
         return false;
 
-    if (!tested.isConstructorFunction && classStaysAsWrittenForInstanceOf(link, tested.layout) && link.findsNothingOnClassObjects(program, tested.layout, key))
-        return true;
-
-    if (FunctionID constructor = program.at(tested.layout).constructor; tested.isConstructorFunction && constructor && link.closuresLackName(constructor, key))
+    if ((tested.isConstructorFunction || classStaysAsWrittenForInstanceOf(link, tested.layout)) && link.findsNothing(program, tested.layout, ClassSide::Static, key, Of::HolderAndAbove))
         return true;
 
     if (!recordsExpectNothingUnderNameOnStaticSidesForInstanceOf(walker, tested.layout, key))
@@ -493,7 +489,9 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         return buildWalkOfChainForInstanceOf(walker, value, walker.build(WTF::move(read)), origin);
     };
 
-    bool testsPrototype = form->testsPrototypeOfInstance && !walker.state().factsOfCell(value).contains(FactOfCell::HasLayoutPrototype);
+    bool testsPrototype = form->testsPrototypeOfInstance && !factsOfCellAsPlannerTakesThem(walker, value).contains(FactOfCell::HasLayoutPrototype);
+    if (form->testsPrototypeOfInstance && !testsPrototype)
+        walker.checkFactsRememberedOfCell(value, origin, FactOfCell::HasLayoutPrototype);
     auto buildAnswerWhereClassIsUnchanged = [&]() -> Reference {
         if (!form->instances)
             return buildAnswerOfMiss();
@@ -696,8 +694,10 @@ static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test,
         answer = booleanAnswerOfInstanceOf(walker, false);
     else {
         bool isSeenAsMade = tested->builtinClass && walker.has(Mechanism::Folding) && walker.plan().hasOneInstance() && walker.types().isSubset(walker.typeOf(value), walker.types().builtinClass(tested->builtinClass)) && isListAsMade(walker, value);
-        if (isSeenAsMade)
+        if (isSeenAsMade) {
+            walker.askAgainWhetherObjectIsAsMade(value);
             answer = booleanAnswerOfInstanceOf(walker, true);
+        }
         else if (testsClass && value.isValue())
             answer = buildClassTestsOfBuiltinInstanceOf(walker, *tested, value, origin);
         else

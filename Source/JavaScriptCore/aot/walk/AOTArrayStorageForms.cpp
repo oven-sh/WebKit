@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCode.h"
 #include "AOTIRProgram.h"
 #include "AOTTypeArena.h"
 #include "JSCJSValueInlines.h"
@@ -91,6 +92,21 @@ bool readTakesIndexOfProvenList(TypeReader types, TypeID array, TypeID position)
     return part && part->builtinClass == BuiltinClasses::Array;
 }
 
+bool numberOfProvenListIsReadUnboxed(TypeReader types, TypeID array, TypeID position, Representation formOfPosition, bool testsForItself)
+{
+    if (readTakesIndexOfProvenList(types, array, position))
+        return true;
+    return testsForItself && position && formOfPosition == Representation::Double && isProvenToBeList(types, array) && types.at(position).isNumberWithoutFraction();
+}
+
+bool keyOfProvenListMayBeAskedForInt32(TypeReader types, TypeID array, TypeID position)
+{
+    if (!position || !isProvenToBeList(types, array))
+        return false;
+    Type key = types.at(position);
+    return key.isNumber() && !key.isInteger() && key.primitives & Primitive::Integer;
+}
+
 ArrayStorage arrayStorageOfData(const Program& program, const DataNode::Array& array)
 {
     bool areInt32 = true;
@@ -166,6 +182,41 @@ bool fitsStorageOfLiteral(const TypeArena& types, ArrayStorage kind, TypeID elem
     if (kind == ArrayStorage::Double)
         return element && types.at(element).isNumber();
     return canStoreWithoutConversion(types, kind, element);
+}
+
+const ArrayStorageForm* findFormOfLiteral(const TypeArena& types, const Code& code, std::span<const ValueID> elements, ArrayStorage named, ArrayStorage declaredByList)
+{
+    bool isNeverMade = std::ranges::any_of(elements, [&](ValueID element) {
+        return isNeverType(code.at(element).type);
+    });
+    if (isNeverMade)
+        return &arrayStorageFormOf(ArrayStorage::Contiguous);
+
+    const ArrayStorageForm* namedForm = findArrayStorageForm(named);
+    const ArrayStorageForm& form = namedForm ? *namedForm : arrayStorageFormOf(hasArrayStorageForm(declaredByList) ? declaredByList : ArrayStorage::Contiguous);
+    RELEASE_ASSERT(namedForm || form.kind != ArrayStorage::Double);
+    bool canHoldElements = std::ranges::all_of(elements, [&](ValueID element) {
+        return fitsStorageOfLiteral(types, form.kind, code.at(element).type);
+    });
+    if (canHoldElements)
+        return &form;
+    return namedForm ? nullptr : &arrayStorageFormOf(ArrayStorage::Contiguous);
+}
+
+ArrayStorage storageThatLiteralIsSurelyBornWith(const Program& program, const TypeArena& types, const Code& code, const Operation& made)
+{
+    std::span<const ValueID> elements = made.elementsOperands();
+    if (made.storage() != AllocationStorage::Heap || !made.holes().empty() || elements.empty())
+        return ArrayStorage::Other;
+    ArrayStorage named = made.arrayStorage();
+    ArrayStorage declared = hasArrayStorageForm(named) ? ArrayStorage::Other : arrayStorageDeclaredBy(program, types, made.type).predicted();
+    const ArrayStorageForm* form = findFormOfLiteral(types, code, elements, named, declared);
+    if (!form || (form->kind == ArrayStorage::Contiguous && holdsOnlyNumbers(declared)))
+        return ArrayStorage::Other;
+    bool everyElementGoesIn = std::ranges::all_of(elements, [&](ValueID element) {
+        return canStoreWithoutConversion(types, form->kind, code.at(element).type) && !(types.at(code.at(element).type).primitives & Primitive::Absent);
+    });
+    return everyElementGoesIn ? form->kind : ArrayStorage::Other;
 }
 
 TypeID typeOfElementRead(ArrayStorage kind)

@@ -1,0 +1,21 @@
+# function take(value) { return value.constructor; } new (take(given))();
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup name-read "constructor"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v1
+    v4 = Construct v3, -
+    v5 = Undefined
+    Return v5
+}
+function f1 name="take" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="constructor"
+    Return v1
+}

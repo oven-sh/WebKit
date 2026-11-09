@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEffectsNet.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSectionWriter.h"
 #include "AOTThreads.h"
@@ -36,6 +37,15 @@ bool Reader::run()
 {
     m_program.admitsReplacedBuiltins = m_build.options().admitsReplacedBuiltins();
     m_program.rowsOfNativeCodeWriteNullish = AOT::hasFlag(m_build.options().testing, Wire::TestingSwitch::NativeCodeAnswersNullish);
+    RowThatSaysLess rowThatSaysLess = RowThatSaysLess::decode(m_build.options().rowThatSaysLess);
+    if (rowThatSaysLess.part == PartOfEffects::RangeOfResult)
+        m_program.builtinWhoseRowWritesItsLeastIntegerAlone = rowThatSaysLess.row;
+    if (rowThatSaysLess.part == PartOfEffects::KindOfResult && rowThatSaysLess.kind == KindOfEffectsRow::Operation)
+        m_program.operationWhoseRuleWritesAnotherKind = rowThatSaysLess.row + 1;
+    else if (rowThatSaysLess.part == PartOfEffects::KindOfResult)
+        m_program.builtinWhoseRowWritesNullAlone = rowThatSaysLess.row;
+    if (rowThatSaysLess.part == PartOfEffects::ContentsOfResult)
+        m_program.builtinWhoseRowWritesThatItsResultHoldsNullAlone = rowThatSaysLess.row;
     m_program.admitsInspector = m_build.options().admitsUnseenCode();
     m_program.excludedCode = m_build.options().excludedCode;
 
@@ -243,6 +253,7 @@ void Reader::forEachListReadIntoTableOfItsName(const Wire::Sections& sections, c
     functor(sections.moduleFailures, m_program.moduleFailures);
     functor(sections.ambiguousExports, m_program.ambiguousExports);
     functor(sections.sourceStamps, m_program.sourceStamps);
+    functor(sections.declaredRecords, m_program.declaredRecords);
     functor(sections.evalScopes, m_program.evalScopes);
     functor(sections.data, m_program.data);
     functor(sections.entries, m_program.entries);

@@ -85,8 +85,7 @@ static uint8_t locationBitOfKeyInTypeTable(const Program& program, const Propert
         hash = addBytesToInternedHash(hash, program.string(key.text));
     if (std::optional<uint8_t> bitOfOwner = program.locationBitOf(key.owner))
         hash = addToInternedHash(hash, static_cast<uint64_t>(*bitOfOwner) + 1);
-    if (key.module)
-        hash = addBytesToInternedHash(hash, program.string(program.at(key.module).path));
+
     return static_cast<uint8_t>(finishInternedHash(hash) % numberOfLocationBitsOfKeys);
 }
 
@@ -741,6 +740,39 @@ void TypeTable::endStableNumbersOfPropertyKeys(const ParallelLoops& loops)
     });
 }
 
+void TypeTable::keepAddressesOfPropertyKeys()
+{
+    uint32_t numberOfKeys = m_propertyKeys.size();
+    for (uint32_t segment = 0; segment < numberOfInternedSegments && firstPositionOfInternedSegment(segment) < numberOfKeys; ++segment) {
+        uint32_t firstPosition = firstPositionOfInternedSegment(segment);
+        m_addressesOfPositionZeroInKeySegments[segment] = reinterpret_cast<uintptr_t>(&m_propertyKeys.at(firstPosition)) - static_cast<uintptr_t>(firstPosition) * sizeof(PropertyKey);
+    }
+    m_numberOfPropertyKeysFoundByAddress = numberOfKeys;
+}
+
+void TypeTable::keepAddressesOfTypes()
+{
+    uint32_t numberOfTypes = m_types.size();
+    for (uint32_t segment = 0; segment < numberOfInternedSegments && firstPositionOfInternedSegment(segment) < numberOfTypes; ++segment) {
+        uint32_t firstPosition = firstPositionOfInternedSegment(segment);
+        m_addressesOfPositionZeroInTypeSegments[segment] = reinterpret_cast<uintptr_t>(&m_types.at(firstPosition)) - static_cast<uintptr_t>(firstPosition) * sizeof(Type);
+    }
+    m_numberOfTypesFoundByAddress = numberOfTypes;
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+const Type& TypeTable::typeKeptBeforeFreezeAt(TypeID id) const
+{
+    uint32_t position = positionInProgramOf(id);
+    if (position < m_numberOfTypesFoundByAddress) [[likely]]
+        return *reinterpret_cast<const Type*>(m_addressesOfPositionZeroInTypeSegments.data()[internedSegmentOf(position)] + static_cast<uintptr_t>(position) * sizeof(Type));
+    RELEASE_ASSERT(liesInProgram(id));
+    return m_types.at(position);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 void TypeTable::addKeysOfTexts(uint32_t numberOfStrings, const ParallelLoops& loops)
 {
     if (!numberOfStrings)
@@ -762,10 +794,8 @@ std::optional<PropertyKeyID> TypeTable::find(const PropertyKey& key) const
     return idAt<PropertyKeyID>(IDHome::Value, *position);
 }
 
-ProvenInEveryVersion TypeTable::provenTypeOf(const DeclaredType& declared) const
+ProvenInEveryVersion TypeTable::provenTypeOfWhatIsOnlyExpected(const DeclaredType& declared) const
 {
-    if (std::optional<ProvenInEveryVersion> established = declared.established())
-        return *established;
     TypeID predicted = declared.expected().predicted();
     Type expected = at(predicted);
     if (!expected.isJavaScriptValue())
@@ -816,11 +846,7 @@ void TypeTable::freeze()
     });
     m_classParts.freeOutgrownSlots();
     m_propertyKeys.freeOutgrownSlots();
-    m_numberOfPropertyKeysOnceFrozen = m_propertyKeys.size();
-    for (uint32_t segment = 0; segment < numberOfInternedSegments && firstPositionOfInternedSegment(segment) < m_numberOfPropertyKeysOnceFrozen; ++segment) {
-        uint32_t firstPosition = firstPositionOfInternedSegment(segment);
-        m_addressesOfPositionZeroInKeySegments[segment] = reinterpret_cast<uintptr_t>(&m_propertyKeys.at(firstPosition)) - static_cast<uintptr_t>(firstPosition) * sizeof(PropertyKey);
-    }
+    keepAddressesOfPropertyKeys();
     m_layoutSets.freeze();
     m_objectSets.freeze();
     m_stringSets.freeze();

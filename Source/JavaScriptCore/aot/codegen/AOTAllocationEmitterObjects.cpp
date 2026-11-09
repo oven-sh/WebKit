@@ -98,7 +98,7 @@ void AllocationEmitter::generateNewSuppressedError(const ValueContext& value)
 bool AllocationEmitter::isListedByArgumentsObjectAlone(ValueID list) const
 {
     const Operation& made = m_code.at(list);
-    if (made.opcode != Opcode::NewArray || !m_facts.mechanisms().contains(Mechanism::EscapeAnalysis))
+    if (made.opcode != Opcode::NewArray || !m_code.has(Mechanism::EscapeAnalysis, m_facts))
         return false;
     if (made.storage() != AllocationStorage::Heap || !made.holes().empty())
         return false;

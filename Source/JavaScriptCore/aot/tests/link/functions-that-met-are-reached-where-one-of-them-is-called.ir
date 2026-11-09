@@ -1,5 +1,5 @@
-# More than four functions that met at one place are no longer told apart, so a call of what lies at such a place may enter any function that has met another. If only the functions that met at that very place were reached, one that met them elsewhere would be entered without code.
-# function run(f) { return f(); }  function look(f) { return typeof f; }  run(one); run(two); run(three); run(four); run(five); look(five); look(six);
+# More than four functions that met at one place are no longer told apart, so a call of what lies at such a place may enter any function that is lost. Two that met elsewhere are still named, and nobody has lost them. If they stayed so where what lies there flows on into the place of the many, `six` would be entered without code.
+# function run(f) { return f(); }  function pass(f) { return f; }  run(one); run(two); run(three); run(four); run(five); pass(five); run(pass(six));
 # RUN: link functions mechanisms=all
 # CHECK: function f3
 # CHECK-NOT: unreached
@@ -7,6 +7,8 @@
 # CHECK-NOT: unreached
 # CHECK: function f8
 # CHECK-NOT: unreached
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f8 callers-known
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -25,20 +27,20 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v10 = Call v0, -, v4 calleeName="run"
     v11 = Call v0, -, v5 calleeName="run"
     v12 = Call v0, -, v6 calleeName="run"
-    v13 = Call v1, -, v6 calleeName="look"
-    v14 = Call v1, -, v7 calleeName="look"
-    v15 = Undefined
-    Return v15
+    v13 = Call v1, -, v6 calleeName="pass"
+    v14 = Call v1, -, v7 calleeName="pass"
+    v15 = Call v0, -, v14 calleeName="run"
+    v16 = Undefined
+    Return v16
 }
 function f1 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = Call v0, -
     Return v1
 }
-function f2 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="pass" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = TypeOf v0
-    Return v1
+    Return v0
 }
 function f3 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
   b0():

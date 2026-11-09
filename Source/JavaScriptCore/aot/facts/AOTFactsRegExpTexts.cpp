@@ -52,6 +52,8 @@ static constexpr uint64_t operationsMoreForBodyInStartOfProgram = 56 * operation
 static constexpr unsigned deepestCall = 256;
 static constexpr unsigned mostOpenRegions = 1024;
 static constexpr uint32_t valuesMadeRoomForAtPriceOfOneOperation = 16;
+static constexpr uint64_t placesOfEntryInMap = 4;
+static constexpr uint64_t placesOfEntryInSet = 3;
 static constexpr uint32_t charactersGoneOverAtPriceOfOneOperation = 16;
 static constexpr uint64_t operationsForCharacterOfPatternThatIsMade = 2;
 static constexpr uint8_t timesThroughBlockWhileGoingBothWays = 4;
@@ -59,7 +61,7 @@ static constexpr uint32_t operationsForBuiltinHandedRegExp = 1 << 10;
 static constexpr size_t mostBytesMade = 256 * MB;
 static constexpr PropertyOffset placeOfMarkOfWhatNobodyKnows = 0;
 
-enum class GrowthOfWork : uint16_t {
+enum class GrowthOfWork : uint32_t {
     WithWhatIsHanded = 1 << 0,
     WithNumbersHanded = 1 << 1,
     WithPropertiesOfWhatIsHanded = 1 << 2,
@@ -75,6 +77,8 @@ enum class GrowthOfWork : uint16_t {
     AsksWhetherWhatIsGivenBackIsTrue = 1 << 12,
     GoesIntoWhatItIsHandedFirst = 1 << 13,
     AsksIdentityOfWhatIsHeld = 1 << 14,
+    MakesCellsOfCharactersHanded = 1 << 15,
+    TouchesOnePlaceOfWhatIsHanded = 1 << 16,
 };
 
 static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithWhatIsHanded[] = {
@@ -97,7 +101,7 @@ static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithWhatIsHanded[] = {
     "MathPow"_s, "MathImul"_s, "MathRound"_s, "ArrayPrototypeIndexOf"_s, "ArrayPrototypeFind"_s, "ArrayPrototypeEvery"_s, "ArrayPrototypeReduceRight"_s,
     "ArrayPrototypeFindIndex"_s, "ArrayPrototypeFindLastIndex"_s, "ArrayPrototypeToSorted"_s, "ArrayPrototypeToReversed"_s, "MapPrototypeHas"_s, "WeakSet"_s,
     "WeakSetPrototypeAdd"_s, "WeakSetPrototypeHas"_s, "WeakSetPrototypeDelete"_s, "EncodeURIComponent"_s, "EncodeURI"_s, "DecodeURI"_s, "DecodeURIComponent"_s,
-    "RegExpPrototypeExec"_s,
+    "RegExpPrototypeExec"_s, "JSONParse"_s,
 };
 
 static constexpr ASCIILiteral builtinsThatCopyWhatIsHeld[] = {
@@ -116,6 +120,11 @@ static constexpr ASCIILiteral builtinsThatGoThroughWhatIsHandedByItsLength[] = {
     "ArrayPrototypeFindLastIndex"_s, "ArrayPrototypeToSorted"_s, "ArrayPrototypeToReversed"_s,
 };
 
+static constexpr ASCIILiteral builtinsThatTouchOnePlaceOfWhatTheyAreHanded[] = {
+    "ArrayPrototypePush"_s, "ArrayPrototypePop"_s, "ArrayPrototypeAt"_s, "MapPrototypeGet"_s, "MapPrototypeSet"_s, "MapPrototypeHas"_s, "MapPrototypeDelete"_s, "SetPrototypeAdd"_s,
+    "SetPrototypeHas"_s, "SetPrototypeDelete"_s,
+};
+
 static constexpr ASCIILiteral builtinsThatGoOverTheirArguments[] = {
     "ArrayFrom"_s, "Set"_s, "Map"_s, "WeakMap"_s, "WeakSet"_s, "ObjectFromEntries"_s,
 };
@@ -127,7 +136,7 @@ static constexpr ASCIILiteral builtinsThatAskWhetherWhatIsGivenBackIsTrue[] = {
 static constexpr ASCIILiteral builtinsThatGoIntoWhatTheyAreHandedFirst[] = {
     "ObjectAssign"_s, "ObjectDefineProperty"_s, "ObjectDefineProperties"_s, "ObjectFreeze"_s, "ObjectSeal"_s, "ObjectSetPrototypeOf"_s, "ReflectDefineProperty"_s, "ObjectCreate"_s,
     "ObjectKeys"_s, "ObjectValues"_s, "ObjectEntries"_s, "ObjectFromEntries"_s, "ObjectGetOwnPropertyNames"_s, "ObjectGetOwnPropertySymbols"_s, "ObjectGetOwnPropertyDescriptor"_s,
-    "ObjectGetOwnPropertyDescriptors"_s, "ObjectGetPrototypeOf"_s, "ReflectGetPrototypeOf"_s, "ReflectGetOwnPropertyDescriptor"_s, "ReflectOwnKeys"_s, "Object"_s, "ArrayFrom"_s,
+    "ObjectGetOwnPropertyDescriptors"_s, "ObjectGetPrototypeOf"_s, "ReflectGetPrototypeOf"_s, "ReflectGetOwnPropertyDescriptor"_s, "ReflectOwnKeys"_s, "Object"_s, "ArrayFrom"_s, "JSONParse"_s,
 };
 
 static constexpr ASCIILiteral builtinsThatAskIdentityOfWhatIsHeld[] = {
@@ -373,9 +382,49 @@ private:
     bool isAsRealmMadeIt(RegExpObject* pattern) { return pattern->structure() == m_realm->regExpStructure() && pattern->getLastIndex().isNumber() && m_realm.get()->regExpPrimordialPropertiesWatchpointSet().isStillValid(); }
     void noteThrown(Exception*);
     bool hasThrown(TopExceptionScope&);
+    void letGoOfWhatWasThrown(TopExceptionScope&);
+    void payForFramesThatEngineWalks();
     JSArray* newList();
     void noteObjectMade() { m_bytesMade += JSFinalObject::allocationSize(JSFinalObject::defaultInlineCapacity); }
     void notePlaceFilled();
+    static uint64_t elementsOf(JSObject* holder) { return hasAnyArrayStorage(holder->indexingType()) ? holder->butterfly()->arrayStorage()->m_numValuesInVector : holder->getArrayLength(); }
+    static uint64_t placesWithRoomIn(JSObject* holder)
+    {
+        uint64_t elements = elementsOf(holder);
+        return (elements ? roundUpToPowerOfTwo(elements) : 0) + holder->structure()->outOfLineCapacity();
+    }
+    static uint64_t placesInEntriesOf(JSObject* holder)
+    {
+        if (auto* map = dynamicDowncast<JSMap>(holder))
+            return static_cast<uint64_t>(map->size()) * placesOfEntryInMap;
+        if (auto* set = dynamicDowncast<JSSet>(holder))
+            return static_cast<uint64_t>(set->size()) * placesOfEntryInSet;
+        SparseArrayValueMap* sparse = hasAnyArrayStorage(holder->indexingType()) ? holder->butterfly()->arrayStorage()->m_sparseMap.get() : nullptr;
+        return sparse ? static_cast<uint64_t>(sparse->size()) * placesOfEntryInSet : 0;
+    }
+    void noteRoomMadeIn(JSObject* holder, uint64_t placesBefore, uint64_t placesInEntriesBefore);
+    void noteStructureMade(JSValue);
+    void noteStructuresMadeIn(JSValue);
+
+    class StoreThatMayMakeRoom {
+        WTF_MAKE_NONCOPYABLE(StoreThatMayMakeRoom);
+    public:
+        StoreThatMayMakeRoom(RehearsalOfRegExpTexts& rehearsal, JSObject* holder)
+            : m_rehearsal(rehearsal)
+            , m_holder(holder)
+            , m_placesBefore(placesWithRoomIn(holder))
+            , m_placesInEntriesBefore(placesInEntriesOf(holder))
+        {
+        }
+
+        ~StoreThatMayMakeRoom() { m_rehearsal.noteRoomMadeIn(m_holder, m_placesBefore, m_placesInEntriesBefore); }
+
+    private:
+        RehearsalOfRegExpTexts& m_rehearsal;
+        JSObject* m_holder;
+        uint64_t m_placesBefore;
+        uint64_t m_placesInEntriesBefore;
+    };
     bool append(JSArray*, JSValue);
     bool storeAt(JSObject*, unsigned index, JSValue);
     bool storeUnder(JSObject*, const Identifier&, JSValue);
@@ -485,6 +534,7 @@ private:
     bool m_isOver { false };
     size_t m_bytesMade { 0 };
     uint32_t m_placesFilledSinceOneWasPaidFor { 0 };
+    uint64_t m_bytesThatParsesMayHaveMade { 0 };
     unsigned m_depth { 0 };
     unsigned m_openRegions { 0 };
     Vector<unsigned> m_regionsOpenAtEntryPlusOne;
@@ -510,6 +560,7 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     realm->setEvalEnabled(false, "the rehearsal evaluates no text"_s);
     realm->setWebAssemblyEnabled(false, "the rehearsal compiles no module"_s);
     realm->weakRandom().setSeed(0);
+    asObject(realm->errorPrototype()->getDirect(vm, vm.propertyNames->constructor))->putDirect(vm, vm.propertyNames->stackTraceLimit, jsNumber(0));
 
     m_whatMarksWhatNobodyKnows.set(vm, constructEmptyObject(vm, realm->nullPrototypeObjectStructure()));
     m_markOfWhatNobodyKnows = Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "unknown"_s));
@@ -582,13 +633,14 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     mark(builtinsThatCopyWhatIsHeld, GrowthOfWork::CopiesWhatIsHeld);
     mark(builtinsThatCopyWhatIsHeldIntoStructuresOfStructures, GrowthOfWork::CopiesWhatIsHeldIntoStructuresOfStructures);
     mark(builtinsThatGoThroughWhatIsHandedByItsLength, GrowthOfWork::WithLengthOfWhatIsHanded);
+    mark(builtinsThatTouchOnePlaceOfWhatTheyAreHanded, GrowthOfWork::TouchesOnePlaceOfWhatIsHanded);
     mark(builtinsThatGoOverTheirArguments, GrowthOfWork::GoesOverItsArguments);
     mark(builtinsThatMakePatternOfTextHanded, GrowthOfWork::MakesPatternOfTextHanded);
     mark(builtinsThatAskWhetherWhatIsGivenBackIsTrue, GrowthOfWork::AsksWhetherWhatIsGivenBackIsTrue);
     mark(builtinsThatGoIntoWhatTheyAreHandedFirst, GrowthOfWork::GoesIntoWhatItIsHandedFirst);
     mark(builtinsThatAskIdentityOfWhatIsHeld, GrowthOfWork::AsksIdentityOfWhatIsHeld);
     m_objectSetPrototypeOf = inRealmByToken("ObjectSetPrototypeOf"_s);
-    for (auto [token, growth] : { std::pair { "ArrayPrototypeJoin"_s, GrowthOfWork::LaysTextBetweenPlaces }, std::pair { "StringPrototypeReplace"_s, GrowthOfWork::LaysTextOverFind }, std::pair { "StringPrototypeReplaceAll"_s, GrowthOfWork::LaysTextOverEveryFind } })
+    for (auto [token, growth] : { std::pair { "ArrayPrototypeJoin"_s, GrowthOfWork::LaysTextBetweenPlaces }, std::pair { "StringPrototypeReplace"_s, GrowthOfWork::LaysTextOverFind }, std::pair { "StringPrototypeReplaceAll"_s, GrowthOfWork::LaysTextOverEveryFind }, std::pair { "JSONParse"_s, GrowthOfWork::MakesCellsOfCharactersHanded } })
         mark(std::span(&token, 1), growth);
     for (ASCIILiteral token : { "FunctionPrototypeCall"_s, "FunctionPrototypeApply"_s }) {
         if (JSValue function = inRealmByToken(token); isKnown(function) && function.isCell())
@@ -641,10 +693,23 @@ JSValue RehearsalOfRegExpTexts::builtinInRealm(BuiltinID id)
     if (!found) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
         auto cell = findInRealm(m_realm.get(), BuiltinCellKey::object(id));
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         found = cell && *cell ? JSValue(*cell) : unknown();
     }
     return found;
+}
+
+void RehearsalOfRegExpTexts::payForFramesThatEngineWalks()
+{
+    m_operationsLeft -= std::min<uint32_t>(m_depth, m_operationsLeft);
+    m_operationsLeftInAll -= std::min<uint64_t>(m_depth, m_operationsLeftInAll);
+}
+
+void RehearsalOfRegExpTexts::letGoOfWhatWasThrown(TopExceptionScope& scope)
+{
+    if (scope.exception())
+        payForFramesThatEngineWalks();
+    scope.clearException();
 }
 
 bool RehearsalOfRegExpTexts::hasThrown(TopExceptionScope& scope)
@@ -653,7 +718,7 @@ bool RehearsalOfRegExpTexts::hasThrown(TopExceptionScope& scope)
     if (!exception)
         return false;
     noteThrown(exception);
-    scope.clearException();
+    letGoOfWhatWasThrown(scope);
     return true;
 }
 
@@ -664,6 +729,41 @@ void RehearsalOfRegExpTexts::notePlaceFilled()
         return;
     m_placesFilledSinceOneWasPaidFor = 0;
     payForPlacesMadeOutOfCharacters(1, 1);
+}
+
+void RehearsalOfRegExpTexts::noteRoomMadeIn(JSObject* holder, uint64_t placesBefore, uint64_t placesInEntriesBefore)
+{
+    uint64_t places = placesWithRoomIn(holder);
+    uint64_t made = places > placesBefore ? nextLength(elementsOf(holder)) + holder->structure()->outOfLineCapacity() : 0;
+    if (uint64_t placesInEntries = placesInEntriesOf(holder); placesInEntries > placesInEntriesBefore)
+        made += placesInEntries - placesInEntriesBefore;
+    m_bytesMade += made * sizeof(JSValue);
+    payForPlacesMadeOutOfCharacters(made / valuesMadeRoomForAtPriceOfOneOperation, made);
+}
+
+void RehearsalOfRegExpTexts::noteStructureMade(JSValue made)
+{
+    if (!made || !made.isObject())
+        return;
+    noteObjectMade();
+    m_bytesMade += placesWithRoomIn(asObject(made)) * sizeof(JSValue);
+}
+
+void RehearsalOfRegExpTexts::noteStructuresMadeIn(JSValue made)
+{
+    if (!made.isObject())
+        return;
+    JSObject* holder = asObject(made);
+    if (auto* list = dynamicDowncast<JSArray>(holder)) {
+        for (unsigned index = 0; index < list->length(); ++index)
+            noteStructureMade(list->tryGetIndexQuickly(index));
+        return;
+    }
+    noteStructureMade(holder);
+    holder->structure()->forEachProperty(*m_vm, [&](const PropertyTableEntry& entry) {
+        noteStructureMade(holder->getDirect(entry.offset()));
+        return true;
+    });
 }
 
 JSArray* RehearsalOfRegExpTexts::newList()
@@ -677,6 +777,7 @@ JSArray* RehearsalOfRegExpTexts::newList()
 bool RehearsalOfRegExpTexts::append(JSArray* list, JSValue element)
 {
     notePlaceFilled();
+    StoreThatMayMakeRoom store(*this, list);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     list->push(m_realm.get(), element);
     return !hasThrown(scope);
@@ -685,6 +786,7 @@ bool RehearsalOfRegExpTexts::append(JSArray* list, JSValue element)
 bool RehearsalOfRegExpTexts::storeAt(JSObject* object, unsigned index, JSValue stored)
 {
     notePlaceFilled();
+    StoreThatMayMakeRoom store(*this, object);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     object->putDirectIndex(m_realm.get(), index, stored);
     return !hasThrown(scope);
@@ -693,6 +795,7 @@ bool RehearsalOfRegExpTexts::storeAt(JSObject* object, unsigned index, JSValue s
 bool RehearsalOfRegExpTexts::storeUnder(JSObject* object, const Identifier& name, JSValue stored)
 {
     notePlaceFilled();
+    StoreThatMayMakeRoom store(*this, object);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     object->putDirectMayBeIndex(m_realm.get(), name, stored);
     return !hasThrown(scope);
@@ -700,6 +803,7 @@ bool RehearsalOfRegExpTexts::storeUnder(JSObject* object, const Identifier& name
 
 bool RehearsalOfRegExpTexts::setLengthOf(JSArray* list, unsigned length)
 {
+    StoreThatMayMakeRoom store(*this, list);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     list->setLength(m_realm.get(), length);
     return !hasThrown(scope);
@@ -832,6 +936,7 @@ void RehearsalOfRegExpTexts::givePrototypeTo(JSValue closure)
     const Function& record = m_program.at(function);
     if (record.kind != FunctionKind::Plain || record.isCoroutine() || !record.hasBody())
         return;
+    noteObjectMade();
     JSObject* prototype = constructEmptyObject(m_realm.get());
     prototype->putDirect(vm, vm.propertyNames->constructor, closure, static_cast<unsigned>(PropertyAttribute::DontEnum));
     asObject(closure)->putDirect(vm, vm.propertyNames->prototype, prototype, static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -863,7 +968,7 @@ JSValue RehearsalOfRegExpTexts::variable(VariableID id)
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
         JSValue member = exported.get(m_realm.get(), Identifier::fromString(*m_vm, name));
         if (scope.exception()) {
-            scope.clearException();
+            letGoOfWhatWasThrown(scope);
             return unknown();
         }
         return held = member;
@@ -877,6 +982,7 @@ JSValue RehearsalOfRegExpTexts::moduleObjectOf(ModuleID id)
     if (held)
         return held;
     VM& vm = *m_vm;
+    noteObjectMade();
     JSObject* made = constructEmptyObject(m_realm.get());
     const Module& module = m_program.at(id);
     JSValue exported = module.exportsVariable ? m_variables[module.exportsVariable.index()] : JSValue();
@@ -903,6 +1009,7 @@ JSValue RehearsalOfRegExpTexts::namespaceOf(ModuleID id)
         return held;
     runModule(id);
     const Module& module = m_program.at(id);
+    noteObjectMade();
     JSObject* made = constructEmptyObject(m_realm.get());
     uint64_t numberOfExports = module.exports.size() + module.syntheticExports.size();
     payForPlacesMadeOutOfCharacters(numberOfExports, numberOfExports);
@@ -928,7 +1035,7 @@ JSValue RehearsalOfRegExpTexts::prototypeFor(JSValue newTarget)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     JSValue prototype = newTarget.get(realm, m_vm->propertyNames->prototype);
     if (scope.exception())
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
     else if (isKnown(prototype) && prototype.isObject())
         return prototype;
     return realm->objectPrototype();
@@ -1015,7 +1122,7 @@ bool RehearsalOfRegExpTexts::noteTexts(std::span<const JSValue> arguments)
     } else if (!pattern.isUndefined())
         text = pattern.toWTFString(realm);
     if (scope.exception()) {
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         m_sawTextThatNobodyKnows = true;
         return true;
     }
@@ -1027,7 +1134,7 @@ bool RehearsalOfRegExpTexts::noteTexts(std::span<const JSValue> arguments)
     } else if (!flags.isUndefined()) {
         String written = flags.toWTFString(realm);
         if (scope.exception()) {
-            scope.clearException();
+            letGoOfWhatWasThrown(scope);
             return true;
         }
         flagsOfText = Yarr::parseFlags(written);
@@ -1055,6 +1162,7 @@ bool RehearsalOfRegExpTexts::noteTexts(std::span<const JSValue> arguments)
 JSValue RehearsalOfRegExpTexts::makeNumberThatNobodyKnows()
 {
     VM& vm = *m_vm;
+    noteObjectMade();
     JSObject* number = constructEmptyObject(vm, m_realm->nullPrototypeObjectStructure());
     number->putDirect(vm, m_markOfWhatNobodyKnows, m_whatMarksWhatNobodyKnows.get());
     number->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, m_unknown->getDirect(vm, vm.propertyNames->toPrimitiveSymbol));
@@ -1067,8 +1175,11 @@ void RehearsalOfRegExpTexts::layUnderNumberThatNobodyKnows(JSObject* object, JSV
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue found = object->getDirect(vm, m_laidUnderNumbersThatNobodyKnows);
     JSMap* all = found ? uncheckedDowncast<JSMap>(found) : JSMap::create(vm, m_realm->mapStructure());
-    if (!found)
+    if (!found) {
+        noteObjectMade();
         object->putDirect(vm, m_laidUnderNumbersThatNobodyKnows, all);
+    }
+    StoreThatMayMakeRoom store(*this, all);
     all->set(m_realm.get(), number, laid);
     hasThrown(scope);
 }
@@ -1119,11 +1230,11 @@ JSValue RehearsalOfRegExpTexts::inHandsOfProgram(JSValue value)
         return made;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue name = original->get(realm, vm.propertyNames->name);
-    scope.clearException();
+    letGoOfWhatWasThrown(scope);
     JSValue length = original->get(realm, vm.propertyNames->length);
-    scope.clearException();
+    letGoOfWhatWasThrown(scope);
     String nameOfWrapper = name && name.isString() ? name.toWTFString(realm) : String();
-    scope.clearException();
+    letGoOfWhatWasThrown(scope);
     JSObject* wrapper = JSNativeStdFunction::create(vm, realm, length && length.isUInt32() ? length.asUInt32() : 0, nameOfWrapper, [this, original](JSGlobalObject* caller, CallFrame* frame) {
         if (!m_operationsLeft || !m_operationsLeftInAll || !hasRoomLeft()) {
             auto scope = DECLARE_THROW_SCOPE(*m_vm);
@@ -1145,20 +1256,20 @@ JSValue RehearsalOfRegExpTexts::inHandsOfProgram(JSValue value)
     wrapper->setPrototypeDirect(vm, original->getPrototypeDirect());
     PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     original->methodTable()->getOwnPropertyNames(original, realm, names, DontEnumPropertiesMode::Include);
-    scope.clearException();
+    letGoOfWhatWasThrown(scope);
     for (const Identifier& name : names) {
         if (name == vm.propertyNames->name || name == vm.propertyNames->length)
             continue;
         PropertySlot slot(original, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool isFound = original->methodTable()->getOwnPropertySlot(original, realm, name, slot);
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         if (!isFound)
             continue;
         if (slot.isAccessor())
             wrapper->putDirectAccessor(realm, name, slot.getterSetter(), slot.attributes());
         else if (slot.isValue())
             wrapper->putDirect(vm, name, slot.getValue(realm, name), slot.attributes());
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
     }
     m_wrappersMade.append(wrapper);
     m_wrappersOfOriginals.add(original, wrapper);
@@ -1267,11 +1378,19 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
     SetForScope goesStraightToProgram(m_callGoesStraightToProgram, isOfProgram || onlyHandsOn);
     SetForScope receiverIsText(m_receiverOfBuiltinIsText, thisValue.isString());
     SetForScope asksWhetherTrue(m_builtinAsksWhetherWhatIsGivenBackIsTrue, !isOfProgram && workOf(callee).contains(GrowthOfWork::AsksWhetherWhatIsGivenBackIsTrue));
+    std::optional<StoreThatMayMakeRoom> intoReceiver;
+    std::optional<StoreThatMayMakeRoom> intoFirstArgument;
+    if (!isOfProgram && isKnown(thisValue) && thisValue.isObject())
+        intoReceiver.emplace(*this, asObject(thisValue));
+    if (!isOfProgram && !arguments.empty() && isKnown(arguments[0]) && arguments[0].isObject())
+        intoFirstArgument.emplace(*this, asObject(arguments[0]));
     JSValue result = JSC::call(realm, callee, callData, thisValue, list, exception);
-    scope.clearException();
+    letGoOfWhatWasThrown(scope);
     noteLaidOutByBuiltin(ropesHanded);
-    if (exception)
+    if (exception) {
+        payForFramesThatEngineWalks();
         noteThrown(exception.get());
+    }
     if (exception || !result)
         return unknown();
     if (callee == m_regExpConstructor)
@@ -1280,12 +1399,17 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
         return result;
     if (!onlyHandsOn && !result.isObject() && std::ranges::any_of(arguments, [&](JSValue argument) { return !isKnown(argument); }))
         return unknown();
-    if (workOf(callee).contains(GrowthOfWork::CopiesWhatIsHeld))
+    if (workOf(callee).contains(GrowthOfWork::CopiesWhatIsHeld)) {
         exchangeBuiltinsHeldBy(result, 1);
-    else if (workOf(callee).contains(GrowthOfWork::CopiesWhatIsHeldIntoStructuresOfStructures))
+        if (!isJSArray(result))
+            noteStructureMade(result);
+    } else if (workOf(callee).contains(GrowthOfWork::CopiesWhatIsHeldIntoStructuresOfStructures)) {
         exchangeBuiltinsHeldBy(result, 2);
-    if (result != thisValue && std::ranges::find(arguments, result) == arguments.end())
-        noteTextMade(result);
+        noteStructuresMadeIn(result);
+    }
+    if (result == thisValue || std::ranges::find(arguments, result) != arguments.end())
+        return result;
+    noteTextMade(result);
     return noteMadeByBuiltin(result, charactersHanded);
 }
 
@@ -1372,10 +1496,11 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
         price.waysThroughChoices.forEachCharacter = std::max(price.waysThroughChoices.forEachCharacter, ways.forEachCharacter);
         return true;
     }
+    bool touchesOnePlace = work.contains(GrowthOfWork::TouchesOnePlaceOfWhatIsHanded);
     if (auto* map = dynamicDowncast<JSMap>(object))
-        price.handed += map->size();
+        price.handed += touchesOnePlace ? 1 : map->size();
     else if (auto* set = dynamicDowncast<JSSet>(object))
-        price.handed += set->size();
+        price.handed += touchesOnePlace ? 1 : set->size();
     if (object->isCallable()) {
         bool isGoneThroughByLength = work.contains(GrowthOfWork::WithLengthOfWhatIsHanded);
         if (auto* proxy = dynamicDowncast<ProxyObject>(object))
@@ -1413,8 +1538,10 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
         price.handed += places;
         if (passesWhatIsLeft(price))
             return false;
-        if (!hasContiguous(object->indexingType()) && !hasAnyArrayStorage(object->indexingType()))
+        if (!hasContiguous(object->indexingType()) && !hasAnyArrayStorage(object->indexingType())) {
+            price.walked += places;
             return true;
+        }
         for (unsigned index = 0; index < places; ++index) {
             ++price.walked;
             JSValue element = object->tryGetIndexQuickly(index);
@@ -1428,8 +1555,12 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
     uint64_t holdersPassed = 0;
     std::optional<uint64_t> elements = elementsOfObjectHandedToBuiltin(object, work.contains(GrowthOfWork::WithLengthOfWhatIsHanded), &holdersPassed);
     auto* list = dynamicDowncast<JSArray>(object);
-    uint64_t placesThatAreRead = list ? list->length() : elements.value_or(0);
+    uint64_t placesThatAreRead = touchesOnePlace ? 1 : list ? list->length() : elements.value_or(0);
     price.handed += holdersPassed / charactersGoneOverAtPriceOfOneOperation * (1 + placesThatAreRead);
+    if (touchesOnePlace) {
+        ++price.handed;
+        return (list || elements) && !passesWhatIsLeft(price);
+    }
     if (list)
         return takePlaces(placesThatAreRead);
     if (!elements || !takePlaces(*elements))
@@ -1562,6 +1693,8 @@ bool RehearsalOfRegExpTexts::wouldBeConverted(OptionSet<GrowthOfWork> work, JSVa
     };
     if (isBoxed(thisValue) || std::ranges::any_of(arguments, isBoxed))
         return true;
+    if (work.contains(GrowthOfWork::MakesCellsOfCharactersHanded) && !arguments.empty() && isKnown(arguments[0]) && arguments[0].isObject())
+        return true;
     bool takesFunctionThatGivesWhatIsLaid = work.containsAny({ GrowthOfWork::LaysTextOverFind, GrowthOfWork::LaysTextOverEveryFind });
     for (size_t index = 0; thisValue.isString() && index < arguments.size(); ++index) {
         JSValue argument = arguments[index];
@@ -1654,6 +1787,9 @@ bool RehearsalOfRegExpTexts::payForBuiltin(JSValue callee, JSValue thisValue, st
         if (!takeByRole(argument, goesOverArguments) || passesWhatIsLeft(price))
             return payForWalkThatEndedInRefusal(price);
     }
+    uint64_t mayBeMadeOfCharacters = work.contains(GrowthOfWork::MakesCellsOfCharactersHanded) ? price.characters / 2 * (JSFinalObject::allocationSize(JSFinalObject::defaultInlineCapacity) + sizeof(JSValue)) : 0;
+    if (m_bytesThatParsesMayHaveMade + mayBeMadeOfCharacters > mostBytesMade)
+        return payForWalkThatEndedInRefusal(price);
     if (work.contains(GrowthOfWork::WithAllThatIsReached) && !arguments.empty() && !takeRawOf(arguments[0], work, price))
         return payForWalkThatEndedInRefusal(price);
     if (thisValue.isString() && !arguments.empty() && arguments[0].isString() && asString(arguments[0])->length() > static_cast<unsigned>(WTF::AdaptiveStringSearcherBase::bmMaxShift))
@@ -1661,6 +1797,7 @@ bool RehearsalOfRegExpTexts::payForBuiltin(JSValue callee, JSValue thisValue, st
     charactersHanded = price.characters;
     if (!pay(price) || (price.holdsWhatNobodyKnows && work.contains(GrowthOfWork::AsksIdentityOfWhatIsHeld)))
         return false;
+    m_bytesThatParsesMayHaveMade += mayBeMadeOfCharacters;
     return !wouldMakeMoreThanAnybodyKeeps(work, thisValue, arguments, price);
 }
 
@@ -1712,10 +1849,14 @@ JSValue RehearsalOfRegExpTexts::noteMadeByBuiltin(JSValue made, uint64_t charact
     if (auto* list = dynamicDowncast<JSArray>(made)) {
         m_bytesMade += static_cast<size_t>(list->length()) * sizeof(JSValue);
         payForPlacesMadeOutOfCharacters(list->length(), charactersHanded);
-    } else if (auto* map = dynamicDowncast<JSMap>(made))
+    } else if (auto* map = dynamicDowncast<JSMap>(made)) {
+        m_bytesMade += placesInEntriesOf(map) * sizeof(JSValue);
         payForPlacesMadeOutOfCharacters(map->size(), charactersHanded);
-    else if (auto* set = dynamicDowncast<JSSet>(made))
+    } else if (auto* set = dynamicDowncast<JSSet>(made)) {
+        m_bytesMade += placesInEntriesOf(set) * sizeof(JSValue);
         payForPlacesMadeOutOfCharacters(set->size(), charactersHanded);
+    } else if (dynamicDowncast<ErrorInstance>(made) && m_realm->stackTraceLimit().value_or(0))
+        payForFramesThatEngineWalks();
     return made;
 }
 
@@ -1749,6 +1890,7 @@ JSValue RehearsalOfRegExpTexts::construct(JSValue callee, JSValue newTarget, std
         case FunctionKind::DerivedConstructor:
             return enter(function, captures.span(), jsUndefined(), callee, newTarget, arguments);
         case FunctionKind::Plain: {
+            noteObjectMade();
             JSObject* made = constructEmptyObject(realm, asObject(prototypeFor(newTarget)));
             JSValue returned = enter(function, captures.span(), made, callee, newTarget, arguments);
             return isKnown(returned) && returned.isObject() ? returned : JSValue(made);
@@ -1782,7 +1924,7 @@ JSValue RehearsalOfRegExpTexts::construct(JSValue callee, JSValue newTarget, std
     noteLaidOutByBuiltin(ropesHanded);
     if (Exception* exception = scope.exception()) {
         noteThrown(exception);
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         return unknown();
     }
     if (!result)
@@ -1800,7 +1942,7 @@ bool RehearsalOfRegExpTexts::appendElementsOf(JSValue list, Values& elements)
     for (unsigned index = 0; index < array->length(); ++index) {
         JSValue element = array->getIndex(realm, index);
         if (scope.exception()) {
-            scope.clearException();
+            letGoOfWhatWasThrown(scope);
             return false;
         }
         elements.append(element);
@@ -1933,7 +2075,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         JSValue environment = operand(store.environmentOperand());
         if (isKnown(environment) && environment.isObject())
             asObject(environment)->putDirectIndex(realm, static_cast<unsigned>(store.field()), operand(store.valueOperand()));
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         return { };
     }
 
@@ -1960,15 +2102,19 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     case Opcode::AppendElement: {
         auto append = value.as<Opcode::AppendElement>();
         notePlaceFilled();
-        if (auto* list = dynamicDowncast<JSArray>(operand(append.arrayOperand())))
+        if (auto* list = dynamicDowncast<JSArray>(operand(append.arrayOperand()))) {
+            StoreThatMayMakeRoom store(*this, list);
             list->push(realm, operand(append.valueOperand()));
-        scope.clearException();
+        }
+        letGoOfWhatWasThrown(scope);
         return { };
     }
     case Opcode::AppendHole: {
-        if (auto* list = dynamicDowncast<JSArray>(operand(value.operand(0))))
+        if (auto* list = dynamicDowncast<JSArray>(operand(value.operand(0)))) {
+            StoreThatMayMakeRoom store(*this, list);
             list->setLength(realm, list->length() + 1);
-        scope.clearException();
+        }
+        letGoOfWhatWasThrown(scope);
         return { };
     }
     case Opcode::AppendSpread: {
@@ -1986,9 +2132,10 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
             isPaid = take(iterable, { GrowthOfWork::WithWhatIsHanded }, pieces, 0) ? pay(pieces) : payForWalkThatEndedInRefusal(pieces);
         if (!isPaid) {
             list->push(realm, unknown());
-            scope.clearException();
+            letGoOfWhatWasThrown(scope);
             return { };
         }
+        StoreThatMayMakeRoom store(*this, list);
         uint64_t elementsPaidFor = pieces.handed;
         forEachInIterable(realm, iterable, [&](VM& ofRealm, JSGlobalObject* realm, JSValue element) {
             if (elementsPaidFor)
@@ -2004,7 +2151,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
             }
             list->push(realm, element);
         });
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         return { };
     }
     case Opcode::NewRegExp: {
@@ -2012,6 +2159,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         RegExp* regExp = RegExp::create(vm, charactersOf(literal.pattern()), toYarrFlags(literal.regExpFlags()));
         if (!regExp->isValid())
             return unknown();
+        noteObjectMade();
         return RegExpObject::create(vm, realm->regExpStructure(), regExp);
     }
     case Opcode::NewTemplateObject: {
@@ -2063,13 +2211,14 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
             return { };
         if (!isKnown(object) || !object.isObject() || isGlobalObject(object) || name.isNull())
             return { };
+        StoreThatMayMakeRoom store(*this, asObject(object));
         if (opcode == Opcode::PropDefine)
             asObject(object)->putDirectMayBeIndex(realm, name, stored);
         else {
             PutPropertySlot slot(object);
             object.put(realm, name, stored, slot);
         }
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         return { };
     }
     case Opcode::ElemSet:
@@ -2085,12 +2234,14 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         }
         if (!isKnown(object) || !mayBeMadeKey(property) || !object.isObject() || isGlobalObject(object))
             return { };
-        Identifier name = property.toPropertyKey(realm);
-        if (!scope.exception()) {
+        StoreThatMayMakeRoom store(*this, asObject(object));
+        if (property.isUInt32())
+            object.putByIndex(realm, property.asUInt32(), stored, false);
+        else if (Identifier name = property.toPropertyKey(realm); !scope.exception()) {
             PutPropertySlot slot(object);
             object.put(realm, name, stored, slot);
         }
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         return { };
     }
     case Opcode::DefineGetter: {
@@ -2099,7 +2250,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         Identifier name = definition.key() ? nameOf(definition.key()) : Identifier();
         if (isKnown(object) && object.isObject() && !isGlobalObject(object) && !name.isNull())
             asObject(object)->putDirectMayBeIndex(realm, name, unknown());
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         return { };
     }
     case Opcode::ElemHas: {
@@ -2135,7 +2286,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         JSValue prototype = operand(store.prototypeOperand());
         if (isKnown(object) && object.isObject() && isKnown(prototype) && (prototype.isObject() || prototype.isNull()) && payForHoldersPassed(prototype))
             asObject(object)->setPrototype(vm, realm, prototype);
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         return { };
     }
     case Opcode::PropHas: {
@@ -2151,6 +2302,8 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     case Opcode::CopyDataProperties:
     case Opcode::CopyObject: {
         bool copiesInto = opcode == Opcode::CopyDataProperties;
+        if (!copiesInto)
+            noteObjectMade();
         JSValue target = copiesInto ? operand(value.as<Opcode::CopyDataProperties>().targetOperand()) : JSValue(constructEmptyObject(realm));
         JSValue source = operand(copiesInto ? value.as<Opcode::CopyDataProperties>().sourceOperand() : value.as<Opcode::CopyObject>().sourceOperand());
         bool leavesSomeOut = copiesInto ? !value.as<Opcode::CopyDataProperties>().excludedKeys().isEmpty() || !value.as<Opcode::CopyDataProperties>().excludedOperands().empty()
@@ -2271,6 +2424,8 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     }
     case Opcode::ToObject: {
         JSValue of = operand(value.operand(0));
+        if (!of.isObject())
+            noteObjectMade();
         return isKnown(of) && !of.isUndefinedOrNull() ? settle(of.toObject(realm)) : unknown();
     }
     case Opcode::Await: {
@@ -2392,9 +2547,11 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     }
     case Opcode::SetMappedArgument: {
         auto store = value.as<Opcode::SetMappedArgument>();
-        if (auto* list = dynamicDowncast<JSArray>(operand(store.argumentsOperand())))
+        if (auto* list = dynamicDowncast<JSArray>(operand(store.argumentsOperand()))) {
+            StoreThatMayMakeRoom room(*this, list);
             list->putDirectIndex(realm, store.index(), operand(store.valueOperand()));
-        scope.clearException();
+        }
+        letGoOfWhatWasThrown(scope);
         return { };
     }
 
@@ -2411,6 +2568,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         JSValue constructor = operand(written.constructorOperand());
         if (!isKnown(constructor) || !constructor.isObject())
             return unknown();
+        noteObjectMade();
         JSValue parent = written.prototypeParentOperand() ? operand(written.prototypeParentOperand()) : JSValue(realm->objectPrototype());
         JSObject* prototype = isKnown(parent) && parent.isObject() ? constructEmptyObject(realm, asObject(parent)) : parent.isNull() ? constructEmptyObject(vm, realm->nullPrototypeObjectStructure()) : constructEmptyObject(realm);
         prototype->putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -2437,10 +2595,11 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
             name = computed.toPropertyKey(realm);
         if (!scope.exception() && isKnown(target) && target.isObject() && !name.isNull() && definition.methodKind() != MethodKind::Setter)
             asObject(target)->putDirectMayBeIndex(realm, name, definition.methodKind() == MethodKind::Method ? operand(definition.functionOperand()) : unknown());
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         return { };
     }
     case Opcode::NewClassToken:
+        noteObjectMade();
         return constructEmptyObject(realm);
     case Opcode::GetConstructPrototype:
         return prototypeFor(operand(value.operand(0)));
@@ -2963,9 +3122,10 @@ JSValue RehearsalOfRegExpTexts::enterWithEntryParameters(FunctionID function, st
     if (!record.has(FunctionFlags::IsAsync) || record.has(FunctionFlags::IsGenerator) || !isKnown(result))
         return result;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
+    noteObjectMade();
     JSValue promise = JSPromise::resolvedPromise(m_realm.get(), result);
     if (scope.exception()) {
-        scope.clearException();
+        letGoOfWhatWasThrown(scope);
         return unknown();
     }
     return promise;

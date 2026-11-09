@@ -306,19 +306,25 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
 #endif
 }
 
-static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& registers, GPRReg siteWord, uint8_t flags, uint8_t flagsKept = 0)
+enum class FrameMayLieOnHeap : bool { No, Yes };
+static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& registers, GPRReg siteWord, FrameMayLieOnHeap mayLieOnHeap, uint8_t flags, uint8_t flagsKept = 0)
 {
     const GPRReg saved = registers.saved;
     const GPRReg word = registers.word;
     const Address version(saved, SavedFrame::offsetOfVersion());
     jit.add32(TrustedImm32(1), version);
     jit.storeFence();
+    Jump liesOnHeap;
+    if (mayLieOnHeap == FrameMayLieOnHeap::Yes)
+        liesOnHeap = jit.branchTest8(CCallHelpers::NonZero, Address(saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), TrustedImm32(SavedFrame::liesOnHeapBit));
     emitCopyFrameWords(jit, registers);
 #if CPU(X86_64)
     jit.store64(SavedFrame::preservedRegister, Address(saved, SavedFrame::offsetOfPreservedRegister()));
 #endif
     jit.loadCallerReturnAddress(0, word);
     jit.storePtr(word, Address(saved, SavedFrame::offsetOfResumeAddress()));
+    if (mayLieOnHeap == FrameMayLieOnHeap::Yes)
+        liesOnHeap.link(&jit);
     if (flagsKept) {
         jit.load8(Address(saved, SavedFrame::offsetOfFlags()), word);
         jit.and32(TrustedImm32(flagsKept), word);
@@ -631,7 +637,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         checkStubOperands(awaitWithSavedFrame(), { awaited, savedFrame, siteWord });
         jit.bindEntry(awaitWithSavedFrame());
     }
-    emitSaveFrame(jit, { awaited, savedFrame, count, word, other, second }, siteWord, 0, form == AwaitedOperand::Value ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0);
+    emitSaveFrame(jit, { awaited, savedFrame, count, word, other, second }, siteWord, FrameMayLieOnHeap::No, 0, form == AwaitedOperand::Value ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0);
 
     JumpList needsOperation;
     if (!queuesJobInOperation) {
@@ -844,7 +850,7 @@ void generateSuspendGenerator(StubAssembler& jit)
     emitStoreSuspendedState(jit, form, generator);
     Label hasSavedFrame = jit.label();
     const uint8_t keptAtAwait = form == GeneratorSuspension::AsyncAwait ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0;
-    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, siteWord, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag, form == GeneratorSuspension::Yield ? 0 : SavedFrame::hasPassedAwaitOnStackFlag | keptAtAwait);
+    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, siteWord, form == GeneratorSuspension::Yield ? FrameMayLieOnHeap::No : FrameMayLieOnHeap::Yes, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag, form == GeneratorSuspension::Yield ? 0 : SavedFrame::hasPassedAwaitOnStackFlag | keptAtAwait);
     emitBarrierPreservingOperands(jit, saved, value, siteWord, word);
     if (form == GeneratorSuspension::AsyncAwait) {
         JumpList isLeftToEngine;

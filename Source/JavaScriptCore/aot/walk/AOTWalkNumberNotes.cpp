@@ -28,20 +28,8 @@ bool hasMechanismsOfNumberForms(const Walker& walker)
     return walker.has(Mechanism::TypedOperations) && walker.has(Mechanism::UnboxedNumbers);
 }
 
-PrimitiveKnownToFolding primitiveKnownInNumberForms(const Walker& walker, Reference reference)
+static PrimitiveKnownToFolding onlyValueOfTypeInNumberForms(const Type& type)
 {
-    if (!reference || !reference.isRecord())
-        return { };
-    const Operation& record = walker.code().at(reference.id());
-    if (record.opcode == Opcode::Double)
-        return PrimitiveKnownToFolding::number(record.number());
-    if (record.opcode == Opcode::String)
-        return PrimitiveKnownToFolding::text(record.string());
-
-    TypeID id = walker.typeOf(reference);
-    if (!id)
-        return { };
-    Type type = walker.types().at(id);
     if (!type.isJavaScriptValue() || type.hasObjects())
         return { };
     switch (type.primitives) {
@@ -62,6 +50,32 @@ PrimitiveKnownToFolding primitiveKnownInNumberForms(const Walker& walker, Refere
     default:
         return { };
     }
+}
+
+PrimitiveKnownToFolding primitiveKnownInNumberForms(const Walker& walker, Reference reference, const Type& type)
+{
+    const Operation& record = walker.code().at(reference.id());
+    if (record.opcode == Opcode::Double)
+        return PrimitiveKnownToFolding::number(record.number());
+    if (record.opcode == Opcode::String)
+        return PrimitiveKnownToFolding::text(record.string());
+    return onlyValueOfTypeInNumberForms(type);
+}
+
+PrimitiveKnownToFolding primitiveKnownInNumberForms(const Walker& walker, Reference reference)
+{
+    if (!reference || !reference.isRecord())
+        return { };
+    const Operation& record = walker.code().at(reference.id());
+    if (record.opcode == Opcode::Double)
+        return PrimitiveKnownToFolding::number(record.number());
+    if (record.opcode == Opcode::String)
+        return PrimitiveKnownToFolding::text(record.string());
+
+    TypeID id = walker.typeOf(reference);
+    if (!id)
+        return { };
+    return onlyValueOfTypeInNumberForms(walker.types().at(id));
 }
 
 std::optional<int64_t> integerKnownInNumberForms(const Walker& walker, Reference reference)

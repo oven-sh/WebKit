@@ -9,10 +9,12 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCallingConventions.h"
 #include "AOTCompiledCode.h"
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
 #include "AOTLinkedFunctions.h"
+#include "AOTNumbering.h"
 #include "AOTSort.h"
 #include "AOTStubKey.h"
 #include "AOTStubsPolls.h"
@@ -231,7 +233,7 @@ static void encodeSites(CallSiteScratch& scratch, const CompiledCode& code)
     scratch.sites.shrink(siteBytes.end() - firstSiteByte);
 }
 
-static void encodeStream(Vector<uint8_t>& stream, CallSiteScratch& scratch, const CompiledCode& code, size_t numberOfFunctions)
+static void encodeStream(Vector<uint8_t>& stream, CallSiteScratch& scratch, const CompiledCode& code, const FunctionNumbers& numbers, const Typed::CallingConventions& conventions)
 {
     const SiteDescription& sites = code.sites;
     std::span<const PrologueCheck> prologueChecks = code.frame.prologueChecks.span();
@@ -268,7 +270,8 @@ static void encodeStream(Vector<uint8_t>& stream, CallSiteScratch& scratch, cons
             RELEASE_ASSERT(inlineFrames[frame].parent < frame);
             RELEASE_ASSERT(inlineFrames[frame].callSite == sites.numberOfSitesWithoutCode - (inlineFrames.size() - 1) + frame);
             BuiltinID calledBuiltin = inlineFrames[frame].calledBuiltin;
-            FunctionID function = calledBuiltin ? functionInFramesOf(calledBuiltin, numberOfFunctions) : code.body.callees[inlineFrames[frame].callee].function;
+            Typed::CodeUnit shown = code.body.callees[inlineFrames[frame].callee];
+            FunctionID function = calledBuiltin ? functionInFramesOf(calledBuiltin, numbers.numberOfFunctions()) : shown.role == Typed::CodeRole::Body ? shown.function : numbers.idOf(conventions.indexOf(shown));
             RELEASE_ASSERT(function);
             InlineFrameRow { .isTailCall = inlineFrames[frame].isTailCall, .isConstruct = inlineFrames[frame].isConstruct, .parent = inlineFrames[frame].parent, .function = function }.append(frames);
         }
@@ -285,14 +288,14 @@ static void encodeStream(Vector<uint8_t>& stream, CallSiteScratch& scratch, cons
     stream.append(scratch.sites.span());
 }
 
-Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, size_t numberOfFunctions, BuildContext& context)
+Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, const FunctionNumbers& numbers, const Typed::CallingConventions& conventions, BuildContext& context)
 {
     Vector<Vector<uint8_t>> streams(functions.size());
     ChunksOfIndices chunks = divideIntoChunks(static_cast<unsigned>(functions.size()));
     forEachIndexInParallel(context.parallelLoops(), chunks.size(), [&](unsigned chunk) {
         CallSiteScratch scratch;
         for (unsigned position = chunks.firstIndexOf[chunk]; position < chunks.firstIndexOf[chunk + 1]; ++position)
-            encodeStream(streams[position], scratch, functions[position], numberOfFunctions);
+            encodeStream(streams[position], scratch, functions[position], numbers, conventions);
     });
     uint64_t numberOfInlineFrames = 0;
     for (const CompiledCode& code : functions)

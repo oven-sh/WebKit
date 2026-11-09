@@ -8,7 +8,7 @@
 # CHECK-LABEL: code f2:Body
 # CHECK: = CallDirect {{*}}function=f6
 # CHECK-LABEL: code f6:Body
-# CHECK: b0({{*}}: undefined|i32 @
+# CHECK: b0({{*}}: undefined|int[0, 2147483647] @
 
 module m0 path="close.mjs" displayPath="close.mjs" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/prelude/iterator-consumers.ts" displayPath="/$bun/js/prelude/iterator-consumers.ts" flags=[IsLibrary]

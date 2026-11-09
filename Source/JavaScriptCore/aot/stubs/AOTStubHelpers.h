@@ -132,6 +132,7 @@ struct VectorGrowth {
     GPRReg storage;
     GPRReg allocator;
     GPRReg scratch;
+    bool isOfExtraProperties { false };
 };
 void growFullVector(StubAssembler&, const VectorGrowth&, JumpList& slowPath);
 void widenStorageOfIntegersForAnyValue(StubAssembler&, GPRReg array, GPRReg scratch, JumpList& isLeftToOthers);

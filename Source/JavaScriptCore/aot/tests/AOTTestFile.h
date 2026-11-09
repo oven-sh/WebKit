@@ -33,6 +33,7 @@ struct RunDirective {
     String command;
     Vector<String> arguments;
     unsigned line;
+    bool isLeftOutUnderFurtherOptionWords { false };
 };
 
 struct OptionWord {

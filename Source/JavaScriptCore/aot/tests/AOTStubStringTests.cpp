@@ -202,6 +202,8 @@ private:
         for (bool isStrict : { false, true }) {
             Answer answer = runWithoutOperation(JSC::AOT::equal(isStrict), m_first.address(), m_second.address());
             AOT_TEST_CHECK(answer.result == equality.result && answer.numberOfLeafCalls == equality.numberOfLeafCalls);
+            Answer answerOfNarrowEntry = runWithoutOperation(equalOfNullableStrings(isStrict), m_first.address(), m_second.address());
+            AOT_TEST_CHECK(answerOfNarrowEntry.result == equality.result && answerOfNarrowEntry.numberOfLeafCalls == equality.numberOfLeafCalls);
         }
         Answer answerInFlags = runWithoutOperation(strictEqualInFlags(), m_first.address(), m_second.address());
         AOT_TEST_CHECK(answerInFlags.result == equality.result && answerInFlags.numberOfLeafCalls == equality.numberOfLeafCalls);
@@ -320,6 +322,40 @@ static void testSameCellsAndImpls()
     AOT_TEST_CHECK(equality.result == 1 && !equality.numberOfLeafCalls);
 }
 
+static void testNullableStrings()
+{
+    ComparisonStubs stubs;
+    Ref<StringImpl> impl = StringImpl::create("the same characters"_s);
+    Ref<StringImpl> otherImpl = StringImpl::create("some other characters"_s);
+    FakeString cell = FakeString::flat(impl.get());
+    FakeString cellOfSameImpl = FakeString::flat(impl.get());
+    FakeString otherCell = FakeString::flat(otherImpl.get());
+    FakeString rope = FakeString::rope(impl->length());
+    const uint64_t undefined = JSValue::encode(jsUndefined());
+    const uint64_t null = JSValue::encode(jsNull());
+
+    struct Case {
+        uint64_t first;
+        uint64_t second;
+        uint64_t isStrictlyEqual;
+        uint64_t isLooselyEqual;
+    };
+    const Case cases[] = {
+        { undefined, undefined, 1, 1 }, { null, null, 1, 1 }, { undefined, null, 0, 1 }, { null, undefined, 0, 1 },
+        { cell.address(), undefined, 0, 0 }, { undefined, cell.address(), 0, 0 }, { cell.address(), null, 0, 0 }, { null, cell.address(), 0, 0 },
+        { rope.address(), undefined, 0, 0 }, { null, rope.address(), 0, 0 },
+        { cell.address(), cell.address(), 1, 1 }, { rope.address(), rope.address(), 1, 1 }, { cell.address(), cellOfSameImpl.address(), 1, 1 }, { cell.address(), otherCell.address(), 0, 0 },
+    };
+    for (const Case& compared : cases) {
+        for (bool isStrict : { false, true }) {
+            ComparisonStubs::Answer narrow = stubs.runWithoutOperation(equalOfNullableStrings(isStrict), compared.first, compared.second);
+            AOT_TEST_CHECK(narrow.result == (isStrict ? compared.isStrictlyEqual : compared.isLooselyEqual) && !narrow.numberOfLeafCalls);
+        }
+        ComparisonStubs::Answer general = stubs.runWithoutOperation(JSC::AOT::equal(true), compared.first, compared.second);
+        AOT_TEST_CHECK(general.result == compared.isStrictlyEqual);
+    }
+}
+
 static void testAtoms()
 {
     ComparisonStubs stubs;
@@ -381,7 +417,7 @@ static void testRopes()
     for (auto [first, second] : pairsOfSameLength) {
         checkLeftToOperation(stubs.runner(), stringsAreEqual(), Entry::operationAOTStringsAreEqual, *first, *second, { 0, 1 });
         checkLeftToOperation(stubs.runner(), distinctStringsAreEqual(), Entry::operationAOTStringsAreEqual, *first, *second, { 0, 1 });
-        for (StubKey strictEqual : { JSC::AOT::equal(true), strictEqualInFlags() })
+        for (StubKey strictEqual : { JSC::AOT::equal(true), strictEqualInFlags(), equalOfNullableStrings(true) })
             checkLeftToOperation(stubs.runner(), strictEqual, Entry::operationAOTStringsAreEqual, *first, *second, { 0, 1 }, true);
     }
 
@@ -519,6 +555,7 @@ std::span<const NativeTest> stubStringTests()
         { "stubs/string-comparison-common-prefixes"_s, ImageTests::whenExecutable<testCommonPrefixes> },
         { "stubs/string-comparison-order-of-wide-units"_s, ImageTests::whenExecutable<testOrderOfWideUnits> },
         { "stubs/string-comparison-same-cells-and-impls"_s, ImageTests::whenExecutable<testSameCellsAndImpls> },
+        { "stubs/string-comparison-nullable-strings"_s, ImageTests::whenExecutable<testNullableStrings> },
         { "stubs/string-comparison-atoms"_s, ImageTests::whenExecutable<testAtoms> },
         { "stubs/string-comparison-ropes"_s, ImageTests::whenExecutable<testRopes> },
     };

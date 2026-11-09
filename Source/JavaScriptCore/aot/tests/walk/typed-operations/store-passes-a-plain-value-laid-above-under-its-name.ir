@@ -4,12 +4,15 @@
 # function run(n) { var t; for (var i = 0; i < n; i++) t = new Reply(i); return t; }
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
+# CHECK-NOT: = NewObject
 # CHECK: [[test]]: {{*}} = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="sent"}]
 # CHECK-NEXT: Branch [[test]] -> taken [[typed]](), notTaken [[closed]]()
 # CHECK: [[typed]]() isInLoop=true:
-# CHECK-NEXT: = PutSlotOrAdd {{*}}key="sent" receivers=[L0] level=Proven
+# What a sloppy constructor function stores fills its object: behind the guard the object is born with both fields; where the guard fails the construction goes by the call.
+# CHECK-NOT: PutSlot
+# CHECK: = NewObject {{*}}layout=L0 fields=[0, 1]
 # CHECK: [[closed]]() frequency=Rare isInLoop=true:
-# CHECK: = PropSet {{*}}key="sent"
+# CHECK: = Construct
 # Nothing lies above under `code`: nobody asks a guard about it.
 # RUN(CODE): walk f2 mechanisms=all
 # CODE-NOT: key="code"}]

@@ -2,15 +2,15 @@
 # print(String(sum(which > 0 ? [1, 2, 4] : ["x", 2, 4], 3)));
 # print("went on");
 # BEHIND A LOOP ITS HEAD SHOWS WHAT ITS EDGES HAND OVER. `s` comes round the loop. Each value of the head's parameter is handed in by the entering edge (0) or made by the body out of the one before (an Add in its generic form:
-# a number, a text or a big integer whatever its operands are). What is shown of the latter with the parameter itself taken as `anything` holds for every turn: one pass, no fixpoint. So the return asks nothing of it.
+# a number or a text, for what stands on its left is no big integer). What is shown of the latter with the parameter itself taken as what it is claimed to be keeps within the claim: the entering edge is the base, the edge that leads back the step: no fixpoint. So the return asks nothing of it.
 # Inside the loop the head stays `anything`: not every edge has been built.
 # RUN(RETURNED): walk f1 mechanisms=all-Inlining
 # RETURNED-LABEL: code f1:Body
-# RETURNED: ([[s]]: number|string|bigint @JSValue{{*}}isLoopHead=true
+# RETURNED: ([[s]]: number|string @JSValue{{*}}isLoopHead=true
 # RETURNED: = Add [[s]], {{*}}form=Generic
 # RETURNED-NOT: CheckProof [[s]]
 # The loop is built twice, for a list whose storage is known in front of it and for any other. What the two heads show meets behind them
-# RETURNED: ([[met]]: number|string|bigint @JSValue):
+# RETURNED: ([[met]]: number|string @JSValue):
 # RETURNED-NOT: CheckProof [[met]]
 # RETURNED: Return [[met]]
 # RUN(NUMBERS): run-in-shell mechanisms=-Inlining globalThis.which = 1;

@@ -43,6 +43,8 @@ enum class LeafPresence : size_t { TakeSlowPath, Absent, Inherited, Own };
     v(VirtualCallTrampoline) \
     v(ErrorConstructorClassInfo) \
     v(BooleanConstructorClassInfo) \
+    v(NumberConstructorClassInfo) \
+    v(StringConstructorClassInfo) \
     v(NonConstructorHostFunction) \
     v(AsyncGeneratorClassInfo) \
     v(GeneratorClassInfo) \
@@ -181,6 +183,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnClasses, GetClassPrototype) \
     v(OperationsOnClasses, GetConstructPrototype) \
     v(OperationsOnClasses, NewClass) \
+    v(OperationsOnClasses, RememberStructureOfClass) \
     v(OperationsOnClasses, ResolveHeritage) \
     v(OperationsOnClasses, SetConstructPrototype) \
     v(OperationsOfDynamicImport, AreLoaderFunctionsStored) \
@@ -217,7 +220,9 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnAsyncIterators, CreateAsyncFromSyncIterator) \
     v(OperationsOnAsyncIterators, FinishAsyncIteratorStep) \
     v(OperationsOnGenerators, IsGeneratorSuspendedAtStart) \
+    v(OperationsOnGenerators, NewAsyncGenerator) \
     v(OperationsOnGenerators, NewGenerator) \
+    v(OperationsOnGenerators, NewGeneratorOfLibrary) \
     v(OperationsOnGenerators, ResumeGenerator) \
     v(OperationsOnGenerators, SaveFrameAndYield) \
     v(OperationsOnGenerators, TakeGeneratorPrototype) \
@@ -291,17 +296,22 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatMakeArrays, AppendHole) \
     v(OperationsThatMakeArrays, AppendIterable) \
     v(OperationsThatMakeArrays, AppendMembers) \
+    v(OperationsThatMakeArrays, AppendValuesOfMap) \
     v(OperationsThatMakeArrays, ArrayPutAtIndex) \
     v(OperationsThatMakeArrays, ArrayPutAtIndexInSloppyCode) \
     v(OperationsThatMakeArrays, ArrayPutAtNumber) \
     v(OperationsThatMakeArrays, ArrayPutNumberAtIndex) \
+    v(OperationsThatMakeArrays, ConvertToDoubleStorage) \
     v(OperationsThatMakeArrays, DestructureIterable) \
     v(OperationsThatMakeArrays, NewArgumentList) \
     v(OperationsThatMakeArrays, NewArrayAtReviewedSite) \
     v(OperationsThatMakeArrays, NewArrayFromDoubles) \
     v(OperationsThatMakeArrays, NewArrayIterator) \
+    v(OperationsThatMakeArrays, NewArrayOfGiven) \
     v(OperationsThatMakeArrays, NewArrayOfHoles) \
     v(OperationsThatMakeArrays, NewArrayWithHoles) \
+    v(OperationsThatMakeArrays, NewArrayWithHolesAtSite) \
+    v(OperationsThatMakeArrays, NewArrayWithLengthAtReviewedSite) \
     v(OperationsThatMakeArrays, NewArrayWithIndexingType) \
     v(OperationsThatMakeArrays, ReadsIteratorOfListUnseen) \
     v(OperationsThatMakeArrays, ReserveArrayRoom) \
@@ -419,10 +429,13 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
     case Entry::operationAOTStringLocaleCompare:
         return RemovableFeature::IntlCollation;
     case Entry::operationAOTRegExpExec:
+    case Entry::operationAOTRegExpMatchFlatProgram8:
+    case Entry::operationAOTRegExpMatchFlatProgram16:
     case Entry::operationAOTRegExpTest:
     case Entry::operationAOTRegExpTestBoxed:
     case Entry::operationAOTRegExpMatchLiteral:
     case Entry::operationAOTRegExpMatchLiteralWithoutObject:
+    case Entry::operationAOTRegExpMatchInParts:
     case Entry::operationAOTNewRegExpLiteral:
     case Entry::operationAOTSharedRegExpLiteral:
     case Entry::operationAOTCopyOfSharedRegExpLiteral:

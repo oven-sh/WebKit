@@ -6,7 +6,7 @@
 # RUN: walk f1 mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
-# CHECK: = StrictEq
+# CHECK: = TypeTest {{*}}testedType=builtin(Bun_sql)
 
 variable g0 name="kept" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
 module m0 path="/main.js" displayPath="main.js" body=f0
