@@ -68,8 +68,16 @@ public:
     {
     }
 
-    JSValue raw() const { return record->get(BufferedRawField); }
-    PyRecord* rawFile() const { return PyRecord::from(raw()); }
+    JSValue rawIfAny() const { return record->get(BufferedRawField); }
+    // Empty: there is none, a ValueError. detach() of a reader asks for no lock, as in CPython: the raw stream may call it from its readinto(), and another thread
+    // while this one waits in read(). So whoever is about to use the raw stream asks for it then, each time, and keeps it no longer than the call.
+    JSValue raw()
+    {
+        JSValue raw = rawIfAny();
+        if (!raw) [[unlikely]]
+            raiseForNoRaw();
+        return raw;
+    }
     JSCell* storage() const { return record->get(BufferedBufferField).asCell(); }
     uint8_t* buffer() const
     {
@@ -79,6 +87,7 @@ public:
 
     // ---- False: an exception ----
     bool checkInitialized();
+    void raiseForNoRaw();
     bool checkClosed(ASCIILiteral message);
     bool initialize(JSValue raw, int64_t bufferSize, bool readable, bool writable);
     bool flushWrites();
@@ -109,6 +118,7 @@ public:
 
     // ---- The raw stream. -1: an exception. -2: it would block ----
     int64_t rawTell();
+    int64_t positionOf(JSValue raw, bool isFileIO);
     int64_t cachedRawTell() { return s.absolutePosition != -1 ? s.absolutePosition : rawTell(); }
     int64_t rawSeek(int64_t target, int whence);
     // The memory is that of the cell `owner`, from `offset` on. No address: see locateMemory().
@@ -213,21 +223,29 @@ bool BufferedStream::checkInitialized()
 {
     if (s.isInitialized) [[likely]]
         return true;
+    raiseForNoRaw();
+    return false;
+}
+
+void BufferedStream::raiseForNoRaw()
+{
     auto scope = DECLARE_THROW_SCOPE(vm);
     raiseValueError(globalObject, scope, s.isDetached ? "raw stream has been detached"_s : "I/O operation on uninitialized object"_s);
-    return false;
 }
 
 int BufferedStream::isClosed()
 {
     if (!record->get(BufferedBufferField))
         return 1;
-    if (s.fastClosedChecks)
-        return fileIOIsClosed(rawFile());
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, checkInitialized()))
+    if (!s.fastClosedChecks && failed(scope, checkInitialized()))
         return -1;
-    JSValue closed = getAttr(globalObject, raw(), ioName(globalObject, IOName::closed));
+    JSValue raw = this->raw();
+    if (failed(scope, raw))
+        return -1;
+    if (s.fastClosedChecks)
+        return fileIOIsClosed(PyRecord::from(raw));
+    JSValue closed = getAttr(globalObject, raw, ioName(globalObject, IOName::closed));
     RETURN_IF_EXCEPTION(scope, -1);
     bool result = isTrue(globalObject, closed);
     RETURN_IF_EXCEPTION(scope, -1);
@@ -263,22 +281,29 @@ int64_t BufferedStream::invalidPosition(int64_t position)
     return -1;
 }
 
+int64_t BufferedStream::positionOf(JSValue raw, bool isFileIO)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isFileIO)
+        RELEASE_AND_RETURN(scope, fileIOSeek(globalObject, PyRecord::from(raw), 0, SEEK_CUR));
+    JSValue result = callMethod(globalObject, raw, ioName(globalObject, IOName::tell));
+    RETURN_IF_EXCEPTION(scope, -1);
+    int64_t position = ioToOffset(globalObject, result, runtime(globalObject).ValueError());
+    RETURN_IF_EXCEPTION(scope, -1);
+    if (position < 0)
+        RELEASE_AND_RETURN(scope, invalidPosition(position));
+    return position;
+}
+
 int64_t BufferedStream::rawTell()
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t position;
-    if (s.rawIsFileIO) {
-        position = fileIOSeek(globalObject, rawFile(), 0, SEEK_CUR);
-        if (failed(scope, position >= 0))
-            return -1;
-    } else {
-        JSValue result = callMethod(globalObject, raw(), ioName(globalObject, IOName::tell));
-        RETURN_IF_EXCEPTION(scope, -1);
-        position = ioToOffset(globalObject, result, runtime(globalObject).ValueError());
-        RETURN_IF_EXCEPTION(scope, -1);
-        if (position < 0)
-            RELEASE_AND_RETURN(scope, invalidPosition(position));
-    }
+    JSValue raw = this->raw();
+    if (failed(scope, raw))
+        return -1;
+    int64_t position = positionOf(raw, s.rawIsFileIO);
+    if (failed(scope, position >= 0))
+        return -1;
     s.absolutePosition = position;
     return position;
 }
@@ -286,13 +311,16 @@ int64_t BufferedStream::rawTell()
 int64_t BufferedStream::rawSeek(int64_t target, int whence)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue raw = this->raw();
+    if (failed(scope, raw))
+        return -1;
     int64_t position;
     if (s.rawIsFileIO) {
-        position = fileIOSeek(globalObject, rawFile(), target, whence);
+        position = fileIOSeek(globalObject, PyRecord::from(raw), target, whence);
         if (failed(scope, position >= 0))
             return -1;
     } else {
-        JSValue result = callMethod(globalObject, raw(), ioName(globalObject, IOName::seek), makeInt(globalObject, target), jsNumber(whence));
+        JSValue result = callMethod(globalObject, raw, ioName(globalObject, IOName::seek), makeInt(globalObject, target), jsNumber(whence));
         RETURN_IF_EXCEPTION(scope, -1);
         position = ioToOffset(globalObject, result, runtime(globalObject).ValueError());
         RETURN_IF_EXCEPTION(scope, -1);
@@ -306,49 +334,77 @@ int64_t BufferedStream::rawSeek(int64_t target, int whence)
 bool BufferedStream::initialize(JSValue raw, int64_t bufferSize, bool readable, bool writable)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (s.lock.isHeld()) {
+    // The raw stream, the buffer and the positions belong to whoever holds the lock. Another thread may take it during any call of the program's from here, so this is
+    // asked again before they are written. A call that is refused has written none of them.
+    auto isLocked = [&] {
+        if (!s.lock.isHeld())
+            return false;
         raiseRuntimeError(globalObject, scope, "reentrant call inside "_s, reprForMessage(globalObject, record));
+        return true;
+    };
+    if (isLocked())
         return false;
-    }
     s.isInitialized = false;
     s.isDetached = false;
 
+    // What is called from here to tell() may call __init__() or detach() of this very stream. This call ends later: if one of those calls but tell() fails the stream is
+    // not initialized, and if none does it writes the whole state behind tell(), with nothing of the program's in between.
+    auto fail = [&] {
+        s.isInitialized = false;
+        return false;
+    };
     if (readable && writable && failed(scope, ioCheckSeekable(globalObject, raw)))
-        return false;
+        return fail();
     if (readable && failed(scope, ioCheckReadable(globalObject, raw)))
-        return false;
+        return fail();
     if (writable && failed(scope, ioCheckWritable(globalObject, raw)))
-        return false;
+        return fail();
 
-    if (JSValue previous = this->raw(); previous && previous != raw)
-        ioDidUnwrap(globalObject, previous);
-    record->set(vm, BufferedRawField, raw);
-    s.rawIsFileIO = !!ioTryExact(globalObject, raw, IOType::FileIO);
-    s.fastClosedChecks = false;
+    // A FileIO stays one, whatever runs until this is written: its __class__ cannot be assigned.
+    bool rawIsFileIO = !!ioTryExact(globalObject, raw, IOType::FileIO);
+    auto setRaw = [&] {
+        if (JSValue previous = rawIfAny(); previous && previous != raw)
+            ioDidUnwrap(globalObject, previous);
+        record->set(vm, BufferedRawField, raw);
+        s.rawIsFileIO = rawIsFileIO;
+        s.fastClosedChecks = false;
+    };
+    PyByteStorage* storage = nullptr;
+    if (bufferSize <= 0)
+        raiseValueError(globalObject, scope, "buffer size must be strictly positive"_s);
+    else
+        storage = ioTryNewStorage(globalObject, bufferSize);
+    if (failed(scope, storage)) {
+        // As in CPython, the raw stream is in its place by now.
+        if (s.lock.isHeld())
+            return false;
+        setRaw();
+        return fail();
+    }
+    int64_t position = positionOf(raw, rawIsFileIO);
+    if (failed(scope, position >= 0)) {
+        takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, fail());
+    }
+
+    if (isLocked())
+        return false;
+    setRaw();
+    record->set(vm, BufferedBufferField, storage);
     s.bufferSize = bufferSize;
+    s.bufferMask = !(bufferSize & (bufferSize - 1)) ? bufferSize - 1 : 0;
     s.readable = readable;
     s.writable = writable;
-
-    if (bufferSize <= 0) {
-        raiseValueError(globalObject, scope, "buffer size must be strictly positive"_s);
-        return false;
-    }
-    PyByteStorage* storage = ioTryNewStorage(globalObject, bufferSize);
-    RETURN_IF_EXCEPTION(scope, false);
-    record->set(vm, BufferedBufferField, storage);
-    s.bufferMask = !(bufferSize & (bufferSize - 1)) ? bufferSize - 1 : 0;
-    if (failed(scope, rawTell() != -1)) {
-        takePendingException(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-
+    if (position >= 0)
+        s.absolutePosition = position;
     if (readable)
         resetReadBuffer();
     if (writable) {
         resetWriteBuffer();
         s.position = 0;
     }
-    s.fastClosedChecks = s.rawIsFileIO && !record->type()->isHeapType();
+    s.fastClosedChecks = rawIsFileIO && !record->type()->isHeapType();
+    s.isDetached = false;
     s.isInitialized = true;
     ioDidOpen(globalObject, record);
     ioDidWrap(globalObject, raw);
@@ -361,9 +417,12 @@ int64_t BufferedStream::rawRead(JSCell* owner, size_t offset, int64_t length)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue raw = this->raw();
+    if (failed(scope, raw))
+        return -1;
     int64_t count;
     if (s.rawIsFileIO) {
-        count = fileIOReadInto(globalObject, rawFile(), owner, offset, static_cast<size_t>(length));
+        count = fileIOReadInto(globalObject, PyRecord::from(raw), owner, offset, static_cast<size_t>(length));
         EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
         if (count < 0)
             return count;
@@ -372,8 +431,8 @@ int64_t BufferedStream::rawRead(JSCell* owner, size_t offset, int64_t length)
         RETURN_IF_EXCEPTION(scope, -1);
         JSValue result;
         do {
-            result = callMethod(globalObject, raw(), ioName(globalObject, IOName::readinto), target);
-        } while (failed(scope, result) && ioTrapEINTR(globalObject));
+            result = callMethod(globalObject, raw, ioName(globalObject, IOName::readinto), target);
+        } while (failed(scope, result) && ioTrapEINTR(globalObject) && !failed(scope, raw = this->raw()));
         if (!result)
             return -1;
         if (isNone(result))
@@ -437,7 +496,10 @@ JSValue BufferedStream::readAll()
         return result;
     };
 
-    JSValue readall = getAttrIfPresent(globalObject, raw(), ioName(globalObject, IOName::readall));
+    JSValue raw = this->raw();
+    if (failed(scope, raw))
+        return { };
+    JSValue readall = getAttrIfPresent(globalObject, raw, ioName(globalObject, IOName::readall));
     RETURN_IF_EXCEPTION(scope, { });
     if (readall) {
         JSValue rest = call(globalObject, readall);
@@ -455,7 +517,10 @@ JSValue BufferedStream::readAll()
     if (buffered)
         all.append(buffered->span());
     while (true) {
-        JSValue data = callMethod(globalObject, raw(), rt.names.read());
+        raw = this->raw();
+        if (failed(scope, raw))
+            return { };
+        JSValue data = callMethod(globalObject, raw, rt.names.read());
         RETURN_IF_EXCEPTION(scope, { });
         if (!isNone(data) && !PyBytes::is(data))
             return raiseTypeError(globalObject, scope, "read() should return bytes"_s);
@@ -701,9 +766,12 @@ int64_t BufferedStream::rawWrite(JSCell* owner, size_t offset, int64_t length)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue raw = this->raw();
+    if (failed(scope, raw))
+        return -1;
     int64_t count;
     if (s.rawIsFileIO) {
-        count = fileIOWrite(globalObject, rawFile(), owner, offset, static_cast<size_t>(length));
+        count = fileIOWrite(globalObject, PyRecord::from(raw), owner, offset, static_cast<size_t>(length));
         EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
         if (count == -2)
             lastErrno = EAGAIN;
@@ -715,9 +783,9 @@ int64_t BufferedStream::rawWrite(JSCell* owner, size_t offset, int64_t length)
         JSValue result;
         do {
             errno = 0;
-            result = callMethod(globalObject, raw(), rt.names.write(), data);
+            result = callMethod(globalObject, raw, rt.names.write(), data);
             lastErrno = errno;
-        } while (failed(scope, result) && ioTrapEINTR(globalObject));
+        } while (failed(scope, result) && ioTrapEINTR(globalObject) && !failed(scope, raw = this->raw()));
         if (!result)
             return -1;
         if (isNone(result))
@@ -825,8 +893,8 @@ static JSValue bufferedDeallocWarn(JSGlobalObject* globalObject, JSValue self, J
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     BufferedStream stream(globalObject, self);
-    if (stream.s.isInitialized && stream.raw()) {
-        if (failed(scope, callMethod(globalObject, stream.raw(), ioName(globalObject, IOName::deallocWarn), source))) {
+    if (JSValue raw = stream.rawIfAny(); raw && stream.s.isInitialized) {
+        if (failed(scope, callMethod(globalObject, raw, ioName(globalObject, IOName::deallocWarn), source))) {
             takePendingException(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
         }
@@ -842,7 +910,10 @@ static JSValue bufferedForward(JSGlobalObject* globalObject, JSValue self, JSStr
     BufferedStream stream(globalObject, self);
     if (failed(scope, stream.checkInitialized()))
         return { };
-    RELEASE_AND_RETURN(scope, callMethod(globalObject, stream.raw(), method));
+    JSValue raw = stream.raw();
+    if (failed(scope, raw))
+        return { };
+    RELEASE_AND_RETURN(scope, callMethod(globalObject, raw, method));
 }
 
 // raw.attribute
@@ -853,7 +924,10 @@ static JSValue bufferedForwardGet(JSGlobalObject* globalObject, JSValue self, JS
     BufferedStream stream(globalObject, self);
     if (failed(scope, stream.checkInitialized()))
         return { };
-    RELEASE_AND_RETURN(scope, getAttr(globalObject, stream.raw(), attribute));
+    JSValue raw = stream.raw();
+    if (failed(scope, raw))
+        return { };
+    RELEASE_AND_RETURN(scope, getAttr(globalObject, raw, attribute));
 }
 
 static JSValue bufferedSimpleFlush(JSGlobalObject* globalObject, JSValue self) { return bufferedForward(globalObject, self, runtime(globalObject).names.flush()); }
@@ -907,10 +981,8 @@ static JSValue bufferedClose(JSGlobalObject* globalObject, JSValue self)
         return { };
 
     JSValue result;
-    if (stream.raw())
-        result = callMethod(globalObject, stream.raw(), runtime(globalObject).names.close());
-    else
-        stream.checkInitialized();
+    if (JSValue raw = stream.raw())
+        result = callMethod(globalObject, raw, runtime(globalObject).names.close());
     EXCEPTION_ASSERT(!!scope.exception() == !result);
     if (!ioDidCloseWrapped(globalObject, stream.record, !result)) [[unlikely]]
         return { };
@@ -937,7 +1009,7 @@ static JSValue bufferedDetach(JSGlobalObject* globalObject, JSValue self)
     // Flushing may have run anything.
     if (failed(scope, stream.checkInitialized()))
         return { };
-    JSValue raw = stream.raw();
+    JSValue raw = stream.rawIfAny();
     stream.record->set(stream.vm, BufferedRawField, JSValue());
     stream.s.isDetached = true;
     stream.s.isInitialized = false;
@@ -1096,7 +1168,8 @@ static JSValue bufferedSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
 
     if (failed(scope, stream.checkClosed("seek of closed file"_s)))
         return { };
-    if (failed(scope, ioCheckSeekable(globalObject, stream.raw())))
+    JSValue raw = stream.raw();
+    if (failed(scope, raw) || failed(scope, ioCheckSeekable(globalObject, raw)))
         return { };
     int64_t target = ioToOffset(globalObject, targetValue, runtime(globalObject).ValueError());
     RETURN_IF_EXCEPTION(scope, { });
@@ -1148,7 +1221,10 @@ static JSValue bufferedTruncate(JSGlobalObject* globalObject, JSValue self, JSVa
         return { };
     if (failed(scope, stream.flushAndRewind()))
         return { };
-    JSValue result = callMethod(globalObject, stream.raw(), ioName(globalObject, IOName::truncate), position ? position : jsUndefined());
+    JSValue raw = stream.raw();
+    if (failed(scope, raw))
+        return { };
+    JSValue result = callMethod(globalObject, raw, ioName(globalObject, IOName::truncate), position ? position : jsUndefined());
     RETURN_IF_EXCEPTION(scope, { });
     // The raw stream may have moved.
     if (failed(scope, stream.rawTell() != -1)) {
