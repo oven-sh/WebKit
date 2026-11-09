@@ -37,10 +37,10 @@ void didChangeBarrierThreshold(VM&, unsigned threshold, bool mutatorShouldBeFenc
 void willAnalyzeHeap(VM&);
 void willCollectForExhaustedCage(VM&);
 void didFindNoRoomWhereCollectionMayRun(VM&);
-String nameOfCompiledCallee(JSCell*);
-bool standsForModuleInHeapSnapshots(JSCell*);
+String compiledCalleeName(JSCell*);
+bool representsModuleInHeapSnapshot(JSCell*);
 [[noreturn]] void crashOnCellVisitMismatch(VM&, const JSCell*);
-std::span<const uint32_t> offsetsOfNarrowReferences(const Structure*);
+std::span<const uint32_t> narrowReferenceOffsets(const Structure*);
 
 } // namespace HeapHooks
 

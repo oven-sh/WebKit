@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
 #include "AOTChildProcess.h"
 #include "AOTVector.h"
 #include "Collector.h"
@@ -532,6 +533,23 @@ static void checkFullCollectionDropsTransitionChain()
     ensureStillAliveHere(object);
 }
 
+#if ASSERT_ENABLED
+NEVER_INLINE static void collectWhileStackHolds(VM& vm, uint64_t word)
+{
+    volatile uint64_t held = word;
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(held == word);
+}
+
+static void checkWordThatOnlyLooksLikeHeaderOfCompiledObjectIsPassedOver()
+{
+    TestVM test;
+    VM& vm = test.vm();
+    uint64_t typeAndState = static_cast<uint64_t>(frameCellState) << 8 * JSCell::cellStateOffset() | static_cast<uint64_t>(CompiledObjectType) << 8 * JSCell::typeInfoTypeOffset();
+    collectWhileStackHolds(vm, typeAndState | (StructureID::encode(vm.structureStructure.get()).bits() + MarkedBlock::atomSize / 2));
+}
+#endif
+
 static void testTransitionChainStaysWithoutCompiledCode()
 {
     if (Options::useAOT())
@@ -570,6 +588,9 @@ std::span<const NativeTest> collectorTests()
         { "collector/empty-eden/off-without-compiled-code"_s, testNoCollectionIsSkippedWithoutCompiledCode },
         { "collector/structures/full-collection-drops-transition-chain"_s, withCompiledCodeOptions<checkFullCollectionDropsTransitionChain> },
         { "collector/structures/chain-stays-without-compiled-code"_s, testTransitionChainStaysWithoutCompiledCode },
+#if ASSERT_ENABLED
+        { "collector/stack/a-word-that-only-looks-like-the-header-of-a-compiled-object-is-passed-over"_s, withCompiledCodeOptions<checkWordThatOnlyLooksLikeHeaderOfCompiledObjectIsPassedOver> },
+#endif
     };
     return tests;
 }

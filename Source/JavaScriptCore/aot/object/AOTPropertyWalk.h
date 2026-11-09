@@ -73,12 +73,12 @@ JS_EXPORT_PRIVATE void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*
 JS_EXPORT_PRIVATE bool hasOwnEnumerableProperty(JSGlobalObject*, JSObject* compiledObject);
 JSCellButterfly* tryGetCachedOwnKeys(VM&, JSObject*, Filter);
 Presence hasOwnProperty(JSObject*, UniquedStringImpl*);
-const CachedPropertyList* tryGetListOfOwnProperties(VM&, JSObject* compiledObject, JSObject*& extraProperties);
+const CachedPropertyList* tryGetOwnPropertyList(VM&, JSObject* compiledObject, JSObject*& extraProperties);
 Presence hasPropertyOnChain(Structure*, UniquedStringImpl*);
-bool listExtraPropertiesInStructure(VM&, JSObject*);
+bool ensureExtraPropertiesStructure(VM&, JSObject*);
 JS_EXPORT_PRIVATE JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned* attributesOrNull);
 JS_EXPORT_PRIVATE bool ordinaryGetOwnPropertySlot(JSGlobalObject*, JSObject*, PropertyName, PropertySlot&);
-JS_EXPORT_PRIVATE bool searchCameByStructures(JSObject* first, JSObject* last);
+JS_EXPORT_PRIVATE bool isOrdinaryPrototypeChain(JSObject* first, JSObject* last);
 JS_EXPORT_PRIVATE UniquedStringImpl* tryFindName(VM&, std::span<const Latin1Character>);
 JS_EXPORT_PRIVATE Presence tryGetOwnValue(JSObject* compiledObject, UniquedStringImpl*, JSValue&);
 using DescriptorMembers = std::array<JSValue, 6>;

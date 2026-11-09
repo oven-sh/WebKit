@@ -300,7 +300,7 @@ static bool isOfTestRunner(ScriptExecutable& executable)
     return id && functionsOfTestRunner().contains(*id);
 }
 
-bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
+bool isInterpretationDisallowed(JSGlobalObject* realm, ScriptExecutable& executable)
 {
     return refusesLibraryText(realm) && isTextOfLibrary(executable, Image::current()->isBuiltWithLibrary()) && !isOfTestRunner(executable);
 }
@@ -308,7 +308,7 @@ bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
 bool refusesToRun(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
-    return executable && refusesToInterpret(function->realm(), *executable);
+    return executable && isInterpretationDisallowed(function->realm(), *executable);
 }
 
 bool isNeededByNothingThatRuns(JSFunction* function)
@@ -369,11 +369,11 @@ void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject* realm)
 void throwBuiltinNotCompiled(JSGlobalObject* realm, const String& builtin)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests();
+    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isReifyingForPresenceCheck();
     if (isMissOfReach && !t_eventMayExposeGlobalObject)
         stopAtMissOfReach(builtin);
     JSObject* error = isMissOfReach ? createBuiltinBehindTargetOfEventNotCompiledError(realm, builtin) : createBuiltinNotCompiledError(realm, builtin);
-    noteErrorOfCodeLeftOut(realm, error);
+    noteOmittedCodeError(realm, error);
     throwException(realm, scope, error);
 }
 
@@ -386,7 +386,7 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
     Vector<String, 4> names = id ? globalBuiltinsThatRun(RuntimeFunctionID(*id)) : Vector<String, 4>();
     if (id && std::ranges::contains(table.moduleLoaderFunctions(), RuntimeFunctionID(*id)))
         names = { "The module loader"_str };
-    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests();
+    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isReifyingForPresenceCheck();
     String leftOut = !isMissOfReach ? String() : names.isEmpty() ? makeString("The built-in function '"_s, function.name().string(), '\'') : makeStringByJoining(names.span(), " or "_s);
     if (isMissOfReach && !t_eventMayExposeGlobalObject)
         stopAtMissOfReach(leftOut);
@@ -395,7 +395,7 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
         return table.at(builtin).kind == BuiltinKind::Accessor;
     });
     if (!isGetterOfAccessor)
-        noteErrorOfCodeLeftOut(realm, error);
+        noteOmittedCodeError(realm, error);
     throwException(realm, scope, error);
 }
 

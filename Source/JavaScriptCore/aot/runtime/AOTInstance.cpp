@@ -1039,7 +1039,7 @@ void VMState::countWithoutImage(VM& vm)
 void VMState::releaseImage(VM& vm)
 {
     counts = nullptr;
-    forgetErrorOfCodeLeftOut(vm);
+    clearOmittedCodeError(vm);
     if (!hasCompiledCode)
         return;
     ASSERT(vm.heap.isShuttingDown());
@@ -1601,7 +1601,7 @@ const ClassInfo ModuleEnvironment::s_info = { "JSModuleEnvironment"_s, nullptr, 
 
 } // anonymous namespace
 
-bool HeapHooks::standsForModuleInHeapSnapshots(JSCell* cell)
+bool HeapHooks::representsModuleInHeapSnapshot(JSCell* cell)
 {
     return cell->classInfo() == ModuleEnvironment::info();
 }

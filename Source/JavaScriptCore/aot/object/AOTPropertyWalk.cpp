@@ -145,7 +145,7 @@ static std::optional<Result> tryVisitCachedList(VM& vm, const Object& typed, JSO
     return Result::Completed;
 }
 
-const CachedPropertyList* tryGetListOfOwnProperties(VM& vm, JSObject* object, JSObject*& extra)
+const CachedPropertyList* tryGetOwnPropertyList(VM& vm, JSObject* object, JSObject*& extra)
 {
     Object* typed = compiledObjectOrNull(object);
     extra = typed ? typed->extraProperties() : nullptr;
@@ -727,7 +727,7 @@ Presence hasPropertyOnChain(Structure* structure, UniquedStringImpl* name)
     return presenceForStructure(structure->vm(), structure, name);
 }
 
-bool listExtraPropertiesInStructure(VM& vm, JSObject* object)
+bool ensureExtraPropertiesStructure(VM& vm, JSObject* object)
 {
     DeferGCForAWhile deferGC(vm);
     return Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
@@ -745,7 +745,7 @@ JSValue getDirect(VM& vm, const JSObject* object, PropertyName name, unsigned* a
     return declaredName ? typed.getDirectFromNativeCode(vm, declaredName, attributesOrNull) : JSValue();
 }
 
-bool searchCameByStructures(JSObject* first, JSObject* last)
+bool isOrdinaryPrototypeChain(JSObject* first, JSObject* last)
 {
     if (first->type() != CompiledObjectType)
         return false;

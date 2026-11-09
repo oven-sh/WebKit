@@ -321,6 +321,9 @@ JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID, OriginalBehindEntry
 JS_EXPORT_PRIVATE void letMockStandForLoadsInFlight(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool standsForLoadsInFlight(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isImportHeld(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool isAskedByLoadThatRequireLeft(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void letLoadsThatRequiresLeftAskAgainFor(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool doLoadsThatRequiresLeftAskAgainFor(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void endMocksThatStoodForLoadsInFlight(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool importsByStatements(JSGlobalObject*, ModuleID importer, ModuleID imported);
 JS_EXPORT_PRIVATE void layMocksAgainAtNextLoad(JSGlobalObject*, ModuleID, bool waits = true);

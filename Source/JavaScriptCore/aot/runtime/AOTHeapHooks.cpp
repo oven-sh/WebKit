@@ -149,12 +149,12 @@ void didFindNoRoomWhereCollectionMayRun(VM& vm)
     vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
 }
 
-String nameOfCompiledCallee(JSCell* cell)
+String compiledCalleeName(JSCell* cell)
 {
     return CompiledCallee::isCompiledCallee(cell) ? CompiledCallee::name(asObject(cell)) : String();
 }
 
-std::span<const uint32_t> offsetsOfNarrowReferences(const Structure* structure)
+std::span<const uint32_t> narrowReferenceOffsets(const Structure* structure)
 {
     if (!MarkedBlock::isAtomAligned(structure))
         return { };

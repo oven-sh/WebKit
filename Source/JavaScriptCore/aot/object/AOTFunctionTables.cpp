@@ -557,7 +557,7 @@ DeclaredAs declaredAs(JSCell* cell)
     if (!function)
         function = compiledBuiltinFunctionID(cell);
     if (!function)
-        return standsInForFunction(cell) ? DeclaredAs::Function : DeclaredAs::NotCompiled;
+        return isOmittedFunctionPlaceholder(cell) ? DeclaredAs::Function : DeclaredAs::NotCompiled;
     FunctionKindData kindData = functionKindData(*function);
     if (kindData.isConstructor)
         return FunctionDescription(*function).isNakedConstructor() ? DeclaredAs::Function : DeclaredAs::Class;

@@ -149,7 +149,7 @@ static std::optional<MappedImage> mapFile(const char* path)
 }
 #endif
 
-void enableGlobalsOfBuiltinTable()
+void enableBuiltinTableGlobals()
 {
     if (!Options::aotImagePath())
         return;
@@ -581,7 +581,7 @@ std::span<const ASCIILiteral> shellFunctionNames()
     return functionNames;
 }
 
-bool isKeyOfCompiledModule(const String& key)
+bool isCompiledModuleKey(const String& key)
 {
     std::optional<ModuleID> module = findModule(key);
     if (module && s_terminateOnResolveModule == module) [[unlikely]] {

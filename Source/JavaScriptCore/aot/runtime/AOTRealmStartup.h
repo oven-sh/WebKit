@@ -50,7 +50,7 @@ void didInstallBuiltins(Instance&);
 JS_EXPORT_PRIVATE void hostDidCreateRealm(JSGlobalObject*);
 void didCreateClass(JSGlobalObject*, const LazyClassStructure&, Structure*, JSObject* prototype, JSObject* constructorOrNull);
 void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue);
-JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key);
+JSObject* takePreallocatedStaticProperty(JSObject* holder, UniquedStringImpl* key);
 bool reportsCreationOfMember(JSObject* holder, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE void hostDidCreateStructure(JSGlobalObject*, Structure*);
 JS_EXPORT_PRIVATE void hostDidCreateConstructor(JSGlobalObject*, JSObject* constructor);

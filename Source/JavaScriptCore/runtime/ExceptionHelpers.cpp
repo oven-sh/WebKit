@@ -72,7 +72,7 @@ JSObject* createUndefinedVariableError(JSGlobalObject* globalObject, const Ident
 String errorDescriptionForValue(JSGlobalObject* globalObject, JSValue v)
 {
 #if ENABLE(AOT)
-    if (String kind = AOT::kindOfPrimitiveWhereNoTextIsQuoted(v); !kind.isNull())
+    if (String kind = AOT::primitiveKindForErrorMessage(v); !kind.isNull())
         return kind;
 #endif
     if (v.isString()) {

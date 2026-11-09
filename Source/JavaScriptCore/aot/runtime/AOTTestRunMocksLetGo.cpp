@@ -58,7 +58,7 @@ void Modules::letGoOfMockAtNextLoad(ModuleID module)
     m_modulesWithNoNamesOwedBelow.clearAll();
     m_testFilesInWhichMocksEnded.set(module, m_instance.vm->aotState().momentOfTestFile);
     if (ModuleRecord* record = recordIfExists(module); record && record->hasLiveExports())
-        loader()->removeEntryOfRecord(record);
+        loader()->removeEntriesForRecord(record);
 }
 
 bool Modules::letGoOfMockOfLibraryModuleAtNextLoad(ModuleID module)
@@ -270,7 +270,7 @@ void Modules::tellOfFilesThatStayedLoadedBelow(ModuleID root)
         ModuleID module = toVisit.takeLast();
         if (isSeen.quickSet(module.index()))
             continue;
-        if (m_filesThatStayLoadedAboveMock.clear(module.index()))
+        if (m_filesThatStayLoadedAboveMock.clear(module.index()) && !(m_filesThatStayLoadedUnlessEvicted.clear(module.index()) && isEvicted(module)))
             tellThatFileDidNotRunAgain(module);
         if (isMocked(module) || mockInPlace(module))
             continue;

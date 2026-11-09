@@ -151,7 +151,7 @@ struct SampledRegisters {
 struct SampledTop {
     CallFrame* callFrame;
     const void* pc;
-    const void* callerPCOfFramelessTop;
+    const void* framelessTopCallerPC;
     CallFrame* framePointer { nullptr };
 };
 
@@ -360,7 +360,7 @@ private:
 };
 static_assert(sizeof(CompiledFrameIterator) <= 1024);
 
-JS_EXPORT_PRIVATE bool findOriginOfCaller(CompiledFrameIterator&, SourceOrigin&);
+JS_EXPORT_PRIVATE bool findCallerOrigin(CompiledFrameIterator&, SourceOrigin&);
 
 } // namespace AOT
 } // namespace JSC

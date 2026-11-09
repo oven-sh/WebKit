@@ -99,9 +99,9 @@ static JSValue requiredWhileEngineAsksHost(LoadedProgram& program, ModuleID file
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
     Modules& modules = modulesOf(program.instance());
-    modules.setRequestToHostAside(true);
+    modules.pushHostRequest(true);
     JSValue answer = requireModule(program.realm(), file);
-    modules.takeUpRequestToHost();
+    modules.popHostRequest();
     threw = scope.exception();
     scope.clearException();
     return answer;

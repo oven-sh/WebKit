@@ -253,7 +253,7 @@ struct RowsOfReads {
     static constexpr int16_t placeIsAskedOfStub = 0;
     static constexpr int16_t placeIsNotKnown = INT16_MIN;
     static constexpr uint32_t firstWait = 16;
-    static constexpr uint8_t mostDoublings = 10;
+    static constexpr uint8_t maxDoublings = 10;
     static constexpr uint8_t numberOfSamples = 16;
     static constexpr uint32_t markOfHiddenRow = 1;
 

@@ -68,7 +68,7 @@ bool Modules::loadsAsExecutableDoes() const
 
 bool Modules::hasTextAtHand() const
 {
-    return !m_innermostFilesBeingRun && m_textsOnTheirWay.isEmpty() && loadsAsExecutableDoes() && (!isTestRun() || m_isInJobsBehindDelivery);
+    return !m_innermostEagerLoad && m_textsOnTheirWay.isEmpty() && loadsAsExecutableDoes() && (!isTestRun() || m_isInJobsBehindDelivery);
 }
 
 bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
@@ -95,8 +95,8 @@ bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
 void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* requested, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller)
 {
     VM& vm = *m_instance.vm;
-    if (m_innermostFilesBeingRun || !m_textsOnTheirWay.isEmpty()) {
-        std::optional<ModuleID> fileThatCalls = m_innermostFilesBeingRun ? fileOrFaceEvaluatedIn(*m_innermostFilesBeingRun) : std::nullopt;
+    if (m_innermostEagerLoad || !m_textsOnTheirWay.isEmpty()) {
+        std::optional<ModuleID> fileThatCalls = m_innermostEagerLoad ? fileOrFaceEvaluatedIn(*m_innermostEagerLoad) : std::nullopt;
         holdText(promise, module, requested, referrerAsyncOrder, fileThatCalls ? turnInWhichTextCame(*fileThatCalls) : m_turnOfTexts);
         return;
     }

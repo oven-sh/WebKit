@@ -83,7 +83,7 @@ static String findQuotedText(ModuleID module, LineColumn place)
     return { };
 }
 
-String quotedTextOfFailedExpression(VM& vm)
+String failedExpressionSource(VM& vm)
 {
     String quoted;
     forEachShownFrameOfRunAtTop(vm, HiddenFrameOnTop::IsShown, [&](const TraceFrame& frame) {
@@ -108,7 +108,7 @@ String quotedTextOfFailedExpression(VM& vm)
     return quoted;
 }
 
-String kindOfPrimitiveWhereNoTextIsQuoted(JSValue value)
+String primitiveKindForErrorMessage(JSValue value)
 {
     if (value.isObject() || value.isUndefinedOrNull())
         return { };
@@ -126,7 +126,7 @@ String kindOfPrimitiveWhereNoTextIsQuoted(JSValue value)
 
 static JSObject* createTypeErrorQuoting(JSGlobalObject* globalObject, JSValue value, const String& description, ASCIILiteral complaint, ErrorInstance::SourceAppender appender, const String& spelled)
 {
-    String expression = quotedTextOfFailedExpression(globalObject->vm());
+    String expression = failedExpressionSource(globalObject->vm());
     if (expression.isNull())
         expression = spelled;
     String message = tryMakeString(description, ' ', complaint);

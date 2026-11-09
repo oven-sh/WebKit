@@ -185,7 +185,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 #if USE(BUN_JSC_ADDITIONS)
             if (m_isTypeScript) break;
 #if ENABLE(AOT)
-            if (globalObject->aotInstance() && AOT::ModuleRecord::throwIfExportWasLeftOut(globalObject, this, hostResolveImportedModule(globalObject, e.moduleName, e.moduleRequestType), e.importName))
+            if (globalObject->aotInstance() && AOT::ModuleRecord::throwIfExportWasOmitted(globalObject, this, hostResolveImportedModule(globalObject, e.moduleName, e.moduleRequestType), e.importName))
                 return;
 #endif
             throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(e.exportName.impl()), "' not found in '"_s, StringView(e.moduleName.impl()), "'"_s));
@@ -277,7 +277,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 if (in.type == ImportEntryType::SingleTypeScript)
                     break;
 #if ENABLE(AOT)
-                if (globalObject->aotInstance() && AOT::ModuleRecord::throwIfExportWasLeftOut(globalObject, this, importedModule, in.importName))
+                if (globalObject->aotInstance() && AOT::ModuleRecord::throwIfExportWasOmitted(globalObject, this, importedModule, in.importName))
                     return;
 #endif
                 if (!(in.localName.isNull() || in.localName.isPrivateName() || in.localName.isSymbol())) {

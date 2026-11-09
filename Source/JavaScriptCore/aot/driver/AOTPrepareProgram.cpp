@@ -139,7 +139,7 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
             prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(options);
         },
         [&] {
-            if (!Typed::walkOptionsOf(build).verifiesCode)
+            if (!willVerifyCode(prepared, build))
                 prepared.facts->freeListsOfSummariesNotKeptForWalk(build.parallelLoops());
         },
     });

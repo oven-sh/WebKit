@@ -417,7 +417,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 #if ENABLE(AOT)
     if (AOT::Image::current())
         m_aotState.attachImage(*this);
-    else if (AOT::Image::usesNoneOnThisThread() && Options::aotCountsPath()) [[unlikely]]
+    else if (AOT::Image::isDisabledOnThisThread() && Options::aotCountsPath()) [[unlikely]]
         m_aotState.countWithoutImage(*this);
 #endif
     structureRareDataStructure.setWithoutWriteBarrier(StructureRareData::createStructure(*this, nullptr, jsNull()));
@@ -1914,8 +1914,8 @@ void VM::drainMicrotasks()
 #if ENABLE(AOT)
     if (m_aotState.hasObjectsBeingFilled) [[unlikely]]
         AOT::RuntimeHooks::finishFillingObjects(*this);
-    if (m_aotState.modulesWhoseFilesRunAheadOfLoader) [[unlikely]]
-        AOT::RuntimeHooks::runFilesThatWaitInLoader(*this);
+    if (m_aotState.modulesWithEagerLoads) [[unlikely]]
+        AOT::RuntimeHooks::transferEagerLoadsToLoader(*this);
 #endif
 
     if (executionForbidden()) [[unlikely]]

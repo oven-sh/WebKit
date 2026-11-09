@@ -199,7 +199,7 @@ static JSObject* requireModule(Modules& modules, const BuiltinTable& table, Runt
         }
         return value ? value.getObject() : nullptr;
     }
-    RequestToHostScope requestToHost(modules);
+    HostRequestScope requestToHost(modules);
     JSValue exports;
     if (table.at(module).flags.contains(RuntimeModuleFlag::HasSource)) {
         if (auto* requireBuiltinModule = methodTable->requireBuiltinModule)
@@ -267,7 +267,7 @@ JSObject* BuiltinCells::memberMadeAhead(JSObject* holder, UniquedStringImpl* key
     return nullptr;
 }
 
-JSObject* BuiltinCells::takeMemberMadeAhead(JSObject* holder, UniquedStringImpl* key)
+JSObject* BuiltinCells::takePreallocatedMember(JSObject* holder, UniquedStringImpl* key)
 {
     size_t index = m_membersMadeAhead.findIf([&](const MemberMadeAhead& made) {
         return made.holder == holder && made.key.impl() == key;
@@ -1646,10 +1646,10 @@ static void lockObjectNamedByGlobalObject(JSGlobalObject* realm, BuiltinID id, J
     locker.lock(id, object);
 }
 
-JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key)
+JSObject* takePreallocatedStaticProperty(JSObject* holder, UniquedStringImpl* key)
 {
     BuiltinCells* cells = builtinCellsOfRealm(holder->realm());
-    return cells ? cells->takeMemberMadeAhead(holder, key) : nullptr;
+    return cells ? cells->takePreallocatedMember(holder, key) : nullptr;
 }
 
 static void awaitConstructorOfClass(Instance& instance, BuiltinClassID builtinClass, JSObject* prototype)

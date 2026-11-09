@@ -606,7 +606,7 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
 static NEVER_INLINE bool isDefinitelyNonThenableWithCompiledCode(JSObject* object, JSGlobalObject* globalObject, Structure* structure, Structure::DefinitelyNonThenableState state)
 {
     // Only a Structure that lists the extra properties of its objects can say that none of them is called "then".
-    if (structure->isCompiledStructure() && AOT::PropertyWalk::listExtraPropertiesInStructure(globalObject->vm(), object))
+    if (structure->isCompiledStructure() && AOT::PropertyWalk::ensureExtraPropertiesStructure(globalObject->vm(), object))
         return isDefinitelyNonThenable(object, globalObject);
 
     UniquedStringImpl* then = globalObject->vm().propertyNames->then.impl();

@@ -426,6 +426,9 @@ public:
         m_importsBehindFactoriesHaveYetToGoOn |= !m_modulesWhoseFactoryRuns.get(module.index());
     }
     bool standsForLoadsInFlight(ModuleID module) const { return m_modulesWithMockThatStandsForLoadsInFlight.get(module.index()); }
+    bool isAskedByLoadThatRequireLeft(ModuleID mocked) const { return m_loadLeftByRequireThatGoesOn && reachedByStatements(*m_loadLeftByRequireThatGoesOn, AtMock::Stops).get(mocked.index()); }
+    void letLoadsThatRequiresLeftAskAgainFor(ModuleID mocked);
+    bool doLoadsThatRequiresLeftAskAgainFor(ModuleID mocked) const { return m_waitsThatRequiresLeft.containsIf([&](const auto& left) { return left.wait->status() == JSPromise::Status::Pending && left.filesToAskAgain.get(mocked.index()); }); }
     void didGoOnBehindFactories() { m_importsBehindFactoriesHaveYetToGoOn = false; }
     bool letsMockOverModuleThatHasRunStandForLoadInFlight(ModuleID module, bool wasLaidOverMockOfPreload)
     {
@@ -470,6 +473,18 @@ public:
         });
     }
     Vector<std::pair<ModuleID, ModuleID>> m_filesRequiredWithOriginalWhileFactoryRan;
+    void keepFilesThatFactoryLoadedWithOriginal(ModuleID mocked)
+    {
+        m_filesThatFactoryLoadedWithOriginal.removeAllMatching([&](const auto& pair) {
+            if (pair.second != mocked)
+                return false;
+            if (!m_filesThatStayLoadedAboveMock.set(pair.first.index()))
+                m_filesThatStayLoadedUnlessEvicted.set(pair.first.index());
+            return true;
+        });
+    }
+    Vector<std::pair<ModuleID, ModuleID>> m_filesThatFactoryLoadedWithOriginal;
+    BitVector m_filesThatStayLoadedUnlessEvicted;
     void tellThatFileDidNotRunAgain(ModuleID);
     void tellThatFailureStayedBehindMock(ModuleID);
     bool keepsFailureThatMockTakesOut(ModuleID module) const
@@ -799,10 +814,10 @@ public:
     }
     void didImportFileFromUncompiledCode(ModuleID fileOrFace);
     bool isEntryPointOfRealm(ModuleID module) const { return m_firstModuleRequestedByHost == module; }
-    bool takeStepOfMainModule(ModuleID module) { return isEntryPointOfRealm(module) && !std::exchange(m_didTakeStepOfMainModule, true); }
-    void willBeLoadedByImport(ModuleID module) { m_didTakeStepOfMainModule |= isEntryPointOfRealm(module); }
+    bool takeMainModuleLoadStep(ModuleID module) { return isEntryPointOfRealm(module) && !std::exchange(m_didTakeMainModuleLoadStep, true); }
+    void willBeLoadedByImport(ModuleID module) { m_didTakeMainModuleLoadStep |= isEntryPointOfRealm(module); }
     bool isLoadedByLoader(ModuleID module) const { return data(module).isLoadedByLoader(); }
-    bool takeLoadPromiseBelowMainModule(ModuleID module) { return isEntryPointOfRealm(module) && !m_didTakeStepOfMainModule && !std::exchange(m_didTakeLoadPromiseBelowMainModule, true); }
+    bool takeShouldSplitMainLoadPromise(ModuleID module) { return isEntryPointOfRealm(module) && !m_didTakeMainModuleLoadStep && !std::exchange(m_didSplitMainLoadPromise, true); }
     JSPromise* evaluateMainModule(ModuleID entryPoint, JSPromise* evaluation);
     bool mainModuleWaitsForItsImport() const { return !!m_capabilityOfMainModule; }
     void runMainModuleThatWaited();
@@ -892,7 +907,7 @@ public:
     bool refusesRequestFromHost(ModuleID module) const { return (data(module).exportsStayInCompiledCode() && !startsRealm(module)) || (valueOfLibraryFileStaysWithCompiledCode(module) && !isAskingHostForFileOfImage()) || refusesRequestFromHostOutsideWindows(module); }
     bool valueOfLibraryFileStaysWithCompiledCode(ModuleID module) const { return data(module).registryID() && m_table.valueOfRuntimeSourceStaysWithCompiledCode(*data(module).registryID()); }
     bool refusesRequestFromHostOutsideWindows(ModuleID module) const { return !m_admitsInspector && !data(module).isEntryPoint() && data(module).kind != ModuleKind::Data && !data(module).bodyThrowsAtLoad && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath() && !m_runsCopyFromDisk && !isAskingHostForFileOfImage(); }
-    bool isRootThatCompiledCodeLoads(ModuleID module) const { return m_rootThatCompiledCodeLoads && fileOf(*m_rootThatCompiledCodeLoads) == fileOf(module); }
+    bool isRootLoadedByCompiledCode(ModuleID module) const { return m_rootLoadedByCompiledCode && fileOf(*m_rootLoadedByCompiledCode) == fileOf(module); }
     bool refusesOriginalsBesideMocks() const { return m_refusesOriginalsBesideMocks; }
     void refuseToShowExportsOf(ModuleID);
     void refuseToHandOutExportOf(ModuleID, StringView name);
@@ -921,7 +936,7 @@ public:
     void askLoaderForNamesBelow(ModuleID required);
     void noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp = true);
     JSValue answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleID requirer);
-    void noteFilesLinkedToOriginalBelowRequire(ModuleID required, ModuleID mocked);
+    void noteFilesLinkedToOriginalBelow(ModuleID root, ModuleID mocked, Vector<std::pair<ModuleID, ModuleID>>& noted);
     bool isImportOfFactorysOwnBehindRequireThatGaveUp(ModuleID, ModuleID referrer);
     JSPromise* importAsFactorysOwnOnceTextHasCome(ModuleID, ModuleID referrer);
     void oweBodyBesideMock(ModuleID);
@@ -975,20 +990,20 @@ public:
     void evaluateModuleInRecord(ModuleID);
     bool beginModuleInRecord(ModuleID);
     bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, FilesBehindFactories = FilesBehindFactories::Run);
-    bool hasOuterLoadAskedFor(ModuleID);
+    bool wasRequestedByOuterLoad(ModuleID);
     Vector<uint32_t, 16> placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places);
-    AbstractModuleRecord* recordOfRequestedModule(ModuleID);
+    AbstractModuleRecord* recordForRequestedModule(ModuleID);
     void queueJobsThatWaitForLoader();
-    void handGraphsToLoader();
+    void transferGraphsToLoader();
     void didLoadGraph(ModuleID root);
     void didFailToLoadGraph(ModuleID root);
-    bool holdGraphBehindEarlierCalls(ModuleRecord&, JSCell* payload, bool isDeferred);
-    void letGoGraphsHeldBehindEarlierCalls();
-    void noteStepOfLoader() { ++m_stepsOfLoader; }
+    bool tryDeferForEarlierImports(ModuleRecord&, JSCell* payload, bool isDeferred);
+    void resumeGraphsDeferredForImports();
+    void countLoaderStep() { ++m_loaderStepCount; }
     void didSettlePromiseOfImport(JSPromise* promise) { m_loadsInFlight.didSettle(promise); }
     void runFileThatWaitsForItsTurn(ModuleID);
     bool isAskedForBehindLoadInFlight(ModuleID fileOrFace);
-    void captureExportsAgain(ModuleID);
+    void recaptureExports(ModuleID);
     void takeCopiesAnewWhereMockCallAloneTookThem(ModuleID face);
     void captureExportsAgainKeepingWhatGettersGave(ModuleID face);
     JSObject* standInWhoseGettersAreTheirCopies(JSValue exports, JSObject* copies);
@@ -1001,7 +1016,7 @@ public:
     bool wasRequiredUnderMockInPlace(ModuleID file) const;
     bool isRunningFilesOf(ModuleID root) const
     {
-        for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
+        for (const EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
             if (files->root == root)
                 return true;
         }
@@ -1009,16 +1024,16 @@ public:
     }
     bool isRunningFilesAheadOfLoader(ModuleID root) const
     {
-        for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
+        for (const EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
             if (files->root == root)
-                return !files->isSynchronousLoadInHandsOfLoader();
+                return !files->isTransferredSynchronousLoad();
         }
         return m_rootWhoseFilesRun == root;
     }
-    bool runsFileOfLoadInHandsOfLoader() const
+    bool isInTransferredSynchronousLoad() const
     {
-        for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
-            if (files->isSynchronousLoadInHandsOfLoader())
+        for (const EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
+            if (files->isTransferredSynchronousLoad())
                 return true;
         }
         return false;
@@ -1039,7 +1054,7 @@ public:
     bool canTellHowGraphIsLoaded(ModuleID root);
     void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
     std::optional<ModuleFailureID> statementThatEndsLoad(ModuleID) const;
-    void appendRequestThatFindsNothing(ModuleFailureID statement, ModuleRecord*);
+    void appendUnresolvableRequest(ModuleFailureID statement, ModuleRecord*);
     void keepFailureOfRequest(ModuleID, ModuleRecord*, const Identifier& name);
     ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*);
     struct RequestsOfUncompiledCode;
@@ -1062,15 +1077,15 @@ public:
     enum class ModulesThatRan : bool { AreWalked, ArePassedOver };
     bool anyImportedModule(ModuleID root, ModulesThatRan, const Invocable<bool(ModuleID)> auto&) const;
     bool importsFileThatRunsAhead(ModuleID root) const;
-    bool importsFileThatRuns(ModuleID root) const;
-    bool waitsForRunningFile(const VM::SynchronousModuleTask&, std::optional<ModuleID> fileThatEnded) const;
-    bool holdStepForRunningFile(const VM::SynchronousModuleTask&);
-    bool releaseStepsHeldForRunningFiles(std::optional<ModuleID> fileThatEnded);
+    bool importsEvaluatingCommonJSModule(ModuleID root) const;
+    bool isLinkStepBlocked(const VM::SynchronousModuleTask&, std::optional<ModuleID> finishedModule) const;
+    bool tryDeferLinkStep(const VM::SynchronousModuleTask&);
+    bool resumeDeferredLinkSteps(std::optional<ModuleID> finishedModule);
     void evaluateRootThatWaitedForFile(ModuleID root);
-    std::optional<ModuleID> fileToWaitFor(const Identifier& key);
-    bool isFileBeingHandedToLoader(const Identifier& key) { return m_fileBeingHandedToLoader && hasKey(*m_fileBeingHandedToLoader, key); }
-    bool hasLoadAroundAskedFor(const Identifier& key);
-    bool waitsForFileBeingHandedToLoader(const Identifier& key, bool& queuesStep);
+    std::optional<ModuleID> findEvaluatingCommonJSModule(const Identifier& key);
+    bool isModuleBeingTransferred(const Identifier& key) { return m_moduleBeingTransferred && hasKey(*m_moduleBeingTransferred, key); }
+    bool wasRequestedByEnclosingLoad(const Identifier& key);
+    bool isBlockedOnModuleTransfer(const Identifier& key, bool& shouldRequeueStep);
     JSPromise* deferRequest(ModuleID file, ModuleLoadingContext*, bool useImportMap);
     bool hasDeferredLoads() const { return !m_deferredRequests.isEmpty() || !m_deferredImports.isEmpty(); }
     void didRequestModule(const Identifier& key, JSCell* payload);
@@ -1081,8 +1096,8 @@ public:
     bool isLoadedModuleWithoutRecord(ModuleID) const;
     bool wasLoadedWithEarlierGraph(ModuleID);
     bool wasLoadedWithGraph(ModuleID) const;
-    ALWAYS_INLINE void setRequestToHostAside(bool isAskingHost) { m_requestsToHostSetAside.append(std::exchange(m_isAskingHost, RequestToHost(isAskingHost))); }
-    void takeUpRequestToHost() { m_isAskingHost = m_requestsToHostSetAside.takeLast(); }
+    ALWAYS_INLINE void pushHostRequest(bool isAskingHost) { m_savedHostRequests.append(std::exchange(m_isAskingHost, HostRequest(isAskingHost))); }
+    void popHostRequest() { m_isAskingHost = m_savedHostRequests.takeLast(); }
     bool isStatementAskingHost() const { return m_isStatementAskingHost; }
     bool setIsStatementAskingHost(bool isAsking) { return std::exchange(m_isStatementAskingHost, isAsking); }
     bool wasImportedWhileItRan(ModuleID file) const;
@@ -1090,7 +1105,7 @@ public:
     bool isAwaitedByImport(ModuleID file);
     bool isAwaitedByImportFromBeforeItRan(ModuleID file);
     void dropErrorOfFile(ModuleID fileOrFace);
-    void didLoseErrorOfModule(const Identifier& key);
+    void didDiscardModuleError(const Identifier& key);
     void evaluateCommonJSForLoader(ModuleID file);
     JSValue execute(ModuleID);
 
@@ -1190,7 +1205,7 @@ public:
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr, JSValue stateOfWait = JSValue(), std::optional<bool> answerOfWalkAlreadyMade = std::nullopt);
     JSPromise* rejectImportWithErrorOfLoad(ModuleID, ImportCaller);
     void startImportWhoseTextHasCome(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
-    bool holdTextOfRequest(JSPromise* fetched, ModuleRecord* requested, ModuleID requester);
+    bool tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* requested, ModuleID requester);
     void deliverFirstTextOnItsWay();
     enum class AskedBy : bool { Loader, Import };
     bool textOfImportComesInLaterTurn(ModuleID, AskedBy);
@@ -1239,7 +1254,7 @@ public:
     JSObject* uncompiledNamespace(ModuleID, ModulePhase, NamespaceUse, bool shouldPreventExtensions = true);
 
 private:
-    friend class RequestToHostScope;
+    friend class HostRequestScope;
 
     template<typename T>
     class Reference {
@@ -1567,51 +1582,51 @@ private:
     JSObject* m_objectOfEarlierRunThatAsksHost { nullptr };
     Vector<ModuleID, 2> m_firstFilesOfLoads;
     BitVector m_filesRequestedByLoader;
-    struct FilesBeingRun {
+    struct EagerLoad {
         ModuleID root;
         std::optional<ModuleID> fileOrFace;
-        FilesBeingRun* outer;
+        EagerLoad* outer;
         bool isAheadOfJobsOfLoader { false };
         ModuleGraphLoadingState* load { nullptr };
         size_t numberOfJobsInFrontOfFile { 0 };
         bool isAheadOfStepsOfLoader { false };
-        std::optional<ModuleID> fileHandedToLoader { };
+        std::optional<ModuleID> transferredModule { };
         BitVector modulesOfLoad { };
-        bool isSynchronousLoadInHandsOfLoader() const { return fileHandedToLoader && !load; }
+        bool isTransferredSynchronousLoad() const { return transferredModule && !load; }
         BitVector requested { };
-        Vector<ModuleID> importersOfNextLevel { };
-        BitVector askedForByOuterLoads { };
-        bool knowsWhatOuterLoadsAskedFor { false };
+        Vector<ModuleID> nextLevelImporters { };
+        BitVector requestedByOuterLoads { };
+        bool hasCollectedOuterRequests { false };
         VM::SynchronousModuleQueue* queueOfLoad { nullptr };
     };
-    std::optional<ModuleID> fileOrFaceEvaluatedIn(const FilesBeingRun&) const;
+    std::optional<ModuleID> fileOrFaceEvaluatedIn(const EagerLoad&) const;
     bool isBegunForStatement(ModuleID fileOrFace) const;
-    bool hasLoaderAskedFor(FilesBeingRun&, ModuleID file);
-    void gatherWhatOuterLoadsAskedFor(FilesBeingRun&);
+    bool wasRequestedByLoad(EagerLoad&, ModuleID file);
+    void collectOuterRequests(EagerLoad&);
     bool hasSynchronousLoadFetched(ModuleID file);
     bool forgetRunWhoseFailureLoaderHasYetToStore(ModuleID file);
     bool takeThrowBehindFetch(ModuleID fileOrFace);
     void makeRecordWithoutExports(ModuleID face);
-    void handGraphToLoader(FilesBeingRun&, std::optional<ModuleID> finishedFile = std::nullopt);
-    void handSynchronousLoadToLoader(FilesBeingRun&);
-    bool comesToLoadOf(FilesBeingRun&, ModuleID required);
+    void transferGraphToLoader(EagerLoad&, std::optional<ModuleID> finishedFile = std::nullopt);
+    void transferSynchronousLoad(EagerLoad&);
+    bool comesToLoadOf(EagerLoad&, ModuleID required);
     void runSynchronousStepsInFrontOf(ModuleID file);
-    struct LoadHandedToLoader {
+    struct TransferredLoad {
         ModuleID root;
         Strong<JSPromise> promise;
     };
-    Vector<LoadHandedToLoader, 1> m_synchronousLoadsHandedToLoader;
-    struct StepHeldForRunningFile {
+    Vector<TransferredLoad, 1> m_transferredSynchronousLoads;
+    struct DeferredLinkStep {
         InternalMicrotask task;
         uint8_t payload;
         std::array<Strong<Unknown>, 4> arguments;
     };
-    Vector<StepHeldForRunningFile, 1> m_stepsHeldForRunningFiles;
+    Vector<DeferredLinkStep, 1> m_deferredLinkSteps;
     void captureNoExports(ModuleID file);
     void runStepsOfLoaderInFrontOf(ModuleID file);
     void finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error);
-    std::optional<ModuleID> m_fileBeingHandedToLoader;
-    FilesBeingRun* m_innermostFilesBeingRun { nullptr };
+    std::optional<ModuleID> m_moduleBeingTransferred;
+    EagerLoad* m_innermostEagerLoad { nullptr };
     void noteRequestByLoader(ModuleID fileOrFace);
     bool wasRequestedByLoader(ModuleID file);
     void letGoOfModuleObject(ModuleID file);
@@ -1698,8 +1713,8 @@ private:
     std::optional<ModuleID> m_entryThatStartsRealm;
     bool m_hostRunsPreloads { false };
     BitVector m_dataFilesImportedByUncompiledCode;
-    bool m_didTakeStepOfMainModule { false };
-    bool m_didTakeLoadPromiseBelowMainModule { false };
+    bool m_didTakeMainModuleLoadStep { false };
+    bool m_didSplitMainLoadPromise { false };
     ModuleID m_importOfMainModule;
     Strong<JSPromise> m_evaluationOfImportOfMainModule;
     Strong<JSPromise> m_capabilityOfMainModule;
@@ -1712,15 +1727,15 @@ private:
     bool m_loadsModulesByName;
     const bool m_refusesOriginalsBesideMocks;
     const bool m_showsEntriesOfRequireCache;
-    class RequestToHost {
+    class HostRequest {
     public:
-        ALWAYS_INLINE RequestToHost(bool isMade = false)
+        ALWAYS_INLINE HostRequest(bool isMade = false)
             : m_madeAt(isMade ? currentStackPointer() : nullptr)
         {
         }
-        static ALWAYS_INLINE RequestToHost forWhatLiesOutsideImage()
+        static ALWAYS_INLINE HostRequest forWhatLiesOutsideImage()
         {
-            RequestToHost request(true);
+            HostRequest request(true);
             request.m_isForFileOfImage = false;
             return request;
         }
@@ -1732,10 +1747,10 @@ private:
         const void* m_madeAt;
         uintptr_t m_isForFileOfImage { true };
     };
-    static_assert(std::has_unique_object_representations_v<RequestToHost>);
-    RequestToHost m_isAskingHost;
-    Vector<RequestToHost, 4> m_requestsToHostSetAside;
-    std::optional<ModuleID> m_rootThatCompiledCodeLoads;
+    static_assert(std::has_unique_object_representations_v<HostRequest>);
+    HostRequest m_isAskingHost;
+    Vector<HostRequest, 4> m_savedHostRequests;
+    std::optional<ModuleID> m_rootLoadedByCompiledCode;
     bool m_isStatementAskingHost { false };
     bool m_isWalkingRequests { false };
     struct LoadInFlight {
@@ -2319,6 +2334,7 @@ private:
     BitVector m_modulesWithLoadEndedByMock;
     ModuleID m_moduleThatRequireAsksFor;
     bool m_walkGoesOnPastFactoriesThatHaveNotSettled { false };
+    std::optional<ModuleID> m_loadLeftByRequireThatGoesOn;
     bool m_letsGoOfMocksAtLinkFromSource { false };
     ModuleID m_moduleThatRequires;
     ModuleID m_targetOfRequireRecordedAhead;
@@ -2356,6 +2372,7 @@ private:
         unsigned factoriesYetToSettle;
         BitVector fetchedAsThemselves;
         Vector<std::pair<ModuleID, uint64_t>, 1> callsOfFactories;
+        BitVector filesToAskAgain;
         bool hasEndedWithLaterMock { false };
         ModuleID fileWhoseMockWasTakenOff;
     };
@@ -2371,7 +2388,7 @@ private:
     BitVector m_modulesAskedForOwnNames;
     BitVector m_filesUnderKeyOfOriginal;
     BitVector m_filesWhoseOriginalCameBackUnderOwnKey;
-    uint32_t m_stepsOfLoader { 0 };
+    uint32_t m_loaderStepCount { 0 };
     UncheckedKeyHashMap<ModuleID, uint64_t> m_loadsThatHoldModules;
     uint64_t m_numberOfNextLoadToGoThrough { 0 };
     void goThroughLoadsOfEarlierJobs();
@@ -2391,7 +2408,7 @@ private:
         uint64_t numberOfLoad;
         uint64_t numberOfEarlierLoad;
     };
-    Vector<GraphHeldBehindEarlierCall, 2> m_graphsHeldBehindEarlierCalls;
+    Vector<GraphHeldBehindEarlierCall, 2> m_graphsDeferredForImports;
     bool hasFileOfGraphBeingLoadedBegun() const;
     bool isTextLeftToRead(ModuleID);
     JSPromise* startImportInLaterTurn(ModuleID, std::optional<int64_t> referrerAsyncOrder);
@@ -2549,15 +2566,15 @@ private:
     bool m_entryPointIsLinked { false };
 };
 
-class RequestToHostScope {
+class HostRequestScope {
 public:
-    ALWAYS_INLINE explicit RequestToHostScope(Modules& modules)
-        : m_isAskingHost(modules.m_isAskingHost, Modules::RequestToHost::forWhatLiesOutsideImage())
+    ALWAYS_INLINE explicit HostRequestScope(Modules& modules)
+        : m_isAskingHost(modules.m_isAskingHost, Modules::HostRequest::forWhatLiesOutsideImage())
     {
     }
 
 private:
-    SetForScope<Modules::RequestToHost> m_isAskingHost;
+    SetForScope<Modules::HostRequest> m_isAskingHost;
 };
 
 Modules& modulesOf(Instance&);

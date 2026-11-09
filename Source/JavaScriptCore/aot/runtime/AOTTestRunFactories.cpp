@@ -1782,6 +1782,32 @@ bool standsForLoadsInFlight(JSGlobalObject* realm, ModuleID module)
     return modules && modules->standsForLoadsInFlight(module);
 }
 
+bool isAskedByLoadThatRequireLeft(JSGlobalObject* realm, ModuleID mocked)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isAskedByLoadThatRequireLeft(mocked);
+}
+
+void Modules::letLoadsThatRequiresLeftAskAgainFor(ModuleID mocked)
+{
+    for (WaitThatRequireLeft& left : m_waitsThatRequiresLeft) {
+        if (left.callsOfFactories.containsIf([&](const auto& call) { return call.first == mocked; }))
+            left.filesToAskAgain.set(mocked.index());
+    }
+}
+
+void letLoadsThatRequiresLeftAskAgainFor(JSGlobalObject* realm, ModuleID mocked)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->letLoadsThatRequiresLeftAskAgainFor(mocked);
+}
+
+bool doLoadsThatRequiresLeftAskAgainFor(JSGlobalObject* realm, ModuleID mocked)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->doLoadsThatRequiresLeftAskAgainFor(mocked);
+}
+
 bool isImportHeld(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);

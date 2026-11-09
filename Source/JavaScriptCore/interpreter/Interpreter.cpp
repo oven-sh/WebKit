@@ -1039,7 +1039,7 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                 start.compiledFramesBelow->emplace(visitor.compiledFrames());
             return IterationStatus::Done;
         }
-        if (auto classFrame = AOT::tryGetFrameOfClassCalledWithoutNew(vm, visitor->callFrame())) [[unlikely]] {
+        if (auto classFrame = AOT::tryGetClassCallWithoutNewFrame(vm, visitor->callFrame())) [[unlikely]] {
             appendIfWanted(StackFrame(*classFrame));
             previousEntryFrame = currentEntryFrame;
             previousEntryFrameStackTraceInsertPos = results.size();

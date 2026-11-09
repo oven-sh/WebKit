@@ -28,11 +28,9 @@ public:
     explicit VerifiedWalks(TestCommandContext& context)
         : m_stage(context.stage())
     {
-        const PreparedProgram* prepared = m_stage.prepared();
-        if (!prepared)
+        m_inputs = m_stage.prepareInputsForVerification();
+        if (!m_inputs)
             return;
-        m_inputs.emplace(*prepared->compileInputs);
-        m_inputs->walk.options.verifiesCode = true;
         m_worker.emplace(*m_inputs, context.build, m_stage.program().types);
     }
 
@@ -50,7 +48,7 @@ public:
 
 private:
     StagedBuild m_stage;
-    std::optional<CompileInputs> m_inputs;
+    std::unique_ptr<CompileInputs> m_inputs;
     std::optional<CompileWorker> m_worker;
 };
 
@@ -376,11 +374,10 @@ static void runWalkWhereHandlerEdgesTakeStandInsCommand(TestCommandContext& cont
 {
     std::optional<Vector<CodeUnit>> units = unitsInOrderOfWords(*context.program, context.arguments, context.out);
     StagedBuild stage = context.stage();
-    const PreparedProgram* prepared = units ? stage.prepared() : nullptr;
+    std::unique_ptr<CompileInputs> prepared = units ? stage.prepareInputsForVerification() : nullptr;
     if (!prepared)
         return;
-    CompileInputs inputs(*prepared->compileInputs);
-    inputs.walk.options.verifiesCode = true;
+    CompileInputs& inputs = *prepared;
     inputs.walk.options.handlerEdgesTakeWhatStandsIn = true;
     CompileWorker worker(inputs, context.build, stage.program().types);
     for (CodeUnit unit : *units) {
@@ -394,11 +391,10 @@ static void runWalkWhereEveryClosureStandsBehindCopiesCommand(TestCommandContext
 {
     std::optional<Vector<CodeUnit>> units = unitsInOrderOfWords(*context.program, context.arguments, context.out);
     StagedBuild stage = context.stage();
-    const PreparedProgram* prepared = units ? stage.prepared() : nullptr;
+    std::unique_ptr<CompileInputs> prepared = units ? stage.prepareInputsForVerification() : nullptr;
     if (!prepared)
         return;
-    CompileInputs inputs(*prepared->compileInputs);
-    inputs.walk.options.verifiesCode = true;
+    CompileInputs& inputs = *prepared;
     inputs.walk.options.everyClosureStandsBehindCopies = true;
     CompileWorker worker(inputs, context.build, stage.program().types);
     for (CodeUnit unit : *units) {

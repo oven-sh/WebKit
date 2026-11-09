@@ -330,7 +330,7 @@ bool CompiledFrame::runsCodeOfFile() const
     return sourceFunctionOf(function) == function && !functionKindData(function).isInRuntimeModule;
 }
 
-bool findOriginOfCaller(CompiledFrameIterator& frames, SourceOrigin& origin)
+bool findCallerOrigin(CompiledFrameIterator& frames, SourceOrigin& origin)
 {
     for (; !frames.isAtEnd(); frames.advance()) {
         const CompiledFrame& frame = frames.frame();
@@ -863,7 +863,7 @@ static SUPPRESS_ASAN SampledTop findTopInCompiledCode(const Image& image, const 
     if (top.kind == CodeKind::Function) {
         if (!callerIsFunction || caller.function != top.function) {
             result = sampledTopAtReturnSite(image, caller, registers.pc, static_cast<void**>(registers.stackPointer) + 1, result.callFrame);
-            result.callerPCOfFramelessTop = callReturnAddress;
+            result.framelessTopCallerPC = callReturnAddress;
         }
     } else if (callerIsFunction)
         return sampledTopAtReturnSite(image, caller, callReturnAddress, static_cast<void**>(registers.stackPointer) + 1, result.callFrame);

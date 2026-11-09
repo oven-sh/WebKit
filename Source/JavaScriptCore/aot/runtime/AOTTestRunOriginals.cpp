@@ -324,8 +324,12 @@ bool Modules::isAskedForByOwnFactory(ModuleID module)
 void Modules::noteLoadBegunByFactories(ModuleID root)
 {
     for (size_t index : m_mocks->modules) {
-        if (ModuleID mocked(index); mocked != root && !hasRunItself(mocked) && isAskedForByOwnFactory(mocked))
+        ModuleID mocked(index);
+        if (mocked == root || !isAskedForByOwnFactory(mocked))
+            continue;
+        if (!hasRunItself(mocked))
             m_modulesThatOwnFactoryMayLoad.set(index);
+        noteFilesLinkedToOriginalBelow(root, mocked, m_filesThatFactoryLoadedWithOriginal);
     }
 }
 
@@ -403,7 +407,7 @@ void Modules::letLoadsInFlightKeepRecordOf(ModuleID module)
     }
     if (storedStatus(module) == StoredModuleStatus::InRecord)
         setStoredStatus(module, StoredModuleStatus::Unlinked);
-    loader()->removeEntryOfRecord(record);
+    loader()->removeEntriesForRecord(record);
     takeOutRecord(module);
     record->setKeepsToModule();
     m_modulesKeptByLoadsInFlight.set(module.index());
@@ -640,15 +644,15 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleI
             requireModuleItselfBesideMock(mocked);
             RETURN_IF_EXCEPTION(scope, { });
         }
-        noteFilesLinkedToOriginalBelowRequire(target, mocked);
+        noteFilesLinkedToOriginalBelow(target, mocked, m_filesRequiredWithOriginalWhileFactoryRan);
     }
     return { };
 }
 
-void Modules::noteFilesLinkedToOriginalBelowRequire(ModuleID required, ModuleID mocked)
+void Modules::noteFilesLinkedToOriginalBelow(ModuleID root, ModuleID mocked, Vector<std::pair<ModuleID, ModuleID>>& noted)
 {
     Vector<Vector<uint32_t, 2>> importersOf(m_table.size());
-    for (size_t importer : reachedByStatements(required, AtMock::Stops)) {
+    for (size_t importer : reachedByStatements(root, AtMock::Stops)) {
         if (isMocked(ModuleID(importer)))
             continue;
         for (const ModuleRequestData& request : m_table.requests(ModuleID(importer)))
@@ -660,7 +664,7 @@ void Modules::noteFilesLinkedToOriginalBelowRequire(ModuleID required, ModuleID 
         for (uint32_t importer : importersOf[toFollow.takeLast()]) {
             if (isNoted.quickSet(importer))
                 continue;
-            m_filesRequiredWithOriginalWhileFactoryRan.append({ ModuleID(importer), mocked });
+            noted.append({ ModuleID(importer), mocked });
             toFollow.append(importer);
         }
     }

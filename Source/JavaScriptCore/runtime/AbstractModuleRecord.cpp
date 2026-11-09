@@ -1886,7 +1886,7 @@ void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetch
 #endif
 #if ENABLE(AOT)
     if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
-        compiled->takeStatus();
+        compiled->adoptStatusIfNeeded();
         // A module that is linked stays linked, however this step ends. The loader is through with the graph.
         if (compiled->status() >= CyclicModuleRecord::Status::Linked) {
             AOT::ModuleLinkingStack stack;
@@ -1951,9 +1951,9 @@ JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
 
 #if ENABLE(AOT)
     if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
-        compiled->takeStatus();
+        compiled->adoptStatusIfNeeded();
         // Whoever imports a CommonJS file while it runs gets what the file has exported by then.
-        if (compiled->isRunningCommonJSFile())
+        if (compiled->isEvaluatingCommonJSModule())
             return wrap(jsUndefined());
     }
 #endif

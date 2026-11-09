@@ -92,7 +92,7 @@ static std::optional<PropertyOffset> placeOnceFiled(LoadedProgram& program, Obje
     for (unsigned turn = 0; turn < readsUntilNameIsFiled && !place; ++turn) {
         std::optional<JSValue> value = Interpreter::tryGetById(program.realm(), object, name);
         AOT_TEST_CHECK(value && *value && !program.vm().exceptionForInspection());
-        place = Interpreter::placeOfFieldInSiteCache(program.realm(), object->structure(), name);
+        place = Interpreter::fieldOffsetForSiteCache(program.realm(), object->structure(), name);
     }
     return place;
 }
@@ -103,7 +103,7 @@ static void testPlaceOfEachRepresentation(LoadedProgram& program)
     DeferGC deferGC(vm);
     Object* object = createMixedObject(program);
 
-    AOT_TEST_CHECK(!Interpreter::placeOfFieldInSiteCache(program.realm(), object->structure(), Identifier::fromString(vm, "any"_s)));
+    AOT_TEST_CHECK(!Interpreter::fieldOffsetForSiteCache(program.realm(), object->structure(), Identifier::fromString(vm, "any"_s)));
 
     bool sawBoxedValue = false;
     bool sawNarrowReference = false;
@@ -190,7 +190,7 @@ static void testReadOfTextFillsItsSite(LoadedProgram& program)
     for (unsigned turn = 0; turn < readsUntilNameIsFiled; ++turn)
         AOT_TEST_CHECK(callWith(program, readsAny, object) == jsNumber(7));
     const GetByIdModeMetadata& cache = cacheOfOnlyRead(readsAny);
-    std::optional<PropertyOffset> place = Interpreter::placeOfFieldInSiteCache(program.realm(), object->structure(), any);
+    std::optional<PropertyOffset> place = Interpreter::fieldOffsetForSiteCache(program.realm(), object->structure(), any);
     AOT_TEST_CHECK(place && isInlineOffset(*place));
     AOT_TEST_CHECK(cache.mode == GetByIdMode::Default && cache.defaultMode.structureID == object->structureID() && cache.defaultMode.cachedOffset == *place);
 

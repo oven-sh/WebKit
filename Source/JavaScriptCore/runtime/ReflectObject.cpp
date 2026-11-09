@@ -292,7 +292,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectDeleteProperty, (JSGlobalObject* globalObj
 }
 
 #if ENABLE(AOT)
-static bool isPrototypeRefusedByLanguage(JSObject* object, JSValue prototype)
+static bool isPrototypeRejectedBySpec(JSObject* object, JSValue prototype)
 {
     if (object->structure()->isImmutablePrototypeExoticObject() || !object->isStructureExtensible())
         return true;
@@ -322,7 +322,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSetPrototypeOf, (JSGlobalObject* globalObj
     bool shouldThrowIfCantSet = false;
 #if ENABLE(AOT)
     // As Reflect.defineProperty(), Reflect.set() and Reflect.deleteProperty(): in a compiled test run what a locked built-in refuses throws, however the test writes it. What the language refuses by itself answers false.
-    if (object->structure()->hasImmutablePrototype() && !isPrototypeRefusedByLanguage(object, proto)) [[unlikely]] {
+    if (object->structure()->hasImmutablePrototype() && !isPrototypeRejectedBySpec(object, proto)) [[unlikely]] {
         ImmutablePropertyNames* names = object->structure()->listedImmutablePropertyNames();
         shouldThrowIfCantSet = names ? names->throwsFromReflect() : AOT::RuntimeHooks::reflectThrowsOnLockedProperty(object);
     }

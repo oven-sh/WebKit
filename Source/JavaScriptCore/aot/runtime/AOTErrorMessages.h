@@ -32,8 +32,8 @@ enum class LoaderChange : uint8_t {
     HandTextToCompile,
 };
 
-JS_EXPORT_PRIVATE String quotedTextOfFailedExpression(VM&);
-JS_EXPORT_PRIVATE String kindOfPrimitiveWhereNoTextIsQuoted(JSValue);
+JS_EXPORT_PRIVATE String failedExpressionSource(VM&);
+JS_EXPORT_PRIVATE String primitiveKindForErrorMessage(JSValue);
 
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, StringView member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);

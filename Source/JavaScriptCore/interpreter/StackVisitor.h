@@ -102,7 +102,7 @@ public:
         bool isCompiledFrame() const { return !!m_compiledFrames; }
         JS_EXPORT_PRIVATE const AOT::CompiledFrame& compiledFrame() const;
         // The frame is that of the built-in function that compiledFrame() calls, and whose steps compiled code runs itself.
-        bool isOfBuiltinCalledByCompiledFrame() const { return m_isOfBuiltinCalledByCompiledFrame; }
+        bool isInlinedBuiltinFrame() const { return m_isInlinedBuiltinFrame; }
         // compiledFrame() is the frame of its caller: CompiledFrameIterator::constructedFunctionThatLeft().
         bool isOfConstructedFunctionThatLeft() const { return m_isOfConstructedFunctionThatLeft; }
         JS_EXPORT_PRIVATE bool isConstructCall() const;
@@ -182,7 +182,7 @@ public:
         uint32_t m_wasmCallSiteIndexBits { };
 #if ENABLE(AOT)
         AOT::CompiledFrameIterator* m_compiledFrames { nullptr };
-        bool m_isOfBuiltinCalledByCompiledFrame { false };
+        bool m_isInlinedBuiltinFrame { false };
         bool m_isOfConstructedFunctionThatLeft { false };
 #endif
 

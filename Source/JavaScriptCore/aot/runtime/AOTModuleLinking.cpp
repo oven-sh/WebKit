@@ -943,7 +943,7 @@ void Modules::copyExportsOfFinishedFile(ModuleID face)
     std::optional<ModuleID> file = m_table.fileBehindFace(face);
     if (!file || !ensureLoaded(face).capturedExports)
         return;
-    if (loader()->isMakingRecordInline(moduleKey(face)) || loader()->isMakingRecordInline(moduleKey(*file)))
+    if (loader()->isMakingModuleInline(moduleKey(face)) || loader()->isMakingModuleInline(moduleKey(*file)))
         return;
     JSValue value = exportsSeenByLoader(*file);
     RETURN_IF_EXCEPTION(scope, void());
@@ -970,7 +970,7 @@ void Modules::captureExportsAgainKeepingWhatGettersGave(ModuleID face)
     EnsureStillAliveScope keepsCopies(copies);
     SetForScope copiesThatGettersGave(m_copiesThatGettersGave, copies);
     SetForScope faceWhoseGettersKeepTheirCopies(m_faceWhoseGettersKeepTheirCopies, std::optional(face));
-    captureExportsAgain(face);
+    recaptureExports(face);
 }
 
 JSObject* Modules::standInWhoseGettersAreTheirCopies(JSValue exports, JSObject* copies)
@@ -1009,7 +1009,7 @@ JSObject* Modules::standInWhoseGettersAreTheirCopies(JSValue exports, JSObject* 
     return standsInForGetter ? standIn : nullptr;
 }
 
-void Modules::captureExportsAgain(ModuleID fileOrFace)
+void Modules::recaptureExports(ModuleID fileOrFace)
 {
     if (forgetCapturedExports(fileOrFace))
         captureExports(m_table.faceOfFile(fileOrFace).value_or(fileOrFace));

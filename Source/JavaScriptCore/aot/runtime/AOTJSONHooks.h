@@ -20,7 +20,7 @@ class JSGlobalObject;
 namespace AOT {
 
 JSValue tryParseJSON(JSGlobalObject*, StringView);
-[[noreturn]] void stopAtJSONTextMismatch(const String& written, const String& writtenByGeneralWay);
+[[noreturn]] void crashOnJSONOutputMismatch(const String& written, const String& genericOutput);
 
 } } // namespace JSC::AOT
 

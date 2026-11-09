@@ -845,7 +845,7 @@ LLINT_SLOW_PATH_DECL(slow_path_create_lexical_environment)
     JSScope* newScope = JSLexicalEnvironment::create(vm, globalObject, currentScope, symbolTable, initialValue);
 #if ENABLE(AOT)
     if (Options::runsCompiledImage())
-        AOT::Interpreter::checkPlacesInSymbolTable(*symbolTable);
+        AOT::Interpreter::checkSymbolTableOffsets(*symbolTable);
 #endif
     LLINT_RETURN(newScope);
 }
@@ -947,7 +947,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
         return;
 
 #if ENABLE(AOT)
-    if (structure->typeInfo().type() == CompiledClosureType && AOT::Interpreter::sharesStructureWithClassesThatLackTheirMembers(vm, baseCell))
+    if (structure->typeInfo().type() == CompiledClosureType && AOT::Interpreter::isClassWithLazyMembers(vm, baseCell))
         return;
 #endif
 
@@ -1005,8 +1005,8 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
 static void startWaitForOtherStructure(GetByIdModeMetadata& metadata, bool heldStructure)
 {
     constexpr uint32_t shortestWait = 16;
-    constexpr uint16_t mostDoublings = 20;
-    uint16_t doublings = heldStructure ? std::min(metadata.padding4, mostDoublings) : 0;
+    constexpr uint16_t maxDoublings = 20;
+    uint16_t doublings = heldStructure ? std::min(metadata.padding4, maxDoublings) : 0;
     metadata.defaultMode.padding1 = 0u - (shortestWait << doublings);
     metadata.padding4 = doublings + 1;
 }
@@ -1123,7 +1123,7 @@ static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObj
     bool holdsOtherStructure = !!metadata.defaultMode.structureID;
     if (holdsOtherStructure && (metadata.defaultMode.padding1 || metadata.defaultMode.structureID == structure->id()))
         return;
-    std::optional<PropertyOffset> offset = AOT::Interpreter::placeOfFieldInSiteCache(globalObject, structure, ident);
+    std::optional<PropertyOffset> offset = AOT::Interpreter::fieldOffsetForSiteCache(globalObject, structure, ident);
     ConcurrentJSLocker locker(codeBlock->m_lock);
     if (!offset || *offset == invalidOffset) {
         // What the cache holds goes on serving those that it was made for.
@@ -2410,7 +2410,7 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
 #if ENABLE(AOT)
         JSObject* error = createNotAFunctionError(globalObject, callee);
         if (globalObject->vm().hasCompiledCode()) [[unlikely]]
-            AOT::explainErrorBehindMemberLeftOut(globalObject, error, calleeFrame->thisValue());
+            AOT::explainOmittedMemberError(globalObject, error, calleeFrame->thisValue());
         LLINT_CALL_THROW(globalObject, error);
 #else
         LLINT_CALL_THROW(globalObject, createNotAFunctionError(globalObject, callee));

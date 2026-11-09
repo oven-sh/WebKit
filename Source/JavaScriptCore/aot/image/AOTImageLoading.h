@@ -26,7 +26,7 @@ JS_EXPORT_PRIVATE Wire::ImageVerdict useImage(std::span<const uint8_t> image, st
 bool mapPrivateCloneOfImagePages(const Image&, std::span<const uint8_t> pagesOfImage, void* target);
 #endif
 #if OS(LINUX) || OS(FREEBSD)
-int openExecutableThatHolds(const Image&);
+int openExecutableContaining(const Image&);
 #endif
 
 } } // namespace JSC::AOT

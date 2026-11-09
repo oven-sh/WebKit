@@ -654,8 +654,8 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
             propertyName = field.name;
             keyAsWritten = field.jsonKey.subspan(1);
             // Code that ran for a member in front may have changed the object.
-            auto fieldsNow = AOT::PropertyWalk::fieldsInKeyOrder(m_object);
-            if (fieldsNow && fieldsNow->data() == m_listedFields.data()) [[likely]]
+            auto currentFields = AOT::PropertyWalk::fieldsInKeyOrder(m_object);
+            if (currentFields && currentFields->data() == m_listedFields.data()) [[likely]]
                 value = AOT::PropertyWalk::readListedField(m_object, field);
             if (!value) [[unlikely]] {
                 value = m_object->get(globalObject, propertyName);
@@ -2310,7 +2310,7 @@ static const AOT::CachedPropertyList* listOfPropertiesForJSON(VM& vm, JSObject& 
     Structure& structure = *object.structure();
     if (object.isCallable() || structure.hasPolyProto() || structure.hasNonReifiedStaticProperties()) [[unlikely]]
         return nullptr;
-    const AOT::CachedPropertyList* list = AOT::PropertyWalk::tryGetListOfOwnProperties(vm, &object, extraProperties);
+    const AOT::CachedPropertyList* list = AOT::PropertyWalk::tryGetOwnPropertyList(vm, &object, extraProperties);
     return list && !list->hasToJSON && !list->endsOfJSONKeys.isEmpty() ? list : nullptr;
 }
 
@@ -2356,7 +2356,7 @@ static NEVER_INLINE ListedPropertiesWritten writeListedProperties(const JSObject
             if (stringCopySameType<Latin1Character, true>(string->span8(), afterKey + 1)) [[unlikely]] {
                 // Asked of what the return below holds anyway: nothing more stays in a register over the copy.
                 auto characters = asString(value.asCell())->tryGetValueImpl()->span8();
-                if (static_cast<size_t>(limit - afterKey) < AOT::maxLengthOfEscapedJSONString(characters.size()))
+                if (static_cast<size_t>(limit - afterKey) < AOT::maxEscapedJSONStringLength(characters.size()))
                     return { Status::FoundOtherValue, index, afterKey, 0, value };
                 next = AOT::appendQuotedAndEscapedJSONString(afterKey, characters);
                 continue;
@@ -3146,7 +3146,7 @@ static NEVER_INLINE void checkAgainstGeneralStringifier(JSGlobalObject& globalOb
         return;
     }
     if (general != written)
-        AOT::stopAtJSONTextMismatch(written, general);
+        AOT::crashOnJSONOutputMismatch(written, general);
 }
 #endif
 

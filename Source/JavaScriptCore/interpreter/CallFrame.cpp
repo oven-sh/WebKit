@@ -215,7 +215,7 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
 #if ENABLE(AOT)
         if constexpr (std::remove_reference_t<decltype(visitor)>::visitsCompiledFrames) {
             if (visitor->isCompiledFrame()) {
-                return AOT::findOriginOfCaller(visitor.compiledFrames(), sourceOrigin) ? IterationStatus::Done : IterationStatus::Continue;
+                return AOT::findCallerOrigin(visitor.compiledFrames(), sourceOrigin) ? IterationStatus::Done : IterationStatus::Continue;
             }
         }
 #endif

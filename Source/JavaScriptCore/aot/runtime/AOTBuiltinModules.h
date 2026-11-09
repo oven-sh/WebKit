@@ -58,7 +58,7 @@ std::optional<FunctionID> compiledBuiltinFunctionID(const JSCell*);
 
 JS_EXPORT_PRIVATE bool refusesLibraryText();
 JS_EXPORT_PRIVATE bool refusesLibraryText(JSGlobalObject*);
-bool refusesToInterpret(JSGlobalObject*, ScriptExecutable&);
+bool isInterpretationDisallowed(JSGlobalObject*, ScriptExecutable&);
 JS_EXPORT_PRIVATE void admitFunctionOfTestRunner(VM&, FunctionExecutable&);
 JS_EXPORT_PRIVATE bool refusesToRun(JSFunction*);
 JS_EXPORT_PRIVATE bool isNeededByNothingThatRuns(JSFunction*);

@@ -98,8 +98,8 @@ public:
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
     static const Image** addressOfCurrentOfThread();
-    JS_EXPORT_PRIVATE static void useNoneOnThisThread();
-    static bool usesNoneOnThisThread();
+    JS_EXPORT_PRIVATE static void disableOnThisThread();
+    static bool isDisabledOnThisThread();
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
     static const Image* findByCodeAddress(const void*);
     static void forEachPublishedImage(const ScopedLambda<IterationStatus(const Image&)>&);

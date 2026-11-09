@@ -129,7 +129,7 @@ public:
     bool someTextKnowsPrivateNames { false };
     JSObject* classPrototypeBeingDefined { nullptr };
     JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
-    Modules* modulesWhoseFilesRunAheadOfLoader { nullptr };
+    Modules* modulesWithEagerLoads { nullptr };
     uintptr_t structureIDBase { 0 };
     Instance* onlyInstance { nullptr };
     uint64_t entriesWithSeveralInstances { 0 };
@@ -143,7 +143,7 @@ public:
     };
     InstanceOfRun instanceOfRecentRun;
     CallFrame* classCalledWithoutNew { nullptr };
-    void* stackPointerOfExceptionTaker { nullptr };
+    void* exceptionCatcherStackPointer { nullptr };
     const void* returnAddressOfCallThatCollected { nullptr };
     void* stackPointerOfImport { nullptr };
     CallFrame* frameOfImportThatAsksLoader { nullptr };

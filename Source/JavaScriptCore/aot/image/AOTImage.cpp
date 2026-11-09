@@ -60,14 +60,14 @@ const Image** Image::addressOfCurrentOfThread()
     return &t_currentImage;
 }
 
-void Image::useNoneOnThisThread()
+void Image::disableOnThisThread()
 {
     t_currentImage = nullptr;
     t_usesNoImage = true;
     s_current.store(differsByThread(), std::memory_order_release);
 }
 
-bool Image::usesNoneOnThisThread()
+bool Image::isDisabledOnThisThread()
 {
     return t_usesNoImage;
 }
