@@ -590,7 +590,7 @@ static JSValue ioBaseWritelines(JSGlobalObject* globalObject, JSValue self, JSVa
         JSValue result;
         do {
             result = callMethod(globalObject, self, rt.names.write(), line);
-        } while (!result && ioTrapEINTR(globalObject));
+        } while (failed(scope, result) && ioTrapEINTR(globalObject));
         return !!result;
     });
     RETURN_IF_EXCEPTION(scope, { });
