@@ -217,6 +217,7 @@ static const PlatformObjectSerializationTraits* LEGACY_NODELETE platformObjectSe
 #endif
     case BigIntTag:
     case BigIntObjectTag:
+    case DecimalTag:
 #if ENABLE(WEBASSEMBLY)
     case WasmMemoryTag:
 #endif

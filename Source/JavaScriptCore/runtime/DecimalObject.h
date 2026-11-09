@@ -26,7 +26,7 @@ public:
     static DecimalObject* create(VM&, Structure*, const Decimal128&);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
-    DECLARE_INFO;
+    DECLARE_EXPORT_INFO;
 
     // Null if the value is something else. Cheap for primitives.
     static DecimalObject* tryCast(JSValue value) { return value.isObject() ? dynamicDowncast<DecimalObject>(asObject(value)) : nullptr; }
@@ -37,6 +37,10 @@ public:
     double toNumberValue() const;
     // What BigInt(decimal) is. Throws a RangeError if the value is not an integer.
     JSValue toBigIntValue(JSGlobalObject*) const;
+
+    // For structured clone. The text is exact. The latter answers null if the text is not that of a Decimal, or useDecimal is off.
+    JS_EXPORT_PRIVATE String textForClone() const;
+    JS_EXPORT_PRIVATE static DecimalObject* tryCreateFromCloneText(JSGlobalObject*, StringView);
 
 private:
     DecimalObject(VM&, Structure*, const Decimal128&);

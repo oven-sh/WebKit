@@ -50,4 +50,20 @@ JSValue DecimalObject::toBigIntValue(JSGlobalObject* globalObject) const
     RELEASE_AND_RETURN(scope, JSBigInt::stringToBigInt(globalObject, m_value.toIntegerString()));
 }
 
+String DecimalObject::textForClone() const
+{
+    return m_value.toExponentialString();
+}
+
+DecimalObject* DecimalObject::tryCreateFromCloneText(JSGlobalObject* globalObject, StringView text)
+{
+    // Not where the program has no Decimal: bytes can come from a process that has.
+    if (!Options::useDecimal())
+        return nullptr;
+    auto value = Decimal128::parse(text);
+    if (!value)
+        return nullptr;
+    return create(globalObject->vm(), globalObject->decimalStructure(), *value);
+}
+
 } // namespace JSC

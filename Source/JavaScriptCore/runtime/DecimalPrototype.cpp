@@ -521,10 +521,16 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToPrecision, (JSGlobalObject* globalObj
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.tojson
-JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToJSON, (JSGlobalObject* globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToJSON, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Options::useDecimalToJSON()) {
+        // Not in the proposal. A String and not a number, whose digits JSON.parse() and most other parsers would round to those of a double.
+        auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(jsString(vm, decimal->value().toString()));
+    }
     return throwVMTypeError(globalObject, scope, "Decimal cannot be serialized as JSON"_s);
 }
 

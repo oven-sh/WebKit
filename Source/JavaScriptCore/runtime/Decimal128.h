@@ -61,6 +61,12 @@ public:
     static Decimal128 divide(const Decimal128&, const Decimal128&);
     static Decimal128 remainder(const Decimal128&, const Decimal128&);
 
+    // As Object.is() of Numbers: NaN is itself, and -0 and +0 differ. The representation of a value is unique.
+    bool isSameValueAs(const Decimal128& other) const
+    {
+        return m_low == other.m_low && m_high == other.m_high && m_exponent == other.m_exponent && m_kind == other.m_kind && m_isNegative == other.m_isNegative;
+    }
+
     // NaN is unordered. -0 and +0 are equivalent.
     static std::partial_ordering compare(const Decimal128&, const Decimal128&);
 
