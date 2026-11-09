@@ -926,6 +926,15 @@ private:
     uint16_t m_preparedPropertyScratchCount { 0 };
     std::optional<FailureReason> m_failureReason;
     std::array<Structure*, preparedStructureTableSize> m_preparedStructures { };
+#if USE(BUN_JSC_ADDITIONS)
+    // Upstream prepares the Structure of every object it writes. The record costs more than it saves until another object of
+    // that Structure comes, and most values have one object of each. So a Structure is prepared where another one is likely:
+    // for an element of a list of two or more, and for an object whose Structure appendUnpreparedObject() meets again.
+    // The bits of the StructureID that it last met in each slot. No StructureID is zero.
+    std::array<uint32_t, preparedStructureTableSize> m_structuresMetOnce { };
+    // Set around the append() of such an element. appendUnpreparedObject() takes it, so what lies in the element does not see it.
+    bool m_isElementOfList { false };
+#endif
     Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, WTF::StringImplMalloc> m_dynamicBuffer;
     uint8_t* m_stackLimit { nullptr };
 #if ENABLE(AOT)
@@ -1918,7 +1927,14 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendUnpreparedObject(
     // skip reading each entry's attributes and testing its key.
     const bool mayHaveNonEnumerableOrSymbolProperties = !structure.isQuickPropertyAccessAllowedForEnumeration();
     const unsigned preparedPropertyScratchBase = m_preparedPropertyScratchCount;
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t& metOnce = m_structuresMetOnce[preparedStructureSlot(structureID)];
+    bool canCacheStructure = m_isElementOfList || metOnce == structureID.bits();
+    m_isElementOfList = false;
+    metOnce = structureID.bits();
+#else
     bool canCacheStructure = true;
+#endif
     bool wroteProperty = false;
     structure.forEachProperty(m_vm, [&](const auto& entry) -> bool {
         if (mayHaveNonEnumerableOrSymbolProperties) [[unlikely]] {
@@ -2393,7 +2409,13 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                         slot = (slot + 1) & (preparedStructureTableSize - 1);
                     }
                 }
+#if USE(BUN_JSC_ADDITIONS)
+                m_isElementOfList = length > 1;
                 append<hasGap>(element.isUndefined() ? jsNull() : element);
+                m_isElementOfList = false;
+#else
+                append<hasGap>(element.isUndefined() ? jsNull() : element);
+#endif
                 if (haveFailure()) [[unlikely]]
                     return;
             nextContiguousElement:
