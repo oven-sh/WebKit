@@ -36,7 +36,6 @@ String initialNameProperty(FunctionID);
 JSString* initialNamePropertyString(VM&, State&, FunctionID);
 
 void setComputedFunctionName(VM&, JSObject* closure, const Identifier& key, MethodKind);
-String nameThatComputedKeyGave(VM&, FunctionID);
 
 } // namespace AOT
 } // namespace JSC

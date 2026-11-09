@@ -3587,7 +3587,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     }
     bool comesBehindCallAboveOriginal = hasComeToItsJob && referrer && lastCallOfImportBehindFactories(module) && importsByStatements(module, fileOf(referrer));
     SetForScope importWhoseMocksRunWhenItsTextHasCome(m_importWhoseMocksRunWhenItsTextHasCome, !comesBehindCallAboveOriginal && mocksRunWhenTextOfImportHasCome(module) ? std::optional(module) : std::nullopt);
-    if (!m_importWhoseMocksRunWhenItsTextHasCome && !mocksRunWhereLoaderFetchesThem(module) && !hasFailedWithPackageThatStaysFailed(module) && !hasFailedWithFileOfProjectThatStaysFailed(module)) {
+    if (!m_importWhoseMocksRunWhenItsTextHasCome && !isCallOfImportLeftInFlight(module) && !mocksRunWhereLoaderFetchesThem(module) && !hasFailedWithPackageThatStaysFailed(module) && !hasFailedWithFileOfProjectThatStaysFailed(module)) {
         SetForScope moduleThatProgramImportsNow(m_moduleThatProgramImportsNow, m_modulesWhoseFactoryRuns.get(module.index()) ? std::nullopt : std::optional(module));
         SetForScope moduleThatImportAsksFor(m_moduleThatImportAsksFor, module);
         SetForScope stateOfWaitOfImportThatAsks(m_stateOfWaitOfImportThatAsks, JSValue());
@@ -4308,8 +4308,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         return promiseOfCaller ? promiseOfCaller : JSPromise::create(*m_instance.vm, realm->promiseStructure());
     };
     bool hadWaited = !!stateOfWait;
-    bool isMadeBehindTests = m_areTestsOfFileDone && text == TextOfImport::MayComeLater && !hadWaited && !m_activeSynchronousLoad && !m_instance.vm->aotState().requireRunsMocks;
-    if (isMadeBehindTests && (m_filesWhoseMocksGiveFilesThemselves.get(fileOf(module).index()) || hasNeverBegunToRunAndStandsUnderNoMock(module))) [[unlikely]]
+    bool isMadeBehindTests = isCallOfImportMadeBehindTests() && text == TextOfImport::MayComeLater && !hadWaited;
+    if (isMadeBehindTests && isCallOfImportLeftInFlight(module)) [[unlikely]]
         return promiseForCaller();
     if (m_goesModuleByModule) [[unlikely]]
         m_rootsOfCallsOfImport.set(module.index());

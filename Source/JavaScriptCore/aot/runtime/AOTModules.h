@@ -2443,6 +2443,8 @@ private:
         }
         return true;
     }
+    bool isCallOfImportMadeBehindTests() const { return m_areTestsOfFileDone && !m_activeSynchronousLoad && !m_instance.vm->aotState().requireRunsMocks; }
+    bool isCallOfImportLeftInFlight(ModuleID module) { return isCallOfImportMadeBehindTests() && (m_filesWhoseMocksGiveFilesThemselves.get(fileOf(module).index()) || hasNeverBegunToRunAndStandsUnderNoMock(module)); }
     bool isTextStillToComeBelowSomeCallThatWentOnBehindTests();
     bool hasBodyBegunAtOrBelowOriginalOf(ModuleID file);
     bool isTextOfSomeCopyOfOriginalStillToCome();

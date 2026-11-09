@@ -170,7 +170,6 @@ public:
     PolledInstances polledInstances;
     uint32_t momentOfLoads { 0 };
     uint32_t momentOfTestFile { 0 };
-    UncheckedKeyHashMap<uint32_t, String, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> namesThatComputedKeysGave;
 };
 
 static_assert(sizeof(UniqueArray<int>) == sizeof(void*));

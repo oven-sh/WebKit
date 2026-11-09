@@ -324,7 +324,7 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
 void Modules::evaluateModuleOwed(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    if (!m_modulesOwedToImportersThatRan.get(module.index()) || (m_factoryOverModuleOwedHasNotSettled && !m_walkGoesOnPastFactoriesThatHaveNotSettled))
+    if (!m_modulesOwedToImportersThatRan.get(module.index()))
         return;
     if (ModuleID file = fileOf(module); m_modulesWithMockToRun.get(file.index())) {
         scope.release();

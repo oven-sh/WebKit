@@ -460,7 +460,7 @@ uint64_t Modules::callOfFactoryThatHasNotSettled(ModuleID module, bool* refusesE
 
 bool Modules::waitsForFactoryThatLoadInFlightCalled(ModuleID module) const
 {
-    if (!isMocked(module) || !data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || isLeftAloneByMock(module) || hasRunItself(module))
+    if (!isMocked(module) || !data(module).isESModuleOfProgram() || data(module).isFaceOfFile())
         return false;
     if (mockInPlace(module) || m_modulesWithMockToRun.get(module.index()) || !callOfFactoryThatHasNotSettled(module))
         return false;
