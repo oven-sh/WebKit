@@ -150,6 +150,7 @@ public:
     bool askerLoadsCompiledFilesAlone { false };
     bool isResolvingImportCall { false };
     bool requireRunsMocks { false };
+    bool someTextNamesStaticPrivateField { false };
     std::unique_ptr<ProgramIdentifiers> identifiers;
     CountedFiles countedFiles;
     struct KeysComparedLastWithLongNames {
