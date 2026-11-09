@@ -545,6 +545,16 @@ static bool startsWithTextInOrder(std::span<const uint8_t> rest, uint64_t afterH
     return !difference && !memcmp(rest.data() + recordedSize, candidate.characters + recordedSize, candidate.size - recordedSize);
 }
 
+static NEVER_INLINE size_t findPositionWhoseHeadMayBeInSomeText(const uint8_t* characters, size_t at, size_t endOfHeads, size_t step, const uint64_t* mayBeHead)
+{
+    for (; at < endOfHeads; at += step) {
+        size_t slotOfHead = slotOfTextHead(textHeadAt(characters + at));
+        if (mayBeHead[slotOfHead / 64] >> slotOfHead % 64 & 1)
+            break;
+    }
+    return at;
+}
+
 static void findInnerParts(const ParallelLoops& loops, TextsOfStrings strings, const BitVector& isName, const IndexOfTextHeads& heads, size_t unitSize, TextSharing& sharing, Vector<uint64_t>& leastFinds)
 {
     forEachIndexInParallel(loops, static_cast<unsigned>(heads.fromLongest.size()), [&](unsigned place) {
@@ -565,15 +575,10 @@ static void findInnerParts(const ParallelLoops& loops, TextsOfStrings strings, c
         size_t endOfHeads = text.size() - textHeadSize + 1;
         size_t step = unitSize;
         for (size_t at = 0; charactersCompared <= maxCharactersCompared; at += step) {
-            uint32_t head = 0;
-            for (;; at += step) {
-                if (at >= endOfHeads)
-                    return;
-                head = textHeadAt(characters + at);
-                size_t slotOfHead = slotOfTextHead(head);
-                if (mayBeHead[slotOfHead / 64] >> slotOfHead % 64 & 1)
-                    break;
-            }
+            at = findPositionWhoseHeadMayBeInSomeText(characters, at, endOfHeads, step, mayBeHead);
+            if (at >= endOfHeads)
+                return;
+            uint32_t head = textHeadAt(characters + at);
             const TextHeadRange* range = heads.findRange(head);
             if (!range)
                 continue;
@@ -793,6 +798,12 @@ static void writeStringRecordsOfChunk(const TextInputs& inputs, RetainedStrings&
 {
     const ImageNumbers& numbers = inputs.numbers;
     ChunkOfEncodedText& chunk = strings.chunks[chunkIndex];
+    struct FrontFoundInText {
+        uint32_t offset;
+        size_t numberOfBytes;
+    };
+    HashMap<const uint8_t*, FrontFoundInText> frontsOfKeptTexts;
+    size_t numberOfStringsAsRead = inputs.program.strings.numberOfStringsAsRead();
     strings.forEachInChunk(chunkIndex, [&](unsigned index) {
         StringID id(index);
         const MeasuredTextOfString& string = strings.measured[index];
@@ -801,7 +812,14 @@ static void writeStringRecordsOfChunk(const TextInputs& inputs, RetainedStrings&
         RELEASE_ASSERT(end > distanceToEnd);
         uint32_t offset = end - static_cast<uint32_t>(distanceToEnd);
         RELEASE_ASSERT(!string.is16Bit() || !(offset % sizeof(char16_t)));
-        RELEASE_ASSERT(equalSpans(text.subspan(offset, string.bytes().size()), string.bytes()));
+        size_t numberOfBytesFound = 0;
+        if (index >= numberOfStringsAsRead && string.length) {
+            FrontFoundInText& front = frontsOfKeptTexts.add(string.characters, FrontFoundInText { offset, 0 }).iterator->value;
+            if (front.offset != offset)
+                front = { offset, 0 };
+            numberOfBytesFound = std::min(std::exchange(front.numberOfBytes, std::max(front.numberOfBytes, string.bytes().size())), string.bytes().size());
+        }
+        RELEASE_ASSERT(equalSpans(text.subspan(offset + numberOfBytesFound, string.bytes().size() - numberOfBytesFound), string.bytes().subspan(numberOfBytesFound)));
 
         bool isName = strings.isName.quickGet(index);
         bool isAtom = isName || numbers.atomsOfStrings().get(index);
@@ -951,11 +969,10 @@ EncodedText encodeText(const TextInputs& inputs, BuildContext& context, NOESCAPE
             encodedIdentifiers[number] = number ? encodeIdentifier(inputs.program, identifiers.at(static_cast<uint32_t>(number)), strings.measured.span()) : ImageIdentifier { 0, 0 };
     });
     size_t numberOfConstants = constants.count();
-    result.stringConstants.grow(2 * numberOfConstants * sizeof(uint32_t));
-    std::span<uint32_t> wordsOfConstants = spanReinterpretCast<uint32_t>(result.stringConstants.mutableSpan());
-    zeroSpan(wordsOfConstants.first(numberOfConstants));
+    result.stringConstants.grow(numberOfConstants * sizeof(uint32_t));
+    std::span<uint32_t> stringsOfConstants = spanReinterpretCast<uint32_t>(result.stringConstants.mutableSpan());
     for (size_t number = 0; number < numberOfConstants; ++number)
-        wordsOfConstants[numberOfConstants + number] = constants.stringOf(static_cast<uint32_t>(number)).index();
+        stringsOfConstants[number] = constants.stringOf(static_cast<uint32_t>(number)).index();
     times.didFinish("write the records"_s);
     destroyInBackground(context.backgroundJobs(), WTF::move(strings));
     return result;

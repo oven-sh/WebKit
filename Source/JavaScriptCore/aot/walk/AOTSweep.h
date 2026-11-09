@@ -22,6 +22,8 @@ struct SweepInputs {
     const Facts& facts;
     const Plan& plan;
     TypeArena& types;
+    bool turnsBranchThatDecidesIntoJump { false };
+    bool letsGoEdgeThatIsTaken { false };
 };
 
 struct ReadOfSweptValue {
@@ -33,6 +35,9 @@ struct ReadOfSweptValue {
 struct SweepTotals {
     uint32_t operationsSwept { 0 };
     uint32_t operationsDropped { 0 };
+    uint32_t branchesThatDecideNothing { 0 };
+    uint32_t doorsDroppedWithTheirValues { 0 };
+    uint32_t birthsMoved { 0 };
 };
 
 inline constexpr uint8_t neededMarkOfSweep = static_cast<uint8_t>(SweepMark::IsNeeded);
@@ -82,6 +87,17 @@ private:
     void countUse(ValueID used, ValueID user);
     void countUsesAtEndsOfBlocks();
 
+    EdgeID lastEdgeOfWayThatDoesNothing(EdgeID first) const;
+    bool waysOfBranchMeetHavingDoneNothing(const Terminator&) const;
+    void needConditionOfBranch(BlockID);
+    BlockID branchAboveWayThatDoesNothing(BlockID) const;
+    void noteThatBlockDoesSomething(BlockID);
+    void noteArgumentNeededFrom(BlockID, BlockID entered, size_t position);
+    void turnBranchesThatDecideNothingIntoJumps();
+    void turnBranchThatDecidesIntoJump();
+    void letGoEdgeThatIsTaken();
+    void leadJumpPastBlocksThatHoldNothing(BlockID);
+
     bool isStoreIntoOwnObject(const Operation&, ValueID& object);
     void holdBackUntilNeeded(ValueID store, ValueID object);
     void needStoresHeldBackFor(ValueID object);
@@ -89,6 +105,9 @@ private:
     void giveUpHandlerOf(BlockID, const Block&);
     void keepHandlerOf(BlockID);
     void keepHandlerIfThrows(const Operation& needed);
+    void keepPollsUnderHandlersBeside(ValueID kept);
+    void settlePollsThatLeaveUnlessRecordsAreKept();
+    Vector<PollWithFate, 4> m_pollsThatLeaveUnlessKept;
     bool handlerOnlyThrowsOutOfUnit(BlockID handler);
     bool beginLookingForCoveredBarriers();
     void beginCoverageAtEndOf(BlockID);
@@ -112,6 +131,11 @@ private:
     bool noteIfCellMayBeLent(ValueID);
     void lendCells();
 
+    bool beginLookingForBirthsToMove();
+    void noteIfBirthMayMove(ValueID, const Operation&);
+    bool moveBirthsToWhereCellsAreNeeded();
+    SweepTotals sweepAgainBehindMovedBirths(const SweepInputs&, Code&);
+
     void beginFollowingLiveness();
     void noteNeededOperationForLiveness(ValueID, const Operation&);
     void noteReadForLiveness(ValueID read, BlockID, ValueID reader);
@@ -130,6 +154,7 @@ private:
     Code* m_code { nullptr };
     SweepTotals m_totals;
     ArraysByValue m_arrays { };
+    RoomsOfSweep& m_rooms;
     Vector<uint8_t>& m_statesOfBlocks;
     uint8_t* m_states { nullptr };
     Vector<ValueID>& m_worklist;
@@ -147,10 +172,11 @@ private:
     };
     Vector<BlockOnSearchPath>& m_searchPath;
     Vector<BlockID>& m_reachedInPostorder;
+    Vector<BlockID>& m_branchesThatDecideNothing;
     SweepBits& m_heldBack;
     bool m_holdsBackStores { false };
-    std::array<uint8_t, numberOfEnumerators<Opcode>> m_operandsWrittenByHeldBackStores { };
-    std::array<uint8_t, numberOfEnumerators<Opcode>> m_opcodesOfAllocationsWhoseStoresAreHeldBack { };
+    std::array<uint8_t, numberOfEnumerators<Opcode>>& m_operandsWrittenByHeldBackStores;
+    std::array<uint8_t, numberOfEnumerators<Opcode>>& m_opcodesOfAllocationsWhoseStoresAreHeldBack;
     Vector<ValueID>& m_waitingStores;
 
     struct OperationInBlock {
@@ -176,6 +202,10 @@ private:
     Vector<ValueID>& m_closuresThatMayBeLent;
     bool m_lendsCells { false };
     Vector<ValueID>& m_cellsThatMayBeLent;
+    bool m_looksForBirthsToMove { false };
+    bool m_hasMovedBirths { false };
+    bool m_sweepsAgainBehindMovedBirths { false };
+    Vector<ValueID>& m_birthsThatMayMove;
     struct EnvironmentHandedBack {
         LayoutID layout;
         ValueID value;
@@ -229,12 +259,14 @@ struct RoomsOfSweep {
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_incomingEdges)>> roomOfIncomingEdges;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_searchPath)>> roomOfSearchPath;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_reachedInPostorder)>> roomOfReachedInPostorder;
+    RoomOnly<std::remove_reference_t<decltype(Sweep::m_branchesThatDecideNothing)>> roomOfBranchesThatDecideNothing;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_heldBack)>> roomOfHeldBack;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_waitingStores)>> roomOfWaitingStores;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_operationsNeededLate)>> roomOfOperationsNeededLate;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_operationsKeptForOperands)>> roomOfOperationsKeptForOperands;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_closuresThatMayBeLent)>> roomOfClosuresThatMayBeLent;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_cellsThatMayBeLent)>> roomOfCellsThatMayBeLent;
+    RoomOnly<std::remove_reference_t<decltype(Sweep::m_birthsThatMayMove)>> roomOfBirthsThatMayMove;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_environmentsHandedBack)>> roomOfEnvironmentsHandedBack;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_namesOfCellsThatMayHoldEnvironments)>> roomOfNamesOfCellsThatMayHoldEnvironments;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_environmentsFollowed)>> roomOfEnvironmentsFollowed;
@@ -255,21 +287,59 @@ struct RoomsOfSweep {
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_storesThatAwaitBirth)>> roomOfStoresThatAwaitBirth;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_birthsAwaited)>> roomOfBirthsAwaited;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_laterFenceCoversAtHeads)>> roomOfLaterFenceCoversAtHeads;
+    std::array<uint8_t, numberOfEnumerators<Opcode>> operandsWrittenByHeldBackStores { };
+    std::array<uint8_t, numberOfEnumerators<Opcode>> opcodesOfAllocationsWhoseStoresAreHeldBack { };
 };
 
-bool staysInSweptCodeByItself(const Program&, const Operation&);
+bool staysInSweptCodeByItself(const Operation&);
 
 bool objectOfLayoutMayLieInFrame(const PlannedLayout&);
 
 inline ValueID rootOfCellInSweptCode(const Code& code, ValueID cell)
 {
-    for (;;) {
-        const Operation& operation = code.at(cell);
-        if (!opcodesThatGiveSameCell.contains(operation.opcode))
-            return cell;
-        ASSERT(operation.operandUses(0).contains(OperandUse::Returns));
-        cell = operation.operand(0);
+    return code.valueBehindNames<opcodesThatGiveSameCell>(cell);
+}
+
+template<typename Functor>
+ALWAYS_INLINE void forEachOperandNeededBySweep(const Operation& operation, const Functor& functor)
+{
+    if (operation.opcode == Opcode::Narrowed) {
+        functor(operation.operand(OperandIndex::Narrowed::value));
+        return;
     }
+    operation.forEachChild(functor);
+}
+
+template<typename Functor>
+ALWAYS_INLINE void forEachValueReadAtEndOfSweptBlock(const Block& block, const Functor& functor)
+{
+    block.terminator.forEachChild(functor);
+    if (block.subject)
+        functor(block.subject);
+}
+
+template<typename Functor>
+ALWAYS_INLINE void forEachArgumentCountedBySweepAtEndOf(const Code& code, const uint8_t* marksOfValues, uint8_t stateOfBlock, const Block& block, const Functor& functor)
+{
+    if (!(stateOfBlock & sweptBlockHandsOverArguments))
+        return;
+    auto forEachArgumentOn = [&](const Edge& edge) ALWAYS_INLINE_LAMBDA {
+        std::span<const ValueID> arguments = edge.arguments();
+        if (arguments.empty())
+            return;
+        std::span<const ValueID> parameters = code.at(edge.to).parameters();
+        size_t numberOfPairs = std::min(parameters.size(), arguments.size());
+        for (size_t position = 0; position < numberOfPairs; ++position) {
+            ValueID argument = arguments.data()[position];
+            ValueID parameter = parameters.data()[position];
+            if (argument && (marksOfValues[parameter.index()] & neededMarkOfSweep))
+                functor(argument, parameter);
+        }
+    };
+    for (uint32_t index = 0; index < block.terminator.numberOfEdges; ++index)
+        forEachArgumentOn(code.at(block.terminator.edge(index)));
+    if (EdgeID handler = handlerOfSweptBlock(block, stateOfBlock))
+        forEachArgumentOn(code.at(handler));
 }
 
 inline bool stringBuilderIsCellOfHeap(const Code& code, ValueID builder)
@@ -281,12 +351,16 @@ inline constexpr OpcodeSet sweptOperationsWithOwnerBarriers = opcodesWhere([](Op
     return runsOwnerBarrierOf(opcode) && remembersOwnerOf(opcode);
 });
 inline constexpr OpcodeSet sweptAllocationsWithFences { Opcode::NewObject, Opcode::NewClosure, Opcode::NewArray, Opcode::CreateRest };
+inline constexpr OpcodeSet birthsThatSweepMayMove { Opcode::NewObject, Opcode::NewArray, Opcode::NewClosure };
+inline constexpr OpcodeSet storesThatMoveWithBirthsInSweep { Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PutEnvironmentField, Opcode::SetMappedArgument, Opcode::FinishBirth, Opcode::TryFinishBirth };
 
 bool newObjectFencesBeforeHandingCellOn(const Program&, const Plan&, const Operation& newObject);
 bool newArrayFencesBeforeHandingCellOn(const Operation& newArray);
 
 bool stubOfMethodEntersFunctionsThatOnlyCallFirstArgument(const Program&, const Facts&, BuiltinID method);
 bool unitMayLendWhatItMakes(const Program&, CodeUnit);
+String findMarkOfSweepThatNothingCovers(const SweepInputs&, Code&);
+bool closuresOfFunctionMayBeLent(const Program&, FunctionID);
 bool closureHasCellThatMayBeLent(const Program&, ClosureForm, FunctionID);
 bool functionEnteredOnlyCallsWhatArrivesAt(const Facts&, CodeRole, uint32_t numberOfBoundArguments, FunctionID, uint32_t position);
 

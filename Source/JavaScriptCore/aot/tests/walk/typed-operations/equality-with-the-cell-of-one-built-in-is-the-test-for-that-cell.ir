@@ -1,0 +1,58 @@
+# function isOwnNext(next) { return next === <the next of array iterators>; }      function isNot(next) { if (<Array.prototype.push> === next) return 1; return 2; }      sink(isOwnNext, isNot);
+# One side of `===` is the cell of one built-in. The other side equals it exactly where it is that cell: that is the test for the type of the one built-in,
+# and the code generator answers it by reading the word of the table of cells in line. It was: StrictEq form=Bits against the cell, fetched by a call of the stub BuiltinCell
+# (the library's stepIterator asks so at every step: TypeScript 6: 0.60 M entries).
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: StrictEq
+# CHECK: = TypeTest v0 testedType=builtin(ArrayIteratorPrototypeNext)
+# RUN(LEFT): walk f2 mechanisms=all
+# LEFT-LABEL: code f2:Body
+# LEFT-NOT: StrictEq
+# LEFT: = TypeTest v0 testedType=builtin(ArrayPrototypePush)
+# RUN(BYTES): bytes f1:Body mechanisms=all
+# BYTES-LABEL: unit f1:Body
+# BYTES-NOT: Call Stub BuiltinCell
+# RUN(SHELL): run-in-shell globalThis.sink = (isOwnNext, isNot) => { const own = [][Symbol.iterator]().next; for (const next of [own, new Map().keys().next, undefined, 1, "next", {}, function next() { }, own]) print(String(isOwnNext(next))); for (const push of [[].push, [].pop, null, Array.prototype.push]) print(String(isNot(push))); };
+# SHELL: true
+# SHELL: false
+# SHELL: false
+# SHELL: false
+# SHELL: false
+# SHELL: false
+# SHELL: false
+# SHELL: true
+# SHELL: 1
+# SHELL: 2
+# SHELL: 2
+# SHELL: 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="isOwnNext" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ArrayIteratorPrototypeNext [isNotReadFromHolder]
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f2 name="isNot" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ArrayPrototypePush [isNotReadFromHolder]
+    v2 = StrictEq v1, v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+}

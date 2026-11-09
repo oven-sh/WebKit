@@ -16,13 +16,15 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void writeAccessorsExpectedInFields(const LinkFlow& flow, LinkTables& tables)
 {
-    for (const Layout& layout : flow.program.layouts) {
-        for (const StaticField& field : layout.staticFields) {
-            if (field.key && !liesInThread(field.key))
-                tables.keysOfStaticFields.set(field.key.index());
-        }
-    }
     Vector<AccessorLaidInField> laid = flow.accessorsLaidInFields;
+    laid.removeAllMatching([&](AccessorLaidInField& accessor) {
+        if (!accessor.appendedKey)
+            return false;
+        std::span<const PropertyKeyID> appendedKeys = tables.appendedKeysOf(accessor.field.layout);
+        size_t place = std::ranges::find(appendedKeys, accessor.appendedKey) - appendedKeys.begin();
+        accessor.field.field = static_cast<uint32_t>(flow.program.at(accessor.field.layout).fields.size() + place);
+        return place == appendedKeys.size();
+    });
     std::ranges::sort(laid);
     for (size_t first = 0; first < laid.size();) {
         LinkedAccessorsOfField expected { laid[first].field, { }, { } };
@@ -43,12 +45,18 @@ void writeAccessorsExpectedInFields(const LinkFlow& flow, LinkTables& tables)
         bool holdsAccessorFromBirth = cell < tables.firstFieldOfLayout[expected.field.layout.index() + 1] && tables.fields[cell].holdsAccessorFromBirth;
         expected.getterIsProven = expected.getter && holdsAccessorFromBirth && !flow.gettersThatMayBeAbsent.get(cell);
         expected.setterIsProven = expected.setter && holdsAccessorFromBirth && !flow.settersThatMayBeAbsent.get(cell);
+        const LinkedCell* held = tables.findCellOfField(expected.field);
+        if (expected.getter && !expected.setter && !hasSeveralSetters && held && held->keepsAccessorOnceLaid) {
+            expected.getterIsProven = true;
+            expected.getterMayNotBeLaidYet = true;
+        }
         if (expected.getter || expected.setter)
             tables.accessorsExpectedInFields.append(expected);
         if (expected.getter || expected.setter) {
             const Layout& layout = flow.program.at(expected.field.layout);
-            if (expected.field.field < layout.fields.size() && !liesInThread(layout.fields[expected.field.field].key))
-                tables.keysOfAccessorsExpectedInFields.set(layout.fields[expected.field.field].key.index());
+            PropertyKeyID key = expected.field.field < layout.fields.size() ? layout.fields[expected.field.field].key : laid[first].appendedKey;
+            if (key && !liesInThread(key))
+                tables.keysOfAccessorsExpectedInFields.set(key.index());
         }
         first = end;
     }
@@ -83,19 +91,14 @@ void writeMembersAboveCreatedLayouts(const LinkFlow& flow, LinkTables& tables)
             return accessors.field.layout;
         };
         for (const LinkedAccessorsOfField& accessors : std::ranges::equal_range(tables.accessorsExpectedInFields, holder, { }, layoutOf)) {
-            PropertyKeyID key = fieldAt(program, accessors.field).key;
+            PropertyKeyID key = accessors.field.field < program.at(holder).fields.size() ? fieldAt(program, accessors.field).key : tables.appendedKeysOf(holder)[accessors.field.field - program.at(holder).fields.size()];
             for (auto [kind, function] : { std::pair { MethodKind::Getter, accessors.getter }, std::pair { MethodKind::Setter, accessors.setter } }) {
                 if (!key || !function)
                     continue;
                 tables.membersAboveCreatedLayouts.append(LinkedMember { LayoutID(index), ClassSide::Prototype, kind, number++, key, function, false, { } });
-                tables.functionsAboveCreatedLayoutsUnderKeys.append({ key, function });
-                tables.keysOfFunctionsAboveCreatedLayouts.set(key.index());
             }
         }
     }
-    std::ranges::sort(tables.functionsAboveCreatedLayoutsUnderKeys);
-    auto repeated = std::ranges::unique(tables.functionsAboveCreatedLayoutsUnderKeys);
-    tables.functionsAboveCreatedLayoutsUnderKeys.shrink(repeated.begin() - tables.functionsAboveCreatedLayoutsUnderKeys.begin());
 }
 
 const LinkedAccessorsOfField* LinkTables::findAccessorsExpectedIn(FieldReference field) const

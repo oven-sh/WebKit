@@ -27,7 +27,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class DirectiveKind : uint8_t { Run, Requires, Options, JSCOptions, Diagnostic, Statistic, Library, Todo, HangsOnOrder, Types };
+enum class DirectiveKind : uint8_t { Run, Requires, Options, JSCOptions, Diagnostic, Statistic, Library, Todo, HangsOnOrder, Types, AsUsersBuild };
 
 template<typename T>
 struct NamedValue {
@@ -82,6 +82,7 @@ private:
         bool requiresCodeOutsideImage { false };
         bool requiresTargetWithoutJSCVT { false };
         bool requiresEntriesOfBun { false };
+        bool requiresOptionsAsWritten { false };
     };
 
     struct OpenSection {
@@ -149,6 +150,7 @@ static constexpr NamedValue<DirectiveKind> directiveKinds[] = {
     { "TODO"_s, DirectiveKind::Todo },
     { "HANGS-ON-ORDER"_s, DirectiveKind::HangsOnOrder },
     { "TYPES"_s, DirectiveKind::Types },
+    { "AS-USERS-BUILD"_s, DirectiveKind::AsUsersBuild },
 };
 
 static constexpr ASCIILiteral namesOfTestSections[] = { "code"_s };
@@ -633,6 +635,13 @@ void TestFileParser::parseOtherDirective(const DirectiveLine& directive)
     case DirectiveKind::Types:
         parseTypes(directive);
         return;
+    case DirectiveKind::AsUsersBuild:
+        if (m_file.asUsersBuild)
+            addError(directive.line, "the file has a second AS-USERS-BUILD line"_s);
+        if (directive.value.trim(isTabOrSpace<char16_t>).isEmpty())
+            addError(directive.line, "AS-USERS-BUILD is written 'AS-USERS-BUILD: <why>'"_s);
+        m_file.asUsersBuild = TestTodo { directive.value.toString(), directive.line };
+        return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -708,6 +717,7 @@ static constexpr ASCIILiteral callingLoopPolls = "calling-loop-polls"_s;
 static constexpr ASCIILiteral codeOutsideImage = "code-outside-image"_s;
 static constexpr ASCIILiteral noJSCVT = "no-jscvt"_s;
 static constexpr ASCIILiteral entriesOfBun = "entries-of-bun"_s;
+static constexpr ASCIILiteral asWritten = "as-written"_s;
 #if ASAN_ENABLED
 static constexpr bool isBuiltWithAddressSanitizer = true;
 #else
@@ -734,12 +744,12 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
     for (StringView word : words) {
-        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : word == entriesOfBun ? group->requiresEntriesOfBun : group->hasRequiredArchitecture;
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : word == entriesOfBun ? group->requiresEntriesOfBun : word == asWritten ? group->requiresOptionsAsWritten : group->hasRequiredArchitecture;
         if (std::exchange(isGiven, true)) {
             addError(directive.line, "REQUIRES is given twice for "_s, prefix);
             return;
         }
-        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == codeOutsideImage || word == noJSCVT || word == entriesOfBun)
+        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == codeOutsideImage || word == noJSCVT || word == entriesOfBun || word == asWritten)
             continue;
         group->requiredArchitecture = findNamedValue(targetArchitectures, word);
         if (!group->requiredArchitecture) {
@@ -805,8 +815,8 @@ void TestFileParser::parseJSCOptions(const DirectiveLine& directive)
 void TestFileParser::parseDiagnostic(const DirectiveLine& directive)
 {
     auto words = splitWords(directive.value);
-    if (words.isEmpty() || words.size() > 2) {
-        addError(directive.line, "DIAGNOSTIC is written <DiagnosticKind> [ <count> ]"_s);
+    if (words.isEmpty() || words.size() > 3) {
+        addError(directive.line, "DIAGNOSTIC is written <DiagnosticKind> [ f<n> ] [ <count> ]"_s);
         return;
     }
 
@@ -816,9 +826,25 @@ void TestFileParser::parseDiagnostic(const DirectiveLine& directive)
         return;
     }
 
+    std::optional<FunctionID> function;
+    size_t placeOfCount = 1;
+    if (words.size() > 1 && words[1].startsWith('f')) {
+        std::optional<uint32_t> number = parseDecimal<uint32_t>(words[1].substring(1));
+        if (!number || *number > FunctionID::largestIndex) {
+            addError(directive.line, "the function of a DIAGNOSTIC is written f<n>"_s);
+            return;
+        }
+        function = FunctionID(*number);
+        placeOfCount = 2;
+    }
+    if (words.size() > placeOfCount + 1) {
+        addError(directive.line, "DIAGNOSTIC is written <DiagnosticKind> [ f<n> ] [ <count> ]"_s);
+        return;
+    }
+
     std::optional<unsigned> count;
-    if (words.size() == 2) {
-        count = parseDecimal<unsigned>(words[1]);
+    if (words.size() > placeOfCount) {
+        count = parseDecimal<unsigned>(words[placeOfCount]);
         if (!count || !*count) {
             addError(directive.line, "the count must be above 0"_s);
             return;
@@ -826,13 +852,13 @@ void TestFileParser::parseDiagnostic(const DirectiveLine& directive)
     }
 
     bool isListed = m_file.diagnostics.containsIf([&](const ExpectedDiagnostic& expected) {
-        return expected.kind == *kind;
+        return expected.kind == *kind && expected.function == function;
     });
     if (isListed) {
         addError(directive.line, words[0], " is listed twice"_s);
         return;
     }
-    m_file.diagnostics.append(ExpectedDiagnostic { *kind, count, directive.line });
+    m_file.diagnostics.append(ExpectedDiagnostic { *kind, function, count, directive.line });
 }
 
 void TestFileParser::parseStatistic(const DirectiveLine& directive)
@@ -886,6 +912,8 @@ void TestFileParser::finishCheckGroups()
                 return run.prefix == group.prefix;
             });
         }
+        for (RunDirective& run : m_file.runs)
+            run.isLeftOutUnderFurtherOptionWords |= group.requiresOptionsAsWritten && run.prefix == group.prefix;
         m_file.checkGroups.append(CheckGroup { WTF::move(group.prefix), WTF::move(group.lines) });
     }
 }

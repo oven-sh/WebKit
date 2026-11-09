@@ -339,6 +339,10 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                     SyntheticModuleRecord::materializeLazyExport(globalObject, resolution.moduleRecord, resolution.localName);
                     RETURN_IF_EXCEPTION(scope, void());
 #endif
+#if ENABLE(AOT)
+                    if (importedModule->inherits<AOT::ModuleRecord>())
+                        keepImportAsLinked(in.localName.impl(), resolution);
+#endif
                 }
                 break;
             }
@@ -648,6 +652,8 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
             capability->rejectWithCaughtException(vm, scope);
             RELEASE_AND_RETURN(scope, capability);
         }
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module))
+            compiled->recordTerminationAfterEvaluation(vm, exception);
 #endif
         JSModuleLoader::attachErrorInfo(globalObject, exception, module, moduleKey(), moduleType(), JSModuleLoader::ModuleFailure::Kind::Evaluation);
         // 9.a. For each Cyclic Module Record m of stack, do

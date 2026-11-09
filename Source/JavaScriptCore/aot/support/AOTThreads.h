@@ -16,6 +16,7 @@
 #include <span>
 #include <utility>
 #include <wtf/Atomics.h>
+#include <wtf/Condition.h>
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
 #include <wtf/Lock.h>
@@ -97,6 +98,8 @@ public:
 
     JS_EXPORT_PRIVATE size_t numberOfJobsWaiting() const;
 
+    JS_EXPORT_PRIVATE void waitUntilAllHaveRun();
+
 private:
     explicit BackgroundJobs(const ParallelLoops&);
 
@@ -108,6 +111,7 @@ private:
     mutable Lock m_lock;
     Deque<Job> m_jobs WTF_GUARDED_BY_LOCK(m_lock);
     bool m_isRunning WTF_GUARDED_BY_LOCK(m_lock) { false };
+    Condition m_allHaveRun;
 };
 
 template<typename T>

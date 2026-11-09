@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTIDSets.h"
+#include "AOTInliningAcrossFiles.h"
 
 #if ENABLE(AOT)
 
@@ -570,7 +571,7 @@ uint32_t IDSetArena::setOfMembersInChunk(IDSetChunkEntry entry)
     return intern(viewOfList(std::span(list).first(size)), std::nullopt, emptyIDSet, emptyIDSet);
 }
 
-void IDSetArena::reset()
+ALWAYS_INLINE_INTO_OTHER_FILES void IDSetArena::reset()
 {
     RELEASE_ASSERT(!m_depthOfInterning);
     ASSERT(m_scratch.isEmpty() && m_scratchEntries.isEmpty());
@@ -822,7 +823,7 @@ uint32_t IDSetArena::unionOf(std::span<const uint32_t> sets, std::span<const uin
     return result;
 }
 
-void IDSetArena::forgetEarlierStates()
+ALWAYS_INLINE_INTO_OTHER_FILES void IDSetArena::forgetEarlierStates()
 {
     if (m_earlierStatesCompared.isEmpty())
         return;

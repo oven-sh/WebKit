@@ -34,6 +34,7 @@ protected:
         , m_notCellMask(generator.pinned().notCellMask)
         , m_cellCageBase(generator.pinned().cellCageBase)
         , m_wordsOfInt32Elements(generator.pinned().wordsOfInt32Elements)
+        , m_owesFenceBehindStores(generator.owesFenceBehindStores())
     {
     }
 
@@ -167,6 +168,14 @@ protected:
     Condition isNumber(Boxed value) { return Condition(m_out.testNonZero64(value.value(), m_numberTag)); }
     Condition isCell(Boxed value) { return Condition(m_out.testIsZero64(value.value(), m_notCellMask)); }
     Condition isNotCell(Boxed value) { return Condition(m_out.testNonZero64(value.value(), m_notCellMask)); }
+    Condition isCellAndNotEmpty(Boxed value)
+    {
+        static_assert(JSValue::ValueUndefined < 16 && JSValue::ValueNull < 16 && JSValue::ValueTrue < 16 && JSValue::ValueFalse < 16 && JSValue::ValueDeleted < 16);
+#if USE(BIGINT32)
+#error "A BigInt32 has no bit from 2^48 up: it would pass for a cell."
+#endif
+        return Condition(m_out.isZero64(m_out.lShr(m_out.sub(value.value(), m_out.constInt64(16)), 48)));
+    }
     Condition isBoolean(Boxed value)
     {
         static_assert(JSValue::ValueTrue == JSValue::ValueFalse + 1);
@@ -254,6 +263,7 @@ protected:
     LValue& m_notCellMask;
     LValue& m_cellCageBase;
     UncheckedKeyHashMap<LValue, LValue>& m_wordsOfInt32Elements;
+    bool& m_owesFenceBehindStores;
 
 private:
     Word32 loadCellType(CellPointer cell) { return Word32(m_out.load8ZeroExt32(cell.value(), m_heaps.JSCell_typeInfoType)); }

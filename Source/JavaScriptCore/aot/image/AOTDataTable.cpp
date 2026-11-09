@@ -160,11 +160,13 @@ static FormOfDataObject formOfDataObject(const Typed::Plan& plan, const Typed::D
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static FieldIndex fieldOfDataMember(const TableInputs& inputs, FormOfDataObject form, const Typed::DataNode::Object& object, const Typed::DataMember& member)
+static FieldIndex fieldOfDataMember(const TableInputs& inputs, FormOfDataObject form, const Typed::DataNode::Object& object, const Typed::DataMember& member, bool& sawNamedMemberOutsideFields)
 {
-    if (form != FormOfDataObject::Compiled)
+    if (form != FormOfDataObject::Compiled || sawNamedMemberOutsideFields)
         return noFieldOfDataMember;
-    return inputs.plan.slots().findField(inputs.program, object.layout, member.key).value_or(noFieldOfDataMember);
+    FieldIndex field = inputs.plan.slots().findField(inputs.program, object.layout, member.key).value_or(noFieldOfDataMember);
+    sawNamedMemberOutsideFields = field == noFieldOfDataMember && inputs.program.nameClassOf(member.key) != Typed::NameClass::Index;
+    return field;
 }
 
 static bool representationTakesDataMember(SlotRepresentation representation, const Typed::DataNode& value)
@@ -257,8 +259,9 @@ static void nameWhatDataTreeNames(const TableInputs& inputs, const Typed::DataNo
             auto& object = node.as<Typed::DataNode::Object>();
             FormOfDataObject form = formOfDataObject(inputs.plan, object);
             fields.shrink(0);
+            bool sawNamedMemberOutsideFields = false;
             for (const Typed::DataMember& member : object.members) {
-                FieldIndex field = fieldOfDataMember(inputs, form, object, member);
+                FieldIndex field = fieldOfDataMember(inputs, form, object, member, sawNamedMemberOutsideFields);
                 if (field == noFieldOfDataMember)
                     names.keys.set(member.key.index());
                 else
@@ -363,8 +366,9 @@ private:
         } else {
             auto& object = node.as<Typed::DataNode::Object>();
             opened.form = formOfDataObject(m_encoder.plan, object);
+            bool sawNamedMemberOutsideFields = false;
             for (const Typed::DataMember& member : object.members)
-                m_fields.append(fieldOfDataMember(m_encoder.inputs, opened.form, object, member));
+                m_fields.append(fieldOfDataMember(m_encoder.inputs, opened.form, object, member, sawNamedMemberOutsideFields));
             opened.numberOfChildren = object.members.size();
         }
         m_openNodes.append(opened);

@@ -256,7 +256,7 @@ void listCreatedFieldAndReturn(StubAssembler& jit, const KeyOrderRegisters& r, G
     jit.callOperationAndReturn(Entry::operationAOTDidCreateFieldAt, didCreateField);
 }
 
-void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, const WaysToFieldInExtension& ways)
+void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, const WaysToFieldInExtension& ways, FirstExtension firstExtension)
 {
     const GPRReg object = r.field.object;
     const GPRReg granule = r.field.representation;
@@ -270,6 +270,8 @@ void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, cons
     static_assert(granuleOf(offsetOfFirstExtensionSlot) == offsetOfFirstExtensionSlot / 8 - 1 && extensionGranuleSize == 8 && maxExtensionGranules == 64);
     if (jit.options().useWideReferences)
         cannotInsert.append(jit.branchTest64(CCallHelpers::Zero, extension));
+    else if (firstExtension == FirstExtension::IsAllocatedInLine)
+        allocateFirstExtensionWithOneGranule(jit, object, granuleBit, extension, granule, r.scratch, ways.fromGranule, cannotInsert);
     insertGranule(jit, extension, granuleBit, granule, OwnedScratchRegister(jit), cannotInsert);
     jit.move(granule, extension);
     jit.jump().linkTo(ways.fromGranule, &jit);
@@ -339,19 +341,17 @@ void generateDidCreateField(StubAssembler& jit)
     jit.returnToCaller();
 
     hasExtraProperties.link(&jit);
-    jit.move(TrustedImm32(0), wordsBefore);
+    listCreatedField(jit, keyOrder, hasNoTransition, std::nullopt);
+    jit.returnToCaller();
+
     isNotRemembered.link(&jit);
-
     appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
-
-    Jump isNotToBeRemembered = jit.branchTest64(CCallHelpers::Zero, wordsBefore);
     locateKeyOrderRun(jit, wordsBefore, slotKey, run);
     jit.store64(wordsBefore, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     jit.store64(slotKey, Address(run, KeyOrderRun::offsetOfSlotKeys()));
     jit.load32(Address(object, offsetOfOrderWord), scratch);
     jit.and32(TrustedImm32(static_cast<int32_t>(orderAndCountMask)), scratch);
     jit.store32(scratch, Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()));
-    isNotToBeRemembered.link(&jit);
     jit.returnToCaller();
 
     hasNoTransition.link(&jit);
@@ -520,7 +520,7 @@ void generatePutSlotOrAdd(StubAssembler& jit)
         .field = { .object = object, .slotData = slotKey, .extensionWordOffset = address, .address = address, .representation = words },
         .value = InvalidGPRReg,
         .type = InvalidGPRReg,
-        .scratch = InvalidGPRReg,
+        .scratch = scratch,
         .secondScratch = entry,
         .number = InvalidFPRReg,
     };
@@ -531,7 +531,7 @@ void generatePutSlotOrAdd(StubAssembler& jit)
     storeAndReturn(Address(address));
 
     hasNoStorage.link(&jit);
-    createGranuleOfField(jit, registers, ways);
+    createGranuleOfField(jit, registers, ways, FirstExtension::IsAllocatedInLine);
 }
 
 } } // namespace JSC::AOT

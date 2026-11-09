@@ -109,6 +109,7 @@ static void emitCallMethodById(StubAssembler& jit, unsigned lentArguments)
     loadWordBehindKeyInAccessTable(jit, inTable, OBJECT_OFFSETOF(AccessTable::Read, keyOfOtherAnswer), calleeGPR, spare, isNotInAccessTable);
     Jump hasForm = jit.branchTest64(CCallHelpers::NonZero, calleeGPR, TrustedImm32(AccessTable::answerHasForm));
     jit.load64(Address(calleeGPR), calleeGPR);
+    readsByStub.append(jit.branchTest64(CCallHelpers::Zero, calleeGPR));
     filesNothing.append(jit.branchIfNotCell(calleeGPR));
     loadClosureWordOfThisRealm(jit, calleeGPR, registers, filesNothing);
     jit.move(TrustedImm64(ClosureWord::minWordOfCalleeTaking(count)), registers.scratch);
@@ -118,7 +119,7 @@ static void emitCallMethodById(StubAssembler& jit, unsigned lentArguments)
     jit.jumpToStub(callsValue);
 
     hasForm.link(&jit);
-    readByFormOfAnswerInAccessTable(jit, thisGPR, calleeGPR, place, calleeGPR, readsByStub, readsByStub, [&] {
+    readByFormOfAnswerInAccessTable(jit, thisGPR, calleeGPR, place, calleeGPR, readsByStub, [&] {
         jit.jumpToStub(callsValue);
     });
 
@@ -165,6 +166,7 @@ void generateTryGetSuperById(StubAssembler& jit)
     JumpList needsGenericRead;
 
     needsGenericRead.append(jit.branchIfNotCell(R0));
+    needsGenericRead.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
     Label hasHolder = jit.label();
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
     loadFrontCell(jit, SlotAccess::Read, { structureID, name, row, cell, scratch });

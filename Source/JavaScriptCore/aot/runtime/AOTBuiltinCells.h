@@ -38,6 +38,8 @@ struct Instance;
 struct ProgramTables;
 struct State;
 
+inline constexpr uint32_t limitOfNumbersOfBuiltinCells = 1 << 15;
+
 class BuiltinCells final : public WritesToBuiltinMembers {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BuiltinCells);
     WTF_MAKE_NONCOPYABLE(BuiltinCells);
@@ -52,9 +54,18 @@ public:
     JSCell* findGetter(BuiltinID);
     std::optional<BuiltinCellKey> keyOfCellHolding(JSCell*) const;
     JSCell* readMember(JSGlobalObject*, JSObject* holder, BuiltinID member);
+    JSCell* findFunctionAsBuilt(BuiltinBoxedStub);
     EncodedJSValue* addressOfValue(BuiltinCellKey);
     JSValue fillValue(JSGlobalObject*, BuiltinCellKey);
     JSValue fillWatchedValue(JSGlobalObject*, BuiltinCellKey);
+    ALWAYS_INLINE JSValue readValueInPlace(uint32_t encodedKey) const
+    {
+        for (const ValueReadInPlace& read : m_valuesReadInPlace) {
+            if (read.encodedKey == encodedKey)
+                return read.holder->structureID() == read.structure ? read.holder->getDirect(read.offset) : JSValue();
+        }
+        return { };
+    }
     void forgetValuesNamed(UniquedStringImpl* key);
     void willWrite(BuiltinID member, UniquedStringImpl* key) final;
     void willAddNameTo(BuiltinID holder) final;
@@ -104,6 +115,7 @@ public:
 
 private:
     std::optional<uint32_t> numberOf(BuiltinCellKey) const;
+    void takeFunctionAsWritten(BuiltinID member);
     JSObject* findKnownObject(BuiltinID) const;
     std::expected<JSCell*, BuiltinLookupFailure> find(BuiltinCellKey);
     std::expected<JSCell*, BuiltinLookupFailure> findInKnownHolder(BuiltinCellKey, JSObject* holder);
@@ -118,6 +130,13 @@ private:
     uint32_t m_numberOfFirstValue;
     std::span<EncodedJSValue> m_values;
     Vector<std::unique_ptr<PropertyValueWatchpoint>> m_watchesOfValues;
+    struct ValueReadInPlace {
+        uint32_t encodedKey { 0 };
+        JSObject* holder { nullptr };
+        StructureID structure;
+        PropertyOffset offset { invalidOffset };
+    };
+    Vector<ValueReadInPlace, 2> m_valuesReadInPlace;
     BitVector m_isUnavailable;
     struct AwaitedMember {
         JSObject* holder;

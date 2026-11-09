@@ -11,7 +11,9 @@
 #include "AOTArrivals.h"
 #include "AOTCallingConventions.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
+#include "AOTSort.h"
 #include <algorithm>
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
@@ -102,6 +104,7 @@ UnitQueue::UnitQueue(const Typed::Program& program, const Typed::CallingConventi
     , m_arrivals(arrivals)
     , m_cycles(numberOfCyclesOfUnitQueue(link))
     , m_isMentioned((static_cast<size_t>(conventions.numberOfUnits()) + bitsInWordOfUnitQueue - 1) / bitsInWordOfUnitQueue)
+    , m_whatIsKnownOfEntries(link ? conventions.numberOfFunctions() : 0)
     , m_selectorsWhoseUnitsAreMentioned(conventions.methodSelectors().size())
     , m_unitsThatAskAmongMentionedUnitsOfClasses(program.layouts.size())
     , m_unitsOfThreads(numberOfThreads)
@@ -109,6 +112,8 @@ UnitQueue::UnitQueue(const Typed::Program& program, const Typed::CallingConventi
     RELEASE_ASSERT(numberOfThreads);
     for (std::atomic<uint32_t>& word : m_isMentioned)
         word.store(0, std::memory_order_relaxed);
+    for (std::atomic<uint8_t>& known : m_whatIsKnownOfEntries)
+        known.store(0, std::memory_order_relaxed);
     for (std::atomic<bool>& areMentioned : m_selectorsWhoseUnitsAreMentioned)
         areMentioned.store(false, std::memory_order_relaxed);
     for (std::atomic<const Vector<Typed::CodeUnit>*>& unitsThatAsk : m_unitsThatAskAmongMentionedUnitsOfClasses)
@@ -186,7 +191,7 @@ void UnitQueue::orderCycles()
 
     for (uint32_t unit = numberOfFunctions * Typed::numberOfCodeRolesOfOneFunction; unit < m_conventions.numberOfUnits(); ++unit)
         m_unitsBehindRoles.append({ m_conventions.unitAt(unit).function.index(), unit });
-    std::ranges::stable_sort(m_unitsBehindRoles, { }, &UnitBehindRoles::function);
+    AOT::stableSort(m_unitsBehindRoles, { }, &UnitBehindRoles::function);
 }
 
 std::span<const uint32_t> UnitQueue::cyclesNamedBy(uint32_t cycle) const
@@ -215,7 +220,7 @@ bool UnitQueue::isSeedThatWaitsForNobody(Typed::CodeUnit unit) const
     return !m_isSeed.isEmpty() && (m_isSeed[index / bitsInWordOfUnitQueue] >> (index % bitsInWordOfUnitQueue) & 1) && !m_arrivals->takesWhatWasLeft(unit.function);
 }
 
-void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) const
+ALWAYS_INLINE_INTO_OTHER_FILES void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) const
 {
     if (m_isTakingSeeds)
         return;
@@ -232,7 +237,7 @@ Vector<Typed::CodeUnit> UnitQueue::mentionedFusedCallEntries() const
     Vector<Typed::CodeUnit> entries;
     for (uint32_t index = 0; index < m_conventions.numberOfFunctions(); ++index) {
         Typed::CodeUnit entry = m_conventions.closureEntryOf(FunctionID(index));
-        if (m_conventions.hasFusedCallEntry(entry.function) && isMentioned(m_conventions.indexOf(entry)))
+        if (m_conventions.hasFusedCallEntry(entry.function) && isMentioned(m_conventions.indexOf(entry)) && (m_conventions.callEntryIsNumberOfModuleStart(entry.function) || isMentioned(m_conventions.indexOf(m_conventions.genericEntry(entry).target))))
             entries.append(entry);
     }
     return entries;
@@ -261,10 +266,49 @@ bool UnitQueue::asksWhoMentions(Typed::CodeUnit unit) const
     return !isInQueueFromStart(unit.function) || (unit.role == Typed::CodeRole::SlowBody && !m_conventions.isSeedOfFunctionInQueueFromStart(unit));
 }
 
-void UnitQueue::mention(unsigned thread, Typed::CodeUnit unit)
+void UnitQueue::mentionEntriesOf(unsigned thread, FunctionID function)
+{
+    Typed::CodeUnit entry = m_conventions.closureEntryOf(function);
+    mention(thread, entry);
+    if (Typed::CodeUnit constructEntry = m_conventions.genericEntry(entry).constructEntry)
+        mention(thread, constructEntry);
+}
+
+void UnitQueue::noteEntryByValue(unsigned thread, FunctionID function, bool asksEveryTeller)
+{
+    if (!isEntryThatMayBeClosed(m_conventions.closureEntryOf(function)))
+        return;
+    std::atomic<uint8_t>& known = m_whatIsKnownOfEntries[function.index()];
+    bool isToldAlready = known.load(std::memory_order_relaxed) & isEnteredByValue;
+    if (isToldAlready && !asksEveryTeller)
+        return;
+    checkMentionByTakenUnit(thread, m_conventions.closureEntryOf(function));
+    if (isToldAlready)
+        return;
+    if (known.fetch_or(isEnteredByValue, std::memory_order_acq_rel) == wordIsNamed)
+        mentionEntriesOf(thread, function);
+}
+
+void UnitQueue::mention(unsigned thread, Typed::CodeUnit unit, MentionKind kind)
 {
     if (!m_conventions.exists(unit)) [[unlikely]]
         crashOnMentionOfUnplannedUnit(m_program, unit);
+
+    if (isEntryThatMayBeClosed(unit)) {
+        std::atomic<uint8_t>& known = m_whatIsKnownOfEntries[unit.function.index()];
+        if (kind == MentionKind::ClosureWord) {
+            if (known.load(std::memory_order_relaxed) & wordIsNamed)
+                return;
+            checkMentionByTakenUnit(thread, unit);
+            if (m_cycles[cycleOf(unit.function)].state.load(std::memory_order_acquire) == CycleState::Done) [[unlikely]]
+                crashOnMentionOfDroppedUnit(m_program, unit, m_conventions.unitAt(m_unitsOfThreads[thread].takenUnit));
+            if (known.fetch_or(wordIsNamed, std::memory_order_acq_rel) == isEnteredByValue)
+                mentionEntriesOf(thread, unit.function);
+            return;
+        }
+        if (known.fetch_or(isEnteredByValue, std::memory_order_acq_rel) == wordIsNamed)
+            mentionEntriesOf(thread, unit.function);
+    }
 
     bool isOfFunctionInQueueFromStart = !asksWhoMentions(unit);
     if (!isOfFunctionInQueueFromStart)
@@ -277,7 +321,8 @@ void UnitQueue::mention(unsigned thread, Typed::CodeUnit unit)
         return;
 
     if (unit.role == Typed::CodeRole::GenericCallEntry && m_conventions.hasFusedCallEntry(unit.function)) {
-        mention(thread, m_conventions.genericEntry(unit).target);
+        if (!m_conventions.callEntryIsNumberOfModuleStart(unit.function))
+            mention(thread, m_conventions.genericEntry(unit).target);
         return;
     }
 
@@ -296,6 +341,7 @@ void UnitQueue::mention(unsigned thread, Typed::CodeUnit unit)
             push(thread, index, &cycle);
         break;
     case CycleState::ReadyForSlowVersions:
+    case CycleState::ReadyForClosedEntries:
         push(thread, index, &cycle);
         break;
     case CycleState::Done:
@@ -361,6 +407,39 @@ bool UnitQueue::beginSlowVersionsOfCycle(unsigned thread, uint32_t number)
     return cycle.numberOfOpenUnits.fetch_sub(1, std::memory_order_acq_rel) > 1;
 }
 
+bool UnitQueue::beginClosedEntriesOfCycle(unsigned thread, uint32_t number)
+{
+    if (m_whatIsKnownOfEntries.isEmpty() || m_cycleOfFunction.isEmpty())
+        return false;
+    Vector<FunctionID, 16> functionsWhoseWordAloneIsNamed;
+    for (uint32_t place = m_firstMemberOfCycle[number]; place < m_firstMemberOfCycle[number + 1]; ++place) {
+        FunctionID member = m_membersOfCycles[place];
+        if (m_whatIsKnownOfEntries[member.index()].load(std::memory_order_acquire) == wordIsNamed)
+            functionsWhoseWordAloneIsNamed.append(member);
+    }
+    if (functionsWhoseWordAloneIsNamed.isEmpty())
+        return false;
+
+    Cycle& cycle = m_cycles[number];
+    cycle.numberOfOpenUnits.store(1, std::memory_order_relaxed);
+    cycle.state.store(CycleState::ReadyForClosedEntries, std::memory_order_release);
+    auto pushUnlessMentioned = [&](Typed::CodeUnit unit) {
+        uint32_t index = m_conventions.indexOf(unit);
+        uint32_t bit = 1u << (index % bitsInWordOfUnitQueue);
+        bool liesInBodyThatIsThere = unit.role == Typed::CodeRole::GenericCallEntry && m_conventions.hasFusedCallEntry(unit.function) && isMentioned(m_conventions.indexOf(m_conventions.genericEntry(unit).target));
+        if (!(m_isMentioned[index / bitsInWordOfUnitQueue].fetch_or(bit, std::memory_order_relaxed) & bit) && !liesInBodyThatIsThere)
+            push(thread, index, &cycle);
+    };
+    for (FunctionID member : functionsWhoseWordAloneIsNamed) {
+        m_arrivals->closeEntriesOf(member);
+        Typed::CodeUnit entry = m_conventions.closureEntryOf(member);
+        pushUnlessMentioned(entry);
+        if (Typed::CodeUnit constructEntry = m_conventions.genericEntry(entry).constructEntry)
+            pushUnlessMentioned(constructEntry);
+    }
+    return cycle.numberOfOpenUnits.fetch_sub(1, std::memory_order_acq_rel) > 1;
+}
+
 void UnitQueue::finishCycle(unsigned thread, uint32_t first)
 {
     Vector<uint32_t, 16> cyclesToFinish;
@@ -368,6 +447,8 @@ void UnitQueue::finishCycle(unsigned thread, uint32_t first)
     while (!cyclesToFinish.isEmpty()) {
         uint32_t number = cyclesToFinish.takeLast();
         if (m_cycles[number].state.load(std::memory_order_relaxed) == CycleState::Ready && beginSlowVersionsOfCycle(thread, number))
+            continue;
+        if (m_cycles[number].state.load(std::memory_order_relaxed) != CycleState::ReadyForClosedEntries && beginClosedEntriesOfCycle(thread, number))
             continue;
         m_cycles[number].state.store(CycleState::Done, std::memory_order_release);
         for (uint32_t named : cyclesNamedBy(number)) {

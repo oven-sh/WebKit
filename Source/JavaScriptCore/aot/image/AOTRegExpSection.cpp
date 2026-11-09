@@ -540,7 +540,7 @@ RegExpSections encodeRegExpRecords(const RegExpRecordInputs& inputs, BuildContex
 
         records.append(createRegExpRecord(request, compiled, *summary, inputs.section.entries[index], details));
         hashes.append(ImageRegExpHash { ImageRegExp::hashOf(summary->patternHash, request.flags), recordNumber });
-        if (compiled.form == RegExpRecordForm::Code)
+        if (compiled.form == RegExpRecordForm::Code || compiled.form == RegExpRecordForm::NoCode)
             maxOutputSize = std::max(maxOutputSize, (summary->numSubpatterns + 1) * 2 + summary->numDuplicateNamedCaptureGroups);
     }
     if (details.didOverflow())

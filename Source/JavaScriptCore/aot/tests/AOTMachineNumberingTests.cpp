@@ -70,6 +70,7 @@ struct NumberingTestFixture {
     {
         PatchOperation* patch = out.patch(Void);
         patch->setRunsWithoutFrame(true);
+        patch->setShowsRegistersToCollector(true);
         patch->setGenerator([](CCallHelpers&, const PatchParameters&) { });
         return patch;
     }
@@ -345,6 +346,48 @@ static void testMachineNumberingArmThatNothingReaches()
     compileOrFail(fixture.test);
     NumberingTestFixture::Memory memory = numberingTestMemory;
     AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 3) && memory[0] == 3);
+}
+
+static void testMachineNumberingSumIsFoundAgainWhereverItsBlockAloneLeads()
+{
+    NumberingTestFixture fixture;
+    Output& out = fixture.out;
+    Block* left = out.newBlock();
+    Block* behindLeft = out.newBlock();
+    Block* right = out.newBlock();
+    Block* join = out.newBlock();
+    Block* apart = out.newBlock();
+    Operation* word = fixture.load(fixture.firstElement);
+    Operation* atFork = out.mul(word, fixture.operand);
+    AOT_TEST_CHECK(atFork->opcode() == Mul && out.findsAgain(atFork) && !out.findsAgain(word) && !out.findsAgain(fixture.operand));
+    ScopeFork fork = out.forkScope();
+    out.branch(fixture.operand, normalEdge(left), normalEdge(right));
+
+    out.appendToArm(left, fork);
+    Operation* inLeft = out.add(atFork, word);
+    AOT_TEST_CHECK(inLeft->opcode() == Add && inLeft->owner() == left && out.findsAgain(atFork) && out.findsAgain(inLeft));
+    out.jump(behindLeft);
+    ScopeFork atEndOfLeft = out.forkScope();
+    out.appendToSuccessor(behindLeft, atEndOfLeft);
+    AOT_TEST_CHECK(out.m_block == behindLeft && out.findsAgain(atFork) && out.findsAgain(inLeft));
+    fixture.store(inLeft, fixture.secondElement, 1);
+    out.jump(join);
+
+    out.appendToArm(right, fork);
+    AOT_TEST_CHECK(out.findsAgain(atFork) && !out.findsAgain(inLeft));
+    out.jump(join);
+
+    out.appendToJoin(join, fork);
+    AOT_TEST_CHECK(out.findsAgain(atFork) && !out.findsAgain(inLeft));
+    out.jump(apart);
+
+    out.appendTo(apart);
+    AOT_TEST_CHECK(!out.findsAgain(atFork) && !out.findsAgain(inLeft));
+    out.ret(atFork);
+
+    compileOrFail(fixture.test);
+    NumberingTestFixture::Memory memory = numberingTestMemory;
+    AOT_TEST_CHECK(fixture.run(memory, 5) == 15 && memory[1] == 18);
 }
 
 static void testMachineNumberingScopesHoldWhileTableGrows()
@@ -715,13 +758,13 @@ static void testMachineNumberingOwnCopyOfNarrowReferenceIsMarked()
     AOT_TEST_CHECK(fixture.run(memory, 5) == 3);
 }
 
-static void testMachineNumberingInheritedLoadIsVerified()
+static void testMachineNumberingReusedLoadIsVerified()
 {
-    for (bool declaresWrite : { false, true }) {
+    for (auto [declaresWrite, crossesEdge] : { std::pair { false, true }, std::pair { true, true }, std::pair { false, false }, std::pair { true, false } }) {
         NumberingTestFixture fixture;
         Output& out = fixture.out;
         unsigned numberOfChecks = 0;
-        out.verifyInheritedLoads(fixture.cousin.index(), [&](Operation* readSameBits) {
+        out.verifyReusedLoads({ fixture.cousin.index() }, [&](Operation* readSameBits) {
             ++numberOfChecks;
             PatchOperation* check = out.check(out.isZero32(readSameBits));
             check->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
@@ -732,15 +775,16 @@ static void testMachineNumberingInheritedLoadIsVerified()
             });
         });
 
-        Block* next = out.newBlock();
         Operation* word = fixture.load(fixture.firstElement);
         Operation* exempt = fixture.load(fixture.cousin, 2);
         Operation* fixed = fixture.load(fixture.immutable, 4);
         fixture.appendWriter(0)->effects.writes = fixture.test.procedure().heapSet(declaresWrite ? fixture.firstElement : fixture.unrelated);
-        out.jump(next);
-        ScopeFork atEnd = out.forkScope();
-
-        out.appendToSuccessor(next, atEnd);
+        if (crossesEdge) {
+            Block* next = out.newBlock();
+            out.jump(next);
+            ScopeFork atEnd = out.forkScope();
+            out.appendToSuccessor(next, atEnd);
+        }
         AOT_TEST_CHECK(fixture.load(fixture.cousin, 2) == exempt && fixture.load(fixture.immutable, 4) == fixed && !numberOfChecks);
         Operation* found = fixture.load(fixture.firstElement);
         AOT_TEST_CHECK((found == word) == !declaresWrite && numberOfChecks == (declaresWrite ? 0u : 1u));
@@ -751,6 +795,99 @@ static void testMachineNumberingInheritedLoadIsVerified()
         AOT_TEST_CHECK(fixture.run(memory, 5) == (declaresWrite ? numberingTestAnswer(5, 6, 30) : -1));
         memory = numberingTestMemory;
         AOT_TEST_CHECK(fixture.run(memory, 3) == numberingTestAnswer(3, 6, 30));
+    }
+}
+
+static void testMachineNumberingStoreOverLoadThatStandsStopsBuild()
+{
+    struct Case {
+        bool isVerified;
+        bool endsLoad;
+        unsigned wordStored;
+        bool stops;
+    };
+    for (auto [isVerified, endsLoad, wordStored, stops] : { Case { true, false, 0, true }, Case { true, true, 0, false }, Case { true, false, 1, false }, Case { false, false, 0, false } }) {
+        NumberingTestFixture fixture;
+        Output& out = fixture.out;
+        if (isVerified)
+            out.verifyReusedLoads({ fixture.cousin.index() }, [](Operation*) { });
+        Operation* word = fixture.load(fixture.firstElement);
+        out.store64(fixture.operand, out.address(endsLoad ? fixture.firstElement : fixture.unrelated, fixture.words, NumberingTestFixture::offsetOfWord(wordStored)));
+        out.ret(word);
+        const std::optional<Failure>& failure = fixture.test.procedure().failure();
+        AOT_TEST_CHECK(stops ? failure && failure->kind == FailureKind::MalformedProcedure : !failure);
+    }
+}
+
+static void testMachineNumberingStoreOverLoadThatStandsIsJudgedByWaysFromEntry()
+{
+    enum class Shape : uint8_t { DeadBlock, DeadThenDead, DeadForkAndJoin, RingThatNothingEnters, LiveThenLive, DeadThenDeadLedIntoLater, DeadBlockLedIntoLater };
+    struct Case {
+        Shape shape;
+        bool stopsAtStore;
+        bool stopsBeforeGeneration;
+    };
+    for (auto [shape, stopsAtStore, stopsBeforeGeneration] : {
+        Case { Shape::DeadBlock, false, false },
+        Case { Shape::DeadThenDead, false, false },
+        Case { Shape::DeadForkAndJoin, false, false },
+        Case { Shape::RingThatNothingEnters, false, false },
+        Case { Shape::LiveThenLive, true, true },
+        Case { Shape::DeadThenDeadLedIntoLater, false, true },
+        Case { Shape::DeadBlockLedIntoLater, false, true },
+    }) {
+        NumberingTestFixture fixture;
+        Output& out = fixture.out;
+        out.verifyReusedLoads({ fixture.cousin.index() }, [](Operation*) { });
+        Block* taken = out.newBlock();
+        Block* first = out.newBlock();
+        Block* end = out.newBlock();
+        Operation* word = fixture.load(fixture.firstElement);
+        ScopeFork fork = out.forkScope();
+        bool firstIsLive = shape == Shape::LiveThenLive;
+        out.branch(firstIsLive ? fixture.operand : out.booleanTrue, normalEdge(taken), normalEdge(first));
+        AOT_TEST_CHECK(first->numberOfIncomingEdges() == firstIsLive);
+
+        out.appendToArm(first, fork);
+        Block* holder = first;
+        if (shape == Shape::DeadThenDead || shape == Shape::LiveThenLive || shape == Shape::DeadThenDeadLedIntoLater) {
+            holder = out.newBlock();
+            out.jump(holder);
+            out.appendToContinuation(holder);
+            AOT_TEST_CHECK(holder->singlePredecessor() == first);
+        } else if (shape == Shape::DeadForkAndJoin) {
+            Block* left = out.newBlock();
+            Block* right = out.newBlock();
+            holder = out.newBlock();
+            ScopeFork inner = out.forkScope();
+            out.branch(fixture.operand, normalEdge(left), normalEdge(right));
+            out.appendToArm(left, inner);
+            out.jump(holder);
+            out.appendToArm(right, inner);
+            out.jump(holder);
+            out.appendToJoin(holder, inner);
+            AOT_TEST_CHECK(holder->numberOfIncomingEdges() == 2);
+        }
+        const std::optional<Failure>& failure = fixture.test.procedure().failure();
+        AOT_TEST_CHECK(!failure);
+        out.store64(fixture.operand, out.address(fixture.unrelated, fixture.words, NumberingTestFixture::offsetOfWord(0)));
+        AOT_TEST_CHECK(stopsAtStore ? failure && failure->kind == FailureKind::MalformedProcedure : !failure);
+        if (stopsAtStore)
+            continue;
+        out.jump(shape == Shape::RingThatNothingEnters ? first : end);
+        AOT_TEST_CHECK(shape != Shape::RingThatNothingEnters || first->singlePredecessor() == first);
+
+        out.appendToArm(taken, fork);
+        bool isLedIntoLater = shape == Shape::DeadThenDeadLedIntoLater || shape == Shape::DeadBlockLedIntoLater;
+        if (isLedIntoLater)
+            out.branch(fixture.operand, normalEdge(end), rareEdge(first));
+        else
+            out.jump(end);
+        out.appendTo(end);
+        out.ret(word);
+        AOT_TEST_CHECK(!failure);
+        AOT_TEST_CHECK(fixture.test.prepare() == !stopsBeforeGeneration);
+        AOT_TEST_CHECK(stopsBeforeGeneration ? failure && failure->kind == FailureKind::MalformedProcedure : !failure);
     }
 }
 
@@ -1036,6 +1173,146 @@ static void testMachineNumberingPhiStandsInPlaceOfPurePatch()
     }
 }
 
+static void testMachineNumberingPhiStandsInPlaceOfReadOfMemory()
+{
+    constexpr PureFunction function { 62, true, false, true };
+    auto find = [&](NumberingTestFixture& fixture, Operation* operand) {
+        return fixture.out.findPurePatch(function, Int64, singleElementSpan(operand));
+    };
+    auto record = [&](NumberingTestFixture& fixture) {
+        Operation* phi = appendNumberingTestWordReadOrMade(fixture);
+        AOT_TEST_CHECK(phi->opcode() == Phi && !find(fixture, fixture.words));
+        fixture.out.recordInPlaceOfReadOfMemory(function, phi, fixture.words, fixture.firstElement);
+        AOT_TEST_CHECK(find(fixture, fixture.words) == phi);
+        return phi;
+    };
+    {
+        NumberingTestFixture fixture;
+        Output& out = fixture.out;
+        record(fixture);
+        AOT_TEST_CHECK(!find(fixture, fixture.alias) && !find(fixture, fixture.operand));
+        AOT_TEST_CHECK(!out.findPurePatch({ 63, true, false, true }, Int64, singleElementSpan(fixture.words)));
+        AOT_TEST_CHECK(!out.findPurePatch(function, Int32, singleElementSpan(fixture.words)));
+        AOT_TEST_CHECK(!out.findPurePatch({ 62 }, Int64, { }));
+    }
+    for (const AbstractHeap NumberingTestFixture::* written : { &NumberingTestFixture::secondElement, &NumberingTestFixture::cousin, &NumberingTestFixture::unrelated }) {
+        NumberingTestFixture fixture;
+        Operation* phi = record(fixture);
+        fixture.store(fixture.operand, fixture.*written, 1);
+        AOT_TEST_CHECK(find(fixture, fixture.words) == phi);
+    }
+    for (const AbstractHeap NumberingTestFixture::* written : { &NumberingTestFixture::firstElement, &NumberingTestFixture::everyElement, &NumberingTestFixture::arrays, &NumberingTestFixture::everything }) {
+        NumberingTestFixture fixture;
+        Output& out = fixture.out;
+        Operation* phi = record(fixture);
+        fixture.store(fixture.operand, fixture.*written);
+        AOT_TEST_CHECK(!find(fixture, fixture.words));
+        Operation* again = appendNumberingTestWordReadOrMade(fixture);
+        AOT_TEST_CHECK(again != phi);
+        out.ret(fixture.combine(phi, again));
+
+        compileOrFail(fixture.test);
+        NumberingTestFixture::Memory memory = numberingTestMemory;
+        AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 5));
+    }
+    {
+        NumberingTestFixture fixture;
+        record(fixture);
+        fixture.appendCall();
+        AOT_TEST_CHECK(!find(fixture, fixture.words));
+    }
+    for (const AbstractHeap NumberingTestFixture::* written : { &NumberingTestFixture::firstElement, &NumberingTestFixture::secondElement, &NumberingTestFixture::cousin }) {
+        NumberingTestFixture fixture;
+        Operation* phi = appendNumberingTestWordReadOrMade(fixture);
+        fixture.out.recordInPlaceOfReadOfMemory(function, phi, fixture.words, fixture.everyElement);
+        AOT_TEST_CHECK(find(fixture, fixture.words) == phi);
+        fixture.store(fixture.operand, fixture.*written, 1);
+        AOT_TEST_CHECK(find(fixture, fixture.words) == (written == &NumberingTestFixture::cousin ? phi : nullptr));
+    }
+    for (bool writesInSuccessor : { false, true }) {
+        NumberingTestFixture fixture;
+        Output& out = fixture.out;
+        Operation* phi = record(fixture);
+        Block* taken = out.newBlock();
+        Block* notTaken = out.newBlock();
+        ScopeFork fork = out.forkScope();
+        out.branch(out.testNonZero64(fixture.operand, 1), normalEdge(taken), normalEdge(notTaken));
+        out.appendToSuccessor(taken, fork);
+        AOT_TEST_CHECK(find(fixture, fixture.words) == phi);
+        if (writesInSuccessor)
+            fixture.store(fixture.operand, fixture.firstElement);
+        AOT_TEST_CHECK(find(fixture, fixture.words) == (writesInSuccessor ? nullptr : phi));
+        out.ret(phi);
+        out.appendToSuccessor(notTaken, fork);
+        AOT_TEST_CHECK(find(fixture, fixture.words) == (writesInSuccessor ? nullptr : phi));
+        out.ret(phi);
+    }
+    auto recordPhiMadeWithoutLoads = [&](NumberingTestFixture& fixture) {
+        Output& out = fixture.out;
+        Block* left = out.newBlock();
+        Block* right = out.newBlock();
+        Block* join = out.newBlock();
+        ScopeFork fork = out.forkScope();
+        out.branch(out.testNonZero64(fixture.operand, 1), normalEdge(left), normalEdge(right));
+        out.appendToArm(left, fork);
+        ValueFromBlock first = out.anchor(fixture.operand);
+        out.jump(join);
+        out.appendToArm(right, fork);
+        ValueFromBlock second = out.anchor(fixture.alias);
+        out.jump(join);
+        out.appendToJoin(join, fork);
+        Operation* phi = out.phi(Int64, first, second);
+        AOT_TEST_CHECK(phi->opcode() == Phi);
+        out.recordInPlaceOfReadOfMemory(function, phi, fixture.words, fixture.firstElement);
+        AOT_TEST_CHECK(find(fixture, fixture.words) == phi);
+    };
+    {
+        NumberingTestFixture fixture;
+        fixture.load(fixture.firstElement);
+        PatchOperation* first = fixture.appendWriter(0);
+        first->effects.writes = fixture.test.procedure().heapSet(fixture.firstElement);
+        recordPhiMadeWithoutLoads(fixture);
+        PatchOperation* second = fixture.appendWriter(0);
+        second->effects.writes = first->effects.writes;
+        AOT_TEST_CHECK(!find(fixture, fixture.words));
+    }
+    {
+        NumberingTestFixture fixture;
+        fixture.load(fixture.firstElement);
+        fixture.appendCall();
+        recordPhiMadeWithoutLoads(fixture);
+        fixture.store(fixture.operand, fixture.firstElement);
+        AOT_TEST_CHECK(!find(fixture, fixture.words));
+    }
+    ProcedureTraits traits;
+    traits.savesFrameOnSuspend = true;
+    for (bool isSuspension : { true, false }) {
+        NumberingTestFixture fixture(traits);
+        Operation* phi = record(fixture);
+        PatchOperation* patch = fixture.appendCall();
+        patch->effects = Effects::none();
+        patch->setIsSuspension(isSuspension);
+        AOT_TEST_CHECK(find(fixture, fixture.words) == (isSuspension ? nullptr : phi));
+    }
+    {
+        NumberingTestFixture fixture;
+        Output& out = fixture.out;
+        Block* left = out.newBlock();
+        Block* right = out.newBlock();
+        Block* join = out.newBlock();
+        ScopeFork fork = out.forkScope();
+        out.branch(out.testNonZero64(fixture.operand, 1), normalEdge(left), normalEdge(right));
+        out.appendToArm(left, fork);
+        record(fixture);
+        out.jump(join);
+        out.appendToArm(right, fork);
+        AOT_TEST_CHECK(!find(fixture, fixture.words));
+        out.jump(join);
+        out.appendToJoin(join, fork);
+        AOT_TEST_CHECK(!find(fixture, fixture.words));
+    }
+}
+
 static void testMachineNumberingTruncationOfConvertedInteger()
 {
     NumberingTestFixture fixture;
@@ -1071,15 +1348,19 @@ static std::span<const NativeTest> listOfMachineNumberingTests()
         { "machine/numbering/word-filled-once"_s, testMachineNumberingWordFilledOnceIsLoadedOnce },
         { "machine/numbering/load-is-made-again-on-request"_s, testMachineNumberingLoadIsMadeAgainOnRequest },
         { "machine/numbering/block-that-lost-an-edge-starts-empty"_s, testMachineNumberingBlockThatLostAnEdgeStartsEmpty },
+        { "machine/numbering/sum-is-found-again-wherever-its-block-alone-leads"_s, testMachineNumberingSumIsFoundAgainWhereverItsBlockAloneLeads },
         { "machine/numbering/successor-reads-its-own-copy-of-two-comparisons"_s, testMachineNumberingSuccessorReadsOwnCopyOfTwoComparisons },
         { "machine/numbering/own-copy-of-a-narrow-reference-is-marked"_s, testMachineNumberingOwnCopyOfNarrowReferenceIsMarked },
-        { "machine/numbering/inherited-load-is-verified"_s, testMachineNumberingInheritedLoadIsVerified },
+        { "machine/numbering/reused-load-is-verified"_s, testMachineNumberingReusedLoadIsVerified },
+        { "machine/numbering/store-over-load-that-stands-stops-build"_s, testMachineNumberingStoreOverLoadThatStandsStopsBuild },
+        { "machine/numbering/store-over-load-that-stands-is-judged-by-ways-from-entry"_s, testMachineNumberingStoreOverLoadThatStandsIsJudgedByWaysFromEntry },
         { "machine/numbering/second-edge-into-a-continuation-asserts"_s, testMachineNumberingSecondEdgeIntoContinuationAsserts },
         { numberingTestOfSecondEdgeIntoContinuation, testMachineNumberingAddsSecondEdgeIntoContinuationOnRequest },
         { numberingTestOfSecondEdgeIntoJoin, testMachineNumberingAddsSecondEdgeIntoJoinOnRequest },
         { "machine/numbering/pure-patches-are-shared-by-id-and-children"_s, testMachineNumberingPurePatchesAreSharedByIDAndChildren },
         { "machine/numbering/patch-that-depends-on-memory-is-shared-until-a-write-there"_s, testMachineNumberingPatchThatDependsOnMemoryIsSharedUntilWriteThere },
         { "machine/numbering/phi-stands-in-place-of-a-pure-patch"_s, testMachineNumberingPhiStandsInPlaceOfPurePatch },
+        { "machine/numbering/phi-stands-in-place-of-a-read-of-memory"_s, testMachineNumberingPhiStandsInPlaceOfReadOfMemory },
         { "machine/numbering/truncation-of-a-converted-integer"_s, testMachineNumberingTruncationOfConvertedInteger },
     };
     return tests;

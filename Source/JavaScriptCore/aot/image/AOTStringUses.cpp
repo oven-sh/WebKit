@@ -104,17 +104,6 @@ static Vector<NameCandidate> collectNumberedNames(const Typed::Program& program,
         });
     }
 
-    BitVector textsOnlyCompared(program.strings.size());
-    textsOnlyCompared.merge(mentions.byID(NumberSpace::AtomOfComparedText).isMentioned);
-    textsOnlyCompared.exclude(isTextOfNumberedKey);
-    textsOnlyCompared.exclude(textsWithoutNumberedKey);
-    for (size_t index : textsOnlyCompared) {
-        names.append(NameCandidate {
-            .identifier = { PropertyKeyID(), StringID(index) },
-            .isOnlyCompared = true,
-            .firstFunction = mentions.firstFunctionMentioning(NumberSpace::AtomOfComparedText, static_cast<uint32_t>(index)),
-        });
-    }
     return names;
 }
 
@@ -149,7 +138,7 @@ static void sortNamesByWordAndThen(const ParallelLoops& loops, std::span<NameCan
 static void sortByUse(const Typed::Program& program, const ParallelLoops& loops, std::span<NameCandidate> names)
 {
     sortNamesByWordAndThen(loops, names, [](const NameCandidate& name) {
-        return static_cast<uint64_t>(name.isOnlyCompared) << 34 | static_cast<uint64_t>(!name.hasPromisedColumn) << 33 | static_cast<uint64_t>(UINT32_MAX - name.numberOfFunctions) << 1 | static_cast<uint64_t>(!name.isLookedUpByCode());
+        return static_cast<uint64_t>(!name.hasPromisedColumn) << 33 | static_cast<uint64_t>(UINT32_MAX - name.numberOfFunctions) << 1 | static_cast<uint64_t>(!name.isLookedUpByCode());
     }, [&](const NameCandidate& a, const NameCandidate& b) {
         if (a.identifier.key != b.identifier.key)
             return isNameKeyOrderedBefore(program, a.identifier.key, b.identifier.key);
@@ -168,7 +157,7 @@ static void groupColumnsByFirstFunction(std::span<NameCandidate> namesWithColumn
 static void sortNamesWithoutColumn(const Typed::Program& program, const ParallelLoops& loops, std::span<NameCandidate> names)
 {
     sortNamesByWordAndThen(loops, names, [](const NameCandidate& name) {
-        return static_cast<uint64_t>(!name.isLookedUpByCode()) << 34 | static_cast<uint64_t>(name.isOnlyCompared) << 33 | static_cast<uint64_t>(!name.isEngineSymbol) << 32 | name.identifier.text.index();
+        return static_cast<uint64_t>(!name.isLookedUpByCode()) << 33 | static_cast<uint64_t>(!name.isEngineSymbol) << 32 | name.identifier.text.index();
     }, [&](const NameCandidate& a, const NameCandidate& b) {
         return isNameKeyOrderedBefore(program, a.identifier.key, b.identifier.key);
     });
@@ -240,7 +229,7 @@ static Vector<FunctionByModule> findFirstFunctionsNamingTexts(const Typed::Progr
         if (text)
             firstFunctions[text.index()] = std::min(firstFunctions[text.index()], function);
     };
-    for (NumberSpace space : { NumberSpace::String, NumberSpace::StringCell, NumberSpace::NameOfText, NumberSpace::AtomOfComparedText }) {
+    for (NumberSpace space : { NumberSpace::String, NumberSpace::StringCell, NumberSpace::NameOfText }) {
         for (size_t string : mentions.byID(space).isMentioned)
             lowerTo(StringID(string), mentions.firstFunctionMentioning(space, static_cast<uint32_t>(string)));
     }
@@ -346,10 +335,7 @@ void ImageNumbersBuilder::numberIdentifiersAndStrings()
     runLanes(context.parallelLoops(), {
         [&] {
             sortByUse(program, context.parallelLoops(), names.mutableSpan());
-            auto numberOfNamesLookedUp = static_cast<uint64_t>(std::ranges::count_if(names, [](const NameCandidate& name) {
-                return !name.isOnlyCompared;
-            }));
-            auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(numberOfNamesLookedUp, RowDisplacementTable::maxColumn));
+            auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(names.size(), RowDisplacementTable::maxColumn));
             runLanes(context.parallelLoops(), {
                 [&] { groupColumnsByFirstFunction(names.mutableSpan().first(columnCount)); },
                 [&] { sortNamesWithoutColumn(program, context.parallelLoops(), names.mutableSpan().subspan(columnCount)); },

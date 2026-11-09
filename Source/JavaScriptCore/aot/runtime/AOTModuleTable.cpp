@@ -112,6 +112,24 @@ std::span<const NameOfStatementData> ModuleTable::namesOfStatements(ModuleID mod
     return { ofModule.begin(), ofModule.end() };
 }
 
+std::span<const StarAsWrittenData> ModuleTable::starsAsWritten(ModuleID module) const
+{
+    auto ofModule = std::ranges::equal_range(m_tables->starsAsWritten(), module.index(), { }, &StarAsWrittenData::module);
+    return { ofModule.begin(), ofModule.end() };
+}
+
+std::optional<ModuleID> ModuleTable::writerOfExport(ModuleID module, unsigned place) const
+{
+    auto key = [](const WriterOfExportData& entry) {
+        return static_cast<uint64_t>(entry.module) << 32 | entry.place;
+    };
+    std::span<const WriterOfExportData> writers = m_tables->writersOfExports();
+    auto found = std::ranges::lower_bound(writers, static_cast<uint64_t>(module.index()) << 32 | place, { }, key);
+    if (found == writers.end() || found->module != module.index() || found->place != place)
+        return std::nullopt;
+    return ModuleID(found->writer);
+}
+
 bool ModuleTable::isAmbiguousExport(ModuleID module, StringView name) const
 {
     return std::ranges::any_of(ambiguousExports(module), [&](const AmbiguousExportData& entry) {

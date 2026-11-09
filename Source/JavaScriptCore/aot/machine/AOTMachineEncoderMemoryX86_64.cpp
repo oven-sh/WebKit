@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTMachineEncoder.h"
+#include "AOTInliningAcrossFiles.h"
 
 #if ENABLE(AOT) && CPU(X86_64)
 
@@ -24,7 +25,7 @@ static bool loadOrStoreMovesNumber(const Operation* access)
 }
 
 template<typename Functor>
-static void withOperandOfLoadOrStore(const AddressForm& form, const Functor& functor)
+static ALWAYS_INLINE void withOperandOfLoadOrStore(const AddressForm& form, const Functor& functor)
 {
     static_assert(!MacroAssembler::TimesOne && MacroAssembler::TimesTwo == 1 && MacroAssembler::TimesFour == 2 && MacroAssembler::TimesEight == 3);
     switch (form.kind) {
@@ -407,7 +408,7 @@ static void encodeX86StoreInMemory(Encoder& encoder, const Step& step)
         encoder.recordTrappingAccess(store, form, instruction);
 }
 
-void Encoder::encodeLoad(const Step& step)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeLoad(const Step& step)
 {
     const Operation* load = step.operation;
     ASSERT(isLoad(load->opcode()) && !m_liveness.isFused(load));
@@ -433,7 +434,7 @@ void Encoder::encodeLoad(const Step& step)
         recordTrappingAccess(load, form, instruction);
 }
 
-void Encoder::encodeStore(const Step& step)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeStore(const Step& step)
 {
     const Operation* store = step.operation;
     ASSERT(isStore(store->opcode()) && !m_liveness.isFused(store->child(0)));

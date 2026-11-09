@@ -12,6 +12,7 @@
 #include "AOTSchemaEnums.h"
 #include "AOTSchemaRecords.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
@@ -44,8 +45,6 @@ struct Layout : LayoutRecord {
 
     std::optional<uint32_t> findField(PropertyKeyID) const;
     std::optional<uint32_t> findStaticField(PropertyKeyID) const;
-    bool hasStaticFieldWithComputedKey() const;
-    bool mayHaveStaticField(PropertyKeyID key) const { return hasStaticFieldWithComputedKey() || findStaticField(key); }
     template<typename Functor> void forEachStaticFieldThatMayMatch(PropertyKeyID, const Functor&) const;
     void indexFields();
 
@@ -113,7 +112,7 @@ void Layout::forEachStaticFieldThatMayMatch(PropertyKeyID key, const Functor& fu
     RELEASE_ASSERT(m_indexedStaticFieldCount == staticFields.size());
     if (m_staticFieldsByKey.isEmpty()) {
         for (const StaticField& field : staticFields) {
-            if (!field.key || field.key == key)
+            if (field.key == key)
                 functor(field);
         }
         return;
@@ -139,6 +138,15 @@ inline bool isDefinedByClass(const Layout& layout) { return layout.kind == Layou
 inline bool isFoundByShapeTest(const Layout& layout)
 {
     return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance || layout.kind == LayoutKind::Container) && !layout.writtenBuiltinBase && !layout.mayBeOrdinaryObject && !layout.holdsOrdinaryObjects;
+}
+ALWAYS_INLINE bool isKnownByStructureOfClass(const Layout& layout)
+{
+    constexpr OptionSet<FieldFlags> flagsOfWhatIsNoPlainProperty { FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden };
+    if (layout.kind != LayoutKind::Instance || !layout.writtenBuiltinBase || layout.base || !isDefinedByClass(layout) || layout.isDerived())
+        return false;
+    return std::ranges::all_of(layout.fields, [&](const Field& field) {
+        return field.key && !field.form.contains(FieldForm::IsAccessor) && !field.flags.containsAny(flagsOfWhatIsNoPlainProperty);
+    });
 }
 
 struct ClassBelowBuiltinClass {

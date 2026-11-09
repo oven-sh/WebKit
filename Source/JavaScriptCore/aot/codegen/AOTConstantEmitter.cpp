@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementEmitterAllocation.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTNumbering.h"
 #include "AOTOperationData.h"
@@ -120,7 +121,8 @@ void ConstantEmitter::generateString(const ValueContext& value)
 void ConstantEmitter::generateBuiltin(const ValueContext& value)
 {
     BuiltinCellKey key = BuiltinCellKey::object(m_builtins.canonicalID(value->builtin()));
-    if (key.hasCell(m_builtins) && key.kind() != BuiltinCellKey::Kind::Value && formOfConstantsWithCellsAt(value).form == Form::Closed && emitter<OperatorEmitter>().leaveOperandToInstanceOf(value, InstanceOfOperand::PrototypeThatIsBuiltin, NumberedImmediate { m_mentions.builtinCell(key) })) {
+    bool endsChains = m_builtins.canonicalID(value->builtin()) == m_builtins.canonicalID(Builtins::ObjectPrototype);
+    if (!endsChains && key.hasCell(m_builtins) && key.kind() != BuiltinCellKey::Kind::Value && formOfConstantsWithCellsAt(value).form == Form::Closed && emitter<OperatorEmitter>().leaveOperandToInstanceOf(value, InstanceOfOperand::PrototypeThatIsBuiltin, NumberedImmediate { m_mentions.builtinCell(key) })) {
         defineCell(value, CellPointer(m_out.constInt64(0)));
         return;
     }
@@ -159,6 +161,7 @@ void ConstantEmitter::generateData(const ValueContext& value)
         return;
     case DataEncoding::ReadOnlyTree:
     case DataEncoding::CopyOnWriteArray:
+    case DataEncoding::TreeWithOwnStorage:
         break;
     }
     if (value->encoding() == DataEncoding::CopyOnWriteArray) {
@@ -219,8 +222,7 @@ void ConstantEmitter::generateKeyConstant(const ValueContext& value)
 
 TypedPointer ConstantEmitter::builtinCellWord(BuiltinCellKey key)
 {
-    bool isFilledOnce = key.kind() != BuiltinCellKey::Kind::Value;
-    return instanceWord(isFilledOnce ? m_heaps.AOTInstance_fieldsFilledOnce : m_heaps.entire(AbstractHeap::AllocatorState), m_mentions.builtinCell(key));
+    return instanceWord(m_heaps.AOTInstance_fieldsFilledOnce, m_mentions.builtinCell(key));
 }
 
 const RegisterSet& ConstantEmitter::registersLostAtSiteOf(ConstantAtSite constant)
@@ -276,7 +278,7 @@ CellPointer ConstantEmitter::makeConstantAtSite(const OperationContext* context,
     return CellPointer(patch);
 }
 
-FormAtPlace ConstantEmitter::formOfConstantsWithCellsAt(const OperationContext& context)
+ALWAYS_INLINE_INTO_OTHER_FILES FormAtPlace ConstantEmitter::formOfConstantsWithCellsAt(const OperationContext& context)
 {
     constexpr StateOfKnowledge always = StateOfKnowledge::Always;
     static_assert(formByLoopAlone(Opcode::KeyConstant, always, true).form == formByLoopAlone(Opcode::String, always, true).form && formByLoopAlone(Opcode::KeyConstant, always, false).form == formByLoopAlone(Opcode::String, always, false).form);
@@ -411,7 +413,7 @@ void ConstantEmitter::branchOnIsBuiltinCell(LValue boxedValueOrCell, BuiltinID i
     m_out.branch(m_out.notZero64(word), targets.notTaken, rareEdge(isNotMade));
 
     m_out.appendTo(isNotMade);
-    CellPointer made = callWithoutSite<CellPointer>(RuntimeOperation::BuiltinCell, { numberOf(m_mentions.builtinCell(key)) }, { .pureFunction = pureFunction(PureOperation::BuiltinCell, key.encoded()), .isOnRarePath = true });
+    CellPointer made = callWithoutSite<CellPointer>(RuntimeOperation::BuiltinCell, { numberOf(m_mentions.builtinCell(key)) }, { .pureFunction = pureFunction(PureOperation::BuiltinCell, key.encoded()), .isOnRarePath = true, .runsCodeOfHost = true });
     m_out.branch(m_out.equal(boxedValueOrCell, made.value()), targets.taken, targets.notTaken);
 }
 

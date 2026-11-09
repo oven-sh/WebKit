@@ -25,6 +25,7 @@ public:
     Operand load(TypedPointer, SlotRepresentation);
     void store(TypedPointer, SlotRepresentation, Operand);
     void storeAbsent(TypedPointer, SlotRepresentation);
+    void copyBits(TypedPointer from, TypedPointer to, SlotRepresentation slot) { storeBits(to, slot, loadBits(from, slot)); }
     Condition holdsAbsent(TypedPointer, SlotRepresentation);
     Condition isAbsent(Operand loaded, SlotRepresentation);
     Operand absentAsUndefined(Operand loaded, SlotRepresentation);
@@ -34,6 +35,7 @@ public:
     Operand loadSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord, const Type& loadedType);
     Operand loadSlotOrUndefined(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Operand loadSlotThatHoldsValue(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
+    Operand loadSlotOrLeaveIfEmpty(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord, BlockEdge isEmpty);
     static constexpr bool storeLooksAtType(SlotRepresentation slot) { return slot == SlotRepresentation::OptionalInt32; }
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord, const Type& storedType);
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord = nullptr);
@@ -58,6 +60,7 @@ private:
     enum class AbsentReadsAs : uint8_t { Absent, Undefined };
 
     Operand loadOutOfLine(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord, bool absentReadsAsUndefined = false);
+    Operand wordOutOfLine(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord);
     bool readsExtensionByCall(const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord) const;
     LValue readFieldInExtension(CellPointer, const PlacedSlot&, const MemoryLocation&);
     Operand operandOfBits(LValue bits, SlotRepresentation);

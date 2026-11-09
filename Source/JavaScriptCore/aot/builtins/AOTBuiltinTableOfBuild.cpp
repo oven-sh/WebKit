@@ -96,6 +96,23 @@ BuiltinTableOfBuild::BuiltinTableOfBuild(const BuiltinTable& table)
 {
 }
 
+void BuiltinTableOfBuild::answerQuestionsAboutClasses()
+{
+    RELEASE_ASSERT(m_data.answersAboutClasses.empty() && m_answersAboutClasses.isEmpty());
+    m_answersAboutClasses.fill({ }, m_table.classCount());
+    for (uint32_t index = 0; index < m_table.classCount(); ++index) {
+        BuiltinClassID builtinClass(index);
+        if (m_table.hasLockedPrototypeChain(builtinClass))
+            m_answersAboutClasses[index].add(AnswerAboutBuiltinClass::HasLockedPrototypeChain);
+        OptionSet<AnswerAboutBuiltinClass> answersAboutClassesAbove { AnswerAboutBuiltinClass::HasClassBelow };
+        if (m_table.mayHavePristineInstances(builtinClass))
+            answersAboutClassesAbove.add(AnswerAboutBuiltinClass::HasClassBelowThatMayHavePristineInstances);
+        for (BuiltinClassID above = m_table.at(builtinClass).parent; above; above = m_table.at(above).parent)
+            m_answersAboutClasses[above.index()].add(answersAboutClassesAbove);
+    }
+    m_data.answersAboutClasses = m_answersAboutClasses.span();
+}
+
 void BuiltinTableOfBuild::lockByNames(BuiltinID wholeObject)
 {
     wholeObject = m_table.canonicalID(wholeObject);
@@ -129,8 +146,10 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
         if (m_table.contains(member) && (m_table.canBeReplacedInTestRuns(member) || m_table.at(member).mutability == BuiltinMutability::ConstantUnlessWritten))
             m_unlockedMembers.append(member);
     }
-    if (m_unlockedMembers.isEmpty() && holdersOfNewNames.empty())
+    if (m_unlockedMembers.isEmpty() && holdersOfNewNames.empty()) {
+        answerQuestionsAboutClasses();
         return;
+    }
     m_builtins = Vector<Builtin>(m_data.builtins);
     m_lockedObjects = Vector<BuiltinID>(m_data.runtime.lockedObjects);
     m_closedKeys = Vector<BuiltinClosedKeys>(m_data.runtime.closedKeys);
@@ -148,6 +167,7 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
     m_data.runtime.lockedMembers = m_lockedMembers.span();
     m_data.runtime.lockedObjects = m_lockedObjects.span();
     m_data.runtime.closedKeys = m_closedKeys.span();
+    answerQuestionsAboutClasses();
 }
 
 namespace Typed {

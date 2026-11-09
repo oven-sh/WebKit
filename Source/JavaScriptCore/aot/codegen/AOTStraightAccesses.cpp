@@ -123,6 +123,17 @@ static void generateFreeNameRead(StraightEmitter& emitter, const BodyValue& valu
     emitter.define(value);
 }
 
+static std::optional<NumberedImmediate> answersAtSiteInStraightAccess(StraightEmitter& emitter, const BodyValue& value, PropertyKeyID key, SiteUse use)
+{
+    const Function& function = emitter.program().at(emitter.function());
+    if (liesInThread(key) || function.isModuleBody() || !value.hasPosition())
+        return std::nullopt;
+    Wire::SourceLocation place = function.locationAt(value.position());
+    if (!hasModule(place))
+        return std::nullopt;
+    return NumberedImmediate { emitter.mentions().siteCache(Vector<uint32_t, 12> { place.module, place.position }, key, MentionList::firstUseOfSiteAnswers + static_cast<uint32_t>(use)) };
+}
+
 static void generatePropGet(StraightEmitter& emitter, const BodyValue& value)
 {
     if (value.isFreeName()) {
@@ -130,8 +141,18 @@ static void generatePropGet(StraightEmitter& emitter, const BodyValue& value)
         return;
     }
     PropertyKeyID key = value.key();
-    bool hasColumn = emitter.plan().slots().hasColumn(key);
-    StubKey stub = hasColumn && emitter.program().nameClassOf(key) == NameClass::Length ? getLengthAtSite() : hasColumn && namesSizeOfTables(emitter.program(), emitter.facts(), key) ? getSizeOfTable() : hasColumn ? getByIdCalledByCode() : getByIdCheckingColumn();
+    bool hasStubOfItsOwn = emitter.program().nameClassOf(key) == NameClass::Length || isSymbolOfRealmInStraightForm(emitter, key);
+    const bool readsSizeOfTable = namesSizeOfTables(emitter.program(), emitter.facts(), key);
+    const bool asksShapeFirst = emitter.plan().slots().someLayoutWrittenInHasField(emitter.program().at(emitter.function()).module, key);
+    const SiteUse use = !readsSizeOfTable && !asksShapeFirst && emitter.plan().slots().someLayoutHasField(key) ? SiteUse::ReadUnderNameOfField : SiteUse::Read;
+    if (std::optional<NumberedImmediate> answers = hasStubOfItsOwn ? std::nullopt : answersAtSiteInStraightAccess(emitter, value, key, use)) {
+        StubKey atSite = readsSizeOfTable ? readSizeOfTableAtSite() : asksShapeFirst ? readAtSite(ReceiverAtSite::IsAnyValue) : readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, use);
+        emitter.callStub(value, atSite, { value.objectOperand() }, { .numberedImmediate = *answers });
+        emitter.define(value);
+        emitter.countReadThatAsksItsSite();
+        return;
+    }
+    StubKey stub = emitter.program().nameClassOf(key) == NameClass::Length ? getLengthAtSite() : namesSizeOfTables(emitter.program(), emitter.facts(), key) ? getSizeOfTable() : getByIdCalledByCode();
     if (isSymbolOfRealmInStraightForm(emitter, key))
         stub = getByIdOfSymbolOfRealm();
     emitter.callStub(value, stub, { value.objectOperand() }, optionsWithNameInStraightAccess(emitter, key));
@@ -141,7 +162,7 @@ static void generatePropGet(StraightEmitter& emitter, const BodyValue& value)
 static void putByNameInStraightAccess(StraightEmitter& emitter, const BodyValue& value, PutMode mode)
 {
     PropertyKeyID key = value.key();
-    StubKey stub = emitter.plan().slots().hasColumn(key) ? AOT::putById(mode) : putByIdHashed(mode);
+    StubKey stub = putByIdHashed(mode);
     if (isSymbolOfRealmInStraightForm(emitter, key))
         stub = putByIdOfSymbolOfRealm(mode);
     emitter.callStub(value, stub, { value.objectOperand(), value.valueOperand() }, optionsWithNameInStraightAccess(emitter, key));

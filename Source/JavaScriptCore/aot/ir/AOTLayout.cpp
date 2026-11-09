@@ -13,6 +13,7 @@
 #include "AOTCellFormat.h"
 #include "AOTIRProgram.h"
 #include "AOTRowsOfLayouts.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
@@ -58,16 +59,7 @@ void Layout::indexFields()
         if (!isInTable)
             m_staticFieldsByKey.append(IndexedField { key, i });
     }
-    std::ranges::stable_sort(m_staticFieldsByKey.mutableSpan().subspan(staticFieldTableSize()), { }, &IndexedField::key);
-}
-
-bool Layout::hasStaticFieldWithComputedKey() const
-{
-    RELEASE_ASSERT(m_indexedStaticFieldCount == staticFields.size());
-    if (m_staticFieldsByKey.isEmpty())
-        return std::ranges::any_of(staticFields, [](const StaticField& field) { return !field.key; });
-    std::span<const IndexedField> outside = staticFieldsOutsideTable();
-    return !outside.empty() && !outside.back().key;
+    AOT::stableSort(m_staticFieldsByKey.mutableSpan().subspan(staticFieldTableSize()), { }, &IndexedField::key);
 }
 
 Vector<uint32_t, 4> Layout::indexedStaticFieldsThatMayMatch(PropertyKeyID key) const
@@ -75,13 +67,8 @@ Vector<uint32_t, 4> Layout::indexedStaticFieldsThatMayMatch(PropertyKeyID key) c
     Vector<uint32_t, 4> found;
     if (std::optional<uint32_t> first = findStaticField(key))
         found.append(*first);
-    std::span<const IndexedField> outside = staticFieldsOutsideTable();
-    for (PropertyKeyID wanted : { key, PropertyKeyID() }) {
-        for (const IndexedField& other : std::ranges::equal_range(outside, wanted, { }, &IndexedField::key))
-            found.append(other.field);
-        if (!key)
-            break;
-    }
+    for (const IndexedField& other : std::ranges::equal_range(staticFieldsOutsideTable(), key, { }, &IndexedField::key))
+        found.append(other.field);
     std::ranges::sort(found);
     return found;
 }

@@ -103,6 +103,7 @@ struct PlanParts {
     BitVector variablesThatRunTimeMayFill;
     BitVector functionsWhoseCallEntryWalksBody;
     BitVector globalNamesNeverStoredByName;
+    BitVector namesOfFieldsWrittenAsOneFunction;
     BitVector globalNamesNeverStoredThroughBinding;
 
     bool hasOneInstance { false };
@@ -187,6 +188,7 @@ public:
     bool genericCallEntryWalksBody(FunctionID id) const { return m_parts.functionsWhoseCallEntryWalksBody.get(id.index()); }
     void findCallEntriesThatWalkBodies(const Program&, const Facts&);
 
+    bool someFieldUnderNameIsWrittenAsOneFunction(PropertyKeyID key) const { return m_parts.namesOfFieldsWrittenAsOneFunction.get(key.index()); }
     GlobalNameUse globalName(PropertyKeyID key) const { return { !m_parts.globalNamesNeverStoredByName.get(key.index()), !m_parts.globalNamesNeverStoredThroughBinding.get(key.index()) }; }
 
     bool hasOneInstance() const { return m_parts.hasOneInstance; }
@@ -203,7 +205,6 @@ JS_EXPORT_PRIVATE void checkPlan(const Program&, const Facts&, const Plan&, Buil
 
 JS_EXPORT_PRIVATE Vector<CodeUnit> unitsNamedOutsideCode(const Program&, const Facts&, const Plan&);
 
-BuiltinID builtinParentNamedByClassRecord(const Program&, const Facts&, LayoutID);
 
 struct ParentInClassRecord {
     LayoutID layout;

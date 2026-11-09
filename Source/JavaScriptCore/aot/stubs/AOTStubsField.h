@@ -212,8 +212,11 @@ void storeField(StubAssembler&, const FieldStoreRegisters&, FieldStoreEnd, Field
 void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition, std::optional<FieldOfLayout> known = std::nullopt);
 void listCreatedField(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition, std::optional<FieldOfLayout> known = std::nullopt);
 void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg value, std::optional<FieldOfLayout> known = std::nullopt);
-void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const WaysToFieldInExtension&);
+enum class FirstExtension : bool { IsLeftToStub, IsAllocatedInLine };
+void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const WaysToFieldInExtension&, FirstExtension = FirstExtension::IsLeftToStub);
+void allocateFirstExtensionWithOneGranule(StubAssembler&, GPRReg object, GPRReg granuleBit, GPRReg extensionAndGranule, GPRReg scratch, GPRReg secondScratch, Label hasGranule, JumpList& isLeftToStub);
 PreludeExit emitPrivateDefinePrelude(StubAssembler&);
+PreludeExit emitPrivateHasPrelude(StubAssembler&);
 PreludeExit emitPrivateSetPrelude(StubAssembler&);
 
 inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);

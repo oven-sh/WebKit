@@ -89,6 +89,7 @@ struct StubSignature {
     MacroAssembler::ResultCondition trueCondition { MacroAssembler::Zero };
     Reg filledOutOfResultInFront;
     Reg filledOutOfResultInFrontOfBody;
+    Reg movedIntoResultInFront;
 
     constexpr void addOperand(Reg reg)
     {
@@ -121,6 +122,33 @@ struct StubSignature {
         RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(operand < numberOfOperands && operands[operand].isGPR() && operands[operand].gpr() != GPRInfo::returnValueGPR);
         signature.filledOutOfResultInFront = operands[operand];
         signature.filledOutOfResultInFrontOfBody = operands[operand];
+        return signature;
+    }
+
+    constexpr StubSignature fillingKeptRegisterInFront(Reg kept) const
+    {
+        StubSignature signature = *this;
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(kept.isGPR() && kept.gpr() != GPRInfo::returnValueGPR && kept != firstResult && kept != secondResult && (!immediate || kept.gpr() != *immediate));
+        for (unsigned index = 0; index < numberOfOperands; ++index)
+            RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(operands[index] != kept);
+        signature.filledOutOfResultInFront = kept;
+        signature.filledOutOfResultInFrontOfBody = kept;
+        return signature;
+    }
+
+    constexpr StubSignature withoutHead() const
+    {
+        StubSignature signature = *this;
+        signature.filledOutOfResultInFront = Reg();
+        signature.filledOutOfResultInFrontOfBody = Reg();
+        signature.movedIntoResultInFront = Reg();
+        return signature;
+    }
+
+    constexpr StubSignature withItsHeadInFrontOfBody() const
+    {
+        StubSignature signature = *this;
+        signature.filledOutOfResultInFrontOfBody = filledOutOfResultInFront;
         return signature;
     }
 

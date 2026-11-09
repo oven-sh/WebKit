@@ -963,6 +963,7 @@ static void checkAdapterAboveResumedFrameWritesItsSaveArea(LoadedProgram& progra
 static const uint64_t* frameOfJobCaller;
 static unsigned numberOfJobEntriesRead;
 static bool readsFramesOfJobLoop;
+static bool bodyHoldsItsFrameInHeapAlone;
 
 static String describeCodeAddress(const void* address)
 {
@@ -1003,7 +1004,7 @@ JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* 
                 continue;
             ++numberOfUnwrittenWords;
 #if CPU(X86_64)
-            numberOfPaddingWords += isInJobFunction(removeCodePtrTag(std::bit_cast<const void*>(frame[1])));
+            numberOfPaddingWords += isInJobFunction(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))) || (bodyHoldsItsFrameInHeapAlone && frameOfCaller - frame == 4 && word == frame + 2);
 #endif
             dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))));
         }
@@ -1018,7 +1019,7 @@ JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* 
     if (readsFramesOfJobLoop)
         AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);
     else
-        AOT_TEST_CHECK(numberOfUnwrittenWords == numberOfPaddingWords && numberOfPaddingWords <= 1);
+        AOT_TEST_CHECK(numberOfUnwrittenWords == numberOfPaddingWords && numberOfPaddingWords <= 1u + bodyHoldsItsFrameInHeapAlone);
 #endif
     ++numberOfJobEntriesRead;
     return JSValue::encode(jsNumber(2));
@@ -1132,6 +1133,7 @@ static void checkFramesBetweenJobAndAsyncGeneratorBodyAreWritten(LoadedProgram& 
     });
     AOT_TEST_CHECK(job->job() == InternalMicrotask::AsyncGeneratorBodyCallNormal);
     queue.clear();
+    SetForScope holdsFrameAlone { bodyHoldsItsFrameInHeapAlone, true };
     runJobOverFilledStack(realm, vm, *job);
     AOT_TEST_CHECK(!scope.exception() && numberOfJobEntriesRead == 1);
     vm.drainMicrotasks();

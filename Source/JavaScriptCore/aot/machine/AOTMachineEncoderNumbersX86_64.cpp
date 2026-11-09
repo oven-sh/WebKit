@@ -131,9 +131,33 @@ static FPRReg x86NumberInRegister(Encoder& encoder, const X86NumberSource& sourc
     return registerIfInMemory;
 }
 
-template<typename Functor>
-static void encodeX86NumberUnary(Encoder& encoder, const X86NumberSource& source, Width widthOfSource, FPRReg destination, const Functor& emit)
+bool Encoder::blockHasWrittenNumberRegisterInFrontOf(const Step& step, FPRReg reg)
 {
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    const BlockSteps& steps = stepsOf(m_block);
+    const Step* first = m_steps + steps.begin;
+    if (&step < first || &step >= m_steps + steps.end)
+        return false;
+    if (m_blockWhoseWrittenNumberRegistersAreNoted != m_block) {
+        m_blockWhoseWrittenNumberRegistersAreNoted = m_block;
+        m_firstStepNotLookedAtForNumberRegisters = first;
+        m_numberRegistersWrittenInBlock = 0;
+    }
+    for (; m_firstStepNotLookedAtForNumberRegisters < &step; ++m_firstStepNotLookedAtForNumberRegisters) {
+        Location written = m_firstStepNotLookedAtForNumberRegisters->destination;
+        if (written.isRegister() && written.reg().isFPR())
+            m_numberRegistersWrittenInBlock |= maskOf(written.reg());
+    }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    return m_numberRegistersWrittenInBlock & maskOf(Reg(reg));
+}
+
+template<typename Functor>
+static void encodeX86NumberUnary(Encoder& encoder, const Step* stepThatWaitsLongForDestination, const X86NumberSource& source, Width widthOfSource, FPRReg destination, const Functor& emit)
+{
+    bool keepsRestOfDestination = source.isRegister() && source.reg.fpr() != destination;
+    if (stepThatWaitsLongForDestination && keepsRestOfDestination && !encoder.blockHasWrittenNumberRegisterInFrontOf(*stepThatWaitsLongForDestination, destination))
+        encoder.m_jit.moveZeroToDouble(destination);
     if (source.isRegister()) {
         emit(source.reg.fpr());
         return;
@@ -351,7 +375,7 @@ static void encodeX86NumberRounding(Encoder& encoder, Opcode opcode, Width width
         return;
     }
 
-    encodeX86NumberUnary(encoder, source, width, destination, [&](auto operand) {
+    encodeX86NumberUnary(encoder, nullptr, source, width, destination, [&](auto operand) {
         if (opcode == Ceil) {
             if (isDouble)
                 jit.ceilDouble(operand, destination);
@@ -521,7 +545,7 @@ void Encoder::encodeNumber(const Step& step)
         return;
     case Sqrt: {
         FPRReg destination = step.destination.fpr();
-        encodeX86NumberUnary(*this, takeSource(0), width, destination, [&](auto operand) {
+        encodeX86NumberUnary(*this, &step, takeSource(0), width, destination, [&](auto operand) {
             if (width == Width64)
                 m_jit.sqrtDouble(operand, destination);
             else
@@ -531,14 +555,14 @@ void Encoder::encodeNumber(const Step& step)
     }
     case FloatToDouble: {
         FPRReg destination = step.destination.fpr();
-        encodeX86NumberUnary(*this, takeSource(0), Width32, destination, [&](auto operand) {
+        encodeX86NumberUnary(*this, &step, takeSource(0), Width32, destination, [&](auto operand) {
             m_jit.convertFloatToDouble(operand, destination);
         });
         return;
     }
     case DoubleToFloat: {
         FPRReg destination = step.destination.fpr();
-        encodeX86NumberUnary(*this, takeSource(0), Width64, destination, [&](auto operand) {
+        encodeX86NumberUnary(*this, &step, takeSource(0), Width64, destination, [&](auto operand) {
             m_jit.convertDoubleToFloat(operand, destination);
         });
         return;

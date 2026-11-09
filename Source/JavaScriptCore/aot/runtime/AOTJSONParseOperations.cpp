@@ -11,6 +11,7 @@
 #include "AOTArrayAllocationProfile.h"
 #include "AOTConvention.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTJSONHooks.h"
 #include "AOTJSONRuntime.h"
@@ -36,6 +37,7 @@
 #include "ObjectConstructor.h"
 #include "ObjectInitializationScope.h"
 #include "TopExceptionScope.h"
+#include "WeakGCMapInlines.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -90,14 +92,38 @@ JSONValueParser::LearnedNames& JSONRuntime::learnedNames()
     return *m_learnedNames;
 }
 
-const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure)
+void JSONRuntime::forgetRecordPlansNotFoundLately(VM& vm)
 {
-    if (structure->isDictionary())
-        return nullptr;
+    if (m_numberOfRecordPlans < fewestRecordPlansLookedThrough || m_numberOfTimesAskedForRecordPlan - m_numberOfTimesAskedWhenPlansWereForgotten <= 2 * static_cast<uint64_t>(m_numberOfRecordPlans))
+        return;
+    m_numberOfTimesAskedWhenPlansWereForgotten = m_numberOfTimesAskedForRecordPlan;
+    uint32_t numberOfRecordPlansBefore = m_numberOfRecordPlans;
+    m_recordPlans.removeIf([&](auto& plansUnderHash) {
+        m_numberOfRecordPlans -= plansUnderHash.value.removeAllMatching([&](const RecordPlanForNames& known) {
+            return m_numberOfCollections - known.numberOfCollectionsWhenLastFound > 1 && m_numberOfTimesAskedForRecordPlan - known.numberOfTimesAskedWhenLastFound > 2 * static_cast<uint64_t>(numberOfRecordPlansBefore);
+        });
+        return plansUnderHash.value.isEmpty();
+    });
+    if (m_numberOfRecordPlans != numberOfRecordPlansBefore)
+        countEvent(vm, RuntimeCounterID::RecordPlansForgotten, numberOfRecordPlansBefore - m_numberOfRecordPlans);
+}
+
+auto JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure) -> RecordPlanFound
+{
+    if (structure->isDictionary() || (m_structuresThatNoPlanFits && m_structuresThatNoPlanFits->get(structure)))
+        return { };
     UniquedStringImpl* lastName = structure->transitionPropertyName();
-    std::optional<uint32_t> lastNameNumber = lastName ? identifiersOf(m_instance).numberOf(lastName) : std::nullopt;
+    UniquedStringImpl* lastNameThatProgramSpells = lastName;
+    Structure* structureOfNamesInRecord = structure;
+    while (lastNameThatProgramSpells && !identifiersOf(m_instance).numberOf(lastNameThatProgramSpells)) {
+        structureOfNamesInRecord = structureOfNamesInRecord->previousID();
+        lastNameThatProgramSpells = structureOfNamesInRecord ? structureOfNamesInRecord->transitionPropertyName() : nullptr;
+    }
+    if (structureOfNamesInRecord && structureOfNamesInRecord != structure && m_structuresThatNoPlanFits && m_structuresThatNoPlanFits->get(structureOfNamesInRecord))
+        return { };
+    std::optional<uint32_t> lastNameNumber = lastNameThatProgramSpells ? identifiersOf(m_instance).numberOf(lastNameThatProgramSpells) : std::nullopt;
     if (!lastNameNumber || std::ranges::equal_range(m_instance.state->tables.parsedRecordFields(), *lastNameNumber, { }, &ParsedRecordFieldData::nameNumber).empty())
-        return nullptr;
+        return { };
 
     unsigned inlineCapacity = structure->inlineCapacity();
     Vector<UniquedStringImpl*, 16> names;
@@ -112,35 +138,73 @@ const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* 
         return hasOnlyPlainProperties;
     });
     if (!hasOnlyPlainProperties || names.contains(nullptr) || names.last() != lastName)
-        return nullptr;
+        return { };
+    size_t numberInRecord = names.size();
+    while (numberInRecord && names[numberInRecord - 1] != lastNameThatProgramSpells)
+        --numberInRecord;
+    if (!numberInRecord)
+        return { };
+    std::span<UniquedStringImpl*> namesInRecord = names.mutableSpan().first(numberInRecord);
+    auto found = [&](const ObjectBuilderPlan* plan) {
+        return RecordPlanFound { plan, static_cast<unsigned>(numberInRecord), numberInRecord < names.size() };
+    };
 
-    for (const RecordPlanForNames& known : m_recordPlans) {
-        if (std::ranges::equal(known.names, names, { }, &RefPtr<UniquedStringImpl>::get))
-            return known.plan.get();
+    uint32_t hash = 0;
+    for (UniquedStringImpl* name : namesInRecord)
+        hash = pairIntHash(hash, name->existingSymbolAwareHash());
+    hash >>= 1;
+    if (auto underHash = m_recordPlans.find(hash); underHash != m_recordPlans.end()) {
+        for (RecordPlanForNames& known : underHash->value) {
+            if (std::ranges::equal(known.names, namesInRecord, { }, &RefPtr<UniquedStringImpl>::get)) {
+                known.numberOfCollectionsWhenLastFound = m_numberOfCollections;
+                known.numberOfTimesAskedWhenLastFound = m_numberOfTimesAskedForRecordPlan;
+                return found(known.plan.get());
+            }
+        }
     }
-    if (m_recordPlans.size() == maxRecordPlans)
-        return nullptr;
-    m_recordPlans.append({ { }, ObjectBuilder::tryCreatePlanOfSmallestRecord(*m_instance.state, names.span(), [](const ObjectBuilderPlan&) { return true; }) });
-    m_recordPlans.last().names.appendContainerWithMapping(names, [](UniquedStringImpl* name) {
+    bool imageHasEveryName = std::ranges::all_of(namesInRecord, [&](UniquedStringImpl* name) {
+        return !!identifiersOf(m_instance).numberOf(name);
+    });
+    if (!imageHasEveryName)
+        return { };
+    std::unique_ptr<ObjectBuilderPlan> plan = ObjectBuilder::tryCreatePlanOfSmallestRecord(*m_instance.state, namesInRecord, [](const ObjectBuilderPlan&) { return true; });
+    if (!plan) {
+        if (!m_structuresThatNoPlanFits)
+            m_structuresThatNoPlanFits = makeUnique<WeakGCMap<Structure*, Structure>>(vm);
+        m_structuresThatNoPlanFits->set(structureOfNamesInRecord, structureOfNamesInRecord);
+        return { };
+    }
+    Vector<RecordPlanForNames, 1>& plansUnderHash = m_recordPlans.add(hash, Vector<RecordPlanForNames, 1> { }).iterator->value;
+    plansUnderHash.append({ { }, WTF::move(plan), m_numberOfCollections, m_numberOfTimesAskedForRecordPlan });
+    if (++m_numberOfRecordPlans > m_mostRecordPlansHeld) {
+        m_mostRecordPlansHeld = m_numberOfRecordPlans;
+        countEvent(vm, RuntimeCounterID::MostRecordPlansHeld);
+    }
+    plansUnderHash.last().names.appendContainerWithMapping(namesInRecord, [](UniquedStringImpl* name) {
         return RefPtr { name };
     });
-    return m_recordPlans.last().plan.get();
+    return found(plansUnderHash.last().plan.get());
 }
 
 NEVER_INLINE JSONRuntime::RecordPlan JSONRuntime::findRecordPlan(VM& vm, Structure* ordinaryStructure)
 {
     if (!m_recordPlanCache)
         m_recordPlanCache.make();
+    ++m_numberOfTimesAskedForRecordPlan;
+    forgetRecordPlansNotFoundLately(vm);
+    uint32_t numberOfCollectionsAtFirst = m_numberOfCollections;
     uint32_t id = ordinaryStructure->id().bits();
-    CachedRecordPlan& cached = (*m_recordPlanCache)[recordPlanCacheIndex(id)];
-    if (cached.structureIDSeenOnce != id) {
-        cached = { 0, id, { } };
-        return { };
-    }
     RecordPlan recordPlan;
-    if (const ObjectBuilderPlan* plan = findOrCreateRecordPlan(vm, ordinaryStructure))
-        recordPlan = { plan, m_instance.state->objects->structures.objectStructure(vm, plan->layout().shape) };
-    cached = { id, id, recordPlan };
+    RecordBesideNames besideNames;
+    if (RecordPlanFound found = findOrCreateRecordPlan(vm, ordinaryStructure); found.plan) {
+        Structure* structure = m_instance.state->objects->structures.objectStructure(vm, found.plan->layout().shape);
+        if (found.hasNamesBeyondRecord)
+            besideNames = { found.plan, structure, found.numberOfNamesInRecord };
+        else
+            recordPlan = { found.plan, structure };
+    }
+    if (m_numberOfCollections == numberOfCollectionsAtFirst)
+        (*m_recordPlanCache)[recordPlanCacheIndex(id)] = { id, recordPlan, besideNames };
     return recordPlan;
 }
 
@@ -172,7 +236,7 @@ NEVER_INLINE uint8_t* JSONRuntime::replace(size_t size)
     return poisonUnusedCapacity(static_cast<uint8_t*>(storage), size, capacity);
 }
 
-ALWAYS_INLINE uint8_t* JSONRuntime::reserve(size_t size)
+ALWAYS_INLINE_INTO_OTHER_FILES uint8_t* JSONRuntime::reserve(size_t size)
 {
     size_t capacity = m_sourceCapacity;
     if (size <= capacity && (capacity <= maxRetainedJSONSourceCapacity || size > maxRetainedJSONSourceCapacity)) [[likely]]
@@ -189,7 +253,7 @@ void JSONRuntime::end()
     words.canEndSourceInline = false;
 }
 
-ALWAYS_INLINE uint8_t* JSONRuntime::beginIn(uint8_t* start, void* stackPointer, size_t length)
+ALWAYS_INLINE_INTO_OTHER_FILES uint8_t* JSONRuntime::beginIn(uint8_t* start, void* stackPointer, size_t length)
 {
     JSONWords& words = m_instance.json;
     words.sourceEnd = start + length;
@@ -200,7 +264,7 @@ ALWAYS_INLINE uint8_t* JSONRuntime::beginIn(uint8_t* start, void* stackPointer, 
     return start;
 }
 
-ALWAYS_INLINE uint8_t* JSONRuntime::begin(void* stackPointer, size_t length)
+ALWAYS_INLINE_INTO_OTHER_FILES uint8_t* JSONRuntime::begin(void* stackPointer, size_t length)
 {
     ASSERT(stackPointer);
     m_wideText = nullptr;
@@ -210,7 +274,7 @@ ALWAYS_INLINE uint8_t* JSONRuntime::begin(void* stackPointer, size_t length)
     return beginIn(start, stackPointer, length);
 }
 
-ALWAYS_INLINE bool JSONRuntime::openLatin1(std::span<const Latin1Character> characters, void* stackPointer)
+ALWAYS_INLINE_INTO_OTHER_FILES bool JSONRuntime::openLatin1(std::span<const Latin1Character> characters, void* stackPointer)
 {
     uint8_t* start = begin(stackPointer, characters.size());
     if (!start) [[unlikely]]
@@ -252,12 +316,13 @@ void JSONRuntime::abandon()
 
 void JSONRuntime::clear()
 {
+    ++m_numberOfCollections;
     if (m_learnedNames)
         m_learnedNames->clear();
     if (m_recordPlanCache)
         m_recordPlanCache->fill({ });
-    for (const RecordPlanForNames& known : m_recordPlans) {
-        if (known.plan)
+    for (const Vector<RecordPlanForNames, 1>& plansUnderHash : m_recordPlans.values()) {
+        for (const RecordPlanForNames& known : plansUnderHash)
             known.plan->clearAcceptedStructures();
     }
     if (m_instance.json.sourceOwnerStackPointer)
@@ -635,6 +700,7 @@ auto JSONValueParser::findOrAddMember(const Members& members, Cursor quote) -> N
     PropertyOffset offset = to ? to->transitionOffset() : invalidOffset;
     if (!to)
         to = Structure::addPropertyTransitionToExistingStructure(from, name, 0, offset);
+    bool isMadeNow = !to;
     if (!to) {
         if (isValidOffset(from->get(m_vm, name)))
             return { };
@@ -643,7 +709,8 @@ auto JSONValueParser::findOrAddMember(const Members& members, Cursor quote) -> N
     if (to->isDictionary() || offset != memberPropertyOffset(members.count))
         return { };
 
-    if (to->isCacheableTransitionFrom(from)) {
+    if (!isMadeNow && to->isCacheableTransitionFrom(from)) {
+        ++m_numberOfTransitionsCached;
         if (from->trySingleTransition() == to)
             m_cache.addName(from, to, offset);
         else {
@@ -686,6 +753,43 @@ JSObject* JSONValueParser::createObject(Members& members, ObjectKind kind)
                 ++m_numberOfRecordsMade;
                 return object;
             }
+        } else if (JSONRuntime::RecordBesideNames* cached = runtime.recordBesideNamesFor(members.structure)) {
+            JSONRuntime::RecordBesideNames beside = *cached;
+            unsigned numberInRecord = beside.numberOfNamesInRecord;
+            unsigned numberBeyondRecord = members.count - numberInRecord;
+            auto layNamesBeyondRecord = [&](Object& row) {
+                if (beside.structureOfNamesBeyondRecord) {
+                    row.setExtraProperties(m_vm, createOrdinaryObject(m_vm, beside.structureOfNamesBeyondRecord, members.values + numberInRecord, numberBeyondRecord), beside.structureWithNamesBeyondRecord);
+                    return true;
+                }
+                Vector<Object::ExtraProperty, 8> properties(numberBeyondRecord, [&](size_t index) {
+                    return Object::ExtraProperty { nullptr, JSValue::decode(members.values[numberInRecord + index]) };
+                });
+                unsigned inlineCapacity = members.structure->inlineCapacity();
+                members.structure->forEachProperty(m_vm, [&](const auto& entry) -> bool {
+                    size_t index = isInlineOffset(entry.offset()) ? entry.offset() : inlineCapacity + (entry.offset() - firstOutOfLineOffset);
+                    if (index >= numberInRecord)
+                        properties[index - numberInRecord].name = entry.key();
+                    return true;
+                });
+                if (!row.tryCreateExtraPropertiesOfNewObject(m_vm, properties.span()))
+                    return false;
+                Structure* ofNamesBeyondRecord = row.extraProperties()->structure();
+                if (ofNamesBeyondRecord->isDictionary() || numberInRecord + ofNamesBeyondRecord->inlineCapacity() > JSFinalObject::maxInlineCapacity)
+                    return true;
+                if (JSONRuntime::RecordBesideNames* stillCached = runtime.recordBesideNamesFor(members.structure)) {
+                    stillCached->structureOfNamesBeyondRecord = ofNamesBeyondRecord;
+                    stillCached->structureWithNamesBeyondRecord = uncheckedDowncast<CompiledStructure>(row.structure());
+                }
+                return true;
+            };
+            JSObject* object = ObjectBuilder::tryBuild(m_vm, *beside.plan, beside.structure, members.values);
+            if (object && layNamesBeyondRecord(*uncheckedDowncast<Object>(object))) {
+                ++m_numberOfRecordsMade;
+                return object;
+            }
+            if (JSONRuntime::RecordBesideNames* stillCached = object ? runtime.recordBesideNamesFor(members.structure) : nullptr)
+                *stillCached = { };
         }
     }
     ++m_numberOfOrdinaryObjectsMade;
@@ -843,6 +947,7 @@ static ALWAYS_INLINE JSValue tryParse(JSGlobalObject* globalObject, size_t lengt
     countEvent(vm, RuntimeCounterID::TextsParsedByOwnParser);
     countEvent(vm, RuntimeCounterID::ObjectsParsedIntoRecords, parser.numberOfRecordsMade());
     countEvent(vm, RuntimeCounterID::ObjectsParsedIntoOrdinaryObjects, parser.numberOfOrdinaryObjectsMade());
+    countEvent(vm, RuntimeCounterID::TransitionsCachedForParsedNames, parser.numberOfTransitionsCached());
     return parsed.end ? parsed.value : JSValue();
 }
 

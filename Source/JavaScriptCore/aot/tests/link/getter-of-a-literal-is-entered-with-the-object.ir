@@ -6,8 +6,8 @@
 # SCAN: DefinesByDescriptor Allocation L0 "y" other=Closure f2 setter
 # RUN: link functions fields layouts mechanisms=all
 # A name with a setter alone reads as undefined, and the field stands for what is read and for what is stored: so the setter counts as handed undefined too.
-# CHECK: function f0 {{*}}result=undefined|i32
-# CHECK: function f1 callers-known {{*}}result=undefined|i32
+# CHECK: function f0 {{*}}result=undefined|int[0, 2147483647]
+# CHECK: function f1 callers-known {{*}}result=undefined|int[0, 2147483647]
 # CHECK-NEXT: parameter 0 {{*}}proven=L0
 # CHECK: function f2 callers-known
 # CHECK: field L0.0 "a" proven=undefined|i32 writers-known

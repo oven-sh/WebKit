@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTCallSiteTable.h"
 #include "AOTCodeTemplates.h"
 #include "AOTFacts.h"
@@ -25,6 +26,7 @@
 #include "AOTSort.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
+#include "AOTStubsCallAdapters.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTTestRunReportSizes.h"
 #include "AOTThreads.h"
@@ -157,10 +159,15 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
 static Vector<uint8_t> encodeSlotHandlers(const StubBlob& blob)
 {
     Vector<uint32_t> offsets;
-    offsets.reserveInitialCapacity(numberOfSlotHandlerTables * numberOfSlotKindsWithHandlers);
+    offsets.reserveInitialCapacity(sizeof(SlotHandlers) / sizeof(void*));
     for (SlotHandlerTable table : allSlotHandlerTables) {
         for (Slot::Kind kind : slotKindsWithHandlers)
             offsets.append(blob.offsetOf(slotHandlerFor(table, kind)).value_or(offsetOfAbsentStub));
+    }
+    for (AnswerHandlerTable table : allAnswerHandlerTables) {
+        const std::array handlers = answerHandlerKeys(table);
+        for (unsigned bits = 0; bits < numberOfSlotKindsWithHandlers; ++bits)
+            offsets.append(bits < handlers.size() ? blob.offsetOf(handlers[bits]).value_or(offsetOfAbsentStub) : offsetOfAbsentStub);
     }
     return bytesOf(offsets);
 }
@@ -177,11 +184,14 @@ static Vector<uint8_t> encodeNamesOfSites(const ImageNumbers& numbers)
             continue;
         uint32_t name = identifiers.numberOf(ImageNumbers::nameOfSite(key)).value();
         uint32_t number = numbersOfSites[place];
-        names[number] = static_cast<uint16_t>(name);
-        if (numbersOfSites[place + 1] - number == 2)
-            names[number + 1] = static_cast<uint16_t>(name >> 16);
-        else
-            RELEASE_ASSERT(name <= UINT16_MAX);
+        if (name < InstanceLayout::nameOfSiteStandsBehind) {
+            names[number] = static_cast<uint16_t>(name);
+            continue;
+        }
+        RELEASE_ASSERT(numbersOfSites[place + 1] - number == InstanceLayout::numbersOfSiteWhoseNameStandsBehind);
+        names[number] = InstanceLayout::nameOfSiteStandsBehind;
+        names[number + 1] = static_cast<uint16_t>(name);
+        names[number + 2] = static_cast<uint16_t>(name >> 16);
     }
     return bytesOf(names);
 }
@@ -223,6 +233,8 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const Compile
     if (facts.storesPathOfMainModule())
         flags.add(ImageFlag::StoresPathOfMainModule);
     const Typed::Program& program = facts.program();
+    if (facts.isLetGo(program.builtins().canonicalID(Builtins::GlobalThis)))
+        flags.add(ImageFlag::LetsGlobalObjectGo);
     bool holdsMockOfFile = false;
     bool originalMayRun = false;
     for (const Typed::Variable& variable : program.variables) {
@@ -375,14 +387,6 @@ static size_t countFunctionsWithCode(const Typed::Program& program, const Linked
     size_t count = 0;
     for (const CompiledCode& code : functions)
         count += hasCode.add(code.unit.function.index());
-    return count;
-}
-
-static size_t countFunctionsInImage(const Typed::Program& program, const LinkedFunctions& functions)
-{
-    size_t count = program.functions.size() + functions.fusedCallEntries().size();
-    for (const CompiledCode& code : functions)
-        count += code.unit.role != Typed::CodeRole::Body;
     return count;
 }
 
@@ -688,10 +692,8 @@ static void writeStrings(std::span<uint8_t> image, const TextRecords& text, cons
 static void writeWordsOfStringConstants(std::span<uint8_t> image, const ImageExtent& extent)
 {
     std::span stringsInImage = sectionIn<ImageStringWord>(image, extent, ImageSection::Strings);
-    std::span constants = sectionIn<uint32_t>(image, extent, ImageSection::StringConstants);
-    size_t count = constants.size() / 2;
-    for (size_t number = 0; number < count; ++number)
-        constants[number] = stringsInImage[constants[count + number]].bits;
+    for (uint32_t& constant : sectionIn<uint32_t>(image, extent, ImageSection::StringConstants))
+        constant = stringsInImage[constant].bits;
 }
 
 static void writeRangeOfShapeSets(std::span<uint8_t> image, const CodeLinkerInputs& linker, const ImageExtent& extent)
@@ -777,7 +779,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     ImageNumbers& numbers = *result.numbers;
 
     ResolvedCallees callees;
-    size_t numberOfFunctionsInImage = 0;
+    NumberingInputs numberingInputs { program, inputs.facts, inputs.plan, functions };
     runLanes(context.parallelLoops(), {
         [&] {
             StepTimes steps(context, nameOfLaneSteps);
@@ -792,8 +794,8 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             StepTimes steps(context, nameOfLaneSteps);
             callees = resolveCallees(functions, inputs.plan, context);
             steps.didFinish("resolve callees"_s);
-            numberOfFunctionsInImage = countFunctionsInImage(program, functions);
-            steps.didFinish("count functions"_s);
+            ImageNumbersBuilder::numberFunctions(numberingInputs, numbers, context);
+            steps.didFinish("number functions"_s);
         },
     });
     times.didFinish("lanes in front of the mentions"_s);
@@ -833,7 +835,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         steps.didFinish("lay out and describe regular expressions"_s);
     };
 
-    NumberingInputs numberingInputs { program, inputs.facts, inputs.plan, functions };
     std::optional<GatheredMentions> mentions;
     std::optional<NamesOfTables> namesOfTables;
     runLanes(context.parallelLoops(), {
@@ -855,7 +856,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         },
         [&] {
             StepTimes steps(context, nameOfLaneSteps);
-            callSites = encodeCallSites(functions, numberOfFunctionsInImage, context);
+            callSites = encodeCallSites(functions, numbers.functions(), inputs.plan.conventions(), context);
             steps.didFinish("encode call sites"_s);
             if (diagnostics.hasErrors())
                 return;
@@ -877,7 +878,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     times.didFinish("lanes beside the numbering"_s);
     if (diagnostics.hasErrors())
         return result;
-    RELEASE_ASSERT(numbers.functions().numberOfFunctions() == numberOfFunctionsInImage);
 
     auto runLanesBehindNumbersInFunctions = [&] {
     runLanes(context.parallelLoops(), {
@@ -925,6 +925,11 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             steps.didFinish("collect called shared code"_s);
             if (!calledSharedCode || diagnostics.hasErrors())
                 return;
+            bool someWordLeadsToStartOfModule = std::ranges::any_of(functions.fusedCallEntries(), [&](const FusedCallEntry& fused) {
+                return inputs.plan.conventions().callEntryIsNumberOfModuleStart(fused.unit.function);
+            });
+            if (someWordLeadsToStartOfModule)
+                calledSharedCode->stubKeys.append(startModuleThatRunTimeNames());
             result.sharedCode = generateSharedCode(WTF::move(*calledSharedCode), stubCatalogOfImage, inputs.entriesUsedByFunctions, context);
             steps.didFinish("generate shared code"_s);
         },
@@ -1013,6 +1018,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
                 .functions = functions,
                 .numbers = numbers,
                 .layout = result.layout,
+                .sharedCode = result.sharedCode,
                 .index = *index,
                 .sideTableFlags = sideTables.flags.span(),
                 .sideTableOffsets = sideTables.offsets.span(),

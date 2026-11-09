@@ -8,15 +8,26 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayIntrinsicEmitter.h"
+#include "AOTCastEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTOperatorEmitter.h"
+#include "AOTThrowEmitter.h"
+#include "IndexingHeader.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
 RepresentationEmitter::RepresentationEmitter(CodeGenerator& generator)
     : OperationEmitter(generator)
 {
+}
+
+Integer RepresentationEmitter::heldToWhatConversionGives(const OperationContext& context, Number number, Integer integer)
+{
+    if (emittersCheckProofs())
+        emitter<ThrowEmitter>().requireOrStopAtFalseProof(context, equal(integer, emitter<ConversionEmitter>().toInteger(number)), std::nullopt, ProofSource::OtherOperation);
+    return integer;
 }
 
 Operand RepresentationEmitter::convert(const OperationContext& context, Opcode conversion, Operand source, const Type& type, Representation to)
@@ -53,9 +64,9 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
         break;
     case Opcode::NumberToInteger:
         if (from == Double && to == Int32)
-            return conversions.narrow(conversions.toInteger(source.as<Number>()));
+            return conversions.narrow(heldToWhatConversionGives(context, source.as<Number>(), conversions.toInteger(source.as<Number>(), type.integers, context.block() && generator().isInLoop(context.block()))));
         if (from == Double && to == Int64)
-            return conversions.toInteger(source.as<Number>());
+            return heldToWhatConversionGives(context, source.as<Number>(), conversions.toInteger(source.as<Number>(), type.integers, context.block() && generator().isInLoop(context.block())));
         break;
     case Opcode::WidenInteger:
         if (from == Int32 && to == Int64)
@@ -63,7 +74,7 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
         break;
     case Opcode::NarrowInteger:
         if (from == Int64 && to == Int32)
-            return conversions.narrow(source.as<Integer>());
+            return conversions.lowHalfOfIntegerToldInsideInt32(source.as<Integer>());
         break;
     case Opcode::Decode:
         if (from == Cell32 && (to == Cell || to == JSValue))
@@ -80,6 +91,27 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
     return emitter<ConstantEmitter>().zeroOf(to);
 }
 
+static bool conversionAsksForNoType(Opcode conversion, Representation from, Representation to)
+{
+    using enum Representation;
+    switch (conversion) {
+    case Opcode::Box:
+        return to == JSValue && RepresentationSet { Boolean, Int32, Double, Cell }.contains(from);
+    case Opcode::Unbox:
+        return from == JSValue && RepresentationSet { Boolean, Int32, Int64, Cell }.contains(to);
+    case Opcode::IntegerToNumber:
+        return from == Int32 && to == Double;
+    case Opcode::NarrowInteger:
+        return from == Int64 && to == Int32;
+    case Opcode::Decode:
+        return from == Cell32 && to == Cell;
+    case Opcode::Compress:
+        return from == Cell && to == Cell32;
+    default:
+        return false;
+    }
+}
+
 void RepresentationEmitter::generate(const ValueContext& value)
 {
     ValueID converted = value->valueOperand();
@@ -92,7 +124,19 @@ void RepresentationEmitter::generate(const ValueContext& value)
         define(value, emitter<OperatorEmitter>().boxedSum(sum));
         return;
     }
-    define(value, convert(value, value.opcode(), get(converted), typeOf(value.id()), value.representation()));
+    if (value.opcode() == Opcode::Box && value.representation() == Representation::JSValue && representationOf(converted) == Representation::Int64 && emitter<ArrayIntrinsicEmitter>().standsBehindTestThatFoundElement(value, { }, converted)) {
+        define(value, emitter<ConversionEmitter>().boxInteger(in<Integer>(converted), Range { 0, IndexingHeader::maximumLength - 1 }));
+        return;
+    }
+    if (value.opcode() == Opcode::Unbox) {
+        if (std::optional<Operand> handedOn = emitter<CastEmitter>().takeIntegerHandedOnTo(value.id())) {
+            define(value, *handedOn);
+            return;
+        }
+    }
+    Operand source = get(converted);
+    bool asksForNoType = conversionAsksForNoType(value.opcode(), source.representation, value.representation());
+    define(value, convert(value, value.opcode(), source, asksForNoType ? Type() : typeOf(value.id()), value.representation()));
 }
 
 } } } // namespace JSC::AOT::Typed

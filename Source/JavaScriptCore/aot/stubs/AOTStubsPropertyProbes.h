@@ -272,6 +272,15 @@ inline constexpr std::array<GPRReg, 2> registersThatWaysOnwardOfGetByIdLose { gp
 void jumpToSlotHandlerOfKind(StubAssembler&, SlotHandlerTable, GPRReg header, GPRReg kind);
 void linkToSlotExit(StubAssembler&, JumpList&, SlotHandlerTable, SlotExit);
 void linkToSlotCannot(StubAssembler&, JumpList&, SlotHandlerTable, SlotFinisher, const CachedSlot&);
+struct FieldExitBySlotRegisters {
+    GPRReg object;
+    GPRReg value;
+    GPRReg addressOfSlot;
+    GPRReg exit;
+    GPRReg scratch;
+    GPRReg extra;
+};
+void repeatFieldExitFoundBySlotAndReturn(StubAssembler&, const FieldExitBySlotRegisters&, JumpList& cannot);
 
 void loadValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result);
 void loadOwnValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result);
@@ -283,6 +292,8 @@ void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfSta
 
 void countSiteCacheMiss(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& isDueForRefill);
 void countMissOfEmptySite(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& isDueForFill);
+void countMissOfPlace(StubAssembler&, GPRReg distance, GPRReg scratch, JumpList& isSample);
+void goOnWhileSamplesOfPlaceAreLeftOut(StubAssembler&, GPRReg scratchOfCount, CCallHelpers::Label isCounted);
 void refillSiteCache(StubAssembler&, GPRReg receiver, GPRReg identifierNumber, GPRReg site, SlotAccess);
 
 inline constexpr unsigned receiverOperand = 0;

@@ -41,6 +41,7 @@ StubSignature signatureOfStringsAreEqual(StubKey) { return StubSignature::withGP
 StubSignature signatureOfDistinctStringsAreEqual(StubKey key) { return signatureOfStringsAreEqual(key); }
 StubSignature signatureOfCompareStrings(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
 StubSignature signatureOfFindCharacter8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
+StubSignature signatureOfFindText8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::A4) }); }
 StubSignature signatureOfStringBuilderAppendString(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 StubSignature signatureOfStringBuilderDiscard(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A1) }); }
 StubSignature signatureOfStackStringBuilderAppendString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
@@ -316,20 +317,9 @@ void generateFlattenString(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = fiber });
 }
 
-void generateFindCharacter8(StubAssembler& jit)
+static void findCodeUnitAndReturn(StubAssembler& jit, GPRReg characters, GPRReg length, GPRReg codeUnit, GPRReg position, GPRReg index, GPRReg unit)
 {
-    static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
-    static_assert(leafArgumentGPR(2) == gprOf(StubRegister::A2) && leafArgumentGPR(3) == gprOf(StubRegister::A3));
-    const GPRReg characters = jit.operand(0);
-    const GPRReg length = jit.operand(1);
-    const GPRReg codeUnit = jit.operand(2);
-    const GPRReg position = jit.operand(3);
-    const GPRReg result = jit.result();
-    const GPRReg index = result == characters ? jit.allocateScratch(StubRegister::A5) : result;
-    const GPRReg unit = jit.allocateScratch(StubRegister::A4);
-    RELEASE_ASSERT(result == GPRInfo::returnValueGPR);
-    RELEASE_ASSERT(noOverlap(characters, length, codeUnit, position, index, unit));
-
+    RELEASE_ASSERT(characters == leafArgumentGPR(0) && length == leafArgumentGPR(1) && codeUnit == leafArgumentGPR(2) && position == leafArgumentGPR(3));
     Jump isPastEnd = jit.branch32(CCallHelpers::AboveOrEqual, position, length);
     Jump needsLeaf = jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthSearchedByBytes));
     jit.zeroExtend32ToWord(position, index);
@@ -347,6 +337,47 @@ void generateFindCharacter8(StubAssembler& jit)
 
     needsLeaf.link(&jit);
     jit.callLeaf(Entry::operationAOTStringFindCharacter8);
+    jit.returnToCaller();
+}
+
+void generateFindCharacter8(StubAssembler& jit)
+{
+    static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
+    static_assert(leafArgumentGPR(2) == gprOf(StubRegister::A2) && leafArgumentGPR(3) == gprOf(StubRegister::A3));
+    const GPRReg characters = jit.operand(0);
+    const GPRReg length = jit.operand(1);
+    const GPRReg codeUnit = jit.operand(2);
+    const GPRReg position = jit.operand(3);
+    const GPRReg result = jit.result();
+    const GPRReg index = result == characters ? jit.allocateScratch(StubRegister::A5) : result;
+    const GPRReg unit = jit.allocateScratch(StubRegister::A4);
+    RELEASE_ASSERT(result == GPRInfo::returnValueGPR);
+    RELEASE_ASSERT(noOverlap(characters, length, codeUnit, position, index, unit));
+
+    findCodeUnitAndReturn(jit, characters, length, codeUnit, position, index, unit);
+}
+
+void generateFindText8(StubAssembler& jit)
+{
+    static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1) && leafArgumentGPR(2) == gprOf(StubRegister::A2));
+    static_assert(leafArgumentGPR(3) == gprOf(StubRegister::A3) && leafArgumentGPR(4) == gprOf(StubRegister::A4));
+    const GPRReg characters = jit.operand(0);
+    const GPRReg length = jit.operand(1);
+    const GPRReg sought = jit.operand(2);
+    const GPRReg lengthOfSought = jit.operand(3);
+    const GPRReg position = jit.operand(4);
+    const GPRReg result = jit.result();
+    const GPRReg index = result == characters ? jit.allocateScratch(StubRegister::A5) : result;
+    RELEASE_ASSERT(result == GPRInfo::returnValueGPR);
+    RELEASE_ASSERT(noOverlap(characters, length, sought, lengthOfSought, position, index));
+
+    Jump isLonger = jit.branch32(CCallHelpers::NotEqual, lengthOfSought, TrustedImm32(1));
+    jit.load8(Address(sought), sought);
+    jit.move(position, lengthOfSought);
+    findCodeUnitAndReturn(jit, characters, length, sought, lengthOfSought, index, position);
+
+    isLonger.link(&jit);
+    jit.callLeaf(Entry::operationAOTStringFind8);
     jit.returnToCaller();
 }
 
@@ -437,34 +468,61 @@ void branchUnlessTextStandsAtPlace(StubAssembler& jit, const TextSoughtAtOnePlac
 {
     auto [string, sought, place, characters, soughtCharacters, length, word] = text;
     RELEASE_ASSERT(noOverlap(string, sought, place, characters, soughtCharacters, length, word));
+    JumpList standsThere;
+    auto findPlace = [&] {
+        isNotThere.append(jit.branch32(CCallHelpers::Below, word, length));
+        jit.sub32(length, word);
+        switch (where) {
+        case PlaceOfSoughtText::IsStart:
+            break;
+        case PlaceOfSoughtText::IsEnd:
+            jit.move(word, place);
+            break;
+        case PlaceOfSoughtText::IsGivenAndLast:
+            needsOperation.append(jit.branch32(CCallHelpers::Below, place, word));
+            [[fallthrough]];
+        case PlaceOfSoughtText::IsGiven:
+            isNotThere.append(jit.branch32(CCallHelpers::Above, place, word));
+            break;
+        }
+    };
     jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
     jit.loadPtr(Address(sought, JSString::offsetOfValue()), soughtCharacters);
+
+    Jump stringIsRope = jit.branchIfRopeStringImpl(characters);
+    Jump soughtIsRope = jit.branchIfRopeStringImpl(soughtCharacters);
+    jit.load32(Address(soughtCharacters, StringImpl::lengthMemoryOffset()), length);
+    jit.load32(Address(characters, StringImpl::lengthMemoryOffset()), word);
+    findPlace();
+    standsThere.append(jit.branchTest32(CCallHelpers::Zero, length));
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(soughtCharacters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
+    jit.loadPtr(Address(soughtCharacters, StringImpl::dataOffset()), soughtCharacters);
+    if (where != PlaceOfSoughtText::IsStart)
+        jit.addPtr(place, characters);
+    jit.load8(Address(characters), word);
+    jit.load8(Address(soughtCharacters), place);
+    isNotThere.append(jit.branch32(CCallHelpers::NotEqual, word, place));
+    standsThere.append(jit.branch32(CCallHelpers::Equal, length, TrustedImm32(1)));
+    needsOperation.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
+    Jump hasCharactersOfBoth = jit.jump();
+
+    stringIsRope.link(&jit);
+    soughtIsRope.link(&jit);
     loadStringLength(jit, sought, soughtCharacters, length);
     loadStringLength(jit, string, characters, word);
-    isNotThere.append(jit.branch32(CCallHelpers::Below, word, length));
-    jit.sub32(length, word);
-    switch (where) {
-    case PlaceOfSoughtText::IsStart:
-        break;
-    case PlaceOfSoughtText::IsEnd:
-        jit.move(word, place);
-        break;
-    case PlaceOfSoughtText::IsGivenAndLast:
-        needsOperation.append(jit.branch32(CCallHelpers::Below, place, word));
-        [[fallthrough]];
-    case PlaceOfSoughtText::IsGiven:
-        isNotThere.append(jit.branch32(CCallHelpers::Above, place, word));
-        break;
-    }
+    findPlace();
     needsOperation.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
-    load8BitCharactersInPlace(jit, string, characters, word, needsOperation);
+    JumpList hasNoCharactersInPlace;
+    load8BitCharactersInPlace(jit, string, characters, word, where == PlaceOfSoughtText::IsEnd ? hasNoCharactersInPlace : needsOperation);
     if (where != PlaceOfSoughtText::IsStart)
         jit.addPtr(place, characters);
     jit.and32(TrustedImm32(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), soughtCharacters, word);
     Jump isJoined = jit.branch32(CCallHelpers::Equal, word, TrustedImm32(JSString::isRopeInPointer));
     load8BitCharactersInPlace(jit, sought, soughtCharacters, word, needsOperation);
+    hasCharactersOfBoth.link(&jit);
     branchIfBytesDiffer(jit, { characters, soughtCharacters, length, place, word }, isNotThere, DifferingWords::MayBeUnloaded);
-    JumpList standsThere;
     standsThere.append(jit.jump());
 
     isJoined.link(&jit);
@@ -483,6 +541,32 @@ void branchUnlessTextStandsAtPlace(StubAssembler& jit, const TextSoughtAtOnePlac
     jit.urshift64(TrustedImm32(JSRopeString::CompactFibers::shiftOfFiber2InUpperWord), part);
     standsThere.append(jit.branchTestPtr(CCallHelpers::Zero, part));
     comparePart();
+    if (where == PlaceOfSoughtText::IsEnd) {
+        standsThere.append(jit.jump());
+        hasNoCharactersInPlace.link(&jit);
+        jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
+        needsOperation.append(jit.branchIfNotRopeStringImpl(characters));
+        needsOperation.append(jit.branchTestPtr(CCallHelpers::NonZero, characters, TrustedImm32(JSRopeString::isSubstringInPointer)));
+        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, length));
+        needsOperation.append(jit.branchIfRopeStringImpl(soughtCharacters));
+        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(soughtCharacters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        const GPRReg lastPart = characters;
+        loadSubstringBaseAndOffset(jit, string, lastPart, word);
+        Jump hasTwoParts = jit.branchTestPtr(CCallHelpers::Zero, word);
+        jit.move(word, lastPart);
+        hasTwoParts.link(&jit);
+        jit.loadPtr(Address(lastPart, JSString::offsetOfValue()), lastPart);
+        needsOperation.append(jit.branchIfRopeStringImpl(lastPart));
+        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(lastPart, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        jit.load32(Address(lastPart, StringImpl::lengthMemoryOffset()), word);
+        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, word));
+        jit.loadPtr(Address(lastPart, StringImpl::dataOffset()), lastPart);
+        jit.load8(BaseIndex(lastPart, word, CCallHelpers::TimesOne, -1), lastPart);
+        jit.loadPtr(Address(soughtCharacters, StringImpl::dataOffset()), word);
+        jit.load8(BaseIndex(word, length, CCallHelpers::TimesOne, -1), word);
+        isNotThere.append(jit.branch32(CCallHelpers::NotEqual, lastPart, word));
+        needsOperation.append(jit.jump());
+    }
     standsThere.link(&jit);
 }
 

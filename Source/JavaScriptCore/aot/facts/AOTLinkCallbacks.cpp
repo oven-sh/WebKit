@@ -152,6 +152,14 @@ static bool listPlacesThatTakeCaptureInLinkCallbacks(const BodyReadInLinkCallbac
     return true;
 }
 
+static bool isHeldAgainstBuiltinInLinkCallbacks(const BodyIndex& index, const BodyValue& comparison, uint32_t operandIndex)
+{
+    if (comparison.opcode() != Opcode::StrictEq)
+        return false;
+    ValueID other = comparison.operand(operandIndex ? 0 : 1);
+    return other && !index.isParameter(other) && index.opcodeOf(other) == Opcode::Builtin;
+}
+
 static bool isOnlyCalledInLinkCallbacks(const BodyReadInLinkCallbacks& body, ValueID parameter, MentionsInLinkCallbacks& found)
 {
     const BodyIndex& index = body.index;
@@ -207,7 +215,7 @@ static bool isOnlyCalledInLinkCallbacks(const BodyReadInLinkCallbacks& body, Val
                     doesMore |= !listPlacesThatTakeCaptureInLinkCallbacks(body, value, operandIndex, found.placesHandedTo);
                 } else if (handsOnInLinkCallbacks(opcode, operandIndex))
                     handsOn = true;
-                else if (!looksInLinkCallbacks.contains(opcode))
+                else if (!looksInLinkCallbacks.contains(opcode) && !isHeldAgainstBuiltinInLinkCallbacks(index, value, operandIndex))
                     doesMore = true;
             });
             if (handsOn)
@@ -311,7 +319,7 @@ void findParametersThatAreOnlyCalled(const Program& program, const BodyIndexTabl
             if (entryParameter >= linked.numberOfParameters || entryParameter >= entry.numberOfParameters())
                 return;
             const LinkedParameter& arriving = tables.parameters[linked.firstParameter + entryParameter];
-            if (!mayBeFunction(arriving.proven) && !mayBeFunction(arriving.expected))
+            if (!mayBeFunction(arriving.proven) && !mayBeFunction(arriving.writtenOrSeenToArrive()))
                 continue;
             judgeEntryParameter(id, *index, entryParameter, handingsOfRange);
         }
@@ -379,7 +387,7 @@ void carryExpectationOfThisIntoCaptures(const Program& program, const BodyIndexT
         if (!ownThis || *ownThis >= tables.function(maker).numberOfParameters)
             continue;
         LinkedParameter arriving = tables.parametersOf(maker)[*ownThis];
-        const BodyIndex* index = arriving.expected && arriving.expectedIsDeclared ? bodies.find(maker) : nullptr;
+        const BodyIndex* index = arriving.written ? bodies.find(maker) : nullptr;
         if (!index || !index->numberOfBlocks())
             continue;
         ValueID held = index->block(entryBlock).parameter(*ownThis);
@@ -396,8 +404,8 @@ void carryExpectationOfThisIntoCaptures(const Program& program, const BodyIndexT
                 if (!operands[capture] || index->valueBehindCasts(operands[capture]) != held)
                     continue;
                 LinkedParameter& captured = tables.parameters[tables.function(made).firstParameter + capture];
-                captured.expected = arriving.expected;
-                captured.expectedIsDeclared = true;
+                captured.written = arriving.written;
+                captured.seenToArrive = { };
             }
         }
     }

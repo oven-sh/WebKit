@@ -316,6 +316,34 @@ SourceOrigin CompiledFrame::sourceOrigin() const
     return position && position->source ? modulesOf(*instance).sourceOrigin(position->source) : SourceOrigin();
 }
 
+bool CompiledFrame::isOfBuiltin() const
+{
+    return FunctionDescription(function).builtinKind() != StackTraceBuiltinKind::None;
+}
+
+bool CompiledFrame::runsCodeOfFile() const
+{
+    if (isOfBuiltin())
+        return false;
+    if (visibility == TraceVisibility::Visible)
+        return true;
+    return sourceFunctionOf(function) == function && !functionKindData(function).isInRuntimeModule;
+}
+
+bool findOriginOfCaller(CompiledFrameIterator& frames, SourceOrigin& origin)
+{
+    for (; !frames.isAtEnd(); frames.advance()) {
+        const CompiledFrame& frame = frames.frame();
+        if (frames.isAmongFramesThatWait() || !frame.runsCodeOfFile())
+            continue;
+        if (frame.isTailDeleted && !(frame.visibility == TraceVisibility::Visible && frames.isConstructCall()))
+            continue;
+        origin = frame.sourceOrigin();
+        return true;
+    }
+    return false;
+}
+
 bool CompiledFrame::isActivationOf(JSCell* cell) const
 {
     return isClosureOf(cell, function);
@@ -1005,8 +1033,10 @@ static uint16_t countShownFrames(const Image& image, InlineFrameReader& reader, 
     uint16_t count = 0;
     LogicalFrame frame = innermostLogicalFrame(image, reader, { code, site.callSite, site.inlineFrame, innermostIsTailDeleted, site.calledBuiltin });
     while (true) {
-        if (filter.shows(FunctionDescription(frame.function).visibility(), frame.isTailDeleted))
+        if (filter.shows(FunctionDescription(frame.function).visibility(), frame.isTailDeleted)) {
+            RELEASE_ASSERT(count < std::numeric_limits<decltype(count)>::max());
             ++count;
+        }
         if (!frame.hasCallerInMachineFrame())
             return count;
         frame = callerOfInlinedFrame(image, reader, code, frame);

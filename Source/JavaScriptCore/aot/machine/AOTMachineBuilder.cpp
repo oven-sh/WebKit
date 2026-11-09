@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineFolding.h"
 #include "AOTMachineTarget.h"
 #include <algorithm>
@@ -49,6 +50,7 @@ static constexpr MachineBuilderFoldFamily machineBuilderFoldFamilyOf(Opcode opco
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case Clz:
     case PopCount:
         return MachineBuilderFoldFamily::Bitwise;
@@ -111,6 +113,7 @@ static constexpr TypeKind machineBuilderKindOfResult(Opcode opcode)
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case Clz:
     case PopCount:
     case Abs:
@@ -274,7 +277,7 @@ static unsigned machineBuilderRankAmongOperands(const Operation* operation)
         return 0;
     if (operation->hasNoPosition())
         return 1;
-    return 2;
+    return operation->opcode() == Load && operation->type().isFloat() ? 3 : 2;
 }
 
 static bool machineBuilderShouldSwapOperands(const Operation* left, const Operation* right)
@@ -385,13 +388,13 @@ Builder::Builder(Procedure& procedure)
 {
 }
 
-ALWAYS_INLINE bool Builder::hasRoomToCreate(size_t bytes) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Builder::hasRoomToCreate(size_t bytes) const
 {
     const Procedure& procedure = m_proc;
     return procedure.m_operations.size() != procedure.m_operations.capacity() && procedure.m_arena.hasRoomFor(bytes);
 }
 
-ALWAYS_INLINE bool Builder::hasRoomToAppendTo(const Block* block, size_t bytes) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool Builder::hasRoomToAppendTo(const Block* block, size_t bytes) const
 {
     return block->m_operations.size() != block->m_operations.capacity() && hasRoomToCreate(bytes);
 }
@@ -463,42 +466,42 @@ ALWAYS_INLINE Operation* Builder::appendNewWithChildren(Opcode opcode, Type type
     return result;
 }
 
-ALWAYS_INLINE Operation* Builder::appendNew(Opcode opcode, Type type)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNew(Opcode opcode, Type type)
 {
     return appendNewWithChildren<0, KindOfAppendedOperation::Any, false>(opcode, type, nullptr, nullptr, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNew(Opcode opcode, Type type, Operation* child)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNew(Opcode opcode, Type type, Operation* child)
 {
     return appendNewWithChildren<1, KindOfAppendedOperation::Any, false>(opcode, type, child, nullptr, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNew(Opcode opcode, Type type, Operation* first, Operation* second)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNew(Opcode opcode, Type type, Operation* first, Operation* second)
 {
     return appendNewWithChildren<2, KindOfAppendedOperation::Any, false>(opcode, type, first, second, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* child)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* child)
 {
     return appendNewWithChildren<1, KindOfAppendedOperation::MemoryAccess, false>(opcode, type, child, nullptr, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* first, Operation* second)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* first, Operation* second)
 {
     return appendNewWithChildren<2, KindOfAppendedOperation::MemoryAccess, false>(opcode, type, first, second, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* child)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* child)
 {
     return appendNewWithChildren<1, KindOfAppendedOperation::Computation, false>(opcode, type, child, nullptr, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second)
 {
     return appendNewWithChildren<2, KindOfAppendedOperation::Computation, false>(opcode, type, first, second, nullptr);
 }
 
-ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second, Operation* third)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second, Operation* third)
 {
     return appendNewWithChildren<3, KindOfAppendedOperation::Computation, false>(opcode, type, first, second, third);
 }
@@ -523,7 +526,7 @@ NEVER_INLINE Operation* Builder::createNewWithoutPositionWhereRoomMayLack(Opcode
     return createNewWithoutPosition<false>(opcode, type, payload, hash);
 }
 
-ALWAYS_INLINE Operation* Builder::createWithoutPosition(Opcode opcode, Type type, uint64_t payload)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::createWithoutPosition(Opcode opcode, Type type, uint64_t payload)
 {
     uint32_t hash = Numbering::hashWithoutPosition(opcode, payload);
     if (Operation* existing = m_numbering.findWithoutPosition(opcode, payload, hash))
@@ -533,7 +536,7 @@ ALWAYS_INLINE Operation* Builder::createWithoutPosition(Opcode opcode, Type type
     return createNewWithoutPosition<true>(opcode, type, payload, hash);
 }
 
-void Builder::noteInheritedFind(const Operation* operation)
+ALWAYS_INLINE_INTO_OTHER_FILES void Builder::noteInheritedFind(const Operation* operation)
 {
     uint32_t index = operation->index();
     if (index >= m_epochOfLastInheritedFind.size()) {
@@ -544,24 +547,24 @@ void Builder::noteInheritedFind(const Operation* operation)
     m_hasInheritedFindsInEpoch = true;
 }
 
-ALWAYS_INLINE Operation* Builder::noteIfInherited(const Numbering::Found& found)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::noteIfInherited(const Numbering::Found& found)
 {
     if (found.isInherited) [[unlikely]]
         noteInheritedFind(found.operation);
     return found.operation;
 }
 
-ALWAYS_INLINE Operation* Builder::findNumbered(const NumberingKey& key, uint32_t hash)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::findNumbered(const NumberingKey& key, uint32_t hash)
 {
     return noteIfInherited(m_numbering.lookUp(key, hash, m_isDuplicating ? Numbering::Reach::OwnEntries : Numbering::Reach::WholeScope));
 }
 
-ALWAYS_INLINE Operation* Builder::findNumberedLoad(const NumberingKey& key, uint32_t hash)
+ALWAYS_INLINE_INTO_OTHER_FILES Operation* Builder::findNumberedLoad(const NumberingKey& key, uint32_t hash)
 {
     return noteIfInherited(m_numbering.lookUpLoad(key, hash, m_isDuplicating ? Numbering::Reach::OwnEntries : Numbering::Reach::WholeScope));
 }
 
-ALWAYS_INLINE Type Builder::typeOfResult(Opcode opcode, Operation* first)
+ALWAYS_INLINE_INTO_OTHER_FILES Type Builder::typeOfResult(Opcode opcode, Operation* first)
 {
     TypeKind kind = machineBuilderRulesOfOpcodes[opcode].kindOfResult;
     RELEASE_ASSERT(kind != machineBuilderKindThatOpcodeDoesNotSay);
@@ -593,22 +596,18 @@ Operation* Builder::duplicateInheritedFindIfFusable(Operation* operand)
     return copy;
 }
 
-Operation* Builder::const32(int32_t value)
+Operation* Builder::const32Slow(int32_t value)
 {
     Operation** kept = static_cast<uint32_t>(value) < numberOfSmallConstantsKept ? &m_smallConstants32[static_cast<uint32_t>(value)] : nullptr;
-    if (kept && *kept)
-        return *kept;
     Operation* result = createWithoutPosition(Const32, Int32, static_cast<uint64_t>(static_cast<int64_t>(value)));
     if (kept)
         *kept = result;
     return result;
 }
 
-Operation* Builder::const64(int64_t value)
+Operation* Builder::const64Slow(int64_t value)
 {
     Operation** kept = static_cast<uint64_t>(value) < numberOfSmallConstantsKept ? &m_smallConstants64[static_cast<uint64_t>(value)] : nullptr;
-    if (kept && *kept)
-        return *kept;
     Operation* result = createWithoutPosition(Const64, Int64, static_cast<uint64_t>(value));
     if (kept)
         *kept = result;
@@ -672,10 +671,19 @@ Operation* Builder::extendWordThatIsNotNegative(Operation* word)
     return result;
 }
 
+bool Builder::findsAgain(Operation* sumOrProduct)
+{
+    if (sumOrProduct->opcode() != Add && sumOrProduct->opcode() != Mul)
+        return false;
+    NumberingKey key = machineBuilderKeyOf(sumOrProduct->opcode(), sumOrProduct->type(), sumOrProduct->child(0), sumOrProduct->child(1));
+    return findNumbered(key, Numbering::hashOf(key)) == sumOrProduct;
+}
+
 Operation* Builder::binary(Opcode opcode, Operation* left, Operation* right)
 {
     ASSERT(descriptionOf(opcode).numberOfChildren == 2);
-    ASSERT(right->type() == (opcode == Shl || opcode == SShr || opcode == ZShr ? Type(Int32) : left->type()));
+    ASSERT(right->type() == (opcode == Shl || opcode == SShr || opcode == ZShr || opcode == RotR ? Type(Int32) : left->type()));
+    ASSERT(opcode != RotR || right->hasInt32());
     sealPendingPatch();
 
     if (isCommutative(opcode) && machineBuilderShouldSwapOperands(left, right))
@@ -964,8 +972,8 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
     if (!traps) {
         hash = Numbering::hashOf(key);
         if (Operation* existing = findNumberedLoad(key, hash)) {
-            if (m_verifierOfInheritedLoads) [[unlikely]]
-                verifyInheritedLoad(existing);
+            if (m_verifierOfReusedLoads) [[unlikely]]
+                verifyReusedLoad(existing, address.base, address.offset);
             return existing;
         }
     }
@@ -978,8 +986,11 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
     result->m_flags |= machineBuilderFlagsOfLoadFrom(heap);
     if (traps)
         result->m_flags |= static_cast<uint16_t>(OperationFlag::Traps);
-    else
+    else {
         m_numbering.addLoad(key, hash, result);
+        if (m_verifierOfReusedLoads) [[unlikely]]
+            noteNumberedLoadForStores(result);
+    }
     return result;
 }
 
@@ -1002,7 +1013,10 @@ Operation* Builder::store(Opcode opcode, Operation* value, Operation* base, ptrd
     Operation* result = appendNewMemoryAccess(opcode, Void, ownValue, ownBase);
     result->m_payload.memory.offset = address.offset;
     result->m_payload.memory.heap = heap.index();
+    result->m_owner->m_writesMemory = true;
     m_numbering.didWrite(heap.index());
+    if (m_verifierOfReusedLoads) [[unlikely]]
+        stopIfLoadOfStoredWordStands(result);
     return result;
 }
 
@@ -1022,6 +1036,8 @@ Operation* Builder::reload(Operation* load)
 
     Operation* result = appendLoadLike(load, base);
     m_numbering.addLoad(key, hash, result);
+    if (m_verifierOfReusedLoads) [[unlikely]]
+        noteNumberedLoadForStores(result);
     return result;
 }
 
@@ -1035,28 +1051,76 @@ Operation* Builder::appendLoadLike(const Operation* load, Operation* base)
     return result;
 }
 
-void Builder::verifyInheritedLoads(HeapIndex writtenByOtherThreads, Function<void(Operation* readSameBits)>&& verifier)
+void Builder::verifyReusedLoads(std::initializer_list<HeapIndex> writtenByOtherThreads, Function<void(Operation* readSameBits)>&& verifier)
 {
-    m_heapWrittenByOtherThreads = writtenByOtherThreads;
-    m_verifierOfInheritedLoads = WTF::move(verifier);
+    m_heapsWrittenByOtherThreads = writtenByOtherThreads;
+    m_verifierOfReusedLoads = WTF::move(verifier);
 }
 
-void Builder::verifyInheritedLoad(Operation* load)
+bool Builder::isWrittenByOtherThreads(HeapIndex heap) const
 {
-    if (m_isVerifyingInheritedLoad || !wasFoundInInheritedScope(load) || load->has(OperationFlag::ReadsImmutableHeap))
+    return std::ranges::any_of(m_heapsWrittenByOtherThreads, [&](HeapIndex written) {
+        return m_proc.heapTree().isSameOrAbove(written, heap);
+    });
+}
+
+static uint64_t machineBuilderPlaceOf(const Operation* base, int64_t granule)
+{
+    return static_cast<uint64_t>(base->index()) << 32 | static_cast<uint32_t>(granule);
+}
+
+void Builder::noteNumberedLoadForStores(Operation* load)
+{
+    if (load->has(OperationFlag::ReadsImmutableHeap) || isWrittenByOtherThreads(load->heap()))
         return;
-    if (m_proc.heapTree().isSameOrAbove(m_heapWrittenByOtherThreads, load->heap()))
+    int64_t begin = load->offset();
+    int64_t end = begin + bytesForWidth(load->accessWidth());
+    for (int64_t granule = begin >> 3; granule <= (end - 1) >> 3; ++granule) {
+        Vector<Operation*, 2>& loads = m_numberedLoadsByPlace.add(machineBuilderPlaceOf(load->lastChild(), granule), Vector<Operation*, 2>()).iterator->value;
+        size_t sameKey = loads.findIf([&](const Operation* other) {
+            return other->opcode() == load->opcode() && other->type() == load->type() && other->offset() == load->offset() && other->heap() == load->heap();
+        });
+        if (sameKey == notFound)
+            loads.append(load);
+        else
+            loads[sameKey] = load;
+    }
+}
+
+void Builder::stopIfLoadOfStoredWordStands(const Operation* store)
+{
+    if (isWrittenByOtherThreads(store->heap()))
         return;
-    SetForScope<bool> isVerifying(m_isVerifyingInheritedLoad, true);
+    int64_t begin = store->offset();
+    int64_t end = begin + bytesForWidth(store->accessWidth());
+    for (int64_t granule = begin >> 3; granule <= (end - 1) >> 3; ++granule) {
+        auto found = m_numberedLoadsByPlace.find(machineBuilderPlaceOf(store->lastChild(), granule));
+        if (found == m_numberedLoadsByPlace.end())
+            continue;
+        for (Operation* load : found->value) {
+            if (load->offset() < end && begin < load->offset() + static_cast<int64_t>(bytesForWidth(load->accessWidth())) && m_numbering.isStillValid(machineBuilderKeyOfLoad(load, load->child(0)), load)) {
+                m_proc.stopAtStoreOverLoadThatStands(store);
+                return;
+            }
+        }
+    }
+}
+
+void Builder::verifyReusedLoad(Operation* load, Operation* baseAsked, int32_t offsetAsked)
+{
+    if (m_isVerifyingReusedLoad || load->has(OperationFlag::ReadsImmutableHeap) || isWrittenByOtherThreads(load->heap()))
+        return;
+    SetForScope<bool> isVerifying(m_isVerifyingReusedLoad, true);
 
     Operation* readBefore = load;
-    Operation* readNow = appendLoadLike(load, load->child(0));
+    Operation* readNow = appendLoadLike(load, baseAsked);
+    readNow->m_payload.memory.offset = offsetAsked;
     if (!load->type().isInt()) {
         Type typeOfBits = load->type() == Double ? Int64 : Int32;
         readBefore = appendNew(BitwiseCast, typeOfBits, readBefore);
         readNow = appendNew(BitwiseCast, typeOfBits, readNow);
     }
-    m_verifierOfInheritedLoads(appendNew(Equal, Int32, readBefore, readNow));
+    m_verifierOfReusedLoads(appendNew(Equal, Int32, readBefore, readNow));
 }
 
 void Builder::noteIntegerAddedTo(Operation* load)
@@ -1069,7 +1133,7 @@ void Builder::noteIntegerAddedTo(Operation* load)
 void Builder::fence()
 {
     sealPendingPatch();
-    appendNew(Fence, Void);
+    appendNew(Fence, Void)->m_owner->m_writesMemory = true;
 }
 
 std::optional<int64_t> Builder::valueKnownToBeReadThrough(const Operation* base)
@@ -1178,9 +1242,16 @@ Operation* Builder::upsilonOfCompletePhi(Operation* value, Operation* phi)
     RELEASE_ASSERT(value->opcode() == Phi && phi->opcode() == Phi && value->type() == phi->type());
     Operation* result = upsilon(value);
     result->m_payload.phi = phi;
-    if (!clearsUpperHalfOfRegister(value))
-        phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
+    handOnUpperHalf(value, phi);
     return result;
+}
+
+bool Builder::handOnUpperHalf(const Operation* value, Operation* phi)
+{
+    if (clearsUpperHalfOfRegister(value) || phi->has(OperationFlag::UpperHalfMayBeSet))
+        return false;
+    phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
+    return true;
 }
 
 void Builder::setPhi(Operation* upsilon, Operation* phi)
@@ -1230,11 +1301,14 @@ PatchOperation* Builder::check(Operation* predicate)
     sealPendingPatch();
 
     SimplifiedPredicate simplified = simplifyPredicate(predicate);
-    if (!simplified.isInverted)
+    bool failsWhenPredicateIsZero = simplified.isInverted && isComparison(simplified.predicate->opcode()) && !simplified.predicate->child(0)->type().isInt();
+    if (!simplified.isInverted || failsWhenPredicateIsZero)
         predicate = simplified.predicate;
     predicate = duplicateIfFusable(predicate);
+    RELEASE_ASSERT(!failsWhenPredicateIsZero || isComparison(predicate->opcode()));
 
     PatchOperation* result = PatchOperation::create(m_proc, Check, Void, m_origin);
+    result->setFailsWhenPredicateIsZero(failsWhenPredicateIsZero);
     result->effects = Effects::none();
     result->effects.exitsSideways = true;
     result->effects.reads = HeapSet::top();
@@ -1274,6 +1348,14 @@ void Builder::recordPurePatch(PatchOperation* patch)
     RELEASE_ASSERT(patch->opcode() == Patch && patch->pureFunction && !patch->effects.terminal);
     ASSERT(patch->owner() == m_block);
     m_numbering.addPurePatch(machineBuilderKeyOfPurePatch(*patch->pureFunction, patch->type(), patch->operands()), patch);
+}
+
+void Builder::recordInPlaceOfReadOfMemory(const PureFunction& function, Operation* phi, Operation* operand, const AbstractHeap& heap)
+{
+    sealPendingPatch();
+    RELEASE_ASSERT(function.dependsOnChildren && function.dependsOnMemory && phi->opcode() == Phi && phi->owner() == m_block);
+    Operation* operands[] { operand };
+    m_numbering.addInPlaceOfReadOfMemory(machineBuilderKeyOfPurePatch(function, phi->type(), operands), phi, heap.index());
 }
 
 void Builder::recordInPlaceOfPurePatch(const PureFunction& function, Operation* phi)
@@ -1435,10 +1517,13 @@ void Builder::sealPatch()
     PatchOperation* patch = std::exchange(m_pendingPatch, nullptr);
     ASSERT(!patch->effects.terminal || patch->owner()->last() == patch);
     if (patch->isSuspension()) [[unlikely]] {
+        patch->m_owner->m_writesMemory = true;
         m_numbering.didWrite(HeapSet::top());
         m_numbering.didSuspend();
         return;
     }
+    if (!patch->effects.writes.isEmpty() || (patch->opcode() == Patch && !patch->onlyKeepsChildrenAlive))
+        patch->m_owner->m_writesMemory = true;
     m_numbering.didWrite(patch->effects.writes);
 }
 

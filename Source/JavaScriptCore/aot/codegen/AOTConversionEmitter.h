@@ -35,9 +35,11 @@ public:
     Boxed boxNumber(Operand);
     Boxed boxDouble(Number value) { return Boxed(m_out.sub(m_out.bitCast(value.value(), Machine::Int64), m_numberTag)); }
     Boxed boxNumberByStub(Number value) { return boxByStub(BoxedNumberForm::Double, value.value()); }
+    Boxed boxNumberByStub(OptionalNumber value) { return boxByStub(BoxedNumberForm::OptionalDouble, value.value()); }
     Boxed boxInteger(Integer, Range);
     Number toNumber(Integer, Range);
     Integer toInteger(Number);
+    Integer toInteger(Number, Range, bool standsInLoop);
     Word32 int32OrElse(Number, LBasicBlock isNoInt32);
     Word32 int32OrElse(Integer, Range, LBasicBlock isNoInt32);
 #if CPU(ARM64)
@@ -45,7 +47,14 @@ public:
 #endif
     std::optional<Integer> exactIntegerBehind(Number);
     void noteIntegerBehind(Number number, LValue integer) { m_integersNotedBehindNumbers.add(number.value(), integer); }
+    void noteInt32ElementBehindNumberOrNaN(Number number, Boxed element)
+    {
+        if (number.value()->opcode() == Machine::Select)
+            m_int32ElementsBehindNumbersOrNaN.add(number.value(), element.value());
+    }
+    void noteNumberOfInt32Element(Number number) { m_numbersOfInt32Elements.add(number.value()); }
     Integer widen(Word32, Range);
+    Word32 lowHalfOfIntegerToldInsideInt32(Integer);
     Word32 narrow(Integer value) { return low32(value); }
     enum class BitsOfInt32 : uint8_t { All, Lowest };
     static constexpr unsigned numberOfLowestBits = numberOfLowestBitsOfInt32;
@@ -81,6 +90,8 @@ private:
         Range range;
         bool mayBeRounded { false };
         bool isTested { false };
+        bool holdsElementOfList { false };
+        bool asksWhetherWideIntegerIsInt32 { false };
         int64_t largestSumOfOtherTerms { 0 };
     };
     using IntegersBehindNumbers = UncheckedKeyHashMap<LValue, std::optional<IntegerBehindNumber>>;
@@ -98,10 +109,15 @@ private:
     Boxed boxByStub(BoxedNumberForm, LValue);
     Integer quietNaNWithSignOf(Integer bits) { return Integer(m_out.shl(m_out.bitOr(m_out.lShr(bits.value(), 51), 1), 51)); }
     Operand unboxOptional(Boxed, const Type&, Representation);
+    Number unboxDoubleThatIsAsked(Boxed);
+    void stopUnlessBoxHolds(Boxed, TypeID kinds);
+    void stopUnlessToldRangeHolds(Condition);
 
     bool m_boxesNumbersByStub { false };
     Place m_placeThatBoxesByStub { Place::Anywhere };
     UncheckedKeyHashMap<LValue, LValue> m_integersNotedBehindNumbers;
+    UncheckedKeyHashMap<LValue, LValue> m_int32ElementsBehindNumbersOrNaN;
+    UncheckedKeyHashSet<LValue> m_numbersOfInt32Elements;
     std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;
     UncheckedKeyHashMap<LValue, bool> m_holdsIntegerThatComesRound;
     LValue m_integerThatComesRound { nullptr };

@@ -86,7 +86,11 @@ static void runInProcessWithCompiledCodeOptions()
     Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--numberOfGCMarkers=4"_s };
     if (collectsContinuously) {
         // The scheduler of a machine with four processors or more: the collector thread waits for the marking without a time limit.
+        // With the pauses of a program, so that the mutator runs beside the marking.
         arguments.appendList({ "--collectContinuously=true"_s, "--collectContinuouslyPeriodMS=20"_s, "--useGenerationalGC=false"_s, "--useStochasticMutatorScheduler=true"_s });
+    } else {
+        // A pause of the mutator lasts until the marking ends.
+        arguments.appendList({ "--minimumGCPauseMS=10000"_s, "--gcPauseScale=10000"_s });
     }
     ChildProcessResult result = launcher.run(arguments.span());
     if (!result.exitedWith(0)) {
@@ -206,7 +210,8 @@ static void checkSmallHeapStartsNoHelper()
     for (unsigned index = 0; index < 10; ++index)
         holder->putDirectIndex(realm, index, constructEmptyObject(realm));
     test.heap().collectSync(CollectionScope::Eden);
-    AOT_TEST_CHECK(!test.heap().didSkipMarkingInLastCollection() && !test.heap().collector().hasStartedHelpers());
+    AOT_TEST_CHECK(!test.heap().didSkipMarkingInLastCollection());
+    AOT_TEST_CHECK(!test.heap().collector().hasStartedHelpers());
     AOT_TEST_CHECK(heapHelperPool().numberOfThreads() == 1);
     ensureStillAliveHere(holder);
 }

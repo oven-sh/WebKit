@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
@@ -106,6 +107,7 @@ public:
     CodeRecords& records() { return m_records; }
     MentionList& mentions() { return m_mentions; }
     ValueID operationBeingGenerated() const { return m_operation ? m_operation->valueID() : ValueID(); }
+    const OperationContext* contextBeingGenerated() const { return m_operation; }
     BlockID blockBeingGenerated() const { return m_operation ? m_operation->block() : BlockID(); }
 
     const Operation& operationAt(ValueID id) const LIFETIME_BOUND { return code().at(id); }
@@ -116,15 +118,36 @@ public:
 
     bool suspends() const { return m_proc.traits().savesFrameOnSuspend; }
     bool hasHandlers() const { return code().hasHandlers(); }
+    bool isLayingOutTurns() const { return !!m_headOfTurnsLaidOut; }
+    bool leavesTurnLaidOut(BlockID target) const { return m_headOfTurnsLaidOut && target != m_headOfTurnsLaidOut && !std::ranges::contains(m_turnLaidOut, target); }
     bool isInLoop(BlockID block) const { return code().at(block).isInLoop; }
     bool isStoredIntoByName(ValueID) const;
     bool takesOpenForm(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
     bool takesFormOfLoops(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
     bool paysForCodeInLine(BlockID block) const { return isInLoop(block); }
     bool laterBarrierCovers(ValueID store) const { return code().marksOf(store).contains(SweepMark::LaterBarrierCovers); }
+    bool barrierIsCountedOn(ValueID store) const { return code().barrierIsCountedOn(store); }
+    void noteThatOwnerIsRememberedBehind(ValueID store)
+    {
+        if (barrierIsCountedOn(store)) [[unlikely]]
+            m_storesBehindWhichOwnerIsRemembered.set(store.index());
+    }
     bool ownerIsYoung(ValueID store) const { return !m_keepsValuesInHeapFrame && code().marksOf(store).contains(SweepMark::OwnerIsYoung); }
     bool laterFenceCovers(ValueID allocation) const { return !m_keepsValuesInHeapFrame && code().marksOf(allocation).contains(SweepMark::LaterFenceCovers); }
     bool isDeferredClosure(ValueID id) const { return isDeferredClosure(code().at(id)); }
+    std::optional<ArrayStorage> kindOfListFoundInFrontOfTurnsLaidOut(ValueID list) const;
+    bool liesInsideByQuestionInFrontOfTurnsLaidOut(ValueID read) const;
+    bool leavesHoleToTestBehind(const ValueContext& read);
+    bool holeIsLeftToTestBehind(ValueID read) const { return m_elementsWhoseHolesAreLeftToTestsBehind.get(read.index()); }
+    LValue& wordWhoseHoleIsLeftToTestAtWork() { return m_wordWhoseHoleIsLeftToTestAtWork; }
+    bool holdsByQuestionInFrontOfTurnsLaidOut(ValueID relation) const { return m_relationsAskedInFrontOfTurnsLaidOut.contains(relation); }
+    std::optional<TypedArrayType> kindOfViewFoundInFrontOfTurnsLaidOut(ValueID view) const;
+    LValue holdsDoublesAsReadInFrontOfTurnsLaidOut(ValueID list) const;
+    bool isGenerated(ValueID id) const { return m_values[id.index()]; }
+    LBasicBlock blockThatHoleLeavesTurnLaidOutBy();
+    void noteWordOfElementInTurnLaidOut(ValueID read, LValue word) { m_wordsOfElementsInTurnLaidOut.append({ read, word }); }
+    bool asksBehindTurnsWhetherElementIsThere(ValueID read) const { return m_asksElementsBehindTurns && isTermOfSumOfElements(read); }
+    void noteBoxedWordOfElementInTurns(LValue word) { m_boxedWordsOfElementsInTurns = m_boxedWordsOfElementsInTurns ? m_out.bitAnd(m_boxedWordsOfElementsInTurns, word) : word; }
     const PlacedSlot* slotOfScopeReadInPlaceOfClosure(ValueID id, const Operation& read) const
     {
         if (read.opcode != Opcode::GetDeferredClosureSlot) [[likely]]
@@ -145,11 +168,10 @@ public:
     LValue wordOf(ValueID id) const { return m_values[id.index()]; }
     void nameAgain(ValueID id, LValue lowered) { m_values[id.index()] = lowered; }
     bool keepsValuesInHeapFrame() const { return m_keepsValuesInHeapFrame; }
-    void saveFramesOfGenerators() { m_savesFramesOfGenerators = true; }
-    void leaveFailuresWithHeapFrameUnsaid() { m_leavesFailuresWithHeapFrameUnsaid = true; }
     std::span<const BlockID> order() const { return m_order; }
     BlockID onlyPredecessorOf(BlockID block) const { return m_singlePredecessors[block.index()]; }
     bool blockDominates(BlockID above, BlockID below);
+    BlockID nearestDominatorOf(BlockID);
     Operand getIn(ValueID id, Representation wanted)
     {
         if (wanted == Representation::Void)
@@ -162,7 +184,7 @@ public:
     bool holdsAnyNaN(ValueID id) const { return m_followsNumbersOutOfBytes && m_valuesHoldingAnyNaN.quickGet(id.index()); }
     Operand getWithAnyNaN(ValueID);
     bool isCarriedBoxed(ValueID id) const { return m_carriesParametersBoxed && m_parametersCarriedBoxed.quickGet(id.index()); }
-    ValueID sumBoxedBy(const Operation& box) const
+    ALWAYS_INLINE ValueID sumBoxedBy(const Operation& box) const
     {
         if (box.opcode != Opcode::Box || box.representation != Representation::JSValue || m_followsNumbersOutOfBytes)
             return { };
@@ -170,7 +192,10 @@ public:
             return { };
         return sumBoxedBySlow(box);
     }
+    bool waitsForBoxOfSum(ValueID, const Operation&) const;
     Number settleNaNOf(const ValueContext&, Number);
+    void noteThatNumberIsNoNaN(const ValueContext&);
+    bool takesNothingForNaN(const ValueContext&);
     void define(const ValueContext& value, Operand result)
     {
         RELEASE_ASSERT(!value.isBranchCondition());
@@ -186,16 +211,26 @@ public:
 
     LBasicBlock blockFor(BlockID) const;
     BlockEdge edgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
+    std::optional<BlockEdge> edgeThatBringsNothing(EdgeID);
+    bool isTakenIntoSwitchInFront(BlockID block) const { return m_switchesTakenIntoSwitchInFront.get(block.index()); }
+    void noteSwitchTakenIntoSwitchInFront(BlockID block) { m_switchesTakenIntoSwitchInFront.set(block.index()); }
     void jumpTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
     void passHandlerArguments(const Edge& handler);
 
     void generateBranchCondition(const TerminatorContext&, ValueID condition, BranchTargets);
-    ValueID readLeftToBranchOnItsTruth(BlockID, std::span<const ValueID> values, ValueID test);
+    ValueID readLeftToBranchOnItsTruth(BlockID id, std::span<const ValueID> values, ValueID test)
+    {
+        if (!test || values.size() < 2 || values.back() != test)
+            return { };
+        return readLeftToBranchOnItsTruthSlow(id, values, test);
+    }
+    ValueID readLeftToBranchOnItsTruthSlow(BlockID, std::span<const ValueID> values, ValueID test);
     struct WaysOfTruth {
         BranchTargets targets;
         bool areOfObjectAndNothing { false };
     };
     std::optional<WaysOfTruth> waysOfTruthOf(const ValueContext& read) const;
+    bool isReadAgainBehindItsOwnTruthAlone(const ValueContext& read) const;
     void generateReturnedCall(const TerminatorContext&, ValueID call);
 
     template<typename T> T& emitter();
@@ -205,10 +240,11 @@ public:
     void failAtLimit(const OperationContext&, LimitID, uint64_t needed);
     bool hasFailed() const { return m_hasFailed; }
 
+    enum class FillsCellOfHeap : bool { No, Yes };
     class InitializationScope {
         WTF_MAKE_NONCOPYABLE(InitializationScope);
     public:
-        explicit InitializationScope(CodeGenerator&);
+        explicit InitializationScope(CodeGenerator&, FillsCellOfHeap = FillsCellOfHeap::Yes);
         ~InitializationScope();
 
     private:
@@ -216,6 +252,7 @@ public:
     };
 
     bool isInitializingCell() const { return m_initializationDepth; }
+    bool& owesFenceBehindStores() { return m_owesFenceBehindStores; }
 
 private:
     struct EmittersMade {
@@ -252,6 +289,16 @@ private:
     bool isDeferredClosureSlow(const Operation&) const;
     const PlacedSlot* slotOfScopeReadInPlaceOfClosureSlow(ValueID, const Operation&) const;
     ValueID m_closureReadForItsScope;
+public:
+    ValueID m_reservationThatBirthHasServed;
+    ValueID m_literalLeftToSpreadRightBehind;
+    LValue bearLiteralAsWritten(BlockID, ValueID literal);
+    std::span<const std::pair<ValueID, ValueID>> usersOfLiteralInBlock(BlockID, ValueID literal);
+private:
+    BlockID m_blockWhoseUsersOfLiteralsAreListed;
+    Vector<std::pair<ValueID, ValueID>> m_usersOfLiteralsInBlock;
+public:
+private:
     Vector<std::pair<ValueID, ValueID>, 2> m_closuresWhoseLivesEndBehindCalls;
     const PlacedSlot* m_slotOfScopeOfClosureRead { nullptr };
     void computeEffectsOf(const OperationContext&) const;
@@ -261,6 +308,7 @@ private:
     void orderBlocks();
     bool isProvenToDominate(BlockID home, BlockID user) const { return m_userOfHomesProven == user && m_homesProven[home.index() % m_homesProven.size()] == home; }
     void verifyThatDefinitionDominates(ValueID, BlockID home, BlockID user);
+    void verifyThatKeptValueIsNamedInThisStretch(ValueID);
     bool dominates(BlockID home, BlockID user);
     void findDominators();
     void numberDominatorTree();
@@ -268,7 +316,6 @@ private:
     void createPhis();
     bool isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft) const;
     ValueID sumBoxedBySlow(const Operation& box) const;
-    bool waitsForBoxOfSum(ValueID, const Operation&) const;
     void followNumbersOutOfBytes();
     bool letsAnyNaNInto(ValueID parameter);
     bool goesOnBehindJump(size_t positionInOrder) const;
@@ -315,23 +362,23 @@ private:
     Operand get(ValueID id, const Operation& operation)
     {
         Representation representation = operation.representation;
-        RELEASE_ASSERT(representation != Representation::Unchosen);
-        if (representation == Representation::Void)
-            return { };
         BlockID home = operation.block();
-        if (!home)
-            return makeConstant(id, operation);
-        if (BlockID user = blockBeingGenerated(); user && user != home && home != m_onlyEntryBlock && !isProvenToDominate(home, user))
-            verifyThatDefinitionDominates(id, home, user);
-        LValue lowered = m_values[id.index()];
-        if (!lowered) [[unlikely]]
-            return zeroInPlaceOfValueOfFailedCode(representation);
-        if (representation == Representation::Double && (m_carriesParametersBoxed || m_followsNumbersOutOfBytes)) [[unlikely]]
-            return getNumberInFormKept(id, lowered);
-        return { representation, lowered };
+        BlockID user = blockBeingGenerated();
+        bool isNumber = representation == Representation::Double || representation == Representation::OptionalDouble;
+        bool hasValue = representation != Representation::Unchosen && representation != Representation::Void && home;
+        if (hasValue && !isNumber && !m_keepsValuesInHeapFrame && (user == home || home == m_onlyEntryBlock || isProvenToDominate(home, user))) [[likely]] {
+            if (LValue lowered = m_values[id.index()]) [[likely]]
+                return { representation, lowered };
+        }
+        return getSlow(id, operation);
     }
+    BitVector m_elementsWhoseHolesAreLeftToTestsBehind;
+    LValue m_wordWhoseHoleIsLeftToTestAtWork { nullptr };
+    UncheckedKeyHashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsMadePresentAtHeadsOfBlocks;
+    Operand getSlow(ValueID, const Operation&);
     Operand zeroInPlaceOfValueOfFailedCode(Representation);
     Operand getNumberInFormKept(ValueID, LValue lowered);
+    COLD NEVER_INLINE void failAtNumberOrNothingReadForItsBits(ValueID);
     Operand makeInWantedForm(ValueID, const Operation&, Representation wanted);
     Operand makeConstant(ValueID, const Operation&);
     void defineValue(ValueID id, Representation representation, Operand operand)
@@ -359,6 +406,32 @@ private:
         ValueID termAsNumber;
         ValueID term;
         LValue added { nullptr };
+        bool termIsElementOfList { false };
+        LValue base { nullptr };
+        LValue takenOver { nullptr };
+    };
+    struct BoundAskedInFront {
+        ValueID read;
+        ValueID length;
+        int64_t most { 0 };
+    };
+    struct ListAskedForKind {
+        ValueID list;
+        ArrayStorage kind { ArrayStorage::Other };
+        bool isStoredInto { false };
+        bool hasOneKind { false };
+        bool otherKindsAreNotAsked { false };
+    };
+    struct KindToldToReads {
+        ValueID list;
+        ValueID holdsDoubles;
+        uint32_t numberOfReads { 0 };
+    };
+    struct StoreOfWhatComesRound {
+        size_t indexOfParameter { 0 };
+        ValueID comesRound;
+        ValueID box;
+        ValueID store;
     };
     struct CountedLoop {
         size_t positionOfHead { 0 };
@@ -369,16 +442,89 @@ private:
         Opcode relation { Opcode::Less };
         int64_t step { 1 };
         int64_t mostTurns { 0 };
+        BlockID asking;
+        bool mayComeBack { false };
         ValueID poll;
         Vector<ValueID, 2> flatStrings;
+        bool turnsForWideTextsFollow { false };
+        bool asksTextsForWide { false };
         Vector<SumOfIntegers, 2> sumsOfIntegers;
+        Vector<StoreOfWhatComesRound, 2> storesOfWhatComesRound;
+        Vector<ListAskedForKind, 2> listsAskedForKind;
+        bool asksListsForAnotherKind() const { return std::ranges::any_of(listsAskedForKind, [](const ListAskedForKind& asked) { return !asked.hasOneKind; }); }
+        Vector<ValueID, 2> listsWhoseKindIsRead;
+        Vector<KindToldToReads, 2> kindsToldToReads;
+        bool secondTurnsGoByKindsRead { false };
+        Vector<ValueID, 2> viewsAskedForKind;
+        Vector<BoundAskedInFront, 2> boundsAskedInFront;
+        Vector<ValueID, 2> relationsAskedInFront;
+        Vector<ValueID, 2> lengthsHeldAgainstBound;
+        Vector<ValueID, 2> accessesUnderCounterBelowBound;
+        Vector<ValueID, 2> relationsOfCounterBelowBound;
+        TypedArrayType kindAskedOfView { NotTypedArray };
+        bool holesLeaveTurns { false };
+        bool storesIntoSlots { false };
+        bool storesIntoLists { false };
+        bool asksListsReadAndListsStoredInto { false };
+        bool sumsAreTakenOverBehindStretches { false };
+        bool layoutWithoutQuestionFollows { false };
     };
+    bool findStoresOfWhatComesRound(CountedLoop&, const Edge& back) const;
+    void storeWhatComesRound(const CountedLoop&, const StoreOfWhatComesRound&, LValue);
+    static void askKindsReadWhereLoopIsComeBackTo(CountedLoop&);
+    struct LimitOfWrittenLoop {
+        BlockID asking;
+        Opcode relation { Opcode::Less };
+        int64_t step { 1 };
+        size_t indexOfCounter { 0 };
+        LValue bound { nullptr };
+        LValue limit { nullptr };
+        LValue paidUpTo { nullptr };
+        LValue paidAtEntry { nullptr };
+        LBasicBlock entry { nullptr };
+        Vector<LValue, 8> phisOfEntry;
+        Vector<LValue, 8> phisOfWrittenHead;
+    };
+    struct RingOfLoopLaidOut {
+        LBasicBlock entry { nullptr };
+        LBasicBlock otherKind { nullptr };
+        LBasicBlock intoWritten { nullptr };
+        LBasicBlock writtenHead { nullptr };
+        LValue bound { nullptr };
+        LValue lastStart { nullptr };
+        LValue limit { nullptr };
+        LValue paidIntoWritten { nullptr };
+        LValue paidUpTo { nullptr };
+        Vector<LValue, 8> phisOfHead;
+        Vector<LValue, 8> phisOfEntry;
+        Vector<LValue, 8> phisIntoWritten;
+        Vector<LValue, 8> phisOfWrittenHead;
+        bool nextMayOpenAnother { false };
+    };
+    std::optional<RingOfLoopLaidOut> m_ringOfLoopLaidOut;
+    struct LayoutsInRow {
+        unsigned left { 0 };
+        LBasicBlock headBehindAll { nullptr };
+        Vector<LValue, 8> phisBehindAll;
+    };
+    std::optional<LayoutsInRow> m_layoutsInRow;
+    bool someHoleLeavesTurn(const CountedLoop&) const;
+    bool someUnusualTurnComesRound(const CountedLoop&) const;
+    LValue askCounter(Opcode relation, LValue counter, LValue limit);
+    void askLimitOfWrittenLoop(const TerminatorContext&);
+    std::optional<LimitOfWrittenLoop> m_limitOfWrittenLoop;
+    Vector<std::pair<LValue, LValue>, 8> m_phisHandedOnWhileIncomplete;
     std::optional<CountedLoop> findCountedLoopAt(size_t positionInOrder) const;
+    bool leavesKindToTurnsLaidOut(BlockID, ValueID, const Operation&) const;
+    size_t m_positionInOrder { 0 };
     void layOutTurns(const CountedLoop&);
+    bool asksTextsOfLoopForWidth(const CountedLoop&);
+    void layOutTurnsForOtherKindOfStorage(CountedLoop&, bool ofListsStoredInto = true);
+    void layOutTurnsForEachKindOfView(CountedLoop&);
     void keepArgumentsForNextTurn(const Edge&);
-    bool leavesTurnLaidOut(BlockID target) const { return m_headOfTurnsLaidOut && target != m_headOfTurnsLaidOut && !std::ranges::contains(m_turnLaidOut, target); }
     void findSumsOfIntegers(CountedLoop&, const Edge& back) const;
     bool addToSumOfIntegers(ValueID);
+    bool isTermOfSumOfElements(ValueID read) const { return std::ranges::any_of(m_sumsOfIntegers, [&](const SumOfIntegers& sum) { return sum.termIsElementOfList && sum.term == read; }); }
     void failAtLimit(LimitID, uint64_t needed, const Subject&);
 
     const FunctionInputs m_inputs;
@@ -397,9 +543,9 @@ private:
     bool m_mayReleaseBehindLastReads { false };
     bool m_mayLendCells { false };
     bool m_keepsValuesInHeapFrame { false };
-    bool m_savesFramesOfGenerators { false };
+    BitVector m_switchesTakenIntoSwitchInFront;
     bool m_looksBehindEachOperation { false };
-    bool m_leavesFailuresWithHeapFrameUnsaid { false };
+    BitVector m_storesBehindWhichOwnerIsRemembered;
     PinnedValues m_pinned;
     std::span<LValue> m_values;
     std::span<ResultRange> m_resultRanges;
@@ -413,6 +559,20 @@ private:
     std::span<const BlockID> m_turnLaidOut;
     WTF::Function<LBasicBlock()> m_blockLeavingTurnLaidOut;
     Vector<SumOfIntegers, 2> m_sumsOfIntegers;
+    Vector<ValueID, 4> m_valuesLeftOutOfTurnsLaidOut;
+    std::span<const ListAskedForKind> m_listsAskedForKindInFrontOfTurnsLaidOut;
+    std::span<const BoundAskedInFront> m_boundsAskedInFrontOfTurnsLaidOut;
+    Vector<ValueID, 2> m_relationsAskedInFrontOfTurnsLaidOut;
+    std::span<const ValueID> m_accessesUnderCounterBelowBoundOfTurnsLaidOut;
+    Vector<ValueID, 2> m_lengthsHeldAgainstBoundByLayoutThatAsked;
+    std::optional<int64_t> mostOfKeyCutByWrittenMask(ValueID key) const;
+    std::span<const ValueID> m_viewsAskedForKindInFrontOfTurnsLaidOut;
+    TypedArrayType m_kindOfViewFoundInFrontOfTurnsLaidOut { NotTypedArray };
+    Vector<std::pair<ValueID, LValue>, 2> m_kindsReadInFrontOfTurnsLaidOut;
+    bool m_holesLeaveTurnsLaidOut { false };
+    bool m_asksElementsBehindTurns { false };
+    LValue m_boxedWordsOfElementsInTurns { nullptr };
+    Vector<std::pair<ValueID, LValue>, 2> m_wordsOfElementsInTurnLaidOut;
     std::span<const BlockID> m_order;
     std::span<BlockID> m_singlePredecessors;
     std::span<ScopeFork> m_scopeAtEndOfBlock;
@@ -431,6 +591,7 @@ private:
     Operand* m_definitionTaken { nullptr };
     EmittersMade m_emitters;
     unsigned m_initializationDepth { 0 };
+    bool m_owesFenceBehindStores { false };
     bool m_isPassingHandlerArguments { false };
     bool m_isAheadOfWhatMayThrow { false };
     bool m_hasFailed { false };

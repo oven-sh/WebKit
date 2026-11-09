@@ -12,6 +12,7 @@
 #include "AOTInstance.h"
 #include "AOTSavedFrame.h"
 #include "AOTStubsBarriers.h"
+#include "AOTStubsOperations.h"
 #include "CallFrame.h"
 #include "JSGlobalObject.h"
 #include "JSPromise.h"
@@ -21,7 +22,14 @@
 
 namespace JSC { namespace AOT {
 
-StubSignature signatureOfNewPromise(StubKey) { return StubSignature::withGPRResult({ }); }
+StubSignature signatureOfNewPromise(StubKey)
+{
+#if CPU(X86_64)
+    return StubSignature::withGPRResult({ }).fillingKeptRegisterInFront(X86Registers::edx);
+#else
+    return StubSignature::withGPRResult({ });
+#endif
+}
 
 void generateNewPromise(StubAssembler& jit)
 {
@@ -55,7 +63,7 @@ void generateNewPromise(StubAssembler& jit)
 StubSignature signatureOfPromiseThen(StubKey key)
 {
     const bool isOnFulfilled = static_cast<PromiseHandler>(key.form()) == PromiseHandler::OnFulfilled;
-    return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(isOnFulfilled ? StubRegister::A2 : StubRegister::A3), gprOf(StubRegister::A4) });
+    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(isOnFulfilled ? StubRegister::A2 : StubRegister::A3), gprOf(StubRegister::A4) });
 }
 
 void generatePromiseThen(StubAssembler& jit)
@@ -64,13 +72,14 @@ void generatePromiseThen(StubAssembler& jit)
     const GPRReg promise = jit.operand(0);
     const GPRReg handler = jit.operand(1);
     const GPRReg derived = jit.operand(2);
+    const GPRReg given = jit.result();
     const GPRReg otherHandler = jit.allocateScratch(isOnFulfilled ? StubRegister::A3 : StubRegister::A2);
     const GPRReg word = jit.allocateScratch(StubRegister::A5);
     const GPRReg other = otherHandler;
     const auto kind = isOnFulfilled ? JSPromise::InlineReactionKind::FulfillHandler : JSPromise::InlineReactionKind::RejectHandler;
     const uint64_t reactionBits = (static_cast<uint64_t>(JSPromise::isHandledFlag) | static_cast<uint64_t>(kind) << JSPromise::inlineReactionKindShift) << promiseFlagsShift;
     RELEASE_ASSERT(promise == operationArgumentGPR(1) && derived == operationArgumentGPR(4) && handler == operationArgumentGPR(isOnFulfilled ? 2 : 3));
-    RELEASE_ASSERT(noOverlap(promise, handler, derived, otherHandler, word, instanceGPR));
+    RELEASE_ASSERT(noOverlap(promise, handler, derived, otherHandler, word, given, instanceGPR));
 
     JumpList needsOperation;
     JumpList takesNoInlineReaction;
@@ -84,11 +93,12 @@ void generatePromiseThen(StubAssembler& jit)
     jit.or64(TrustedImm64(static_cast<int64_t>(reactionBits)), word);
     jit.store64(handler, Address(promise, JSPromise::offsetOfSlot()));
     jit.store64(word, Address(promise, JSPromise::offsetOfPacked()));
+    jit.move(derived, given);
     jit.returnToCaller();
 
     takesNoInlineReaction.link(&jit);
     if (isOnFulfilled) {
-        const JobRegisters job { jit.allocateScratch(StubRegister::T9), jit.allocateScratch(StubRegister::R0), jit.allocateScratch(StubRegister::T12), word };
+        const JobRegisters job { jit.allocateScratch(StubRegister::T9), given, jit.allocateScratch(StubRegister::T12), word };
         RELEASE_ASSERT(noOverlap(promise, handler, derived, other, job.queue, job.slot, job.next, job.scratch, instanceGPR));
         emitBranchUnlessHolds(jit, awaitedIsFulfilled, { InvalidGPRReg, promise, word, other }, needsOperation);
         emitReserveJob(jit, job, needsOperation);
@@ -99,12 +109,27 @@ void generatePromiseThen(StubAssembler& jit)
         jit.move(TrustedImm64(JSValue::ValueUndefined), other);
         jit.store64(other, argumentOfJob(job.slot, 3));
         emitPublishJob(jit, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Fulfilled, job);
+        jit.move(derived, given);
+        jit.returnToCaller();
+    } else {
+        const JobRegisters job { jit.allocateScratch(StubRegister::T9), given, jit.allocateScratch(StubRegister::T12), word };
+        RELEASE_ASSERT(noOverlap(promise, handler, derived, other, job.queue, job.slot, job.next, job.scratch, instanceGPR));
+        emitBranchUnlessHolds(jit, awaitedIsFulfilled, { InvalidGPRReg, promise, word, other }, needsOperation);
+        emitReserveJob(jit, job, needsOperation);
+        jit.store64(derived, argumentOfJob(job.slot, 0));
+        jit.load64(Address(promise, JSPromise::offsetOfSlot()), other);
+        jit.store64(other, argumentOfJob(job.slot, 1));
+        jit.move(TrustedImm64(JSValue::ValueUndefined), other);
+        jit.store64(other, argumentOfJob(job.slot, 2));
+        jit.store64(other, argumentOfJob(job.slot, 3));
+        emitPublishJob(jit, InternalMicrotask::PromiseResolveWithoutHandlerJob, JSPromise::Status::Fulfilled, job);
+        jit.move(derived, given);
         jit.returnToCaller();
     }
 
     needsOperation.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), otherHandler);
-    jit.callOperationAndReturn(Entry::operationAOTPromiseThen, { .returns = OperationCall::Returns::Void });
+    jit.callOperationAndReturn(Entry::operationAOTPromiseThen, { .returns = OperationCall::Returns::Value });
 }
 
 void emitBranchIfMayBeThenable(StubAssembler& jit, GPRReg value, GPRReg structure, GPRReg scratch, JumpList& mayBeThenable)
@@ -120,6 +145,32 @@ void emitBranchIfMayBeThenable(StubAssembler& jit, GPRReg value, GPRReg structur
     mayBeThenable.append(branchIfWatchpointSetIsNotWatched(jit, Address(scratch, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet)), scratch));
     isNotObject.link(&jit);
     isNotCell.link(&jit);
+}
+
+static_assert(noOverlap(resultGPROfPreservingCall(), gprOf(StubRegister::T9), gprOf(StubRegister::T11)));
+
+StubSignature signatureOfIsNotThenable(StubKey)
+{
+    StubSignature signature = StubSignature::withGPRResult({ Reg(resultGPROfPreservingCall()) });
+    signature.firstResult = resultGPROfPreservingCall();
+    return signature;
+}
+
+void generateIsNotThenable(StubAssembler& jit)
+{
+    const GPRReg value = jit.clobberOperand(0);
+    const GPRReg result = jit.result();
+    const GPRReg structure = jit.allocateScratch(StubRegister::T9);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    RELEASE_ASSERT(value == result);
+    JumpList mayBeThenable;
+    emitBranchIfMayBeThenable(jit, value, structure, scratch, mayBeThenable);
+    jit.move(TrustedImm32(1), result);
+    jit.returnToCaller();
+
+    mayBeThenable.link(&jit);
+    jit.move(TrustedImm32(0), result);
+    jit.returnToCaller();
 }
 
 void emitFulfillPromise(StubAssembler& jit, GPRReg promise, GPRReg value, GPRReg other, const JobRegisters& job, JumpList& needsEngine)

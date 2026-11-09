@@ -10,6 +10,7 @@
 #include "AOTMachine.h"
 #include "AOTMachineNumbering.h"
 #include <wtf/Function.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Machine {
 
@@ -107,14 +108,31 @@ public:
         m_block = block;
     }
 
-    JS_EXPORT_PRIVATE Operation* const32(int32_t);
-    JS_EXPORT_PRIVATE Operation* const64(int64_t);
+    Operation* const32(int32_t value)
+    {
+        if (static_cast<uint32_t>(value) < numberOfSmallConstantsKept) {
+            if (Operation* kept = m_smallConstants32[static_cast<uint32_t>(value)])
+                return kept;
+        }
+        return const32Slow(value);
+    }
+    Operation* const64(int64_t value)
+    {
+        if (static_cast<uint64_t>(value) < numberOfSmallConstantsKept) {
+            if (Operation* kept = m_smallConstants64[static_cast<uint64_t>(value)])
+                return kept;
+        }
+        return const64Slow(value);
+    }
+    JS_EXPORT_PRIVATE Operation* const32Slow(int32_t);
+    JS_EXPORT_PRIVATE Operation* const64Slow(int64_t);
     JS_EXPORT_PRIVATE Operation* constFloat(float);
     JS_EXPORT_PRIVATE Operation* constDouble(double);
     Operation* constantOfType(Type type, int64_t value) { return type == Int32 ? const32(static_cast<int32_t>(value)) : const64(value); }
 
     JS_EXPORT_PRIVATE Operation* unary(Opcode, Operation*);
     JS_EXPORT_PRIVATE Operation* binary(Opcode, Operation*, Operation*);
+    JS_EXPORT_PRIVATE bool findsAgain(Operation* sumOrProduct);
     JS_EXPORT_PRIVATE Operation* lowWord(Operation*);
     JS_EXPORT_PRIVATE Operation* extendWordThatIsNotNegative(Operation*);
     JS_EXPORT_PRIVATE Operation* chill(Opcode, Operation*, Operation*);
@@ -138,7 +156,7 @@ public:
     JS_EXPORT_PRIVATE void fence();
     JS_EXPORT_PRIVATE static std::optional<int64_t> valueKnownToBeReadThrough(const Operation* base);
 
-    JS_EXPORT_PRIVATE void verifyInheritedLoads(HeapIndex writtenByOtherThreads, Function<void(Operation* readSameBits)>&&);
+    JS_EXPORT_PRIVATE void verifyReusedLoads(std::initializer_list<HeapIndex> writtenByOtherThreads, Function<void(Operation* readSameBits)>&&);
 
     JS_EXPORT_PRIVATE void setDeclaredAccesses(const HeapSet& reads, const HeapSet& writes);
     JS_EXPORT_PRIVATE void clearDeclaredAccesses();
@@ -161,12 +179,14 @@ public:
     JS_EXPORT_PRIVATE Operation* upsilon(Operation* value, Operation* phi = nullptr);
     JS_EXPORT_PRIVATE void setPhi(Operation* upsilon, Operation* phi);
     JS_EXPORT_PRIVATE Operation* upsilonOfCompletePhi(Operation* value, Operation* phi);
+    JS_EXPORT_PRIVATE bool handOnUpperHalf(const Operation* value, Operation* phi);
 
     JS_EXPORT_PRIVATE PatchOperation* patch(Type);
     JS_EXPORT_PRIVATE PatchOperation* check(Operation* predicate);
     JS_EXPORT_PRIVATE Operation* findPurePatch(const PureFunction&, Type, std::span<Operation* const> operands);
     JS_EXPORT_PRIVATE void recordPurePatch(PatchOperation*);
     JS_EXPORT_PRIVATE void recordInPlaceOfPurePatch(const PureFunction&, Operation* phi);
+    JS_EXPORT_PRIVATE void recordInPlaceOfReadOfMemory(const PureFunction&, Operation* phi, Operation* operand, const AbstractHeap&);
 
     JS_EXPORT_PRIVATE void jump(Edge);
     JS_EXPORT_PRIVATE bool tryToLeadBranchPastEmptyBlock(Edge);
@@ -203,7 +223,10 @@ private:
         return index < m_epochOfLastInheritedFind.size() && m_epochOfLastInheritedFind[index] == m_scopeEpoch;
     }
     Operation* appendLoadLike(const Operation* load, Operation* base);
-    void verifyInheritedLoad(Operation* load);
+    void verifyReusedLoad(Operation* load, Operation* baseAsked, int32_t offsetAsked);
+    void noteNumberedLoadForStores(Operation* load);
+    void stopIfLoadOfStoredWordStands(const Operation* store);
+    bool isWrittenByOtherThreads(HeapIndex) const;
     template<unsigned numberOfChildren, KindOfAppendedOperation, bool hasRoom> Operation* appendNewWithChildren(Opcode, Type, Operation* first, Operation* second, Operation* third);
     Operation* appendNew(Opcode, Type);
     Operation* appendNew(Opcode, Type, Operation*);
@@ -261,9 +284,10 @@ private:
     uint32_t m_scopeEpoch { 0 };
     bool m_hasInheritedFindsInEpoch { false };
     bool m_isDuplicating { false };
-    bool m_isVerifyingInheritedLoad { false };
-    HeapIndex m_heapWrittenByOtherThreads { rootHeapIndex };
-    Function<void(Operation*)> m_verifierOfInheritedLoads;
+    bool m_isVerifyingReusedLoad { false };
+    Vector<HeapIndex, 2> m_heapsWrittenByOtherThreads;
+    UncheckedKeyHashMap<uint64_t, Vector<Operation*, 2>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_numberedLoadsByPlace;
+    Function<void(Operation*)> m_verifierOfReusedLoads;
     Origin m_origin;
     PatchOperation* m_pendingPatch { nullptr };
     bool m_hasDeclaredAccesses { false };

@@ -667,6 +667,8 @@ public:
 private:
     bool tryDefineWithoutValidation(PropertyName name, const PropertyDescriptor& descriptor)
     {
+        if (isPreparedBeforeLookups(m_vm, name.uid()))
+            return false;
         Object& target = *m_compiledTarget;
         unsigned attributes = descriptor.attributes();
         const FieldData* field = target.fieldNamed(target.state(), name);

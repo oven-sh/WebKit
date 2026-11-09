@@ -27,7 +27,7 @@ inline std::optional<WordOfGetterForSiteAnswers> findWordOfGetterForSiteAnswers(
 {
     using Form = SiteAnswers::Form;
     static_assert(Slot::payloadOf(Slot::Kind::Getter) == SlotPayload::Holder && Slot::locationOf(Slot::Kind::Getter) == SlotLocation::WordIndex);
-    if (use != SiteUse::Read)
+    if (!isRead(use) && use != SiteUse::Call)
         return std::nullopt;
     int32_t wordIndex = slot.wordIndex();
     if (slot.has(Slot::isOwn)) {

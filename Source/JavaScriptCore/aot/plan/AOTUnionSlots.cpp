@@ -167,14 +167,16 @@ struct OffsetUseInUnionSlots {
     uint32_t numberOfRows { 0 };
 };
 
-Vector<OffsetUseInUnionSlots, 8> countOffsetUsesInUnionSlots(Vector<uint32_t, 8>&& offsets)
+Vector<OffsetUseInUnionSlots, 8> countOffsetUsesInUnionSlots(Vector<OffsetUseInUnionSlots, 8>&& offsets)
 {
-    AOT::sort(offsets);
+    AOT::sort(offsets, [](const OffsetUseInUnionSlots& a, const OffsetUseInUnionSlots& b) {
+        return a.offset < b.offset;
+    });
     Vector<OffsetUseInUnionSlots, 8> uses;
-    for (uint32_t offset : offsets) {
-        if (uses.isEmpty() || uses.last().offset != offset)
-            uses.append(OffsetUseInUnionSlots { offset, 0 });
-        ++uses.last().numberOfRows;
+    for (OffsetUseInUnionSlots use : offsets) {
+        if (uses.isEmpty() || uses.last().offset != use.offset)
+            uses.append(OffsetUseInUnionSlots { use.offset, 0 });
+        uses.last().numberOfRows += use.numberOfRows;
     }
     AOT::sort(uses, [](const OffsetUseInUnionSlots& a, const OffsetUseInUnionSlots& b) {
         return a.numberOfRows != b.numberOfRows ? a.numberOfRows > b.numberOfRows : a.offset < b.offset;
@@ -214,8 +216,8 @@ public:
             addRowsPassedOver();
         m_cells.grow(m_numberOfLayouts);
         m_depthsReached.fill(0, m_numberOfLayouts);
-        for (const Group& group : m_groups)
-            placeAtSharedOffsets(group);
+        for (uint32_t group : m_groupsInOrder)
+            placeAtSharedOffsets(m_groups[group]);
         fillLayoutsThatWereTouched();
         finishLayoutsThatWereTouched();
     }
@@ -240,24 +242,38 @@ private:
         bool isQueued { false };
     };
 
-    struct Group {
-        uint32_t firstUnit { 0 };
-        uint32_t numberOfUnits { 0 };
+    struct PartOfGroup {
+        uint32_t index { 0 };
+        uint32_t numberOfRows { 0 };
+        bool isGroup { false };
     };
 
-    struct RowInMember {
-        uint32_t family { 0 };
-        uint32_t key { 0 };
+    struct Group {
+        uint32_t firstPart { 0 };
+        uint32_t numberOfParts { 0 };
+        uint32_t depthOfDeepestDeclaration { 0 };
+        uint32_t numberOfRows { 0 };
+        uint32_t numberOfRowsInWidestFamily { 0 };
+        uint32_t firstUnitLeft { 0 };
+        uint32_t numberOfUnitsLeft { 0 };
         uint8_t logWidth { 0 };
         FormInUnionSlots form { FormInUnionSlots::Unknown };
+    };
+
+    struct NameInFamily {
+        uint32_t key { 0 };
+        PartOfGroup part;
+    };
+
+    struct RowsOfUnit {
         UnitIndex unit { 0 };
+        uint32_t numberOfRows { 0 };
     };
 
     uint32_t rowOf(FieldReference field) const { return m_rows.firstRowOfLayout[field.layout.index()] + field.field; }
     uint32_t widthOfRow(uint32_t row) const { return m_rows.widths.empty() ? widestSlotInUnionSlots : m_rows.widths[row]; }
     bool isTouchable(LayoutID id) const { return m_depths[id.index()] != none; }
     std::span<const uint32_t> rowsOf(UnitIndex unit) const LIFETIME_BOUND { return m_rowsOfUnits.span().subspan(m_units[unit].firstRow, m_units[unit].numberOfRows); }
-    std::span<const UnitIndex> unitsOf(const Group& group) const LIFETIME_BOUND { return m_unitsOfGroups.span().subspan(group.firstUnit, group.numberOfUnits); }
     uint32_t offsetOfFirstSlotOf(LayoutID id) const { return m_rows.offsetsOfFirstSlots[id.index()]; }
 
     bool standsByItself(LayoutID id) const
@@ -390,7 +406,7 @@ private:
         if (declaresOrRefusesUnit) {
             m_units.shrink(0);
             m_groups.shrink(0);
-            m_unitsOfGroups.shrink(0);
+            m_partsOfGroups.shrink(0);
             collectUnits();
             collectGroups();
             return;
@@ -483,104 +499,97 @@ private:
                 membersOutsideSmallerFamilies[firstMemberOutsideSmallerFamilies[family.index() + 1]++] = LayoutID(layout);
         }
 
-        struct DeclarationOfName {
-            uint32_t key { 0 };
-            UnitIndex unit { 0 };
-            auto operator<=>(const DeclarationOfName&) const = default;
-        };
-        Vector<Vector<DeclarationOfName>> declarationsInFamilies(numberOfFamilies);
-        Vector<uint32_t> numbersOfDeclarationsInOrder;
-        numbersOfDeclarationsInOrder.fill(0, numberOfFamilies);
-        BitVector familiesWhoseNamesInOrderHaveOneDeclarationEach(numberOfFamilies);
-        Vector<uint32_t> lastFamiliesWithSeveralDeclarations;
-        lastFamiliesWithSeveralDeclarations.fill(0, types.numberOfPropertyKeys());
-
-        Vector<RowInMember> rowsInMembers;
-        Vector<uint64_t> namesWithUnits;
+        Vector<Vector<NameInFamily>> namesOfFamiliesInside(numberOfFamilies);
+        BitVector familiesThatOneFamilyInsideLeftNamesWithOneUnitEach(numberOfFamilies);
         for (uint32_t family = 0; family < numberOfFamilies; ++family) {
-            Vector<DeclarationOfName> declarations = std::exchange(declarationsInFamilies[family], { });
+            Vector<NameInFamily> names = std::exchange(namesOfFamiliesInside[family], { });
+            size_t numberFromInside = names.size();
             for (LayoutID member : membersOutsideSmallerFamilies.span().subspan(firstMemberOutsideSmallerFamilies[family], firstMemberOutsideSmallerFamilies[family + 1] - firstMemberOutsideSmallerFamilies[family])) {
                 forEachNameOf(member, [&](uint32_t key, UnitIndex unit) {
-                    declarations.append(DeclarationOfName { key, unit });
+                    names.append(NameInFamily { key, { unit, 1, false } });
                 });
             }
-            auto endOfThoseInOrder = declarations.begin() + numbersOfDeclarationsInOrder[family];
-            bool isAsFamilyInsideLeftIt = endOfThoseInOrder == declarations.end() && familiesWhoseNamesInOrderHaveOneDeclarationEach.quickGet(family);
-            std::ranges::sort(std::span(endOfThoseInOrder, declarations.end()), { }, [](const DeclarationOfName& declaration) {
-                return static_cast<uint64_t>(declaration.key) << 32 | declaration.unit;
-            });
-            std::inplace_merge(declarations.begin(), endOfThoseInOrder, declarations.end());
+            bool isAsFamilyInsideLeftIt = names.size() == numberFromInside && familiesThatOneFamilyInsideLeftNamesWithOneUnitEach.quickGet(family);
+            if (!isAsFamilyInsideLeftIt) {
+                AOT::sort(names, [](const NameInFamily& a, const NameInFamily& b) {
+                    return std::tuple(a.key, a.part.isGroup, a.part.index) < std::tuple(b.key, b.part.isGroup, b.part.index);
+                });
+            }
 
-            bool hasNameWithSeveralDeclarations = false;
-            size_t numberKept = isAsFamilyInsideLeftIt ? declarations.size() : 0;
-            for (size_t index = numberKept; index < declarations.size(); ++index) {
-                DeclarationOfName declaration = declarations[index];
-                size_t numberKeptOfName = numberKept && declarations[numberKept - 1].key == declaration.key ? 1 + (numberKept > 1 && declarations[numberKept - 2].key == declaration.key) : 0;
-                if (numberKeptOfName == 2 || (numberKeptOfName && declarations[numberKept - 1].unit == declaration.unit))
+            bool someNameHasGroup = false;
+            size_t numberKept = isAsFamilyInsideLeftIt ? names.size() : 0;
+            for (size_t begin = numberKept; begin < names.size();) {
+                size_t end = begin;
+                size_t endOfNamed = begin;
+                for (; end < names.size() && names[end].key == names[begin].key; ++end) {
+                    NameInFamily name = names[end];
+                    if (endOfNamed > begin && !name.part.isGroup && names[endOfNamed - 1].part.index == name.part.index)
+                        names[endOfNamed - 1].part.numberOfRows += name.part.numberOfRows;
+                    else
+                        names[endOfNamed++] = name;
+                }
+                std::span<NameInFamily> named = names.mutableSpan().subspan(begin, endOfNamed - begin);
+                begin = end;
+                if (named.size() == 1 && !named[0].part.isGroup) {
+                    names[numberKept++] = named[0];
                     continue;
-                if (numberKeptOfName) {
-                    hasNameWithSeveralDeclarations = true;
-                    lastFamiliesWithSeveralDeclarations[declaration.key] = family + 1;
                 }
-                declarations[numberKept++] = declaration;
-            }
-            declarations.shrink(numberKept);
-
-            if (hasNameWithSeveralDeclarations) {
-                namesWithUnits.shrink(0);
-                m_program.at(m_families.layoutsOf(FamilyID(family))).forEach([&](LayoutID member) {
-                    forEachNameOf(member, [&](uint32_t key, UnitIndex unit) {
-                        if (lastFamiliesWithSeveralDeclarations[key] == family + 1)
-                            namesWithUnits.append(static_cast<uint64_t>(key) << 32 | unit);
-                    });
+                auto classOf = [&](const PartOfGroup& part) {
+                    return part.isGroup ? std::tuple(m_groups[part.index].logWidth, m_groups[part.index].form) : std::tuple(m_units[part.index].logWidth, formOf(part.index));
+                };
+                AOT::sort(named, [&](const NameInFamily& a, const NameInFamily& b) {
+                    return std::tuple_cat(classOf(a.part), std::tuple(a.part.isGroup, a.part.index)) < std::tuple_cat(classOf(b.part), std::tuple(b.part.isGroup, b.part.index));
                 });
-                std::ranges::sort(namesWithUnits);
-                for (uint64_t nameWithUnit : namesWithUnits) {
-                    UnitIndex unit = static_cast<UnitIndex>(nameWithUnit);
-                    rowsInMembers.append(RowInMember { family, static_cast<uint32_t>(nameWithUnit >> 32), m_units[unit].logWidth, FormInUnionSlots::Unknown, unit });
+                for (std::span<const NameInFamily> rest = named; !rest.empty();) {
+                    size_t size = std::ranges::find_if(rest, [&](const NameInFamily& other) {
+                        return classOf(other.part) != classOf(rest[0].part);
+                    }) - rest.begin();
+                    NameInFamily kept = rest[0];
+                    if (size > 1 || kept.part.isGroup) {
+                        Group group;
+                        group.firstPart = static_cast<uint32_t>(m_partsOfGroups.size());
+                        group.numberOfParts = static_cast<uint32_t>(size);
+                        std::tie(group.logWidth, group.form) = classOf(kept.part);
+                        for (const NameInFamily& name : rest.first(size)) {
+                            m_partsOfGroups.append(name.part);
+                            group.depthOfDeepestDeclaration = std::max(group.depthOfDeepestDeclaration, name.part.isGroup ? m_groups[name.part.index].depthOfDeepestDeclaration : m_units[name.part.index].depth);
+                            group.numberOfRows += name.part.isGroup ? m_groups[name.part.index].numberOfRows : name.part.numberOfRows;
+                        }
+                        kept.part = PartOfGroup { static_cast<uint32_t>(m_groups.size()), 0, true };
+                        m_groups.append(group);
+                        someNameHasGroup = true;
+                    }
+                    rest = rest.subspan(size);
+                    names[numberKept++] = kept;
                 }
             }
+            names.shrink(numberKept);
 
             if (FamilyID above = m_families.nearestFamilyAbove(FamilyID(family))) {
-                Vector<DeclarationOfName>& declarationsAbove = declarationsInFamilies[above.index()];
-                if (declarationsAbove.isEmpty()) {
-                    numbersOfDeclarationsInOrder[above.index()] = declarations.size();
-                    familiesWhoseNamesInOrderHaveOneDeclarationEach.quickSet(above.index(), !hasNameWithSeveralDeclarations);
-                    declarationsAbove = WTF::move(declarations);
-                } else
-                    declarationsAbove.appendVector(declarations);
+                Vector<NameInFamily>& namesAbove = namesOfFamiliesInside[above.index()];
+                familiesThatOneFamilyInsideLeftNamesWithOneUnitEach.quickSet(above.index(), namesAbove.isEmpty() && !someNameHasGroup);
+                if (namesAbove.isEmpty())
+                    namesAbove = WTF::move(names);
+                else
+                    namesAbove.appendVector(names);
             }
         }
-        auto nameInFamily = [](const RowInMember& row) {
-            return std::tuple(row.family, row.key);
-        };
-
-
-        for (size_t begin = 0; begin < rowsInMembers.size();) {
-            size_t end = begin;
-            while (end < rowsInMembers.size() && nameInFamily(rowsInMembers[end]) == nameInFamily(rowsInMembers[begin]))
-                ++end;
-            std::span<RowInMember> named = rowsInMembers.mutableSpan().subspan(begin, end - begin);
-            begin = end;
-            if (named.front().unit == named.back().unit)
-                continue;
-            for (RowInMember& row : named)
-                row.form = formOf(row.unit);
-            AOT::sort(named, [](const RowInMember& a, const RowInMember& b) {
-                return std::tuple(a.logWidth, a.form, a.unit) < std::tuple(b.logWidth, b.form, b.unit);
-            });
-            for (std::span<const RowInMember> rest = named; !rest.empty();) {
-                size_t size = std::ranges::find_if(rest, [&](const RowInMember& row) {
-                    return row.logWidth != rest[0].logWidth || row.form != rest[0].form;
-                }) - rest.begin();
-                if (rest[0].unit != rest[size - 1].unit) {
-                    m_groups.append(Group { static_cast<uint32_t>(m_unitsOfGroups.size()), static_cast<uint32_t>(size) });
-                    for (const RowInMember& row : rest.first(size))
-                        m_unitsOfGroups.append(row.unit);
-                }
-                rest = rest.subspan(size);
+        for (size_t index = m_groups.size(); index--;) {
+            Group& group = m_groups[index];
+            group.numberOfRowsInWidestFamily = std::max(group.numberOfRowsInWidestFamily, group.numberOfRows);
+            for (const PartOfGroup& part : m_partsOfGroups.span().subspan(group.firstPart, group.numberOfParts)) {
+                if (part.isGroup)
+                    m_groups[part.index].numberOfRowsInWidestFamily = std::max(m_groups[part.index].numberOfRowsInWidestFamily, group.numberOfRowsInWidestFamily);
             }
         }
+        m_groupsInOrder.shrink(0);
+        for (uint32_t group = 0; group < m_groups.size(); ++group)
+            m_groupsInOrder.append(group);
+        AOT::stableSort(m_groupsInOrder, [&](uint32_t a, uint32_t b) {
+            if (m_groups[a].depthOfDeepestDeclaration != m_groups[b].depthOfDeepestDeclaration)
+                return m_groups[a].depthOfDeepestDeclaration < m_groups[b].depthOfDeepestDeclaration;
+            return m_rows.haveFinalWidths && m_groups[a].numberOfRowsInWidestFamily > m_groups[b].numberOfRowsInWidestFamily;
+        });
     }
 
     ALWAYS_INLINE CellInUnionSlots& cellOf(LayoutID id)
@@ -832,26 +841,70 @@ private:
         });
     }
 
-    void placeAtSharedOffsets(const Group& group)
+    void placeAtSharedOffsets(Group& group)
     {
-        std::span<const UnitIndex> unitsOfGroup = unitsOf(group);
+        Vector<RowsOfUnit, 16> rows;
+        for (const PartOfGroup& part : m_partsOfGroups.span().subspan(group.firstPart, group.numberOfParts)) {
+            if (part.isGroup)
+                rows.append(m_unitsLeftByGroups.span().subspan(m_groups[part.index].firstUnitLeft, m_groups[part.index].numberOfUnitsLeft));
+            else
+                rows.append(RowsOfUnit { part.index, part.numberOfRows });
+        }
+        auto uniteRowsWhere = [&](NOESCAPE const Invocable<bool(UnitIndex, UnitIndex)> auto& standsFor) {
+            size_t numberKept = 0;
+            for (RowsOfUnit ofUnit : rows) {
+                if (numberKept && standsFor(rows[numberKept - 1].unit, ofUnit.unit))
+                    rows[numberKept - 1].numberOfRows += ofUnit.numberOfRows;
+                else
+                    rows[numberKept++] = ofUnit;
+            }
+            rows.shrink(numberKept);
+        };
+        AOT::sort(rows, [](const RowsOfUnit& a, const RowsOfUnit& b) {
+            return a.unit < b.unit;
+        });
+        uniteRowsWhere([](UnitIndex kept, UnitIndex next) {
+            return kept == next;
+        });
+
+        placeAtSharedOffsets(rows.span());
+
+        auto offsetOrNone = [&](UnitIndex unit) {
+            return m_units[unit].isPlaced ? static_cast<uint64_t>(m_units[unit].offset) : std::numeric_limits<uint64_t>::max();
+        };
+        AOT::sort(rows, [&](const RowsOfUnit& a, const RowsOfUnit& b) {
+            return std::tuple(offsetOrNone(a.unit), a.unit) < std::tuple(offsetOrNone(b.unit), b.unit);
+        });
+        uniteRowsWhere([&](UnitIndex kept, UnitIndex next) {
+            return m_units[next].isPlaced && offsetOrNone(kept) == offsetOrNone(next);
+        });
+        group.firstUnitLeft = static_cast<uint32_t>(m_unitsLeftByGroups.size());
+        group.numberOfUnitsLeft = static_cast<uint32_t>(rows.size());
+        m_unitsLeftByGroups.appendVector(rows);
+    }
+
+    void placeAtSharedOffsets(std::span<const RowsOfUnit> rows)
+    {
         UnitList unplaced;
-        for (UnitIndex unit : unitsOfGroup) {
-            if (!m_units[unit].isPlaced && (unplaced.isEmpty() || unplaced.last() != unit))
-                unplaced.append(unit);
+        for (const RowsOfUnit& ofUnit : rows) {
+            if (!m_units[ofUnit.unit].isPlaced)
+                unplaced.append(ofUnit.unit);
         }
         if (unplaced.isEmpty())
             return;
+        UnitList unitsOfGroup;
+        for (const RowsOfUnit& ofUnit : rows)
+            unitsOfGroup.append(ofUnit.unit);
 
         placeUnitsDeclaredAbove(unplaced.span());
         unplaced.removeAllMatching([&](UnitIndex unit) {
             return m_units[unit].isPlaced || waitsForUnitsDeclaredAbove(unit);
         });
 
-        Vector<uint32_t, 8> offsets;
-        for (UnitIndex unit : unitsOfGroup) {
-            if (m_units[unit].isPlaced)
-                offsets.append(m_units[unit].offset);
+        Vector<OffsetUseInUnionSlots, 8> offsets;
+        for (const RowsOfUnit& ofUnit : rows) {
+            if (m_units[ofUnit.unit].isPlaced)
+                offsets.append(OffsetUseInUnionSlots { m_units[ofUnit.unit].offset, ofUnit.numberOfRows });
         }
         Vector<OffsetUseInUnionSlots, 8> offsetsInUse = countOffsetUsesInUnionSlots(WTF::move(offsets));
         if (offsetsInUse.size() <= 1)
@@ -914,7 +967,9 @@ private:
     Vector<Unit> m_units;
     Vector<uint32_t> m_rowsOfUnits;
     Vector<Group> m_groups;
-    Vector<UnitIndex> m_unitsOfGroups;
+    Vector<uint32_t> m_groupsInOrder;
+    Vector<PartOfGroup> m_partsOfGroups;
+    Vector<RowsOfUnit> m_unitsLeftByGroups;
 };
 
 } // anonymous namespace

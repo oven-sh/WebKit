@@ -29,7 +29,7 @@
 # LATER-NEXT: may hold 8 8
 # RUN(ACCESSOR): run-in-shell give = () => "other"; keep = x => x; later = function (Meter) { Object.defineProperty(Meter.prototype, "missing", { get() { return 9; } }); };
 # ACCESSOR: lacks undefined undefined
-# ACCESSOR-NEXT: may hold 9 9
+# ACCESSOR-NEXT: - 9
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

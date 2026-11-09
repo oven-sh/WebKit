@@ -1,5 +1,5 @@
 import type { Problems } from "./declarations.ts";
-import { DependencyClosure, type RuntimeDependencies } from "./dependency-closure.ts";
+import { closureOf, type RuntimeDependencies } from "./dependency-closure.ts";
 import type { ModelBuiltin, ModelFunction, ModelModule, TableModel } from "./model.ts";
 
 const maximumHostFunctionCount = 20;
@@ -40,7 +40,7 @@ function checkUndeclaredNativeCode(model: TableModel, problems: Problems): void 
 }
 
 export function checkDependencies(model: TableModel, problems: Problems): void {
-  const closure = new DependencyClosure(model);
+  const closure = closureOf(model);
   const anyHostObject = closure.dependenciesOfAnyHostObject();
   checkLoadsNothing(
     anyHostObject,
@@ -59,7 +59,7 @@ export function checkDependencies(model: TableModel, problems: Problems): void {
 }
 
 export function describeUndescribedResults(model: TableModel): string {
-  return new DependencyClosure(model)
+  return closureOf(model)
     .undescribedResults()
     .map(({ builtin, reason }) => `${builtin.text}: ${reason}\n`)
     .join("");
@@ -77,7 +77,7 @@ export function undescribedProperties(model: Pick<TableModel, "builtins" | "modu
 }
 
 export function summarizeUndescribedResults(model: TableModel): string {
-  const closure = new DependencyClosure(model);
+  const closure = closureOf(model);
   const { loads, calls, implementedBy } = closure.dependenciesOfAnyHostObject();
   return (
     `${closure.undescribedResults().length} host entries have a result that is not described; ` +

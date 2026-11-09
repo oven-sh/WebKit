@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTWalk.h"
+#include "AOTWalkNumberGuesses.h"
 
 #if ENABLE(AOT)
 
@@ -13,6 +14,7 @@
 #include "AOTOpcodeSets.h"
 #include "AOTOperatorForms.h"
 #include "AOTTypeArena.h"
+#include "AOTTypeRelations.h"
 #include "AOTTypeTable.h"
 #include "JSGlobalObjectFunctions.h"
 #include <cmath>
@@ -27,6 +29,7 @@ Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 static constexpr OpcodeSet arithmeticAmongTypedOperators = operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative, OperatorKind::Bitwise });
 static constexpr OpcodeSet conversionsAmongTypedOperators { Opcode::ToNumber, Opcode::ToNumeric, Opcode::ToString, Opcode::ToBoolean };
 static constexpr OpcodeSet opcodesOfTypedOperators = arithmeticAmongTypedOperators | allEqualities | allRelations | conversionsAmongTypedOperators;
+static_assert(opcodesOfTypedOperators == opcodesThatBuildTypedOperatorTakes);
 
 static_assert(!OperandIndex::Eq::left && !OperandIndex::TypeTest::value && !OperandIndex::TypeOf::value);
 
@@ -78,9 +81,15 @@ OperatorForm formAllowedForTypedOperator(Walker& walker, Opcode opcode, const Bo
     return chooseFormOfOperator(walker.program(), walker.types(), opcode, operands);
 }
 
-static bool buildInFormOfTypedOperator(Walker& walker, Draft&& draft, OperatorForm form, ValueID input)
+static ALWAYS_INLINE bool buildInFormOfTypedOperator(Walker& walker, Draft&& draft, OperatorForm form, ValueID input)
 {
     walker.chooseConservativeFields(draft);
+    if (form == OperatorForm::NumberAndValue && holdOperandBesideNumberToNumberOrBeginTurnAgain(walker, draft, input))
+        form = formAllowedForTypedOperator(walker, draft);
+    else if (Walker::NumberAskedBesideNumber asked = form == OperatorForm::NumberAndValue ? walker.askValueBesideNumberForNumber(walker.currentBodyIndex().value(input)) : Walker::NumberAskedBesideNumber()) {
+        draft.setOperand(asked.operandIndex, asked.proven);
+        form = formAllowedForTypedOperator(walker, draft);
+    }
     draft.setForm(form);
     Origin origin = draft.origin();
     walker.bind(input, boxedUnlessNumbersAreUnboxed(walker, walker.build(WTF::move(draft)), origin));
@@ -174,6 +183,28 @@ static bool equalsTextAloneInTypedOperator(Walker& walker, const Type& text, con
     return std::isnan(jsToNumber(walker.types().viewOf(literal, buffer)));
 }
 
+static ALWAYS_INLINE TypeID typeOfOneTestableBuiltinOfTypedOperator(Walker& walker, const Type& type)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID builtin = type.isObject() ? singleBuiltinOf(walker.types(), type) : BuiltinID();
+    if (!builtin || !isTestableBuiltin(table, table.canonicalID(builtin)))
+        return { };
+    return walker.types().forBuiltin(table.canonicalID(builtin));
+}
+
+static bool rowsOfMethodThatGaveValueGiveNumbersAlone(Walker& walker, Reference given)
+{
+    const Operation& call = walker.code().at(given.id());
+    if (call.opcode != Opcode::Call || !call.methodOfReceiverAsMade())
+        return false;
+    BuiltinOperandTypes passed;
+    passed.receiver = TypeTable::anything;
+    for (size_t index = 0; index < call.argumentsOperands().size(); ++index)
+        passed.arguments.append(TypeTable::anything);
+    TypeID byRows = resultTypeOfReachableOverloads(BuiltinTypeContext { walker.program(), walker.types() }, call.methodOfReceiverAsMade(), BuiltinCallMode::Call, passed);
+    return byRows && walker.types().at(byRows).isNumber();
+}
+
 static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     std::optional<uint32_t> narrowed = operandsNarrowedBehindTypedOperator(walker, value.id());
@@ -181,12 +212,25 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
         return true;
 
     static_assert(!OperandIndex::StrictEq::left && OperandIndex::Eq::right == 1 && OperandIndex::StrictEq::right == 1);
-    Type leftType = walker.types().at(inputs.typeOf(value.operand(0)));
-    Type rightType = walker.types().at(inputs.typeOf(value.operand(1)));
+    OperatorTypes typesOfOperands { inputs.typeOf(value.operand(0)), inputs.typeOf(value.operand(1)) };
+    Type leftType = walker.types().at(typesOfOperands.left);
+    Type rightType = walker.types().at(typesOfOperands.right);
     if (leftType.isNever() || rightType.isNever())
         return false;
 
     Opcode opcode = value.opcode();
+    if (opcode == Opcode::StrictEq) {
+        if (TypeID tested = typeOfOneTestableBuiltinOfTypedOperator(walker, rightType); tested && leftType.isJavaScriptValue() && narrowed && !(*narrowed & ~1u)) {
+            if (!inputs.areOnlyTypes())
+                bindTypeTestAsTypedOperator(walker, value, walker.referenceOf(value.operand(0)), tested);
+            return true;
+        }
+        if (TypeID tested = typeOfOneTestableBuiltinOfTypedOperator(walker, leftType); tested && rightType.isJavaScriptValue() && narrowed && !*narrowed) {
+            if (!inputs.areOnlyTypes())
+                bindTypeTestAsTypedOperator(walker, value, walker.referenceOf(value.operand(1)), tested);
+            return true;
+        }
+    }
     if (opcode == Opcode::Eq) {
         if (rightType.isUndefinedOrNull() && leftType.isJavaScriptValue() && narrowed && !(*narrowed & ~1u)) {
             if (!inputs.areOnlyTypes())
@@ -201,7 +245,7 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
         if (equalsTextAloneInTypedOperator(walker, leftType, rightType) || equalsTextAloneInTypedOperator(walker, rightType, leftType))
             opcode = Opcode::StrictEq;
     }
-    OperatorForm form = formAllowedForTypedOperator(walker, opcode, value, inputs);
+    OperatorForm form = hasOperatorForm(opcode) ? chooseFormOfOperator(walker.program(), walker.types(), opcode, typesOfOperands) : OperatorForm::Generic;
     if (form == OperatorForm::Generic || inputs.areOnlyTypes())
         return form != OperatorForm::Generic;
 
@@ -213,6 +257,14 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
         draft.setLeftOperand(left);
         draft.setRightOperand(right);
     }
+    bool leftIsInt32 = leftType.isInt32();
+    if (opcode == Opcode::StrictEq && form == OperatorForm::Numbers && leftIsInt32 != rightType.isInt32()) {
+        Reference other = leftIsInt32 ? draft.rightOperand() : draft.leftOperand();
+        const Type& typeOfOther = leftIsInt32 ? rightType : leftType;
+        bool otherIsWholeOrNothing = (typeOfOther.primitives & Primitive::Integer) && typeOfOther.hasOnlyPrimitives(Primitive::Integer | Primitive::UndefinedOrNull | Primitive::Absent);
+        if (other && other.isValue() && walker.representationOf(other) == Representation::JSValue && otherIsWholeOrNothing)
+            form = OperatorForm::Int32AndValue;
+    }
     if (opcode == Opcode::StrictEq && form == OperatorForm::NumberAndValue && narrowed && !*narrowed && walker.has(Mechanism::UnboxedNumbers)) {
         Draft readAsNumber(Opcode::NumberOrNaN, draft.origin());
         readAsNumber.setValueOperand(leftType.isNumber() ? draft.rightOperand() : draft.leftOperand());
@@ -222,6 +274,47 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
         else
             draft.setLeftOperand(number);
         form = OperatorForm::Numbers;
+    }
+    if (opcode == Opcode::StrictEq && form == OperatorForm::Int32AndValue && walker.has(Mechanism::Guesses) && walker.opensGuesses()) {
+        constexpr Walker::TurnOfTypedCopy turn = Walker::TurnOfTypedCopy::HasRunNoOtherCode;
+        Reference boxed = leftIsInt32 ? draft.rightOperand() : draft.leftOperand();
+        if (walker.standsInFrontOfTypedCopy(boxed, turn) && walker.types().saysNothing(walker.typeOf(boxed)) && rowsOfMethodThatGaveValueGiveNumbersAlone(walker, boxed)) {
+            Reference test;
+            {
+                Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+                Draft question(Opcode::TypeTest, draft.origin());
+                question.setValueOperand(boxed);
+                question.setTestedType(TypeTable::int32);
+                test = walker.build(WTF::move(question));
+            }
+            if (walker.hasFailed())
+                return true;
+            if (walker.branchInFrontOfTypedCopy(test, true, turn)) {
+                Reference fails;
+                {
+                    Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+                    fails = walker.drawWhetherGuessFails(draft.origin());
+                }
+                if (fails)
+                    walker.branchInFrontOfTypedCopy(fails, false, turn);
+                walker.noteGuessOpened();
+                walker.count(StatisticID::ValuesComparedWithIntegersAskedOnceInFrontOfLoops);
+                Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+                Draft proof(Opcode::Narrowed, draft.origin());
+                proof.setValueOperand(boxed);
+                proof.setTestOperand(test);
+                proof.setOperandIndex(OperandIndex::TypeTest::value);
+                proof.setIsOnTakenEdge(true);
+                Reference integer = walker.build(WTF::move(proof));
+                if (!integer)
+                    return true;
+                if (leftIsInt32)
+                    draft.setRightOperand(integer);
+                else
+                    draft.setLeftOperand(integer);
+                form = OperatorForm::Integers;
+            }
+        }
     }
     return buildInFormOfTypedOperator(walker, WTF::move(draft), form, value.id());
 }

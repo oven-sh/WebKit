@@ -289,7 +289,7 @@ static JSCellButterfly* bindStar(VM& vm, State& state, JSGlobalObject* realm, St
     }
 
     uint32_t orderAndCount = star.orderAndCountOfSource();
-    std::span<const uint16_t> entriesOfSource = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderAndCount)).first(countOf(orderAndCount));
+    std::span<const uint16_t> entriesOfSource = state.objects->keyOrders.entriesListedBy(layout, orderAndCount);
     JSCellButterfly* bindings = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, static_cast<unsigned>(2 * (entriesOfSource.size() + bindingsOfSource.size())));
 
     unsigned end = 0;
@@ -464,7 +464,7 @@ static bool canGetPendingStars(const Object& target)
 
 static bool orderListsField(State& state, const LayoutData& layout, uint32_t orderAndCount, const FieldData& field)
 {
-    std::span<const uint16_t> listed = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderAndCount)).first(countOf(orderAndCount));
+    std::span<const uint16_t> listed = state.objects->keyOrders.entriesListedBy(layout, orderAndCount);
     uint16_t index = layout.indexOf(field);
     if (index < listed.size() && listed[index] == index)
         return true;
@@ -697,7 +697,7 @@ static void forEachNameOfSourceOfStar(VM& vm, State& state, Star star, const Inv
         functor(namesOfStars->keyOfEntry(static_cast<unsigned>(index) + 1));
     };
     uint32_t orderAndCount = star.orderAndCountOfSource();
-    std::span<const uint16_t> entries = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderAndCount)).first(countOf(orderAndCount));
+    std::span<const uint16_t> entries = state.objects->keyOrders.entriesListedBy(layout, orderAndCount);
     size_t next = Object::forEachPositionedKey(entries, layout.numberOfFields, numberOfNamesOfStars, [&](uint16_t index) {
         const FieldData& field = layout.fields()[index];
         if (!field.isPrivate() && !(field.flags & fieldIsNotEnumerable) && layouts.hasStringKey(field))
@@ -902,6 +902,8 @@ void Object::ensureStructureForExtraProperties(VM& vm)
         return;
     JSCell::setStructure(vm, updatedStructure);
     state().propertyCaches->forgetFieldExits();
+    if (!wasDictionary)
+        state().propertyCaches->forgetAddedExtraProperties();
 }
 
 bool Object::ensureStructureForExtraPropertiesIfNeeded(VM& vm, JSCell* cell)
@@ -930,6 +932,10 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
         if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue) || (isDefinition && attributes))
             return { };
         extra->putDirectOffset(vm, offset, value);
+        if (structure()->mayBePrototype()) [[unlikely]] {
+            countEvent(vm, RuntimeCounterID::ValuesReplacedOnCompiledPrototypes);
+            didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name.uid());
+        }
         return { ExtraPropertyStore::Replaced, offset };
     }
     if (isNotExtensible())
@@ -937,7 +943,8 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
     JSGlobalObject* realm = structure()->realm();
     if (!isDefinition && !storeCreatesOwnProperty(realm, structure(), this, name.uid(), isMadeAtRunTime ? StoredName::IsNotSpelledByProgram : StoredName::MayBeSpelledByProgram))
         return { };
-    willAddExtraProperty(vm, name, !isMadeAtRunTime);
+    if (!mayAddExtraProperty(vm, name, !isMadeAtRunTime))
+        return { };
     bool hadNone = !extra;
     if (hadNone)
         extra = constructEmptyObject(vm, Instance::of(realm)->realm.emptyExtraPropertiesStructure);
@@ -952,6 +959,15 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
         didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
     return { ExtraPropertyStore::Added, slot.cachedOffset() };
+}
+
+bool Object::mayAddExtraProperty(VM& vm, PropertyName name, bool isSpelledByProgram)
+{
+    if (!name.isPrivateName() && !admitsMutation(vm, *this, ObjectMutation::AddProperty))
+        return false;
+    if (isSpelledByProgram)
+        state().objects->classes.didShadowMember(layout(), name.uid());
+    return true;
 }
 
 void Object::willAddExtraProperty(VM& vm, PropertyName name, bool isSpelledByProgram)

@@ -41,45 +41,69 @@ public:
 
     void generateGetArrayLength(const ValueContext&);
     void generateGetArrayStorage(const ValueContext&);
+    void generateGetArrayRoom(const ValueContext&);
+    void generateExtendArrayLength(const ValueContext&);
+    void generateSetArrayLength(const ValueContext&);
     void generateGetArrayElement(const ValueContext&);
     void generatePutArrayElement(const ValueContext&);
     void generateHasArrayElement(const ValueContext&);
     void generateAppendElements(const ValueContext&);
     void generateAppendMembers(const ValueContext&);
+    void generateAppendValuesOfMap(const ValueContext&);
     void generateReserveArrayRoom(const ValueContext&);
+    void generateConvertToDoubleStorage(const ValueContext&);
     void generateGetTypedArrayLength(const ValueContext&);
     void generateGetTypedArrayVector(const ValueContext&);
     void generateGetTypedArrayElement(const ValueContext&);
     void generatePutTypedArrayElement(const ValueContext&);
     void generateGetEnumeratorIndexedLength(const ValueContext&);
     void generateIsElementInStorage(const ValueContext&);
+    void generateGetElementInStorageOrAbsent(const ValueContext&);
+    bool asksTruthOfRawElement(ValueID read);
     void generateGetStringLength(const ValueContext&);
     void generateGetStringCodeUnit(const ValueContext&);
 
     bool testsEveryPosition();
+    std::optional<ArrayStorage> kindOfListFoundInFrontOfTurns(const ValueContext& access, ValueID list, bool isStoredInto = false);
+    std::optional<TypedArrayType> kindOfViewFoundInFrontOfTurns(const ValueContext& access, ValueID view);
     enum class StorageIsWritten : bool { No, Yes };
     void holdKindOfList(const ValueContext& access, StorageIsWritten = StorageIsWritten::No);
     void stopUnlessInside(const ValueContext& access, Condition isInside);
+    void holdElementToldToBeThere(const ValueContext& read, Condition isThere, StatisticID counted = StatisticID::ElementsToldToBeThereHeldAgainstHoles);
+    void stopWhereHoleWouldBeStored(const OperationContext& store, const ArrayStorageForm&, Operand rawElement);
     void stopUnlessListIsAsMadeWhereNothingIsFound(const ValueContext& access, CellPointer list);
 
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);
     Condition isPristineInstance(CellPointer, OptionSet<PristineAspects>);
     Condition hasArrayStorage(CellPointer array, ArrayStorage, bool isWritable = false);
+    Condition listHasArrayStorage(ValueID list, ArrayStorage kind) { return hasArrayStorage(in<CellPointer>(list), kind); }
+    Condition listTakesStoresInArrayStorage(ValueID list, ArrayStorage kind) { return kind == ArrayStorage::Double ? hasWritableShape(indexingMode(in<CellPointer>(list), IndexingShapeAndWritabilityMask), arrayStorageFormOf(ArrayStorage::Double)) : holdsWritableBoxedElements(in<CellPointer>(list)); }
+    Condition viewIsOfKind(ValueID view, TypedArrayType);
+    Pointer storageOfList(CellPointer list) { return elementsOf(list).butterfly; }
+    Condition areInt32Elements(LValue boxedWordsMet) { return isInt32(Boxed(boxedWordsMet)); }
     Word32 indexingMode(CellPointer array, IndexingType mask);
     Condition hasShape(Word32 maskedMode, const ArrayStorageForm& form) { return equal(maskedMode, word32(form.shape)); }
     Condition holdsBoxedElements(Word32 maskedMode);
     Condition holdsBoxedElements(CellPointer array);
+    Condition holdsWritableBoxedElements(CellPointer array);
+    Condition takesNumbersByKindOfStorage(CellPointer array, bool admitsInt32Storage);
     Condition hasWritableShape(Word32 modeWithWritability, const ArrayStorageForm& form) { return equal(modeWithWritability, word32(form.indexingType)); }
 
+    CellPointer askedAnew(CellPointer cell) { return CellPointer(m_out.opaque(cell.value())); }
     ArrayElements elementsOf(CellPointer array) { return { array, loadField<Pointer>(array, m_heaps.JSArray_butterfly) }; }
     ArrayElements elementsOf(const ValueContext& access, CellPointer array);
     Integer publicLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength)); }
     Integer vectorLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_vectorLength)); }
     void setPublicLength(const ArrayElements& elements, Integer length) { storeField(elements.butterfly, m_heaps.Butterfly_publicLength, low32(length)); }
+    Word32 publicLengthAsWord(const ArrayElements& elements) { return loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength); }
+    Word32 vectorLengthAsWord(const ArrayElements& elements) { return loadField<Word32>(elements.butterfly, m_heaps.Butterfly_vectorLength); }
+    void setPublicLength(const ArrayElements& elements, Word32 length) { storeField(elements.butterfly, m_heaps.Butterfly_publicLength, length); }
     Integer arrayLength(CellPointer array) { return publicLength(elementsOf(array)); }
 
     TypedPointer elementAt(const ArrayStorageForm&, const ArrayElements&, Integer index);
     TypedPointer elementOfUnknownForm(const ArrayElements&, Integer index);
+    bool boxIsMadeInFormOfType(ValueID) const;
+    void storeWordOfOperand(const OperationContext&, ValueID stored, Boxed word, const ArrayElements&, Integer index);
     Operand loadRawElement(const ArrayStorageForm&, const ArrayElements&, Integer index);
     Boxed loadBoxedElement(const ArrayElements&, Integer index);
     Condition isHole(const ArrayStorageForm&, Operand rawElement);
@@ -91,6 +115,7 @@ public:
     Operand convertElementThatHasBeenAsked(const OperationContext&, const ArrayStorageForm&, Operand rawElement, Representation, TypeID result);
     Operand convertInt32Element(Word32, Representation);
     Operand absentElement(const OperationContext&, Representation);
+    Operand whatReadGivesWhereNothingIsFound(const ValueContext& read, Representation);
     void storeRawElement(const ArrayStorageForm&, const ArrayElements&, Integer index, Operand rawElement);
     std::optional<Operand> rawElementToStore(const ArrayStorageForm&, ValueID stored, LBasicBlock doesNotFit);
     ArrayStorageFormList candidateFormsFor(ValueID stored, ArrayStorage expected);
@@ -102,11 +127,15 @@ public:
     bool hasOnlyExpectedArmInLine(const ValueContext& store);
     using ShapeTest = Condition (ElementAccessEmitter::*)(Word32 mode, const ArrayStorageForm&);
     enum class FirstForm : bool { IsExpected, IsLikeTheOthers };
-    void forEachFormByShape(Word32 mode, ShapeTest, const ArrayStorageFormList&, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>&, FirstForm = FirstForm::IsExpected);
+    void forEachFormByShape(Word32 mode, ShapeTest, const ArrayStorageFormList&, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>&, FirstForm = FirstForm::IsExpected, ValueID int32ThatArmOfValuesStoresInEitherKind = { });
+    ValueID int32ThatArmOfValuesStoresInEitherKind(ValueID stored, const ArrayStorageFormList&);
 
     enum class NaNIndexMode : bool { TakeSlowPath, ProduceOutOfBoundsIndex };
     Integer indexOrElse(ValueID position, bool keyIsIntegral, LBasicBlock isNotAnIndex, NaNIndexMode = NaNIndexMode::TakeSlowPath);
+    Integer indexOfAccessOrElse(const ValueContext& access, LBasicBlock isNotAnIndex, NaNIndexMode = NaNIndexMode::TakeSlowPath);
     Integer indexInsideLength(ValueID position);
+    Integer indexFoundBelowLength(Integer index);
+    Condition isBelowLengthOfView(Integer index, Integer length, TypedArrayType);
     std::optional<Integer> indexBesideWholeNumber(ValueID position, Number, LBasicBlock isNotAnIndex);
     LengthTest testLength(Integer index, const ArrayElements&);
     LengthTest testLength(const ValueContext&, Integer index, const ArrayElements&);
@@ -115,6 +144,7 @@ public:
     Operand readElement(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isAbsent);
     const PlacedSlot* extraPropertiesWordOfReadByPosition(const ValueContext& read);
     Boxed readElementOfExtraProperties(CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, LBasicBlock notFound);
+    void overwriteElementOfExtraProperties(const ValueContext& store, CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, Boxed stored, LBasicBlock notFound);
     Operand readElementInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole);
     void branchOnPresentElement(const ValueContext& test, const ArrayStorageForm&, BranchTargets);
     void branchOnPresentElementInAnyStorage(const ValueContext& test, BranchTargets);
@@ -124,7 +154,7 @@ public:
 
     void appendElement(const ValueContext& store, CellPointer array, ValueID element);
     Boxed appendOutOfLine(const OperationContext&, CellPointer array, ValueID element);
-    Condition tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored);
+    Condition tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored, bool leavesStorageAsItIs = false, std::optional<Pointer> profileOfSite = std::nullopt);
     void widenStorageOfIntegers(CellPointer array, const ArrayStorageForm& wider, LBasicBlock isLeftToOthers);
     void turnIntegersIntoFractions(CellPointer array, const ArrayElements&, LBasicBlock isLeftToOthers);
 
@@ -132,6 +162,7 @@ public:
     TypedArrayElements typedArrayElementsOf(ValueID view, LBasicBlock isNotFixedLength);
     Operand loadTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType);
     void storeTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType, Operand stored);
+    void forEachKindOfView(const ValueContext&, CellPointer view, NOESCAPE const ScopedLambda<void(TypedArrayType)>& inArm);
 
 private:
     void readWithKnownStorage(const ValueContext&, const ArrayStorageForm&);
@@ -140,6 +171,7 @@ private:
     bool hasOneArmInLine(const ValueContext& read);
     void readWithOneArmInLine(const ValueContext&, const ArrayStorageForm* knownForm);
     void readFromDoubleOrInt32Storage(const ValueContext&);
+    Operand numberOfInt32Element(const ValueContext&, Boxed element);
     Operand readNumberInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole);
     Boxed readOutOfLine(const ValueContext&, CellPointer array);
     bool findsElement(const ValueContext& read);
@@ -152,9 +184,6 @@ private:
     void storeOutOfLine(const ValueContext&, CellPointer array, NumberBoxing);
     Boxed appendOutOfLine(const OperationContext&, CellPointer array, ValueID element, NumberBoxing);
     void storeInVector(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, Operand rawElement, LBasicBlock isBeyondVector);
-    std::optional<Integer> integerNamedByAppend(const ValueContext& store, size_t index);
-    Integer lengthNamedOrRead(const ValueContext& store, const ArrayElements&);
-    void branchUnlessHasRoomBehindLength(const ValueContext& store, const ArrayElements&, Integer length, LBasicBlock isFull);
 
     void holdPositionInsideList(const ValueContext& access);
     void holdPositionInsideView(const ValueContext& access, Integer index, const TypedArrayElements&);
@@ -167,6 +196,7 @@ private:
     Operand loadBytesOfTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType);
     Word32 clampedToUint8(Integer);
     Word32 clampedToUint8(Word32);
+    Word32 clampedToUint8(Number);
 };
 
 static_assert(sizeof(ElementAccessEmitter) == sizeof(OperationEmitter));

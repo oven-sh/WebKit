@@ -384,6 +384,28 @@ static void appendUnitsToMap(ImageSymbolTable& table, const Typed::Program& prog
             appendNumberToMapRow(table, entry.count);
         }
         table.append("\n"_s);
+
+        Vector<std::pair<StubKey, uint32_t>, 16> stubsCalled;
+        auto count = [&](StubKey called) {
+            auto counted = std::ranges::find(stubsCalled, called, &std::pair<StubKey, uint32_t>::first);
+            if (counted == stubsCalled.end())
+                stubsCalled.append({ called, 1 });
+            else
+                ++counted->second;
+        };
+        for (const Relocation& relocation : code.body.relocations) {
+            if (relocation.space == SymbolSpace::Stub)
+                count(code.body.stubKeys[relocation.symbol].withoutImmediate());
+            else if (relocation.space == SymbolSpace::ArgumentThunk)
+                count(calleeOfArgumentMoves(code.body.argumentMoves[relocation.symbol]).withoutImmediate());
+        }
+        table.append("FC"_s);
+        for (auto [called, times] : stubsCalled) {
+            table.append("\t"_s);
+            appendStubToSymbolName(table, called);
+            appendNumberToMapRow(table, times);
+        }
+        table.append("\n"_s);
     }
 }
 

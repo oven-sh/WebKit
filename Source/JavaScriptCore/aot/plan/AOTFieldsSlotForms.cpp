@@ -180,7 +180,7 @@ static void forEachFewLayoutsWithoutFamilyForSlotForms(const Program& program, c
         ask(linked.functions[index].result, false);
         for (const LinkedParameter& parameter : linked.parametersOf(FunctionID(index))) {
             ask(parameter.proven, false);
-            ask(parameter.expected, false);
+            ask(parameter.writtenOrSeenToArrive(), false);
         }
     }
     for (size_t index = 0; index < linked.variables.size(); ++index)
@@ -281,9 +281,13 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
         }
     });
 
+    auto isInheritedRow = [&](FieldReference row) {
+        const Layout& layout = program.at(row.layout);
+        return row.field < layout.fields.size() && layout.fields[row.field].flags.contains(FieldFlags::IsInherited);
+    };
     auto isNarrowByItself = [&](size_t unit) {
         return std::ranges::any_of(units.rowsOf(units.units[unit]), [&](FieldReference row) {
-            return layoutsThatGainFromNarrowForms.quickGet(row.layout.index());
+            return !isInheritedRow(row) && layoutsThatGainFromNarrowForms.quickGet(row.layout.index());
         });
     };
     auto formOf = [&](size_t unit, bool mayBeNarrow) {

@@ -54,6 +54,7 @@ static_assert(sizeof(ValueFacts) == 16);
 
 struct LoopFacts {
     uint16_t pressure[numberOfBanks] { 0, 0 };
+    uint16_t pressureAcrossPatches[numberOfBanks] { 0, 0 };
     RegisterMask registersTakenByPatches { 0 };
     Position endOfLastExitingBlock { 0 };
     std::span<Operation* const> valuesReadFromOutside;
@@ -95,6 +96,15 @@ public:
     Position lastCallIn(const Block* block, Bank bank) const { return m_lastCallsInBlocks.isEmpty() ? 0 : m_lastCallsInBlocks[block->index()][static_cast<unsigned>(bank)]; }
     Position nextCallBehindEndOf(const Block* block, Bank bank) const { return lastCallIn(block, bank) ? m_nextCallsBehindEnds[block->index()][static_cast<unsigned>(bank)] : nextCallBehindHeadOf(block, bank); }
     Position endOfWhatWaysLeadToFrom(const Block* block) const { return m_endsOfWhatWaysLeadTo[block->index()]; }
+    bool standsInLoopThatMayTurn(const Order& order, const BlockPlace& place) const
+    {
+        const Loop* const loops = order.loops().data();
+        for (uint32_t loop = place.loop; loop != noLoop; loop = loops[loop].parent) {
+            if (endOfWhatWaysLeadToFrom(order.blocksInOrder()[loops[loop].firstBlock]) == noPosition)
+                return true;
+        }
+        return false;
+    }
     bool hasLandingPads() const { return m_hasLandingPads; }
 
     std::span<Operation* const> sunkInto(const Block* block) const { return m_sunk.isEmpty() ? std::span<Operation* const>() : m_sunk[block->index()].span(); }
@@ -355,7 +365,7 @@ public:
     void run();
     void letGoOfWorkingLists();
 
-    void scanBlock(Block*);
+    template<bool regionsHaveKinds> void scanBlock(Block*);
 
     void addUse(Operation* value, Position, Reg hint = Reg());
     void define(Operation*, Position);
@@ -410,6 +420,7 @@ public:
         uint32_t loopThatCountsForCalls { noLoop };
         bool countsForLoops { false };
         uint8_t traitsOfUses { 0 };
+        uint16_t flagsOfWhatIsRead { 0 };
     };
     PlaceOfReads m_placeOfReads;
 
@@ -419,6 +430,10 @@ public:
     Position m_nextSafepoint { noPosition };
     Position m_nextSuspension { noPosition };
     Position m_nextLandingPad { noPosition };
+    Position m_nextLandingPadThatComesBack { noPosition };
+    static constexpr uint8_t regionHoldsLandingPad = 1;
+    static constexpr uint8_t regionComesBack = 2;
+    ArenaVector<uint8_t> m_kindsOfRegions;
     struct RegionState {
         Position nextCall[numberOfBanks] { noPosition, noPosition };
     };
@@ -432,14 +447,20 @@ public:
     ArenaVector<uint32_t> m_loopCountedFor;
     struct LoopState {
         uint16_t mostLive[numberOfBanks] { 0, 0 };
-        uint16_t outerValuesRead[numberOfBanks] { 0, 0 };
+        uint16_t mostLiveAcrossPatches[numberOfBanks] { 0, 0 };
+        uint32_t outerValuesRead[numberOfBanks] { 0, 0 };
+        uint32_t outerValuesOfRunNotCounted[numberOfBanks] { 0, 0 };
         RegisterMask registersTakenByPatches { 0 };
         ArenaVector<Operation*> valuesReadFromOutside;
         uint16_t phisReadOnlyBehindLoop[numberOfBanks] { 0, 0 };
         Position endOfLastExitingBlock { 0 };
+        static constexpr uint32_t notLookedFor = noLoop - 1;
+        uint32_t nearestLoopAroundOfOtherRegion { notLookedFor };
+        uint32_t loopAroundThatMayLackExitingBlock { noLoop };
     };
     ArenaVector<LoopState> m_loopStates;
     ArenaVector<uint32_t> m_loopOfLastListedRead;
+    ArenaVector<uint32_t> m_loopOfLastReadExtendedForCalls;
     BitSpan m_isPhiReadOnlyBehindLoop;
     uint16_t m_numberLive[numberOfBanks] { 0, 0 };
     std::array<uint16_t, numberOfBanks> m_mostLiveInBlock { 0, 0 };

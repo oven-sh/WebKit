@@ -16,7 +16,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v0 = Builtin builtin=Uint8ArrayPrototype
     v1 = Builtin builtin=MapPrototype
     v2 = NewArray v0, v1 contents=anything
-    v3 = Integer integer=1
+    v3 = Double number=0.5
     v4 = ElemGet v2, v3
     v5 = Builtin builtin=Object
     v6 = Builtin builtin=ObjectGetPrototypeOf

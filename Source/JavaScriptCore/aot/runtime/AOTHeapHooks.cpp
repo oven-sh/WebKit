@@ -50,6 +50,7 @@ static void visitRootsOfCompiledCode(VM& vm, Visitor& visitor)
     VMState& state = vm.aotState();
     state.caches->visitRoots(visitor, volatility);
 
+    SetRootMarkReasonScope scopeOfWhatFollowsRealms(visitor, RootMarkReason::Output);
     Locker locker { state.instancesLock };
     for (Instance* instance : state.instances) {
         if (!visitor.isMarked(livenessToken(instance)))

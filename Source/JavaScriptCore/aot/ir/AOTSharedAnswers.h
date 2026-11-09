@@ -29,8 +29,9 @@ enum class SharedQuestion : uint32_t {
     NamedObjectsOfDifference,
     NamedObjectsOfUnionPartKind,
     RoundOverSet,
+    ContentsOfArrayInData,
 };
-inline constexpr unsigned numberOfSharedQuestions = static_cast<unsigned>(SharedQuestion::RoundOverSet) + 1;
+inline constexpr unsigned numberOfSharedQuestions = static_cast<unsigned>(SharedQuestion::ContentsOfArrayInData) + 1;
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(SharedQuestion);
 
 class SharedAnswers {

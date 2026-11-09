@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTableRealm.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPrimitives.h"
 #include "AOTSort.h"
 #include "AOTTypeRelations.h"
@@ -34,7 +35,7 @@ static constexpr BuiltinClassOfPrimitives builtinClassesOfPrimitives[] = {
     { BuiltinClasses::Boolean, Primitive::Boolean },
 };
 
-BuiltinMemberName builtinMemberNameOf(const Program& program, PropertyKeyID id)
+ALWAYS_INLINE_INTO_OTHER_FILES BuiltinMemberName builtinMemberNameOf(const Program& program, PropertyKeyID id)
 {
     const PropertyKey& key = program.at(id);
     switch (key.kind) {
@@ -70,6 +71,8 @@ BuiltinID findOwnMember(const Program& program, BuiltinID holder, PropertyKeyID 
 bool listsEveryMemberUnder(const Program& program, BuiltinID holder, PropertyKeyID key)
 {
     constexpr OptionSet<BuiltinFlag> flagsOfCompleteLists { BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject };
+    if (BuiltinName name = program.builtinNameOf(key); name && program.builtins().isClosedOnHostFunctions(name) && program.builtins().isNativeFunctionOfHost(holder))
+        return true;
     return program.builtins().at(holder).flags.containsAny(flagsOfCompleteLists) && program.at(key).kind != PropertyKeyKind::EnginePrivateName;
 }
 

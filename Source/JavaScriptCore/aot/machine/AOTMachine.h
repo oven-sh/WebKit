@@ -636,6 +636,8 @@ public:
 
     void setRunsWithoutFrame(bool value) { setBit(RunsWithoutFrame, value); }
     bool runsWithoutFrame() const { return bit(RunsWithoutFrame); }
+    void setShowsRegistersToCollector(bool value) { setBit(ShowsRegistersToCollector, value); }
+    bool showsRegistersToCollector() const { return bit(ShowsRegistersToCollector); }
     void setFollowsFrameSetup(bool value) { setBit(FollowsFrameSetup, value); }
     bool followsFrameSetup() const { return bit(FollowsFrameSetup); }
     void setTestsStackAheadOfFramedPart(bool value) { setBit(TestsStackAheadOfFramedPart, value); }
@@ -661,11 +663,14 @@ public:
     std::span<const unsigned> childrenLetGoByCallee() const { return m_childrenLetGoByCallee.span(); }
     void setSharesLatePath(bool value) { setBit(SharesLatePath, value); }
     bool sharesLatePath() const { return bit(SharesLatePath); }
+    bool failsWhenPredicateIsZero() const { return bit(FailsWhenPredicateIsZero); }
     void setBringsOperandsToTheirRegisters(bool value) { setBit(BringsOperandsToTheirRegisters, value); }
     bool bringsOperandsToTheirRegisters() const { return bit(BringsOperandsToTheirRegisters); }
     JS_EXPORT_PRIVATE void leaveOperandsWhereTheyLie();
     void setRegisterThatCalleeFillsOutOfResult(Reg reg) { m_registerThatCalleeFillsOutOfResult = reg; }
     Reg registerThatCalleeFillsOutOfResult() const { return m_registersToBringOperandsTo.isEmpty() ? m_registerThatCalleeFillsOutOfResult : Reg(); }
+    void setRegisterThatCalleeMovesIntoResult(Reg reg) { m_registerThatCalleeMovesIntoResult = reg; }
+    Reg registerThatCalleeMovesIntoResult() const { return m_registerThatCalleeMovesIntoResult; }
     void setLeavesMoveOutOfResultToCallee(bool value) { setBit(LeavesMoveOutOfResultToCallee, value); }
     bool leavesMoveOutOfResultToCallee() const { return bit(LeavesMoveOutOfResultToCallee); }
 
@@ -694,6 +699,8 @@ private:
         FindsOperandsInFrameWithoutRecord = 1 << 8,
         LeavesMoveOutOfResultToCallee = 1 << 9,
         TestsStackAheadOfFramedPart = 1 << 10,
+        FailsWhenPredicateIsZero = 1 << 11,
+        ShowsRegistersToCollector = 1 << 12,
     };
 
     struct SuccessorClobber {
@@ -717,6 +724,7 @@ private:
 
     bool bit(Bit bit) const { return m_bits & bit; }
     void setBit(Bit bit, bool value) { m_bits = value ? m_bits | bit : m_bits & ~bit; }
+    void setFailsWhenPredicateIsZero(bool value) { setBit(FailsWhenPredicateIsZero, value); }
 
     Procedure& m_procedure;
     ArenaVector<Operation*> m_operands;
@@ -725,6 +733,7 @@ private:
     ArenaVector<unsigned> m_childrenLetGoByCallee;
     ArenaVector<Reg> m_registersToBringOperandsTo;
     Reg m_registerThatCalleeFillsOutOfResult;
+    Reg m_registerThatCalleeMovesIntoResult;
     RegisterMask m_earlyClobbered { 0 };
     RegisterMask m_lateClobbered { 0 };
     RegisterMask m_registersToRelease { 0 };
@@ -850,6 +859,7 @@ public:
         return static_cast<EdgeClass>(m_classesOfIncomingEdgesFolded);
     }
     bool hasOnlyOnePredecessor() const { return m_hasOnlyOnePredecessor; }
+    bool writesMemory() const { return m_writesMemory; }
     bool isLandingPad() const { return m_isLandingPad; }
     bool isEntry() const { return m_isEntry; }
 
@@ -911,6 +921,7 @@ private:
     bool m_isLandingPad { false };
     bool m_isEntry { false };
     bool m_lastOperationMayEndBlock { false };
+    bool m_writesMemory { false };
     ArenaVector<Operation*> m_operations;
     ArenaVector<Operation*> m_phis;
     ArenaVector<Operation*> m_upsilons;
@@ -933,6 +944,10 @@ struct ProcedureTraits {
     bool mayOmitFrameRecord { false };
     bool checksAllocation { false };
     bool ordersBlocksAsWhenOrderedAgain { false };
+    bool leavesOutSavesThatPatchesAloneRead { false };
+    bool takesSpillsThatStepsReadToBeReadByNone { false };
+    bool takesValuesKeptForCollectorToBeReadByStepsAlone { false };
+    bool takesWaysOnToReadNothing { false };
     bool notesRangesOfOrigins { false };
     CPUFeatureSet features;
 
@@ -998,13 +1013,23 @@ enum class FailureKind : uint8_t {
     FrameAddressAcrossSuspension,
     NarrowReferenceWithoutPointer,
     InnerPointerWithoutOwner,
+    ReleasedValueIsReadOnWayOn,
     NeedsFrameWhereNoneIsSetUp,
+};
+
+struct PlaceOfCheck {
+    static constexpr PlaceOfCheck here(const char* file = __builtin_FILE_NAME(), const char* function = __builtin_FUNCTION(), uint32_t line = __builtin_LINE()) { return { file, function, line }; }
+
+    const char* file { nullptr };
+    const char* function { nullptr };
+    uint32_t line { 0 };
 };
 
 struct Failure {
     FailureKind kind;
     Origin origin;
     uint32_t operation { UINT32_MAX };
+    PlaceOfCheck check;
 };
 
 class Procedure {
@@ -1012,7 +1037,7 @@ class Procedure {
 public:
     JS_EXPORT_PRIVATE Procedure(Arena&, const HeapTree&, const ProcedureTraits&);
 
-    COLD JS_EXPORT_PRIVATE void fail(FailureKind, const Operation* = nullptr);
+    COLD JS_EXPORT_PRIVATE void fail(FailureKind, const Operation* = nullptr, PlaceOfCheck = PlaceOfCheck::here());
     const std::optional<Failure>& failure() const { return m_failure; }
 
     Arena& arena() { return m_arena; }
@@ -1022,10 +1047,14 @@ public:
     void noteThatOrderWasMadeAgain() { m_orderWasMadeAgain = true; }
 
     JS_EXPORT_PRIVATE Block* addBlock();
+    Block* addBlockThatOnlyJumps();
     unsigned numberOfBlocks() const { return m_blocks.size(); }
     Block* blockAt(unsigned index) const { return m_blocks[index]; }
     std::span<Block* const> blocks() const { return m_blocks.span(); }
     std::span<Block* const> blocksBegunBeforeAnythingLedToThem() const { return m_blocksBegunBeforeAnythingLedToThem.span(); }
+    COLD void stopAtStoreOverLoadThatStands(const Operation* store);
+    COLD void stopAtStoresThatWayLeadsToAfterAll();
+    bool keepsStoresToLookAtAgain() const { return !m_storesOverLoadsWhereNoWayLed.isEmpty(); }
 
     JS_EXPORT_PRIVATE Block* addEntrypoint(uint16_t id);
     std::span<const Entrypoint> entrypoints() const { return m_entrypoints.span(); }
@@ -1085,6 +1114,7 @@ public:
     std::span<const FrameRange> frameRanges() const { return m_frameRanges.span(); }
     std::span<const RangeOfOrigin> rangesOfOrigins() const { return m_rangesOfOrigins.span(); }
     uint32_t numberOfOperationsEncoded() const { return m_numberOfOperationsEncoded; }
+    uint32_t numberOfSwitchWindowsToldByBits() const { return m_numberOfSwitchWindowsToldByBits; }
     uint32_t numberOfInnerPointersAcrossSafepoints() const { return m_numberOfInnerPointersAcrossSafepoints; }
     void noteInnerPointerAcrossSafepoint() { ++m_numberOfInnerPointersAcrossSafepoints; }
     uint32_t numberOfTrapsTakenOver() const { return m_numberOfTrapsTakenOver; }
@@ -1105,6 +1135,7 @@ private:
         operation->m_index = m_operations.size();
         m_operations.append(m_arena, operation);
     }
+    template<uint32_t capacityOfOperations> inline Block* addBlockWithRoomForOperations();
     inline Block* addBlockInline();
 
     enum class ListThatBuildingLeaves : uint8_t {
@@ -1148,6 +1179,7 @@ private:
     unsigned m_numberOfListsOfHeapsKept { 0 };
     ArenaVector<Block*> m_blocks;
     ArenaVector<Block*> m_blocksBegunBeforeAnythingLedToThem;
+    ArenaVector<const Operation*> m_storesOverLoadsWhereNoWayLed;
     ArenaVector<Operation*> m_operations;
     ArenaVector<Entrypoint> m_entrypoints;
     ArenaVector<std::span<const Type>> m_tuples;
@@ -1173,6 +1205,7 @@ private:
     ArenaVector<FrameRange> m_frameRanges;
     ArenaVector<RangeOfOrigin> m_rangesOfOrigins;
     uint32_t m_numberOfOperationsEncoded { 0 };
+    uint32_t m_numberOfSwitchWindowsToldByBits { 0 };
     uint32_t m_numberOfInnerPointersAcrossSafepoints { 0 };
     uint32_t m_numberOfTrapsTakenOver { 0 };
     MacroAssembler::Label m_rareCodeStart;
@@ -1180,20 +1213,26 @@ private:
     std::optional<Failure> m_failure;
 };
 
-ALWAYS_INLINE Block* Procedure::addBlockInline()
+template<uint32_t capacityOfOperations>
+ALWAYS_INLINE Block* Procedure::addBlockWithRoomForOperations()
 {
     static_assert(std::is_trivially_destructible_v<Block>);
     static_assert(alignof(Block) >= alignof(Edge) && alignof(Edge) >= alignof(Operation*) && !(sizeof(Block) % alignof(Edge)));
     constexpr size_t bytesOfSuccessors = Block::firstCapacityOfSuccessors * sizeof(Edge);
-    constexpr size_t bytesOfOperations = Block::firstCapacityOfOperations * sizeof(Operation*);
+    constexpr size_t bytesOfOperations = capacityOfOperations * sizeof(Operation*);
     constexpr size_t bytesOfUpsilons = Block::firstCapacityOfUpsilons * sizeof(Operation*);
     uintptr_t memory = reinterpret_cast<uintptr_t>(m_arena.allocate(sizeof(Block) + bytesOfSuccessors + bytesOfOperations + bytesOfUpsilons, alignof(Block)));
     Block* block = new (NotNull, reinterpret_cast<void*>(memory)) Block(*this, m_blocks.size());
     block->m_successors.adoptStorage(reinterpret_cast<Edge*>(memory + sizeof(Block)), Block::firstCapacityOfSuccessors);
-    block->m_operations.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors), Block::firstCapacityOfOperations);
+    block->m_operations.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors), capacityOfOperations);
     block->m_upsilons.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors + bytesOfOperations), Block::firstCapacityOfUpsilons);
     m_blocks.append(m_arena, block);
     return block;
+}
+
+ALWAYS_INLINE Block* Procedure::addBlockInline()
+{
+    return addBlockWithRoomForOperations<Block::firstCapacityOfOperations>();
 }
 
 template<typename Functor>

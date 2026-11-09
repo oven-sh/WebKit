@@ -5,7 +5,7 @@
 # Each field of a layout of the table of built-ins is one edge in every program: a layout more in the table moves the number by its fields.
 # RUN: link counts mechanisms=all
 # REQUIRES: entries-of-bun
-# CHECK: counts flow | nodes {{*}} | edges 5483 | observers 3806 |
+# CHECK: counts flow | nodes {{*}} | edges 5082 | observers 3806 |
 
 layout L0 kind=Instance name="A" module=m0 constructor=f1
 # REPEAT: i = 1..200

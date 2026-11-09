@@ -26,11 +26,12 @@ void PromiseBuiltinEmitter::generatePromiseResolve(const InlineCall& call)
     PromiseIntrinsicEmitter& promises = emitter<PromiseIntrinsicEmitter>();
     Boxed resolution = argumentOrUndefined(call, 0);
     ValueID fulfillment = call.argumentOrNull(0);
+    bool mayStoreCell = fulfillment && typeOf(fulfillment).hasCells();
     auto newFulfilledPromise = [&] {
         CellPointer promise = promises.newPromise(call.context());
-        promises.fulfillWithoutBarrier(promise, resolution);
-        if (fulfillment && typeOf(fulfillment).hasCells())
-            emitter<BarrierEmitter>().fenceAfterInitialization();
+        promises.fulfillWithoutBarrier(promise, resolution, mayStoreCell);
+        if (mayStoreCell)
+            emitter<BarrierEmitter>().fenceAfterLateStores();
         return promise;
     };
     if (!call.canMiss()) {
@@ -97,8 +98,7 @@ void PromiseBuiltinEmitter::generatePromiseThen(const InlineCall& call)
     Boxed onFulfilled = argumentOrUndefined(call, 0);
     Boxed onRejected = argumentOrUndefined(call, 1);
     CellPointer derived = emitter<PromiseIntrinsicEmitter>().newPromise(call.context());
-    callVoidOperation(call.context(), RuntimeOperation::PromiseThen, { promise, onFulfilled, onRejected, derived });
-    finishInlineCall(call, derived);
+    finishInlineCall(call, callOperation<CellPointer>(call.context(), RuntimeOperation::PromiseThen, { promise, onFulfilled, onRejected, derived }));
 }
 
 void PromiseBuiltinEmitter::generatePromiseCatch(const InlineCall& call)

@@ -415,21 +415,47 @@ static bool turnsTakeSlotForInt32(Walker& walker, LoopID loop, ValueID object, P
         ValueID read = readOfSlotBehindNamesInNumberExpectations(index, value);
         return read && index.value(read).key() == key && index.valueBehindCasts(index.value(read).objectOperand()) == object;
     };
-    for (BlockID member : index.membersOf(loop)) {
-        for (BodyValue operation : index.block(member).values()) {
-            if (operation.opcode() == Opcode::PropGet && isReadOfSlot(operation.id()) && usesSpeakForInt32(walker, operation.id()))
-                return true;
-            if (operation.opcode() != Opcode::PropSet || operation.isFreeName() || operation.key() != key || index.valueBehindCasts(operation.objectOperand()) != object)
-                continue;
-            ValueID stored = index.valueBehindCasts(operation.valueOperand());
-            if (!stored || index.isParameter(stored))
-                continue;
-            BodyValue step = index.value(stored);
-            if ((step.opcode() == Opcode::Increment || step.opcode() == Opcode::Decrement) && isReadOfSlot(step.operand(0)))
-                return true;
+    auto placeOf = [](ValueID holder, PropertyKeyID name) {
+        return static_cast<uint64_t>(holder.index()) << 32 | name.index();
+    };
+    Walker::AccessesOfSlotsInLoop& listed = walker.accessesOfSlotsInLoopListedLast();
+    if (listed.body != &index || listed.loop != loop) {
+        listed.body = &index;
+        listed.loop = loop;
+        listed.underObjectAndName.clear();
+        listed.turnsTakeForInt32.clear();
+        for (BlockID member : index.membersOf(loop)) {
+            for (BodyValue operation : index.block(member).values()) {
+                if ((operation.opcode() == Opcode::PropGet || operation.opcode() == Opcode::PropSet) && !operation.isFreeName())
+                    listed.underObjectAndName.add(placeOf(index.valueBehindCasts(operation.objectOperand()), operation.key()), Vector<ValueID, 2> { }).iterator->value.append(operation.id());
+            }
         }
     }
-    return false;
+    auto accesses = listed.underObjectAndName.find(placeOf(object, key));
+    if (accesses == listed.underObjectAndName.end())
+        return false;
+    if (auto known = listed.turnsTakeForInt32.find(placeOf(object, key)); known != listed.turnsTakeForInt32.end())
+        return known->value;
+    auto keep = [&](bool takes) {
+        if (listed.body == &index && listed.loop == loop)
+            listed.turnsTakeForInt32.add(placeOf(object, key), takes);
+        return takes;
+    };
+    for (ValueID access : accesses->value) {
+        BodyValue operation = index.value(access);
+        if (operation.opcode() == Opcode::PropGet) {
+            if (usesSpeakForInt32(walker, access))
+                return keep(true);
+            continue;
+        }
+        ValueID stored = index.valueBehindCasts(operation.valueOperand());
+        if (!stored || index.isParameter(stored))
+            continue;
+        BodyValue step = index.value(stored);
+        if ((step.opcode() == Opcode::Increment || step.opcode() == Opcode::Decrement) && isReadOfSlot(step.operand(0)))
+            return keep(true);
+    }
+    return keep(false);
 }
 
 ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker& walker, ValueID input, ExpectationOfNumber found)
@@ -458,7 +484,7 @@ ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, Expectation
 {
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers))
         return found;
-    if (isLeftAsFoundInNumberExpectations(walker.rememberedExpectationOf(input)))
+    if (isLeftAsFoundInNumberExpectations(walker.expectationRememberedOf(input)))
         return found;
     TypeArena& types = walker.types();
     TypeID proven = provenTypeInNumberExpectations(walker, input);

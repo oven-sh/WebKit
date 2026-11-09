@@ -33,6 +33,7 @@ struct RunDirective {
     String command;
     Vector<String> arguments;
     unsigned line;
+    bool isLeftOutUnderFurtherOptionWords { false };
 };
 
 struct OptionWord {
@@ -47,6 +48,7 @@ ASCIILiteral nameOf(const DiagnosticName&);
 
 struct ExpectedDiagnostic {
     DiagnosticName kind;
+    std::optional<FunctionID> function;
     std::optional<unsigned> count;
     unsigned line;
 };
@@ -93,6 +95,7 @@ struct TestFile {
     std::optional<FunctionID> functionOfTypesLine;
     std::optional<TestTodo> todo;
     std::optional<TestTodo> hangsOnOrder;
+    std::optional<TestTodo> asUsersBuild;
     Vector<TestFileError> errors;
 
     std::span<const CheckLine> checkLinesFor(StringView prefix) const;

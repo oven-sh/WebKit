@@ -325,6 +325,39 @@ static size_t bytesOfStoresInTestOfPhiTest(Type type, int64_t lower, int64_t upp
     return test.testProcedure.linkedCode().size();
 }
 
+enum class KindOfTwoBounds : uint8_t { BothAreSigned, LowerIsSignedAndNotBelowNought, LowerIsSignedAndBelowNought, LowerIsUnsignedAndUpperSigned };
+
+template<KindOfTwoBounds kind>
+static void testTwoBoundsOfOneValue()
+{
+    TestOfPhiTest test;
+    Output& out = test.out;
+    LBasicBlock asksUpperBound = out.newBlock();
+    LBasicBlock inside = out.newBlock();
+    LBasicBlock outside = out.newBlock();
+    constexpr int32_t low = kind == KindOfTwoBounds::BothAreSigned || kind == KindOfTwoBounds::LowerIsSignedAndBelowNought ? -5 : 65;
+    constexpr int32_t high = 90;
+    constexpr bool lowerIsSigned = kind != KindOfTwoBounds::LowerIsUnsignedAndUpperSigned;
+    constexpr bool upperIsSigned = kind == KindOfTwoBounds::BothAreSigned || kind == KindOfTwoBounds::LowerIsUnsignedAndUpperSigned;
+    LValue value = out.castToInt32(test.first);
+    out.branch(lowerIsSigned ? out.greaterThanOrEqual(value, out.constInt32(low)) : out.aboveOrEqual(value, out.constInt32(low)), normalEdge(asksUpperBound), normalEdge(outside));
+    out.appendTo(asksUpperBound);
+    out.branch(upperIsSigned ? out.lessThanOrEqual(value, out.constInt32(high)) : out.belowOrEqual(value, out.constInt32(high)), normalEdge(inside), normalEdge(outside));
+    test.returnConstant(inside, 1);
+    test.returnConstant(outside, 0);
+    const Order& order = test.compile();
+
+    bool areAskedAtOnce = kind == KindOfTwoBounds::BothAreSigned || kind == KindOfTwoBounds::LowerIsSignedAndNotBelowNought;
+    AOT_TEST_OF_PHI_CHECK(test, order.of(asksUpperBound).isReached() == !areAskedAtOnce);
+    AOT_TEST_OF_PHI_CHECK(test, value->useCount() == (areAskedAtOnce ? 1u : 2u));
+    for (int32_t asSigned : { std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min() + 1, -91, -90, -65, -6, -5, -4, -1, 0, 1, 64, 65, 66, 89, 90, 91, std::numeric_limits<int32_t>::max() - 1, std::numeric_limits<int32_t>::max() }) {
+        uint32_t asUnsigned = static_cast<uint32_t>(asSigned);
+        bool passesLower = lowerIsSigned ? asSigned >= low : asUnsigned >= static_cast<uint32_t>(low);
+        bool passesUpper = upperIsSigned ? asSigned <= high : asUnsigned <= static_cast<uint32_t>(high);
+        AOT_TEST_OF_PHI_CHECK(test, test.run(asSigned) == (passesLower && passesUpper ? 1 : 0));
+    }
+}
+
 static void testNeighboringStoresOfConstantsAreOneStore()
 {
     size_t neighbors = bytesOfStoresInTestOfPhiTest(Int32, 7, 0, 4, 1);
@@ -361,6 +394,10 @@ std::span<const NativeTest> machineTestsOfPhisTests()
         { "machine-tests-of-phis/box-that-is-read-where-what-passes-may-fail-too-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::FailsWhereWhatPassesMayFailToo> },
         { "machine-tests-of-phis/word-added-to-a-bound-with-a-lower-half-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::BoundHasLowerHalf> },
         { "machine-tests-of-phis/neighboring-stores-of-constants-are-one-store"_s, Machine::testNeighboringStoresOfConstantsAreOneStore },
+        { "machine-tests-of-phis/two-signed-bounds-of-one-value-are-asked-at-once"_s, Machine::testTwoBoundsOfOneValue<Machine::KindOfTwoBounds::BothAreSigned> },
+        { "machine-tests-of-phis/a-signed-lower-bound-not-below-nought-and-an-unsigned-upper-bound-are-asked-at-once"_s, Machine::testTwoBoundsOfOneValue<Machine::KindOfTwoBounds::LowerIsSignedAndNotBelowNought> },
+        { "machine-tests-of-phis/a-signed-lower-bound-below-nought-and-an-unsigned-upper-bound-stay-two-tests"_s, Machine::testTwoBoundsOfOneValue<Machine::KindOfTwoBounds::LowerIsSignedAndBelowNought> },
+        { "machine-tests-of-phis/an-unsigned-lower-and-a-signed-upper-bound-stay-two-tests"_s, Machine::testTwoBoundsOfOneValue<Machine::KindOfTwoBounds::LowerIsUnsignedAndUpperSigned> },
     };
     return tests;
 }

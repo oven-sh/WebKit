@@ -18,6 +18,7 @@
 #include "AOTEmptyPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
@@ -42,6 +43,7 @@
 #include "JSCConfig.h"
 #include "JSCInlines.h"
 #include "PropertyOffset.h"
+#include "RegExpObject.h"
 #include "SlotVisitorInlines.h"
 #include <array>
 #include <bit>
@@ -794,7 +796,7 @@ NEVER_INLINE void HashedSlotTable::forgetPlacesCopiedFromSlotForStores(const Slo
         return;
     for (Instance* instance : m_vm.aotState().instances) {
         PropertyCacheWords& words = instance->propertyCaches;
-        if (std::exchange(words.placesFiledFromSlotsAndCleared, words.placesFiledFromSlots) != words.placesFiledFromSlots)
+        if (std::exchange(words.placesHoldCopiesOfSlots, 0))
             zeroSpan(instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>());
     }
 }
@@ -805,7 +807,7 @@ NEVER_INLINE void HashedSlotTable::forgetOrdinaryConstructorsWith(StructureID st
         instance->propertyCaches.headersOfPrototypeSlotsOfOrdinaryConstructors[PlaceOfOrdinaryConstructor::indexFor(structureID.bits())] = 0;
 }
 
-ALWAYS_INLINE void HashedSlotTable::forgetPlacesCopiedFrom(const HashedSlot& filed)
+ALWAYS_INLINE_INTO_OTHER_FILES void HashedSlotTable::forgetPlacesCopiedFrom(const HashedSlot& filed)
 {
     if (filed.access() == SlotAccess::Store) [[unlikely]]
         forgetPlacesCopiedFromSlotForStores(filed.slot);
@@ -1256,10 +1258,15 @@ void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStri
     }
 }
 
+void VMPropertyCaches::didReplaceValueOnObjectOfSomeChain(JSObject* changed, UniquedStringImpl* uid)
+{
+    if (m_filteredObjects.mayContain(changed))
+        didChangeFilteredObject(changed, uid);
+}
+
 void VMPropertyCaches::didStartWatchingReplacements()
 {
     for (Instance* instance : m_vm.aotState().instances) {
-        instance->propertyCaches.accessTable.didStartWatchingReplacements();
         if (std::exchange(instance->propertyCaches.placesTakeReplacementsAsUnwatched, 0))
             zeroSpan(instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>());
     }
@@ -1304,6 +1311,12 @@ std::optional<Slot> VMPropertyCaches::find(StructureID id, const CachedName& nam
     if (const Slot* slot = m_hashedTable.find(id, name.uid, access))
         return *slot;
     return std::nullopt;
+}
+
+bool VMPropertyCaches::holdsInFrontRows(StructureID id, const CachedName& name, SlotAccess access) const
+{
+    std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber) : std::nullopt;
+    return column && m_front.find(id, *column, access);
 }
 
 void VMPropertyCaches::remove(StructureID id, const CachedName& name, SlotAccess access)
@@ -1411,6 +1424,8 @@ void initializePropertyCacheWords(Instance& instance)
     Structure* structureOfNoReceiver = vm.structureStructure.get();
     words.numberStructureID = (numberStructure ? numberStructure : structureOfNoReceiver)->id().bits();
     words.booleanStructureID = (booleanStructure ? booleanStructure : structureOfNoReceiver)->id().bits();
+    uintptr_t wordsToUndefined = (std::bit_cast<uintptr_t>(instance.state->objectThatHoldsUndefined->inlineStorage()) - vm.heap.cage().base()) / sizeof(EncodedJSValue);
+    words.wordOfCageThatHoldsUndefined = wordsToUndefined <= UINT32_MAX ? static_cast<uint32_t>(wordsToUndefined) : 0;
     words.hasInstanceUID = vm.propertyNames->hasInstanceSymbol.impl();
     words.prototypeUID = vm.propertyNames->prototype.impl();
     words.lengthUID = vm.propertyNames->length.impl();
@@ -1432,7 +1447,7 @@ void initializePropertyCacheWords(Instance& instance)
         return;
     uint8_t* sharedCode = const_cast<uint8_t*>(image.sharedCodeCopy(0));
     std::span offsets = image.slotHandlerOffsets();
-    std::span handlers(&instance.slotHandlers()[0][0], numberOfSlotHandlerTables * numberOfSlotKindsWithHandlers);
+    std::span handlers(&instance.slotHandlers()[0][0], sizeof(SlotHandlers) / sizeof(void*));
     RELEASE_ASSERT(offsets.size() == handlers.size());
     for (size_t index = 0; index < handlers.size(); ++index)
         handlers[index] = offsets[index] == offsetOfAbsentStub ? nullptr : sharedCode + offsets[index];
@@ -1469,11 +1484,13 @@ PropertyCaches::PropertyCaches(State& state)
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
     state.caches->addClearedEachCollection("exits of fields"_s, asMutableByteSpan(std::span { m_fieldExits }));
+    state.caches->addClearedEachCollection("returns of fields"_s, asMutableByteSpan(std::span { m_fieldReturns }));
     state.caches->addClearedEachCollection("extra properties added"_s, asMutableByteSpan(std::span { m_addedExtraProperties }));
     state.caches->addClearedEachCollection("ordinary constructors"_s, asMutableByteSpan(std::span { state.instance.propertyCaches.headersOfPrototypeSlotsOfOrdinaryConstructors }));
     state.caches->add(CacheKind::ClearedEachCollection, "exits of fields beside their table"_s, m_fieldExitsBesideTable);
     state.caches->add(CacheKind::ClearedEachCollection, "extra properties added beside their table"_s, m_addedExtraPropertiesBesideTable);
     state.instance.propertyCaches.fieldExits = m_fieldExits.data();
+    state.instance.propertyCaches.fieldReturns = m_fieldReturns.data();
 }
 
 PropertyCaches::~PropertyCaches() = default;
@@ -1650,6 +1667,14 @@ bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid,
     return false;
 }
 
+void PropertyCaches::remember(const FieldExit& exit)
+{
+    FieldExit& place = placeOf(exit.structureBefore, exit.name);
+    putAtPlace(place, m_fieldExitsBesideTable, exit);
+    if (exit.widthOfSlot)
+        m_state.instance.propertyCaches.placesOfFieldExitsBySlot[((exit.structureBefore.bits() >> StructureRowWords::granuleShift) + (exit.offsetOfSlot >> 2)) % FieldExit::numberOfPlacesBySlot] = static_cast<uint8_t>(&place - m_fieldExits.data());
+}
+
 void PropertyCaches::didFileNothing()
 {
     if (uint8_t* counter = std::exchange(m_counterOfPairToFile, nullptr))
@@ -1787,7 +1812,7 @@ static void askAgainWhatSlotAnswers(Instance& instance, JSCell* base, UniquedStr
     case Slot::Kind::Value: {
         JSCell* holder = slot.has(Slot::isOwn) ? base : slot.holder;
         if (holder && holder->isObject())
-            stopAtStaleAnswer(instance, base, name, KindOfAnswer::Value, asObject(holder)->getDirect(Slot::offsetFor(slot.wordIndex())), table);
+            stopAtStaleAnswer(instance, base, name, KindOfAnswer::Value, valueAtOffset(asObject(holder), Slot::offsetFor(slot.wordIndex())), table);
         return;
     }
     case Slot::Kind::Getter:
@@ -1889,6 +1914,15 @@ void SiteCaches::waitLongerForNextFill(const void* site)
     stateOf(site).missesLeft = SiteCacheState::missesBeforeRefill(refillCount);
     if (refillCount < SiteCacheState::maxRefillCount)
         ++refillCount;
+}
+
+unsigned SiteCaches::takeSamplesToLeaveOutBeforeNextFill(const void* site)
+{
+    uint8_t& refillCount = refillCountOf(site);
+    unsigned samples = SiteCacheState::missesBeforeRefill(refillCount) / SiteCacheState::missesOfEmptySitesPerSample;
+    if (refillCount < SiteCacheState::maxRefillCount)
+        ++refillCount;
+    return samples;
 }
 
 bool SiteCaches::didWaitForSamples(const void* site)
@@ -2075,13 +2109,13 @@ AnswersAtSites::AnswersAtSites(State& state, SiteCaches& states)
     , m_indices(state.instance.indicesOfSiteAnswers())
     , m_answers(state.instance.siteAnswers())
     , m_endOfWideAnswers(reinterpret_cast<WideSiteAnswers*>(state.instance.siteAnswers().data() + state.instance.siteAnswers().size()))
-    , m_placesThatMissed(state.tableArena.allocate<uint64_t>((std::min<size_t>(m_indices.size(), numberOfMissBits) + 63) / 64))
-    , m_placesThatFailed(state.tableArena.allocate<uint64_t>((std::min<size_t>(m_indices.size(), numberOfMissBits) + 63) / 64))
     , m_placesInPageShift(WTF::fastLog2(static_cast<unsigned>(pageSize() / sizeof(uint16_t))))
     , m_requestsOfPages(state.tableArena.allocate<uint8_t>((m_indices.size() >> m_placesInPageShift) + 1))
     , m_ownerID(state.chainDependents->addOwner(*this))
 {
     m_places.append(UINT32_MAX);
+    m_places.append(UINT32_MAX);
+    m_answers[numberOfAnswersThatHoldNothing] = SiteAnswers::forPlacesWithout();
     state.caches->add(CacheKind::WeakByKey, "AnswersAtSites"_s, *this);
 }
 
@@ -2092,23 +2126,37 @@ uint32_t AnswersAtSites::placeAtDistanceFromInstance(uint32_t distance) const
     return static_cast<uint32_t>(offset / sizeof(uint16_t));
 }
 
+uint8_t* AnswersAtSites::missesAndSamplesLeftOutAt(uint32_t place)
+{
+    uint8_t* instance = reinterpret_cast<uint8_t*>(&m_state.instance);
+    size_t distance = reinterpret_cast<uint8_t*>(&m_indices[place]) - instance;
+    return instance + InstanceLayout::offsetOfMissesOfPlaces + distance % InstanceLayout::bytesReservedForMissesOfPlaces;
+}
+
+void AnswersAtSites::beginPeriodOfAnotherLength(uint32_t place)
+{
+    static constexpr std::array<uint8_t, 8> missesLeftOut { 0, 5, 2, 7, 1, 4, 6, 3 };
+    uint8_t& misses = *missesAndSamplesLeftOutAt(place);
+    uint8_t turn = (misses + 1) & 7;
+    misses = static_cast<uint8_t>(SiteCacheState::sampleStep * missesLeftOut[turn] | turn);
+    samplesLeftOutAt(place) = 0;
+}
+
+void AnswersAtSites::waitLongerForNextFill(uint32_t place)
+{
+    static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) / SiteCacheState::missesOfEmptySitesPerSample <= UINT8_MAX);
+    samplesLeftOutAt(place) = static_cast<uint8_t>(m_states.takeSamplesToLeaveOutBeforeNextFill(keyOfState(place)));
+}
+
 bool AnswersAtSites::isDueForFilling(uint32_t place)
 {
-    uint32_t missBit = place % numberOfMissBits;
-    uint64_t& word = m_placesThatMissed[missBit / 64];
-    uint64_t bit = 1ull << (missBit % 64);
-    if (!(std::exchange(word, word | bit) & bit))
-        return false;
-    if (!answersOf(place)) {
-        uint8_t& requests = m_requestsOfPages[place >> m_placesInPageShift];
-        if (requests < requestsThatOpenPage) {
-            ++requests;
-            return false;
-        }
-        if (!(m_placesThatFailed[missBit / 64] & bit))
-            return true;
-    }
-    return m_states.didWaitForSamples(keyOfState(place));
+    if (answersOf(place))
+        return true;
+    uint8_t& requests = m_requestsOfPages[place >> m_placesInPageShift];
+    if (requests >= requestsThatOpenPage)
+        return true;
+    ++requests;
+    return false;
 }
 
 SiteAnswers* AnswersAtSites::ensureAnswersOf(uint32_t place, SiteUse use)
@@ -2124,6 +2172,7 @@ SiteAnswers* AnswersAtSites::ensureAnswersOf(uint32_t place, SiteUse use)
     } else
         return nullptr;
     ASSERT(m_answers[number].isEmpty());
+    countEvent(*m_state.instance.vm, RuntimeCounterID::AnswersGivenToSites);
     m_answers[number].first = SiteAnswers::withoutKey(use, true);
     m_places[number] = place;
     m_indices[place] = static_cast<uint16_t>(number * wordsInAnswers);
@@ -2189,9 +2238,12 @@ void AnswersAtSites::giveBackWideAnswersIfEmpty(uint32_t number)
 
 void AnswersAtSites::didFailToFill(uint32_t place)
 {
-    uint32_t missBit = place % numberOfMissBits;
-    m_placesThatFailed[missBit / 64] |= 1ull << (missBit % 64);
-    m_states.waitLongerForNextFill(keyOfState(place));
+    waitLongerForNextFill(place);
+}
+
+static bool isRoad(SiteUse use, SiteAnswers::Answer answer)
+{
+    return isRead(use) && answer.isByStructure() && SiteAnswers::formOf(use, answer.key) == SiteAnswers::Form::Nothing;
 }
 
 static bool borrowsOperandOfOtherAnswer(SiteUse use, SiteAnswers::Answer answer)
@@ -2202,78 +2254,174 @@ static bool borrowsOperandOfOtherAnswer(SiteUse use, SiteAnswers::Answer answer)
     return form == SiteAnswers::Form::ValueInStorageOfHolder || form == SiteAnswers::Form::GetterInStorageOfHolder;
 }
 
-void AnswersAtSites::fill(uint32_t place, SiteUse use, const AnswerByStructure& filled, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
+static bool isValueInStorageOfHolderAtCall(SiteAnswers::Answer answer)
+{
+    return answer.isByStructure() && SiteAnswers::formOf(SiteUse::Call, answer.key) == SiteAnswers::Form::ValueInStorageOfHolder;
+}
+
+static SiteAnswers::Answer asNewestAtRead(SiteUse use, SiteAnswers::Answer answer)
+{
+    static_assert(Slot::wordIndexFor(0) > 0 && Slot::wordIndexFor(firstOutOfLineOffset) < 0);
+    if (!answer.isByStructure() || SiteAnswers::formOf(use, answer.key) != SiteAnswers::Form::OwnValueInCell)
+        return answer;
+    uint32_t key = (answer.key & ~SiteAnswers::formMask) | SiteAnswers::bitsOf(use, SiteAnswers::mostCommonForm(use));
+    return { key, use == SiteUse::Read ? static_cast<uint32_t>(answer.operand / sizeof(EncodedJSValue)) : answer.operand };
+}
+
+static bool secondRepeatsFirst(SiteUse use, const SiteAnswers& answers)
+{
+    using Form = SiteAnswers::Form;
+    if (!answers.holdsShape() || !answers.second.isByStructure() || answers.second.operand != answers.first.operand)
+        return false;
+    Form form = SiteAnswers::formOf(use, answers.second.key);
+    uint32_t bitTurned = form == Form::OwnNarrowReferenceInCell ? SiteAnswers::bitTurnedForNarrowReferenceInCell : form == Form::OwnInt32InCell ? SiteAnswers::bitTurnedForInt32InCell : form == Form::OwnFieldInExtension ? SiteAnswers::bitTurnedForFieldInExtension : 0;
+    if (!bitTurned && form != Form::OwnFieldInCell)
+        return false;
+    const CompiledStructure* compiled = compiledObjectStructureOrNull(WTF::opaque(answers.second.structureID().decode()));
+    return compiled && answers.first.key == (shapeWordOf(compiled->layout().shape) ^ bitTurned);
+}
+
+void AnswersAtSites::fill(uint32_t place, SiteUse use, const AnswerByStructure& filled, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects, bool stubFollowsFurtherAnswers)
 {
     RELEASE_ASSERT(filled.answer.isByStructure());
-    if (use == SiteUse::Read && holdsAnotherStructure(place, filled.answer.structureID()) && std::ranges::contains(WideSiteAnswers::formsOfFurtherAnswers, SiteAnswers::formOf(use, filled.answer.key))) {
-        addFurtherAnswer(place, filled.answer, uid, changeableObjects);
-        return;
+    if (isRead(use) && holdsAnotherStructure(place, use, filled.answer.structureID())) {
+        SiteAnswers::Form form = SiteAnswers::formOf(use, filled.answer.key);
+        bool comesBack = stubFollowsFurtherAnswers && wasPutOut(place, filled.answer.structureID());
+        if (std::ranges::contains(WideSiteAnswers::formsOfFurtherAnswers, form) || (comesBack && WideSiteAnswers::canBeFurtherAnswer(form, filled.indexInStorageOfHolder))) {
+            addFurtherAnswer(place, filled, uid, changeableObjects);
+            return;
+        }
+        if (stubFollowsFurtherAnswers)
+            m_visitorsPutOut.add(static_cast<uint64_t>(place) << 32 | answersOf(place)->second.structureID().bits());
     }
     SiteAnswers* answers = ensureAnswersOf(place, use);
     if (!answers) {
         didFailToFill(place);
         return;
     }
-    m_states.waitLongerForNextFill(keyOfState(place));
+    waitLongerForNextFill(place);
     SiteAnswers::Answer& newest = answers->newestByStructure(use);
     SiteAnswers::Answer& other = answers->besideNewestByStructure(use);
     const bool otherIsFirst = &other == &answers->first;
+    const bool otherReadsOperandOfNewest = use == SiteUse::Call && isValueInStorageOfHolderAtCall(other);
+    if (use == SiteUse::Call && isValueInStorageOfHolderAtCall(filled.answer) && (otherReadsOperandOfNewest || isValueInStorageOfHolderAtCall(newest)) && newest.operand == filled.answer.operand && other.operand == static_cast<uint32_t>(filled.indexInStorageOfHolder)) {
+        if (newest.key && newest.key != filled.answer.key)
+            other.key = newest.key;
+        newest.key = filled.answer.key;
+        m_wasWrittenSinceLastSweep = true;
+        if (!changeableObjects.empty())
+            m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
+        return;
+    }
+    if (otherReadsOperandOfNewest)
+        other = SiteAnswers::withoutKey(use, otherIsFirst);
     bool didBorrow = borrowsOperandOfOtherAnswer(use, newest);
     if (didBorrow)
         newest = { };
     if (borrowsOperandOfOtherAnswer(use, filled.answer))
         other = SiteAnswers::withoutKey(use, otherIsFirst, static_cast<uint32_t>(filled.indexInStorageOfHolder));
-    else if (use == SiteUse::Call) {
-        other = newest;
+    else if (!isRead(use)) {
+        if (newest.key)
+            other = newest;
     } else if (didBorrow)
         other = SiteAnswers::withoutKey(use, otherIsFirst);
-    newest = filled.answer;
+    newest = isRead(use) ? asNewestAtRead(use, filled.answer) : filled.answer;
+    if (isRoad(use, filled.answer))
+        countEvent(*m_state.instance.vm, RuntimeCounterID::RoadsFiledAtSites);
+    ASSERT(use != SiteUse::Call || !answers->second.isByStructure() || SiteAnswers::formOf(use, answers->second.key) != SiteAnswers::Form::GetterInStorageOfHolder);
     m_wasWrittenSinceLastSweep = true;
     if (!changeableObjects.empty())
         m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
 }
 
-void AnswersAtSites::fillByShape(uint32_t place, SiteAnswers::Answer answer)
+void AnswersAtSites::fillByShape(uint32_t place, SiteUse use, SiteAnswers::Answer answer, std::optional<SiteAnswers::Answer> sameByStructure)
 {
     RELEASE_ASSERT(answer.isByShape());
-    SiteAnswers* answers = ensureAnswersOf(place, SiteUse::Read);
+    SiteAnswers* answers = ensureAnswersOf(place, use);
     if (!answers) {
         didFailToFill(place);
         return;
     }
-    m_states.waitLongerForNextFill(keyOfState(place));
-    if (borrowsOperandOfOtherAnswer(SiteUse::Read, answers->second))
+    waitLongerForNextFill(place);
+    if (borrowsOperandOfOtherAnswer(use, answers->second))
         answers->second = { };
     answers->first = answer;
+    if (sameByStructure && (!answers->second.key || isRoad(use, answers->second))) {
+        answers->second = *sameByStructure;
+        m_wasWrittenSinceLastSweep = true;
+    }
 }
 
-bool AnswersAtSites::holdsAnotherStructure(uint32_t place, StructureID id) const
+bool AnswersAtSites::holdsAnotherStructure(uint32_t place, SiteUse use, StructureID id) const
 {
     const SiteAnswers* answers = answersOf(place);
-    return answers && answers->second.isByStructure() && answers->second.structureID() != id;
+    return answers && answers->second.isByStructure() && answers->second.structureID() != id && !secondRepeatsFirst(use, *answers) && !isRoad(use, answers->second);
 }
 
-void AnswersAtSites::addFurtherAnswer(uint32_t place, SiteAnswers::Answer answer, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
+void AnswersAtSites::moveUpFurtherAnswer(uint32_t place, SiteUse use, StructureID id)
 {
+    using Form = SiteAnswers::Form;
+    WideSiteAnswers* wide = wideAnswersOf(place);
+    if (!wide)
+        return;
+    if (uint8_t& leftOut = samplesLeftOutAt(place)) {
+        --leftOut;
+        return;
+    }
+    auto found = std::ranges::find(wide->structuresOfFurtherAnswers, id.bits());
+    if (found == wide->structuresOfFurtherAnswers.end())
+        return;
+    size_t index = found - wide->structuresOfFurtherAnswers.begin();
+    SiteAnswers::Answer& first = wide->answers.first;
+    SiteAnswers::Answer& second = wide->answers.second;
+    const WideSiteAnswers::FormOfFurtherAnswer held = wide->formsOfFurtherAnswersHeld[index];
+    const AnswerByStructure up { { id.bits() | held.bits, wide->operandsOfFurtherAnswers[index] }, held.indexInStorageOfHolder };
+    const bool upBorrows = borrowsOperandOfOtherAnswer(use, up.answer);
+    if (upBorrows && wide->answers.holdsShape())
+        return;
+    AnswerByStructure down { isRoad(use, second) ? SiteAnswers::Answer { } : second, 0 };
+    if (down.answer.isByStructure()) {
+        if (borrowsOperandOfOtherAnswer(use, second))
+            down.indexInStorageOfHolder = static_cast<int32_t>(first.operand);
+        else if (SiteAnswers::formOf(use, second.key) == Form::OwnValueInStorage && static_cast<int32_t>(second.operand) > 0)
+            down.answer = { (second.key & ~SiteAnswers::formMask) | SiteAnswers::bitsOf(use, Form::OwnValueInCell), static_cast<uint32_t>(second.operand * sizeof(EncodedJSValue)) };
+        if (!WideSiteAnswers::canBeFurtherAnswer(SiteAnswers::formOf(use, down.answer.key), down.indexInStorageOfHolder))
+            return;
+    }
+    waitLongerForNextFill(place);
+    if (upBorrows)
+        first = SiteAnswers::withoutKey(use, true, static_cast<uint32_t>(up.indexInStorageOfHolder));
+    else if (down.indexInStorageOfHolder)
+        first = SiteAnswers::withoutKey(use, true);
+    second = asNewestAtRead(use, up.answer);
+    *found = down.answer.isByStructure() ? down.answer.structureID().bits() : 0;
+    wide->operandsOfFurtherAnswers[index] = down.answer.operand;
+    wide->formsOfFurtherAnswersHeld[index] = { static_cast<uint8_t>(down.answer.key & SiteAnswers::formMask), static_cast<int8_t>(down.indexInStorageOfHolder) };
+    m_wasWrittenSinceLastSweep = true;
+}
+
+void AnswersAtSites::addFurtherAnswer(uint32_t place, const AnswerByStructure& filled, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
+{
+    const SiteAnswers::Answer answer = filled.answer;
     WideSiteAnswers* wide = ensureWideAnswersOf(place);
     if (!wide) {
-        m_states.waitLongerForNextFill(keyOfState(place));
+        waitLongerForNextFill(place);
         return;
     }
     auto& structures = wide->structuresOfFurtherAnswers;
     if (std::ranges::contains(structures, answer.structureID().bits())) {
-        m_states.waitLongerForNextFill(keyOfState(place));
+        waitLongerForNextFill(place);
         return;
     }
     auto room = std::ranges::find(structures, 0u);
     if (room == structures.end()) {
         room = structures.begin() + m_nextStructureToForget++ % structures.size();
-        m_states.waitLongerForNextFill(keyOfState(place));
+        waitLongerForNextFill(place);
     }
     size_t index = room - structures.begin();
     *room = answer.structureID().bits();
     wide->operandsOfFurtherAnswers[index] = answer.operand;
-    wide->bitsOfFormsOfFurtherAnswers[index] = static_cast<uint8_t>(answer.key & SiteAnswers::formMask);
+    wide->formsOfFurtherAnswersHeld[index] = { static_cast<uint8_t>(answer.key & SiteAnswers::formMask), static_cast<int8_t>(filled.indexInStorageOfHolder) };
     m_wasWrittenSinceLastSweep = true;
     if (!changeableObjects.empty())
         m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
@@ -2283,18 +2431,18 @@ void AnswersAtSites::addStructureThatLacksName(uint32_t place, StructureID id, U
 {
     WideSiteAnswers* wide = ensureWideAnswersOf(place);
     if (!wide) {
-        m_states.waitLongerForNextFill(keyOfState(place));
+        waitLongerForNextFill(place);
         return;
     }
     auto& structures = wide->structuresThatLackName;
     if (std::ranges::contains(structures, id.bits())) {
-        m_states.waitLongerForNextFill(keyOfState(place));
+        waitLongerForNextFill(place);
         return;
     }
     auto room = std::ranges::find(structures, 0u);
     if (room == structures.end()) {
         room = structures.begin() + m_nextStructureToForget++ % structures.size();
-        m_states.waitLongerForNextFill(keyOfState(place));
+        waitLongerForNextFill(place);
     }
     *room = id.bits();
     m_wasWrittenSinceLastSweep = true;
@@ -2302,7 +2450,7 @@ void AnswersAtSites::addStructureThatLacksName(uint32_t place, StructureID id, U
         m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
 }
 
-bool AnswersAtSites::findsSlotOf(uint32_t place, const Object& object) const
+bool AnswersAtSites::findsSlotOf(uint32_t place, SiteUse use, const Object& object) const
 {
     const SiteAnswers* answers = answersOf(place);
     if (!answers)
@@ -2311,13 +2459,13 @@ bool AnswersAtSites::findsSlotOf(uint32_t place, const Object& object) const
         return true;
     if (!answers->second.isByStructure() || answers->second.structureID() != object.structureID())
         return false;
-    SiteAnswers::Form form = SiteAnswers::formOf(SiteUse::Read, answers->second.key);
-    return form == SiteAnswers::Form::OwnFieldInCell || form == SiteAnswers::Form::OwnNarrowReferenceInCell || form == SiteAnswers::Form::OwnInt32InCell;
+    SiteAnswers::Form form = SiteAnswers::formOf(use, answers->second.key);
+    return form == SiteAnswers::Form::OwnFieldInCell || form == SiteAnswers::Form::OwnNarrowReferenceInCell || form == SiteAnswers::Form::OwnInt32InCell || form == SiteAnswers::Form::OwnFieldInExtension;
 }
 
 void AnswersAtSites::fillAboveFieldLeftOut(uint32_t place, StructureID id, WhatStandsAbove above, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
 {
-    m_states.waitLongerForNextFill(keyOfState(place));
+    waitLongerForNextFill(place);
     WideSiteAnswers* wide = ensureWideAnswersOf(place);
     if (!wide)
         return;
@@ -2344,6 +2492,7 @@ void AnswersAtSites::dropChainDependent(VM&, uint32_t place, UniquedStringImpl*)
     } else
         giveBackIfEmpty(static_cast<uint32_t>(answers - m_answers.data()));
     m_states.forgetHowOftenItWasFilled(keyOfState(place));
+    samplesLeftOutAt(place) = 0;
 }
 
 bool AnswersAtSites::hasChainDependent(VM&, uint32_t place, UniquedStringImpl*) const
@@ -2357,6 +2506,8 @@ bool AnswersAtSites::hasChainDependent(VM&, uint32_t place, UniquedStringImpl*) 
 
 size_t AnswersAtSites::removeDeadEntries(VM& vm, CollectionScope scope)
 {
+    if (scope == CollectionScope::Full)
+        m_visitorsPutOut.clear();
     if (scope == CollectionScope::Eden && !m_wasWrittenSinceLastSweep)
         return 0;
     m_wasWrittenSinceLastSweep = false;
@@ -2368,7 +2519,7 @@ size_t AnswersAtSites::removeDeadEntries(VM& vm, CollectionScope scope)
         for (SiteAnswers::Answer* answer : { &answers.first, &answers.second }) {
             if (!answer->isByStructure() || vm.heap.isMarked(answer->structureID().decode()))
                 continue;
-            *answer = { };
+            answer->key = 0;
             didClear = true;
             ++numberOfClearedAnswers;
         }
@@ -2413,12 +2564,17 @@ static std::optional<uint32_t> offsetOfPlainValueInCell(const FieldData& field)
     return field.slot.offset;
 }
 
-static std::optional<SiteAnswers::Answer> answerForPlainValueInExtension(const Object& object, const FieldData& field)
+static bool isPlainValueInExtension(const Object& object, const FieldData& field)
 {
     SlotRepresentation representation = field.slot.representation();
     if (field.isAccessor() || !field.isOutOfLine() || (representation != SlotRepresentation::JSValue && representation != SlotRepresentation::Cell))
-        return std::nullopt;
-    if (object.layout().extensionSlot() != SlotData::create(offsetOfFirstField, SlotRepresentation::Cell32))
+        return false;
+    return object.layout().extensionSlot() == SlotData::create(offsetOfFirstField, SlotRepresentation::Cell32);
+}
+
+static std::optional<SiteAnswers::Answer> answerForPlainValueInExtension(const Object& object, const FieldData& field)
+{
+    if (!isPlainValueInExtension(object, field))
         return std::nullopt;
     return SiteAnswers::tryByShapeInExtension(object.shapeWord(), field.slot.offset);
 }
@@ -2445,7 +2601,7 @@ static std::optional<AnswersAtSites::AnswerByStructure> answerOfSlot(SiteUse use
         if (slot.has(Slot::isOwn)) {
             if (slot.has(Slot::isOutOfLine))
                 return answer(Form::OwnValueInStorage, static_cast<uint32_t>(wordIndex));
-            return answer(use == SiteUse::Read ? Form::OwnValueInCell : Form::OwnFieldInCell, static_cast<uint32_t>(wordIndex) * sizeof(EncodedJSValue));
+            return answer(isRead(use) ? Form::OwnValueInCell : Form::OwnFieldInCell, static_cast<uint32_t>(wordIndex) * sizeof(EncodedJSValue));
         }
         if (!slot.holder || usesWideReferences)
             return std::nullopt;
@@ -2460,21 +2616,37 @@ static std::optional<AnswersAtSites::AnswerByStructure> answerOfSlot(SiteUse use
         std::optional<WordOfGetterForSiteAnswers> word = findWordOfGetterForSiteAnswers(use, slot, cageBase, usesWideReferences);
         return word ? answer(word->form, word->operand, word->indexInStorageOfHolder) : std::nullopt;
     }
+    case Slot::Kind::FieldGetter: {
+        if ((use != SiteUse::Call && !isRead(use)) || slot.has(Slot::isOutOfLine))
+            return std::nullopt;
+        SlotRepresentation representation = slot.field.slot.representation();
+        if ((representation != SlotRepresentation::JSValue && representation != SlotRepresentation::Cell) || slot.field.slot.offset % sizeof(EncodedJSValue))
+            return std::nullopt;
+        return answer(Form::OwnGetterInCell, slot.field.slot.offset);
+    }
     case Slot::Kind::Absent: {
-        if (use != SiteUse::Read || usesWideReferences)
+        if (!isRead(use) || usesWideReferences)
             return std::nullopt;
         uintptr_t words = (std::bit_cast<uintptr_t>(objectThatHoldsUndefined->inlineStorage()) - cageBase) / sizeof(EncodedJSValue);
         return words <= UINT32_MAX ? answer(Form::ValueInWordOfCage, static_cast<uint32_t>(words)) : std::nullopt;
     }
+    case Slot::Kind::ArrayLength:
+        return isRead(use) && slot.has(Slot::isLastIndexOfRegExp) ? answer(Form::OwnValueInCell, static_cast<uint32_t>(RegExpObject::offsetOfLastIndex())) : std::nullopt;
     case Slot::Kind::TypedArrayLength:
-        return use == SiteUse::Read && !slot.has(Slot::readsByteOffset) ? answer(Form::LengthOfTypedArray, 0) : std::nullopt;
-    case Slot::Kind::ExtraProperty: {
+        return isRead(use) && !slot.has(Slot::readsByteOffset) ? answer(Form::LengthOfTypedArray, 0) : std::nullopt;
+    case Slot::Kind::ExtraProperty:
+    case Slot::Kind::ExtraGetter: {
+        const bool isGetter = slot.kind == Slot::Kind::ExtraGetter;
+        if (isGetter && use != SiteUse::Call)
+            return std::nullopt;
         constexpr int32_t maxIndex = (1 << (31 - SiteAnswers::indexShiftInOperandOfExtraValue)) - 1;
         uint32_t hiddenWordOffset = slot.hiddenWordOffset();
         int32_t wordIndex = slot.extraProperty.wordIndex;
         if (usesWideReferences || hiddenWordOffset % sizeof(uint32_t) || hiddenWordOffset / sizeof(uint32_t) > UINT8_MAX || wordIndex > maxIndex || wordIndex < -maxIndex)
             return std::nullopt;
         uint32_t operand = static_cast<uint32_t>(wordIndex) << SiteAnswers::indexShiftInOperandOfExtraValue | hiddenWordOffset / sizeof(uint32_t);
+        if (isGetter)
+            return answer(slot.has(Slot::isOutOfLine) ? Form::ExtraGetterInStorageAtCall : Form::ExtraGetterInCellAtCall, operand);
         return answer(slot.has(Slot::isOutOfLine) ? Form::ExtraValueInStorage : Form::ExtraValueInCell, operand);
     }
     default:
@@ -2508,10 +2680,10 @@ static std::optional<AnswersAtSites::WhatStandsAbove> findWhatStandsAboveFieldLe
     }
 }
 
-bool PropertyCaches::fillAboveFieldLeftOut(uint32_t place, Object& object, const CachedName& name)
+bool PropertyCaches::fillAboveFieldLeftOut(uint32_t place, SiteUse use, Object& object, const CachedName& name)
 {
     Structure* structure = object.structure();
-    if (m_state.instance.options().useWideReferences() || object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype) || !m_answersAtSites.findsSlotOf(place, object))
+    if (m_state.instance.options().useWideReferences() || object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype) || !m_answersAtSites.findsSlotOf(place, use, object))
         return false;
     std::optional<Slot> slot = m_tables.find(structure->id(), name, SlotAccess::Read);
     if (!slot || belongsToOneObject(structure))
@@ -2621,25 +2793,160 @@ void PropertyCaches::keepIfBelowBuiltinClass(Structure* structure)
     m_structuresBelowBuiltinClasses.keep(structure, changeableObjects.span());
 }
 
-void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse use)
+RowsOfReads::Row* PropertyCaches::claimRowOfReads(JSValue base, RowsOfReads& group)
+{
+    JSObject* object = base.getObject();
+    Structure* structure = object ? WTF::opaque(object->structure()) : nullptr;
+    bool isAnsweredByStubAlone = !structure || structure->isDictionary() || structure->isCompiledStructure() || structure->typeInfo().overridesGetOwnPropertySlot() || TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags());
+    uint32_t id = isAnsweredByStubAlone ? 0 : structure->id().bits();
+    RELEASE_ASSERT(!(id & RowsOfReads::markOfHiddenRow));
+
+    if (group.samplesLeft) {
+        RowsOfReads::Row* hidden = nullptr;
+        for (unsigned index = 0; index < RowsOfReads::numberOfRows; ++index) {
+            if (id && group.rows[index].structure == (id | RowsOfReads::markOfHiddenRow)) {
+                hidden = &group.rows[index];
+                ++group.cameInLastSample[index];
+            }
+        }
+        for (unsigned index = 0; id && !hidden && index < RowsOfReads::numberOfRows; ++index) {
+            if (group.rows[index].structure)
+                continue;
+            hidden = &group.rows[index];
+            hidden->structure = id | RowsOfReads::markOfHiddenRow;
+            std::ranges::fill(hidden->places, RowsOfReads::placeIsNotKnown);
+            ++group.cameInLastSample[index];
+        }
+        group.samplesThatHadRow += !!hidden;
+        if (!--group.samplesLeft) {
+            for (unsigned index = 0; index < RowsOfReads::numberOfRows; ++index)
+                group.rows[index].structure &= ~RowsOfReads::markOfHiddenRow;
+            if (group.samplesThatHadRow * 3 < RowsOfReads::numberOfSamples)
+                group.hasGivenUp = 1;
+            group.missesLeft = RowsOfReads::firstWait << group.doublings;
+            if (group.doublings < RowsOfReads::mostDoublings)
+                ++group.doublings;
+        }
+        return hidden;
+    }
+
+    static constexpr uint8_t waitsWhileNothingIsClaimed = 3;
+    if (!id && std::ranges::none_of(group.rows, [](const RowsOfReads::Row& row) { return !!row.structure; })) {
+        if (group.doublings >= waitsWhileNothingIsClaimed)
+            group.hasGivenUp = 1;
+        else
+            group.missesLeft = RowsOfReads::firstWait << group.doublings++;
+        return nullptr;
+    }
+
+    RowsOfReads::Row* claimed = nullptr;
+    if (id) {
+        for (RowsOfReads::Row& row : group.rows) {
+            if (row.structure == id)
+                return &row;
+            if (!row.structure && !claimed)
+                claimed = &row;
+        }
+    }
+    bool putsOutRow = id && !claimed;
+    if (putsOutRow) {
+        unsigned fewest = RowsOfReads::numberOfRows - 1;
+        for (unsigned index = RowsOfReads::numberOfRows - 1; index--;) {
+            if (group.cameInLastSample[index] < group.cameInLastSample[fewest])
+                fewest = index;
+        }
+        claimed = &group.rows[fewest];
+    }
+    if (claimed) {
+        claimed->structure = id;
+        std::ranges::fill(claimed->places, RowsOfReads::placeIsNotKnown);
+    }
+    if (!id || putsOutRow) {
+        for (RowsOfReads::Row& row : group.rows) {
+            if (row.structure)
+                row.structure |= RowsOfReads::markOfHiddenRow;
+        }
+        group.samplesLeft = RowsOfReads::numberOfSamples;
+        group.samplesThatHadRow = 0;
+        std::ranges::fill(group.cameInLastSample, 0);
+    }
+    return claimed;
+}
+
+void PropertyCaches::findPlaceInRowOfReads(JSCell* base, uint32_t identifierNumber, RowsOfReads::Row& row, uint32_t index)
+{
+    Structure* structure = WTF::opaque(base->structure());
+    RELEASE_ASSERT(index < RowsOfReads::numberOfPlaces);
+    if ((row.structure & ~RowsOfReads::markOfHiddenRow) != structure->id().bits())
+        return;
+    int16_t& place = row.places[index];
+    place = RowsOfReads::placeIsAskedOfStub;
+    unsigned attributes;
+    std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(nameOf(identifierNumber).uid, attributes);
+    if (!offset || !isValidOffset(*offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        return;
+    static_assert(!(JSObject::offsetOfInlineStorage() % sizeof(EncodedJSValue)));
+    ptrdiff_t wordIndex = isInlineOffset(*offset) ? static_cast<ptrdiff_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offsetInInlineStorage(*offset)) : static_cast<ptrdiff_t>(offsetInButterfly(*offset));
+    if (wordIndex <= INT16_MIN || wordIndex > INT16_MAX || (wordIndex > 0) != isInlineOffset(*offset) || !wordIndex)
+        return;
+    place = static_cast<int16_t>(wordIndex);
+}
+
+void PropertyCaches::fileOwnPlainValueUnlessFiled(JSObject* base, uint32_t identifierNumber)
+{
+    Structure* structure = WTF::opaque(base->structure());
+    CachedName name = nameOf(identifierNumber);
+    if (structure->isDictionary() || structure->typeInfo().overridesGetOwnPropertySlot() || TypeInfo::hasStaticPropertyTable(base->inlineTypeFlags()) || m_tables.find(structure->id(), name, SlotAccess::Read))
+        return;
+    unsigned attributes;
+    std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(name.uid, attributes);
+    if (!offset || !isValidOffset(*offset) || attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+        return;
+    JSValue value = valueAtOffset(base, *offset);
+    if (!value)
+        return;
+    PropertySlot slot(base, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+    slot.setValue(base, attributes, value, *offset);
+    PropertyAnswer answer = classifyRead({ m_state.instance.globalObject, base, structure, name.uid, slot, ChainWalkMode::AllocatesNothing });
+    if (answer.isCacheable())
+        cache({ structure, name, SlotAccess::Read }, answer);
+}
+
+void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse use, bool stubFollowsFurtherAnswers, bool stubJumpsToArmOfAnswer)
 {
     Structure* structure = WTF::opaque(base->structure());
     StructureID id = structure->id();
     CachedName name = nameOf(identifierNumber);
+    if (compiledObjectStructureOrNull(structure))
+        holdExtraPropertiesToStructureThatIsNamed(m_state.instance.globalObject, *uncheckedDowncast<Object>(base), "an answer is filed at a place"_s);
+    if (use == SiteUse::AbsenceAmongExtraProperties) {
+        const CompiledStructure* compiled = compiledObjectStructureOrNull(structure);
+        unsigned attributes = 0;
+        std::optional<PropertyOffset> offset = compiled && compiled->listsEveryExtraProperty() && !belongsToOneObject(structure) ? compiled->extraPropertiesStructure()->getWithoutMaterializing(name.uid, attributes) : std::nullopt;
+        std::optional<SiteAnswers::Answer> answer = offset && !isValidOffset(*offset) ? SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::Nothing, 0) : std::nullopt;
+        const SiteAnswers* answers = m_answersAtSites.answersOf(place);
+        if (!answer)
+            m_answersAtSites.didFailToFill(place);
+        else if (answers && answers->first.isByStructure() && answers->second.isByStructure())
+            m_answersAtSites.addStructureThatLacksName(place, id, name.uid, { });
+        else
+            m_answersAtSites.fill(place, use, { *answer }, name.uid, { });
+        return;
+    }
     if (use == SiteUse::Call)
         keepIfBelowBuiltinClass(structure);
 
     if (compiledObjectStructureOrNull(structure)) {
         auto* object = uncheckedDowncast<Object>(base);
         const FieldData* field = object->fieldNamed(m_state, name.uid);
-        bool isLeftOut = field && use == SiteUse::Read && !object->isInSlot(*field) && !(object->orderWord() & orderWordHasFieldOutsideSlot);
-        if (isLeftOut && fillAboveFieldLeftOut(place, *object, name))
+        bool isLeftOut = field && isRead(use) && !object->isInSlot(*field) && !(object->orderWord() & orderWordHasFieldOutsideSlot);
+        if (isLeftOut && fillAboveFieldLeftOut(place, use, *object, name))
             return;
         if (std::optional<uint32_t> offset = field ? offsetOfPlainValueInCell(*field) : std::nullopt; offset && (object->isInSlot(*field) || isLeftOut)) {
             const SiteAnswers* answers = m_answersAtSites.answersOf(place);
-            bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != object->shapeWord() && !answers->second.key;
-            if (use == SiteUse::Read && !hasRoomOnlyByStructure && !object->bearsMark()) {
-                m_answersAtSites.fillByShape(place, SiteAnswers::byShape(object->shapeWord(), *offset));
+            bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != object->shapeWord() && (!answers->second.key || isRoad(use, answers->second) || stubFollowsFurtherAnswers);
+            if (isRead(use) && !hasRoomOnlyByStructure && !object->bearsMark()) {
+                m_answersAtSites.fillByShape(place, use, SiteAnswers::byShape(object->shapeWord(), *offset), stubJumpsToArmOfAnswer ? SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInCell, *offset) : std::nullopt);
                 return;
             }
             if (std::optional<SiteAnswers::Answer> answer = SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInCell, *offset))
@@ -2648,9 +2955,9 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
                 m_answersAtSites.didFailToFill(place);
             return;
         }
-        if (std::optional<SiteAnswers::Answer> answer = field && use == SiteUse::Read ? answerForTypedSlotInCell(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
+        if (std::optional<SiteAnswers::Answer> answer = field && isRead(use) ? answerForTypedSlotInCell(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
             const SiteAnswers* answers = m_answersAtSites.answersOf(place);
-            bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != answer->key && !answers->second.key;
+            bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != answer->key && (!answers->second.key || isRoad(use, answers->second));
             std::optional<SiteAnswers::Form> form = hasRoomOnlyByStructure || object->bearsMark() ? SiteAnswers::formByStructureOfSlotInCell(field->slot.representation()) : std::nullopt;
             if (std::optional<SiteAnswers::Answer> byStructure = form ? SiteAnswers::tryByStructure(use, id, *form, field->slot.offset) : std::nullopt) {
                 m_answersAtSites.fill(place, use, { *byStructure }, name.uid, { });
@@ -2658,12 +2965,21 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
             }
             if (object->bearsMark())
                 m_answersAtSites.didFailToFill(place);
-            else
-                m_answersAtSites.fillByShape(place, *answer);
+            else {
+                std::optional<SiteAnswers::Form> sameForm = stubJumpsToArmOfAnswer ? SiteAnswers::formByStructureOfSlotInCell(field->slot.representation()) : std::nullopt;
+                m_answersAtSites.fillByShape(place, use, *answer, sameForm ? SiteAnswers::tryByStructure(use, id, *sameForm, field->slot.offset) : std::nullopt);
+            }
             return;
         }
-        if (std::optional<SiteAnswers::Answer> answer = field && use == SiteUse::Read && !object->bearsMark() ? answerForPlainValueInExtension(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
-            m_answersAtSites.fillByShape(place, *answer);
+        if (std::optional<SiteAnswers::Answer> answer = field && isRead(use) && !object->bearsMark() ? answerForPlainValueInExtension(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
+            m_answersAtSites.fillByShape(place, use, *answer, stubJumpsToArmOfAnswer ? SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInExtension, answer->operand) : std::nullopt);
+            return;
+        }
+        if (std::optional<uint32_t> operand = field && (use == SiteUse::Call || stubJumpsToArmOfAnswer) && isPlainValueInExtension(*object, *field) && object->isInSlot(*field) ? SiteAnswers::operandOfFieldInExtension(field->slot.offset) : std::nullopt) {
+            if (std::optional<SiteAnswers::Answer> answer = SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInExtension, *operand))
+                m_answersAtSites.fill(place, use, { *answer }, name.uid, { });
+            else
+                m_answersAtSites.didFailToFill(place);
             return;
         }
     }
@@ -2671,21 +2987,29 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     std::optional<Slot> slot = m_tables.find(id, name, SlotAccess::Read);
     if (slot && m_vm.aotState().verifiesFastPathAnswers) [[unlikely]]
         askAgainWhatSlotAnswers(m_state.instance, base, name.uid, *slot);
-    if (slot && slot->kind == Slot::Kind::ExtraProperty && belongsToOneObject(structure))
+    auto hasNoFormAtPlaces = [](Slot::Kind kind) {
+        return (kind == Slot::Kind::ClosureName || kind == Slot::Kind::ClosureLength || kind == Slot::Kind::CustomGetter || kind == Slot::Kind::Getter || kind == Slot::Kind::ExtraGetter);
+    };
+    bool rowAnswers = slot && stubJumpsToArmOfAnswer && hasNoFormAtPlaces(slot->kind) && !belongsToOneObject(structure) && m_tables.holdsInFrontRows(id, name, SlotAccess::Read)
+        && !(compiledObjectStructureOrNull(structure) && uncheckedDowncast<Object>(base)->fieldNamed(m_state, name.uid));
+    if (slot && (slot->kind == Slot::Kind::ExtraProperty || slot->kind == Slot::Kind::ExtraGetter) && belongsToOneObject(structure))
         slot = std::nullopt;
-    if (slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure))
-        slot = std::nullopt;
-    std::optional<AnswersAtSites::AnswerByStructure> answer = slot ? answerOfSlot(use, *slot, m_vm.heap.cage().base(), m_state.instance.options().useWideReferences(), m_state.objectThatHoldsUndefined) : std::nullopt;
+    bool placeMayNotCallGetter = slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure);
+    std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !placeMayNotCallGetter ? answerOfSlot(use, *slot, m_vm.heap.cage().base(), m_state.instance.options().useWideReferences(), m_state.objectThatHoldsUndefined) : std::nullopt;
+    if (!answer && rowAnswers && !m_answersAtSites.holdsAnotherStructure(place, use, id)) {
+        if (std::optional<SiteAnswers::Answer> road = SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::Nothing, 0))
+            answer = AnswersAtSites::AnswerByStructure { *road, 0 };
+    }
     if (!answer) {
         m_answersAtSites.didFailToFill(place);
         return;
     }
-    bool isOneMoreStructureThatLacksName = slot->kind == Slot::Kind::Absent && m_answersAtSites.holdsAnotherStructure(place, id);
+    bool isOneMoreStructureThatLacksName = slot->kind == Slot::Kind::Absent && m_answersAtSites.holdsAnotherStructure(place, use, id);
     if (!slot->has(Slot::dependsOnChain)) {
         if (isOneMoreStructureThatLacksName)
             m_answersAtSites.addStructureThatLacksName(place, id, name.uid, { });
         else
-            m_answersAtSites.fill(place, use, *answer, name.uid, { });
+            m_answersAtSites.fill(place, use, *answer, name.uid, { }, stubFollowsFurtherAnswers);
         return;
     }
     JSGlobalObject* globalObject = m_state.instance.globalObject;
@@ -2702,7 +3026,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     if (isOneMoreStructureThatLacksName)
         m_answersAtSites.addStructureThatLacksName(place, id, name.uid, walk.changeableObjects.span());
     else
-        m_answersAtSites.fill(place, use, *answer, name.uid, walk.changeableObjects.span());
+        m_answersAtSites.fill(place, use, *answer, name.uid, walk.changeableObjects.span(), stubFollowsFurtherAnswers);
 }
 
 void PropertyCaches::didFinishCollection(VM&, CollectionScope)
@@ -2718,6 +3042,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCallGetterOfSlot, EncodedJSValue, (Instance
 {
     constexpr Entry entry = Entry::operationAOTCallGetterOfSlot;
     AOT_OPERATION_BEGIN(instance, entry);
+    if (vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+        stopAtStaleGetterOfPendingRead(*instance, JSValue::decode(base), getterSetter);
+    ++instance->propertyCaches.slowPathReadCount;
     OPERATION_RETURN(scope, JSValue::encode(cellArgument<GetterSetter>(getterSetter, entry)->callGetter(globalObject, JSValue::decode(base))));
 }
 

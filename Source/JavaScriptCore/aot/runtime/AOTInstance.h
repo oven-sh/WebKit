@@ -49,6 +49,8 @@ namespace AOT {
 
 class Image;
 struct CaseConversions;
+struct QuotedTexts;
+struct SortedStorage;
 struct ImageFunction;
 struct ImageRegExp;
 struct ImageStringRecord;
@@ -238,6 +240,8 @@ struct RealmWords {
     const void* keysOfPairs;
     uint64_t keyOfPairMask;
     CaseConversions* caseConversions;
+    QuotedTexts* quotedTexts;
+    SortedStorage* sortedStorage;
     MicrotaskQueue* microtaskQueue;
     JSCell* functionOfEngineOverCompiledFunction;
     JSCell* compiledFunctionUnderFunctionOfEngine;
@@ -392,6 +396,7 @@ struct Instance : InstanceHeader {
     SlotHandlers& slotHandlers() { return propertyCaches.handlers; }
 #endif
     static constexpr ptrdiff_t offsetOfSlotHandlers(SlotHandlerTable);
+    static constexpr ptrdiff_t offsetOfAnswerHandlers(AnswerHandlerTable);
 
     std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> boxedCalls() { return std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> { reinterpret_cast<BoxedCallEntry*>(reinterpret_cast<uint8_t*>(this) + offsetOfBoxedCalls()), StubWords::numberOfBoxedCallEntries }; }
     static constexpr ptrdiff_t offsetOfBoxedCalls();
@@ -436,6 +441,11 @@ constexpr ptrdiff_t Instance::offsetOfSlotHandlers(SlotHandlerTable table)
     constexpr ptrdiff_t offsetOfHandlers = AOT_INSTANCE_OFFSET(propertyCaches.handlers);
 #endif
     return offsetOfHandlers + static_cast<ptrdiff_t>(static_cast<unsigned>(table) * numberOfSlotKindsWithHandlers * sizeof(void*));
+}
+
+constexpr ptrdiff_t Instance::offsetOfAnswerHandlers(AnswerHandlerTable table)
+{
+    return offsetOfSlotHandlers(static_cast<SlotHandlerTable>(numberOfSlotHandlerTables + static_cast<unsigned>(table)));
 }
 
 constexpr ptrdiff_t Instance::offsetOfBoxedCalls()

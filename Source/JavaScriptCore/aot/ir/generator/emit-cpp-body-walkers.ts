@@ -443,14 +443,19 @@ inline uint32_t numberOfWordsInFrontOfNamedOperands(uint64_t outline, const uint
   );
 }
 
-const variadicOperandsByOutline = `ALWAYS_INLINE std::span<const ValueID> BodyValue::variadicOperands() const
+const variadicOperandsByOutline = `ALWAYS_INLINE std::span<const ValueID> BodyValue::variadicOperandsBy(uint64_t outline) const
 {
-    uint64_t placeOfFirst = placeOfFirstVariadicOperandIn(outlineOfFieldsOf(m_opcode));
+    uint64_t placeOfFirst = placeOfFirstVariadicOperandIn(outline);
     if (!placeOfFirst)
         return { };
     if (placeOfFirst != placeOfVariadicBodyOperandsFoundByCase) [[likely]]
         return wordsBehindHead().operandsAt(static_cast<uint32_t>(placeOfFirst - 1));
     return variadicOperandsFoundByCase();
+}
+
+ALWAYS_INLINE std::span<const ValueID> BodyValue::variadicOperands() const
+{
+    return variadicOperandsBy(outlineOfFieldsOf(m_opcode));
 }`.split("\n");
 
 const forEachOperandByOutline = `template<typename Functor>
@@ -463,11 +468,11 @@ void BodyValue::forEachOperand(const Functor& functor) const
             return;
         words += numberOfWordsInFrontOfNamedOperands(outline, words);
     }
-    std::span<const ValueID> variadic = variadicOperands();
     uint32_t operandIndex = 0;
     for (uint64_t places = placesBehindNamedOperandsIn(outline); places; places >>= 8)
         visitBodyOperand(ValueID::fromBits(words[(places & 0xff) - 1]), operandIndex++, functor);
-    visitVariadicBodyOperands(variadic, operandIndex, functor);
+    if (placeOfFirstVariadicOperandIn(outline))
+        visitVariadicBodyOperands(variadicOperandsBy(outline), operandIndex, functor);
 }`.split("\n");
 
 const copyFieldsByOutline = `template<OperationHolder Holder, typename Functor>
@@ -568,6 +573,32 @@ function visitReferencesOfField(schema: Schema, entry: Entry, { part, offset }: 
 
 function visitReferences(schema: Schema, entry: Entry): string[] {
   return [...placedPayloadOf(entry).flatMap(field => visitReferencesOfField(schema, entry, field)), "return;"];
+}
+
+function kindsOfReferencesOf(entry: Entry): Kind[] {
+  return placedPayloadOf(entry).flatMap(({ part }) => {
+    const element = part.kind.tag === "List" ? part.kind.element : part.kind;
+    const translation = translationOf(entry, part, element);
+    if (translation.tag === "None") return [];
+    if (translation.tag === "Id") return [element];
+    return referencesInRecord(entry, part, translation.record).map(({ kind }) => kind);
+  });
+}
+
+function namesVariableOrLoadsModuleFunction(schema: Schema): string[] {
+  const isAskedFor = (kind: Kind) =>
+    engineTypeOf(kind) === "VariableID" || roleArgument(schema, kind) === ", ModuleReferenceKind::Target";
+  const cases = schema.operations.map(entry => ({
+    label: entry.name,
+    value: String(entry.isWire && kindsOfReferencesOf(entry).some(isAskedFor)),
+  }));
+  return constexprSwitch({
+    signature: "bool namesVariableOrLoadsModule(Opcode opcode)",
+    subject: "opcode",
+    enumName: "Opcode",
+    cases,
+    defaultValue: "false",
+  });
 }
 
 function copyList(entry: Entry, field: PayloadField, element: Kind, offset: string): string {
@@ -749,6 +780,7 @@ function bodyWalkersHeader(schema: Schema): string[] {
     ...cursors.map(numberOfFieldWordsFunction),
     numberOfWordsBehindHeadFunction(schema.operations),
     outlineOfFieldsColumn(schema.operations),
+    namesVariableOrLoadsModuleFunction(schema),
     ...walkersOf(schema).flatMap(walker =>
       cursors
         .filter(({ className }) => walker.walksOnly === undefined || walker.walksOnly === className)

@@ -14,6 +14,7 @@
 #include "AOTOperatorForms.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
+#include "AOTWalkResultsInParts.h"
 #include "AOTWalkStringFolds.h"
 #include <optional>
 #include <span>
@@ -40,7 +41,7 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
         return false;
     if (!accessesUnderKeysInWalkStrings.contains(opcode)) {
         bool somethingIsProven = false;
-        for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode); ++operandIndex) {
+        for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode) && !somethingIsProven; ++operandIndex) {
             if (ValueID operand = value.operand(operandIndex))
                 somethingIsProven |= !walker.nothingIsProvenOf(walker.referenceOf(operand));
         }
@@ -91,9 +92,17 @@ bool buildCallByOneRowForStrings(Walker& walker, const CallByOneRow& call)
     case InlineBuiltin::StringLastIndexOf:
     case InlineBuiltin::StringIncludes:
         return buildSearchInString(walker, call);
+    case InlineBuiltin::StringSplit:
+        return buildSplitInParts(walker, call);
     case InlineBuiltin::CallNumberConstructor:
     case InlineBuiltin::ParseInt:
         return buildNumberOfPieceByCall(walker, call);
+    case InlineBuiltin::MapGet:
+        return buildLookupOfPieceInMap(walker, call);
+    case InlineBuiltin::MapHas:
+        return buildTestForKeyLookedUpBehindIt(walker, call);
+    case InlineBuiltin::MapSet:
+        return buildStoreUnderPieceInMap(walker, call);
     default:
         return false;
     }
@@ -116,10 +125,10 @@ Reference referenceToRecordForStrings(const Walker& walker, ValueID record)
 
 Reference rootForStrings(const Walker& walker, Reference reference)
 {
-    const Code& code = walker.code();
-    while (reference.isValue() && opcodesThatGiveSameCell.contains(code.at(reference.id()).opcode))
-        reference = referenceToRecordForStrings(walker, code.at(reference.id()).operand(0));
-    return reference;
+    if (!reference.isValue())
+        return reference;
+    ValueID root = walker.code().valueBehindNames<opcodesThatGiveSameCell>(reference.id());
+    return root == reference.id() ? reference : referenceToRecordForStrings(walker, root);
 }
 
 Reference stringBehindFlatString(const Walker& walker, Reference reference)
@@ -151,11 +160,11 @@ static PrimitiveKnownToFolding onlyValueOfTypeInWalkStrings(const TypeArena& typ
 {
     if (!id)
         return { };
-    Type type = types.at(id);
-    if (!type.isJavaScriptValue() || type.hasObjects())
+    const Type* record = holdsOnlyPrimitives(id) ? nullptr : &types.recordOf(id);
+    if (record && (!record->isJavaScriptValue() || record->hasObjects()))
         return { };
 
-    switch (type.primitives) {
+    switch (record ? record->primitives : primitivesInID(id)) {
     case Primitive::Undefined:
         return PrimitiveKnownToFolding::undefined();
     case Primitive::Null:
@@ -164,10 +173,12 @@ static PrimitiveKnownToFolding onlyValueOfTypeInWalkStrings(const TypeArena& typ
         return PrimitiveKnownToFolding::boolean(false);
     case Primitive::True:
         return PrimitiveKnownToFolding::boolean(true);
-    case Primitive::Integer:
-        return type.integers.isSingleValue() ? PrimitiveKnownToFolding::integer(type.integers.minimum) : PrimitiveKnownToFolding();
+    case Primitive::Integer: {
+        Range integers = record ? record->integers : integersInID(id);
+        return integers.isSingleValue() ? PrimitiveKnownToFolding::integer(integers.minimum) : PrimitiveKnownToFolding();
+    }
     case Primitive::LiteralString: {
-        StringID literal = singleStringLiteralOf(type);
+        StringID literal = record ? singleStringLiteralOf(*record) : StringID();
         return literal ? PrimitiveKnownToFolding::text(literal) : PrimitiveKnownToFolding();
     }
     default:
@@ -225,6 +236,132 @@ bool isProvenString(const Walker& walker, TypeID id)
     return !type.isNever() && type.isAnyString();
 }
 
+namespace {
+
+struct SumInWalkStrings {
+    struct Term {
+        ValueID record;
+        int64_t factor { 0 };
+        int64_t least { std::numeric_limits<int64_t>::min() };
+        int64_t greatest { std::numeric_limits<int64_t>::max() };
+    };
+    struct PassedTest {
+        ValueID relation;
+        bool holds { false };
+    };
+    Vector<Term, 8> terms;
+    Vector<PassedTest, 4> passedTests;
+    int64_t constant { 0 };
+    bool holdsWhatIsTooGreat { false };
+};
+
+} // anonymous namespace
+
+static constexpr unsigned deepestSumReadInWalkStrings = 6;
+static constexpr int64_t greatestMagnitudeAddedInWalkStrings = static_cast<int64_t>(1) << 53;
+
+static void addToSumInWalkStrings(const Walker& walker, SumInWalkStrings& sum, ValueID value, int64_t factor, unsigned depth = 0)
+{
+    const Code& code = walker.code();
+    const Operation* record = &code.at(value);
+    SumInWalkStrings::Term added { { }, factor };
+    auto holdToTypeOfName = [&] {
+        Type type = walker.types().at(record->type);
+        if (!type.isInteger())
+            return;
+        added.least = std::max(added.least, type.integers.minimum);
+        added.greatest = std::min(added.greatest, type.integers.maximum);
+    };
+    holdToTypeOfName();
+    while (opcodesThatGiveSameValue.contains(record->opcode)) {
+        if (record->opcode == Opcode::Narrowed && record->testOperand() && !record->narrowsHolderOfOperand() && !record->narrowsOtherResultOfOperand() && !record->narrowsTermOfOperand() && allRelations.contains(code.at(record->testOperand()).opcode))
+            sum.passedTests.append({ record->testOperand(), record->isOnTakenEdge() });
+        value = record->operand(0);
+        record = &code.at(value);
+        holdToTypeOfName();
+    }
+    if (record->opcode == Opcode::Integer) {
+        if (record->integer() < -greatestMagnitudeAddedInWalkStrings || record->integer() > greatestMagnitudeAddedInWalkStrings)
+            sum.holdsWhatIsTooGreat = true;
+        else
+            sum.constant += factor * record->integer();
+        return;
+    }
+    if (depth < deepestSumReadInWalkStrings && hasOperatorForm(record->opcode) && record->form() == OperatorForm::Integers) {
+        switch (record->opcode) {
+        case Opcode::Add:
+        case Opcode::Sub:
+            addToSumInWalkStrings(walker, sum, record->operand(0), factor, depth + 1);
+            addToSumInWalkStrings(walker, sum, record->operand(1), record->opcode == Opcode::Add ? factor : -factor, depth + 1);
+            return;
+        case Opcode::Increment:
+        case Opcode::Decrement:
+            sum.constant += record->opcode == Opcode::Increment ? factor : -factor;
+            addToSumInWalkStrings(walker, sum, record->operand(0), factor, depth + 1);
+            return;
+        default:
+            break;
+        }
+    }
+    for (SumInWalkStrings::Term& term : sum.terms) {
+        if (term.record == value) {
+            term.factor += factor;
+            term.least = std::max(term.least, added.least);
+            term.greatest = std::min(term.greatest, added.greatest);
+            return;
+        }
+    }
+    added.record = value;
+    sum.terms.append(added);
+}
+
+static bool sumIsAtMostInWalkStrings(const SumInWalkStrings& sum, int64_t most)
+{
+    constexpr int64_t greatestMagnitudeAdded = greatestMagnitudeAddedInWalkStrings;
+    if (sum.holdsWhatIsTooGreat)
+        return false;
+    int64_t greatest = sum.constant;
+    for (const SumInWalkStrings::Term& term : sum.terms) {
+        if (!term.factor)
+            continue;
+        int64_t bound = term.factor > 0 ? term.greatest : term.least;
+        if (std::abs(term.factor) > 2 || bound < -greatestMagnitudeAdded || bound > greatestMagnitudeAdded)
+            return false;
+        greatest += term.factor * bound;
+    }
+    return greatest <= most;
+}
+
+bool relationIsShownBySumsForStrings(const Walker& walker, Opcode relation, Reference left, Reference right)
+{
+    RELEASE_ASSERT(relation == Opcode::Less || relation == Opcode::LessEq);
+    if (!left || !right || !left.isRecord() || !right.isRecord() || !walker.has(Mechanism::Folding))
+        return false;
+    const Code& code = walker.code();
+    int64_t most = relation == Opcode::LessEq ? 0 : -1;
+    SumInWalkStrings difference;
+    addToSumInWalkStrings(walker, difference, left.id(), 1);
+    addToSumInWalkStrings(walker, difference, right.id(), -1);
+    if (sumIsAtMostInWalkStrings(difference, most))
+        return true;
+
+    for (SumInWalkStrings::PassedTest passed : Vector<SumInWalkStrings::PassedTest, 4>(difference.passedTests)) {
+        const Operation& test = code.at(passed.relation);
+        if (test.form() != OperatorForm::Integers)
+            continue;
+        bool saysLess = test.opcode == Opcode::Less || test.opcode == Opcode::LessEq;
+        bool admitsEqual = test.opcode == Opcode::LessEq || test.opcode == Opcode::GreaterEq;
+        uint32_t lesser = saysLess == passed.holds ? 0 : 1;
+        int64_t mostOfTest = admitsEqual == passed.holds ? 0 : -1;
+        SumInWalkStrings rest = difference;
+        addToSumInWalkStrings(walker, rest, test.operand(lesser), -1);
+        addToSumInWalkStrings(walker, rest, test.operand(1 - lesser), 1);
+        if (sumIsAtMostInWalkStrings(rest, most - mostOfTest))
+            return true;
+    }
+    return false;
+}
+
 std::optional<bool> relationDecidedForStrings(const Walker& walker, Opcode relation, Reference left, Reference right)
 {
     RELEASE_ASSERT(relation == Opcode::Less || relation == Opcode::LessEq);
@@ -267,8 +404,17 @@ std::optional<uint32_t> operandsNarrowedBehindTestForStrings(const Walker& walke
     if (index.isUnused(test))
         return 0;
     std::optional<BodyUser> user = index.onlyUser(test);
-    if (!user)
-        return std::nullopt;
+    if (!user) {
+        std::optional<BodyUser> first = index.firstUser(test);
+        ValueID truth = first && first->kind == BodyUseKind::Operand && index.opcodeOf(first->value) == Opcode::ToBoolean ? first->value : ValueID();
+        std::optional<BodyUser> asker = truth ? index.onlyUser(truth) : std::nullopt;
+        if (!asker || asker->kind != BodyUseKind::TerminatorOperand)
+            return std::nullopt;
+        uint32_t numberOfUsesSeen = 1;
+        for (BodyTarget target : index.terminator(asker->block).targets())
+            numberOfUsesSeen += target.proofs().size();
+        return index.useCount(test) == numberOfUsesSeen ? std::optional<uint32_t>(0) : std::nullopt;
+    }
     if (user->kind != BodyUseKind::TerminatorOperand)
         return 0;
 
@@ -352,7 +498,7 @@ bool nameProvesPositionBelowLengthForStrings(const Walker& walker, Reference pos
     const Code& code = walker.code();
     while (position.isValue() && opcodesThatGiveSameCell.contains(code.at(position.id()).opcode)) {
         const Operation& name = code.at(position.id());
-        if (name.opcode == Opcode::Narrowed && name.testOperand()) {
+        if (name.opcode == Opcode::Narrowed && name.testOperand() && !name.narrowsTermOfOperand()) {
             uint32_t placeOfPosition = 0;
             if (relationSaysPositionBelowLengthInWalkStrings(walker, code.at(name.testOperand()), name.isOnTakenEdge(), placeOfPosition, string) && placeOfPosition == name.operandIndex())
                 return true;

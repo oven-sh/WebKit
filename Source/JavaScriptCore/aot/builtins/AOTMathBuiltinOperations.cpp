@@ -13,6 +13,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStringBuilderStorage.h"
+#include "AOTTextsOfFewDigits.h"
 #include "JSCInlines.h"
 #include "JSGlobalObjectFunctions.h"
 #include "MathCommon.h"
@@ -27,6 +28,7 @@ namespace JSC { namespace AOT {
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNumberToStringWithRadix, JSCell*, (Instance* instance, double value, int32_t radix))
 {
+    RELEASE_ASSERT(radix >= 2 && radix <= 36);
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNumberToStringWithRadix);
     if (int32_t integer = truncateDoubleToInt32(value); integer == value)
         OPERATION_RETURN(scope, int32ToString(vm, integer, radix));
@@ -35,6 +37,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNumberToStringWithRadix, JSCell*, 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInt32ToStringWithRadix, JSCell*, (Instance* instance, int32_t value, int32_t radix))
 {
+    RELEASE_ASSERT(radix >= 2 && radix <= 36);
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTInt32ToStringWithRadix);
     OPERATION_RETURN(scope, int32ToString(vm, value, radix));
 }
@@ -75,21 +78,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMathHypot3, double, (double x, dou
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMathF16Round, double, (double x))
 {
     return Float16 { x };
-}
-
-static ALWAYS_INLINE std::optional<double> valueOfFewDigits(std::span<const Latin1Character> characters)
-{
-    constexpr size_t maxNumberOfDigits = 15;
-    if (characters.empty() || characters.size() > maxNumberOfDigits)
-        return std::nullopt;
-    uint64_t whole = 0;
-    for (Latin1Character character : characters) {
-        unsigned digit = character - '0';
-        if (digit > 9)
-            return std::nullopt;
-        whole = whole * 10 + digit;
-    }
-    return static_cast<double>(whole);
 }
 
 extern "C" double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTParseInt8(const Latin1Character* characters, uint32_t length, int32_t radix)

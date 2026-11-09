@@ -12,13 +12,13 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-ValueID openOfCleanupThatOnlyThrowsOn(const BodyIndex& index, BodyBlock block)
+static ValueID openOfCleanupThatClosesAndThrowsOn(const BodyIndex& index, BodyBlock block)
 {
     BodyTarget edge = block.handler();
     if (!edge.arguments().empty())
         return { };
     BodyBlock cleanup = index.block(edge.block());
-    if (cleanup.role() != BlockRole::IterationCleanup || cleanup.numberOfParameters() || cleanup.hasHandler())
+    if (cleanup.role() != BlockRole::IterationCleanup || cleanup.numberOfParameters())
         return { };
 
     ValueID open = cleanup.subject();
@@ -43,20 +43,42 @@ ValueID openOfCleanupThatOnlyThrowsOn(const BodyIndex& index, BodyBlock block)
     return closes && end.kind() == TerminatorKind::Rethrow && end.operand(0) == caught ? open : ValueID();
 }
 
+ValueID openOfCleanupThatOnlyThrowsOn(const BodyIndex& index, BodyBlock block)
+{
+    return index.block(block.handler().block()).hasHandler() ? ValueID() : openOfCleanupThatClosesAndThrowsOn(index, block);
+}
+
+bool Walker::handlerOnlyClosesIterations(const BodyIndex& index, BodyBlock block) const
+{
+    for (BodyBlock covered = block;;) {
+        if (!openOfCleanupThatClosesAndThrowsOn(index, covered))
+            return false;
+        BodyBlock cleanup = index.block(covered.handler().block());
+        if (!cleanup.hasHandler())
+            return true;
+        covered = cleanup;
+    }
+}
+
 bool Walker::throwsPastHandlerOf(BodyBlock block) const
 {
     if (!has(Mechanism::TypedOperations))
         return false;
     const Frame& frame = m_frames.last();
-    ValueID open = openOfCleanupThatOnlyThrowsOn(*frame.index, block);
-    if (!open)
-        return false;
-
-    Reference state = referenceBoundIn(frame, open);
-    if (!state || !state.isVirtual())
-        return false;
-    const IterationByIndex& iteration = m_iterationsByIndex[state.object().index()];
-    return iteration.list && !iteration.iterator && !iteration.mayGoByProtocol && iteration.inlineFrame == frame.inlineFrame;
+    const BodyIndex& index = *frame.index;
+    for (BodyBlock covered = block;;) {
+        ValueID open = openOfCleanupThatClosesAndThrowsOn(index, covered);
+        Reference state = open ? referenceBoundIn(frame, open) : Reference();
+        if (!state || !state.isVirtual())
+            return false;
+        const IterationByIndex& iteration = m_iterationsByIndex[state.object().index()];
+        if (!iteration.list || iteration.iterator || iteration.mayGoByProtocol || iteration.inlineFrame != frame.inlineFrame)
+            return false;
+        BodyBlock cleanup = index.block(covered.handler().block());
+        if (!cleanup.hasHandler())
+            return true;
+        covered = cleanup;
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

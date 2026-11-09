@@ -200,21 +200,32 @@ static ImageTests::ExecutableCopy load(const RegExpSection& section)
     return code;
 }
 
-static Vector<int> interpret(const Source& source, StringView subject)
-{
-    Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
-    Yarr::YarrPattern pattern(source.pattern, source.flags, error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Performed);
-    AOT_TEST_CHECK(!Yarr::hasError(error));
-    BumpPointerAllocator allocator;
-    auto bytecode = Yarr::byteCompile(pattern, &allocator, error);
-    AOT_TEST_CHECK(bytecode && !Yarr::hasError(error));
-    Vector<unsigned> output(FillWith { }, pattern.offsetsSize(), Yarr::offsetNoMatch);
-    if (Yarr::interpret(bytecode.get(), subject, 0, output.mutableSpan().data()) == Yarr::offsetNoMatch)
-        return { };
-    return output.map([](unsigned offset) {
-        return static_cast<int>(offset);
-    });
-}
+class Interpreter {
+public:
+    explicit Interpreter(const Source& source)
+        : m_pattern(source.pattern, source.flags, m_error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Performed)
+    {
+        AOT_TEST_CHECK(!Yarr::hasError(m_error));
+        m_bytecode = Yarr::byteCompile(m_pattern, &m_allocator, m_error);
+        AOT_TEST_CHECK(m_bytecode && !Yarr::hasError(m_error));
+    }
+
+    Vector<int> match(StringView subject)
+    {
+        Vector<unsigned> output(FillWith { }, m_pattern.offsetsSize(), Yarr::offsetNoMatch);
+        if (Yarr::interpret(m_bytecode.get(), subject, 0, output.mutableSpan().data()) == Yarr::offsetNoMatch)
+            return { };
+        return output.map([](unsigned offset) {
+            return static_cast<int>(offset);
+        });
+    }
+
+private:
+    Yarr::ErrorCode m_error { Yarr::ErrorCode::NoError };
+    Yarr::YarrPattern m_pattern;
+    BumpPointerAllocator m_allocator;
+    std::unique_ptr<Yarr::BytecodePattern> m_bytecode;
+};
 
 MatchResult Matcher::match(Yarr::YarrCodeBlock& codeBlock, std::span<int> output, StringView subject)
 {
@@ -240,8 +251,9 @@ void Matcher::checkAnswers(const LaidOutRegExps& laidOut, const ImageTests::Exec
         auto [offsetFor8Bit, offsetFor16Bit] = laidOut.section.entries[index];
         Yarr::YarrCodeBlock codeBlock(nullptr);
         codeBlock.setCodeFromImage(code.start() + offsetFor8Bit, code.start() + offsetFor16Bit);
+        Interpreter interpreter(source);
         for (const String& subject : subjects) {
-            bool isSame = execute(codeBlock, outputSize, subject) == interpret(source, subject);
+            bool isSame = execute(codeBlock, outputSize, subject) == interpreter.match(subject);
             if (!isSame)
                 dataLogLn("/", source.pattern, "/ and the interpreter disagree on \"", subject, "\"");
             AOT_TEST_CHECK(isSame);
@@ -396,6 +408,56 @@ static Vector<String> mixedSubjects()
     return subjects;
 }
 
+static void checkEveryShapeOfRun(unsigned length, OptionSet<Yarr::Flags> flags)
+{
+    constexpr unsigned classAtFifthPlace = 1u << 3;
+    Vector<Source> sources;
+    for (unsigned shape = 0; shape < (1u << (length - 1)); ++shape) {
+        if (!(shape & classAtFifthPlace))
+            continue;
+        StringBuilder pattern;
+        pattern.append('a');
+        for (unsigned place = 1; place < length; ++place) {
+            if ((shape >> (place - 1)) & 1)
+                pattern.append("[a-z]"_s);
+            else
+                pattern.append(static_cast<char>('a' + place));
+        }
+        sources.append({ pattern.toString(), flags });
+    }
+
+    Vector<Latin1Character> characters;
+    for (unsigned place = 0; place < length; ++place)
+        characters.append(static_cast<Latin1Character>('a' + place));
+    auto makeSubject = [&](bool is16Bit) {
+        String subject { characters.span() };
+        if (is16Bit)
+            subject.convertTo16Bit();
+        return subject;
+    };
+    Vector<String> subjects { makeSubject(false), makeSubject(true) };
+    for (unsigned place = 0; place < length; ++place) {
+        Latin1Character kept = characters[place];
+        for (Latin1Character other : { '~', '\0' }) {
+            characters[place] = other;
+            subjects.append(makeSubject(true));
+        }
+        characters[place] = kept;
+    }
+
+    LaidOutRegExps laidOut = layOut(WTF::move(sources));
+    Matcher matcher;
+    matcher.checkAnswers(laidOut, load(laidOut.section), subjects.span());
+}
+
+static void testEveryShapeOfRunMatchesWideSubjects()
+{
+    checkEveryShapeOfRun(12, { });
+    checkEveryShapeOfRun(12, { Yarr::Flags::IgnoreCase });
+    checkEveryShapeOfRun(12, { Yarr::Flags::Unicode });
+    checkEveryShapeOfRun(13, { });
+}
+
 static void testEqualBodiesShareCode()
 {
     LaidOutRegExps same = layOut({ { "ab+c"_s, { } }, { "ab+c"_s, { } } });
@@ -536,7 +598,7 @@ static void testOnlyCodeIsPlaced()
     AOT_TEST_CHECK(section.entries.size() == 2 && section.entries[0] == section.entries[1]);
     AOT_TEST_CHECK(section.items.size() == 1 && section.items[0].kind == Kind::Routine);
 
-    std::array<CompiledRegExp, 3> mixed { compile({ "abc"_s, { } }), compileToCode({ "ab+c"_s, { } }), CompiledRegExp { } };
+    std::array<CompiledRegExp, 3> mixed { compile({ "abc"_s, { } }), compileToCode({ "[ab][cd]+e"_s, { } }), CompiledRegExp { } };
     section = layOutSection(mixed);
     AOT_TEST_CHECK(countItems(section, Kind::Body) == 2 && countItems(section, Kind::Routine) == 1);
     AOT_TEST_CHECK(section.entries[0] == section.entries[2]);
@@ -668,6 +730,7 @@ static void testPointerImmediateDeclines()
 std::span<const NativeTest> regExpImageTests()
 {
     static constexpr NativeTest tests[] = {
+        { "regexp-image/every-shape-of-run-matches-wide-subjects"_s, testEveryShapeOfRunMatchesWideSubjects },
         { "regexp-image/equal-bodies-share-code"_s, testEqualBodiesShareCode },
         { "regexp-image/latin1-classes-share-byte-tables"_s, testLatin1ClassesShareByteTables },
         { "regexp-image/equal-latin1-classes-share-bit-plane"_s, testEqualLatin1ClassesShareBitPlane },

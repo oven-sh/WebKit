@@ -9,10 +9,14 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinOperationSupport.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTSortedStorage.h"
+#include "AOTState.h"
 #include "ArrayPrototypeInlines.h"
 #include "ButterflyInlines.h"
 #include "DeferTermination.h"
@@ -27,6 +31,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/Atomics.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
 
@@ -248,7 +253,18 @@ static ALWAYS_INLINE bool precedesInDefaultOrder(const StringImpl& first, const 
     return is_lt(codePointCompare(StringView { first }, StringView { second }));
 }
 
-static bool trySortStrings(JSGlobalObject* globalObject, JSArray* array)
+SortedStorage& SortedStorage::ensure(State& state)
+{
+    if (SortedStorage* storage = state.instance.realm.sortedStorage) [[likely]]
+        return *storage;
+    SortedStorage* storage = state.tableArena.allocate<SortedStorage>(1);
+    storage->cageBase = state.instance.vm->heap.cage().base();
+    state.caches->addClearedEachCollection("sorted storage"_s, asMutableByteSpan(std::span { storage->entries }));
+    state.instance.realm.sortedStorage = storage;
+    return *storage;
+}
+
+static bool trySortStrings(JSGlobalObject* globalObject, State& state, JSArray* array)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -258,6 +274,15 @@ static bool trySortStrings(JSGlobalObject* globalObject, JSArray* array)
     unsigned length = butterfly.publicLength();
     if (length > maxLengthOfInsertionSortedArray)
         return false;
+    JSCellButterfly* shared = isCopyOnWrite(array->indexingMode()) && !JSCellButterfly::isOutsideHeap(&butterfly) ? JSCellButterfly::fromButterfly(&butterfly) : nullptr;
+    if (const SortedStorage* known = shared ? state.instance.realm.sortedStorage : nullptr) {
+        if (JSCellButterfly* sorted = known->tryFind(shared)) {
+            countEvent(vm, RuntimeCounterID::SortedStorageLaidUnderListsAgain);
+            if (sorted != shared)
+                array->setButterfly(vm, sorted->toButterfly());
+            return true;
+        }
+    }
 
     const WriteBarrier<Unknown>* elements = butterfly.contiguous().data();
     std::array<EncodedJSValue, maxLengthOfInsertionSortedArray> sorted;
@@ -291,8 +316,18 @@ static bool trySortStrings(JSGlobalObject* globalObject, JSArray* array)
         sorted[position] = JSValue::encode(element);
         impls[position] = impl;
     }
-    if (isSorted)
+    if (isSorted) {
+        if (shared)
+            SortedStorage::ensure(state).remember(shared, shared);
         return true;
+    }
+    if (JSCellButterfly* made = shared ? JSCellButterfly::tryCreate(vm, WTF::opaque(shared->structure()), length) : nullptr) {
+        for (unsigned i = 0; i < length; ++i)
+            made->setIndex(vm, i, JSValue::decode(sorted[i]));
+        array->setButterfly(vm, made->toButterfly());
+        SortedStorage::ensure(state).remember(shared, made);
+        return true;
+    }
     RELEASE_AND_RETURN(scope, array->appendMemcpy(globalObject, vm, 0, ArrayWithContiguous, std::span<const EncodedJSValue> { sorted }.first(length)));
 }
 
@@ -300,7 +335,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySortInDefaultOrder, EncodedJSValue, (I
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySortInDefaultOrder);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySortInDefaultOrder);
-    bool isSorted = trySortStrings(globalObject, array);
+    bool isSorted = trySortStrings(globalObject, *instance->state, array);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (isSorted)
         OPERATION_RETURN(scope, JSValue::encode(array));
@@ -449,10 +484,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshiftOfAnyList, EncodedJSValue, (Ins
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(length + 1)));
 }
 
+static ALWAYS_INLINE bool speciesOfListIsAsBuilt(VM& vm, JSArray* array)
+{
+    if (array->isPristine()) [[likely]]
+        return array->realm()->arraySpeciesWatchpointSet().state() == IsWatched;
+    return arraySpeciesWatchpointIsValid(vm, array);
+}
+
 static JSArray* trySpliceFast(JSGlobalObject* globalObject, VM& vm, JSArray* array, JSValue start, JSValue deleteCount, std::span<const EncodedJSValue> items)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!start.isInt32() || !deleteCount.isInt32() || !arraySpeciesWatchpointIsValid(vm, array)) [[unlikely]]
+    if (!start.isInt32() || !deleteCount.isInt32() || !speciesOfListIsAsBuilt(vm, array)) [[unlikely]]
         return nullptr;
     int64_t length = array->length();
     int64_t from = start.asInt32() < 0 ? std::max<int64_t>(length + start.asInt32(), 0) : std::min<int64_t>(start.asInt32(), length);
@@ -466,9 +508,43 @@ static JSArray* trySpliceFast(JSGlobalObject* globalObject, VM& vm, JSArray* arr
     return isDone ? result : nullptr;
 }
 
+static JSArray* tryRemoveItemFast(JSGlobalObject* globalObject, VM& vm, JSArray* array, JSValue start, JSValue deleteCount)
+{
+    IndexingType mode = array->indexingMode();
+    if ((mode != ArrayWithContiguous && mode != ArrayWithInt32 && mode != ArrayWithDouble) || !start.isInt32() || deleteCount != jsNumber(1))
+        return nullptr;
+    unsigned length = array->butterfly()->publicLength();
+    unsigned from = start.asInt32() < 0 ? static_cast<unsigned>(std::max<int64_t>(static_cast<int64_t>(length) + start.asInt32(), 0)) : std::min<unsigned>(start.asInt32(), length);
+    if (from >= length || length - from > MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        return nullptr;
+    if (!speciesOfListIsAsBuilt(vm, array) || globalObject->isHavingABadTime() || (!array->isPristine() && array->structure()->holesMustForwardToPrototype(array))) [[unlikely]]
+        return nullptr;
+    JSArray* removed = tryCreateArrayWithStorage(vm, globalObject->originalArrayStructureForIndexingType(mode), 1, 1);
+    if (!removed) [[unlikely]]
+        return nullptr;
+    Butterfly* butterfly = array->butterfly();
+    WriteBarrier<Unknown>* elements = butterfly->contiguous().data();
+    removed->butterfly()->contiguous().atUnsafe(0).setWithoutWriteBarrier(elements[from].get());
+    vm.mutatorFence();
+    unsigned last = length - 1;
+    if (from < last) {
+        if (mode == ArrayWithContiguous)
+            gcSafeMemmove(elements + from, elements + from + 1, (last - from) * sizeof(JSValue));
+        else
+            memmove(static_cast<void*>(elements + from), static_cast<const void*>(elements + from + 1), (last - from) * sizeof(JSValue));
+    }
+    if (mode == ArrayWithDouble)
+        butterfly->contiguousDouble().atUnsafe(last) = PNaN;
+    else
+        elements[last].clear();
+    butterfly->setPublicLength(last);
+    vm.writeBarrier(array);
+    return removed;
+}
+
 static JSArray* tryInsertItemFast(JSGlobalObject* globalObject, VM& vm, JSArray* array, JSValue start, JSValue deleteCount, JSValue item)
 {
-    if (!start.isInt32() || !deleteCount.isInt32() || deleteCount.asInt32() > 0 || !arraySpeciesWatchpointIsValid(vm, array) || globalObject->isHavingABadTime()) [[unlikely]]
+    if (!start.isInt32() || !deleteCount.isInt32() || deleteCount.asInt32() > 0 || !speciesOfListIsAsBuilt(vm, array) || globalObject->isHavingABadTime()) [[unlikely]]
         return nullptr;
     IndexingType mode = array->indexingMode();
     if (mode != ArrayWithContiguous && (mode != ArrayWithInt32 || !item.isInt32()))
@@ -478,8 +554,10 @@ static JSArray* tryInsertItemFast(JSGlobalObject* globalObject, VM& vm, JSArray*
     if (length >= butterfly->vectorLength())
         return nullptr;
     unsigned from = start.asInt32() < 0 ? static_cast<unsigned>(std::max<int64_t>(static_cast<int64_t>(length) + start.asInt32(), 0)) : std::min<unsigned>(start.asInt32(), length);
+    if (length - from > MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        return nullptr;
     WriteBarrier<Unknown>* elements = butterfly->contiguous().data();
-    for (unsigned index = from; index < length; ++index) {
+    for (unsigned index = array->isPristine() ? length : from; index < length; ++index) {
         if (!elements[index]) [[unlikely]]
             return nullptr;
     }
@@ -497,6 +575,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySpliceOfAnyList, EncodedJSValue, (Inst
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySpliceOfAnyList);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySpliceOfAnyList);
+    if (JSArray* removed = tryRemoveItemFast(globalObject, vm, array, JSValue::decode(start), JSValue::decode(deleteCount))) [[likely]]
+        OPERATION_RETURN(scope, JSValue::encode(removed));
     JSArray* result = trySpliceFast(globalObject, vm, array, JSValue::decode(start), JSValue::decode(deleteCount), { });
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (result) [[likely]]
@@ -504,11 +584,36 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySpliceOfAnyList, EncodedJSValue, (Inst
     OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeSplice, array, JSValue::decode(start), JSValue::decode(deleteCount))));
 }
 
+static JSArray* tryReplaceItemFast(JSGlobalObject* globalObject, VM& vm, JSArray* array, JSValue start, JSValue deleteCount, JSValue item)
+{
+    IndexingType mode = array->indexingMode();
+    if ((mode != ArrayWithContiguous && (mode != ArrayWithInt32 || !item.isInt32())) || !start.isInt32() || deleteCount != jsNumber(1))
+        return nullptr;
+    unsigned length = array->butterfly()->publicLength();
+    unsigned from = start.asInt32() < 0 ? static_cast<unsigned>(std::max<int64_t>(static_cast<int64_t>(length) + start.asInt32(), 0)) : std::min<unsigned>(start.asInt32(), length);
+    if (from >= length || !array->butterfly()->contiguous().data()[from]) [[unlikely]]
+        return nullptr;
+    if (!speciesOfListIsAsBuilt(vm, array) || globalObject->isHavingABadTime()) [[unlikely]]
+        return nullptr;
+    EnsureStillAliveScope itemScope(item);
+    JSArray* removed = tryCreateArrayWithStorage(vm, globalObject->originalArrayStructureForIndexingType(mode), 1, 1);
+    if (!removed) [[unlikely]]
+        return nullptr;
+    WriteBarrier<Unknown>* elements = array->butterfly()->contiguous().data();
+    removed->butterfly()->contiguous().atUnsafe(0).setWithoutWriteBarrier(elements[from].get());
+    vm.mutatorFence();
+    elements[from].setWithoutWriteBarrier(item);
+    vm.writeBarrier(array);
+    return removed;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySpliceItemIntoAnyList, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue start, EncodedJSValue deleteCount, EncodedJSValue item))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySpliceItemIntoAnyList);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySpliceItemIntoAnyList);
     if (JSArray* removed = tryInsertItemFast(globalObject, vm, array, JSValue::decode(start), JSValue::decode(deleteCount), JSValue::decode(item))) [[likely]]
+        OPERATION_RETURN(scope, JSValue::encode(removed));
+    if (JSArray* removed = tryReplaceItemFast(globalObject, vm, array, JSValue::decode(start), JSValue::decode(deleteCount), JSValue::decode(item)))
         OPERATION_RETURN(scope, JSValue::encode(removed));
     JSArray* result = trySpliceFast(globalObject, vm, array, JSValue::decode(start), JSValue::decode(deleteCount), singleElementSpan(item));
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());

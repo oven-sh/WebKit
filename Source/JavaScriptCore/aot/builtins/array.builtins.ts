@@ -16,7 +16,7 @@ const returningReceiverAsObject = <Columns extends object>(columns: Columns) => 
 ];
 const element = b.slot("this", "element");
 const elementOrUndefined = b.union(element, b.undefined);
-const newArrayOf = (contents: b.TableType) => anyArray.holding({ element: contents }).fresh;
+const newArrayOf = (contents: b.TableType) => anyArray.exactly.holding({ element: contents }).fresh;
 const newDenseArrayOf = (contents: b.TableType) => newArrayOf(contents).dense;
 const arrayFromSpecies = b.union(anyArray, b.object).freshUnlessSpecies;
 const denseArrayFromSpecies = b.union(anyArray.dense, b.object).freshUnlessSpecies;
@@ -129,7 +129,7 @@ const concatenationOf = (spreadCount: number) => {
   return {
     this: pristineArray,
     args: { ...Object.fromEntries(spread.map(name => [name, pristineArray])), items: b.any.rest },
-    returns: newDenseArrayOf(b.union(element, ...spread.map(name => b.slot(name, "element")), b.operand("items"))),
+    returns: newArrayOf(b.union(element, ...spread.map(name => b.slot(name, "element")), b.operand("items"))),
     ...operandCodeEffects,
     uses: {
       this: [b.readsContents()],
@@ -194,7 +194,7 @@ export default b.declarations(
         getter: arrayLength,
         capability: "none",
         uses: { this: b.inspected },
-        reads: [storage],
+        reads: [storage, "ArrayLengths"],
         implementation: b.inline("ArrayLength"),
         setter: {
           value: b.f64.loose,
@@ -500,7 +500,7 @@ export default b.declarations(
         {
           this: arrayLike,
           args: { items: b.any.rest },
-          returns: denseArrayFromSpecies,
+          returns: arrayFromSpecies,
           ...operandCodeEffects,
           uses: {
             this: [b.runs("Species"), testsConcatSpreadable, b.storedIn(elementOfResult), b.contentsStoredIn(elementOfResult)],
@@ -534,7 +534,7 @@ export default b.declarations(
         {
           this: pristineArray,
           args: slicedRange,
-          returns: newDenseArrayOf(element),
+          returns: newArrayOf(element),
           ...allocationEffects,
           readsStateBeforeConversions: true,
           uses: { this: [b.readsContents()] },
@@ -546,7 +546,7 @@ export default b.declarations(
         {
           this: arrayLike,
           args: slicedRange,
-          returns: denseArrayFromSpecies,
+          returns: arrayFromSpecies,
           ...operandCodeEffects,
           readsStateBeforeConversions: true,
           uses: { this: [b.runs("Species"), ...readsArrayLike, b.contentsStoredIn(elementOfResult)] },
@@ -557,7 +557,7 @@ export default b.declarations(
         {
           this: pristineArray,
           args: { start: optionalRelativeIndex, deleteCount: optionalRelativeIndex, items: b.any.rest },
-          returns: newDenseArrayOf(element),
+          returns: newArrayOf(element),
           ...nativeEffects,
           readsStateBeforeConversions: true,
           uses: { this: [b.movesElements], items: [b.storedIn(element)] },
@@ -569,7 +569,7 @@ export default b.declarations(
         {
           this: arrayLike,
           args: { start: optionalRelativeIndex, deleteCount: optionalRelativeIndex, items: b.any.rest },
-          returns: denseArrayFromSpecies,
+          returns: arrayFromSpecies,
           ...propertyStoreEffects,
           readsStateBeforeConversions: true,
           uses: {

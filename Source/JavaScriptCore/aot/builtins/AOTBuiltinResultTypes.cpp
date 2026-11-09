@@ -134,16 +134,24 @@ static TypeID applyRangeRuleToBuiltinResult(const BuiltinTypeContext& context, c
     return declared;
 }
 
-static TypeID resultTypeOfWholeBuiltinCall(const BuiltinTypeContext& context, BuiltinOverloadID id, const BuiltinOperandTypes* operands)
+static ALWAYS_INLINE TypeID resultTypeOfWholeBuiltinCall(const BuiltinTypeContext& context, BuiltinOverloadID id, const BuiltinOperandTypes* operands)
 {
     const BuiltinOverload& overload = context.program.builtins().at(id);
     if (overload.isUndeclared() || (overload.resultIsDeclaredOnly() && context.level == TypeLevel::Proven))
         return context.types.anything(UnknownSeed::UndescribedNativeResult);
     if (context.program.rowsOfNativeCodeWriteNullish && overload.code.implementation.kind == BuiltinImplementationKind::HostCall)
         return TypeArena::fromPrimitives(Primitive::UndefinedOrNull);
+    if (context.program.builtinWhoseRowWritesNullAlone == overload.builtin.index()) [[unlikely]]
+        return TypeArena::fromPrimitives(Primitive::Null);
 
     TypeID declared = typeOfBuiltinType(context, overload.result.type, operands);
-    return operands ? applyRangeRuleToBuiltinResult(context, overload, *operands, declared) : declared;
+    TypeID written = operands ? applyRangeRuleToBuiltinResult(context, overload, *operands, declared) : declared;
+    if (context.program.builtinWhoseRowWritesItsLeastIntegerAlone == overload.builtin.index()) [[unlikely]] {
+        Range integers = context.types.at(written).integers;
+        if (!integers.isEmpty())
+            return context.types.withIntegers(written, Range::one(integers.minimum));
+    }
+    return written;
 }
 
 static bool hasNeverAmongBuiltinOperands(const BuiltinOperandTypes& operands)

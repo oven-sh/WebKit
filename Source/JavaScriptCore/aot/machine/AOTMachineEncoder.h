@@ -214,7 +214,7 @@ public:
     void storeToSpill(const Operation*);
     void storeSpilledValuesDefinedAtHead(Block*, const BlockPlace&);
     void setUpFrame(const Block*);
-    void leaveFrameIfSetUp();
+    void leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords = { });
     void noteFrameState(bool isSetUp)
     {
         m_frameIsSetUp = isSetUp;
@@ -232,6 +232,7 @@ public:
     void runLatePaths();
     void linkPendingJumps();
     void findBlocksWithoutCode();
+    void findRareBlocksThatRepeatAnother(std::span<const uint32_t> layoutIndexesOfRareBlocksThatMoveAndJumpOn, std::span<const uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn);
     const Block* blockEnteredThrough(const Block* block) const { return m_blocksEntered[block->index()]; }
     void placeColdCodeNearItsJumps();
     bool hasCode(const Block* block) const { return blockEnteredThrough(block) == block; }
@@ -263,6 +264,8 @@ public:
     void addPendingJumps(const MacroAssembler::JumpList&, const Block*);
 
     std::span<const GPRReg> findRegistersThatSetupPushes(const Block*);
+    bool setupPushesSavesOfRareRegion(const Block* block) const { return !m_spillsPushedAtSetup.isEmpty() && !block->isEntry() && !m_allocation.isHeadOfFramedPart(block); }
+    std::span<const GPRReg> findRegistersThatTeardownPops(uint32_t beginOfSteps, uint32_t endOfSteps, uint32_t& endOfStepsAheadOfPops);
     bool setupHasPushed(SpillIndex spill) const { return !m_spillsPushedAtSetup.isEmpty() && std::ranges::find(m_spillsPushedAtSetup.span(), spill) != m_spillsPushedAtSetup.span().end(); }
 
     ALWAYS_INLINE AddressForm resolveAddress(const Operation* access, LeafCursor& leaves)
@@ -281,11 +284,19 @@ public:
     }
     AddressForm resolveAddressSlowCase(const Operation* access, LeafCursor&);
     AddressForm resolveScaledSum(const Operation* sum, LeafCursor&);
-    ALWAYS_INLINE MacroAssembler::Address addressOf(Location memory) const
+    NEVER_INLINE void failBecauseSlotThatNoStepReadsIsRead(SpillIndex) const;
+    ALWAYS_INLINE void noteThatSlotIsRead(SpillIndex spill) const
+    {
+        if (m_allocation.spills()[spill].isReadByNoStep) [[unlikely]]
+            failBecauseSlotThatNoStepReadsIsRead(spill);
+    }
+    ALWAYS_INLINE MacroAssembler::Address addressOf(Location memory, MemoryOfEncodedMove use = MemoryOfEncodedMove::IsRead) const
     {
         switch (memory.kind()) {
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
+            if (use == MemoryOfEncodedMove::IsRead)
+                noteThatSlotIsRead(memory.spillIndex());
             return m_frame.addressInFrame(m_frame.offsetFromFPOf(memory.spillIndex()));
 
         case Location::Outgoing:
@@ -318,7 +329,7 @@ public:
 
     ALWAYS_INLINE void encodePatch(const Step&, PatchOperation*);
     void encodeCheck(const Step&, PatchOperation*);
-    ALWAYS_INLINE ValueRep repOf(const PatchOperation* patch, Location location, const Operation* value) const
+    ALWAYS_INLINE ValueRep repOf(const PatchOperation* patch, Location location, const Operation* value, MemoryOfEncodedMove access = MemoryOfEncodedMove::IsRead) const
     {
         switch (location.kind()) {
         case Location::Register:
@@ -326,6 +337,8 @@ public:
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
             RELEASE_ASSERT(m_frame.hasFrameRecord() || patch->findsOperandsInFrameWithoutRecord());
+            if (access == MemoryOfEncodedMove::IsRead)
+                noteThatSlotIsRead(location.spillIndex());
             return ValueRep::stack(m_frame.offsetFromFPOf(location.spillIndex()));
         case Location::Outgoing:
             RELEASE_ASSERT(m_frameIsSetUp);
@@ -373,6 +386,7 @@ public:
     void encodeBranchOnTest(Block*, const Step&, const Operation* predicate);
     void encodeBranchOnOverflow(Block*, const Step&);
     void encodeSwitch(Block*, const Step&);
+    void encodeSwitchByBits(Block*, GPRReg value, Width, unsigned begin, unsigned end);
     void encodeSwitchThroughTable(Block*, GPRReg value, int64_t firstValue, uint64_t numberOfEntries);
     void encodeBinarySearch(Block*, GPRReg value, Width, std::span<const int64_t> values, unsigned firstSuccessor);
     void encodeReturn(const Step&);
@@ -392,6 +406,7 @@ public:
     MacroAssembler::Jump jumpOnOverflow(bool whenItOverflowed);
 
     void encodeNumber(const Step&);
+    bool blockHasWrittenNumberRegisterInFrontOf(const Step&, FPRReg);
 
     void encodeLoad(const Step&);
     void encodeStore(const Step&);
@@ -454,11 +469,15 @@ public:
     bool m_frameRangeIsOpen { false };
     ArenaVector<GPRReg> m_registersPushedAtSetup;
     ArenaVector<SpillIndex> m_spillsPushedAtSetup;
+    ArenaVector<GPRReg> m_registersPoppedAtTeardown;
     MacroAssembler::Label m_teardownSharedByReturns;
     Origin m_origin;
     uint32_t m_operationOfOrigin { UINT32_MAX };
     const Block* m_blockWithClearedScratchFPR { nullptr };
     unsigned m_offsetBehindClearedScratchFPR { 0 };
+    const Block* m_blockWhoseWrittenNumberRegistersAreNoted { nullptr };
+    const Step* m_firstStepNotLookedAtForNumberRegisters { nullptr };
+    RegisterMask m_numberRegistersWrittenInBlock { 0 };
 };
 
 inline bool encodedMoveIsWide(Width width)
@@ -577,7 +596,7 @@ ALWAYS_INLINE void Encoder::encodeSave(const Step& step)
     checkMemoryOfEncodedMove(*this, step.destination, step.width, MemoryOfEncodedMove::IsWritten);
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination));
+    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination, MemoryOfEncodedMove::IsWritten));
 }
 
 ALWAYS_INLINE bool patchRepAnswersConstraint(const ValueRep& answer, const ValueRep& constraint)
@@ -640,7 +659,7 @@ ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const St
                 RELEASE_ASSERT(patchRegisterAnswersConstraint(*rep, constraint));
                 continue;
             }
-            new (NotNull, rep) ValueRep(repOf(patch, *location, patch));
+            new (NotNull, rep) ValueRep(repOf(patch, *location, patch, MemoryOfEncodedMove::IsWritten));
             RELEASE_ASSERT(patchRepAnswersConstraint(*rep, constraint));
         }
         Operation* const* operand = operands.data() + firstOperand;

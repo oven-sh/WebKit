@@ -217,6 +217,8 @@ ASCIILiteral MachinePrinter::nameOf(FailureKind kind)
         return "NarrowReferenceWithoutPointer"_s;
     case FailureKind::InnerPointerWithoutOwner:
         return "InnerPointerWithoutOwner"_s;
+    case FailureKind::ReleasedValueIsReadOnWayOn:
+        return "ReleasedValueIsReadOnWayOn"_s;
     case FailureKind::NeedsFrameWhereNoneIsSetUp:
         return "NeedsFrameWhereNoneIsSetUp"_s;
     }
@@ -430,6 +432,8 @@ void MachinePrinter::printPatch(PrintStream& out, CommaPrinter& comma, const Pat
         out.print(comma, "ReleasesDeadValues");
     if (patch.sharesLatePath())
         out.print(comma, "SharesLatePath");
+    if (patch.failsWhenPredicateIsZero())
+        out.print(comma, "FailsWhenPredicateIsZero");
 
     if (patch.pureFunction) {
         uint64_t id = patch.pureFunction->id;
@@ -767,7 +771,7 @@ void MachinePrinter::printLiveness(PrintStream& out)
         const LoopFacts& facts = liveness.of(loops[index], order);
         out.print("loop ", index, ": pressure GP = ", facts.pressure[static_cast<unsigned>(Bank::GP)], ", FP = ", facts.pressure[static_cast<unsigned>(Bank::FP)]);
         if (facts.registersTakenByPatches)
-            out.print(", registersTakenByPatches = ", MachineRegisterListDump(facts.registersTakenByPatches));
+            out.print(", registersTakenByPatches = ", MachineRegisterListDump(facts.registersTakenByPatches), ", pressureAcrossPatches GP = ", facts.pressureAcrossPatches[static_cast<unsigned>(Bank::GP)], ", FP = ", facts.pressureAcrossPatches[static_cast<unsigned>(Bank::FP)]);
         if (!facts.valuesReadFromOutside.empty()) {
             out.print(", valuesReadFromOutside =");
             for (const Operation* value : facts.valuesReadFromOutside)
@@ -1065,6 +1069,8 @@ void MachinePrinter::printAllocation(PrintStream& out)
             out.print(", isStoredAtHeadOfFramedPart");
         if (spill.isSharedByPhis)
             out.print(", isSharedByPhis");
+        if (spill.isReadByNoStep)
+            out.print(", isReadByNoStep");
         out.println();
     }
 
@@ -1157,6 +1163,16 @@ void printProcedure(PrintStream& out, const Procedure& procedure)
 void printOperation(PrintStream& out, const Procedure& procedure, const Operation* operation)
 {
     MachinePrinter(procedure).printOperation(out, operation);
+}
+
+void printFailure(PrintStream& out, const Procedure& procedure)
+{
+    const Failure& failure = *procedure.failure();
+    out.print(failure.kind, ", by the check in ", failure.check.function, " at ", failure.check.file, ":", failure.check.line);
+    if (failure.operation < procedure.numberOfOperations()) {
+        out.print(": ");
+        printOperation(out, procedure, procedure.operationAt(failure.operation));
+    }
 }
 
 void printOrder(PrintStream& out, const Procedure& procedure)

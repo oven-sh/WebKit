@@ -10,8 +10,10 @@
 
 #include "AOTCompiledCode.h"
 #include "AOTImageFormat.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
+#include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -113,7 +115,7 @@ StubCalls::StubCalls(const StubCatalog& catalog, RelocationRecorder& relocations
 {
 }
 
-ALWAYS_INLINE StubCalls::ResolvedKey StubCalls::resolveKey(StubKey key, std::optional<uint32_t> immediate) const
+ALWAYS_INLINE_INTO_OTHER_FILES StubCalls::ResolvedKey StubCalls::resolveKey(StubKey key, std::optional<uint32_t> immediate) const
 {
     const RememberedStubKey& remembered = rememberStubKey(m_rememberedKeys, m_catalog, key);
     if (immediate && remembered.bindsImmediate)
@@ -122,11 +124,12 @@ ALWAYS_INLINE StubCalls::ResolvedKey StubCalls::resolveKey(StubKey key, std::opt
     return { key, immediate };
 }
 
-ALWAYS_INLINE StubKey StubCalls::prepare(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate)
+ALWAYS_INLINE_INTO_OTHER_FILES StubKey StubCalls::prepare(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate)
 {
     auto [finalKey, immediateToMove] = resolveKey(key, immediate);
     if (immediateToMove) {
         GPRReg destination = immediateGPROfStub(m_rememberedKeys, m_catalog, finalKey);
+        RELEASE_ASSERT(!m_registerFilledInFrontOfNextCall || (destination != GPRInfo::returnValueGPR && Reg(destination) != m_registerFilledInFrontOfNextCall));
         jit.move(CCallHelpers::TrustedImm32(*immediateToMove), destination);
     }
     return finalKey;
@@ -139,8 +142,10 @@ CodeSymbol StubCalls::prepare(StubKey key, NumberedImmediate immediate)
         return { SymbolSpace::Stub, indexOf(finalKey.withImmediate(0), immediate.mention) };
     if (movesNumbersInThunks(finalKey))
         return { SymbolSpace::ArgumentThunk, appendThunkThatMovesNumber(m_argumentMoves, finalKey, immediate, { }) };
-    moveNumberedImmediate(m_relocations, immediate, immediateGPROfStub(m_rememberedKeys, m_catalog, finalKey));
-    return { SymbolSpace::Stub, indexOf(finalKey) };
+    GPRReg destination = immediateGPROfStub(m_rememberedKeys, m_catalog, finalKey);
+    RELEASE_ASSERT(!m_registerFilledInFrontOfNextCall || (destination != GPRInfo::returnValueGPR && Reg(destination) != m_registerFilledInFrontOfNextCall));
+    moveNumberedImmediate(m_relocations, immediate, destination);
+    return { SymbolSpace::Stub, indexOf(finalKey, siblingUnderNameWithColumn(finalKey) ? std::optional<uint32_t>(immediate.mention) : std::nullopt) };
 }
 
 uint32_t StubCalls::indexOf(StubKey key, std::optional<uint32_t> mentionOfImmediate)
@@ -204,12 +209,15 @@ uint32_t StubCalls::indexOf(Typed::CodeUnit callee)
     return result.iterator->value;
 }
 
-ALWAYS_INLINE uint32_t StubCalls::emitCall(CCallHelpers&, StubKey called, CodeSymbol symbol, const RecordedCall& record)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t StubCalls::emitCall(CCallHelpers&, StubKey called, CodeSymbol symbol, const RecordedCall& record)
 {
     if (m_registerFilledInFrontOfNextCall) [[unlikely]] {
-        RELEASE_ASSERT(symbol.space == SymbolSpace::Stub && signatureOf(called).filledOutOfResultInFront == m_registerFilledInFrontOfNextCall);
+        const StubSignature signature = signatureOf(called);
+        RELEASE_ASSERT(symbol.space == SymbolSpace::Stub && signature.filledOutOfResultInFront == m_registerFilledInFrontOfNextCall);
+        RELEASE_ASSERT(signature.movedIntoResultInFront == m_registerMovedIntoResultInFrontOfNextCall);
         m_registerFilledInFrontOfNextCall = Reg();
-        symbol.entry = entryInFrontOfStub;
+        m_registerMovedIntoResultInFrontOfNextCall = Reg();
+        symbol.entry = signature.movedIntoResultInFront ? entryInFrontOfStubThatDoesTwoMoves : entryInFrontOfStub;
     }
     uint32_t call = safeCast<uint32_t>(m_calls.size());
     if (call == m_calls.capacity()) [[unlikely]]
@@ -267,7 +275,7 @@ uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, NumberedImmediate immed
     RELEASE_ASSERT(!argumentMovesUseRegister(moves, destination));
     if (movesNumbersInThunks(finalKey))
         return emitCall(jit, finalKey, { SymbolSpace::ArgumentThunk, appendThunkThatMovesNumber(m_argumentMoves, finalKey, immediate, moves) }, { 0, site, firstReadSite });
-    uint32_t thunk = appendArgumentMovesOfThunk(m_argumentMoves, finalKey, std::nullopt, moves);
+    uint32_t thunk = siblingUnderNameWithColumn(finalKey) ? appendWordsOfThunk(m_argumentMoves, finalKey, mentionNamesSiblingOfCallee | immediate.mention, moves) : appendArgumentMovesOfThunk(m_argumentMoves, finalKey, std::nullopt, moves);
     moveNumberedImmediate(m_relocations, immediate, destination);
     return emitCall(jit, finalKey, { SymbolSpace::ArgumentThunk, thunk }, { 0, site, firstReadSite });
 }
@@ -298,10 +306,11 @@ void StubCalls::callFunction(CCallHelpers& jit, Typed::CodeUnit callee, uint16_t
     emitCall(jit, StubKey(), { SymbolSpace::Function, indexOf(callee), entry }, { 0, site, { } });
 }
 
-void StubCalls::callRegister(CCallHelpers& jit, GPRReg address, OptionalIndex site)
+uint32_t StubCalls::callRegister(CCallHelpers& jit, GPRReg address, OptionalIndex site)
 {
     jit.call(address, JSEntryPtrTag);
     m_calls.append({ 0, site, { }, jit.label() });
+    return safeCast<uint32_t>(m_calls.size() - 1);
 }
 
 void StubCalls::jumpToFunction(CCallHelpers&, Typed::CodeUnit callee, uint16_t entry)

@@ -25,8 +25,11 @@
 #include "AOTRegExpFlags.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallHost.h"
+#include "AOTStubsPrimitiveFastPaths.h"
+#include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
@@ -143,15 +146,41 @@ void BuiltinCallEmitter::stopUnlessNativeResultIsAsWritten(const ValueContext& v
     TypeID tested = types().wholeKindsAndBuiltinClassesOf(typeIDOf(value.id()));
     if (tested == TypeTable::anything)
         return;
-    Condition isAsWritten = hasType(result, typeTestPlanFor(TypeTable::anything, Representation::JSValue, tested));
+    RELEASE_ASSERT(staysInSweptCodeByItself(value.value()));
+    TypeID numbers = types().intersectionOf(tested, TypeTable::number);
+    RELEASE_ASSERT(called.index() < 1u << 22);
+    bool looksAgainOutOfLine = !isNeverType(numbers) && types().isSubset(numbers, TypeTable::integer);
+    TypeID besideNumbers = types().withoutPrimitives(tested, Primitive::Number);
     LBasicBlock stops = newBlock();
     LBasicBlock continuation = newBlock();
     ScopeFork fork = m_out.forkScope();
-    m_out.branch(isAsWritten.value(), normalEdge(continuation), rareEdge(stops));
-    m_out.appendToArm(stops, fork);
+    BranchTargets targets { normalEdge(continuation), rareEdge(stops) };
+    auto appendBehindTest = [&](LBasicBlock block) {
+        if (block->singlePredecessor() == fork.block)
+            m_out.appendToArm(block, fork);
+        else
+            m_out.appendToJoin(block, fork);
+    };
+    if (!looksAgainOutOfLine)
+        branchOnType(result, typeTestPlanFor(TypeTable::anything, Representation::JSValue, tested), targets);
+    else if (isNeverType(besideNumbers))
+        branch(isInt32(result), targets);
+    else {
+        LBasicBlock isNoInt32 = newBlock();
+        branch(isInt32(result), { normalEdge(continuation), normalEdge(isNoInt32) });
+        m_out.appendToArm(isNoInt32, fork);
+        branchOnType(result, typeTestPlanFor(TypeTable::anything, Representation::JSValue, besideNumbers), targets);
+    }
+    appendBehindTest(stops);
+    if (looksAgainOutOfLine) {
+        callVoidOperation(value, RuntimeOperation::StopUnlessNativeResultIsIntegerAsWritten, { result, word32(static_cast<int32_t>(Written::encode(kinds, constructs, called.index(), !types().isSubset(numbers, TypeTable::int32)))) });
+        m_out.jump(continuation);
+        m_out.appendToJoin(continuation, fork);
+        return;
+    }
     callVoidOperation(value, RuntimeOperation::StopAtNativeResult, { result, word32(static_cast<int32_t>(Written::encode(kinds, constructs, called.index()))) });
     m_out.unreachable();
-    m_out.appendToArm(continuation, fork);
+    appendBehindTest(continuation);
 }
 
 void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
@@ -187,7 +216,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return;
         }
         if (builtin == Builtins::Number && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
-            defineResult(callOperation<Boxed>(value, RuntimeOperation::NumberOfAnyValue, { boxedOperand(value, arguments[0]) }, { .calledBuiltin = builtin }));
+            defineResult(Boxed(callStub(value, numberOfAnyValue(), { boxedOperand(value, arguments[0]).value() }, { .calledBuiltin = builtin }).first));
             return;
         }
         if (builtin == Builtins::String && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
@@ -347,7 +376,7 @@ CellPointer BuiltinCallEmitter::builtinCell(const OperationContext& context, Bui
     return emitter<ConstantEmitter>().builtinCell(context, key);
 }
 
-Boxed BuiltinCallEmitter::builtinValue(const OperationContext& context, BuiltinCellKey key, RuntimeOperation fills)
+Boxed BuiltinCallEmitter::builtinValue(const OperationContext& context, BuiltinCellKey key, RuntimeOperation fills, const ValueContext* heldAgainstItsRow)
 {
     RELEASE_ASSERT(key.kind() == BuiltinCellKey::Kind::Value);
     if (!key.hasCell(m_builtins)) {
@@ -361,22 +390,30 @@ Boxed BuiltinCallEmitter::builtinValue(const OperationContext& context, BuiltinC
     return either<Boxed>(isNotEmpty(filled), [&] {
         return filled;
     }, [&] {
-        return callOperation<Boxed>(context, fills, { word32(static_cast<int32_t>(key.encoded())) }, { .isOnRarePath = true });
+        Boxed made = callOperation<Boxed>(context, fills, { word32(static_cast<int32_t>(key.encoded())) }, { .isOnRarePath = true });
+        if (heldAgainstItsRow)
+            stopUnlessNativeResultIsAsWritten(*heldAgainstItsRow, made, key.builtin(), false);
+        return made;
     });
 }
 
-CellPointer BuiltinCallEmitter::calleeOf(const OperationContext& context, const BuiltinOverload& overload)
+static BuiltinCellKey keyOfCalleeOf(const BuiltinOverload& overload)
 {
     switch (overload.mode) {
     case BuiltinCallMode::Call:
     case BuiltinCallMode::Construct:
-        return builtinCell(context, BuiltinCellKey::object(overload.builtin));
+        return BuiltinCellKey::object(overload.builtin);
     case BuiltinCallMode::Get:
-        return builtinCell(context, BuiltinCellKey::getter(overload.builtin));
+        return BuiltinCellKey::getter(overload.builtin);
     case BuiltinCallMode::Set:
-        return builtinCell(context, BuiltinCellKey::setter(overload.builtin));
+        return BuiltinCellKey::setter(overload.builtin);
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+CellPointer BuiltinCallEmitter::calleeOf(const OperationContext& context, const BuiltinOverload& overload)
+{
+    return builtinCell(context, keyOfCalleeOf(overload));
 }
 
 Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, BuiltinOverloadID id, std::optional<Boxed> receiver, std::span<const Boxed> arguments)
@@ -397,7 +434,10 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
     }
 
     bool constructs = overload.mode == BuiltinCallMode::Construct;
-    Boxed callee = boxCell(calleeOf(context, overload));
+    unsigned count = static_cast<unsigned>(arguments.size());
+    std::optional<StubKey> stub = stubThatCallsBuiltin(m_builtins, overload, count);
+    bool leavesFunctionUnfetched = stub && stub->family() == StubFamily::CallBoxedBuiltin && fetchesFunctionOnlyToLeave(static_cast<BoxedCallForm>(stub->form()), count) && keyOfCalleeOf(overload).hasCell(m_builtins);
+    Boxed callee = leavesFunctionUnfetched ? Boxed(zeroExtended(numberOf(m_mentions.builtinCell(keyOfCalleeOf(overload)))).value()) : boxCell(calleeOf(context, overload));
     Boxed thisValue = undefined();
     if (constructs)
         thisValue = callee;
@@ -408,8 +448,7 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
 
     CallEmitter& calls = emitter<CallEmitter>();
     CallOptions options { .constructs = constructs };
-    unsigned count = static_cast<unsigned>(arguments.size());
-    if (std::optional<StubKey> stub = stubThatCallsBuiltin(m_builtins, overload, count)) {
+    if (stub) {
         Vector<LValue, 8> values;
         for (Boxed argument : arguments)
             values.append(argument.value());
@@ -544,6 +583,11 @@ void BuiltinCallEmitter::generateNewArgumentList(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewArgumentList, { in<Boxed>(value->arrayLikeOperand()) }));
 }
 
+void BuiltinCallEmitter::generateNewArrayOfGiven(const ValueContext& value)
+{
+    define(value, CellPointer(callStub(value, newArrayOfGiven(), { in<Boxed>(value->givenOperand()).value() }).first));
+}
+
 bool BuiltinCallEmitter::canShareRegExpLiteral(const Operation& literal) const
 {
     return !!placeWhereRegExpLiteralIsWritten(m_program, m_code, literal);
@@ -574,12 +618,25 @@ CellPointer BuiltinCallEmitter::sharedRegExpLiteral(const ValueContext& at, cons
 
 void BuiltinCallEmitter::generateGetBuiltinValue(const ValueContext& value)
 {
-    defineAs(value, builtinValue(value, BuiltinCellKey::value(m_builtins.canonicalID(value->builtin()))), typeOf(value.id()));
+    defineAs(value, builtinValue(value, BuiltinCellKey::value(m_builtins.canonicalID(value->builtin())), RuntimeOperation::FillBuiltinValue, &value), typeOf(value.id()));
 }
 
 void BuiltinCallEmitter::generateGetWatchedBuiltinValue(const ValueContext& value)
 {
     defineAs(value, builtinValue(value, BuiltinCellKey::value(m_builtins.canonicalID(value->builtin())), RuntimeOperation::FillWatchedBuiltinValue), typeOf(value.id()));
+}
+
+void BuiltinCallEmitter::generateGetWatchedBuiltinValueOrAbsent(const ValueContext& value)
+{
+    BuiltinCellKey key = BuiltinCellKey::value(m_builtins.canonicalID(value->builtin()));
+    if (!key.hasCell(m_builtins)) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        define(value, undefined());
+        return;
+    }
+    Pointer values = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.hostValues));
+    Integer number = zeroExtended(numberOf(m_mentions.builtinCell(key)));
+    defineAs(value, Boxed(m_out.load64(m_out.baseIndex(m_heaps.entire(AbstractHeap::RuntimeState), values.value(), number.value(), ScaleEight))), typeOf(value.id()));
 }
 
 void BuiltinCallEmitter::generateInitializeBuiltin(const ValueContext& value)

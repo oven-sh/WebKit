@@ -66,25 +66,43 @@ public:
 #endif
     }
 
-    Word operandBorrowedOfOtherAnswer() const { return word(OBJECT_OFFSETOF(SiteAnswers, first) + OBJECT_OFFSETOF(SiteAnswers::Answer, operand)); }
+    Word operandBorrowedOfOtherAnswer() const { return word(OBJECT_OFFSETOF(SiteAnswers, second) + OBJECT_OFFSETOF(SiteAnswers::Answer, operand)); }
 
 private:
-    static constexpr ptrdiff_t offsetOfAnswer = OBJECT_OFFSETOF(SiteAnswers, second);
+    static constexpr ptrdiff_t offsetOfAnswer = OBJECT_OFFSETOF(SiteAnswers, first);
 
     GPRReg m_place;
 };
 
 } // anonymous namespace
 
-static void loadNameOfPlaceOfGetter(StubAssembler& jit, GPRReg distance, GPRReg name, GPRReg scratch, NameAtSite nameAtSite)
+static void loadNameOfPlaceOfGetterOrMark(StubAssembler& jit, GPRReg distance, GPRReg name, GPRReg scratch)
 {
     RELEASE_ASSERT(noOverlap(distance, scratch) && noOverlap(name, scratch));
-    static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers && RowDisplacementTable::maxColumn <= UINT16_MAX);
+    static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers && RowDisplacementTable::maxColumn + 1 == InstanceLayout::nameOfSiteStandsBehind);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.namesOfSitesByDistance)), scratch);
-    if (nameAtSite == NameAtSite::HasColumn)
-        jit.load16(BaseIndex(scratch, distance, CCallHelpers::TimesOne), name);
+    if (name == distance) {
+        jit.addPtr(distance, scratch);
+        jit.load16(Address(scratch), name);
+        return;
+    }
+    jit.load16(BaseIndex(scratch, distance, CCallHelpers::TimesOne), name);
+}
+
+static void loadNameBehindMarkOfPlaceOfGetter(StubAssembler& jit, GPRReg distance, GPRReg name, GPRReg scratch)
+{
+    if (name == distance)
+        jit.load32(Address(scratch, sizeof(uint16_t)), name);
     else
-        jit.load32(BaseIndex(scratch, distance, CCallHelpers::TimesOne), name);
+        jit.load32(BaseIndex(scratch, distance, CCallHelpers::TimesOne, sizeof(uint16_t)), name);
+}
+
+static void loadNameOfPlaceOfGetter(StubAssembler& jit, GPRReg distance, GPRReg name, GPRReg scratch)
+{
+    loadNameOfPlaceOfGetterOrMark(jit, distance, name, scratch);
+    Jump standsThere = jit.branch32(CCallHelpers::BelowOrEqual, name, TrustedImm32(RowDisplacementTable::maxColumn));
+    loadNameBehindMarkOfPlaceOfGetter(jit, distance, name, scratch);
+    standsThere.link(&jit);
 }
 
 static void fillAnswersOfPlaceOfGetter(StubAssembler& jit, GPRReg object, GPRReg name, GPRReg distance)
@@ -100,7 +118,7 @@ static void fillAnswersOfPlaceOfGetter(StubAssembler& jit, GPRReg object, GPRReg
         jit.move(name, A2);
         jit.move(object, A1);
         jit.move(instanceGPR, A0);
-        jit.move(TrustedImm32(static_cast<int32_t>(SiteUse::Read)), A4);
+        jit.move(TrustedImm32(static_cast<int32_t>(SiteUse::Call)), A4);
         jit.callOperation(Entry::operationAOTFillSiteAnswers, jit.reuseScratch(StubRegister::Operation));
     });
 }
@@ -109,14 +127,17 @@ StubSignature signatureOfGetterAtSite(StubKey)
 {
     StubSignature signature = StubSignature::withGPRResult({ gprOf(firstStubOperandRegister) });
     signature.immediate = gprOf(shortStubImmediateRegister);
+#if CPU(X86_64)
+    return signature.fillingKeptRegisterInFront(X86Registers::edx);
+#else
     return signature;
+#endif
 }
 
 void generateGetterAtSite(StubAssembler& jit)
 {
-    constexpr SiteUse use = SiteUse::Read;
+    constexpr SiteUse use = SiteUse::Call;
     using Form = SiteAnswers::Form;
-    const NameAtSite nameAtSite = static_cast<NameAtSite>(jit.key().form());
     const GPRReg object = jit.operand(0);
     const GPRReg result = jit.result();
     const GPRReg distance = jit.immediate();
@@ -136,7 +157,9 @@ void generateGetterAtSite(StubAssembler& jit)
     const GPRReg scratchBehindMiss = key;
 #endif
     RELEASE_ASSERT(noOverlap(object, distance, place, key, operand));
+    JumpList isNoPair;
     auto returnGetterOf = [&](GPRReg getterSetter) {
+        branchUnlessAccessorPair(jit, getterSetter, isNoPair);
         jit.loadPtr(Address(getterSetter, GetterSetter::offsetOfGetter()), result);
         jit.returnToCaller();
     };
@@ -170,8 +193,29 @@ void generateGetterAtSite(StubAssembler& jit)
     returnGetterOf(key);
 
     isNotInStorageOfHolder.link(&jit);
-    Jump isNoGetter = branchUnlessForm(Form::OwnGetterInCell);
+    Jump isNotInCell = branchUnlessForm(Form::OwnGetterInCell);
     jit.loadPtr(BaseIndex(object, operand, CCallHelpers::TimesOne), key);
+    returnGetterOf(key);
+
+    auto loadExtraProperties = [&] {
+        jit.zeroExtend8To32(operand, key);
+        jit.load32(BaseIndex(object, key, CCallHelpers::TimesFour), key);
+        isNoPair.append(jit.branchTest32(CCallHelpers::Zero, key));
+        jit.rshift32(TrustedImm32(SiteAnswers::indexShiftInOperandOfExtraValue), operand);
+    };
+    isNotInCell.link(&jit);
+    Jump isNotExtraInCell = branchUnlessForm(Form::ExtraGetterInCellAtCall);
+    loadExtraProperties();
+    jit.add32(operand, key);
+    jit.loadPtr(BaseIndex(cellCageBaseGPR, key, CCallHelpers::TimesEight), key);
+    returnGetterOf(key);
+
+    isNotExtraInCell.link(&jit);
+    Jump isNoGetter = branchUnlessForm(Form::ExtraGetterInStorageAtCall);
+    loadExtraProperties();
+    jit.loadPtr(BaseIndex(cellCageBaseGPR, key, CCallHelpers::TimesEight, JSObject::butterflyOffset()), key);
+    jit.signExtend32ToPtr(operand, operand);
+    jit.loadPtr(BaseIndex(key, operand, CCallHelpers::TimesEight), key);
     returnGetterOf(key);
 
     isNoGetter.link(&jit);
@@ -179,18 +223,20 @@ void generateGetterAtSite(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotAnswered.link(&jit);
+    isNoPair.link(&jit);
     RELEASE_ASSERT(noOverlap(object, distance, nameBehindMiss, scratchBehindMiss, instanceGPR));
     JumpList isSample;
-    countMissOfEmptySite(jit, distance, scratchBehindMiss, isSample);
+    countMissOfPlace(jit, distance, scratchBehindMiss, isSample);
     Label isCounted = jit.label();
     jit.addOutOfLinePart([=](StubAssembler& jit) mutable {
         isSample.link(&jit);
-        loadNameOfPlaceOfGetter(jit, distance, nameBehindMiss, scratchBehindMiss, nameAtSite);
+        goOnWhileSamplesOfPlaceAreLeftOut(jit, scratchBehindMiss, isCounted);
+        loadNameOfPlaceOfGetter(jit, distance, nameBehindMiss, scratchBehindMiss);
         fillAnswersOfPlaceOfGetter(jit, object, nameBehindMiss, distance);
         jit.jump().linkTo(isCounted, &jit);
     });
     checkStubOperands(getterByAccessTable(), { object });
-    loadNameOfPlaceOfGetter(jit, distance, distance == gprOf(stubImmediateRegister) ? distance : jit.allocateScratch(stubImmediateRegister), scratchBehindMiss, nameAtSite);
+    loadNameOfPlaceOfGetter(jit, distance, distance == gprOf(stubImmediateRegister) ? distance : jit.allocateScratch(stubImmediateRegister), scratchBehindMiss);
     jit.jumpToStub(getterByAccessTable());
 }
 

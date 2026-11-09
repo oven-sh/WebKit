@@ -108,7 +108,17 @@ static ValueID findOperationWrittenForOneReaderInTextBuilderRows(const BodyIndex
     return { };
 }
 
-bool takePartsOfJoinMadeForOneReader(Walker& walker, ValueID operand, Vector<Reference, 8>& parts)
+static bool onlyRecordsThatNobodySeesStandBehindInTextBuilderRows(const Walker& walker, ValueID made)
+{
+    const Code& code = walker.code();
+    for (ValueID id = code.lastOperationOf(walker.currentBlock()); id != made; id = code.at(id).previous) {
+        if (!id || !code.at(id).traits().isRemovableWhenUnused())
+            return false;
+    }
+    return true;
+}
+
+bool takePartsOfJoinMadeForOneReader(Walker& walker, ValueID operand, Vector<Reference, 8>& parts, Vector<ValueID, 2>* joinsThatFailWhereReaderFails)
 {
     Reference text = walker.isUnreachable() ? Reference() : walker.referenceOf(operand);
     if (!text || !text.isValue())
@@ -116,7 +126,10 @@ bool takePartsOfJoinMadeForOneReader(Walker& walker, ValueID operand, Vector<Ref
     const Code& code = walker.code();
     ValueID root = rootOfCellInSweptCode(code, text.id());
     const Operation& made = code.at(root);
-    if (!textsTakenApartInTextBuilderRows.contains(made.opcode) || !made.traits().isRemovableWhenUnused())
+    if (!textsTakenApartInTextBuilderRows.contains(made.opcode))
+        return false;
+    bool mayFailForItsLength = !made.traits().isRemovableWhenUnused();
+    if (mayFailForItsLength && (!joinsThatFailWhereReaderFails || !operationsThatJoinTexts.contains(made.opcode) || !made.traits().withoutThrowByRule().isRemovableWhenUnused() || made.block() != walker.currentBlock()))
         return false;
     if (made.opcode == Opcode::Strcat && made.isLikelyKey())
         return false;
@@ -137,8 +150,18 @@ bool takePartsOfJoinMadeForOneReader(Walker& walker, ValueID operand, Vector<Ref
         if (!part || !hasTextByItselfInTextBuilderRows(walker, referenceToRecordInTextBuilderRows(code, part)))
             return false;
     }
+    bool oneOperandIsText = std::ranges::any_of(made.operands(), [&](ValueID part) {
+        return hasOnlyInTextBuilderRows(walker, referenceToRecordInTextBuilderRows(code, part), Primitive::AnyString);
+    });
+    if (made.opcode == Opcode::Add && !oneOperandIsText)
+        return false;
     if (made.block() == walker.currentBlock() && !isReadByNoRecordSoFar(walker, Reference::value(root)))
         return false;
+    if (mayFailForItsLength) {
+        if (!onlyRecordsThatNobodySeesStandBehindInTextBuilderRows(walker, root))
+            return false;
+        joinsThatFailWhereReaderFails->append(root);
+    }
 
     for (ValueID part : made.operands())
         parts.append(referenceToRecordInTextBuilderRows(code, part));
@@ -311,9 +334,10 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
         return false;
     TypeID expected = typeOfPartGuessedBesideString;
     if (expectation.type) {
-        if (!hasTextByItself(types.at(expectation.type)))
+        TypeID withText = hasTextByItself(types.at(expectation.type)) ? expectation.type : walker.isInLoop() ? findPrimitivesExpectedBesideObjects(walker, guessed) : TypeID();
+        if (!withText || types.at(withText).isUndefinedOrNull())
             return false;
-        expected = types.intersectionOf(expectation.type, expected);
+        expected = types.intersectionOf(withText, expected);
     }
     TypeID tested = types.testablePartOf(types.withLiteralStringsWidened(expected));
     TypeID proven = walker.typeOf(value);

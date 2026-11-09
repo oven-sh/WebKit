@@ -11,6 +11,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStringEmitter.h"
+#include "AOTThrowEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -122,6 +123,25 @@ void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std
         defineTest(value, compare(relation, left.as<Word32>(), right.as<Word32>()));
         return;
     }
+    if (left.is<Integer>() || right.is<Integer>()) {
+        bool integerIsOnRight = right.is<Integer>();
+        Integer integer = (integerIsOnRight ? right : left).as<Integer>();
+        Boxed boxed = (integerIsOnRight ? left : right).as<Boxed>();
+        build().statistics().count(StatisticID::IntegersOf64BitsHeldAgainstBoxedNumbers);
+        defineTestByBranching(value, [&](BranchTargets targets) {
+            LBasicBlock int32Case = newBlock();
+            LBasicBlock numberCase = newBlock();
+            m_out.branch(isInt32(boxed).value(), normalEdge(int32Case), unlikelyEdge(numberCase));
+            m_out.appendTo(int32Case);
+            Integer wide = signExtended(low32(boxed));
+            branch(compare(relation, integerIsOnRight ? wide : integer, integerIsOnRight ? integer : wide), targets);
+            m_out.appendTo(numberCase);
+            Number unboxed = asNumber(boxed, integerIsOnRight ? leftType : rightType);
+            Number converted = toNumber(integer);
+            branch(compare(relation, integerIsOnRight ? unboxed : converted, integerIsOnRight ? converted : unboxed), targets);
+        });
+        return;
+    }
     if (!mayBeInt32(left, leftType) || !mayBeInt32(right, rightType)) {
         Number leftNumber = asNumber(left, leftType);
         defineTest(value, compare(relation, leftNumber, asNumber(right, rightType)));
@@ -162,10 +182,14 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
     case OperatorForm::Integers: {
         m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
         bool areBothNonNegative = typeOf(left).integers.minimum >= 0 && typeOf(right).integers.minimum >= 0;
+        if (relation == Relation::Less && AOT::hasFlag(build().options().testing, Wire::TestingSwitch::EqualIntegersAreTakenToBeLess)) [[unlikely]]
+            relation = Relation::LessOrEqual;
         Representation width = widthOfComparedIntegers(m_generator, value.value());
         Operand leftInteger = m_generator.getIn(left, width);
         Operand rightInteger = m_generator.getIn(right, width);
         result = withIntegerOperands(leftInteger, rightInteger, [&](auto x, auto y) {
+            if (areBothNonNegative && emittersCheckProofs())
+                emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, greaterThanOrEqual(bitOr(x, y), 0), std::nullopt, ProofSource::OtherOperation);
             return areBothNonNegative ? compareNonNegative(m_out, relation, x.value(), y.value()) : compare(relation, x, y);
         });
         break;
@@ -225,10 +249,7 @@ void OperatorEmitter::generateIntegerBound(const ValueContext& value)
 
     bool asksForGreaterInteger = asksForGreaterOnLeft != value->numberIsOnLeft();
     bool roundsUp = asksForGreaterInteger == admitsEquality;
-    constexpr int64_t least = -maxTrackedInteger;
-    constexpr int64_t greatest = maxTrackedInteger;
-    static_assert(static_cast<double>(greatest + 1) == 0x1p62);
-    int64_t boundForNaN = asksForGreaterInteger ? greatest : least;
+    static_assert(static_cast<double>(maxTrackedInteger + 1) == 0x1p62);
 
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Number number = in<Number>(value->numberOperand());
@@ -237,9 +258,14 @@ void OperatorEmitter::generateIntegerBound(const ValueContext& value)
         define(value, conversions.narrow(rounded));
         return;
     }
-    Integer bound = select(equal(number, number), rounded, boundForNaN);
-    bound = select(lessThanOrEqual(number, this->number(-0x1p62)), least, bound);
-    define(value, select(greaterThanOrEqual(number, this->number(0x1p62)), greatest, bound));
+    Condition isInt32 = equal(signExtended(low32(rounded)), rounded);
+    if (!isX86_64())
+        isInt32 = Condition(m_out.bitAnd(isInt32.value(), equal(number, number).value()));
+    define(value, either<Integer>(isInt32, [&] {
+        return rounded;
+    }, [&] {
+        return callLeaf<Integer>(RuntimeOperation::RoundToIntegerBound, { number, word32(roundsUp | asksForGreaterInteger << 1) });
+    }));
 }
 
 Condition OperatorEmitter::relationOnStringCells(const ValueContext& value, Relation relation, CellPointer left, CellPointer right)
@@ -365,22 +391,22 @@ Condition OperatorEmitter::relationOnValues(const ValueContext& value, Relation 
     else
         numberOperand = in<Number>(numberID);
     Boxed otherOperand = in<Boxed>(otherID);
-    auto compareByOperation = [&](const CallOptions& options) {
+    auto compareByStub = [&] {
         Boxed boxedNumber = emitter<ConversionEmitter>().boxDouble(numberOperand);
         Boxed x = numberIsOnRight ? otherOperand : boxedNumber;
         Boxed y = numberIsOnRight ? boxedNumber : otherOperand;
-        return callOperation<Condition>(value, traitsOfRelation(relation).operation, { x, y }, options);
+        return Condition(m_out.castToInt32(callStub(value, binaryOperation(traitsOfRelation(relation).stub, true), { x.value(), y.value() }).first));
     };
     if (!(typeOf(otherID).primitives & Primitive::Number)) {
-        m_out.noteForm(Form::Runtime, StateOfKnowledge::NumberAndOtherValue);
-        return compareByOperation(CallOptions { });
+        m_out.noteForm(Form::Closed, StateOfKnowledge::NumberAndOtherValue);
+        return compareByStub();
     }
     m_out.noteForm(Form::Open, StateOfKnowledge::NumberAndValue);
     return either<Condition>(isNumber(otherOperand), [&] {
         Number otherNumber = valueInRelation == ValueInRelation::IsNoInt32 ? unboxDouble(otherOperand) : numberToDouble(otherOperand);
         return numberIsOnRight ? compare(relation, otherNumber, numberOperand) : compare(relation, numberOperand, otherNumber);
     }, [&] {
-        return compareByOperation(CallOptions { .isOnRarePath = true });
+        return compareByStub();
     });
 }
 

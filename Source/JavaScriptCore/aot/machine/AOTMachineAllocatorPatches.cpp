@@ -125,7 +125,7 @@ static Location memoryHomeOfPatchOperand(Allocator& allocator, Operation* value)
 {
     if (spillHoldsValueWherePatchStands(allocator, value)) {
         allocator.noteFrameUse();
-        return Location::spill(allocator.m_allocation.spillOf(value));
+        return allocator.placeToReadIn(allocator.m_allocation.spillOf(value));
     }
 
     if (!liesInMemoryForPatchAllocation(allocator, value)) {
@@ -146,7 +146,7 @@ static ALWAYS_INLINE Location memoryHomeOfPatchOperandInLine(Allocator& allocato
 {
     if (spillHoldsValueWherePatchStands(allocator, value)) [[likely]] {
         allocator.noteFrameUse();
-        return Location::spill(allocator.m_allocation.spillOf(value));
+        return allocator.placeToReadIn(allocator.m_allocation.spillOf(value));
     }
     return memoryHomeOfPatchOperand(allocator, value);
 }
@@ -336,7 +336,7 @@ static bool registersMatterBehindPatch(const PatchOperation* patch)
 
 static bool isReadOnlyByFixedPatchOperands(const Allocator& allocator, const PatchOperation* patch, const Operation* value, Position late)
 {
-    if (patch->opcode() == Check || allocator.isLiveBehind(value, late))
+    if (patch->opcode() == Check || (registersMatterBehindPatch(patch) && allocator.isLiveBehind(value, late)))
         return false;
     std::span<Operation* const> operands = patch->operands();
     for (unsigned child = 0; child < operands.size(); ++child) {
@@ -349,7 +349,7 @@ static bool isReadOnlyByFixedPatchOperands(const Allocator& allocator, const Pat
     return true;
 }
 
-static Location sourceOfFixedPatchOperand(Allocator& allocator, Operation* value, RegisterMask wanted)
+static ALWAYS_INLINE Location sourceOfFixedPatchOperand(Allocator& allocator, Operation* value, RegisterMask wanted)
 {
     if (RegisterMask held = allocator.stateOf(value).registers)
         return Location::reg(allocator.anyRegisterOf(value, (held & ~wanted) ? (held & ~wanted) : held));
@@ -357,7 +357,7 @@ static Location sourceOfFixedPatchOperand(Allocator& allocator, Operation* value
         return Location::immediate();
     allocator.noteFrameUse();
     if (spillHoldsValueWherePatchStands(allocator, value)) [[likely]]
-        return Location::spill(allocator.m_allocation.spillOf(value));
+        return allocator.placeToReadIn(allocator.m_allocation.spillOf(value));
     return allocator.memoryLocationOf(value);
 }
 
@@ -888,6 +888,9 @@ static NEVER_INLINE bool childrenKeptAliveArePlacedAsConstrained(const PatchOper
 
 void Allocator::allocatePatch(PatchOperation* patch)
 {
+    if (m_isAheadOfFramedPart && isInRareRegion() && patch->effects.mayCollect) [[unlikely]]
+        keepPointersThatWait(endOfWhatWaysLeadToFromSafepointsOfRareRegion());
+
     auto allocatePlainPatch = [&]<bool patchEndsBlock, bool someOperandMayBeBrought>() ALWAYS_INLINE_LAMBDA -> bool {
         ASSERT(someOperandMayBeBrought || patch->m_registersToBringOperandsTo.isEmpty());
         const uint16_t bits = patch->m_bits;
@@ -1028,7 +1031,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
                         letOperandStayInRegister();
                     else if (!held && kind == ValueRep::ColdAny && spillHoldsValueWherePatchStands(*this, value)) {
                         traitsOfPatch |= SomeOperandStaysInItsSpill;
-                        place = Location::spill(m_allocation.spillOf(value));
+                        place = placeToReadIn(m_allocation.spillOf(value));
                         writtenForOperandsToldElsewhere |= maskToBringTo;
                     } else
                         traitsOfPatch |= SomeOperandIsPlacedInItsTurn;
@@ -1524,10 +1527,13 @@ void Allocator::allocatePatch(PatchOperation* patch)
     }
 
     bool releasesItsChild = false;
-    if ((bits & PatchOperation::ReleasesDeadValues) && !endsBlock && numberOfChildren == firstChild + 1) {
+    if ((bits & PatchOperation::ReleasesDeadValues) && !endsBlock && !numberOfResults && numberOfChildren == firstChild + 1) {
         Operation* child = children[firstChild];
-        if (!child->hasNoPosition() && !isLiveBehind(child, late) && m_liveness.of(child).lastUse <= early) {
+        bool isReadBehindByPosition = isLiveBehind(child, late) || m_liveness.of(child).lastUse > early;
+        if (!child->hasNoPosition() && (!isReadBehindByPosition || (!isReadOnSomeWayOn(child, early + 1) && !isHeldAtHeadThatWayLeadsBackTo(child)))) {
             releasesItsChild = true;
+            if (isReadBehindByPosition)
+                m_releasesByWaysOn.append(m_arena, ReleaseByWaysOn { child, patch, static_cast<uint32_t>(m_allocation.m_steps.size()) });
             patch->m_registersToRelease = stateOf(child).registers & m_file.allocatableIn(Bank::GP);
         }
     }
@@ -1737,7 +1743,7 @@ static void clearMemoryOfReleasedValue(Allocator& allocator, Operation* value)
     clear(allocator.stateOf(value).saveInRareRegion);
 }
 
-RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Position position)
+RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Position position, const PatchOperation* releasing)
 {
     if (released->opcode() != Phi)
         return 0;
@@ -1763,6 +1769,7 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
                     RegisterMask held = stateOf(handedOn).registers & m_file.allocatableIn(Bank::GP);
                     if ((spill == noSpill && !held) || isReadOnSomeWayOn(handedOn, position))
                         continue;
+                    m_releasesByWaysOn.append(m_arena, ReleaseByWaysOn { handedOn, releasing, static_cast<uint32_t>(m_allocation.m_steps.size()) });
                     if (held && !isHeldAtHeadThatWayLeadsBackTo(handedOn)) {
                         unbindAll(handedOn);
                         freed |= held;
@@ -1801,7 +1808,7 @@ bool Allocator::isHeldAtHeadThatWayLeadsBackTo(const Operation* value) const
         const Block* head = m_order.blocksInOrder()[loops[loop].firstBlock];
         if (m_lastSearchThatReachedBlock[head->index()] == m_numberOfSearchesForWays)
             continue;
-        for (const RegisterBinding& binding : m_heads[head->index()].bindings) {
+        for (const RegisterBinding& binding : m_heads[head->index()].bindings()) {
             if (binding.value == value)
                 return true;
         }
@@ -1813,39 +1820,154 @@ bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
 {
     if (m_order.of(m_block).isRare() || m_liveness.of(value).has(ValueFlag::IsKeptForCollector))
         return true;
-    const uint32_t firstUse = m_liveness.of(value).firstUse;
-    for (uint32_t use = firstUse; use; use = m_liveness.use(use).next) {
-        Position read = m_liveness.use(use).position;
-        if (read >= position && read < m_order.endOf(m_block))
-            return true;
-    }
+    const bool takesWaysOnToReadNothing = m_proc.traits().takesWaysOnToReadNothing;
+    uint32_t nextRead = findReadFromInList(value, position);
+    if (!takesWaysOnToReadNothing && nextRead && m_liveness.use(nextRead).position < m_order.endOf(m_block))
+        return true;
 
-    findBlocksThatLeadToReadsOf(value);
-    return std::ranges::any_of(m_block->successors(), [&](const Edge& successor) {
+    findBlocksThatLeadToReadsOf(value, firstBlockOnWaysFrom(m_block, value));
+    return !takesWaysOnToReadNothing && std::ranges::any_of(m_block->successors(), [&](const Edge& successor) {
         return m_lastSearchThatReachedBlock[successor.block()->index()] == m_numberOfSearchesForWays;
     });
+}
+
+void Allocator::checkThatNoWayOnReadsWhatHintsReleased()
+{
+    if (m_releasesByWaysOn.isEmpty())
+        return;
+    std::sort(m_releasesByWaysOn.begin(), m_releasesByWaysOn.end(), [](const ReleaseByWaysOn& left, const ReleaseByWaysOn& right) {
+        return left.value->index() < right.value->index();
+    });
+
+    const Step* const steps = m_allocation.m_steps.begin();
+    ArenaVector<uint32_t> lastWalkThatEnteredBlock;
+    lastWalkThatEnteredBlock.fill(m_arena, m_order.mostBlocks(), 0);
+    ArenaVector<const Block*> entered;
+    uint32_t walk = 0;
+    for (uint32_t next = 0; next < m_releasesByWaysOn.size();) {
+        const Operation* value = m_releasesByWaysOn[next].value;
+        const Position lastReadByPosition = m_liveness.of(value).lastUse;
+        ++walk;
+        entered.clear();
+
+        auto reads = [&](const Step& step, const PatchOperation* hintOfValue) {
+            if (step.kind == StepKind::KeepPointer)
+                return step.operation == value;
+            if (step.kind != StepKind::Execute || step.operation == hintOfValue)
+                return false;
+            bool isAmongLeaves = false;
+            forEachLeaf(m_liveness, step.operation, [&](const Operation*, unsigned, const Operation* leaf) {
+                isAmongLeaves |= leaf == value;
+            });
+            return isAmongLeaves;
+        };
+        auto someStepReadsFrom = [&](const Block* block, uint32_t first, const PatchOperation* hintOfValue) {
+            const BlockSteps& range = m_allocation.stepsOf(block);
+            for (uint32_t index = first; index < range.end; ++index) {
+                if (reads(steps[index], hintOfValue))
+                    return true;
+            }
+            for (const Operation* upsilon : block->upsilons()) {
+                const Operation* phi = upsilon->phi();
+                if (upsilon->child(0) != value || !phi || m_valueFacts[phi->index()].has(ValueFlag::IsDropped))
+                    continue;
+                for (const Edge& successor : block->successors()) {
+                    if (successor.block() == phi->owner())
+                        return true;
+                }
+            }
+            return range.terminator != UINT32_MAX && range.terminator >= first && reads(steps[range.terminator], hintOfValue);
+        };
+        auto enterSuccessorsOf = [&](const Block* block) {
+            for (const Edge& successor : block->successors()) {
+                const Block* target = successor.block();
+                uint32_t& last = lastWalkThatEnteredBlock[target->index()];
+                if (target == value->owner() || last == walk || m_order.headOf(target) > lastReadByPosition)
+                    continue;
+                last = walk;
+                entered.append(m_arena, target);
+            }
+        };
+
+        bool isRead = false;
+        for (; next < m_releasesByWaysOn.size() && m_releasesByWaysOn[next].value == value; ++next) {
+            const PatchOperation* releasing = m_releasesByWaysOn[next].releasing;
+            const Block* block = releasing->owner();
+            const bool isHintOfValue = releasing->releasesDeadValues() && releasing->child(firstPlacedChildOfPatch(releasing)) == value;
+            isRead |= someStepReadsFrom(block, m_releasesByWaysOn[next].firstStepBehind, isHintOfValue ? releasing : nullptr);
+            enterSuccessorsOf(block);
+        }
+        for (uint32_t index = 0; index < entered.size() && !isRead; ++index) {
+            isRead = someStepReadsFrom(entered[index], m_allocation.stepsOf(entered[index]).begin, nullptr);
+            enterSuccessorsOf(entered[index]);
+        }
+        if (isRead) {
+            m_proc.fail(FailureKind::ReleasedValueIsReadOnWayOn, value);
+            return;
+        }
+    }
 }
 
 bool Allocator::isReadOnSomeWayFromHeadOf(const Operation* value, const Block* block)
 {
     if (m_liveness.of(value).has(ValueFlag::IsKeptForCollector))
         return true;
-    findBlocksThatLeadToReadsOf(value);
+    bool numberingCostsNoMoreThanSearchesHave = !m_numbersOfDominatedBlocks.isEmpty() || m_numberOfBlocksReachedBySearchesForWays >= m_order.blocksInOrder().size();
+    if (numberingCostsNoMoreThanSearchesHave && m_valueOfLastSearchForWays != value && dominatesSomeReadBelowDefinitionOf(block, value))
+        return true;
+    findBlocksThatLeadToReadsOf(value, firstBlockOnWaysFrom(block, value));
     return m_lastSearchThatReachedBlock[block->index()] == m_numberOfSearchesForWays;
 }
 
-void Allocator::findBlocksThatLeadToReadsOf(const Operation* value)
+bool Allocator::dominatesSomeReadBelowDefinitionOf(const Block* block, const Operation* value)
+{
+    if (block == value->owner() || !dominates(value->owner(), block))
+        return false;
+    std::span<Block* const> blocks = m_order.blocksInOrder();
+    for (uint32_t use = m_liveness.of(value).firstUse; use; use = m_liveness.use(use).next) {
+        auto behind = std::ranges::upper_bound(blocks, m_liveness.use(use).position, { }, [&](const Block* other) {
+            return m_order.headOf(other);
+        });
+        if (dominates(block, *std::prev(behind)))
+            return true;
+    }
+    return false;
+}
+
+uint32_t Allocator::firstBlockOnWaysFrom(const Block* block, const Operation* value)
+{
+    std::span<const Loop> loops = m_order.loops();
+    if (!m_someLoopHasSideEntrance) {
+        m_someLoopHasSideEntrance = std::ranges::any_of(loops, [](const Loop& loop) {
+            return loop.hasSideEntrance;
+        });
+    }
+    if (*m_someLoopHasSideEntrance || m_order.of(block).isRare() || m_order.of(value->owner()).isRare())
+        return 0;
+    uint32_t first = m_order.of(block).orderIndex;
+    uint32_t definedIn = m_order.of(value->owner()).orderIndex;
+    for (uint32_t loop = m_order.of(block).loop; loop != noLoop; loop = loops[loop].parent) {
+        if (loops[loop].firstBlock <= definedIn && definedIn < loops[loop].endBlock)
+            break;
+        first = std::min(first, loops[loop].firstBlock);
+    }
+    return first;
+}
+
+void Allocator::findBlocksThatLeadToReadsOf(const Operation* value, uint32_t firstBlock)
 {
     const uint32_t firstUse = m_liveness.of(value).firstUse;
-    if (m_valueOfLastSearchForWays != value) {
+    if (m_valueOfLastSearchForWays != value || firstBlock < m_firstBlockOfLastSearchForWays) {
         m_valueOfLastSearchForWays = value;
+        m_firstBlockOfLastSearchForWays = firstBlock;
         if (m_lastSearchThatReachedBlock.isEmpty())
             m_lastSearchThatReachedBlock.fill(m_arena, m_order.mostBlocks(), 0);
         ++m_numberOfSearchesForWays;
-        ArenaVector<const Block*> reached;
+        ArenaVector<const Block*>& reached = m_blocksReachedBySearchForWays;
+        reached.clear();
         auto reach = [&](const Block* block) {
             uint32_t& last = m_lastSearchThatReachedBlock[block->index()];
-            if (block == value->owner() || last == m_numberOfSearchesForWays)
+            if (block == value->owner() || last == m_numberOfSearchesForWays || m_order.of(block).orderIndex < firstBlock)
                 return;
             last = m_numberOfSearchesForWays;
             reached.append(m_arena, block);
@@ -1861,16 +1983,20 @@ void Allocator::findBlocksThatLeadToReadsOf(const Operation* value)
             for (const Block* predecessor : m_order.of(reached[index]).predecessors)
                 reach(predecessor);
         }
+        m_numberOfBlocksReachedBySearchesForWays += reached.size();
     }
 }
 
 void Allocator::releaseDeadValue(PatchOperation* patch)
 {
+    Operation* released = patch->child(firstPlacedChildOfPatch(patch));
+    RegisterMask freed = stateOf(released).registers & m_file.allocatableIn(Bank::GP);
+    if (freed)
+        unbindAll(released);
     patch->m_registersToRelease |= registersWhereReleasedValueMayHaveWaited();
     patch->m_registersToRelease &= ~m_bound;
-    Operation* released = patch->child(firstPlacedChildOfPatch(patch));
     clearMemoryOfReleasedValue(*this, released);
-    RegisterMask freed = clearPlacesOfValuesHandedTo(released, earlyPositionOfAllocatedPatch(*this, patch) + 1);
+    freed |= clearPlacesOfValuesHandedTo(released, earlyPositionOfAllocatedPatch(*this, patch) + 1, patch);
     patch->m_registersToRelease |= freed;
     m_allocation.m_patchAssignments.last().usedRegisters &= ~freed;
 }
@@ -1902,7 +2028,7 @@ void Allocator::releaseChildrenLetGoByCallee(PatchOperation* patch, std::span<co
         patch->m_registersToRelease |= stateOf(value).registers & m_file.allocatableIn(Bank::GP) & ~locked;
         if (std::ranges::find(readFromMemory.span(), value) == readFromMemory.span().end())
             clearMemoryOfReleasedValue(*this, value);
-        patch->m_registersToRelease |= clearPlacesOfValuesHandedTo(value, early) & ~locked;
+        patch->m_registersToRelease |= clearPlacesOfValuesHandedTo(value, early, patch) & ~locked;
         patch->m_registersToRelease |= registersWhereReleasedValueMayHaveWaited() & ~m_bound & ~locked;
     }
 }

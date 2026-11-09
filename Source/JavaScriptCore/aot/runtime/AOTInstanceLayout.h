@@ -51,6 +51,8 @@ struct InstanceLayout {
     static constexpr size_t sizeOfSiteAnswers = 16;
     static constexpr unsigned sizeOfIndexOfSiteAnswersShift = 1;
     static constexpr size_t sizeOfIndexOfSiteAnswers = 1 << sizeOfIndexOfSiteAnswersShift;
+    static constexpr uint16_t nameOfSiteStandsBehind = UINT16_MAX;
+    static constexpr uint32_t numbersOfSiteWhoseNameStandsBehind = 3;
     static constexpr size_t offsetOfStringCells = 384 * KB + shiftAboveLoopPollPage;
 #if defined(BUN_HARDENED)
     static constexpr size_t offsetOfWordsWrittenOnce = 16 * KB;
@@ -67,6 +69,8 @@ struct InstanceLayout {
     static constexpr size_t bytesReservedForKeyedValuePlaces = 32 * KB;
     static constexpr size_t bytesReservedForSiteAnswers = sizeof(uint64_t) << (8 * sizeOfIndexOfSiteAnswers);
     static constexpr ptrdiff_t offsetOfSiteAnswers = offsetOfKeyedValuePlaces - static_cast<ptrdiff_t>(bytesReservedForSiteAnswers);
+    static constexpr size_t bytesReservedForMissesOfPlaces = size_t { 1 } << 16;
+    static constexpr ptrdiff_t offsetOfMissesOfPlaces = offsetOfSiteAnswers - static_cast<ptrdiff_t>(bytesReservedForMissesOfPlaces);
     static constexpr ptrdiff_t offsetOfCopiesWithoutFrame = -static_cast<ptrdiff_t>(48 * KB);
     static constexpr size_t bytesReservedForCopiesWithoutFrame = 16 * KB;
     static constexpr size_t offsetOfTablesAboveInstance = 32 * KB + shiftAboveLoopPollPage;
@@ -128,6 +132,7 @@ static_assert(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForPrefixAndP
 static_assert(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForPrefixAndPollPage - InstanceLayout::bytesReservedForLoopPollPage) <= InstanceLayout::offsetOfKeyedValuePlaces);
 static_assert(InstanceLayout::offsetOfKeyedValuePlaces + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForKeyedValuePlaces) <= InstanceLayout::offsetOfCopiesWithoutFrame);
 static_assert(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForPrefixAndPollPage - InstanceLayout::bytesReservedForLoopPollPage) <= InstanceLayout::offsetOfSiteAnswers && !(InstanceLayout::offsetOfSiteAnswers % static_cast<ptrdiff_t>(InstanceLayout::sizeOfSiteAnswers)));
+static_assert(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForPrefixAndPollPage - InstanceLayout::bytesReservedForLoopPollPage) <= InstanceLayout::offsetOfMissesOfPlaces);
 static_assert(InstanceLayout::offsetOfCopiesWithoutFrame + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForCopiesWithoutFrame) <= -static_cast<ptrdiff_t>(32 * KB));
 static_assert(!(InstanceLayout::offsetOfLoopPollPage() % static_cast<ptrdiff_t>(InstanceLayout::granuleAboveInstance)) && !(InstanceLayout::bytesReservedForLoopPollPage % InstanceLayout::granuleAboveInstance));
 static_assert(InstanceLayout::offsetOfLoopPollPage() < 0 || InstanceLayout::offsetOfLoopPollPage() + InstanceLayout::bytesReservedForLoopPollPage <= InstanceLayout::offsetOfTablesAboveInstance);

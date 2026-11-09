@@ -38,7 +38,7 @@ static GPRReg resolvedAddressRegisterOf(Location leaf)
     return leaf.gpr();
 }
 
-static AddressForm resolvedAddressOfBaseWithoutPosition(const Encoder& encoder, const Operation* base, int32_t offsetOfAccess)
+static ALWAYS_INLINE AddressForm resolvedAddressOfBaseWithoutPosition(const Encoder& encoder, const Operation* base, int32_t offsetOfAccess)
 {
     RELEASE_ASSERT(base->hasNoPosition());
 
@@ -74,7 +74,7 @@ static AddressForm resolvedAddressOfBaseWithoutPosition(const Encoder& encoder, 
     return resolvedAddressAt(reg.gpr(), offset.value());
 }
 
-static AddressForm resolvedAddressOfLeaf(const Encoder& encoder, const Operation* base, Location location, int32_t offset)
+static ALWAYS_INLINE AddressForm resolvedAddressOfLeaf(const Encoder& encoder, const Operation* base, Location location, int32_t offset)
 {
     switch (location.kind()) {
     case Location::Register:
@@ -96,7 +96,7 @@ static AddressForm resolvedAddressOfLeaf(const Encoder& encoder, const Operation
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void resolveIndexOfAddress(const Liveness& liveness, AddressForm& form, const Operation* index, LeafCursor& leaves)
+static ALWAYS_INLINE void resolveIndexOfAddress(const Liveness& liveness, AddressForm& form, const Operation* index, LeafCursor& leaves)
 {
     const Operation* shift = nullptr;
     if (index->opcode() == Shl && liveness.isFused(index)) {

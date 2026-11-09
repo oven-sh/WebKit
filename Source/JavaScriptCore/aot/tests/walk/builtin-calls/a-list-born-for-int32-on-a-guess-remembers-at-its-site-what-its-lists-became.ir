@@ -1,0 +1,88 @@
+# The texts that make a list of a given length store into it by TryPutByValDirect, behind it by TryPutIndex. What they store says what the list is born with.
+# function products(length, a, b) { const made = $newArrayLike(length | 0, undefined); const product = (a | 0) * (b | 0); if (!$tryPutByValDirect(made, 0, product) && !$tryPutIndex(made, 0, product)) $putByValDirect(made, 0, product); return made; }
+# A product of two int32 has no fraction and need not be an int32. Such a list was born for fractions, and whoever read it got fractions: an index read out of it had to be asked whether it is one.
+# It is born for int32 now: A GUESS. The store asks the kind of the list first; a number that does not fit turns the list into one of fractions where TryPutIndex stands, without a call.
+# And the site remembers: the record's kind is a seed, and a site whose lists were widened bears the wider kind from its next review on, so that the widening is not paid list after list.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArrayLike {{*}}arrayStorage=Int32 [remembersStorageAtSite]
+# CHECK: @Double = Mul
+# CHECK: = TryPutByValDirect {{*}}arrayStorage=Int32
+# CHECK: = TryPutIndex
+# The number goes to the direct store in the form it has: it is boxed for the store behind alone.
+# RUN(UNBOXED): walk f1 mechanisms=all
+# UNBOXED: [[product]]: {{*}} @Double = Mul
+# UNBOXED: = TryPutByValDirect {{*}}, [[product]] arrayStorage=Int32
+# What is proven an int32 is no guess and remembers nothing; what may have a fraction is born for fractions as before.
+# RUN(PROVEN): walk f2 mechanisms=all
+# PROVEN: = NewArrayLike {{*}}arrayStorage=Int32
+# RUN(NOGUESS): walk f2 mechanisms=all
+# NOGUESS-NOT: remembersStorageAtSite
+# RUN(FRACTION): walk f3 mechanisms=all
+# FRACTION: = NewArrayLike {{*}}arrayStorage=Double
+# RUN(NOMEMORY): walk f3 mechanisms=all
+# NOMEMORY-NOT: remembersStorageAtSite
+# RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = (products, sums, halves) => { const kind = list => /ArrayWith([A-Za-z0-9]+)/.exec(describe(list))[1]; const tell = list => kind(list) + ":" + list.length + ":" + list[0] + ":" + (1 in list); print(tell(products(4, 2, 3)), tell(products(4, 65536, 65536)), tell(products(4, -65536, 65536)), tell(products(4, 0, -1)), tell(products(0, 2, 3)), tell(products(200, 2, 3))); let wrong = 0; for (let turn = 0; turn < 600; turn++) { const list = products(8, 65536 + turn, 65536); if (list[0] !== (65536 + turn) * 65536 || list.length !== 8 || 1 in list || kind(list) !== "Double") wrong++; } print(wrong, tell(products(4, 2, 3)), tell(products(4, 65536, 65536)), tell(sums(4, 2, 3)), tell(halves(4, 3))); };
+# ANSWER: Int32:4:6:false Double:4:4294967296:false Double:4:-4294967296:false Double:4:0:false Int32:1:6:false Int32:200:6:false
+# ANSWER-NEXT: 0 Double:4:6:false Double:4:4294967296:false Int32:4:5:false Double:4:1.5:false
+# ANSWER-NEXT: exited with 0
+# LIBRARY: own
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/aot/written-lists.ts" displayPath="/$bun/aot/written-lists.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="products" module=m1 role=Library flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    v4 = BitOr v0, v3
+    v5 = Undefined
+    v6 = NewArrayLike v4, v5 @12
+    v7 = BitOr v1, v3
+    v8 = BitOr v2, v3
+    v9 = Mul v7, v8
+    v10 = TryPutByValDirect v6, v3, v9
+    Branch v10 -> taken b3(), notTaken b1()
+  b1():
+    v11 = TryPutIndex v6, v3, v9
+    Branch v11 -> taken b3(), notTaken b2()
+  b2():
+    ElemDefine v6, v3, v9
+    Jump -> next b3()
+  b3():
+    Return v6
+}
+function f2 name="sums" module=m1 role=Library flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    v4 = BitOr v0, v3
+    v5 = Undefined
+    v6 = NewArrayLike v4, v5
+    v7 = BitOr v1, v3
+    v8 = BitOr v2, v3
+    v9 = Add v7, v8
+    v10 = BitOr v9, v3
+    v11 = TryPutByValDirect v6, v3, v10
+    Return v6
+}
+function f3 name="halves" module=m1 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Undefined
+    v5 = NewArrayLike v3, v4
+    v6 = BitOr v1, v2
+    v7 = Double number=0.5
+    v8 = Mul v6, v7
+    v9 = TryPutByValDirect v5, v2, v8
+    Return v5
+}

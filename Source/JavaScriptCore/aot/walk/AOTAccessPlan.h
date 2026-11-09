@@ -113,17 +113,21 @@ inline std::optional<FieldAccess> fieldCreatedInSlotBy(const AccessContext& cont
         return std::nullopt;
 
     const PlacedSlot& slot = slots.slot(layout, *field);
-    if (!slot.hasStorage() || !canLeaveSlot(slot.representation) || slot.mayExistWithoutStorage || slot.isFilledAtBirth || slot.deferredFunction || slot.representation != SlotRepresentation::JSValue)
+    if (!slot.hasStorage() || !canLeaveSlot(slot.representation) || slot.mayExistWithoutStorage || slot.isFilledAtBirth || slot.deferredFunction)
         return std::nullopt;
     auto isFunctionOfProgram = [&](TypeID function) {
         Type type = types.at(function);
         return type.isObject() && type.isJavaScriptValue() && type.hasOnlyClosures();
     };
     if (form.contains(FieldForm::IsAccessor)) {
-        if (!slot.holdsAccessor || (definition.getter && !isFunctionOfProgram(definition.getter)) || (definition.setter && !isFunctionOfProgram(definition.setter)))
+        if (slot.type && (!definition.getter || !types.isSubset(definition.getter, slot.type)))
+            return std::nullopt;
+        if (slot.representation != SlotRepresentation::JSValue || !slot.holdsAccessor || (definition.getter && !isFunctionOfProgram(definition.getter)) || (definition.setter && !isFunctionOfProgram(definition.setter)))
             return std::nullopt;
     } else {
         if (slot.holdsAccessor || !definition.value || !types.at(definition.value).isJavaScriptValue() || (types.at(definition.value).primitives & (Primitive::Absent | Primitive::Unspecified)))
+            return std::nullopt;
+        if (slot.representation != SlotRepresentation::JSValue && types.at(definition.value).mayBeUndefinedOrNull())
             return std::nullopt;
         if ((slot.type && !types.isSubset(definition.value, slot.type)) || (slot.provenType && !types.isSubset(definition.value, slot.provenType)))
             return std::nullopt;

@@ -1,4 +1,4 @@
-# queueMicrotask(Object.setPrototypeOf([new CustomEvent("made up")], null)); setImmediate(() => {})
+# queueMicrotask(Object.setPrototypeOf([new MessageEvent("made up")], null)); setImmediate(() => {})
 # LIBRARY: own
 # RUN: link functions mechanisms=all
 # REQUIRES: entries-of-bun
@@ -19,10 +19,10 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v4 = Call v2, -, v3 calleeName="setImmediate"
     v5 = PropGet v0 key="queueMicrotask" [isFreeName]
     v6 = Convert v5 declared={type=builtin(QueueMicrotask) flags=[IsExpected]}
-    v7 = PropGet v0 key="CustomEvent" [isFreeName]
-    v8 = Convert v7 declared={type=builtin(CustomEvent) flags=[IsExpected]}
+    v7 = PropGet v0 key="MessageEvent" [isFreeName]
+    v8 = Convert v7 declared={type=builtin(MessageEvent) flags=[IsExpected]}
     v9 = String string="made up"
-    v10 = Construct v8, -, v9 calleeName="CustomEvent"
+    v10 = Construct v8, -, v9 calleeName="MessageEvent"
     v11 = NewArray v10 contents=anything
     v12 = Builtin builtin=ObjectSetPrototypeOf
     v13 = Null

@@ -57,7 +57,14 @@ StubSignature signatureOfGetByIdOfNarrowCellInExtension(StubKey) { return signat
 StubSignature signatureOfGetByIdOfEmptySlot(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfGetByIdOfFieldLeftOut(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfGetByIdOfCell(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
-StubSignature signatureOfInById(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
+StubSignature signatureOfInById(StubKey)
+{
+#if CPU(X86_64)
+    return signatureReturningValue({ firstStubOperandRegister }).fillingKeptRegisterInFront(X86Registers::edx);
+#else
+    return signatureReturningValue({ firstStubOperandRegister });
+#endif
+}
 
 static void subtractWordAt(StubAssembler& jit, Address address, GPRReg value, GPRReg scratch)
 {
@@ -395,6 +402,7 @@ static void answerByFieldRecordAndReturn(StubAssembler& jit, ObjectLookupQuestio
         isAccessor.link(&jit);
         const GPRReg getterSetter = r.uid;
         loadGetterSetterInField(jit, registers.field.address, registers.field.representation, getterSetter, exits.isAbsent);
+        branchUnlessAccessorPair(jit, getterSetter, isUnknown);
         callGetterAndReturn(jit, r.receiver, getterSetter, isUnknown);
     } else {
         JumpList isPresent;
@@ -715,6 +723,7 @@ void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const
     cannot.append(jit.jump());
     hasNoField.link(&jit);
     loadStructure(jit, owner, r.structure);
+    cannot.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
     jit.load32(Address(r.structure, CompiledStructure::offsetOfExtraPropertiesSlot()), r.index);
     jit.and32(TrustedImm32(SlotData::maxOffset), r.index);
     cannot.append(jit.branchTest32(CCallHelpers::Zero, r.index));
@@ -1025,26 +1034,25 @@ void generateGetByIdKeepingRegisters(StubAssembler& jit)
     };
     Jump isNotCell = jit.branchIfNotCell(R0);
     JumpList isNotInAccessTable;
-    JumpList isAnsweredByFieldTable;
-    JumpList isNotInFieldTable;
+    JumpList isNoFieldOfCompiledObject;
     JumpList hasOtherName;
-    JumpList isNotCompiledObject;
     JumpList isAnsweredByHandler;
-    returnValueByAccessTable(jit, { { R0, name, cell, scratch }, row, InvalidGPRReg, true }, isNotInAccessTable, isAnsweredByFieldTable);
-    isNotInAccessTable.link(&jit);
-    FieldTableProbe probe { R0, name, row, cell, true, true, false, jit.key().callerFrame() };
-    probe.isNotCompiledObject = &isNotCompiledObject;
-    probe.keyInAccessTable = scratch;
-    probe.placeInAccessTable = OwnedScratchRegister::registerToHandOn;
-    probe.hasFormAndOperand = &isAnsweredByFieldTable;
+    const bool nameHasColumn = jit.key().form() == static_cast<uint8_t>(NameAtSite::HasColumn);
+    FieldTableProbe probe { R0, name, row, cell, nameHasColumn, true, false, jit.key().callerFrame() };
+    probe.isNotCompiledObject = &isNoFieldOfCompiledObject;
     probe.waysOnwardAreCalls = true;
-    returnFieldByTable(jit, probe, isNotInFieldTable);
+    returnFieldByTable(jit, probe, isNoFieldOfCompiledObject);
+    isNoFieldOfCompiledObject.link(&jit);
+    returnValueByAccessTable(jit, { { R0, name, cell, scratch }, row, InvalidGPRReg, true }, isNotInAccessTable);
     auto askFrontTable = [&](ReceiverOfFrontProbe receiverIs) {
         jit.load32(Address(R0, JSCell::structureIDOffset()), cell);
         readByFrontTable(jit, { R0, name, cell, row, scratch, InvalidGPRReg, receiverIs, true }, R0, hasOtherName);
         isAnsweredByHandler.append(jit.jump());
     };
-    isNotInFieldTable.link(&jit);
+    isNotInAccessTable.link(&jit);
+    if (!nameHasColumn)
+        hasOtherName.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
+    Jump isNotCompiledObject = jit.branchTest8(CCallHelpers::Zero, Address(R0, offsetOfShapeWord + 3), TrustedImm32(compiledObjectShapeBit >> 24));
     askFrontTable(ReceiverOfFrontProbe::IsCompiledObject);
     isNotCompiledObject.link(&jit);
     askFrontTable(ReceiverOfFrontProbe::IsAnyCell);
@@ -1062,7 +1070,7 @@ void generateGetByIdKeepingRegisters(StubAssembler& jit)
 
     isNotCell.link(&jit);
     callAndReturn(scopedLambda<void()>([&] {
-        jit.callStub(getById().withCallerFrame(CallerFrame::StubFrame));
+        jit.callStub((nameHasColumn ? getById() : getByIdCheckingColumn()).withCallerFrame(CallerFrame::StubFrame));
     }));
 #else
     UNUSED_PARAM(jit);
@@ -1096,19 +1104,15 @@ void generateGetById(StubAssembler& jit)
     Label start = jit.label();
     loadStructureIDOfReceiver(jit, R0, T11, *miss, [&] {
         JumpList isNotInAccessTable;
-        JumpList isAnsweredByFieldTable;
-        JumpList isNotInFieldTable;
-        JumpList isNotCompiledObject;
+        JumpList isNoFieldOfCompiledObject;
         jit.bindEntry(getByIdOfCell().withCallerFrame(callerFrame));
-        returnValueByAccessTable(jit, { { R0, name, T11, T12 }, T14, T10 }, isNotInAccessTable, isAnsweredByFieldTable);
-        isNotInAccessTable.link(&jit);
         FieldTableProbe probe { R0, name, T14, cell, true, true, false, callerFrame };
-        probe.isNotCompiledObject = &isNotCompiledObject;
-        probe.keyInAccessTable = T11;
-        probe.placeInAccessTable = T13;
-        probe.hasFormAndOperand = &isAnsweredByFieldTable;
-        returnFieldByTable(jit, probe, isNotInFieldTable);
-        isNotInFieldTable.link(&jit);
+        probe.isNotCompiledObject = &isNoFieldOfCompiledObject;
+        returnFieldByTable(jit, probe, isNoFieldOfCompiledObject);
+        isNoFieldOfCompiledObject.link(&jit);
+        returnValueByAccessTable(jit, { { R0, name, T11, T12 }, T14, T10 }, isNotInAccessTable);
+        isNotInAccessTable.link(&jit);
+        Jump isNotCompiledObject = jit.branchTest8(CCallHelpers::Zero, Address(R0, offsetOfShapeWord + 3), TrustedImm32(compiledObjectShapeBit >> 24));
         behindFieldTable = jit.label();
         jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
         readByFrontTable(jit, { R0, name, T11, cell, T10, T13, ReceiverOfFrontProbe::IsCompiledObject, true }, R0, hasOtherName);

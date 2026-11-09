@@ -19,7 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr OpcodeSet opcodesThatNameModulesInScanStrings = opcodesWhere([](Opcode opcode) {
     return PayloadWord::module(opcode) || PayloadWord::referrer(opcode);
 });
-static constexpr OpcodeSet opcodesThatGoByNumbersOfModulesInScanStrings { Opcode::ModuleNamespace, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::MockSeenBy, Opcode::NamespaceSeenBy };
+static constexpr OpcodeSet opcodesThatGoByNumbersOfModulesInScanStrings { Opcode::ModuleNamespace, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::IsLinkedBelow, Opcode::MockSeenBy, Opcode::NamespaceSeenBy };
 
 namespace {
 
@@ -81,14 +81,25 @@ static PropertyKeyID keyOfPrimitiveInScanStrings(const Program& program, Primiti
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-StringID textThatValueBeginsWith(const Program& program, BodyValue definition, NOESCAPE const DefinitionsInScanOfStrings& definitionOf)
+StringID textThatValueBeginsWith(const Program& program, BodyValue definition, NOESCAPE const DefinitionsInScanOfStrings& definitionOf, Vector<uint32_t>& beginningsFound)
 {
+    static constexpr uint32_t beginsWithNoText = 1;
+    static constexpr uint32_t firstText = 2;
+    Vector<ValueID, 8> passed;
+    auto answer = [&](StringID text) {
+        for (ValueID value : passed)
+            beginningsFound[value.index()] = text ? text.index() + firstText : beginsWithNoText;
+        return text;
+    };
     while (definition && !definition.isParameter()) {
+        if (uint32_t found = beginningsFound[definition.id().index()])
+            return answer(found == beginsWithNoText ? StringID() : StringID(found - firstText));
+        passed.append(definition.id());
         ValueID first;
         switch (definition.opcode()) {
         case Opcode::String: {
             StringID text = definition.as<Opcode::String>().string();
-            return text && text != program.strings.emptyString() ? text : StringID();
+            return answer(text && text != program.strings.emptyString() ? text : StringID());
         }
         case Opcode::Add:
             first = definition.as<Opcode::Add>().leftOperand();
@@ -100,22 +111,22 @@ StringID textThatValueBeginsWith(const Program& program, BodyValue definition, N
             break;
         }
         default:
-            return { };
+            return answer({ });
         }
         if (!first || first >= definition.id())
-            return { };
+            return answer({ });
         definition = definitionOf(first);
     }
-    return { };
+    return answer({ });
 }
 
-PropertyKeyID nameKeyOfAccessInScan(const Program& program, PrimitiveKnownToFolding held, const BodyValue& definition, NOESCAPE const DefinitionsInScanOfStrings& definitionOf, StringID& beginning)
+PropertyKeyID nameKeyOfAccessInScan(const Program& program, PrimitiveKnownToFolding held, const BodyValue& definition, NOESCAPE const DefinitionsInScanOfStrings& definitionOf, Vector<uint32_t>& beginningsFound, StringID& beginning)
 {
     beginning = { };
     if (PropertyKeyID key = keyOfPrimitiveInScanStrings(program, held))
         return key;
     if (!held)
-        beginning = textThatValueBeginsWith(program, definition, definitionOf);
+        beginning = textThatValueBeginsWith(program, definition, definitionOf, beginningsFound);
     return { };
 }
 

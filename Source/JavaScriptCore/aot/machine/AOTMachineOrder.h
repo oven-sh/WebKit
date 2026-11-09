@@ -18,12 +18,20 @@ inline constexpr uint32_t noRareRegion = UINT32_MAX;
 
 struct Loop {
     uint32_t parent { noLoop };
+    uint32_t loopAroundOutsideRun { noLoop };
     uint32_t firstBlock { 0 };
     uint32_t endBlock { 0 };
     Position begin { 0 };
     Position end { 0 };
     bool hasSideEntrance { false };
 };
+
+inline uint32_t innermostLoopAroundBoth(const Loop* loops, uint32_t loopAroundEarlier, Position later)
+{
+    while (loopAroundEarlier != noLoop && loops[loopAroundEarlier].end <= later)
+        loopAroundEarlier = loops[loopAroundEarlier].loopAroundOutsideRun;
+    return loopAroundEarlier;
+}
 
 struct RareRegion {
     Block* onlyEntry { nullptr };
@@ -105,6 +113,13 @@ public:
     static void replaceJumpWithBranch(Block* from, const Operation* phi, bool isInverted);
     static Block* split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeToTarget);
     static Block* askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond);
+    static void askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond, Operation* subject, int32_t low, int32_t high);
+    struct CaseOfEquality {
+        int64_t value;
+        Edge target;
+    };
+    static void askEqualitiesBySwitch(Block* first, Operation* subject, std::span<Block* const> laterLinks, std::span<const CaseOfEquality> sortedCases, Edge otherwise);
+    static void askBitsOfTwoTestsAtOnce(Block* first, unsigned wayOfFirstWhereBitIsSet, Operation* bitsOfFirst, Block* second, unsigned wayOfSecondWhereBitIsSet, Operation* bitsOfSecond);
     static void makePhiOfTruncationBehindJoin(Block* join, Operation* truncation);
     static void passJoinBy(Block* from, Block* target, Operation* phi, Operation* value);
     static bool isUnsplit(const Block* from, const BlockPlace& placeOfTarget)

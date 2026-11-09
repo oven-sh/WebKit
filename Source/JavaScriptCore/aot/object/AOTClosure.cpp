@@ -160,7 +160,8 @@ static void analyzeCaptures(JSCell* cell, uint32_t closureNumber, std::span<cons
     JSCell* scope = scopeInHeapSnapshotOf(cell);
     JSCell* holder = scope ? scope : cell;
     Instance* instance = cell->structure()->realm()->aotInstance();
-    if (JSCell* environment = instance ? instance->state->statics->environmentOfModuleThatDefines(closureNumber) : nullptr)
+    JSCell* environment = instance ? instance->state->statics->environmentOfModuleThatDefines(closureNumber) : nullptr;
+    if (environment)
         analyzer.analyzeEdge(holder, environment, RootMarkReason::None);
     if (String name = cell->inherits<JSFunction>() ? String() : CompiledCallee::displayName(asObject(cell)); !name.isEmpty())
         analyzer.setLabelForCell(cell, name);
@@ -169,7 +170,10 @@ static void analyzeCaptures(JSCell* cell, uint32_t closureNumber, std::span<cons
         JSValue reference = JSValue::decode(captures[i]);
         if (!reference || !reference.isCell())
             continue;
-        if (UniquedStringImpl* name = identifiers.nameInHeapSnapshots(closureNumber, i))
+        UniquedStringImpl* name = identifiers.nameInHeapSnapshots(closureNumber, i);
+        if (name && environment && identifiers.isVariableOfModuleInHeapSnapshots(closureNumber, i))
+            instance->state->statics->analyzeVariableOfModule(environment, reference.asCell(), name, analyzer);
+        else if (name)
             analyzer.analyzeVariableNameEdge(holder, reference.asCell(), name);
         else
             analyzer.analyzeIndexEdge(holder, reference.asCell(), i);
@@ -696,10 +700,20 @@ bool Closure::holdsStaticFieldUnder(UniquedStringImpl* uid) const
     return classes.staticField(*classLayout, uid) && !classes.hasStaticMethodNamed(*classLayout, uid);
 }
 
+bool Closure::valueUnderIsHeardByNobody(UniquedStringImpl* uid) const
+{
+    const ClassTable& classes = state().objects->classes;
+    if (const LayoutData* classLayout = classData())
+        return holdsStaticFieldUnder(uid) || classes.nobodyHearsOfValueUnder(*classLayout, ClassSide::Static, uid);
+    ClassSide side = ClassSide::Static;
+    const LayoutData* constructed = classes.classHeldBy(const_cast<Closure*>(this), side);
+    return constructed && side == ClassSide::Static && classes.nobodyHearsOfValueUnder(*constructed, side, uid);
+}
+
 static bool tryReplaceStaticFieldOfClassObject(VM& vm, Closure& closure, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     Structure* structure = closure.structure();
-    if (structure->isDictionary() || !closure.holdsStaticFieldUnder(name.uid()))
+    if (structure->isDictionary() || structure->isImmutableProperty(name.uid()) || structure->hasFrozenElementsInPlace() || !closure.valueUnderIsHeardByNobody(name.uid()))
         return false;
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, name, attributes);
@@ -726,7 +740,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     bool isStoreToClassObject = classLayout && slot.thisValue() == JSValue(closure);
     if (isStoreToClassObject && StaticFields::tryStore(*closure, name.uid(), value))
         return true;
-    if (isStoreToClassObject && tryReplaceStaticFieldOfClassObject(vm, *closure, name, value, slot))
+    if (slot.thisValue() == JSValue(closure) && tryReplaceStaticFieldOfClassObject(vm, *closure, name, value, slot))
         return true;
     closure->ensureClassObject(vm);
     if (name == vm.propertyNames->prototype)
@@ -791,7 +805,8 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
-    RETURN_IF_EXCEPTION(scope, false);
+    if (Exception* exception = scope.exception(); exception && !vm.isTerminationException(exception)) [[unlikely]]
+        return false;
     holdClosureToLackingNameSlowCase(vm, closure, name.uid());
     if (classLayout) {
         classes.holdMemberToProof(vm, *classLayout, ClassSide::Static, closure, name.uid());
@@ -852,7 +867,10 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
     if (classLayout && object->getPrototypeDirect() != prototype)
         closure->state().objects->classes.didChangePrototypeLink(*classLayout, ClassSide::Static);
     JSValue prototypeBefore = object->getPrototypeDirect();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool result = Base::setPrototype(object, globalObject, prototype, shouldThrow);
+    if (Exception* exception = scope.exception(); exception && !vm.isTerminationException(exception)) [[unlikely]]
+        return false;
     if (object->getPrototypeDirect() != prototypeBefore)
         holdClosureToItsPrototype(vm, closure);
     if (classLayout)
@@ -1097,11 +1115,6 @@ bool ReifiedSlimClosure::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     if (name == vm.propertyNames->prototype) [[unlikely]]
         slot.disableCaching();
     return result;
-}
-
-bool ReifiedSlimClosure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
-{
-    return Base::deleteProperty(cell, globalObject, name, slot);
 }
 
 bool SlimClosure::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)

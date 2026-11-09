@@ -28,6 +28,7 @@ enum class X86IntegerShift : uint8_t {
     Left,
     ArithmeticRight,
     LogicalRight,
+    RotateRight,
 };
 
 enum class X86IntegerExtension : uint8_t {
@@ -183,7 +184,7 @@ static ALWAYS_INLINE X86IntegerOperand takeX86IntegerOperand(Encoder& encoder, c
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static X86IntegerOperand takeFirstX86IntegerOperand(Encoder& encoder, const Step& step)
+static ALWAYS_INLINE X86IntegerOperand takeFirstX86IntegerOperand(Encoder& encoder, const Step& step)
 {
     LeafCursor cursor(step);
     return takeX86IntegerOperand(encoder, step.operation, 0, cursor);
@@ -290,7 +291,7 @@ static void applyX86IntegerInstruction(CCallHelpers& jit, X86IntegerInstruction 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void applyX86IntegerImmediate(CCallHelpers& jit, X86IntegerInstruction instruction, Width width, int64_t constant, GPRReg source, GPRReg destination)
+static ALWAYS_INLINE void applyX86IntegerImmediate(CCallHelpers& jit, X86IntegerInstruction instruction, Width width, int64_t constant, GPRReg source, GPRReg destination)
 {
     bool is32 = width == Width32;
     RELEASE_ASSERT(is32 || isRepresentableAs<int32_t>(constant));
@@ -476,6 +477,12 @@ static void encodeX86IntegerShift(Encoder& encoder, const Step& step, X86Integer
             jit.urshift32(source, immediate, destination);
         else
             jit.urshift64(source, immediate, destination);
+        return;
+    case X86IntegerShift::RotateRight:
+        if (is32)
+            jit.rotateRight32(source, immediate, destination);
+        else
+            jit.rotateRight64(source, immediate, destination);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -667,7 +674,7 @@ static void encodeX86PopulationCount(Encoder& encoder, const Step& step)
         jit.countPopulation64(gpr, destination);
 }
 
-static void encodeX86ScaledSum(Encoder& encoder, const Step& step)
+static ALWAYS_INLINE void encodeX86ScaledSum(Encoder& encoder, const Step& step)
 {
     LeafCursor cursor(step);
     AddressForm form = encoder.resolveScaledSum(step.operation, cursor);
@@ -821,6 +828,9 @@ void Encoder::encodeInteger(const Step& step)
         return;
     case ZShr:
         encodeX86IntegerShift(*this, step, X86IntegerShift::LogicalRight);
+        return;
+    case RotR:
+        encodeX86IntegerShift(*this, step, X86IntegerShift::RotateRight);
         return;
 
     case SExt8:

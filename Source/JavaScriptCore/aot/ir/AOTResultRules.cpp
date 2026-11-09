@@ -31,7 +31,6 @@ const PositionTypes& PositionTypes::knowingNothing()
         TypeID environmentField(TypeLevel, LayoutID, uint32_t) const final { return { }; }
         TypeID slot(TypeLevel, LayoutID, uint32_t) const final { return { }; }
         TypeID property(TypeLevel, ObjectID, PropertyKeyID) const final { return { }; }
-        TypeID contents(TypeLevel, ObjectID, ContentsSlot) const final { return { }; }
         TypeID result(TypeLevel, FunctionID, uint32_t) const final { return { }; }
         TypeID entryParameter(TypeLevel, FunctionID, uint32_t) const final { return { }; }
         TypeID resultOfCallBeingTyped(TypeLevel, uint32_t) const final { return { }; }
@@ -74,6 +73,7 @@ TypeID ResultRules::provenOrUnknown(TypeID type, UnknownSeed seed)
 }
 
 static constexpr OpcodeSet callsOfNamedFunctionInResultRules { Opcode::CallDirect, Opcode::CallTable };
+static constexpr OpcodeSet callsThatGiveBoundsOfPartsInResultRules { Opcode::BoundsOfRegExpMatch };
 static_assert((opcodesWithCountedResults | callsOfNamedFunctionInResultRules) == opcodesWithCountedResults);
 static_assert(opcodesWithCountedResults.contains(Opcode::Results) && opcodesWithCountedResults.contains(Opcode::DestructureIterable));
 
@@ -87,6 +87,10 @@ std::optional<uint32_t> numberOfCountedResultsOf(const Program& program, const O
         return operation.numberOfVariadicOperands();
     if (opcode == Opcode::DestructureIterable)
         return operation.count();
+    if (callsThatGiveBoundsOfPartsInResultRules.contains(opcode))
+        return 2 * operation.count();
+    if (opcode == Opcode::BoundsOfStringSplit)
+        return 2 * operation.count() + 1;
     if (callsOfNamedFunctionInResultRules.contains(opcode)) {
         size_t numberOfResults = program.at(operation.function()).results.size();
         if (numberOfResults == 1)
@@ -116,7 +120,7 @@ static ALWAYS_INLINE bool holdsNeverAmongOperandsOfRule(OperandTypes operands)
 static constexpr OpcodeSet checksThatThrowInResultRules = checksThatHandOnOrThrow;
 static_assert(OperandIndex::CheckInitialized::value == OperandIndex::RequireObjectCoercible::value && OperandIndex::CheckInitialized::value == OperandIndex::RequireObject::value);
 
-static TypeID resultTypeOfCheckThatThrows(TypeArena& types, Opcode check, TypeID checked)
+static ALWAYS_INLINE TypeID resultTypeOfCheckThatThrows(TypeArena& types, Opcode check, TypeID checked)
 {
     if (!checked)
         return { };
@@ -181,6 +185,8 @@ TypeID resultTypeOf(const TypingContext& context, const Operation& operation, Op
         return TypeTable::never;
 
     Opcode opcode = opcodeOf(operation);
+    if (context.program.operationWhoseRuleWritesAnotherKind == static_cast<unsigned>(opcode) + 1) [[unlikely]]
+        return opcode == Opcode::TypeOf || opcode == Opcode::ToString || opcode == Opcode::Strcat ? TypeTable::symbol : TypeTable::nullish;
     if (opcodesLookedAtInFrontOfResultRules.contains(opcode)) {
         if (context.level == TypeLevel::Proven && (opcode == Opcode::PropGet || opcode == Opcode::Call) && !resultIndex) {
             static_assert(!OperandIndex::PropGet::object && !OperandIndex::Call::callee);

@@ -14,7 +14,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool storeMayLeaveErrorOwedForPolls(Opcode opcode)
+static ALWAYS_INLINE bool storeMayLeaveErrorOwedForPolls(Opcode opcode)
 {
     if (opcode == Opcode::PropSet)
         return true;
@@ -103,6 +103,8 @@ void Walker::noteRecordBuiltForPolls(ValueID id, const Draft& draft, const Effec
                 OpenLoop& open = m_openLoops.changeable(place - 1);
                 if (open.likelyTurnMayCollect)
                     isSettled = true;
+                else if (!standsOnRareWay && m_makesLetterOfStep && !isStoreThatMayOwe)
+                    open.lettersMadeInLikelyTurns.append(id);
                 else if (!standsOnRareWay)
                     open.likelyTurnMayCollect = true;
                 else if (open.pollInFront) {
@@ -196,14 +198,16 @@ void Walker::settleFateOfPoll(const OpenLoop& loop)
     }
 
     bool pollLeavesHandler = loop.poll && m_code.at(m_code.blockOf(loop.poll)).handler && loop.pollInFront && !loop.likelyTurnMayCollect && loop.numberOfEdgesThatCameRound;
-    if (!pollLeavesHandler) {
+    if (!pollLeavesHandler || (!loop.lettersMadeInLikelyTurns.isEmpty() && !loop.pollsInFrontOfLoopsInside.isEmpty())) {
         drop(loop.pollInFront);
         return;
     }
     m_code.addFateOfPoll(loop.poll, FateOfPoll::LeavesHandler);
+    for (ValueID letter : loop.lettersMadeInLikelyTurns)
+        m_code.addFateOfPoll(loop.poll, FateOfPoll::LeavesHandler, letter);
     for (ValueID poll : loop.pollsInFrontOfLoopsInside)
         drop(poll);
-    if (around)
+    if (around && loop.lettersMadeInLikelyTurns.isEmpty())
         around->pollsInFrontOfLoopsInside.append(loop.pollInFront);
 }
 

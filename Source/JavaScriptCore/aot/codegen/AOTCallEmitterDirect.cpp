@@ -12,6 +12,7 @@
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
 #include "AOTIRProgram.h"
+#include "AOTModuleEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTThrowEmitter.h"
 #include "AOTStubCatalog.h"
@@ -36,14 +37,25 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, const 
     if (locations.numberOfStackArguments)
         placed.onStack.fill(nullptr, locations.numberOfStackArguments);
     std::array<LValue, numberOfDirectArgumentGPRs> inGPRs { };
-    unsigned numberOfGPRs = 0;
+    unsigned endOfGPRs = 0;
+    auto placeOfGPR = [&](Reg reg) {
+        if (endOfGPRs < numberOfDirectArgumentGPRs && reg == Reg(directArgumentGPR(endOfGPRs)))
+            return endOfGPRs;
+        unsigned place = 0;
+        while (place < numberOfDirectArgumentGPRs && !(reg == Reg(directArgumentGPR(place))))
+            ++place;
+        RELEASE_ASSERT(place < numberOfDirectArgumentGPRs);
+        return place;
+    };
     placed.stackWordsToReserve = std::max(conventions().stackWordsReservedByCallersOf(m_program, callee), locations.numberOfStackWords());
     uint64_t letGoByCallee = returnsResultOfFunction(callee.role) ? generator().facts().summaries().at(callee.function).entryParametersLetGo : 0;
     for (size_t i = 0; i < arguments.size(); ++i) {
         const ArgumentLocation& location = locations.parameters[i];
+        unsigned place = 0;
         if (location.kind == ArgumentLocation::Kind::GPR) {
-            RELEASE_ASSERT(numberOfGPRs < numberOfDirectArgumentGPRs && location.reg == Reg(directArgumentGPR(numberOfGPRs)));
-            ++numberOfGPRs;
+            place = placeOfGPR(location.reg);
+            RELEASE_ASSERT(!inGPRs[place]);
+            endOfGPRs = std::max(endOfGPRs, place + 1);
         }
         if (location.kind == ArgumentLocation::Kind::None || !arguments[i].value)
             continue;
@@ -55,7 +67,7 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, const 
         case ArgumentLocation::Kind::None:
             break;
         case ArgumentLocation::Kind::GPR:
-            inGPRs[numberOfGPRs - 1] = argument;
+            inGPRs[place] = argument;
             break;
         case ArgumentLocation::Kind::FPR:
             placed.inRegisters.append(Machine::ConstrainedValue(argument, Machine::ValueRep::reg(location.reg)));
@@ -66,7 +78,7 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, const 
         }
     }
 
-    for (unsigned index = 0; index < numberOfGPRs; ++index) {
+    for (unsigned index = 0; index < endOfGPRs; ++index) {
         if (inGPRs[index])
             placed.inRegisters.append(Machine::ConstrainedValue(inGPRs[index], Machine::ValueRep::reg(directArgumentGPR(index))));
     }
@@ -130,7 +142,26 @@ void CallEmitter::callStartOfModule(const ValueContext& value, CodeUnit start, c
         emitTailCall(value, stub, placed);
         return;
     }
-    defineResultsOfCall(value, locations.results.span(), emitCall(value, stub, placed, locations.results.span(), { }));
+    auto callStub = [&] {
+        return emitCall(value, stub, placed, locations.results.span(), { });
+    };
+    bool hasOneResultInRegister = locations.results.size() == 1 && hasRegister(value.representation());
+    if (!generator().paysForCodeInLine(value.block()) || !(locations.results.isEmpty() || hasOneResultInRegister)) {
+        defineResultsOfCall(value, locations.results.span(), callStub());
+        return;
+    }
+    Condition hasBegun = emitter<ModuleEmitter>().hasBegun(planned->module);
+    if (!hasOneResultInRegister) {
+        ifElse(hasBegun, [] { }, [&] {
+            callStub();
+        });
+        return;
+    }
+    define(value, eitherOperand(hasBegun, Representation::JSValue, [&]() -> Operand {
+        return undefined();
+    }, [&]() -> Operand {
+        return resultOfCall(locations.results[0], callStub());
+    }));
 }
 
 void CallEmitter::generateCallDirect(const ValueContext& value)

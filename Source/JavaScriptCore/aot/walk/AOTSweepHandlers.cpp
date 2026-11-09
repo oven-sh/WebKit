@@ -16,6 +16,9 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -54,7 +57,7 @@ static constexpr TerminatorKindSet sweptTerminatorsThatMayExitSidewaysOrCollect 
     return kinds;
 }();
 
-static bool makingSweptConstantsMayExitSidewaysOrCollect(const Code& code, std::span<const ValueID> used)
+static ALWAYS_INLINE bool makingSweptConstantsMayExitSidewaysOrCollect(const Code& code, std::span<const ValueID> used)
 {
     for (ValueID id : used) {
         if (!id)
@@ -295,17 +298,19 @@ void Sweep::beginCoverageAtEndOf(BlockID id)
     std::span<const ValueID> coveredAtHeadOfFirstTarget = coveredAtHeadOfTarget(0);
     if (coveredAtHeadOfFirstTarget.empty() || sweptTerminatorMayThrowToHandler(code, terminator))
         return;
-    for (ValueID owner : coveredAtHeadOfFirstTarget) {
-        bool isCoveredOnEveryWay = true;
-        for (uint32_t targetIndex = 1; targetIndex < terminator.numberOfEdges && isCoveredOnEveryWay; ++targetIndex) {
-            std::span<const ValueID> covered = coveredAtHeadOfTarget(targetIndex);
-            isCoveredOnEveryWay = std::ranges::find(covered, owner) != covered.end();
-        }
-        if (!isCoveredOnEveryWay)
-            continue;
-        m_ownersCovered.quickSet(owner.index());
-        m_coveredOwners.append(owner);
+    m_coveredOwners.append(coveredAtHeadOfFirstTarget);
+    for (uint32_t targetIndex = 1; targetIndex < terminator.numberOfEdges && !m_coveredOwners.isEmpty(); ++targetIndex) {
+        std::span<const ValueID> covered = coveredAtHeadOfTarget(targetIndex);
+        for (ValueID owner : covered)
+            m_ownersCovered.quickSet(owner.index());
+        m_coveredOwners.removeAllMatching([&](ValueID owner) {
+            return !m_ownersCovered.quickGet(owner.index());
+        });
+        for (ValueID owner : covered)
+            m_ownersCovered.quickClear(owner.index());
     }
+    for (ValueID owner : m_coveredOwners)
+        m_ownersCovered.quickSet(owner.index());
 }
 
 void Sweep::lookForCoveredBarrier(ValueID id, const Operation& operation)
@@ -481,7 +486,7 @@ struct FenceOfSweptOperation {
 } // anonymous namespace
 
 // A fence keeps the stores that fill a new cell in front of the store that hands the cell on, which the collector may follow while the program runs. It keeps every earlier store of the thread there too.
-static FenceOfSweptOperation describeFenceOfSweptOperation(const Program& program, const Plan& plan, const Operation& operation)
+static ALWAYS_INLINE FenceOfSweptOperation describeFenceOfSweptOperation(const Program& program, const Plan& plan, const Operation& operation)
 {
     EffectTraits traits = operation.traits();
     if (!traits.isRemovableWhenUnused() || callsAmongSweptOperations.contains(operation.opcode) || testsItsOwnGuess(operation))
@@ -501,7 +506,7 @@ static FenceOfSweptOperation describeFenceOfSweptOperation(const Program& progra
     case Opcode::NewArray:
         return { .alwaysFences = newArrayFencesBeforeHandingCellOn(operation), .mayLeaveFenceToLaterOne = operation.storage() == AllocationStorage::Heap };
     case Opcode::CreateRest:
-        return { .mayLeaveFenceToLaterOne = operation.storage() == AllocationStorage::Heap };
+        return { };
     default: {
         bool allocatesOrWrites = traits.mayCollect() || (traits.mayTouchMemory() && !declaredBoundInTable(operation.opcode).writes.isEmpty());
         return { .mayHandCellOn = allocatesOrWrites && !sweptOperationHandsOnNoOperand(operation.opcode) };
@@ -535,6 +540,8 @@ void Sweep::lookForCoveredFence(ValueID id, const Operation& operation)
 {
     if (!m_laterFenceCovers && !sweptAllocationsWithFences.contains(operation.opcode))
         return;
+    if (m_looksForBirthsToMove && sweptAllocationsWithFences.contains(operation.opcode))
+        noteIfBirthMayMove(id, operation);
     FenceOfSweptOperation fence = describeFenceOfSweptOperation(m_inputs->program, m_inputs->plan, operation);
     if (m_lendsClosures && operation.opcode == Opcode::NewClosure && noteIfClosureMayBeLent(id) && fence.alwaysFences)
         return;
@@ -610,6 +617,199 @@ void Sweep::lookForCoverageAgain()
         if (looksForCoveredFences && m_laterFenceCovers)
             endFenceCoverageAtHeadOf(id);
     }
+}
+
+namespace {
+
+class MarksOfSweepAskedForward {
+public:
+    MarksOfSweepAskedForward(const SweepInputs& inputs, Code& code)
+        : m_inputs(inputs)
+        , m_code(code)
+    {
+    }
+
+    String run()
+    {
+        orderBlocks();
+        m_blocksWithPolls.ensureSize(m_code.numberOfBlocks());
+        for (size_t place = m_blocksInPostorder.size(); place--;) {
+            BlockID block = m_blocksInPostorder[place];
+            if (String brokenRule = walk(block, m_awaitedAtHeads.take(block.index())); !brokenRule.isNull())
+                return brokenRule;
+        }
+        return findWayRoundWithoutPoll();
+    }
+
+private:
+    using StoresByOwner = HashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+
+    struct Awaited {
+        StoresByOwner storesByOwner;
+        ValueID allocation;
+
+        bool isEmpty() const { return storesByOwner.isEmpty() && !allocation; }
+    };
+
+    void orderBlocks()
+    {
+        struct Step {
+            BlockID block;
+            uint32_t nextTarget { 0 };
+        };
+        Vector<Step, 32> way;
+        BitVector seen;
+        seen.ensureSize(m_code.numberOfBlocks());
+        m_placesInPostorder.fill(0, m_code.numberOfBlocks());
+        for (uint32_t index = 0; index < m_code.numberOfBlocks(); ++index) {
+            if (!m_code.isReached(BlockID(index)) || seen.quickSet(index))
+                continue;
+            way.append({ BlockID(index) });
+            while (!way.isEmpty()) {
+                Step& step = way.last();
+                const Terminator& terminator = m_code.at(step.block).terminator;
+                if (step.nextTarget >= terminator.numberOfEdges) {
+                    m_placesInPostorder[step.block.index()] = static_cast<uint32_t>(m_blocksInPostorder.size());
+                    m_blocksInPostorder.append(step.block);
+                    way.removeLast();
+                    continue;
+                }
+                BlockID target = m_code.at(terminator.edge(step.nextTarget++)).to;
+                if (!seen.quickSet(target.index()))
+                    way.append({ target });
+            }
+        }
+    }
+
+    String walk(BlockID block, Awaited&& awaited)
+    {
+        for (ValueID id : m_code.valuesOf(block)) {
+            const Operation& operation = m_code.at(id);
+            OptionSet<SweepMark> marks = m_code.marksOf(id);
+            if (operation.opcode == Opcode::LoopHint)
+                m_blocksWithPolls.quickSet(block.index());
+
+            if (!awaited.storesByOwner.isEmpty() && (sweptOperationMayExitSidewaysOrCollect(m_code, operation) || awaited.storesByOwner.contains(id.index())))
+                return sentenceOfBarrier(firstStoreOf(awaited));
+            bool leavesBarrier = marks.contains(SweepMark::LaterBarrierCovers);
+            if (leavesBarrier || (!awaited.storesByOwner.isEmpty() && sweptStoresThatRememberOwner.contains(operation.opcode))) {
+                BarrierOfSweptStore barrier = describeBarrierOfSweptStore(m_code, m_inputs.types, operation);
+                if (leavesBarrier && !barrier.owner)
+                    return sentenceOfBarrier(id);
+                if (leavesBarrier)
+                    awaited.storesByOwner.add(barrier.owner.index(), id);
+                else if (barrier.owner && barrier.alwaysRuns && awaited.storesByOwner.remove(barrier.owner.index()))
+                    m_code.noteBarrierIsCountedOn(id);
+            }
+
+            if (marks.contains(SweepMark::LaterFenceCovers)) {
+                if (!awaited.allocation)
+                    awaited.allocation = id;
+            } else if (awaited.allocation) {
+                FenceOfSweptOperation fence = describeFenceOfSweptOperation(m_inputs.program, m_inputs.plan, operation);
+                if (fence.alwaysFences)
+                    awaited.allocation = { };
+                else if (fence.mayHandCellOn)
+                    return sentenceOfFence(awaited.allocation);
+            }
+        }
+        if (awaited.isEmpty())
+            return { };
+
+        const Terminator& terminator = m_code.at(block).terminator;
+        bool wayEnds = !terminator.numberOfEdges || sweptTerminatorMayThrowToHandler(m_code, terminator);
+        for (uint32_t targetIndex = 0; targetIndex < terminator.numberOfEdges && !wayEnds; ++targetIndex) {
+            BlockID target = m_code.at(terminator.edge(targetIndex)).to;
+            if (m_placesInPostorder[target.index()] >= m_placesInPostorder[block.index()]) {
+                wayEnds = true;
+                break;
+            }
+            Awaited& atHead = m_awaitedAtHeads.add(target.index(), Awaited { }).iterator->value;
+            for (auto& [owner, store] : awaited.storesByOwner)
+                atHead.storesByOwner.add(owner, store);
+            if (!atHead.allocation)
+                atHead.allocation = awaited.allocation;
+        }
+        if (!wayEnds)
+            return { };
+        return awaited.storesByOwner.isEmpty() ? sentenceOfFence(awaited.allocation) : sentenceOfBarrier(firstStoreOf(awaited));
+    }
+
+    static ValueID firstStoreOf(const Awaited& awaited)
+    {
+        ValueID first;
+        for (ValueID store : awaited.storesByOwner.values()) {
+            if (!first || store.index() < first.index())
+                first = store;
+        }
+        return first;
+    }
+
+    String sentenceOfBarrier(ValueID store) const
+    {
+        return sentence(m_code.at(store).block(), store, "the barrier of a store is left to a later one, and on some way something collects or leaves, or the way ends, in front of a barrier of the same owner"_s);
+    }
+
+    String sentenceOfFence(ValueID allocation) const
+    {
+        return sentence(m_code.at(allocation).block(), allocation, "the fence of an allocation is left to a later one, and on some way a cell may be handed on, or the way ends, in front of a fence"_s);
+    }
+
+    bool holdsPoll(BlockID block) const { return m_blocksWithPolls.quickGet(block.index()); }
+
+    String findWayRoundWithoutPoll()
+    {
+        enum class State : uint8_t { NotSeen, IsOnWay, IsDone };
+        Vector<State> states;
+        states.fill(State::NotSeen, m_code.numberOfBlocks());
+        struct Step {
+            BlockID block;
+            uint32_t nextTarget { 0 };
+        };
+        Vector<Step, 32> way;
+        for (uint32_t index = 0; index < m_code.numberOfBlocks(); ++index) {
+            if (!m_code.isReached(BlockID(index)) || states[index] != State::NotSeen || holdsPoll(BlockID(index)))
+                continue;
+            states[index] = State::IsOnWay;
+            way.append({ BlockID(index) });
+            while (!way.isEmpty()) {
+                Step& step = way.last();
+                const Terminator& terminator = m_code.at(step.block).terminator;
+                if (step.nextTarget >= terminator.numberOfEdges) {
+                    states[step.block.index()] = State::IsDone;
+                    way.removeLast();
+                    continue;
+                }
+                BlockID target = m_code.at(terminator.edge(step.nextTarget++)).to;
+                if (states[target.index()] == State::IsOnWay)
+                    return makeString('f', m_code.function().index(), ' ', nameOf(m_code.role()), " b"_s, target.index(), ": a way leads round to the block and no poll is kept on it"_s);
+                if (states[target.index()] != State::NotSeen || holdsPoll(target))
+                    continue;
+                states[target.index()] = State::IsOnWay;
+                way.append({ target });
+            }
+        }
+        return { };
+    }
+
+    String sentence(BlockID block, ValueID id, ASCIILiteral what) const
+    {
+        return makeString('f', m_code.function().index(), ' ', nameOf(m_code.role()), " b"_s, block.index(), " v"_s, id.index(), " ("_s, nameOf(m_code.at(id).opcode), "): "_s, what);
+    }
+
+    const SweepInputs& m_inputs;
+    Code& m_code;
+    Vector<BlockID> m_blocksInPostorder;
+    Vector<uint32_t> m_placesInPostorder;
+    BitVector m_blocksWithPolls;
+    HashMap<uint32_t, Awaited, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_awaitedAtHeads;
+};
+
+} // anonymous namespace
+
+String findMarkOfSweepThatNothingCovers(const SweepInputs& inputs, Code& code)
+{
+    return MarksOfSweepAskedForward(inputs, code).run();
 }
 
 } } } // namespace JSC::AOT::Typed

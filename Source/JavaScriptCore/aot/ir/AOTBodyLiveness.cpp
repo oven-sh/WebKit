@@ -428,6 +428,42 @@ void BodyLivenessSolver::raiseLastUsesOfWhatIsLiveAtHeads()
 
 } // anonymous namespace
 
+void BodyLiveness::countHeadsWhereLive(std::span<const BlockID> blocks, std::span<uint32_t> numbersByValue) const
+{
+    struct Place {
+        uint32_t set;
+        uint32_t base;
+    };
+    Vector<uint32_t> numbersOfBranches;
+    Vector<uint32_t> numbersOfWords;
+    numbersOfBranches.fill(0, m_data->branches.size());
+    numbersOfWords.fill(0, m_data->words.size());
+    Vector<Place> places;
+    Vector<Place> placesBelow;
+    auto add = [&](uint32_t level, uint32_t set, uint32_t base, uint32_t number, Vector<Place>& list) {
+        if (!set)
+            return;
+        uint32_t& numberOfSet = level ? numbersOfBranches[set] : numbersOfWords[set];
+        if (!numberOfSet)
+            list.append({ set, base });
+        numberOfSet += number;
+    };
+    for (BlockID block : blocks)
+        add(m_data->levels, m_data->liveAtHeads[block.index()], 0, 1, places);
+    for (uint32_t level = m_data->levels; level; --level) {
+        placesBelow.shrink(0);
+        for (Place place : places) {
+            for (uint32_t branch = 0; branch < BodyLivenessData::numberOfBranches; ++branch)
+                add(level - 1, m_data->branches[place.set][branch], place.base + (branch << BodyLivenessData::shiftOf(level - 1)), numbersOfBranches[place.set], placesBelow);
+        }
+        std::swap(places, placesBelow);
+    }
+    for (Place place : places) {
+        for (uint64_t word = m_data->words[place.set]; word; word &= word - 1)
+            numbersByValue[place.base + std::countr_zero(word)] += numbersOfWords[place.set];
+    }
+}
+
 void BodyLiveness::compute(const BodyIndex& index)
 {
     m_index = &index;

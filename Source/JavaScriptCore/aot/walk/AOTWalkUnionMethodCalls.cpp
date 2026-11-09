@@ -23,22 +23,38 @@ static constexpr size_t mostArmsInUnionMethodCalls = 4;
 
 constinit const OpcodeSet opcodesThatCallMethodsBehindTestsOfShapeTakes { Opcode::PropGet };
 
-bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& read)
+static ValueID findCallOfMethodReadInUnionMethodCalls(const BodyIndex& index, const BodyValue& read)
+{
+    ValueID call = index.onlyUsingValue(read.id());
+    ValueID callee = read.id();
+    while (call && inputOperationsThatHandOn.contains(index.opcodeOf(call))) {
+        callee = call;
+        call = index.onlyUsingValue(call);
+    }
+    if (!call || index.blockOf(call) != index.blockOf(read.id()))
+        return { };
+    if (index.opcodeOf(call) == Opcode::Construct) {
+        auto written = index.value(call).as<Opcode::Construct>();
+        return written.calleeOperand() == callee && !written.newTargetOperand() ? call : ValueID();
+    }
+    if (index.opcodeOf(call) != Opcode::Call || callee != read.id())
+        return { };
+    auto written = index.value(call).as<Opcode::Call>();
+    return written.calleeOperand() == read.id() && written.thisValueOperand() == read.as<Opcode::PropGet>().objectOperand() ? call : ValueID();
+}
+
+static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyValue& read, ValueID call, bool takesWhatIsOnlyExpected = false)
 {
     if (walker.standsInArmOfRowOfShapeTests() || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::TypedOperations))
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     auto lookup = read.as<Opcode::PropGet>();
-    ValueID call = index.onlyUsingValue(read.id());
-    if (lookup.isFreeName() || !lookup.objectOperand() || !call || index.opcodeOf(call) != Opcode::Call || index.blockOf(call) != index.blockOf(read.id()))
-        return false;
-    auto written = index.value(call).as<Opcode::Call>();
-    if (written.calleeOperand() != read.id() || written.thisValueOperand() != lookup.objectOperand())
+    if (lookup.isFreeName() || !lookup.objectOperand())
         return false;
     BodyBlock block = index.block(index.blockOf(read.id()));
     uint32_t first = block.firstValue().index();
     uint32_t begin = read.id().index() - first;
-    uint32_t end = call.index() - first + 1;
+    uint32_t end = (call ? call : read.id()).index() - first + 1;
     Reference receiver = walker.referenceOf(lookup.objectOperand());
     if (end > walker.endOfStretchBeingWalked() || !receiver || !receiver.isValue())
         return false;
@@ -47,12 +63,43 @@ bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& 
     const Program& program = walker.program();
     const Plan& plan = walker.plan();
     TypeID proven = walker.typeOf(receiver);
+    bool isOnlyExpected = false;
+    if (takesWhatIsOnlyExpected) {
+        if (!proven || !types.saysNothing(proven) || liesInThread(lookup.key()))
+            return false;
+        TypeID expected = objectsExpectedOfOperandOfQuestion(walker, lookup.objectOperand());
+        Vector<LayoutID, mostArmsInUnionMethodCalls> holders;
+        if (!expected || !walker.facts().layoutsByNames().appendHoldersAmongUnlessMoreThan(mostArmsInUnionMethodCalls, lookup.key(), types.listOf(types.at(expected).layouts), holders) || holders.size() < 2)
+            return false;
+        TypeID whoAnswer = types.forLayouts(holders.span());
+        auto typeAsExpected = [&](ValueID input) {
+            return input == lookup.objectOperand() ? whoAnswer : walker.typeOf(walker.referenceOf(input));
+        };
+        if (typedFormOf(walker, read, TypesOfInputs(typeAsExpected)) != TypedForm::None)
+            return false;
+        proven = whoAnswer;
+        isOnlyExpected = true;
+    }
     if (!proven || !types.at(proven).isJavaScriptValue() || (types.at(proven).primitives & ~Primitive::UndefinedOrNull) || !types.at(proven).hasOnlyLayouts() || holdsOneMember(types.at(proven).layouts))
         return false;
 
     bool mayBeNothing = types.at(proven).primitives;
-    bool somethingIsLeft = false;
+    bool somethingIsLeft = isOnlyExpected;
+    bool someAnswerByGetter = false;
     Vector<TypeID, mostArmsInUnionMethodCalls> arms;
+    Vector<TypeID, mostArmsInUnionMethodCalls> armsThatFindNeitherGetterNorField;
+    if (!call) {
+        size_t numberInUse = 0;
+        for (LayoutID member : membersOf(types, types.at(proven))) {
+            if (plan.isInUse(member) && ++numberInUse > mostArmsInUnionMethodCalls)
+                return false;
+        }
+        bool someClassHasAccessor = walker.isInLoop() || std::ranges::any_of(membersOf(types, types.at(proven)), [&](LayoutID member) {
+            return plan.isInUse(member) && walker.facts().linked().findMember(program, member, ClassSide::Prototype, lookup.key()).kind == MemberFound::Kind::Accessor;
+        });
+        if (!someClassHasAccessor)
+            return false;
+    }
     for (size_t place = 0; place < membersOf(types, types.at(proven)).size(); ++place) {
         LayoutID member = membersOf(types, types.at(proven))[place];
         if (!plan.isInUse(member))
@@ -63,14 +110,21 @@ bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& 
         auto typeBehindTest = [&](ValueID input) {
             return input == lookup.objectOperand() ? tested : walker.typeOf(walker.referenceOf(input));
         };
-        if (typedFormOf(walker, read, TypesOfInputs(typeBehindTest)) == TypedForm::None)
+        TypedForm form = typedFormOf(walker, read, TypesOfInputs(typeBehindTest));
+        someAnswerByGetter |= form == TypedForm::BuiltAsCall;
+        if (form == TypedForm::None) {
+            if (!call)
+                return false;
             somethingIsLeft = true;
-        else if (arms.size() == mostArmsInUnionMethodCalls)
+        } else if (arms.size() + armsThatFindNeitherGetterNorField.size() == mostArmsInUnionMethodCalls)
             return false;
+        else if (!call && form != TypedForm::BuiltAsCall && !findField(program, member, lookup.key()))
+            armsThatFindNeitherGetterNorField.append(tested);
         else
             arms.append(tested);
     }
-    if (arms.isEmpty())
+    arms.appendVector(armsThatFindNeitherGetterNorField);
+    if (arms.isEmpty() || (!call && !someAnswerByGetter && !walker.isInLoop()))
         return false;
 
     uint32_t firstOfStretch = first + begin;
@@ -101,7 +155,9 @@ bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& 
         return walker.build(WTF::move(narrowed));
     };
 
-    walker.count(StatisticID::MethodCallsToldApartByShape);
+    walker.count(call ? StatisticID::MethodCallsToldApartByShape : StatisticID::ReadsToldApartByShape);
+    if (isOnlyExpected)
+        walker.count(StatisticID::MethodCallsOnExpectedReceiversToldApartByShape);
     Reference left = receiver;
     if (mayBeNothing) {
         Draft check(Opcode::RequireObjectCoercible, origin);
@@ -119,17 +175,22 @@ bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& 
 
     SetForScope standsInArm(walker.numberOfFramesAtRowOfShapeTests(), walker.depthOfCopies() + 1);
     BlockID meeting = walker.addBlock();
+    BlockID closedArmOfAll = isOnlyExpected ? walker.addBlock(BlockFrequency::Rare) : BlockID();
+    if (closedArmOfAll)
+        walker.code().markRareBlockThatKeepsSites(closedArmOfAll);
+    SetForScope failingLooksOfArmsGoThere(walker.closedArmOfRowOfShapeTests(), Walker::ClosedArmOfRowOfShapeTests { closedArmOfAll, read.id(), walker.depthOfCopies() });
     walker.noteGuessOpened();
     for (size_t place = 0; place < arms.size() && !walker.isUnreachable(); ++place) {
         Draft test(Opcode::ShapeTest, origin);
         test.setObjectOperand(left);
         test.setLayouts(types.at(arms[place]).layouts);
+        test.setRefusesMarkedObjects(isOnlyExpected);
         Reference passes = walker.build(WTF::move(test));
         if (!passes)
             return true;
         bool isLast = place + 1 == arms.size();
         BlockID passed = walker.addBlock();
-        BlockID failed = walker.addBlock(isLast ? BlockFrequency::Rare : BlockFrequency::Normal);
+        BlockID failed = isLast && closedArmOfAll ? closedArmOfAll : walker.addBlock(isLast ? BlockFrequency::Rare : BlockFrequency::Normal);
         walker.branch(passes, passed, failed);
         walker.continueIn(passed);
         if (Reference narrowed = narrowedBy(left, passes, true)) {
@@ -147,10 +208,12 @@ bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& 
             return true;
         walker.continueIn(failed);
         if (!isLast) {
-            left = narrowedBy(left, passes, false);
+            if (!isOnlyExpected)
+                left = narrowedBy(left, passes, false);
             if (!left)
                 return true;
         } else if (somethingIsLeft) {
+            walker.closedArmOfRowOfShapeTests() = { };
             Walker::ClosedArm closedArm(walker);
             walkArm();
         } else
@@ -159,6 +222,34 @@ bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& 
     if (!walker.hasFailed())
         walker.letArmsMeet(stretch, built, meeting);
     return true;
+}
+
+bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& read)
+{
+    ValueID call = findCallOfMethodReadInUnionMethodCalls(walker.currentBodyIndex(), read);
+    return call && walkBehindTestsOfShapeInUnionMethodCalls(walker, read, call);
+}
+
+bool callMethodsOfExpectedReceiversBehindTestsOfShape(Walker& walker, const BodyValue& read)
+{
+    if (!walker.isInLoop() || !walker.opensGuesses() || !walker.facts().layoutsByNames().severalLayoutsHold(read.as<Opcode::PropGet>().key()) || walker.isNestedTooDeeply())
+        return false;
+    Reference receiver = walker.referenceOf(read.as<Opcode::PropGet>().objectOperand());
+    if (!receiver || !receiver.isValue() || !walker.code().at(walker.code().blockOf(receiver.id())).isInLoop)
+        return false;
+    ValueID call = findCallOfMethodReadInUnionMethodCalls(walker.currentBodyIndex(), read);
+    return call && walkBehindTestsOfShapeInUnionMethodCalls(walker, read, call, true);
+}
+
+bool readBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& read)
+{
+    ValueID object = read.as<Opcode::PropGet>().objectOperand();
+    TypeID proven = object ? walker.typeOf(walker.referenceOf(object)) : TypeID();
+    if (!proven || !walker.types().at(proven).hasOnlyLayouts())
+        return false;
+    if (walker.isNestedTooDeeply() || (!walker.isInLoop() && walker.program().at(walker.unit().function).isModuleBody()))
+        return false;
+    return !findCallOfMethodReadInUnionMethodCalls(walker.currentBodyIndex(), read) && walkBehindTestsOfShapeInUnionMethodCalls(walker, read, { });
 }
 
 } } } // namespace JSC::AOT::Typed

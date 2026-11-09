@@ -13,6 +13,7 @@ runtime PrivateDefine : void (EncodedJSValue object, JSCell* token, uint32_t fie
 
 runtime GetSuperBase : EncodedJSValue (EncodedJSValue home, uint32_t homeKind) ; RuntimeCreatesConstant
 runtime GetSuperPropertyById : EncodedJSValue (EncodedJSValue base, EncodedJSValue receiver, uint32_t key) ; unknownCode
+runtime GetSuperPropertyOfClassById : EncodedJSValue (EncodedJSValue classObject, EncodedJSValue receiver, uint32_t key) ; unknownCode
 runtime SuperGet : EncodedJSValue (EncodedJSValue base, EncodedJSValue property, EncodedJSValue receiver) ; unknownCode
 runtime SuperSet : void (EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, EncodedJSValue receiver, uint32_t mode) ; unknownCode
 
@@ -30,6 +31,7 @@ runtime SetLiteralPrototype : void (JSCell* object, EncodedJSValue prototype, ui
 runtime Construct : EncodedJSValue (EncodedJSValue callee, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* arguments) ; unknownCode
 runtime Apply : EncodedJSValue (EncodedJSValue callee, EncodedJSValue thisValue, EncodedJSValue list) ; unknownCode
 runtime NewArgumentList : JSCell* (EncodedJSValue arrayLike) ; unknownCode
+runtime NewArrayOfGiven : JSCell* (EncodedJSValue given) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime ReadArgumentList : JSCell* (JSCell* list) ; unknownCode
 runtime ConstructWithArray : EncodedJSValue (EncodedJSValue callee, EncodedJSValue newTarget, EncodedJSValue list) ; unknownCode
 runtime SuperConstruct : EncodedJSValue (EncodedJSValue parent, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* arguments) ; unknownCode
@@ -42,7 +44,8 @@ runtime CreateThis : JSCell* (JSCell* constructor, JSCell* newTarget) ; unknownC
 runtime ResolveHeritage : EncodedJSValue (EncodedJSValue heritage) ; unknownCode
 runtime NewClass : JSCell* (uint32_t request, EncodedJSValue constructor, EncodedJSValue heritage, EncodedJSValue prototypeParent) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, AllocatorState, RuntimeState) throws collects
 runtime GetClassPrototype : JSCell* (JSCell* classObject) ; RuntimeCreatesConstant
-runtime BeginMemberGuards : void (uint32_t classIndex) ; reads(all) writes(MemberGuards, AllocatorState, RuntimeState)
+runtime BeginMemberGuards : void (uint32_t classIndex, uint32_t endsTopLevelOfModule) ; reads(all) writes(MemberGuards, AllocatorState, RuntimeState)
+runtime RememberStructureOfClass : size_t (JSCell* cell, uint32_t classIndex, uint32_t offsetOfStructures) ; reads(all) writes(RuntimeState)
 runtime GetConstructPrototype : JSCell* (EncodedJSValue newTarget) ; unknownCode
 runtime SetConstructPrototype : JSCell* (JSCell* object, JSCell* prototype, uint32_t allocation, uint32_t holdsNoField) ; RuntimeAllocates writes(MemberGuards)
 
@@ -61,15 +64,20 @@ runtime BarrierSlow : void (JSCell* cell) ; reads(all) writes(RuntimeState)
 runtime RememberElement : void (JSCell* array, EncodedJSValue element) ; reads(all) writes(RuntimeState)
 
 runtime NewArray : JSCell* (uint32_t count, const EncodedJSValue* values) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime NewArrayOfList : JSCell* (JSCell* list, uint32_t capacityAndKind) ; RuntimeAllocates
 runtime NewArrayOfHoles : JSCell* (uint32_t lengthAndCapacity, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayAtReviewedSite : JSCell* (void* profile, uint32_t seedIndexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime NewArrayWithLengthAtReviewedSite : JSCell* (void* profile, uint32_t seedAndLengthAndCapacity) ; reads(all) writes(AllocatorState, RuntimeState) collects
 runtime ArrayPush : EncodedJSValue (JSCell* array, EncodedJSValue value) ; unknownCode
 runtime ArraySlice : EncodedJSValue (JSCell* array, int64_t from, int64_t to) ; unknownCode
 runtime ArrayCopy : EncodedJSValue (JSCell* array) ; unknownCode
 runtime AppendElements : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray
+runtime SetArrayLength, SetArrayLengthInSloppyCode : void (JSCell* array, uint32_t length) ; RuntimeGrowsArray writes(ShapeWords, ArrayLengths)
 runtime AppendMembers : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
+runtime AppendValuesOfMap : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
 runtime ReserveArrayRoom : void (JSCell* array, uint64_t room) ; reads(all) writes(ArrayStorage, AllocatorState, RuntimeState) collects
+runtime ConvertToDoubleStorage : void (JSCell* array) ; reads(all) writes(Elements, ArrayStorage, ShapeWords, AllocatorState, RuntimeState) collects
 runtime TryFinishBirth : void (JSCell* object) ; reads(all) writes(RuntimeState)
 runtime AreHeldFieldsFilled : size_t (JSCell* object) ; reads(all)
 runtime ArrayPutAtIndex, ArrayPutAtIndexInSloppyCode, ArrayPutNumberAtIndex : void (JSCell* array, EncodedJSValue value, uint64_t position) ; unknownCode
@@ -121,6 +129,7 @@ runtime CompareStrictEq : size_t (EncodedJSValue, EncodedJSValue) ; RuntimeCreat
 runtime Fmod, Pow : double (double, double) ; none ; leaf
 runtime ToInt32 : size_t (double) ; none ; leaf
 runtime TryConvertToInteger : int64_t (EncodedJSValue value) ; none ; leaf
+runtime RoundToIntegerBound : int64_t (double number, uint32_t roundsUpAndTakesGreatestForNaN) ; none ; leaf
 runtime AddNumberAndValueAsNumber, SubNumberAndValueAsNumber, MulNumberAndValueAsNumber, DivNumberAndValueAsNumber : double (EncodedJSValue value, uint32_t typeAndNumberSide, double number) ; unknownCode
 runtime InstanceOfAndCache : size_t (EncodedJSValue value, EncodedJSValue constructor) ; unknownCode
 runtime DefaultHasInstance : size_t (EncodedJSValue value, EncodedJSValue prototype) ; unknownCode
@@ -140,15 +149,16 @@ runtime ResolvePromise : void (JSCell* promise, EncodedJSValue value) ; unknownC
 runtime ResolvePromiseOrReturnResult : EncodedJSValue (JSCell* promise, EncodedJSValue value) ; unknownCode
 runtime RejectPromise : void (JSCell* promise, EncodedJSValue reason) ; reads(all) writes(PromiseState, ExternalState, AllocatorState, RuntimeState) collects
 runtime RejectWithException : JSCell* (uint64_t frame) ; unknownCode
-runtime NewGenerator : JSCell* (EncodedJSValue closure, uint32_t kind) ; reads(all) writes(ShapeWords, NamedProperties, AllocatorState, RuntimeState) collects
+runtime NewGenerator : JSCell* (EncodedJSValue closure) ; reads(all) writes(ShapeWords, NamedProperties, AllocatorState, RuntimeState) collects
+runtime NewAsyncGenerator, NewGeneratorOfLibrary : JSCell* (EncodedJSValue closure) ; unknownCode
 runtime NewHeapFrame : JSCell* (uint32_t numberOfWords, void* resumeAddress) ; reads(all) writes(AllocatorState, RuntimeState, InternalFields) collects
-runtime TakeGeneratorPrototype : void (JSCell* generator, EncodedJSValue closure) ; reads(all) writes(PrototypeLinks, ShapeWords, AllocatorState, RuntimeState) collects
+runtime TakeGeneratorPrototype : void (JSCell* generator, EncodedJSValue closure) ; unknownCode
 runtime SaveFrameAndAwait, SaveFrameAndAwaitCall, SaveFrameAndAwaitInModuleBody : JSCell* (EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords) ; unknownCode suspends
 runtime AwaitWithSavedFrame, AwaitCallWithSavedFrame, AwaitWithSavedFrameInModuleBody : JSCell* (EncodedJSValue awaited, JSCell* savedFrame) ; unknownCode suspends
 runtime SaveFrameAndYield : JSCell* (JSCell* generator, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords) ; unknownCode suspends
 runtime AsyncIteratorStep : EncodedJSValue (JSCell* iterator, EncodedJSValue sent) ; unknownCode
 runtime FinishAsyncIteratorStep : EncodedJSValue (JSCell* generator, EncodedJSValue returned, uint32_t consumerMayContinue) ; unknownCode
-runtime PromiseThen : void (JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived) ; unknownCode
+runtime PromiseThen : JSCell* (JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived) ; unknownCode
 runtime PromiseCatch : JSCell* (JSCell* promise, EncodedJSValue onRejected) ; unknownCode
 runtime PromiseAll : JSCell* (uint32_t count, const EncodedJSValue* elements, uint32_t directCalls) ; unknownCode
 
@@ -164,8 +174,11 @@ runtime NewRuntimeErrorWithName : JSCell* (uint32_t errorKind, uint32_t name) ; 
 runtime NewSuppressedError : JSCell* (EncodedJSValue error, EncodedJSValue suppressed) ; RuntimeAllocates
 runtime ThrowRuntimeError : void (uint32_t errorKind) ; reads(all) writes(AllocatorState, RuntimeState) throws
 runtime StopAtNativeResult : void (EncodedJSValue found, uint32_t written) ; reads(all) writes(ExternalState)
+runtime StopUnlessNativeResultIsIntegerAsWritten : void (EncodedJSValue found, uint32_t written) ; reads(all) writes(ExternalState)
 runtime PoisonCell : void (JSCell* cell, uint32_t function, uint32_t position) ; reads(all) writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements, AllocatorState, RuntimeState)
 runtime StopAtFalseProof : void (EncodedJSValue found, uint32_t function, uint32_t position, uint32_t source) ; reads(all) writes(ExternalState)
+runtime StopAtStaleLoad : void (uint32_t function, uint32_t position) ; reads(all) writes(ExternalState)
+runtime StopUnlessValueHasType : void (uint32_t kindsAndSource, uint32_t type, EncodedJSValue value) ; reads(all) writes(AllocatorState, RuntimeState, ExternalState)
 runtime StopAtFalseEffects : void (uint32_t function, uint32_t position, uint32_t part, uint32_t rows, uint64_t differs) ; reads(all) writes(ExternalState)
 runtime DigestForEffectsNet : uint64_t (EncodedJSValue value, uint64_t lanes) ; reads(all) ; leaf
 runtime CollectionsForEffectsNet : uint64_t (uint64_t vm) ; reads(all) ; leaf
@@ -177,7 +190,8 @@ runtime PollAtPrologueWithoutCollecting : void* (uint8_t* returnAddress) ; reads
 runtime DirectEval : EncodedJSValue (EncodedJSValue text, uint32_t request, uint32_t count, const EncodedJSValue* operands) ; unknownCode
 
 runtime StringConstant, KeyConstant, BuiltinCell : JSCell* (uint32_t index) ; RuntimeCreatesConstant
-runtime MethodCalledBoxed : JSCell* (uint32_t form) ; RuntimeCreatesConstant
+runtime MethodCalledBoxed : JSCell* (uint32_t builtin) ; RuntimeCreatesConstant
+runtime FunctionOfBuiltinAsBuilt : JSCell* (uint32_t form) ; RuntimeCreatesConstant
 runtime ModuleBuiltinCell : JSCell* (uint32_t builtin, uint32_t module) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime FillBuiltinValue : EncodedJSValue (uint32_t cellKey) ; unknownCode
 runtime FillWatchedBuiltinValue : EncodedJSValue (uint32_t cellKey) ; unknownCode
@@ -199,9 +213,10 @@ runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; un
 runtime RecordRequire : void (uint32_t module, uint32_t referrer) ; unknownCode
 runtime RequireIfHeldForImport : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime WasLoadedSynchronously : size_t (uint32_t module) ; reads(ExternalState) writes(ExternalState)
-runtime SeesMockOf : size_t (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
-runtime MockSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
-runtime NamespaceSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
+runtime SeesMockOf : size_t (uint32_t module, uint32_t referrer, uint32_t reader, uint32_t thatKeepsNamesOfOriginal) ; reads(ExternalState) writes(ExternalState)
+runtime IsLinkedBelow : size_t (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
+runtime MockSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t reader) ; reads(ExternalState) writes(ExternalState)
+runtime NamespaceSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t reader) ; unknownCode
 runtime AreLoaderFunctionsStored : size_t () ; reads(ExternalState)
 runtime CountExecution : void (uint32_t module, uint32_t description, uint32_t counter) ; reads(ExternalState) writes(ExternalState)
 runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL) ; unknownCode

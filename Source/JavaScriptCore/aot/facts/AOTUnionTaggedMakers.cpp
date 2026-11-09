@@ -10,6 +10,7 @@
 
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
+#include "AOTSort.h"
 #include "AOTThinSummary.h"
 #include <algorithm>
 #include <optional>
@@ -165,7 +166,7 @@ Vector<TaggedMaker> findTaggedMakers(const Program& program, const ThinSummaries
             makers.append(TaggedMaker { index, constructor, *tagParameter });
     }
 
-    std::ranges::stable_sort(makers, { }, &TaggedMaker::constructor);
+    AOT::stableSort(makers, { }, &TaggedMaker::constructor);
     makers.shrink(makers.size() - std::ranges::unique(makers, { }, &TaggedMaker::constructor).size());
     return makers;
 }

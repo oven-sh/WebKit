@@ -197,8 +197,39 @@ static Operation* foldMachineBitCount(Builder& builder, Opcode opcode, Type type
     return nullptr;
 }
 
+Operation* foldMachineRotationOutOfShifts(Builder& builder, Type type, Operation* left, Operation* right)
+{
+    if (left->opcode() == ZShr)
+        std::swap(left, right);
+    if (left->opcode() != Shl || right->opcode() != ZShr || left->child(0) != right->child(0) || !left->child(1)->hasInt32() || !right->child(1)->hasInt32())
+        return nullptr;
+    int32_t width = bitFoldWidth(type);
+    int32_t toLeft = left->child(1)->asInt32() & (width - 1);
+    int32_t toRight = right->child(1)->asInt32() & (width - 1);
+    if (!toLeft || toLeft + toRight != width)
+        return nullptr;
+    return builder.binary(RotR, left->child(0), builder.const32(toRight));
+}
+
+static Operation* foldMachineRotation(Builder& builder, Type type, Operation* value, Operation* amountOperand)
+{
+    RELEASE_ASSERT(amountOperand->hasInt32());
+    int32_t amount = amountOperand->asInt32() & (bitFoldWidth(type) - 1);
+    if (amount != amountOperand->asInt32())
+        return builder.binary(RotR, value, builder.const32(amount));
+    if (!amount)
+        return value;
+    if (value->hasInt32())
+        return builder.const32(static_cast<int32_t>(std::rotr(static_cast<uint32_t>(value->asInt32()), amount)));
+    if (value->hasInt64())
+        return builder.const64(static_cast<int64_t>(std::rotr(static_cast<uint64_t>(value->asInt64()), amount)));
+    return nullptr;
+}
+
 Operation* foldMachineShiftOrBitCount(Builder& builder, Opcode opcode, Type type, Operation* left, Operation* rightOrNull)
 {
+    if (opcode == RotR)
+        return foldMachineRotation(builder, type, left, rightOrNull);
     if (opcode == Shl || opcode == SShr || opcode == ZShr)
         return foldMachineShift(builder, opcode, type, left, rightOrNull);
     if (opcode == Clz || opcode == PopCount)
@@ -355,6 +386,40 @@ static Operation* foldMachineBitwiseCast(Builder& builder, Type result, Operatio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static Operation* singleThatDoubleIs(Builder& builder, Operation* number)
+{
+    if (number->opcode() == FloatToDouble)
+        return number->child(0);
+    if (!number->hasDouble() || !(std::abs(number->asDouble()) <= std::numeric_limits<float>::max()))
+        return nullptr;
+    if (std::bit_cast<uint64_t>(static_cast<double>(static_cast<float>(number->asDouble()))) == std::bit_cast<uint64_t>(number->asDouble()))
+        return builder.constFloat(static_cast<float>(number->asDouble()));
+    return nullptr;
+}
+
+static Operation* foldMachineOperatorOnSinglesRoundedToSingle(Builder& builder, Operation* rounded)
+{
+    static_assert(std::numeric_limits<double>::digits >= 2 * std::numeric_limits<float>::digits + 2);
+    switch (rounded->opcode()) {
+    case Add:
+    case Sub:
+    case Mul:
+    case Div: {
+        if (rounded->child(0)->hasDouble() && rounded->child(1)->hasDouble())
+            return nullptr;
+        Operation* left = singleThatDoubleIs(builder, rounded->child(0));
+        Operation* right = left ? singleThatDoubleIs(builder, rounded->child(1)) : nullptr;
+        return right ? builder.binary(rounded->opcode(), left, right) : nullptr;
+    }
+    case Sqrt: {
+        Operation* taken = rounded->child(0)->hasDouble() ? nullptr : singleThatDoubleIs(builder, rounded->child(0));
+        return taken ? builder.unary(Sqrt, taken) : nullptr;
+    }
+    default:
+        return nullptr;
+    }
+}
+
 Operation* foldConversionOtherThanOfWords(Builder& builder, Opcode opcode, Type result, Operation* operand)
 {
     if (opcode == SExt8 || opcode == SExt16)
@@ -372,7 +437,7 @@ Operation* foldConversionOtherThanOfWords(Builder& builder, Opcode opcode, Type 
             return builder.constFloat(static_cast<float>(operand->asDouble()));
         if (operand->opcode() == FloatToDouble)
             return operand->child(0);
-        return nullptr;
+        return foldMachineOperatorOnSinglesRoundedToSingle(builder, operand);
     }
 
     RELEASE_ASSERT_NOT_REACHED();

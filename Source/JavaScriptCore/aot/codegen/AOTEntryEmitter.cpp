@@ -188,6 +188,8 @@ static uint32_t stackWordsPassedBy(const CodeGenerationInputs& inputs, const Ope
 
 static bool passesStackWordsInTailCall(const CodeGenerationInputs& inputs, const Code& code)
 {
+    if (!code.mayHoldReturnedCalls())
+        return false;
     for (uint32_t index = 0; index < code.numberOfBlocks(); ++index) {
         BlockID block(index);
         const Terminator& terminator = code.at(block).terminator;
@@ -539,9 +541,17 @@ CCallHelpers::JumpList emitQuestionOfEntryWrittenByHand(CCallHelpers& jit, const
     return ways.misfits;
 }
 
-void emitEntryWrittenByHand(CCallHelpers& jit, const CodeGenerationInputs& inputs, CodeRecords& records, CodeUnit unit, std::span<const QuestionOfEntry> questions, bool frameIsSetUp)
+void emitEntryWrittenByHand(CCallHelpers& jit, const CodeGenerationInputs& inputs, CodeRecords& records, CodeUnit unit, std::span<const QuestionOfEntry> questions, bool frameIsSetUp, bool nobodyEnters)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
+    if (nobodyEnters) {
+        uint32_t site = records.sites.addSite({ .origin = Origin { .position = inputs.program.at(unit.function).position, .inlineFrame = 0, .isTailCall = false, .isPartOfConstruction = false } });
+        if (!frameIsSetUp)
+            jit.emitFunctionPrologue();
+        emitStraightThrowSite(jit, records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = ProofSource::EntryParameter }, std::nullopt, 0, site);
+        jit.breakpoint();
+        return;
+    }
     constexpr GPRReg scratch = scratchOfEntryWrittenByHand;
     Vector<WaysOutOfQuestionOfEntry, 4> ways(questions.size());
     for (size_t index = 0; index < questions.size(); ++index)

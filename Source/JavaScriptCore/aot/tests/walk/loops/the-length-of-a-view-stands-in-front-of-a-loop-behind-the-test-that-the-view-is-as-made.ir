@@ -5,8 +5,9 @@
 # function wait(view: Uint8Array) { let turns = 0; while (view[4] === undefined) turns++; return turns > 0; }
 # sink(sum, above, told, spin, wait); new SharedArrayBuffer(4).grow;
 # Another thread may lengthen the memory that a view follows, and no effect of this thread says when: the length of such a view stays in its turn, or `while (view.length === 4) { }` would spin for ever.
-# A view over a buffer that may grow is born in another Structure than the one that bears the mark of being as made. So behind the test in front of the loop the length is fixed, and it stands in front of the typed build.
+# Where some thread may grow shared memory, the test in front of the loop asks besides the mark of being as made that the view lies over no shared memory that grows. So behind it no other thread moves the length, and it stands in front of the typed build.
 # A view that the turns only read by index stands in the same row: `above` has no name to ask for, and its bound would else be read in every turn: 13.5 instructions a turn became 18.0.
+# Having no name to ask for, it is asked for its storage alone: an heir of Int32Array, which never bears the mark of its names, takes the typed turns too.
 # The length of `above` is read further in front, for the room of the view under the counter (the head asks the lesser of the bound and the room): a length that another thread makes greater behind that read leaves the
 # room too small, never too great, and where the room is reached the turn goes to the other build, which asks the view as it then is.
 # The failing side is the closed copy, which asks the view in every turn. Where a turn runs other code nothing can stand in front, and nothing is asked: `told`.
@@ -22,7 +23,7 @@
 # CHECK-NOT: = GetTypedArrayLength
 # CHECK-LABEL: code f2:Body
 # CHECK: = GetTypedArrayLength
-# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage, Names]
+# CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage]
 # CHECK: frequency=Rare isLoopHead=true
 # CHECK: = ElemGet
 # CHECK: isInLoop=true isLoopHead=true
@@ -32,6 +33,7 @@
 # RUN(MACHINE): emit f1:Body f2:Body mechanisms=all
 # MACHINE-LABEL: unit f1:Body
 # MACHINE: = Load8Z({{*}}JSCell_typeInfoFlags
+# MACHINE: = Load8Z({{*}}JSArrayBufferView_sharingOfMemory
 # MACHINE-LABEL: unit f2:Body
 # MACHINE: JSArrayBufferView_length
 # RUN(SHELL): run-in-shell globalThis.sink = (sum, above, told) => { const shared = new SharedArrayBuffer(16, { maxByteLength: 64 }); const own = new ArrayBuffer(16, { maxByteLength: 64 }); const gone = new Float64Array([7, 8]); const views = [new Float64Array([1.5, 2, 3]), new Float64Array(shared), new Float64Array(shared, 8, 1), new Float64Array(own), gone]; views[1].set([1, 2]); views[3].set([4, 5]); const whole = [new Int32Array([1, 5, 9, 2]), new Int32Array(shared), new Int32Array(shared, 8, 2), new Int32Array(own), new Int32Array(gone.buffer)]; let said = ""; for (let round = 0; round < 3; round++) { for (const view of views) said += sum(view) + " "; for (const view of whole) said += above(view, 0, 12) + " "; said += "| "; if (round === 0) { shared.grow(32); views[1][3] = 10; own.resize(8); } if (round === 1) gone.buffer.transfer(); } print(said); };

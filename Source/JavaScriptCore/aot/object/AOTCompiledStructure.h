@@ -108,6 +108,8 @@ public:
     }
     uint16_t extraPropertiesCellSize() const { return hasExtraProperties() ? m_extraKeysAndCellSize.extraPropertiesCellSize : 0; }
     void setSuccessorByPrivateName(VM& vm, CompiledStructure* successor) { m_successorByPrivateName.set(vm, this, successor); }
+    const uint64_t* wordsOfObjectWithoutFields() const { return m_wordsOfObjectWithoutFields; }
+    void setWordsOfObjectWithoutFields(const uint64_t* words) { m_wordsOfObjectWithoutFields = words; }
     JSObject* heldExtraProperties() const
     {
         const RareData* rareData = this->rareData();
@@ -289,9 +291,10 @@ private:
     SlotData m_extraPropertiesSlot { };
     SlotData m_extensionSlot { };
     WriteBarrier<CompiledStructure> m_successorByPrivateName;
+    const uint64_t* m_wordsOfObjectWithoutFields { nullptr };
 };
 #if CPU(ADDRESS64) && !HAVE(36BIT_ADDRESS)
-static_assert(sizeof(CompiledStructure) == 152);
+static_assert(sizeof(CompiledStructure) == 160);
 #endif
 
 ALWAYS_INLINE const CompiledStructure* compiledObjectStructureOrNull(const Structure* structure)

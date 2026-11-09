@@ -1316,7 +1316,7 @@ void JSArray::validatePristine(VM& vm) const
     }
     structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
         UniquedStringImpl* name = entry.key();
-        check(!name->isSymbol() && name != vm.propertyNames->toJSON.impl() && name != vm.propertyNames->then.impl());
+        check((!name->isSymbol() || Structure::isSymbolThatNothingProbes(name)) && name != vm.propertyNames->toJSON.impl() && name != vm.propertyNames->then.impl());
         check(!isImmutableOnPrototypeChain(realm->arrayPrototype(), name));
         check(!structure->hasPristineElements() || !isCanonicalNumericIndexString(name));
         return true;
@@ -1869,6 +1869,20 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
     Butterfly* butterfly = this->butterfly();
     
     auto indexingType = this->indexingType();
+    if (startIndex && vm.arrayStoragePolicy() == ArrayStoragePolicy::KeepsDenseArraysDense && (indexingType == ArrayWithInt32 || indexingType == ArrayWithDouble || indexingType == ArrayWithContiguous)) {
+        unsigned oldLength = butterfly->publicLength();
+        RELEASE_ASSERT(count <= oldLength && startIndex <= oldLength - count);
+        unsigned behind = oldLength - (startIndex + count);
+        if (behind >= MIN_SPARSE_ARRAY_INDEX && startIndex < behind && !holesMustForwardToPrototype()) {
+            WriteBarrier<Unknown>* elements = butterfly->contiguous().data();
+            if (indexingType == ArrayWithContiguous) {
+                gcSafeMemmove(elements + count, elements, sizeof(JSValue) * startIndex);
+                vm.writeBarrier(this);
+            } else
+                memmove(static_cast<void*>(elements + count), static_cast<const void*>(elements), sizeof(JSValue) * startIndex);
+            startIndex = 0;
+        }
+    }
     switch (indexingType) {
     case ArrayClass:
         return true;
@@ -2039,6 +2053,21 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
         return false;
 
     Butterfly* butterfly = this->butterfly();
+
+    if (IndexingType type = indexingType(); startIndex && vm.arrayStoragePolicy() == ArrayStoragePolicy::KeepsDenseArraysDense && (type == ArrayWithInt32 || type == ArrayWithDouble || type == ArrayWithContiguous)) {
+        unsigned oldLength = butterfly->publicLength();
+        RELEASE_ASSERT(startIndex <= oldLength);
+        unsigned behind = oldLength - startIndex;
+        if (behind >= MIN_SPARSE_ARRAY_INDEX && startIndex < behind && count <= MAX_STORAGE_VECTOR_LENGTH - oldLength && !holesMustForwardToPrototype() && tryMoveElementsStartBackward(vm, count)) {
+            WriteBarrier<Unknown>* elements = this->butterfly()->contiguous().data();
+            if (type == ArrayWithContiguous) {
+                gcSafeMemmove(elements, elements + count, sizeof(JSValue) * startIndex);
+                vm.writeBarrier(this);
+            } else
+                memmove(static_cast<void*>(elements), static_cast<const void*>(elements + count), sizeof(JSValue) * startIndex);
+            return true;
+        }
+    }
     
     switch (indexingType()) {
     case ArrayClass:

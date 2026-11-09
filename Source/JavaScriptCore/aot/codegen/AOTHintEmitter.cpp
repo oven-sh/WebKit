@@ -8,16 +8,19 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
 #include "AOTCompileUnit.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConvention.h"
+#include "AOTConversionEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTInstance.h"
 #include "AOTPoisonedCell.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTStaleAnswers.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsOperations.h"
@@ -130,6 +133,35 @@ void HintEmitter::generateEndLifeOfCell(const ValueContext& value)
     endLifeOf(value, value->cellOperand());
 }
 
+void HintEmitter::generateAskObjectAgain(const ValueContext& value)
+{
+    if (!emitter<AccessEmitter>().verifiesFastPathAnswers(value->key()))
+        return;
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    ValueID object = value->objectOperand();
+    if (FunctionID function = value->function()) {
+        if (!conventions().exists(conventions().closureEntryOf(function)))
+            return;
+        LBasicBlock goesOn = nullptr;
+        if (ValueID onlyWhere = value->onlyWhereOperand()) {
+            LBasicBlock asks = newBlock();
+            goesOn = newBlock();
+            branch(in<Condition>(onlyWhere), { normalEdge(asks), normalEdge(goesOn) });
+            m_out.appendTo(asks);
+        }
+        int32_t kindAndStub = static_cast<int32_t>(kindAndStubOfAnswer(value->functionIsGetter() ? KindOfAnswer::Accessor : KindOfAnswer::Value, value->asksChainAbovePrototype() ? StubThatAnswers::ChainAbovePrototype : StubThatAnswers::FunctionThatNameFinds));
+        callVoidOperation(value, RuntimeOperation::StopAtStaleAnswer, { conversions.box(value, get(object), typeOf(object)), boxInt32(numberOf(m_mentions.add(NumberSpace::ClosureFunction, function))), identifierNumber(value->key()), word32(kindAndStub) });
+        if (goesOn) {
+            m_out.jump(goesOn);
+            m_out.appendTo(goesOn);
+        }
+        return;
+    }
+    ValueID answered = value->answeredOperand();
+    int32_t kindAndStub = static_cast<int32_t>(kindAndStubOfAnswer(KindOfAnswer::Value, StubThatAnswers::StateOfWalk) | (value->answerIsMethod() ? accessorIsNoAnswerOfWalk : 0));
+    callVoidOperation(value, RuntimeOperation::StopAtStaleAnswer, { conversions.box(value, get(object), typeOf(object)), conversions.box(value, get(answered), typeOf(answered)), identifierNumber(value->key()), word32(kindAndStub) });
+}
+
 void HintEmitter::generateGuessFailsUnasked(const ValueContext& value)
 {
     uint32_t period = build().options().periodOfGuessesThatFail;
@@ -148,6 +180,27 @@ void HintEmitter::generateGuessFailsUnasked(const ValueContext& value)
         jit.store32(params[0].gpr(), state);
     });
     defineTest(value, belowOrEqual(Integer(drawn), integer(UINT32_MAX / period)));
+}
+
+void HintEmitter::generateBeginsWhatMayRunAgain(const ValueContext& value)
+{
+    emitter<RuntimeCallEmitter>().beginWatchOfWhatMayRunAgain(value);
+    defineTest(value, belowOrEqual(integer(1), integer(0)));
+}
+
+void HintEmitter::generateTurnBeginsAgain(const ValueContext& value)
+{
+    emitter<RuntimeCallEmitter>().endWatchOfWhatRunsAgain(value, definitionOf(value->beginningOperand()));
+}
+
+void HintEmitter::generateCopyLeavesForCall(const ValueContext& value)
+{
+    emitter<RuntimeCallEmitter>().endWatchOfWhatRunsAgain(value, definitionOf(value->beginningOperand()));
+}
+
+void HintEmitter::generateTurnWasQuiet(const ValueContext& value)
+{
+    emitter<RuntimeCallEmitter>().endWatchOfWhatRunsAgain(value, definitionOf(value->beginningOperand()));
 }
 
 bool HintEmitter::endsLivesAtRunTime()
@@ -188,6 +241,7 @@ void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)
     Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Void);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->setRunsWithoutFrame(true);
+    patchpoint->setShowsRegistersToCollector(true);
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(context);
     patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const Machine::PatchParameters& params) {
         if (!params.frameIsSetUp())
@@ -208,6 +262,7 @@ void HintEmitter::emitPoll(const ValueContext& value)
     bool leavesOwedError = m_code.marksOf(value.id()).contains(SweepMark::LeavesOwedError);
     if (hasFaultingLoopPolls) {
         patchpoint->setRunsWithoutFrame(!isARM64());
+        patchpoint->setShowsRegistersToCollector(true);
         patchpoint->setGenerator([records = &m_records, site, leavesOwedError](CCallHelpers& jit, const Machine::PatchParameters& params) {
             emitFaultingLoad(jit, params, records, site, leavesOwedError);
         });

@@ -15,11 +15,13 @@
 #include "AOTEffectsOfOperations.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTPlan.h"
 #include "AOTSchemaInlineBuiltins.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
+#include "AOTWalkKnown.h"
 #include "AOTWalkKnownCalls.h"
 #include "AOTWalkStrings.h"
 #include <algorithm>
@@ -53,13 +55,16 @@ Effects effectsOfLibraryFunctionBehindRow(const Walker& walker, const BuiltinOve
 
 std::optional<Effects> effectsOfSearchForWhatIsNoString(const TypeArena& types, InlineBuiltin builtin, TypeID searchedOrNotPassed)
 {
-    if (builtin != InlineBuiltin::ArrayIndexOf && builtin != InlineBuiltin::ArrayIncludes)
+    bool isLookupInTable = builtin == InlineBuiltin::MapGet || builtin == InlineBuiltin::MapHas || builtin == InlineBuiltin::SetHas;
+    if (!isLookupInTable && builtin != InlineBuiltin::ArrayIndexOf && builtin != InlineBuiltin::ArrayIncludes)
         return std::nullopt;
     if (!searchedOrNotPassed)
         return std::nullopt;
     Type searched = types.at(searchedOrNotPassed);
     if (!searched.isJavaScriptValue() || (searched.primitives & Primitive::AnyString))
         return std::nullopt;
+    if (isLookupInTable)
+        return searched.primitives & Primitive::BigInt ? std::nullopt : std::optional<Effects>(declaredBoundOf(InlineBuiltin::WeakMapGet));
     return declaredBoundOf(InlineBuiltin::ArrayAt);
 }
 
@@ -196,13 +201,114 @@ static FunctionID findSortThatCallsNoComparatorForKnownRows(Walker& walker, cons
     return { };
 }
 
+bool isBuiltinCalledWithoutReceiver(const Walker& walker, TypeID handedOver)
+{
+    if (!handedOver || !walker.has(Mechanism::BuiltinCalls))
+        return false;
+    Type type = walker.types().at(handedOver);
+    BuiltinID builtin = type.isObject() && type.isJavaScriptValue() ? singleBuiltinOf(walker.types(), type) : BuiltinID();
+    if (!builtin)
+        return false;
+    const BuiltinTable& table = walker.program().builtins();
+    bool hasRow = false;
+    for (const BuiltinOverload& row : table.overloadsOf(table.canonicalID(builtin))) {
+        if (row.mode != BuiltinCallMode::Call)
+            continue;
+        if (row.receiver || row.isUndeclared())
+            return false;
+        hasRow = true;
+    }
+    return hasRow;
+}
+
 bool isLeafHandedToMethodOfLists(const Walker& walker, TypeID handedOver)
 {
     if (!handedOver)
         return false;
+    if (isBuiltinCalledWithoutReceiver(walker, handedOver))
+        return true;
     Type type = walker.types().at(handedOver);
     FunctionID only = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
     return only && walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
+}
+
+static bool loopReadsOffResultFirstForKnownRows(Walker& walker, ValueID value)
+{
+    static constexpr OpcodeSet readersOfFirstOperand { Opcode::PropGet, Opcode::PropHas, Opcode::ElemGet, Opcode::ElemHas };
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (;;) {
+        std::optional<BodyUser> user = index.firstUser(value);
+        if (!user || user->kind != BodyUseKind::Operand)
+            return false;
+        BodyValue reader = index.value(user->value);
+        if (opcodesThatStateTypes.contains(reader.opcode())) {
+            value = user->value;
+            continue;
+        }
+        if ((reader.opcode() == Opcode::IteratorOpen && reader.operand(0) == value) || (reader.opcode() == Opcode::AppendSpread && reader.operand(1) == value))
+            return true;
+        return walker.isInLoop() && readersOfFirstOperand.contains(reader.opcode()) && reader.operand(0) == value;
+    }
+}
+
+static bool numbersAreSeenToArriveAtFunctionHandedForKnownRows(Walker& walker, const BodyValue& call)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto arguments = call.as<Opcode::Call>().argumentsOperands();
+    ValueID handed = arguments.empty() ? ValueID() : index.valueBehindCasts(arguments[0]);
+    if (!handed || index.isParameter(handed) || index.opcodeOf(handed) != Opcode::NewClosure)
+        return false;
+    TypeArena& types = walker.types();
+    return std::ranges::any_of(walker.facts().linked().parametersOf(index.value(handed).function()), [&](const LinkedParameter& parameter) {
+        TypeID arriving = parameter.writtenOrSeenToArrive();
+        TypeID there = arriving ? types.withoutNullish(arriving) : TypeID();
+        return there && !isNeverType(there) && types.at(there).isNumber();
+    });
+}
+
+static bool runOverBoxedValuesTakesResultFirstForKnownRows(Walker& walker, ValueID value)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (;;) {
+        std::optional<BodyUser> user = index.firstUser(value);
+        if (!user || user->kind != BodyUseKind::Operand)
+            return false;
+        BodyValue reader = index.value(user->value);
+        if (opcodesThatStateTypes.contains(reader.opcode())) {
+            value = user->value;
+            continue;
+        }
+        if (reader.opcode() != Opcode::PropGet || reader.operand(0) != value)
+            return false;
+        ValueID taker = index.onlyUsingValue(reader.id());
+        if (!taker || index.opcodeOf(taker) != Opcode::Call || index.value(taker).as<Opcode::Call>().calleeOperand() != reader.id())
+            return false;
+        if (numbersAreSeenToArriveAtFunctionHandedForKnownRows(walker, index.value(taker)))
+            return false;
+        BuiltinID member = findMemberOnObjectAsMade(walker, walker.types().builtinClass(BuiltinClasses::Array), reader.key());
+        FunctionID entered = member ? findLibraryFunctionsBehindBuiltin(walker, walker.types().forBuiltin(walker.program().builtins().canonicalID(member))).enteredByValue : FunctionID();
+        const BodyIndex* text = entered ? walker.facts().bodies().find(entered) : nullptr;
+        return text && text->opcodes().contains(Opcode::HasContiguousIndex);
+    }
+}
+
+static void holdResultToRowsForKnownRows(Walker& walker, const BodyValue& call, TypeID byRows)
+{
+    TypeArena& types = walker.types();
+    Reference result = walker.isUnreachable() || walker.hasFailed() ? Reference() : walker.referenceOf(call.id());
+    if (!byRows || !result || !result.isValue())
+        return;
+    TypeID own = walker.typeOf(result);
+    if (!types.at(byRows).isJavaScriptValue() || !types.at(own).isJavaScriptValue() || types.at(byRows).anyObject || types.isSubset(own, byRows))
+        return;
+    TypeID tested = walker.typeThatUnitMayTestFor(types.testablePartOf(byRows));
+    if (types.isSubset(own, tested))
+        return;
+    Reference held = walker.proveOrTrap(result, tested, ProofSource::ResultOfCall, walker.originOf(call));
+    if (!held)
+        return;
+    walker.bind(call.id(), held);
+    walker.count(StatisticID::ResultsOfLibraryFunctionsHeldToRows);
 }
 
 bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
@@ -228,7 +334,7 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             Reference handedOver = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
             Reference receiver = call.thisValueOperand() ? walker.referenceOf(call.thisValueOperand()) : Reference();
             bool isListAsItWasMade = receiver && (isListAsMade(walker, receiver) || receiverStaysAsMadeByLink(walker, call));
-            mayCopy = walker.isInLoop() && (isListAsItWasMade || walker.walksOwnBodyOfUnit()) && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            mayCopy = ((walker.isInLoop() || walker.bodyAtWorkCallsItself()) ? isListAsItWasMade || walker.walksOwnBodyOfUnit() : isListAsItWasMade && isReadOutOfVariableOfFileThatStays(walker, call.thisValueOperand())) && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
         } else if (!behind.named.isEmpty())
             function = findLibraryFunctionOfRowsReachedBy(walker, call);
         isFoundByRowsReached = function && function != behind.enteredByValue;
@@ -246,16 +352,23 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             return true;
         }
     }
+    TypeID resultByRows = loopReadsOffResultFirstForKnownRows(walker, call.id()) ? findTypeOfResultOfRowsReachedBy(walker, call) : TypeID();
     FunctionID reached = enteredByValue && mayCopy == MayCopyFunctionCalledDirectly::Yes ? findLibraryFunctionOfRowsReachedBy(walker, call) : FunctionID();
-    walker.noteThatCopyMakesNewList(reached && reached != function ? function : FunctionID(), written.thisValueOperand());
-    bool isBuilt = callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), mayCopy);
+    bool makesNewList = reached && reached != function;
+    FunctionID calledWhereNoCopyIsMade;
+    if (const BodyIndex* ofRows = makesNewList ? walker.facts().bodies().find(reached) : nullptr; ofRows && ofRows->opcodes().contains(Opcode::HasContiguousIndex))
+        calledWhereNoCopyIsMade = std::exchange(function, reached);
+    walker.noteThatCopyMakesNewList(makesNewList ? function : FunctionID(), written.thisValueOperand(), runOverBoxedValuesTakesResultFirstForKnownRows(walker, call.id()));
+    bool isBuilt = callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), mayCopy, calledWhereNoCopyIsMade);
     walker.noteThatCopyMakesNewList({ }, { });
-    if (isBuilt)
+    if (isBuilt) {
         walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);
+        holdResultToRowsForKnownRows(walker, call, resultByRows);
+    }
     return isBuilt;
 }
 
-bool isPrivateAliasOfBuiltinMember(const Program& program, PropertyKeyID key)
+ALWAYS_INLINE_INTO_OTHER_FILES bool isPrivateAliasOfBuiltinMember(const Program& program, PropertyKeyID key)
 {
     if (!key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::EnginePrivateName)
         return false;

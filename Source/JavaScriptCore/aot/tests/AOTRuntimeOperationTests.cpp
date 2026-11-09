@@ -7,11 +7,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTChildProcess.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTGrowingText.h"
 #include "AOTHost.h"
 #include "AOTImage.h"
+#include "AOTInstance.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTOpcode.h"
 #include "AOTOperationCallScope.h"
@@ -19,6 +21,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaOperations.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTStubTestSupport.h"
 #include "AOTTemporaryFile.h"
 #include "AOTVector.h"
 #include "ClonedArguments.h"
@@ -29,7 +32,10 @@
 #include "OperationResult.h"
 #include "Options.h"
 #include "TopExceptionScope.h"
+#include "VMEntryScopeInlines.h"
 #include "VMTrapsInlines.h"
+#include "Watchdog.h"
+#include <setjmp.h>
 #include <stdlib.h>
 #include <type_traits>
 #include <wtf/DataLog.h>
@@ -47,12 +53,17 @@ static constexpr ASCIILiteral callsThroughRuntimeTableTest = "runtime-operations
 static constexpr ASCIILiteral unusedEntriesTrapTest = "runtime-operations/unused-entries-trap"_s;
 static constexpr ASCIILiteral unmappedArgumentsTest = "runtime-operations/unmapped-arguments-come-from-frame-and-rest"_s;
 static constexpr ASCIILiteral appendElementsTest = "runtime-operations/append-elements"_s;
+#if OS(UNIX)
+static constexpr ASCIILiteral radixOutsideOfItsRangeTest = "runtime-operations/a-radix-outside-of-two-to-thirty-six-stops-the-process"_s;
+#endif
 static constexpr ASCIILiteral arrayLiteralsTest = "runtime-operations/array-literals-are-pristine-and-contiguous"_s;
 static constexpr ASCIILiteral badTimeStopsTest = "runtime-operations/a-realm-with-an-image-that-begins-to-have-a-bad-time-stops"_s;
 static constexpr ASCIILiteral pushesAndHolesTest = "runtime-operations/pushes-and-holes"_s;
+static constexpr ASCIILiteral literalBornHoldingListTest = "runtime-operations/literal-born-holding-list"_s;
 static constexpr ASCIILiteral growingTextTest = "runtime-operations/a-text-that-is-added-to-grows-in-a-buffer"_s;
 static constexpr ASCIILiteral partsOfOtherWidthTest = "runtime-operations/a-growing-text-takes-parts-whose-characters-have-changed-width"_s;
 static constexpr ASCIILiteral deferredTerminationTest = "runtime-operations/poll-throws-deferred-termination-after-the-deferral"_s;
+static constexpr ASCIILiteral pollShowsRegistersTest = "runtime-operations/poll-that-faults-shows-every-register-to-the-collector"_s;
 static constexpr ASCIILiteral pollInCallStubTest = "runtime-operations/poll-in-call-stub-leaves-pending-out-of-memory-error"_s;
 static constexpr ASCIILiteral callsAreCountedTest = "runtime-operations/calls-are-counted-under-a-counts-path"_s;
 static constexpr ASCIILiteral callsAreNotCountedTest = "runtime-operations/calls-are-not-counted-by-default"_s;
@@ -324,6 +335,65 @@ static void checkAppendElements(LoadedProgram& program)
         AOT_TEST_CHECK_FOR_SOURCE(hasAnyArrayStorage(target->indexingType()) == hadArrayStorage, appendCase.target);
         target->validatePristine(program.vm());
     }
+}
+
+static void checkLiteralsBornHoldingLists(LoadedProgram& program)
+{
+    struct Case {
+        ASCIILiteral list;
+        std::optional<IndexingType> byWhatItHolds;
+        std::optional<IndexingType> whereValuesAreNamed;
+        bool isOfFractions { false };
+    };
+    static constexpr Case cases[] = {
+        { "[1, 2, 3]"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "Array.of(1, 2, 3)"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "['x', 1, 2, 3].slice(1)"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "[]"_s, std::nullopt, std::nullopt },
+        { "(a => (a.pop(), a))([1])"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "['x'].slice(1)"_s, ArrayWithInt32, ArrayWithContiguous },
+        { "['x', 2, 3]"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "[1, 'x', 3]"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "[1, 2, 'x']"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "['x', 1, 2.5, 3].slice(1)"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "[1, , 3]"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "['x', , 3]"_s, ArrayWithContiguous, ArrayWithContiguous },
+        { "[0.5, 1.5, -0, Infinity]"_s, ArrayWithDouble, ArrayWithContiguous, true },
+        { "(a => (a.pop(), a))([0.5])"_s, ArrayWithDouble, ArrayWithContiguous, true },
+        { "(a => (delete a[1], a))([0.5, 1.5, 2.5])"_s, ArrayWithContiguous, ArrayWithContiguous, true },
+        { "(a => (delete a[0], a))([0.5, 1.5])"_s, ArrayWithContiguous, ArrayWithContiguous, true },
+        { "(a => (a[0] = 4, delete a[2], a))([0.5, 1, 2, 3])"_s, ArrayWithContiguous, ArrayWithContiguous, true },
+        { "(a => (a[0] = 4, a))([0.5, 1, 2, 3])"_s, ArrayWithDouble, ArrayWithContiguous, true },
+        { "(a => (a[1000] = 1, a))([1])"_s, std::nullopt, std::nullopt },
+    };
+    Realms& realms = program.realms();
+    JSGlobalObject* realm = program.realm();
+    for (const Case& given : cases) {
+        for (bool namesValues : { false, true }) {
+            JSArray* list = realms.array(realm, given.list);
+            AOT_TEST_CHECK_FOR_SOURCE(hasDouble(list->indexingType()) == given.isOfFractions, given.list);
+            if (list->length() > maxHoleArrayCapacity) {
+                AOT_TEST_CHECK_FOR_SOURCE(!callFromNativeCode(program, operationAOTNewArrayOfList, list, maxHoleArrayCapacity << 1 | namesValues), given.list);
+                continue;
+            }
+            const uint32_t capacity = (list->length() + 2) | 1;
+            Vector<EncodedJSValue> elements = elementsOf(realm, list);
+            JSCell* cell = callFromNativeCode(program, operationAOTNewArrayOfList, list, capacity << 1 | namesValues);
+            std::optional<IndexingType> expected = namesValues ? given.whereValuesAreNamed : given.byWhatItHolds;
+            AOT_TEST_CHECK_FOR_SOURCE(!!cell == !!expected && elementsOf(realm, list) == elements, given.list);
+            if (!cell)
+                continue;
+            auto* born = dynamicDowncast<JSArray>(cell);
+            AOT_TEST_CHECK_FOR_SOURCE(born && born != list && born->indexingType() == *expected && born->isPristine(), given.list);
+            AOT_TEST_CHECK_FOR_SOURCE(born->length() == elements.size() && born->butterfly()->vectorLength() == capacity && elementsOf(realm, born) == elements, given.list);
+            for (uint32_t index = 0; index < capacity; ++index)
+                AOT_TEST_CHECK_FOR_SOURCE(born->canGetIndexQuickly(index) == (index < elements.size()), given.list);
+            born->validatePristine(program.vm());
+        }
+    }
+    JSArray* list = realms.array(realm, "[1, 2, 3]"_s);
+    AOT_TEST_CHECK(!callFromNativeCode(program, operationAOTNewArrayOfList, list, 1u << 1));
+    AOT_TEST_CHECK(!callFromNativeCode(program, operationAOTNewArrayOfList, list, (maxHoleArrayCapacity + 2) << 1));
 }
 
 static void haveABadTime(LoadedProgram& program)
@@ -621,6 +691,200 @@ static void checkPollThrowsDeferredTerminationAfterTheDeferral(LoadedProgram& pr
     vm.clearHasTerminationRequest();
 }
 
+#if AOT_LOOP_POLLS_FAULT && OS(LINUX)
+
+static constexpr ASCIILiteral programThatSpins =
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
+    "entry module=m0\n"
+    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+    "    v0 = NewClosure function=f1\n"
+    "    Return v0\n"
+    "}\n"
+    "function f1 name=\"spins\" results=[{type=anything}] {\n"
+    "    Jump -> next b1()\n"
+    "  b1():\n"
+    "    LoopHint\n"
+    "    Jump -> next b1()\n"
+    "}\n"_s;
+
+static constexpr uint64_t maskOfCellsAtPoll = 0x5555555555555555ULL;
+static jmp_buf s_placeToComeBackToFromPoll;
+static uint64_t s_maskedCellsOfRegistersAtPoll[32];
+static uint64_t s_registersWhoseCellsWereFound;
+
+NEVER_INLINE static void makeCellForEveryRegisterAtPoll(JSGlobalObject* realm)
+{
+    for (GPRReg reg : allocatableGPRs)
+        s_maskedCellsOfRegistersAtPoll[static_cast<unsigned>(reg)] = std::bit_cast<uint64_t>(constructEmptyObject(realm)) ^ maskOfCellsAtPoll;
+}
+
+NEVER_INLINE static void clearStackBelowCaller()
+{
+    volatile uint64_t words[8192];
+    for (volatile uint64_t& word : words)
+        word = 0;
+}
+
+NEVER_INLINE static bool lookForCellsWithEyesOfCollector(JSGlobalObject* realm, void*, void*)
+{
+    clearStackBelowCaller();
+    Heap& heap = realm->vm().heap;
+    heap.collectNow(Sync, CollectionScope::Full);
+    for (GPRReg reg : allocatableGPRs) {
+        if (heap.isMarked(std::bit_cast<const void*>(s_maskedCellsOfRegistersAtPoll[static_cast<unsigned>(reg)] ^ maskOfCellsAtPoll)))
+            s_registersWhoseCellsWereFound |= uint64_t { 1 } << static_cast<unsigned>(reg);
+    }
+    longjmp(s_placeToComeBackToFromPoll, 1);
+}
+
+[[noreturn]] NEVER_INLINE static void enterPollWithCellInEveryRegister(Instance* instance, const uint8_t* poll)
+{
+#if CPU(X86_64)
+    static_assert(instanceGPR == X86Registers::r13 && MacroAssembler::s_scratchRegister == X86Registers::r11);
+    asm volatile(
+        "movq %0, %%r13\n"
+        "movq %1, %%r11\n"
+        "andq $-16, %%rsp\n"
+        "subq $8, %%rsp\n"
+        "movabsq $0x5555555555555555, %%r14\n"
+        "movq 0(%%rdx), %%rax\n"
+        "xorq %%r14, %%rax\n"
+        "movq 8(%%rdx), %%rcx\n"
+        "xorq %%r14, %%rcx\n"
+        "movq 24(%%rdx), %%rbx\n"
+        "xorq %%r14, %%rbx\n"
+        "movq 48(%%rdx), %%rsi\n"
+        "xorq %%r14, %%rsi\n"
+        "movq 56(%%rdx), %%rdi\n"
+        "xorq %%r14, %%rdi\n"
+        "movq 64(%%rdx), %%r8\n"
+        "xorq %%r14, %%r8\n"
+        "movq 72(%%rdx), %%r9\n"
+        "xorq %%r14, %%r9\n"
+        "movq 80(%%rdx), %%r10\n"
+        "xorq %%r14, %%r10\n"
+        "movq 96(%%rdx), %%r12\n"
+        "xorq %%r14, %%r12\n"
+        "movq 120(%%rdx), %%r15\n"
+        "xorq %%r14, %%r15\n"
+        "movq 16(%%rdx), %%rdx\n"
+        "xorq %%r14, %%rdx\n"
+        "xorl %%r14d, %%r14d\n"
+        "jmpq *%%r11\n"
+        :
+        : "D"(instance), "S"(poll), "d"(s_maskedCellsOfRegistersAtPoll)
+        : "memory");
+#elif CPU(ARM64)
+    static_assert(instanceGPR == ARM64Registers::x26);
+    asm volatile(
+        "mov x26, %0\n"
+        "mov x17, %1\n"
+        "mov x16, %2\n"
+        "mov x27, sp\n"
+        "and x27, x27, #-16\n"
+        "mov sp, x27\n"
+        "mov x27, #0x5555555555555555\n"
+        "ldr x0, [x16, #0]\n"
+        "eor x0, x0, x27\n"
+        "ldr x1, [x16, #8]\n"
+        "eor x1, x1, x27\n"
+        "ldr x2, [x16, #16]\n"
+        "eor x2, x2, x27\n"
+        "ldr x3, [x16, #24]\n"
+        "eor x3, x3, x27\n"
+        "ldr x4, [x16, #32]\n"
+        "eor x4, x4, x27\n"
+        "ldr x5, [x16, #40]\n"
+        "eor x5, x5, x27\n"
+        "ldr x6, [x16, #48]\n"
+        "eor x6, x6, x27\n"
+        "ldr x7, [x16, #56]\n"
+        "eor x7, x7, x27\n"
+        "ldr x8, [x16, #64]\n"
+        "eor x8, x8, x27\n"
+        "ldr x9, [x16, #72]\n"
+        "eor x9, x9, x27\n"
+        "ldr x10, [x16, #80]\n"
+        "eor x10, x10, x27\n"
+        "ldr x11, [x16, #88]\n"
+        "eor x11, x11, x27\n"
+        "ldr x12, [x16, #96]\n"
+        "eor x12, x12, x27\n"
+        "ldr x13, [x16, #104]\n"
+        "eor x13, x13, x27\n"
+        "ldr x14, [x16, #112]\n"
+        "eor x14, x14, x27\n"
+        "ldr x15, [x16, #120]\n"
+        "eor x15, x15, x27\n"
+        "ldr x19, [x16, #152]\n"
+        "eor x19, x19, x27\n"
+        "ldr x20, [x16, #160]\n"
+        "eor x20, x20, x27\n"
+        "ldr x21, [x16, #168]\n"
+        "eor x21, x21, x27\n"
+        "ldr x22, [x16, #176]\n"
+        "eor x22, x22, x27\n"
+        "ldr x23, [x16, #184]\n"
+        "eor x23, x23, x27\n"
+        "ldr x24, [x16, #192]\n"
+        "eor x24, x24, x27\n"
+        "mov x16, xzr\n"
+        "mov x27, xzr\n"
+        "br x17\n"
+        :
+        : "r"(instance), "r"(poll), "r"(s_maskedCellsOfRegistersAtPoll)
+        : "memory", "x16", "x17", "x26", "x27");
+#endif
+    __builtin_unreachable();
+}
+
+static void checkPollThatFaultsShowsEveryRegisterToCollector(LoadedProgram& program)
+{
+    const Image* image = Image::current();
+    const uint8_t* poll = nullptr;
+    for (const uint8_t& byte : image->code()) {
+        std::optional<FaultSite> site = image->faultSiteAt(&byte);
+        if (!site || site->kind != FaultSiteKind::LoopPoll)
+            continue;
+        AOT_TEST_CHECK(!poll && site->hasFrame == isARM64());
+        poll = &byte;
+    }
+    AOT_TEST_CHECK(poll);
+
+    VM& vm = program.vm();
+    Instance& instance = program.instance();
+    Watchdog& watchdog = vm.ensureWatchdog();
+    watchdog.setTimeLimit(0_s, lookForCellsWithEyesOfCollector);
+    VMEntryScope entryScope(vm, program.realm());
+    SetForScope topCallFrame(vm.topCallFrame, vm.topCallFrame);
+    SetForScope topEntryFrame(vm.topEntryFrame, static_cast<EntryFrame*>(Thread::currentSingleton().stack().origin()));
+    if (!watchdog.isActive())
+        watchdog.enteredVM();
+    vm.notifyNeedWatchdogCheck();
+    makeCellForEveryRegisterAtPoll(program.realm());
+    clearStackBelowCaller();
+    setPollsEnabled(instance, true);
+    s_registersWhoseCellsWereFound = 0;
+    if (!setjmp(s_placeToComeBackToFromPoll))
+        enterPollWithCellInEveryRegister(&instance, poll);
+    setPollsEnabled(instance, false);
+    watchdog.setTimeLimit(Watchdog::noTimeLimit);
+
+    uint64_t registersThatHeldCells = 0;
+    for (GPRReg reg : allocatableGPRs)
+        registersThatHeldCells |= uint64_t { 1 } << static_cast<unsigned>(reg);
+    if (s_registersWhoseCellsWereFound != registersThatHeldCells)
+        dataLogLn("registers whose cells were marked: ", RawHex(s_registersWhoseCellsWereFound), " of ", RawHex(registersThatHeldCells));
+    AOT_TEST_CHECK(s_registersWhoseCellsWereFound == registersThatHeldCells);
+}
+
+static void pollThatFaultsShowsEveryRegisterToCollector()
+{
+    runWithLoadedProgram(pollShowsRegistersTest, programThatSpins, checkPollThatFaultsShowsEveryRegisterToCollector);
+}
+
+#endif
+
 static void checkPollInCallStubLeavesPendingOutOfMemoryError(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -771,6 +1035,31 @@ static void appendElements()
     runWithLoadedProgram(appendElementsTest, programText, checkAppendElements);
 }
 
+#if OS(UNIX)
+static void checkRadixOutsideOfItsRangeStopsProcess(LoadedProgram& program)
+{
+    auto outcomeWith = [&](int32_t radix, bool takesInt32) {
+        return runInChild([&] {
+            if (takesInt32)
+                callFromNativeCode(program, operationAOTInt32ToStringWithRadix, 255, radix);
+            else
+                callFromNativeCode(program, operationAOTNumberToStringWithRadix, 255.5, radix);
+        });
+    };
+    for (bool takesInt32 : { true, false }) {
+        for (int32_t radix : { 2, 16, 36 })
+            AOT_TEST_CHECK(outcomeWith(radix, takesInt32) == ChildOutcome::Finished);
+        for (int32_t radix : { 1, 0, 37, -1 })
+            AOT_TEST_CHECK(outcomeWith(radix, takesInt32) == ChildOutcome::Crashed);
+    }
+}
+
+static void radixOutsideOfItsRangeStopsProcess()
+{
+    runWithLoadedProgram(radixOutsideOfItsRangeTest, programText, checkRadixOutsideOfItsRangeStopsProcess);
+}
+#endif
+
 static void arrayLiteralsArePristineAndContiguous()
 {
     runWithLoadedProgram(arrayLiteralsTest, programText, checkArrayLiterals);
@@ -779,6 +1068,11 @@ static void arrayLiteralsArePristineAndContiguous()
 static void realmWithImageThatBeginsToHaveABadTimeStops()
 {
     runWithLoadedProgramThatStops(badTimeStopsTest, programText, haveABadTime, "AOT: the realm of a compiled program is having a bad time"_s);
+}
+
+static void literalsAreBornHoldingLists()
+{
+    runWithLoadedProgram(literalBornHoldingListTest, programText, checkLiteralsBornHoldingLists);
 }
 
 static void pushesAndHoles()
@@ -839,13 +1133,20 @@ std::span<const NativeTest> runtimeOperationTests()
         { callsThroughRuntimeTableTest, operationsAreCalledThroughRuntimeTable },
         { unmappedArgumentsTest, unmappedArgumentsComeFromFrameAndRest },
         { appendElementsTest, appendElements },
+#if OS(UNIX)
+        { radixOutsideOfItsRangeTest, radixOutsideOfItsRangeStopsProcess },
+#endif
         { arrayLiteralsTest, arrayLiteralsArePristineAndContiguous },
         { badTimeStopsTest, realmWithImageThatBeginsToHaveABadTimeStops },
         { pushesAndHolesTest, pushesAndHoles },
+        { literalBornHoldingListTest, literalsAreBornHoldingLists },
         { growingTextTest, textThatIsAddedToGrowsInBuffer },
         { partsOfOtherWidthTest, growingTextTakesPartsWhoseCharactersHaveChangedWidth },
         { deferredTerminationTest, pollThrowsDeferredTerminationAfterTheDeferral },
         { pollInCallStubTest, pollInCallStubLeavesPendingOutOfMemoryError },
+#if AOT_LOOP_POLLS_FAULT && OS(LINUX)
+        { pollShowsRegistersTest, pollThatFaultsShowsEveryRegisterToCollector },
+#endif
         { callsAreCountedTest, callsAreCountedUnderCountsPath },
         { callsAreNotCountedTest, callsAreNotCountedByDefault },
         { countsAtExitTest, countsAreWrittenOnceWhenProcessExits },

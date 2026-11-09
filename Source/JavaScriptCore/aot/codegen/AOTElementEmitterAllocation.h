@@ -23,12 +23,17 @@ public:
     const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array);
 
     CellPointer newLiteral(const ValueContext&);
+    bool isLeftToSpreadRightBehind(BlockID, ValueID literal, const Operation&, std::span<const ValueID> behind);
+    void bearLiteralHoldingList(const ValueContext& spread, LValue iterable, StubKey appendsAsWritten);
     CellPointer newArrayOf(const OperationContext&, std::span<const ValueID> elements, const Type& array);
     CellPointer newArrayOfNumbers(const OperationContext&, std::span<const Number>);
     CellPointer newArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, BuiltinID calledBuiltin);
     enum class ElementsBelowLength : bool { Cleared, NotCleared };
     enum class LengthIsSetBy : bool { Allocation, Caller };
     CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath, ElementsBelowLength = ElementsBelowLength::Cleared, LengthIsSetBy = LengthIsSetBy::Allocation);
+    std::optional<Pointer> profileOfListsOfLengthAtSite(Origin, const ArrayStorageForm& seed);
+    CellPointer allocateArrayOfHolesAtSite(const ValueContext&, Integer length, const ArrayStorageForm& seed, Pointer profile, LBasicBlock slowPath);
+    CellPointer bearArrayOfLength(const OperationContext&, const ArrayStorageForm&, Integer length);
     CellPointer allocateEmptyArrayWithRoom(const OperationContext&, Integer room, const ArrayStorageForm&, LBasicBlock slowPath);
     void allocateListLike(const OperationContext&, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>&, const ArrayStorageForm* inPlaceOfAnyValue = nullptr);
     void setLengthOfNewArray(CellPointer, Integer length);
@@ -39,6 +44,14 @@ private:
     using RawElements = Vector<Operand, 16>;
 
     CellPointer newLiteralWithHoles(const ValueContext&);
+    std::optional<Integer> takeRoomAskedRightBehind(const ValueContext&);
+    ArrayStorage storageThatLiteralNames(ValueID literal, const Operation&);
+    struct AppendedBehindSpread {
+        uint32_t room { 0 };
+        bool holdsWhatIsNoNumber { false };
+    };
+    std::optional<AppendedBehindSpread> findWhatIsAppendedBehindSpread(BlockID, ValueID literal, ValueID spread);
+    CellPointer newLiteralWithRoom(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&, Integer room);
     CellPointer newLiteralAtSite(const ValueContext&, const ArrayStorageForm& seed, std::span<const uint32_t> site);
     CellPointer newArrayInForm(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);

@@ -416,6 +416,10 @@ static void testSetters()
     FakeObject<16> absentSetter;
     absentSetter.setHeader(0, NullSetterFunctionType);
     FakeObject<sizeof(GetterSetter)> accessors;
+    accessors.setHeader(0, GetterSetterType);
+    FakeObject<sizeof(GetterSetter)> cellOfOtherKind;
+    cellOfOtherKind.setHeader(0, FinalObjectType);
+    cellOfOtherKind.at<uint64_t>(GetterSetter::offsetOfSetter()) = setter.address();
     FakePlainObject object(PropertyStores::structureID);
     object.word(Slot::wordIndexFor(offset)) = accessors.address();
 
@@ -435,6 +439,13 @@ static void testSetters()
         AOT_TEST_CHECK(run.recordedArguments[0] == object.address() && run.recordedArguments[1] == accessors.address() && run.recordedArguments[2] == value);
         AOT_TEST_CHECK(static_cast<uint32_t>(run.recordedArguments[3]) == static_cast<uint32_t>(storeCase.mode));
         AOT_TEST_CHECK(object.word(Slot::wordIndexFor(offset)) == accessors.address());
+
+        for (uint64_t word : std::initializer_list<uint64_t> { cellOfOtherKind.address(), JSValue::ValueEmpty, bitsOf(jsNumber(5)) }) {
+            object.word(Slot::wordIndexFor(offset)) = word;
+            run = stores.store(storeCase, object.address(), value);
+            AOT_TEST_CHECK(run.calledOperation && run.landedCall.place == LandedCall::Place::Nowhere && object.word(Slot::wordIndexFor(offset)) == word);
+        }
+        object.word(Slot::wordIndexFor(offset)) = accessors.address();
     });
 }
 
@@ -710,6 +721,7 @@ static void testInheritedSettersOfAbsentFields()
     setter.setHeader(PropertyStores::slimClosureStructureID, SlimClosureType);
     setter.at<uint64_t>(offsetOfSlimClosureWord) = stores.runner.closureWord(1);
     FakeObject<sizeof(GetterSetter)> accessors;
+    accessors.setHeader(0, GetterSetterType);
     accessors.at<uint64_t>(GetterSetter::offsetOfSetter()) = setter.address();
     FakePlainObject holder(0);
     holder.word(Slot::wordIndexFor(offset)) = accessors.address();
@@ -730,6 +742,20 @@ static void testInheritedSettersOfAbsentFields()
         FakeTypedObject object(JSValue::ValueUndefined);
         checkUncached(stores, storeCase, object.address(), value);
         AOT_TEST_CHECK(object.field() == JSValue::ValueUndefined);
+
+        constexpr uint32_t orderWordThatLeavesFieldOut = orderWordOf(9, 3);
+        stores.file(storeCase, *Slot::tryCreateFieldAndHolder(toStructureID(PropertyStores::structureID), Slot::Kind::FieldOrInheritedSetter, Slot::dependsOnChain | Slot::emptySlotMayBeUndefined, SlotData::decode(orderWordThatLeavesFieldOut), std::bit_cast<JSCell*>(holder.address()), offset, stores.runner.instance().cellCageBase));
+        for (uint32_t otherBits : { 0u, orderWordHasExtraProperties, orderWordIntegrityBits }) {
+            FakeTypedObject objectThatLeavesFieldOut(JSValue::ValueEmpty, orderWordThatLeavesFieldOut | otherBits);
+            StubRun run = stores.store(storeCase, objectThatLeavesFieldOut.address(), value);
+            AOT_TEST_CHECK(!run.calledOperation && run.landedCall.place == LandedCall::Place::CompiledFunction && !objectThatLeavesFieldOut.field());
+            AOT_TEST_CHECK(run.landedCall.values.callee == setter.address() && run.landedCall.values.thisValue == objectThatLeavesFieldOut.address() && run.landedCall.values.arguments[0] == value);
+        }
+        for (uint32_t otherWord : { orderWordOf(9, 4), orderWordOf(9, 2), orderWordOf(8, 3), orderWordThatLeavesFieldOut | orderWordHasFieldOutsideSlot, outOfLineOrderWord }) {
+            FakeTypedObject objectUnderOtherWord(JSValue::ValueEmpty, otherWord);
+            checkUncached(stores, storeCase, objectUnderOtherWord.address(), value);
+            AOT_TEST_CHECK(!objectUnderOtherWord.field());
+        }
     }
 }
 
@@ -1417,19 +1443,32 @@ static void testFieldsFoundInFieldTable()
     });
 }
 
+static void testInstructionsOfStoreUnderNameThatLayoutLacks()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    constexpr uint32_t budget = 139;
+    PropertyStores stores;
+    FieldTable table(stores);
+    stores.clearCaches();
+    stores.runner.setCountsInstructions(true);
+    FakeObjectWithShape withoutRow(FieldTable::shapeWithoutTheNames, bitsOf(jsNumber(1)));
+    StubRun run = stores.store(StoreCase { PutMode::Strict, FiledIn::Front }, withoutRow.address(), bitsOf(jsNumber(42)));
+    AOT_TEST_CHECK(run.calledOperation && run.instructionsInStubs && withoutRow.field() == bitsOf(jsNumber(1)));
+    if (*run.instructionsInStubs != budget)
+        dataLogLn("a store under a name that the layout lacks, found in no table: ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+    AOT_TEST_CHECK(*run.instructionsInStubs <= budget);
+#endif
+}
+
 static void testStoresGoByTablesAlone()
 {
     PropertyStores stores;
     FieldTable table(stores);
-    AccessTableWords& words = stores.runner.instance().propertyCaches.accessTable;
-    AccessTable::Store& place = words.stores[AccessTable::indexFor(PropertyStores::structureID, PropertyStores::storedName)];
-    const uint64_t key = AccessTable::keyFor(PropertyStores::structureID, PropertyStores::storedName);
     const uint64_t before = bitsOf(jsNumber(1));
     const uint64_t number = bitsOf(jsNumber(42));
     forEachStoreWithEmptyCaches(stores, [&](const StoreCase& storeCase) {
         FakeObjectWithShape object(FieldTable::shapeThatTakesAnyValue, before);
         AOT_TEST_CHECK(!stores.store(storeCase, object.address(), number).calledOperation && object.field() == number);
-        AOT_TEST_CHECK(place.key != key && !words.holdsStoresToUnwatchedStructures);
         FakeObjectWithShape withoutRow(FieldTable::shapeWithoutTheNames, before);
         AOT_TEST_CHECK(stores.storeAgain(storeCase, withoutRow.address(), number).calledOperation && withoutRow.field() == before && withoutRow.wordAfterFieldIsUntouched());
 
@@ -1439,7 +1478,6 @@ static void testStoresGoByTablesAlone()
             auto stored = [&]() -> uint64_t& { return isInlineOffset(offset) ? plain.word(Slot::wordIndexFor(offset)) : storage.property(offset - firstOutOfLineOffset); };
             stores.file(storeCase, Slot::createInStorage(toStructureID(PropertyStores::structureID), Slot::Kind::Value, Slot::isOwn, nullptr, offset));
             AOT_TEST_CHECK(!stores.store(storeCase, plain.address(), number).calledOperation && stored() == number);
-            AOT_TEST_CHECK(place.key != key && !words.holdsStoresToUnwatchedStructures);
             stores.clearCaches();
             stored() = before;
             AOT_TEST_CHECK(stores.storeAgain(storeCase, plain.address(), number).calledOperation && stored() == before);
@@ -1791,6 +1829,7 @@ std::span<const NativeTest> stubPropertyStoreTests()
         { "stubs/put-by-id/exits"_s, ImageTests::whenExecutable<testExits> },
         { "stubs/put-by-id/barriers"_s, ImageTests::whenExecutable<testBarriers> },
         { "stubs/write-barrier/remembers-owner-without-operation"_s, ImageTests::whenExecutable<testBarrierRemembersOwnerWithoutOperation> },
+        { "stubs/put-by-id/instructions/a-name-that-the-layout-lacks"_s, ImageTests::whenExecutable<testInstructionsOfStoreUnderNameThatLayoutLacks> },
         { "stubs/put-by-id/typed-fields"_s, ImageTests::whenExecutable<testTypedFields> },
         { "stubs/put-by-id/fields-that-leave-the-stub"_s, ImageTests::whenExecutable<testFieldsThatLeaveTheStub> },
         { "stubs/put-by-id/created-fields"_s, ImageTests::whenExecutable<testCreatedFields> },

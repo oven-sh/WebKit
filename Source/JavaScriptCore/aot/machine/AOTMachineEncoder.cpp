@@ -8,11 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineDescription.h"
 #include "AOTMachineEncoderPairsOfLoads.h"
 #include "AOTMachineFrameForms.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "DisallowMacroScratchRegisterUsage.h"
+#include <algorithm>
+#include <bit>
 
 namespace JSC { namespace AOT { namespace Machine {
 
@@ -180,6 +183,48 @@ static bool blockThatJumpsOnlyJumpsOn(const Encoder& encoder, const Block* block
     return true;
 }
 
+static bool rareBlockOnlyMovesAndJumpsOn(const Encoder& encoder, const Block* block)
+{
+    ASSERT(block->last()->opcode() == Jump);
+
+    const BlockSteps& steps = encoder.stepsOf(block);
+    if (steps.beginOfEdgeMoves == steps.endOfEdgeMoves)
+        return false;
+    const BlockPlace& place = encoder.placeOf(block);
+    if (!(place.isRare() || place.layoutPart == LayoutPart::Rare) || block->isEntry() || block->isLandingPad() || !block->phis().empty())
+        return false;
+    const Allocation& allocation = encoder.m_allocation;
+    for (uint32_t index = steps.begin; index < steps.end; ++index) {
+        const Step& step = allocation.step(index);
+        if (step.kind != StepKind::Execute)
+            return false;
+        switch (step.operation->opcode()) {
+        case Nop:
+        case Upsilon:
+            break;
+        default:
+            return false;
+        }
+        if (allocation.isSpilled(step.operation))
+            return false;
+    }
+    for (uint32_t index = steps.beginOfEdgeMoves; index < steps.endOfEdgeMoves; ++index) {
+        switch (allocation.step(index).kind) {
+        case StepKind::Move:
+        case StepKind::Reload:
+        case StepKind::Save:
+        case StepKind::Materialize:
+            break;
+        default:
+            return false;
+        }
+    }
+    FrameAtBlock frame = encoder.frameAtBlock(block, place);
+    if (frame.isSetUpAtHead || frame.returnsInPlaceOfJump)
+        return false;
+    return !(encoder.m_hasFramedPart && allocation.isHeadOfFramedPart(block));
+}
+
 void Encoder::findBlocksWithoutCode()
 {
     UncheckedSpan<Block* const> layout = m_order.blocksInLayout();
@@ -188,6 +233,7 @@ void Encoder::findBlocksWithoutCode()
     UncheckedSpan<const Block*> blocksEntered = m_blocksEntered;
     UncheckedSpan<uint32_t> nextLayoutIndexWithCode = m_nextLayoutIndexWithCode;
     ArenaVector<uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn;
+    ArenaVector<uint32_t> layoutIndexesOfRareBlocksThatMoveAndJumpOn;
     for (uint32_t index = 0; index < numberOfBlocksInLayout; ++index) {
         const Block* block = layout[index];
         const Block* entered = block;
@@ -197,7 +243,8 @@ void Encoder::findBlocksWithoutCode()
             if (blockThatJumpsOnlyJumpsOn(*this, block)) {
                 entered = block->successor(0).block();
                 layoutIndexesOfBlocksThatOnlyJumpOn.append(m_arena, index);
-            }
+            } else if (rareBlockOnlyMovesAndJumpsOn(*this, block))
+                layoutIndexesOfRareBlocksThatMoveAndJumpOn.append(m_arena, index);
         } else if (opcode == Patch) {
             if (m_hasSpills && block->numSuccessors() && m_allocation.isSpilled(last)) {
                 if (!m_blocksThatStoreResultOfPatchAtHead.size())
@@ -223,9 +270,12 @@ void Encoder::findBlocksWithoutCode()
             entered = m_blocksEntered[entered->index()];
             ++steps;
         }
-        if (steps > layout.size())
-            entered = block;
-        m_blocksEntered[block->index()] = entered;
+        if (steps > layout.size()) {
+            m_blocksEntered[block->index()] = block;
+            continue;
+        }
+        for (const Block* passed = block; passed != entered;)
+            passed = std::exchange(m_blocksEntered[passed->index()], entered);
     }
 
     for (uint32_t place = layoutIndexesOfBlocksThatOnlyJumpOn.size(); place--;) {
@@ -234,6 +284,83 @@ void Encoder::findBlocksWithoutCode()
             continue;
         m_nextLayoutIndexWithCode[index] = m_nextLayoutIndexWithCode[index + 1];
         --m_numberOfBlocksWithCode;
+    }
+    if (layoutIndexesOfRareBlocksThatMoveAndJumpOn.size() >= 2)
+        findRareBlocksThatRepeatAnother(layoutIndexesOfRareBlocksThatMoveAndJumpOn.span(), layoutIndexesOfBlocksThatOnlyJumpOn.span());
+}
+
+void Encoder::findRareBlocksThatRepeatAnother(std::span<const uint32_t> layoutIndexesOfRareBlocksThatMoveAndJumpOn, std::span<const uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn)
+{
+    struct Candidate {
+        uint64_t key;
+        uint32_t layoutIndex;
+    };
+    UncheckedSpan<Block* const> layout = m_order.blocksInLayout();
+    ArenaVector<Candidate> candidates;
+    candidates.reserve(m_arena, layoutIndexesOfRareBlocksThatMoveAndJumpOn.size());
+    auto wordOf = [](const Step& step) {
+        uint64_t word = static_cast<uint64_t>(step.kind) << 56 ^ static_cast<uint64_t>(step.width) << 48 ^ static_cast<uint64_t>(std::bit_cast<uint32_t>(step.destination)) << 20 ^ std::bit_cast<uint32_t>(step.sources[0]);
+        return step.kind == StepKind::Materialize ? word ^ static_cast<uint64_t>(step.operation->index()) * 0xff51afd7ed558ccdull : word;
+    };
+    for (uint32_t index : layoutIndexesOfRareBlocksThatMoveAndJumpOn) {
+        const Block* block = layout[index];
+        if (m_blocksThatStoreResultOfPatchAtHead.size() && m_blocksThatStoreResultOfPatchAtHead.get(block->index()))
+            continue;
+        uint64_t key = blockEnteredThrough(block->successor(0).block())->index() * 2 + frameAtBlock(block).runsInFrame;
+        const BlockSteps& steps = stepsOf(block);
+        for (uint32_t step = steps.beginOfEdgeMoves; step < steps.endOfEdgeMoves; ++step)
+            key = (key ^ wordOf(m_allocation.step(step))) * 0x9e3779b97f4a7c15ull;
+        candidates.append(m_arena, Candidate { key, index });
+    }
+    if (candidates.size() < 2)
+        return;
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        return a.key != b.key ? a.key < b.key : a.layoutIndex < b.layoutIndex;
+    });
+    auto repeats = [&](const Block* first, const Block* second) {
+        if (blockEnteredThrough(first->successor(0).block()) != blockEnteredThrough(second->successor(0).block()))
+            return false;
+        if (frameAtBlock(first).runsInFrame != frameAtBlock(second).runsInFrame)
+            return false;
+        RELEASE_ASSERT(frameAtBlock(first).isTornDownAtEnd == frameAtBlock(second).isTornDownAtEnd);
+        const BlockSteps& stepsOfFirst = stepsOf(first);
+        const BlockSteps& stepsOfSecond = stepsOf(second);
+        const uint32_t numberOfMoves = stepsOfFirst.endOfEdgeMoves - stepsOfFirst.beginOfEdgeMoves;
+        if (numberOfMoves != stepsOfSecond.endOfEdgeMoves - stepsOfSecond.beginOfEdgeMoves)
+            return false;
+        for (uint32_t index = 0; index < numberOfMoves; ++index) {
+            const Step& a = m_allocation.step(stepsOfFirst.beginOfEdgeMoves + index);
+            const Step& b = m_allocation.step(stepsOfSecond.beginOfEdgeMoves + index);
+            if (a.kind != b.kind || a.width != b.width || a.destination != b.destination || a.sources[0] != b.sources[0])
+                return false;
+            if (a.kind == StepKind::Materialize && a.operation != b.operation)
+                return false;
+        }
+        return true;
+    };
+    ArenaVector<uint32_t> layoutIndexesOfCopies;
+    for (uint32_t first = 0; first < candidates.size();) {
+        uint32_t end = first + 1;
+        for (; end < candidates.size() && candidates[end].key == candidates[first].key; ++end) {
+            if (!repeats(layout[candidates[first].layoutIndex], layout[candidates[end].layoutIndex]))
+                continue;
+            m_blocksEntered[layout[candidates[end].layoutIndex]->index()] = layout[candidates[first].layoutIndex];
+            --m_numberOfBlocksWithCode;
+            layoutIndexesOfCopies.append(m_arena, candidates[end].layoutIndex);
+        }
+        first = end;
+    }
+    if (layoutIndexesOfCopies.isEmpty())
+        return;
+    for (uint32_t index : layoutIndexesOfBlocksThatOnlyJumpOn) {
+        const Block* entered = m_blocksEntered[layout[index]->index()];
+        m_blocksEntered[layout[index]->index()] = m_blocksEntered[entered->index()];
+    }
+    std::sort(layoutIndexesOfCopies.begin(), layoutIndexesOfCopies.end(), std::greater<uint32_t>());
+    for (uint32_t copy : layoutIndexesOfCopies) {
+        const uint32_t next = m_nextLayoutIndexWithCode[copy + 1];
+        for (uint32_t index = copy + 1; index-- && m_nextLayoutIndexWithCode[index] == copy;)
+            m_nextLayoutIndexWithCode[index] = next;
     }
 }
 
@@ -378,7 +505,7 @@ void OrderOfWriting::findPieces()
     }
 }
 
-void OrderOfWriting::writePiece(Piece& piece)
+ALWAYS_INLINE_INTO_OTHER_FILES void OrderOfWriting::writePiece(Piece& piece)
 {
     piece.isPlaced = true;
     m_somethingIsPlaced = true;
@@ -575,6 +702,7 @@ void Encoder::run()
 bool Encoder::fallsThroughToSlowCase(const Block* from, const Block* target) const
 {
     ASSERT(from != m_block);
+    ASSERT(hasCode(from));
     const BlockPlace& placeAsNamed = m_order.of(target);
     if (!placeAsNamed.isReached())
         return false;
@@ -626,10 +754,35 @@ ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
         storeSpilledValuesDefinedAtHead(block, place);
 
     const BlockSteps& steps = stepsOf(block);
-    if (steps.begin < steps.end)
-        encodeSteps(steps.begin, steps.end);
-    if (steps.beginOfEdgeMoves < steps.endOfEdgeMoves)
-        encodeSteps(steps.beginOfEdgeMoves, steps.endOfEdgeMoves);
+    uint32_t beginOfSteps = steps.begin;
+    if (frame.isSetUpAtHead && setupPushesSavesOfRareRegion(block)) {
+        for (; beginOfSteps < steps.end; ++beginOfSteps) {
+            const Step& step = m_allocation.step(beginOfSteps);
+            if (step.kind != StepKind::Save || !step.destination.isSpill())
+                break;
+            uint32_t pushed = 0;
+            while (pushed < m_spillsPushedAtSetup.size() && m_spillsPushedAtSetup[pushed] != step.destination.spillIndex())
+                ++pushed;
+            if (pushed < m_spillsPushedAtSetup.size())
+                m_spillsPushedAtSetup[pushed] = noSpill;
+            else
+                encodeSteps(beginOfSteps, beginOfSteps + 1);
+        }
+        m_spillsPushedAtSetup.clear();
+    }
+    uint32_t endOfSteps = steps.end;
+    uint32_t endOfEdgeMoves = steps.endOfEdgeMoves;
+    std::span<const GPRReg> registersPoppedAtTeardown;
+    if (frame.isTornDownAtEnd) {
+        if (steps.beginOfEdgeMoves < steps.endOfEdgeMoves)
+            registersPoppedAtTeardown = findRegistersThatTeardownPops(steps.beginOfEdgeMoves, steps.endOfEdgeMoves, endOfEdgeMoves);
+        else
+            registersPoppedAtTeardown = findRegistersThatTeardownPops(beginOfSteps, steps.end, endOfSteps);
+    }
+    if (beginOfSteps < endOfSteps)
+        encodeSteps(beginOfSteps, endOfSteps);
+    if (steps.beginOfEdgeMoves < endOfEdgeMoves)
+        encodeSteps(steps.beginOfEdgeMoves, endOfEdgeMoves);
 
     RELEASE_ASSERT(steps.terminator != UINT32_MAX);
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -647,7 +800,7 @@ ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
     if (frame.isTornDownAtEnd) {
         RELEASE_ASSERT(terminator.operation->isUnconditionalJump());
         ASSERT(m_frameIsSetUp);
-        leaveFrameIfSetUp();
+        leaveFrameIfSetUp(registersPoppedAtTeardown);
     }
 
     noteOrigin(terminator.operation->origin(), terminator.operation->index());
@@ -701,31 +854,65 @@ void Encoder::encodeBlocksUnder()
     m_isAmongOtherCode = false;
 }
 
-static NEVER_INLINE PatchOperation* findCalleeThatDoesMoveOutOfResultItself(const Step* move, const Step* end)
+static NEVER_INLINE PatchOperation* findCalleeThatDoesMoveOutOfResultItself(const Step* move, const Step* end, const Step* steps, const BlockSteps& stepsOfBlock, const Step*& moveIntoResult)
 {
+    const Step* const endOfRangeOfMove = end;
+    const Step* intoResult = nullptr;
     const Reg result = Reg(GPRInfo::returnValueGPR);
     if (move->width != Width64 || !move->destination.isRegister())
         return nullptr;
     const Reg filled = move->destination.reg();
+    RELEASE_ASSERT(stepsOfBlock.terminator != UINT32_MAX);
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    for (const Step* next = move + 1; next < end; ++next) {
+    const Step* const endOfBlock = steps + stepsOfBlock.end;
+    const Step* const endOfEdgeMoves = steps + stepsOfBlock.endOfEdgeMoves;
+    const Step* const terminator = steps + stepsOfBlock.terminator;
+    for (const Step* next = move + 1;; ++next) {
+        if (next == end) {
+            if (end == endOfBlock && stepsOfBlock.beginOfEdgeMoves < stepsOfBlock.endOfEdgeMoves) {
+                next = steps + stepsOfBlock.beginOfEdgeMoves;
+                end = endOfEdgeMoves;
+            } else if (end == endOfBlock || end == endOfEdgeMoves) {
+                next = terminator;
+                end = terminator + 1;
+            } else
+                return nullptr;
+        }
         switch (next->kind) {
         case StepKind::Move:
             if (!next->sources[0].isRegister() || next->sources[0].reg() == filled)
                 return nullptr;
+            if (intoResult && next->sources[0].reg() == result)
+                return nullptr;
+            if (!intoResult && end == endOfRangeOfMove && next->width == Width64 && next->destination == Location::reg(result) && next->sources[0].reg() != result) {
+                intoResult = next;
+                continue;
+            }
             [[fallthrough]];
         case StepKind::Reload:
         case StepKind::Materialize:
             if (!next->destination.isRegister() || next->destination.reg() == filled || next->destination.reg() == result)
+                return nullptr;
+            if (intoResult && next->destination.reg() == intoResult->sources[0].reg())
                 return nullptr;
             continue;
         case StepKind::Execute: {
             if (next->operation->opcode() != Patch)
                 return nullptr;
             auto* patch = static_cast<PatchOperation*>(next->operation);
-            return patch->registerThatCalleeFillsOutOfResult() == filled ? patch : nullptr;
+            if (patch->registerThatCalleeFillsOutOfResult() != filled)
+                return nullptr;
+            if (patch->registerThatCalleeMovesIntoResult() != (intoResult ? intoResult->sources[0].reg() : Reg()))
+                return nullptr;
+            moveIntoResult = intoResult;
+            return patch;
         }
         case StepKind::Save:
+            if (!next->sources[0].isRegister() || next->sources[0].reg() == filled)
+                return nullptr;
+            if (intoResult && next->sources[0].reg() == result)
+                return nullptr;
+            continue;
         case StepKind::Swap:
         case StepKind::ClearSpill:
         case StepKind::KeepPointer:
@@ -733,7 +920,6 @@ static NEVER_INLINE PatchOperation* findCalleeThatDoesMoveOutOfResultItself(cons
         }
     }
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    return nullptr;
 }
 
 void Encoder::encodeSteps(uint32_t begin, uint32_t end)
@@ -744,6 +930,7 @@ void Encoder::encodeSteps(uint32_t begin, uint32_t end)
 
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     const Step* const endOfSteps = m_steps + end;
+    const Step* moveIntoResultLeftToCallee = nullptr;
     for (const Step* current = m_steps + begin; current < endOfSteps; ++current) {
         const Step& step = *current;
         if (m_notesRangesOfOrigins) [[unlikely]] {
@@ -781,8 +968,10 @@ void Encoder::encodeSteps(uint32_t begin, uint32_t end)
             continue;
         }
         case StepKind::Move:
+            if (current == moveIntoResultLeftToCallee)
+                continue;
             if (step.sources[0] == Location::reg(Reg(GPRInfo::returnValueGPR))) {
-                if (PatchOperation* callee = findCalleeThatDoesMoveOutOfResultItself(current, endOfSteps)) {
+                if (PatchOperation* callee = findCalleeThatDoesMoveOutOfResultItself(current, endOfSteps, m_steps, stepsOf(m_block), moveIntoResultLeftToCallee)) {
                     callee->setLeavesMoveOutOfResultToCallee(true);
                     continue;
                 }
@@ -826,7 +1015,7 @@ void Encoder::encodeExecute(const Step& step)
     encodeExecuteInline(step);
 }
 
-ALWAYS_INLINE void Encoder::encodeExecuteInline(const Step& step)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeExecuteInline(const Step& step)
 {
     ASSERT(step.kind == StepKind::Execute);
     Operation* operation = step.operation;
@@ -869,6 +1058,7 @@ ALWAYS_INLINE void Encoder::encodeExecuteInline(const Step& step)
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case Clz:
     case PopCount:
     case SExt8:
@@ -964,18 +1154,23 @@ ALWAYS_INLINE void Encoder::encodeExecuteInline(const Step& step)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+void Encoder::failBecauseSlotThatNoStepReadsIsRead(SpillIndex spill) const
+{
+    m_proc.fail(FailureKind::SpillSlotLacksItsValue, m_allocation.spills()[spill].value);
+}
+
 void Encoder::storeToSpill(const Operation* value)
 {
     SpillIndex spill = m_allocation.spillOf(value);
     ASSERT(spill != noSpill);
     Reg source = m_allocation.registerAtDefinitionOf(value);
-    if (!source || m_allocation.spills()[spill].isStoredAtHeadOfFramedPart || m_allocation.isWrittenByEdges(value) || setupHasPushed(spill))
+    if (!source || m_allocation.spills()[spill].isStoredAtHeadOfFramedPart || m_allocation.spills()[spill].isReadByNoStep || m_allocation.isWrittenByEdges(value) || setupHasPushed(spill))
         return;
 
     RELEASE_ASSERT(m_frameIsSetUp);
     ASSERT(m_allocation.spills()[spill].width == widthOf(value->type()));
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::StoreBehindDefinition));
-    MacroAssembler::Address address = addressOf(Location::spill(spill));
+    MacroAssembler::Address address = addressOf(Location::spill(spill), MemoryOfEncodedMove::IsWritten);
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     switch (value->type().kind()) {
     case Int32:
@@ -997,7 +1192,7 @@ void Encoder::storeToSpill(const Operation* value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& place)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& place)
 {
     for (Operation* phi : block->phis()) {
         if (m_allocation.isSpilled(phi) && !m_liveness.isDropped(phi))
@@ -1014,7 +1209,7 @@ void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& pl
     storeToSpill(last);
 }
 
-void Encoder::setUpFrame(const Block* block)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::setUpFrame(const Block* block)
 {
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::FrameSetup));
@@ -1023,7 +1218,7 @@ void Encoder::setUpFrame(const Block* block)
     noteFrameState(true);
 }
 
-void Encoder::leaveFrameIfSetUp()
+void Encoder::leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords)
 {
     if (!m_frameIsSetUp)
         return;
@@ -1033,11 +1228,14 @@ void Encoder::leaveFrameIfSetUp()
     Origin originOfUser = m_origin;
     uint32_t operationOfUser = m_operationOfOrigin;
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::FrameTeardown));
-    emitFrameTeardown(m_jit, m_frame);
+    if (registersPoppedOutOfWords.empty())
+        emitFrameTeardown(m_jit, m_frame);
+    else
+        emitTeardownOfFrameThatPopsWords(m_jit, m_frame, registersPoppedOutOfWords);
     noteOrigin(originOfUser, operationOfUser);
 }
 
-void Encoder::startOrEndFrameRange(bool isSetUp)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::startOrEndFrameRange(bool isSetUp)
 {
     ASSERT(m_frameRangeIsOpen != isSetUp);
     m_frameRangeIsOpen = isSetUp;

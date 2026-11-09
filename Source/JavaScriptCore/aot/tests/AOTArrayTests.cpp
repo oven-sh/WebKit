@@ -167,6 +167,44 @@ static void testProfileReviewInterval()
     }
 }
 
+static void testProfileSamplesWalkThroughTheResiduesOfTheInterval()
+{
+    ArrayAllocationProfile profile { };
+    profile.set(3, ContiguousShape);
+    for (unsigned reviews = 0; reviews < window; ++reviews) {
+        profile.reviews = reviews;
+        profile.startInterval();
+        uint32_t allocations = 0;
+        do {
+            profile.word -= ArrayAllocationProfile::oneAllocation;
+            ++allocations;
+        } while (!profile.isDueForReview());
+        AOT_TEST_CHECK(allocations == ArrayAllocationProfile::shortestInterval - reviews);
+    }
+}
+
+static void testProfileLearnsNothingFromListsThatAreStillEmpty()
+{
+    Realms realms;
+    ArrayAllocationProfile allEmpty { };
+    review(realms, allEmpty, ArrayWithContiguous, 0, window);
+    AOT_TEST_CHECK(!allEmpty.capacity() && hasNewWindow(allEmpty));
+
+    ArrayAllocationProfile oneFilled { };
+    review(realms, oneFilled, ArrayWithContiguous, 4);
+    review(realms, oneFilled, ArrayWithContiguous, 0, window - 1);
+    AOT_TEST_CHECK(!oneFilled.capacity() && hasNewWindow(oneFilled));
+
+    ArrayAllocationProfile someShort { };
+    review(realms, someShort, ArrayWithContiguous, 2);
+    review(realms, someShort, ArrayWithContiguous, 0, window - 1);
+    AOT_TEST_CHECK(someShort.capacity() == 3 && hasNewWindow(someShort));
+
+    ArrayAllocationProfile allShort { };
+    review(realms, allShort, ArrayWithContiguous, 1, window);
+    AOT_TEST_CHECK(allShort.capacity() == 1 && hasNewWindow(allShort));
+}
+
 static void testProfileReviewIntervalGrowsWhileNothingChanges()
 {
     Realms realms;
@@ -207,6 +245,42 @@ static void testProfileReviewIntervalGrowsWhileNothingChanges()
     AOT_TEST_CHECK(profile.capacity() == 1);
 }
 
+static JSArray* createListForAnyValue(Realms& realms, std::initializer_list<JSValue> values)
+{
+    JSArray* array = createArray(realms, ArrayWithContiguous, values.size());
+    unsigned position = 0;
+    for (JSValue value : values)
+        array->butterfly()->contiguous().at(array, position++).setWithoutWriteBarrier(value);
+    return array;
+}
+
+static void testProfileReadsContentsOfFirstListThatTakesAnyValue()
+{
+    Realms realms;
+    auto learnedFrom = [&](std::initializer_list<JSValue> values) {
+        ArrayAllocationProfile profile { };
+        reviewArrayAllocationProfile(profile, createListForAnyValue(realms, values), true);
+        return profile.shape();
+    };
+    AOT_TEST_CHECK(learnedFrom({ }) == Int32Shape);
+    AOT_TEST_CHECK(learnedFrom({ jsNumber(1), jsNumber(-2) }) == Int32Shape);
+    AOT_TEST_CHECK(learnedFrom({ jsNumber(1), JSValue(), jsNumber(2) }) == Int32Shape);
+    AOT_TEST_CHECK(learnedFrom({ jsNumber(1), jsNumber(2.5) }) == DoubleShape);
+    AOT_TEST_CHECK(learnedFrom({ jsNumber(-0.0) }) == DoubleShape);
+    AOT_TEST_CHECK(learnedFrom({ jsNumber(1.5), jsNaN() }) == ContiguousShape);
+    AOT_TEST_CHECK(learnedFrom({ jsNumber(1), jsUndefined() }) == ContiguousShape);
+    AOT_TEST_CHECK(learnedFrom({ jsNull() }) == ContiguousShape);
+
+    ArrayAllocationProfile notAsked { };
+    reviewArrayAllocationProfile(notAsked, createListForAnyValue(realms, { jsNumber(1) }));
+    AOT_TEST_CHECK(notAsked.shape() == ContiguousShape);
+
+    ArrayAllocationProfile hasLearned { };
+    review(realms, hasLearned, ArrayWithInt32, 2);
+    reviewArrayAllocationProfile(hasLearned, createListForAnyValue(realms, { jsNumber(1) }), true);
+    AOT_TEST_CHECK(hasLearned.shape() == ContiguousShape);
+}
+
 std::span<const NativeTest> arrayTests()
 {
     static constexpr NativeTest tests[] = {
@@ -214,7 +288,10 @@ std::span<const NativeTest> arrayTests()
         { "arrays/forms/store-without-conversion"_s, testFormsStoreWithoutConversion },
         { "arrays/profile/grows-with-the-third-longer-array"_s, testProfileGrowsWithTheThirdLongerArray },
         { "arrays/profile/review-interval"_s, testProfileReviewInterval },
+        { "arrays/profile/samples-walk-through-the-residues-of-the-interval"_s, testProfileSamplesWalkThroughTheResiduesOfTheInterval },
+        { "arrays/profile/learns-nothing-from-lists-that-are-still-empty"_s, testProfileLearnsNothingFromListsThatAreStillEmpty },
         { "arrays/profile/review-interval-grows-while-nothing-changes"_s, testProfileReviewIntervalGrowsWhileNothingChanges },
+        { "arrays/profile/reads-the-contents-of-the-first-list-that-takes-any-value"_s, testProfileReadsContentsOfFirstListThatTakesAnyValue },
     };
     return tests;
 }

@@ -5,11 +5,13 @@
 
 #include "config.h"
 #include "AOTMachineEncoder.h"
+#include "AOTSort.h"
 
 #if ENABLE(AOT)
 
 #include "AllowMacroScratchRegisterUsage.h"
 #include <algorithm>
+#include <bit>
 
 namespace JSC { namespace AOT { namespace Machine {
 
@@ -294,7 +296,7 @@ void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
             otherConstant = static_cast<int32_t>(test.right()->asInt());
     }
     bool storesSumAnew = test.isWidenedWhereTestFails && m_allocation.isStoredBehindDefinition(test.sum);
-    MacroAssembler::Address spillOfSum = storesSumAnew ? addressOf(Location::spill(m_allocation.spillOf(test.sum))) : MacroAssembler::Address(InvalidGPRReg, 0);
+    MacroAssembler::Address spillOfSum = storesSumAnew ? addressOf(Location::spill(m_allocation.spillOf(test.sum)), MemoryOfEncodedMove::IsWritten) : MacroAssembler::Address(InvalidGPRReg, 0);
 
     MacroAssembler::Jump overflowed = jumpOnOverflow(true);
     MacroAssembler::Jump liesBelowLeastResult;
@@ -371,10 +373,12 @@ static unsigned endOfDenseRunInEncodedSwitch(std::span<const int64_t> values, un
     return end;
 }
 
+enum class WayOfSwitchSegment : uint8_t { Search, Table, Bits };
+
 struct EncodedSwitchSegment {
     unsigned begin;
     unsigned end;
-    bool goesThroughTable;
+    WayOfSwitchSegment way;
 };
 
 // Upper segments are emitted last, so only the very last segment may fall through to the next block.
@@ -391,7 +395,11 @@ static void encodeSwitchSegments(Encoder& encoder, Block* block, GPRReg value, W
     }
 
     const EncodedSwitchSegment& segment = segments.front();
-    if (!segment.goesThroughTable) {
+    if (segment.way == WayOfSwitchSegment::Bits) {
+        encoder.encodeSwitchByBits(block, value, width, segment.begin, segment.end);
+        return;
+    }
+    if (segment.way == WayOfSwitchSegment::Search) {
         encoder.encodeBinarySearch(block, value, width, values.subspan(segment.begin, segment.end - segment.begin), segment.begin);
         return;
     }
@@ -425,25 +433,154 @@ void Encoder::encodeSwitch(Block* block, const Step& step)
 
     ArenaVector<EncodedSwitchSegment> segments;
     unsigned beginOfSearch = 0;
+    const Block* enteredOtherwise = blockEnteredThrough(block->successor(numberOfCases).block());
+    auto leadsToFewPlaces = [&](unsigned begin, unsigned end) {
+        Vector<const Block*, maxPlacesToldByBitsOfSwitchWindow> places;
+        for (unsigned place = begin; place < end; ++place) {
+            const Block* entered = blockEnteredThrough(block->successor(place).block());
+            if (entered == enteredOtherwise || places.contains(entered))
+                continue;
+            if (places.size() == maxPlacesToldByBitsOfSwitchWindow)
+                return false;
+            places.append(entered);
+        }
+        return true;
+    };
+    auto liesInOneWindow = [&](unsigned begin, unsigned last) {
+        return static_cast<uint64_t>(values[last]) - static_cast<uint64_t>(values[begin]) < valuesInSwitchWindow;
+    };
     if (scratchOfEncodedSwitch(*this, step) != InvalidGPRReg) {
+        bool isCutIntoWindows = leadsToFewPlaces(0, numberOfCases);
         for (unsigned begin = 0; begin < numberOfCases;) {
-            unsigned end = endOfDenseRunInEncodedSwitch(values, begin);
+            unsigned end = begin + 1;
+            if (isCutIntoWindows) {
+                while (end < numberOfCases && liesInOneWindow(begin, end))
+                    ++end;
+            } else
+                end = endOfDenseRunInEncodedSwitch(values, begin);
             if (end - begin < minCasesForJumpTable) {
                 ++begin;
                 continue;
             }
             if (beginOfSearch < begin)
-                segments.append(m_arena, EncodedSwitchSegment { beginOfSearch, begin, false });
-            segments.append(m_arena, EncodedSwitchSegment { begin, end, true });
+                segments.append(m_arena, EncodedSwitchSegment { beginOfSearch, begin, WayOfSwitchSegment::Search });
+            bool goesByBits = isCutIntoWindows || (liesInOneWindow(begin, end - 1) && leadsToFewPlaces(begin, end));
+            segments.append(m_arena, EncodedSwitchSegment { begin, end, goesByBits ? WayOfSwitchSegment::Bits : WayOfSwitchSegment::Table });
             begin = end;
             beginOfSearch = end;
         }
     }
     if (beginOfSearch < numberOfCases)
-        segments.append(m_arena, EncodedSwitchSegment { beginOfSearch, numberOfCases, false });
+        segments.append(m_arena, EncodedSwitchSegment { beginOfSearch, numberOfCases, WayOfSwitchSegment::Search });
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     encodeSwitchSegments(*this, block, value, width, segments.span());
+}
+
+void Encoder::encodeSwitchByBits(Block* block, GPRReg value, Width width, unsigned begin, unsigned end)
+{
+    std::span<const int64_t> values = block->last()->switchData().caseValues;
+    const Block* otherwise = block->successor(block->numSuccessors() - 1).block();
+    const Block* enteredOtherwise = blockEnteredThrough(otherwise);
+    bool isEmittedLast = end == values.size();
+    int64_t first = values[begin];
+    uint64_t greatest = static_cast<uint64_t>(values[end - 1]) - static_cast<uint64_t>(first);
+    RELEASE_ASSERT(begin < end && greatest < valuesInSwitchWindow);
+    static_assert(valuesInSwitchWindow == 64);
+
+    struct PlaceToldByBits {
+        const Block* target;
+        uint64_t mask;
+    };
+    Vector<PlaceToldByBits, maxPlacesToldByBitsOfSwitchWindow> places;
+    uint64_t listed = 0;
+    for (unsigned place = begin; place < end; ++place) {
+        const Block* target = block->successor(place).block();
+        if (blockEnteredThrough(target) == enteredOtherwise)
+            continue;
+        size_t found = places.findIf([&](const PlaceToldByBits& known) {
+            return blockEnteredThrough(known.target) == blockEnteredThrough(target);
+        });
+        if (found == notFound) {
+            found = places.size();
+            places.append(PlaceToldByBits { target, 0 });
+        }
+        uint64_t bit = uint64_t { 1 } << (static_cast<uint64_t>(values[place]) - static_cast<uint64_t>(first));
+        places[found].mask |= bit;
+        listed |= bit;
+    }
+    RELEASE_ASSERT(places.size() <= maxPlacesToldByBitsOfSwitchWindow);
+    auto goOnOtherwise = [&] {
+        if (!isEmittedLast || !fallsThroughTo(block, otherwise))
+            jumpTo(otherwise);
+    };
+    if (places.isEmpty()) {
+        goOnOtherwise();
+        return;
+    }
+    ++m_proc.m_numberOfSwitchWindowsToldByBits;
+    AOT::stableSort(places, [](const PlaceToldByBits& a, const PlaceToldByBits& b) {
+        return std::popcount(a.mask) > std::popcount(b.mask);
+    });
+    bool hasNoGap = listed == (greatest == valuesInSwitchWindow - 1 ? ~uint64_t { 0 } : (uint64_t { 1 } << (greatest + 1)) - 1);
+    if (!hasNoGap && first > 0 && static_cast<uint64_t>(first) + greatest < valuesInSwitchWindow) {
+        for (PlaceToldByBits& place : places)
+            place.mask <<= first;
+        greatest += static_cast<uint64_t>(first);
+        first = 0;
+    }
+
+    AllowMacroScratchRegisterUsage allowScratch(m_jit);
+    GPRReg index = value;
+    if (first) {
+        index = scratchOfEncodedSwitch(*this, m_allocation.step(m_allocation.stepsOf(block).terminator));
+        RELEASE_ASSERT(index != InvalidGPRReg && index != value && index != scratchGPR);
+        if (width == Width32)
+            m_jit.add32(MacroAssembler::TrustedImm32(static_cast<int32_t>(0u - static_cast<uint32_t>(first))), value, index);
+        else
+            m_jit.add64(MacroAssembler::TrustedImm64(static_cast<int64_t>(uint64_t { 0 } - static_cast<uint64_t>(first))), value, index);
+    }
+    auto branchOnWindow = [&](MacroAssembler::RelationalCondition condition) {
+        MacroAssembler::TrustedImm32 last(static_cast<int32_t>(greatest));
+        return width == Width32 ? m_jit.branch32(condition, index, last) : m_jit.branch64(condition, index, last);
+    };
+    if (hasNoGap && places.size() == 1) {
+        const Block* target = places[0].target;
+        if (isEmittedLast && fallsThroughTo(block, target)) {
+            addPendingJump(branchOnWindow(MacroAssembler::Above), otherwise);
+            return;
+        }
+        addPendingJump(branchOnWindow(MacroAssembler::BelowOrEqual), target);
+        goOnOtherwise();
+        return;
+    }
+    addPendingJump(branchOnWindow(MacroAssembler::Above), otherwise);
+
+    GPRReg mask = m_jit.scratchRegister();
+    auto branchOnBit = [&](MacroAssembler::ResultCondition condition) {
+#if CPU(X86_64)
+        return m_jit.branchTestBit64(condition, mask, index);
+#else
+        m_jit.urshift64(mask, index, mask);
+        return m_jit.branchTest64(condition, mask, MacroAssembler::TrustedImm32(1));
+#endif
+    };
+    for (size_t place = 0; place < places.size(); ++place) {
+        const Block* target = places[place].target;
+        bool isLastPlace = place + 1 == places.size();
+        if (isLastPlace && hasNoGap) {
+            if (!isEmittedLast || !fallsThroughTo(block, target))
+                jumpTo(target);
+            return;
+        }
+        m_jit.move(MacroAssembler::TrustedImm64(static_cast<int64_t>(places[place].mask)), mask);
+        if (isLastPlace && isEmittedLast && fallsThroughTo(block, target)) {
+            addPendingJump(branchOnBit(MacroAssembler::Zero), otherwise);
+            return;
+        }
+        addPendingJump(branchOnBit(MacroAssembler::NonZero), target);
+    }
+    goOnOtherwise();
 }
 
 void Encoder::encodeSwitchThroughTable(Block* block, GPRReg value, int64_t firstValue, uint64_t numberOfEntries)
@@ -473,9 +610,13 @@ void Encoder::encodeSwitchThroughTable(Block* block, GPRReg value, int64_t first
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     MacroAssembler::TrustedImm32 endOfTable(static_cast<int32_t>(numberOfEntries));
+    GPRReg place = index;
     if (width == Width32) {
         m_jit.add32(MacroAssembler::TrustedImm32(static_cast<int32_t>(0u - static_cast<uint32_t>(firstValue))), value, index);
         addPendingJump(m_jit.branch32(MacroAssembler::AboveOrEqual, index, endOfTable), otherwise);
+    } else if (!firstValue) {
+        place = value;
+        addPendingJump(m_jit.branch64(MacroAssembler::AboveOrEqual, value, endOfTable), otherwise);
     } else {
         m_jit.add64(MacroAssembler::TrustedImm64(static_cast<int64_t>(uint64_t { 0 } - static_cast<uint64_t>(firstValue))), value, index);
         addPendingJump(m_jit.branch64(MacroAssembler::AboveOrEqual, index, endOfTable), otherwise);
@@ -483,7 +624,7 @@ void Encoder::encodeSwitchThroughTable(Block* block, GPRReg value, int64_t first
 
     GPRReg table = m_jit.scratchRegister();
     m_relocations.moveAddress(CodeSymbol { SymbolSpace::JumpTable, tableIndex }, table, PCRelativeReach::Far);
-    m_jit.load32SignedExtendTo64(MacroAssembler::BaseIndex(table, index, MacroAssembler::TimesFour), index);
+    m_jit.load32SignedExtendTo64(MacroAssembler::BaseIndex(table, place, MacroAssembler::TimesFour), index);
     m_jit.add64(index, table);
     m_jit.farJump(table, NoPtrTag);
 }

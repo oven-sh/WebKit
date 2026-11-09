@@ -14,7 +14,13 @@ namespace JSC { namespace AOT { namespace Typed {
 void findGrowingTexts(Walker&, BlockID inputHead, const LoopPreview&, Vector<GrowingText, 2>&);
 
 bool mayKeepTextsInStringBuilders(const Walker&);
-bool isTextInStringBuilder(const Walker&, Reference);
+ALWAYS_INLINE bool isTextInStringBuilder(const Walker& walker, Reference reference)
+{
+    if (!reference.isValue())
+        return false;
+    TypeID type = walker.code().at(reference.id()).type;
+    return type && !holdsOnlyPrimitives(type) && walker.types().at(type).isOpaque(OpaqueKind::StringBuilder);
+}
 TextInStringBuilder* findTextNamedBy(Walker&, ValueID input);
 bool isNameOfTextInStringBuilder(Walker&, ValueID input);
 
@@ -45,9 +51,14 @@ bool appendRowToTextInStringBuilder(Walker&, const BodyValue& join, Vector<Refer
 
 void appendPartsToStringBuilder(Walker&, TextInStringBuilder&, Reference name, std::span<const Reference> parts, Origin);
 bool partHasFormOfItsOwnInStringBuilder(const Type&);
+bool handlerInForceReadsTextInStringBuilder(Walker&, const TextInStringBuilder&);
 StringID textOfKnownPartOfStringBuilder(Walker&, Reference part);
 
 bool edgeLeavesLoopOfTextInStringBuilder(Walker&, BlockID to);
+bool edgeBeginsTextAnewInStringBuilder(Walker&, BlockID to, std::span<const Reference> arguments);
+void beginTextsAnewInStringBuildersOnEdge(Walker&, BlockID to, Vector<Reference, 8>& arguments);
+bool edgeHandsTextInStringBuilderToReader(Walker&, BlockID to, std::span<const Reference> writtenArguments);
+void handStringsOfTextsInStringBuildersToReadersOnEdge(Walker&, BlockID to, std::span<Reference> writtenArguments);
 struct TextsTakenOutOnEdge {
     Vector<std::pair<Reference, Reference>, 2> strings;
     Vector<ValueID, 2> names;
@@ -71,7 +82,7 @@ void becomeOperationOfStringBuilderInFrame(Walker&, TextInStringBuilder&, Refere
 Reference finishTextInFrame(Walker&, Reference name, Origin);
 bool appendPieceWithoutCutting(Walker&, TextInStringBuilder&, Reference name, Reference part, Origin);
 bool appendResultOfBuiltinStraight(Walker&, TextInStringBuilder&, Reference name, Reference part, Origin);
-bool takePartsOfJoinMadeForOneReader(Walker&, ValueID operand, Vector<Reference, 8>& parts);
+bool takePartsOfJoinMadeForOneReader(Walker&, ValueID operand, Vector<Reference, 8>& parts, Vector<ValueID, 2>* joinsThatFailWhereReaderFails);
 
 } } } // namespace JSC::AOT::Typed
 

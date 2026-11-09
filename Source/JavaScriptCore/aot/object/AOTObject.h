@@ -195,6 +195,7 @@ public:
     };
     void moveFieldToExtraProperties(VM&, const FieldData&, LeavingProperty, SlotExitReason);
     bool tryRepeat(VM&, const FieldExit&, JSValue);
+    bool tryRepeat(VM&, const FieldReturn&, JSValue);
     bool tryRepeat(VM&, const AddedExtraProperty&, JSValue);
     bool tryDefineAsOnTheLastObject(VM&, PropertyName, const PropertyDescriptor&);
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
@@ -222,7 +223,8 @@ public:
         LeavingProperty property;
     };
     ExtraPropertyFound findExtraProperty(VM&, PropertyName) const;
-    bool tryAddAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    enum class MemoryOfAddedNames : bool { IsAsked, WasAskedInVain };
+    bool tryAddAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes, MemoryOfAddedNames = MemoryOfAddedNames::IsAsked);
     void replaceExtraProperty(VM&, PropertyName, LeavingProperty);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
@@ -267,6 +269,7 @@ public:
     };
     ExtraPropertyStoreResult tryStoreExtraProperty(VM&, PropertyName, JSValue, OptionSet<ExtraPropertyStoreFlag>);
     void willAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
+    [[nodiscard]] bool mayAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
 
     std::span<const uint16_t> keyOrder(State&) const;
     void forEachKeyInOrder(State& state, const Invocable<void(uint16_t)> auto& functor) const
@@ -294,6 +297,8 @@ public:
     std::optional<uint32_t> numberOfExtraKeysByStructure() const;
     void willCreateField(State&, const FieldData&);
     void didCreateField(State&, const FieldData&, bool withStorage = true);
+    bool tryRepeatCreationAtSlot(State&, uint32_t slotKey);
+    void rememberCreationAtSlot(State&, StructureID before, uint32_t orderAndCountBefore, uint32_t slotKey) const;
     void setKeyOrder(VM&, State&, std::span<const uint16_t> keys);
     bool trySetNumberedKeyOrder(VM&, State&, std::span<const uint16_t> keys);
     struct PlaceOfExtraKey {

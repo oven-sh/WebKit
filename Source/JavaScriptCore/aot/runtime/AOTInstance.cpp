@@ -17,6 +17,7 @@
 #include "AOTCallSiteCache.h"
 #include "AOTCellFormat.h"
 #include "AOTChainDependents.h"
+#include "AOTCheckedSpan.h"
 #include "AOTClassGuards.h"
 #include "AOTClosure.h"
 #include "AOTCompactTable.h"
@@ -66,6 +67,7 @@
 #include "DeferGC.h"
 #include "ErrorConstructor.h"
 #include "FastMarkAppender.h"
+#include "GlobalObjectMethodTable.h"
 #include "HeapAnalyzer.h"
 #include "HeapIterationScope.h"
 #include "IntlObject.h"
@@ -81,11 +83,13 @@
 #include "LocalAllocator.h"
 #include "MarkedBlockCage.h"
 #include "NativeExecutable.h"
+#include "NumberConstructor.h"
 #include "ObjectPrototype.h"
 #include "Opcode.h"
 #include "Options.h"
 #include "ReservedRangeHeap.h"
 #include "SlotVisitorInlines.h"
+#include "StringConstructor.h"
 #include "SubspaceInlines.h"
 #include "Symbol.h"
 #include "VM.h"
@@ -162,11 +166,17 @@ static void fillMethodTable(Instance& instance, const Image& image)
     std::span<uint32_t> methodTable = instance.methodTable();
     if (methodTable.empty())
         return;
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(LINUX)
     std::span<const uint8_t> pagesOfImage { reinterpret_cast<const uint8_t*>(image.methodTable().data()), roundUpToMultipleOf(pageSize(), methodTable.size_bytes()) };
     if (mapPrivateCloneOfImagePages(image, pagesOfImage, methodTable.data()))
         return;
 #endif
+    volatile uint32_t* to = methodTable.data();
+    const volatile uint32_t* from = image.methodTable().data();
+    for (size_t index = 0; index < methodTable.size(); index += pageSize() / sizeof(uint32_t)) {
+        to[index] = 0;
+        static_cast<void>(from[index]);
+    }
     memcpySpan(methodTable, image.methodTable());
     OSAllocator::protect(methodTable.data(), InstanceLayout::bytesReservedForMethodTable(instance.tables().instanceSizes), true, false);
 }
@@ -242,6 +252,7 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image, Progr
     words.stringConstants = image.section<uint32_t>(ImageSection::StringConstants).data();
     static_assert(!(InstanceLayout::largestPageSize % InstanceLayout::sizeOfIndexOfSiteAnswers) && !(InstanceLayout::distanceToPageEdge % InstanceLayout::sizeOfIndexOfSiteAnswers));
     static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers);
+    RELEASE_ASSERT(InstanceLayout::offsetOfIndexOfSiteAnswers(image.programTables().instanceSizes, image.programTables().instanceSizes.numberOfSiteCaches) <= INT32_MAX);
     words.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(image.section<uint16_t>(ImageSection::NamesOfSites).data()) - InstanceLayout::offsetOfIndicesOfSiteAnswers(image.programTables().instanceSizes);
     words.listedStrings = image.section<uint32_t>(ImageSection::LongStrings).data();
     words.text = image.section<uint8_t>(ImageSection::Text).data();
@@ -317,6 +328,7 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     words.boundFunctionExecutable = vm.getBoundFunction(targetIsJSFunction, SourceTaintedOrigin::Untainted);
     words.emptyExtraPropertiesStructure = JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
     words.extraPropertiesWithElementsStructure = Structure::nonPropertyTransition(vm, words.emptyExtraPropertiesStructure, TransitionKind::AllocateContiguous, nullptr);
+    words.headerOfExtraPropertiesWithElements = cellHeaderFor(words.extraPropertiesWithElementsStructure);
     words.boundFunctionClassInfo = JSBoundFunction::info();
     words.objectPrototype = realm->objectPrototype();
     words.functionPrototypeCall = realm->linkTimeConstant(LinkTimeConstant::callFunction);
@@ -475,6 +487,8 @@ Instance* Instance::create(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
     RELEASE_ASSERT(vm.hasCompiledCode());
+    if (const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost)
+        vm.aotState().image->setOpenCompressedText(host->openCompressedText);
     takeFaultsOfThisThreadOnAnotherStack();
     DeferGCForAWhile deferGC(vm);
     destroyDeadInstances(vm);
@@ -500,12 +514,10 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
-    instance->state->caches->addClearedEachCollection("places filed from slots"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlots));
-    instance->state->caches->addClearedEachCollection("places filed from slots and cleared"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlotsAndCleared));
+    instance->state->caches->addClearedEachCollection("places hold copies of slots"_s, asMutableByteSpan(instance->propertyCaches.placesHoldCopiesOfSlots));
     instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()));
     instance->state->caches->addClearedEachCollection("access table"_s, asMutableByteSpan(accessTableOf(*instance, *instance->program)));
     instance->state->caches->addClearedEachCollection("keys of the access table that depend on chains"_s, asMutableByteSpan(instance->propertyCaches.accessTable.numberOfKeysThatDependOnChains));
-    instance->state->caches->addClearedEachCollection("access table holds stores to unwatched structures"_s, asMutableByteSpan(instance->propertyCaches.accessTable.holdsStoresToUnwatchedStructures));
     fillInstanceClassInfos(*instance);
     initializeRuntimeWords(*instance);
 
@@ -624,6 +636,7 @@ static size_t arenaCapacity(const ProgramTables& tables)
         + sizeOfZeroedTable(tables.firstEnvironmentShape, sizeof(uint32_t))
         + sizeOfZeroedTable(tables.allocations().size() + 1, sizeof(AllocationSiteRecord) + sizeof(int32_t))
         + sizeOfZeroedTable(tables.numberOfClasses(), sizeof(JSCell*))
+        + sizeOfZeroedTable(tables.sizeOfStructuresOfHeirs, sizeof(uint8_t))
         + sizeOfZeroedTable(tables.numberOfClosureCells, sizeOfCellReference)
         + sizeOfZeroedTable(tables.keyCellIdentifiers().size(), sizeOfCellReference)
         + sizeOfZeroedTable(tables.bigIntConstants().size(), sizeof(JSCell*))
@@ -824,6 +837,8 @@ static void fillThunkAndPointers(void** entries, const Image& image)
     set(Entry::NonConstructorHostFunction, std::bit_cast<void*>(&callHostFunctionAsConstructor));
     set(Entry::ErrorConstructorClassInfo, const_cast<ClassInfo*>(ErrorConstructor::info()));
     set(Entry::BooleanConstructorClassInfo, const_cast<ClassInfo*>(BooleanConstructor::info()));
+    set(Entry::NumberConstructorClassInfo, const_cast<ClassInfo*>(NumberConstructor::info()));
+    set(Entry::StringConstructorClassInfo, const_cast<ClassInfo*>(StringConstructor::info()));
     set(Entry::GeneratorClassInfo, const_cast<ClassInfo*>(Generator::info()));
     set(Entry::AsyncGeneratorClassInfo, const_cast<ClassInfo*>(JSAsyncGenerator::info()));
 #if ENABLE(WEBASSEMBLY)
@@ -1002,6 +1017,7 @@ void VMState::attachImage(VM& vm)
 #endif
     regExpLiterals = makeUnique<RegExpLiterals>(*caches);
     regExpMatchOutput = makeUniqueArray<int>(sizeOfRegExpMatchOutput);
+    this->sizeOfRegExpMatchOutput = sizeOfRegExpMatchOutput;
 
     moduleRecordStructure.setWithoutWriteBarrier(ModuleRecord::createStructure(vm, nullptr, jsNull()));
     stringBuilderStorageStructure.setWithoutWriteBarrier(StringBuilderStorage::createStructure(vm, nullptr, jsNull()));
@@ -1034,6 +1050,7 @@ void VMState::releaseImage(VM& vm)
 
     regExpLiterals = nullptr;
     regExpMatchOutput = nullptr;
+    sizeOfRegExpMatchOutput = 0;
     propertyCaches = nullptr;
     functionTables = nullptr;
     cyclesOfImports = nullptr;
@@ -1132,7 +1149,6 @@ static thread_local size_t t_sizeOfPagesOfThread;
 static thread_local bool t_isStarting;
 static std::atomic<unsigned> s_numberOfThreadsStarting;
 #if ENABLE(AOT_GUARDED_PAGES)
-// Of the threads that are starting, those whose VM has not mapped its caches of properties, by far the largest of its tables.
 static thread_local bool t_hasNoPropertyCaches;
 static std::atomic<unsigned> s_numberOfThreadsWithoutPropertyCaches;
 
@@ -1198,9 +1214,7 @@ static void* tryReservePagesForTables(const Image& image, unsigned numberOfThrea
     if (!MarkedBlockCage::tryEnsureRoomForNewVMs(numberOfThreads))
         return nullptr;
 #if ENABLE(AOT_GUARDED_PAGES)
-    // Each table gets pages at an address of its own when its VM is made, so none are reserved here: there must be room for every thread that is starting.
     ++s_numberOfThreadsWithoutPropertyCaches;
-    // The count is read in front of the room: a thread that maps its caches in between is counted twice, never not at all.
     size_t needed = sizeOfPagesThatStartingThreadsWillMap(image, numberOfThreads) + sizeToLeaveFree;
     if (addressSpaceLeft() >= needed)
         return &s_numberOfThreadsStarting;
@@ -1520,6 +1534,11 @@ void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue va
     write(instance, slot, value);
 }
 
+void ProgramStatics::emptyVariableWhoseValueHasMoved(Instance& instance, SlotData slot)
+{
+    write(instance, slot, JSValue());
+}
+
 void ProgramStatics::write(Instance& instance, SlotData slot, JSValue value)
 {
     SlotRepresentation representation = slot.representation();
@@ -1609,6 +1628,7 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
 {
     if (m_tables.namedVariables().empty())
         return;
+    m_scopesOfClosures.variablesShown.clear();
     if (m_firstNamedVariablesOfModules.isEmpty()) {
         m_placesOfModulesOfClosureNumbers.fill(UINT32_MAX, m_tables.closureFunctions.end - m_tables.closureFunctions.first);
         bool endsWhereModuleEnds = forEachNamedVariable(m_tables.namedVariables(), [&](uint32_t module, size_t) {
@@ -1617,7 +1637,7 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
         }, [&](const VariableData& variable) {
             m_namedVariables.append(variable);
         }, [&](uint32_t first, uint32_t length) {
-            std::ranges::fill(m_placesOfModulesOfClosureNumbers.mutableSpan().subspan(first, length), static_cast<uint32_t>(m_modulesInHeapSnapshots.size() - 1));
+            std::ranges::fill(checkedSubspan(m_placesOfModulesOfClosureNumbers.mutableSpan(), first, length), static_cast<uint32_t>(m_modulesInHeapSnapshots.size() - 1));
         });
         RELEASE_ASSERT(endsWhereModuleEnds);
         m_firstNamedVariablesOfModules.append(static_cast<uint32_t>(m_namedVariables.size()));
@@ -1670,8 +1690,10 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
 
 void ProgramStatics::ScopesOfClosures::clear()
 {
-    if (!vm->isAnalyzingHeap())
-        list.clear();
+    if (vm->isAnalyzingHeap())
+        return;
+    list.clear();
+    variablesShown.clear();
 }
 
 JSCell* ProgramStatics::scopeInHeapSnapshotOf(JSCell* closure) const
@@ -1689,6 +1711,19 @@ JSCell* ProgramStatics::environmentOfModuleThatDefines(uint32_t closureNumber) c
     return place < m_environmentsOfModules.size() ? m_environmentsOfModules[place] : nullptr;
 }
 
+JSCell* ProgramStatics::environmentOfModule(uint32_t module) const
+{
+    std::span<const uint32_t> modules = m_modulesInHeapSnapshots.span();
+    size_t place = std::ranges::lower_bound(modules, module) - modules.begin();
+    return place < modules.size() && modules[place] == module && place < m_environmentsOfModules.size() ? m_environmentsOfModules[place] : nullptr;
+}
+
+void ProgramStatics::analyzeVariableOfModule(JSCell* standIn, JSCell* held, UniquedStringImpl* name, HeapAnalyzer& analyzer) const
+{
+    if (m_scopesOfClosures.variablesShown.add({ standIn, held, name }).isNewEntry)
+        analyzer.analyzeVariableNameEdge(standIn, held, name);
+}
+
 void ProgramStatics::analyzeVariablesOfModule(JSCell* standIn, uint32_t module, HeapAnalyzer& analyzer) const
 {
     analyzer.analyzeEdge(m_instance.globalObject->moduleLoader(), standIn, RootMarkReason::None);
@@ -1697,7 +1732,7 @@ void ProgramStatics::analyzeVariablesOfModule(JSCell* standIn, uint32_t module, 
         JSCell* held = cellIn(variable.slot);
         UniquedStringImpl* name = held ? identifiers.nameInHeapSnapshots(&variable) : nullptr;
         if (name)
-            analyzer.analyzeVariableNameEdge(standIn, held, name);
+            analyzeVariableOfModule(standIn, held, name, analyzer);
     }
 }
 

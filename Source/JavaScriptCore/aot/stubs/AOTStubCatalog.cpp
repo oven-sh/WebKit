@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStubAssembler.h"
@@ -240,8 +241,6 @@ const StubCatalog::Node& StubCatalog::closedNodeAt(unsigned index) const
     return *m_nodes[index];
 }
 
-#if ASSERT_ENABLED
-
 template<typename... Description>
 static void reportFalseStubDeclaration(StubKey body, const Description&... description)
 {
@@ -258,6 +257,8 @@ static void reportFalseStubDeclaration(StubKey body, const Description&... descr
     out.println(" "_s, description...);
 }
 
+#if ASSERT_ENABLED
+
 static bool stubRecordingsGiveSameAnswers(const StubRecording& first, const StubRecording& second)
 {
     return first.clobberedInline == second.clobberedInline
@@ -268,6 +269,8 @@ static bool stubRecordingsGiveSameAnswers(const StubRecording& first, const Stub
         && first.references == second.references
         && first.operationsCalled == second.operationsCalled;
 }
+
+#endif // ASSERT_ENABLED
 
 void StubCatalog::checkDeclarations(std::span<Node* const> nodes)
 {
@@ -299,6 +302,7 @@ void StubCatalog::checkDeclarations(std::span<Node* const> nodes)
             break;
         }
 
+#if ASSERT_ENABLED
         switch (descriptor.clobbers) {
         case StubClobbers::ClobbersLikeCall:
             break;
@@ -317,13 +321,12 @@ void StubCatalog::checkDeclarations(std::span<Node* const> nodes)
 
         if (descriptor.ownEffects.isDeclared && isStubEnteredWithCallConvention(node.recording))
             report(body, "declares its own effects, but is entered with the call convention"_s);
+#endif
     }
 
     if (!allDeclarationsHold)
         CRASH();
 }
-
-#endif // ASSERT_ENABLED
 
 NEVER_INLINE void StubCatalog::generateAndClose(unsigned first) const
 {
@@ -350,6 +353,9 @@ NEVER_INLINE void StubCatalog::generateAndClose(unsigned first) const
     for (const Node* node : addedNodes) {
         StubKey body = node->recording.body;
         RELEASE_ASSERT(!isOperationCallHead(body) || node->effects.writes.isSubsetOf(AOT::effectsOf(entryAtOffset(*body.immediate())).writes));
+        const StubSignature signature = signatureOf(body);
+        if (Reg filled = signature.filledOutOfResultInFrontOfBody; filled && !signature.usesCallConvention && !std::ranges::contains(std::span(signature.operands).first(signature.numberOfOperands), filled))
+            RELEASE_ASSERT(!node->clobbered.contains(filled, IgnoreVectors));
         for (const StubReference& reference : node->recording.references) {
             if (reference.kind != StubReference::Kind::ReturnedAddress)
                 continue;
@@ -361,8 +367,8 @@ NEVER_INLINE void StubCatalog::generateAndClose(unsigned first) const
         }
     }
 
-#if ASSERT_ENABLED
     checkDeclarations(addedNodes.span());
+#if ASSERT_ENABLED
     StubOptions optionsWithOtherFieldTable = m_options;
     optionsWithOtherFieldTable.maxNameInFieldTable = m_options.maxNameInFieldTable ? 0 : UINT16_MAX;
     StubAssembler jitWithOtherFieldTable(optionsWithOtherFieldTable, *this);
@@ -396,7 +402,7 @@ const StubCatalog::Node& StubCatalog::nodeOf(StubKey body) const
     return closedNodeAt(findIndexInStubCatalog(m_nodeOfBody, body));
 }
 
-const StubCatalog::Answer* StubCatalog::tryFindOwnAnswer(StubKey key) const
+ALWAYS_INLINE_INTO_OTHER_FILES const StubCatalog::Answer* StubCatalog::tryFindOwnAnswer(StubKey key) const
 {
     if (!key.immediate()) {
         auto place = m_answerOfKeyWithoutImmediate.find(key.bits());

@@ -12,10 +12,12 @@
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
+#include "AOTOperandKinds.h"
 #include "AOTPlan.h"
 #include "AOTRepresentationRules.h"
 #include "AOTResultRules.h"
 #include "AOTWalkListReadsInLoops.h"
+#include "AOTWalkStrings.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/IterationStatus.h>
@@ -23,6 +25,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr AbstractHeapSet heapsWrittenOnceForLoopInvariants { AbstractHeap::ShapeWords };
+
+static constexpr OpcodeSet answeredByTextAloneForLoopInvariants { Opcode::StringEqualsLiteral, Opcode::ValueEqualsLiteral };
 
 static constexpr OpcodeSet readsKeptByStateInLoopInvariants { Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
 
@@ -33,6 +37,11 @@ static bool findsSameInEveryTurnForLoopInvariants(const Program& program, const 
         return false;
     Effects effects = declaredEffectsOfOperation(program, opcode, operation);
     return effects.isUnobservable() && !effects.reads.overlaps(effectsOfLoop.writes);
+}
+
+static bool readsFieldOfScopeThatTurnsStoreForLoopInvariants(const BodyValue& operation, const LoopPreview& preview)
+{
+    return operation.opcode() == Opcode::GetEnvironmentField && std::ranges::binary_search(preview.fieldsOfScopesThatTurnsStore, FieldReference { operation.layout(), operation.field() });
 }
 
 void hoistInvariants(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering)
@@ -52,7 +61,7 @@ void hoistInvariants(Walker& walker, BlockID inputHead, const LoopPreview& previ
         operation.forEachOperand([&](ValueID operand, uint32_t) {
             takesOnlyWhatStandsInFront &= operand.index() < head.firstParameter().index() || hoisted.contains(operand);
         });
-        if (takesOnlyWhatStandsInFront && findsSameInEveryTurnForLoopInvariants(walker.program(), operation, preview.effects)) {
+        if (takesOnlyWhatStandsInFront && !readsFieldOfScopeThatTurnsStoreForLoopInvariants(operation, preview) && findsSameInEveryTurnForLoopInvariants(walker.program(), operation, preview.effects)) {
             walker.walkStretch(inputHead, place, place + 1);
             hoisted.append(operation.id());
             continue;
@@ -66,7 +75,7 @@ static constexpr OpcodeSet readsByNameForLoopInvariants { Opcode::PropGet, Opcod
 static constexpr OpcodeSet storesByNameForLoopInvariants { Opcode::PropSet, Opcode::PropDefine };
 static constexpr OpcodeSet accessesByKeyForLoopInvariants { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
 
-std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& operation, const TypesOfInputs& types, FunctionID* halfRunBehindLooks)
+std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& operation, const TypesOfInputs& types, FunctionID* halfRunBehindLooks, bool sitesMayAnswer)
 {
     Opcode opcode = operation.opcode();
     bool isByKey = accessesByKeyForLoopInvariants.contains(opcode);
@@ -75,9 +84,10 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
 
     walker.takeFormAskedAhead();
     TypedForm typedForm = typedFormOf(walker, operation, types);
+    if (typedForm == TypedForm::None && sitesMayAnswer && walker.looksTakeFormsBehindLooksAsBuilt() && siteMayAnswerReadWithoutOtherCode(walker, operation))
+        return Effects::ofReadByNameThatRunsNoCode();
     bool isBuiltBehindLooks = !isByKey && walker.looksTakeFormsBehindLooksAsBuilt() && typedForm != TypedForm::None && typedForm != TypedForm::BuiltAsCall && typedForm != TypedForm::BuiltOnObjectAsMade;
-    bool isFoundAbovePrimitive = typedForm == TypedForm::BuiltOnObjectAsMade && walker.looksTakeFormsBehindLooksAsBuilt()
-        && (!walker.types().at(types(operation.objectOperand())).hasObjects() || findMemberThatGuessAsksByItsByte(walker, operation, types(operation.objectOperand())));
+    bool isFoundAbovePrimitive = typedForm == TypedForm::BuiltOnObjectAsMade && walker.looksTakeFormsBehindLooksAsBuilt();
     if (typedForm != TypedForm::Built && !isBuiltBehindLooks && !isFoundAbovePrimitive && !(typedForm == TypedForm::BuiltOnObjectAsMade && readsLengthOfViewTestedInFrontOfLoop(walker, operation)))
         return std::nullopt;
     Walker::FormAskedAhead form = walker.takeFormAskedAhead();
@@ -89,6 +99,19 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
 
     if (isByKey)
         return form.level == KnowledgeLevel::Proven ? std::optional<Effects>(declaredBoundOf(form.opcode)) : std::nullopt;
+    TypeID typeOfReceiver = opcode == Opcode::PropGet || opcode == Opcode::PropSet ? types(operation.objectOperand()) : TypeID();
+    if (LayoutID heir = typeOfReceiver ? layoutKnownByStructureOfClass(walker, walker.types().withoutNullish(typeOfReceiver)) : LayoutID(); heir && findField(walker.program(), heir, operation.key())) {
+        bool readsField = opcode == Opcode::PropGet && typeFoundBehindLooks(walker, operation, walker.types().withoutNullish(typeOfReceiver));
+        bool storesIntoField = opcode == Opcode::PropSet && typedForm == TypedForm::BuiltBehindLookAtCell;
+        if (storesIntoField || readsField) {
+            Opcode access = storesIntoField ? Opcode::PutPropertyOfHeir : Opcode::GetPropertyOfHeir;
+            Effects ofAccess = declaredBoundOf(access);
+            nameFieldInEffectsOfAccessToHeir(walker.program(), access, operation.key(), ofAccess);
+            Effects effects = declaredBoundOf(Opcode::HasStructureOfClass);
+            effects.merge(ofAccess);
+            return effects;
+        }
+    }
     if (readsByNameForLoopInvariants.contains(opcode)) {
         Effects effects = Effects::ofReadByNameThatRunsNoCode();
         if (TypeID object = types(operation.objectOperand()); object && walker.types().at(walker.types().withoutNullish(object)).hasOnlyLayouts())
@@ -100,7 +123,7 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
                 effects.merge(declaredEffectsOfOperation(walker.program(), read, built));
             }
         }
-        if (form.opcode == Opcode::GetWatchedBuiltinValue)
+        if (form.opcode == Opcode::GetWatchedBuiltinValue && !(sitesMayAnswer && walker.looksTakeFormsBehindLooksAsBuilt()))
             effects.merge(declaredBoundOf(Opcode::GetWatchedBuiltinValue));
         if (form.opcode == Opcode::InitializeBuiltin)
             effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
@@ -159,9 +182,65 @@ void Walker::openLoop(OpenLoop&& loop)
     m_openLoops.append(WTF::move(loop));
 }
 
+void Walker::layChecksOfParametersOfHead(BlockID head, uint32_t numberOfParametersOfInput)
+{
+    if (m_hasFailed || isUnreachable() || m_openLoops.isEmpty() || m_openLoops.last().head != head)
+        return;
+    TypeID anyWord = m_types.withPrimitives(TypeTable::anything, Primitive::Absent);
+    SetForScope whereItStands(m_buildsWhereItStands, true);
+    Origin origin = m_origin;
+    origin.isTailCall = false;
+    Vector<ValueID, 8> parameters(m_code.at(head).parameters().first(numberOfParametersOfInput));
+    for (ValueID parameter : parameters) {
+        Representation form = m_code.at(parameter).representation;
+        if ((form != Representation::JSValue && form != Representation::Cell && form != Representation::Cell32) || !m_types.at(m_code.at(parameter).type).isJavaScriptValue())
+            continue;
+        Draft check(Opcode::CheckProof, origin);
+        check.setValueOperand(Reference::value(parameter));
+        check.setCheckedType(anyWord);
+        check.setTypeWithoutProof(anyWord);
+        check.setSource(ProofSource::OtherOperation);
+        ValueID laid(m_code.numberOfValues());
+        build(WTF::move(check));
+        if (m_hasFailed || isUnreachable())
+            return;
+        if (m_code.numberOfValues() == laid.index() + 1 && m_code.at(laid).opcode == Opcode::CheckProof)
+            m_code.leaveCheckOfProofToTestBehind(laid);
+    }
+}
+
+void Walker::askParametersOfHeadsForWhatIsShown()
+{
+    for (uint32_t index = 0; index < m_code.numberOfValues() && !m_hasFailed; ++index) {
+        const Operation& check = m_code.at(ValueID(index));
+        if (check.opcode != Opcode::CheckProof || check.source() != ProofSource::OtherOperation || check.checkedType() != check.typeWithoutProof() || !check.isLeftToTestBehind())
+            continue;
+        ValueID parameter = check.valueOperand();
+        BlockID head = m_code.at(parameter).block();
+        if (m_code.at(parameter).opcode != Opcode::Parameter || head != check.block() || !m_headsOfClosedLoops.contains(head.index()))
+            continue;
+        TypeID shown = typeShown(Reference::value(parameter));
+        if (!shown || !m_types.at(shown).isJavaScriptValue())
+            continue;
+        TypeID checked = typeThatUnitMayTestFor(m_types.testablePartOf(shown), true);
+        if (!m_types.isSubset(TypeTable::anything, checked))
+            m_code.setCheckedTypeOfProof(ValueID(index), checked);
+    }
+}
+
 void Walker::closeNewestLoop()
 {
     const OpenLoop& loop = m_openLoops.last();
+    if (!m_hasFailed && !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().headThatAsksLesserBound == loop.head) {
+        const WayIntoClosedCopy& way = m_waysIntoClosedCopies.last();
+        LocationMasks restsOn;
+        if (way.viewWhoseLengthIsBound)
+            restsOn.add(AbstractHeapSet { AbstractHeap::TypedArrayStorage });
+        if (way.variableThatIsBound && !numberReadOutOfVariableStays(*this, way.variableThatIsBound))
+            restsOn.add(program(), MemoryLocation::moduleVariable(way.variableThatIsBound));
+        if (!restsOn.isEmpty() && (loop.effects.mayRunOtherCode() || restsOn.overlaps(loop.effects.writes)))
+            fail("a word read in front of a typed build is used where its turns may write what it rests on"_s, m_inputs.options.verifiesCode || takesVariablesThatBoundToBeAsInFront() ? InternalErrorKind::WordInFrontOfTypedBuildIsStale : InternalErrorKind::Unknown);
+    }
     settleFateOfPoll(loop);
     m_headsOfClosedLoops.add(loop.head.index());
     if (loop.frontOfQuietTurns)
@@ -177,6 +256,7 @@ void Walker::closeNewestLoop()
         setPlaceOfLoopBehindBlock(earlier, 0);
     for (BlockID block : loop.blocksOfFrontOfQuietTurns)
         setPlaceOfLoopBehindBlock(block, 0);
+    forgetWhatWasBelievedAt(loop.head);
     m_openLoops.removeLast();
 }
 
@@ -213,8 +293,10 @@ void Walker::leaveBlockOpenInFrontOfLoop(BlockID inputHead, BlockID head, std::s
         return;
     }
 
-    if (!makeReadyToCross(head, entering, true, loop.entering))
+    auto readyToCross = std::make_shared<ArgumentsOfEdge>();
+    if (!makeReadyToCross(head, entering, true, *readyToCross))
         return;
+    loop.entering = WTF::move(readyToCross);
     layFrontOfQuietTurns(loop, inputHead);
     if (m_hasFailed)
         return;
@@ -227,8 +309,9 @@ void Walker::leaveBlockOpenInFrontOfLoop(BlockID inputHead, BlockID head, std::s
     }
     m_block = { };
     if (!m_frontsSharedWithTypedBuilds.isEmpty() && m_frontsSharedWithTypedBuilds.last().frameIndex == m_frames.size() - 1 && m_frontsSharedWithTypedBuilds.last().inputHead == inputHead) {
-        for (ValueID built : m_frontsSharedWithTypedBuilds.last().builtInFront)
-            noteBuiltInFrontOfLoop(static_cast<uint32_t>(m_openLoops.size() - 1), built);
+        const ValuesBuiltInFront& shared = m_frontsSharedWithTypedBuilds.last().builtInFront;
+        for (uint32_t place = 0; place < shared.size(); ++place)
+            noteBuiltInFrontOfLoop(static_cast<uint32_t>(m_openLoops.size() - 1), ValueID::fromBits(shared[place]));
     }
 }
 
@@ -248,7 +331,7 @@ void Walker::endBlocksInFrontOfLoops(size_t frameIndex, BlockID next)
         BlockID entered = closeFrontOfQuietTurns(loop);
         if (loop.blockInFront && !m_code.at(loop.blockInFront).hasEnded()) {
             m_code.end(loop.blockInFront, TerminatorDraft(TerminatorKind::Jump, loop.origin), 1);
-            m_code.closeEdge(m_code.at(loop.blockInFront).terminator.next(), entered, loop.entering);
+            m_code.closeEdge(m_code.at(loop.blockInFront).terminator.next(), entered, *loop.entering);
         }
         closeNewestLoop();
     }
@@ -261,7 +344,7 @@ void Walker::endBlocksInFrontOfLoopsFrom(size_t numberOfLoopsKept)
         BlockID entered = closeFrontOfQuietTurns(loop);
         if (loop.blockInFront && !m_code.at(loop.blockInFront).hasEnded()) {
             m_code.end(loop.blockInFront, TerminatorDraft(TerminatorKind::Jump, loop.origin), 1);
-            m_code.closeEdge(m_code.at(loop.blockInFront).terminator.next(), entered, loop.entering);
+            m_code.closeEdge(m_code.at(loop.blockInFront).terminator.next(), entered, *loop.entering);
         }
         closeNewestLoop();
     }
@@ -275,7 +358,10 @@ bool Walker::standsInFrontOfLoop(uint32_t indexOfLoop, Reference reference) cons
         return true;
     BlockID block = m_code.blockOf(reference.id());
     uint32_t place = block && block.index() < m_placesOfLoopsBehindBlocks.size() ? m_placesOfLoopsBehindBlocks[block.index()] : 0;
-    return place && place - 1 <= indexOfLoop;
+    if (!place || place - 1 > indexOfLoop)
+        return false;
+    const Operation& operation = m_code.at(reference.id());
+    return place - 1 < indexOfLoop || (operation.opcode != Opcode::Strcat && (operation.opcode != Opcode::FlattenString || !operation.isReadOperand()));
 }
 
 static bool mayLeaveSomeLoopForLoopInvariants(const TypeArena& types, const Draft& draft, const Effects& effects, bool proofsHoldEverywhere)
@@ -283,9 +369,9 @@ static bool mayLeaveSomeLoopForLoopInvariants(const TypeArena& types, const Draf
     Opcode opcode = draft.opcode;
     if (resultRuleOf(opcode) == ResultRule::None || resultRuleOf(opcode) == ResultRule::Allocation || interpretedOf(opcode) == Interpretation::Allocation)
         return false;
-    if (opcode == Opcode::IsElementPresent)
+    if (opcode == Opcode::IsElementPresent || opcode == Opcode::HasStructureOfClass)
         return false;
-    if (opcode == Opcode::Narrowed || opcode == Opcode::AssumeType || opcode == Opcode::ResultAt || boundToOf(opcode) != BoundTo::Nothing)
+    if (opcode == Opcode::Narrowed || opcode == Opcode::ResultAt || boundToOf(opcode) != BoundTo::Nothing)
         return false;
     if (!effects.writes.isEmpty() || effects.mayThrow || !effects.alwaysCompletes() || effects.reads.containsAny(bookkeepingHeaps))
         return false;
@@ -295,7 +381,7 @@ static bool mayLeaveSomeLoopForLoopInvariants(const TypeArena& types, const Draf
     if (conversionsOfForm.contains(opcode))
         return true;
     if (branchesOf(opcode) != Branches::No)
-        return !effects.reads.isEmpty() || (opcode == Opcode::TypeTest && types.at(draft.testedType()).hasCells());
+        return !effects.reads.isEmpty() || (opcode == Opcode::TypeTest && types.at(draft.testedType()).hasCells()) || (opcode == Opcode::ToBoolean && draft.form() == OperatorForm::Generic);
     return true;
 }
 
@@ -364,8 +450,22 @@ bool Walker::executesOnEveryIteration(uint32_t loopIndex, const HoistPoint& poin
     return true;
 }
 
-std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, const Effects& effects) const
+std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, const Effects& effects, TypeID proven) const
 {
+    if (draft.opcode == Opcode::GetValueAtSiteOrAbsent && (effects.reads.containsAny(AbstractHeapSet { AbstractHeap::RuntimeState }) || effects.writes.containsAny(AbstractHeapSet { AbstractHeap::RuntimeState }))) {
+        Effects besideItsSite = effects;
+        besideItsSite.reads.remove(AbstractHeapSet { AbstractHeap::RuntimeState });
+        besideItsSite.writes.remove(AbstractHeapSet { AbstractHeap::RuntimeState });
+        return findLoopToBuildInFrontOf(draft, besideItsSite, proven);
+    }
+    if (draft.opcode == Opcode::GetBuiltinValue && effects.mayThrow && !effects.mayRunOtherCode() && !effects.mayBeTerminated) {
+        if (isUnderHandler())
+            return std::nullopt;
+        Effects behindFirstRead = Effects::none();
+        behindFirstRead.reads.add(observableHeaps);
+        behindFirstRead.mayCollect = effects.mayCollect;
+        return findLoopToBuildInFrontOf(draft, behindFirstRead, proven);
+    }
     if (m_buildsWhereItStands)
         return std::nullopt;
     uint32_t numberOfLoops = std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft);
@@ -381,20 +481,22 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         return std::nullopt;
     if (draft.opcode == Opcode::GetTypedArrayLength && viewMayFollowSharedMemoryThatGrows(*this, draft.viewOperand()))
         return std::nullopt;
-    if (readsStorageWhereItIsUsed() && effects.reads.containsAny(AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayStorage }))
-        return std::nullopt;
     for (Reference operand : draft.operands()) {
         if (operand && (!operand.isRecord() || typeOf(operand) != ownTypeOf(operand)))
             return std::nullopt;
     }
 
     LocationMasks reads = effects.reads.without(heapsWrittenOnceForLoopInvariants);
+    if (answeredByTextAloneForLoopInvariants.contains(draft.opcode))
+        reads = reads.without(AbstractHeapSet { AbstractHeap::StringStorage });
+    if (takesStorageAndLengthsToBeAsInFront())
+        reads = reads.without(AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths, AbstractHeap::TypedArrayStorage });
     HoistPoint point = currentHoistPoint();
     std::optional<uint32_t> outermost;
     forEachOpenLoopAround(numberOfLoops, 0, [&](uint32_t index) {
         const OpenLoop& loop = m_openLoops[index];
         bool readsWhatTurnsMayWrite = !reads.isEmpty() && (loop.effects.mayRunOtherCode() || reads.overlaps(loop.effects.writes));
-        if (!loop.blockInFront || (readsWhatTurnsMayWrite && (reads.containsAny(heapsWhoseWritesNobodySees) || reads.overlaps(loop.placesThatQuietTurnsWrite) || !mayReadInFrontOfQuietTurns(index))))
+        if (!loop.blockInFront || m_code.at(loop.blockInFront).hasEnded() || (readsWhatTurnsMayWrite && (reads.containsAny(heapsWhoseWritesNobodySees) || reads.overlaps(loop.placesThatQuietTurnsWrite) || !mayReadInFrontOfQuietTurns(index))))
             return IterationStatus::Done;
         if (effects.mayCollect && (!loop.effects.mayCollect || m_code.at(loop.blockInFront).handler))
             return IterationStatus::Done;
@@ -403,7 +505,21 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         });
         if (!operandsStandInFront)
             return IterationStatus::Done;
-        if (draft.opcode != Opcode::ResolveCallTarget && !executesOnEveryIteration(index, point))
+        static constexpr OpcodeSet neverFailOfList { Opcode::GetArrayStorage, Opcode::GetArrayLength, Opcode::GetArrayRoom, Opcode::HasArrayStorage };
+        static constexpr OpcodeSet neverFailWhereTheyMayLeaveLoops { Opcode::GetSlot, Opcode::GetModuleVariable };
+        bool findsList = neverFailWhereTheyMayLeaveLoops.contains(draft.opcode) && proven && (hasKind(m_types, proven, OperandKind::Array) || holdsListOrWordThatVariableIsBornWith(draft, proven));
+        static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub };
+        static constexpr OpcodeSet writtenNumbers { Opcode::Integer, Opcode::Double };
+        auto isKeyOfReadAlone = [&] {
+            const BodyIndex& text = currentBodyIndex();
+            ValueID user = isWrittenInFrameOnTop(draft) && draft.inputValueGiven ? text.onlyUsingValue(draft.inputValueGiven) : ValueID();
+            return user && text.opcodeOf(user) == Opcode::ElemGet && text.value(user).propertyOperand() == draft.inputValueGiven;
+        };
+        bool isSumWithWrittenNumber = sums.contains(draft.opcode) && effects.reads.isEmpty() && !effects.mayCollect && isKeyOfReadAlone() && std::ranges::any_of(draft.operands(), [&](Reference operand) {
+            return operand && (operand.isConstant() || (operand.isValue() && writtenNumbers.contains(m_code.at(operand.id()).opcode)));
+        });
+        bool mayStandWhereNotEveryTurnAsks = draft.opcode == Opcode::ResolveCallTarget || ((findsList || isSumWithWrittenNumber || neverFailOfList.contains(draft.opcode)) && m_code.at(m_block).frequency != BlockFrequency::Rare);
+        if (!mayStandWhereNotEveryTurnAsks && !executesOnEveryIteration(index, point))
             return IterationStatus::Done;
         if (readsWhatTurnsMayWrite && loop.watchesTurns) {
             noteReadThatCouldStandInFront(loop, reads);
@@ -416,6 +532,11 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         return IterationStatus::Continue;
     });
     return outermost;
+}
+
+bool Walker::comparisonWithTextLeavesLoop(const Draft& comparison) const
+{
+    return !m_openLoops.isEmpty() && findLoopToBuildInFrontOf(comparison, declaredBoundInTable(comparison.opcode), TypeTable::boolean);
 }
 
 std::optional<uint32_t> Walker::findLoopThatReaderVouchesFor(const Draft& draft, uint32_t outermostLoopThatMayBeLeft) const
@@ -480,6 +601,79 @@ void Walker::buildCheckThatTestHolds(Reference test, ProofSource source, Origin 
     buildCheckOfProof(test, holds, TypeTable::boolean, source, origin);
 }
 
+Reference Walker::askInFrontOfOpenLoopWhetherItsFirstTurnBegins(uint32_t indexOfLoop)
+{
+    if (isUnreachable() || indexOfLoop >= m_openLoops.size() || indexOfLoop >= m_numberOfLoopsThatMayBeLeft)
+        return { };
+    const OpenLoop& open = m_openLoops[indexOfLoop];
+    BlockID inFront = open.blockInFront;
+    if (!inFront || m_code.at(inFront).hasEnded() || open.frame >= m_frames.size())
+        return { };
+    const Frame& frame = m_frames[open.frame];
+    const BodyIndex& index = *frame.index;
+    BodyBlock head = index.block(index.loop(open.loop).head);
+    BodyTerminator end = head.terminator();
+    if (end.kind() != TerminatorKind::Branch)
+        return { };
+    ValueID asked = end.as<TerminatorKind::Branch>().conditionOperand();
+    if (!asked || index.isParameter(asked) || !head.holds(asked) || !allRelations.contains(index.opcodeOf(asked)))
+        return { };
+    BodyTargets::Iterator target = end.targets().begin();
+    BlockID behindYes = (*target).block();
+    if (!index.isInLoop(behindYes, open.loop) || index.isInLoop((*++target).block(), open.loop))
+        return { };
+    if (behindYes == head.id() || !index.dominates(behindYes, frame.block))
+        return { };
+
+    std::span<const ValueID> entering = open.recordsEntering();
+    auto asItEnters = [&](ValueID written) -> Reference {
+        ValueID value = index.valueBehindCasts(written);
+        Reference reference;
+        if (index.isParameter(value) && index.blockOf(value) == head.id()) {
+            uint32_t position = value.index() - head.firstParameter().index();
+            if (position < entering.size() && entering[position])
+                reference = m_code.isConstant(entering[position]) ? Reference::constant(entering[position]) : Reference::value(entering[position]);
+        } else
+            reference = referenceBoundIn(frame, written);
+        bool isNumberInFront = reference && reference.isRecord() && standsInFrontOfLoop(indexOfLoop, reference) && typeOf(reference) == ownTypeOf(reference) && m_types.at(ownTypeOf(reference)).isNumber();
+        return isNumberInFront ? reference : Reference();
+    };
+    BodyValue relation = index.value(asked);
+    Reference left = asItEnters(relation.operand(0));
+    Reference right = asItEnters(relation.operand(1));
+    if (!left || !right)
+        return { };
+
+    Origin origin = open.origin;
+    BlockID inside = std::exchange(m_block, inFront);
+    SetForScope loopsThatMayBeLeft(m_numberOfLoopsThatMayBeLeft, indexOfLoop);
+    Reference begins = buildOperatorForStrings(*this, relation.opcode(), left, right, origin);
+    m_block = m_hasFailed ? BlockID() : inside;
+    return begins && begins.isValue() && representationOf(begins) == Representation::Boolean ? begins : Reference();
+}
+
+bool Walker::isInSightWhereWalkBuilds(Reference reference) const
+{
+    if (m_numberOfLoopsThatMayBeLeft >= m_openLoops.size() || !reference.isValue() || reference.id().index() < m_openLoops[m_numberOfLoopsThatMayBeLeft].firstRecord)
+        return true;
+    BlockID block = m_code.blockOf(reference.id());
+    uint32_t place = block && block.index() < m_placesOfLoopsBehindBlocks.size() ? m_placesOfLoopsBehindBlocks[block.index()] : 0;
+    return place && place - 1 <= m_numberOfLoopsThatMayBeLeft;
+}
+
+bool Walker::everyTurnOfTypedCopyThatComesRoundPassesHere() const
+{
+    std::optional<uint32_t> loop = openLoopOfTypedCopy();
+    return loop && executesOnEveryIteration(*loop, currentHoistPoint());
+}
+
+bool Walker::goOnInFrontOfTypedCopyWhereItsFirstTurnBegins()
+{
+    std::optional<uint32_t> loop = openLoopOfTypedCopy();
+    Reference begins = loop ? askInFrontOfOpenLoopWhetherItsFirstTurnBegins(*loop) : Reference();
+    return begins && branchInFrontOfTypedCopy(begins, true);
+}
+
 std::optional<uint32_t> Walker::outermostLoopToMakeTextInFrontOf(std::span<const Reference> operands, const Effects& ofText) const
 {
     if (isUnreachable() || isUnderHandler() || m_numberOfCopiesBuiltForSize)
@@ -505,6 +699,115 @@ std::optional<uint32_t> Walker::outermostLoopToMakeTextInFrontOf(std::span<const
         return IterationStatus::Continue;
     });
     return outermost;
+}
+
+std::optional<uint32_t> Walker::outermostLoopToLookUpInFrontOf(std::span<const Reference> operands, const Effects& ofLookup) const
+{
+    if (m_buildsWhereItStands || !has(Mechanism::LoopInvariants) || isUnreachable() || isUnderHandler() || m_numberOfCopiesBuiltForSize || ofLookup.mayThrowByRule() || !ofLookup.alwaysCompletes())
+        return std::nullopt;
+    for (Reference operand : operands) {
+        if (!operand || !operand.isRecord() || typeOf(operand) != ownTypeOf(operand))
+            return std::nullopt;
+    }
+
+    if (drawChoice(DrawnFor::PlaceInFrontOfLoop, currentFunction().index(), m_origin.position, false) == ChoiceOfCost::No)
+        return std::nullopt;
+
+    LocationMasks reads = ofLookup.reads.without(heapsWhoseWritesNobodySees);
+    HoistPoint point = currentHoistPoint();
+    std::optional<uint32_t> outermost;
+    forEachOpenLoopAround(std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft), 0, [&](uint32_t index) {
+        const OpenLoop& loop = m_openLoops[index];
+        bool mayLeave = loop.blockInFront && !m_code.at(loop.blockInFront).hasEnded() && !m_code.at(loop.blockInFront).handler && !loop.frontOfQuietTurns
+            && !loop.effects.mayRunOtherCode() && !reads.overlaps(loop.effects.writes) && ofLookup.writes.isSubsetOf(loop.effects.writes) && (!ofLookup.mayCollect || loop.effects.mayCollect)
+            && std::ranges::all_of(operands, [&](Reference operand) { return standsInFrontOfLoop(index, operand); }) && executesOnEveryIteration(index, point);
+        if (!mayLeave)
+            return IterationStatus::Done;
+        outermost = index;
+        point = hoistPointInFrontOf(index);
+        return IterationStatus::Continue;
+    });
+    return outermost;
+}
+
+void Walker::holdLookupInFrontAgainstLookupInTurn(Reference believed, Draft&& lookedUpAgain, const Effects& ofLookup, ProofSource source)
+{
+    if (isUnreachable() || hasFailed() || !believed || !believed.isValue())
+        return;
+    WalkState asBelieved = m_state;
+    Origin origin = lookedUpAgain.origin();
+    origin.isTailCall = false;
+    auto isSame = [&](Reference left, Reference right) {
+        Draft comparison(Opcode::StrictEq, origin);
+        chooseConservativeFields(comparison);
+        comparison.setLeftOperand(left);
+        comparison.setRightOperand(right);
+        return buildTestOfCheck(WTF::move(comparison));
+    };
+    uint32_t numberOfRecordsInFront = m_code.numberOfValues();
+    Reference found;
+    {
+        SetForScope whereItStands(m_buildsWhereItStands, true);
+        found = build(WTF::move(lookedUpAgain), &ofLookup);
+    }
+    Reference same = !isUnreachable() && isBuiltWhereItStandsSince(numberOfRecordsInFront, found) ? isSame(found, believed) : Reference();
+    if (same && same.isValue() && !isUnreachable()) {
+        if (m_types.isSubset(typeOf(believed), TypeTable::boolean))
+            buildCheckOfProof(same, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, source, origin);
+        else {
+            BlockID whereAnswersAreSame = addBlock();
+            BlockID whereTheyDiffer = addBlock(BlockFrequency::Rare);
+            branch(same, whereAnswersAreSame, whereTheyDiffer);
+            continueIn(whereTheyDiffer);
+            for (Reference answer : { found, believed }) {
+                Reference isItself = isUnreachable() ? Reference() : isSame(answer, answer);
+                if (isItself)
+                    buildCheckOfProof(isItself, TypeArena::fromPrimitives(Primitive::False), TypeTable::boolean, source, origin);
+            }
+            if (!isUnreachable())
+                jumpTo(whereAnswersAreSame);
+            continueIn(whereAnswersAreSame);
+        }
+    }
+    m_state = WTF::move(asBelieved);
+}
+
+void Walker::holdValueRememberedAgainstValueAtSite(Reference believed, Draft&& readAgain)
+{
+    if (isUnreachable() || hasFailed() || !believed || !believed.isValue())
+        return;
+    WalkState asBelieved = m_state;
+    Origin origin = readAgain.origin();
+    origin.isTailCall = false;
+    uint32_t numberOfRecordsInFront = m_code.numberOfValues();
+    Reference found;
+    {
+        SetForScope whereItStands(m_buildsWhereItStands, true);
+        found = build(WTF::move(readAgain));
+    }
+    if (!isUnreachable() && isBuiltWhereItStandsSince(numberOfRecordsInFront, found)) {
+        Draft question(Opcode::TypeTest, origin);
+        question.setValueOperand(found);
+        question.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
+        Reference isAbsent = buildTestOfCheck(WTF::move(question));
+        if (isAbsent && isAbsent.isValue() && !isUnreachable()) {
+            BlockID whereSiteAnswers = addBlock();
+            BlockID behind = addBlock();
+            branch(isAbsent, behind, whereSiteAnswers);
+            continueIn(whereSiteAnswers);
+            Draft present(Opcode::Narrowed, origin);
+            present.setValueOperand(found);
+            present.setTestOperand(isAbsent);
+            present.setOperandIndex(OperandIndex::TypeTest::value);
+            present.setIsOnTakenEdge(false);
+            if (Reference answer = build(WTF::move(present)); answer && !isUnreachable())
+                checkThatValuesAreTheSame(answer, believed, origin);
+            if (!isUnreachable())
+                jumpTo(behind);
+            continueIn(behind);
+        }
+    }
+    m_state = WTF::move(asBelieved);
 }
 
 uint32_t Walker::numberOfOpenLoopsAround(size_t frameIndex, BlockID inputBlock) const
@@ -562,10 +865,12 @@ static unsigned hashOfRecordInFrontOfLoop(const Record& record)
     return hash ^ hash >> 16;
 }
 
-static bool isSameAsRecordInFrontOfLoop(const Code& code, ValueID id, const Draft& draft)
+static bool isSameAsRecordInFrontOfLoop(const Code& code, ValueID id, const Draft& draft, uint32_t firstRecordOfLoop)
 {
     const Operation& record = code.at(id);
     if (record.opcode != draft.opcode || record.representation != draft.representation || record.flags != draft.flags || !std::ranges::equal(record.payload(), draft.payload()))
+        return false;
+    if (record.opcode == Opcode::FlattenString && record.isReadOperand() && id.index() < firstRecordOfLoop)
         return false;
     return std::ranges::equal(record.operands(), draft.operands(), [](ValueID held, Reference taken) {
         return taken ? held == taken.id() : !held;
@@ -574,8 +879,10 @@ static bool isSameAsRecordInFrontOfLoop(const Code& code, ValueID id, const Draf
 
 ValueID Walker::findSameInFrontOfPlainWalk(const Draft& draft) const
 {
-    for (ValueID id : m_frontsSharedWithTypedBuilds.last().builtInFront) {
-        if (isSameAsRecordInFrontOfLoop(m_code, id, draft))
+    const ValuesBuiltInFront& shared = m_frontsSharedWithTypedBuilds.last().builtInFront;
+    for (uint32_t place = 0; place < shared.size(); ++place) {
+        ValueID id = ValueID::fromBits(shared[place]);
+        if (isSameAsRecordInFrontOfLoop(m_code, id, draft, UINT32_MAX))
             return id;
     }
     return { };
@@ -583,21 +890,22 @@ ValueID Walker::findSameInFrontOfPlainWalk(const Draft& draft) const
 
 ValueID Walker::findSameInFrontOfLoop(uint32_t indexOfLoop, const Draft& draft) const
 {
-    auto isSame = [&](ValueID id) {
-        return isSameAsRecordInFrontOfLoop(m_code, id, draft);
-    };
     const OpenLoop& loop = m_openLoops[indexOfLoop];
+    auto isSame = [&](ValueID id) {
+        return isSameAsRecordInFrontOfLoop(m_code, id, draft, loop.firstRecord);
+    };
     if (loop.tableOfBuiltInFront.isEmpty()) {
-        for (ValueID id : loop.builtInFront) {
+        for (uint32_t place = 0; place < loop.builtInFront.size(); ++place) {
+            ValueID id = ValueID::fromBits(loop.builtInFront[place]);
             if (isSame(id))
                 return id;
         }
         return { };
     }
-    size_t mask = loop.tableOfBuiltInFront.size() - 1;
-    for (size_t place = hashOfRecordInFrontOfLoop(draft) & mask; loop.tableOfBuiltInFront[place]; place = (place + 1) & mask) {
-        if (isSame(loop.tableOfBuiltInFront[place]))
-            return loop.tableOfBuiltInFront[place];
+    uint32_t mask = loop.tableOfBuiltInFront.size() - 1;
+    for (uint32_t place = hashOfRecordInFrontOfLoop(draft) & mask; ValueID id = ValueID::fromBits(loop.tableOfBuiltInFront[place]); place = (place + 1) & mask) {
+        if (isSame(id))
+            return id;
     }
     return { };
 }
@@ -659,15 +967,16 @@ Reference Walker::appendConversionAmongOpenLoops(Opcode opcode, Representation t
         return record.opcode == opcode && record.representation == to && record.operand(0) == operand.id();
     };
     if (loop.tableOfBuiltInFront.isEmpty()) {
-        for (ValueID id : loop.builtInFront) {
+        for (uint32_t place = 0; place < loop.builtInFront.size(); ++place) {
+            ValueID id = ValueID::fromBits(loop.builtInFront[place]);
             if (isSame(id))
                 return Reference::value(id);
         }
     } else {
-        size_t mask = loop.tableOfBuiltInFront.size() - 1;
-        for (size_t place = hashOfRecordInFrontOfLoop(ConversionSoughtInFrontOfLoop { opcode, to, 0, operand }) & mask; loop.tableOfBuiltInFront[place]; place = (place + 1) & mask) {
-            if (isSame(loop.tableOfBuiltInFront[place]))
-                return Reference::value(loop.tableOfBuiltInFront[place]);
+        uint32_t mask = loop.tableOfBuiltInFront.size() - 1;
+        for (uint32_t place = hashOfRecordInFrontOfLoop(ConversionSoughtInFrontOfLoop { opcode, to, 0, operand }) & mask; ValueID id = ValueID::fromBits(loop.tableOfBuiltInFront[place]); place = (place + 1) & mask) {
+            if (isSame(id))
+                return Reference::value(id);
         }
     }
     ValueID id = m_code.appendConversion(block, opcode, operand.id(), to, proven, origin);
@@ -678,21 +987,21 @@ Reference Walker::appendConversionAmongOpenLoops(Opcode opcode, Representation t
 void Walker::noteBuiltInFrontOfLoop(uint32_t indexOfLoop, ValueID built)
 {
     OpenLoop& loop = m_openLoops.changeable(indexOfLoop);
-    loop.builtInFront.append(built);
+    loop.builtInFront.append(built.bits());
     if (loop.builtInFront.size() <= mostBuiltInFrontOfLoopWithoutTable)
         return;
     auto add = [&](ValueID id) {
-        size_t mask = loop.tableOfBuiltInFront.size() - 1;
-        size_t place = hashOfRecordInFrontOfLoop(m_code.at(id)) & mask;
-        while (loop.tableOfBuiltInFront[place])
+        uint32_t mask = loop.tableOfBuiltInFront.size() - 1;
+        uint32_t place = hashOfRecordInFrontOfLoop(m_code.at(id)) & mask;
+        while (ValueID::fromBits(loop.tableOfBuiltInFront[place]))
             place = (place + 1) & mask;
-        loop.tableOfBuiltInFront[place] = id;
+        loop.tableOfBuiltInFront.mutableAt(place) = id.bits();
     };
     if (loop.builtInFront.size() * 2 <= loop.tableOfBuiltInFront.size())
         return add(built);
-    loop.tableOfBuiltInFront.fill(ValueID(), std::max<size_t>(mostBuiltInFrontOfLoopWithoutTable * 4, loop.tableOfBuiltInFront.size() * 2));
-    for (ValueID id : loop.builtInFront)
-        add(id);
+    loop.tableOfBuiltInFront.fill(ValueID().bits(), std::max<uint32_t>(mostBuiltInFrontOfLoopWithoutTable * 4, loop.tableOfBuiltInFront.size() * 2));
+    for (uint32_t place = 0; place < loop.builtInFront.size(); ++place)
+        add(ValueID::fromBits(loop.builtInFront[place]));
 }
 
 } } } // namespace JSC::AOT::Typed

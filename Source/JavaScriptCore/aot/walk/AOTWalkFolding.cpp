@@ -16,6 +16,7 @@
 #include "AOTStringTable.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTTypeRelations.h"
+#include "AOTWalkResultsInParts.h"
 #include "AOTWalkStringFolds.h"
 #include "AOTWalkKnown.h"
 #include "AOTWalkListReadsInLoops.h"
@@ -31,7 +32,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr size_t maxBytesOfTextMadeByFolding = 65536;
+static constexpr size_t maxBytesOfTextMadeByFolding = mostBytesOfTextMadeByStringFolds;
 
 static constexpr OpcodeSet testsThatTypesDecideInFolding = opcodesWhere([](Opcode opcode) {
     Proof proof = provesOf(opcode);
@@ -47,7 +48,7 @@ static constexpr OpcodeSet conversionsToObjectsInFolding { Opcode::ToObject, Opc
 static constexpr OpcodeSet opcodesOfFolding = operationsOnPrimitivesInFolding | testsThatTypesDecideInFolding | castsOfFolding | readsOfFolding | storesThatStateFollowsForFolding | checksThatHandOnOrThrow
     | conversionsToObjectsInFolding | OpcodeSet { Opcode::TypeOf, Opcode::ToLength };
 
-static PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, TypeID id)
+static ALWAYS_INLINE PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, TypeID id)
 {
     if (!id)
         return { };
@@ -77,7 +78,7 @@ static PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, 
     }
 }
 
-static PrimitiveKnownToFolding primitiveHeldInFolding(Walker& walker, Reference reference)
+static ALWAYS_INLINE PrimitiveKnownToFolding primitiveHeldInFolding(Walker& walker, Reference reference)
 {
     if (!reference)
         return { };
@@ -396,7 +397,7 @@ static PrimitiveKnownToFolding evaluateInFolding(const Program& program, TypeRea
     }
 }
 
-static Reference foldOverKnownPrimitivesInFolding(Walker& walker, const BodyValue& value)
+static ALWAYS_INLINE Reference foldOverKnownPrimitivesInFolding(Walker& walker, const BodyValue& value)
 {
     std::array<PrimitiveKnownToFolding, 2> operands;
     for (uint32_t operandIndex = 0; operandIndex < operands.size(); ++operandIndex) {
@@ -611,7 +612,7 @@ static bool neitherSideOfTestIsRuledOutInFolding(const TypeArena& types, const B
     return !(mayBeInteger(first) && mayLieWithinBounds(second)) && !(mayBeInteger(second) && mayLieWithinBounds(first));
 }
 
-static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const BodyValue& test)
+static ALWAYS_INLINE std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const BodyValue& test)
 {
     std::array<TypeID, 2> typesOfOperands;
     uint32_t numberOfOperands = 0;
@@ -645,6 +646,16 @@ static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const 
             return true;
     }
     return std::nullopt;
+}
+
+static NEVER_INLINE void checkRawNumbersThatAnswerRestsOnInFolding(Walker& walker, const BodyValue& answered)
+{
+    for (uint32_t operandIndex = 0; operandIndex < 2; ++operandIndex) {
+        ValueID operand = answered.operand(operandIndex);
+        if (!operand)
+            break;
+        walker.checkRawNumberThatFoldRestsOn(walker.referenceOf(operand), walker.originOf(answered));
+    }
 }
 
 static Reference operandOfCheckThatPassesInFolding(Walker& walker, const BodyValue& check)
@@ -684,7 +695,7 @@ static constexpr OpcodeSet conversionsThatMayHandOnInFolding = opcodesWhere([](O
     return primitivesThatConversionHandsOnInFolding(opcode) || conversionsToObjectsInFolding.contains(opcode) || opcode == Opcode::ToLength;
 });
 
-static Reference operandThatConversionHandsOnInFolding(Walker& walker, const BodyValue& conversion)
+static ALWAYS_INLINE Reference operandThatConversionHandsOnInFolding(Walker& walker, const BodyValue& conversion)
 {
     Opcode opcode = conversion.opcode();
     uint16_t handedOn = primitivesThatConversionHandsOnInFolding(opcode);
@@ -756,7 +767,7 @@ static Reference onlyValueOfCellInFolding(Walker& walker, const LinkedCell& cell
     return walker.constant(onlyValueOfTypeInFolding(walker.types(), cell.proven));
 }
 
-static Reference unlessAbsentInFolding(Walker& walker, Reference held)
+static ALWAYS_INLINE Reference unlessAbsentInFolding(Walker& walker, Reference held)
 {
     TypeID type = typeToJudgeByInFolding(walker, held);
     return type && !(walker.types().at(type).primitives & Primitive::Absent) ? held : Reference();
@@ -774,14 +785,14 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
         return { };
     Reference object = walker.referenceOf(read.objectOperand());
     if (!walker.state().mayHoldPlaceOf(object))
-        return { };
+        return propertyOfResultTakenInParts(walker, object, read.key());
     TypeID type = typeToJudgeByInFolding(walker, object);
     if (!type)
         return { };
     TypeArena& types = walker.types();
     LayoutID layout = singleLayoutOf(types, types.at(type));
     if (!layout)
-        return { };
+        return propertyOfResultTakenInParts(walker, object, read.key());
     std::optional<FieldReference> field = findField(walker.program(), layout, read.key());
     if (!field || holdsAccessorInFolding(walker, *field))
         return { };
@@ -796,6 +807,8 @@ static Reference elementAnsweredByStateInFolding(Walker& walker, const BodyValue
     TypeID typeOfIndex = typeToJudgeByInFolding(walker, index);
     if (!typeOfIndex || !walker.types().at(typeOfIndex).isNumber())
         return { };
+    if (Reference part = partOfListThatIsOnlyTakenApart(walker, walker.referenceOf(read.objectOperand()), index))
+        return part;
     Reference held = unlessAbsentInFolding(walker, walker.state().element(walker.referenceOf(read.objectOperand()), index));
     if (held && (walker.types().at(typeToJudgeByInFolding(walker, held)).primitives & Primitive::Undefined) && readLeavesTurnAtHoleBehindRow(walker, value))
         return { };
@@ -825,7 +838,7 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
         FieldReference field { read.layout(), read.field() };
         Reference environment = walker.referenceOf(read.environmentOperand());
         if (Reference held = walker.state().environmentField(environment, field))
-            return walker.typeAnswerOfStateAsRead(value, environment, field, held);
+            return held;
         return valueOfStableBinding(walker, value);
     }
     case Opcode::PropGet:
@@ -910,7 +923,7 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
     return true;
 }
 
-static Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
+static ALWAYS_INLINE Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
     if (readsOfFolding.contains(opcode))
@@ -929,8 +942,11 @@ static Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
             return constant;
     }
     if (testsThatTypesDecideInFolding.contains(opcode)) {
-        if (std::optional<bool> answer = answerThatTypesDecideInFolding(walker, value))
+        if (std::optional<bool> answer = answerThatTypesDecideInFolding(walker, value)) {
+            if (walker.checksProofs()) [[unlikely]]
+                checkRawNumbersThatAnswerRestsOnInFolding(walker, value);
             return walker.constant(PrimitiveKnownToFolding::boolean(*answer));
+        }
     }
     if (opcode == Opcode::TypeTest && isLookAtCellInFrontOfIsArray(walker, walker.currentBodyIndex(), value)) {
         Reference asked = walker.referenceOf(value.operand(0));
@@ -939,23 +955,36 @@ static Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
     }
     if (Reference answer = opcode == Opcode::StrictEq && !walker.isAskedByBranchOfItsBlock(value) ? walker.buildTestOfTagAsTestOfShape(value) : Reference())
         return answer;
-    return conversionsThatMayHandOnInFolding.contains(opcode) ? operandThatConversionHandsOnInFolding(walker, value) : Reference();
+    Reference handedOn = conversionsThatMayHandOnInFolding.contains(opcode) ? operandThatConversionHandsOnInFolding(walker, value) : Reference();
+    if (handedOn && walker.checksProofs()) [[unlikely]]
+        checkRawNumbersThatAnswerRestsOnInFolding(walker, value);
+    return handedOn;
 }
 
 constinit const OpcodeSet opcodesThatFoldOperationTakes = opcodesOfFolding;
 static_assert(opcodesThatFoldOperationTakesInChains == opcodesOfFolding);
 
+static NEVER_INLINE bool buildWhereNoAnswerIsKnownToFolding(Walker& walker, const BodyValue& value)
+{
+    if (value.opcode() == Opcode::CheckInitialized)
+        return buildCheckOfCellInFolding(walker, value);
+    return !walker.has(Mechanism::TypedOperations) && buildTypedAccess(walker, value);
+}
+
+static NEVER_INLINE bool bindAnswerKnownToFolding(Walker& walker, const BodyValue& value, Reference answer)
+{
+    walker.bind(value.id(), answer);
+    return true;
+}
+
 bool foldOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
-    Opcode opcode = value.opcode();
-    ASSERT(opcodesOfFolding.contains(opcode));
-    if (Reference answer = storesThatStateFollowsForFolding.contains(opcode) ? Reference() : answerKnownToFolding(walker, value)) {
-        walker.bind(value.id(), answer);
-        return true;
-    }
-    if (opcode == Opcode::CheckInitialized)
-        return buildCheckOfCellInFolding(walker, value);
-    return placesThatStateFollowsForFolding.contains(opcode) && !walker.has(Mechanism::TypedOperations) && buildTypedAccess(walker, value);
+    ASSERT(opcodesOfFolding.contains(value.opcode()));
+    if (Reference answer = storesThatStateFollowsForFolding.contains(value.opcode()) ? Reference() : answerKnownToFolding(walker, value))
+        return bindAnswerKnownToFolding(walker, value, answer);
+    if (value.opcode() != Opcode::CheckInitialized && !placesThatStateFollowsForFolding.contains(value.opcode()))
+        return false;
+    return buildWhereNoAnswerIsKnownToFolding(walker, value);
 }
 
 } } } // namespace JSC::AOT::Typed

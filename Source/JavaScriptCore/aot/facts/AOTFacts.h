@@ -127,6 +127,7 @@ public:
     FactRows<ClassMember> membersOfClass;
     Vector<uint32_t> placesOfMembersOfClassByKey;
     BitVector layoutsThatParsersMayMake;
+    LayoutSetID layoutsThatStayWithCompiledCode;
 
     BitVector modulesWhosePathNoOperationReads;
     struct FunctionGivenToVariable {
@@ -262,6 +263,11 @@ public:
         const BuiltinUseRecord* use = findFactRow(builtinUses(), id.index(), &BuiltinUseRecord::builtin);
         return use && hasFunction(use->witness);
     }
+    bool isLetGo(BuiltinID id) const
+    {
+        const BuiltinUseRecord* use = findFactRow(builtinUses(), id.index(), &BuiltinUseRecord::builtin);
+        return use && (static_cast<uint32_t>(use->uses) & static_cast<uint32_t>(BuiltinUse::Escaped));
+    }
     bool isUsedWithoutNamesFromRunTime(BuiltinID id) const
     {
         const BuiltinUseRecord* use = findFactRow(builtinUses(), id.index(), &BuiltinUseRecord::builtin);
@@ -306,7 +312,6 @@ private:
     FactTables m_tables;
 };
 
-BuiltinID builtinParentNamedByClassRecord(const Program&, const Facts&, LayoutID);
 
 struct InputsOfProgramFacts {
     const Program& program;

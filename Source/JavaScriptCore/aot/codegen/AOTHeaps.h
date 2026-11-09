@@ -56,6 +56,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTInstance_moduleValues, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_globalBindings, 0, Mutable, RuntimeState) \
     v(AOTInstance_siteCaches, 0, OutsideDeclaredEffects, RuntimeState) \
+    v(AOTInstance_arrayProfiles, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTPropertyCaches_front, 0, Mutable, RuntimeState) \
     v(AOTClassToken_knownStructures, JSCellButterfly::offsetOfData() + ClassToken::knownStructuresSlot * sizeof(EncodedJSValue), OutsideDeclaredEffects, RuntimeState) \
     v(AOTClassToken_records, 0, OutsideDeclaredEffects, RuntimeState) \
@@ -75,6 +76,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
 
 #define FOR_EACH_JSC_FIELD_HEAP_UNDER_ROOT(v) \
     v(ClassInfo_parentClass, ClassInfo::offsetOfParentClass(), Immutable) \
+    v(JSArrayBufferView_sharingOfMemory, JSArrayBufferView::offsetOfMode(), Immutable) \
     v(JSCell_typeInfoType, JSCell::typeInfoTypeOffset(), Immutable) \
     v(JSPropertyNameEnumerator_cachedInlineCapacity, JSPropertyNameEnumerator::cachedInlineCapacityOffset(), Immutable) \
     v(JSPropertyNameEnumerator_cachedPropertyNamesVector, JSPropertyNameEnumerator::cachedPropertyNamesVectorOffset(), ImmutableInnerPointer) \
@@ -95,6 +97,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(DateInstance_internalNumber, DateInstance::offsetOfInternalNumber(), Mutable, InternalFields) \
     v(DateInstance_cachedGregorianDateTime, DateInstance::offsetOfCachedGregorianDateTime(), Mutable, InternalFields) \
     v(DateInstance_cachedGregorianDateTimeUTC, DateInstance::offsetOfCachedGregorianDateTimeUTC(), Mutable, InternalFields) \
+    v(GetterSetter_getter, GetterSetter::offsetOfGetter(), Mutable, RuntimeState) \
     v(InlineWatchpointSet_data, InlineWatchpointSet::offsetOfData(), Mutable, RuntimeState) \
     v(JSArrayBufferView_byteOffset, JSArrayBufferView::offsetOfByteOffset(), Mutable, TypedArrayStorage) \
     v(JSArrayBufferView_length, JSArrayBufferView::offsetOfLength(), Mutable, TypedArrayStorage) \

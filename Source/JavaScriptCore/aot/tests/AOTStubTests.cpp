@@ -816,6 +816,45 @@ static void testHeadsOfOperationsWriteWhatRowsName()
     }
 }
 
+static void testWhatFamiliesDeclareOfTheirCallsHolds()
+{
+    for (const StubOptions& options : stubOptionVariants()) {
+        StubCatalog catalog(options);
+        unsigned numberOfLeaves = 0;
+        auto lookAt = [&](StubKey key) {
+            Typed::Effects effects = catalog.effectsOf(key);
+            StubLeafness leafness = descriptorOf(key.family()).leafness;
+            if (leafness == StubLeafness::MayCall)
+                return;
+            AOT_TEST_CHECK(!effects.mayCollect && !effects.mayThrow && !effects.mayCallUnknownCode);
+            if (leafness != StubLeafness::Leaf)
+                return;
+            ++numberOfLeaves;
+            Vector<StubKey> bodies { bodyOf(key) };
+            for (size_t index = 0; index < bodies.size(); ++index) {
+                const StubRecording& recording = catalog.recordingOf(bodies[index]);
+                AOT_TEST_CHECK(recording.operationsCalled.isEmpty());
+                for (const StubReference& reference : recording.references) {
+                    StubKey body = bodyOf(reference.target);
+                    if (reference.kind != StubReference::Kind::Address && reference.kind != StubReference::Kind::ReturnedAddress && !bodies.contains(body))
+                        bodies.append(body);
+                }
+            }
+        };
+        forEachKeyWithoutImmediate([&](StubKey key) {
+            lookAt(key);
+            if (descriptorOf(key.family()).binding != ImmediateBinding::OperationOffset)
+                return;
+            for (const OperationPrelude& prelude : operationPreludes()) {
+                StubKey head = key.withImmediate(offsetInRuntimeTable(prelude.operation));
+                if (exists(head))
+                    lookAt(head);
+            }
+        });
+        AOT_TEST_CHECK(numberOfLeaves);
+    }
+}
+
 static constexpr std::array constantsAtSites { ConstantAtSite::String, ConstantAtSite::Key, ConstantAtSite::BuiltinCell };
 
 static void testConstantsAtSitesLoseNoRegister()
@@ -1018,6 +1057,7 @@ std::span<const NativeTest> stubTests()
 #endif
         { "stubs/registers-live-across-reads"_s, testRegistersLiveAcrossReads },
         { "stubs/heads-of-operations-write-what-their-rows-name"_s, testHeadsOfOperationsWriteWhatRowsName },
+        { "stubs/what-families-declare-of-their-calls-holds"_s, testWhatFamiliesDeclareOfTheirCallsHolds },
         { "stubs/constants-at-sites-lose-no-register"_s, testConstantsAtSitesLoseNoRegister },
         { "stubs/constants-at-sites-take-the-number-behind-the-call"_s, testConstantsAtSitesTakeNumberBehindCall },
         { "stubs/constants-at-sites-read-a-filled-word"_s, testConstantsAtSitesReadFilledWord },

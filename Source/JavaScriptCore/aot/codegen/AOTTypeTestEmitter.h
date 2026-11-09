@@ -17,6 +17,16 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+struct TypeTestPlansKeptAcrossUnits {
+    using Plans = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    static constexpr unsigned mostPlansOfRepresentation = 512;
+
+    const Plan* plan { nullptr };
+    const TypeTable* table { nullptr };
+    std::array<Plans, numberOfEnumerators<Representation>> plans;
+    KindsInLayoutSets kindsInSets;
+};
+
 class TypeTestEmitter final : public OperationEmitter {
 public:
     explicit TypeTestEmitter(CodeGenerator& generator)
@@ -38,6 +48,7 @@ public:
     Condition hasSharingMode(CellPointer, ArrayBufferSharingMode);
     Condition isNamespaceOf(CellPointer, ModuleID);
     Condition isIntegerIn(Number, Range);
+    Condition isInRange(Integer, Range);
 
 private:
     using PlanMap = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
@@ -69,13 +80,16 @@ private:
     Condition passesByMarker(Operand, const TypeTestPlan&, bool payloadPasses);
     Condition doublePasses(Number, const TypeTestPlan&);
     Condition integerPasses(Integer, const TypeTestPlan&, Range heldByForm = Range::full());
-    Condition isInRange(Integer, Range);
     Condition isExactIntegerIn(Number, Integer truncated, Range);
     Condition cellPasses(CellPointer, const TypeTestPlan&);
     Condition stringPasses(CellPointer, const TypeTestPlan&);
     Condition isCallableByCallData(CellPointer);
     std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
 
+    TypeTestPlansKeptAcrossUnits& whatIsKeptAcrossUnits();
+    TypeTestPlansKeptAcrossUnits::Plans& plansKeptAcrossUnits(Representation);
+
+    TypeTestPlansKeptAcrossUnits* m_plansKeptAcrossUnits { nullptr };
     std::array<PlanMap, numberOfEnumerators<Representation>> m_plans;
     bool m_casesAreBranchedOn { true };
     bool m_nextCaseIsUnlikely { false };

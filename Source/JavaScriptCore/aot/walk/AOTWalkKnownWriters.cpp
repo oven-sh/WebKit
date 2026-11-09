@@ -8,15 +8,18 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCallPlan.h"
 #include "AOTCodeRole.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
 #include "AOTPlan.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkListReadsInLoops.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -38,7 +41,7 @@ static OptionSet<FactOfCell> factsOfCellEndedInKnownWriters(const LocationMasks&
     return factsOfCellEndedBy(writes) | OptionSet<FactOfCell>::fromRaw(static_cast<OptionSet<FactOfCell>::StorageType>(~factsOfCellKnownInKnownWriters.toRaw()));
 }
 
-void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard)
+void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject)
 {
     if (effects.mayRunOtherCode()) {
         invalidate(effects);
@@ -51,18 +54,18 @@ void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<b
     };
     m_answers.endWhatIsWritten(effects, endsAnswer);
     if (!holdsNoRecord() && !effects.writes.isEmpty()) {
-        heldToWrite().endWhatIsWritten(effects, mayBeWritten, mayEndGuard);
+        heldToWrite().endWhatIsWritten(m_program, effects, mayBeWritten, mayEndGuard, writtenAlone, writerOfOneObject);
         noteKindsOfRecordsLeft();
     }
 }
 
-void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard)
+void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject)
 {
     const LocationMasks& writes = effects.writes;
     if (!writes.containsOnly(heapsJudgedInKnownWriters)) {
         Effects judgedByHeap = effects;
         judgedByHeap.writes.remove(heapsJudgedInKnownWriters);
-        endWhatIsWritten(judgedByHeap);
+        endWhatIsWritten(program, judgedByHeap, writtenAlone);
         if (holdsNoRecord())
             return;
     }
@@ -123,7 +126,7 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const Sc
     }
     if (goesByLists()) [[unlikely]] {
         endByLists({ .shapes = endsShapes, .elements = endsElements, .facts = factsEnded, .slots = slotsWritten, .environmentFields = environmentFieldsWritten, .guards = guardsWritten,
-            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard });
+            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard, .writerOfOneObject = writerOfOneObject, .program = &program, .writtenAlone = writtenAlone });
         dropEndedRecordsIfMany();
         return;
     }
@@ -162,9 +165,9 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const Sc
             endPlacesWhere(holder, false, [&](const Place& place) {
                 bool ends = false;
                 if (place.kind == PlaceKind::Slot)
-                    ends = (slotsWritten & place.mask()) && isWritten();
+                    ends = (slotsWritten & place.mask()) && !liesBesideWhatIsWritten(program, place, slotsWritten, writtenAlone) && isWritten();
                 else if (place.kind == PlaceKind::EnvironmentField)
-                    ends = (environmentFieldsWritten & place.mask()) && isWritten();
+                    ends = (environmentFieldsWritten & place.mask()) && !liesBesideWhatIsWritten(program, place, environmentFieldsWritten, writtenAlone) && isWritten();
                 else if (place.kind == PlaceKind::GuardOfStores || place.kind == PlaceKind::GuardOfReads)
                     ends = (guardsWritten & place.mask()) && mayEndGuard(classOfGuardedSide(place.first), PropertyKeyID::fromBits(place.second));
                 else if (!(bitOfKind(place.kind) & kindsThatRestOnWhatIsKnown))
@@ -216,6 +219,17 @@ static bool makesNewCellInKnownWriters(const Operation& made)
             return false;
     }
     return true;
+}
+
+bool isOfLayoutAlone(Walker& walker, Reference object, LayoutID layout)
+{
+    TypeID id = object.isRecord() ? walker.typeOf(object) : TypeID();
+    if (!id)
+        return false;
+    const Type& type = walker.types().at(id);
+    if (!type.isJavaScriptValue() || type.primitives || !type.hasOnlyLayouts() || type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
+        return false;
+    return singleLayoutOf(walker.types(), type) == layout;
 }
 
 bool mayBeSameObject(Walker& walker, Reference first, Reference second)
@@ -281,7 +295,7 @@ static bool opcodeMayRunCodeOfOperandsInKnownWriters(Opcode opcode, uint32_t num
     return false;
 }
 
-static bool writesThroughDeclaredOperandInKnownWriters(Opcode opcode, uint32_t declaredIndex, uint32_t numberOfDeclaredOperands)
+static ALWAYS_INLINE bool writesThroughDeclaredOperandInKnownWriters(Opcode opcode, uint32_t declaredIndex, uint32_t numberOfDeclaredOperands)
 {
     if (operandUsesOf(opcode, declaredIndex).containsAny(usesThatWriteOperandInKnownWriters))
         return true;
@@ -313,7 +327,7 @@ static bool writesThroughDeclaredOperandsAloneInKnownWriters(Opcode opcode, Vect
 
 static Reference onlyObjectDefinedOnInKnownWriters(Walker& walker, const Draft& writer)
 {
-    static constexpr OpcodeSet definitionsOnOneObject { Opcode::DefineGetter, Opcode::DefineSetter, Opcode::DefineAccessors, Opcode::PropDefine };
+    static constexpr OpcodeSet definitionsOnOneObject { Opcode::DefineGetter, Opcode::DefineSetter, Opcode::DefineAccessors, Opcode::PropDefine, Opcode::ElemDefine };
     if (definitionsOnOneObject.contains(writer.opcode))
         return writer.objectOperand();
     if (writer.opcode == Opcode::DefineOwnProperty) {
@@ -323,7 +337,7 @@ static Reference onlyObjectDefinedOnInKnownWriters(Walker& walker, const Draft& 
     return { };
 }
 
-static std::optional<ElementStoreInKnownWriters> findElementStoreWithoutOtherCodeInKnownWriters(const Draft& writer, const Effects& effects)
+static ALWAYS_INLINE std::optional<ElementStoreInKnownWriters> findElementStoreWithoutOtherCodeInKnownWriters(const Draft& writer, const Effects& effects)
 {
     if (writer.opcode == Opcode::PutArrayElement) {
         if (writer.level() != KnowledgeLevel::Proven)
@@ -398,14 +412,42 @@ static bool rowAboveHoldsInKnownWriters(const Walker& walker, LayoutID from, Lay
     return false;
 }
 
+static bool isOnlyClosureOfClassWhoseGuardsHaveBegunInKnownWriters(const Walker& walker, LayoutID made, TypeID newTarget)
+{
+    const Program& program = walker.program();
+    LayoutID classLayout = declaredLayoutOf(program, made);
+    AccessContext context { program, WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() };
+    if (!newTarget || !walker.state().guardsHaveBegun(classLayout) || !prototypeOfConstructorFunctionIsLeftToGuards(context, classLayout))
+        return false;
+    Type type = walker.types().at(newTarget);
+    return type.isObject() && type.hasOnlyClosures() && singleFunctionOf(walker.types(), type) == program.at(classLayout).constructor;
+}
+
+static bool liesBelowPrototypeReadBehindGuardsInKnownWriters(const Walker& walker, const Draft& birth)
+{
+    const Code& code = walker.code();
+    Reference prototype = rootInKnownWriters(code, birth.prototypeOperand());
+    if (!prototype.isValue())
+        return false;
+    const Operation& read = code.at(prototype.id());
+    const Program& program = walker.program();
+    if (read.opcode != Opcode::GetConstructPrototype || declaredLayoutOf(program, read.layout()) != declaredLayoutOf(program, birth.layout()) || !read.newTargetOperand())
+        return false;
+    return isOnlyClosureOfClassWhoseGuardsHaveBegunInKnownWriters(walker, birth.layout(), code.at(read.newTargetOperand()).type);
+}
+
 static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walker, const Draft& writer)
 {
     using Which = GuardsEndedInKnownWriters::Which;
     if (testsItsOwnGuess(writer))
         return { };
     const Program& program = walker.program();
+    if (writer.opcode == Opcode::GetConstructPrototype && isOnlyClosureOfClassWhoseGuardsHaveBegunInKnownWriters(walker, writer.layout(), walker.typeOf(writer.newTargetOperand())))
+        return { Which::None, { }, { } };
     if (writer.opcode == Opcode::NewObject) {
         LayoutID classLayout = declaredLayoutOf(program, writer.layout());
+        if (writer.prototypeOperand() && !program.prototypeMaySelectOtherClass(writer.layout()) && liesBelowPrototypeReadBehindGuardsInKnownWriters(walker, writer))
+            return { Which::None, { }, { } };
         if (writer.prototypeOperand())
             return program.prototypeMaySelectOtherClass(writer.layout()) ? GuardsEndedInKnownWriters { } : GuardsEndedInKnownWriters { Which::OfClassesInRowOf, classLayout, { } };
         if (program.at(classLayout).has(LayoutFlags::IsConstructorFunction) && !walker.state().guardsHaveBegun(classLayout))
@@ -441,12 +483,81 @@ static ALWAYS_INLINE bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker,
     return writesFreshObjectsOfTurnAloneInKnownWriters(walker, draft, effects);
 }
 
+bool makesNewCell(const Operation& made)
+{
+    return makesNewCellInKnownWriters(made);
+}
+
+static std::optional<Vector<uint32_t, 2>> objectsMadeHereInKnownWriters(Walker& walker, const ObjectsWrittenAloneInKnownWriters& written)
+{
+    Vector<uint32_t, 2> made;
+    for (Reference object : written) {
+        Reference root = rootInKnownWriters(walker.code(), object);
+        if (!root.isValue() || !makesNewCellInKnownWriters(walker.code().at(root.id())))
+            return std::nullopt;
+        made.append(root.id().index());
+    }
+    return made;
+}
+
+static std::optional<Vector<uint32_t, 2>> listMadeHereThatLoopOnlyFillsInKnownWriters(Walker& walker, Reference receiver)
+{
+    if (walker.takesReceiversOfMethodsOfListsToBeMadeHere()) [[unlikely]]
+        return Vector<uint32_t, 2> { };
+    std::optional<BlockID> head = walker.headOfInnermostTryInFrameOnTop();
+    std::optional<Vector<uint32_t, 2>> made = head ? objectsMadeHereInKnownWriters(walker, ObjectsWrittenAloneInKnownWriters { receiver }) : std::nullopt;
+    if (!made || !textOfLoopOnlyFillsListAndReadsAnother(walker, *head, ValueID(made->first())) || !walker.textOfLoopReckonsWithWhatItReads(*head))
+        return std::nullopt;
+    return made;
+}
+
+std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker& walker, const TerminatorDraft& tried, const Effects& effects)
+{
+    static constexpr std::array methods { InlineBuiltin::ArrayPush, InlineBuiltin::ArrayPop, InlineBuiltin::ArrayShift, InlineBuiltin::ArrayUnshift };
+    if (tried.kind != TerminatorKind::TryCallInline || effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !std::ranges::contains(methods, tried.inlineBuiltin()) || !tried.numberOfOperands() || !tried.operand(0))
+        return std::nullopt;
+    return listMadeHereThatLoopOnlyFillsInKnownWriters(walker, tried.operand(0));
+}
+
+static bool isMethodOfListThatWritesItsReceiverAloneInKnownWriters(const Walker& walker, const Draft& call)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID called = table.canonicalID(table.at(call.overload()).builtin);
+    for (BuiltinID method : { BuiltinID(Builtins::ArrayPrototypePush), BuiltinID(Builtins::ArrayPrototypePop), BuiltinID(Builtins::ArrayPrototypeShift), BuiltinID(Builtins::ArrayPrototypeUnshift) }) {
+        if (table.contains(method) && called == table.canonicalID(method))
+            return true;
+    }
+    return false;
+}
+
+std::optional<Vector<uint32_t, 2>> objectsMadeHereThatAloneAreWritten(Walker& walker, const Draft& draft, const Effects& effects)
+{
+    if (draft.opcode == Opcode::CallBuiltin && !testsItsOwnGuess(draft) && !effects.mayRunOtherCode() && draft.receiverOperand() && isMethodOfListThatWritesItsReceiverAloneInKnownWriters(walker, draft))
+        return listMadeHereThatLoopOnlyFillsInKnownWriters(walker, draft.receiverOperand());
+    std::optional<ObjectsWrittenAloneInKnownWriters> written = objectsWrittenAloneByInKnownWriters(walker, draft, effects, findElementStoreWithoutOtherCodeInKnownWriters(draft, effects));
+    return written && !written->isEmpty() ? objectsMadeHereInKnownWriters(walker, *written) : std::nullopt;
+}
+
 static constexpr AbstractHeapSet heapsEndedByWriterInKnownWriters = perObjectHeaps | AbstractHeapSet { AbstractHeap::MemberGuards };
 static constexpr uint64_t objectsOfAnyLayoutInKnownWriters = UINT64_MAX;
+
+std::optional<MemoryLocation> locationThatStoreNames(const Program& program, const Draft& draft, const Effects& effects)
+{
+    ASSERT(storesThatNameOnePlace.contains(draft.opcode));
+    if (effects.mayRunOtherCode())
+        return std::nullopt;
+    MemoryLocation location = draft.opcode == Opcode::PutModuleVariable ? MemoryLocation::moduleVariable(draft.variable())
+        : draft.opcode == Opcode::PutEnvironmentField ? MemoryLocation::environmentField(draft.layout(), draft.field())
+        : MemoryLocation::objectField(draft.key());
+    uint64_t mask = maskOf(program, location);
+    return std::has_single_bit(mask) && effects.writes.maskOf(location.heap()) == mask ? std::optional(location) : std::nullopt;
+}
 
 static NEVER_INLINE void endWhatWriterWritesInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
 {
     WalkState& state = walker.state();
+    std::optional<MemoryLocation> locationWrittenAlone = storeMayLeaveWhatLiesBeside(state, draft) ? locationThatStoreNames(walker.program(), draft, effects) : std::nullopt;
+    const MemoryLocation* writtenAlone = locationWrittenAlone ? &*locationWrittenAlone : nullptr;
     Effects ended = effects;
     GuardsEndedInKnownWriters guards;
     if (effects.writes.contains(AbstractHeap::MemberGuards)) {
@@ -461,11 +572,11 @@ static NEVER_INLINE void endWhatWriterWritesInKnownWriters(Walker& walker, const
             return true;
         return rowAboveHoldsInKnownWriters(walker, classOfGuard, guards.classLayout) || rowAboveHoldsInKnownWriters(walker, guards.classLayout, declaredLayoutOf(walker.program(), classOfGuard));
     };
+    auto noObjectIsWritten = [](Reference) {
+        return false;
+    };
     if (!ended.writes.containsAny(perObjectHeaps)) {
-        auto noObjectIsWritten = [](Reference) {
-            return false;
-        };
-        state.invalidate(ended, noObjectIsWritten, mayEndGuard);
+        state.invalidate(ended, noObjectIsWritten, mayEndGuard, writtenAlone);
         return;
     }
 
@@ -481,10 +592,7 @@ static NEVER_INLINE void endWhatWriterWritesInKnownWriters(Walker& walker, const
         for (Reference object : *written)
             state.answers().endWhatIsWrittenIn(rootInKnownWriters(code, object), ended);
         ended.writes.remove(perObjectHeaps);
-        auto noOtherObjectIsWritten = [](Reference) {
-            return false;
-        };
-        state.invalidate(ended, noOtherObjectIsWritten, mayEndGuard);
+        state.invalidate(ended, noObjectIsWritten, mayEndGuard);
     } else {
         Vector<Reference, 4> freshOperands;
         if (!written) {
@@ -517,22 +625,56 @@ static NEVER_INLINE void endWhatWriterWritesInKnownWriters(Walker& walker, const
             TypeID type = walker.typeOf(holder);
             return !type || (bitsOfLayoutsOf(walker, type) & layoutsWritten);
         };
-        state.invalidate(ended, mayBeWritten, mayEndGuard);
+        auto findClassOf = [&](Reference holder) -> WalkState::ClassOfHolder {
+            Reference root = rootInKnownWriters(code, holder);
+            TypeID type = root.isRecord() ? walker.typeOf(root) : TypeID();
+            LayoutID only = type ? singleLayoutOf(walker.types(), walker.types().at(type)) : LayoutID();
+            if (!only || !isOfLayoutAlone(walker, root, only))
+                return { };
+            return { only, holder == root && root.isValue() && makesNewCellInKnownWriters(code.at(root.id())) };
+        };
+        auto rootIsOfLayoutAlone = [&](Reference holder, LayoutID layout) {
+            return isOfLayoutAlone(walker, rootInKnownWriters(code, holder), layout);
+        };
+        auto askedOfRoots = scopedLambda<bool(Reference, LayoutID)>(rootIsOfLayoutAlone);
+        auto askedOfHolders = scopedLambda<WalkState::ClassOfHolder(Reference)>(findClassOf);
+        Reference rootWritten = written && written->size() == 1 ? rootInKnownWriters(code, written->first()) : Reference();
+        WalkState::WriterOfOneObject writer { rootWritten, rootWritten ? findClassOf(rootWritten) : WalkState::ClassOfHolder(), askedOfRoots, askedOfHolders };
+        state.invalidate(ended, mayBeWritten, mayEndGuard, writtenAlone, writer.classOfRoot.layoutAlone ? &writer : nullptr);
     }
 }
 
-static void endWhatOperationWritesOrRunsInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
+template<bool netOfEffectsWatchesTurns>
+static ALWAYS_INLINE bool endWhatOperationWritesOrRunsInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
 {
     WalkState& state = walker.state();
-    if (!writesObjectsOfTurnAloneInKnownWriters(walker, draft, effects))
+    bool writesWhatTurnHasMade = writesObjectsOfTurnAloneInKnownWriters(walker, draft, effects);
+    if constexpr (netOfEffectsWatchesTurns)
+        walker.noteWhetherOperationWritesWhatTurnHasMade(writesWhatTurnHasMade);
+    if (!writesWhatTurnHasMade)
         state.noteWhatOperationDoes(effects);
     if (draft.opcode == Opcode::ReleaseEnvironment)
         state.noteSomethingWasDoneInTurn();
     if (!walker.has(Mechanism::TypedOperations) || effects.mayRunOtherCode() || !effects.writes.containsAny(heapsEndedByWriterInKnownWriters) || state.isEmpty()) {
+        if (storeMayLeaveWhatLiesBeside(state, draft)) [[unlikely]] {
+            std::optional<MemoryLocation> writtenAlone = locationThatStoreNames(walker.program(), draft, effects);
+            state.invalidate(effects, writtenAlone ? &*writtenAlone : nullptr);
+            return writesWhatTurnHasMade;
+        }
         state.invalidate(effects);
-        return;
+        return writesWhatTurnHasMade;
     }
     endWhatWriterWritesInKnownWriters(walker, draft, effects);
+    return writesWhatTurnHasMade;
+}
+
+static NEVER_INLINE bool endWhatOperationWritesOrRunsWhereNetOfEffectsWatchesTurns(Walker& walker, const Draft& draft, const Effects& effects)
+{
+    uint32_t markOfTurnInFront = walker.state().markOfTurn();
+    bool writesWhatTurnHasMade = endWhatOperationWritesOrRunsInKnownWriters<true>(walker, draft, effects);
+    if (walker.turnsForgetWhatWasDone())
+        walker.state().layMarkOfTurnFalsely(markOfTurnInFront);
+    return writesWhatTurnHasMade;
 }
 
 static void noteThatGuardsOfRowHaveBegunInKnownWriters(Walker& walker, LayoutID classLayout)
@@ -549,13 +691,35 @@ bool writerEndsNoGuard(const Walker& walker, const Draft& writer)
     return guardsEndedByInKnownWriters(walker, writer).which == GuardsEndedInKnownWriters::Which::None;
 }
 
-void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
+ALWAYS_INLINE_INTO_OTHER_FILES void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
 {
-    endWhatOperationWritesOrRunsInKnownWriters(walker, draft, effects);
-    if (draft.opcode == Opcode::BeginMemberGuards)
+    bool isPutBack = draft.opcode == Opcode::PutModuleVariable && walker.storeIsPutBackWhereTurnBeginsAgain(draft.variable());
+    uint32_t newestStoreInFront = isPutBack ? walker.state().newestStoreToPutBack() : 0;
+    bool writesWhatTurnHasMade = walker.netOfEffectsWatchesTurns() ? endWhatOperationWritesOrRunsWhereNetOfEffectsWatchesTurns(walker, draft, effects) : endWhatOperationWritesOrRunsInKnownWriters<false>(walker, draft, effects);
+    if (isPutBack) {
+        walker.state().noteStoreToPutBack(walker.numberOfTurnOfTypedCopy(), newestStoreInFront);
+        if (walker.netOfEffectsWatchesTurns()) [[unlikely]]
+            walker.noteWhetherOperationWritesWhatTurnHasMade(true);
+    }
+    if (draft.opcode == Opcode::BeginMemberGuards) {
+        walker.noteGuardsBegunInTries(declaredLayoutOf(walker.program(), draft.layout()));
         noteThatGuardsOfRowHaveBegunInKnownWriters(walker, declaredLayoutOf(walker.program(), draft.layout()));
+    }
     static_assert(!declaredBoundOf(Opcode::PutSlot).writes.contains(AbstractHeap::NamedProperties) && !declaredBoundOf(Opcode::PutSlotOrAdd).writes.contains(AbstractHeap::NamedProperties));
-    if ((draft.opcode != Opcode::PutSlot && draft.opcode != Opcode::PutSlotOrAdd) || testsItsOwnGuess(draft) || !effects.writes.contains(AbstractHeap::NamedProperties))
+    if (draft.opcode == Opcode::PutDoubleIndex || draft.opcode == Opcode::PutPropertyOfHeir) {
+        if (uint32_t storeToPutBack = walker.takeStoreBeingBuiltToPutBack(); storeToPutBack && !writesWhatTurnHasMade) {
+            walker.state().noteStoreToPutBack(walker.numberOfTurnOfTypedCopy(), storeToPutBack);
+            walker.keepStateBehindStoreToPutBack(storeToPutBack);
+        }
+        return;
+    }
+    if (draft.opcode != Opcode::PutSlot && draft.opcode != Opcode::PutSlotOrAdd)
+        return;
+    if (uint32_t storeToPutBack = walker.takeStoreBeingBuiltToPutBack(); storeToPutBack && !writesWhatTurnHasMade) {
+        walker.state().noteStoreToPutBack(walker.numberOfTurnOfTypedCopy(), storeToPutBack);
+        walker.keepStateBehindStoreToPutBack(storeToPutBack);
+    }
+    if (testsItsOwnGuess(draft) || !effects.writes.contains(AbstractHeap::NamedProperties))
         return;
     const Code& code = walker.code();
     for (Reference name = draft.objectOperand(); name.isValue(); name = Reference::value(code.at(name.id()).operand(0))) {

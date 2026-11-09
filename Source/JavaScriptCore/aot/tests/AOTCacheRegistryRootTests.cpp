@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTChildProcess.h"
 #include "AOTDroppedClosureTestSupport.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTVMState.h"
@@ -19,7 +20,9 @@
 #include "VM.h"
 #include <array>
 #include <optional>
+#include <stdlib.h>
 #include <wtf/ConcurrentPtrHashSet.h>
+#include <wtf/DataLog.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
@@ -254,6 +257,24 @@ static void testSiteRootsStructureThatNextObjectGets(LoadedProgram& program)
     }
 }
 
+static void testSitePastEndOfSiteCachesOnRequest(LoadedProgram& program)
+{
+    SiteCaches& sites = program.state().propertyCaches->siteCaches();
+    SiteCache first = siteOfTestsOfDroppedClosures(program);
+    AOT_TEST_CHECK(!sites.indexOf(first));
+    if (getenv(crashRequestVariable))
+        dataLogLn(sites.indexOf(std::bit_cast<SiteCache>(std::bit_cast<uintptr_t>(first) + program.instance().siteCaches().size_bytes())));
+}
+
+static void testSiteBetweenTwoSlotsOnRequest(LoadedProgram& program)
+{
+    SiteCaches& sites = program.state().propertyCaches->siteCaches();
+    SiteCache first = siteOfTestsOfDroppedClosures(program);
+    AOT_TEST_CHECK(!sites.indexOf(first));
+    if (getenv(crashRequestVariable))
+        dataLogLn(sites.indexOf(std::bit_cast<SiteCache>(std::bit_cast<uintptr_t>(first) + 1)));
+}
+
 static void testSiteDoesNotRootStructureOfOneObject(LoadedProgram& program)
 {
     for (ASCIILiteral name : namesOfFunctionsWithClosuresToDrop) {
@@ -282,6 +303,8 @@ std::span<const NativeTest> cacheRegistryRootTests()
     static constexpr NativeTest tests[] = {
         { "cache-registry-roots/no-table-roots-closure-given-display-name"_s, withClosuresToDrop<testNoTableRootsClosureGivenDisplayName> },
         { "cache-registry-roots/site-roots-structure-that-next-object-gets"_s, withClosuresToDrop<testSiteRootsStructureThatNextObjectGets> },
+        { "ends-on-request/site-past-the-end-of-the-site-caches"_s, withClosuresToDrop<testSitePastEndOfSiteCachesOnRequest> },
+        { "ends-on-request/site-between-two-slots"_s, withClosuresToDrop<testSiteBetweenTwoSlotsOnRequest> },
         { "cache-registry-roots/site-does-not-root-structure-of-one-object"_s, withClosuresToDrop<testSiteDoesNotRootStructureOfOneObject> },
         { "strongRootsAreAppendedInOrder"_s, testStrongRootsAreAppendedInOrder },
         { "nullStrongRootsAreSkipped"_s, testNullStrongRootsAreSkipped },

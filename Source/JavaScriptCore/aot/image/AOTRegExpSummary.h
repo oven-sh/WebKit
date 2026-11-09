@@ -55,6 +55,7 @@ struct RegExpSummary {
     unsigned numSubpatterns { 0 };
     unsigned minimumSize { 0 };
     unsigned numDuplicateNamedCaptureGroups { 0 };
+    uint64_t groupsPresentInEveryMatch { 0 };
     Yarr::SpecificPattern specificPattern { Yarr::SpecificPattern::None };
     String source;
     String atom;

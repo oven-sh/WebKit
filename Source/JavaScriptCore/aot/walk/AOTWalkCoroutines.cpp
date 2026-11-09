@@ -31,8 +31,9 @@ Reference addDriverParameterOfCoroutine(Walker&, BlockID entry);
 Reference convertReturnedValueOfCoroutine(Walker&, Reference returned, Origin);
 Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, Origin);
 bool canWaitForStepOfAsyncGenerator(Walker&);
-Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Origin);
+Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Reference goesByDriver, Origin);
 bool engineAnswersAboveGenerators(const Walker&);
+OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 
 static constexpr OpcodeSet operationsOfFamilyCoroutine { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope };
 
@@ -58,14 +59,6 @@ static Reference boxedUndefinedForCoroutine(Walker& walker)
     Draft undefined(Opcode::Undefined);
     undefined.representation = Representation::JSValue;
     return walker.constant(WTF::move(undefined));
-}
-
-static Reference boxedResumeModeForCoroutine(Walker& walker, ResumeMode mode)
-{
-    Draft integer(Opcode::Integer);
-    integer.setInteger(static_cast<int64_t>(mode));
-    integer.representation = Representation::JSValue;
-    return walker.constant(WTF::move(integer));
 }
 
 static bool endBlockOfCoroutine(Walker& walker, TerminatorKind kind, Reference value, Origin origin)
@@ -145,7 +138,7 @@ bool canWaitForStepOfAsyncGenerator(Walker& walker)
     return body && body->kind != CoroutineKind::Generator;
 }
 
-Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Origin origin)
+Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Reference goesByDriver, Origin origin)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
     if (!body || body->kind == CoroutineKind::Generator) {
@@ -157,6 +150,8 @@ Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Referen
     step.setGeneratorOperand(generator);
     step.setValueOperand(sent);
     step.setDriverOperand(body->driver);
+    if (goesByDriver)
+        step.setGoesByDriverOperand(goesByDriver);
     step.setHeldOperands(held);
     step.setCalledBuiltin(awaitedCallee);
     return buildSuspensionOfCoroutine(walker, WTF::move(step));
@@ -190,9 +185,12 @@ static Reference buildResultOfYieldOfCoroutine(Walker& walker, Reference resumpt
 
 static void branchOnResumeModeOfCoroutine(Walker& walker, Reference mode, ResumeMode modeThatLeaves, TerminatorKind kind, Reference sent, Origin origin)
 {
+    Draft asked(Opcode::Integer);
+    asked.setInteger(static_cast<int64_t>(modeThatLeaves));
     Draft test = draftForCoroutine(walker, Opcode::StrictEq, origin);
     test.setLeftOperand(mode);
-    test.setRightOperand(boxedResumeModeForCoroutine(walker, modeThatLeaves));
+    test.setRightOperand(walker.constant(WTF::move(asked)));
+    test.setForm(formAllowedForTypedOperator(walker, test));
     Reference isResumedToLeave = walker.build(WTF::move(test));
 
     BlockID leaves = walker.addBlock(BlockFrequency::Rare);
@@ -203,9 +201,14 @@ static void branchOnResumeModeOfCoroutine(Walker& walker, Reference mode, Resume
     walker.continueIn(goesOn);
 }
 
-static bool generatorGoesIntoIterationAloneOfCoroutine(const BodyIndex& body, ValueID site)
+static bool generatorGoesIntoIterationAloneOfCoroutine(const BodyIndex& body, const LinkedCall& call)
 {
-    if (body.isParameter(site) || body.opcodeOf(site) != Opcode::Call)
+    ValueID site = call.site;
+    if (body.isParameter(site))
+        return false;
+    if (call.asksForIterator)
+        return body.opcodeOf(site) == Opcode::AppendSpread || (body.opcodeOf(site) == Opcode::IteratorOpen && body.value(site).as<Opcode::IteratorOpen>().iteratorKind() == IteratorKind::Sync);
+    if (body.opcodeOf(site) != Opcode::Call)
         return false;
     if (body.isUnused(site))
         return true;
@@ -241,7 +244,7 @@ bool nobodyLooksAboveGeneratorsOf(const Walker& walker, FunctionID generatorFunc
                 ++*numberOfListedCalls;
             if (!body)
                 body = walker.facts().bodies().find(referrer);
-            if (!body || !generatorGoesIntoIterationAloneOfCoroutine(*body, call.site))
+            if (!body || !generatorGoesIntoIterationAloneOfCoroutine(*body, call))
                 return false;
         }
     }
@@ -514,9 +517,12 @@ bool walkRampOfCoroutine(Walker& walker)
             walker.fail("a generator function does not take its function object, which its generators read their prototype from"_s);
             return false;
         }
-        Draft allocation = draftForCoroutine(walker, function.has(FunctionFlags::IsAsync) ? Opcode::NewAsyncGenerator : Opcode::NewGenerator, origin);
+        bool readsPrototype = !nobodyLooksAboveGeneratorsOf(walker, unit.function, nullptr);
+        bool hasNoPrototypeOfItsOwn = walker.plan().functionKind(program, conventions.closureEntryOf(unit.function)).isInRuntimeModule;
+        Opcode birth = function.has(FunctionFlags::IsAsync) ? Opcode::NewAsyncGenerator : readsPrototype && hasNoPrototypeOfItsOwn ? Opcode::NewGeneratorOfLibrary : Opcode::NewGenerator;
+        Draft allocation = draftForCoroutine(walker, birth, origin);
         allocation.setFunction(unit.function);
-        if (!nobodyLooksAboveGeneratorsOf(walker, unit.function, nullptr))
+        if (readsPrototype)
             allocation.setCalleeOperand(operands[*calleeParameter]);
         driver = walker.build(WTF::move(allocation));
     } else if (neverSuspends)

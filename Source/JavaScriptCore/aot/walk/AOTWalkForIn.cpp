@@ -372,7 +372,7 @@ bool Walker::iterationsSteppedAtHandOverPositionsAlone(BlockID inputHead) const
         --numberInFront;
         if (iteration.inputHead != inputHead || iteration.inlineFrame != m_frames.last().inlineFrame)
             continue;
-        if (!iteration.goesThroughListByIndexAlone() || !iteration.isDeadBehindLoop)
+        if ((!iteration.goesThroughListByIndexAlone() && !iteration.goesThroughViewByIndexAlone() && !iteration.goesThroughTextByIndexAlone()) || !iteration.isDeadBehindLoop)
             return false;
     }
     return true;

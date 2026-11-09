@@ -29,10 +29,19 @@ public:
     };
 
     struct Snapshot {
-        bool isSet { false };
-        std::span<const RegisterBinding> bindings;
+        bool isSet() const { return first; }
+        std::span<const RegisterBinding> bindings() const { return { first, static_cast<size_t>(std::popcount(registers)) }; }
+        void set(const RegisterBinding* bindingsInOrderOfRegisters, RegisterMask registersBound)
+        {
+            ASSERT(bindingsInOrderOfRegisters);
+            first = bindingsInOrderOfRegisters;
+            registers = registersBound;
+        }
+
+        const RegisterBinding* first { nullptr };
         RegisterMask registers { 0 };
     };
+    static_assert(sizeof(Snapshot) == 16);
 
     void allocateBlock(Block*);
     void allocateOperation(Operation*);
@@ -184,6 +193,8 @@ public:
         m_allocation.m_needsFrameAheadOfFramedPart |= m_isAheadOfFramedPart;
     }
     void enterFramedPart();
+    void keepPointersThatWait(Position endOfWhatWaysLeadTo);
+    Position endOfWhatWaysLeadToFromSafepointsOfRareRegion() const;
     Position position() const { return m_position; }
     bool isInRareRegion() const { return m_rareRegion != noRareRegion; }
 
@@ -359,7 +370,8 @@ public:
     bool frameMayChangeOnEdge(const Block* from, const Block* target);
     Block* splitEdge(Block* from, unsigned successorIndex, const Snapshot& endOfFrom);
     Position findFirstReadFromHeadOf(const Block*, const Operation* value);
-    bool listsRegistersAtHeadOf(const Block* block) const { return m_proc.checksAllocation() || m_order.of(block).isRare() || m_allocation.isHeadOfFramedPart(block); }
+    bool firstCallBehindHeadReadsValueElsewhere(const Block* target, Reg, const Operation* value);
+    bool listsRegistersAtHeadOf(const Block* block) const { return m_allocation.recordsWhatCheckersRead() || m_order.of(block).isRare() || m_allocation.isHeadOfFramedPart(block); }
     ArenaVector<std::span<const RegisterBinding>>& registersAtHeads() { return m_allocation.m_registersAtHead; }
     Snapshot takeSnapshot();
     void restore(const Snapshot&);
@@ -375,6 +387,10 @@ public:
     void noteOperandTakenBack(const Operation* sum, OperandTakenBack, Location otherOperand);
 
     void chooseRegistersKeptThroughLoop(const Loop&, bool movesMayWriteRegisters);
+    const Block* headOfLoopThatBlockOnlyLeadsBackTo(const Block*) const;
+    void dropWhatBlockThatLeadsBackNeitherReadsNorHandsOn(const Block*, const Block* headOfLoop);
+    void holdWhatHeadOfLoopHolds(const Block*, const Block* headOfLoop, Position limitOfDefinitions);
+    Reg takeRegisterOfValueThatLoopReadsBehindPhi(const Loop&, const Operation* phi);
     bool isReadInside(const Operation* value, const Loop&) const;
     void bringInWhatLoopReads(const Loop&, Position limitOfDefinitions);
     bool isKeptThroughLoopAround(Reg, const Operation* value, Position) const;
@@ -393,11 +409,14 @@ public:
     RegisterMask takeScratchRegisters(Bank, unsigned count, RegisterMask& locked);
     void releaseDeadValue(PatchOperation*);
     void releaseChildrenLetGoByCallee(PatchOperation*, std::span<const Location> locationsOfOperands, Position early, RegisterMask locked);
-    RegisterMask clearPlacesOfValuesHandedTo(Operation* released, Position);
-    void findBlocksThatLeadToReadsOf(const Operation* value);
+    RegisterMask clearPlacesOfValuesHandedTo(Operation* released, Position, const PatchOperation* releasing);
+    void findBlocksThatLeadToReadsOf(const Operation* value, uint32_t firstBlock);
+    uint32_t firstBlockOnWaysFrom(const Block*, const Operation* value);
     bool isReadOnSomeWayFromHeadOf(const Operation* value, const Block*);
+    bool dominatesSomeReadBelowDefinitionOf(const Block*, const Operation* value);
     bool isHeldAtHeadThatWayLeadsBackTo(const Operation* value) const;
     bool isReadOnSomeWayOn(const Operation* value, Position);
+    void checkThatNoWayOnReadsWhatHintsReleased();
     RegisterMask registersWhereReleasedValueMayHaveWaited() const;
 
     void enterRareRegion(uint32_t region);
@@ -414,6 +433,14 @@ public:
     RegisterMask registersWhereCallInBlockTakesWhatLiesThere(const Block*) const;
     unsigned numberOfReadsThatWordWouldReload(const Operation*, Position end) const;
     void findFramedPart();
+    static bool isReadByMoreThanSteps(const ValueFacts& facts) { return facts.has(ValueFlag::LivesIntoLandingPad) || facts.has(ValueFlag::LivesAcrossSuspension) || facts.has(ValueFlag::IsKeptForCollector); }
+    bool isReadByMoreThanSteps(const SpillFacts&) const;
+    void findSpillsThatNoStepReads();
+    ALWAYS_INLINE Location placeToReadIn(SpillIndex spill) const
+    {
+        m_allocation.m_spills[spill].isRead = true;
+        return Location::spill(spill);
+    }
     void settleFramedPart();
     void standIn(const Block* block)
     {
@@ -508,6 +535,7 @@ public:
         Position first;
         Position last;
         Position until;
+        uint32_t rareRegion;
     };
     ArenaVector<SafepointsAheadOfFramedPart> m_safepointsAheadOfFramedPart;
     struct ReferenceWhosePointerWaits {
@@ -524,8 +552,24 @@ public:
     void letEdgesWritePhi(Operation* phi, SpillIndex, const BlockPlace& placeOfHead);
     ArenaVector<Reg> m_hints;
     ArenaVector<Position> m_knownReadsOutsideRareRegions;
+    struct ReleaseByWaysOn {
+        const Operation* value;
+        const PatchOperation* releasing;
+        uint32_t firstStepBehind;
+    };
+    ArenaVector<ReleaseByWaysOn> m_releasesByWaysOn;
+    mutable ArenaVector<uint8_t> m_whetherValuesThatRareRegionsReadAreWorthCalleeSaveNotYetSaved;
+    struct WhetherHeadAroundHolds {
+        uint32_t loopWhoseHeadHolds { noLoop };
+        uint32_t loopFromWhichNoHeadHolds { noLoop };
+        RegisterMask registersHeld { 0 };
+        RegisterMask registersNotHeld { 0 };
+    };
+    ArenaVector<WhetherHeadAroundHolds> m_whetherHeadsAroundHold;
     BitSpan m_hasPassedOnHintsOfPhis;
     ArenaVector<uint32_t> m_firstReadsNotKnownOutOfReach;
+    uint64_t m_numberOfLaterReadsAskedWhetherTheyCount { 0 };
+    ArenaVector<uint32_t> m_lastReadsThatCounted;
     struct FirstReadFromHead {
         Position head { noPosition };
         Position read { noPosition };
@@ -534,8 +578,12 @@ public:
     mutable ArenaVector<uint32_t> m_numbersOfListsOfReads;
     mutable ArenaVector<std::span<const uint32_t>> m_listsOfReads;
     ArenaVector<uint32_t> m_lastSearchThatReachedBlock;
+    ArenaVector<const Block*> m_blocksReachedBySearchForWays;
     uint32_t m_numberOfSearchesForWays { 0 };
+    size_t m_numberOfBlocksReachedBySearchesForWays { 0 };
     const Operation* m_valueOfLastSearchForWays { nullptr };
+    uint32_t m_firstBlockOfLastSearchForWays { 0 };
+    std::optional<bool> m_someLoopHasSideEntrance;
     ArenaVector<uint32_t> m_firstLoopsWhoseHeadsAreNotJudged;
     Position m_positionOfLastQuestionForLoopNotJudged { noPosition };
     Position m_beginOfFirstLoopNotJudged { noPosition };

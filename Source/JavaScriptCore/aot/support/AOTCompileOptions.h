@@ -28,15 +28,19 @@ using Wire::ImageForm;
 using Wire::OutputOptions;
 using Wire::ReferenceWidth;
 using Wire::ReportSet;
+using Wire::TestingLie;
 using Wire::TestingSwitch;
 
 template<typename Flags>
 constexpr bool hasFlag(Flags set, Flags flag)
 {
-    return static_cast<uint32_t>(set) & static_cast<uint32_t>(flag);
+    using Word = std::underlying_type_t<Flags>;
+    return static_cast<Word>(set) & static_cast<Word>(flag);
 }
 
-enum class DrawnFor : uint8_t { BlockFrequency, LoopMark, ExpectedType, OtherExpectedType, StepOfGuessesThatFail, NodeOfLink, CopyInLine, ParameterGuard, LoopBuiltTwice, PlaceInFrontOfLoop, GuessOutsideLoops };
+static_assert(hasFlag(allMembersOf<TestingSwitch>.back(), allMembersOf<TestingSwitch>.back()));
+
+enum class DrawnFor : uint8_t { BlockFrequency, LoopMark, ExpectedType, OtherExpectedType, StepOfGuessesThatFail, NodeOfLink, CopyInLine, ParameterGuard, LoopBuiltTwice, PlaceInFrontOfLoop, GuessOutsideLoops, WayOfWalking, ResultInParts };
 
 constexpr uint32_t drawBySeed(uint32_t seed, DrawnFor question, uint32_t first, uint32_t second)
 {
@@ -102,27 +106,22 @@ struct CompileOptions {
     double sizeClassProgression { 0 };
     unsigned threadCount { 1 };
     CompileAction action { CompileAction::Compile };
+    bool verifiesCode { false };
     bool verifiesMachineCode { false };
     bool asksWhetherFlowOfLinkIsClosed { false };
     bool walksLastWalksOfLoopsAlone { false };
     bool walksLoopsThatFitAgain { false };
     bool asksWhetherLinkFindsLessFromMore { false };
-#if ASSERT_ENABLED || ASAN_ENABLED
-    bool verifiesAfterEveryStage { false };
-    bool verifiesProgram { false };
-    bool validatesReferences { false };
-    bool validatesReferenceGuards { false };
-#else
-    static constexpr bool verifiesAfterEveryStage = false;
-    static constexpr bool verifiesProgram = false;
-    static constexpr bool validatesReferences = false;
-    static constexpr bool validatesReferenceGuards = false;
-#endif
     ReportSet reports { };
     TestingSwitch testing { };
+    TestingLie lies { };
     uint32_t rowThatSaysLess { 0 };
     uint32_t seedOfShuffles { 0 };
     uint32_t periodOfGuessesThatFail { 0 };
+    uint32_t wayForcedOnUnits { 0 };
+    uint32_t periodOfUnitsWalkedThatWay { 0 };
+    uint32_t periodOfHearingsThatCutWalks { 0 };
+    uint32_t phaseOfHearingsThatCutWalks { 0 };
     ExcludedCode excludedCode { };
     OutputOptions output { };
     LoggingOptions logging;

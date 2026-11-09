@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCode.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -86,7 +87,7 @@ static bool describesPrimitivesAlone(const NaturalType& natural)
     return !natural.isObject && !natural.isFunction && !natural.opaque && !natural.builtinClass;
 }
 
-TypeID naturalTypeFrom(TypeArena& types, const NaturalType& natural)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID naturalTypeFrom(TypeArena& types, const NaturalType& natural)
 {
     if (describesPrimitivesAlone(natural)) {
         NaturalPrimitives written = primitivesOf(natural);
@@ -157,7 +158,7 @@ static TypeID widestPrimitiveResultByRuleOf(Opcode opcode)
     return applyResultRule(rules, Draft(opcode), 0, ResultSide::Unproven);
 }
 
-TypeID widestPrimitiveResultOf(Opcode opcode)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID widestPrimitiveResultOf(Opcode opcode)
 {
     static const std::array<TypeID, numberOfEnumerators<Opcode>> results = [] {
         std::array<TypeID, numberOfEnumerators<Opcode>> byRule;
@@ -564,7 +565,7 @@ TypeID numberResultOf(TypeArena& types, Opcode opcode, OperandTypes operandTypes
     return numberResultOf(types, opcode, operands.span());
 }
 
-TypeID typeAfterStepOfOne(TypeArena& types, Opcode opcode, std::span<const TypeID> operandTypes)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID typeAfterStepOfOne(TypeArena& types, Opcode opcode, std::span<const TypeID> operandTypes)
 {
     auto stepIn = [](TypeID type) -> int64_t {
         if (!isIntegerType(type))
@@ -619,6 +620,16 @@ TypeID naturalTypeOfOperands(const TypingContext& context, Opcode opcode, Natura
     for (const NaturalOperand& operand : operands)
         classes.append(classOf(operand));
     TypeID upperBound = naturalTypeFrom(context.types, naturalTypeOf(table, classes.span()));
+    bool mayGiveText = std::ranges::any_of(operands, [](const NaturalOperand& operand) {
+        return !operand.hasOnlyPrimitives(Primitive::NumberLike | Primitive::BigInt);
+    });
+    bool mayGiveBigInt = std::ranges::all_of(operands, [](const NaturalOperand& operand) {
+        return !operand.isMadeOfPrimitives || operand.primitives & (Primitive::BigInt | Primitive::Unspecified | Primitive::Absent);
+    });
+    if (!mayGiveText || !mayGiveBigInt)
+        upperBound = context.types.withoutPrimitives(upperBound, (mayGiveText ? 0 : Primitive::AnyString) | (mayGiveBigInt ? 0 : Primitive::BigInt));
+    if (isNeverType(upperBound))
+        return TypeTable::never;
     if (!isNumberType(upperBound))
         return upperBound;
     TypeID refined = numberResultOf(context.types, opcode, operands.span());

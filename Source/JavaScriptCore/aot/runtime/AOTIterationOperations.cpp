@@ -12,6 +12,8 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinModules.h"
 #include "AOTBuiltinTable.h"
+#include "AOTCompactTable.h"
+#include "AOTErrorMessages.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTOperationArguments.h"
@@ -348,6 +350,49 @@ static ALWAYS_INLINE bool mayBeSteppedByRunTime(JSValue iterable)
     }
 }
 
+template<typename Collection>
+static bool tryTakeOutOfTable(JSGlobalObject* globalObject, Collection* collection, std::span<EncodedJSValue> elements)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (collection->realm() != globalObject || !collection->isIteratorProtocolFastAndNonObservable())
+        return false;
+    JSCell* table = collection->storage();
+    if (!table || elements.empty())
+        return true;
+    size_t numberTaken = 0;
+    auto take = [&](JSValue key, JSValue value) ALWAYS_INLINE_LAMBDA {
+        if constexpr (std::is_same_v<Collection, JSMap>) {
+            JSArray* pair = constructArrayPair(globalObject, key, value);
+            if (scope.exception()) [[unlikely]]
+                return false;
+            elements[numberTaken++] = JSValue::encode(pair);
+        } else {
+            UNUSED_PARAM(value);
+            elements[numberTaken++] = JSValue::encode(key);
+        }
+        return numberTaken < elements.size();
+    };
+    if (Collection::Helper::isCompact(*table)) {
+        uint32_t& deletedPrefix = CompactTable::deletedPrefixOf(collection);
+        CompactTable::forEachEntryFrom(vm, table, deletedPrefix, [&](uint32_t entry, JSValue key, JSValue value) ALWAYS_INLINE_LAMBDA {
+            if (!numberTaken)
+                deletedPrefix = entry;
+            return take(key, value);
+        });
+        return true;
+    }
+    typename Collection::Helper::Entry entry = 0;
+    while (true) {
+        auto found = Collection::Helper::transitAndNext(vm, Collection::Helper::ordinary(*table), entry);
+        if (!found.storage || !take(found.key, found.value))
+            break;
+        table = found.storage;
+        entry = found.entry + 1;
+    }
+    return true;
+}
+
 static void destructureIterable(Instance& instance, JSGlobalObject* globalObject, JSValue iterable, std::span<EncodedJSValue> elements)
 {
     VM& vm = globalObject->vm();
@@ -370,8 +415,21 @@ static void destructureIterable(Instance& instance, JSGlobalObject* globalObject
     for (EncodedJSValue& element : elements)
         element = JSValue::encode(jsUndefined());
 
+    if (iterable.isCell()) {
+        JSCell* cell = iterable.asCell();
+        bool isTaken = false;
+        if (cell->type() == JSSetType)
+            isTaken = tryTakeOutOfTable(globalObject, uncheckedDowncast<JSSet>(cell), elements);
+        else if (cell->type() == JSMapType)
+            isTaken = tryTakeOutOfTable(globalObject, uncheckedDowncast<JSMap>(cell), elements);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (isTaken)
+            return;
+    }
+
     IterationInRunTime iteration(instance, globalObject);
-    if (!iteration.tryOpenUnseen(iterable)) {
+    bool isOpenedUnseen = iteration.tryOpenUnseen(iterable);
+    if (!isOpenedUnseen) {
         if (!elements.empty() && !mayBeSteppedByRunTime(iterable)) {
             if (JSFunction* takes = functionOfLibrary(globalObject, instance.iteration.functionThatTakesFromIterable, Builtins::CompilerHelpersTakeFromIterable)) {
                 MarkedArgumentBuffer arguments;
@@ -407,6 +465,8 @@ static void destructureIterable(Instance& instance, JSGlobalObject* globalObject
             return;
         element = JSValue::encode(value);
     }
+    if (isOpenedUnseen)
+        return;
     RELEASE_AND_RETURN(scope, iteration.close());
 }
 
@@ -432,8 +492,10 @@ static JSPropertyNameEnumerator* enumeratorOfListWithoutNames(Instance& instance
     if (instance.arrays.structuresOfListsWithoutNames[place] != structureID || instance.arrays.chainsAboveListsWithoutNames[place] != structure->prototypeChain(vm, instance.globalObject, list))
         return nullptr;
     uint32_t length = list->getEnumerableLength();
-    if (!length || length != list->getArrayLength())
+    if (length != list->getArrayLength())
         return nullptr;
+    if (!length)
+        return vm.emptyPropertyNameEnumerator();
     EnumeratorCacheEntry& entry = instance.objects.enumerators[indexOfCachedEnumerator(structureID, length)];
     if (entry.structureID == structureID && entry.orderWord == length)
         return uncheckedDowncast<JSPropertyNameEnumerator>(entry.enumerator);
@@ -454,7 +516,8 @@ static bool otherNamesRequireAnotherStructure(Structure* structure)
 static void rememberListsWithoutNames(Instance& instance, JSArray* list, JSPropertyNameEnumerator* enumerator)
 {
     Structure* structure = list->structure();
-    if (!enumerator->indexedLength() || enumerator->sizeOfPropertyNames() || enumerator->cachedStructureID() != structure->id() || structure->isDictionary())
+    bool listsNothing = enumerator == instance.vm->emptyPropertyNameEnumerator();
+    if (structure->isDictionary() || (!listsNothing && (!enumerator->indexedLength() || enumerator->sizeOfPropertyNames() || enumerator->cachedStructureID() != structure->id())))
         return;
     bool sawPolyProto = false;
     if (normalizePrototypeChain(instance.globalObject, list, sawPolyProto) == InvalidPrototypeChain || sawPolyProto)
@@ -506,6 +569,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTEnumeratorGetByVal, EncodedJSValue, (Instan
 JSC_DEFINE_JIT_OPERATION(operationAOTDestructureIterable, void, (Instance* instance, EncodedJSValue iterable, uint32_t count, EncodedJSValue* results))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDestructureIterable);
+    if (JSValue::decode(iterable).isUndefinedOrNull()) [[unlikely]] {
+        throwException(globalObject, scope, createIterationOfNullishError(globalObject, JSValue::decode(iterable)));
+        OPERATION_RETURN(scope);
+    }
     destructureIterable(*instance, globalObject, JSValue::decode(iterable), unsafeMakeSpan(results, count));
     OPERATION_RETURN(scope);
 }
@@ -541,7 +608,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowNotIterable, void, (Instance* instance
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowNotIterable);
     JSValue iterable = JSValue::decode(encodedIterable);
-    if (isSpread)
+    if (!isSpread && iterable.isUndefinedOrNull())
+        throwException(globalObject, scope, createIterationOfNullishError(globalObject, iterable));
+    else if (isSpread)
         throwException(globalObject, scope, createSpreadIteratorNotFunctionError(globalObject));
     else
         throwTypeError(globalObject, scope, getIteratorErrorMessage(validateIterable(vm, iterable, jsUndefined()), iterable));
@@ -631,6 +700,10 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (iterable.isUndefinedOrNull()) [[unlikely]] {
+        throwException(globalObject, scope, createSpreadOfNullishError(globalObject));
+        return;
+    }
     if (iterable.isCell()) {
         JSCell* cell = iterable.asCell();
         if (isReadByIndexUnseen(iterable))
@@ -647,8 +720,14 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
         } else if (!isJSArray(cell)) {
             if (cell->type() == JSMapIteratorType && uncheckedDowncast<JSMapIterator>(cell)->kind() == IterationKind::Entries && tryAppendPairsLeftIn(globalObject, target, uncheckedDowncast<JSMapIterator>(cell)))
                 return;
+            if (cell->type() == JSMapIteratorType && tryAppendMembersOfIteratorNobodyStepped(globalObject, target, uncheckedDowncast<JSMapIterator>(cell)))
+                return;
+            if (cell->type() == JSSetIteratorType && tryAppendMembersOfIteratorNobodyStepped(globalObject, target, uncheckedDowncast<JSSetIterator>(cell)))
+                return;
             if (cell->type() == JSMapType && uncheckedDowncast<JSMap>(cell)->isIteratorProtocolFastAndNonObservable() && tryAppendPairsOfMap(globalObject, target, uncheckedDowncast<JSMap>(cell)))
                 return;
+            if (cell->type() == JSSetType && uncheckedDowncast<JSSet>(cell)->isIteratorProtocolFastAndNonObservable())
+                RELEASE_AND_RETURN(scope, appendMembersOfSet(globalObject, target, uncheckedDowncast<JSSet>(cell)));
             if (cell->type() == ClonedArgumentsType) {
                 bool isAppended = tryAppendElementsOfArguments(globalObject, target, uncheckedDowncast<ClonedArguments>(cell));
                 RETURN_IF_EXCEPTION(scope, void());

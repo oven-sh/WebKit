@@ -62,11 +62,12 @@ Operand StaticsEmitter::loadVariable(VariableID id)
     return emitter<SlotEmitter>().load(addressOf(id), m_plan.variable(id).representation);
 }
 
-void StaticsEmitter::storeVariable(VariableID id, Operand stored)
+void StaticsEmitter::storeVariable(VariableID id, Operand stored, bool isPutBackWhereTurnBeginsAgain)
 {
     PlannedVariable variable = m_plan.variable(id);
     emitter<SlotEmitter>().store(addressOf(id), variable.representation, stored);
-    emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfModulesStored);
+    if (!isPutBackWhereTurnBeginsAgain)
+        emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfModulesStored);
     if (traitsOf(variable.representation).holdsCell)
         emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }
@@ -101,6 +102,11 @@ TypedPointer StaticsEmitter::guardByte(const ClassGuardKey& guard)
 TypedPointer StaticsEmitter::countOfGuards(std::span<const ClassGuardKey> guards)
 {
     return instanceWord(m_heaps.AOTInstance_classGuards, m_mentions.classGuardCount(guards));
+}
+
+TypedPointer StaticsEmitter::rowOfCountsOfGuards(std::span<const Vector<ClassGuardKey, 4>> slots)
+{
+    return instanceWord(m_heaps.AOTInstance_classGuards, m_mentions.rowOfClassGuardCounts(slots));
 }
 
 TypedPointer StaticsEmitter::wordOfEnvironmentHandedBack(LayoutID layout)

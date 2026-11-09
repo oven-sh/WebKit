@@ -9,6 +9,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableRealm.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTHostEntriesTestSupport.h"
@@ -303,6 +304,22 @@ static void testMemberLookup()
     });
 }
 
+static void testMembersAskedByByteAlone()
+{
+    AOT_TEST_CHECK(table().at(hostBuiltin("ObjectPrototype__proto__"_s)).mutability == BuiltinMutability::AlwaysLocked && !isMemberAskedByByteAlone(table(), hostBuiltin("ObjectPrototype__proto__"_s)));
+    AOT_TEST_CHECK(isMemberAskedByByteAlone(table(), hostBuiltin("AbortSignalPrototypeAborted"_s)));
+    AOT_TEST_CHECK(isMemberAskedByByteAlone(table(), hostBuiltin("AbortControllerPrototypeSignal"_s)));
+    AOT_TEST_CHECK(!isMemberAskedByByteAlone(table(), Builtins::ArrayPrototypePush));
+    AOT_TEST_CHECK(!isMemberAskedByByteAlone(table(), Builtins::ObjectPrototype));
+    forEachBuiltin([&](BuiltinID id, const Builtin& builtin) {
+        AOT_TEST_CHECK(builtin.kind != BuiltinKind::Accessor || !builtin.flags.contains(BuiltinFlag::IsCompilerHelper));
+        if (!isMemberAskedByByteAlone(table(), id))
+            return;
+        AOT_TEST_CHECK(builtin.kind == BuiltinKind::Accessor && builtin.holder && builtin.name);
+        AOT_TEST_CHECK(cellThatNamesMemberAskedByItsByte(table(), id) == BuiltinCellKey::getter(id) && !BuiltinCellKey::getter(id).hasCell(table()));
+    });
+}
+
 static void testMemberMissingOnTargetIsNotFound()
 {
     BuiltinID member = hostBuiltin("ProcessCwd"_s);
@@ -334,8 +351,25 @@ static void testMutabilityFollowsTheLock()
         AOT_TEST_CHECK(builtin.flags.contains(BuiltinFlag::IsLockedObject) == lockedObjects.contains(id));
         AOT_TEST_CHECK(table().isLocationOfLockedObject(id) == (builtin.holder && lockedObjects.contains(builtin.holder)));
         bool hasLockOfItsOwn = builtin.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers });
-        AOT_TEST_CHECK(table().hasLockedPrototypeLink(id) == (hasLockOfItsOwn || table().isFunctionOfEngine(id) || table().closesOnlyNamesOfCalls(id)));
+        AOT_TEST_CHECK(table().hasLockedPrototypeLink(id) == (builtin.prototypeLink != BuiltinPrototypeLink::Unknown && (hasLockOfItsOwn || table().isFunctionOfEngine(id) || table().isNativeFunctionOfHost(id) || table().closesOnlyNamesOfCalls(id))));
+        if (table().isNativeFunctionOfHost(id)) {
+            AOT_TEST_CHECK(!table().isFunctionOfEngine(id) && builtin.origin == BuiltinOrigin::Host);
+            for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::call, BuiltinNames::apply, BuiltinNames::bind, table().nameOf(WellKnownSymbol::HasInstance) })
+                AOT_TEST_CHECK(table().isClosedKey(id, name));
+            AOT_TEST_CHECK(!table().isClosedKey(id, BuiltinNames::toString) && !table().isClosedKey(id, BuiltinNames::then));
+        }
+        if (table().ignoresReceiver(id)) {
+            AOT_TEST_CHECK(!table().overloadsOf(table().canonicalID(id)).empty());
+            for (const BuiltinOverload& row : table().overloadsOf(table().canonicalID(id)))
+                AOT_TEST_CHECK(!row.isUndeclared() && !row.receiver);
+            for (const BuiltinOverloadSummary& overload : table().overloadSummariesOf(table().canonicalID(id)))
+                AOT_TEST_CHECK(overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::InternalFunction);
+        }
         AOT_TEST_CHECK(table().closesIndexKeys(id) == (table().hasLockedPrototypeLink(id) && (builtin.kind == BuiltinKind::Prototype || builtin.flags.contains(BuiltinFlag::IsLockedObject))));
+        for (BuiltinName textOfPrimitive : { BuiltinNames::undefined, BuiltinNames::null, BuiltinNames::trueKeyword, BuiltinNames::falseKeyword }) {
+            AOT_TEST_CHECK(!table().closesIndexKeys(id) || builtin.flags.contains(BuiltinFlag::IsLockedObject) || table().isClosedKey(table().canonicalID(id), textOfPrimitive));
+            AOT_TEST_CHECK(!table().closesIndexKeys(id) || !table().canTakeNameInTestRuns(table().canonicalID(id), textOfPrimitive));
+        }
         bool isLockedLocation = !builtin.holder || table().isLocationOfLockedObject(id) || lockedMembers.contains(id);
         if (isLockedLocation && !builtin.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
             AOT_TEST_CHECK(builtin.mutability == BuiltinMutability::AlwaysLocked);
@@ -409,6 +443,11 @@ static void testLockedMembers()
     }
     for (BuiltinID id : { Builtins::ArrayPrototypeMap, Builtins::Error, Builtins::Math, Builtins::ArrayPrototype })
         AOT_TEST_CHECK(!table().isHostFunctionOfEngine(id));
+    for (BuiltinID id : { hostBuiltin("Fetch"_s), hostBuiltin("SetTimeout"_s), hostBuiltin("ConsoleLog"_s) })
+        AOT_TEST_CHECK(table().ignoresReceiver(id) && table().isNativeFunctionOfHost(id));
+    AOT_TEST_CHECK(!table().ignoresReceiver(hostBuiltin("ProcessNextTick"_s)) && !table().isNativeFunctionOfHost(hostBuiltin("ProcessNextTick"_s)));
+    for (BuiltinID id : { Builtins::Math, Builtins::ArrayPrototype, Builtins::ArrayPrototypeMap, Builtins::ArrayPrototypeSlice, Builtins::ObjectPrototypeValueOf, Builtins::ObjectPrototypeHasOwnProperty, Builtins::FunctionPrototypeBind })
+        AOT_TEST_CHECK(!table().ignoresReceiver(id));
     for (BuiltinID id : { Builtins::ArrayPrototypeMap, Builtins::FunctionPrototypeCall, Builtins::FunctionPrototypeApply, Builtins::ReflectGet }) {
         AOT_TEST_CHECK(table().isFunctionOfEngine(id) && !table().isHostFunctionOfEngine(id) && table().hasLockedPrototypeLink(id));
         for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::call, BuiltinNames::apply, BuiltinNames::bind, table().nameOf(WellKnownSymbol::HasInstance) })
@@ -423,7 +462,7 @@ static void testLockedMembers()
         const BuiltinOverload& read = table().overloadsOf(id)[0];
         AOT_TEST_CHECK(read.mode == BuiltinCallMode::Get && read.receiver->uses == OperandUses { OperandUse::Inspects } && read.effects.capability == BuiltinCapability::Heap);
     }
-    AOT_TEST_CHECK(table().at(BuiltinClasses::BoundFunction).hasClosureInstances && !table().at(BuiltinClasses::Function).hasClosureInstances);
+    AOT_TEST_CHECK(!table().at(BuiltinClasses::BoundFunction).hasClosureInstances && !table().at(BuiltinClasses::Function).hasClosureInstances);
     AOT_TEST_CHECK(table().definesCharactersOnNewInstances(BuiltinClasses::String));
     for (BuiltinClassID otherClass : { BuiltinClasses::Number, BuiltinClasses::Object, BuiltinClasses::Array, BuiltinClasses::StringIterator })
         AOT_TEST_CHECK(!table().definesCharactersOnNewInstances(otherClass));
@@ -472,6 +511,22 @@ static void testLockedMembers()
     for (BuiltinID id : std::initializer_list<BuiltinID> { Builtins::Object, Builtins::Array, Builtins::Math, Builtins::ArrayPrototype, Builtins::ArrayPrototypeMap, hostBuiltin("BunGlob"_s) })
         AOT_TEST_CHECK(!table().closesOnlyNamesOfCalls(id));
     AOT_TEST_CHECK(std::ranges::is_sorted(table().closedKeysOf(Builtins::MapPrototype)));
+}
+
+static void testNoReturnCanLieAboveIteratorsOfEngine()
+{
+    for (BuiltinID next : { Builtins::ArrayIteratorPrototypeNext, Builtins::MapIteratorPrototypeNext, Builtins::SetIteratorPrototypeNext, Builtins::StringIteratorPrototypeNext }) {
+        BuiltinID last;
+        for (BuiltinID holder = table().canonicalID(table().at(next).holder); holder; holder = table().at(holder).prototypeLink == BuiltinPrototypeLink::Builtin ? table().canonicalID(table().at(holder).inheritsFrom) : BuiltinID()) {
+            AOT_TEST_CHECK(!table().findOwnMember(holder, BuiltinNames::returnKeyword));
+            AOT_TEST_CHECK(table().at(holder).flags.contains(BuiltinFlag::IsLockedObject) || table().isClosedKey(holder, BuiltinNames::returnKeyword));
+            AOT_TEST_CHECK(table().at(holder).flags.contains(BuiltinFlag::ListsAllMembers));
+            AOT_TEST_CHECK(table().hasLockedPrototypeLink(holder));
+            AOT_TEST_CHECK(!table().canTakeNameInTestRuns(holder, BuiltinNames::returnKeyword));
+            last = holder;
+        }
+        AOT_TEST_CHECK(last == table().canonicalID(Builtins::ObjectPrototype) && table().at(last).prototypeLink == BuiltinPrototypeLink::Null);
+    }
 }
 
 static void testStringConstantsFollowTheTarget()
@@ -523,11 +578,15 @@ static void testAttachmentsAreFoundByEntry()
         AOT_TEST_CHECK(table().formsOf(record.builtin) == &record);
     for (const BuiltinBoxedCall& record : table().boxedCalls())
         AOT_TEST_CHECK(table().boxedCallStubOf(record.builtin) == record.stub);
+    for (const BuiltinBoxedCall& record : table().boxedCalls())
+        AOT_TEST_CHECK(table().methodCalledBy(record.stub) == table().canonicalID(record.builtin));
+    for (unsigned stub = 0; stub < numberOfBuiltinBoxedStubs; ++stub)
+        AOT_TEST_CHECK(table().boxedCallStubOf(table().methodCalledBy(static_cast<BuiltinBoxedStub>(stub))) == static_cast<BuiltinBoxedStub>(stub));
     for (const BuiltinNumberConstant& record : attachments.numberConstants)
         AOT_TEST_CHECK(table().numberOf(record.builtin).has_value());
 
-    AOT_TEST_CHECK(table().featureUsesOf(Builtins::MathMax).empty() && table().moduleLoadsOf(Builtins::MathMax).empty() && table().calledFunctionsOf(Builtins::MathMax).empty());
-    AOT_TEST_CHECK(!table().unseenCodeOf(Builtins::MathMax) && !table().at(Builtins::MathMax).flags.contains(BuiltinFlag::RunsUnseenCode) && !table().boxedCallStubOf(Builtins::Math));
+    AOT_TEST_CHECK(table().featureUsesOf(Builtins::MathAbs).empty() && table().moduleLoadsOf(Builtins::MathAbs).empty() && table().calledFunctionsOf(Builtins::MathAbs).empty());
+    AOT_TEST_CHECK(!table().unseenCodeOf(Builtins::MathAbs) && !table().at(Builtins::MathAbs).flags.contains(BuiltinFlag::RunsUnseenCode) && !table().boxedCallStubOf(Builtins::Math));
 }
 
 static void testHostUsesOfStartupLoads()
@@ -652,10 +711,74 @@ layout L3 kind=Instance name="BelowNothing"
         AOT_TEST_CHECK(!arena.isSubset(narrowedTo(outside), instances) && !liesInParameter(narrowedTo(outside)));
 }
 
+static void testTypesAreFoundByAddressWhereTheTableKeepsThem()
+{
+    using namespace Typed;
+    constexpr uint32_t numberOfLayouts = 11;
+    BuildContext build(makeDefaultCompileOptions());
+    std::unique_ptr<Program> program = parseProgramForBuiltinTableTests(R"IR(module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record0"
+layout L1 name="Record1"
+layout L2 name="Record2"
+layout L3 name="Record3"
+layout L4 name="Record4"
+layout L5 name="Record5"
+layout L6 name="Record6"
+layout L7 name="Record7"
+layout L8 name="Record8"
+layout L9 name="Record9"
+layout L10 name="Record10"
+)IR"_s, build);
+    TypeArena arena(program->types, ArenaKeeps::InProgram);
+    Vector<std::pair<TypeID, const Type*>> kept;
+    auto keepSetsOfLayouts = [&](uint32_t firstSet, uint32_t endOfSets) {
+        for (uint32_t set = firstSet; set < endOfSets; ++set) {
+            Vector<LayoutID, numberOfLayouts> layouts;
+            for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+                if (set >> index & 1)
+                    layouts.append(LayoutID(index));
+            }
+            TypeID type = arena.forLayouts(layouts.span());
+            kept.append({ type, &program->types.typeKeptAt(type) });
+        }
+    };
+    auto everyTypeLiesWhereItLay = [&] {
+        return std::ranges::all_of(kept, [&](const std::pair<TypeID, const Type*>& one) {
+            return &program->types.typeKeptAt(one.first) == one.second;
+        });
+    };
+    keepSetsOfLayouts(1, 1200);
+    AOT_TEST_CHECK(program->types.numberOfTypes() > firstPositionOfInternedSegment(2));
+    program->types.keepAddressesOfTypes();
+    AOT_TEST_CHECK(everyTypeLiesWhereItLay());
+    keepSetsOfLayouts(1200, 1u << numberOfLayouts);
+    AOT_TEST_CHECK(program->types.numberOfTypes() > firstPositionOfInternedSegment(3) && everyTypeLiesWhereItLay());
+    program->types.keepAddressesOfTypes();
+    AOT_TEST_CHECK(everyTypeLiesWhereItLay());
+}
+
+static void testMarkIsHadByWhomItsListNames()
+{
+    size_t numberListed = 0;
+    for (unsigned number = 0; number <= static_cast<unsigned>(BuiltinMark::AsksOptionsForListedNamesAlone); ++number) {
+        BuiltinMark mark = static_cast<BuiltinMark>(number);
+        BitVector listed(table().builtinCount());
+        for (const BuiltinMarkedEntry& entry : table().marked(mark))
+            listed.quickSet(entry.builtin.index());
+        numberListed += table().marked(mark).size();
+        for (unsigned index = 0; index < table().builtinCount(); ++index)
+            AOT_TEST_CHECK(table().has(mark, BuiltinID(index)) == listed.quickGet(index));
+        AOT_TEST_CHECK(!table().has(mark, BuiltinID()) && !table().has(mark, BuiltinID(table().builtinCount())));
+    }
+    AOT_TEST_CHECK(numberListed);
+}
+
 std::span<const NativeTest> builtinTableTests()
 {
     static constexpr NativeTest tests[] = {
         { "builtin-table/id-types"_s, testIDTypes },
+        { "builtin-table/a-mark-is-had-by-whom-its-list-names"_s, testMarkIsHadByWhomItsListNames },
+        { "type-table/types-are-found-by-address-where-the-table-keeps-them"_s, testTypesAreFoundByAddressWhereTheTableKeepsThem },
         { "builtin-table/describes-itself"_s, testTableDescribesItself },
         { "builtin-table/names-of-keys"_s, testNamesOfKeys },
         { "builtin-table/tokens-round-trip"_s, testTokensRoundTrip },
@@ -664,10 +787,12 @@ std::span<const NativeTest> builtinTableTests()
         { "builtin-table/classes-and-slots"_s, testClassesAndSlots },
         { "builtin-table/class-relations"_s, testClassRelations },
         { "builtin-table/member-lookup"_s, testMemberLookup },
+        { "builtin-table/members-asked-by-their-byte-alone"_s, testMembersAskedByByteAlone },
         { "builtin-table/member-missing-on-target-is-not-found"_s, testMemberMissingOnTargetIsNotFound },
         { "builtin-table/mutability-follows-the-lock"_s, testMutabilityFollowsTheLock },
         { "builtin-table/locked-objects"_s, testLockedObjects },
         { "builtin-table/locked-members"_s, testLockedMembers },
+        { "builtin-table/no-return-can-lie-above-iterators-of-engine"_s, testNoReturnCanLieAboveIteratorsOfEngine },
         { "builtin-table/string-constants-follow-the-target"_s, testStringConstantsFollowTheTarget },
         { "builtin-table/attachments-are-found-by-entry"_s, testAttachmentsAreFoundByEntry },
         { "builtin-table/host-uses-of-startup-loads"_s, testHostUsesOfStartupLoads },

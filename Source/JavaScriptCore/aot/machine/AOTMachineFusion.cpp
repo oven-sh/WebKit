@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineFolding.h"
 #include "AOTSlotRepresentation.h"
 #include <algorithm>
@@ -40,7 +41,7 @@ constexpr bool fusionOpcodesHaveChildren(unsigned numberOfChildren)
 }
 static_assert(fusionOpcodesHaveChildren<Neg, Clz, PopCount, Abs, Ceil, Floor, FTrunc, Sqrt, BitwiseCast, SExt8, SExt16, SExt32, ZExt32, Trunc, IToD, FloatToDouble, DoubleToFloat>(1));
 static_assert(fusionOpcodesHaveChildren<Load8Z, Load8S, Load16Z, Load16S, Load, Branch>(1));
-static_assert(fusionOpcodesHaveChildren<Add, Sub, Mul, MulHigh, UMulHigh, Div, UDiv, Mod, UMod, BitAnd, BitOr, BitXor, Shl, SShr, ZShr, FMin, FMax>(2));
+static_assert(fusionOpcodesHaveChildren<Add, Sub, Mul, MulHigh, UMulHigh, Div, UDiv, Mod, UMod, BitAnd, BitOr, BitXor, Shl, SShr, ZShr, RotR, FMin, FMax>(2));
 static_assert(fusionOpcodesHaveChildren<Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Above, Below, AboveEqual, BelowEqual, EqualOrUnordered, Store8, Store16, Store>(2));
 
 static ALWAYS_INLINE Operation* const* fusionChildrenOf(const Operation* operation)
@@ -609,7 +610,7 @@ static ALWAYS_INLINE bool fuseIntoAccess(ValueFacts* values, const Operation* ac
     return fuseAddressOfAccess(values, access, address, numberOfChildren);
 }
 
-static bool fuseScaledIndexBelow(ValueFacts* values, const Operation* sum)
+static ALWAYS_INLINE bool fuseScaledIndexBelow(ValueFacts* values, const Operation* sum)
 {
     ASSERT(!values[sum->index()].has(ValueFlag::IsFused));
     if (sum->opcode() != Add || sum->type() != Int64)
@@ -771,6 +772,7 @@ static NEVER_INLINE bool fuseIntoOtherThanBranch(ValueFacts* values, Operation* 
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case FMin:
     case FMax:
     case Equal:
@@ -1394,7 +1396,7 @@ static bool parseSumTestedByOverflow(const Operation* branch, SumTestedByOverflo
     return true;
 }
 
-bool mayTestSumByOverflow(const Operation* branch)
+ALWAYS_INLINE_INTO_OTHER_FILES bool mayTestSumByOverflow(const Operation* branch)
 {
     if (!branchMayReadSumOfExtendedWords(branch))
         return false;

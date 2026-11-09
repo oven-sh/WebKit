@@ -976,14 +976,19 @@ static void placeFieldsForSlotPlan(const Program& program, const LinkTables& lin
 
 }
 
-static bool slotMayGoByTypeOfFieldForSlotPlan(const Program& program, const Facts& facts, FieldReference reference)
+enum class SlotGoesByType : bool { InWhatItIsHeldTo, InItsRawForm };
+
+static bool slotMayGoByTypeOfFieldForSlotPlan(const Program& program, const Facts& facts, FieldReference reference, SlotGoesByType asked = SlotGoesByType::InItsRawForm)
 {
     constexpr OptionSet<FieldFlags> filledByAllocationAlone { FieldFlags::IsBrand, FieldFlags::IsHidden };
     const Field* declaration = reference.field < program.at(reference.layout).fields.size() ? &fieldAt(program, declarationOf(program, reference)) : nullptr;
-    if (declaration && (!declaration->form.isEmpty() || declaration->flags.containsAny(filledByAllocationAlone)))
+    auto formForbids = [&](OptionSet<FieldForm> form) {
+        return asked == SlotGoesByType::InItsRawForm ? !form.isEmpty() : form.contains(FieldForm::IsAccessor);
+    };
+    if (declaration && (formForbids(declaration->form) || declaration->flags.containsAny(filledByAllocationAlone)))
         return false;
     FieldFacts fieldFacts = facts.field(reference);
-    if (!fieldFacts.formOfValue.isEmpty() || fieldFacts.facts.contains(FieldFact::IsAccessor))
+    if ((declaration ? formForbids(fieldFacts.formOfValue) : !fieldFacts.formOfValue.isEmpty()) || fieldFacts.facts.contains(FieldFact::IsAccessor))
         return false;
     return !declaration || !declaration->flags.contains(FieldFlags::IsPrivate) || (facts.hasOneInstance() && facts.isEvaluatedAtMostOnce(declaredLayoutOf(program, declarationOf(program, reference).layout)));
 }
@@ -1047,21 +1052,20 @@ static TypeID typeHeldOfFieldForSlotPlan(const Program& program, const Facts& fa
     const Layout& layout = program.at(reference.layout);
     if (layout.kind != LayoutKind::Record && layout.kind != LayoutKind::Instance)
         return { };
-    if (!slotMayGoByTypeOfFieldForSlotPlan(program, facts, reference))
+    if (!slotMayGoByTypeOfFieldForSlotPlan(program, facts, reference, SlotGoesByType::InWhatItIsHeldTo))
         return { };
     FieldFacts enforced = facts.field(reference);
     bool namesOrdinaryObjects = enforced.slotType && std::ranges::any_of(membersOf(types, types.at(enforced.slotType)), [&](LayoutID member) {
         return program.at(member).holdsOrdinaryObjects;
     });
-    if (namesOrdinaryObjects)
-        return { };
-    return contentsOfEnforcedSlot(types, enforced.slotType, enforced.facts.contains(FieldFact::SlotHoldsUndefinedAndNull));
+    TypeID held = namesOrdinaryObjects ? types.unionOf(types.withoutObjects(enforced.slotType), TypeTable::object) : enforced.slotType;
+    return contentsOfEnforcedSlot(types, held, enforced.facts.contains(FieldFact::SlotHoldsUndefinedAndNull));
 }
 
 static bool someStoreMayEmptySlotInSlotPlan(const Program& program, const Facts& facts, FieldReference reference)
 {
     TypeID held = facts.field(reference).slotType;
-    if (!held || !slotMayGoByTypeOfFieldForSlotPlan(program, facts, reference))
+    if (!held || !slotMayGoByTypeOfFieldForSlotPlan(program, facts, reference, SlotGoesByType::InWhatItIsHeldTo))
         return false;
     TypeID proven = facts.linked().provenOfField(reference);
     if (!proven)
@@ -1073,6 +1077,13 @@ static bool someStoreMayEmptySlotInSlotPlan(const Program& program, const Facts&
     Type stored = program.at(proven);
     stored.primitives &= ~markersThatEveryHeldSlotTakes;
     return !isSubset(TypeReader(program), stored, program.at(held));
+}
+
+static FormOfPlaceInSlotPlan formOfSlotOfScopeForSlotPlan(const Program& program, const Facts& facts, const LinkTables& link, FieldReference reference)
+{
+    if (fieldAt(program, reference).declared.isEstablished())
+        return FormOfPlaceInSlotPlan::AnyValue;
+    return formProvenOfFieldForSlotPlan(program, facts, link, reference);
 }
 
 static BitVector lookAtFieldsAheadOfPlacesForSlotPlan(Program& program, const Facts& facts, const ParallelLoops& loops, const BitVector& layoutsThatRepeatTheirBases, bool hasTypedSlots, PlacesOfFieldsInSlotPlan& places)
@@ -1102,6 +1113,10 @@ static BitVector lookAtFieldsAheadOfPlacesForSlotPlan(Program& program, const Fa
                     layoutsWithSlotsThatStoresMayEmpty.quickSet(index);
                     break;
                 }
+            }
+            if (hasTypedSlots && layout.kind == LayoutKind::Environment) {
+                for (uint32_t field = 0; field < layout.fields.size(); ++field)
+                    places.formsProven[places.firstRowOfLayout[index] + field] = formOfSlotOfScopeForSlotPlan(program, facts, link, { id, field });
             }
             if (!hasTypedSlots || !isObjectLayout(layout.kind))
                 continue;
@@ -1133,8 +1148,18 @@ static void chooseFormsOfPlacesForSlotPlan(Program& program, const Facts& facts,
     static_assert(FormOfPlaceInSlotPlan::AnyValue > FormOfPlaceInSlotPlan::Number && FormOfPlaceInSlotPlan::AnyValue > FormOfPlaceInSlotPlan::Integer && FormOfPlaceInSlotPlan::AnyValue > FormOfPlaceInSlotPlan::Unclaimed);
     TypeArena types(program.types, ArenaKeeps::InProgram);
     BitVector placesWithRowThatTakesEveryValue(places.formsOfPlaces.size());
+    BitVector rowsFilledOnceByDefinition(places.typesHeld.size());
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         if (!isObjectLayout(program.layouts[index].kind))
+            continue;
+        uint32_t numberOfRows = numberOfFieldsNotRepeated(program, layoutsThatRepeatTheirBases, LayoutID(index));
+        for (uint32_t field = 0; field < numberOfRows; ++field) {
+            if (fieldAt(program, declarationOf(program, { LayoutID(index), field })).form.containsAll({ FieldForm::IsReadOnly, FieldForm::IsNotConfigurable }))
+                rowsFilledOnceByDefinition.quickSet(places.firstRowOfLayout[index] + field);
+        }
+    }
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (!isObjectLayout(program.layouts[index].kind) && program.layouts[index].kind != LayoutKind::Environment)
             continue;
         uint32_t endOfRows = places.firstRowOfLayout[index] + numberOfFieldsNotRepeated(program, layoutsThatRepeatTheirBases, LayoutID(index));
         for (uint32_t row = places.firstRowOfLayout[index]; row < endOfRows; ++row) {
@@ -1146,7 +1171,7 @@ static void chooseFormsOfPlacesForSlotPlan(Program& program, const Facts& facts,
     }
 
     for (uint32_t row = 0; row < places.typesHeld.size(); ++row) {
-        if (places.typesHeld[row] && placesWithRowThatTakesEveryValue.quickGet(places.places[row]))
+        if (places.typesHeld[row] && placesWithRowThatTakesEveryValue.quickGet(places.places[row]) && !rowsFilledOnceByDefinition.quickGet(row))
             places.typesHeld[row] = { };
     }
 
@@ -1212,6 +1237,24 @@ bool fieldStaysInSlot(const Program& program, const PlacedSlot& slot)
     return takesEveryValue || (slot.type && slot.everyStoreFits);
 }
 
+bool takesAccessorsOfLibraryAlone(const Program& program, const SlotPlan& slots, LayoutID id, PropertyKeyID name)
+{
+    auto isClassOfLibrary = [&](LayoutID classLayout) {
+        const Layout& layout = program.at(classLayout);
+        return layout.kind == LayoutKind::Instance && layout.constructor && isLibraryCode(program, program.at(layout.constructor));
+    };
+    LayoutID declared = declaredLayoutOf(program, id);
+    if (isClassOfLibrary(declared))
+        return true;
+    size_t numberOfClassesLeft = program.layouts.size();
+    for (LayoutID above = program.at(declared).base; above && numberOfClassesLeft--; above = program.at(above).base) {
+        std::optional<FieldIndex> field = slots.findField(program, above, name);
+        if (field && slots.slot(above, *field).holdsAccessor && isClassOfLibrary(above))
+            return true;
+    }
+    return false;
+}
+
 void markFieldsHeldFilledInSlotPlan(const Program& program, const LinkTables& linked, const ParallelLoops& loops, SlotPlanParts& slots)
 {
     static constexpr uint32_t layoutsInRange = 256;
@@ -1228,22 +1271,16 @@ void markFieldsHeldFilledInSlotPlan(const Program& program, const LinkTables& li
                 const LinkedCell* cell = linked.findCellOfField({ id, field });
                 PlacedSlot& slot = planned.slots[field];
                 slot.isHeldFilled = cell && cell->isFilled && slot.hasStorage() && !slot.holdsAccessor && !(slot.isOutOfLine() && slot.mayExistWithoutStorage) && fieldStaysInSlot(program, slot);
+                if (slot.isHeldFilled)
+                    planned.fieldsHeldFilled.append(field);
             }
         }
     });
 }
 
-Vector<FieldIndex, 8> fieldsHeldFilledInSlots(const Program& program, const LinkTables&, const SlotPlan& slots, LayoutID id)
+Vector<FieldIndex, 8> fieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan& slots, LayoutID id)
 {
-    Vector<FieldIndex, 8> fields;
-    const PlannedLayout& planned = slots.layout(id);
-    if (!planned.hasSlots())
-        return fields;
-    for (FieldIndex field = 0; field < program.at(id).fields.size(); ++field) {
-        if (planned.slots[field].isHeldFilled)
-            fields.append(field);
-    }
-    return fields;
+    return Vector<FieldIndex, 8>(slots.layout(id).fieldsHeldFilled.span());
 }
 
 bool constantListsFieldsHeldFilledInSlots(const Program& program, const LinkTables& linked, const SlotPlan& slots, DataID data, RootOfConstant root)
@@ -1419,7 +1456,7 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
 }
 
 MentionedKeys findMentionedKeys(const Program&, const Facts&, const ParallelLoops&);
-void planNames(const Program&, const MentionedKeys&, BuildContext&, SlotPlanParts&);
+void planNames(const Program&, const LayoutsByNames&, const MentionedKeys&, BuildContext&, SlotPlanParts&);
 Vector<ClosureForm> chooseClosureForms(const Program&, const LinkTables&);
 BitVector findFunctionsWhoseClosuresGetOnlyListedNames(const Program&, const LinkTables&);
 BitVector findFunctionsWhosePrototypePropertyStaysAsMade(const Program&, const LinkTables&);
@@ -1428,14 +1465,19 @@ KeyOrders computeKeyOrders(const Program&, const LinkTables&, const ThinSummarie
 
 StorageOfLayouts chooseStorageOfLayouts(const Program&, const Facts&, const ParallelLoops&);
 SlotPlanParts computeSlotPlanParts(Program&, const Facts&, BuildContext&, const StorageOfLayouts&, KeyOrders&, PromotedEnvironments&);
-static void dropTypesOfNumbersLeftBoxedInSlotPlan(const Program& program, BuildContext& build, SlotPlanParts& parts)
+static bool holdsNumbersThatMayBeFractionsInSlotPlan(const Type& held)
+{
+    return held.isNumberOrNullish() && !held.isInt32OrNullish();
+}
+
+static void dropTypesOfFractionsLeftBoxedInSlotPlan(const Program& program, BuildContext& build, SlotPlanParts& parts)
 {
     std::atomic<uint64_t> numberOfFieldsOutOfLine { 0 };
     forEachRangeOfIndicesInParallel(build.parallelLoops(), parts.layouts.size(), [&](size_t first, size_t end) {
         uint64_t numberOutOfLineInRange = 0;
         for (PlannedLayout& layout : parts.layouts.mutableSpan().subspan(first, end - first)) {
             for (PlacedSlot& slot : layout.slots) {
-                if (slot.type && slot.representation == SlotRepresentation::JSValue && program.types.at(slot.type).isNumberOrNullish())
+                if (slot.type && slot.representation == SlotRepresentation::JSValue && holdsNumbersThatMayBeFractionsInSlotPlan(program.types.at(slot.type)))
                     slot.type = { };
                 numberOutOfLineInRange += slot.isOutOfLine();
             }
@@ -1476,13 +1518,22 @@ void holdDoorsToProofsInSlotPlan(Program& program, const Facts& facts, const Par
     }
 
     TypeArena types(program.types, ArenaKeeps::InProgram);
+    for (const LinkedAccessorsOfField& laid : facts.linked().accessorsExpectedInFields) {
+        PlannedLayout& planned = parts.layouts[laid.field.layout.index()];
+        if (!laid.getterIsProven || laid.field.field >= planned.numberOfFields())
+            continue;
+        if (PlacedSlot& slot = planned.slots[laid.field.field]; slot.holdsAccessor && slot.indexInLayoutRecord && slot.hasStorage())
+            slot.type = types.forFunction(laid.getter);
+    }
     std::array<HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>, 2> askedOfProvenInSlot;
     for (const Vector<FieldReference>& fieldsWithDoors : fieldsWithDoorsInRanges) {
         for (FieldReference reference : fieldsWithDoors) {
             PlacedSlot& slot = parts.layouts[reference.layout.index()].slots[reference.field];
             TypeID proven = facts.linked().provenOfField(reference);
             uint64_t key = static_cast<uint64_t>(proven.bits()) << 32 | slot.type.bits();
-            bool isStoredByNameWithoutTest = slot.representation == SlotRepresentation::OptionalInt32 || slot.representation == SlotRepresentation::OptionalDouble || slot.representation == SlotRepresentation::OptionalBoolean;
+            const LinkedCell* cell = facts.linked().findCellOfField(reference);
+            bool keepsItsTag = cell && holdsTagThatNarrowSlotForgets(types, *cell);
+            bool isStoredByNameWithoutTest = !keepsItsTag && (slot.representation == SlotRepresentation::OptionalInt32 || slot.representation == SlotRepresentation::OptionalDouble || slot.representation == SlotRepresentation::OptionalBoolean);
             TypeID asked = TypeID::fromBits(askedOfProvenInSlot[isStoredByNameWithoutTest].ensure(key, [&] {
                 TypeID asked = typeInWordsOfTestsForSlotPlan(facts, types, proven, true);
                 if (asked && isStoredByNameWithoutTest && types.at(asked).primitives & Primitive::Number)
@@ -1596,7 +1647,7 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
     parts.layouts.grow(numberOfLayouts);
     GroupsOfLayoutsForFields groupsForFields;
     UnitsOfFields unitsOfFields;
-    Vector<LayoutID> environmentsHandedBack;
+    EnvironmentsHandedBack environmentsHandedBack;
     runLanes(build.parallelLoops(), {
         [&] {
             placeFieldsForSlotPlan(program, facts.linked(), facts.held(), layoutsWithSlotsThatStoresMayEmpty, families, layoutsBelowTheirBases, storage, storageOfLayouts, hasTypedSlots, places);
@@ -1622,20 +1673,23 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
 
     {
         StepTimes times(build, nameOf(Stage::PlanSlots));
-        promotedEnvironments = planPromotedEnvironments(program, facts, parts);
+        promotedEnvironments = planPromotedEnvironments(program, facts, parts, environmentsHandedBack.takenByClosuresMadeForCallsAlone.span());
         leaveClosuresOfLiteralsUnmade(program, facts, promotedEnvironments, build.recordedOptions().useWideReferences(), parts);
         times.didFinish("plan: promoted environments, closures of literals"_s);
     }
     runLanes(build.parallelLoops(), {
         [&] {
             StepTimes times(build, nameOf(Stage::PlanSlots));
-            environmentsHandedBack.removeAllMatching([&](LayoutID id) {
+            environmentsHandedBack.all.removeAllMatching([&](LayoutID id) {
                 return promotedEnvironments.isPromoted(id);
             });
-            layEnvironmentsHandedBack(build, environmentsHandedBack.span(), parts);
+            layEnvironmentsHandedBack(build, environmentsHandedBack.all.span(), parts);
             chooseStorageOfFields(program, facts, build, parts, layoutsBelowTheirBases, WTF::move(groupsForFields), WTF::move(unitsOfFields));
-            dropTypesOfNumbersLeftBoxedInSlotPlan(program, build, parts);
-            planNames(program, mentioned, build, parts);
+            dropTypesOfFractionsLeftBoxedInSlotPlan(program, build, parts);
+            std::optional<LayoutsByNames> writersAlone;
+            if (!facts.mechanisms().contains(Mechanism::Guesses))
+                writersAlone = LayoutsByNames::thatListsWritersAlone(program, facts.summaries());
+            planNames(program, writersAlone ? *writersAlone : facts.layoutsByNames(), mentioned, build, parts);
             times.didFinish("plan: lane of storage of fields, names"_s);
         },
         [&] {

@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInliningAcrossFiles.h"
 #include "AOTMachineTarget.h"
+#include "AOTSort.h"
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -198,7 +200,7 @@ Block* Order::split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeT
     Arena& arena = procedure.arena();
     Block* target = from->successor(successorIndex).block();
     ASSERT(!target->isLandingPad());
-    Block* middle = procedure.addBlock();
+    Block* middle = procedure.addBlockThatOnlyJumps();
 
     auto append = [&](ArenaVector<Operation*>& list, Opcode opcode, Type type, Origin origin) ALWAYS_INLINE_LAMBDA {
         Operation* operation = arena.create<Operation>(opcode, type, origin);
@@ -270,6 +272,126 @@ Block* Order::askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* s
     else
         asked->setSuccessors(targetOfFirst, targetOfSecond);
     return asked;
+}
+
+void Order::askBitsOfTwoTestsAtOnce(Block* first, unsigned wayOfFirstWhereBitIsSet, Operation* bitsOfFirst, Block* second, unsigned wayOfSecondWhereBitIsSet, Operation* bitsOfSecond)
+{
+    Procedure& procedure = first->procedure();
+    RELEASE_ASSERT(first->last()->opcode() == Branch && first->numSuccessors() == 2 && second->last()->opcode() == Branch && second->numSuccessors() == 2);
+    RELEASE_ASSERT(first->successor(1 - wayOfFirstWhereBitIsSet).block() == second && second->numberOfIncomingEdges() == 1);
+    RELEASE_ASSERT(first->upsilons().empty() && second->upsilons().empty());
+
+    const Edge targetOfFirst = first->successor(wayOfFirstWhereBitIsSet);
+    const Edge toSecond = first->successor(1 - wayOfFirstWhereBitIsSet);
+    const Edge targetOfSecond = second->successor(wayOfSecondWhereBitIsSet);
+    const Edge wayOn = second->successor(1 - wayOfSecondWhereBitIsSet);
+
+    Operation* maskOfFirst = bitsOfFirst->m_children[1];
+    Operation* maskOfSecond = bitsOfSecond->m_children[1];
+    Operation* maskOfBoth = procedure.arena().create<Operation>(maskOfFirst->opcode(), maskOfFirst->type(), first->last()->origin());
+    maskOfBoth->m_payload.bits = maskOfFirst->asInt() | maskOfSecond->asInt();
+    procedure.didCreate(maskOfBoth);
+    bitsOfFirst->m_children[1] = maskOfBoth;
+    maskOfBoth->gainUse();
+    bitsOfSecond->m_children[1] = maskOfFirst;
+    maskOfSecond->loseUse();
+    Operation* wordOfFirst = bitsOfFirst->m_children[0];
+    Operation* wordOfSecond = bitsOfSecond->m_children[0];
+    if (wordOfSecond != wordOfFirst) {
+        RELEASE_ASSERT(wordOfFirst->owner() == first && wordOfSecond->owner() == second && wordOfSecond->useCount() == 1);
+        bitsOfSecond->m_children[0] = wordOfFirst;
+        wordOfFirst->gainUse();
+        wordOfSecond->loseUse();
+    }
+
+    Edge whereBitOfEitherIsSet(second, std::min(targetOfFirst.edgeClass(), targetOfSecond.edgeClass()));
+    Edge whereNoBitIsSet(wayOn.block(), std::max(toSecond.edgeClass(), wayOn.edgeClass()));
+    second->clearSuccessors();
+    if (wayOfFirstWhereBitIsSet)
+        first->setSuccessors(whereNoBitIsSet, whereBitOfEitherIsSet);
+    else
+        first->setSuccessors(whereBitOfEitherIsSet, whereNoBitIsSet);
+    if (wayOfSecondWhereBitIsSet)
+        second->setSuccessors(targetOfSecond, targetOfFirst);
+    else
+        second->setSuccessors(targetOfFirst, targetOfSecond);
+}
+
+void Order::askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond, Operation* subject, int32_t low, int32_t high)
+{
+    Procedure& procedure = first->procedure();
+    Arena& arena = procedure.arena();
+    RELEASE_ASSERT(first->last()->opcode() == Branch && first->numSuccessors() == 2 && second->last()->opcode() == Branch && second->numSuccessors() == 2);
+    RELEASE_ASSERT(first->successor(1 - leavingSuccessorOfFirst).block() == second && second->numberOfIncomingEdges() == 1);
+    RELEASE_ASSERT(first->upsilons().empty() && second->upsilons().empty() && subject->type() == Int32);
+
+    const Edge leavingFirst = first->successor(leavingSuccessorOfFirst);
+    const Edge toSecond = first->successor(1 - leavingSuccessorOfFirst);
+    const Edge leavingSecond = second->successor(leavingSuccessorOfSecond);
+    const Edge inside = second->successor(1 - leavingSuccessorOfSecond);
+
+    Operation* branch = first->m_operations.takeLast();
+    Origin origin = branch->origin();
+    auto constant = [&](int32_t value) {
+        Operation* made = arena.create<Operation>(Const32, Int32, origin);
+        made->m_payload.bits = value;
+        procedure.didCreate(made);
+        return made;
+    };
+    auto append = [&](Opcode opcode, Operation* left, Operation* right) {
+        Operation* made = arena.create<Operation>(opcode, Int32, origin);
+        made->m_auxiliary = 2;
+        made->m_children[0] = left;
+        made->m_children[1] = right;
+        made->m_owner = first;
+        made->m_indexInBlock = first->m_operations.size();
+        procedure.didCreate(made);
+        first->m_operations.append(arena, made);
+        return made;
+    };
+    Operation* distance = low ? append(Add, subject, constant(static_cast<int32_t>(0u - static_cast<uint32_t>(low)))) : subject;
+    Operation* test = append(BelowEqual, distance, constant(static_cast<int32_t>(static_cast<uint32_t>(high) - static_cast<uint32_t>(low))));
+    branch->m_children[0]->loseUse();
+    branch->m_children[0] = test;
+    test->gainUse();
+    branch->m_indexInBlock = first->m_operations.size();
+    first->m_operations.append(arena, branch);
+
+    second->clearSuccessors();
+    first->setSuccessors(Edge(inside.block(), std::max(toSecond.edgeClass(), inside.edgeClass())), Edge(leavingFirst.block(), std::min(leavingFirst.edgeClass(), leavingSecond.edgeClass())));
+    letGoOfBlockThatNothingLeadsTo(second);
+    if (!leavingSecond.block()->numberOfIncomingEdges())
+        letGoOfBlockThatNothingLeadsTo(leavingSecond.block());
+}
+
+void Order::askEqualitiesBySwitch(Block* first, Operation* subject, std::span<Block* const> laterLinks, std::span<const CaseOfEquality> sortedCases, Edge otherwise)
+{
+    Procedure& procedure = first->procedure();
+    Arena& arena = procedure.arena();
+    RELEASE_ASSERT(first->last()->opcode() == Branch && first->upsilons().empty() && subject->type() == Int32);
+
+    for (Block* link : laterLinks)
+        link->clearSuccessors();
+    first->clearSuccessors();
+
+    std::span<int64_t> values = arena.createSpan<int64_t>(sortedCases.size());
+    for (size_t index = 0; index < sortedCases.size(); ++index) {
+        RELEASE_ASSERT(!index || sortedCases[index - 1].value < sortedCases[index].value);
+        values[index] = sortedCases[index].value;
+    }
+    Operation* end = first->last();
+    end->m_children[0]->loseUse();
+    end->m_opcode = Switch;
+    end->m_auxiliary = 1;
+    end->m_children[0] = subject;
+    subject->gainUse();
+    end->m_payload.switchData = arena.create<SwitchData>(SwitchData { values });
+    for (const CaseOfEquality& one : sortedCases)
+        first->appendSuccessor(one.target);
+    first->appendSuccessor(otherwise);
+
+    for (Block* link : laterLinks)
+        letGoOfBlockThatNothingLeadsTo(link);
 }
 
 void Order::joinEdgesToOneBlock(Block* from)
@@ -1148,7 +1270,7 @@ void BlockOrderBuilder::takeRareBlocksOutOfOrder()
     m_entriesOfRareRegions = std::span<const EntryOfRareRegion>(entries, static_cast<size_t>(endOfEntries - entries));
 }
 
-ALWAYS_INLINE uint32_t BlockOrderBuilder::representativeOf(BlockState* states, uint32_t block)
+ALWAYS_INLINE_INTO_OTHER_FILES uint32_t BlockOrderBuilder::representativeOf(BlockState* states, uint32_t block)
 {
     uint32_t link = states[block].regionLink;
     if (states[link].regionLink == link) [[likely]]
@@ -1585,6 +1707,7 @@ void BlockOrderBuilder::findLoopsWithSideEntrances()
     const BlockPlace* const places = m_places.begin();
     Block* const* const blocksInOrder = m_blocksInOrder.begin();
     Loop* const loops = m_loops.begin();
+    uint32_t* const loopAroundThatMayLackMark = m_arena.allocateArray<uint32_t>(m_loops.size());
     for (const Loop& outermost : m_loops) {
         if (outermost.parent != noLoop)
             continue;
@@ -1596,8 +1719,21 @@ void BlockOrderBuilder::findLoopsWithSideEntrances()
                 first = places[place.predecessors.front()->index()].orderIndex;
                 last = places[place.predecessors.back()->index()].orderIndex;
             }
-            for (uint32_t loop = place.isLoopHead ? loops[place.loop].parent : place.loop; loop != noLoop && (first < loops[loop].firstBlock || last >= loops[loop].endBlock); loop = loops[loop].parent)
+            uint32_t innermost = place.isLoopHead ? loops[place.loop].parent : place.loop;
+            if (innermost == noLoop || (first >= loops[innermost].firstBlock && last < loops[innermost].endBlock))
+                continue;
+            for (uint32_t loop = innermost;; loop = loops[loop].parent) {
+                while (loop != noLoop && loops[loop].hasSideEntrance) {
+                    uint32_t around = loopAroundThatMayLackMark[loop];
+                    if (around != noLoop && loops[around].hasSideEntrance)
+                        around = loopAroundThatMayLackMark[loop] = loopAroundThatMayLackMark[around];
+                    loop = around;
+                }
+                if (loop == noLoop || (first >= loops[loop].firstBlock && last < loops[loop].endBlock))
+                    break;
                 loops[loop].hasSideEntrance = true;
+                loopAroundThatMayLackMark[loop] = loops[loop].parent;
+            }
         }
     }
 }
@@ -1618,6 +1754,11 @@ NEVER_INLINE void BlockOrderBuilder::placeLoops()
     for (Loop& loop : m_loops) {
         loop.begin = placeOf(m_blocksInOrder[loop.firstBlock]).head;
         loop.end = loop.endBlock < m_blocksInOrder.size() ? placeOf(m_blocksInOrder[loop.endBlock]).head : m_end;
+        if (loop.parent == noLoop)
+            continue;
+        const Loop& parent = m_loops[loop.parent];
+        bool isInRunOfParent = parent.endBlock == loop.endBlock && placeOf(m_blocksInOrder[parent.firstBlock]).rareRegion == placeOf(m_blocksInOrder[loop.firstBlock]).rareRegion;
+        loop.loopAroundOutsideRun = isInRunOfParent ? parent.loopAroundOutsideRun : loop.parent;
     }
 }
 
@@ -1823,7 +1964,7 @@ void Order::placeBlocksSplitLate(Procedure& procedure)
     Block* const* const endOfNewBlocks = firstNewBlock + newBlocks.size();
     auto sortNewBlocksBy = [&](const auto& keyOf) {
         if (!std::ranges::is_sorted(newBlocks, { }, keyOf))
-            std::ranges::stable_sort(newBlocks, { }, keyOf);
+            AOT::stableSort(newBlocks, { }, keyOf);
     };
 
     sortNewBlocksBy(orderIndexOf);

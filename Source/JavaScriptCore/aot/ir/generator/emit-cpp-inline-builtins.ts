@@ -37,6 +37,7 @@ function inlineHeader(schema: Schema): string[] {
     lookup("InlineBuiltinFamily familyOf", builtin => `InlineBuiltinFamily::${builtin.family}`, null),
     lookup("uint32_t numberOfParametersOf", builtin => String(builtin.parameterKinds.length), "0"),
     lookup("bool hasOptionalSlowPath", builtin => String(builtin.hasOptionalSlowPath), "false"),
+    lookup("bool reckonsInLine", builtin => String(builtin.reckonsInLine), "false"),
     ["JS_EXPORT_PRIVATE bool isValidParameter(InlineBuiltin, uint32_t parameterIndex, uint32_t word);"],
   );
   return cppHeader(['"AOTSchemaEnums.h"'], [...blocks(...macros), "", ...inNamespace("Typed", declarations)]);

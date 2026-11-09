@@ -26,22 +26,22 @@ public:
     {
     }
 
-    void generateAdd(const ValueContext& value) { define(value, arithmeticResult(value, ArithmeticOperator::Add)); }
-    void generateSub(const ValueContext& value) { define(value, arithmeticResult(value, ArithmeticOperator::Sub)); }
-    void generateMul(const ValueContext& value) { define(value, arithmeticResult(value, ArithmeticOperator::Mul)); }
-    void generateDiv(const ValueContext& value) { define(value, arithmeticResult(value, ArithmeticOperator::Div)); }
-    void generateMod(const ValueContext& value) { define(value, arithmeticResult(value, ArithmeticOperator::Mod)); }
-    void generatePow(const ValueContext& value) { define(value, arithmeticResult(value, ArithmeticOperator::Pow)); }
-    void generateBitAnd(const ValueContext& value) { define(value, bitwiseResult(value, BitwiseOperator::And)); }
-    void generateBitOr(const ValueContext& value) { define(value, bitwiseResult(value, BitwiseOperator::Or)); }
-    void generateBitXor(const ValueContext& value) { define(value, bitwiseResult(value, BitwiseOperator::Xor)); }
-    void generateLShift(const ValueContext& value) { define(value, bitwiseResult(value, BitwiseOperator::LeftShift)); }
-    void generateRShift(const ValueContext& value) { define(value, bitwiseResult(value, BitwiseOperator::RightShift)); }
-    void generateURShift(const ValueContext& value) { define(value, bitwiseResult(value, BitwiseOperator::UnsignedRightShift)); }
-    void generateNegate(const ValueContext& value) { define(value, unaryResult(value, UnaryOperator::Negate)); }
-    void generateIncrement(const ValueContext& value) { define(value, unaryResult(value, UnaryOperator::Increment)); }
-    void generateDecrement(const ValueContext& value) { define(value, unaryResult(value, UnaryOperator::Decrement)); }
-    void generateBitNot(const ValueContext& value) { define(value, unaryResult(value, UnaryOperator::BitNot)); }
+    void generateAdd(const ValueContext& value) { defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Add)); }
+    void generateSub(const ValueContext& value) { defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Sub)); }
+    void generateMul(const ValueContext& value) { defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Mul)); }
+    void generateDiv(const ValueContext& value) { defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Div)); }
+    void generateMod(const ValueContext& value) { defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Mod)); }
+    void generatePow(const ValueContext& value) { defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Pow)); }
+    void generateBitAnd(const ValueContext& value) { defineHeldToItsType(value, bitwiseResult(value, BitwiseOperator::And)); }
+    void generateBitOr(const ValueContext& value) { defineHeldToItsType(value, bitwiseResult(value, BitwiseOperator::Or)); }
+    void generateBitXor(const ValueContext& value) { defineHeldToItsType(value, bitwiseResult(value, BitwiseOperator::Xor)); }
+    void generateLShift(const ValueContext& value) { defineHeldToItsType(value, bitwiseResult(value, BitwiseOperator::LeftShift)); }
+    void generateRShift(const ValueContext& value) { defineHeldToItsType(value, bitwiseResult(value, BitwiseOperator::RightShift)); }
+    void generateURShift(const ValueContext& value) { defineHeldToItsType(value, bitwiseResult(value, BitwiseOperator::UnsignedRightShift)); }
+    void generateNegate(const ValueContext& value) { defineHeldToItsType(value, unaryResult(value, UnaryOperator::Negate)); }
+    void generateIncrement(const ValueContext& value) { defineHeldToItsType(value, unaryResult(value, UnaryOperator::Increment)); }
+    void generateDecrement(const ValueContext& value) { defineHeldToItsType(value, unaryResult(value, UnaryOperator::Decrement)); }
+    void generateBitNot(const ValueContext& value) { defineHeldToItsType(value, unaryResult(value, UnaryOperator::BitNot)); }
     void generateLess(const ValueContext& value) { generateRelation(value, Relation::Less); }
     void generateLessEq(const ValueContext& value) { generateRelation(value, Relation::LessOrEqual); }
     void generateGreater(const ValueContext& value) { generateRelation(value, Relation::Greater); }
@@ -55,6 +55,7 @@ public:
     void generateInstanceOf(const ValueContext&);
     bool leaveOperandToInstanceOf(const ValueContext& read, InstanceOfOperand, NumberedImmediate);
     void generateHasInPrototypeChain(const ValueContext&);
+    void generateFindInPrototypeChainUnlessTrapped(const ValueContext&);
     void generateToBoolean(const ValueContext&);
     void generateLogicalNot(const ValueContext&);
     void generateTypeOf(const ValueContext&);
@@ -73,11 +74,13 @@ private:
     Operand arithmeticResult(const ValueContext&, ArithmeticOperator);
     Operand bitwiseResult(const ValueContext&, BitwiseOperator);
     Operand unaryResult(const ValueContext&, UnaryOperator);
+    void defineHeldToItsType(const ValueContext&, Operand);
     void generateRelation(const ValueContext&, Relation);
     void generateEquality(const ValueContext&, bool isStrict);
     template<typename Functor> Operand convertedToNumber(const ValueContext&, const Functor& convertValue);
 
-    Number asNumericOperand(ValueID);
+    Number asNumericOperand(ValueID, const OperationContext* user = nullptr);
+    Number numericOperandAsItComes(ValueID);
     Number asNumericOperandWithAnyNaN(ValueID);
     Number asNumber(Operand, const Type&);
     Number asNumberLikeOperand(ValueID);

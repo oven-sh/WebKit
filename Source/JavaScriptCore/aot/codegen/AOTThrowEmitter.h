@@ -30,7 +30,7 @@ public:
     void stopAtFalseProof(const OperationContext&, std::optional<Boxed> found, ProofSource);
     void checkOrStopAtFalseProof(const OperationContext&, Condition holds, ProofSource);
     void requireOrStopAtFalseProof(const OperationContext&, Condition holds, std::optional<Boxed> found, ProofSource);
-    void stopUnlessAmongKinds(const OperationContext&, Boxed found, uint32_t kinds, ProofSource, std::optional<uint32_t> mentionOfUpperHalfOfClosureWord = std::nullopt);
+    void stopUnlessStubPasses(const OperationContext&, Boxed found, StubKey, uint32_t kinds, ProofSource, std::optional<uint32_t> mentionAboveKinds = std::nullopt, std::optional<uint32_t> numberInRegister = std::nullopt);
 
     void requireNotNullish(const OperationContext&, Operand, const Type&, NullishAccess, StringID name);
     void requireInitialized(const OperationContext&, Operand, const Type&, StringID name);

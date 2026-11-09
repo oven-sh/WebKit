@@ -173,8 +173,20 @@ bool PoisonedCell::preventExtensions(JSObject* object, JSGlobalObject*) { stop(o
 bool PoisonedCell::isExtensible(JSObject* object, JSGlobalObject*) { stop(object); }
 bool PoisonedCell::setPrototype(JSObject* object, JSGlobalObject*, JSValue, bool) { stop(object); }
 JSValue PoisonedCell::getPrototype(JSObject* object, JSGlobalObject*) { stop(object); }
-CallData PoisonedCell::getCallData(JSCell* cell) { stop(cell); }
-CallData PoisonedCell::getConstructData(JSCell* cell) { stop(cell); }
+
+CallData PoisonedCell::getCallData(JSCell* cell)
+{
+    if (cell->vm().isCollectorBusyOnCurrentThread())
+        return { };
+    stop(cell);
+}
+
+CallData PoisonedCell::getConstructData(JSCell* cell)
+{
+    if (cell->vm().isCollectorBusyOnCurrentThread())
+        return { };
+    stop(cell);
+}
 
 } } // namespace JSC::AOT
 

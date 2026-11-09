@@ -5,8 +5,8 @@
 # f1 = total
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# the entry of the other copy: the sum, and the position behind it
-# CHECK: [[entry]]({{*}}@JSValue, {{*}}: int[0, 34359738368] @Int64) frequency=Rare:
+# the entry of the other copy: the sum, and the position behind it. It is no rare code: one item of another shape sends all the turns that are left there
+# CHECK: [[entry]]({{*}}@JSValue, {{*}}: int[0, 34359738368] @Int64):
 # CHECK: ([[sum]]: number @Double, [[position]]: int[0, 34359738368] @Int64) isInLoop=true isLoopHead=true
 # CHECK: = ShapeTest
 # CHECK: [[boxed]]: number @JSValue = Box [[sum]]

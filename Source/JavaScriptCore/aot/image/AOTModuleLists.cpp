@@ -76,7 +76,7 @@ void forEachIndexOfLoopsInParallel(const ParallelLoops& loops, std::initializer_
 
 static bool unitHasCodeForModuleLists(const TableInputs& inputs, CodeUnit unit)
 {
-    return inputs.functions.positionOfUnit(unit, inputs.plan.conventions().indexOf(unit)).has_value();
+    return inputs.functions.positionOfUnit(unit, inputs.plan.conventions().indexOf(unit)).has_value() || inputs.functions.hasFusedCallEntry(unit, inputs.plan.conventions().indexOf(unit));
 }
 
 static bool moduleHasCompiledBody(const TableInputs& inputs, ModuleID id)
@@ -519,8 +519,12 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
         if (answers.ofModules[index].contains(AnswerAboutModule::IsUncompiledCode))
             answers.modulesOfUncompiledCode.append(index);
     }
+    const auto& linkedFunctions = inputs.facts.linked().functions;
+    FunctionID sorts = Typed::functionThatSorts(program);
+    bool runTimeEntersSort = sorts && sorts.index() < linkedFunctions.size() && !linkedFunctions[sorts.index()].everyCallerIsKnown;
     for (uint32_t place = 0; place < numberOfRuntimeFunctions; ++place) {
-        if (hostEntersCodeOfRuntimeFunction[place] && functionsCalledByHost.get(program.runtimeFunctions[place].function.index()))
+        FunctionID function = program.runtimeFunctions[place].function;
+        if (hostEntersCodeOfRuntimeFunction[place] && (functionsCalledByHost.get(function.index()) || (runTimeEntersSort && function == sorts)))
             answers.compiledRuntimeFunctions.append(place);
     }
     return answers;
@@ -563,6 +567,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
     ModuleData entry { };
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
+    entry.bodyThrowsAtLoad = module.flags.contains(ModuleFlags::ThrowsAtLoad);
     entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::MayBeImportedWhileItRuns : module.kind == ModuleKind::Data ? ModuleFlags::AnswersLoaderWithNamespace : ModuleFlags::IsImportedAsNamespace);
     if (isModuleOfHost)
         entry.importedWhileItRunsOrAsNamespace = inputs.plan.hasRequireCacheValue(id);
@@ -585,7 +590,9 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::RunsAgain), Flag::RunsAgainAfterThrow },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsModuleToImports), Flag::IsModuleToImports },
         { module.kind == ModuleKind::CommonJs && module.exportsVariable && inputs.facts.linked().exportsThatStayIn.get(module.exportsVariable.index()), Flag::ExportsStayInCompiledCode },
-        { module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError), Flag::KeepsError },
+        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::KeepsError), Flag::KeepsError },
+        { module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::RunsAgain), Flag::BodyMayRunAgain },
+        { module.kind == ModuleKind::Data && module.flags.contains(ModuleFlags::IsFoundByName), Flag::IsDataFoundByName },
         { isEntered && entry.bodyFunction() && entryOfModuleBodyLeadsToStart(inputs, module.body), Flag::EvaluatesItself },
         { hasValue, Flag::HasValue },
         { isBundlerHelper, Flag::IsLibraryCodeWithFilePath },
@@ -626,6 +633,23 @@ static bool isExportDescribedInModuleLists(const TableInputs& inputs, const Type
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+Vector<WriterOfExportData> listWritersOfExports(const TableInputs& inputs)
+{
+    Vector<WriterOfExportData> writers;
+    const Typed::Program& program = inputs.program;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        uint32_t place = 0;
+        for (const Typed::ModuleExport& moduleExport : program.modules[index].exports) {
+            if (!isExportDescribedInModuleLists(inputs, moduleExport))
+                continue;
+            if (moduleExport.writer)
+                writers.append({ index, place, moduleExport.writer.index() });
+            ++place;
+        }
+    }
+    return writers;
+}
+
 template<typename Numbers>
 static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, VariableID variableThatHoldsMock, const Numbers& numbers, ModuleLists& lists)
 {
@@ -636,7 +660,7 @@ static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, V
         if (!isExportDescribedInModuleLists(inputs, moduleExport))
             continue;
         ModuleExportData entry { };
-        entry.staysIn = behind && inputs.facts.linked().exportsThatStayIn.get(behind.index());
+        entry.staysIn = moduleExport.isLeftOut || (behind && inputs.facts.linked().exportsThatStayIn.get(behind.index()));
         entry.name = numbers.nameOfText(moduleExport.name, "an export of"_s, id);
         entry.kindBits = static_cast<uint32_t>(moduleExport.kind);
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;
@@ -700,7 +724,7 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
         return;
     for (const Typed::RequiredName& requiredName : module.requiredNames) {
         if (requiredName.specifier)
-            lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), numbers.shownString(requiredName.exportName), requiredName.dropsExportIfAbsent, numbers.shownString(requiredName.specifier) });
+            lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), numbers.shownString(requiredName.exportName), requiredName.dropsExportIfAbsent, numbers.shownString(requiredName.specifier), requiredName.isAskedForByStar });
         lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, numbers.nameOfText(requiredName.name, "what another module must export for"_s, id) });
     }
 }

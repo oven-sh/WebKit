@@ -19,6 +19,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
+#include "AOTModuleHost.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectWords.h"
 #include "AOTProgramStrings.h"
@@ -31,6 +32,9 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <wtf/Lock.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/SymbolImpl.h>
@@ -277,19 +281,70 @@ static std::span<const FunctionTextEntry> functionTextEntriesOfSource(const Prog
     return { found.begin(), found.end() };
 }
 
-static std::span<const Latin1Character> bytesOf(const ProgramTables& tables, const FunctionTextEntry& entry)
+static std::optional<std::span<const Latin1Character>> openBlocksOfText(Image::OpenedBlocksOfText& openedText, OpenCompressedText open, const uint8_t* compressed, std::span<const uint32_t> ends, uint32_t sizeOfText, uint32_t start, uint32_t end)
 {
-    return { tables.at<Latin1Character>(tables.functionTexts()[0].textOffset) + entry.start, entry.end - entry.start };
+    RELEASE_ASSERT(start <= end && end <= sizeOfText);
+    RELEASE_ASSERT(sizeOfText <= static_cast<uint64_t>(ends.size()) * sizeOfBlockOfText);
+    if (!open)
+        return std::nullopt;
+    Locker locker { openedText.lock };
+    if (!openedText.text) {
+        size_t sizeReserved = roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(sizeOfText, 1));
+        void* text = OSAllocator::tryReserveUncommitted(sizeReserved);
+        void* isOpened = nullptr;
+        if (!text)
+            return std::nullopt;
+        if (!tryFastZeroedMalloc(ends.size()).getValue(isOpened)) {
+            OSAllocator::releaseDecommitted(text, sizeReserved, 0);
+            return std::nullopt;
+        }
+        openedText.text = static_cast<uint8_t*>(text);
+        openedText.isOpened = static_cast<uint8_t*>(isOpened);
+    }
+    uint8_t* opened = openedText.text;
+    uint8_t* isOpened = openedText.isOpened;
+    for (uint32_t block = start / sizeOfBlockOfText; static_cast<uint64_t>(block) * sizeOfBlockOfText < end; ++block) {
+        if (isOpened[block])
+            continue;
+        uint32_t first = block ? ends[block - 1] : 0;
+        size_t offset = static_cast<size_t>(block) * sizeOfBlockOfText;
+        size_t sizeOfBlock = std::min<size_t>(sizeOfBlockOfText, sizeOfText - offset);
+        OSAllocator::commit(opened + offset, roundUpToMultipleOf(WTF::pageSize(), sizeOfBlock), true, false);
+        if (!open({ opened + offset, sizeOfBlock }, { compressed + first, ends[block] - first }))
+            return std::nullopt;
+        isOpened[block] = 1;
+    }
+    return std::span { byteCast<Latin1Character>(opened) + start, end - start };
 }
 
-std::span<const Latin1Character> functionSourceBytes(FunctionID function)
+static std::optional<std::span<const Latin1Character>> bytesOf(const Image& image, const FunctionTextEntry& entry)
 {
-    const ProgramTables& tables = programTables();
+    const ProgramTables& tables = image.programTables();
+    const FunctionTexts& texts = tables.functionTexts()[0];
+    if (texts.numberOfBlocks)
+        return openBlocksOfText(image.openedTextOfFunctions(), image.openCompressedText(), tables.at<uint8_t>(texts.textOffset), { tables.at<uint32_t>(texts.endsOfBlocksOffset), texts.numberOfBlocks }, texts.sizeOfText, entry.start, entry.end);
+    return std::span { tables.at<Latin1Character>(texts.textOffset) + entry.start, entry.end - entry.start };
+}
+
+std::optional<std::span<const Latin1Character>> quotedTextBytes(uint32_t start, uint32_t length)
+{
+    const Image& image = *Image::current();
+    std::span<const uint8_t> text = image.programTables().textOfQuotes();
+    std::span<const uint32_t> blocks = image.programTables().blocksOfTextOfQuotes();
+    if (blocks.empty())
+        return byteCast<Latin1Character>(text.subspan(start, length));
+    return openBlocksOfText(image.openedTextOfQuotes(), image.openCompressedText(), text.data(), blocks.subspan(1), blocks[0], start, start + length);
+}
+
+std::optional<std::span<const Latin1Character>> functionSourceBytes(FunctionID function)
+{
+    const Image& image = *Image::current();
+    const ProgramTables& tables = image.programTables();
     std::span entries = functionTextEntriesOfSource(tables, tables.sourceFunctionOf(function.index()));
     auto entry = std::ranges::find(entries, function.index(), [](const FunctionTextEntry& entry) -> uint32_t { return entry.function; });
     if (entry == entries.end())
-        return { };
-    return bytesOf(tables, *entry);
+        return std::span<const Latin1Character> { };
+    return bytesOf(image, *entry);
 }
 
 JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
@@ -300,7 +355,13 @@ JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
         if (JSString* text = found->value.get())
             return text;
     }
-    std::span bytes = functionSourceBytes(function);
+    std::optional opened = functionSourceBytes(function);
+    if (!opened) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    std::span bytes = *opened;
     if (!bytes.data())
         return nullptr;
     JSString* text = charactersAreAllASCII(bytes) ? jsOwnedString(vm, StringImpl::createWithoutCopying(bytes)) : jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
@@ -511,6 +572,24 @@ bool awaitsByItself(JSCell* cell)
         return false;
     std::optional<FunctionID> function = functionOf(cell);
     return function && !std::ranges::binary_search(programTables().asyncFunctionsWithoutAwait(), sourceFunctionOf(*function).index());
+}
+
+bool mayAskForOwnOriginal(JSCell* cell)
+{
+    std::optional<FunctionID> function = functionOf(cell);
+    return !function || std::ranges::binary_search(programTables().functionsThatMayAskForOwnOriginal(), sourceFunctionOf(*function).index());
+}
+
+Vector<String> originalsAskedFor(JSCell* cell)
+{
+    Vector<String> specifiers;
+    std::optional<FunctionID> function = functionOf(cell);
+    if (!function)
+        return specifiers;
+    const Image& image = *Image::current();
+    for (const OriginalAskedForData& asked : std::ranges::equal_range(programTables().originalsAskedFor(), sourceFunctionOf(*function).index(), { }, &OriginalAskedForData::function))
+        specifiers.append(image.text().createString(StringID(asked.specifier)));
+    return specifiers;
 }
 
 String closureDeclaredName(JSObject* object)

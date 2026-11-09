@@ -46,9 +46,14 @@ bool unitMayLendWhatItMakes(const Program& program, CodeUnit unit)
     return !isBodyOfCoroutine(unit.role, isCoroutine) && !(isCoroutine && walksInputBody(unit.role));
 }
 
+bool closuresOfFunctionMayBeLent(const Program& program, FunctionID function)
+{
+    return !program.at(function).calleeParameterIndex();
+}
+
 bool closureHasCellThatMayBeLent(const Program& program, ClosureForm form, FunctionID function)
 {
-    return (form == ClosureForm::Slim || form == ClosureForm::Full) && !program.at(function).calleeParameterIndex();
+    return (form == ClosureForm::Slim || form == ClosureForm::Full) && closuresOfFunctionMayBeLent(program, function);
 }
 
 bool functionEnteredOnlyCallsWhatArrivesAt(const Facts& facts, CodeRole role, uint32_t numberOfBoundArguments, FunctionID function, uint32_t position)
@@ -118,7 +123,7 @@ bool Sweep::beginLendingClosures()
 {
     const Code& code = *m_code;
     m_closuresThatMayBeLent.shrink(0);
-    if (!code.opcodesOfValues().contains(Opcode::NewClosure) || !m_inputs->facts.mechanisms().contains(Mechanism::CellsInFrames))
+    if (!code.opcodesOfValues().contains(Opcode::NewClosure) || !code.has(Mechanism::CellsInFrames, m_inputs->facts))
         return false;
     return unitMayLendWhatItMakes(m_inputs->program, code.unit());
 }
@@ -144,6 +149,8 @@ void Sweep::lendClosures()
             m_coverageIsOutOfDate = true;
             continue;
         }
+        if (code.at(code.blockOf(closure)).frequency != BlockFrequency::Normal)
+            continue;
         code.layClosureInFrame(closure, loan);
     }
     m_lendsClosures = false;
@@ -195,7 +202,7 @@ bool Sweep::beginLendingCells()
 {
     const Code& code = *m_code;
     m_cellsThatMayBeLent.shrink(0);
-    if (!code.opcodesOfValues().contains(Opcode::NewObject) || !code.opcodesOfValues().contains(Opcode::CallDirect) || !m_inputs->facts.mechanisms().contains(Mechanism::CellsInFrames))
+    if (!code.opcodesOfValues().contains(Opcode::NewObject) || !code.opcodesOfValues().contains(Opcode::CallDirect) || !code.has(Mechanism::CellsInFrames, m_inputs->facts))
         return false;
     CodeUnit unit = code.unit();
     bool isCoroutine = m_inputs->program.at(unit.function).isCoroutine();

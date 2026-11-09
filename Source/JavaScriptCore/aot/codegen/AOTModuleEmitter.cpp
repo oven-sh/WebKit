@@ -183,17 +183,22 @@ void ModuleEmitter::generateWasLoadedSynchronously(const ValueContext& value)
 
 void ModuleEmitter::generateSeesMockOf(const ValueContext& value)
 {
-    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::SeesMockOf, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
+    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::SeesMockOf, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()), word32(value->thatKeepsNamesOfOriginal()) }));
+}
+
+void ModuleEmitter::generateIsLinkedBelow(const ValueContext& value)
+{
+    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::IsLinkedBelow, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
 }
 
 void ModuleEmitter::generateMockSeenBy(const ValueContext& value)
 {
-    define(value, callWithoutSite<Boxed>(RuntimeOperation::MockSeenBy, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
+    define(value, callWithoutSite<Boxed>(RuntimeOperation::MockSeenBy, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()) }));
 }
 
 void ModuleEmitter::generateNamespaceSeenBy(const ValueContext& value)
 {
-    define(value, callOperation<Boxed>(value, RuntimeOperation::NamespaceSeenBy, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
+    define(value, callOperation<Boxed>(value, RuntimeOperation::NamespaceSeenBy, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()) }));
 }
 
 void ModuleEmitter::generateCountExecution(const ValueContext& value)
@@ -236,6 +241,12 @@ TypedPointer ModuleEmitter::statusOf(ModuleID module)
     static_assert(sizeof(StoredModuleStatus) == sizeof(uint8_t));
     Pointer statuses = loadImmutablePointer(AOT_INSTANCE_OFFSET(modules.status));
     return m_out.address(m_heaps.entire(AbstractHeap::ExternalState), statuses.value(), module.index());
+}
+
+Condition ModuleEmitter::hasBegun(ModuleID module)
+{
+    static_assert(StoredModuleStatus::InRecord < StoredModuleStatus::Evaluated && StoredModuleStatus::Evaluated < StoredModuleStatus::Evaluating);
+    return above(Word32(m_out.load8ZeroExt32(statusOf(module))), word32(static_cast<int32_t>(StoredModuleStatus::InRecord)));
 }
 
 void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)

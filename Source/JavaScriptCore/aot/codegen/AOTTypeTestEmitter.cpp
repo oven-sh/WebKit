@@ -74,13 +74,41 @@ void TypeTestEmitter::forEachNonCellCase(Boxed value, const TypeTestPlan& plan, 
     });
 }
 
+TypeTestPlansKeptAcrossUnits& TypeTestEmitter::whatIsKeptAcrossUnits()
+{
+    if (!m_plansKeptAcrossUnits) {
+        m_plansKeptAcrossUnits = &generator().procedure().arena().objectKeptAcrossResets<TypeTestPlansKeptAcrossUnits>();
+        if (m_plansKeptAcrossUnits->plan != &m_plan || m_plansKeptAcrossUnits->table != &types().table()) {
+            for (TypeTestPlansKeptAcrossUnits::Plans& plans : m_plansKeptAcrossUnits->plans)
+                plans.clear();
+            m_plansKeptAcrossUnits->kindsInSets.clear();
+            m_plansKeptAcrossUnits->plan = &m_plan;
+            m_plansKeptAcrossUnits->table = &types().table();
+        }
+    }
+    return *m_plansKeptAcrossUnits;
+}
+
+TypeTestPlansKeptAcrossUnits::Plans& TypeTestEmitter::plansKeptAcrossUnits(Representation representation)
+{
+    return whatIsKeptAcrossUnits().plans[static_cast<size_t>(representation)];
+}
+
 const TypeTestPlan& TypeTestEmitter::planFor(TypeID from, Representation representation, TypeID to)
 {
     RELEASE_ASSERT(from && to);
     uint64_t key = static_cast<uint64_t>(from.bits()) << 32 | to.bits();
-    return *m_plans[static_cast<size_t>(representation)].ensure(key, [&] {
-        return std::unique_ptr<TypeTestPlan>(new TypeTestPlan(computeTypeTestPlan(types(), TypeTestContext { m_plan, hasOneInstance() }, from, representation, to)));
-    }).iterator->value;
+    auto compute = [&] {
+        return std::unique_ptr<TypeTestPlan>(new TypeTestPlan(computeTypeTestPlan(types(), TypeTestContext { m_plan, hasOneInstance(), &whatIsKeptAcrossUnits().kindsInSets }, from, representation, to)));
+    };
+    if (holdsOnlyPrimitives(to) && !liesInThread(from)) {
+        TypeTestPlansKeptAcrossUnits::Plans& kept = plansKeptAcrossUnits(representation);
+        if (auto found = kept.find(key); found != kept.end())
+            return *found->value;
+        if (kept.size() < TypeTestPlansKeptAcrossUnits::mostPlansOfRepresentation)
+            return *kept.add(key, compute()).iterator->value;
+    }
+    return *m_plans[static_cast<size_t>(representation)].ensure(key, compute).iterator->value;
 }
 
 void TypeTestEmitter::emitBranch(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
@@ -314,6 +342,15 @@ void TypeTestEmitter::testBoxed(Boxed value, const TypeTestPlan& plan, BlockEdge
         present.passingPrimitives &= ~Primitive::Absent;
         present.failingPrimitives &= ~Primitive::Absent;
         if (plan.failingPrimitives & Primitive::Absent) {
+            if (!present.cellsOccur() || !present.someCellPasses()) {
+                testNonCell(value, plan, failure);
+                return;
+            }
+            if (generator().wordWhoseHoleIsLeftToTestAtWork() == value.value() && !(present.passingPrimitives & ~cellPrimitives)) {
+                leaveUnless(isCellAndNotEmpty(value), failure);
+                testCell(unboxCell(value), present, failure);
+                return;
+            }
             leaveUnless(isNotEmpty(value), failure);
             testBoxed(value, present, failure);
             return;

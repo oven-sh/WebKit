@@ -227,7 +227,12 @@ export function resolveCondition(
   const operand = resolveOperand(builder, builtin, condition.operand, source);
   if (operand === null) return null;
   if ("hasProperty" in condition) {
-    return { ...conditionOnNoOperand, operand, hasProperty: builder.internComponent(condition.hasProperty) };
+    return {
+      ...conditionOnNoOperand,
+      operand,
+      hasProperty: builder.internComponent(condition.hasProperty),
+      startsWith: internTexts(builder, condition.startsWith ?? []),
+    };
   }
   const calledOn = condition.calledOn === undefined ? null : resolveObject(builder, condition.calledOn, source);
   if (condition.calledOn !== undefined && calledOn === null) return null;

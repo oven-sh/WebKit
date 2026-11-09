@@ -110,6 +110,8 @@ MockDoor::MockDoor(Modules* modules, ModuleID module, ASCIILiteral door)
     , m_module(module)
     , m_door(door)
 {
+    if (modules)
+        modules->dropAnswersKept();
     if (m_modules) [[unlikely]]
         m_before = m_modules->describeMockState(module);
 }

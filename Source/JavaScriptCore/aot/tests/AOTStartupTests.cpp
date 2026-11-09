@@ -79,6 +79,11 @@ static void testStubsFindTheirWordsBeforeFirstUse(LoadedProgram& program)
         }
     }
     AOT_TEST_CHECK(numberOfHandlers);
+    for (AnswerHandlerTable table : allAnswerHandlerTables) {
+        const std::array handlers = answerHandlerKeys(table);
+        for (unsigned bits = 0; bits < handlers.size(); ++bits)
+            AOT_TEST_CHECK(instance.slotHandlers()[numberOfSlotHandlerTables + static_cast<unsigned>(table)][bits] == image.stubAddress(handlers[bits]));
+    }
 
     AOT_TEST_CHECK(words.hashedSlots && words.front[0].plane && words.front[0].rowsForStructureIDZero);
     AOT_TEST_CHECK(words.hasInstanceUID == vm.propertyNames->hasInstanceSymbol.impl() && words.prototypeUID == vm.propertyNames->prototype.impl());

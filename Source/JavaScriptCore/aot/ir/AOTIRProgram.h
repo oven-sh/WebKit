@@ -88,6 +88,7 @@ public:
     Vector<ModuleFailure> moduleFailures;
     Vector<AmbiguousExport> ambiguousExports;
     Vector<SourceStamp> sourceStamps;
+    Vector<DeclaredRecord> declaredRecords;
     Vector<EvalScope> evalScopes;
     Vector<Function> functions;
     UnitIDTables unitsOfBodies;
@@ -101,6 +102,10 @@ public:
     Wire::ExcludedCode excludedCode { };
     bool admitsReplacedBuiltins { false };
     bool rowsOfNativeCodeWriteNullish { false };
+    uint16_t builtinWhoseRowWritesItsLeastIntegerAlone { 0 };
+    uint16_t builtinWhoseRowWritesNullAlone { 0 };
+    uint16_t operationWhoseRuleWritesAnotherKind { 0 };
+    uint16_t builtinWhoseRowWritesThatItsResultHoldsNullAlone { 0 };
     bool admitsInspector { false };
 
     Function& at(FunctionID id) { return functions[id.index()]; }
@@ -127,7 +132,15 @@ public:
     StringID stringOf(BuiltinName textName) const { return strings.stringOf(textName); }
 
     PropertyKeyID keyOf(BuiltinName name) const { return m_derivedTables.builtinNameKeys[name.index()]; }
-    BuiltinName builtinNameOf(PropertyKeyID) const;
+    PropertyKeyID keyOfWordOnWhatSeesAccesses() const { return m_derivedTables.keyOfWordOnWhatSeesAccesses; }
+    ALWAYS_INLINE BuiltinName builtinNameOf(PropertyKeyID id) const
+    {
+        const PropertyKey& key = at(id);
+        if (key.kind == PropertyKeyKind::Text) [[likely]]
+            return strings.builtinName(key.text);
+        return builtinNameOfKeyThatIsNoText(id, key);
+    }
+    BuiltinName builtinNameOfKeyThatIsNoText(PropertyKeyID, const PropertyKey&) const;
     inline NameClass nameClassOf(PropertyKeyID) const;
     bool isIndexLike(PropertyKeyID key) const { return mayBeElementKey(nameClassOf(key)); }
 
@@ -156,6 +169,7 @@ public:
     void appendBuiltinLayouts();
     void appendNamespaceLayouts(const ParallelLoops&);
     LayoutID layoutOfWholeNamespace(ModuleID) const;
+    LayoutID layoutOfNamespaceThatListsNoName(ModuleID) const;
     VariableID variableBehindExport(ModuleID, uint32_t index) const;
     void internBuiltinNameKeys();
     uint32_t numberInTextOf(LayoutID) const;
@@ -190,9 +204,11 @@ private:
         Vector<LayoutID> layoutsWithName;
         Vector<uint32_t> firstViewAbove;
         Vector<LayoutID> viewsAbove;
+        Vector<uint32_t> rowOfFieldsWrittenAbove;
         Vector<uint32_t> firstFieldWrittenAbove;
         Vector<FieldWrittenAbove> fieldsWrittenAbove;
         Vector<PropertyKeyID> builtinNameKeys;
+        PropertyKeyID keyOfWordOnWhatSeesAccesses;
         Vector<BuiltinName> registeredSymbolNames;
         Vector<std::pair<BuiltinID, ModuleID>> compiledModulesOfNamespaceObjects;
         Vector<uint8_t> locationBitsOfVariables;
@@ -295,13 +311,22 @@ BitVector functionsCalledByHost(const Program&);
 BitVector functionsCalledByHost(const Program&, const ParallelLoops&);
 
 const RuntimeFunctionEntry* findRuntimeFunction(const Program&, RuntimeFunctionID);
+FunctionID findNakedConstructorOf(const Program&, BuiltinID);
+FunctionID functionThatSorts(const Program&);
 bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);
 bool isFaceOfCommonJSFile(const Program&, const Module&);
+bool parsersCouldMakeRecordsOf(const Program&, LayoutID);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 BitVector modulesThatHostAsksFor(const Program&, bool beginsModulesOfData = false);
 bool answersToPath(const Program&, const Module&);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);
+bool objectOfLibraryFileIsResultOfBody(const Program&, ModuleID);
+
+constexpr bool hasNamespaceLayout(ModuleKind kind)
+{
+    return kind == ModuleKind::SourceText || kind == ModuleKind::RuntimeSource;
+}
 ModuleID commonJsModuleCapturedBy(const Program&, const Module& face);
 Vector<ModuleID, 2> formsInImage(const Program&, ModuleID named);
 bool namesWaysToModuleObjects(const Program&);

@@ -13,6 +13,7 @@
 #include "AOTCallSiteTable.h"
 #include "AOTCodeSites.h"
 #include "AOTFaultTable.h"
+#include "AOTHostFunctionTexts.h"
 #include "AOTImageFormat.h"
 #include "AOTImageForward.h"
 #include "AOTImageText.h"
@@ -29,6 +30,7 @@
 #include <mutex>
 #include <span>
 #include <wtf/IterationStatus.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMalloc.h>
@@ -119,6 +121,16 @@ public:
     };
     const std::optional<PlaceInExecutable>& placeInExecutable() const { return m_placeInExecutable; }
     void setPlaceInExecutable(const PlaceInExecutable& place) { m_placeInExecutable = place; }
+
+    struct OpenedBlocksOfText {
+        Lock lock;
+        uint8_t* text { nullptr };
+        uint8_t* isOpened { nullptr };
+    };
+    void setOpenCompressedText(OpenCompressedText open) const { m_openCompressedText.store(open, std::memory_order_release); }
+    OpenCompressedText openCompressedText() const { return m_openCompressedText.load(std::memory_order_acquire); }
+    OpenedBlocksOfText& openedTextOfFunctions() const { return m_openedTextOfFunctions; }
+    OpenedBlocksOfText& openedTextOfQuotes() const { return m_openedTextOfQuotes; }
     const std::optional<PositionInFile>& positionOfCodeInFile() const { return m_positionOfCodeInFile; }
     void setPositionOfCodeInFile(const std::optional<PositionInFile>& position) { m_positionOfCodeInFile = position; }
     unsigned number() const { return m_number; }
@@ -144,6 +156,7 @@ public:
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
     bool storesPathOfMainModule() const { return header().has(ImageFlag::StoresPathOfMainModule); }
     bool runsEntryPointsAgain() const { return header().has(ImageFlag::RunsEntryPointsAgain); }
+    bool letsGlobalObjectGo() const { return header().has(ImageFlag::LetsGlobalObjectGo); }
     bool showsEntriesOfRequireCache() const { return header().has(ImageFlag::ShowsEntriesOfRequireCache); }
 
     JS_EXPORT_PRIVATE CodeLocation locate(const void* pc) const;
@@ -200,6 +213,9 @@ private:
     static std::atomic<const Image*> s_lastPublished;
 
     mutable std::array<std::atomic<void*>, 8> m_frequentStubs { };
+    mutable std::atomic<OpenCompressedText> m_openCompressedText { nullptr };
+    mutable OpenedBlocksOfText m_openedTextOfFunctions;
+    mutable OpenedBlocksOfText m_openedTextOfQuotes;
     unsigned m_number { 0 };
     const Image* m_publishedBefore { nullptr };
     std::optional<PlaceInExecutable> m_placeInExecutable;

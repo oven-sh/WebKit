@@ -549,12 +549,15 @@ static ALWAYS_INLINE void copyDataPropertiesAsBeforeOrByAnyWay(Instance* instanc
         RETURN_IF_EXCEPTION(scope, void());
     }
     scope.release();
+    countEvent(vm, RuntimeCounterID::CopiesNotRepeated);
     copyDataPropertiesByAnyWay(instance, globalObject, vm, object, JSValue::decode(source), excluded);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyDataProperties);
+    if (Object* from = compiledObjectOrNull(JSValue::decode(source)); from && from->bearsMark() && !(from->orderWord() & orderWordHasFieldOutsideSlot)) [[unlikely]]
+        from->tryFinishBirth();
     scope.release();
     copyDataPropertiesAsBeforeOrByAnyWay(instance, globalObject, vm, target, source, excludedRun, count, excludedKeys);
     OPERATION_RETURN(scope);
@@ -597,30 +600,6 @@ static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobal
     return tryCopyAsOrdinaryObject(vm, globalObject, &source, ExcludedRun { });
 }
 
-static NEVER_INLINE JSObject* tryCopyCompiledObjectWithout(Instance* instance, JSGlobalObject* globalObject, VM& vm, Object& source, ExcludedRun excluded)
-{
-    if (&source.state() != instance->state)
-        return nullptr;
-    for (uint32_t number : excluded.identifiers) {
-        Identifier name = identifierAt(instance, number);
-        const FieldData* field = source.fieldNamed(*instance->state, name);
-        if (parseIndex(name) || (field && (!field->canLeaveSlot() || field->isAccessor() || field->isPrivate())))
-            return nullptr;
-    }
-    Object* copy = Object::tryCreateCopyOfFields(vm, source);
-    if (!copy)
-        return nullptr;
-    DeferTerminationForAWhile deferTermination(vm);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    for (uint32_t number : excluded.identifiers) {
-        DeletePropertySlot slot;
-        bool isGone = Object::deleteProperty(copy, globalObject, identifierAt(instance, number), slot);
-        scope.assertNoException();
-        RELEASE_ASSERT(isGone);
-    }
-    return copy;
-}
-
 static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -656,10 +635,6 @@ static ALWAYS_INLINE JSObject* copyObject(Instance* instance, JSGlobalObject* gl
             return copy;
     }
     ExcludedRun run = excludedRunAt(instance, excludedRun);
-    if (Object* record = !count && excludedRun && source.isObject() ? compiledObjectOrNull(source) : nullptr) {
-        if (JSObject* copy = tryCopyCompiledObjectWithout(instance, globalObject, vm, *record, run))
-            return copy;
-    }
     if (!compiled && !count && source.isObject()) {
         if (JSObject* copy = tryCopyWithoutNames(vm, globalObject, asObject(source), run))
             return copy;

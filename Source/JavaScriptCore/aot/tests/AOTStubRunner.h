@@ -117,7 +117,7 @@ struct LandedCall {
 struct StubEnvironment {
     static StubEnvironment& of(Instance* instance) { return *reinterpret_cast<StubEnvironment*>(reinterpret_cast<uint8_t*>(instance) - OBJECT_OFFSETOF(StubEnvironment, instance)); }
 
-    static constexpr size_t bytesBelowInstance = WTF::roundUpToMultipleOf<InstanceLayout::granuleBelowInstance>(static_cast<size_t>(std::max({ static_cast<ptrdiff_t>(sizeof(InstancePrefix)), -InstanceLayout::offsetOfKeyedValuePlaces, -Instance::offsetOfBoxedCalls() })));
+    static constexpr size_t bytesBelowInstance = WTF::roundUpToMultipleOf<InstanceLayout::granuleBelowInstance>(static_cast<size_t>(std::max({ static_cast<ptrdiff_t>(sizeof(InstancePrefix)), -InstanceLayout::offsetOfKeyedValuePlaces, -InstanceLayout::offsetOfMissesOfPlaces, -Instance::offsetOfBoxedCalls() })));
 
     std::array<uint8_t, bytesBelowInstance - sizeof(InstancePrefix)> tablesAndUnusedBelowPrefix;
     InstancePrefix prefix;
@@ -139,6 +139,9 @@ struct StubEnvironment {
     uint64_t resultOfRecordedOperation;
     CallRegisterValues call;
     LandedCall landedCall;
+    uint64_t resultOfNextLanding;
+    uint64_t calleeOfEarlierLanding;
+    uint64_t thisValueOfEarlierLanding;
     uint64_t wordsNobodyWrote;
     std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
     std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
@@ -172,7 +175,7 @@ public:
 
     StubRun run(StubKey, std::initializer_list<uint64_t> operands, std::optional<uint32_t> immediate = std::nullopt);
     StubRun runOperationCall(StubKey, std::initializer_list<uint64_t> arguments);
-    StubRun runCall(StubKey, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments);
+    StubRun runCall(StubKey, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments, std::optional<uint32_t> immediate = std::nullopt);
     uint64_t closureWord(unsigned numberOfParameters, ClosureWord::Flags flags = { }) const { return ClosureWord::encode({ distanceOfCompiledFunction, numberOfParameters }, 1, flags); }
     Instance& instance() { return m_environment->instance; }
     void forgetAccessTable() { instance().propertyCaches.accessTable.forgetEverything(); }
@@ -184,6 +187,9 @@ public:
     void countCallsOf(Entry entry) { install(entry, countOperationCall); }
     void recordCallsOf(Entry entry) { install(entry, recordOperationCall); }
     void setResultOfRecordedOperation(uint64_t result) { m_environment->resultOfRecordedOperation = result; }
+    void setResultOfNextLanding(uint64_t result) { m_environment->resultOfNextLanding = result; }
+    uint64_t calleeOfEarlierLanding() const { return m_environment->calleeOfEarlierLanding; }
+    uint64_t thisValueOfEarlierLanding() const { return m_environment->thisValueOfEarlierLanding; }
     void countWordsNobodyWroteAtCallsOf(Entry entry) { install(entry, std::bit_cast<UGPRPair (SYSV_ABI *)(Instance*)>(m_landingThatCountsWordsNobodyWrote)); }
     void countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry entry)
     {
@@ -424,6 +430,12 @@ inline MacroAssemblerCodeRef<JSEntryPtrTag> StubRunner::compileStubCaller(const 
 
 inline void StubRunner::emitLandingInCompiledFunction(CCallHelpers& jit)
 {
+    jit.pushToSave(GPRInfo::returnValueGPR);
+    jit.load64(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.values.callee)), GPRInfo::returnValueGPR);
+    jit.store64(GPRInfo::returnValueGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, calleeOfEarlierLanding)));
+    jit.load64(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.values.thisValue)), GPRInfo::returnValueGPR);
+    jit.store64(GPRInfo::returnValueGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, thisValueOfEarlierLanding)));
+    jit.popToRestore(GPRInfo::returnValueGPR);
     jit.store64(CCallHelpers::TrustedImm32(static_cast<int32_t>(LandedCall::Place::CompiledFunction)), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.place)));
     jit.store64(countGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.count)));
     jit.store64(calleeGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.calleeInRegister)));
@@ -431,7 +443,12 @@ inline void StubRunner::emitLandingInCompiledFunction(CCallHelpers& jit)
     jit.store64(thisGPR, environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.values.thisValue)));
     for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
         jit.store64(argumentGPR(i), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, landedCall.values.arguments), i));
-    jit.move(CCallHelpers::TrustedImm64(resultOfCompiledFunction), GPRInfo::returnValueGPR);
+    jit.move(CCallHelpers::TrustedImm64(wordThatNobodyWrote), calleeGPR);
+    jit.move(calleeGPR, thisGPR);
+    for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
+        jit.move(calleeGPR, argumentGPR(i));
+    jit.load64(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, resultOfNextLanding)), GPRInfo::returnValueGPR);
+    jit.store64(CCallHelpers::TrustedImm32(static_cast<int32_t>(resultOfCompiledFunction)), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, resultOfNextLanding)));
     jit.ret();
 }
 
@@ -538,6 +555,7 @@ inline StubRunner::StubRunner(const StubOptions& options, std::span<const StubKe
 {
     AOT_TEST_CHECK(m_blob.code.relocations.isEmpty());
     m_environment->runtimeTable.fill(operationPointer(countOperationCall));
+    m_environment->resultOfNextLanding = resultOfCompiledFunction;
     Instance& instance = m_environment->instance;
     instance.runtimeTable = m_environment->runtimeTable.data();
     instance.vm = &m_environment->vm.get();
@@ -552,6 +570,11 @@ inline StubRunner::StubRunner(const StubOptions& options, std::span<const StubKe
     for (SlotHandlerTable table : allSlotHandlerTables) {
         for (Slot::Kind kind : slotKindsWithHandlers)
             instance.slotHandlers()[static_cast<unsigned>(table)][static_cast<unsigned>(kind)] = addressOf(slotHandlerFor(table, kind));
+    }
+    for (AnswerHandlerTable table : allAnswerHandlerTables) {
+        const std::array handlers = answerHandlerKeys(table);
+        for (unsigned bits = 0; bits < handlers.size(); ++bits)
+            instance.slotHandlers()[numberOfSlotHandlerTables + static_cast<unsigned>(table)][bits] = addressOf(handlers[bits]);
     }
     compileLandings();
 }
@@ -592,6 +615,8 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
     environment.numberOfRecordedCalls = 0;
     environment.recordedArguments = { };
     environment.landedCall = { };
+    environment.calleeOfEarlierLanding = 0;
+    environment.thisValueOfEarlierLanding = 0;
     environment.wordsNobodyWrote = 0;
     environment.numbers = markers;
     std::ranges::copy(operands, environment.operands.begin());
@@ -642,7 +667,7 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
     return { environment.result, !!environment.numberOfOperationCalls, environment.numberOfRecordedCalls, environment.recordedArguments, environment.landedCall, instructionsInStubs, changedRegisters, leapsInStubs };
 }
 
-inline StubRun StubRunner::runCall(StubKey key, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments)
+inline StubRun StubRunner::runCall(StubKey key, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments, std::optional<uint32_t> immediate)
 {
     const StubSignature& signature = m_catalog.summaryOf(key).signature;
     AOT_TEST_CHECK(signature.usesCallConvention && arguments.size() <= numberOfArgumentGPRs);
@@ -652,7 +677,7 @@ inline StubRun StubRunner::runCall(StubKey key, uint64_t callee, uint64_t thisVa
     call.arguments.fill(unsetArgument);
     std::ranges::copy(arguments, call.arguments.begin());
     if (!signature.numberOfOperands)
-        return run(key, { });
+        return run(key, { }, immediate);
     AOT_TEST_CHECK(signature.numberOfOperands == 1 && signature.operands[0] == Reg(countGPR));
     return run(key, { arguments.size() });
 }

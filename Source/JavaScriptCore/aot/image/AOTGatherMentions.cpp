@@ -33,7 +33,7 @@ namespace JSC { namespace AOT {
 static constexpr std::array gatheredSpacesThatCountFunctions { NumberSpace::Name, NumberSpace::NameOfText };
 static_assert(std::ranges::all_of(gatheredSpacesThatCountFunctions, hasOneIDAsKey));
 
-static constexpr std::array gatheredSpacesThatKeepFirstFunction { NumberSpace::Name, NumberSpace::NameOfText, NumberSpace::AtomOfComparedText, NumberSpace::String, NumberSpace::StringCell, NumberSpace::KeyCell };
+static constexpr std::array gatheredSpacesThatKeepFirstFunction { NumberSpace::Name, NumberSpace::NameOfText, NumberSpace::String, NumberSpace::StringCell, NumberSpace::KeyCell };
 static_assert(std::ranges::all_of(gatheredSpacesThatKeepFirstFunction, hasOneIDAsKey));
 static_assert(std::ranges::all_of(gatheredSpacesThatCountFunctions, [](NumberSpace space) { return std::ranges::contains(gatheredSpacesThatKeepFirstFunction, space); }), "functions are counted unit by unit");
 static_assert(FunctionByModule { .position = UINT32_MAX, .function = FunctionID(0u) } < FunctionByModule { }, "a minimum over functions starts at no function");
@@ -196,6 +196,17 @@ private:
             addMentionsImpliedByRequest(key);
             return;
         case NumberSpace::ClassGuard:
+            if (isRowOfClassGuardCountsKey(key)) {
+                bool everySlotListsGuards = true;
+                bool hasSlots = forEachSlotInRowOfClassGuardCountsKey(key, [&](uint32_t, std::span<const uint32_t> slot) {
+                    everySlotListsGuards &= forEachGuardInSlotOfRowOfClassGuardCounts(slot, [&](std::span<const uint32_t> guard) {
+                        add(NumberSpace::ClassGuard, guard);
+                    });
+                });
+                if (!hasSlots || !everySlotListsGuards)
+                    reportMalformedMention("the row of counts of guards of classes is no row of lists of guards"_s);
+                return;
+            }
             if (isClassGuardCountKey(key)) {
                 bool listsGuards = forEachGuardInClassGuardCountKey(key, [&](std::span<const uint32_t> guard) {
                     add(NumberSpace::ClassGuard, guard);
@@ -223,7 +234,6 @@ private:
             }
             add(NumberSpace::Name, key.subspan(key.size() - 2, 1));
             return;
-        case NumberSpace::AtomOfComparedText:
         case NumberSpace::ShownString:
         case NumberSpace::AtomOfString:
         case NumberSpace::Name:
@@ -244,8 +254,10 @@ private:
         case NumberSpace::RegExpLiteralCell:
         case NumberSpace::TemplateObjectCell:
         case NumberSpace::ArrayProfile:
+        case NumberSpace::RowsOfReads:
         case NumberSpace::EnvironmentHandedBack:
         case NumberSpace::ClassRank:
+        case NumberSpace::HeirLookedAt:
         case NumberSpace::ClosureFunction:
         case NumberSpace::ClosureCell:
         case NumberSpace::Allocation:
@@ -301,6 +313,7 @@ private:
         std::span<const uint32_t> data = dataAndEncoding.first(1);
         switch (static_cast<Typed::DataEncoding>(dataAndEncoding[1])) {
         case Typed::DataEncoding::ReadOnlyTree:
+        case Typed::DataEncoding::TreeWithOwnStorage:
             return;
         case Typed::DataEncoding::CopyOnWriteArray: {
             const auto* array = m_program.at(DataID(data[0])).root.tryAs<Typed::DataNode::Array>();

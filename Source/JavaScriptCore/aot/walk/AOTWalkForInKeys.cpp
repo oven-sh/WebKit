@@ -73,6 +73,19 @@ static std::optional<UseOfKeyInWalkForInKeys> findQuestionOfCallInWalkForInKeys(
         return std::nullopt;
 
     const BuiltinTable& table = walker.program().builtins();
+    ValueID receiver = call.thisValueOperand();
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    if (table.canonicalID(builtin) == Builtins::FunctionPrototypeCall) {
+        Reference called = receiver ? walker.referenceOf(receiver) : Reference();
+        if (!called || !called.isRecord() || arguments.empty())
+            return std::nullopt;
+        Type typeOfCalled = walker.types().at(walker.typeOf(called));
+        builtin = typeOfCalled.isObject() ? singleBuiltinOf(walker.types(), typeOfCalled) : BuiltinID();
+        if (!builtin)
+            return std::nullopt;
+        receiver = arguments[0];
+        arguments = arguments.subspan(1);
+    }
     std::optional<bool> asksReceiver;
     for (const BuiltinOverload& overload : table.overloadsOf(table.canonicalID(builtin))) {
         if (overload.mode != BuiltinCallMode::Call)
@@ -83,7 +96,6 @@ static std::optional<UseOfKeyInWalkForInKeys> findQuestionOfCallInWalkForInKeys(
     }
     if (!asksReceiver)
         return std::nullopt;
-    std::span<const ValueID> arguments = call.argumentsOperands();
     size_t placeOfKey = *asksReceiver ? 0 : 1;
     if (arguments.size() <= placeOfKey)
         return std::nullopt;
@@ -91,7 +103,7 @@ static std::optional<UseOfKeyInWalkForInKeys> findQuestionOfCallInWalkForInKeys(
     BodyTerminator end = index.terminator(index.blockOf(call.id()));
     if (end.kind() == TerminatorKind::ReturnCall && end.operand(0) == call.id())
         return std::nullopt;
-    return UseOfKeyInWalkForInKeys { *asksReceiver ? call.thisValueOperand() : arguments[0], arguments[placeOfKey] };
+    return UseOfKeyInWalkForInKeys { *asksReceiver ? receiver : arguments[0], arguments[placeOfKey] };
 }
 
 bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operation)

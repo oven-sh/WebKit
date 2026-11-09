@@ -54,6 +54,49 @@ uint32_t limitOfStretchOfNumbers(const Walker& walker, const BodyBlock& block)
     return limit;
 }
 
+std::optional<uint32_t> findPlaceBehindUpdateOfElement(Walker& walker, const BodyValue& read)
+{
+    static constexpr OpcodeSet operatorsInsideUpdate = operatorsThatMakeNumbers | allSums;
+    static constexpr OpcodeSet passedInsideUpdate = opcodesThatStateTypes | OpcodeSet { Opcode::Integer, Opcode::Double, Opcode::ReleaseHint };
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (read.opcode() != Opcode::ElemGet || read.id().index() >= index.numberOfValues() || index.value(read.id()).words() != read.words() || walker.hasTextsInStringBuilders())
+        return std::nullopt;
+    BodyBlock block = index.block(index.blockOf(read.id()));
+    if (walker.inputBlockBeingWalked() != block.id())
+        return std::nullopt;
+    TypeArena& types = walker.types();
+    auto namesSame = [&](ValueID stored, ValueID loaded) {
+        if (index.valueBehindCasts(stored) == index.valueBehindCasts(loaded))
+            return !!index.valueBehindCasts(stored);
+        Reference built = stored < read.id() ? walker.referenceOf(stored) : Reference();
+        return built && built.isValue() && built == walker.referenceOf(loaded);
+    };
+    uint32_t first = block.firstValue().index();
+    uint32_t limit = limitOfStretchOfNumbers(walker, block);
+    for (uint32_t place = read.id().index() + 1 - first; place < limit; ++place) {
+        BodyValue operation = index.value(ValueID(first + place));
+        Opcode opcode = operation.opcode();
+        if (opcode == Opcode::ElemSet) {
+            bool storesWhereItWasRead = namesSame(operation.objectOperand(), read.objectOperand()) && namesSame(operation.propertyOperand(), read.propertyOperand());
+            return storesWhereItWasRead && operation.valueOperand() > read.id() ? std::optional<uint32_t>(place + 1) : std::nullopt;
+        }
+        if (passedInsideUpdate.contains(opcode) && !opcodesThatStateTypes.contains(opcode))
+            continue;
+        if (!passedInsideUpdate.contains(opcode) && !operatorsInsideUpdate.contains(opcode))
+            return std::nullopt;
+        bool takesNumbersAlone = true;
+        operation.forEachOperand([&](ValueID operand, uint32_t) {
+            if (operand >= read.id())
+                return;
+            Reference taken = walker.referenceOf(operand);
+            takesNumbersAlone &= taken && taken.isRecord() && types.at(walker.typeOf(taken)).isNumber();
+        });
+        if (!takesNumbersAlone)
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 Reference buildTestOfNumber(Walker& walker, Reference value, TypeID tested, Origin origin)
 {
     Draft test(Opcode::TypeTest, origin);
@@ -72,6 +115,45 @@ Reference buildProofOfNumber(Walker& walker, Reference value, Reference test, Or
     narrowed.setOperandIndex(OperandIndex::TypeTest::value);
     narrowed.setIsOnTakenEdge(true);
     return walker.build(WTF::move(narrowed));
+}
+
+bool holdOperandBesideNumberToNumberOrBeginTurnAgain(Walker& walker, Draft& draft, ValueID written)
+{
+    if (effectRuleOf(draft.opcode) != EffectRule::Operator || draft.numberOfNamedOperands() != 2)
+        return false;
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.mayBeginTurnAgainInClosedCopy() || !walker.standsInTurnThatLooksCountOn() || !walker.turnsOfTypedCopyStoreAtPositionOfList())
+        return false;
+    TypeArena& types = walker.types();
+    uint32_t asked = types.at(walker.typeOf(draft.operand(0))).isNumber() ? 1 : 0;
+    Reference operand = draft.operand(asked);
+    TypeID type = walker.typeOf(operand);
+    if (!operand.isValue() || !types.at(walker.typeOf(draft.operand(1 - asked))).isNumber() || !types.overlap(type, TypeTable::number) || !types.overlap(type, TypeTable::object))
+        return false;
+    TypeID expected = findExpectation(walker, walker.currentBodyIndex().value(written).operand(asked)).type;
+    if (!expected || !types.at(expected).isNumber())
+        return false;
+    Origin origin = draft.origin();
+    origin.isTailCall = false;
+    Reference isNumber = buildTestOfNumber(walker, operand, TypeTable::number, origin);
+    if (!isNumber)
+        return false;
+    BlockID passed = walker.addBlock();
+    BlockID failed = walker.addBlock(BlockFrequency::Rare);
+    walker.letGuessFailUnasked(failed, origin);
+    walker.branch(isNumber, passed, failed);
+    walker.continueIn(failed);
+    if (!walker.isUnreachable())
+        walker.beginTurnAgainInClosedCopy();
+    walker.continueIn(passed);
+    walker.noteGuessOpened();
+    if (walker.isUnreachable() || walker.hasFailed())
+        return false;
+    Reference number = buildProofOfNumber(walker, operand, isNumber, origin);
+    if (!number)
+        return false;
+    walker.count(StatisticID::OperandsAskedForNumberInQuietTurns);
+    draft.setOperand(asked, number);
+    return true;
 }
 
 static bool isReturnedAtOnceInNumberArms(const BodyIndex& index, BlockID block, ValueID value)

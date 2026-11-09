@@ -88,6 +88,7 @@ export default b.declarations(
   b.intrinsic("setIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%SetIterator%.prototype.next" }),
   b.intrinsic("generatorProtoNext", "Value", { intrinsic: "Builtin", path: "%Generator%.prototype.next" }),
   b.intrinsic("stringProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "String.prototype.@@iterator" }),
+  b.intrinsic("iteratorProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "Iterator.prototype.@@iterator" }),
   b.intrinsic("Infinity", "Value", { intrinsic: "Double", value: Infinity }),
   b.intrinsic("MAX_SAFE_INTEGER", "Value", {
     intrinsic: "Int",
@@ -167,6 +168,7 @@ export default b.declarations(
 
   builtinObjects(
     "AsyncDisposableStack",
+    "Boolean",
     "DisposableStack",
     "Iterator",
     "Map",
@@ -207,6 +209,7 @@ export default b.declarations(
     "createDisposableResource",
     "everyFrom",
     "filterFrom",
+    "filterTruthy",
     "findFrom",
     "findIndexFrom",
     "flatIntoArray",
@@ -250,6 +253,11 @@ export default b.declarations(
     arrayStorageInt32: [1, "Int32"],
     arrayStorageDouble: [2, "Double"],
     arrayStorageContiguous: [3, "Contiguous"],
+  }),
+  b.intrinsic("mostArgumentsReservedOnStack", "Value", {
+    intrinsic: "Int",
+    value: 65535,
+    cppExpression: "defaultLimitValue(LimitID::MaxReservedStackArguments, hostArchitecture())",
   }),
   enumerators("Typed::GeneratorStepCheck", { generatorStepCheckIsGenerator: [1, "IsGenerator"] }),
   enumerators("Typed::GeneratorStepStatus", {

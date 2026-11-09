@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinNameSlots.h"
+#include "AOTCheckedSpan.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTRemovableFeature.h"
 #include "AOTVector.h"
 #include "CommonIdentifiers.h"
@@ -74,13 +76,6 @@ const BuiltinTable& BuiltinTable::singleton()
     letArrayLeaveWithCompiler<&builtinTableClassesByMemberName>();
     static constinit const BuiltinTable table(builtinTableData);
     return table;
-}
-
-template<typename T>
-static const T& checkedAt(std::span<const T> list, size_t index)
-{
-    RELEASE_ASSERT(index < list.size());
-    return list[index];
 }
 
 template<typename Record, typename Key>
@@ -347,6 +342,13 @@ BuiltinMemberLookup BuiltinTable::findMember(BuiltinID holder, BuiltinName name)
 
 bool BuiltinTable::hasLockedPrototypeChain(BuiltinClassID builtinClass) const
 {
+    if (std::optional<bool> kept = answerKeptAbout(builtinClass, AnswerAboutBuiltinClass::HasLockedPrototypeChain))
+        return *kept;
+    return everyLinkOfPrototypeChainIsLocked(builtinClass);
+}
+
+bool BuiltinTable::everyLinkOfPrototypeChainIsLocked(BuiltinClassID builtinClass) const
+{
     if (!at(builtinClass).prototype)
         return false;
     BuiltinID holder = canonicalID(at(builtinClass).prototype);
@@ -374,6 +376,8 @@ bool BuiltinTable::mayHavePristineInstances(BuiltinClassID builtinClass) const
 
 bool BuiltinTable::isRedefinedBelow(BuiltinClassID builtinClass, BuiltinName name) const
 {
+    if (!answerKeptAbout(builtinClass, AnswerAboutBuiltinClass::HasClassBelowThatMayHavePristineInstances).value_or(true))
+        return false;
     return std::ranges::any_of(classesWithInstanceMember(name), [&](BuiltinClassID other) {
         return other != builtinClass && isSameOrSubclassOf(other, builtinClass) && mayHavePristineInstances(other);
     });
@@ -473,16 +477,6 @@ bool BuiltinTable::isObjectOfClass(BuiltinID canonical) const
     return entry.instanceClass && (entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Prototype);
 }
 
-bool BuiltinTable::onlyEntriesInheritFrom(BuiltinID canonicalPrototype) const
-{
-    const Builtin& prototype = at(canonicalPrototype);
-    if (prototype.kind != BuiltinKind::Prototype || !prototype.instanceClass)
-        return false;
-    return std::ranges::all_of(m_data.classes, [&](const BuiltinClass& other) {
-        return other.instancesAreEntries || !isSameOrSubclassOf(other.id, prototype.instanceClass);
-    });
-}
-
 bool BuiltinTable::isSameOrSubclassOf(BuiltinClassID builtinClass, BuiltinClassID ancestor) const
 {
     for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
@@ -490,6 +484,15 @@ bool BuiltinTable::isSameOrSubclassOf(BuiltinClassID builtinClass, BuiltinClassI
             return true;
     }
     return false;
+}
+
+bool BuiltinTable::hasClassBelow(BuiltinClassID builtinClass) const
+{
+    if (std::optional<bool> kept = answerKeptAbout(builtinClass, AnswerAboutBuiltinClass::HasClassBelow))
+        return *kept;
+    return std::ranges::any_of(m_data.classes, [&](const BuiltinClass& other) {
+        return other.parent && isSameOrSubclassOf(other.parent, builtinClass);
+    });
 }
 
 TypedArrayType BuiltinTable::typedArrayTypeOf(BuiltinClassID builtinClass) const
@@ -604,6 +607,17 @@ bool BuiltinTable::isFunctionOfEngine(BuiltinID id) const
     });
 }
 
+bool BuiltinTable::isNativeFunctionOfHost(BuiltinID id) const
+{
+    const Builtin& entry = at(id);
+    if (entry.origin != BuiltinOrigin::Host || (entry.kind != BuiltinKind::Function && entry.kind != BuiltinKind::Method))
+        return false;
+    std::span<const BuiltinOverloadSummary> overloads = overloadSummariesOf(id);
+    return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
+        return overload.mode == BuiltinCallMode::Call && overload.callee == BuiltinCallee::HostFunction;
+    });
+}
+
 bool BuiltinTable::isClosedOnHostFunctions(BuiltinName name) const
 {
     return name == BuiltinNames::call || name == BuiltinNames::apply || name == BuiltinNames::bind || name == nameOf(WellKnownSymbol::HasInstance);
@@ -613,7 +627,7 @@ bool BuiltinTable::isClosedKey(BuiltinID holder, BuiltinName name) const
 {
     if (std::ranges::binary_search(closedKeysOf(holder), name))
         return true;
-    if (isClosedOnHostFunctions(name) && isFunctionOfEngine(holder))
+    if (isClosedOnHostFunctions(name) && (isFunctionOfEngine(holder) || isNativeFunctionOfHost(holder)))
         return true;
     if (!at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames) || isSymbolName(name))
         return false;
@@ -691,12 +705,21 @@ bool BuiltinTable::formatterWalksInstancesOf(BuiltinClassID builtinClass) const
     return true;
 }
 
-bool BuiltinTable::isPrintedByFormatter(BuiltinID id, const BuiltinParameter& parameter) const
+bool BuiltinTable::hostTakesInstancesAsAnswers(BuiltinClassID builtinClass) const
+{
+    for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
+        if (BuiltinID constructor = at(current).constructor; constructor && has(BuiltinMark::InstancesAreAnswersThatHostTakes, canonicalID(constructor)))
+            return true;
+    }
+    return false;
+}
+
+ALWAYS_INLINE_INTO_OTHER_FILES bool BuiltinTable::isPrintedByFormatter(BuiltinID id, const BuiltinParameter& parameter) const
 {
     if (!parameter.protocols.contains(Protocol::OwnValues) || !parameter.protocols.contains(Protocol::PrototypeChain) || !parameter.protocols.contains(Protocol::CallsNamed))
         return false;
     if (parameter.calledMembers.empty())
-        return at(id).origin == BuiltinOrigin::Host;
+        return at(id).origin == BuiltinOrigin::Host || has(BuiltinMark::ResultShowsOperandsToFormatters, canonicalID(id));
     return std::ranges::any_of(namesOfHostMethodsCallingStartupLoads(), [&](BuiltinName name) {
         return std::ranges::contains(parameter.calledMembers, name);
     });
@@ -734,22 +757,21 @@ std::span<const BuiltinMarkedEntry> BuiltinTable::marked(BuiltinMark mark) const
     return marks.subspan(found.begin() - marks.begin(), found.size());
 }
 
-bool BuiltinTable::has(BuiltinMark mark, BuiltinID id) const
-{
-    auto placeOf = [](BuiltinMark markOfEntry, BuiltinID builtin) {
-        return static_cast<uint64_t>(markOfEntry) << 32 | builtin.index();
-    };
-    return std::ranges::binary_search(m_data.runtime.marks, placeOf(mark, id), { }, [&](const BuiltinMarkedEntry& entry) {
-        return placeOf(entry.mark, entry.builtin);
-    });
-}
-
 std::optional<BuiltinBoxedStub> BuiltinTable::boxedCallStubOf(BuiltinID id) const
 {
     const BuiltinBoxedCall* found = findRecord(m_data.attachments.boxedCalls, &BuiltinBoxedCall::builtin, id);
     if (!found)
         return std::nullopt;
     return found->stub;
+}
+
+BuiltinID BuiltinTable::methodCalledBy(BuiltinBoxedStub stub) const
+{
+    for (const BuiltinBoxedCall& call : m_data.attachments.boxedCalls) {
+        if (call.stub == stub && canonicalID(call.builtin) == call.builtin)
+            return call.builtin;
+    }
+    return { };
 }
 
 Vector<BuiltinID, 4> BuiltinTable::membersThatHoldMethodOf(BuiltinBoxedStub stub) const

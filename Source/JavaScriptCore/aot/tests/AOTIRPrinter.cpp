@@ -196,6 +196,9 @@ static void printLinesOfProgramList(IRPrinter& printer, ProgramList list)
     case ProgramList::SourceStamps:
         printLinesOfList(printer, list, program.sourceStamps);
         return;
+    case ProgramList::DeclaredRecords:
+        printLinesOfList(printer, list, program.declaredRecords);
+        return;
     case ProgramList::EvalScopes:
         printLinesOfList(printer, list, program.evalScopes);
         return;
@@ -752,6 +755,7 @@ void MemoryLocation::dump(PrintStream& out, const Program& program) const
     case AbstractHeap::AllocatorState:
     case AbstractHeap::RuntimeState:
     case AbstractHeap::CalleesInFrames:
+    case AbstractHeap::ArrayLengths:
         RELEASE_ASSERT_NOT_REACHED();
     }
     out.print("]"_s);

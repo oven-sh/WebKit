@@ -4122,6 +4122,12 @@ public:
         m_formatter.twoByteOp(OP2_PCMPEQB_VdqWdq, (RegisterID)dst, (RegisterID)src);
     }
 
+    void pcmpeqw_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PCMPEQW_VdqWdq, (RegisterID)dst, (RegisterID)src);
+    }
+
     void subsd_rr(XMMRegisterID src, XMMRegisterID dst)
     {
         m_formatter.prefix(PRE_SSE_F2);

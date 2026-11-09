@@ -41,8 +41,8 @@ private:
         unsigned nextSuccessor;
     };
 
-    bool fail(const Operation* = nullptr);
-    bool failAtEndOf(const Block*);
+    bool fail(const Operation* = nullptr, PlaceOfCheck = PlaceOfCheck::here());
+    bool failAtEndOf(const Block*, PlaceOfCheck = PlaceOfCheck::here());
 
     bool isInProcedure(const Operation*) const;
     bool isInProcedure(const Block*) const;
@@ -51,7 +51,7 @@ private:
 
     bool findWhatIsLeft();
     bool isLeft(const Block* block) const { return !m_isBehindBlockPasses || m_blockIsLeft.get(block->index()); }
-    bool isLeft(const Operation* operation) const { return !m_isBehindBlockPasses || !operation->owner() || m_operationIsLeft.get(operation->index()); }
+    ALWAYS_INLINE bool isLeft(const Operation* operation) const { return !m_isBehindBlockPasses || !operation->owner() || m_operationIsLeft.get(operation->index()); }
 
     bool checkMembership();
     bool checkEdges();
@@ -129,15 +129,15 @@ bool MachineValidator::findWhatIsLeft()
     return true;
 }
 
-bool MachineValidator::fail(const Operation* operation)
+bool MachineValidator::fail(const Operation* operation, PlaceOfCheck check)
 {
-    m_proc.fail(FailureKind::MalformedProcedure, operation);
+    m_proc.fail(FailureKind::MalformedProcedure, operation, check);
     return false;
 }
 
-bool MachineValidator::failAtEndOf(const Block* block)
+bool MachineValidator::failAtEndOf(const Block* block, PlaceOfCheck check)
 {
-    return fail(block->isEmpty() ? nullptr : block->last());
+    return fail(block->isEmpty() ? nullptr : block->last(), check);
 }
 
 bool MachineValidator::isInProcedure(const Operation* operation) const
@@ -364,6 +364,8 @@ bool MachineValidator::isLegalPatch(const PatchOperation* patch) const
     unsigned numberOfChildren = patch->numChildren();
     if (patch->opcode() == Check && (type != Void || !numberOfChildren || !patch->child(0)->type().isInt()))
         return false;
+    if (patch->failsWhenPredicateIsZero() && (patch->opcode() != Check || !isComparison(patch->child(0)->opcode()) || patch->child(0)->child(0)->type().isInt()))
+        return false;
     if (!hasLegalTupleIndex(type))
         return false;
 
@@ -451,6 +453,7 @@ bool MachineValidator::hasLegalTypes(const Operation* operation) const
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
         return type.isInt() && type == typeOfChild(0) && typeOfChild(1) == Int32;
     case Clz:
     case PopCount:
@@ -557,7 +560,7 @@ bool MachineValidator::hasInstructionOnTarget(const Operation* operation)
     if (!operation->type().isInt())
         return true;
 #if CPU(X86_64)
-    if (opcode == Shl || opcode == SShr || opcode == ZShr)
+    if (opcode == Shl || opcode == SShr || opcode == ZShr || opcode == RotR)
         return operation->child(1)->hasInt32();
     return opcode != Div && opcode != UDiv && opcode != Mod && opcode != UMod && opcode != MulHigh && opcode != UMulHigh;
 #else

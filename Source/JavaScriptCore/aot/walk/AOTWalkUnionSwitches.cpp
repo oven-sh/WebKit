@@ -53,13 +53,7 @@ struct ReadOfSubjectInUnionSwitches {
 
 static ValueID valueBehindNamesInUnionSwitches(const Code& code, ValueID value)
 {
-    while (value && opcodesThatGiveSameValue.contains(code.at(value).opcode)) {
-        ValueID source = code.at(value).valueOperand();
-        if (source.index() >= value.index())
-            return { };
-        value = source;
-    }
-    return value;
+    return code.valueBehindNames<opcodesThatGiveSameValue, Code::SourcesOfNames::StandEarlier>(value);
 }
 
 static bool isOperationOfBlockInUnionSwitches(const BodyIndex& index, BodyBlock block, ValueID value)

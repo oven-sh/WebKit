@@ -1,7 +1,7 @@
 # If a read through a set of layouts found the field of one member alone, a text would be taken for an integer. If the members shared one node under the name, the field of each would be proven what the other holds
 # function read(o) { return o.x; }  read({ x: 1, p: 1 });  read({ x: "a", q: 1 });
 # RUN: link functions fields layouts mechanisms=all
-# CHECK: function f1 callers-known one-callee {{*}}result=i32|string returns=
+# CHECK: function f1 callers-known one-callee {{*}}result=int[0, 2147483647]|string returns=
 # CHECK-NEXT: parameter 0 {{*}}proven=L0|L1
 # CHECK: field L0.0 "x" proven=i32 writers-known
 # CHECK: field L1.0 "x" proven=string writers-known

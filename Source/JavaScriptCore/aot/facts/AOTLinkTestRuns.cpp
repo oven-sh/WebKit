@@ -171,6 +171,17 @@ FlowNodeID TestRunsInLink::makeNodeOfNameAdded(PropertyKeyID key)
     });
 }
 
+FlowNodeID TestRunsInLink::nodeOfSomeNameAdded()
+{
+    if (!m_isTestRun)
+        return { };
+    return m_flow.nodeAskedOnceByLane(LinkFlow::MadeOnDemand::NameAddedByTests, uint64_t(1) << 32, [&] {
+        if (!m_nodeOfSomeNameAdded)
+            m_nodeOfSomeNameAdded = m_flow.makeSharedNode();
+        return m_nodeOfSomeNameAdded;
+    });
+}
+
 bool TestRunsInLink::isNameAdded(FlowNodeID nodeOfNameAdded) const
 {
     return !m_flow.typeAt(nodeOfNameAdded).isNothing();
@@ -203,8 +214,10 @@ void TestRunsInLink::noteWriteOfNewName(BuiltinID canonicalHolder, PropertyKeyID
         return;
     if (m_namesListed.add(static_cast<uint64_t>(canonicalHolder.index()) << 32 | name.index()).isNewEntry)
         m_namesAdded.append(NameAddedByTests { canonicalHolder, name });
-    if (FlowNodeID added = nodeOfNameAdded(key))
+    if (FlowNodeID added = nodeOfNameAdded(key)) {
         m_flow.arrive(added, LinkType::anything());
+        m_flow.arrive(nodeOfSomeNameAdded(), LinkType::anything());
+    }
 }
 
 void TestRunsInLink::noteWriteOn(const LinkType& subject, PropertyKeyID key, FunctionID writer)
@@ -215,8 +228,10 @@ void TestRunsInLink::noteWriteOn(const LinkType& subject, PropertyKeyID key, Fun
     if (subject.builtin && !addsAsInExecutable)
         noteWriteOfNewName(m_flow.program.builtins().canonicalID(subject.builtin), key);
     if (subject.holdsLostBuiltins && !addsAsInExecutable) {
-        if (FlowNodeID added = nodeOfNameAdded(key))
+        if (FlowNodeID added = nodeOfNameAdded(key)) {
             m_flow.arrive(added, LinkType::anything());
+            m_flow.arrive(nodeOfSomeNameAdded(), LinkType::anything());
+        }
     }
 }
 

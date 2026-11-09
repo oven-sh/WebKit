@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCells.h"
+#include "AOTBuiltinTable.h"
 #include "AOTChainDependents.h"
 #include "AOTClassGuards.h"
 #include "AOTClassMemberTable.h"
@@ -25,9 +26,13 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
+#include "AOTRuntimeHooks.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
 #include "AOTVMState.h"
+#include "BrandedStructure.h"
+#include "AbstractSlotVisitorInlines.h"
 #include "DeferTermination.h"
 #include "FunctionPrototype.h"
 #include "FunctionRareData.h"
@@ -36,6 +41,7 @@
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
+#include "SlotVisitorInlines.h"
 #include "TopExceptionScope.h"
 #include <wtf/ForbidHeapAllocation.h>
 
@@ -72,12 +78,56 @@ ClassTable::ClassTable(State& state)
     state.instance.classes.prototypesOfClassObjects = m_prototypesOfClassObjects.data();
     state.instance.classes.privateFieldPlaces = m_privateFieldPlaces.data();
     state.caches->add(CacheKind::WeakByKey, "class sides by holder"_s, *this);
+    state.caches->add(CacheKind::StrongRoots, "prototype objects of class objects that are reached"_s, *this);
     state.caches->addClearedEachCollection("places of prototype properties"_s, asWritableBytes(std::span { m_placesOfPrototypeProperties }));
     state.caches->addClearedEachCollection("prototypes of class objects"_s, asWritableBytes(std::span { m_prototypesOfClassObjects }));
+    state.caches->addClearedEachCollection("this beside callees"_s, asWritableBytes(std::span { m_thisBesideCallees }));
     state.caches->addClearedEachCollection("the last evaluation of a class"_s, asWritableBytes(singleElementSpan(m_lastEvaluation)));
+    state.caches->addClearedEachCollection("structures with brands of heirs"_s, asWritableBytes(std::span { m_structuresWithBrandsOfHeirs }));
+    m_brandsOfHeirs.fill(nullptr, m_tables.numberOfClasses());
+    if (m_tables.sizeOfStructuresOfHeirs)
+        state.instance.classes.structuresOfHeirs = state.tableArena.allocate<uint8_t>(m_tables.sizeOfStructuresOfHeirs);
 }
 
 ClassTable::~ClassTable() = default;
+
+Symbol* ClassTable::brandOfHeirsFor(VM& vm, JSCell* parent, JSCell* newTarget)
+{
+    auto* classObject = dynamicDowncast<Closure>(newTarget);
+    const LayoutData* classLayout = classObject ? classObject->classData() : nullptr;
+    uint32_t offsetOfProperties = classLayout ? classLayout->classData().propertiesOfHeirsOffset : 0;
+    if (!offsetOfProperties)
+        return nullptr;
+    BuiltinID constructor = BuiltinTable::singleton().at(BuiltinClassID(m_tables.at<PropertiesOfHeirsData>(offsetOfProperties)->builtinClass)).constructor;
+    if (!constructor || m_state.builtinCells->findObject(constructor) != parent)
+        return nullptr;
+    uint32_t rank = m_tables.rankOfClass(classLayout->index);
+    if (Symbol* brand = m_brandsOfHeirs[rank])
+        return brand;
+    Symbol* brand = Symbol::create(vm, PrivateSymbolImpl::create(*StringImpl::empty()).get());
+    m_state.immortalCells->add(brand);
+    m_brandsOfHeirs[rank] = brand;
+    return brand;
+}
+
+Structure* ClassTable::structureWithBrandOfHeirs(VM& vm, JSCell* parent, JSCell* newTarget, Structure* structure)
+{
+    StructureWithBrandOfHeirs& last = m_structuresWithBrandsOfHeirs[indexOfStructureWithBrandOfHeirs(newTarget)];
+    if (last.withoutBrand == structure && last.newTarget == newTarget && last.parent == parent) [[likely]]
+        return last.withBrand;
+    Symbol* brand = brandOfHeirsFor(vm, parent, newTarget);
+    last = { parent, newTarget, structure, brand ? Structure::setBrandTransition(vm, structure, brand) : structure };
+    return last.withBrand;
+}
+
+Structure* RuntimeHooks::addBrandForSuperCall(VM& vm, JSFunction* newTarget, Structure* structure)
+{
+    VMState& vmState = vm.aotState();
+    vmState.newTargetOfSuperCall = nullptr;
+    Instance* instance = Instance::owning(newTarget);
+    State* state = instance ? instance->state : nullptr;
+    return state && state->objects ? state->objects->classes.structureWithBrandOfHeirs(vm, vmState.parentOfSuperCall, newTarget, structure) : structure;
+}
 
 const LayoutData* ClassTable::classOf(const ClassPrototype& prototype) const
 {
@@ -96,10 +146,18 @@ FunctionID ClassTable::functionOfOwnClosure(const Closure& closure) const
     return FunctionID(m_tables.closureFunctionWithNumber(closure.closureNumber()));
 }
 
+static constexpr uint64_t isAnswered = 1;
+
+void ClassTable::rememberClassConstructedBy(FunctionID function, const LayoutData& classLayout) const
+{
+    uint32_t offset = m_tables.offsetOf(&classLayout);
+    ASSERT(offset == findOffsetOfClassConstructedBy(m_tables, function));
+    m_classesOfFunctionsAsked[function.index() % numberOfClassesOfFunctionsAsked].store(static_cast<uint64_t>(function.index()) << 32 | isAnswered | offset, std::memory_order_relaxed);
+}
+
 const LayoutData* ClassTable::classConstructedBy(FunctionID function) const
 {
     static_assert(alignof(LayoutData) > 1);
-    constexpr uint64_t isAnswered = 1;
     std::atomic<uint64_t>& place = m_classesOfFunctionsAsked[function.index() % numberOfClassesOfFunctionsAsked];
     uint64_t question = static_cast<uint64_t>(function.index()) << 32 | isAnswered;
     uint64_t answer = place.load(std::memory_order_relaxed);
@@ -218,6 +276,150 @@ JSObject* ClassTable::classPrototypeIfExists(const LayoutData& classLayout) cons
     return static_cast<JSObject*>(prototypeCellOf(m_state, classLayout));
 }
 
+bool ClassTable::structureTellsInstancesOf(const LayoutData& classLayout, JSCell* cell, std::span<int32_t> displacementsOfFields) const
+{
+    uint32_t offsetOfProperties = isDefinedByClass(classLayout) && classLayout.evaluation() == EvaluationState::ProvenOnce ? classLayout.classData().propertiesOfHeirsOffset : 0;
+    JSObject* prototype = offsetOfProperties ? classPrototypeIfExists(classLayout) : nullptr;
+    if (!prototype || !cell->isObject())
+        return false;
+
+    const PropertiesOfHeirsData& properties = *m_tables.at<PropertiesOfHeirsData>(offsetOfProperties);
+    RELEASE_ASSERT(displacementsOfFields.size() == properties.numberOfNames);
+    const BuiltinClass& builtinClass = BuiltinTable::singleton().at(BuiltinClassID(properties.builtinClass));
+    Structure* structure = cell->structure();
+    TypeInfo typeInfo = structure->typeInfo();
+    if (builtinClass.instanceTest != BuiltinInstanceTest::JSTypeEquals || typeInfo.type() != builtinClass.type)
+        return false;
+    if (structure->isDictionary() || structure->hasPolyProto() || structure->realm() != m_state.instance.globalObject || structure->storedPrototype() != JSValue(prototype))
+        return false;
+    if (structure->isWatchingReplacement() || structure->mayBePrototype() || structure->mayHaveImmutableProperties() || isCopyOnWrite(structure->indexingMode()))
+        return false;
+    Symbol* brand = m_brandsOfHeirs[m_tables.rankOfClass(classLayout.index)];
+    if (!brand || !structure->isBrandedStructure() || !uncheckedDowncast<BrandedStructure>(structure)->checkBrand(brand))
+        return false;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    bool isArray = builtinClass.id == BuiltinClasses::Array;
+    bool isError = table.isSameOrSubclassOf(builtinClass.id, BuiltinClasses::Error);
+    if (typeInfo.hasStaticPropertyTable() || typeInfo.getOwnPropertySlotIsImpure() || typeInfo.prohibitsPropertyCaching() || ((typeInfo.overridesGetOwnPropertySlot() || typeInfo.overridesPut()) && !isArray && !isError))
+        return false;
+    BuiltinID prototypeOfBase = builtinClass.prototype ? table.canonicalID(builtinClass.prototype) : BuiltinID();
+    const BuiltinCells& builtinCells = *m_state.builtinCells;
+    if (!prototypeOfBase || (builtinCells.builtinsToLock().get(prototypeOfBase.index()) && prototype->getPrototypeDirect() != JSValue(builtinCells.lockedObjects().get(prototypeOfBase.index()))))
+        return false;
+    auto mayLieOutsideStructure = [&](UniquedStringImpl* uid) {
+        if (isArray)
+            return equal(uid, "length"_s) || parseIndex(*uid);
+        if (!isError)
+            return false;
+        for (BuiltinClassID current = builtinClass.id; current; current = table.at(current).parent) {
+            if (!table.at(current).listsNamesDefinedOnNewInstances)
+                return true;
+            for (BuiltinName name : table.at(current).namesDefinedOnNewInstances) {
+                if (equal(uid, byteCast<Latin1Character>(table.textOf(name))))
+                    return true;
+            }
+        }
+        return false;
+    };
+
+    ProgramIdentifiers& identifiers = identifiersOf(m_state.instance);
+    for (const MethodData& method : classLayout.methods()) {
+        if (method.flags & methodHasComputedName)
+            return false;
+        unsigned attributes = 0;
+        std::optional<PropertyOffset> own = structure->getWithoutMaterializing(identifiers.uid(method.name), attributes);
+        if (!own || isValidOffset(*own) || mayLieOutsideStructure(identifiers.uid(method.name)))
+            return false;
+    }
+    Vector<int32_t, 16> displacementsInStructure;
+    for (uint32_t name : properties.names()) {
+        if (name & PropertiesOfHeirsData::mayBeStoredLate) {
+            displacementsInStructure.append(0);
+            continue;
+        }
+        unsigned attributes = 0;
+        std::optional<PropertyOffset> own = structure->getWithoutMaterializing(identifiers.uid(name), attributes);
+        if (!own || !isOutOfLineOffset(*own) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || mayLieOutsideStructure(identifiers.uid(name)))
+            return false;
+        int32_t displacement = static_cast<int32_t>(offsetInButterfly(*own) * static_cast<intptr_t>(sizeof(EncodedJSValue)));
+        int32_t learned = displacementsOfFields[displacementsInStructure.size()];
+        if (learned && learned != displacement)
+            return false;
+        displacementsInStructure.append(displacement);
+    }
+    auto isListedField = [&](UniquedStringImpl* uid) {
+        return std::ranges::any_of(properties.names(), [&](uint32_t name) {
+            return identifiers.uid(name & ~PropertiesOfHeirsData::mayBeStoredLate) == uid;
+        });
+    };
+    const MembersAboveHeirs& membersAbove = *m_membersAboveHeirs.ensure(properties.builtinClass, [&] {
+        auto members = makeUnique<MembersAboveHeirs>();
+        for (BuiltinID holder = prototypeOfBase; holder;) {
+            for (const Builtin& member : table.memberEntriesOf(holder)) {
+                if (table.isSymbolName(member.name) || member.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
+                    continue;
+                Identifier name = table.identifierOf(*m_state.instance.vm, member.name);
+                members->canBeToldByStructure &= !mayLieOutsideStructure(name.impl());
+                members->names.append(name.impl());
+            }
+            const Builtin& object = table.at(holder);
+            members->canBeToldByStructure &= object.prototypeLink != BuiltinPrototypeLink::Unknown;
+            holder = object.prototypeLink == BuiltinPrototypeLink::Builtin ? table.canonicalID(object.inheritsFrom) : BuiltinID();
+        }
+        return members;
+    }).iterator->value;
+    if (!membersAbove.canBeToldByStructure)
+        return false;
+    for (const RefPtr<UniquedStringImpl>& name : membersAbove.names) {
+        unsigned attributes = 0;
+        std::optional<PropertyOffset> own = structure->getWithoutMaterializing(name.get(), attributes);
+        if (!own || (isValidOffset(*own) && !isListedField(name.get())))
+            return false;
+    }
+    std::ranges::copy(displacementsInStructure, displacementsOfFields.begin());
+    return true;
+}
+
+bool ClassTable::rememberStructureOfInstances(VM& vm, JSCell* cell, const LayoutData& classLayout, uint32_t offsetOfStructures)
+{
+    uint32_t offsetOfProperties = classLayout.classData().propertiesOfHeirsOffset;
+    RELEASE_ASSERT(offsetOfProperties);
+    size_t numberOfFields = m_tables.at<PropertiesOfHeirsData>(offsetOfProperties)->numberOfNames;
+    RELEASE_ASSERT(!(offsetOfStructures % alignof(StructuresOfHeir)) && offsetOfStructures + StructuresOfHeir::sizeWithDisplacementsOfFields(numberOfFields) <= m_tables.sizeOfStructuresOfHeirs);
+    auto& structures = *reinterpret_cast<StructuresOfHeir*>(m_state.instance.classes.structuresOfHeirs + offsetOfStructures);
+    uint32_t structureID = cell->structureID().bits();
+    VerdictOnStructureOfHeir& verdict = m_newestVerdictsOnStructuresOfHeirs[indexOfVerdictOnStructureOfHeir(structureID, offsetOfStructures)];
+    if (verdict.speaksOf(structureID, offsetOfStructures)) {
+        structures.layAtBack(structureID, verdict.passes());
+        return verdict.passes();
+    }
+    uint64_t keyOfVerdict = static_cast<uint64_t>(structureID) << 32 | offsetOfStructures;
+    if (auto earlier = m_verdictsOnStructuresOfHeirs.find(keyOfVerdict); earlier != m_verdictsOnStructuresOfHeirs.end()) {
+        verdict = { structureID, static_cast<uint32_t>(*earlier) };
+        structures.layAtBack(structureID, verdict.passes());
+        return verdict.passes();
+    }
+    countEvent(vm, RuntimeCounterID::StructuresOfHeirsExamined);
+    bool tells = structureTellsInstancesOf(classLayout, cell, structures.displacementsOfFields(numberOfFields));
+    verdict = { structureID, offsetOfStructures | (tells ? VerdictOnStructureOfHeir::passesBit : 0) };
+    m_verdictsOnStructuresOfHeirs.add(keyOfVerdict | (tells ? VerdictOnStructureOfHeir::passesBit : 0));
+    if (structures.holdsNoStructure())
+        m_offsetsOfStructuresOfHeirsInUse.append(offsetOfStructures);
+    structures.layInFront(structureID, tells);
+    return tells;
+}
+
+void ClassTable::forgetStructuresOfHeirs()
+{
+    if (m_offsetsOfStructuresOfHeirsInUse.isEmpty())
+        return;
+    for (uint32_t offset : m_offsetsOfStructuresOfHeirsInUse)
+        *reinterpret_cast<StructuresOfHeir*>(m_state.instance.classes.structuresOfHeirs + offset) = { };
+    m_offsetsOfStructuresOfHeirsInUse.shrink(0);
+    m_newestVerdictsOnStructuresOfHeirs.fill({ });
+    m_verdictsOnStructuresOfHeirs.clear();
+}
+
 JSObject* ClassTable::classPrototypeOfInstances(VM& vm, const LayoutData& classLayout)
 {
     JSObject* prototype = classPrototype(vm, classLayout);
@@ -280,7 +482,7 @@ void ClassTable::didCreatePrototypePropertyOf(Closure* function)
         return;
     }
     m_constructorFunctionsWithoutClass.add(classLayout->index);
-    didEvaluateClassAgain(m_state, *classLayout);
+    disarmMemberGuards(*classLayout);
 }
 
 JSObject* ClassTable::defineClassOfConstructorFunction(VM& vm, const LayoutData& classLayout)
@@ -320,8 +522,82 @@ void ClassTable::checkParentOfPrototypeObject(const LayoutData& classLayout, JSO
 void ClassTable::registerClassPrototype(const LayoutData& classLayout, JSObject* prototype)
 {
     ASSERT((classLayout.evaluation() == EvaluationState::ProvenOnce || !isDefinedByClass(classLayout)) && !classPrototypeIfExists(classLayout));
+    FunctionID constructor(classLayout.classData().classConstructor);
+    auto evaluation = constructor ? m_evaluationsHeldWhileReached.find(constructor.index()) : m_evaluationsHeldWhileReached.end();
+    if (evaluation == m_evaluationsHeldWhileReached.end() || evaluation->value.rank != m_tables.rankOfClass(classLayout.index)) {
+        prototypeCellOf(m_state, classLayout) = prototype;
+        m_state.immortalCells->add(prototype);
+        return;
+    }
+    Locker locker { m_state.caches->lock() };
     prototypeCellOf(m_state, classLayout) = prototype;
-    m_state.immortalCells->add(prototype);
+    m_constructorsOfEvaluationsChangedSinceCollection.append(constructor.index());
+}
+
+bool ClassTable::tryHoldClassObjectWhileReached(FunctionID function, JSCell* classObject)
+{
+    const LayoutData* constructed = classConstructedBy(function);
+    return constructed && tryHoldClassObjectWhileReached(*constructed, function, classObject);
+}
+
+bool ClassTable::tryHoldClassObjectWhileReached(const LayoutData& constructed, FunctionID function, JSCell* classObject)
+{
+    if (!livesWhileReached(constructed) || FunctionID(constructed.classData().classConstructor) != function)
+        return false;
+    if (!m_markOfEvaluationThatDied) {
+        JSObject* mark = constructEmptyObject(*m_state.instance.vm, m_state.instance.globalObject->nullPrototypeObjectStructure());
+        m_state.immortalCells->add(mark);
+        m_markOfEvaluationThatDied = mark;
+    }
+    Locker locker { m_state.caches->lock() };
+    bool isFirst = m_evaluationsHeldWhileReached.add(function.index(), EvaluationHeldWhileReached { classObject, m_tables.rankOfClass(constructed.index) }).isNewEntry;
+    RELEASE_ASSERT(isFirst);
+    m_constructorsOfEvaluationsChangedSinceCollection.append(function.index());
+    return true;
+}
+
+template<typename Visitor>
+void ClassTable::visitRoots(Visitor& visitor)
+{
+    auto visitPrototypeOf = [&](const EvaluationHeldWhileReached& evaluation) {
+        if (!evaluation.classObject || evaluation.classObject == m_markOfEvaluationThatDied)
+            return;
+        JSCell* prototype = m_state.instance.classes.classPrototypes[evaluation.rank];
+        if (prototype && visitor.isMarked(evaluation.classObject))
+            visitor.appendUnbarriered(prototype);
+    };
+    if (visitor.collectionScope() == CollectionScope::Eden) {
+        for (uint32_t constructor : m_constructorsOfEvaluationsChangedSinceCollection)
+            visitPrototypeOf(m_evaluationsHeldWhileReached.get(constructor));
+        return;
+    }
+    for (auto& evaluation : m_evaluationsHeldWhileReached.values())
+        visitPrototypeOf(evaluation);
+}
+
+template void ClassTable::visitRoots(AbstractSlotVisitor&);
+template void ClassTable::visitRoots(SlotVisitor&);
+
+void ClassTable::endEvaluationsThatDied(VM& vm, CollectionScope scope)
+{
+    auto endWhatDied = [&](EvaluationHeldWhileReached& evaluation) {
+        JSCell*& classObject = evaluation.classObject;
+        if (!vm.heap.isMarked(classObject))
+            classObject = m_markOfEvaluationThatDied;
+        JSCell*& prototype = m_state.instance.classes.classPrototypes[evaluation.rank];
+        if (prototype && !vm.heap.isMarked(prototype))
+            prototype = nullptr;
+    };
+    if (scope == CollectionScope::Eden) {
+        for (uint32_t constructor : m_constructorsOfEvaluationsChangedSinceCollection) {
+            if (auto entry = m_evaluationsHeldWhileReached.find(constructor); entry != m_evaluationsHeldWhileReached.end())
+                endWhatDied(entry->value);
+        }
+    } else {
+        for (auto& evaluation : m_evaluationsHeldWhileReached.values())
+            endWhatDied(evaluation);
+    }
+    m_constructorsOfEvaluationsChangedSinceCollection.shrink(0);
 }
 
 bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, const LayoutData& classLayout) const
@@ -340,6 +616,8 @@ bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, co
 size_t ClassTable::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     forgetInstancesBelowPrototypes();
+    forgetStructuresOfHeirs();
+    endEvaluationsThatDied(vm, scope);
     size_t sizeBefore = m_classSidesByHolder.size();
     m_writes.forEachRegionToSweep(scope, [&](size_t, size_t) {
         m_classSidesByHolder.removeIf([&](auto& entry) {
@@ -727,10 +1005,6 @@ ClassDefinition::ParentResolution ClassDefinition::resolveParents(JSValue herita
             return ParentResolution::BaseNotDefined;
         RELEASE_ASSERT(m_prototypeParent);
     } else if (heritage || m_classLayout.hasUntypedBase) {
-        if (uint32_t builtinBase = m_classLayout.classData().builtinBase; !heritage && builtinBase != LayoutData::noBase) {
-            heritage = m_state.builtinCells->findObject(BuiltinID(builtinBase));
-            prototypeParent = asObject(heritage)->getDirect(m_vm, m_vm.propertyNames->prototype);
-        }
         RELEASE_ASSERT(heritage && (heritage.isObject() || heritage.isNull()));
         RELEASE_ASSERT(prototypeParent && (prototypeParent.isObject() || prototypeParent.isNull()));
         m_classObjectParent = heritage.getObject();
@@ -965,7 +1239,7 @@ JSValue ClassTable::resolveHeritage(JSGlobalObject* globalObject, JSValue herita
         return { };
     }
     if (auto* classObject = dynamicDowncast<Closure>(heritage.asCell()); classObject && classObject->isLazyClassObject()) {
-        if (JSValue prototype = classObject->prototypeProperty(vm))
+        if (JSObject* prototype = classPrototype(vm, *classObject->classData()))
             return prototype;
     }
     JSValue prototypeParent = asObject(heritage)->get(globalObject, vm.propertyNames->prototype);
@@ -975,6 +1249,14 @@ JSValue ClassTable::resolveHeritage(JSGlobalObject* globalObject, JSValue herita
         return { };
     }
     return prototypeParent;
+}
+
+static void registerFirstClassObjectOf(ClosureTable& closures, Closure* classObject, FunctionID constructor, const LayoutData& classLayout)
+{
+    if (FunctionID(classLayout.classData().classConstructor) == constructor) [[likely]]
+        closures.registerFirstClassObject(classObject, constructor, classLayout);
+    else
+        closures.registerClassObject(classObject);
 }
 
 static void markFunctionPropertiesDeclaredAsFields(VM& vm, Closure* classObject, const LayoutData& classLayout)
@@ -988,7 +1270,7 @@ static void markFunctionPropertiesDeclaredAsFields(VM& vm, Closure* classObject,
     }
 }
 
-bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const LayoutData& classLayout, JSValue heritage, JSValue prototypeParent)
+bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const LayoutData& classLayout, JSValue heritage, JSValue prototypeParent, FunctionID constructor, JSCell* registered)
 {
     if (!leavesDefinitionToRecord(classLayout))
         return false;
@@ -997,8 +1279,6 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
     if (JSObject* prototype = classPrototypeIfExists(classLayout); prototype && (!classLayout.createsPrototypeBeforeClassObject || prototype->classInfo() != ClassPrototype::info()))
         return false;
     ClosureTable& closures = m_state.objects->closures;
-    FunctionID constructor = functionOfOwnClosure(*classObject);
-    JSCell* registered = closures.closureIfCreated(constructor);
     if (registered && registered != classObject)
         return false;
 
@@ -1010,7 +1290,7 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
     if (const LayoutData* baseClass = heritage ? assumedBaseOf(classLayout) : baseOf(classLayout)) {
         FunctionID baseConstructor(baseClass->classData().classConstructor);
         JSCell* baseClassObject = baseOf(classLayout) && hasOneClassObject(*baseClass) ? closures.closure(vm, baseConstructor) : closures.closureIfCreated(baseConstructor);
-        if (!baseClassObject || (heritage && heritage != JSValue(baseClassObject)))
+        if (!baseClassObject || isMarkOfEvaluationThatDied(baseClassObject) || (heritage && heritage != JSValue(baseClassObject)))
             return false;
         leavesPrototypeToFirstTouch = !classLayout.createsPrototypeBeforeClassObject;
         structure = lazyClassObjectStructureInheritingFrom(vm, asObject(baseClassObject));
@@ -1024,7 +1304,7 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
         return false;
 
     if (!registered)
-        closures.registerClassObject(classObject);
+        registerFirstClassObjectOf(closures, classObject, constructor, classLayout);
     if (!classLayout.staticFields().empty())
         markFunctionPropertiesDeclaredAsFields(vm, classObject, classLayout);
     classObject->setStructure(vm, structure);
@@ -1089,32 +1369,41 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
     return true;
 }
 
-Closure* ClassTable::classObjectForEvaluation(Closure* allocated, const LayoutData& classLayout) const
+Closure* ClassTable::defineClassWhereItIsEvaluated(JSGlobalObject* globalObject, Closure* allocated, const LayoutData& classLayout, JSValue parent, JSValue prototypeParent)
 {
-    if (!hasOneClassObject(classLayout))
-        return allocated;
-    auto* registered = dynamicDowncast<Closure>(m_state.objects->closures.closureIfCreated(functionOfOwnClosure(*allocated)));
-    return registered ? registered : allocated;
+    FunctionID constructor = functionOfOwnClosure(*allocated);
+    JSCell* registered = m_state.objects->closures.closureIfCreated(constructor);
+    auto* only = hasOneClassObject(classLayout) ? dynamicDowncast<Closure>(registered) : nullptr;
+    Closure* classObject = only ? only : allocated;
+    defineClass(globalObject, classObject, classLayout, parent, prototypeParent, constructor, registered);
+    return classObject;
 }
 
 void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue parent, JSValue prototypeParent)
 {
+    FunctionID constructor = functionOfOwnClosure(*classObject);
+    defineClass(globalObject, classObject, classLayout, parent, prototypeParent, constructor, m_state.objects->closures.closureIfCreated(constructor));
+}
+
+void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue parent, JSValue prototypeParent, FunctionID constructor, JSCell* registered)
+{
     VM& vm = globalObject->vm();
     beginGuards(classLayout);
-    if (tryLeaveDefinitionToRecord(vm, classObject, classLayout, parent, prototypeParent))
+    ClosureTable& closures = m_state.objects->closures;
+    if (FunctionID(classLayout.classData().classConstructor) == constructor) [[likely]]
+        rememberClassConstructedBy(constructor, classLayout);
+    if (tryLeaveDefinitionToRecord(vm, classObject, classLayout, parent, prototypeParent, constructor, registered))
         return;
     bool isProvenOnce = classLayout.evaluation() == EvaluationState::ProvenOnce;
-    ClosureTable& closures = m_state.objects->closures;
-    JSCell* registered = closures.closureIfCreated(functionOfOwnClosure(*classObject));
     RELEASE_ASSERT(!isProvenOnce || !registered || registered == classObject);
     if (isProvenOnce && (classObject->getDirect(vm, vm.propertyNames->prototype) || (!classLayout.createsPrototypeBeforeClassObject && (classPrototypeIfExists(classLayout) || prototypeAwaitsFirstTouch(classLayout)))))
         return;
     if (registered && registered != classObject) {
-        didEvaluateClassAgain(m_state, classLayout);
+        disarmMemberGuards(classLayout);
         if (tryDefineAgainWithKeptStructures(globalObject, classObject, classLayout, parent, prototypeParent))
             return;
     } else if (!registered && classLayout.evaluation() != EvaluationState::SeenTwice)
-        closures.registerClassObject(classObject);
+        registerFirstClassObjectOf(closures, classObject, constructor, classLayout);
     else if (!registered && tryDefineAgainWithKeptStructures(globalObject, classObject, classLayout, parent, prototypeParent))
         return;
     markFunctionPropertiesDeclaredAsFields(vm, classObject, classLayout);
@@ -1136,7 +1425,12 @@ void ClassTable::forgetEvaluationOf(const LayoutData& classLayout)
             classObject->ensureClassObject(*m_state.instance.vm);
     }
     disarmMemberGuards(classLayout);
-    prototypeCellOf(m_state, classLayout) = nullptr;
+    {
+        Locker locker { m_state.caches->lock() };
+        prototypeCellOf(m_state, classLayout) = nullptr;
+        if (constructor)
+            m_evaluationsHeldWhileReached.remove(constructor.index());
+    }
     m_classesWhosePrototypeAwaitsFirstTouch.clear(m_tables.rankOfClass(classLayout.index));
     if (constructor)
         m_declaredMemberLocations.remove(constructor.index());
@@ -1441,7 +1735,7 @@ void moveToProperties(VM& vm, Closure& classObject)
         Identifier name = identifiersOf(state.instance).identifier(field.name);
         classObject.putDirectWithoutTransition(vm, name, value, static_cast<unsigned>(PropertyAttribute::None));
         didPutFieldInPlaceOfFunctionProperty(vm, classObject, name.impl());
-        classes.storeStaticField(field, JSValue());
+        ProgramStatics::emptyVariableWhoseValueHasMoved(state.instance, field.slot);
     }
     classes.didEmptyStaticFields(classLayout);
 }

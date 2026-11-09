@@ -14,6 +14,7 @@
 #include "AOTIRProgram.h"
 #include "AOTInstanceLayout.h"
 #include "AOTPlan.h"
+#include "AOTPropertyCachesWords.h"
 #include "AOTSort.h"
 #include "AOTStringUses.h"
 #include "AOTThreads.h"
@@ -54,6 +55,7 @@ public:
             && placeData()
             && placeCellsOfLiterals()
             && placeArrayProfiles()
+            && placeRowsOfReads()
             && placeEnvironmentsHandedBack()
             && placeMethodTable()
             && finish();
@@ -212,6 +214,7 @@ private:
         m_statics.regExpLiteralCellOffsets = withoutOffsets(m_mentions.keys(NumberSpace::RegExpLiteralCell).size());
         m_statics.templateObjectCellOffsets = withoutOffsets(m_mentions.keys(NumberSpace::TemplateObjectCell).size());
         m_statics.arrayProfileOffsets = withoutOffsets(m_mentions.keys(NumberSpace::ArrayProfile).size());
+        m_statics.rowsOfReadsOffsets = withoutOffsets(m_mentions.keys(NumberSpace::RowsOfReads).size());
         m_statics.environmentHandedBackOffsets = withoutOffsets(m_program.layouts.size());
         m_statics.classGuardBits = Vector<uint32_t>(FillWith { }, m_program.layouts.size() * numberOfClassSides, noClassGuardBit);
     }
@@ -233,6 +236,15 @@ private:
         return first;
     }
 
+    uint32_t placeOfFirstRowOfClassGuardCounts() const
+    {
+        const NumberedKeys& guards = m_mentions.keys(NumberSpace::ClassGuard);
+        uint32_t first = placeOfFirstClassGuardCount();
+        while (first && isRowOfClassGuardCountsKey(guards.keyAt(first - 1)))
+            --first;
+        return first;
+    }
+
     void placeClassGuardCounts()
     {
         struct CountToPlace {
@@ -241,14 +253,16 @@ private:
         };
         const NumberedKeys& guards = m_mentions.keys(NumberSpace::ClassGuard);
         uint32_t firstCount = placeOfFirstClassGuardCount();
+        auto isCountedFromFirst = [&](std::span<const uint32_t> guard) {
+            LayoutID classLayout(guard[0]);
+            ClassSide side = sideOfClassGuardKey(guard);
+            bool isCountedWhereGuardsBegin = side == ClassSide::Prototype && isClassGuardOfNamesKey(guard) && guardsOfNamesAwaitBeginningOf(m_program, m_plan, classLayout);
+            return m_plan.hasClassRecord(classLayout) && !m_plan.bitsOfClassGuardsAreClearWhileTheyHold(classLayout, side) && !isCountedWhereGuardsBegin;
+        };
         Vector<CountToPlace> counts(guards.size() - firstCount, [&](size_t index) {
             CountToPlace count { 0, static_cast<uint32_t>(index) };
             forEachGuardInClassGuardCountKey(guards.keyAt(firstCount + index), [&](std::span<const uint32_t> guard) {
-                LayoutID classLayout(guard[0]);
-                ClassSide side = sideOfClassGuardKey(guard);
-                bool isCountedWhereGuardsBegin = side == ClassSide::Prototype && isClassGuardOfNamesKey(guard) && guardsOfNamesAwaitBeginningOf(m_program, m_plan, classLayout);
-                if (m_plan.hasClassRecord(classLayout) && !m_plan.bitsOfClassGuardsAreClearWhileTheyHold(classLayout, side) && !isCountedWhereGuardsBegin)
-                    ++count.firstValue;
+                count.firstValue += isCountedFromFirst(guard);
             });
             return count;
         });
@@ -260,6 +274,22 @@ private:
             uint32_t offset = allocate(sizeof(uint32_t), sizeof(uint32_t));
             m_offsetsOfClassGuardCounts[count.index] = offset;
             m_statics.classGuardCounts.append({ offset, count.firstValue });
+        }
+
+        for (uint32_t place = placeOfFirstRowOfClassGuardCounts(); place < firstCount; ++place) {
+            uint32_t width = 0;
+            forEachSlotInRowOfClassGuardCountsKey(guards.keyAt(place), [&](uint32_t, std::span<const uint32_t>) {
+                ++width;
+            });
+            uint32_t offset = allocate(width * sizeof(uint32_t), sizeof(uint32_t));
+            m_offsetsOfRowsOfClassGuardCounts.append(offset);
+            forEachSlotInRowOfClassGuardCountsKey(guards.keyAt(place), [&](uint32_t slot, std::span<const uint32_t> guardsOfSlot) {
+                uint32_t firstValue = guardsOfSlot.empty();
+                forEachGuardInSlotOfRowOfClassGuardCounts(guardsOfSlot, [&](std::span<const uint32_t> guard) {
+                    firstValue += isCountedFromFirst(guard);
+                });
+                m_statics.classGuardCounts.append({ offset + slot * static_cast<uint32_t>(sizeof(uint32_t)), firstValue });
+            });
         }
     }
 
@@ -290,6 +320,16 @@ private:
                 });
             }
         });
+        uint32_t firstRow = placeOfFirstRowOfClassGuardCounts();
+        for (uint32_t place = firstRow; place < firstCount; ++place) {
+            forEachSlotInRowOfClassGuardCountsKey(guards.keyAt(place), [&](uint32_t slot, std::span<const uint32_t> guardsOfSlot) {
+                forEachGuardInSlotOfRowOfClassGuardCounts(guardsOfSlot, [&](std::span<const uint32_t> guard) {
+                    std::optional<uint32_t> placeOfGuard = guards.find(guard);
+                    RELEASE_ASSERT(placeOfGuard && *placeOfGuard < firstRow);
+                    m_statics.guardsOfClassGuardCounts.append({ m_statics.bitsOfClassGuards[*placeOfGuard], m_offsetsOfRowsOfClassGuardCounts[place - firstRow] + slot * static_cast<uint32_t>(sizeof(uint32_t)) });
+                });
+            });
+        }
         parallelSort(m_context.parallelLoops(), m_statics.guardsOfClassGuardCounts.mutableSpan(), std::less<PlacedGuardOfClassGuardCount> { });
     }
 
@@ -365,8 +405,8 @@ private:
         const NumberedKeys& guards = m_mentions.keys(NumberSpace::ClassGuard);
         if (!guards.size())
             return true;
-        uint32_t firstCount = placeOfFirstClassGuardCount();
-        for (uint32_t index = 0; index < firstCount; ++index) {
+        uint32_t firstRow = placeOfFirstRowOfClassGuardCounts();
+        for (uint32_t index = 0; index < firstRow; ++index) {
             std::span<const uint32_t> key = guards.keyAt(index);
             RELEASE_ASSERT(key.size() >= 2 && !(key.size() % 2));
             AskerOfClassGuardOfName asker = askerOfClassGuardKey(key);
@@ -392,6 +432,8 @@ private:
                 list.append(PlacedClassGuardOfName { classLayout, side, static_cast<NumberSpace>(names[0]), names[1], bit, asker });
             }
         }
+        for (uint32_t offset : m_offsetsOfRowsOfClassGuardCounts)
+            m_statics.bitsOfClassGuards.append(offset * bitsPerByte);
         for (uint32_t offset : m_offsetsOfClassGuardCounts)
             m_statics.bitsOfClassGuards.append(offset * bitsPerByte);
         listGuardsOfClassGuardCounts();
@@ -447,6 +489,19 @@ private:
         RELEASE_ASSERT(firstLastArray == m_statics.arrayProfileOffsets.first() + sizeOfProfiles);
         m_statics.distanceFromArrayProfileToLastArray = static_cast<uint32_t>(sizeOfProfiles);
         m_statics.clearedEachCollection.append({ firstLastArray, static_cast<uint32_t>(sizeOfProfiles) });
+        return true;
+    }
+
+    bool placeRowsOfReads()
+    {
+        if (m_statics.rowsOfReadsOffsets.isEmpty())
+            return true;
+        uint32_t first = alignToWord();
+        for (uint32_t& offset : m_statics.rowsOfReadsOffsets)
+            offset = allocate(WTF::roundUpToMultipleOf<wordSize>(sizeof(RowsOfReads)), wordSize);
+        if (!fitsWithin(m_limit))
+            return false;
+        m_statics.clearedEachCollection.append({ first, static_cast<uint32_t>(m_end - first) });
         return true;
     }
 
@@ -549,6 +604,7 @@ private:
     PlacedStatics m_statics;
     Vector<uint32_t> m_originsOfMethodSelectors;
     Vector<uint32_t> m_offsetsOfClassGuardCounts;
+    Vector<uint32_t> m_offsetsOfRowsOfClassGuardCounts;
     uint32_t m_sizeOfMethodTable { 0 };
     uint64_t m_end { 0 };
 };
@@ -565,11 +621,12 @@ void ImageNumbersBuilder::numberSites()
     numbers.m_siteCaches = mentions.takeKeys(NumberSpace::SiteCache);
     const NumberedKeys& sites = numbers.m_siteCaches;
     numbers.m_numbersOfSites.resize(sites.size() + 1);
+    const BitVector& keysWithColumn = inputs.plan.slots().keysWithColumn();
     uint64_t numberOfNumbersOfSites = 0;
     for (uint32_t place = 0; place < sites.size(); ++place) {
         std::span<const uint32_t> key = sites.keyAt(place);
         numbers.m_numbersOfSites[place] = static_cast<uint32_t>(numberOfNumbersOfSites);
-        numberOfNumbersOfSites += ImageNumbers::isPlaceWithSiteAnswers(key) && !inputs.plan.slots().hasColumn(ImageNumbers::nameOfSite(key)) ? 2 : 1;
+        numberOfNumbersOfSites += ImageNumbers::isPlaceWithSiteAnswers(key) && !keysWithColumn.get(ImageNumbers::nameOfSite(key).index()) ? InstanceLayout::numbersOfSiteWhoseNameStandsBehind : 1;
     }
     numbers.m_numbersOfSites[sites.size()] = static_cast<uint32_t>(std::min<uint64_t>(numberOfNumbersOfSites, UINT32_MAX));
 }
@@ -583,6 +640,7 @@ void ImageNumbersBuilder::layOutStatics()
     numbers.m_regExpLiteralCells = mentions.takeKeys(NumberSpace::RegExpLiteralCell);
     numbers.m_templateObjectCells = mentions.takeKeys(NumberSpace::TemplateObjectCell);
     numbers.m_arrayProfiles = mentions.takeKeys(NumberSpace::ArrayProfile);
+    numbers.m_rowsOfReads = mentions.takeKeys(NumberSpace::RowsOfReads);
     numbers.m_classGuards = mentions.takeKeys(NumberSpace::ClassGuard);
 
     if (!fits)

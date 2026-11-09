@@ -200,7 +200,7 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnPropertiesOfAssignment
     if (const Object* compiledSource = source.compiledObject) {
         ObjectModel& objects = *compiledSource->state().objects;
         const LayoutData& layout = compiledSource->layout();
-        auto entries = objects.keyOrders.entriesInOrder(layout, orderOf(source.orderWord)).first(countOf(source.orderWord));
+        auto entries = objects.keyOrders.entriesListedBy(layout, source.orderWord);
         properties.reserveInitialCapacity(entries.size());
         for (uint16_t index : entries) {
             if (index >= layout.numberOfFields)

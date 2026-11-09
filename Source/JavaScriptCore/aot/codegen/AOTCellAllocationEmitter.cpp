@@ -139,8 +139,6 @@ Pointer CellAllocationEmitter::allocationSiteRecord(const MentionedAllocation& a
     return offsetBy(Pointer(m_out.add(distances.value(), signExtended(distance).value())), -static_cast<ptrdiff_t>(sizeof(AllocationSiteRecord)));
 }
 
-static constexpr size_t maxBytesZeroedInLine = 256;
-
 ZeroedBy CellAllocationEmitter::whoZeroesBody(const OperationContext& context, const MentionedAllocation& allocation, unsigned storesOfZero, unsigned storesOfOtherPatterns) const
 {
     size_t size = allocation.placed.size;
@@ -266,6 +264,59 @@ void CellAllocationEmitter::copyFieldWords(CellPointer source, CellPointer cell,
     m_out.jump(copyLoop);
 
     m_out.appendTo(copied);
+}
+
+void CellAllocationEmitter::storeWordInLoop(CellPointer cell, const Layout& layout, unsigned begin, unsigned end, int64_t word)
+{
+    RELEASE_ASSERT(begin < end && !((end - begin) % bytesStoredInTurnOfLoop));
+    const Machine::AbstractHeap& fields = m_heaps.entire(layout.isEnvironment() ? AbstractHeap::EnvironmentFields : AbstractHeap::ObjectFields);
+    LBasicBlock storeWords = newBlock();
+    LBasicBlock stored = newBlock();
+    LValue bits = m_out.opaque(m_out.constInt64(word));
+    ValueFromBlock start = m_out.anchor(m_out.constIntPtr(begin));
+    m_out.jump(storeWords);
+
+    m_out.appendTo(storeWords);
+    LValue offset = m_out.phi(Machine::pointerType(), start);
+    LValue to = m_out.add(cell.value(), offset);
+    for (unsigned place = 0; place < bytesStoredInTurnOfLoop; place += sizeof(uint64_t))
+        m_out.store64(bits, m_out.address(fields, to, place));
+    LValue next = m_out.add(offset, bytesStoredInTurnOfLoop);
+    m_out.addIncomingToPhi(offset, m_out.anchor(next));
+    m_out.branch(m_out.below(next, m_out.constIntPtr(end)), normalEdge(storeWords), normalEdge(stored));
+
+    m_out.appendTo(stored);
+}
+
+void CellAllocationEmitter::copyWords(CellPointer source, unsigned offsetInSource, CellPointer cell, unsigned offsetInCell, unsigned bytes)
+{
+    static constexpr unsigned bytesCopiedInTurnOfLoop = 8 * sizeof(uint64_t);
+    RELEASE_ASSERT(bytes && !(bytes % sizeof(uint64_t)));
+    const Machine::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
+    auto copyWord = [&](LValue from, LValue to, unsigned place) {
+        m_out.store64(m_out.load64(m_out.address(fields, from, offsetInSource + place)), m_out.address(fields, to, offsetInCell + place));
+    };
+    unsigned bytesInLoop = bytes > maxFieldBytesOfCellCopiedWithoutLoop ? bytes / bytesCopiedInTurnOfLoop * bytesCopiedInTurnOfLoop : 0;
+    if (bytesInLoop) {
+        LBasicBlock copyTurn = newBlock();
+        LBasicBlock copied = newBlock();
+        ValueFromBlock start = m_out.anchor(m_out.constIntPtr(0));
+        m_out.jump(copyTurn);
+
+        m_out.appendTo(copyTurn);
+        LValue offset = m_out.phi(Machine::pointerType(), start);
+        LValue from = m_out.add(source.value(), offset);
+        LValue to = m_out.add(cell.value(), offset);
+        for (unsigned place = 0; place < bytesCopiedInTurnOfLoop; place += sizeof(uint64_t))
+            copyWord(from, to, place);
+        LValue next = m_out.add(offset, bytesCopiedInTurnOfLoop);
+        m_out.addIncomingToPhi(offset, m_out.anchor(next));
+        m_out.branch(m_out.below(next, m_out.constIntPtr(bytesInLoop)), normalEdge(copyTurn), normalEdge(copied));
+
+        m_out.appendTo(copied);
+    }
+    for (unsigned place = bytesInLoop; place < bytes; place += sizeof(uint64_t))
+        copyWord(source.value(), cell.value(), place);
 }
 
 CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, const MentionedAllocation& allocation, CellPointer source, unsigned fieldBytes)
@@ -483,42 +534,9 @@ CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, s
     return join.finish();
 }
 
-void CellAllocationEmitter::copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied)
-{
-    CodeGenerator::InitializationScope scope(generator());
-    LValue end = m_out.shl(zeroExtended(count).value(), 3);
-    ValueFromBlock start = m_out.anchor(m_out.intPtrZero);
-    m_out.jump(copyLoop);
-
-    m_out.appendTo(copyLoop);
-    LValue offset = m_out.phi(Machine::pointerType(), start);
-    m_out.branch(m_out.below(offset, end), normalEdge(copyElement), normalEdge(copied));
-
-    m_out.appendTo(copyElement);
-    LValue element = m_out.load64(TypedPointer(m_heaps.argumentBuffer, m_out.add(buffer.value(), offset)));
-    m_out.store64(element, TypedPointer(m_heaps.indexedContiguousProperties.atAnyIndex(), m_out.add(butterfly.value(), offset)));
-    m_out.addIncomingToPhi(offset, m_out.anchor(m_out.add(offset, m_out.intPtrEight)));
-    m_out.jump(copyLoop);
-
-    m_out.appendTo(copied);
-}
-
 CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& context, Word32 count, Pointer buffer)
 {
-    LBasicBlock slowPath = newBlock();
-    LBasicBlock copyLoop = newBlock();
-    LBasicBlock copyElement = newBlock();
-    LBasicBlock copied = newBlock();
-    Join<CellPointer> join(m_out);
-    auto [array, butterfly] = allocateArray(context, count, bitOr(count, word32(1)), ArrayWithContiguous, slowPath);
-    copyFromBuffer(count, buffer, butterfly, copyLoop, copyElement, copied);
-    emitter<BarrierEmitter>().fenceAfterInitialization(context);
-    join.add(array);
-
-    m_out.appendTo(slowPath);
-    Word32 countOrCapacityOfEmptyArray = select(isZero(count), 1 << capacityShiftInArrayLiteralCount, count);
-    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArray, { countOrCapacityOfEmptyArray, buffer }, { .isOnRarePath = true }));
-    return join.finish();
+    return CellPointer(callStub(context, AOT::newArrayFromBuffer(), { count.value(), buffer.value() }).first);
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -7,7 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEffectsOfOperations.h"
 #include "AOTFoldingOfConstants.h"
+#include "AOTOpcodeSets.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -29,8 +31,22 @@ inline constexpr OpcodeSet opcodesThatFoldOperationTakesInChains = operationsOnP
     Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::PropGet, Opcode::ElemGet, Opcode::PutModuleVariable, Opcode::PutEnvironmentField,
     Opcode::ToObject, Opcode::ToThis, Opcode::TypeOf, Opcode::ToLength };
 AOT_LINK_OF_WALK(foldOperation, opcodesThatFoldOperationTakesInChains)
-extern const OpcodeSet opcodesThatBuildFreshObjectTakes;
-AOT_LINK_OF_WALK(buildFreshObject, opcodesThatBuildFreshObjectTakes)
+inline constexpr OpcodeSet allocationsOfEscapeAnalysis = opcodesWhere([](Opcode opcode) {
+    if (opcode == Opcode::NewClosure || opcode == Opcode::Data)
+        return true;
+    if (resultRuleOf(opcode) != ResultRule::Allocation || effectRuleOf(opcode) != EffectRule::Declared || boundToOf(opcode) == BoundTo::Site)
+        return false;
+    Effects bound = declaredBoundOf(opcode);
+    return bound.writes.containsOnly(heapsWhoseWritesNobodySees) && !bound.mayRunOtherCode();
+});
+static_assert(allocationsOfEscapeAnalysis.contains(Opcode::NewObject) && allocationsOfEscapeAnalysis.contains(Opcode::NewArray) && allocationsOfEscapeAnalysis.contains(Opcode::CreateIteratorResult));
+static_assert(!allocationsOfEscapeAnalysis.contains(Opcode::NewTemplateObject) && !allocationsOfEscapeAnalysis.contains(Opcode::TruncateNewArray));
+
+inline constexpr OpcodeSet namesOfOperandInEscapeAnalysis = opcodesThatHandOn({ HandedOn::PassedCheck, HandedOn::Mark });
+inline constexpr OpcodeSet argumentsObjectsOfEscapeAnalysis { Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments };
+static_assert(allocationsOfEscapeAnalysis.contains(Opcode::CreateUnmappedArguments) && allocationsOfEscapeAnalysis.contains(Opcode::CreateMappedArguments));
+inline constexpr OpcodeSet opcodesOfEscapeAnalysis = allocationsOfEscapeAnalysis | namesOfOperandInEscapeAnalysis | OpcodeSet { Opcode::StrictEq, Opcode::GetMappedArgument, Opcode::PropDelete };
+AOT_LINK_OF_WALK(buildFreshObject, opcodesOfEscapeAnalysis)
 extern const OpcodeSet opcodesThatCallBuiltinTakes;
 inline constexpr OpcodeSet opcodesThatCallBuiltinTakesInChains { Opcode::Call, Opcode::Construct, Opcode::CallList, Opcode::ConstructList };
 AOT_LINK_OF_WALK(callBuiltin, opcodesThatCallBuiltinTakesInChains)
@@ -42,6 +58,8 @@ extern const OpcodeSet opcodesThatBuildTypedIterationTakes;
 inline constexpr OpcodeSet opcodesThatBuildTypedIterationTakesInChains { Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::AppendSpread, Opcode::AppendElement, Opcode::AppendHole,
     Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList, Opcode::ResultAt };
 AOT_LINK_OF_WALK(buildTypedIteration, opcodesThatBuildTypedIterationTakesInChains)
+inline constexpr OpcodeSet opcodesThatBuildIterationThatAsksItsListItselfTakes { Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::ResultAt };
+AOT_LINK_OF_WALK(buildIterationThatAsksItsListItself, opcodesThatBuildIterationThatAsksItsListItselfTakes)
 extern const OpcodeSet opcodesThatBuildTypedConstructionTakes;
 inline constexpr OpcodeSet opcodesThatBuildTypedConstructionTakesInChains { Opcode::GetConstructPrototype, Opcode::NewObject };
 AOT_LINK_OF_WALK(buildTypedConstruction, opcodesThatBuildTypedConstructionTakesInChains)
@@ -60,12 +78,16 @@ inline constexpr OpcodeSet opcodesThatBuildAccessByIndexOffExpectedViewTakes { O
 AOT_LINK_OF_WALK(buildAccessByIndexOffExpectedView, opcodesThatBuildAccessByIndexOffExpectedViewTakes)
 inline constexpr OpcodeSet opcodesThatBuildReadByIndexOffAnyBaseTakes { Opcode::ElemGet };
 AOT_LINK_OF_WALK(buildReadByIndexOffAnyBase, opcodesThatBuildReadByIndexOffAnyBaseTakes)
-inline constexpr OpcodeSet opcodesThatAskPlainVectorBehindRowTakes { Opcode::HasContiguousIndex, Opcode::GetOwnContiguousIndex };
+inline constexpr OpcodeSet opcodesThatAskPlainVectorBehindRowTakes { Opcode::HasContiguousIndex, Opcode::GetOwnContiguousIndex, Opcode::TryPutByValDirect };
 AOT_LINK_OF_WALK(askPlainVectorBehindRow, opcodesThatAskPlainVectorBehindRowTakes)
 extern const OpcodeSet opcodesThatOpenGuessAtTakes;
 inline constexpr OpcodeSet opcodesThatOpenGuessAtTakesInChains = opcodesOfFamily(OperationFamily::Access) | opcodesOfFamily(OperationFamily::PrivateAccess) | opcodesOfFamily(OperationFamily::Operator) | opcodesOfFamily(OperationFamily::ArrayIntrinsic)
     | OpcodeSet { Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::Call, Opcode::Construct, Opcode::CallList, Opcode::RequireObjectCoercible };
 GuessOpened openGuessAtOfItsOpcodes(Walker&, const BodyValue&);
+GuessOpened openGuessAtOnlyProvenHolderOfName(Walker&, const BodyValue&);
+bool tellRowsApartByKindOfStorage(Walker&, const BodyValue& read);
+inline constexpr OpcodeSet opcodesThatAskRowOnceWhereStretchStoresIntoItTakes { Opcode::ElemGet, Opcode::ElemSet };
+AOT_LINK_OF_WALK(askRowOnceWhereStretchStoresIntoIt, opcodesThatAskRowOnceWhereStretchStoresIntoItTakes)
 ALWAYS_INLINE GuessOpened openGuessAt(Walker& walker, const BodyValue& value) { return opcodesThatOpenGuessAtTakesInChains.contains(value.opcode()) ? openGuessAtOfItsOpcodes(walker, value) : GuessOpened::None; }
 template<Opcode known> ALWAYS_INLINE GuessOpened openGuessAt(Walker& walker, const BodyValueOf<known>& value) { return opcodesThatOpenGuessAtTakesInChains.contains(known) ? openGuessAtOfItsOpcodes(walker, value) : GuessOpened::None; }
 

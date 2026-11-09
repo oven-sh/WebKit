@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAsyncResumption.h"
+#include "AOTClosure.h"
 #include "AOTGenerator.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
@@ -19,7 +20,9 @@
 #include "AOTStubFrames.h"
 #include "AOTStubsCoroutines.h"
 #include "AbstractSlotVisitorInlines.h"
+#include "AsyncGeneratorFunctionPrototype.h"
 #include "AsyncGeneratorPrototype.h"
+#include "GeneratorFunctionPrototype.h"
 #include "GeneratorPrototype.h"
 #include "InternalFunction.h"
 #include "IteratorOperations.h"
@@ -177,7 +180,8 @@ SavedFrame* SavedFrame::createHeapFrame(VM& vm, Instance& instance, size_t numbe
     SavedFrame* saved = create(vm, instance, CoroutineKind::Generator, numberOfWords, 0, 0);
     std::ranges::fill(std::span { saved->words(), numberOfWords }, 0);
     saved->m_resumeAddress = resumeAddress;
-    saved->m_flags = isHeapFrameFlag;
+    saved->m_numberOfSavedRegisterPairs = liesOnHeapBit;
+    saved->m_flags = isSuspendedAtYieldFlag;
     vm.mutatorFence();
     return saved;
 }
@@ -209,7 +213,7 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
 {
     size_t numberOfWords = machineFrame.numberOfWords();
     uint64_t siteWord = machineFrame.words->siteWord;
-    RELEASE_ASSERT(m_numberOfWords == numberOfWords && !m_liveSlotMapOffsetPlusOne);
+    RELEASE_ASSERT(!liesOnHeap() && m_numberOfWords == numberOfWords && !m_liveSlotMapOffsetPlusOne);
     RELEASE_ASSERT(m_numberOfSavedRegisterPairs == savedRegistersOrPairsOf(siteWord) && m_numberOfWordsSkippedAtBottom == skippedAtBottomOf(siteWord));
     ASSERT(!goesOnInContextOfItsAwait());
     willWrite();
@@ -426,19 +430,54 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     }
     m_state = State::Running;
     JSValue result = enterSavedFrame(vm, *Instance::owning(m_savedFrame), m_savedFrame, mode, value);
-    if (scope.exception()) [[unlikely]] {
-        m_state = State::Completed;
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        if (!vm.isTerminationException(exception))
+            didEnd();
         return { };
     }
     bool isDone = m_state == State::Running;
     if (isDone)
-        m_state = State::Completed;
+        didEnd();
     return createIteratorResultObject(globalObject, result, isDone);
+}
+
+Structure* CoroutineTable::structureOfGeneratorsOfLibrary(VM& vm, bool isAsync)
+{
+    JSGlobalObject* realm = m_instance.globalObject;
+    Structure* structure = isAsync ? realm->asyncGeneratorStructure() : m_generatorStructure;
+    uint32_t& remembered = m_instance.coroutines.structureIDsOfGeneratorsOfLibrary[isAsync];
+    if (remembered)
+        return structure;
+    if (std::exchange(m_hasAskedAboveGeneratorFunctionsOfLibrary[isAsync], true))
+        return nullptr;
+    JSObject* holder = isAsync ? static_cast<JSObject*>(realm->asyncGeneratorFunctionPrototype()) : realm->generatorFunctionPrototype();
+    auto isPrototypeOfStructure = [&](JSValue held) { return held == structure->storedPrototype(); };
+    auto watch = PropertyValueWatchpoint::tryWatch(vm, holder, vm.propertyNames->prototype.impl(), isPrototypeOfStructure, [](PropertyValueWatchpoint& fired) {
+        fired.owner<Instance>().coroutines.structureIDsOfGeneratorsOfLibrary[fired.number()] = 0;
+    }, &m_instance, isAsync);
+    if (!watch)
+        return nullptr;
+    m_watchesAboveGeneratorFunctionsOfLibrary[isAsync] = WTF::move(watch);
+    remembered = structure->id().bits();
+    return structure;
+}
+
+static bool isGeneratorFunctionOfLibraryAsMade(const Instance& instance, JSObject* generatorFunction, bool isAsync)
+{
+    auto* closure = dynamicDowncast<Closure>(generatorFunction);
+    if (!closure || !closure->kind().isInRuntimeModule)
+        return false;
+    return closure->structureID().bits() == static_cast<uint32_t>(instance.closures.closureHeaders[closureStructureOfGeneratorFunctions(isAsync)]);
 }
 
 Structure* structureOfGenerator(JSGlobalObject* globalObject, Instance& instance, JSObject* generatorFunction, CoroutineKind kind)
 {
     RELEASE_ASSERT(kind != CoroutineKind::AsyncFunction);
+    bool isAsync = kind == CoroutineKind::AsyncGenerator;
+    if (isGeneratorFunctionOfLibraryAsMade(instance, generatorFunction, isAsync)) {
+        if (Structure* structure = instance.state->coroutines->structureOfGeneratorsOfLibrary(globalObject->vm(), isAsync))
+            return structure;
+    }
     Structure* base = kind == CoroutineKind::Generator ? instance.state->coroutines->generatorStructure() : globalObject->asyncGeneratorStructure();
     return InternalFunction::createSubclassStructure(globalObject, generatorFunction, base);
 }

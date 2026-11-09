@@ -203,6 +203,14 @@ static const LayoutData* classWhoseHolderChanged(const ClassTable& classes, JSOb
     return layout;
 }
 
+static bool seesAccessesUnderName(VM& vm, JSObject* holder, UniquedStringImpl* uid)
+{
+    unsigned attributes = 0;
+    Object* compiled = compiledObjectOrNull(holder);
+    JSValue held = compiled ? compiled->getDirectFromNativeCode(vm, uid, &attributes) : holder->getDirect(vm, uid, attributes);
+    return held && ClassTable::seesAccesses(vm, uid, attributes);
+}
+
 static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, UniquedStringImpl* uidOrNull)
 {
     ClassTable& classes = state.objects->classes;
@@ -212,11 +220,14 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
         return;
     if (uidOrNull) {
         classes.holdMemberToProof(vm, *layout, side, changed, uidOrNull);
+        if (seesAccessesUnderName(vm, changed, uidOrNull) && !classes.holdsMemberOfRecordUnder(vm, *layout, side, changed, uidOrNull))
+            classes.didLayWhatSeesAccesses(vm, *layout, side);
         classes.didChangeMember(*layout, side, uidOrNull);
         return;
     }
     classes.holdLinkToProof(vm, *layout, side, changed);
     if (changed->isFrozen(vm)) {
+        classes.didLayWhatSeesAccesses(vm, *layout, side);
         classes.didFreezeHolder(vm, *layout, side, changed);
         return;
     }
@@ -224,10 +235,15 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
     classes.didChangePrototypeLink(*layout, side);
 }
 
-void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
+enum class ChangeOfChainObject : uint8_t { IsOfAnyKind, ReplacesValue };
+
+static void tellOfChangeOfChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull, ChangeOfChainObject change)
 {
     if (VMPropertyCaches* caches = vm.aotState().propertyCaches.get()) {
-        caches->didChangeObjectOnSomeChain(changed, uidOrNull);
+        if (change == ChangeOfChainObject::ReplacesValue)
+            caches->didReplaceValueOnObjectOfSomeChain(changed, uidOrNull);
+        else
+            caches->didChangeObjectOnSomeChain(changed, uidOrNull);
         JSGlobalObject* realm = changed->structure()->realm();
         if (realm && changed == realm->objectPrototype() && realm->aotInstance())
             caches->didChangeObjectPrototype(changed, uidOrNull);
@@ -243,10 +259,25 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
     }
 }
 
+void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
+{
+    tellOfChangeOfChainObject(vm, changed, uidOrNull, ChangeOfChainObject::IsOfAnyKind);
+}
+
+void didReplaceValueOnChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uid)
+{
+    tellOfChangeOfChainObject(vm, changed, uid, ChangeOfChainObject::ReplacesValue);
+}
+
 void RuntimeHooks::didStartWatchingReplacements(VM& vm)
 {
     if (VMPropertyCaches* caches = vm.aotState().propertyCaches.get())
         caches->didStartWatchingReplacements();
+    for (Instance* instance : vm.aotState().instances) {
+        State* state = instance->state;
+        if (state && state->objects)
+            state->objects->classes.forgetStructuresOfHeirs();
+    }
 }
 
 void RuntimeHooks::didChangeGlobalLexicalBindings(JSGlobalObject* realm)

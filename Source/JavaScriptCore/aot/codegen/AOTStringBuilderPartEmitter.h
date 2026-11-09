@@ -24,6 +24,7 @@ public:
     void generateStringBuilderAppendString(const ValueContext&);
     void generateStringBuilderAppendStringRange(const ValueContext&);
     void generateStringBuilderAppendBoolean(const ValueContext&);
+    void generateStringBuilderAppendCodeUnit(const ValueContext&);
     void generateStringBuilderAppendStringOrNullish(const ValueContext&);
     void generateStringBuilderAppendValue(const ValueContext&);
     void generateStackStringBuilderAppendConstant(const ValueContext&);
@@ -32,6 +33,7 @@ public:
     void generateStackStringBuilderAppendString(const ValueContext&);
     void generateStackStringBuilderAppendStringRange(const ValueContext&);
     void generateStackStringBuilderAppendBoolean(const ValueContext&);
+    void generateStackStringBuilderAppendCodeUnit(const ValueContext&);
     void generateStackStringBuilderAppendStringOrNullish(const ValueContext&);
     void generateStackStringBuilderAppendValue(const ValueContext&);
 
@@ -43,6 +45,7 @@ private:
 
     StringBuilderEmitter& builders() { return emitter<StringBuilderEmitter>(); }
     PlaceInFrame placeInFrameOf(const ValueContext& value) { return { builders().recordOf(value), in<Pointer>(value->cursorOperand()) }; }
+    void holdIntegerToldToHaveFewDigits(const ValueContext&, Integer appended);
     bool isProvenToHaveFewDigits(ValueID integer) const
     {
         Type type = typeOf(integer);

@@ -46,7 +46,7 @@ static bool readOperandsInNumberOperators(Walker& walker, const BodyValue& value
         if (!type || isNeverType(type))
             return false;
         operand.type = walker.types().at(type);
-        operand.known = primitiveKnownInNumberForms(walker, operand.reference);
+        operand.known = primitiveKnownInNumberForms(walker, operand.reference, operand.type);
     }
     return true;
 }
@@ -181,8 +181,10 @@ static Reference buildBitsOfNumberInNumberOperators(Walker& walker, Opcode conve
 {
     Type type = walker.types().at(walker.typeOf(number));
     Range leftAsTheyAre = conversion == Opcode::ToUint32 ? Range::uint32() : Range::int32();
-    if (type.isInteger() && type.integers.isSubsetOf(leftAsTheyAre) && walker.has(Mechanism::Folding))
+    if (type.isInteger() && type.integers.isSubsetOf(leftAsTheyAre) && walker.has(Mechanism::Folding)) {
+        walker.checkRawNumberThatFoldRestsOn(number, origin);
         return number;
+    }
     if (conversion == Opcode::ToUint32 && !type.isInteger()) {
         number = buildConversionInNumberOperators(walker, Opcode::ToInt32, number, origin);
         if (!number)
@@ -191,10 +193,8 @@ static Reference buildBitsOfNumberInNumberOperators(Walker& walker, Opcode conve
     return buildConversionInNumberOperators(walker, conversion, number, origin);
 }
 
-static bool convertOperandsOfBitOperatorOnce(Walker& walker, Origin origin, std::span<Reference> operands)
+static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Origin origin, std::span<Reference> operands)
 {
-    if (!walker.isInLoop())
-        return false;
     TypeArena& types = walker.types();
     for (Reference operand : operands) {
         if (!types.at(walker.typeOf(operand)).isNumberLike())
@@ -206,6 +206,8 @@ static bool convertOperandsOfBitOperatorOnce(Walker& walker, Origin origin, std:
         Reference number = operands[operandIndex];
         Type type = types.at(walker.typeOf(number));
         if (!(type.primitives & Primitive::Double))
+            continue;
+        if (!walker.isInLoop() && opcode == Opcode::BitAnd && isMaskOfLowestBitsOfInt32(types.at(walker.typeOf(operands[1 - operandIndex]))))
             continue;
         hasConverted = true;
         if (!type.isNumber())
@@ -252,7 +254,7 @@ static bool buildBitOperator(Walker& walker, const BodyValue& value, OperandsInN
 
     std::array<Reference, 2> taken { operands[0].reference, operands[1].reference };
     std::span<Reference> takenByOperator = std::span(taken).first(numberOfOperands);
-    takesOtherOperands |= convertOperandsOfBitOperatorOnce(walker, origin, takenByOperator);
+    takesOtherOperands |= convertOperandsOfBitOperatorOnce(walker, opcode, origin, takenByOperator);
     if (!takesOtherOperands)
         return false;
     return buildOnOperandsInNumberOperators(walker, value, takenByOperator);
@@ -379,7 +381,7 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
 
     if (allEqualities.contains(opcode) || allRelations.contains(opcode) || opcode == Opcode::ToBoolean) {
         bool somethingIsProven = false;
-        for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode); ++operandIndex)
+        for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode) && !somethingIsProven; ++operandIndex)
             somethingIsProven |= !walker.nothingIsProvenOf(walker.referenceOf(value.operand(operandIndex)));
         if (!somethingIsProven)
             return false;
@@ -390,8 +392,10 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
         return false;
 
     if (arithmeticInNumberOperators.contains(opcode) && walker.has(Mechanism::Folding)) {
-        if (Reference given = valueThatArithmeticGives(walker, opcode, operands))
+        if (Reference given = valueThatArithmeticGives(walker, opcode, operands)) {
+            walker.noteValueThatFoldedArithmeticGives(given);
             return bindInNumberOperators(walker, value, given);
+        }
     }
     if (opcode == Opcode::Pow && operands[0].type.isNumber() && isKnownIntegerInNumberOperators(operands[1].known, 2))
         return bindInNumberOperators(walker, value, buildOperatorInNumberForms(walker, Opcode::Mul, operands[0].reference, operands[0].reference, walker.originOf(value)));

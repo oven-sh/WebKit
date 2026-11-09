@@ -347,6 +347,14 @@ static void testCompileBadOptionsSize()
     checkOptionsRejected(options);
 }
 
+static void testCompileTestingSwitchPastLastMember()
+{
+    static_assert(numberOfEnumerators<Wire::TestingSwitch> > 32 && numberOfEnumerators<Wire::TestingSwitch> < 64);
+    Wire::CompileOptions options = wireOptions();
+    options.testing = static_cast<Wire::TestingSwitch>(1ull << numberOfEnumerators<Wire::TestingSwitch>);
+    checkOptionsRejected(options);
+}
+
 std::span<const NativeTest> imageBuildTests()
 {
     static constexpr NativeTest tests[] = {
@@ -360,6 +368,7 @@ std::span<const NativeTest> imageBuildTests()
         { "image/limits/code-over-two-gigabytes"_s, testCodeOverTwoGigabytes },
         { "image/compile/random-bytes"_s, testCompileRandomBytes },
         { "image/compile/bad-options-size"_s, testCompileBadOptionsSize },
+        { "image/compile/testing-switch-past-the-last-member"_s, testCompileTestingSwitchPastLastMember },
     };
     return tests;
 }

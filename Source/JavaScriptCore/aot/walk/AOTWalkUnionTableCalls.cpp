@@ -61,7 +61,7 @@ struct TableCallInUnionTableCalls {
 
 } // anonymous namespace
 
-static bool isCallOfMethodReadInUnionTableCalls(const BodyIndex& index, const BodyValue& read, ValueID call)
+static ALWAYS_INLINE bool isCallOfMethodReadInUnionTableCalls(const BodyIndex& index, const BodyValue& read, ValueID call)
 {
     auto lookup = read.as<Opcode::PropGet>();
     if (lookup.isFreeName() || !lookup.objectOperand() || !call || index.opcodeOf(call) != Opcode::Call || index.blockOf(call) != index.blockOf(read.id()))
@@ -173,7 +173,7 @@ static void mergeEffectsOfMethodsInUnionTableCalls(Walker& walker, ReceiversOfTa
 
 enum class ArmsMayTakeCallInUnionTableCalls : bool { No, Yes };
 
-static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(Walker& walker, const BodyValue& read, ValueID call, Reference receiver, ArmsMayTakeCallInUnionTableCalls armsMayTakeCall, std::optional<ReceiversOfTableCallInUnionTableCalls>& receiversOfThisCallAlone)
+static ALWAYS_INLINE std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(Walker& walker, const BodyValue& read, ValueID call, Reference receiver, ArmsMayTakeCallInUnionTableCalls armsMayTakeCall, std::optional<ReceiversOfTableCallInUnionTableCalls>& receiversOfThisCallAlone)
 {
     if (isTableRole(walker.unit().role) || !receiver || !receiver.isValue())
         return std::nullopt;
@@ -216,7 +216,7 @@ static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(
         if (!everyMethodComesBack)
             return std::nullopt;
     }
-    if (!walker.isShown(receiver, proven))
+    if (!someReceiverHasNoRow && !walker.isShown(receiver, proven))
         return std::nullopt;
     return TableCallInUnionTableCalls { *selector, &receivers };
 }
@@ -264,6 +264,26 @@ static Reference narrowedByInUnionTableCalls(Walker& walker, Reference value, Re
     return walker.build(WTF::move(narrowed));
 }
 
+static uint32_t chooseSelectorInUnionTableCalls(Walker& walker, const Draft& written, uint32_t boxed)
+{
+    const CallingConventions& conventions = walker.plan().conventions();
+    if (boxed + 1 >= conventions.methodSelectors().size())
+        return boxed;
+    const MethodSelector& typed = conventions.methodSelector(boxed + 1);
+    if (!typed.isTyped || typed.family != conventions.methodSelector(boxed).family || typed.numberOfArguments != conventions.methodSelector(boxed).numberOfArguments)
+        return boxed;
+    if (typed.result != Representation::JSValue && walker.positions().resultOfSelector(TypeLevel::Proven, boxed + 1) != typed.typeOfResult)
+        return boxed;
+    const MethodFamily& family = conventions.familyOf(typed);
+    std::span<const Reference> arguments = written.argumentsOperands();
+    for (size_t place = 0; place < arguments.size(); ++place) {
+        TypeID taken = family.typesOfArguments[place];
+        if (taken && !walker.isShown(arguments[place], taken))
+            return boxed;
+    }
+    return boxed + 1;
+}
+
 constinit const OpcodeSet opcodesThatCallMethodThroughTableTakes { Opcode::Call };
 
 bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
@@ -290,6 +310,7 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
     }
 
     Walker::ArmsThatMeet arms;
+    bool isReadBehind = !index.isUnused(call.id());
     BlockID meeting;
     BlockID withoutRow;
     Reference passes;
@@ -299,6 +320,7 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         Draft test(Opcode::ShapeTest, walker.originOf(call));
         test.setObjectOperand(receiver);
         test.setLayouts(walker.types().at(walker.types().forLayouts(planned->receivers->withRows.span())).layouts);
+        test.setAsksInFull(!walker.isShown(receiver, walker.typeOf(receiver)));
         passes = walker.build(WTF::move(test));
         if (!passes)
             return true;
@@ -314,6 +336,10 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         walker.state().noteShape(receiver, walker.typeOf(receiver));
     }
 
+    if (walker.verifiesCode() && !walker.isShown(receiver, walker.typeOf(receiver))) {
+        walker.fail("a receiver of the method table is not shown to be what its type says"_s);
+        return true;
+    }
     walker.bind(read.id(), receiver);
     Draft asWritten = walker.draftOf(call);
     walker.bind(read.id(), Reference());
@@ -324,7 +350,7 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
     table.setReceiverOperand(receiver);
     table.setArgumentsOperands(asWritten.argumentsOperands());
     table.setKey(read.as<Opcode::PropGet>().key());
-    table.setSelector(planned->selector);
+    table.setSelector(chooseSelectorInUnionTableCalls(walker, asWritten, planned->selector));
     table.expected = asWritten.expected;
     table.inputValueGiven = asWritten.inputValueGiven;
 
@@ -356,14 +382,14 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         walker.bind(written.thisValueOperand(), boundBefore);
         if (walker.hasFailed())
             return true;
-        if (Reference byName = walker.isUnreachable() ? Reference() : walker.referenceOf(call.id()))
-            arms.append({ walker.currentBlock(), { byName } });
+        if (!walker.isUnreachable())
+            arms.append({ walker.currentBlock(), { isReadBehind ? walker.referenceOf(call.id()) : Reference() } });
     }
     if (walker.hasFailed())
         return true;
     walker.bind(read.id(), Reference());
     Reference met;
-    if (walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(&met, 1)))
+    if (walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(&met, 1).first(isReadBehind)))
         walker.bind(call.id(), met);
     return true;
 }

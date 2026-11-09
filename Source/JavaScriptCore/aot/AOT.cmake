@@ -340,6 +340,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTRuntimeRecordTests.cpp
     aot/tests/AOTRuntimeTypeTests.cpp
     aot/tests/AOTSavedFrameTests.cpp
+    aot/tests/AOTSharedArrayTests.cpp
     aot/tests/AOTSharingModeAndNamespaceTests.cpp
     aot/tests/AOTSiteAnswersOfGettersTests.cpp
     aot/tests/AOTSlimClosureTests.cpp
@@ -352,6 +353,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTStaticMembersNamedLikeBuiltinsTests.cpp
     aot/tests/AOTStorageOwnerProgramTests.cpp
     aot/tests/AOTStoreAnswerTests.cpp
+    aot/tests/AOTStoresOfStubsProgramTests.cpp
     aot/tests/AOTStringBuilderStorageTests.cpp
     aot/tests/AOTStringSearchTests.cpp
     aot/tests/AOTStringStraysTests.cpp
@@ -530,11 +532,23 @@ function(AOT_CHECK_READS_THAT_ASSUME)
     file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/aot/*.cpp" "${JAVASCRIPTCORE_DIR}/aot/*.h")
     add_custom_command(
         OUTPUT "${JavaScriptCore_AOT_GENERATED_DIR}/AOTReadsThatAssumeChecked.h"
-        DEPENDS ${sources} "${JAVASCRIPTCORE_DIR}/aot/codegen/generator/reads-that-assume.ts" "${JAVASCRIPTCORE_DIR}/aot/codegen/AOTReadsThatAssume.txt"
+        DEPENDS ${sources} "${JAVASCRIPTCORE_DIR}/aot/codegen/generator/reads-that-assume.ts" "${JAVASCRIPTCORE_DIR}/aot/codegen/AOTReadsThatAssume.txt" "${JAVASCRIPTCORE_DIR}/aot/codegen/generator/stub-registers.ts"
         COMMAND "${NODE_EXECUTABLE}" "${JAVASCRIPTCORE_DIR}/aot/codegen/generator/reads-that-assume.ts" --javascriptcore "${JAVASCRIPTCORE_DIR}" --out "${JavaScriptCore_AOT_GENERATED_DIR}"
         VERBATIM
     )
     set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} "${JavaScriptCore_AOT_GENERATED_DIR}/AOTReadsThatAssumeChecked.h" PARENT_SCOPE)
+endfunction()
+
+# It reads the text of the runtime's sources. What it writes says only that they have passed.
+function(AOT_CHECK_LATE_STORES)
+    file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/aot/*.cpp" "${JAVASCRIPTCORE_DIR}/aot/*.h")
+    add_custom_command(
+        OUTPUT "${JavaScriptCore_AOT_GENERATED_DIR}/AOTLateStoresChecked.h"
+        DEPENDS ${sources} "${JAVASCRIPTCORE_DIR}/aot/runtime/generator/late-stores.ts" "${JAVASCRIPTCORE_DIR}/aot/runtime/AOTLateStores.txt"
+        COMMAND "${NODE_EXECUTABLE}" "${JAVASCRIPTCORE_DIR}/aot/runtime/generator/late-stores.ts" --javascriptcore "${JAVASCRIPTCORE_DIR}" --out "${JavaScriptCore_AOT_GENERATED_DIR}"
+        VERBATIM
+    )
+    set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} "${JavaScriptCore_AOT_GENERATED_DIR}/AOTLateStoresChecked.h" PARENT_SCOPE)
 endfunction()
 
 function(AOT_READ_LIBRARY_SOURCES result problemsResult)
@@ -639,6 +653,7 @@ AOT_GENERATE_FROM_SCHEMA()
 AOT_GENERATE_BUILTIN_TABLE()
 AOT_GENERATE_RUNTIME_FACTS()
 AOT_CHECK_READS_THAT_ASSUME()
+AOT_CHECK_LATE_STORES()
 AOT_COMPUTE_SOURCES()
 AOT_CHECK_SOURCE_LISTS()
 AOT_CHECK_EXPORTED_HEADERS()

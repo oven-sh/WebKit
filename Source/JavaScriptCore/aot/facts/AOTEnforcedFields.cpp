@@ -78,7 +78,7 @@ static bool holdsPlainValueInEnforcedFields(const Program& program, const Field&
 {
     constexpr OptionSet<FieldFlags> filledByAllocationAlone { FieldFlags::IsBrand, FieldFlags::IsHidden };
     bool isUnderPrivateName = declaration.key && program.at(declaration.key).kind == PropertyKeyKind::PrivateName;
-    return declaration.form.isEmpty() && !declaration.flags.containsAny(filledByAllocationAlone) && !isUnderPrivateName;
+    return !declaration.form.contains(FieldForm::IsAccessor) && !declaration.flags.containsAny(filledByAllocationAlone) && !isUnderPrivateName;
 }
 
 static SourceOfSlotType sourceOfWrittenTypeInEnforcedFields(const DeclaredType& declared)
@@ -185,8 +185,8 @@ static bool numberIsInt32ByGuessInEnforcedFields(const Program& program, const L
     if (const LinkedCell* seen = held.findCellOfField(reference); seen && seen->proven && !isNeverType(seen->proven)) {
         Type shown = types.at(seen->proven);
         bool showsSomething = !shown.hasUnboundedUnknown() && (shown.primitives & Primitive::All) != Primitive::All;
-        bool showsFractionsAlone = shown.primitives & Primitive::Double && !(shown.primitives & Primitive::Integer);
-        if (showsSomething && (showsFractionsAlone || shown.primitives & (Primitive::Boolean | Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt) || shown.hasObjects()))
+        bool showsNoInt32 = !!(shown.primitives & Primitive::FractionalNumber) || (shown.primitives & Primitive::Double && !(shown.primitives & Primitive::Integer));
+        if (showsSomething && (showsNoInt32 || shown.primitives & (Primitive::Boolean | Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt) || shown.hasObjects()))
             return false;
     }
     if (!key || linked.keysStoredWhatIsNoInt32.get(key.index()))
@@ -243,7 +243,8 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
     }
 
     if (!isAppended && !moreIsStoredThanIsSeen && (!written || written == TypeTable::anything)) {
-        if (const LinkedCell* seen = held.findCellOfField(declaration); seen && seen->proven && !seen->leavesOutWhatArrives && !isNeverType(seen->proven)) {
+        bool isFilledOnceByDefinition = fieldAt(program, declaration).form.containsAll({ FieldForm::IsReadOnly, FieldForm::IsNotConfigurable });
+        if (const LinkedCell* seen = held.findCellOfField(declaration); seen && seen->proven && (!seen->leavesOutWhatArrives || isFilledOnceByDefinition) && !isNeverType(seen->proven)) {
             Type shown = types.at(seen->proven);
             if (!shown.hasUnboundedUnknown() && (shown.primitives & Primitive::All) != Primitive::All && !shown.hasOnlyPrimitives(rawValuesInEnforcedFields | Primitive::UndefinedOrNull)) {
                 written = seen->proven;
@@ -272,6 +273,9 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
     }
 
     if (!type)
+        return { };
+
+    if (!isAppended && !fieldAt(program, declaration).form.isEmpty() && types.at(type).hasOnlyPrimitives(rawValuesInEnforcedFields | Primitive::UndefinedOrNull))
         return { };
 
     if (types.at(type).hasOnlyPrimitives(rawValuesInEnforcedFields | Primitive::UndefinedOrNull))

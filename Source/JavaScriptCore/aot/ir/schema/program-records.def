@@ -3,7 +3,7 @@ enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObj
     | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
 }
 flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType IsOfCreatedObject | engine IsDerived }
-flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods IsRequiredAndReadThoughNeverWritten | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
@@ -11,11 +11,11 @@ record Field wire {
     key: PropertyKey? computedKey: UInt32? declared: DeclaredType flags: FieldFlags form: FieldForm originLayout: Layout? originField: UInt32?
     variableName: String?
 }
-record StaticField wire { key: PropertyKey? computedKey: UInt32? variable: Variable }
+record StaticField wire { key: PropertyKey variable: Variable }
 record Layout wire extendedEngine {
     kind: LayoutKind name: String? module: Module(Referrer)? position: UInt32 base: Layout? constructor: Function(Constructor)?
     fields: Span<Field> staticFields: Span<StaticField> supertypes: Span<Layout> sorted computedKeyCount: UInt32 flags: LayoutFlags
-    declaredOrder: Span<UInt32>
+    declaredOrder: Span<UInt32> place: UInt32?
     | engine builtinLayout: BuiltinLayout? namespaceOf: Module(Referrer)? ownFieldCount: UInt32 writtenBuiltinBase: BuiltinClass?
 }
 
@@ -23,7 +23,7 @@ enum VariableInitialization { Uninitialized Undefined Function }
 flags VariableFlags { IsImmutable IsReplaceable HoldsMock OriginalMayRun }
 record Variable wire {
     name: String? module: Module(Referrer) declared: DeclaredType initialization: VariableInitialization function: Function(Closure)? owner: Layout?
-    flags: VariableFlags
+    flags: VariableFlags place: UInt32?
 }
 
 enum FunctionKind (| engine canBeBound: Bool, isClassConstructor: Bool) {
@@ -31,9 +31,9 @@ enum FunctionKind (| engine canBeBound: Bool, isClassConstructor: Bool) {
 }
 flags FunctionFlags {
     IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
-    HasExplicitName IsNakedConstructor IsNamedByComputedKey
+    HasExplicitName IsNakedConstructor IsNamedByComputedKey IsAlwaysInlined
 }
-flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers }
+flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers MayAskForOwnOriginal }
 enum EntryParameter (presentWith: FunctionFlags) {
     Capture(none) This(HasThis) Callee(TakesCallee) NewTarget(HasNewTarget) ArgumentCount(HasArgumentCount) Parameter(none) HiddenRest(HasHiddenRest)
 }
@@ -44,6 +44,7 @@ record Function wire extendedEngine {
     name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 syntax: FunctionSyntax
     enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredCapture> thisType: DeclaredType parameters: Span<DeclaredType>
     results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
+    originalsAskedFor: Span<String>
     | engine capabilities: FunctionCapabilities constructedClass: Layout?
 }
 
@@ -51,7 +52,7 @@ enum ECMAMode { Strict Sloppy }
 flags EvalScopeFlags { IsInFunction IsInArrowFunction IsInFieldInitializer IsInDerivedConstructor AllowsSuperProperty AllowsSuperCall AllowsNewTarget }
 enum EvalBindingKind {
     Variable Constant FunctionName This NewTarget HomeObject ClassObject Arguments PrivateName PrivateMethod PrivateAccessor WithObject EvalVariables
-    MappedArgument SimpleCatchParameter
+    MappedArgument SimpleCatchParameter PrivateFunction PrivateAccessorPair
 }
 record EvalBinding wire {
     name: String? kind: EvalBindingKind depth: UInt32 layout: Layout? field: UInt32? variable: Variable? operand: UInt32? function: UInt32?
@@ -70,22 +71,23 @@ enum ImportPhase { Evaluation Defer }
 enum ModuleRequestKind { Import Require }
 enum ModuleExportKind { Variable Namespace Indirect }
 flags ModuleFlags {
-    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache RunsAgain AnswersLoaderWithNamespace IsHeldUnderNameWithoutPrefix IsChangedOnDiskByRun IsShownByEntryOfCache LoadsCompiledFilesAlone FindsBuiltinsReadOnly IsHandedOutByTestRunner IsReachedWithoutExtension IsReachedUnderAnotherExtension IsReachedAsFolder ThrowsAtLoad IsModuleToImports
+    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache RunsAgain AnswersLoaderWithNamespace IsHeldUnderNameWithoutPrefix IsChangedOnDiskByRun IsShownByEntryOfCache LoadsCompiledFilesAlone FindsBuiltinsReadOnly IsHandedOutByTestRunner IsReachedWithoutExtension IsReachedUnderAnotherExtension IsReachedAsFolder ThrowsAtLoad IsModuleToImports DependsOnMoreThanSource
     | engine EvaluatesItself
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
 record QuotedText wire { position: UInt32 start: UInt32 end: UInt32 }
 record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> quotedTexts: Span<QuotedText> sorted by position textOfQuotes: Span<Byte> }
-record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool }
+record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool starPlace: UInt32? }
 record ModuleExport wire {
     name: String kind: ModuleExportKind variable: Variable? module: Module(Target)? importName: String? phase: ImportPhase isFromStarExport: Bool
-    isDroppedWhileEmpty: Bool
+    isDroppedWhileEmpty: Bool isLeftOut: Bool writer: Module(Referrer)?
 }
 record SyntheticExport wire { name: String variable: Variable? isKnownMember: Bool isReplaceable: Bool }
-record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool }
+record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool isAskedForByStar: Bool }
 record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? endsLoadOf: Module(Referrer)? }
 record AmbiguousExport wire { module: Module(Referrer) name: String }
 record SourceStamp wire { module: Module(Referrer) low: UInt32 high: UInt32 }
+record DeclaredRecord wire { module: Module(Referrer) position: UInt32 parameter: UInt32 names: Span<PropertyKey> sorted }
 record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
     externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
@@ -139,6 +141,7 @@ list quotedTexts : QuotedText
 list moduleFailures : ModuleFailure as modulefailure prefix q
 list ambiguousExports : AmbiguousExport as ambiguousexport
 list sourceStamps : SourceStamp as sourcestamp
+list declaredRecords : DeclaredRecord as declaredrecord
 list evalScopes : EvalScope as evalscope prefix e
 list evalBindings : EvalBinding
 list declaredCaptures : DeclaredCapture

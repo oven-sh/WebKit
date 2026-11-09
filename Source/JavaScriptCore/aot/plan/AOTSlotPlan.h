@@ -124,7 +124,6 @@ struct PlannedLayout {
 
     LayoutStorage storage { LayoutStorage::None };
     bool isRecordAlone { false };
-    bool liesOnlyInFrames { false };
     bool cellsAreHandedBack { false };
     uint16_t numberOfRecordFields { 0 };
     uint32_t size { 0 };
@@ -139,6 +138,7 @@ struct PlannedLayout {
     std::optional<FieldIndex> environmentOfDeferredClosures;
     BitVector fieldsThatHoldRawValuesFromBirth;
     bool mayBearMark { false };
+    Vector<FieldIndex> fieldsHeldFilled;
 };
 
 inline size_t PlannedLayout::findAppendedKey(PropertyKeyID key) const
@@ -255,6 +255,7 @@ struct FieldAccess {
     bool mayBeFilledWithoutStorage { false };
     bool findsOffsetByShape { false };
     PropertyKeyID key;
+    LayoutSetID layoutsThatTestInCodeLetThrough;
     PlacedSlot slot;
     PlacedSlot extensionWord;
     LayoutsOwnedOrLent<4> membersWithField;
@@ -346,7 +347,8 @@ struct SlotPlanParts {
     BitVector layoutsNeverAllocated;
     BitVector keysWithColumn;
     BitVector keysOfSlotsThatHoldMarks;
-    BitVector keysOfFields;
+    Vector<uint32_t> firstModuleThatWritesFieldUnder;
+    Vector<uint32_t> modulesThatWriteFields;
 };
 
 struct FieldAccessesOfSets {
@@ -381,6 +383,7 @@ struct FieldAccessesOfSets {
 
 bool fieldStaysInSlot(const Program&, const PlacedSlot&);
 class SlotPlan;
+bool takesAccessorsOfLibraryAlone(const Program&, const SlotPlan&, LayoutID, PropertyKeyID);
 struct LinkTables;
 void markFieldsHeldFilledInSlotPlan(const Program&, const LinkTables&, const ParallelLoops&, SlotPlanParts&);
 Vector<FieldIndex, 8> fieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan&, LayoutID);
@@ -447,10 +450,20 @@ public:
     size_t numberOfFunctionsWhoseClosuresGetOnlyListedNames() const { return m_parts.functionsWhoseClosuresGetOnlyListedNames.bitCount(); }
     const ClassCreationPlan& classCreation(LayoutID id) const { return id.index() < m_parts.classCreation.size() ? m_parts.classCreation[id.index()] : m_unplannedClass; }
 
-    bool hasColumn(PropertyKeyID key) const { return m_parts.keysWithColumn.get(key.index()); }
     bool someSlotUnderKeyHoldsMark(PropertyKeyID key) const { return m_parts.keysOfSlotsThatHoldMarks.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_parts.keysWithColumn; }
-    bool namesField(PropertyKeyID key) const { return m_parts.keysOfFields.get(key.index()); }
+    bool someLayoutHasField(PropertyKeyID key) const
+    {
+        std::span<const uint32_t> first = m_parts.firstModuleThatWritesFieldUnder.span();
+        return static_cast<size_t>(key.index()) + 1 >= first.size() || first[key.index()] != first[key.index() + 1];
+    }
+    bool someLayoutWrittenInHasField(ModuleID module, PropertyKeyID key) const
+    {
+        std::span<const uint32_t> first = m_parts.firstModuleThatWritesFieldUnder.span();
+        if (!module || static_cast<size_t>(key.index()) + 1 >= first.size())
+            return false;
+        return std::ranges::binary_search(m_parts.modulesThatWriteFields.span().subspan(first[key.index()], first[key.index() + 1] - first[key.index()]), module.index());
+    }
 
     unsigned numberOfLayouts() const { return m_parts.layouts.size(); }
     unsigned numberOfVariables() const { return m_parts.variables.size(); }

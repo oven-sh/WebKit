@@ -38,6 +38,15 @@ public:
         ++m_size;
         return true;
     }
+    void remove(uint32_t number)
+    {
+        uint32_t word = number / bitsOfWord;
+        uint64_t bit = 1ull << number % bitsOfWord;
+        if (word >= m_words.size() || !(m_words[word] & bit))
+            return;
+        m_words.mutableAt(word) &= ~bit;
+        --m_size;
+    }
     void keepMembersOf(const SharedSetOfNumbers& other)
     {
         if (m_size)
@@ -53,6 +62,17 @@ public:
     {
         m_words.swap(other.m_words);
         std::swap(m_size, other.m_size);
+    }
+    template<typename Functor> void forEachMemberNotIn(const SharedSetOfNumbers& other, const Functor& functor) const
+    {
+        if (!m_size)
+            return;
+        m_words.forEachStretchNotSharedWith(other.m_words, [&](uint32_t begin, uint32_t end) {
+            for (uint32_t word = begin; word < end; ++word) {
+                for (uint64_t bits = m_words[word] & ~(word < other.m_words.size() ? other.m_words[word] : 0); bits; bits &= bits - 1)
+                    functor(word * bitsOfWord + static_cast<uint32_t>(std::countr_zero(bits)));
+            }
+        });
     }
 
 private:
@@ -76,11 +96,15 @@ public:
     {
         takeRoom(m_checkedNames, former.m_checkedNames);
         takeRoom(m_newestCheckedNames, former.m_newestCheckedNames);
+        takeRoom(m_numbersThatName, former.m_numbersThatName);
     }
+    void rememberNoPlace() { m_remembersPlaces = false; }
+    bool remembersPlaces() const { return m_remembersPlaces; }
     void clear()
     {
         m_checkedNames.shrink(0);
         m_newestCheckedNames.shrink(0);
+        m_numbersThatName.shrink(0);
         if (!m_numbersOfBindings.isEmpty())
             m_numbersOfBindings.clear();
         if (!m_numbersOfBuiltins.isEmpty())
@@ -99,6 +123,16 @@ public:
         m_newestCheckedNames[index] = number + 1;
         return number;
     }
+    void rememberNumberThatNames(Reference name, uint32_t number)
+    {
+        uint32_t index = name.id().index();
+        if (size_t size = m_numbersThatName.size(); size <= index) {
+            m_numbersThatName.grow(index + 1);
+            std::ranges::fill(m_numbersThatName.mutableSpan().subspan(size), 0);
+        }
+        m_numbersThatName[index] = number + 1;
+    }
+    uint32_t numberThatNames(Reference name) const { return name.id().index() < m_numbersThatName.size() ? m_numbersThatName[name.id().index()] : 0; }
     ALWAYS_INLINE uint32_t newestCheckedNameOf(Reference value) const
     {
         static_assert(!static_cast<uint32_t>(Reference::Kind::Value) && static_cast<uint32_t>(Reference::Kind::Constant) == 1 && Reference::kindShift == 30);
@@ -137,8 +171,10 @@ private:
 
     Vector<CheckedName> m_checkedNames;
     Vector<uint32_t> m_newestCheckedNames;
+    Vector<uint32_t> m_numbersThatName;
     HashMap<uint64_t, uint32_t> m_numbersOfBindings;
     HashMap<uint32_t, uint32_t> m_numbersOfBuiltins;
+    bool m_remembersPlaces { true };
 };
 
 enum class FactOfCell : uint8_t {
@@ -165,7 +201,7 @@ public:
         if (m_held)
             ++m_held->numberOfOwners;
         else
-            m_marks.kinds &= programIsWhole;
+            m_marks.kinds &= keptWhereNothingIsHeld;
         if (!other.m_answers.isEmpty())
             m_answers = other.m_answers;
     }
@@ -174,7 +210,7 @@ public:
         , m_marks(other.m_marks)
         , m_program(other.m_program)
     {
-        other.m_marks.kinds &= programIsWhole;
+        other.m_marks.kinds &= keptWhereNothingIsHeld;
         if (!other.m_answers.isEmpty())
             m_answers.swap(other.m_answers);
     }
@@ -194,7 +230,7 @@ public:
             m_answers = other.m_answers;
         m_marks = other.m_marks;
         if (m_held != other.m_held)
-            m_marks.kinds &= programIsWhole;
+            m_marks.kinds &= keptWhereNothingIsHeld;
         if (!(m_marks.kinds & programIsWhole)) [[unlikely]]
             noteWhetherProgramIsWhole();
         return *this;
@@ -294,6 +330,44 @@ public:
                 functor(holder.object, FieldReference { LayoutID(place.first), place.second }, place.value);
         }
     }
+    void forEachBeliefOfFreshHolderLackingIn(const WalkState& arriving, NOESCAPE const Invocable<void(Reference holder, std::optional<FieldReference> fieldOfScope, Reference believed)> auto& functor) const
+    {
+        if (!holdsFreshObjects())
+            return;
+        auto isFreshHolder = [&](const Holder& holder) {
+            return !holder.hasEnded && holder.isFresh && holder.object;
+        };
+        auto holdCells = [&](uint32_t begin, uint32_t end) {
+            for (uint32_t number = begin; number < end; ++number) {
+                if (!isFreshHolder(m_held->m_holders[number]))
+                    continue;
+                Reference object = m_held->m_holders[number].object;
+                if (!arriving.isFresh(object) || (shapeOf(object) && shapeOf(object) != arriving.shapeOf(object)) || !arriving.factsOfCell(object).containsAll(factsOfCell(object)) || (factsOfCell(object).contains(FactOfCell::OrderWordIsKnown) && orderWordOf(object) != arriving.orderWordOf(object)))
+                    functor(object, std::nullopt, Reference());
+            }
+        };
+        auto holdPlaces = [&](uint32_t begin, uint32_t end) {
+            for (uint32_t position = begin; position < end; ++position) {
+                const Place& place = m_held->m_places[position];
+                if (!place.value || place.holder == none || !isFreshHolder(m_held->m_holders[place.holder]))
+                    continue;
+                Reference object = m_held->m_holders[place.holder].object;
+                if (!arriving.isFresh(object) || arriving.valueOfPlace(place.kind, object, place.first, place.second) == place.value)
+                    continue;
+                functor(object, place.kind == PlaceKind::EnvironmentField ? std::optional(FieldReference { LayoutID(place.first), place.second }) : std::nullopt, place.value);
+            }
+        };
+        if (!arriving.m_held)
+            holdCells(0, m_held->m_holders.size());
+        else if (arriving.m_held != m_held) {
+            m_held->m_holders.forEachStretchNotSharedWith(arriving.m_held->m_holders, holdCells);
+            if (mayHold(Kinds::places) && m_held->m_numberOfPlaces)
+                m_held->m_places.forEachStretchNotSharedWith(arriving.m_held->m_places, holdPlaces);
+        }
+        m_answers.forEachHolderOfAnswerAboutFreshHolderLackingIn(arriving.m_answers, [&](Reference holder) {
+            functor(holder, std::nullopt, holder);
+        });
+    }
     void forEachValueHeldByAnother(NOESCAPE const Invocable<void(Reference)> auto& functor) const
     {
         if (!m_held)
@@ -317,7 +391,9 @@ public:
     void noteCheckedName(Reference value, Reference name)
     {
         RELEASE_ASSERT(m_program.numbers && !checkedNameOf(value));
-        heldToWrite().m_checkedNames.add(m_program.numbers->addCheckedName(value, name));
+        Held& held = heldToWrite();
+        held.m_checkedNames.add(m_program.numbers->addCheckedName(value, name));
+        held.m_filterOfValuesWithCheckedNames |= bitOfValueWithCheckedName(value);
         m_marks.kinds |= Kinds::checkedNames;
     }
     ALWAYS_INLINE Reference checkedNameOf(Reference value) const
@@ -325,9 +401,26 @@ public:
         if (!hasCheckedNames())
             return { };
         uint32_t newest = m_program.numbers->newestCheckedNameOf(value);
-        return newest ? checkedNameHeldFrom(newest) : Reference();
+        return newest && (m_held->m_filterOfValuesWithCheckedNames & bitOfValueWithCheckedName(value)) ? checkedNameHeldFrom(newest) : Reference();
+    }
+    static uint64_t bitOfValueWithCheckedName(Reference value) { return 1ull << (value.bits() * 0x9e3779b1u >> 26); }
+    template<typename Functor> void forEachValueWithCheckedNameThatIsNotHeldBy(const WalkState& other, const Functor& functor) const
+    {
+        if (!hasCheckedNames() || !other.hasCheckedNames())
+            return;
+        m_held->m_checkedNames.forEachMemberNotIn(other.m_held->m_checkedNames, [&](uint32_t number) {
+            functor(m_program.numbers->checkedName(number).value);
+        });
     }
     bool hasCheckedNames() const { return mayHold(Kinds::checkedNames); }
+    Reference valueNamedAnewBy(Reference name) const
+    {
+        uint32_t number = hasCheckedNames() && name.isValue() ? m_program.numbers->numberThatNames(name) : 0;
+        if (!number || !m_held->m_checkedNames.contains(number - 1) || m_program.numbers->checkedName(number - 1).name != name)
+            return { };
+        return m_program.numbers->checkedName(number - 1).value;
+    }
+    void nameAnew(Reference value, Reference name);
 
     void noteEndOfDeadZone(VariableID variable)
     {
@@ -442,6 +535,8 @@ public:
 
     void noteSlot(Reference object, FieldReference field, Reference value)
     {
+        if (!remembersPlaces())
+            return;
         if (writesInPlace() || !noteChangesNothing(slot(object, field), value)) {
             heldToWrite().noteSlot(m_program, object, field, value);
             m_marks.kinds |= Kinds::places;
@@ -449,6 +544,8 @@ public:
     }
     void noteVariable(VariableID variable, Reference value)
     {
+        if (!remembersPlaces())
+            return;
         if (writesInPlace() || !noteChangesNothing(this->variable(variable), value)) {
             heldToWrite().noteVariable(m_program, variable, value);
             m_marks.kinds |= Kinds::places;
@@ -456,6 +553,8 @@ public:
     }
     void noteEnvironmentField(Reference environment, FieldReference field, Reference value)
     {
+        if (!remembersPlaces())
+            return;
         if (writesInPlace() || !noteChangesNothing(environmentField(environment, field), value)) {
             heldToWrite().noteEnvironmentField(m_program, environment, field, value);
             m_marks.kinds |= Kinds::places;
@@ -463,55 +562,106 @@ public:
     }
     void noteElement(Reference object, Reference index, Reference value)
     {
+        if (!remembersPlaces())
+            return;
         if (writesInPlace() || !noteChangesNothing(element(object, index), value)) {
             heldToWrite().noteElement(object, index, value);
             m_marks.kinds |= Kinds::places;
         }
     }
+    void noteElementWithNaNForHole(Reference object, Reference index, Reference value)
+    {
+        if (!remembersPlaces())
+            return;
+        if (writesInPlace() || !noteChangesNothing(elementWithNaNForHole(object, index), value)) {
+            heldToWrite().noteElementWithNaNForHole(object, index, value);
+            m_marks.kinds |= Kinds::places;
+        }
+    }
+    void noteElementsLieOutsideViews(Reference object)
+    {
+        if (mayHoldPlaceOf(object))
+            heldToWrite().noteElementsLieOutsideViews(object);
+    }
+    bool remembersPlaces() const { return !m_program.numbers || m_program.numbers->remembersPlaces(); }
     Reference slot(Reference object, FieldReference field) const { return valueOfPlace(PlaceKind::Slot, object, field.layout.index(), field.field); }
     Reference variable(VariableID variable) const { return valueOfPlace(PlaceKind::Variable, Reference(), variable.index(), 0); }
     Reference environmentField(Reference environment, FieldReference field) const { return valueOfPlace(PlaceKind::EnvironmentField, environment, field.layout.index(), field.field); }
     Reference element(Reference object, Reference index) const { return valueOfPlace(PlaceKind::Element, object, index.bits(), 0); }
+    Reference elementWithNaNForHole(Reference object, Reference index) const { return valueOfPlace(PlaceKind::Element, object, index.bits(), 1); }
     struct SlotOfObject {
         FieldReference field;
         Reference value;
     };
     Vector<SlotOfObject, 8> listSlotsOf(Reference object) const;
+    struct ElementOfObject {
+        Reference index;
+        Reference value;
+    };
+    Vector<ElementOfObject, 8> listElementsOf(Reference object) const;
     bool mayHoldPlaceOf(Reference base) const { return mayHold(Kinds::places) && m_held->m_numberOfPlaces && m_held->mayHaveRecordOf(base); }
+    bool holdsPlacesThatEffectsReach() const { return mayHold(Kinds::places) && m_held->m_numberOfPlacesReachedByEffects; }
 
-    void invalidateAliasedSlots(Reference object, FieldReference field, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject)
+    void invalidateAliasedSlots(Reference object, FieldReference field, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject, NOESCAPE const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone)
     {
         if (m_held && m_held->m_numberOfPlaces)
-            heldToWrite().invalidateAliasedSlots(m_program, object, field, mayBeSameObject);
+            heldToWrite().invalidateAliasedSlots(m_program, object, field, mayBeSameObject, isOfLayoutAlone);
     }
 
     static constexpr uint32_t placesWereWrittenInTurn = 1u << 31;
     bool nothingWasDoneInTurn(uint32_t numberOfTurn) const { return numberOfTurn && m_marks.turnInWhichNothingWasDone == numberOfTurn; }
-    bool noOtherCodeRanInTurn(uint32_t numberOfTurn) const { return numberOfTurn && (m_marks.turnInWhichNothingWasDone & ~placesWereWrittenInTurn) == numberOfTurn; }
+    static constexpr uint32_t storesOfTurnCanBePutBack = 1u << 30;
+    static constexpr uint32_t turnOfMark(uint32_t mark) { return mark & ~(placesWereWrittenInTurn | storesOfTurnCanBePutBack); }
+    bool noOtherCodeRanInTurn(uint32_t numberOfTurn) const { return numberOfTurn && turnOfMark(m_marks.turnInWhichNothingWasDone) == numberOfTurn; }
+    bool allThatWasDoneInTurnCanBePutBack(uint32_t numberOfTurn) const { return noOtherCodeRanInTurn(numberOfTurn) && !(m_marks.turnInWhichNothingWasDone & placesWereWrittenInTurn); }
+    uint32_t newestStoreToPutBack() const { return m_marks.turnInWhichNothingWasDone & storesOfTurnCanBePutBack ? (m_marks.kinds & placeOfNewestStoreToPutBack) >> shiftOfPlaceOfNewestStoreToPutBack : 0; }
+    void noteStoreToPutBack(uint32_t numberOfTurn, uint32_t store)
+    {
+        RELEASE_ASSERT(numberOfTurn < storesOfTurnCanBePutBack && store <= placeOfNewestStoreToPutBack >> shiftOfPlaceOfNewestStoreToPutBack);
+        m_marks.turnInWhichNothingWasDone = storesOfTurnCanBePutBack | numberOfTurn;
+        m_marks.kinds = (m_marks.kinds & ~placeOfNewestStoreToPutBack) | store << shiftOfPlaceOfNewestStoreToPutBack;
+    }
     void noteHeadOfTurn(uint32_t numberOfTurn) { m_marks.turnInWhichNothingWasDone = numberOfTurn; }
     void noteSomethingWasDoneInTurn() { m_marks.turnInWhichNothingWasDone = 0; }
+    uint32_t markOfTurn() const { return m_marks.turnInWhichNothingWasDone; }
+    void layMarkOfTurnFalsely(uint32_t mark) { m_marks.turnInWhichNothingWasDone = mark; }
     bool nothingWasDoneSinceCopyBegan(uint32_t numberOfCopy) const { return m_marks.turnInWhichNothingWasDone && m_marks.turnInWhichNothingWasDone <= numberOfCopy; }
     void noteCopyBegins(uint32_t numberOfCopy)
     {
         if (!m_marks.turnInWhichNothingWasDone || (m_marks.turnInWhichNothingWasDone & placesWereWrittenInTurn))
             m_marks.turnInWhichNothingWasDone = numberOfCopy;
     }
+    void giveMarkOfTurnBackBehindCopy(uint32_t numberOfCopy, uint32_t markInFrontOfCopy)
+    {
+        if (!(m_marks.turnInWhichNothingWasDone & storesOfTurnCanBePutBack) && (m_marks.turnInWhichNothingWasDone & ~placesWereWrittenInTurn) == numberOfCopy)
+            m_marks.turnInWhichNothingWasDone = markInFrontOfCopy;
+    }
     void noteWhatOperationDoes(const Effects& effects)
     {
         if (m_marks.turnInWhichNothingWasDone && !effects.mayBeRunAgainUnseen())
-            m_marks.turnInWhichNothingWasDone = effects.mayRunOtherCode() ? 0 : m_marks.turnInWhichNothingWasDone | placesWereWrittenInTurn;
+            m_marks.turnInWhichNothingWasDone = effects.mayRunOtherCode() ? 0 : turnOfMark(m_marks.turnInWhichNothingWasDone) | placesWereWrittenInTurn;
     }
 
-    ALWAYS_INLINE void invalidate(const Effects& effects)
+    ALWAYS_INLINE void invalidate(const Effects& effects, const MemoryLocation* writtenAlone = nullptr)
     {
         noteWhatOperationDoes(effects);
         if (!effects.writes.isEmpty() || effects.mayRunOtherCode()) {
             if (!holdsNoRecord())
-                endWhatIsWritten(effects);
+                endWhatIsWritten(effects, writtenAlone);
             m_answers.endWhatIsWritten(effects, *this);
         }
     }
-    void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard);
+    struct ClassOfHolder {
+        LayoutID layoutAlone;
+        bool isNewCellItself { false };
+    };
+    struct WriterOfOneObject {
+        Reference root;
+        ClassOfHolder classOfRoot;
+        const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone;
+        const ScopedLambda<ClassOfHolder(Reference holder)>& classOf;
+    };
+    void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone = nullptr, const WriterOfOneObject* = nullptr);
     void invalidateHeap()
     {
         m_marks.turnInWhichNothingWasDone = 0;
@@ -542,6 +692,7 @@ public:
         endWhatIsNotFresh();
         Held& held = heldToWrite();
         held.m_checkedNames.clear();
+        held.m_filterOfValuesWithCheckedNames = 0;
         held.m_builtinsRead.clear();
         m_marks.kinds &= ~Kinds::checkedNames;
         m_answers.clear();
@@ -569,6 +720,9 @@ private:
         static constexpr uint32_t records = shapes | freshObjects | places | factsOfCells;
     };
     static constexpr uint32_t programIsWhole = 1u << 31;
+    static constexpr uint32_t shiftOfPlaceOfNewestStoreToPutBack = 8;
+    static constexpr uint32_t placeOfNewestStoreToPutBack = (programIsWhole - 1) & ~((1u << shiftOfPlaceOfNewestStoreToPutBack) - 1);
+    static constexpr uint32_t keptWhereNothingIsHeld = programIsWhole | placeOfNewestStoreToPutBack;
     static constexpr uint64_t programIsWholeAmongMarks = static_cast<uint64_t>(programIsWhole) << 32;
 
     enum class PlaceKind : uint8_t { Slot, Variable, EnvironmentField, Element, GuardOfStores, GuardOfReads };
@@ -592,6 +746,7 @@ private:
         bool isFresh { false };
         bool hasEnded { false };
         bool isListedAsFreshWithElements { false };
+        bool elementsLieOutsideViews { false };
     };
     struct Place {
         static constexpr uint8_t entireHeap = 64;
@@ -656,7 +811,9 @@ private:
         }
 
         static uint8_t bitOf(const ProgramOfState&, const MemoryLocation&);
+        static PropertyKeyID keyOfSlot(const ProgramOfState&, FieldReference);
         static uint8_t bitOfSlot(const ProgramOfState&, FieldReference);
+        static bool liesBesideWhatIsWritten(const ProgramOfState&, const Place&, uint64_t written, const MemoryLocation* writtenAlone);
 
         void noteShape(Reference object, TypeID proven);
         void noteFresh(Reference object);
@@ -672,9 +829,11 @@ private:
         void noteVariable(const ProgramOfState&, VariableID, Reference value);
         void noteEnvironmentField(const ProgramOfState&, Reference environment, FieldReference, Reference value);
         void noteElement(Reference object, Reference index, Reference value);
-        void invalidateAliasedSlots(const ProgramOfState&, Reference object, FieldReference, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject);
+        void noteElementWithNaNForHole(Reference object, Reference index, Reference value);
+        void noteElementsLieOutsideViews(Reference object);
+        void invalidateAliasedSlots(const ProgramOfState&, Reference object, FieldReference, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject, NOESCAPE const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone);
         void meetWith(const Held&, RecordsLastMet*);
-        void endWhatIsWritten(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard);
+        void endWhatIsWritten(const ProgramOfState&, const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject*);
 
         bool mayHaveRecordOf(Reference object) const { return m_filterOfHolders & bitInFilterOfHolders(object); }
         TypeID shapeOfHolderOf(Reference) const;
@@ -682,7 +841,7 @@ private:
         bool holderIsFresh(Reference) const;
         bool letLeaveIfFresh(Reference);
         bool restsOnHeapsAmong(const LocationMasks& writes) const;
-        void endWhatIsWritten(const Effects&);
+        void endWhatIsWritten(const ProgramOfState&, const Effects&, const MemoryLocation* writtenAlone);
         void endWhatIsNotFresh();
         void dropAllRecords();
         void clear();
@@ -720,6 +879,7 @@ private:
         struct WhatEnds {
             bool shapes { false };
             bool elements { false };
+            bool sparesElementsOutsideViews { false };
             OptionSet<FactOfCell> facts;
             uint64_t slots { 0 };
             uint64_t variables { 0 };
@@ -727,6 +887,10 @@ private:
             uint64_t guards { 0 };
             const ScopedLambda<bool(Reference holder)>* mayBeWritten { nullptr };
             const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>* mayEndGuard { nullptr };
+            VariableID variableWrittenAlone;
+            const WriterOfOneObject* writerOfOneObject { nullptr };
+            const ProgramOfState* program { nullptr };
+            const MemoryLocation* writtenAlone { nullptr };
         };
         bool goesByLists()
         {
@@ -754,7 +918,7 @@ private:
             return true;
         }
         void endByLists(const WhatEnds&);
-        void invalidateAliasedSlotsByLists(uint32_t own, uint8_t bit, FieldReference, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject);
+        void invalidateAliasedSlotsByLists(uint32_t own, uint8_t bit, FieldReference, bool storesIntoLayoutAlone, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject, NOESCAPE const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone);
         void makeLists();
         void dropLists();
         void listPlace(uint32_t place);
@@ -804,11 +968,12 @@ private:
         uint64_t m_maskOfPlacesReachedByEffects { 0 };
         uint64_t m_filterOfHolders { 0 };
         SharedSetOfNumbers m_checkedNames;
+        uint64_t m_filterOfValuesWithCheckedNames { 0 };
         SharedSetOfNumbers m_bindingsPastDeadZone;
         SharedSetOfNumbers m_builtinsRead;
         Table m_tableOfHolders;
         Table m_tableOfPlaces;
-        Vector<uint32_t, holdersFoundWithoutTable> m_holdersReachedByEffects;
+        SharedArray<uint32_t, holdersFoundWithoutTable> m_holdersReachedByEffects;
         SharedArray<Holder, holdersFoundWithoutTable> m_holders;
         SharedArray<Place, placesThatLieInHeld> m_places;
     };
@@ -828,7 +993,7 @@ private:
     void shareWhatIsHeldBy(const WalkState&);
     void dropWhatIsHeld();
     void dropAllRecords();
-    void endWhatIsWritten(const Effects&);
+    void endWhatIsWritten(const Effects&, const MemoryLocation* writtenAlone);
     void endWhatIsNotFresh();
     void noteBindingPastDeadZone(uint32_t number)
     {
@@ -858,7 +1023,7 @@ private:
         if (!!(m_marks.kinds & programIsWhole) != m_program.isWhole())
             return false;
         if (!m_held)
-            return !(m_marks.kinds & ~programIsWhole);
+            return !(m_marks.kinds & ~keptWhereNothingIsHeld);
         return !!(m_marks.kinds & Kinds::checkedNames) == !m_held->m_checkedNames.isEmpty()
             && (m_marks.kinds & Kinds::shapes || !m_held->m_numberOfShapes)
             && (m_marks.kinds & Kinds::freshObjects || !m_held->m_numberOfFreshHolders)

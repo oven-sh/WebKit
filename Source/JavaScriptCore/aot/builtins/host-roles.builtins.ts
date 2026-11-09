@@ -11,6 +11,8 @@ export default b.declarations(
     "%CompilerHelpers%.describeUnlessOrdinary",
     "%CompilerHelpers%.findInPlainQuery",
     "%CompilerHelpers%.findPlainQueryValue",
+    "%CompilerHelpers%.maxOfList",
+    "%CompilerHelpers%.minOfList",
     "%CompilerHelpers%.nextOfStepsOverText",
     "%CompilerHelpers%.openIterator",
     "%CompilerHelpers%.openWrappedIterator",

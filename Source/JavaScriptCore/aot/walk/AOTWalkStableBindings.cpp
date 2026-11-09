@@ -58,6 +58,11 @@ static bool variableStaysAsFilled(const Walker& walker, VariableID id, Definitio
     return !!plan.deferredDefinitions().findDeferred(id) == (definition == DefinitionOfStableVariable::IsPutOff);
 }
 
+bool numberReadOutOfVariableStays(const Walker& walker, VariableID variable)
+{
+    return variableStaysAsFilled(walker, variable);
+}
+
 static bool scopeSlotStaysAsFilled(const Walker& walker, FieldReference field)
 {
     const Layout& layout = walker.program().at(field.layout);
@@ -66,10 +71,10 @@ static bool scopeSlotStaysAsFilled(const Walker& walker, FieldReference field)
 
 static bool keepsNotesOfStableBindings(const Walker& walker)
 {
-    return walker.has(Mechanism::Folding) && !walker.checksProofs();
+    return walker.has(Mechanism::Folding) && walker.state().remembersPlaces();
 }
 
-static bool isValueOfFilledBinding(Walker& walker, Reference value, bool hasDeadZone)
+static ALWAYS_INLINE bool isValueOfFilledBinding(Walker& walker, Reference value, bool hasDeadZone)
 {
     TypeID type = value ? walker.typeOf(value) : TypeID();
     uint16_t saysNothing = Primitive::Absent | Primitive::Unspecified | (hasDeadZone ? 0 : Primitive::Undefined);
@@ -103,6 +108,11 @@ void noteObjectOfVariablePutOff(Walker& walker, VariableID variable, Reference o
 {
     if (keepsNotesOfStableBindings(walker) && variableStaysAsFilled(walker, variable, DefinitionOfStableVariable::IsPutOff) && isValueOfFilledBinding(walker, object, hasDeadZone(walker, variable)))
         noteKnown(walker, KnownNote::ValueKeptByPlace, { }, { }, variable.index(), LocationMasks(), object.bits(), true);
+}
+
+bool objectOfVariablePutOffStays(const Walker& walker, VariableID variable)
+{
+    return keepsNotesOfStableBindings(walker) && isVariableFilledAtFirstRead(walker.plan(), variable) && variableStaysAsFilled(walker, variable, DefinitionOfStableVariable::IsPutOff);
 }
 
 Reference objectOfVariablePutOff(Walker& walker, VariableID variable)

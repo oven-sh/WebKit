@@ -73,6 +73,75 @@ static bool isDefinedOnEdgeIntoLoop(const Block* from, const Operation* value)
     return value == last || (value->opcode() == Extract && value->child(0) == last);
 }
 
+Reg Allocator::takeRegisterOfValueThatLoopReadsBehindPhi(const Loop& loop, const Operation* phi)
+{
+    const Block* head = m_order.blocksInOrder()[loop.firstBlock];
+    const ValueFacts& factsOfPhi = m_liveness.of(phi);
+    if (m_order.of(head).isRare() || !hasBackEdgeOutsideRareRegions(loop) || factsOfPhi.has(ValueFlag::LivesAcrossCall) || factsOfPhi.has(ValueFlag::LivesAcrossSuspension) || factsOfPhi.has(ValueFlag::LivesIntoLandingPad))
+        return Reg();
+    Position latestRead = findFirstReadFromHeadOf(head, phi);
+    if (latestRead == noPosition || latestRead >= loop.end)
+        return Reg();
+
+    Reg chosen;
+    forEachRegister(m_bound & registersLoopMayTake(*this, head, bankOf(phi->type())) & ~m_liveness.of(loop, m_order).registersTakenByPatches, [&](Reg reg) {
+        const Operation* value = m_valueIn[reg.index()];
+        if (!value || (value->opcode() == Phi && value->owner() == head) || !value->type().isNumeric() || isDefinedOnEdgeIntoLoop(m_block, value) || m_liveness.of(value).has(ValueFlag::IsRematerialized))
+            return;
+        Position read = firstReadAtOrBehindStartOfLoop(*this, value, loop);
+        if (read == noPosition || read <= latestRead)
+            return;
+        latestRead = read;
+        chosen = reg;
+    });
+    if (!chosen)
+        return Reg();
+    Operation* value = m_valueIn[chosen.index()];
+    markSpilled(value);
+    unbindAll(value);
+    return chosen;
+}
+
+const Block* Allocator::headOfLoopThatBlockOnlyLeadsBackTo(const Block* block) const
+{
+    if (!block->last()->isUnconditionalJump() || m_order.of(block).isRare())
+        return nullptr;
+    const Block* next = block->successor(0).block();
+    const BlockPlace& place = m_order.of(next);
+    return place.isLoopHead && !place.isRare() && place.head < m_order.headOf(block) && m_heads[next->index()].isSet() ? next : nullptr;
+}
+
+void Allocator::dropWhatBlockThatLeadsBackNeitherReadsNorHandsOn(const Block* block, const Block* headOfLoop)
+{
+    const Position end = m_order.endOf(block);
+    std::span<const RegisterBinding> held = m_heads[headOfLoop->index()].bindings();
+    forEachRegister(m_bound, [&](Reg reg) {
+        Operation* value = m_valueIn[reg.index()];
+        if (!value || value->owner() == block || m_liveness.of(value).has(ValueFlag::IsRematerialized) || !value->type().isNumeric() || !spillHoldsValueAtHeadOf(block, value))
+            return;
+        if (findFirstReadFromHeadOf(block, value) < end)
+            return;
+        for (const RegisterBinding& binding : held) {
+            if (binding.reg == reg && binding.value == value)
+                return;
+        }
+        unbindAll(value);
+    });
+}
+
+void Allocator::holdWhatHeadOfLoopHolds(const Block* block, const Block* headOfLoop, Position limitOfDefinitions)
+{
+    for (const RegisterBinding& binding : m_heads[headOfLoop->index()].bindings()) {
+        Operation* value = binding.value;
+        if (!value || value->owner() == headOfLoop || m_valueIn[binding.reg.index()] || stateOf(value).registers || !value->type().isNumeric())
+            continue;
+        const ValueFacts& facts = m_liveness.of(value);
+        if (facts.has(ValueFlag::IsRematerialized) || facts.definition >= limitOfDefinitions || !spillHoldsValueAtHeadOf(block, value))
+            continue;
+        bind(binding.reg, value);
+    }
+}
+
 void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWriteRegisters)
 {
     const Block* head = m_order.blocksInOrder()[loop.firstBlock];
@@ -84,17 +153,29 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
 
     RegisterMask registersOfLoop = 0;
     int numberOfSpareRegisters[numberOfBanks];
+    int numberOfSpareRegistersThatPatchesLeave[numberOfBanks];
     for (Bank bank : { Bank::GP, Bank::FP }) {
         RegisterMask registers = registersLoopMayTake(*this, head, bank);
         numberOfSpareRegisters[static_cast<unsigned>(bank)] = std::popcount(registers) - static_cast<int>(loopFacts.pressure[static_cast<unsigned>(bank)]);
+        numberOfSpareRegistersThatPatchesLeave[static_cast<unsigned>(bank)] = std::popcount(registers & ~takenByPatches) - static_cast<int>(loopFacts.pressureAcrossPatches[static_cast<unsigned>(bank)]);
         registersOfLoop |= registers;
     }
-    auto takeSpareRegister = [&](Bank bank) {
-        return numberOfSpareRegisters[static_cast<unsigned>(bank)]-- > 0;
+    auto takeSpareRegister = [&](Reg reg) {
+        unsigned bank = static_cast<unsigned>(bankOf(reg));
+        bool isSpare = numberOfSpareRegisters[bank]-- > 0;
+        if (maskOf(reg) & takenByPatches)
+            return isSpare;
+        return numberOfSpareRegistersThatPatchesLeave[bank]-- > 0 && isSpare;
     };
     auto spillAheadOfLoop = [&](Operation* value) {
         markSpilled(value);
         unbindAll(value);
+    };
+    auto mayBeSpilledAheadOfLoop = [&](const Operation* value) {
+        bool wouldBeStoredOutsideRareRegion = loopIsRare && isDefinedOutsideRareRegion(value) && !spillHoldsValueAtHeadOf(head, value);
+        const ValueFacts& facts = m_liveness.of(value);
+        bool spillWouldHoldNothing = isReadByMoreThanSteps(facts) && headIsAheadOfFramedPart(head) && isStoredAtHeadsOfFramedPart(value);
+        return value->type().isNumeric() && !isDefinedOnEdgeIntoLoop(m_block, value) && !wouldBeStoredOutsideRareRegion && !spillWouldHoldNothing;
     };
 
     ValueLiveThroughLoop candidates[64];
@@ -123,12 +204,13 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
         }
         if (!comesRound)
             return;
-        if (isReadInside(value, loop))
+        if (isReadInside(value, loop)) {
             ++numberOfSpareRegisters[static_cast<unsigned>(bankOf(reg))];
+            ++numberOfSpareRegistersThatPatchesLeave[static_cast<unsigned>(bankOf(reg))];
+        }
 
-        bool wouldBeStoredOutsideRareRegion = loopIsRare && isDefinedOutsideRareRegion(value) && !spillHoldsValueAtHeadOf(head, value);
-        if (!value->type().isNumeric() || isDefinedOnEdgeIntoLoop(m_block, value) || wouldBeStoredOutsideRareRegion) {
-            takeSpareRegister(bankOf(reg));
+        if (!mayBeSpilledAheadOfLoop(value)) {
+            takeSpareRegister(reg);
             return;
         }
         if (!(maskOf(reg) & registersWorthKeepingThroughLoop(m_file, facts, isAheadOfFramedPart(head) && !loopIsRare) & ~takenByPatches)) {
@@ -149,7 +231,7 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
     });
     for (unsigned index = 0; index < numberOfCandidates; ++index) {
         Operation* value = candidates[index].value;
-        if (!takeSpareRegister(bankOf(value->type())))
+        if (!takeSpareRegister(anyRegisterOf(value, stateOf(value).registers)))
             spillAheadOfLoop(value);
     }
     if (!takenByPatches || !comesRound)
@@ -183,6 +265,8 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
             bind(target, value);
         } else if (spillHoldsValueAtHeadOf(head, value))
             unbindAll(value);
+        else if (RegisterMask held = stateOf(value).registers; !(held & (held - 1)) && !isAheadOfFramedPart(head) && mayBeSpilledAheadOfLoop(value) && firstCallBehindHeadReadsValueElsewhere(head, anyRegisterOf(value, held), value))
+            spillAheadOfLoop(value);
     }
 }
 
@@ -202,18 +286,23 @@ void Allocator::bringInWhatLoopReads(const Loop& loop, Position limitOfDefinitio
     RegisterMask registers[numberOfBanks];
     unsigned numberFree[numberOfBanks];
     unsigned numberStillAskedFor[numberOfBanks];
+    unsigned numberStillAskedForAcrossPatches[numberOfBanks];
     for (Bank bank : { Bank::GP, Bank::FP }) {
         unsigned index = static_cast<unsigned>(bank);
         registers[index] = registersLoopMayTake(*this, head, bank);
         numberFree[index] = static_cast<unsigned>(std::popcount(registers[index] & ~m_bound));
         numberStillAskedFor[index] = loopFacts.pressure[index];
+        numberStillAskedForAcrossPatches[index] = loopFacts.pressureAcrossPatches[index];
     }
     forEachRegister(m_bound, [&](Reg reg) {
         const Operation* value = m_valueIn[reg.index()];
         unsigned& number = numberStillAskedFor[static_cast<unsigned>(bankOf(reg))];
+        unsigned& numberAcrossPatches = numberStillAskedForAcrossPatches[static_cast<unsigned>(bankOf(reg))];
         bool isCounted = !m_liveness.of(value).has(ValueFlag::IsRematerialized) && ((value->opcode() == Phi && value->owner() == head) || isReadInside(value, loop));
         if (isCounted && number)
             --number;
+        if (isCounted && numberAcrossPatches && !(maskOf(reg) & loopFacts.registersTakenByPatches))
+            --numberAcrossPatches;
     });
 
     for (Operation* value : loopFacts.valuesReadFromOutside) {
@@ -230,6 +319,8 @@ void Allocator::bringInWhatLoopReads(const Loop& loop, Position limitOfDefinitio
         unsigned room = isRematerialized ? static_cast<unsigned>(std::popcount(candidates)) : numberFree[index] + 1;
         if (!candidates || room <= numberStillAskedFor[index])
             continue;
+        if (!isRematerialized && static_cast<unsigned>(std::popcount(candidates)) + 1 <= numberStillAskedForAcrossPatches[index])
+            continue;
 
         Reg hint = hintOf(value);
         Reg reg = takeRegister(bank, candidates, hint && (candidates & maskOf(hint)) ? hint : Reg());
@@ -239,8 +330,12 @@ void Allocator::bringInWhatLoopReads(const Loop& loop, Position limitOfDefinitio
             m_rematerializedValueKeptIn[reg.index()] = value;
             m_rematerializedValueIsKeptUntil[reg.index()] = loop.end;
             m_endOfLastLoopThatKeepsValueMadeAgain = std::max(m_endOfLastLoopThatKeepsValueMadeAgain, loop.end);
-        } else if (numberStillAskedFor[index])
-            --numberStillAskedFor[index];
+        } else {
+            if (numberStillAskedFor[index])
+                --numberStillAskedFor[index];
+            if (numberStillAskedForAcrossPatches[index])
+                --numberStillAskedForAcrossPatches[index];
+        }
     }
 }
 
@@ -279,6 +374,16 @@ static ALWAYS_INLINE uint32_t passOverReadsAheadOfOnlyWayOn(const Allocator& all
     for (uint32_t loop = target.loop; loop != noLoop && loops[loop].begin >= endOfBlock; loop = loops[loop].parent)
         endOfWhatIsOutOfReach = loops[loop].begin;
     return allocator.findReadFromAmongLaterReads(value, use, endOfWhatIsOutOfReach);
+}
+
+static void noteReadOfValue(Allocator& allocator, ArenaVector<uint32_t>& readsByValue, const Operation* value, uint32_t read)
+{
+    if (readsByValue.isEmpty()) {
+        const uint32_t numberOfOperations = allocator.m_order.mostOperations();
+        readsByValue.growWithoutInitializing(allocator.m_arena, numberOfOperations);
+        memset(readsByValue.begin(), 0, static_cast<size_t>(numberOfOperations) * sizeof(uint32_t));
+    }
+    readsByValue[value->index()] = read;
 }
 
 enum class LoopsAroundBlock : uint8_t {
@@ -322,7 +427,9 @@ static bool isDeadOnEveryPathFromBlock(LoopsAroundBlock loopsAround, Allocator& 
     uint32_t loopAround = place.loop;
     if (place.isLoopHead && from == head && definition < loops[loopAround].begin)
         loopAround = loops[loopAround].parent;
-    while (loopAround != noLoop && definition < loops[loopAround].begin && (loopsAround == LoopsAroundBlock::AreAskedByCaller || (loops[loopAround].hasSideEntrance && isDeadOnWaysOnFromHeadOf(loops[loopAround], allocator, value))))
+    if (loopsAround == LoopsAroundBlock::AreAskedByCaller && loopAround != noLoop && definition < loops[loopAround].begin)
+        loopAround = innermostLoopAroundBoth(loops, order.of(value->owner()).loop, head);
+    while (loopAround != noLoop && definition < loops[loopAround].begin && loops[loopAround].hasSideEntrance && isDeadOnWaysOnFromHeadOf(loops[loopAround], allocator, value))
         loopAround = loops[loopAround].parent;
     if (loopAround != noLoop) {
         const Loop& loop = loops[loopAround];
@@ -368,6 +475,7 @@ static bool isDeadOnEveryPathFromBlock(LoopsAroundBlock loopsAround, Allocator& 
         }
         uint32_t firstInDoubt = use;
         for (; use; use = liveness.use(use).next) {
+            ++allocator.m_numberOfLaterReadsAskedWhetherTheyCount;
             const Use& read = liveness.use(use);
             if (read.position >= startOfReadsBehindLoop)
                 break;
@@ -375,18 +483,21 @@ static bool isDeadOnEveryPathFromBlock(LoopsAroundBlock loopsAround, Allocator& 
                 isDead = false;
                 break;
             }
+            if (use != firstInDoubt || allocator.m_lastReadsThatCounted.isEmpty())
+                continue;
+            if (uint32_t counted = allocator.m_lastReadsThatCounted[value->index()]) {
+                const Use& kept = liveness.use(counted);
+                if (kept.position > read.position && kept.position < startOfReadsBehindLoop && kept.headOfBlockPassedOnEveryPath >= head)
+                    return false;
+            }
         }
         if (use == firstInDoubt)
             return isDead;
+        if (!isDead)
+            noteReadOfValue(allocator, allocator.m_lastReadsThatCounted, value, use);
     }
-    if (block == allocator.m_block && !hasPassedOverReads) {
-        if (firstReadsNotKnownOutOfReach.isEmpty()) {
-            const uint32_t numberOfOperations = allocator.m_order.mostOperations();
-            firstReadsNotKnownOutOfReach.growWithoutInitializing(allocator.m_arena, numberOfOperations);
-            memset(firstReadsNotKnownOutOfReach.begin(), 0, static_cast<size_t>(numberOfOperations) * sizeof(uint32_t));
-        }
-        firstReadsNotKnownOutOfReach[value->index()] = use ? use : UINT32_MAX;
-    }
+    if (block == allocator.m_block && !hasPassedOverReads)
+        noteReadOfValue(allocator, firstReadsNotKnownOutOfReach, value, use ? use : UINT32_MAX);
     return isDead;
 }
 

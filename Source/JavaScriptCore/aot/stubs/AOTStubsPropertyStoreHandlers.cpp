@@ -22,9 +22,12 @@
 #include "Butterfly.h"
 #include "IndexingType.h"
 #include "JSFunction.h"
+#include "JSGlobalObject.h"
+#include "JSGlobalProxy.h"
 #include "JSObject.h"
 #include "JSType.h"
 #include "PureNaN.h"
+#include "RegExpObject.h"
 #include <bit>
 #include <type_traits>
 #include <wtf/FunctionTraits.h>
@@ -142,6 +145,7 @@ void generateStoreSlot(StubAssembler& jit)
         jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
     };
     auto callSetter = [&](GPRReg getterSetter) {
+        branchUnlessAccessorPair(jit, getterSetter, miss);
         const SlotOperation operation = traits.operation;
         RELEASE_ASSERT(operation == SlotOperation::StoreStrict || operation == SlotOperation::StoreSloppy);
         const SlotFinisher finisher = operation == SlotOperation::StoreStrict ? SlotFinisher::CallSetterStrict : SlotFinisher::CallSetterSloppy;
@@ -287,6 +291,18 @@ void generateStoreSlot(StubAssembler& jit)
         JumpList hasNoStorage;
 
         uncached.append(jit.branchTest32(CCallHelpers::NonZero, Address(receiver, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(traits.operation))));
+        if (accessOf(traits.operation) == SlotAccess::Store && origin == SlotOrigin::ByVal) {
+            static_assert(SlotData::create(8, SlotRepresentation::JSValue).encoded() == 8 && !traitsOf(SlotRepresentation::JSValue).absentBits);
+            const GPRReg offsetOfSlot = r.field.slotData;
+            Jump asksMore = slot.branchUnlessFlag(jit, Slot::fieldTakesAnyValue);
+            slot.loadFirstPayloadWord(jit, offsetOfSlot);
+            Jump isAbsent = jit.branchTest64(CCallHelpers::Zero, BaseIndex(receiver, offsetOfSlot, CCallHelpers::TimesOne));
+            jit.store64(value, BaseIndex(receiver, offsetOfSlot, CCallHelpers::TimesOne));
+            rememberPlaceOfFieldOfAnyValue(jit, receiver, name, offsetOfSlot, r.field.address, r.type);
+            returnAfterStoring(jit, receiver, value);
+            isAbsent.link(&jit);
+            asksMore.link(&jit);
+        }
         jit.move64ToDouble(name, arm.savedName);
         slot.loadFirstPayloadWord(jit, r.field.slotData);
         slot.loadSecondPayloadWord(jit, r.type);
@@ -340,6 +356,14 @@ void generateStoreSlot(StubAssembler& jit)
             arm.uncached.append(exits.wasAbsentAndIsNotAccepted);
             arm.uncached.append(hasNoStorage);
         }
+        if (origin == SlotOrigin::ByVal && !createsField && accessOf(traits.operation) == SlotAccess::Store) {
+            JumpList isNotRepeated;
+            exits.cannot.link(&jit);
+            exits.cannot.clear();
+            isNotRepeated.append(slot.branchIfFlag(jit, Slot::isOutOfLine));
+            repeatFieldExitFoundBySlotAndReturn(jit, { .object = receiver, .value = value, .addressOfSlot = r.field.address, .exit = r.scratch, .scratch = r.type, .extra = r.secondScratch }, isNotRepeated);
+            exits.cannot.append(isNotRepeated);
+        }
         linkToSlotCannot(jit, exits.cannot, table, createsField ? SlotFinisher::CreateField : SlotFinisher::StoreField, slot);
         linkToUncachedExit(arm);
         break;
@@ -350,6 +374,7 @@ void generateStoreSlot(StubAssembler& jit)
         JumpList isAbsent;
 
         slot.loadFirstPayloadWord(jit, field.slotData);
+        Jump keepsOrderWordThatLeavesFieldOut = slot.branchIfFlag(jit, Slot::emptySlotMayBeUndefined);
         Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
         computeFieldAddress(jit, field, false, isAbsent);
         Label hasAddress = jit.label();
@@ -359,6 +384,11 @@ void generateStoreSlot(StubAssembler& jit)
         loadExtensionWordOffset(jit, receiver, field.extensionWordOffset);
         computeFieldAddress(jit, field, true, isAbsent);
         jit.jump().linkTo(hasAddress, &jit);
+
+        keepsOrderWordThatLeavesFieldOut.link(&jit);
+        jit.load32(Address(receiver, offsetOfOrderWord), T11);
+        jit.and32(TrustedImm32(static_cast<int32_t>(orderAndCountMask | orderWordHasFieldOutsideSlot)), T11);
+        uncached.append(jit.branch32(CCallHelpers::NotEqual, T11, field.slotData));
 
         isAbsent.link(&jit);
         loadInheritedValueBySlot(jit, slot, T10, T11, getterSetter);
@@ -456,6 +486,12 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::ArrayLength: {
+        Jump isLength = slot.branchUnlessFlag(jit, Slot::isLastIndexOfRegExp);
+        uncached.append(jit.branchTest8(CCallHelpers::NonZero, Address(receiver, RegExpObject::offsetOfRegExpAndFlags()), TrustedImm32(RegExpObject::lastIndexIsNotWritableFlag)));
+        jit.store64(value, Address(receiver, RegExpObject::offsetOfLastIndex()));
+        returnAfterStoring(jit, receiver, value);
+
+        isLength.link(&jit);
         static constexpr unsigned maxElementsClearedInStub = 64;
         JumpList& cannot = uncached;
         const GPRReg array = receiver;
@@ -585,12 +621,56 @@ static Entry entryFor(const Entry (&byMode)[numberOfModes], PutMode mode)
     return byMode[static_cast<size_t>(mode)];
 }
 
+static void storeToGlobalObjectThroughItsProxyAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg identifierNumber, GPRReg value)
+{
+    const GPRReg uid = jit.allocateScratch(StubRegister::T10);
+    const GPRReg structureID = jit.allocateScratch(StubRegister::T11);
+    const GPRReg header = jit.allocateScratch(slotHeaderRegister);
+    const GPRReg payload = jit.allocateScratch(slotPayloadRegister);
+    const GPRReg entry = jit.allocateScratch(StubRegister::T14);
+    const GPRReg globalObject = entry;
+    const GPRReg kind = uid;
+    const GPRReg wordIndex = uid;
+    const GPRReg storage = structureID;
+    RELEASE_ASSERT(noOverlap(receiver, identifierNumber, value, uid, structureID, header, payload, entry, instanceGPR));
+    JumpList isLeftToOperation;
+    isLeftToOperation.append(jit.branchIfNotCell(receiver));
+    isLeftToOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(receiver, JSCell::typeInfoTypeOffset()), TrustedImm32(GlobalProxyType)));
+    jit.loadPtr(Address(receiver, JSGlobalProxy::targetOffset()), globalObject);
+    isLeftToOperation.append(jit.branchPtr(CCallHelpers::NotEqual, globalObject, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+    isLeftToOperation.append(jit.branchPtr(CCallHelpers::NotEqual, Address(globalObject, JSGlobalObject::offsetOfGlobalThis()), receiver));
+    jit.load32(Address(globalObject, JSCell::structureIDOffset()), structureID);
+    loadIdentifier(jit, identifierNumber, uid, isLeftToOperation);
+    findHashedSlot(jit, SlotAccess::Store, { structureID, uid, entry, header, payload, payload, kind }, isLeftToOperation);
+    const CachedSlot nearValue(SlotForm::Slot, Slot::Kind::Value, header, payload);
+    const CachedSlot farValue(SlotForm::Slot, Slot::Kind::FarValue, header, payload);
+    isLeftToOperation.append(nearValue.branchUnlessFlag(jit, Slot::isOwn));
+    Jump isFar = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(static_cast<int32_t>(Slot::Kind::FarValue)));
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(static_cast<int32_t>(Slot::Kind::Value))));
+    jit.loadPtr(Address(receiver, JSGlobalProxy::targetOffset()), globalObject);
+    nearValue.loadOwnWordIndex(jit, wordIndex);
+    jit.move(globalObject, storage);
+    Jump isInline = nearValue.branchUnlessFlag(jit, Slot::isOutOfLine);
+    Label isOutOfLine = jit.label();
+    jit.loadPtr(Address(globalObject, JSObject::butterflyOffset()), storage);
+    isInline.link(&jit);
+    jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
+    returnAfterStoring(jit, globalObject, value);
+    isFar.link(&jit);
+    jit.loadPtr(Address(receiver, JSGlobalProxy::targetOffset()), globalObject);
+    farValue.loadOwnWordIndex(jit, wordIndex);
+    jit.jump().linkTo(isOutOfLine, &jit);
+    isLeftToOperation.link(&jit);
+}
+
 static void emitStoreByIdExit(StubAssembler& jit, PutMode mode, SlotExit exit)
 {
     const GPRReg receiver = jit.operand(receiverOperand);
     const GPRReg identifierNumber = jit.operand(exitNameOperand);
     const GPRReg value = jit.operand(exitValueOperand);
     if (exit == SlotExit::Uncached) {
+        if (mode != PutMode::Define)
+            storeToGlobalObjectThroughItsProxyAndReturn(jit, receiver, identifierNumber, value);
         jit.callOperationAndReturn(entryFor(uncachedOperationsById, mode), createExitCall(receiver, identifierNumber, value));
         return;
     }

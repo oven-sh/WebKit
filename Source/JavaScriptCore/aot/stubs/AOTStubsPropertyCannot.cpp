@@ -74,7 +74,7 @@ void generateCallGetterOfAnswer(StubAssembler& jit)
     RELEASE_ASSERT(signatureOfSlotCannot(finisher).operands[firstOperandOfFinisher] == Reg(jit.operand(1)) && signatureOfSlotCannot(finisher).operands[0] == Reg(jit.operand(0)));
     jit.recordClobbers(RegisterSet { gprOf(slotHeaderRegister), gprOf(slotPayloadRegister), gprOf(slotNameRegister) });
     JumpList cannot;
-    callGetterAndReturn(jit, jit.operand(0), jit.operand(1), cannot);
+    callGetterAndReturn(jit, jit.operand(0), jit.clobberOperand(1), cannot);
     jit.linkToStub(cannot, finisher);
 }
 
@@ -101,6 +101,7 @@ void generateGetterByAccessTable(StubAssembler& jit)
     jit.and32(TrustedImm32(bitsOfForm), answer, key);
     findsNone.append(jit.branch32(CCallHelpers::NotEqual, key, TrustedImm32(bitsOfForm)));
     loadValueInOwnStorageByAnswer(jit, object, answer, place, answer);
+    branchUnlessAccessorPair(jit, answer, findsNone);
     jit.loadPtr(Address(answer, GetterSetter::offsetOfGetter()), jit.result());
     jit.returnToCaller();
 

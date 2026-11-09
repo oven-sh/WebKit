@@ -499,6 +499,7 @@ struct Builtin {
     BuiltinPrototypeLink prototypeLink { BuiltinPrototypeLink::Unknown };
     OptionSet<BuiltinPlatform> platforms { };
     OptionSet<BuiltinFlag> flags { };
+    uint64_t marks { 0 };
     BuiltinID holder { };
     BuiltinName name { };
     BuiltinID inheritsFrom { };
@@ -511,8 +512,11 @@ struct Builtin {
     bool isNamedByText { false };
     bool isAddedAtFirstRead { false };
     bool isAddedAsEnumerable { false };
+    bool canBeListed { false };
     bool isReadWithoutType { false };
 };
+
+enum class BuiltinWordOfCell : uint8_t { None, Followed, Unfollowed, MarkedWhereFilled };
 
 struct BuiltinSlot {
     BuiltinSlotID id { };
@@ -526,6 +530,7 @@ struct BuiltinSlot {
     std::optional<uint8_t> internalField { };
     bool holdsWhatStepsHandOut { false };
     bool holdsWhatIsThrown { false };
+    BuiltinWordOfCell wordOfCell { BuiltinWordOfCell::None };
 };
 
 struct BuiltinClass {
@@ -541,6 +546,7 @@ struct BuiltinClass {
     bool isNeverPristine { false };
     BuiltinPristineTest pristineTest { BuiltinPristineTest::Mark };
     bool hasClosureInstances { false };
+    bool isFollowedBesideUnseenObject { false };
     bool instancesAreEntries { false };
     bool keepsStructuresOfClassesBelow { false };
     bool definesCharactersOnNewInstances { false };
@@ -730,6 +736,9 @@ enum class BuiltinMark : uint8_t {
     InstancesHaveMethodCalledWithStartupLoads,
     InstancesArePrintedByCodeOfTheirOwn,
     PrintsWhatHandlersAnswer,
+    InstancesAreAnswersThatHostTakes,
+    ResultShowsOperandsToFormatters,
+    InstancesShowWhatTheirMethodAnswersToFormatters,
     LoadsCodeWithoutJSAccess,
     ReadLoadsCodeByName,
     HoldsPathOfMainModule,
@@ -750,7 +759,12 @@ enum class BuiltinMark : uint8_t {
     LaysOperandAbovePrototype,
     HandsOutNoOtherHostObject,
     IsDeletedWhenModuleOfLibraryLoads,
+    PassesOverListWhereItTakesRecordOfHandlers,
+    AsksOptionsForListedNamesAlone,
+    MayLayListenerForUncaughtExceptions,
 };
+static_assert(static_cast<unsigned>(BuiltinMark::MayLayListenerForUncaughtExceptions) < 64);
+constexpr uint64_t bitOfMark(BuiltinMark mark) { return 1ull << static_cast<unsigned>(mark); }
 
 struct BuiltinMarkedEntry {
     BuiltinMark mark { };
@@ -866,6 +880,12 @@ struct BuiltinTableRuntime {
     std::span<const BuiltinRealmStructure> realmStructures { };
 };
 
+enum class AnswerAboutBuiltinClass : uint8_t {
+    HasLockedPrototypeChain = 1 << 0,
+    HasClassBelowThatMayHavePristineInstances = 1 << 1,
+    HasClassBelow = 1 << 2,
+};
+
 struct BuiltinTableData {
     std::span<const Builtin> builtins { };
     std::span<const BuiltinPackedOverload> overloads { };
@@ -879,6 +899,7 @@ struct BuiltinTableData {
     BuiltinTableTokens tokens { };
     BuiltinTableAttachments attachments { };
     BuiltinTableRuntime runtime { };
+    std::span<const OptionSet<AnswerAboutBuiltinClass>> answersAboutClasses { };
 };
 
 extern const BuiltinTableData builtinTableData;
@@ -937,6 +958,7 @@ public:
     unsigned slotCount() const { return m_data.slots.size(); }
     unsigned layoutCount() const { return m_data.layouts.size(); }
     unsigned nameCount() const { return m_data.names.textNames.size() + m_data.names.symbolNames.size() + m_data.names.registeredSymbolNames.size(); }
+    unsigned textNameCount() const { return m_data.names.textNames.size(); }
     unsigned moduleCount() const { return m_data.runtime.modules.size(); }
 
     ALWAYS_INLINE const Builtin& at(BuiltinID id) const
@@ -981,7 +1003,7 @@ public:
 
     BuiltinClassID receiverClassOf(BuiltinID) const;
     bool isSameOrSubclassOf(BuiltinClassID, BuiltinClassID ancestor) const;
-    bool onlyEntriesInheritFrom(BuiltinID canonicalPrototype) const;
+    bool hasClassBelow(BuiltinClassID) const;
     bool isObjectOfClass(BuiltinID canonical) const;
     TypedArrayType typedArrayTypeOf(BuiltinClassID) const;
     BuiltinClassID typedArrayClassOf(BuiltinClassID) const;
@@ -999,9 +1021,10 @@ public:
     JS_EXPORT_PRIVATE bool canTakeNameInTestRuns(BuiltinID holder, BuiltinName) const;
     JS_EXPORT_PRIVATE bool isHostFunctionOfEngine(BuiltinID) const;
     JS_EXPORT_PRIVATE bool isFunctionOfEngine(BuiltinID) const;
-    bool hasLockedPrototypeLink(BuiltinID holder) const { return at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) || isFunctionOfEngine(holder) || closesOnlyNamesOfCalls(holder); }
+    JS_EXPORT_PRIVATE bool isNativeFunctionOfHost(BuiltinID) const;
+    bool hasLockedPrototypeLink(BuiltinID holder) const { return at(holder).prototypeLink != BuiltinPrototypeLink::Unknown && (at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) || isFunctionOfEngine(holder) || isNativeFunctionOfHost(holder) || closesOnlyNamesOfCalls(holder)); }
     bool closesOnlyNamesOfCalls(BuiltinID holder) const { return at(holder).kind == BuiltinKind::Constructor && !at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) && !closedKeysOf(holder).empty(); }
-    bool closesIndexKeys(BuiltinID holder) const { return at(holder).flags.contains(BuiltinFlag::IsLockedObject) || (at(holder).flags.contains(BuiltinFlag::HasLockedMembers) && at(holder).kind == BuiltinKind::Prototype); }
+    bool closesIndexKeys(BuiltinID holder) const { return at(holder).flags.contains(BuiltinFlag::IsLockedObject) || (at(holder).flags.contains(BuiltinFlag::HasLockedMembers) && at(holder).kind == BuiltinKind::Prototype && at(holder).prototypeLink != BuiltinPrototypeLink::Unknown); }
     JS_EXPORT_PRIVATE bool hasLockedPrototypeChain(BuiltinClassID) const;
     JS_EXPORT_PRIVATE bool mayHavePristineInstances(BuiltinClassID) const;
     std::span<const BuiltinName> closedKeysOf(BuiltinID holder) const;
@@ -1019,12 +1042,13 @@ public:
     bool letsInUnseenCodeWhenCalled(BuiltinID) const;
     const BuiltinForms* formsOf(BuiltinID) const;
     std::optional<BuiltinBoxedStub> boxedCallStubOf(BuiltinID) const;
+    BuiltinID methodCalledBy(BuiltinBoxedStub) const;
     Vector<BuiltinID, 4> membersThatHoldMethodOf(BuiltinBoxedStub) const;
     std::span<const BuiltinBoxedCall> boxedCalls() const { return m_data.attachments.boxedCalls; }
 
     std::span<const BuiltinID> lockedObjects() const { return m_data.runtime.lockedObjects; }
     std::span<const BuiltinMarkedEntry> marked(BuiltinMark) const;
-    bool has(BuiltinMark, BuiltinID) const;
+    bool has(BuiltinMark mark, BuiltinID id) const { return contains(id) && m_data.builtins[id.index()].marks & bitOfMark(mark); }
     std::span<const BuiltinLoaderOfMachineCode> loadersOfMachineCode() const { return m_data.runtime.loadersOfMachineCode; }
     std::span<const BuiltinID> lockedMembers() const { return m_data.runtime.lockedMembers; }
     std::span<const RuntimeFunctionData> runtimeFunctions() const { return m_data.runtime.functions; }
@@ -1036,6 +1060,7 @@ public:
     std::span<const BuiltinName> nativeCellsFilledByCalledFunctions() const;
     bool isPrintedByFormatter(BuiltinID, const BuiltinParameter&) const;
     bool formatterWalksInstancesOf(BuiltinClassID) const;
+    bool hostTakesInstancesAsAnswers(BuiltinClassID) const;
     std::span<const BuiltinName> namesOfHostMethodsCallingStartupLoads() const { return m_data.runtime.namesOfHostMethodsCallingStartupLoads; }
     std::span<const RuntimeFunctionID> moduleLoaderFunctions() const { return m_data.runtime.moduleLoaderFunctions; }
     std::span<const BuiltinName> keysReadBy(Protocol) const;
@@ -1078,6 +1103,14 @@ private:
     friend class BuiltinTableOfBuild;
 
     void appendComponent(StringBuilder&, BuiltinName) const;
+    bool everyLinkOfPrototypeChainIsLocked(BuiltinClassID) const;
+    ALWAYS_INLINE std::optional<bool> answerKeptAbout(BuiltinClassID builtinClass, AnswerAboutBuiltinClass answer) const
+    {
+        if (m_data.answersAboutClasses.empty() || !builtinClass)
+            return std::nullopt;
+        RELEASE_ASSERT(builtinClass.index() < m_data.answersAboutClasses.size());
+        return m_data.answersAboutClasses[builtinClass.index()].contains(answer);
+    }
 
     const BuiltinTableData& m_data;
 };
@@ -1096,6 +1129,7 @@ public:
 private:
     void lockByNames(BuiltinID wholeObject);
     void lockEveryWholeObjectByNames();
+    void answerQuestionsAboutClasses();
 
     BuiltinTableData m_data;
     Vector<Builtin> m_builtins;
@@ -1105,6 +1139,7 @@ private:
     Vector<Vector<BuiltinName>> m_closedSymbols;
     Vector<BuiltinID> m_unlockedMembers;
     Vector<BuiltinID> m_membersWhoseLockIsLeftToProgram;
+    Vector<OptionSet<AnswerAboutBuiltinClass>> m_answersAboutClasses;
     BuiltinTable m_table;
 };
 

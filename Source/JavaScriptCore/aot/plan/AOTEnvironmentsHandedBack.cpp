@@ -66,8 +66,21 @@ struct BodyOfMakerInEnvironmentsHandedBack {
 struct EnvironmentJudgedInEnvironmentsHandedBack {
     ValueID environment;
     bool isHandedToFunctionEnteredItself { false };
+    bool isTakenByMoreThanClosuresMadeForCalls { false };
     Vector<BlockID, 2> blocksThatKeep { };
     Vector<FunctionID, 2> functionsOfClosuresLent { };
+    Vector<FunctionID, 2> functionsOfClosuresMadeForCalls { };
+};
+
+struct EnvironmentFoundInEnvironmentsHandedBack {
+    LayoutID layout;
+    bool isHandedBack { false };
+    bool isTakenByClosuresMadeForCallsAlone { false };
+};
+
+struct CallThatClosureIsMadeFor {
+    ValueID call;
+    size_t position { 0 };
 };
 
 } // anonymous namespace
@@ -107,35 +120,40 @@ static bool receiverIsWrittenAsTableInEnvironmentsHandedBack(const BodyOfMakerIn
     return onlyClass && (onlyClass->builtinClass == BuiltinClasses::Map || onlyClass->builtinClass == BuiltinClasses::Set);
 }
 
-static bool isMadeForCallThatBorrows(const BodyOfMakerInEnvironmentsHandedBack& body, ValueID closure)
+static std::optional<CallThatClosureIsMadeFor> findCallThatClosureIsMadeFor(const BodyIndex& index, ValueID closure)
 {
-    const BodyIndex& index = body.index;
     for (ValueID name = closure;;) {
         ValueID taker = index.onlyUsingValue(name);
         if (!taker)
-            return false;
+            return std::nullopt;
         BodyValue user = index.value(taker);
         Opcode opcode = user.opcode();
         if (opcode != Opcode::Call && opcode != Opcode::CallDirect) {
             if (!inputOperationsThatHandOn.contains(opcode) || user.operand(0) != name)
-                return false;
+                return std::nullopt;
             name = taker;
             continue;
         }
         std::span<const ValueID> arguments = user.argumentsOperands();
         size_t position = std::ranges::find(arguments, name) - arguments.begin();
         if (position == arguments.size())
-            return false;
-        const LinkTables& linked = body.facts.linked();
-        if (opcode == Opcode::CallDirect)
-            return linked.onlyCallsWhatArrivesAt(user.function(), static_cast<unsigned>(position));
-        if (FunctionID callee = linked.calleeAt(body.function, taker))
-            return linked.onlyCallsWhatArrivesAt(callee, body.program.at(callee).firstParameterIndex() + static_cast<unsigned>(position));
-        return receiverIsWrittenAsTableInEnvironmentsHandedBack(body, user);
+            return std::nullopt;
+        return CallThatClosureIsMadeFor { taker, position };
     }
 }
 
-static bool leavesCellToItsFrames(const BodyOfMakerInEnvironmentsHandedBack& body, const BodyValue& user, uint32_t operandIndex)
+static bool callBorrowsClosureMadeForIt(const BodyOfMakerInEnvironmentsHandedBack& body, CallThatClosureIsMadeFor taking)
+{
+    BodyValue call = body.index.value(taking.call);
+    const LinkTables& linked = body.facts.linked();
+    if (call.opcode() == Opcode::CallDirect)
+        return linked.onlyCallsWhatArrivesAt(call.function(), static_cast<unsigned>(taking.position));
+    if (FunctionID callee = linked.calleeAt(body.function, taking.call))
+        return linked.onlyCallsWhatArrivesAt(callee, body.program.at(callee).firstParameterIndex() + static_cast<unsigned>(taking.position));
+    return receiverIsWrittenAsTableInEnvironmentsHandedBack(body, call);
+}
+
+static bool leavesCellToItsFrames(const BodyOfMakerInEnvironmentsHandedBack& body, const BodyValue& user, uint32_t operandIndex, std::optional<CallThatClosureIsMadeFor> callThatClosureIsMadeFor)
 {
     switch (user.opcode()) {
     case Opcode::GetEnvironmentField:
@@ -144,7 +162,7 @@ static bool leavesCellToItsFrames(const BodyOfMakerInEnvironmentsHandedBack& bod
     case Opcode::CallDirect:
         return true;
     case Opcode::NewClosure:
-        return isMadeForCallThatBorrows(body, user.id());
+        return callThatClosureIsMadeFor && callBorrowsClosureMadeForIt(body, *callThatClosureIsMadeFor);
     case Opcode::ReleaseHint:
         return true;
     default:
@@ -176,7 +194,7 @@ static void findHowFarWaysOnLeadOutOfBlocksAbove(BodyOfMakerInEnvironmentsHanded
     }
 }
 
-static void findMentionsOfEnvironmentsJudged(const BodyOfMakerInEnvironmentsHandedBack& body, std::span<EnvironmentJudgedInEnvironmentsHandedBack> judged)
+static ALWAYS_INLINE void findMentionsOfEnvironmentsJudged(const BodyOfMakerInEnvironmentsHandedBack& body, std::span<EnvironmentJudgedInEnvironmentsHandedBack> judged)
 {
     const BodyIndex& index = body.index;
     ValueID first = judged.front().environment;
@@ -197,8 +215,13 @@ static void findMentionsOfEnvironmentsJudged(const BodyOfMakerInEnvironmentsHand
                 EnvironmentJudgedInEnvironmentsHandedBack* mentioned = judgedThatIs(operand);
                 if (!mentioned)
                     return;
-                bool leavesCell = leavesCellToItsFrames(body, user, operandIndex);
+                std::optional<CallThatClosureIsMadeFor> callThatClosureIsMadeFor = user.opcode() == Opcode::NewClosure ? findCallThatClosureIsMadeFor(index, user.id()) : std::nullopt;
+                bool leavesCell = leavesCellToItsFrames(body, user, operandIndex, callThatClosureIsMadeFor);
                 mentioned->isHandedToFunctionEnteredItself |= user.opcode() == Opcode::CallDirect;
+                if (callThatClosureIsMadeFor)
+                    mentioned->functionsOfClosuresMadeForCalls.append(user.function());
+                else
+                    mentioned->isTakenByMoreThanClosuresMadeForCalls |= !leavesCell || user.opcode() == Opcode::CallDirect;
                 if (leavesCell && user.opcode() == Opcode::NewClosure)
                     mentioned->functionsOfClosuresLent.append(user.function());
                 if (!leavesCell)
@@ -206,10 +229,21 @@ static void findMentionsOfEnvironmentsJudged(const BodyOfMakerInEnvironmentsHand
             });
         }
         block.terminator().forEachOperand([&](ValueID operand, uint32_t) {
-            if (EnvironmentJudgedInEnvironmentsHandedBack* mentioned = judgedThatIs(operand))
+            if (EnvironmentJudgedInEnvironmentsHandedBack* mentioned = judgedThatIs(operand)) {
                 mentioned->blocksThatKeep.append(id);
+                mentioned->isTakenByMoreThanClosuresMadeForCalls = true;
+            }
         });
     }
+}
+
+static bool closuresMadeForCallsAloneTake(const BodyOfMakerInEnvironmentsHandedBack& body, EnvironmentJudgedInEnvironmentsHandedBack& judged)
+{
+    if (judged.isTakenByMoreThanClosuresMadeForCalls)
+        return false;
+    std::ranges::sort(judged.functionsOfClosuresMadeForCalls);
+    size_t numberOfFunctions = std::ranges::unique(judged.functionsOfClosuresMadeForCalls).begin() - judged.functionsOfClosuresMadeForCalls.begin();
+    return numberOfFunctions && numberOfFunctions == body.numberOfFunctionsThatCapture[body.index.value(judged.environment).as<Opcode::NewObject>().layout().index()];
 }
 
 static bool someWayKeepsNothing(BodyOfMakerInEnvironmentsHandedBack& body, EnvironmentJudgedInEnvironmentsHandedBack& judged)
@@ -278,7 +312,7 @@ static const PlacedSlot* findSlotThatHoldsLinkWhileCellWaits(const PlannedLayout
     return nullptr;
 }
 
-Vector<LayoutID> findEnvironmentsHandedBack(const Program& program, const Facts& facts, BuildContext& build)
+EnvironmentsHandedBack findEnvironmentsHandedBack(const Program& program, const Facts& facts, BuildContext& build)
 {
     if (program.admitsInspector || !withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::CellsInFrames))
         return { };
@@ -299,7 +333,7 @@ Vector<LayoutID> findEnvironmentsHandedBack(const Program& program, const Facts&
                 ++numberOfFunctionsThatCapture[environment.index()];
         }
     }
-    Vector<Vector<LayoutID, 2>> found(makers.size());
+    Vector<Vector<EnvironmentFoundInEnvironmentsHandedBack, 2>> found(makers.size());
     forEachIndexInParallel(build.parallelLoops(), makers.size(), [&](unsigned place) {
         const BodyIndex* index = facts.bodies().find(makers[place]);
         if (!index || index->hasIrreducibleFlow() || program.at(makers[place]).isModuleBody())
@@ -316,17 +350,23 @@ Vector<LayoutID> findEnvironmentsHandedBack(const Program& program, const Facts&
         BodyOfMakerInEnvironmentsHandedBack body { program, facts, makers[place], *index, numberOfFunctionsThatCapture };
         findMentionsOfEnvironmentsJudged(body, judged.mutableSpan());
         for (EnvironmentJudgedInEnvironmentsHandedBack& environment : judged) {
-            if (someWayKeepsNothing(body, environment))
-                found[place].append(index->value(environment.environment).as<Opcode::NewObject>().layout());
+            bool isHandedBack = someWayKeepsNothing(body, environment);
+            bool isTakenByClosuresMadeForCallsAlone = closuresMadeForCallsAloneTake(body, environment);
+            if (isHandedBack || isTakenByClosuresMadeForCallsAlone)
+                found[place].append({ index->value(environment.environment).as<Opcode::NewObject>().layout(), isHandedBack, isTakenByClosuresMadeForCallsAlone });
         }
     });
 
     BitVector takenOrNothing = findEnvironmentsThatPositionsTakeOrNothing(program);
-    Vector<LayoutID> environments;
+    EnvironmentsHandedBack environments;
     for (const auto& layouts : found) {
-        for (LayoutID id : layouts) {
-            if (program.at(id).kind == LayoutKind::Environment && !takenOrNothing.get(id.index()))
-                environments.append(id);
+        for (const EnvironmentFoundInEnvironmentsHandedBack& environment : layouts) {
+            if (program.at(environment.layout).kind != LayoutKind::Environment || takenOrNothing.get(environment.layout.index()))
+                continue;
+            if (environment.isHandedBack)
+                environments.all.append(environment.layout);
+            if (environment.isTakenByClosuresMadeForCallsAlone)
+                environments.takenByClosuresMadeForCallsAlone.append(environment.layout);
         }
     }
     return environments;
@@ -336,7 +376,7 @@ void layEnvironmentsHandedBack(BuildContext& build, std::span<const LayoutID> en
 {
     for (LayoutID id : environments) {
         PlannedLayout& planned = parts.layouts[id.index()];
-        if (planned.storage != LayoutStorage::Environment || planned.slots.isEmpty() || planned.liesOnlyInFrames || planned.cellsAreHandedBack)
+        if (planned.storage != LayoutStorage::Environment || planned.slots.isEmpty() || planned.cellsAreHandedBack)
             continue;
         if (const PlacedSlot* holderOfLink = findSlotThatHoldsLinkWhileCellWaits(planned))
             planned.offsetOfLinkToNextCellHandedBack = holderOfLink->offset;

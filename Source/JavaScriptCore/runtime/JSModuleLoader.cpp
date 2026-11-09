@@ -934,8 +934,23 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
             if (modulePromise->status() == JSPromise::Status::Pending) {
                 if (fetchPromise->status() == JSPromise::Status::Pending) {
-                    fetchSynchronously(globalObject, fetchPromise, resolved, moduleReferrer(referrerKey), RefPtr { moduleRequest.m_attributes }, scriptFetcher.copyRef());
+#if ENABLE(AOT)
+                    // A compiled module already has the record for each of its requests, so there is nothing to fetch.
+                    auto* compiled = record && !moduleRequest.m_attributes ? dynamicDowncast<AOT::ModuleRecord>(record) : nullptr;
+                    AbstractModuleRecord* requested = compiled ? compiled->recordOfRequestBeingFetched(resolved) : nullptr;
+                    if (Exception* exception = scope.exception()) [[unlikely]] {
+                        TRY_CLEAR_EXCEPTION(scope, nullptr);
+                        fetchPromise->rejectPromise(vm, exception->value());
+                    } else if (requested)
+                        fetchPromise->fulfillPromise(vm, requested);
+                    else
+#endif
+                        fetchSynchronously(globalObject, fetchPromise, resolved, moduleReferrer(referrerKey), RefPtr { moduleRequest.m_attributes }, scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
+#if ENABLE(AOT)
+                // Compiled code has begun the file ahead of this load, and the file still runs: this is the step in which it runs, which ends when the file does.
+                } else if (vm.hasCompiledCode() && AOT::ModuleRecord::isFileBeingHandedToLoader(globalObject, resolved)) {
+#endif
                 } else if (fetchPromise->status() == JSPromise::Status::Fulfilled) {
                     // fetchPromise already settled but its
                     // ModuleRegistryFetchSettled reaction is sitting on the
@@ -1049,8 +1064,12 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     modulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
 
-    if (!deferredPromise || !mapEntry->loadPromise())
+    if (!deferredPromise || !mapEntry->loadPromise()) {
         mapEntry->setLoadPromise(vm, loadPromise);
+#if ENABLE(AOT)
+        mapEntry->setIsLoadPromiseOfSynchronousLoad(vm.synchronousModuleQueue());
+#endif
+    }
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) {
@@ -1187,17 +1206,12 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii.2. NOTE: HostLoadImportedModule will call FinishLoadingImportedModule, which re-enters the graph loading process through ContinueModuleLoading.
                     //
-                    // If module.[[LoadedModules]] contains the request after the HostLoadImportedModule call, the requested
+                    // If module.[[LoadedModules]] grew across the HostLoadImportedModule call, the requested
                     // module was loaded synchronously, which means it was already loaded before. In that case
                     // there is no need to attach a ModuleGraphLoadingError reaction, so we skip it.
-                    // In a compiled program sizes can't tell: a CommonJS file that runs during the call can load this module's other requests.
                     bool needsErrorReaction = module->loadedModules().size() == loadedModulesCountBefore;
-                    ASSERT(vm.hasCompiledCode() || module->loadedModules().size() <= loadedModulesCountBefore + 1);
-                    ASSERT(vm.hasCompiledCode() || needsErrorReaction != module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() }));
-#if ENABLE(AOT)
-                    if (vm.hasCompiledCode())
-                        needsErrorReaction = !module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() });
-#endif
+                    ASSERT(module->loadedModules().size() <= loadedModulesCountBefore + 1);
+                    ASSERT(needsErrorReaction != module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() }));
                     if (needsErrorReaction)
                         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, state);
                     // 2.d.iv. If state.[[IsLoading]] is false, return UNUSED.
@@ -1709,7 +1723,7 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
                 // Not where a graph has asked for the root: `bun run` reads the files of a graph on other threads and has taken that step by the time a file of the graph runs.
                 if (!load && context->entry() == entry)
                     return false;
-                if (load && load->containsVisited(entry->record()))
+                if (load && entry->isLoadPromiseOfSynchronousLoad() && load->containsVisited(entry->record()))
                     return false;
             }
         }

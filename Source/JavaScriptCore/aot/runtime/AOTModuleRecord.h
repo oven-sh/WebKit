@@ -66,6 +66,7 @@ public:
     void setIsHeldByLoader(bool isHeldByLoader) { m_isHeldByLoader = isHeldByLoader; }
 
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
+    void recordTerminationAfterEvaluation(VM&, Exception*);
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
     void willLoadRequests(ModuleGraphLoadingState&);
     void countLoaderStep();
@@ -81,6 +82,7 @@ public:
     static void didFailToLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
     static std::optional<ModuleID> fileToWaitFor(JSGlobalObject*, const Identifier& key);
+    static bool isFileBeingHandedToLoader(JSGlobalObject*, const Identifier& key);
     static JSPromise* deferRequest(JSGlobalObject*, ModuleID file, ModuleLoadingContext*, bool useImportMap);
     static void didRequestModule(JSGlobalObject*, const Identifier& key, JSCell* payload);
     static void didSettleLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
@@ -98,6 +100,9 @@ public:
     bool holdGraphBehindEarlierCalls(JSCell* payload, bool isDeferred);
     void takeStatus();
     bool isRunningCommonJSFile();
+    bool keepsToModule() const { return m_keepsToModule; }
+    bool takesNamesFromModuleItself();
+    void setKeepsToModule(bool keepsToModule = true) { m_keepsToModule = keepsToModule; }
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
     bool runsWhenLoaded() const { return m_runsWhenLoaded; }
     void setRunsInItsTurn() { m_runsInItsTurn = true; }
@@ -114,15 +119,35 @@ public:
     static void willAnswerRequestOfUncompiledModule(JSGlobalObject*, const Identifier& key, const Identifier& keyOfAsker);
     static void willAnswerFromRegistry(JSGlobalObject*, const Identifier& key, const String& pathOfAsker);
     AbstractModuleRecord* recordOfRequest(JSGlobalObject*, const Identifier& key);
+    AbstractModuleRecord* recordOfRequestBeingFetched(const Identifier& key);
     bool holdTextOfRequest(JSPromise* fetched, AbstractModuleRecord* requested);
     void didRequestCompiledModule(const Identifier& key, ModuleID module) { m_compiledRequests.append({ key.impl(), module }); }
     unsigned innerModuleLinking(JSGlobalObject*, ModuleLinkingStack&, unsigned index, RefPtr<ScriptFetcher>);
     void execute(JSGlobalObject*, JSPromise* capability = nullptr);
     void executeAsync(JSGlobalObject*);
 
-    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&);
+    struct Statement {
+        AbstractModuleRecord* target { nullptr };
+        Identifier importName;
+        ModuleRecord* leader { nullptr };
+        bool standsInEntryFromStar { false };
+        bool claimsWhatStarsFind { false };
+    };
+    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&, ModuleRecord* leader, Statement&);
+    Resolution claimAsOwn(const Identifier& exportName);
+    struct Asker {
+        ModuleRecord* record;
+        UniquedStringImpl* name;
+    };
+    bool originalShows(JSGlobalObject*, const Identifier& exportName, std::span<const Asker>);
+    bool originalShows(JSGlobalObject*, const Identifier& exportName, std::span<ModuleRecord* const> askersOfSameName);
+    bool isNamedByEndedMockInFrontOfItsStar(JSGlobalObject*, const Identifier& exportName, unsigned index);
+    bool answersByWhoLedToIt() const;
+    bool keepsEndedMock() const;
     bool someMockStandsInPlace() const;
     bool mayOutlive(AbstractModuleRecord*) const;
+    const Resolution* resolutionKept(UniquedStringImpl* exportName);
+    void keepResolution(UniquedStringImpl* exportName, const Resolution&);
     bool standsForMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
@@ -137,6 +162,8 @@ private:
     ModuleRecord(Instance&, Structure*, JSModuleLoader*, const Identifier& moduleKey, ModuleID);
     Modules& modules() const;
     void appendDynamicStarTargets(StarExportTargets&);
+    bool appendStarsThatMayProvide(const Identifier& exportName, unsigned index, StarExportTargets&);
+    AbstractModuleRecord* recordBehindStar(ModuleID);
 
     Instance& m_instance;
     ModuleID m_module;
@@ -153,6 +180,7 @@ private:
     bool m_runsInItsTurn { false };
     bool m_isRequestedByWalkedModule { false };
     bool m_hasRequestThatFindsNothing { false };
+    bool m_keepsToModule { false };
 };
 
 } } // namespace JSC::AOT

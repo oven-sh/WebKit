@@ -10,10 +10,11 @@
 
 #include "AOTCode.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static TypeID typeByConstructionOfEntryParameter(const TypingContext& context, const Function& callee, unsigned entryParameterIndex)
+static ALWAYS_INLINE TypeID typeByConstructionOfEntryParameter(const TypingContext& context, const Function& callee, unsigned entryParameterIndex)
 {
     switch (callee.entryParameterKind(entryParameterIndex)) {
     case EntryParameter::Capture:
@@ -32,10 +33,9 @@ static TypeID typeByConstructionOfEntryParameter(const TypingContext& context, c
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-TypeID declaredEntryTypeOf(const TypingContext& context, FunctionID callee, unsigned entryParameterIndex)
+static ALWAYS_INLINE TypeID findDeclaredEntryType(const TypingContext& context, FunctionID callee, unsigned entryParameterIndex, TypeID known)
 {
     TypeID byConstruction = typeByConstructionOfEntryParameter(context, context.program.at(callee), entryParameterIndex);
-    TypeID known = context.positions.entryParameter(context.level, callee, entryParameterIndex);
     if (!byConstruction || !known)
         return byConstruction ? byConstruction : known;
 
@@ -47,6 +47,19 @@ TypeID declaredEntryTypeOf(const TypingContext& context, FunctionID callee, unsi
 
     TypeID both = context.types.intersectionOf(byConstruction, known);
     return isNeverType(both) ? byConstruction : both;
+}
+
+TypeID declaredEntryTypeOf(const TypingContext& context, FunctionID callee, unsigned entryParameterIndex)
+{
+    TypeID known = context.positions.entryParameter(context.level, callee, entryParameterIndex);
+    if (context.level != TypeLevel::Proven || !context.believesWhatFrontEndHasEstablished)
+        return findDeclaredEntryType(context, callee, entryParameterIndex, known);
+    TypeArena::TypeTakenAtEntry& last = context.types.typeTakenLastAtEntry(callee.index(), entryParameterIndex);
+    if (last.function == callee.index() && last.entryParameter == entryParameterIndex && last.known == known.bits() && last.epoch == context.types.epoch())
+        return last.taken;
+    TypeID taken = findDeclaredEntryType(context, callee, entryParameterIndex, known);
+    last = { callee.index(), entryParameterIndex, known.bits(), context.types.epoch(), taken };
+    return taken;
 }
 
 static TypeID requiredTypeOfEstablishedPosition(const TypingContext& context, const DeclaredType& declared)
@@ -89,7 +102,7 @@ static TypeID requiredTypeOfPrivateDefinition(const TypingContext& context, Layo
     return fields[field].flags.contains(FieldFlags::IsBrand) ? context.typeIDOf(fields[field].declared) : TypeTable::anything;
 }
 
-static TypeID requiredTypeOfInitialValue(const TypingContext& context, LayoutID layout, uint32_t field)
+static ALWAYS_INLINE TypeID requiredTypeOfInitialValue(const TypingContext& context, LayoutID layout, uint32_t field)
 {
     const Layout& allocated = context.program.at(layout);
     if (allocated.isEnvironment())
@@ -200,7 +213,7 @@ TypeID requiredTypeOfOperand(const TypingContext& context, const Operation& user
 }
 
 template<typename Operation>
-TypeID requiredTypeOfDeclaredOperand(const TypingContext& context, const Operation& user, uint32_t operandIndex)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID requiredTypeOfDeclaredOperand(const TypingContext& context, const Operation& user, uint32_t operandIndex)
 {
     ASSERT(operandKindOf(opcodeOf(user), operandIndex) == OperandKind::Declared);
     return requiredTypeOfOperandInResultRules<true>(context, user, operandIndex);

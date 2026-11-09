@@ -13,9 +13,11 @@
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
+#include "AOTTypedArrayKinds.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <optional>
 #include <span>
 #include <wtf/StdLibExtras.h>
@@ -285,8 +287,20 @@ static TypeID typeOfBuiltinTypePartRead(const BuiltinTypeReading& reading, const
             TypeID iterated = typeOfValuesIteratedByBuiltin(reading, iterable);
             return part.isSettled ? typeOfAwaited(typingContextOfBuiltinTypes(context), iterated) : iterated;
         });
-    case BuiltinTypePartKind::CallbackResult:
-        return anyValueWrittenByTable(reading, UnknownSeed::ResultOfUnknownCallee);
+    case BuiltinTypePartKind::CallbackResult: {
+        TypeID ofUnknownCallee = anyValueWrittenByTable(reading, UnknownSeed::ResultOfUnknownCallee);
+        if (!part.operand)
+            return ofUnknownCallee;
+        return typeFromBuiltinOperand(reading, *part.operand, ofUnknownCallee, [&](TypeID callee) -> TypeID {
+            BuiltinID called = types.at(callee).isObject() ? singleBuiltinOf(types, types.at(callee)) : BuiltinID();
+            if (!called)
+                return ofUnknownCallee;
+            TypeID result = TypeTable::never;
+            for (BuiltinOverloadID row : table.overloadIDsOf(table.canonicalID(called)))
+                result = types.unionOf(result, resultTypeOfBuiltinCallOnList(context, row, { }));
+            return result;
+        });
+    }
     case BuiltinTypePartKind::Prototype:
         return types.withPrimitives(anyObjectWrittenByTable(reading), Primitive::Null);
     }
@@ -408,6 +422,32 @@ TypeID typeExpectedByLibraryFunction(const Program& program, TypeArena& types, F
     if (!taken || isNeverType(taken) || types.isSubset(TypeTable::anything, taken))
         return { };
     return taken;
+}
+
+uint32_t kindsOfViewsOfNumbersIn(const Program& program, TypeReader types, TypeID id)
+{
+    if (!id || holdsOnlyPrimitives(id))
+        return 0;
+    Type type = types.at(id);
+    if (!type.isObject() || !type.hasOnlyClassObjects())
+        return 0;
+    const BuiltinTable& table = program.builtins();
+    uint32_t kinds = 0;
+    for (const ClassPart& part : classPartsOf(types, type)) {
+        TypedArrayType kind = table.typedArrayTypeOf(part.builtinClass);
+        if (!hasInlineElementAccess(kind))
+            return 0;
+        kinds |= 1u << kind;
+    }
+    return std::has_single_bit(kinds) ? 0 : kinds;
+}
+
+BuiltinClassID classAboveViewsOfSeveralKinds(const Program& program, TypeReader types, TypeID id)
+{
+    if (!kindsOfViewsOfNumbersIn(program, types, id))
+        return { };
+    const BuiltinTable& table = program.builtins();
+    return table.at(table.typedArrayClassOf(classPartsOf(types, types.at(id)).front().builtinClass)).parent;
 }
 
 TypedArrayType typedArrayTypeOf(const BuiltinTypeContext& context, TypeID id)

@@ -1,5 +1,5 @@
 # Object.getPrototypeOf(hidden).removeListener = (type, target) => target(); process.removeListener("tick", second)
-# The twin of member-above-a-built-in-read-as-a-value-and-called-on-another-receiver-leads-to-the-prototype.ir: nobody has a member of the native emitters' prototype as a value, so no value that nobody follows leads there: the gain stays.
+# As member-above-a-built-in-read-as-a-value-and-called-on-another-receiver-leads-to-the-prototype.ir: whatever `hidden` is, the member lies in a locked place.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
 # REQUIRES: entries-of-bun

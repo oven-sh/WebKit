@@ -7,9 +7,27 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
+#include "AOTBuiltinTable.h"
+#include "AOTClassTable.h"
+#include "AOTClosure.h"
+#include "AOTLoadedProgramTestSupport.h"
+#include "AOTModules.h"
+#include "AOTObjectModel.h"
 #include "AOTShellProgramTestSupport.h"
+#include "AOTState.h"
+#include "AOTVMState.h"
+#include "DeferGCInlines.h"
+#include "JSCInlines.h"
+#include "ObjectConstructor.h"
+#include "TopExceptionScope.h"
+#include <array>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
+
+std::span<const NativeTest> builtinSubclassTests();
 
 static constexpr ASCIILiteral errorSubclasses = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -539,6 +557,259 @@ function f4 name="read" kind=Method flags=[HasThis] captures=[{type=classtoken f
 }
 )IR"_s;
 
+static constexpr ASCIILiteral heirsHandedToRegistry = R"IR(layout L0 kind=Instance name="Registry" module=m0 constructor=f1 fields=[{key="hits" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Map
+    v2 = NewClosure function=f1
+    v3 = ResolveHeritage v1
+    v4 = NewClass v2, v1, v3 layout=L0
+    v5 = NewClosure function=f2
+    DefineMethod v4, v5 layout=L0 key="lookup"
+    v7 = FinishClass v4 layout=L0
+    v8 = PropGet v0 key="registry" [isFreeName]
+    PropSet v8, v7 key="Registry" mode=Strict
+    v10 = Construct v7
+    PropSet v8, v10 key="first" mode=Strict
+    v12 = Construct v7
+    PropSet v8, v12 key="second" mode=Strict
+    v14 = Construct v7
+    PropSet v8, v14 key="third" mode=Strict
+    v16 = Construct v7
+    PropSet v8, v16 key="fourth" mode=Strict
+    v18 = Construct v7
+    PropSet v8, v18 key="fifth" mode=Strict
+    v20 = PropGet v0 key="Object" [isFreeName]
+    v21 = PropGet v20 key="setPrototypeOf"
+    v22 = Construct v1
+    v23 = PropGet v7 key="prototype"
+    v24 = Call v21, v20, v22, v23 calleeKey="setPrototypeOf"
+    v25 = Integer integer=0
+    PropSet v22, v25 key="name" mode=Strict
+    PropSet v22, v25 key="hits" mode=Strict
+    PropSet v8, v22 key="sixth" mode=Strict
+    v29 = Construct v7
+    PropSet v8, v29 key="seventh" mode=Strict
+    v31 = Construct v7
+    PropSet v8, v31 key="eighth" mode=Strict
+    v33 = Construct v7
+    PropSet v8, v33 key="ninth" mode=Strict
+    v35 = Construct v7
+    PropSet v8, v35 key="tenth" mode=Strict
+    v37 = Construct v7
+    PropSet v8, v37 key="eleventh" mode=Strict
+    v39 = Construct v7
+    PropSet v8, v39 key="twelfth" mode=Strict
+    v41 = Construct v7
+    PropSet v8, v41 key="thirteenth" mode=Strict
+    Return
+}
+function f1 name="Registry" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    v4 = Integer integer=0
+    PropSet v3, v4 key="hits" mode=Strict
+    v6 = String string="r"
+    PropSet v3, v6 key="name" mode=Strict
+    Return v3
+}
+function f2 name="lookup" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get"
+    Return v3
+}
+)IR"_s;
+
+static void checkWhichStructuresTellHeirs(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* registry = constructEmptyObject(realm);
+    realm->putDirect(vm, Identifier::fromString(vm, "registry"_s), registry);
+    evaluateModuleSynchronously(realm, ModuleID { 0u });
+    AOT_TEST_CHECK(!scope.exception());
+    auto handedOver = [&](ASCIILiteral name) {
+        JSValue value = registry->getDirect(vm, Identifier::fromString(vm, name));
+        AOT_TEST_CHECK(value && value.isObject());
+        return asObject(value);
+    };
+
+    ClassTable& classes = program.state().objects->classes;
+    const LayoutData* classLayout = classes.classConstructedBy(classes.functionOfOwnClosure(*uncheckedDowncast<Closure>(handedOver("Registry"_s))));
+    AOT_TEST_CHECK(classLayout && classLayout->classData().propertiesOfHeirsOffset);
+    DeferGC deferGC(vm);
+    constexpr int32_t displacementOfFirstProperty = static_cast<int32_t>(offsetInButterfly(firstOutOfLineOffset) * static_cast<intptr_t>(sizeof(EncodedJSValue)));
+    constexpr int32_t displacementOfSecondProperty = static_cast<int32_t>(offsetInButterfly(firstOutOfLineOffset + 1) * static_cast<intptr_t>(sizeof(EncodedJSValue)));
+    const std::array<int32_t, 2> asConstructorStores { displacementOfFirstProperty, displacementOfSecondProperty };
+    std::array<int32_t, 2> displacements { };
+    auto isRefused = [&](JSCell* cell) {
+        std::array<int32_t, 2> before = displacements;
+        return !classes.structureTellsInstancesOf(*classLayout, cell, displacements) && displacements == before;
+    };
+
+    JSObject* lacksField = handedOver("fifth"_s);
+    AOT_TEST_CHECK(JSCell::deleteProperty(lacksField, realm, Identifier::fromString(vm, "hits"_s)) && !scope.exception());
+    AOT_TEST_CHECK(isRefused(lacksField));
+
+    JSObject* asConstructed = handedOver("first"_s);
+    AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, asConstructed, displacements) && displacements == asConstructorStores);
+    AOT_TEST_CHECK(handedOver("second"_s)->structureID() == asConstructed->structureID());
+    AOT_TEST_CHECK(isRefused(lacksField));
+
+    JSObject* hidesMethod = handedOver("second"_s);
+    hidesMethod->putDirect(vm, Identifier::fromString(vm, "lookup"_s), jsNumber(9));
+    AOT_TEST_CHECK(isRefused(hidesMethod));
+
+    JSObject* liesBelowOtherPrototype = handedOver("third"_s);
+    liesBelowOtherPrototype->setPrototypeDirect(vm, realm->objectPrototype());
+    AOT_TEST_CHECK(isRefused(liesBelowOtherPrototype));
+
+    JSObject* dictionary = handedOver("fourth"_s);
+    dictionary->convertToDictionary(vm);
+    AOT_TEST_CHECK(isRefused(dictionary));
+
+    AOT_TEST_CHECK(isRefused(registry));
+
+    JSObject* bornAsPlainMap = handedOver("sixth"_s);
+    AOT_TEST_CHECK(isRefused(bornAsPlainMap));
+    std::array<int32_t, 2> nothingLearned { };
+    AOT_TEST_CHECK(!classes.structureTellsInstancesOf(*classLayout, bornAsPlainMap, nothingLearned) && !nothingLearned[0] && !nothingLearned[1]);
+    AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, asConstructed, displacements) && displacements == asConstructorStores);
+
+    JSObject* holdsReadOnlyField = handedOver("seventh"_s);
+    holdsReadOnlyField->putDirect(vm, Identifier::fromString(vm, "name"_s), jsNumber(1), static_cast<unsigned>(PropertyAttribute::ReadOnly));
+    AOT_TEST_CHECK(isRefused(holdsReadOnlyField));
+
+    JSObject* frozen = handedOver("eighth"_s);
+    AOT_TEST_CHECK(objectConstructorFreeze(realm, frozen) && !scope.exception());
+    AOT_TEST_CHECK(isRefused(frozen));
+
+    JSObject* becamePrototype = handedOver("ninth"_s);
+    becamePrototype->didBecomePrototype(vm);
+    AOT_TEST_CHECK(isRefused(becamePrototype));
+
+    JSObject* refusesEveryWrite = handedOver("tenth"_s);
+    AOT_TEST_CHECK(refusesEveryWrite->makePropertiesImmutable(vm));
+    AOT_TEST_CHECK(isRefused(refusesEveryWrite));
+
+    JSObject* hidesMemberOfBase = handedOver("eleventh"_s);
+    hidesMemberOfBase->putDirect(vm, Identifier::fromString(vm, "get"_s), jsNumber(1));
+    AOT_TEST_CHECK(isRefused(hidesMemberOfBase));
+
+    JSObject* hidesMemberAboveBase = handedOver("twelfth"_s);
+    hidesMemberAboveBase->putDirect(vm, vm.propertyNames->toString, jsNumber(1));
+    AOT_TEST_CHECK(isRefused(hidesMemberAboveBase));
+
+    JSObject* hidesNoMember = handedOver("thirteenth"_s);
+    hidesNoMember->putDirect(vm, Identifier::fromString(vm, "extra"_s), jsNumber(1));
+    AOT_TEST_CHECK(hidesNoMember->structureID() != asConstructed->structureID());
+    AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, hidesNoMember, displacements) && displacements == asConstructorStores);
+
+    Structure* watched = asConstructed->structure();
+    AOT_TEST_CHECK(!watched->isWatchingReplacement());
+    watched->startWatchingPropertyForReplacements(vm, Identifier::fromString(vm, "hits"_s));
+    AOT_TEST_CHECK(watched->isWatchingReplacement() && isRefused(asConstructed));
+    watched->didReplaceProperty(firstOutOfLineOffset);
+    AOT_TEST_CHECK(!watched->isWatchingReplacement());
+    AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, asConstructed, displacements) && displacements == asConstructorStores);
+
+    JSObject* classPrototype = classes.classPrototypeIfExists(*classLayout);
+    JSValue prototypeOfBase = classPrototype->getPrototypeDirect();
+    AOT_TEST_CHECK(prototypeOfBase == JSValue(program.state().builtinCells->lockedObjects().get(BuiltinTable::singleton().at(BuiltinClasses::Map).prototype.index())));
+    vm.aotState().nativeTestChangesObjectsUnseen = true;
+    AOT_TEST_CHECK(classPrototype->methodTable()->setPrototype(classPrototype, realm, constructEmptyObject(realm), true) && !scope.exception());
+    AOT_TEST_CHECK(asConstructed->getPrototypeDirect() == JSValue(classPrototype) && isRefused(asConstructed));
+    AOT_TEST_CHECK(classPrototype->methodTable()->setPrototype(classPrototype, realm, prototypeOfBase, true) && !scope.exception());
+    AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, asConstructed, displacements) && displacements == asConstructorStores);
+}
+
+static constexpr ASCIILiteral heirWhoseMethodStoresField = R"IR(layout L0 kind=Instance name="Counter" module=m0 constructor=f1 fields=[{key="hits" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Map
+    v2 = NewClosure function=f1
+    v3 = ResolveHeritage v1
+    v4 = NewClass v2, v1, v3 layout=L0
+    v5 = NewClosure function=f2
+    DefineMethod v4, v5 layout=L0 key="record"
+    v7 = FinishClass v4 layout=L0
+    v8 = PropGet v0 key="registry" [isFreeName]
+    v9 = Construct v7
+    PropSet v8, v9 key="counter" mode=Strict
+    PropSet v8, v5 key="record" mode=Strict
+    Return
+}
+function f1 name="Counter" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    v4 = Integer integer=0
+    PropSet v3, v4 key="hits" mode=Strict
+    Return v3
+}
+function f2 name="record" kind=Method flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="hits" mode=Strict
+    Return v1
+}
+)IR"_s;
+
+static void checkStoreIntoWatchedFieldOfHeirTellsWatchers(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* registry = constructEmptyObject(realm);
+    realm->putDirect(vm, Identifier::fromString(vm, "registry"_s), registry);
+    evaluateModuleSynchronously(realm, ModuleID { 0u });
+    AOT_TEST_CHECK(!scope.exception());
+    Identifier hits = Identifier::fromString(vm, "hits"_s);
+    JSObject* counter = asObject(registry->getDirect(vm, Identifier::fromString(vm, "counter"_s)));
+    JSValue record = registry->getDirect(vm, Identifier::fromString(vm, "record"_s));
+    auto store = [&](int32_t stored) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(stored));
+        call(realm, record, counter, arguments, "record is a function"_s);
+        AOT_TEST_CHECK(!scope.exception());
+        AOT_TEST_CHECK(counter->getDirect(vm, hits) == jsNumber(stored));
+    };
+    store(1);
+    store(2);
+    Structure* watched = counter->structure();
+    AOT_TEST_CHECK(!watched->isWatchingReplacement());
+    watched->startWatchingPropertyForReplacements(vm, hits);
+    AOT_TEST_CHECK(watched->isWatchingReplacement());
+    store(3);
+    AOT_TEST_CHECK(!watched->isWatchingReplacement());
+    store(4);
+}
+
+static void testNewestStructureOfHeirLiesInFront()
+{
+    constexpr uint32_t firstThatPasses = 10;
+    constexpr uint32_t firstRefused = 20;
+    StructuresOfHeir structures { };
+    for (uint32_t number = 0; number <= StructuresOfHeir::numberThatPass; ++number)
+        structures.layInFront(firstThatPasses + number, true);
+    for (uint32_t number = 0; number <= StructuresOfHeir::numberRefused; ++number)
+        structures.layInFront(firstRefused + number, false);
+    for (uint32_t index = 0; index < StructuresOfHeir::numberThatPass; ++index)
+        AOT_TEST_CHECK(structures.thatPass[index] == firstThatPasses + StructuresOfHeir::numberThatPass - index);
+    for (uint32_t index = 0; index < StructuresOfHeir::numberRefused; ++index)
+        AOT_TEST_CHECK(structures.refused[index] == firstRefused + StructuresOfHeir::numberRefused - index);
+
+    structures.layAtBack(firstThatPasses, true);
+    structures.layAtBack(firstRefused, false);
+    for (uint32_t index = 0; index + 1 < StructuresOfHeir::numberThatPass; ++index)
+        AOT_TEST_CHECK(structures.thatPass[index] == firstThatPasses + StructuresOfHeir::numberThatPass - index);
+    for (uint32_t index = 0; index + 1 < StructuresOfHeir::numberRefused; ++index)
+        AOT_TEST_CHECK(structures.refused[index] == firstRefused + StructuresOfHeir::numberRefused - index);
+    AOT_TEST_CHECK(structures.thatPass[StructuresOfHeir::numberThatPass - 1] == firstThatPasses && structures.refused[StructuresOfHeir::numberRefused - 1] == firstRefused);
+}
+
 static void checkBuiltinSubclassProgram(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
     checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s });
@@ -602,10 +873,15 @@ std::span<const NativeTest> builtinSubclassTests()
         { "builtin-subclasses/own-properties-come-before-getters-of-the-class"_s, testGettersUnderOwnNames },
         { "builtin-subclasses/cells-that-leave-and-join-the-class"_s, testCellsThatLeaveAndJoinClass },
         { "builtin-subclasses/private-name-of-a-collection-subclass"_s, testPrivateNameOfCollectionSubclass },
+        { "builtin-subclasses/structures-that-tell-heirs-of-a-collection"_s, runNativeTestWithLoadedProgram<builtinSubclassTests, heirsHandedToRegistry, checkWhichStructuresTellHeirs> },
+        { "builtin-subclasses/the-newest-structure-of-an-heir-lies-in-front"_s, testNewestStructureOfHeirLiesInFront },
+        { "builtin-subclasses/a-store-into-a-watched-field-of-an-heir-tells-the-watchers"_s, runNativeTestWithLoadedProgram<builtinSubclassTests, heirWhoseMethodStoresField, checkStoreIntoWatchedFieldOfHeirTellsWatchers> },
     };
     return tests;
 }
 
 } } // namespace JSC::AOT
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(AOT)

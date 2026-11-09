@@ -291,7 +291,7 @@ public:
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
-    std::optional<uint32_t> writtenPosition() const
+    ALWAYS_INLINE std::optional<uint32_t> writtenPosition() const
     {
         if (writtenPositionRole() != WrittenPositionRole::WhereWritten)
             return std::nullopt;
@@ -341,6 +341,7 @@ private:
     JS_EXPORT_PRIVATE Origin originWithSecondPosition() const;
     ValueID operandFoundByCase(uint32_t operandIndex) const;
     std::span<const ValueID> variadicOperandsFoundByCase() const;
+    std::span<const ValueID> variadicOperandsBy(uint64_t outline) const;
 
     const uint32_t* m_words { nullptr };
     const UnitIDRemap* m_unit { nullptr };
@@ -676,6 +677,7 @@ public:
     BodyValue operationAt(uint32_t wordOffset, ValueID id) const { return BodyValue::operation(m_words + wordOffset, m_unit, id); }
     BodyValue parameterAt(uint32_t wordOffset, ValueID id) const { return BodyValue::parameter(m_words + wordOffset, m_unit, id); }
     BodyBlock blockAt(uint32_t wordOffset, uint32_t wordOffsetOfTerminator, BlockID id, ValueID firstParameter) const { return { m_words + wordOffset, m_words + wordOffsetOfTerminator, m_unit, id, firstParameter }; }
+    BodyTerminator terminatorAt(uint32_t wordOffsetOfTerminator, BlockID id) const { return { m_words + wordOffsetOfTerminator, m_unit, id }; }
 
     template<typename Functor>
     void forEachBlock(const Functor& functor) const

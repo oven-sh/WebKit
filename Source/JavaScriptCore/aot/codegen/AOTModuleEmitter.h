@@ -22,6 +22,7 @@ public:
     void generateAreLoaderFunctionsStored(const ValueContext&);
     void generateWasLoadedSynchronously(const ValueContext&);
     void generateSeesMockOf(const ValueContext&);
+    void generateIsLinkedBelow(const ValueContext&);
     void generateMockSeenBy(const ValueContext&);
     void generateNamespaceSeenBy(const ValueContext&);
     void generateCountExecution(const ValueContext&);
@@ -39,6 +40,7 @@ public:
     bool hasSingleNamespaceInValueWord(ModuleID);
     Boxed loadModuleValue(ModuleID);
     Boxed loadRequireCacheValue(ModuleID);
+    Condition hasBegun(ModuleID);
 
 private:
     Word32 moduleIndex(ModuleID);

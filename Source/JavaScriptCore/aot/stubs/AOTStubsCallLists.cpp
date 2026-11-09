@@ -43,6 +43,8 @@ StubSignature signatureOfCallFromArgumentListFrame(StubKey)
     return signature;
 }
 
+StubSignature signatureOfCallFromArgumentListFrameWithWords(StubKey key) { return signatureOfCallFromArgumentListFrame(key); }
+
 void emitLoadArgumentRegistersFromList(StubAssembler& jit, const ArgumentList& list, unsigned firstRegister)
 {
     std::array<Jump, numberOfArgumentGPRs> noMoreArguments;
@@ -381,6 +383,12 @@ void generateCallWithArray(StubAssembler& jit)
 
     doesNotFitOnStack.link(&jit);
     emitThrowStackOverflow(jit);
+}
+
+void generateCallFromArgumentListFrameWithWords(StubAssembler& jit)
+{
+    emitMoveStackWordsToArgumentListFrame(jit, jit.key().count(), jit.key().form() ? sizeOfSpilledArgumentRegisters : 0);
+    jit.jumpToStub(callFromArgumentListFrame());
 }
 
 void generateCallFromArgumentListFrame(StubAssembler& jit)

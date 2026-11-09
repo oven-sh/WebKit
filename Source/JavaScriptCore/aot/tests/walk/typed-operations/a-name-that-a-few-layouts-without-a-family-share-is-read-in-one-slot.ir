@@ -16,8 +16,8 @@
 # WALK: = GetSlot {{*}}key="value" receivers=[L2] level=Proven
 # WALK: = ShapeTest {{*}}layouts=[L1]
 # WALK: = GetSlot {{*}}key="left" receivers=[L1] level=Proven
-# WALK: = GetSlot {{*}}key="right" receivers=[L1] level=Proven
 # WALK: = GetSlot {{*}}key="inner" receivers=[L0] level=Proven
+# WALK: = GetSlot {{*}}key="right" receivers=[L1] level=Proven
 # RUN(NOTHING): walk f1 mechanisms=all
 # NOTHING-NOT: PropGet
 # NOTHING-NOT: StrictEq

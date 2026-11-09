@@ -119,27 +119,12 @@ void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context,
 void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, const String& text, BranchTargets targets)
 {
     if (!comparedTextFitsInRegister(text)) {
-        branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first)), targets);
+        branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand, text.length()), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first)), targets);
         return;
     }
     LValue operands[] = { subject, m_out.constInt64(static_cast<int64_t>(packStringIntoRegister(text))) };
     emitter<RuntimeCallEmitter>().callStubAndBranch(context, equalsLiteralOfLength(operand, text.length()), operands, { }, targets);
 }
-
-StringEmitter::AtomOfName StringEmitter::atomOfName(uint32_t mentionOfName)
-{
-    Integer name = zeroExtended(numberOf(mentionOfName));
-    if (build().recordedOptions().form() != ImageForm::PositionIndependent) {
-        Pointer atoms = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.programIdentifiers));
-        return { offsetBy(atoms, mul(name, static_cast<int64_t>(sizeof(UniquedStringImpl))), 0), std::nullopt };
-    }
-    Pointer offsets = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets));
-    Word32 offset(m_out.load32(m_out.baseIndex(m_heaps.AOTInstance_fieldsFilledOnce, offsets.value(), name.value(), ScaleFour)));
-    return { offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(lazyStrings.headers)), zeroExtended(offset), 0), isNotZero(offset) };
-}
-
-static_assert(JSCell::typeInfoFlagsOffset() == JSCell::typeInfoTypeOffset() + 1);
-static constexpr uint32_t typeAndFlagsOfAtom = StringType | (TypeInfo(StringType, JSString::StructureFlags).inlineTypeFlags() | TypeInfoPerCellBit) << 8;
 
 static constexpr OpcodeSet comparisonsWithLiteral { Opcode::StringEqualsLiteral, Opcode::ValueEqualsLiteral };
 
@@ -162,35 +147,10 @@ bool StringEmitter::readsCharactersInLine(const OperationContext& context)
     static_assert(formByLoopAlone(Opcode::StringEqualsLiteral, StateOfKnowledge::Always, false).form == formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false).form);
     static constexpr FormAtPlace namedInLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, true);
     static constexpr FormAtPlace namedOutsideLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false);
-    FormAtPlace named = context.block() && generator().isInLoop(context.block()) ? namedInLoops : namedOutsideLoops;
+    bool hasLeftLoop = context.valueID() && comparisonsWithLiteral.contains(generator().code().at(context.valueID()).opcode) && generator().code().at(context.valueID()).hasLeftLoop();
+    FormAtPlace named = context.block() && (generator().isInLoop(context.block()) || hasLeftLoop) ? namedInLoops : namedOutsideLoops;
     m_out.noteFormOf(comparisonsWithLiteral, named.form, StateOfKnowledge::Always, named.place);
     return named.form == Form::Open;
-}
-
-CellPointer StringEmitter::branchOnAtomOfLiteral(ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool isString, Machine::EdgeClass frequencyWithoutAtom)
-{
-    BlockEdge withoutAtom(newBlock(), frequencyWithoutAtom);
-    CellPointer string(subject);
-    if (operand == ComparedOperand::Value) {
-        Boxed boxed(subject);
-        continueIf(isCell(boxed), targets.notTaken);
-        string = unboxCell(boxed);
-    }
-    if (isString)
-        continueIf(hasBits(loadByte(string, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit), withoutAtom);
-    else {
-        Word32 typeAndFlags(m_out.load16ZeroExt32(m_out.address(m_heaps.JSCell_typeInfoFlags, string.value(), JSCell::typeInfoTypeOffset())));
-        continueIf(equal(typeAndFlags, static_cast<int32_t>(typeAndFlagsOfAtom)), withoutAtom);
-    }
-    AtomOfName atom = atomOfName(m_mentions.add(NumberSpace::AtomOfComparedText, literal));
-    if (atom.exists)
-        continueIf(*atom.exists, withoutAtom);
-    Condition isAtomOfText = equal(loadField<Pointer>(string, m_heaps.JSString_value), atom.address);
-    ensureStillAliveHere(string);
-    branch(isAtomOfText, targets);
-
-    m_out.appendTo(withoutAtom.block());
-    return string;
 }
 
 void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject)
@@ -228,7 +188,11 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
             return;
         }
         bool isString = operand == ComparedOperand::String || everyCellIsString;
-        string = branchOnAtomOfLiteral(operand, subject, literal, targets, isString, Machine::EdgeClass::Normal);
+        if (operand == ComparedOperand::Value) {
+            Boxed boxed(subject);
+            continueIf(isCell(boxed), targets.notTaken);
+            string = unboxCell(boxed);
+        }
         if (!isString)
             continueIf(hasCellType(string, StringType), targets.notTaken);
     } else {
@@ -265,7 +229,7 @@ Condition StringEmitter::equalsLiteral(const OperationContext& context, Compared
         });
     }
     m_out.noteFormOf(comparisonsWithLiteral, Form::Closed, StateOfKnowledge::LiteralComparedByStub);
-    return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first));
+    return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand, text.length()), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first));
 }
 
 void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString)
@@ -375,6 +339,10 @@ Word32 StringEmitter::find(const CharacterView& subject, const CharacterView& so
     Word32 found = selectByWidth<Word32>(subject.is8Bit, [&](bool is8Bit) {
         RuntimeOperation forward = is8Bit ? RuntimeOperation::StringFind8 : RuntimeOperation::StringFind16;
         RuntimeOperation backward = is8Bit ? RuntimeOperation::StringReverseFind8 : RuntimeOperation::StringReverseFind16;
+        if (is8Bit && isForward) {
+            LValue operands[] = { subject.characters.value(), subject.length.value(), sought.characters.value(), sought.length.value(), position.value() };
+            return low32(Integer(emitter<RuntimeCallEmitter>().callStubWithoutSite(findText8(), operands).first));
+        }
         return low32(callLeaf<Integer>(isForward ? forward : backward, { subject.characters, subject.length, sought.characters, sought.length, position }));
     });
     ensureStillAliveHere(subject.owner);
@@ -426,6 +394,8 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
     StringID literal = value->literal();
     String text = textOf(literal);
     Word32 position = word32Of(value->positionOperand());
+    if (isForward && !position.value()->isInt32(0))
+        holdRangeInside(value, position, position);
     if (!isForward && position.value()->isInt32(0) && canCompareInline(literal)) {
         CharacterView view = viewOf(value, string);
         Word32 length = word32(text.length());
@@ -469,6 +439,8 @@ void StringEmitter::generateStringIndexOfCharacter(const ValueContext& value)
     ValueID string = value->stringOperand();
     Word32 codeUnit = word32(static_cast<int32_t>(value->codeUnit()));
     Word32 position = word32Of(value->positionOperand());
+    if (!position.value()->isInt32(0))
+        holdRangeInside(value, position, position);
     if (typeOf(string).isOpaque(OpaqueKind::FlatString)) {
         define(value, findCodeUnit(viewOf(value, string), codeUnit, position, SearchDirection::Forward));
         return;

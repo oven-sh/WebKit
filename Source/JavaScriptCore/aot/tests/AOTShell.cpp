@@ -79,6 +79,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionAOTInstructionsOfThread);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTPlaceOfProperty);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTMarksOfObject);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTStoreIntoSlotUntested);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTAddExtraPropertyUnseen);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTFindObjectOfLayout);
 static JSC_DECLARE_HOST_FUNCTION(functionLockCell);
 static JSC_DECLARE_HOST_FUNCTION(functionUnlockCell);
@@ -92,7 +93,7 @@ static JSC_DECLARE_CUSTOM_SETTER(setExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getParentOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getChildrenOfModuleObject);
 
-static constexpr std::array<ASCIILiteral, 19> functionNames {
+static constexpr std::array<ASCIILiteral, 20> functionNames {
     "runCompiledEntryPoint"_s,
     "setRequireCacheEntry"_s,
     "overrideRequire"_s,
@@ -104,6 +105,7 @@ static constexpr std::array<ASCIILiteral, 19> functionNames {
     "aotPlaceOfProperty"_s,
     "aotMarksOfObject"_s,
     "aotStoreIntoSlotUntested"_s,
+    "aotAddExtraPropertyUnseen"_s,
     "aotFindObjectOfLayout"_s,
     "lockCell"_s,
     "unlockCell"_s,
@@ -335,6 +337,20 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTStoreIntoSlotUntested, (JSGlobalObject* glob
     return JSValue::encode(jsBoolean(field && object->store(vm, *field, AcceptedValue::provenAtBuildTime(callFrame->argument(2)))));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionAOTAddExtraPropertyUnseen, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Object* object = compiledObjectOrNull(callFrame->argument(0));
+    JSObject* extraProperties = object ? object->extraProperties() : nullptr;
+    if (!extraProperties)
+        return JSValue::encode(jsBoolean(false));
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    extraProperties->putDirect(vm, name, callFrame->argument(2));
+    return JSValue::encode(jsBoolean(true));
+}
+
 // So a test gets hold of an object of which the compiler has proven that nothing but compiled code ever sees it, and does to it what is ruled out: a false proof made on purpose. Null: there is none.
 JSC_DEFINE_HOST_FUNCTION(functionAOTFindObjectOfLayout, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -541,6 +557,7 @@ void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
         { functionAOTPlaceOfProperty, 2 },
         { functionAOTMarksOfObject, 1 },
         { functionAOTStoreIntoSlotUntested, 3 },
+        { functionAOTAddExtraPropertyUnseen, 3 },
         { functionAOTFindObjectOfLayout, 1 },
         { functionLockCell, 1 },
         { functionUnlockCell, 1 },

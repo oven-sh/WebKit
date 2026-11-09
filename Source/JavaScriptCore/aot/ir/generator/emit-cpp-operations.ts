@@ -109,10 +109,12 @@ function entryInfoDeclarations(schema: Schema): string[] {
   const externals = ["None", ...schema.externals.map(external => external.name)];
   return `JS_EXPORT_PRIVATE std::span<const uint32_t> defaultPayloadOf(TerminatorKind);
 // By the number of the opcode: the words that a fresh draft has, and how many named operands.
+inline constexpr unsigned numberOfFreshPayloadWordsAtHand = 12;
 struct FreshWordsOfOperation {
     const uint32_t* payload { nullptr };
     uint16_t numberOfPayloadWords { 0 };
     uint16_t numberOfNamedOperands { 0 };
+    std::array<uint32_t, numberOfFreshPayloadWordsAtHand> firstPayloadWords { };
 };
 JS_EXPORT_PRIVATE extern const std::array<FreshWordsOfOperation, numberOfEnumerators<Opcode>> freshWordsByOpcode;
 ALWAYS_INLINE const FreshWordsOfOperation& freshWordsOf(Opcode opcode) { return freshWordsByOpcode[static_cast<unsigned>(opcode)]; }
@@ -150,7 +152,7 @@ ALWAYS_INLINE const OperandInfo& operandInfoIn(const OperandInfosOfEntry& infos,
 ALWAYS_INLINE const OperandInfo& operandInfoOf(Opcode opcode, uint32_t operandIndex) { return operandInfoIn(operandInfosByOpcode[static_cast<unsigned>(opcode)], operandIndex); }
 ALWAYS_INLINE const OperandInfo& operandInfoOf(TerminatorKind kind, uint32_t operandIndex) { return operandInfoIn(operandInfosByTerminatorKind[static_cast<unsigned>(kind)], operandIndex); }
 
-inline OperandKind operandKindOf(Opcode opcode, uint32_t operandIndex) { return operandInfoOf(opcode, operandIndex).kind; }
+ALWAYS_INLINE OperandKind operandKindOf(Opcode opcode, uint32_t operandIndex) { return operandInfoOf(opcode, operandIndex).kind; }
 inline OperandKind operandKindOf(TerminatorKind kind, uint32_t operandIndex) { return operandInfoOf(kind, operandIndex).kind; }
 inline OperandUses operandUsesOf(Opcode opcode, uint32_t operandIndex) { return operandInfoOf(opcode, operandIndex).uses; }
 inline OperandUses operandUsesOf(TerminatorKind kind, uint32_t operandIndex) { return operandInfoOf(kind, operandIndex).uses; }
@@ -299,7 +301,7 @@ function lookup(
     const sizesOfGroups = [...Map.groupBy(cases, ({ value }) => value).values()].map(group => group.length);
     if (cases.length - Math.max(...sizesOfGroups) < leastLabelsOfColumnTable) {
       const signature = `${type} ${name}(${enumName} ${parameter})`;
-      return constexprSwitch({ signature, subject: parameter, enumName, cases, defaultValue });
+      return constexprSwitch({ signature, subject: parameter, enumName, cases, defaultValue, qualifier: "ALWAYS_INLINE constexpr" });
     }
     const inSchema = nameOfSwitchBehindTable(name);
     const signature = `${type} ${inSchema}(${enumName} ${parameter})`;
@@ -775,7 +777,9 @@ function operationsSource(schema: Schema): string[] {
       "    std::array<FreshWordsOfOperation, numberOfEnumerators<Opcode>> table;",
       "    for (unsigned index = 0; index < table.size(); ++index) {",
       "        std::span<const uint32_t> payload = defaultPayloadInSchemaOf(static_cast<Opcode>(index));",
-      "        table[index] = { payload.data(), static_cast<uint16_t>(payload.size()), static_cast<uint16_t>(numberOfNamedOperandsOf(static_cast<Opcode>(index))) };",
+      "        table[index] = { payload.data(), static_cast<uint16_t>(payload.size()), static_cast<uint16_t>(numberOfNamedOperandsOf(static_cast<Opcode>(index))), { } };",
+      "        for (size_t word = 0; word < payload.size() && word < numberOfFreshPayloadWordsAtHand; ++word)",
+      "            table[index].firstPayloadWords[word] = payload[word];",
       "    }",
       "    return table;",
       "}();",

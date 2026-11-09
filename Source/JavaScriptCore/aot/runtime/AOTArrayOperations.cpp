@@ -57,6 +57,13 @@ static bool holdsOnlyNumbersForDoubleStorage(std::span<const EncodedJSValue> val
     });
 }
 
+static bool holdsOnlyInt32s(std::span<const EncodedJSValue> values)
+{
+    return std::ranges::all_of(values, [](EncodedJSValue encoded) {
+        return JSValue::decode(encoded).isInt32();
+    });
+}
+
 static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
 {
     IndexingType type = source->indexingType();
@@ -66,6 +73,8 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
             return false;
         if (hasContiguous(target->indexingType()) && copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + length))
             return appendBoxedDoubles(globalObject, vm, target, source->butterfly()->contiguousDouble().data(), length);
+        if (hasInt32(target->indexingType()))
+            target->tryMakeWritableDouble(vm);
     } else if (hasInt32(type) || hasContiguous(type)) {
         if (containsHole(source->butterfly()->contiguous().data(), length))
             return false;
@@ -74,6 +83,10 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
         if (hasInt32(type) && (hasContiguous(targetType) || hasDouble(targetType)))
             return target->appendMemcpy(globalObject, vm, target->length(), hasDouble(targetType) ? ArrayWithDouble : ArrayWithContiguous, values);
         if (hasContiguous(type) && hasDouble(targetType) && holdsOnlyNumbersForDoubleStorage(values))
+            return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithDouble, values);
+        if (hasContiguous(type) && hasInt32(targetType) && holdsOnlyInt32s(values))
+            return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithInt32, values);
+        if (hasContiguous(type) && hasInt32(targetType) && holdsOnlyNumbersForDoubleStorage(values) && target->tryMakeWritableDouble(vm).data())
             return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithDouble, values);
     } else
         return false;
@@ -176,6 +189,15 @@ void appendElementsOfList(JSGlobalObject* globalObject, JSArray* target, JSArray
     appendElements(globalObject, globalObject->vm(), target, source);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Instance* instance, JSCell* cell))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTConvertToDoubleStorage);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTConvertToDoubleStorage);
+    if (array->indexingMode() != ArrayWithInt32)
+        return;
+    array->tryMakeWritableDouble(vm);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayRoom, void, (Instance* instance, JSCell* cell, uint64_t room))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayRoom);
@@ -187,10 +209,28 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayRoom, void, (Instance*
     if (room > MAX_STORAGE_VECTOR_LENGTH || room <= vectorLength)
         return;
     unsigned publicLength = array->butterfly()->publicLength();
-    unsigned lengthThatGrowsToRoom = static_cast<unsigned>(room - room / 3);
+    unsigned lengthThatGrowsToRoom = static_cast<unsigned>(room - room / 4 - room / 16);
     ASSERT(nextLength(lengthThatGrowsToRoom) >= room);
     if (array->ensureLength(vm, std::max(lengthThatGrowsToRoom, vectorLength + 1)))
         array->butterfly()->setPublicLength(publicLength);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetArrayLength, void, (Instance* instance, JSCell* cell, uint32_t length))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetArrayLength);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTSetArrayLength);
+    PutPropertySlot slot(array, true);
+    array->methodTable()->put(array, globalObject, vm.propertyNames->length, jsNumber(length), slot);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetArrayLengthInSloppyCode, void, (Instance* instance, JSCell* cell, uint32_t length))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetArrayLengthInSloppyCode);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTSetArrayLengthInSloppyCode);
+    PutPropertySlot slot(array, false);
+    array->methodTable()->put(array, globalObject, vm.propertyNames->length, jsNumber(length), slot);
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
@@ -246,20 +286,69 @@ JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned public
     return std::bit_cast<JSArray*>(cell);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfList, JSCell*, (Instance* instance, JSCell* cell, uint32_t capacityAndKind))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfList);
+    JSArray* list = cellArgument<JSArray>(cell, Entry::operationAOTNewArrayOfList);
+    unsigned capacity = capacityAndKind >> 1;
+    IndexingType kindOfList = list->indexingType();
+    if (hasDouble(kindOfList)) {
+        size_t count = list->butterfly()->publicLength();
+        bool holdsValues = capacityAndKind & 1 || std::ranges::any_of(std::span { list->butterfly()->contiguousDouble().data(), count }, [](double fraction) {
+            return fraction != fraction;
+        });
+        Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(holdsValues ? ArrayWithContiguous : ArrayWithDouble);
+        if (capacity < count || capacity > maxHoleArrayCapacity || (holdsValues ? !hasContiguous(structure->indexingType()) : !hasDouble(structure->indexingType())) || structure->outOfLineCapacity())
+            OPERATION_RETURN(scope, nullptr);
+        JSArray* array = tryCreateArrayWithStorage(vm, structure, count, capacity);
+        if (!array)
+            OPERATION_RETURN(scope, nullptr);
+        for (size_t index = 0; index < count; ++index) {
+            double fraction = list->butterfly()->contiguousDouble().atUnsafe(index);
+            if (!holdsValues)
+                array->butterfly()->contiguousDouble().atUnsafe(index) = fraction;
+            else
+                array->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(fraction != fraction ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, fraction));
+        }
+        vm.mutatorFence();
+        OPERATION_RETURN(scope, array);
+    }
+    if (!hasInt32(kindOfList) && !hasContiguous(kindOfList))
+        OPERATION_RETURN(scope, nullptr);
+    std::span<const WriteBarrier<Unknown>> elements { list->butterfly()->contiguous().data(), list->butterfly()->publicLength() };
+    if (capacity < elements.size() || capacity > maxHoleArrayCapacity)
+        OPERATION_RETURN(scope, nullptr);
+    bool isContiguous = capacityAndKind & 1 || std::ranges::any_of(elements, [](const WriteBarrier<Unknown>& element) {
+        return !element || !element.get().isInt32();
+    });
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(isContiguous ? ArrayWithContiguous : ArrayWithInt32);
+    if ((isContiguous ? !hasContiguous(structure->indexingType()) : !hasInt32(structure->indexingType())) || structure->outOfLineCapacity())
+        OPERATION_RETURN(scope, nullptr);
+    JSArray* array = tryCreateArrayWithStorage(vm, structure, elements.size(), capacity);
+    if (!array)
+        OPERATION_RETURN(scope, nullptr);
+    elements = { list->butterfly()->contiguous().data(), elements.size() };
+    for (size_t index = 0; index < elements.size(); ++index)
+        array->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(elements[index] ? elements[index].get() : jsUndefined());
+    vm.mutatorFence();
+    OPERATION_RETURN(scope, array);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArray);
-    static_assert(maxValuesInArrayLiteral < 1u << capacityShiftInArrayLiteralCount);
+    static_assert(maxValuesInArrayLiteral < int32ValuesInArrayLiteralCount && int32ValuesInArrayLiteralCount < 1u << capacityShiftInArrayLiteralCount);
     unsigned emptyCapacity = count >> capacityShiftInArrayLiteralCount;
-    count &= (1u << capacityShiftInArrayLiteralCount) - 1;
+    bool holdsInt32 = count & int32ValuesInArrayLiteralCount;
+    count &= int32ValuesInArrayLiteralCount - 1;
     if (count > maxValuesInArrayLiteral || (emptyCapacity && count)) [[unlikely]]
         crashOnWrongOperand(Entry::operationAOTNewArray);
     auto valueAt = [&](uint32_t i) {
-        return JSValue::decode(values[i]);
+        return holdsInt32 ? jsNumber(static_cast<int32_t>(values[i])) : JSValue::decode(values[i]);
     };
-    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(holdsInt32 ? ArrayWithInt32 : ArrayWithContiguous);
     unsigned vectorLength = emptyCapacity ? emptyCapacity : arrayLiteralVectorLength(count);
-    bool hasWantedStorage = hasContiguous(structure->indexingType());
+    bool hasWantedStorage = holdsInt32 ? hasInt32(structure->indexingType()) : hasContiguous(structure->indexingType());
     if (hasWantedStorage && !structure->outOfLineCapacity()) {
         if (JSArray* array = vectorLength <= maxHoleArrayCapacity ? tryCreateArrayWithStorage(vm, structure, count, vectorLength) : nullptr) {
             for (uint32_t i = 0; i < count; ++i)
@@ -466,7 +555,22 @@ static void startWindow(ArrayAllocationProfile& profile)
     std::ranges::fill(profile.largestLengths, 0);
 }
 
-void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull)
+static IndexingType narrowestShapeThatHoldsContentsOf(JSArray* array)
+{
+    IndexingType shape = Int32Shape;
+    Butterfly* butterfly = array->butterfly();
+    for (unsigned position = 0; position < butterfly->publicLength(); ++position) {
+        JSValue value = butterfly->contiguous().at(array, position).get();
+        if (!value || value.isInt32())
+            continue;
+        if (!value.isDouble() || value.asDouble() != value.asDouble())
+            return ContiguousShape;
+        shape = DoubleShape;
+    }
+    return shape;
+}
+
+void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull, bool readsContentsAtFirst)
 {
     if (!lastArrayOrNull) {
         if (profile.intervalDoublings)
@@ -474,6 +578,8 @@ void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* last
         return;
     }
     IndexingType shape = lastArrayOrNull->indexingType() & IndexingShapeMask;
+    if (readsContentsAtFirst && !profile.shape() && shape == ContiguousShape)
+        shape = narrowestShapeThatHoldsContentsOf(lastArrayOrNull);
     if (shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape) {
         if (!profile.shape())
             profile.set(profile.capacity(), Int32Shape);
@@ -504,11 +610,14 @@ void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* last
         return;
     }
 
-    if (wanted < inUse)
+    for (uint8_t kept : profile.largestLengths)
+        wanted = kept ? kept | 1 : wanted;
+    bool takesLessRoom = wanted < inUse && profile.largestLengths[0];
+    if (takesLessRoom)
         profile.intervalDoublings = 0;
     else if (profile.intervalDoublings < ArrayAllocationProfile::maxIntervalDoublings)
         ++profile.intervalDoublings;
-    profile.set(wanted < inUse ? wanted : profile.capacity(), learnedShape);
+    profile.set(takesLessRoom ? wanted : profile.capacity(), learnedShape);
     startWindow(profile);
 }
 
@@ -535,6 +644,35 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayAtReviewedSite, JSCell*, (Instance*
         OPERATION_RETURN(scope, nullptr);
     }
     // Not a root: every collection zeroes this word, so it neither keeps the array alive nor dangles.
+    lastArray = array;
+    OPERATION_RETURN(scope, array);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayWithLengthAtReviewedSite, JSCell*, (Instance* instance, void* profileAddress, uint32_t seedAndLengthAndCapacity))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayWithLengthAtReviewedSite);
+    uint8_t* statics = instance->statics();
+    uint8_t* address = static_cast<uint8_t*>(profileAddress);
+    uint64_t distanceToLastArray = instance->arrays.distanceFromProfileToLastArray;
+    uint32_t seedIndexingType = seedAndLengthAndCapacity >> seedShiftBesideLengthAndCapacity;
+    unsigned capacity = (seedAndLengthAndCapacity & ((1u << seedShiftBesideLengthAndCapacity) - 1)) >> holeArrayCapacityShift;
+    unsigned length = seedAndLengthAndCapacity & ((1u << holeArrayCapacityShift) - 1);
+    RELEASE_ASSERT(address >= statics && distanceToLastArray >= sizeof(ArrayAllocationProfile));
+    RELEASE_ASSERT(address + distanceToLastArray + ArrayAllocationProfile::sizeOfLastArrayWord <= statics + instance->tables().instanceSizes.sizeOfStatics);
+    RELEASE_ASSERT(seedIndexingType == ArrayWithInt32 || seedIndexingType == ArrayWithDouble);
+    RELEASE_ASSERT(capacity & 1 && capacity <= maxHoleArrayCapacity && length <= capacity);
+    auto& profile = *reinterpret_cast<ArrayAllocationProfile*>(address);
+    auto& lastArray = *reinterpret_cast<JSArray**>(address + distanceToLastArray);
+    ASSERT(profile.isDueForReview());
+
+    reviewArrayAllocationProfile(profile, lastArray);
+    profile.startInterval();
+    lastArray = nullptr;
+    if (globalObject->isHavingABadTime())
+        OPERATION_RETURN(scope, nullptr);
+
+    IndexingType shape = std::max<IndexingType>(profile.shape(), seedIndexingType & IndexingShapeMask);
+    JSArray* array = tryCreateArrayWithStorage(vm, globalObject->originalArrayStructureForIndexingType(IsArray | shape), length, capacity);
     lastArray = array;
     OPERATION_RETURN(scope, array);
 }

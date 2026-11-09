@@ -82,12 +82,11 @@ public:
             return { };
         }
         Wire::forEachEnumeratedMember(m_wire, [&]<typename E>(E& member) {
-            uint64_t end = numberOfEnumerators<E>;
-            if constexpr (isFlagWord<E>) {
-                static_assert(numberOfEnumerators<E> <= 32);
-                end = 1ull << numberOfEnumerators<E>;
-            }
-            if (static_cast<uint32_t>(member) < end)
+            constexpr unsigned numberOfMembers = numberOfEnumerators<E>;
+            static_assert(!isFlagWord<E> || numberOfMembers <= 8 * sizeof(E));
+            constexpr uint64_t bitsOfMembers = numberOfMembers < 64 ? (1ull << numberOfMembers % 64) - 1 : ~0ull;
+            uint64_t word = static_cast<std::underlying_type_t<E>>(member);
+            if (isFlagWord<E> ? !(word & ~bitsOfMembers) : word < numberOfMembers)
                 return;
             reportInvalid(member);
             member = { };
@@ -151,17 +150,12 @@ private:
     {
         CheckSet checks = m_wire.checks;
         options.recorded.validates = hasFlag(checks, CheckSet::Validate);
-        options.verifiesMachineCode = options.recorded.validates || Options::verifyAOTMachineCode();
+        options.verifiesCode = options.recorded.validates || hasFlag(checks, CheckSet::VerifyEachStage);
+        options.verifiesMachineCode = options.verifiesCode || Options::verifyAOTMachineCode();
         options.asksWhetherFlowOfLinkIsClosed = hasFlag(checks, CheckSet::FlowFixpoint);
         options.walksLastWalksOfLoopsAlone = hasFlag(checks, CheckSet::LastWalksOfLoopsAlone);
         options.walksLoopsThatFitAgain = hasFlag(checks, CheckSet::WalksOfLoopsThatFitAgain);
         options.asksWhetherLinkFindsLessFromMore = hasFlag(checks, CheckSet::FlowFindsNoLessFromMore);
-#if ASSERT_ENABLED || ASAN_ENABLED
-        options.verifiesAfterEveryStage = hasFlag(checks, CheckSet::VerifyEachStage);
-        options.verifiesProgram = options.verifiesAfterEveryStage || options.recorded.validates || Options::verifyAOTProgram();
-        options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
-        options.validatesReferences = options.validatesReferenceGuards || hasFlag(checks, CheckSet::ValidateReferences);
-#endif
     }
 
     void readThreadCount(CompileOptions& options)
@@ -195,6 +189,7 @@ private:
     void readTesting(CompileOptions& options)
     {
         options.testing = m_wire.testing;
+        options.lies = m_wire.lies;
         options.recorded.verifiesFastPathAnswers = hasFlag(m_wire.testing, TestingSwitch::CheckWalkAtRunTime);
         if (m_wire.rowThatSaysLess && !hasFlag(m_wire.testing, TestingSwitch::RowSaysLess))
             reportInvalid(m_wire.rowThatSaysLess);
@@ -203,8 +198,21 @@ private:
         bool failsGuesses = hasFlag(m_wire.testing, TestingSwitch::FailGuesses);
         bool drawsBySeed = hasFlag(m_wire.testing, TestingSwitch::ShuffleBlockFrequencies) || hasFlag(m_wire.testing, TestingSwitch::ShuffleExpectedTypes)
             || hasFlag(m_wire.testing, TestingSwitch::GiveLinkMore) || hasFlag(m_wire.testing, TestingSwitch::ShuffleChoices);
-        if (drawsBySeed ? !m_wire.seedOfShuffles : m_wire.seedOfShuffles && !failsGuesses)
+        bool forcesWay = hasFlag(m_wire.testing, TestingSwitch::WalksUnitsBy);
+        if (drawsBySeed ? !m_wire.seedOfShuffles : m_wire.seedOfShuffles && !failsGuesses && !forcesWay)
             reportInvalid(m_wire.seedOfShuffles);
+        if (forcesWay != !!m_wire.periodOfUnitsWalkedThatWay)
+            reportInvalid(m_wire.periodOfUnitsWalkedThatWay);
+        if (forcesWay ? !m_wire.wayForcedOnUnits || m_wire.wayForcedOnUnits > 2 : !!m_wire.wayForcedOnUnits)
+            reportInvalid(m_wire.wayForcedOnUnits);
+        options.wayForcedOnUnits = m_wire.wayForcedOnUnits;
+        options.periodOfUnitsWalkedThatWay = m_wire.periodOfUnitsWalkedThatWay;
+        if (hasFlag(m_wire.testing, TestingSwitch::CutWalksOfLoopsShort) != !!m_wire.periodOfHearingsThatCutWalks)
+            reportInvalid(m_wire.periodOfHearingsThatCutWalks);
+        if (m_wire.phaseOfHearingsThatCutWalks && m_wire.phaseOfHearingsThatCutWalks >= m_wire.periodOfHearingsThatCutWalks)
+            reportInvalid(m_wire.phaseOfHearingsThatCutWalks);
+        options.periodOfHearingsThatCutWalks = m_wire.periodOfHearingsThatCutWalks;
+        options.phaseOfHearingsThatCutWalks = m_wire.phaseOfHearingsThatCutWalks;
         if (failsGuesses != !!m_wire.periodOfGuessesThatFail)
             reportInvalid(m_wire.periodOfGuessesThatFail);
         options.seedOfShuffles = m_wire.seedOfShuffles;

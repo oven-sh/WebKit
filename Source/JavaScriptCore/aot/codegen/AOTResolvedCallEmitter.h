@@ -21,6 +21,11 @@ public:
     void generateResolveCallTarget(const ValueContext&);
     void generateCallResolved(const ValueContext&);
     void generateRegExpMatchLiteral(const ValueContext&);
+    void generateRegExpMatchLiteralInParts(const ValueContext&);
+    void generateBoundsOfRegExpMatch(const ValueContext&);
+    void generateNewRegExpMatchArray(const ValueContext&);
+
+private:
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedSpan.h"
 #include "AOTCurrentWork.h"
 #include "AOTNativeTest.h"
 #include "AOTShellProcess.h"
@@ -16,6 +17,7 @@
 #include "AOTTestRunner.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
+#include <span>
 #include <stdlib.h>
 #include <wtf/ASCIICType.h>
 #include <wtf/DataLog.h>
@@ -36,8 +38,6 @@
 namespace JSC { namespace AOT {
 
 using namespace Typed;
-
-static constexpr const char* crashRequestVariable = "TESTAOT_CRASH_ON_REQUEST";
 
 static constexpr ASCIILiteral passingFile =
     "# RUN: print\n"
@@ -174,6 +174,16 @@ static void testCrashThatRunAsksForIsNotNamed()
     AOT_TEST_CHECK(!result.output.contains("crashed"_s) && !result.output.contains("SIG"_s));
 }
 
+static void testChildOfSeveralFilesSaysWhenShellHasEnded()
+{
+    TemporaryFile asking(".ir"_s, byteCast<uint8_t>(fileThatAsksShellToCrash.span8()));
+    TemporaryFile passing(".ir"_s, byteCast<uint8_t>(passingFile.span8()));
+    ChildProcessResult child = runWith(createLauncher(), { String(runSubcommandName), "--single-process"_s, asking.path(), passing.path() });
+    AOT_TEST_CHECK(child.exitedWith(0) && child.output.contains(lineAfterChildProcess));
+    ChildProcessResult whole = runWith(createLauncher(), { String(runSubcommandName), asking.path(), passing.path() });
+    AOT_TEST_CHECK(whole.exitedWith(0) && whole.output.contains("2 passed, 0 failed, 0 todo\n"_s) && !whole.output.contains(lineAfterChildProcess));
+}
+
 static void testCrashThatNoRunAsksForSaysHowShellWasStarted()
 {
     TemporaryFile file(".ir"_s, byteCast<uint8_t>(fileWhoseShellAlsoCrashesUnasked.span8()));
@@ -199,6 +209,56 @@ static void testCrashesOnRequest()
 static void testFailsCheckOnRequest()
 {
     AOT_TEST_CHECK(!getenv(crashRequestVariable));
+}
+
+static void testAssertionFailsOnRequest()
+{
+    RELEASE_ASSERT(!getenv(crashRequestVariable));
+}
+
+static std::span<const uint32_t> threeOfFourNumbers()
+{
+    static constexpr uint32_t numbers[] { 1, 2, 3, 4 };
+    return std::span(numbers).first(3);
+}
+
+static void testIndexPastEndOfListOnRequest()
+{
+    AOT_TEST_CHECK(checkedAt(threeOfFourNumbers(), 2) == 3);
+    if (getenv(crashRequestVariable))
+        dataLogLn(checkedAt(threeOfFourNumbers(), 3));
+}
+
+static void testStartPastEndOfListOnRequest()
+{
+    AOT_TEST_CHECK(checkedSubspan(threeOfFourNumbers(), 3).empty());
+    if (getenv(crashRequestVariable))
+        dataLogLn(checkedSubspan(threeOfFourNumbers(), 4).size());
+}
+
+static void testStretchPastEndOfListOnRequest()
+{
+    AOT_TEST_CHECK(checkedSubspan(threeOfFourNumbers(), 1, 2).back() == 3);
+    if (getenv(crashRequestVariable))
+        dataLogLn(checkedSubspan(threeOfFourNumbers(), 2, 2).back());
+}
+
+static void testWhatLiesPastEndOfListEndsAsAnAssertionDoes()
+{
+    auto endOf = [](ASCIILiteral test) {
+        return runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), String(test) });
+    };
+    setCrashRequest(true);
+    ChildProcessResult assertion = endOf("ends-on-request/assertion"_s);
+    ChildProcessResult index = endOf("ends-on-request/index-past-the-end-of-a-list"_s);
+    ChildProcessResult start = endOf("ends-on-request/start-past-the-end-of-a-list"_s);
+    ChildProcessResult stretch = endOf("ends-on-request/stretch-past-the-end-of-a-list"_s);
+    ChildProcessResult siteBehind = endOf("ends-on-request/site-past-the-end-of-the-site-caches"_s);
+    ChildProcessResult siteBetween = endOf("ends-on-request/site-between-two-slots"_s);
+    setCrashRequest(false);
+    AOT_TEST_CHECK(assertion.outcome == ChildProcessOutcome::Crashed);
+    for (const ChildProcessResult* result : { &index, &start, &stretch, &siteBehind, &siteBetween })
+        AOT_TEST_CHECK(result->outcome == ChildProcessOutcome::Crashed && result->code == assertion.code);
 }
 
 static void testTodoOfNativeTestStandsForNoDeath()
@@ -246,7 +306,13 @@ std::span<const NativeTest> childProcessTests()
         { "runner/todo-of-a-file-stands-for-no-death"_s, testTodoOfFileStandsForNoDeath },
         { "runner/todo-of-a-native-test-stands-for-no-death"_s, testTodoOfNativeTestStandsForNoDeath },
         { "runner/crash-that-a-run-asks-for-is-not-named"_s, testCrashThatRunAsksForIsNotNamed },
+        { "runner/child-of-several-files-says-when-a-shell-has-ended"_s, testChildOfSeveralFilesSaysWhenShellHasEnded },
         { "runner/crash-that-no-run-asks-for-says-how-the-shell-was-started"_s, testCrashThatNoRunAsksForSaysHowShellWasStarted },
+        { "checked-span/what-lies-past-the-end-of-a-list-ends-as-an-assertion-does"_s, testWhatLiesPastEndOfListEndsAsAnAssertionDoes },
+        { "ends-on-request/assertion"_s, testAssertionFailsOnRequest },
+        { "ends-on-request/index-past-the-end-of-a-list"_s, testIndexPastEndOfListOnRequest },
+        { "ends-on-request/start-past-the-end-of-a-list"_s, testStartPastEndOfListOnRequest },
+        { "ends-on-request/stretch-past-the-end-of-a-list"_s, testStretchPastEndOfListOnRequest },
         { "crash-on-request/first"_s, testCrashesOnRequest },
         { "crash-on-request/fails-a-check"_s, testFailsCheckOnRequest },
     };

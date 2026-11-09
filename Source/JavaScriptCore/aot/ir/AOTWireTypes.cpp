@@ -101,7 +101,7 @@ static ClassPartsID readClassPartsOfWireType(TypeArena& arena, const Wire::Secti
     return arena.internClassParts(parts.span());
 }
 
-static uint32_t endOfTypesNamedByWireType(const Wire::Sections& checkedSections, uint32_t index)
+static ALWAYS_INLINE uint32_t endOfTypesNamedByWireType(const Wire::Sections& checkedSections, uint32_t index)
 {
     Wire::Span list = checkedSections.types[index].classes;
     std::span<const Wire::ClassPart> parts = checkedSections.classParts.subspan(list.start, list.count);
@@ -411,15 +411,24 @@ static BitVector modulesNamedByModuleBuiltins(const Program& program, uint32_t n
     forEachIndexInParallel(loops, (numberOfFunctions + functionsPerTask - 1) / functionsPerTask, [&](unsigned task) {
         uint32_t end = std::min(numberOfFunctions, (task + 1) * functionsPerTask);
         for (uint32_t index = task * functionsPerTask; index < end; ++index) {
-            program.functions[index].body.forEachBlock([&](const BodyBlock& block) {
-                for (BodyValue value : block.values()) {
+            const Body& body = program.functions[index].body;
+            if (!body)
+                continue;
+            const UnitIDRemap* unit = &body.unit();
+            BodyBlock block = body.entry();
+            for (uint32_t blockIndex = 0; blockIndex < body.numberOfBlocks(); ++blockIndex) {
+                BodyValues::Iterator cursor = block.values().begin();
+                for (uint32_t remaining = block.numberOfValues(); remaining--; ++cursor) {
+                    BodyValue value = *cursor;
                     if (value.opcode() != Opcode::ModuleBuiltin)
                         continue;
                     ModuleID module = value.as<Opcode::ModuleBuiltin>().module();
                     if (module && module.index() < numberOfModules)
                         isNamed[module.index()].store(true, std::memory_order_relaxed);
                 }
-            });
+                BodyTerminator terminator(cursor.words(), unit, BlockID(blockIndex));
+                block = BodyBlock(terminator.end(), nullptr, unit, BlockID(blockIndex + 1), block.endOfValues());
+            }
         }
     });
 

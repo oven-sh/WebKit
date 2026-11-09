@@ -24,6 +24,7 @@
 #include "JSObject.h"
 #include "JSString.h"
 #include "ProxyObject.h"
+#include "RegExpObject.h"
 #include "VM.h"
 #include <algorithm>
 #include <limits>
@@ -138,6 +139,7 @@ void generateReadSlot(StubAssembler& jit)
         RELEASE_ASSERT_NOT_REACHED();
     };
     auto callGetter = [&](GPRReg getterSetter) {
+        branchUnlessAccessorPair(jit, getterSetter, miss);
         const StubSignature finisher = signatureOfSlotCannot(slotCannot(SlotFinisher::CallGetter, origin));
         RELEASE_ASSERT(finisher.operands[finisher.numberOfOperands - 1] == Reg(getterSetter));
         RegisterSet lostToEveryCaller;
@@ -384,12 +386,18 @@ void generateReadSlot(StubAssembler& jit)
             jit.load64(BaseIndex(extraPropertyRegisters.extraProperties, extraPropertyRegisters.wordIndex, CCallHelpers::TimesEight), T10);
             callGetter(T10);
             return;
-        case Slot::Kind::ArrayLength:
+        case Slot::Kind::ArrayLength: {
+            Jump isLastIndex = slot.branchIfFlag(jit, Slot::isLastIndexOfRegExp);
             jit.loadPtr(Address(R0, JSObject::butterflyOffset()), T10);
             jit.load32(Address(T10, Butterfly::offsetOfPublicLength()), T10);
             uncached.append(jit.branch32(CCallHelpers::LessThan, T10, TrustedImm32(0)));
             returnInt32(T10);
+
+            isLastIndex.link(&jit);
+            jit.load64(Address(R0, RegExpObject::offsetOfLastIndex()), R0);
+            jit.returnToCaller();
             return;
+        }
         case Slot::Kind::TypedArrayLength: {
             uncached.append(jit.branchTest8(CCallHelpers::NonZero, Address(R0, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
             Jump readsByteOffset = slot.branchIfFlag(jit, Slot::readsByteOffset);

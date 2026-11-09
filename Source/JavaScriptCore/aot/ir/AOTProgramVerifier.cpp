@@ -10,10 +10,12 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLayout.h"
 #include "AOTNameClass.h"
 #include "AOTOperationData.h"
 #include "AOTPhaseTimes.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringTable.h"
 #include "AOTThreads.h"
@@ -38,7 +40,9 @@ std::optional<InternalError> findErrorInStringAsRead(const Program& program, uin
     std::span<const uint8_t> bytes = strings[id];
     if (!isCanonicalProgramString(bytes))
         return InternalError { .kind = InternalErrorKind::StringNotCanonical, .count = index };
-    if (classifyName(bytes) != strings.nameClass(id) || program.builtins().nameOf(bytes) != strings.builtinName(id))
+    BuiltinName name = strings.builtinName(id);
+    bool carriesNameThatItDoesNotSpell = name && (name.index() >= program.builtins().textNameCount() || !equalSpans(program.builtins().textOf(name), bytes));
+    if (classifyName(bytes) != strings.nameClass(id) || carriesNameThatItDoesNotSpell)
         return InternalError { .kind = InternalErrorKind::NameClassMismatch, .count = index };
     StringID found = strings.find(bytes);
     if (found != id)
@@ -204,7 +208,7 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    void checkClassParts(ClassPartsID parts)
+    ALWAYS_INLINE void checkClassParts(ClassPartsID parts)
     {
         if (!parts)
             return;
@@ -265,6 +269,8 @@ void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const Functi
         checker.checkRequired(functionType);
     for (BuiltinID member : function.builtinMembers)
         checker.checkRequired(member);
+    for (StringID specifier : function.originalsAskedFor)
+        checker.checkRequired(specifier);
 }
 
 void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const TypeSite& site)
@@ -613,7 +619,7 @@ std::optional<InternalError> findFieldError(const Program& program, LayoutID id,
 
 } // anonymous namespace
 
-bool isValidPropertyKey(const PropertyKey& key)
+ALWAYS_INLINE_INTO_OTHER_FILES bool isValidPropertyKey(const PropertyKey& key)
 {
     bool hasCreationSite = key.module || key.callNumber;
     switch (key.kind) {
@@ -738,6 +744,7 @@ void ProgramVerifier::verifyIDs()
     verifyList(m_program.moduleFailures);
     verifyList(m_program.ambiguousExports);
     verifyList(m_program.sourceStamps);
+    verifyList(m_program.declaredRecords);
     verifyList(m_program.evalScopes);
     verifyList(m_program.data);
     verifyList(m_program.entries);
@@ -858,6 +865,16 @@ void ProgramVerifier::verifyClasses()
     });
     for (uint32_t index : invalidClasses)
         fail({ .kind = InternalErrorKind::InvalidClass, .layout = LayoutID(index) });
+    BitVector rowsThatEnd = answerAlongRows(m_program.layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
+        LayoutID base = m_program.at(id).base;
+        if (!base)
+            return { true, { } };
+        return { std::nullopt, base };
+    });
+    for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+        if (!rowsThatEnd.quickGet(index))
+            fail({ .kind = InternalErrorKind::RingOfBases, .layout = LayoutID(index) });
+    }
 }
 
 bool ProgramVerifier::isValidClass(LayoutID id, const Layout& layout) const
@@ -939,9 +956,9 @@ void ProgramVerifier::verifyVariables()
     }
 }
 
-bool ProgramVerifier::runOnModulesNamedInBodies()
+bool ProgramVerifier::runOnModulesNamedInBodies(Vector<MentionInCode>&& mentionsInBodies)
 {
-    verifyModulesNamedInBodies();
+    verifyModulesNamedInBodies(WTF::move(mentionsInBodies));
     return !hasFailed();
 }
 
@@ -950,9 +967,9 @@ bool verifyRecords(const Program& program, BuildContext& build)
     return ProgramVerifier(program, build).run();
 }
 
-bool verifyModulesNamedInBodies(const Program& program, BuildContext& build)
+bool verifyModulesNamedInBodies(const Program& program, BuildContext& build, Vector<MentionInCode>&& mentionsInBodies)
 {
-    return ProgramVerifier(program, build).runOnModulesNamedInBodies();
+    return ProgramVerifier(program, build).runOnModulesNamedInBodies(WTF::move(mentionsInBodies));
 }
 
 } } } // namespace JSC::AOT::Typed
