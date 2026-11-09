@@ -467,6 +467,27 @@ bool Modules::waitsForFactoryThatLoadInFlightCalled(ModuleID module) const
     return !m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return pair.mocked == module; });
 }
 
+void Modules::askLoaderForNamesBelow(ModuleID required)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    BitVector seen(m_table.size());
+    Vector<ModuleID, 16> work { required };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (seen.quickSet(module.index()) || isMocked(module) || hasBegunToLoad(module))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(module)) {
+            if (request.isHoisted || request.isRequire)
+                continue;
+            if (data(request.targetModule()).isUncompiledCode()) {
+                resolvedKey(request.targetModule());
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+            work.append(moduleLoadedBy(request));
+        }
+    }
+}
+
 void Modules::noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp)
 {
     BitVector reached = reachedByStatements(required, AtMock::Stops);

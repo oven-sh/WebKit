@@ -918,6 +918,7 @@ public:
     JSValue requireModuleItselfBesideMock(ModuleID);
     uint64_t callOfFactoryThatHasNotSettled(ModuleID, bool* refusesEveryRequire = nullptr) const;
     bool waitsForFactoryThatLoadInFlightCalled(ModuleID) const;
+    void askLoaderForNamesBelow(ModuleID required);
     void noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp = true);
     JSValue answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleID requirer);
     void noteFilesLinkedToOriginalBelowRequire(ModuleID required, ModuleID mocked);

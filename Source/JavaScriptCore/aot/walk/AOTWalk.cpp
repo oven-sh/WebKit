@@ -7185,8 +7185,12 @@ void Walker::walkBlock(BlockID inputBlock)
     });
     const BodyIndex& index = *m_frames.last().index;
     BodyBlock block = index.block(inputBlock);
-    if (!frameIndex && !m_pendingBlocks.isEmpty())
-        m_pendingBlocks.shrink(0);
+    if (!frameIndex && !m_pendingBlocks.isEmpty()) {
+        if (m_frames[0].loopsBeingBuiltTwice.isEmpty())
+            m_pendingBlocks.shrink(0);
+        else
+            letGoOfPendingBlocksThatHaveEnded();
+    }
     if (!m_openLoops.isEmpty() && !m_walksCleanupBesideCopyOfLoop) {
         const OpenLoop& newest = m_openLoops.last();
         if (newest.frame > frameIndex || (newest.frame == frameIndex && inputBlock.index() > index.loop(newest.loop).last.index()))

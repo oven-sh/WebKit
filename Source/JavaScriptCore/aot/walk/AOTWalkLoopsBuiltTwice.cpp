@@ -2317,8 +2317,15 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
             m_block = { };
             m_state.clear();
             continueIn(startOfRest);
-            if (isUnreachable())
-                continue;
+            if (isUnreachable()) {
+                bool someFrontLeadsHere = false;
+                m_code.forEachEdgeIntoSoFar(startOfRest, [&](const Edge&) {
+                    someFrontLeadsHere = true;
+                });
+                if (!someFrontLeadsHere)
+                    continue;
+                m_block = startOfRest;
+            }
         } else {
             m_block = start.block;
             m_state = WTF::move(start.state);
@@ -3481,7 +3488,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     bool holdsCounterBelowLengthsOfLists = heldBelowRoom.accesses.containsIf([](const AccessUnderCounterOfLoop& access) { return access.isOfList; });
     std::optional<WalkState> knownInFrontOfTestsOfLists;
     auto buildTestsOfLists = [&] {
-        if (listsRead.lists.containsIf([](const ListTestedInFrontOfLoop& list) { return list.kindMayWellBeAnother && list.keepsKindWhereNoCopyIsWalkedForAnother; }) && !listsRead.lists.containsIf(isConvertedInFrontOfTypedCopy))
+        if (listsRead.lists.containsIf([](const ListTestedInFrontOfLoop& list) { return list.kindMayWellBeAnother; }) && !listsRead.lists.containsIf(isConvertedInFrontOfTypedCopy))
             knownInFrontOfTestsOfLists = m_state;
         SetForScope asked(m_inputHeadAskedAboutTypedCopy, headOfLooksTriedForLists);
         buildTestsOfListsReadInLoop(*this, inputHead, entering, listsRead, guesses.span(), proofs.span(), closedStart, origin);

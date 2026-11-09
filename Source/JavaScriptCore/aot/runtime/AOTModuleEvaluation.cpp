@@ -3931,6 +3931,10 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         else
             letLinksOfLoadStand(target);
     });
+    if (someFactoryHasNotSettled || !m_requiresThatGaveUp.isEmpty()) [[unlikely]] {
+        askLoaderForNamesBelow(target);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (someFactoryHasNotSettled) [[unlikely]]
         noteThatRequireGaveUpOn(target, false);
     if (!m_requiresThatGaveUp.isEmpty() && (!targetData.isOfLibrary() || isRequiredByProgram)) [[unlikely]] {
@@ -4004,6 +4008,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         evaluateSynchronously(target, SynchronousEvaluationReason::Require);
         loaded.isBeingRequired = false;
         if (scope.exception()) [[unlikely]] {
+            noteThatRequireGaveUpOn(target);
             loaded.isKeptByRequire = wasKeptByRequire;
             if (!wasKeptByRequire)
                 loaded.objectMadeByRequire.set(*this, nullptr);
