@@ -179,7 +179,8 @@ JS_EXPORT_PRIVATE void unpinMemoryForHost(JSCell* holder);
 // above. A word of the stack that merely looks like a reference keeps the cell it names, as ever, but a view that nothing else
 // refers to is released. So code written in C++ that relies on the memory of an object across calls that may run anything
 // takes a buffer, which counts whatever refers to it; having a view in a variable is not enough.
-// (With a frame of the optimizing compilers on the stack, of which the registers in use cannot be told, every word counts.)
+// (With a frame on the stack of which the registers in use cannot be told, every word counts: one of the optimizing compilers, of WebAssembly, of the callee of an
+// inline cache; and in a VM that has code compiled ahead of time.)
 // A __release_buffer__() written in Python is not called from here, but at the next safe point.
 bool isHeldByFrames(JSGlobalObject*, JSValue exporter);
 void releaseUnreachableBuffers(JSGlobalObject*, bool thorough);

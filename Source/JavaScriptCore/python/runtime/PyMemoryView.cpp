@@ -32,7 +32,6 @@
 #include "PyThreads.h"
 #include "PyTuple.h"
 #include "PyTypes.h"
-#include "StackVisitor.h"
 #include "TopExceptionScope.h"
 #include <wtf/SetForScope.h>
 
@@ -491,6 +490,9 @@ static JSValue managedBufferFinalize(JSGlobalObject* globalObject, JSValue self)
 template<typename Function>
 static bool bufferForEachCellInFrames(VM& vm, const Function& function)
 {
+    // Code compiled ahead of time has frames of a kind of their own.
+    if (vm.hasCompiledCode())
+        return false;
     bool isComplete = true;
     // Where the frame that this one called ends. It lies among the registers of this one.
     Register* endOfCallee = nullptr;
@@ -504,14 +506,19 @@ static bool bufferForEachCellInFrames(VM& vm, const Function& function)
         if (value && value.isCell() && HeapUtil::isJSCellStorage(vm.heap, filter, value.asCell()) && !value.asCell()->isZapped())
             function(value.asCell());
     };
-    auto visitFrame = [&](StackVisitor& visitor) {
-        CodeBlock* codeBlock = visitor->codeBlock();
-        // (Of a function that was inlined the visitor has the code as it was before, and the frame of the function that it was inlined in.)
-        if (!visitor->isNativeFrame() && (!codeBlock || visitor->isInlinedDFGFrame() || JITCode::isOptimizingJIT(codeBlock->jitType()))) {
+    // True: go on.
+    auto visitFrame = [&](CallFrame* frame) {
+        // None: a function of C++.
+        CodeBlock* codeBlock = frame->isNativeCalleeFrame() ? nullptr : frame->codeBlock();
+        if (frame->isNativeCalleeFrame() || (codeBlock && JITCode::isOptimizingJIT(codeBlock->jitType()))) {
             isComplete = false;
-            return IterationStatus::Done;
+            return false;
         }
-        CallFrame* frame = visitor->callFrame();
+        // There was no room for it on the stack: it has its code block, but neither its function nor its registers.
+        if (codeBlock && frame->isZombieFrame()) {
+            endOfCallee = frame->registers() + CallFrame::headerSizeInRegisters;
+            return true;
+        }
         size_t argumentCount = frame->argumentCountIncludingThis();
         if (codeBlock)
             argumentCount = std::max<size_t>(argumentCount, codeBlock->numParameters());
@@ -534,20 +541,21 @@ static bool bufferForEachCellInFrames(VM& vm, const Function& function)
             }
         }
         endOfCallee = arguments + argumentCount;
-        return IterationStatus::Continue;
+        return true;
     };
-    StackVisitor::visit(vm.topCallFrame, vm, visitFrame);
+    // By the frames of the machine, each of them once, not by what a StackVisitor shows, which is made for stack traces: it shows functions that were inlined, which have
+    // no frame, leaves out the one that a call in tail position was inlined in, and ends early if it cannot tell.
+    auto visitFrames = [&](CallFrame* frame, EntryFrame* entryFrame) {
+        endOfCallee = nullptr;
+        while (frame && visitFrame(frame))
+            frame = frame->callerFrame(entryFrame);
+    };
+    visitFrames(vm.topCallFrame, vm.topEntryFrame);
 
     // The threads that are not running have frames too, and have taken with them what the runtimes hold for the one that is.
     if (vm.apiLock().hasParkedThreads()) {
         vm.apiLock().forEachParkedThread([&](JSLock::ParkedThread& parked) {
-            if (!parked.topCallFrame())
-                return;
-            // A StackVisitor starts from what the VM says is the top.
-            SetForScope callFrame(vm.topCallFrame, parked.topCallFrame());
-            SetForScope entryFrame(vm.topEntryFrame, parked.topEntryFrame());
-            endOfCallee = nullptr;
-            StackVisitor::visit(parked.topCallFrame(), vm, visitFrame);
+            visitFrames(parked.topCallFrame(), parked.topEntryFrame());
         });
         vm.heap.pythonRuntimes().first()->threads().forEachCellSetAside(function);
     }
