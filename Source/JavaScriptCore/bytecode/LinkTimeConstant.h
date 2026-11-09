@@ -158,10 +158,11 @@ class JSGlobalObject;
     v(ownKeys, nullptr) \
     v(ReferenceError, nullptr) \
     v(SuppressedError, nullptr) \
-    v(Decimal, nullptr) \
     v(DisposableStack, nullptr) \
     v(AsyncDisposableStack, nullptr) \
     v(enqueueJob, nullptr) \
+    v(Decimal, nullptr) \
+    v(decimalOperator, nullptr) \
 
 #define DECLARE_LINK_TIME_CONSTANT(name, code) name,
 enum class LinkTimeConstant : int32_t {

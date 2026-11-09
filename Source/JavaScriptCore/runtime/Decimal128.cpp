@@ -704,6 +704,7 @@ String Decimal128::toString() const
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal-decimaltodecimalstring
+// With the sign of an integer, and with all digits of the fraction.
 String Decimal128::toDecimalString() const
 {
     if (!isFinite())
@@ -719,6 +720,7 @@ String Decimal128::toDecimalString() const
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimaltoexponentialstring
+// With 1 <= argument * 10^-e < 10 in place of 10^e.
 String Decimal128::toExponentialString() const
 {
     if (!isFinite())
@@ -780,11 +782,6 @@ String Decimal128::toFixed(double numberOfDigits, RoundingMode mode) const
     return toStringUnlessOverflowed(builder);
 }
 
-bool Decimal128::hasMoreDigitsThan(double numberOfDigits) const
-{
-    return isFinite() && coefficient().numberOfDigits() > numberOfDigits;
-}
-
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.toprecision
 String Decimal128::toPrecision(double numberOfDigits, RoundingMode mode) const
 {
@@ -813,26 +810,28 @@ String Decimal128::toPrecision(double numberOfDigits, RoundingMode mode) const
         return toStringUnlessOverflowed(builder);
     }
 
-    // The steps for the other values do not give the value (1.25 is "125" and 1200 is "12.0"). These are the digits and the choice of
-    // notation of Number.prototype.toPrecision, to which the proposal says that this is similar.
+    // The steps for the other values do not give the value (1.25 is "125" and 1200 is "12.0"). They also count the sign as a digit, can
+    // write it twice, and round a negative value as if it were positive. These are the digits of Number.prototype.toPrecision, to which
+    // the proposal says that this is similar. So is the notation, but a value that has more digits than asked for has an exponent, as in
+    // the steps, whose scale and exponent are wrong there.
     int scientific = scientificExponent();
-    int exponent = m_exponent;
-    Decimal128 rounded = *this;
     if (int excess = numberOfCoefficientDigits - wanted; excess > 0) {
-        exponent += excess;
-        Wide magnitude = magnitudeInUnitsOf(exponent, mode);
+        Wide magnitude = magnitudeInUnitsOf(m_exponent + excess, mode);
         if (magnitude == Wide::powerOf10(wanted)) {
             magnitude = Wide::powerOf10(wanted - 1);
-            ++exponent;
             ++scientific;
         }
+        Decimal128 rounded = *this;
         rounded.setUnrestrictedCoefficient(magnitude);
+        appendExponential(builder, rounded.coefficientDigits().span(), scientific, wanted);
+        return toStringUnlessOverflowed(builder);
     }
-    auto digits = rounded.coefficientDigits();
+
+    auto digits = coefficientDigits();
     if (scientific < -6 || scientific >= wanted)
         appendExponential(builder, digits.span(), scientific, wanted);
     else
-        appendPlain(builder, digits.span(), exponent, wanted - 1 - scientific);
+        appendPlain(builder, digits.span(), m_exponent, wanted - 1 - scientific);
     return toStringUnlessOverflowed(builder);
 }
 

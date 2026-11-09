@@ -73,6 +73,7 @@ public:
     JSValue select(JSGlobalObject*, IntlMathematicalValue&& targetValue) const;
     JSValue selectRange(JSGlobalObject*, double start, double end) const;
     JSValue selectRange(JSGlobalObject*, IntlMathematicalValue&& start, IntlMathematicalValue&& end) const;
+    JSValue selectRangeOfDecimals(JSGlobalObject*, IntlMathematicalValue&& start, IntlMathematicalValue&& end) const;
     JSObject* resolvedOptions(JSGlobalObject*) const;
 
 private:

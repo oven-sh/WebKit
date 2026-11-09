@@ -1,5 +1,5 @@
 //@ runDefault("--useDecimal=1")
-// The algorithms of https://tc39.es/proposal-decimal/ written out step by step, against all pairs of a set of values. A Decimal value is
+// The algorithms of https://tc39.es/proposal-decimal/ written out step by step, but for their checks of the arguments, against all pairs of a set of values. A Decimal value is
 // one of the strings below, or { n, e } for the mathematical value n * 10^e.
 
 const NaND = "NaN", PINF = "Infinity", NINF = "-Infinity", P0 = "0", N0 = "-0";
@@ -331,26 +331,47 @@ function scale10(d, n) {
     return roundToDecimalDomain(d.n, 1n, d.e + n);
 }
 
-// DecimalToExponentialString, with the exponent of the value and the sign.
+function canonicalizeDecimalString(digits) {
+    if (!digits.includes("."))
+        return digits;
+    if (!digits.endsWith("0"))
+        return digits;
+    const lhs = digits.slice(0, digits.indexOf("."));
+    const rhs = digits.slice(digits.indexOf(".") + 1);
+    const noTrailingZeroes = rhs.replace(/0+$/, "");
+    return noTrailingZeroes === "" ? lhs : lhs + "." + noTrailingZeroes;
+}
+
+// DecimalToDecimalString. Not as in the steps: an integer has the prefix too, and nonIntegerPart is not cut to numDigits digits.
+function toDecimal(d) {
+    if (!isMV(d) && !zero(d))
+        return d;
+    const prefix = sign(d) === -1 ? "-" : "";
+    if (zero(d))
+        return prefix + "0";
+    const argument = steps.abs(d);
+    const x = argument.e >= 0 ? argument.n * tenTo(argument.e) : argument.n / tenTo(-argument.e);
+    const y = argument.e >= 0 ? 0n : argument.n % tenTo(-argument.e);
+    const fractionalPart = y === 0n ? "" : String(y).padStart(-argument.e, "0");
+    let integerPart = x === 0n ? "" : String(x);
+    if (y === 0n)
+        return prefix + integerPart;
+    if (integerPart === "")
+        integerPart = "0";
+    return canonicalizeDecimalString(prefix + integerPart + "." + fractionalPart);
+}
+
+// DecimalToExponentialString. Not as in the steps: e is the one for which 1 <= argument * 10^-e < 10.
 function toExponential(d) {
     if (d === NaND || infinite(d))
         return d;
+    const prefix = sign(d) === -1 ? "-" : "";
     if (zero(d))
-        return d + "e+0";
-    const digits = String(abs(d.n)), coefficient = digits.replace(/0+$/, "");
-    return (d.n < 0n ? "-" : "") + coefficient[0] + (coefficient.length > 1 ? "." + coefficient.slice(1) : "") + "e" + (digits.length - 1 + d.e);
-}
-
-// DecimalToDecimalString, with the sign of an integer.
-function toDecimal(d) {
-    if (!isMV(d))
-        return d;
-    let digits = String(abs(d.n));
-    if (d.e >= 0)
-        return (d.n < 0n ? "-" : "") + digits + "0".repeat(d.e);
-    digits = digits.padStart(1 - d.e, "0");
-    const text = digits.slice(0, d.e) + "." + digits.slice(d.e);
-    return (d.n < 0n ? "-" : "") + text.replace(/\.?0+$/, "");
+        return prefix + "0e+0";
+    const argument = steps.abs(d);
+    const e = length(argument.n) - 1 + argument.e;
+    const mantissa = { n: argument.n, e: argument.e - e };
+    return prefix + toDecimal(mantissa) + "e" + e;
 }
 
 function toStringOf(d) {
@@ -376,7 +397,6 @@ for (const d1 of values) {
         shouldBe(answer(x[name]()), expected(steps[name](d1)), what1(name));
     shouldBe(x.toExponential(), toExponential(d1), what1("toExponential"));
     shouldBe(x.toString(), toStringOf(d1), what1("toString"));
-    shouldBe(x.toPrecision(), toStringOf(d1), what1("toPrecision"));
     shouldBe(x.toPrecision({}), toDecimal(d1), what1("toPrecision({})"));
     shouldBe(Number(x), Number(toExponential(d1)), what1("Number"));
     for (const n of [0, 1, -1, 34, -34, NaN, Infinity, -Infinity])

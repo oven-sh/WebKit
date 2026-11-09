@@ -1,5 +1,5 @@
 //@ requireOptions("--useDecimal=1")
-// 1.5m, the literal syntax of https://github.com/tc39/proposal-decimal#decimal-literals
+// 1.5m. An extension: the proposal has no literals.
 
 function shouldBe(actual, expected, what = "") {
     if (!Object.is(actual, expected))
@@ -170,4 +170,19 @@ shouldBe((() => 1_0.50m).toString(), "() => 1_0.50m");
     noInline(sum);
     for (let i = 0; i < testLoopCount / 100; ++i)
         shouldBe(sum(10).equals(1m), true);
+}
+
+// A 16-bit source.
+shouldBe(String(eval("/*\u4e00*/1_0.5e1m")), "105");
+shouldThrow(() => eval("/*\u4e00*/1mx"), SyntaxError);
+shouldThrow(() => eval("/*\u4e00*/01m"), SyntaxError);
+
+// Names of members.
+{
+    let value;
+    const object = new class { set 1m(v) { value = v; } async 2m() { } static get 3m() { return 4m; } };
+    object["1"] = 5m;
+    shouldBe(String(value), "5");
+    shouldBe(object["2"]() instanceof Promise, true);
+    shouldBe(String(object.constructor["3"]), "4");
 }

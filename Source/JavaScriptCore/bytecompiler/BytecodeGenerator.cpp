@@ -1863,6 +1863,128 @@ bool BytecodeGenerator::tryEmitTypeofIsUndefinedForStringComparison(RegisterID* 
     return true;
 }
 
+// The operation is a call and not a part of op_add and its like, because every tier knows that the results of those are no objects.
+// The call answers undefined, and has had no effect, if the operands are not Decimals. It cannot throw, so it needs no expression info.
+void BytecodeGenerator::emitDecimalOperator(DecimalOperator decimalOperator, RegisterID* dst, RegisterID* left, RegisterID* right, Label& ordinary)
+{
+    emitJumpIfFalse(emitIsObject(newTemporary(), left), ordinary);
+    if (left != right)
+        emitJumpIfFalse(emitIsObject(newTemporary(), right), ordinary);
+
+    RefPtr<RegisterID> function = moveLinkTimeConstant(newTemporary(), LinkTimeConstant::decimalOperator);
+    RefPtr<RegisterID> result = newTemporary();
+    {
+        CallArguments arguments(*this, nullptr, 3);
+        emitLoad(arguments.thisRegister(), jsUndefined());
+        emitLoad(arguments.argumentRegister(0), jsNumber(static_cast<unsigned>(decimalOperator)));
+        move(arguments.argumentRegister(1), left);
+        move(arguments.argumentRegister(2), right);
+        Vector<RefPtr<RegisterID>, CallFrame::headerSizeInRegisters, UnsafeVectorOverflow> callFrame;
+        for (int i = 0; i < CallFrame::headerSizeInRegisters; ++i)
+            callFrame.append(newTemporary());
+        OpCall::emit(this, result.get(), function.get(), arguments.argumentCountIncludingThis(), arguments.stackOffset(), nextValueProfileIndex());
+    }
+    emitJumpIfTrue(emitIsUndefined(newTemporary(), result.get()), ordinary);
+    move(dst, result.get());
+}
+
+template<typename Functor>
+RegisterID* BytecodeGenerator::emitWithDecimalOperator(DecimalOperator decimalOperator, RegisterID* dst, RegisterID* left, RegisterID* right, OperandTypes types, const Functor& emitOrdinary)
+{
+    ASSERT(usesDecimalOperators());
+    auto mightBeObject = [](RegisterID* operand, ResultType type) {
+        if (operand->virtualRegister().isConstant())
+            return false;
+        return !type.definitelyIsNumber() && !type.definitelyIsString() && !type.definitelyIsBigInt() && !type.definitelyIsBoolean() && !type.definitelyIsNull() && !type.isInt32();
+    };
+    if (!mightBeObject(left, types.first()) || !mightBeObject(right, types.second()))
+        return emitOrdinary();
+
+    // Nothing else may hold these, and temporaries are made below.
+    RefPtr<RegisterID> protectedDst = dst;
+    RefPtr<RegisterID> protectedLeft = left;
+    RefPtr<RegisterID> protectedRight = right;
+
+    Ref<Label> ordinary = newLabel();
+    Ref<Label> done = newLabel();
+    emitDecimalOperator(decimalOperator, dst, left, right, ordinary.get());
+    emitJump(done.get());
+    emitLabel(ordinary.get());
+    RegisterID* result = emitOrdinary();
+    ASSERT_UNUSED(result, result == dst);
+    emitLabel(done.get());
+    return dst;
+}
+
+static std::optional<DecimalOperator> decimalOperatorForOpcode(OpcodeID opcodeID)
+{
+    switch (opcodeID) {
+    case op_add:
+        return DecimalOperator::Add;
+    case op_sub:
+        return DecimalOperator::Subtract;
+    case op_mul:
+        return DecimalOperator::Multiply;
+    case op_div:
+        return DecimalOperator::Divide;
+    case op_mod:
+        return DecimalOperator::Remainder;
+    case op_eq:
+        return DecimalOperator::Equal;
+    case op_neq:
+        return DecimalOperator::NotEqual;
+    case op_less:
+        return DecimalOperator::Less;
+    case op_lesseq:
+        return DecimalOperator::LessOrEqual;
+    case op_greater:
+        return DecimalOperator::Greater;
+    case op_greatereq:
+        return DecimalOperator::GreaterOrEqual;
+    default:
+        return std::nullopt;
+    }
+}
+
+RegisterID* BytecodeGenerator::emitNegateOrDecimal(RegisterID* dst, RegisterID* src, ResultType type)
+{
+    return emitWithDecimalOperator(DecimalOperator::Negate, dst, src, src, { type, type }, [&] {
+        OpNegate::emit(this, dst, src, m_codeBlock->addUnaryArithProfile(), type);
+        return dst;
+    });
+}
+
+RegisterID* BytecodeGenerator::emitBinaryOpOrDecimal(OpcodeID opcodeID, RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes types)
+{
+    auto decimalOperator = decimalOperatorForOpcode(opcodeID);
+    if (!decimalOperator)
+        return emitOrdinaryBinaryOp(opcodeID, dst, src1, src2, types);
+    return emitWithDecimalOperator(*decimalOperator, dst, src1, src2, types, [&] {
+        return emitOrdinaryBinaryOp(opcodeID, dst, src1, src2, types);
+    });
+}
+
+RegisterID* BytecodeGenerator::emitEqualOrDecimal(RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes types)
+{
+    return emitWithDecimalOperator(DecimalOperator::Equal, dst, src1, src2, types, [&] {
+        return emitEqualityOp<OpEq>(dst, src1, src2);
+    });
+}
+
+RegisterID* BytecodeGenerator::emitIncOrDecOrDecimal(RegisterID* srcDst, bool isIncrement)
+{
+    return emitWithDecimalOperator(isIncrement ? DecimalOperator::Increment : DecimalOperator::Decrement, srcDst, srcDst, srcDst, { }, [&] {
+        return isIncrement ? emitInc(srcDst) : emitDec(srcDst);
+    });
+}
+
+RegisterID* BytecodeGenerator::emitToNumericOrDecimal(RegisterID* dst, RegisterID* src)
+{
+    return emitWithDecimalOperator(DecimalOperator::ToNumeric, dst, src, src, { }, [&] {
+        return emitToNumeric(dst, src);
+    });
+}
+
 RegisterID* BytecodeGenerator::emitUnaryOp(OpcodeID opcodeID, RegisterID* dst, RegisterID* src, ResultType type)
 {
     switch (opcodeID) {
@@ -1870,6 +1992,8 @@ RegisterID* BytecodeGenerator::emitUnaryOp(OpcodeID opcodeID, RegisterID* dst, R
         emitUnaryOp<OpNot>(dst, src);
         break;
     case op_negate:
+        if (usesDecimalOperators()) [[unlikely]]
+            return emitNegateOrDecimal(dst, src, type);
         OpNegate::emit(this, dst, src, m_codeBlock->addUnaryArithProfile(), type);
         break;
     case op_bitnot:
@@ -1888,6 +2012,13 @@ RegisterID* BytecodeGenerator::emitUnaryOp(OpcodeID opcodeID, RegisterID* dst, R
 }
 
 RegisterID* BytecodeGenerator::emitBinaryOp(OpcodeID opcodeID, RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes types)
+{
+    if (usesDecimalOperators()) [[unlikely]]
+        return emitBinaryOpOrDecimal(opcodeID, dst, src1, src2, types);
+    return emitOrdinaryBinaryOp(opcodeID, dst, src1, src2, types);
+}
+
+RegisterID* BytecodeGenerator::emitOrdinaryBinaryOp(OpcodeID opcodeID, RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes types)
 {
     switch (opcodeID) {
     case op_eq:

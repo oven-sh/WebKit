@@ -60,35 +60,62 @@ const d = value => new Decimal(value);
     shouldBe(log.join(), "digits,roundingMode,precision,roundingMode");
 
     for (const [text, precision, expected, roundingMode] of [
-        ["123.456", 4, "123.5"], ["123.456", 2, "1.2e2"], ["-123.456", 4, "-123.4", "ceil"], ["-123.456", 4, "-123.5", "floor"], ["1", 3, "1.00"], ["-12", 4, "-12.00"],
+        ["123.456", 4, "1.235e2"], ["123.456", 2, "1.2e2"], ["-123.456", 4, "-1.234e2", "ceil"], ["-123.456", 4, "-1.235e2", "floor"], ["123.456", 6, "123.456"],
+        // The sign is not a digit.
+        ["-5", 2, "-5.0"], ["-15", 3, "-15.0"], ["-1.5", 4, "-1.500"], ["-15", 2, "-15"], ["1", 3, "1.00"], ["-12", 4, "-12.00"],
         // Zero has that many digits behind the point, and its sign with one digit only.
         ["0", 1, "0"], ["-0", 1, "-0"], ["0", 3, "0.000"], ["-0", 3, "0.000"],
         // Fewer digits than asked for and a fraction: decimal notation.
         ["0.000001", 2, "0.0000010"], ["0.0000001", 2, "0.00000010"], ["-1e-10", 3, "-0.000000000100"], ["0.00123", 5, "0.0012300"], ["1.5", 3, "1.50"],
-        // As many or more: that of Number.prototype.toPrecision, but for the sign of the exponent.
-        ["1.5e-10", 2, "1.5e-10"], ["1.55e-10", 2, "1.6e-10"], ["1.25", 3, "1.25"], ["99.99", 3, "100"], ["99.99", 2, "1.0e2"], ["1200", 4, "1200"], ["1200", 3, "1.20e3"], ["1200", 2, "1.2e3"],
+        // As many: the notation of Number.prototype.toPrecision. More: an exponent.
+        ["1.5e-10", 2, "1.5e-10"], ["1.55e-10", 2, "1.6e-10"], ["1.25", 3, "1.25"], ["99.99", 3, "1.00e2"], ["99.99", 2, "1.0e2"], ["1.25", 2, "1.2e0"], ["0.00125", 2, "1.2e-3"], ["1200", 4, "1200"], ["1200", 3, "1.20e3"], ["1200", 2, "1.2e3"],
         ["25", 1, "2e1"], ["25", 1, "3e1", "halfExpand"], ["9.5", 1, "1e1"], ["NaN", 1, "NaN"], ["-Infinity", 1, "-Infinity"], ["1", 40, "1." + "0".repeat(39)], ["1e34", 35, "1" + "0".repeat(34)],
     ])
         shouldBe(d(text).toPrecision({ precision, roundingMode }), expected, `${text} ${precision}`);
-    shouldBe(d("123.456").toPrecision(), "123.456");
-    shouldBe(d("1e40").toPrecision(), "1e40");
+    // Without options the precision is 0.
+    for (const text of ["123.456", "1e40", "NaN", "Infinity", "0"]) {
+        shouldThrow(() => d(text).toPrecision(), RangeError);
+        shouldThrow(() => d(text).toPrecision(undefined), RangeError);
+    }
     // With options but no precision: decimal notation.
     shouldBe(d("-1e40").toPrecision({}), "-1" + "0".repeat(40));
     shouldBe(d("1e-10").toPrecision({ roundingMode: 1 }), "0.0000000001");
-    // The rounding mode matters only where there is something to round.
-    for (const text of ["NaN", "Infinity", "0", "1.5"]) {
-        for (const roundingMode of ["x", 1, null])
+    // The rounding mode is not checked. What is not one is halfEven, and is not converted.
+    for (const roundingMode of ["x", "Ceil", "", 1, null, true, 1n, Symbol(), {}, { toString() { throw new Error("toString"); } }]) {
+        for (const text of ["NaN", "Infinity", "0", "1.5"])
             shouldBe(typeof d(text).toPrecision({ precision: 2, roundingMode }), "string");
+        shouldBe(d("1.25").toPrecision({ precision: 2, roundingMode }), "1.2e0");
+        shouldBe(d("1.35").toPrecision({ precision: 2, roundingMode }), "1.4e0");
     }
-    shouldThrow(() => d("1.55").toPrecision({ precision: 2, roundingMode: "x" }), RangeError);
-    shouldThrow(() => d("1.55").toPrecision({ precision: 2, roundingMode: 1 }), TypeError);
     shouldThrow(() => d("1").toPrecision({ precision: 0 }), RangeError);
     shouldThrow(() => d("1").toPrecision({ precision: NaN }), RangeError);
     shouldThrow(() => d("1").toPrecision({ precision: "1" }), TypeError);
-    // toPrecision and toFixed write what those of Number write where both are exact.
+    // Which options are read, against every error.
+    for (const [method, name, values] of [
+        ["toFixed", "digits", [["1", TypeError, 2], [undefined, TypeError, 2], [NaN, RangeError, 2], [-1, RangeError, 2], [1.5, RangeError, 2], [Infinity, RangeError, 2], [1, null, 2]]],
+        ["toPrecision", "precision", [["1", TypeError, 1], [undefined, null, 1], [null, TypeError, 1], [NaN, RangeError, 1], [Infinity, RangeError, 1], [-Infinity, RangeError, 2], [0, RangeError, 2], [-0, RangeError, 2], [1.5, RangeError, 2], [1, null, 2]]],
+    ]) {
+        for (const [value, errorType, count] of values) {
+            for (const text of ["1.5", "NaN", "0"]) {
+                const log = [];
+                const options = new Proxy({ [name]: value }, { get(target, key) { log.push(key); return target[key]; } });
+                if (errorType)
+                    shouldThrow(() => d(text)[method](options), errorType);
+                else
+                    d(text)[method](options);
+                shouldBe(log.join(), [name, "roundingMode"].slice(0, count).join(), `${method} ${String(value)}`);
+            }
+        }
+    }
+    // The error of the count is before that of the mode.
+    shouldThrow(() => d("1").toFixed({ digits: 1.5, roundingMode: 1 }), RangeError);
+    shouldThrow(() => d("1").toFixed({ digits: "1", roundingMode: "x" }), TypeError);
+
+    // toPrecision and toFixed write what those of Number write where both are exact and have the digits.
     for (const number of [0.5, 1.25, 123.5, 4096, -2.75]) {
         for (let count = 1; count < 12; ++count) {
-            shouldBe(d(number).toPrecision({ precision: count, roundingMode: "halfExpand" }), number.toPrecision(count).replace("e+", "e"));
+            if (count >= String(Math.abs(number)).replace(/^0?\./, "").replace(".", "").replace(/^0+/, "").length)
+                shouldBe(d(number).toPrecision({ precision: count, roundingMode: "halfExpand" }), number.toPrecision(count).replace("e+", "e"));
             shouldBe(d(number).toFixed({ digits: count, roundingMode: "halfExpand" }), number.toFixed(count));
         }
     }

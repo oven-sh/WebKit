@@ -94,3 +94,27 @@ const max = "9.999999999999999999999999999999999e6144";
     shouldBe(d("1").add(new other.Decimal("2")).toString(), "3");
     shouldBe(Object.getPrototypeOf(Reflect.construct(Decimal, ["1"], Object.defineProperty(other.Function().bind(), "prototype", { value: null }))), other.Decimal.prototype);
 }
+
+// No white space or line terminator is allowed anywhere.
+for (const c of ["\t", "\v", "\f", "\n", "\r", " ", "\u00A0", "\u1680", "\u2000", "\u200B", "\u2028", "\u2029", "\u3000", "\uFEFF", "\0"]) {
+    for (const text of [c, c + "1", "1" + c, "1" + c + "1", "-" + c + "1", "1e" + c + "1", c + "NaN", "NaN" + c, c + "Infinity", "Infinity" + c])
+        shouldThrow(() => d(text), SyntaxError);
+}
+
+// An exception of the Get of the prototype goes before that of the text, and errors are of the realm of the constructor.
+{
+    const throwing = Object.defineProperty(function () { }.bind(), "prototype", { get() { throw new EvalError; } });
+    for (const text of ["1", "zz"])
+        shouldThrow(() => Reflect.construct(Decimal, [text], throwing), EvalError);
+    shouldThrow(() => Reflect.construct(Decimal, [null], throwing), TypeError);
+
+    const { proxy, revoke } = Proxy.revocable(function () { }, { get() { revoke(); return undefined; } });
+    shouldThrow(() => Reflect.construct(Decimal, ["1"], proxy), TypeError);
+    shouldThrow(() => Reflect.construct(Decimal, ["1"], proxy), TypeError);
+
+    const other = createGlobalObject();
+    shouldThrow(() => new other.Decimal("zz"), other.SyntaxError);
+    shouldThrow(() => new other.Decimal({}), other.TypeError);
+    shouldThrow(() => other.Decimal("1"), other.TypeError);
+    shouldThrow(() => Reflect.construct(Decimal, ["zz"], other.Object), SyntaxError);
+}

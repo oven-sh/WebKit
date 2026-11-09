@@ -373,6 +373,7 @@ inline IntlMathematicalValue toIntlMathematicalValue(JSGlobalObject* globalObjec
             return IntlMathematicalValue { PNaN };
         if (decimalValue.isInfinity())
             return IntlMathematicalValue { decimalValue.isNegative() ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity() };
+        // The steps answer the Decimal value itself, which is not an Intl mathematical value.
         if (decimalValue.isZero())
             return IntlMathematicalValue { decimalValue.isNegative() ? -0.0 : 0.0 };
         return IntlMathematicalValue { IntlMathematicalValue::NumberType::Integer, decimalValue.isNegative(), decimalValue.toExponentialString().ascii() };

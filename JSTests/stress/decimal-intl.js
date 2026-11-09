@@ -57,3 +57,27 @@ shouldThrow(() => plural.selectRange(d("NaN"), d("1")), RangeError);
 for (const receiver of [undefined, 1, "1", {}])
     shouldThrow(() => Decimal.prototype.toLocaleString.call(receiver), TypeError);
 shouldThrow(() => d("1").toLocaleString("x"), RangeError);
+
+// The category is that of the Number value, not that of the exact one.
+shouldBe(new Intl.PluralRules("en", { maximumFractionDigits: 20 }).select(d("1.00000000000000000001")), "one");
+shouldBe(new Intl.PluralRules("en", { maximumFractionDigits: 20 }).select("1.00000000000000000001"), "other");
+
+// The ends of a range are written the same: the category of the ends.
+for (const [locale, options, start, end, expected] of [
+    ["en", {}, "1", "1", "one"], ["en", {}, "1.0001", "1", "one"], ["en", {}, "1", "2", "other"], ["ar", {}, "0", "0", "zero"], ["ar", {}, "2", "2", "two"],
+    ["en", { type: "ordinal" }, "2", "2", "two"], ["en", {}, "Infinity", "Infinity", "other"], ["en", {}, "-0", "0", "other"], ["sl", {}, "1", "2", "two"], ["sl", {}, "101", "3", "few"], ["en", {}, "1e400", "1e401", "other"],
+]) {
+    const rules = new Intl.PluralRules(locale, options);
+    shouldBe(rules.selectRange(d(start), d(end)), expected, `${locale} ${start} ${end}`);
+}
+shouldBe(new Intl.PluralRules("en").selectRange(d("1"), 1), "one");
+shouldBe(new Intl.PluralRules("en").selectRange(1n, d("1")), "one");
+for (const [start, end] of [[d("NaN"), d("1")], [d("1"), NaN], [d("1"), d("NaN")]]) {
+    let error;
+    try {
+        new Intl.PluralRules("en").selectRange(start, end);
+    } catch (e) {
+        error = e;
+    }
+    shouldBe(error instanceof RangeError, true);
+}

@@ -9,6 +9,9 @@
 
 namespace JSC {
 
+// decimalOperator(DecimalOperator, left, right). undefined if an operand is not a Decimal. Both operands of a unary operator are the same.
+JSC_DECLARE_HOST_FUNCTION(decimalOperator);
+
 class DecimalPrototype final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;

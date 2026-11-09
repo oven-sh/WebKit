@@ -30,6 +30,12 @@ public:
     static constexpr Decimal128 nan() { return { Kind::NaN, false }; }
     static constexpr Decimal128 infinity(bool isNegative) { return { Kind::Infinity, isNegative }; }
     static constexpr Decimal128 zero(bool isNegative) { return { Kind::Finite, isNegative }; }
+    static constexpr Decimal128 one()
+    {
+        Decimal128 result;
+        result.m_low = 1;
+        return result;
+    }
 
     // StrDecimalLiteral or "NaN". No white space, no numeric separators. nullopt is a syntax error.
     static std::optional<Decimal128> parse(StringView);
@@ -61,9 +67,6 @@ public:
     // The count of digits and the power are integers that may be of any magnitude.
     Decimal128 round(double numberOfFractionalDigits, RoundingMode) const;
     Decimal128 scale10(double power) const;
-
-    // Whether toPrecision() has to round.
-    bool hasMoreDigitsThan(double numberOfDigits) const;
 
     String toString() const;
     // Never with an exponent.

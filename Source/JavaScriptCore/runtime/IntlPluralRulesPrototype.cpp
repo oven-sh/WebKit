@@ -78,7 +78,8 @@ void IntlPluralRulesPrototype::finishCreation(VM& vm, JSGlobalObject* globalObje
     UNUSED_PARAM(globalObject);
 }
 
-// https://tc39.es/proposal-decimal/#sec-resolveplural: the category of a Decimal is that of its Number value.
+// https://tc39.es/proposal-decimal/#sec-resolveplural: the category of a Decimal is that of its Number value. The draft amends that
+// operation and ResolvePluralRange, but not the methods that call them. This is how they pass a Decimal on.
 static IntlMathematicalValue toPluralOperand(JSGlobalObject* globalObject, JSValue value)
 {
     if (auto* decimal = DecimalObject::tryCast(value)) [[unlikely]]
@@ -129,6 +130,9 @@ JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncSelectRange, (JSGlobalObjec
 
     auto end = toPluralOperand(globalObject, endValue);
     RETURN_IF_EXCEPTION(scope, { });
+
+    if (DecimalObject::tryCast(startValue) || DecimalObject::tryCast(endValue)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(pluralRules->selectRangeOfDecimals(globalObject, WTF::move(start), WTF::move(end))));
 
     auto startNumber = start.tryGetDouble();
     auto endNumber = end.tryGetDouble();

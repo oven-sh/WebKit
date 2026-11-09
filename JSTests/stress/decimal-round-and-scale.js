@@ -66,3 +66,13 @@ const d = value => new Decimal(value);
         shouldThrow(() => d("1").scale10(power), TypeError);
     shouldThrow(() => d("NaN").scale10(1.5), RangeError);
 }
+
+// The order of the checks of round(), which are all before the value is looked at.
+shouldThrow(() => d("1").round(1.5, 1), RangeError);
+shouldThrow(() => d("1").round("1", "bad"), TypeError);
+for (const text of ["NaN", "Infinity", "-Infinity", "0", "-0"]) {
+    shouldThrow(() => d(text).round(0, "bad"), RangeError);
+    shouldThrow(() => d(text).round(0, null), TypeError);
+    shouldThrow(() => d(text).round(0.5), RangeError);
+    shouldThrow(() => d(text).round(), TypeError);
+}

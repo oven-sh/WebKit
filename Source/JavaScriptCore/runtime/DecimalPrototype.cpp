@@ -7,6 +7,7 @@
 #include "DecimalPrototype.h"
 
 #include "DecimalObject.h"
+#include "DecimalOperator.h"
 #include "IntlNumberFormatInlines.h"
 #include "JSCInlines.h"
 
@@ -189,6 +190,8 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncExponent, (JSGlobalObject* globalObject
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.mantissa
+//
+// The steps have the Numbers NaN and Infinity in place of the Decimal values, and do not say what e is. It is the exponent.
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncMantissa, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     return unary(globalObject, callFrame, [&](const Decimal128& value) {
@@ -285,6 +288,21 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncGreaterThanOrEqual, (JSGlobalObject* gl
 }
 
 // https://tc39.es/proposal-decimal/#dfn-decimal-rounding-mode
+static std::optional<Decimal128::RoundingMode> roundingModeFromName(const String& name)
+{
+    if (name == "ceil"_s)
+        return Decimal128::RoundingMode::Ceil;
+    if (name == "floor"_s)
+        return Decimal128::RoundingMode::Floor;
+    if (name == "trunc"_s)
+        return Decimal128::RoundingMode::Trunc;
+    if (name == "halfExpand"_s)
+        return Decimal128::RoundingMode::HalfExpand;
+    if (name == "halfEven"_s)
+        return Decimal128::RoundingMode::HalfEven;
+    return std::nullopt;
+}
+
 static Decimal128::RoundingMode toRoundingMode(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -298,16 +316,8 @@ static Decimal128::RoundingMode toRoundingMode(JSGlobalObject* globalObject, JSV
     }
     String name = asString(value)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    if (name == "ceil"_s)
-        return Decimal128::RoundingMode::Ceil;
-    if (name == "floor"_s)
-        return Decimal128::RoundingMode::Floor;
-    if (name == "trunc"_s)
-        return Decimal128::RoundingMode::Trunc;
-    if (name == "halfExpand"_s)
-        return Decimal128::RoundingMode::HalfExpand;
-    if (name == "halfEven"_s)
-        return Decimal128::RoundingMode::HalfEven;
+    if (auto mode = roundingModeFromName(name)) [[likely]]
+        return *mode;
     throwRangeError(globalObject, scope, "roundingMode must be either \"ceil\", \"floor\", \"trunc\", \"halfExpand\", or \"halfEven\""_s);
     return { };
 }
@@ -386,8 +396,9 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncScale10, (JSGlobalObject* globalObject,
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.tostring
 //
-// Two errors of the steps of the operations below it are not followed: the sign of an integer is kept, and the exponent of the
-// exponential notation is that of the value (the steps ask for 1 <= argument * 10^e < 10 and then divide by 10^e).
+// Three errors of the steps of the operations below it are not followed. The sign of an integer is kept. A fraction is written whole:
+// the steps cut it to the number of digits of the integer part. The exponential notation is that of the significand and the exponent:
+// the steps have the exponent with the wrong sign and scale the mantissa the wrong way (12300e-2 for 123), even out of the domain.
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToString, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -400,6 +411,8 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToString, (JSGlobalObject* globalObject
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.tolocalestring
+//
+// The steps read [[Decimal128Data]], a slot that nothing has, and do not convert its value. It is [[DecimalData]], as everywhere else.
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToLocaleString, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -470,8 +483,8 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToFixed, (JSGlobalObject* globalObject,
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.toprecision
 //
-// The steps read the precision and never use it: it stays 0, which is a RangeError. This uses it. Without options they end at the same
-// 0, against the description of the method, "equivalent to toString", which is followed there. See Decimal128::toPrecision() for the rest.
+// The steps read the precision and never use it: it stays 0, which is a RangeError. This uses it. Without options it is 0 and the
+// RangeError is what the steps have, although the description of the method says "equivalent to toString". See Decimal128::toPrecision().
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToPrecision, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -482,7 +495,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToPrecision, (JSGlobalObject* globalObj
     auto* options = toOptions(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
     if (!options)
-        return JSValue::encode(jsString(vm, decimal->value().toString()));
+        return throwVMRangeError(globalObject, scope, "precision must be a positive integer"_s);
     JSValue precisionValue = options->get(globalObject, Identifier::fromString(vm, "precision"_s));
     RETURN_IF_EXCEPTION(scope, { });
     if (precisionValue.isUndefined())
@@ -490,17 +503,19 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToPrecision, (JSGlobalObject* globalObj
 
     if (!precisionValue.isNumber()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "precision must be a number"_s);
-    if (!std::isfinite(precisionValue.asNumber())) [[unlikely]]
+    // -Infinity is not in this step. It throws below, behind the second Get.
+    if (double number = precisionValue.asNumber(); std::isnan(number) || number == std::numeric_limits<double>::infinity()) [[unlikely]]
         return throwVMRangeError(globalObject, scope, "precision must be a positive integer"_s);
     JSValue roundingModeValue = options->get(globalObject, vm.propertyNames->roundingMode);
     RETURN_IF_EXCEPTION(scope, { });
     double precision = toIntegerOption(globalObject, precisionValue, 1, "precision must be a number"_s, "precision must be a positive integer"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    // The steps do not check the rounding mode. It has to be one only where they round by it.
+    // The steps do not check the rounding mode, and round by anything that is not one as by undefined.
     auto mode = Decimal128::RoundingMode::HalfEven;
-    if (decimal->value().hasMoreDigitsThan(precision)) {
-        mode = toRoundingMode(globalObject, roundingModeValue);
+    if (roundingModeValue.isString()) {
+        String name = asString(roundingModeValue)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
+        mode = roundingModeFromName(name).value_or(mode);
     }
     RELEASE_AND_RETURN(scope, stringOrOutOfMemory(globalObject, decimal->value().toPrecision(precision, mode)));
 }
@@ -519,6 +534,53 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncValueOf, (JSGlobalObject* globalObject,
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     return throwVMTypeError(globalObject, scope, "Decimal.prototype.valueOf must not be called. To compare Decimals, use compare(), equals() or lessThan()"_s);
+}
+
+// Not in the proposal, where operators throw. See --useDecimalOperators and BytecodeGenerator::emitDecimalOperator().
+JSC_DEFINE_HOST_FUNCTION(decimalOperator, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto* left = DecimalObject::tryCast(callFrame->argument(1));
+    auto* right = DecimalObject::tryCast(callFrame->argument(2));
+    if (!left || !right)
+        return JSValue::encode(jsUndefined());
+
+    const Decimal128& x = left->value();
+    const Decimal128& y = right->value();
+    auto boolean = [](bool value) { return JSValue::encode(jsBoolean(value)); };
+    switch (static_cast<DecimalOperator>(callFrame->argument(0).asInt32())) {
+    case DecimalOperator::Add:
+        return newDecimal(globalObject, Decimal128::add(x, y));
+    case DecimalOperator::Subtract:
+        return newDecimal(globalObject, Decimal128::subtract(x, y));
+    case DecimalOperator::Multiply:
+        return newDecimal(globalObject, Decimal128::multiply(x, y));
+    case DecimalOperator::Divide:
+        return newDecimal(globalObject, Decimal128::divide(x, y));
+    case DecimalOperator::Remainder:
+        return newDecimal(globalObject, Decimal128::remainder(x, y));
+    case DecimalOperator::Equal:
+        return boolean(Decimal128::compare(x, y) == 0);
+    case DecimalOperator::NotEqual:
+        // Unlike notEquals() this is the opposite of ==, as for every other type.
+        return boolean(Decimal128::compare(x, y) != 0);
+    case DecimalOperator::Less:
+        return boolean(Decimal128::compare(x, y) < 0);
+    case DecimalOperator::LessOrEqual:
+        return boolean(Decimal128::compare(x, y) <= 0);
+    case DecimalOperator::Greater:
+        return boolean(Decimal128::compare(x, y) > 0);
+    case DecimalOperator::GreaterOrEqual:
+        return boolean(Decimal128::compare(x, y) >= 0);
+    case DecimalOperator::Negate:
+        return newDecimal(globalObject, x.negate());
+    case DecimalOperator::Increment:
+        return newDecimal(globalObject, Decimal128::add(x, Decimal128::one()));
+    case DecimalOperator::Decrement:
+        return newDecimal(globalObject, Decimal128::subtract(x, Decimal128::one()));
+    case DecimalOperator::ToNumeric:
+        return JSValue::encode(left);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 } // namespace JSC
