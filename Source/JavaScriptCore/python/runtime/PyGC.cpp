@@ -1232,23 +1232,25 @@ static bool forEachReferent(JSGlobalObject* globalObject, JSCell* object, const 
     // there is the runtime's own memory, a part of the object (HeapView::addPart()): what is in it, the object refers to (the values of a struct sequence that are no items). All these are
     // properties of the cell with names, which the items are not. (None of the plain containers has any.)
     if (Structure* structure = object->structure(); isContainerByKind && !depth && structure->maxOffset() != invalidOffset) {
-        bool isDone = false;
+        // In the order of their places in the object, which no collection changes. (The structure names them in the order in which they were added while it has its table, and the other way round when a collection has dropped
+        // that. A place that has been freed is used again, so this is not always the order in which the object got them.)
+        Vector<std::pair<PropertyOffset, UniquedStringImpl*>, 8> properties;
         structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
-            JSValue value = asObject(object)->getDirect(entry.offset());
+            properties.append({ entry.offset(), entry.key() });
+            return true;
+        });
+        std::ranges::sort(properties);
+        for (auto [offset, key] : properties) {
+            JSValue value = asObject(object)->getDirect(offset);
             if (!value || !value.isCell())
-                return true;
+                continue;
             JSCell* cell = value.asCell();
             bool isHidden = false;
             for (unsigned i = 0; i < Runtime::numberOfHiddenKeys; ++i)
-                isHidden |= entry.key() == &rt.hiddenKey(i).uid();
-            if (isHidden && isContainer(cell))
-                isDone = forEachReferent(globalObject, cell, sink, depth + 1, isForMirror);
-            else if (mayBeGiven(cell))
-                isDone = sink(cell);
-            return !isDone;
-        });
-        if (isDone)
-            return true;
+                isHidden |= key == &rt.hiddenKey(i).uid();
+            if (isHidden && isContainer(cell) ? forEachReferent(globalObject, cell, sink, depth + 1, isForMirror) : mayBeGiven(cell) && sink(cell))
+                return true;
+        }
     }
     // In CPython an object holds on to its type only if that has been allocated. There it is the tp_traverse of the type that says so, by visiting Py_TYPE(self), and this line stands for those of CPython's own types.
     // That of the type of an extension has been asked itself (CApi::Face::visitChildren()): where it has named the type, that was its word, and it is not said again for it. (Where it has not been heard to, it may
