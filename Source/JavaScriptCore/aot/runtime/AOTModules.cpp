@@ -7652,15 +7652,7 @@ void didStopLayingMock(JSGlobalObject* realm, ModuleID module)
 
 bool hasESModuleMarker(JSCell* moduleNamespace)
 {
-    return uncheckedDowncast<ModuleNamespace>(moduleNamespace)->showsESModuleMarker();
-}
-
-bool ModuleNamespace::showsESModuleMarker() const
-{
-    if (!m_hasESModuleMarker)
-        return false;
-    ModuleStatus status = modules().status(m_module);
-    return status != ModuleStatus::Evaluating && status != ModuleStatus::EvaluatingAsync && status != ModuleStatus::Failed;
+    return uncheckedDowncast<ModuleNamespace>(moduleNamespace)->hasESModuleMarker();
 }
 
 void setESModuleMarker(JSCell* moduleNamespace, bool hasMarker)
