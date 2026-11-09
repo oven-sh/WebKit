@@ -117,6 +117,7 @@ struct ModuleHost {
     bool (*isPatchedOnceFactorySettles)(JSGlobalObject*, const String& path);
     uint32_t (*willLoad)(JSGlobalObject*, ModuleID fileThatWroteItIfKnown, ModuleID asked, LoadByName);
     bool (*wroteFactoryThatHasNotSettled)(JSGlobalObject*, ModuleID file, ModuleID mocked);
+    bool (*isRequiredForSakeOfOwnFactory)(JSGlobalObject*, ModuleID required, ModuleID requirer);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);

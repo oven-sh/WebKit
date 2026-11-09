@@ -1170,13 +1170,6 @@ public:
         m_cellsMadeForOneOperation.append(noted);
     }
     std::span<const CellsMadeForOneOperation> cellsMadeForOneOperation() const LIFETIME_BOUND { return m_cellsMadeForOneOperation.span(); }
-    void noteReadOfVariableThatStandsForNoValueOfText(ValueID read)
-    {
-        while (!m_readsOfVariablesThatStandForNoValueOfText.isEmpty() && m_readsOfVariablesThatStandForNoValueOfText.last().index() >= read.index())
-            m_readsOfVariablesThatStandForNoValueOfText.removeLast();
-        m_readsOfVariablesThatStandForNoValueOfText.append(read);
-    }
-    std::span<const ValueID> readsOfVariablesThatStandForNoValueOfText() const LIFETIME_BOUND { return m_readsOfVariablesThatStandForNoValueOfText.span(); }
     void noteValueThatFoldedArithmeticGives(ValueID given) { m_valuesThatFoldedArithmeticGives.append(given); }
     std::span<const ValueID> valuesThatFoldedArithmeticGives() const LIFETIME_BOUND { return m_valuesThatFoldedArithmeticGives.span(); }
     ValueID appendConversion(BlockID, Opcode, ValueID operand, Representation, TypeID proven, Origin);
@@ -1278,7 +1271,6 @@ private:
     Vector<InputOfHoleReadAsNaN> m_inputsOfHolesReadAsNaN;
     Vector<InputOfHoleReadAsNaN> m_readsAnsweredByHolesReadAsNaN;
     Vector<CellsMadeForOneOperation> m_cellsMadeForOneOperation;
-    Vector<ValueID> m_readsOfVariablesThatStandForNoValueOfText;
     Vector<ValueID> m_valuesThatFoldedArithmeticGives;
     Vector<PollWithFate> m_pollsWithFates;
     struct ChangeToOlderPart {

@@ -11,6 +11,7 @@
 #include "AOTMachineTarget.h"
 #include "AOTMachineTestSupport.h"
 #include "AOTNativeTest.h"
+#include "AOTSavedFrame.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubRegisters.h"
 #include "CPU.h"
@@ -757,9 +758,9 @@ static void testMemoryTrappingLoadNamesItsReference()
 enum class TrapInMemoryTest : uint8_t { Stays, MayBeHandedOver, IsHandedOver };
 
 template<typename Functor>
-static void checkTrapAheadOfAccessInMemoryTest(TrapInMemoryTest expected, const Functor& appendRest)
+static void checkTrapAheadOfAccessInMemoryTest(TrapInMemoryTest expected, const Functor& appendRest, const ProcedureTraits& traits = { })
 {
-    TestProcedure test;
+    TestProcedure test(traits);
     Output& out = test.out();
     LValue base = test.argumentGPR(0);
     LValue otherBase = test.argumentGPR(1);
@@ -820,7 +821,10 @@ static LValue appendPatchAndLoadBehindTrapInMemoryTest(Output& out, const Abstra
     patch->effects = effects;
     patch->setRunsWithoutFrame(true);
     patch->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
-        jit.move(params[1].gpr(), params[0].gpr());
+        if (params[1].isFPR())
+            jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+        else
+            jit.move(params[1].gpr(), params[0].gpr());
     });
     LValue loaded = out.load64(out.address(heap, base, 8));
     out.ret(out.add(out.add(loaded, loaded), patch));
@@ -829,19 +833,46 @@ static LValue appendPatchAndLoadBehindTrapInMemoryTest(Output& out, const Abstra
 
 static void testMemoryTrapIsHandedOverPastPatchWithoutEffects()
 {
-    checkTrapAheadOfAccessInMemoryTest(TrapInMemoryTest::IsHandedOver, [](Output& out, const AbstractHeap& heap, LValue base, LValue otherBase) {
-        return appendPatchAndLoadBehindTrapInMemoryTest(out, heap, base, otherBase, Effects::none());
+    checkTrapAheadOfAccessInMemoryTest(TrapInMemoryTest::IsHandedOver, [](Output& out, const AbstractHeap& heap, LValue base, LValue) {
+        return appendPatchAndLoadBehindTrapInMemoryTest(out, heap, base, out.constDouble(2.5), Effects::none());
     });
-    checkTrapAheadOfAccessInMemoryTest(TrapInMemoryTest::Stays, [](Output& out, const AbstractHeap& heap, LValue base, LValue otherBase) {
-        Effects reads = Effects::none();
-        reads.reads = HeapSet::top();
-        return appendPatchAndLoadBehindTrapInMemoryTest(out, heap, base, otherBase, reads);
-    });
-    checkTrapAheadOfAccessInMemoryTest(TrapInMemoryTest::Stays, [](Output& out, const AbstractHeap& heap, LValue base, LValue otherBase) {
-        Effects writes = Effects::none();
-        writes.writes = HeapSet::top();
-        return appendPatchAndLoadBehindTrapInMemoryTest(out, heap, base, otherBase, writes);
-    });
+}
+
+enum class PatchBehindTrapInMemoryTest : uint8_t { Reads, Writes, TakesInteger, TakesBase, Suspends };
+
+template<PatchBehindTrapInMemoryTest kind>
+static void testMemoryTrapStaysAheadOfPatch()
+{
+    ProcedureTraits traits;
+    traits.savesFrameOnSuspend = kind == PatchBehindTrapInMemoryTest::Suspends;
+    checkTrapAheadOfAccessInMemoryTest(TrapInMemoryTest::Stays, [&](Output& out, const AbstractHeap& heap, LValue base, LValue otherBase) {
+        if constexpr (kind == PatchBehindTrapInMemoryTest::Suspends) {
+            constexpr GPRReg result = GPRInfo::returnValueGPR;
+            RegisterFile file = registerFileFor(traits);
+            RegisterMask lost = (file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP)) & ~maskOf(Reg(result));
+            if constexpr (SavedFrame::preservedRegister != InvalidGPRReg)
+                lost &= ~maskOf(Reg(SavedFrame::preservedRegister));
+            PatchOperation* suspension = out.patch(Int64);
+            suspension->resultConstraints = { ValueRep::reg(result) };
+            suspension->effects = Effects::none();
+            suspension->clobberLate(lost);
+            suspension->setIsSuspension(true);
+            suspension->setGenerator([](CCallHelpers& jit, const PatchParameters&) {
+                jit.move(CCallHelpers::TrustedImm32(0), result);
+            });
+            LValue loaded = out.load64(out.address(heap, base, 8));
+            out.ret(out.add(out.add(loaded, loaded), suspension));
+            return loaded;
+        } else {
+            Effects effects = Effects::none();
+            if constexpr (kind == PatchBehindTrapInMemoryTest::Reads)
+                effects.reads = HeapSet::top();
+            if constexpr (kind == PatchBehindTrapInMemoryTest::Writes)
+                effects.writes = HeapSet::top();
+            LValue operand = kind == PatchBehindTrapInMemoryTest::TakesInteger ? otherBase : kind == PatchBehindTrapInMemoryTest::TakesBase ? base : out.constDouble(2.5);
+            return appendPatchAndLoadBehindTrapInMemoryTest(out, heap, base, operand, effects);
+        }
+    }, traits);
 }
 
 struct MemoryTestStore {
@@ -1279,6 +1310,11 @@ std::span<const NativeTest> machineMemoryTests()
         { "machine/memory/trapping-load-names-its-reference"_s, Machine::testMemoryTrappingLoadNamesItsReference },
         { "machine/memory/trap-is-handed-over-or-stays"_s, Machine::testMemoryTrapIsHandedOverOrStays },
         { "machine/memory/trap-is-handed-over-past-a-patch-without-effects"_s, Machine::testMemoryTrapIsHandedOverPastPatchWithoutEffects },
+        { "machine/memory/trap-stays-ahead-of-a-patch-that-reads"_s, Machine::testMemoryTrapStaysAheadOfPatch<Machine::PatchBehindTrapInMemoryTest::Reads> },
+        { "machine/memory/trap-stays-ahead-of-a-patch-that-writes"_s, Machine::testMemoryTrapStaysAheadOfPatch<Machine::PatchBehindTrapInMemoryTest::Writes> },
+        { "machine/memory/trap-stays-ahead-of-a-patch-that-takes-an-integer"_s, Machine::testMemoryTrapStaysAheadOfPatch<Machine::PatchBehindTrapInMemoryTest::TakesInteger> },
+        { "machine/memory/trap-stays-ahead-of-a-patch-that-takes-its-base"_s, Machine::testMemoryTrapStaysAheadOfPatch<Machine::PatchBehindTrapInMemoryTest::TakesBase> },
+        { "machine/memory/trap-stays-ahead-of-a-patch-that-suspends"_s, Machine::testMemoryTrapStaysAheadOfPatch<Machine::PatchBehindTrapInMemoryTest::Suspends> },
         { "machine/memory/neighboring-stores-pair"_s, Machine::testMemoryNeighboringStoresPair },
         { "machine/memory/tested-sum-is-stored-by-the-branch"_s, Machine::testMemoryTestedSumIsStoredByBranch },
         { "machine/memory/low-half-is-left-alone-where-the-whole-word-is-read"_s, Machine::testMemoryLowHalfIsLeftAloneWhereWholeWordIsRead },

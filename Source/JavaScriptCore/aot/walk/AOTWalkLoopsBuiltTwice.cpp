@@ -474,10 +474,6 @@ void Walker::holdVariablesOfFilesThatTurnsStore(BlockID inputHead)
                 chooseConservativeFields(read);
                 if (has(Mechanism::Folding) && m_state.isPastDeadZone(variable))
                     read.setFollowsItsStore(true);
-                const Function& function = program().at(currentFunction());
-                bool storeOfTextVouches = !function.isModuleBody() && function.module == program().at(variable).module;
-                if (storeOfTextVouches)
-                    read.inputValueGiven = operation.id();
                 held = build(WTF::move(read));
                 if (m_hasFailed || isUnreachable())
                     return;
@@ -3337,7 +3333,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     auto askBoundOfCounter = [&] {
         Reference bound = relationOfHeadOnNumber.variable ? valueKnownOf(readOfBoundOfRelation()) : boundOfRelationFromInFront();
         if (!bound) {
-            Draft inFront = draftOfReadInFrontOfHead(readOfBoundOfRelation());
+            Draft inFront = draftOfReadInFrontOfHead(readOfBoundOfRelation(), ReadInFrontOfHead::IsTestedInFront);
             inFront.setFollowsItsStore(false);
             bound = build(WTF::move(inFront));
         }
@@ -3487,9 +3483,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         bool isOfAnotherFile = field.variable && functionsOfOtherFilesAskedInFront.contains(field.variable);
         Reference read = isUnreachable() || isOfAnotherFile ? Reference() : valueKnownOf(field);
         if (!read && !isUnreachable()) {
-            Draft inFront = draftOfReadInFrontOfHead(field, isOfAnotherFile);
-            if (!field.variable)
-                inFront.setFollowsItsStore(false);
+            Draft inFront = draftOfReadInFrontOfHead(field, ReadInFrontOfHead::IsTestedInFront, isOfAnotherFile);
             size_t queued = variablesAskedInFront.findIf([&](const VariableAskedInFrontOfLoop& asked) { return asked.variable == field.variable; });
             count(queued == notFound ? StatisticID::VariablesThatQuietTurnsStoreReadInFrontOfLoops : variablesAskedInFront[queued].counted);
             read = build(WTF::move(inFront));

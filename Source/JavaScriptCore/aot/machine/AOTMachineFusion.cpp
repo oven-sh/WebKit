@@ -390,8 +390,10 @@ static bool fusionCanRunAheadOfTrap(const Operation* between)
 {
     if (fusionIsLoad(between->opcode()))
         return !between->traps() && fusionChildrenOf(between)[0]->hasNoPosition();
-    if (between->opcode() == Patch)
-        return between->as<PatchOperation>()->effects.maySink();
+    if (between->opcode() == Patch) {
+        const PatchOperation* patch = between->as<PatchOperation>();
+        return patch->effects.maySink() && !patch->isSuspension() && std::ranges::all_of(patch->children(), [](const Operation* operand) { return operand->type().isFloat(); });
+    }
     return !between->mustStay();
 }
 

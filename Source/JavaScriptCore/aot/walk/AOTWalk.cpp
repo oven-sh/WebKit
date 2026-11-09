@@ -3625,8 +3625,6 @@ void Walker::noteOperationBuiltWhereCodeIsVerified(ValueID id, const Draft& draf
     static constexpr OpcodeSet closuresAndClassesMade { Opcode::NewClosure, Opcode::NewClass, Opcode::NewGenerator, Opcode::NewGeneratorOfLibrary, Opcode::NewAsyncGenerator, Opcode::NewPromise, Opcode::NewRegExp };
     if (draft.opcode == Opcode::GetArrayElement && draft.readsHoleAsNaN())
         m_code.noteInputOfHoleReadAsNaN({ id, currentFunction(), draft.inputValueGiven });
-    if (draft.opcode == Opcode::GetModuleVariable && !draft.inputValueGiven && !draft.givesWordAsItLies())
-        m_code.noteReadOfVariableThatStandsForNoValueOfText(id);
     if (!isWrittenInFrameOnTop(draft) || opcodesThatMakeArguments.contains(draft.opcode) || (resultRuleInWalk(draft.opcode) != ResultRule::Allocation && !closuresAndClassesMade.contains(draft.opcode)))
         return;
     const Frame& frame = m_frames.last();
@@ -3863,7 +3861,7 @@ static void letObjectsLeaveAtSuspension(Walker& walker)
     }
 }
 
-uint16_t Walker::wordThatVariableIsBornWith(const Program& program, VariableID variable)
+static uint16_t wordThatVariableIsBornWithInWalk(const Program& program, VariableID variable)
 {
     VariableInitialization born = program.at(variable).initialization;
     return born == VariableInitialization::Uninitialized ? Primitive::Absent : born == VariableInitialization::Undefined ? Primitive::Undefined : 0;
@@ -3873,7 +3871,7 @@ bool Walker::leavesOutWordThatVariableIsBornWith(const Draft& draft, TypeID prov
 {
     if (draft.opcode != Opcode::GetModuleVariable || plan().variable(draft.variable()).function)
         return false;
-    uint16_t word = wordThatVariableIsBornWith(program(), draft.variable());
+    uint16_t word = wordThatVariableIsBornWithInWalk(program(), draft.variable());
     return word && !(m_types.at(proven).primitives & word);
 }
 
@@ -3881,7 +3879,7 @@ bool Walker::holdsListOrWordThatVariableIsBornWith(const Draft& draft, TypeID pr
 {
     if (draft.opcode != Opcode::GetModuleVariable || draft.givesWordAsItLies() || plan().variable(draft.variable()).function)
         return false;
-    uint16_t word = wordThatVariableIsBornWith(program(), draft.variable());
+    uint16_t word = wordThatVariableIsBornWithInWalk(program(), draft.variable());
     return word && (m_types.at(proven).primitives & word) && hasKind(m_types, m_types.withoutPrimitives(proven, word), OperandKind::Array);
 }
 
@@ -3938,11 +3936,11 @@ Reference Walker::askVariableInFrontOfTypedCopy(const Draft& draft, uint32_t out
         Draft read(draft);
         read.setGivesWordAsItLies(true);
         found = build(WTF::move(read));
-        if (!found || !found.isValue() || isUnreachable() || !m_types.at(m_types.withoutPrimitives(typeOf(found), wordThatVariableIsBornWith(program(), draft.variable()))).isJavaScriptValue())
+        if (!found || !found.isValue() || isUnreachable() || !m_types.at(m_types.withoutPrimitives(typeOf(found), wordThatVariableIsBornWithInWalk(program(), draft.variable()))).isJavaScriptValue())
             return { };
         Draft test(Opcode::TypeTest, draft.origin());
         test.setValueOperand(found);
-        test.setTestedType(TypeArena::fromPrimitives(wordThatVariableIsBornWith(program(), draft.variable())));
+        test.setTestedType(TypeArena::fromPrimitives(wordThatVariableIsBornWithInWalk(program(), draft.variable())));
         isAsBorn = build(WTF::move(test));
     }
     if (!isAsBorn || !isAsBorn.isValue() || !branchInFrontOfTypedCopy(isAsBorn, false, turn, TurnsThatAsk::Some))

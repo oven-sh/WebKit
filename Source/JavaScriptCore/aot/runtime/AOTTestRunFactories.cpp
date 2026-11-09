@@ -392,7 +392,10 @@ JSObject* Modules::packageItselfBesideMock(ModuleID module)
         if (!isReady)
             return nullptr;
         didEndMock(module);
+        bool mockWaits = m_modulesWithMockToRun.get(module.index());
+        m_modulesWithMockToRun.clear(module.index());
         evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+        m_modulesWithMockToRun.set(module.index(), mockWaits);
         willMock(module);
         if (status(module) == ModuleStatus::Evaluated || status(module) == ModuleStatus::Failed)
             m_modulesThatRanBesideMock.set(module.index());

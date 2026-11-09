@@ -451,7 +451,7 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
             if (!value && readsInFront && !mayBeInDeadZone(found)) {
                 if (variable)
                     count(StatisticID::VariablesThatQuietTurnsStoreReadInFrontOfLoops);
-                value = build(draftOfReadInFrontOfHead(found));
+                value = build(draftOfReadInFrontOfHead(found, ReadInFrontOfHead::ComesRound));
             }
             found.values.append(value);
             if (value || !readsInFront)
@@ -529,24 +529,25 @@ Draft Walker::draftOfReadOf(const FieldOfScope& field)
     return read;
 }
 
-Draft Walker::draftOfReadInFrontOfHead(const FieldOfScope& field, bool fileMayNotHaveRun)
+Draft Walker::draftOfReadInFrontOfHead(const FieldOfScope& field, ReadInFrontOfHead use, bool fileMayNotHaveRun)
 {
     Draft read = draftOfReadOf(field);
-    if (!field.variable)
-        return read;
-    if (field.readOfTextThatVouches) {
-        read.setOrigin(originOf(currentBodyIndex().value(field.readOfTextThatVouches)));
-        read.inputValueGiven = field.readOfTextThatVouches;
+    if (!field.variable) {
+        if (use == ReadInFrontOfHead::IsTestedInFront)
+            read.setFollowsItsStore(false);
         return read;
     }
+    if (field.readOfTextThatVouches) {
+        read.setOrigin(originOf(currentBodyIndex().value(field.readOfTextThatVouches)));
+        return read;
+    }
+    read.setFollowsItsStore(false);
     if (takesVariablesReadInFrontOfLoopsToHoldWhatIsProven())
         return read;
-    read.setFollowsItsStore(false);
     if (fileMayNotHaveRun || (!m_state.isPastDeadZone(field.variable) && leavesOutWordThatVariableIsBornWith(read, resultTypeOf(read)))) {
         read.setGivesWordAsItLies(true);
         count(StatisticID::ReadsInFrontOfLoopsThatGiveTheWordAsItLies);
-    } else if (m_state.isPastDeadZone(field.variable))
-        read.setFollowsItsStore(true);
+    }
     return read;
 }
 
@@ -633,11 +634,11 @@ bool Walker::bringFieldsOfScopesRound(EdgeID& edge, BlockID head, Vector<Referen
             value = askAgainWhereItComesRound(edge, head, field.type, arguments.span().first(numberBesideFieldsOfScopes), scopedLambda<Reference()>([&] {
                 if (Reference atHand = valueKnownOf(field))
                     return atHand;
-                return build(draftOfReadInFrontOfHead(field));
+                return build(draftOfReadInFrontOfHead(field, ReadInFrontOfHead::ComesRound));
             }));
         }
         if (!value && !field.isHeld)
-            value = build(draftOfReadInFrontOfHead(field));
+            value = build(draftOfReadInFrontOfHead(field, ReadInFrontOfHead::ComesRound));
         if (!value) {
             if (!m_hasFailed && !isUnreachable())
                 fail("a field of a scope does not come round to the head of its loop"_s);

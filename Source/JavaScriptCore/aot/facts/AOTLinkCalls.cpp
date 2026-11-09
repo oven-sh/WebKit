@@ -5403,6 +5403,8 @@ ALWAYS_INLINE void CallInLinkCalls::addResult(RowCall& call)
 
     if (result.iteratedOperand) {
         Values handedOut = valuesHandedOutBy(result.iterationKind, valuesAt(call, *result.iteratedOperand));
+        if (const BuiltinParameter* iterated = m_builtins.parameterFor(row, *result.iteratedOperand); iterated && iterated->conversion == BuiltinConversion::ToString)
+            add(handedOut, primitivesForLinkCalls(Primitive::String));
         bool everyIteratorIsFollowed = forEachSiteOfResult(call, [&](SiteID made, const BuiltinTypePart&) {
             bool hasSlot = false;
             for (BuiltinSlotID id : m_builtins.at(m_flow.classOf(made)).slots) {

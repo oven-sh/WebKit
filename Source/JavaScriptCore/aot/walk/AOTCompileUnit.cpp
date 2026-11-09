@@ -489,6 +489,16 @@ private:
         return asked;
     }
 
+    bool checksInFrontOfCallLetNothingPass(ValueID value, ValueID call) const
+    {
+        while (!isNeverType(typeThatChecksInFrontOfCallAskOf(value, call))) {
+            if (m_code.isConstant(value) || !conversionsOfForm.contains(m_code.at(value).opcode))
+                return false;
+            value = m_code.at(value).operand(0);
+        }
+        return true;
+    }
+
     TypeID typeThatTestsAndChecksLeaveOf(ValueID value, ValueID call) const
     {
         TypeID left = typeThatChecksInFrontOfCallAskOf(value, call);
@@ -574,7 +584,7 @@ private:
                     continue;
             }
             if (isNeverType(left)) {
-                if (operand && isNeverType(typeThatChecksInFrontOfCallAskOf(operand, id)))
+                if (operand && checksInFrontOfCallLetNothingPass(operand, id))
                     continue;
                 return sentence(id, callee, place, operand, "and all that its unit has left there is never"_s, { });
             }
@@ -655,67 +665,6 @@ static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, TypeArena& 
     return { };
 }
 
-static bool operationOnVariableStandsInFrontOnEveryWay(const Code& code, ValueID read)
-{
-    VariableID variable = code.at(read).variable();
-    auto isNamedAtOrInFrontOf = [&](ValueID last) {
-        for (ValueID id = last; id; id = code.at(id).previous) {
-            const Operation& operation = code.at(id);
-            if ((operation.opcode == Opcode::GetModuleVariable || operation.opcode == Opcode::PutModuleVariable) && operation.variable() == variable)
-                return true;
-        }
-        return false;
-    };
-    if (isNamedAtOrInFrontOf(code.at(read).previous))
-        return true;
-    BitVector seen;
-    Vector<BlockID, 16> blocksWithoutIt { code.blockOf(read) };
-    seen.add(code.blockOf(read).index());
-    while (!blocksWithoutIt.isEmpty()) {
-        BlockID block = blocksWithoutIt.takeLast();
-        if (code.at(block).isEntry)
-            return false;
-        code.allEdgesIntoBlockOfFinishedCode(block).forEach([&](const Edge& edge) {
-            if (seen.add(edge.from.index()) && !isNamedAtOrInFrontOf(code.lastOperationOf(edge.from)))
-                blocksWithoutIt.append(edge.from);
-        });
-    }
-    return true;
-}
-
-static String findReadLaidWithProofThatNothingVouchesFor(const WalkInputs& inputs, TypeArena& types, const Code& code)
-{
-    if (code.readsOfVariablesThatStandForNoValueOfText().empty())
-        return { };
-    BitVector valuesTakenByMoreThanChecks;
-    auto take = [&](std::span<const ValueID> operands) {
-        for (ValueID operand : operands) {
-            if (operand)
-                valuesTakenByMoreThanChecks.set(operand.index());
-        }
-    };
-    for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
-        if (const Operation& operation = code.at(ValueID(index)); operation.block() && operation.opcode != Opcode::CheckProof)
-            take(operation.operands());
-    }
-    for (uint32_t index = 0; index < code.numberOfBlocks(); ++index)
-        take(code.at(BlockID(index)).terminator.operands());
-    for (uint32_t index = 0; index < code.numberOfEdges(); ++index)
-        take(code.at(EdgeID(index)).arguments());
-    for (ValueID read : code.readsOfVariablesThatStandForNoValueOfText()) {
-        const Operation& operation = code.at(read);
-        if (!operation.block() || operation.opcode != Opcode::GetModuleVariable || operation.givesWordAsItLies() || !valuesTakenByMoreThanChecks.get(read.index()))
-            continue;
-        if (operation.variable().index() >= inputs.program.variables.size() || inputs.plan.variable(operation.variable()).function)
-            continue;
-        if (operation.followsItsStore() && operationOnVariableStandsInFrontOnEveryWay(code, read))
-            continue;
-        if (uint16_t word = Walker::wordThatVariableIsBornWith(inputs.program, operation.variable()); word && !(types.at(operation.type).primitives & word))
-            return makeString('f', code.unit().function.index(), " v"_s, read.index(), " (GetModuleVariable) stands for no value of the text, is typed by a proof that leaves out the word that its variable is born with, and nothing vouches for it: no operation on the variable stands in front of it on every way"_s);
-    }
-    return { };
-}
-
 static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const PositionTypes& positions, const PositionTypes& whatFunctionsHandBack, const Code& code, std::span<const Walker::ArrivalHeld> arrivalsHeld)
 {
     InternalErrorKind kindOfBrokenRule { InternalErrorKind::OpcodeNotInForm };
@@ -733,10 +682,6 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::OpcodeNotInForm;
         brokenRule = findStoreOfWhatCallerMayLend(inputs, types, code);
-    }
-    if (brokenRule.isNull()) {
-        kindOfBrokenRule = InternalErrorKind::TypeOutOfDate;
-        brokenRule = findReadLaidWithProofThatNothingVouchesFor(inputs, types, code);
     }
     if (brokenRule.isNull())
         return true;

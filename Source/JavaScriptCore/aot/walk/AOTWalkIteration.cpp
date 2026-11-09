@@ -1215,6 +1215,16 @@ public:
         Reference keyOfPair = !iteration.handsPartsOfPairsOn ? Reference() : iteration.table ? m_walker.addParameter(after, { }, Representation::JSValue) : m_walker.addParameter(after, { }, m_walker.formOfParameter(m_walker.types().integer(Range { 0, Walker::positionBehindEveryEnd }), { }));
         Reference valueOfPair = iteration.handsPartsOfPairsOn ? m_walker.addParameter(after, { }, Representation::JSValue) : Reference();
 
+        stepByIndexOrByProtocol(iteration, runsNoCode, after);
+        iteration.position = position;
+        iteration.table = table;
+        iteration.keyOfPair = keyOfPair;
+        iteration.valueOfPair = valueOfPair;
+        return resultsOf(done, value);
+    }
+
+    void stepByIndexOrByProtocol(const Walker::IterationByIndex& iteration, bool runsNoCode, BlockID after)
+    {
         Reference list = iteration.list;
         if (iteration.mayGoByProtocol) {
             BlockID byProtocol = addBlock(iteration.textOrListMayStandInstead && iteration.contents == ContentsStepped::Text ? BlockFrequency::Normal : BlockFrequency::Unlikely);
@@ -1240,11 +1250,6 @@ public:
             std::optional<uint32_t> length = lengthKnownOf(iteration);
             stepByIndex(iteration, list, length ? integer(*length) : lengthOf(iteration, list), runsNoCode, after);
         }
-        iteration.position = position;
-        iteration.table = table;
-        iteration.keyOfPair = keyOfPair;
-        iteration.valueOfPair = valueOfPair;
-        return resultsOf(done, value);
     }
 
     Reference resumeThroughFlatEntries(Walker::IterationByIndex& iteration)
@@ -1298,6 +1303,17 @@ public:
         return handedOut && index.useCount(resume.id()) == 2 && onlyUserTakesUndefinedForNaNInTypedElements(m_walker, index.value(handedOut)) ? handedOut : ValueID();
     }
 
+    bool branchBehindAsksWhetherStepWasLast(const BodyValue& resume)
+    {
+        const BodyIndex& index = m_walker.currentBodyIndex();
+        BodyTerminator end = index.terminator(index.blockOf(resume.id()));
+        ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
+        if (!m_walker.has(Mechanism::Folding) || !condition || index.isParameter(condition) || index.opcodeOf(condition) != Opcode::ResultAt)
+            return false;
+        auto asked = index.value(condition).as<Opcode::ResultAt>();
+        return asked.resultsOperand() == resume.id() && asked.index() == static_cast<uint32_t>(IteratorResumeResult::Done);
+    }
+
     bool stepListOnWaysApart(Reference state, const BodyValue& resume)
     {
         const Walker::IterationByIndex& record = m_walker.iterationByIndex(state);
@@ -1305,14 +1321,7 @@ public:
             return false;
         Walker::IterationByIndex entered = record;
         const BodyIndex& index = m_walker.currentBodyIndex();
-        BodyTerminator end = index.terminator(index.blockOf(resume.id()));
-        ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
-        if (!m_walker.has(Mechanism::Folding) || !condition || index.isParameter(condition) || index.opcodeOf(condition) != Opcode::ResultAt)
-            return false;
-        auto asked = index.value(condition).as<Opcode::ResultAt>();
-        if (asked.resultsOperand() != resume.id() || asked.index() != static_cast<uint32_t>(IteratorResumeResult::Done))
-            return false;
-        if (integerIn(entered.position) || !m_walker.armsMayEndWithBranchBehind(resume))
+        if (!branchBehindAsksWhetherStepWasLast(resume) || integerIn(entered.position) || !m_walker.armsMayEndWithBranchBehind(resume))
             return false;
         bool runsNoCode = readsOfListRunNoCode(entered);
         Reference length = lengthOf(entered, entered.list);
@@ -1373,6 +1382,45 @@ public:
         return true;
     }
 
+    bool stepThatMayGoByProtocolOnWaysApart(Reference state, const BodyValue& resume)
+    {
+        const Walker::IterationByIndex& record = m_walker.iterationByIndex(state);
+        if (!record.mayGoByProtocol || record.goesByProtocolAlone || record.state || record.isTakenAtOpen || record.holdsFlatEntries || record.literal || record.table || record.handsPartsOfPairsOn || !record.head || !findWayOfIteration(m_walker.currentBodyIndex(), resume.operand(0)).onlyStepStandsAtHeadOfLoop)
+            return false;
+        Walker::IterationByIndex entered = record;
+        if (!branchBehindAsksWhetherStepWasLast(resume) || integerIn(entered.position) || !m_walker.armsMayEndWithBranchBehind(resume))
+            return false;
+        BlockID finished = addBlock();
+        BlockID giving = addBlock();
+        Reference given = m_walker.addParameter(giving, { }, Representation::JSValue);
+        Reference behind = m_walker.addParameter(giving, { }, m_walker.formOfParameter(m_walker.types().integer(Range { 0, Walker::positionBehindEveryEnd }), { }));
+        {
+            SetForScope endsApart(m_whereLastStepGoes, finished);
+            stepByIndexOrByProtocol(entered, readsOfListRunNoCode(entered), giving);
+        }
+        if (m_walker.hasFailed())
+            return true;
+
+        continueIn(finished);
+        if (!m_walker.isUnreachable()) {
+            m_walker.iterationByIndex(state).position = integer(Walker::positionBehindEveryEnd);
+            m_walker.bind(resume.id(), resultsOf(boolean(true), undefined()));
+            if (!m_walker.endArmWithBranchBehind(resume)) {
+                m_walker.fail("a way of a step does not walk the end of its block"_s);
+                return true;
+            }
+        }
+
+        continueIn(giving);
+        if (m_walker.isUnreachable())
+            return true;
+        m_walker.iterationByIndex(state).position = behind;
+        m_walker.bind(resume.id(), resultsOf(boolean(false), given));
+        if (!m_walker.endArmWithBranchBehind(resume))
+            m_walker.fail("a way of a step does not walk the end of its block"_s);
+        return true;
+    }
+
     bool stepByMethodInSightOnWaysApart(Reference state, const BodyValue& resume)
     {
         const Walker::IterationByIndex& entered = m_walker.iterationByIndex(state);
@@ -1382,13 +1430,7 @@ public:
         Reference iterator = entered.iterator;
         if (!findOnlyCallee(m_walker, resume, next))
             return false;
-        const BodyIndex& index = m_walker.currentBodyIndex();
-        BodyTerminator end = index.terminator(index.blockOf(resume.id()));
-        ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
-        if (!m_walker.has(Mechanism::Folding) || !condition || index.isParameter(condition) || index.opcodeOf(condition) != Opcode::ResultAt)
-            return false;
-        auto asked = index.value(condition).as<Opcode::ResultAt>();
-        if (asked.resultsOperand() != resume.id() || asked.index() != static_cast<uint32_t>(IteratorResumeResult::Done) || !m_walker.armsMayEndWithBranchBehind(resume))
+        if (!branchBehindAsksWhetherStepWasLast(resume) || !m_walker.armsMayEndWithBranchBehind(resume))
             return false;
         Reference answer = requireObject(call(next, iterator), RuntimeErrorKind::IteratorResultNotObject);
         Reference done = truthOf(readOffAnswer(answer, BuiltinNames::done));
@@ -1421,15 +1463,7 @@ public:
         if (record.mayGoByProtocol || record.isTakenAtOpen || record.holdsFlatEntries || record.literal || !record.table || !stepsThroughTable(record.contents) || !record.head || !findWayOfIteration(m_walker.currentBodyIndex(), resume.operand(0)).onlyStepStandsAtHeadOfLoop)
             return false;
         Walker::IterationByIndex entered = record;
-        const BodyIndex& index = m_walker.currentBodyIndex();
-        BodyTerminator end = index.terminator(index.blockOf(resume.id()));
-        ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
-        if (!m_walker.has(Mechanism::Folding) || !condition || index.isParameter(condition) || index.opcodeOf(condition) != Opcode::ResultAt)
-            return false;
-        auto asked = index.value(condition).as<Opcode::ResultAt>();
-        if (asked.resultsOperand() != resume.id() || asked.index() != static_cast<uint32_t>(IteratorResumeResult::Done))
-            return false;
-        if (entered.otherForm != Walker::IterationByIndex::OtherForm::None || !m_walker.armsMayEndWithBranchBehind(resume))
+        if (!branchBehindAsksWhetherStepWasLast(resume) || entered.otherForm != Walker::IterationByIndex::OtherForm::None || !m_walker.armsMayEndWithBranchBehind(resume))
             return false;
         Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
         isClosed.setTableOperand(entered.table);
@@ -2646,7 +2680,15 @@ private:
 
     void endStepByProtocol(const Walker::IterationByIndex& iteration, BlockID after, Reference done, Reference value, Reference position, Reference keyOfPair = { }, Reference valueOfPair = { })
     {
-        if (iteration.goesByProtocolAlone)
+        if (m_whereLastStepGoes) {
+            if (m_walker.hasFailed())
+                return;
+            RELEASE_ASSERT(done.isConstant() && m_walker.code().at(done.id()).opcode == Opcode::Boolean);
+            if (m_walker.code().at(done.id()).boolean())
+                jumpTo(m_whereLastStepGoes);
+            else
+                jumpTo(after, { value, position });
+        } else if (iteration.goesByProtocolAlone)
             jumpTo(after, { done, value });
         else if (iteration.table)
             endStepThroughTable(iteration, after, done, value, position, undefined());
@@ -3207,6 +3249,7 @@ private:
     bool m_mayStepGenerator { true };
     bool m_protocolIsForTheOddOne { false };
     BlockID m_whereNeitherTextNorListIsStepped;
+    BlockID m_whereLastStepGoes;
     ValueID m_valueThatStepHandsToArithmeticAlone;
     bool m_takesListApart { false };
     BlockFrequency m_frequencyOfBlocksAdded { BlockFrequency::Normal };
@@ -4295,7 +4338,7 @@ bool buildTypedIterationOfItsOpcodes(Walker& walker, const BodyValue& value)
         builder.expectNoGenerator();
     if (!isAsync && isExpectedToBeSteppedUnseen(walker, value.operand(0)))
         builder.expectNoStepByProtocol();
-    if (builder.stepTableOnWaysApart(state, value) || builder.stepListOnWaysApart(state, value) || (!isAsync && builder.stepByMethodInSightOnWaysApart(state, value)))
+    if (builder.stepTableOnWaysApart(state, value) || builder.stepListOnWaysApart(state, value) || (!isAsync && (builder.stepThatMayGoByProtocolOnWaysApart(state, value) || builder.stepByMethodInSightOnWaysApart(state, value))))
         return true;
     Reference results;
     if (std::optional<uint32_t> position = walker.iterationByIndex(state).literal ? placeOfStepInPattern(walker.currentBodyIndex(), value) : std::nullopt) {

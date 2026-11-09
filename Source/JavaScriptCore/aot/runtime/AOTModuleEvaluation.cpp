@@ -3784,6 +3784,12 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     if (m_mocks) [[unlikely]]
         noteLoadBegunByFactories(target);
     bool someFactoryHasNotSettled = tellHostOfRequire(target);
+    if (m_mocks && referrer && host().isRequiredForSakeOfOwnFactory && waitsForFactoryThatLoadInFlightCalled(target)) [[unlikely]] {
+        if (host().isRequiredForSakeOfOwnFactory(m_instance.globalObject, target, referrer))
+            RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
+        throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(target)));
+        return { };
+    }
     if (isAskedForByOwnFactory(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
     if (m_mocks && referrer && isMocked(target) && targetData.isESModuleOfProgram() && !targetData.isFaceOfFile() && isOfPackage(referrer) && host().isLeftToItselfByMock && host().isLeftToItselfByMock(m_instance.globalObject, m_table.pathText(target), m_table.pathText(referrer))) [[unlikely]]

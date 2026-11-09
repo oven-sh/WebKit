@@ -943,7 +943,6 @@ public:
     };
     Vector<ValueDefinedBehindBirth, 8> takeWhatIsDefinedBehindBirthOf(LayoutID layout) { return layout == m_layoutOfBirthThatListsWhatIsBehind ? std::exchange(m_valuesDefinedBehindBirth, { }) : Vector<ValueDefinedBehindBirth, 8>(); }
     BlockID currentBlock() const { return m_block; }
-    static uint16_t wordThatVariableIsBornWith(const Program&, VariableID);
     Origin originOf(const BodyValue& value) const
     {
         Origin origin = value.origin();
@@ -1840,7 +1839,8 @@ private:
     void keepFieldsOfScopesThatLoopWrites(BlockID inputHead, Vector<FieldOfScope, 4>&);
     Draft draftOfReadOfFieldThatComesRound(Reference scope, FieldReference);
     Draft draftOfReadOf(const FieldOfScope&);
-    Draft draftOfReadInFrontOfHead(const FieldOfScope&, bool fileMayNotHaveRun = false);
+    enum class ReadInFrontOfHead : uint8_t { ComesRound, IsTestedInFront };
+    Draft draftOfReadInFrontOfHead(const FieldOfScope&, ReadInFrontOfHead, bool fileMayNotHaveRun = false);
     bool isFitForParameterOfField(const FieldOfScope&, Reference value);
     Reference fitForParameterOfField(const FieldOfScope&, Reference known);
     bool bringFieldsOfScopesRound(EdgeID&, BlockID head, Vector<Reference, 8>& arguments);

@@ -812,8 +812,11 @@ void Modules::captureExportsOfLibraryModules(ModuleID root)
     walk->replay(scope, [&](ModuleID module) {
         return status(module) == ModuleStatus::Unlinked;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
-        if (leaf == ModuleLinkWalk::Leaf::CapturesExports && data(module).exportRule == SyntheticExportRule::RuntimeModule && !isNativeModule(module))
-            captureExports(module);
+        if (leaf != ModuleLinkWalk::Leaf::CapturesExports || data(module).exportRule != SyntheticExportRule::RuntimeModule || isNativeModule(module))
+            return;
+        if (!didCaptureExports(module))
+            ensureLoaded(module).isBeingLoadedByLoader = true;
+        captureExports(module);
     }, [](ModuleID, bool) { });
     RETURN_IF_EXCEPTION(scope, void());
     keepLinkWalk(WTF::move(walk));

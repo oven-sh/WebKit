@@ -458,6 +458,15 @@ uint64_t Modules::callOfFactoryThatHasNotSettled(ModuleID module, bool* refusesE
     return refuses || data(module).isESModuleOfProgram() || (data(module).kind == ModuleKind::CommonJs && !data(module).isOfLibrary()) ? call : 0;
 }
 
+bool Modules::waitsForFactoryThatLoadInFlightCalled(ModuleID module) const
+{
+    if (!isMocked(module) || !data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || isLeftAloneByMock(module) || hasRunItself(module))
+        return false;
+    if (mockInPlace(module) || m_modulesWithMockToRun.get(module.index()) || !callOfFactoryThatHasNotSettled(module))
+        return false;
+    return !m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return pair.mocked == module; });
+}
+
 void Modules::noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp)
 {
     BitVector reached = reachedByStatements(required, AtMock::Stops);

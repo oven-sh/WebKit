@@ -915,6 +915,7 @@ public:
     void runOriginalsOwedTo(ModuleID importer);
     JSValue requireModuleItselfBesideMock(ModuleID);
     uint64_t callOfFactoryThatHasNotSettled(ModuleID, bool* refusesEveryRequire = nullptr) const;
+    bool waitsForFactoryThatLoadInFlightCalled(ModuleID) const;
     void noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp = true);
     JSValue answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleID requirer);
     bool isImportOfFactorysOwnBehindRequireThatGaveUp(ModuleID, ModuleID referrer);
