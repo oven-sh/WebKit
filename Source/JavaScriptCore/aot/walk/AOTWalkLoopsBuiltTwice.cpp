@@ -985,35 +985,6 @@ Walker::ObjectsMadeHereThatLoopMentions Walker::objectsMadeHereThatLoopMentions(
     return mentioned;
 }
 
-bool Walker::textOfLoopNames(BlockID inputHead, ValueID root)
-{
-    const BodyIndex& index = currentBodyIndex();
-    uint32_t firstValue = index.block(inputHead).firstParameter().index();
-    bool isNamed = false;
-    auto look = [&](ValueID value) {
-        if (isNamed || !value || value.index() >= firstValue)
-            return;
-        Reference reference = referenceOf(value);
-        isNamed = reference && reference.isValue() && rootOfCellInSweptCode(m_code, reference.id()) == root;
-    };
-    for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
-        BodyBlock block = index.block(member);
-        for (BodyValue operation : block.values())
-            operation.forEachOperand([&](ValueID operand, uint32_t) { look(operand); });
-        BodyTerminator end = block.terminator();
-        end.forEachOperand([&](ValueID operand, auto...) { look(operand); });
-        for (BodyTarget target : end.targets()) {
-            for (ValueID argument : target.arguments())
-                look(argument);
-        }
-        if (block.hasHandler()) {
-            for (ValueID argument : block.handler().arguments())
-                look(argument);
-        }
-    }
-    return isNamed;
-}
-
 std::optional<Walker::IsItselfMentioned> Walker::isOtherThanRestOf(const ObjectsMadeHereThatLoopMentions& mentioned, Reference other) const
 {
     if (!other.isValue())

@@ -209,6 +209,7 @@ public:
             letGo->exclude(m_filesThatRanInPreload);
         }
         m_rootsOfImportsBehindFactories.clear();
+        m_callsOfImportBehindFactories.clear();
         m_failuresOfFactories.clear();
         m_loadsThatFailedForWantOfMock.clear();
         m_areTestsOfFileDone = false;
@@ -1140,6 +1141,20 @@ public:
     bool m_importOfMockedModuleHasComeToItsJob { false };
     Vector<ModuleID, 2> m_modulesOfHeldImports;
     Vector<ModuleID, 2> m_rootsOfImportsBehindFactories;
+    struct CallOfImportBehindFactories {
+        ModuleID root;
+        Strong<JSPromise> promise;
+        size_t numberOfCallsMadeBefore;
+    };
+    Vector<CallOfImportBehindFactories, 2> m_callsOfImportBehindFactories;
+    const CallOfImportBehindFactories* lastCallOfImportBehindFactories(ModuleID root) const
+    {
+        for (size_t index = m_callsOfImportBehindFactories.size(); index--;) {
+            if (m_callsOfImportBehindFactories[index].root == root && m_callsOfImportBehindFactories[index].promise->status() == JSPromise::Status::Pending)
+                return &m_callsOfImportBehindFactories[index];
+        }
+        return nullptr;
+    }
     Vector<ModuleID, 2> m_rootsOfImportsThatHaveGoneOn;
     void didGoOnBehindFactories(ModuleID root);
     JSValue errorOfFactoryThatFailedWhileCallWaited(ModuleID root, uint32_t momentCallBeganToWait) const;

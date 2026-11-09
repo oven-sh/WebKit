@@ -934,13 +934,14 @@ void Walker::holdWhatArrivesWhereEdgesAreAwaited(BlockID to)
             return false;
         if (believed != holder && believed.isValue() && m_state.isFresh(Reference::value(rootOfCellInSweptCode(m_code, believed.id()))))
             return false;
+        ValueID root = rootOfCellInSweptCode(m_code, holder.id());
+        if (m_code.isConstant(root) || !makesNewCell(m_code.at(root)))
+            return false;
         for (size_t place = firstTry; place < m_triesOfLoops.size() && !m_inputs.options.objectsWrittenInLoopsAreTakenToBeOnlyForgotten; ++place) {
             if (m_triesOfLoops[place].objectsMadeInFrontThatAreWritten.contains(holder.id().index()))
                 return false;
         }
-        ValueID root = rootOfCellInSweptCode(m_code, holder.id());
-        bool isListedWhereLoopMentionsIt = !m_code.isConstant(root) && makesNewCell(m_code.at(root));
-        if (!m_inputs.options.objectsNamedInLoopsAreTakenToBeOnlyForgotten && (isOtherThanRestOf(objectsMadeHereThatLoopMentions(m_triesOfLoops[firstTry].inputHead), holder) != IsItselfMentioned::No || (!isListedWhereLoopMentionsIt && textOfLoopNames(m_triesOfLoops[firstTry].inputHead, root))))
+        if (!m_inputs.options.objectsNamedInLoopsAreTakenToBeOnlyForgotten && isOtherThanRestOf(objectsMadeHereThatLoopMentions(m_triesOfLoops[firstTry].inputHead), holder) != IsItselfMentioned::No)
             return false;
         count(believed == holder ? StatisticID::AnswersAboutFreshObjectsOnlyForgottenInLoops : StatisticID::PlacesOfFreshObjectsOnlyForgottenInLoops);
         return true;

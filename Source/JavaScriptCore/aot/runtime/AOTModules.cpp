@@ -179,6 +179,7 @@ void Modules::forgetUnfinishedLoads()
     m_importsWhoseMocksRunWhenTheirTextsHaveCome.clear();
     m_modulesOfHeldImports.clear();
     m_rootsOfImportsBehindFactories.clear();
+    m_callsOfImportBehindFactories.clear();
     m_failuresOfFactories.clear();
     m_loadsThatFailedForWantOfMock.clear();
     m_copiesOfOriginalsBeingLoaded.clear();
@@ -3598,10 +3599,10 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     if (!fetchParameters)
         return fetchParameters.error();
     bool isLeftToHost = isLeftToHostAsFarAsIsKnown(module);
-    bool wasGivenUpOnByRequireOfItself = !hasComeToItsJob && referrer && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) {
-        return pair.required == module && pair.mocked == module && pair.call == callOfFactoryThatHasNotSettled(module);
+    bool wasGivenUpOnByRequire = !hasComeToItsJob && referrer && m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) {
+        return pair.mocked == module && pair.call == callOfFactoryThatHasNotSettled(module);
     }) && host().wroteFactoryThatHasNotSettled && host().wroteFactoryThatHasNotSettled(realm, fileOf(referrer), module);
-    if (!isLeftToHost && ((isMadeByOwnFactory && isFetchedBehindItsFactory(module)) || wasGivenUpOnByRequireOfItself)) [[unlikely]]
+    if (!isLeftToHost && ((isMadeByOwnFactory && isFetchedBehindItsFactory(module)) || wasGivenUpOnByRequire)) [[unlikely]]
         RELEASE_AND_RETURN(scope, importModuleItselfWithoutLoader(module));
     if (!isLeftToHost && !hasComeToItsJob && referrer && !m_importOfFactorysOwnHasItsText && !m_requiresThatGaveUp.isEmpty() && isImportOfFactorysOwnBehindRequireThatGaveUp(module, referrer)) [[unlikely]]
         RELEASE_AND_RETURN(scope, importAsFactorysOwnOnceTextHasCome(module, referrer));
@@ -4384,6 +4385,11 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         m_loadsThatFailedForWantOfMock.append({ module, Strong<JSPromise>(*m_instance.vm, factories) });
     }
+    const CallOfImportBehindFactories* earlier = text == TextOfImport::HasCome && !hadWaited ? lastCallOfImportBehindFactories(module) : nullptr;
+    bool comesBehindEarlierCall = earlier && earlier->numberOfCallsMadeBefore;
+    size_t numberOfCallsMadeBefore = comesBehindEarlierCall ? earlier->numberOfCallsMadeBefore - 1 : std::ranges::count_if(m_importsWhoseMocksRunWhenTheirTextsHaveCome, [&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.module == module; });
+    if (comesBehindEarlierCall)
+        factories = earlier->promise.get();
     if (factories) [[unlikely]] {
         VM& vm = *m_instance.vm;
         JSPromise* promise = promiseForCaller();
@@ -4400,6 +4406,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, heldCall);
         if (!hadWaited) {
             m_rootsOfImportsBehindFactories.append(module);
+            m_callsOfImportBehindFactories.append({ module, Strong<JSPromise>(vm, promise), numberOfCallsMadeBefore });
             JSFunction* didSettle = JSFunction::create(vm, realm, 2, String(), JSC::AOT::didSettleImportBehindFactories, ImplementationVisibility::Private);
             bool wasHandled = promise->isHandled();
             promise->performPromiseThenWithContext(vm, realm, didSettle, didSettle, jsUndefined(), jsNumber(module.index()));

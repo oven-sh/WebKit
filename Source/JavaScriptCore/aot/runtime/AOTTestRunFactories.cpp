@@ -592,6 +592,7 @@ void Modules::didSettleImportBehindFactories(ModuleID root)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     m_rootsOfImportsBehindFactories.removeFirst(root);
+    m_callsOfImportBehindFactories.removeAllMatching([](const auto& call) { return call.promise->status() != JSPromise::Status::Pending; });
     if (m_rootsOfImportsBehindFactories.isEmpty() && !isSomeCallHeldForItsText())
         m_failuresOfFactories.clear();
     if (!m_rootsOfImportsThatHaveGoneOn.removeFirst(root) || m_modulesWithMockThatStandsForLoadsInFlight.isEmpty() || m_loadsInFlight.numberBeingLoaded())

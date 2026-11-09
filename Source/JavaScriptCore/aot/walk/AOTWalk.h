@@ -1761,7 +1761,6 @@ public:
     std::optional<BlockID> headOfInnermostTryInFrameOnTop() const { return !m_triesOfLoops.isEmpty() && m_triesOfLoops.last().frameIndex == m_frames.size() - 1 ? std::optional(m_triesOfLoops.last().inputHead) : std::nullopt; }
     using ObjectsMadeHereThatLoopMentions = Vector<uint32_t, 4>;
     ObjectsMadeHereThatLoopMentions objectsMadeHereThatLoopMentions(BlockID inputHead);
-    bool textOfLoopNames(BlockID inputHead, ValueID root);
     enum class IsItselfMentioned : uint8_t { No, Yes };
     std::optional<IsItselfMentioned> isOtherThanRestOf(const ObjectsMadeHereThatLoopMentions&, Reference) const;
     bool turnsOfTypedCopyLeaveViewsAsTheyAre(TurnOfTypedCopy) const;
