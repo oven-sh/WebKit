@@ -4790,12 +4790,14 @@ JSC_DEFINE_JIT_OPERATION(operationFunctionBind, JSBoundFunction*, (JSGlobalObjec
         if (found) {
             JSValue lengthValue = target->get(globalObject, vm.propertyNames->length);
             OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-            length = lengthValue.toIntegerOrInfinity(globalObject);
-            OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-            if (length > boundArgsLength)
-                length -= boundArgsLength;
-            else
-                length = 0;
+            if (lengthValue.isNumber()) {
+                length = lengthValue.toIntegerOrInfinity(globalObject);
+                OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+                if (length > boundArgsLength)
+                    length -= boundArgsLength;
+                else
+                    length = 0;
+            }
         }
         JSValue nameValue = target->get(globalObject, vm.propertyNames->name);
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
