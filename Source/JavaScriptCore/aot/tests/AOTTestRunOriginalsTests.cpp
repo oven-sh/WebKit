@@ -148,7 +148,7 @@ static void checkOriginalThatThrowsLeavesMockAndRunsAgain(LoadedProgram& program
     AOT_TEST_CHECK(scope.exception());
     scope.clearException();
     AOT_TEST_CHECK(globalNamed(program, "ranOnce"_s).isUndefined());
-    AOT_TEST_CHECK(hasMockInPlace(realm, dep));
+    AOT_TEST_CHECK(hasActiveMock(realm, dep));
     AOT_TEST_CHECK(required(program, project) == jsNumber(2));
 
     AOT_TEST_CHECK(required(program, package) == jsNumber(1));
@@ -211,7 +211,7 @@ static void checkMockThatEndsWhileOriginalRunsLeavesOriginal(LoadedProgram& prog
     };
     AOT_TEST_CHECK(required(program, package) == jsNumber(1));
     AOT_TEST_CHECK(!scope.exception());
-    AOT_TEST_CHECK(!hasMockInPlace(realm, dep));
+    AOT_TEST_CHECK(!hasActiveMock(realm, dep));
     AOT_TEST_CHECK(required(program, project) == jsNumber(1));
     AOT_TEST_CHECK(required(program, package) == jsNumber(1));
     AOT_TEST_CHECK(globalNamed(program, "ranTwice"_s).isUndefined());
@@ -232,7 +232,7 @@ static void checkMockLaidWhileOriginalRunsStandsBehindIt(LoadedProgram& program)
     AOT_TEST_CHECK(required(program, package) == jsNumber(1));
     AOT_TEST_CHECK(!scope.exception());
     AOT_TEST_CHECK(JSValue::decode(seenByProject) == jsNumber(3));
-    AOT_TEST_CHECK(hasMockInPlace(realm, dep));
+    AOT_TEST_CHECK(hasActiveMock(realm, dep));
     AOT_TEST_CHECK(required(program, project) == jsNumber(3));
     AOT_TEST_CHECK(required(program, package) == jsNumber(1));
     AOT_TEST_CHECK(globalNamed(program, "ranTwice"_s).isUndefined());

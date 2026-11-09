@@ -1,0 +1,7 @@
+# An operation that begins in its own frame leaves by no forced jump: asked of the text of the sources and headers of aot/, but for tests/, in every build by aot/runtime/generator/forced-jumps.py.
+# <file> | <function> | <why its jump is right as it is>. A function stands here where a line that begins an operation in the function's own frame (AOT_OPERATION_BEGIN.., AOT_OPERATION_FIND_OWN_FRAME,
+# AOT_OPERATION_FRAME_RECORD.., AOT_FRAME_RECORD_OF_THIS_FUNCTION, __builtin_frame_address, ..CallFrameTracer) has a forced jump (musttail in any spelling, AOT_MUST_TAIL_CALL, MUST_TAIL_CALL) behind it
+# in the text, and no road through the function passes both. A #define with the lines that continue it is read as a function of its own, under the macro's name.
+# It reads text: it knows no roads, so a jump on another road than the beginning is found too; and a line of this list whose function has no such pair any more fails the build.
+# A beginning inside a function that is inlined into the one that jumps is not seen here: Tools/Scripts/aot/find-frame-records-handed-to-jumps.py sees it in a finished binary.
+runtime/AOTStringOperations.cpp | concatenateShortStringKey | the road that begins in its own frame returns inside its case; the road that jumps to concatenateByContents has begun nothing

@@ -379,7 +379,7 @@ unsigned BunV8HeapSnapshotBuilder::getNodeTypeIndex(JSCell* cell)
     }
     case JSType::CellType:
 #if ENABLE(AOT)
-        if (AOT::HeapHooks::standsForModuleInHeapSnapshots(cell))
+        if (AOT::HeapHooks::representsModuleInHeapSnapshot(cell))
             return static_cast<unsigned>(V8NodeType::Object);
 #endif
         return static_cast<unsigned>(V8NodeType::Hidden);
@@ -455,13 +455,13 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
         return makeString("system / "_s, cell->className());
 #if ENABLE(AOT)
     case JSType::CellType:
-        if (AOT::HeapHooks::standsForModuleInHeapSnapshots(cell))
+        if (AOT::HeapHooks::representsModuleInHeapSnapshot(cell))
             return makeString("system / "_s, cell->className());
         break;
     case JSType::CompiledClosureType:
     case JSType::SlimClosureType:
     case JSType::SlimClosureWithPropertiesType: {
-        String displayName = AOT::HeapHooks::nameOfCompiledCallee(cell);
+        String displayName = AOT::HeapHooks::compiledCalleeName(cell);
         if (!displayName.isEmpty())
             return displayName;
         break;

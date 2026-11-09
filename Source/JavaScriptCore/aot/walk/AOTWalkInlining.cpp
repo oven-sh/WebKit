@@ -1437,13 +1437,7 @@ bool Walker::leaveCopyOfHeadForCallWhereItMay()
     if (!frame.blocksOfHead || !frame.mayLeaveForCall || isUnreachable() || !m_state.nothingWasDoneSinceCopyBegan(frame.numberOfCopy) || isUnderHandlerOtherThanCleanups() || hasTextsInStringBuilders())
         return false;
     jumpTo(blockWhereCopyLeavesForCall());
-    if (!isUnreachable()) {
-        PendingBlock& left = pendingBlock(m_block);
-        left.state = WTF::move(m_state);
-        left.hasState = true;
-    }
-    m_block = { };
-    m_state.clear();
+    leaveBlockPending();
     return true;
 }
 

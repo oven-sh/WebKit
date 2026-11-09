@@ -105,7 +105,7 @@ public:
     static bool getOwnPropertySlot(JSObject* object, JSGlobalObject* realm, PropertyName name, PropertySlot& slot)
     {
         const CommonIdentifiers& names = *realm->vm().propertyNames;
-        bool isKnown = (name == names.name || name == names.length || name == names.prototype) && standsInForFunction(object);
+        bool isKnown = (name == names.name || name == names.length || name == names.prototype) && isOmittedFunctionPlaceholder(object);
         if (isKnown || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry)
             return Base::getOwnPropertySlot(object, realm, name, slot);
         return throwMessageOfStandIn(realm, object);
@@ -143,15 +143,15 @@ const ClassInfo StandInForValue::s_info = { "Function"_s, &Base::s_info, nullptr
 
 } // namespace
 
-static thread_local bool makesMemberForLookThatOnlyTests;
-static thread_local bool makesMemberForRead;
+static thread_local bool reifiesMemberForPresenceCheck;
+static thread_local bool reifiesMemberForRead;
 
 static bool isMakingMemberForRead()
 {
-    return makesMemberForRead;
+    return reifiesMemberForRead;
 }
 
-void noteErrorOfCodeLeftOut(JSGlobalObject* realm, JSObject* error)
+void noteOmittedCodeError(JSGlobalObject* realm, JSObject* error)
 {
     VM& vm = realm->vm();
     JSValue message = error->getDirect(vm, vm.propertyNames->message);
@@ -167,7 +167,7 @@ void noteErrorOfCodeLeftOut(JSGlobalObject* realm, JSObject* error)
     members.isThrownToRead = isMakingMemberForRead();
 }
 
-static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
+static String takeOmittedCodeErrorMessage(VM& vm)
 {
     Exception* exception = vm.exceptionForInspection();
     if (!exception)
@@ -193,7 +193,7 @@ static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
     return message;
 }
 
-static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const String& nameOfMember, JSObject* answeredBy, const FunctionLeftOut* function = nullptr)
+static JSValue createThrowingPlaceholder(JSGlobalObject* realm, String&& message, const String& nameOfMember, JSObject* answeredBy, const OmittedFunction* function = nullptr)
 {
     VM& vm = realm->vm();
     if (answeredBy) {
@@ -217,37 +217,37 @@ static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const 
     return standIn;
 }
 
-JSValue takeStandInForMemberLeftOut(JSGlobalObject* realm, const String& nameOfMember)
+JSValue takeOmittedMemberPlaceholder(JSGlobalObject* realm, const String& nameOfMember)
 {
-    String message = takeMessageOfErrorOfCodeLeftOut(realm->vm());
+    String message = takeOmittedCodeErrorMessage(realm->vm());
     if (message.isNull())
         return { };
-    return standInThatThrows(realm, WTF::move(message), nameOfMember, nullptr);
+    return createThrowingPlaceholder(realm, WTF::move(message), nameOfMember, nullptr);
 }
 
-JSValue takeStandInForFunctionLeftOut(JSGlobalObject* realm, const FunctionLeftOut& function, JSObject* answeredBy)
+JSValue takeOmittedFunctionPlaceholder(JSGlobalObject* realm, const OmittedFunction& function, JSObject* answeredBy)
 {
-    String message = takeMessageOfErrorOfCodeLeftOut(realm->vm());
+    String message = takeOmittedCodeErrorMessage(realm->vm());
     if (message.isNull())
         return { };
-    return standInThatThrows(realm, WTF::move(message), function.name, answeredBy, &function);
+    return createThrowingPlaceholder(realm, WTF::move(message), function.name, answeredBy, &function);
 }
 
-MakingOfMemberForLook::MakingOfMemberForLook(bool lookOnlyTests)
-    : m_previous(std::exchange(makesMemberForLookThatOnlyTests, lookOnlyTests))
-    , m_previousForRead(std::exchange(makesMemberForRead, !lookOnlyTests))
+MemberReificationScope::MemberReificationScope(bool isPresenceCheck)
+    : m_previous(std::exchange(reifiesMemberForPresenceCheck, isPresenceCheck))
+    , m_previousForRead(std::exchange(reifiesMemberForRead, !isPresenceCheck))
 {
 }
 
-MakingOfMemberForLook::~MakingOfMemberForLook()
+MemberReificationScope::~MemberReificationScope()
 {
-    makesMemberForLookThatOnlyTests = m_previous;
-    makesMemberForRead = m_previousForRead;
+    reifiesMemberForPresenceCheck = m_previous;
+    reifiesMemberForRead = m_previousForRead;
 }
 
-bool isMakingMemberForLookThatOnlyTests()
+bool isReifyingForPresenceCheck()
 {
-    return makesMemberForLookThatOnlyTests;
+    return reifiesMemberForPresenceCheck;
 }
 
 bool isPlaceholderForOmittedBuiltin(JSCell* cell)
@@ -255,7 +255,7 @@ bool isPlaceholderForOmittedBuiltin(JSCell* cell)
     return cell->inherits<StandInForValue>();
 }
 
-bool standsInForFunction(JSCell* cell)
+bool isOmittedFunctionPlaceholder(JSCell* cell)
 {
     if (!cell->inherits<StandInForValue>())
         return false;
@@ -268,7 +268,7 @@ bool standsInForFunction(JSCell* cell)
     });
 }
 
-void explainErrorBehindMemberLeftOut(JSGlobalObject* realm, JSObject* error, JSValue base)
+void explainOmittedMemberError(JSGlobalObject* realm, JSObject* error, JSValue base)
 {
     VM& vm = realm->vm();
     String sentence;
@@ -295,13 +295,13 @@ void explainErrorBehindMemberLeftOut(JSGlobalObject* realm, JSObject* error, JSV
     error->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(text, text.endsWith('.') ? " "_s : ". "_s, sentence)), static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
-bool isAnythingNotedOfMembersLeftOut(const VM* vm)
+bool hasOmittedMemberNotes(const VM* vm)
 {
     Locker locker { membersLock };
     return membersByVM().contains(const_cast<VM*>(vm));
 }
 
-void forgetErrorOfCodeLeftOut(VM& vm)
+void clearOmittedCodeError(VM& vm)
 {
     Locker locker { membersLock };
     membersByVM().remove(&vm);

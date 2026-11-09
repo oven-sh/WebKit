@@ -448,11 +448,11 @@ bool ordinarySetSlow(JSGlobalObject* globalObject, JSObject* object, PropertyNam
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    // The receiver is a proxy of the object that hands definitions on to it. Where an element can be set quickly nothing above the object takes the store, so the store ends in the object as it does without the proxy.
+    // The receiver is a proxy for this object, and its handler forwards defineProperty to it. If an element can be set quickly, nothing on the prototype chain intercepts the store, so the store ends in the object just as it would without the proxy.
     if (std::optional<uint32_t> index = vm.hasCompiledCode() ? parseIndex(propertyName) : std::nullopt; index && !object->structure()->hasImmutableIndexedProperties()) {
-        JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver);
+        JSObject* defineTarget = AOT::RuntimeHooks::proxyDefinePropertyTarget(vm, receiver);
         RETURN_IF_EXCEPTION(scope, false);
-        if (definedOn == object && object->trySetIndexQuickly(vm, *index, value))
+        if (defineTarget == object && object->trySetIndexQuickly(vm, *index, value))
             return true;
     }
 #endif
@@ -864,8 +864,8 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
     if (receiver->type() == GlobalProxyType)
         receiver = uncheckedDowncast<JSGlobalProxy>(receiver)->target();
 #if ENABLE(AOT)
-    if (JSObject* definedOn = vm.hasCompiledCode() ? AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver) : nullptr; definedOn && definedOn->type() != ProxyObjectType && definedOn->type() != CompiledObjectType)
-        receiver = definedOn;
+    if (JSObject* defineTarget = vm.hasCompiledCode() ? AOT::RuntimeHooks::proxyDefinePropertyTarget(vm, receiver) : nullptr; defineTarget && defineTarget->type() != ProxyObjectType && defineTarget->type() != CompiledObjectType)
+        receiver = defineTarget;
     RETURN_IF_EXCEPTION(scope, false);
 #endif
     scope.release();
@@ -3368,24 +3368,24 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
             PropertyOffset offset = getDirectOffset(vm, key, attributes);
             if (!isValidOffset(offset)) {
 #if ENABLE(AOT)
-                // Compiled code may hold the object already. The property is that object.
-                JSObject* madeAhead = vm.hasCompiledCode() && !(value.attributes() & PropertyAttribute::Accessor) ? AOT::RuntimeHooks::takeStaticPropertyMadeAhead(this, key.impl()) : nullptr;
-                if (madeAhead) [[unlikely]] {
+                // Compiled code may already hold the object for this property. If so, store that same object.
+                JSObject* preallocated = vm.hasCompiledCode() && !(value.attributes() & PropertyAttribute::Accessor) ? AOT::RuntimeHooks::takePreallocatedStaticProperty(this, key.impl()) : nullptr;
+                if (preallocated) [[unlikely]] {
                     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-                    putDirect(vm, key, madeAhead, attributesForStructure(value.attributes()));
+                    putDirect(vm, key, preallocated, attributesForStructure(value.attributes()));
                 } else
 #endif
                     reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
                 // Leave the rest lazy on throw; the caller propagates.
                 if (vm.exceptionForInspection()) [[unlikely]] {
 #if ENABLE(AOT)
-                    JSValue standIn = vm.hasCompiledCode() ? AOT::takeStandInForMemberLeftOut(globalObject, key.string()) : JSValue();
-                    if (!standIn)
+                    JSValue placeholder = vm.hasCompiledCode() ? AOT::takeOmittedMemberPlaceholder(globalObject, key.string()) : JSValue();
+                    if (!placeholder)
                         return;
-                    // It is laid as a getter: called, it throws the error that names the member. No read finds it as a value.
+                    // It is stored as a getter that throws the error naming the member. No read returns it as a value.
                     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
                     unsigned attributesOfGetter = (attributesForStructure(value.attributes()) & ~static_cast<unsigned>(PropertyAttribute::ReadOnly)) | PropertyAttribute::Accessor;
-                    putDirectNonIndexAccessor(vm, key, GetterSetter::create(vm, globalObject, asObject(standIn), nullptr), attributesOfGetter);
+                    putDirectNonIndexAccessor(vm, key, GetterSetter::create(vm, globalObject, asObject(placeholder), nullptr), attributesOfGetter);
                     continue;
 #else
                     return;

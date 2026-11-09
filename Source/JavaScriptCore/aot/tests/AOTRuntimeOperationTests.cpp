@@ -921,7 +921,7 @@ static void checkCallsAreNotCounted(LoadedProgram& program)
 static void checkVMWithoutImageCounts(LoadedProgram&)
 {
     Thread::create("VM without an image"_s, [] {
-        Image::useNoneOnThisThread();
+        Image::disableOnThisThread();
         RefPtr<VM> vm = VM::create();
         JSLockHolder locker(*vm);
         const RuntimeCounts* counts = vm->aotState().counts.get();

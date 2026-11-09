@@ -9,6 +9,7 @@
 
 #include "AOTBuiltinIDTypes.h"
 #include "AOTInstance.h"
+#include "JSArray.h"
 #include "JSBigInt.h"
 #include "JSCJSValue.h"
 #include "MarkedBlock.h"
@@ -16,7 +17,6 @@
 namespace JSC {
 
 class ArgList;
-class JSArray;
 class JSObject;
 class JSString;
 class Structure;
@@ -34,6 +34,14 @@ JSValue constructInEngine(Instance*, BuiltinID constructor, JSValue argument);
 void markPristineIfOriginal(Instance&, JSObject*);
 
 JSString* tryConvertListToString(JSGlobalObject*, JSArray*);
+
+ALWAYS_INLINE bool mayRefuseOrRunOtherCode(JSArray* array)
+{
+    IndexingType type = array->indexingType();
+    if (hasAnyArrayStorage(type))
+        return hasSlowPutArrayStorage(type) || array->butterfly()->arrayStorage()->m_sparseMap;
+    return isCopyOnWrite(array->indexingMode()) && array->hasFrozenElementsInPlace();
+}
 
 void prepareFinalObjectAllocation(Instance*, InlineAllocation, Structure*);
 

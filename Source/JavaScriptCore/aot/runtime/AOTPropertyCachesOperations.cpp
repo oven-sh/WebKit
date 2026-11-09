@@ -543,10 +543,41 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetWithProxyTrap, EncodedJSValue, (Instance
     OPERATION_RETURN(scope, JSValue::encode(ProxyObject::getWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key, words.proxy)));
 }
 
+static bool isTrapResultAllowed(VM& vm, JSObject* target, JSCell* key, JSValue answer)
+{
+    if (!key->isString())
+        return false;
+    StringImpl* impl = const_cast<StringImpl*>(uncheckedDowncast<JSString>(key)->tryGetValueImpl());
+    if (!impl || !impl->isAtom() || parseIndex(*impl))
+        return false;
+    auto* name = static_cast<UniquedStringImpl*>(impl);
+    JSObject* holder = target;
+    if (target->type() == CompiledObjectType) {
+        auto* object = uncheckedDowncast<Object>(target);
+        if (object->isFrozen() || object->isSealed() || !object->compiledStructure().hasOnlyConfigurableFields())
+            return false;
+        holder = extraPropertiesIfMade(*object);
+        if (!holder)
+            return !object->hasExtraProperties();
+    }
+    Structure* structure = holder->structure();
+    if (structure->typeInfo().overridesGetOwnPropertySlot() || structure->typeInfo().hasStaticPropertyTable())
+        return false;
+    unsigned attributes;
+    PropertyOffset offset = structure->get(vm, name, attributes);
+    if (!isValidOffset(offset) || !(attributes & PropertyAttribute::DontDelete))
+        return true;
+    if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+        return false;
+    return !(attributes & PropertyAttribute::ReadOnly) || holder->getDirect(offset) == answer;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTValidateAnswerOfProxyTrap, EncodedJSValue, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue answer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateAnswerOfProxyTrap);
     const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    if (isTrapResultAllowed(vm, words.target, words.key, JSValue::decode(answer)))
+        OPERATION_RETURN(scope, answer);
     ProxyObject::validateGetTrapResultWhereBound(globalObject, JSValue::decode(answer), words.target, words.key);
     OPERATION_RETURN(scope, answer);
 }
@@ -637,6 +668,29 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnValueUnderKeyOrEmpty, EncodedJS
     if (!isValidOffset(offset) || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue))
         return JSValue::encode(JSValue());
     return JSValue::encode(asObject(base)->getDirect(offset));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindsDefaultHasInstance, size_t, (EncodedJSValue encodedConstructor))
+{
+    JSValue constructor = JSValue::decode(encodedConstructor);
+    if (!constructor.isObject())
+        return false;
+    JSObject* current = asObject(constructor);
+    UniquedStringImpl* name = current->vm().propertyNames->hasInstanceSymbol.impl();
+    JSFunction* ofEngine = current->globalObject()->functionProtoHasInstanceSymbolFunction();
+    while (true) {
+        if (current->type() == ProxyObjectType)
+            return false;
+        Structure* structure = current->structure();
+        unsigned attributes = 0;
+        PropertyOffset offset = structure->getConcurrently(name, attributes);
+        if (isValidOffset(offset))
+            return !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue)) && current->getDirect(offset) == JSValue(ofEngine);
+        JSValue above = structure->storedPrototype(current);
+        if (!above.isObject())
+            return true;
+        current = asObject(above);
+    }
 }
 
 static JSValue getFromCellAndCache(Instance* instance, JSValue base, const Identifier& name)

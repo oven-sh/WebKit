@@ -67,9 +67,9 @@ static_assert(static_cast<int32_t>(notFound) == -1, "compiled code takes the low
 static constexpr size_t maxRegisterStringLength = defaultLimitValue(LimitID::MaxRegisterStringLength, hostArchitecture());
 static_assert(maxRegisterStringLength == sizeof(uint64_t));
 
-static StringView textOf(uint32_t text)
+static ALWAYS_INLINE StringView textOf(uint32_t text)
 {
-    return Image::current()->text().view(StringID(text));
+    return Image::current()->text().viewInline(StringID(text));
 }
 
 template<typename CharacterType>

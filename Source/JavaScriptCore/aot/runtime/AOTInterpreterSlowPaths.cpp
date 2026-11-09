@@ -58,7 +58,7 @@ void willRunInInterpreter(CodeBlock* codeBlock)
 
 static JSValue getById(Instance&, JSCell* base, const Identifier&);
 
-static Instance* instanceOfInterpreter(JSGlobalObject* realm)
+static Instance* interpreterInstance(JSGlobalObject* realm)
 {
     Instance* instance = realm->aotInstance();
     return instance && instance->state ? instance : nullptr;
@@ -248,7 +248,7 @@ JSValue callCustomGetter(const CustomAccessorRecord& record, JSCell* base, const
 static std::optional<JSValue> tryGetByName(JSGlobalObject* globalObject, JSCell* base, const Identifier& ident, CacheOfOperation cache)
 {
     bool isCompiledObject = base->type() == CompiledObjectType;
-    Instance* instance = instanceOfInterpreter(globalObject);
+    Instance* instance = interpreterInstance(globalObject);
     if (!instance)
         return std::nullopt;
     if (!isCompiledObject)
@@ -261,15 +261,15 @@ std::optional<JSValue> tryGetById(JSGlobalObject* globalObject, JSCell* base, co
     return tryGetByName(globalObject, base, ident, CacheOfOperation::HoldsOwnValues);
 }
 
-bool sharesStructureWithClassesThatLackTheirMembers(VM& vm, JSCell* cell)
+bool isClassWithLazyMembers(VM& vm, JSCell* cell)
 {
     Closure* closure = uncheckedDowncast<Closure>(cell);
     return closure->kind().isConstructor && closure->classData() && !closure->getDirect(vm, vm.propertyNames->prototype);
 }
 
-std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject* globalObject, Structure* structure, const Identifier& ident)
+std::optional<PropertyOffset> fieldOffsetForSiteCache(JSGlobalObject* globalObject, Structure* structure, const Identifier& ident)
 {
-    Instance* instance = instanceOfInterpreter(globalObject);
+    Instance* instance = interpreterInstance(globalObject);
     if (!instance)
         return std::nullopt;
     const Slot* slot = instance->state->propertyCaches->findByKey(structure, ident.impl(), SlotAccess::Read);
@@ -319,7 +319,7 @@ std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject* globalObje
 
 void didGetById(JSGlobalObject* globalObject, JSObject* base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot)
 {
-    Instance* instance = instanceOfInterpreter(globalObject);
+    Instance* instance = interpreterInstance(globalObject);
     if (!instance || structureBefore->isDictionary() || slot.isCacheableValue() || (isJSArray(base) && ident == instance->vm->propertyNames->length))
         return;
     PropertyCaches& caches = *instance->state->propertyCaches;
@@ -339,7 +339,7 @@ std::optional<JSValue> tryGetByVal(JSGlobalObject* globalObject, JSCell* base, J
 
 std::optional<bool> tryInById(JSGlobalObject* globalObject, JSObject* base, const Identifier& ident)
 {
-    Instance* instance = instanceOfInterpreter(globalObject);
+    Instance* instance = interpreterInstance(globalObject);
     if (!instance)
         return std::nullopt;
     if (!instance->state->propertyCaches->findByKey(base->structure(), ident.impl(), SlotAccess::Read))
@@ -357,7 +357,7 @@ std::optional<bool> tryInByVal(JSGlobalObject* globalObject, JSObject* base, JSV
 
 bool tryPutById(JSGlobalObject* globalObject, JSCell* base, const Identifier& ident, JSValue value, bool isStrict)
 {
-    Instance* instance = instanceOfInterpreter(globalObject);
+    Instance* instance = interpreterInstance(globalObject);
     if (!instance)
         return false;
     putById(*instance, base, ident, value, isStrict);
@@ -374,7 +374,7 @@ bool tryPutByVal(JSGlobalObject* globalObject, JSCell* base, JSValue key, JSValu
 
 std::optional<bool> tryInstanceOf(JSGlobalObject* globalObject, JSValue value, JSValue constructor)
 {
-    Instance* instance = instanceOfInterpreter(globalObject);
+    Instance* instance = interpreterInstance(globalObject);
     if (!instance)
         return std::nullopt;
     return instanceOfAndCache(instance, value, constructor);
@@ -493,7 +493,7 @@ void planObjectLiteral(JSGlobalObject* globalObject, CodeBlock* codeBlock, const
     VM& vm = globalObject->vm();
     allocatorWord(profile) = std::bit_cast<uintptr_t>(subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(profile.structure()->inlineCapacity()), AllocatorForMode::EnsureAllocator).localAllocator());
 
-    Instance* instance = instanceOfInterpreter(globalObject);
+    Instance* instance = interpreterInstance(globalObject);
     if (!instance || codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
         return;
 
@@ -515,14 +515,14 @@ void planObjectLiteral(JSGlobalObject* globalObject, CodeBlock* codeBlock, const
         allocatorWord(profile) = std::bit_cast<uintptr_t>(plan) | ObjectLiteralPlan::allocatorTag;
 }
 
-void checkPlacesInSymbolTable(SymbolTable& table)
+void checkSymbolTableOffsets(SymbolTable& table)
 {
     auto* bytes = reinterpret_cast<uint8_t*>(&table);
-    RELEASE_ASSERT(reinterpret_cast<uint8_t*>(&table.singleton()) == bytes + PlacesInSymbolTable::offsetOfSingleton);
-    RELEASE_ASSERT(*reinterpret_cast<uint32_t*>(bytes + PlacesInSymbolTable::offsetOfMaxScopeOffset) + 1 == table.scopeSize());
-    uintptr_t singleton = *reinterpret_cast<uintptr_t*>(bytes + PlacesInSymbolTable::offsetOfSingleton);
+    RELEASE_ASSERT(reinterpret_cast<uint8_t*>(&table.singleton()) == bytes + SymbolTableOffsets::offsetOfSingleton);
+    RELEASE_ASSERT(*reinterpret_cast<uint32_t*>(bytes + SymbolTableOffsets::offsetOfMaxScopeOffset) + 1 == table.scopeSize());
+    uintptr_t singleton = *reinterpret_cast<uintptr_t*>(bytes + SymbolTableOffsets::offsetOfSingleton);
     bool isThin = singleton & 1;
-    RELEASE_ASSERT(table.singleton().isStillValid() || !isThin || singleton == PlacesInSymbolTable::invalidatedSingleton);
+    RELEASE_ASSERT(table.singleton().isStillValid() || !isThin || singleton == SymbolTableOffsets::invalidatedSingleton);
 }
 
 void fuseReadsOfClosureVariables(CodeBlock& codeBlock)

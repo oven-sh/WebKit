@@ -253,7 +253,7 @@ struct RowsOfReads {
     static constexpr int16_t placeIsAskedOfStub = 0;
     static constexpr int16_t placeIsNotKnown = INT16_MIN;
     static constexpr uint32_t firstWait = 16;
-    static constexpr uint8_t mostDoublings = 10;
+    static constexpr uint8_t maxDoublings = 10;
     static constexpr uint8_t numberOfSamples = 16;
     static constexpr uint32_t markOfHiddenRow = 1;
 
@@ -357,7 +357,7 @@ static_assert(sizeof(RestOfPlaceForStores) == sizeof(KeyedValuePlace));
 static_assert(sizeof(AcceptedKindOfValue) == 1u << AcceptedKindOfValue::sizeShift && hasOneBitSet(AcceptedKindOfValue::numberOfEntries));
 static_assert(AcceptedKindOfValue::leastWordThatIsKind < compiledObjectShapeBit && pointerUpperHalfBits < AcceptedKindOfValue::leastWordThatIsKind && bigIntHashMask < AcceptedKindOfValue::leastWordThatIsKind);
 static_assert(UINT32_MAX >> AcceptedKindOfValue::structureIDShift < AcceptedKindOfValue::kindOfCompiledClosureZero && AcceptedKindOfValue::kindOfImmediateZero + UINT8_MAX < AcceptedKindOfValue::leastWordThatIsKind);
-static_assert(static_cast<uint32_t>(AcceptedKindOfValue::ClassOfSlot::Cell32) & AcceptedKindOfValue::classesWithNarrowReferences && static_cast<uint32_t>(AcceptedKindOfValue::ClassOfSlot::OptionalCell32) & AcceptedKindOfValue::classesWithNarrowReferences);
+static_assert(!!(static_cast<uint32_t>(AcceptedKindOfValue::ClassOfSlot::Cell32) & AcceptedKindOfValue::classesWithNarrowReferences) && !!(static_cast<uint32_t>(AcceptedKindOfValue::ClassOfSlot::OptionalCell32) & AcceptedKindOfValue::classesWithNarrowReferences));
 static_assert(!(static_cast<uint32_t>(AcceptedKindOfValue::ClassOfSlot::Cell) & AcceptedKindOfValue::classesWithNarrowReferences) && AcceptedKindOfValue::classesWithNarrowReferences << 30 == KeyedValuePlace::narrowReferenceBit);
 static_assert(std::is_trivially_default_constructible_v<PropertyCacheWords>);
 static_assert(OBJECT_OFFSETOF(PropertyCacheWords, hashedSlotOffsetMask) == OBJECT_OFFSETOF(PropertyCacheWords, hashedSlots) + sizeof(void*));

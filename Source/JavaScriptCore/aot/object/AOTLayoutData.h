@@ -282,7 +282,6 @@ struct LayoutData {
     uint32_t isCopiedByWords : 1;
     uint32_t index;
     uint32_t shape;
-    uint32_t name;
     uint32_t size;
     uint16_t numberOfFields;
     uint16_t numberOfFieldOperands;
@@ -378,7 +377,7 @@ struct LayoutData {
         return trailingSize(counts);
     }
 };
-static_assert(sizeof(LayoutData) == 36 && offsetof(LayoutData, index) == 4 && isImageRecord<LayoutData>);
+static_assert(sizeof(LayoutData) == 32 && offsetof(LayoutData, index) == 4 && isImageRecord<LayoutData>);
 static_assert(numberOfEnumerators<LayoutKind> <= 1u << 5 && numberOfEnumerators<EvaluationState> <= 1u << 2);
 static_assert(numberOfEnumerators<ObjectMutation> <= LayoutData::impossibleMutationBits);
 static_assert(numberOfEnumerators<LayoutKind> <= 1u << 4);

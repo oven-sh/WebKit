@@ -7,7 +7,7 @@
 #
 # The Structure of a compiled object prohibits caching by offset. What its properties are is in the hashed table of
 # AOT::VMPropertyCaches, under (StructureID, name, access). The slow paths fill the table. The cache of a get_by_id holds a property
-# that lies in the cell of a compiled object or among its extra properties: AOT::Interpreter::placeOfFieldInSiteCache().
+# that lies in the cell of a compiled object or among its extra properties: AOT::Interpreter::fieldOffsetForSiteCache().
 #
 # Nobody reads a value profile here, so none is written.
 
@@ -120,7 +120,7 @@ macro loadConstantOperand(size, index, value, isLoaded)
     jmp isLoaded
 end
 
-# AOT::instanceOfInterpreter(). A realm has one instance, whose tables answer for every cell, compiled object or not.
+# AOT::interpreterInstance(). A realm has one instance, whose tables answer for every cell, compiled object or not.
 macro loadAnyInstanceOfRealm(instance, hasNone)
     loadp CodeBlock[cfr], instance
     loadp CodeBlock::m_globalObject[instance], instance
@@ -502,7 +502,7 @@ macro getFromCompiledObject(slow, done)
 
     # loadInheritedValueBySlot() in the stubs.
 .inherits:
-    btbnz SlotFlags[t6], constexpr AOT::Interpreter::flagsOfInheritedValuesLeftToSlowPath, slow
+    btbnz SlotFlags[t6], constexpr AOT::Interpreter::inheritedValueSlowPathFlags, slow
     loadi SlotSecondPayloadWord[t6], t0
     lshiftp constexpr AOT::cell32Shift, t0
     addp InstanceCellCageBase[t5], t0
@@ -528,7 +528,7 @@ macro testPresenceInObject(slow, isPresent, isAbsent)
     bbeq t0, constexpr AOT::Slot::Kind::Absent, isAbsent
     move 1, t1
     lshifti t0, t1
-    btinz t1, constexpr AOT::kindsOfPresentProperties, isPresent
+    btinz t1, constexpr AOT::presentPropertyKinds, isPresent
     jmp slow
 
 .field:
@@ -1350,8 +1350,8 @@ aotOp(op_create_lexical_environment, OpCreateLexicalEnvironment, macro (size, ge
     loadAnyInstanceOfRealm(t5, .slow)
     get(m_symbolTable, t0)
     loadConstantOrVariable(size, t0, t1)
-    bpneq (constexpr AOT::Interpreter::PlacesInSymbolTable::offsetOfSingleton)[t1], constexpr AOT::Interpreter::PlacesInSymbolTable::invalidatedSingleton, .slow
-    loadi (constexpr AOT::Interpreter::PlacesInSymbolTable::offsetOfMaxScopeOffset)[t1], t2
+    bpneq (constexpr AOT::Interpreter::SymbolTableOffsets::offsetOfSingleton)[t1], constexpr AOT::Interpreter::SymbolTableOffsets::invalidatedSingleton, .slow
+    loadi (constexpr AOT::Interpreter::SymbolTableOffsets::offsetOfMaxScopeOffset)[t1], t2
     addi 1, t2
     # MarkedSpace::sizeClassToIndex(): an allocator of eight bytes for each step of sixteen.
     move t2, t3
@@ -1575,9 +1575,9 @@ aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
     # ArrayAllocationProfile::selectIndexingType().
     loadq OpNewArray::Metadata::m_arrayAllocationProfile[t6], t3
     move t3, t2
-    urshiftq constexpr AOT::shiftOfIndexingTypeInArrayAllocationProfile, t2
-    lshiftq constexpr AOT::bitsOfTypeInArrayAllocationProfile, t3
-    urshiftq constexpr AOT::bitsOfTypeInArrayAllocationProfile, t3
+    urshiftq constexpr AOT::arrayAllocationProfileIndexingTypeShift, t2
+    lshiftq constexpr AOT::arrayAllocationProfileTypeBits, t3
+    urshiftq constexpr AOT::arrayAllocationProfileTypeBits, t3
     btqz t3, .typeIsCurrent
     loadb JSCell::m_indexingTypeAndMisc[t3], t0
     andi constexpr AllWritableArrayTypes, t0
@@ -1591,7 +1591,7 @@ aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
     move constexpr BASE_CONTIGUOUS_VECTOR_LEN_EMPTY, t3
     jmp .elementsFit
 .hasElements:
-    bia t1, constexpr AOT::maxLengthOfArrayLiteralAllocatedInline, .slow
+    bia t1, constexpr AOT::maxFastPathArrayLiteralLength, .slow
     move t1, t3
     ori 1, t3
     biaeq t3, constexpr BASE_CONTIGUOUS_VECTOR_LEN, .hasVectorLength
@@ -1670,8 +1670,8 @@ aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
 
     # ArrayAllocationProfile::updateLastAllocation().
     loadq OpNewArray::Metadata::m_arrayAllocationProfile[t6], t0
-    urshiftq constexpr AOT::bitsOfPointerInArrayAllocationProfile, t0
-    lshiftq constexpr AOT::bitsOfPointerInArrayAllocationProfile, t0
+    urshiftq constexpr AOT::arrayAllocationProfilePointerBits, t0
+    lshiftq constexpr AOT::arrayAllocationProfilePointerBits, t0
     orq t1, t0
     storeq t0, OpNewArray::Metadata::m_arrayAllocationProfile[t6]
     return(t1)
@@ -2046,7 +2046,7 @@ aotOp(op_construct, OpConstruct, macro (size, get, dispatch, metadata, return)
     bbneq JSCell::m_type[t0], constexpr CompiledClosureType, .enters
     loadp JSFunction::m_executableOrRareData[t0], t1
     btpz t1, (constexpr JSFunction::rareDataTag), .enters
-    bbneq (FunctionRareData::m_compiledAllocationConstructorHighBits - (constexpr JSFunction::rareDataTag))[t1], constexpr AOT::Interpreter::highBitsOfConstructorThatOnlyReturns, .enters
+    bbneq (FunctionRareData::m_compiledAllocationConstructorHighBits - (constexpr JSFunction::rareDataTag))[t1], constexpr AOT::Interpreter::trivialConstructorHighBits, .enters
     loadi (FunctionRareData::m_compiledAllocationStructureID - (constexpr JSFunction::rareDataTag))[t1], t2
     btiz t2, .enters
     # new.target lies where the callee would find `this`.
@@ -2055,7 +2055,7 @@ aotOp(op_construct, OpConstruct, macro (size, get, dispatch, metadata, return)
     bqneq ThisArgumentOffset[cfr, t3, 8], t0, .enters
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_vm[t1], t1
-    loadp (constexpr AOT::Interpreter::offsetOfAllocatorOfDefaultFinalObject)[t1], t1
+    loadp (constexpr AOT::Interpreter::offsetOfDefaultFinalObjectAllocator)[t1], t1
     btpz t1, .enters
     allocateCell(t1, t0, t3, .enters)
     storei t2, JSCell::m_structureID[t0]

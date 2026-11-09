@@ -451,12 +451,13 @@ bool buildCopyThatMakesObject(Walker& walker, const BodyValue& value)
     if (walker.hasFailed())
         return true;
     written.resultIsReturnedAtOnce = false;
-    written.isTailCall = false;
+    bool isTailCall = std::exchange(written.isTailCall, false);
 
     Reference made = buildArmsInWalkCopies(walker, source, orders.span(), plan.layoutsAreProven, written.origin(), [&](const CopiedOrderInWalkCopies& order, Reference tested) {
         return buildObjectMadeByCopyInWalkCopies(walker, written, value, order, tested);
     }, [&] {
         Draft asWritten = written;
+        asWritten.isTailCall = isTailCall;
         walker.chooseConservativeFields(asWritten);
         return walker.build(WTF::move(asWritten));
     });
@@ -578,7 +579,7 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
         return true;
     walker.noteAssignmentWrittenOut();
     written.resultIsReturnedAtOnce = false;
-    written.isTailCall = false;
+    bool isTailCall = std::exchange(written.isTailCall, false);
     Origin origin = written.origin();
     Vector<Reference, 4> operandsAsWritten(written.argumentsOperands());
     walker.count(StatisticID::OwnKeyWalksExpanded, static_cast<uint32_t>(planned.size()));
@@ -600,6 +601,7 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
                 operands[1 + later - firstSource] = madeAgain;
         }
         Draft rest = written;
+        rest.isTailCall = isTailCall;
         rest.setArgumentsOperands(operands.span());
         walker.chooseConservativeFields(rest);
         walker.build(WTF::move(rest));

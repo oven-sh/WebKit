@@ -481,6 +481,18 @@ const PreparedProgram* StagedBuild::prepared()
     return m_state->ensurePrepared() ? &m_state->prepared : nullptr;
 }
 
+std::unique_ptr<CompileInputs> StagedBuild::prepareInputsForVerification()
+{
+    if (!m_state->isPrepared)
+        m_state->prepared.isVerifiedByCaller = true;
+    if (!prepared())
+        return nullptr;
+    RELEASE_ASSERT(willVerifyCode(m_state->prepared, m_build));
+    auto inputs = makeUniqueWithoutFastMallocCheck<CompileInputs>(*m_state->prepared.compileInputs);
+    inputs->walk.options.verifiesCode = true;
+    return inputs;
+}
+
 TypeArena& StagedBuild::types()
 {
     State& state = *m_state;

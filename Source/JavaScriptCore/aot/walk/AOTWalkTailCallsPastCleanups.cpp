@@ -48,6 +48,14 @@ ValueID openOfCleanupThatOnlyThrowsOn(const BodyIndex& index, BodyBlock block)
     return index.block(block.handler().block()).hasHandler() ? ValueID() : openOfCleanupThatClosesAndThrowsOn(index, block);
 }
 
+ValueID openOfCleanupThatThrowsOnOutsideLoop(const BodyIndex& index, BodyBlock block, LoopID loop)
+{
+    BodyBlock cleanup = index.block(block.handler().block());
+    if (cleanup.hasHandler() && index.isInLoop(cleanup.handler().block(), loop))
+        return { };
+    return openOfCleanupThatClosesAndThrowsOn(index, block);
+}
+
 bool Walker::handlerOnlyClosesIterations(const BodyIndex& index, BodyBlock block) const
 {
     for (BodyBlock covered = block;;) {

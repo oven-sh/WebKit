@@ -98,8 +98,8 @@ public:
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
     static const Image** addressOfCurrentOfThread();
-    JS_EXPORT_PRIVATE static void useNoneOnThisThread();
-    static bool usesNoneOnThisThread();
+    JS_EXPORT_PRIVATE static void disableOnThisThread();
+    static bool isDisabledOnThisThread();
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
     static const Image* findByCodeAddress(const void*);
     static void forEachPublishedImage(const ScopedLambda<IterationStatus(const Image&)>&);
@@ -127,8 +127,8 @@ public:
         uint8_t* text { nullptr };
         uint8_t* isOpened { nullptr };
     };
-    void setOpenCompressedText(OpenCompressedText open) const { m_openCompressedText.store(open, std::memory_order_release); }
-    OpenCompressedText openCompressedText() const { return m_openCompressedText.load(std::memory_order_acquire); }
+    void setDecompressText(DecompressTextFunction open) const { m_decompressText.store(open, std::memory_order_release); }
+    DecompressTextFunction decompressText() const { return m_decompressText.load(std::memory_order_acquire); }
     OpenedBlocksOfText& openedTextOfFunctions() const { return m_openedTextOfFunctions; }
     OpenedBlocksOfText& openedTextOfQuotes() const { return m_openedTextOfQuotes; }
     const std::optional<PositionInFile>& positionOfCodeInFile() const { return m_positionOfCodeInFile; }
@@ -149,12 +149,12 @@ public:
     bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
-    bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
+    bool allowsLibrarySource() const { return header().has(ImageFlag::AdmitsLibraryText); }
     bool isBuiltWithLibrary() const { return header().has(ImageFlag::IsBuiltWithLibrary); }
     bool refusesOriginalsBesideMocks() const { return header().has(ImageFlag::RefusesOriginalsBesideMocks); }
     bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
-    bool storesPathOfMainModule() const { return header().has(ImageFlag::StoresPathOfMainModule); }
+    bool setsMainModulePath() const { return header().has(ImageFlag::StoresPathOfMainModule); }
     bool runsEntryPointsAgain() const { return header().has(ImageFlag::RunsEntryPointsAgain); }
     bool letsGlobalObjectGo() const { return header().has(ImageFlag::LetsGlobalObjectGo); }
     bool showsEntriesOfRequireCache() const { return header().has(ImageFlag::ShowsEntriesOfRequireCache); }
@@ -201,7 +201,7 @@ public:
 
     std::optional<SourcePosition> positionOf(uint32_t function, CallSiteIndex) const;
 
-    bool mayHoldModulePathStartingWith(StringView start) const;
+    bool mayContainModulePathWithPrefix(StringView start) const;
 
 private:
     Image(std::span<const uint8_t> bytes, const uint8_t* code);
@@ -213,7 +213,7 @@ private:
     static std::atomic<const Image*> s_lastPublished;
 
     mutable std::array<std::atomic<void*>, 8> m_frequentStubs { };
-    mutable std::atomic<OpenCompressedText> m_openCompressedText { nullptr };
+    mutable std::atomic<DecompressTextFunction> m_decompressText { nullptr };
     mutable OpenedBlocksOfText m_openedTextOfFunctions;
     mutable OpenedBlocksOfText m_openedTextOfQuotes;
     unsigned m_number { 0 };
@@ -329,7 +329,7 @@ JS_EXPORT_PRIVATE bool isCompiledCodePC(const void*);
 JS_EXPORT_PRIVATE std::optional<uint32_t> imageCodeOffset(const void* address);
 JS_EXPORT_PRIVATE uintptr_t imageCodeStart();
 JS_EXPORT_PRIVATE std::optional<ImageFrame> imageFrameAtReturnAddress(const void* returnAddress);
-JS_EXPORT_PRIVATE bool isInStubOfImage(const void* address);
+JS_EXPORT_PRIVATE bool isInImageStub(const void* address);
 
 } } // namespace JSC::AOT
 

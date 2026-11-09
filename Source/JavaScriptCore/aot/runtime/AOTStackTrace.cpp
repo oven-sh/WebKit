@@ -143,7 +143,7 @@ String FunctionDescription::name(VM& vm) const
     return Image::current()->isObfuscated() ? emptyString() : functionName(*this, NameForm::AsWritten);
 }
 
-String FunctionDescription::nameInFrames(VM& vm, JSCell*, bool) const
+String FunctionDescription::stackTraceName(VM& vm, JSCell*, bool) const
 {
     if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
@@ -1109,7 +1109,7 @@ void forEachShownFrame(CompiledFunctionID code, const CallSiteRecord& site, Show
     }
 }
 
-std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM& vm, CallFrame* callFrame)
+std::optional<TraceFrame> tryGetClassCallWithoutNewFrame(VM& vm, CallFrame* callFrame)
 {
     if (vm.aotState().classCalledWithoutNew != callFrame) [[likely]]
         return std::nullopt;
@@ -1165,10 +1165,10 @@ LineColumn obfuscatedPositionOf(const TraceFrame& frame)
 
 String sourceURLOf(ModuleID module)
 {
-    return module ? pathOfFileOfModule(module) : emptyString();
+    return module ? moduleFilePath(module) : emptyString();
 }
 
-String pathOfFileThatDeclares(JSCell* compiledFunction)
+String declaringFilePath(JSCell* compiledFunction)
 {
     std::optional<FunctionID> function = functionOf(compiledFunction);
     std::optional<SourcePosition> definition = function ? FunctionDescription(*function).definition() : std::nullopt;
@@ -1183,7 +1183,7 @@ String sourceProviderURLOf(ModuleID module)
 String sourceProviderURLOf(const TraceFrame& frame, const std::optional<SourcePosition>& position)
 {
     if (FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
-        return moduleOfCompilerHelpers;
+        return compilerHelpersModule;
     return position ? sourceProviderURLOf(position->source) : emptyString();
 }
 

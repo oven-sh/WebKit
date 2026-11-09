@@ -2824,7 +2824,7 @@ RowsOfReads::Row* PropertyCaches::claimRowOfReads(JSValue base, RowsOfReads& gro
             if (group.samplesThatHadRow * 3 < RowsOfReads::numberOfSamples)
                 group.hasGivenUp = 1;
             group.missesLeft = RowsOfReads::firstWait << group.doublings;
-            if (group.doublings < RowsOfReads::mostDoublings)
+            if (group.doublings < RowsOfReads::maxDoublings)
                 ++group.doublings;
         }
         return hidden;

@@ -179,7 +179,7 @@ bool buildTestAgainstJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& jo
     uint32_t firstValue = index.block(inputBlock).firstValue().index();
     uint32_t placeOfJoin = join.id().index() - firstValue;
     uint32_t behindCall = test->call.index() + 1 - firstValue;
-    Walker::StretchInArms stretch = walker.stretchInArms(inputBlock, placeOfJoin, behindCall, true);
+    Walker::StretchInArms stretch = walker.stretchInArms(inputBlock, placeOfJoin, behindCall);
 
     if (FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), join.id()))
         walker.leaveAnythingAt(callee);

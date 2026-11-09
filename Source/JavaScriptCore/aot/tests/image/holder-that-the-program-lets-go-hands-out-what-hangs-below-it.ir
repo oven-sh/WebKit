@@ -1,6 +1,6 @@
 # take(Function.prototype)
 # The text of the program hands the holder on, and nobody follows what is done with it: `Reflect.get(holder, "constructor")` names the member in a text. So all that hangs below it has gone out of sight with it, the evaluator too.
-# It is the control of holder-that-the-library-lets-go-hands-out-no-evaluator.ir.
+# It is the control of Bun's test/aot/engine-tests/image/holder-that-the-library-lets-go-hands-out-no-evaluator.ir.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: image
 # CHECK: flags {{*}}AdmitsUnknownJavaScript

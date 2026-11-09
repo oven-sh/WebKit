@@ -150,14 +150,6 @@ static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, V
     return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, values.span());
 }
 
-static bool mayRefuseOrRunOtherCode(JSArray* array)
-{
-    IndexingType type = array->indexingType();
-    if (hasAnyArrayStorage(type))
-        return hasSlowPutArrayStorage(type) || array->butterfly()->arrayStorage()->m_sparseMap;
-    return isCopyOnWrite(array->indexingMode()) && array->hasFrozenElementsInPlace();
-}
-
 static void appendElements(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

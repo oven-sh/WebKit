@@ -491,11 +491,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* insta
         printKindsOfNativeResult(found, kindOfNativeResult(JSValue::decode(encodedFound)));
     ASCIILiteral name = names[std::min<size_t>(source, names.size() - 1)];
     dataLogLn("AOT: f", function, " at ", position, ": ", name, " is not of the type that the compiler has proven of it. It is: ", found.toString(), ". This is a bug in Bun.");
-    if (auto* stopWithReport = moduleHostOf(instance.globalObject).stopWithReport) {
+    if (auto* crashWithReason = moduleHostOf(instance.globalObject).crashWithReason) {
         StringPrintStream reason;
         reason.print("AOT: f", function, " at ", position, ": ", name, ". It is: ", found.toString(), ".");
         ASCIICString text = reason.toASCIICString();
-        stopWithReport(text.span());
+        crashWithReason(text.span());
     }
     CRASH();
 }
@@ -510,11 +510,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleLoad, void, (Instance* instance, uint32_t function, uint32_t position))
 {
     dataLogLn("AOT: f", function, " at ", position, ": a word of memory was taken to hold what an earlier load of it found, and it holds something else. This is a bug in Bun.");
-    if (auto* stopWithReport = moduleHostOf(instance->globalObject).stopWithReport) {
+    if (auto* crashWithReason = moduleHostOf(instance->globalObject).crashWithReason) {
         StringPrintStream reason;
         reason.print("AOT: f", function, " at ", position, ": a word of memory no longer holds what an earlier load of it found.");
         ASCIICString text = reason.toASCIICString();
-        stopWithReport(text.span());
+        crashWithReason(text.span());
     }
     CRASH();
 }

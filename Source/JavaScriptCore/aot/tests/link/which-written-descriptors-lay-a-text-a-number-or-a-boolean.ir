@@ -1,6 +1,6 @@
 # Object.defineProperty(Math, "k1", { value: 7 }) and nine more: which of them the scan says lay a text, a number or a boolean that is written.
 # Yes: 7, "t", true, 1.5. No: null and undefined (no text, number or boolean), a function, a value beside a getter (the call throws), a value that is stored over with a function, one of two values.
-# If the scan said yes of one of the last six, a function could be laid on a built-in under the word "a number": built-in-that-native-code-hands-to-the-library-is-let-go-where-a-function-is-defined-on-it.ir.
+# If the scan said yes of one of the last six, a function could be laid on a built-in under the word "a number": Bun's test/aot/engine-tests/link/built-in-that-native-code-hands-to-the-library-is-let-go-where-a-function-is-defined-on-it.ir.
 # RUN: summary f0
 # CHECK: v8 DefinesByDescriptor Builtin Math other=Allocation L0 under-a-name-that-nobody-else-names descriptor-in-sight lays-text-number-or-boolean
 # CHECK: v13 DefinesByDescriptor Builtin Math other=Allocation L0 under-a-name-that-nobody-else-names descriptor-in-sight lays-text-number-or-boolean

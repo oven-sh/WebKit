@@ -18,7 +18,7 @@ Every boundary between two stages is text. So a bug gets a test at the stage tha
 | Scan and Link | IR text | the thin summary of a function, Link's tables, the texts that arrive at RegExp | `summary`, `link`, `regexp-texts` | `link/` |
 | Plan | IR text | slots, shapes, variables, units | `plan` | `plan/` |
 | Walk | IR text | Code text, walked and swept | `walk` | `walk/`, a folder for each mechanism |
-| Code | Code text | Code text, machine operations | `code-round-trip`, `verify-code`, `sweep-code`, `emit-code` | the section `code` of a test file: `walk/code-text/`, `walk/sweep/` |
+| Code | Code text | Code text, machine operations | `code-round-trip`, `verify-code`, `sweep-code`, `position-inside`, `element-present`, `verify-grounds`, `emit-code` | the section `code` of a test file: `walk/code-text/`, `walk/sweep/`, `walk/positions-inside/` |
 | Machine | operations built through `Output` | what they answer when run in the test process, and the allocation as text | native tests, `emit`, `order`, `allocate`, `frame`, `bytes` | `AOTMachine*Tests.cpp`, `AOTOutputTests.cpp`, `machine/` |
 | Whole programs | IR text | what the program prints | `run-in-shell` | `answers/` |
 
@@ -34,10 +34,11 @@ Every boundary between two stages is text. So a bug gets a test at the stage tha
 | `walk/<mechanism>/` | for each mechanism: what it does, what it must leave alone, the same input with the mechanism withheld (`..-withheld.ir`), and a suspension in the middle of its territory |
 | `walk/code-text/` | Code text is read and printed; each file breaks one rule of Code, and `verify-code` names the kind and the rule, with green controls beside them. No walk is run |
 | `walk/sweep/` | the sweep by itself, on Code that is written out: what goes and what stays, stores that wait for their object, handlers, barriers, hints, what is live at a suspension, and how often an operation is visited. No walk is run |
+| `walk/positions-inside/` | the two provers on whose word the walk leaves the test of a position out, each asked by itself over Code that is written out: what it grants and what it must refuse. No walk is run |
 | `machine/` | a unit's operations, allocation, frame and bytes as text: frames, polls, entries, calls, exceptions, code shape |
 | `image/` | what the flags, sections and tables of the image say to the run time |
 | `answers/` | programs that run in the shell and hold what they answer, and nothing else: no count, no shape of code. The shell runs the same text itself and compares. Bun's `test/aot/tools/answers-test-from-source.ts` makes such a file from a program: what it made lies in Bun's `test/aot/answers`, as the head and the program, and gets its records when it runs |
-| `host/`, `unit/` | the stand-in host's table of built-ins (no tests); native tests of the table of built-ins |
+| `host/`, `unit/` | the stand-in host's table of built-ins and its list of native tests, which is empty; native tests of the table of built-ins |
 
 ## Running
 
@@ -313,7 +314,7 @@ function f13 name="size" parameters=[{type=L0|L2}] results=[{type=anything}] {
 The section holds Code text: what the sweep and the emitters take. It starts at `# -- code` and ends at `# -- end of code`. Each line is a
 comment: the text is what follows `# `, and `#` alone is an empty line. Its lines are not directives. A file has at most one. It goes outside
 the source block and before `# -- generated:`. An error in it names the line of the file where the text starts, and the line within the text.
-`code-round-trip`, `verify-code`, `sweep-code` and `emit-code` read it.
+`code-round-trip`, `verify-code`, `sweep-code`, `position-inside`, `element-present`, `verify-grounds` and `emit-code` read it.
 
 Code text is the line `code f3:Body {`, its lines, and `}`. The first line names the unit, and the section cannot leave it out. Without
 a role the unit is the `Body`. The grammar is at the top of `AOTCodeParser.cpp`.
@@ -369,7 +370,8 @@ entry by its token (`builtin=MathMax`, `runtimefunction id=ArrayPrototypeMap`, `
 under both tables:
 
 - It names entries of the engine and of the stand-in host alone. A token that only Bun's table has (`builtin=QueueMicrotask`) does not
-  parse in WebKit's build. To hand a function to the host, which calls it later: `Construct` of `builtin=FinalizationRegistry`.
+  parse in WebKit's build, and the test fails there. A test that needs such an entry lies in Bun's `test/aot/engine-tests/<the same folder>`,
+  and Bun's `testaot` runs it. To hand a function to the host, which calls it later: `Construct` of `builtin=FinalizationRegistry`.
 - It pins nothing that hangs on what else the table holds: the number of a name or of an object, or how an entry that both hosts
   declare (`BunServe`) treats an operand the test is not about.
 
@@ -529,6 +531,13 @@ The other three take the section `code` and no argument.
 - `verify-code` prints `verified`, or the kind of the stop and the first rule of Code that the section breaks.
 - `sweep-code` sweeps the Code and prints it, then `# visits of operations: <n>`. Where the swept Code holds a cell of the frame, the line
   `# cells of the frame: verified` follows, or the kind of the stop and the first rule about such cells that the swept Code breaks.
+- `position-inside position=v2 length=v5 below=v7 from-zero-up=v11` asks `groundsShowPositionInside()` whether those grounds show that the
+  position lies inside, every relation taken to have passed (`not-below=`: to have failed; also `counter=`, `start=`, and `length-holds-bound=`:
+  `below=` holds the position under a bound, and this relation holds that bound within the length). It prints `shown` or `not shown`.
+- `verify-grounds access=v10 view=v0 position=v2 length=v6 below=v8 passed=v8 access=v11 ..` lays those grounds on the accesses named, as the walk
+  lays them where the checks are on, and verifies the Code. An access that is not named has no ground. It prints `verified` or the rule that is broken.
+- `element-present list=v0 position=v2 passed=v15` asks `testsShowElementPresent()` whether those tests (`failed=`: one that answered no) show
+  that the element is there. It prints `shown` or `not shown`.
 
 **Machine** (`AOTMachineTestCommands.cpp`). `machine/AOTMachinePrinter.h` shows the texts. They hold no address. These commands get the
 stand-in library, so they see one more module and one more function than the text has. Each unit starts with the line
@@ -660,7 +669,7 @@ question and of two numbers of the program, so one command line gives one execut
   What the tables do not show is held too: each holder that a lookup of the run from more passed as in sight, each name that it took for unlaid and each member that it took for a constant, if nobody was told otherwise there,
   must be so at the end of the run on the program as it is (`LinkFlow::findWhatWasTakenAndNeitherHoldsNorWasTold()`, the list of `check=Validate` asked of the other flow). `AnswersOfLookupsAskedAgain` counts what is asked, under either word.
   THE RED CONTROL: a seed with its highest bit set gives the more to the run that stands for the program as it is, and the build must stop: `link/link-that-says-more-of-more-is-stopped-by-name.ir`,
-  `link/what-a-lookup-took-and-the-other-run-denies-is-stopped-by-name.ir`.
+  Bun's `test/aot/engine-tests/link/what-a-lookup-took-and-the-other-run-denies-is-stopped-by-name.ir`.
 - `testing=ShuffleChoices:<seed>`: `Walker::drawChoice()` answers a question of cost with yes, no or as it pays: a copy in line (no), a loop built twice (no), a place in front of a loop (no), a parameter guard (both), a guess outside loops (both), the result of a built-in in parts (both).
   `ChoicesOfCostDrawn` counts the draws.
 
@@ -870,8 +879,9 @@ as todo. Once it passes it fails with `passes: remove its todo`. With `--single-
 A file of native tests has one provider: a function that returns a `static constexpr` array of tests. To add one, add its name to
 one of the three lists in `AOTNativeTest.h`, define it in the namespace that list is declared in, and add the file to
 `JavaScriptCore_AOT_TEST_SOURCES` (`aot/AOT.cmake`). Whoever deletes such a file takes its provider out of the list, or `testaot` does not link.
-A native test that needs an entry of Bun's table of built-ins is listed in `AOTNativeTestsOfHostEntries.inc`. `testaot` with the stand-in
-host's table leaves it out and counts it.
+A native test that needs an entry of a host's own table of built-ins lies in that host's repository (Bun: `test/aot/native`). Whoever links
+`testaot` defines `nativeTestProvidersOfHost()`, and those providers' tests run behind the ones listed here. The headers of this folder that
+such a test includes are exported with the engine's (`JavaScriptCore_AOT_EXPORTED_HEADERS`).
 
 Native tests run serially. With `--single-process` each name is printed before its test runs, so the last name printed is the
 test that crashed. That is also how `native` learns from a child which test to report. A test that needs a process of its own (one image,

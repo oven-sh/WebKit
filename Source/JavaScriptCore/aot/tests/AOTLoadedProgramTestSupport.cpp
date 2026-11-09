@@ -143,6 +143,22 @@ void overwriteWordInImage(const uint32_t& word, uint32_t value)
 #endif
 }
 
+static ASCIILiteral s_textOfLoadedProgram;
+
+bool isNamedInTextOfLoadedProgram(const LayoutData& layout, ASCIILiteral name)
+{
+    StringView text(s_textOfLoadedProgram);
+    String head = makeString("layout L"_s, layout.index, ' ');
+    for (size_t start = text.find(head); start != notFound; start = text.find(head, start + 1)) {
+        if (start && text[start - 1] != '\n')
+            continue;
+        size_t end = text.find('\n', start);
+        StringView line = text.substring(start, end == notFound ? text.length() - start : end - start);
+        return line.contains(makeString(" name=\""_s, name, '"'));
+    }
+    return false;
+}
+
 static void runInChildProcess(ASCIILiteral testName, const String& imagePath)
 {
     ChildProcessLauncher launcher(String(programPath()), { });
@@ -160,6 +176,7 @@ void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, Loade
     if (const char* imagePath = byteCast<char>(Options::aotImagePath())) {
         if (!Image::isRegistered())
             useImageAt(String::fromUTF8(imagePath));
+        s_textOfLoadedProgram = programText;
         LoadedProgram program;
         body(program);
         return;

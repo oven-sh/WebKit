@@ -38,8 +38,8 @@ JS_EXPORT_PRIVATE void runAsyncGeneratorBodyJob(JSGlobalObject*, VM&, InternalMi
 JS_EXPORT_PRIVATE bool hasCompiledBody(JSAsyncGenerator*);
 JS_EXPORT_PRIVATE void resumeDriver(VM&, JSObject* driver, JSValue resolution, bool isRejected, bool isEnteredByJobLoop);
 
-JS_EXPORT_PRIVATE JSValue tryAwaitForStepInProgress(JSGlobalObject*, JSValue settlementTarget, JSValue awaited);
-JS_EXPORT_PRIVATE bool tryFinishStepInProgress(JSValue settlementTarget, JSValue value, bool isDone);
+JS_EXPORT_PRIVATE JSValue tryAwaitInCurrentStep(JSGlobalObject*, JSValue settlementTarget, JSValue awaited);
+JS_EXPORT_PRIVATE bool tryFinishCurrentStep(JSValue settlementTarget, JSValue value, bool isDone);
 struct AdapterEntry {
     JSCell* outerFrame { nullptr };
     JSCell* outerAsyncGenerator { nullptr };
@@ -53,17 +53,17 @@ struct AsyncGeneratorBodyEntry {
 };
 JS_EXPORT_PRIVATE AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator*, bool isEnteredByJobLoop);
 JS_EXPORT_PRIVATE JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry&, JSAsyncGenerator* entered, JSValue returned, JSValue error, bool isTerminated);
-ALWAYS_INLINE bool canEnterFunctionOfJob(JSGlobalObject* globalObject, VM& vm, JSValue function)
+ALWAYS_INLINE bool canEnterJobFunction(JSGlobalObject* globalObject, VM& vm, JSValue function)
 {
     return function.isCell() && isCompiledCalleeType(function.asCell()->type()) && function.asCell()->structure()->realm() == globalObject && globalObject->aotInstance() && vm.isSafeToRecurseSoft();
 }
-ALWAYS_INLINE bool canRunHandlerOfJob(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue handler)
+ALWAYS_INLINE bool canRunJobHandler(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue handler)
 {
-    return promiseOrCapability.isCell() && promiseOrCapability.asCell()->structureID() == globalObject->promiseStructure()->id() && canEnterFunctionOfJob(globalObject, vm, handler);
+    return promiseOrCapability.isCell() && promiseOrCapability.asCell()->structureID() == globalObject->promiseStructure()->id() && canEnterJobFunction(globalObject, vm, handler);
 }
 JS_EXPORT_PRIVATE JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejected);
 JS_EXPORT_PRIVATE bool takesBareSteps(JSValue settlementTarget);
-JS_EXPORT_PRIVATE JSValue contextInWhichDriverGoesOn(JSValue settlementTarget);
+JS_EXPORT_PRIVATE JSValue driverResumeContext(JSValue settlementTarget);
 JS_EXPORT_PRIVATE void deliverBareStepToDriver(JSObject* driver, bool isDone);
 
 JSValue enterSavedFrame(VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue sent);

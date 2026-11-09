@@ -337,7 +337,7 @@ static void checkBuiltinNamesNeedNoAtomTable(LoadedProgram& program)
     VM& vm = program.vm();
     auto nameOf = [&](BuiltinID builtin) {
         FunctionDescription description(functionInFramesOf(builtin));
-        String name = description.nameInFrames(vm);
+        String name = description.stackTraceName(vm);
         AOT_TEST_CHECK(name == description.name(vm) && name == description.calculatedDisplayName(vm, nullptr, false));
         return name;
     };

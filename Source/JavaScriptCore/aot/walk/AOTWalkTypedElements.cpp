@@ -515,6 +515,8 @@ bool onlyUserTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyValue
 
 static bool everyUserTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyValue& read, WhatStandsBesideRead beside, bool readGivesUpItsHole = true)
 {
+    if (walker.shouldAssumeArithmeticUsers()) [[unlikely]]
+        return true;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID name = read.id();
     ValueID user = index.onlyUsingValue(name);
@@ -615,13 +617,13 @@ static void beginAgainInTypedElements(Walker& walker)
         walker.beginTurnAgainInClosedCopy();
 }
 
-static bool goOnOrBeginTurnAgainInTypedElements(Walker& walker, Reference test)
+static bool goOnOrBeginTurnAgainInTypedElements(Walker& walker, Reference test, bool laysWhatTestDecidesOnItsEdges = false)
 {
     if (!test)
         return false;
     BlockID passed = walker.addBlock();
     BlockID failed = walker.addBlock(BlockFrequency::Rare);
-    walker.branch(test, passed, failed);
+    walker.branch(test, passed, failed, laysWhatTestDecidesOnItsEdges);
     walker.continueIn(failed);
     if (!walker.isUnreachable())
         beginAgainInTypedElements(walker);
@@ -1165,15 +1167,7 @@ static bool askKeyOfLaterStoresOfTypedElements(const AccessOfTypedElements& acce
         Reference test = walker.build(WTF::move(isBelowLength));
         if (!test || !test.isValue())
             return false;
-        BlockID passed = walker.addBlock();
-        BlockID failed = walker.addBlock(BlockFrequency::Rare);
-        walker.branchOnTest(test, passed, failed);
-        walker.continueIn(failed);
-        if (!walker.isUnreachable())
-            beginAgainInTypedElements(walker);
-        walker.continueIn(passed);
-        walker.noteGuessOpened();
-        if (walker.isUnreachable() || walker.hasFailed())
+        if (!goOnOrBeginTurnAgainInTypedElements(walker, test, true))
             return false;
         noteKnown(walker, KnownNote::LengthOfList, list, { }, 0, placesUnderLengthsOfLists, held.bits());
         walker.count(StatisticID::KeysOfLaterStoresAskedInFrontOfTheFirst);
@@ -1289,10 +1283,38 @@ static bool standsInHeadOfItsLoopInTypedElements(const AccessOfTypedElements& ac
     return !loop || index.loop(loop).head == block;
 }
 
-static bool goOnWhereListIsLengthenedInTypedElements(const AccessOfTypedElements& access, const ListTestedInFrontOfLoop& tested, Origin origin)
+static std::optional<PassedTest> findWhatHoldsKeyBelowRoomAskedInFrontInTypedElements(const AccessOfTypedElements& access, const ListTestedInFrontOfLoop& tested)
 {
     Walker& walker = access.walker;
-    if (!placeOfCounterNotedInTypedElements(access, KnownNote::RoomOfListHoldsEveryTurn, tested.name) || standsInHeadOfItsLoopInTypedElements(access)) {
+    const BodyIndex& index = walker.currentBodyIndex();
+    LoopID loop = index.loopOf(index.blockOf(access.value.id()));
+    std::optional<uint64_t> noted = loop ? findKnown(walker, KnownNote::TestThatRoomOfListHoldsEveryTurn, tested.name, { }, index.loop(loop).head.index()) : std::nullopt;
+    std::optional<uint64_t> filledTo = noted ? findKnown(walker, KnownNote::LengthThatLoopFillsLiteralTo, tested.name, { }, index.loop(loop).head.index()) : std::nullopt;
+    Reference roomHoldsEveryTurn = filledTo ? Reference::fromBits(static_cast<uint32_t>(*noted)) : Reference();
+    if (!roomHoldsEveryTurn || !roomHoldsEveryTurn.isValue() || walker.code().at(roomHoldsEveryTurn.id()).opcode != Opcode::LessEq || !access.base.isRecord() || !access.key.isRecord())
+        return std::nullopt;
+    std::optional<PassedTest> below = walker.findWhatHoldsBelow(access.key, Reference::fromBits(static_cast<uint32_t>(*filledTo)));
+    if (BodyTerminator testOfHead = index.terminator(index.loop(loop).head); !below && testOfHead.isConditionalBranch())
+        below = walker.findPassedTest(walker.referenceOf(testOfHead.operand(0)));
+    if (!below)
+        return std::nullopt;
+    GroundsOfPosition grounds { .view = access.base.id(), .position = access.key.id(), .length = walker.code().at(roomHoldsEveryTurn.id()).rightOperand(), .lengthHoldsBound = roomHoldsEveryTurn.id() };
+    if (!below->sides().empty()) {
+        grounds.isBelow = below->sides().front().test;
+        grounds.isBelowAnswersYes = below->sides().front().answersYes;
+    }
+    return walker.showPositionInside(grounds);
+}
+
+static bool goOnWhereListIsLengthenedInTypedElements(const AccessOfTypedElements& access, const ListTestedInFrontOfLoop& tested, Origin origin, std::optional<PassedTest>& insideBehindRaise)
+{
+    Walker& walker = access.walker;
+    std::optional<PassedTest> belowRoom;
+    if (!walker.takesRoomsAskedInFrontForGiven() && placeOfCounterNotedInTypedElements(access, KnownNote::RoomOfListHoldsEveryTurn, tested.name) && !standsInHeadOfItsLoopInTypedElements(access))
+        belowRoom = findWhatHoldsKeyBelowRoomAskedInFrontInTypedElements(access, tested);
+    if (belowRoom)
+        walker.count(StatisticID::ListsLengthenedOnRoomAskedInFront);
+    if (!belowRoom && !walker.takesRoomsAskedInFrontForGiven()) {
         Draft room(Opcode::GetArrayRoom, origin);
         walker.chooseConservativeFields(room);
         room.setArrayOperand(tested.name);
@@ -1303,16 +1325,21 @@ static bool goOnWhereListIsLengthenedInTypedElements(const AccessOfTypedElements
         if (!isBelowRoom.rightOperand())
             return false;
         isBelowRoom.setForm(formAllowedForTypedOperator(walker, isBelowRoom));
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, walker.build(WTF::move(isBelowRoom))))
+        Reference roomOfTurn = isBelowRoom.rightOperand();
+        Reference keyLiesBelowRoom = walker.build(WTF::move(isBelowRoom));
+        if (!goOnOrBeginTurnAgainInTypedElements(walker, keyLiesBelowRoom, true))
             return false;
+        belowRoom = walker.findWhatHoldsPositionBehindTestOfLength(access.base, access.key, roomOfTurn, keyLiesBelowRoom);
     }
     Draft extend(Opcode::ExtendArrayLength, origin);
     walker.chooseConservativeFields(extend);
     extend.setArrayOperand(access.base);
     extend.setPositionOperand(access.key);
+    if (belowRoom)
+        extend.restOn(*belowRoom);
     if (Reference pointer = storageOfListFromInFrontOfLoop(walker, tested, origin))
         extend.setStorageOperand(pointer);
-    walker.build(WTF::move(extend));
+    insideBehindRaise = walker.findWhatHoldsPositionBehindRaise(access.base, access.key, walker.build(WTF::move(extend)));
     walker.count(StatisticID::StoresThatLengthenTheirListInEveryTurn);
     return !walker.isUnreachable() && !walker.hasFailed();
 }
@@ -1358,6 +1385,7 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
 
     Origin origin = walker.originOf(access.value);
     origin.isTailCall = false;
+    Reference keyIsFromZeroUp;
     if (!isInside && access.typeOfKey.integers.minimum < 0) {
         Draft zero(Opcode::Integer, origin);
         zero.setInteger(0);
@@ -1366,13 +1394,14 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
         isNotNegative.setLeftOperand(access.key);
         isNotNegative.setRightOperand(walker.constant(WTF::move(zero)));
         isNotNegative.setForm(formAllowedForTypedOperator(walker, isNotNegative));
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, walker.build(WTF::move(isNotNegative))))
+        keyIsFromZeroUp = walker.build(WTF::move(isNotNegative));
+        if (!goOnOrBeginTurnAgainInTypedElements(walker, keyIsFromZeroUp, true))
             return true;
     }
     bool lengthensList = fillsLiteralFromItsEnd && !turnStoresAgainBehindInTypedElements(access) && walker.mayBeginTurnAgainInClosedCopy() && placeOfCounterNotedInTypedElements(access, KnownNote::ListEndsWhereCounterEntersLoop, tested->name);
     if (isPush && !lengthensList)
         return false;
-    if (!isInside && !lengthensList) {
+    if (!isInside && !lengthensList && !walker.takesLengthsAskedInTurnsForGiven()) {
         Draft length(Opcode::GetArrayLength, origin);
         walker.chooseConservativeFields(length);
         length.setArrayOperand(tested->name);
@@ -1383,8 +1412,14 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
         if (!isBelowLength.rightOperand())
             return true;
         isBelowLength.setForm(formAllowedForTypedOperator(walker, isBelowLength));
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, walker.build(WTF::move(isBelowLength))))
+        Reference lengthOfTurn = isBelowLength.rightOperand();
+        Reference keyLiesBelowLength = walker.build(WTF::move(isBelowLength));
+        if (!goOnOrBeginTurnAgainInTypedElements(walker, keyLiesBelowLength, true))
             return true;
+        std::optional<PassedTest> below = walker.findPassedTest(keyLiesBelowLength);
+        std::optional<PassedTest> fromZeroUp = keyIsFromZeroUp ? walker.findPassedTest(keyIsFromZeroUp) : walker.findWhatHoldsFromZeroUp(access.key);
+        if (below && fromZeroUp)
+            inside = walker.showPositionInsideBehindTests(access.base, access.key, lengthOfTurn, *fromZeroUp, *below);
     }
     Reference stored = access.stored;
     if (!fits && tested->storage == ArrayStorage::Int32) {
@@ -1410,7 +1445,7 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
     if (!walker.standsInStretchWithArmsAsWritten() && turnMayBeginAgainInTypedElements(access) && !askKeyOfLaterStoresOfTypedElements(access, origin))
         return true;
 
-    if (lengthensList && !goOnWhereListIsLengthenedInTypedElements(access, *tested, origin))
+    if (lengthensList && !goOnWhereListIsLengthenedInTypedElements(access, *tested, origin, inside))
         return true;
     Reference heldInFrontOfStore;
     if (opcode == Opcode::PutDoubleIndex && !goesByKind && walker.storeIntoElementCanBePutBack() && turnStoresAgainBehindInTypedElements(access)) {
@@ -1436,7 +1471,7 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
     put.setArrayOperand(access.base);
     put.setPositionOperand(access.key);
     put.setValueOperand(stored);
-    if (isInside)
+    if (inside)
         put.setIsInBounds(*inside);
     if (goesByKind)
         put.setGoesByKindOfStorage(true);
@@ -1916,7 +1951,8 @@ Reference buildReadOfElementOfViewBehindTestOfLength(Walker& walker, const BodyV
         narrowed.setIsOnTakenEdge(true);
         Reference held = walker.build(WTF::move(narrowed));
         if (held && held.isValue() && held != position) {
-            walker.state().noteCheckedName(position, held);
+            if (walker.typeOf(held) != walker.typeOf(position))
+                walker.state().noteCheckedName(position, held);
             position = held;
         }
     }

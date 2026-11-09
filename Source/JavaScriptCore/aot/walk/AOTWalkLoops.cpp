@@ -345,7 +345,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
 
 #define FOR_EACH_FIELD_OF_FRAME_IN_TRY_THAT_STANDING_BESIDE_PLAIN_WALK_TAKES_BACK(macro) \
     macro(block) macro(endOfValues) macro(firstValueListedByBirthInFront) macro(endOfValuesListedByBirthInFront) macro(hasHandler) macro(handlerOnlyClosesIterations) macro(standsInFrontOfHead) macro(narrowedValues) macro(firstNarrowerName) macro(listOfNarrowerNamesIsLong) macro(lookedAt) \
-    macro(wholeExpectations) macro(shapesOfValues) macro(blockOfNamesForHandler) macro(namesForHandler)
+    macro(wholeExpectations) macro(shapesOfValues) macro(blockOfNamesForHandler) macro(namesForHandlerWereNotedInFrontOfHead) macro(namesForHandler)
 
 #define FOR_EACH_FIELD_OF_FRAME_IN_TRY_THAT_STANDING_BESIDE_PLAIN_WALK_LEAVES(macro) \
     macro(returnDominator) macro(walkedUpTo) macro(endOfStretch) macro(numberOfStretchesBeingWalked) macro(placeTakenByEndOfBlockAskedLast) \
@@ -426,7 +426,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
 
 #define FOR_EACH_FIELD_OF_WALKER_THAT_ITS_WRITER_PUTS_BACK(macro) \
     macro(m_valuesStoodInFor) macro(m_whereListsAreMadeBehindEntry) macro(m_makerOfListsBehindEntry) macro(m_accessWhoseKeyIsTested) macro(m_depthOfCopiesAroundThatAccess) macro(m_accessWhoseKeyArmHolds) macro(m_depthOfCopiesAroundKeyHeldByArm) macro(m_staticFieldSeenInVariableByArm) macro(m_isMakingObjectsOfConstant) \
-    macro(m_numberOfMarksOfTries) macro(m_nestingDepth) macro(m_serialOfNewestMark) macro(m_loopsBeingBought) macro(m_sizesOfLogsWhereFramesWentOnTop) macro(m_buysTwoBuilds) \
+    macro(m_numberOfMarksOfTries) macro(m_nestingDepth) macro(m_serialOfNewestMark) macro(m_loopsBeingBought) macro(m_reversionableLoops) macro(m_sizesOfLogsWhereFramesWentOnTop) macro(m_buysTwoBuilds) \
     macro(m_numberOfFormsHeardAsArms) macro(m_operationsThatRanOtherCodeOfRow) macro(m_guardsOfStoresAskedOfRow) macro(m_previewOutOfRow) macro(m_listsAreStruckInRow) macro(m_otherCodeStaysInTypedBuildOfRow) macro(m_otherCodeIsKeptOutOfFirstCopyInVainOfRow) macro(m_otherCodeStayedInVainOfRow) macro(m_readsAskSitesThoughCallStaysOfRow) macro(m_sumsAreNotAskedInRow) macro(m_keysAreReadOffLookInRow) macro(m_keyWasTakenForCounterAskedInFront) macro(m_walksCopyThatAsksCountersAlone) macro(m_headOfTypedBuildOverListsTestedInFront) \
     macro(m_frameOfTypedBuildOverListsTestedInFront) macro(m_listsMadeHereOfTypedBuildOverListsTestedInFront) macro(m_headOfRowHandedOn) macro(m_frameOfRowHandedOn) macro(m_enteredOfRowHandedOn) macro(m_typesOfRowHandedOn) \
     macro(m_rungsOfRowHandedOn) macro(m_parametersThatRareWaysWidenedHandedOn) macro(m_parametersThatElementsOutsideViewsWidenedHandedOn) macro(m_firstOtherCodeRanInCopyOfRow) macro(m_someCallStaysInTurnOfRow) macro(m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces) macro(m_turnsOfRowTakeApartListsFromInFront) macro(m_rowSaysTurnsAreQuietOutsideArms) macro(m_effectsOutsideArmsOfRow) \
@@ -435,7 +435,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
     macro(m_numberOfFramesBelowHandlerMade) macro(m_buildsWhereItStands) macro(m_rowOfCopyFoundUnderKey) macro(m_numberOfLoopsAroundEdgeBeingLed) macro(m_readWhoseGuessIsOpen) macro(m_weighsWhatIsWritten) macro(m_makesLetterOfStep)
 
 #define FOR_EACH_FIELD_OF_WALKER_THAT_ITS_WRITER_SETS_AND_CLEARS(macro) \
-    macro(m_questionOfTruthAnsweredOnWays) macro(m_answerOfThatQuestionOnWays) macro(m_frameOfThatQuestionOnWays) \
+    macro(m_armsWalkedInFrontOfLoop) macro(m_questionOfTruthAnsweredOnWays) macro(m_answerOfThatQuestionOnWays) macro(m_frameOfThatQuestionOnWays) \
     macro(m_numberOfFieldsOfScopesOfHeadBeingOpened) macro(m_buildsTestsBesidePlainWalk) macro(m_expectationsRememberedForLook) macro(m_typesOfInputsInLook) \
     macro(m_looksTakeFormsBehindLooksAsBuilt) macro(m_walksCopyWhereItsGuardFailed) macro(m_nextCopyIsOfMethodThatProtocolCalls) macro(m_expectedOfArgumentsOfCopies) macro(m_purchaseAsksWhetherTurnsCanBeQuiet) macro(m_resultOfCallBeingTyped) macro(m_heldInFrontOfStoreBeingBuilt) macro(m_storeBeingBuiltToPutBack) macro(m_isPuttingStoresBack)
 
@@ -820,7 +820,7 @@ void Walker::letMentionsOfLoopLeave(BlockID inputHead, std::span<const ValueID> 
     Vector<ValueID, 4> onlyRead;
     Vector<ValueID, 4> mayOnlyBorrowScopes;
     auto mention = [&](ValueID value) {
-        if (!value || value.index() >= firstValue)
+        if (!value || value.index() >= firstValue || m_inputs.options.loopsAreTakenToNameNothingFromInFront)
             return;
         if (Reference reference = referenceOf(value); reference && reference.isRecord())
             letLeave(reference);
@@ -930,21 +930,34 @@ void Walker::holdWhatArrivesWhereEdgesAreAwaited(BlockID to)
         });
     }
     auto isOnlyForgottenInLoopOf = [&](size_t firstTry, Reference holder, bool isFieldOfScope, Reference believed) {
-        if (!believed || isFieldOfScope || isScopeThatUnitMakes(holder) || !m_state.isFresh(holder) || m_triesOfLoops[firstTry].frameIndex != m_frames.size() - 1)
+        if (!believed || isFieldOfScope || !holder.isValue() || isScopeThatUnitMakes(holder) || !m_state.isFresh(holder) || m_triesOfLoops[firstTry].frameIndex != m_frames.size() - 1)
             return false;
         if (believed != holder && believed.isValue() && m_state.isFresh(Reference::value(rootOfCellInSweptCode(m_code, believed.id()))))
             return false;
-        for (size_t place = firstTry; place < m_triesOfLoops.size(); ++place) {
+        ValueID root = rootOfCellInSweptCode(m_code, holder.id());
+        if (m_code.isConstant(root) || !makesNewCell(m_code.at(root)))
+            return false;
+        for (size_t place = firstTry; place < m_triesOfLoops.size() && !m_inputs.options.objectsWrittenInLoopsAreTakenToBeOnlyForgotten; ++place) {
             if (m_triesOfLoops[place].objectsMadeInFrontThatAreWritten.contains(holder.id().index()))
                 return false;
         }
-        return isOtherThanRestOf(objectsMadeHereThatLoopMentions(m_triesOfLoops[firstTry].inputHead), holder) == IsItselfMentioned::No;
+        if (!m_inputs.options.objectsNamedInLoopsAreTakenToBeOnlyForgotten && isOtherThanRestOf(objectsMadeHereThatLoopMentions(m_triesOfLoops[firstTry].inputHead), holder) != IsItselfMentioned::No)
+            return false;
+        count(believed == holder ? StatisticID::AnswersAboutFreshObjectsOnlyForgottenInLoops : StatisticID::PlacesOfFreshObjectsOnlyForgottenInLoops);
+        return true;
     };
     m_believedAheadOfEdges[believedHere].state.forEachBeliefOfFreshHolderLackingIn(m_state, [&](Reference holder, std::optional<FieldReference> fieldOfScope, Reference believed) {
         bool isCarriedRound = believed && believed.isValue() && m_code.at(believed.id()).opcode == Opcode::Parameter && m_code.at(believed.id()).block() == to;
         if (!tried) {
-            if (!isCarriedRound && !(firstTryOfClosedCopy != notFound && isOnlyForgottenInLoopOf(firstTryOfClosedCopy, holder, !!fieldOfScope, believed)))
-                fail("what arrives at a block is not what was believed there"_s);
+            if (isCarriedRound || (firstTryOfClosedCopy != notFound && isOnlyForgottenInLoopOf(firstTryOfClosedCopy, holder, !!fieldOfScope, believed)))
+                return;
+            bool arrivesInBuildOfRowHandedOn = firstTryOfClosedCopy != notFound && m_headOfRowHandedOn == m_waysIntoClosedCopies.last().inputHead && m_frameOfRowHandedOn == m_waysIntoClosedCopies.last().frameIndex;
+            if (arrivesInBuildOfRowHandedOn && !believed && !fieldOfScope) {
+                if (!m_mentionsThatLeaveHandedOn.contains(everyFreshObject))
+                    m_mentionsThatLeaveHandedOn.append(everyFreshObject);
+                return;
+            }
+            fail("what arrives at a block is not what was believed there"_s);
             return;
         }
         if (fieldOfScope && tried->keepsScopesAtHead && isScopeThatUnitMakes(holder)) {
@@ -2617,13 +2630,13 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
         else
             answer.effects.merge(tried.done);
         answer.knowsEffects = true;
-        if ((effectsWereGuessed || (assumedTop && assumed.mayRunOtherCode())) && effectsFit && !tried.done.mayRunOtherCode() && !answer.claimsNothing && index.loop(loop).numberOfLoopsWithin <= 1) {
+        if ((effectsWereGuessed || (assumedTop && assumed.mayRunOtherCode())) && effectsFit && !tried.done.mayRunOtherCode() && !answer.claimsNothing && tried.done != assumed) {
             if (defersPurchase())
                 m_triesOfLoops.last().somethingIsWantedInside = true;
             else
                 effectsFit = false;
         }
-        if (!assumedTop && effectsFit && !tried.misfits && assumed.mayRunOtherCode() && !tried.done.mayRunOtherCode() && !answer.claimsNothing && !answer.wasFoundQuietUnderOtherCode && index.loop(loop).numberOfLoopsWithin <= 1) {
+        if (!assumedTop && effectsFit && !tried.misfits && assumed.mayRunOtherCode() && !tried.done.mayRunOtherCode() && !answer.claimsNothing && !answer.wasFoundQuietUnderOtherCode) {
             answer.wasFoundQuietUnderOtherCode = true;
             answer.effects = tried.done;
             if (defersPurchase())

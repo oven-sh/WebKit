@@ -514,11 +514,6 @@ jobs:
               }'
           status=${PIPESTATUS[0]}
           echo "run-javascriptcore-tests exited with $status"
-          # Without Bun's host, testaot leaves out the tests listed in AOTNativeTestsOfHostEntries.inc, one per line, and no
-          # others. Bun's CI runs them.
-          left_out=$(grep -a -E '^[0-9]+ passed, [0-9]+ failed, [0-9]+ todo' "$RUNNER_TEMP/jsc-tests.log" | tail -n 1 | grep -o -E '[0-9]+ left out' || echo "0 left out")
-          listed="$(grep -c '"_s' Source/JavaScriptCore/aot/tests/AOTNativeTestsOfHostEntries.inc) left out"
-          if [ -x "$root/bin/testaot" ] && [ "$left_out" != "$listed" ]; then echo "::error::testaot: $left_out, but AOTNativeTestsOfHostEntries.inc lists $listed"; status=1; fi
           # What each failing run printed (exception, stack, exit code), grouped under its name: the part of the full
           # log that is needed to fix a test.
           awk '

@@ -1175,6 +1175,8 @@ void ElementAccessEmitter::branchOnElementPresence(const ValueContext& value, co
         if (inside.value()->opcode() == Machine::ZExt32)
             inside = Integer(m_out.extendWordThatIsNotNegative(inside.value()->child(0)));
     }
+    if (AOT::hasFlag(build().options().lies, Wire::TestingLie::ElementsInsideListsAreTakenToBeThere))
+        return branch(boolean(true), targets);
     branch(form ? isHole(*form, loadRawElement(*form, elements, inside)) : isEmpty(loadBoxedElement(elements, inside)), targets.swapped());
 }
 

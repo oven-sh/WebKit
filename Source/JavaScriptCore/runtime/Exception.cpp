@@ -142,10 +142,10 @@ Exception* Exception::tryCreateWithStackOfErrorMadeHere(VM& vm, JSValue thrownVa
     ErrorInstance* error = errorToTakeStackFrom(vm, thrownValue);
     if (!error || !AOT::beginsInTopCompiledFrame(vm, *error->returnAddresses()))
         return nullptr;
-    // The stack of an Error ends at Error.stackTraceLimit. The report of an uncaught exception lists the frames below that too.
+    // An Error's stack stops at Error.stackTraceLimit. The report of an uncaught exception also lists the frames beyond that.
     if (error->returnAddresses()->isFull && error->returnAddresses()->limit < Options::exceptionStackTraceLimit())
         return nullptr;
-    // The end of a collection may turn the stack of the Error into text.
+    // The end of a garbage collection may convert the Error's stack to a string.
     DeferGC deferGC(vm);
     Exception* result = new (NotNull, allocateCell<Exception>(vm)) Exception(vm, thrownValue);
     result->Base::finishCreation(vm);

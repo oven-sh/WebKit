@@ -649,7 +649,8 @@ static void runSameBytesAloneCommand(TestCommandContext& context)
     }
 
     StagedBuild staged = context.stage();
-    const PreparedProgram* prepared = staged.prepared();
+    std::unique_ptr<CompileInputs> verifyingInputs = staged.prepareInputsForVerification();
+    const PreparedProgram* prepared = verifyingInputs ? staged.prepared() : nullptr;
     if (!prepared)
         return;
     Program& program = staged.program();
@@ -686,7 +687,7 @@ static void runSameBytesAloneCommand(TestCommandContext& context)
         }
     }
 
-    CompileInputs inputsAlone = inputs;
+    CompileInputs inputsAlone = *verifyingInputs;
     inputsAlone.walk.options.verifiesCode = !inputs.walk.options.verifiesCode;
 
     bool isSameEverywhere = true;

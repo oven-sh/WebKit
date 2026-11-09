@@ -29,6 +29,7 @@ public:
 
     EnumeratorFields loadFields(CellPointer enumerator);
     Integer nameIndexOf(const EnumeratorFields& fields, Integer position) { return sub(position, zeroExtended(fields.indexedLength)); }
+    Integer nameIndexOf(CellPointer enumerator, Integer position) { return sub(position, zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_indexLength))); }
     Condition isOwnName(const EnumeratorFields& fields, Integer nameIndex) { return below(nameIndex, zeroExtended(fields.endOwnPropertyIndex)); }
     Condition hasCachedKeys(CellPointer enumerator, const EnumeratorFields&, CellPointer object);
     Condition isInStructurePart(CellPointer enumerator, Integer nameIndex) { return below(nameIndex, zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endStructurePropertyIndex))); }

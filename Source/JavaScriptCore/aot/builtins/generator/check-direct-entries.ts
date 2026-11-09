@@ -142,6 +142,7 @@ function findNumberProblems({ result, effects, flags, code: { directEntry } }: M
   if (!returnsNumber) return [];
   const problems: string[] = [];
   if (!holdsOnlyPrimitive({ ...result.type, integers: null }, "Number")) problems.push(`${symbol} returns a number, so the row returns nothing else`);
+  if (result.type.integers !== null) problems.push(`${symbol} returns a number that no test looks at, so the row writes no range`);
   if (effects.capability !== "none" || flags.includes("Throws"))
     problems.push(`${symbol} returns a number, so it neither throws nor allocates nor calls`);
   return problems;

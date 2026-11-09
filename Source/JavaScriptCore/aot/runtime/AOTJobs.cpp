@@ -226,7 +226,7 @@ static AsyncGeneratorStepInProgress* findUnfinishedStep(JSValue settlementTarget
     return step;
 }
 
-JSValue tryAwaitForStepInProgress(JSGlobalObject* globalObject, JSValue settlementTarget, JSValue awaited)
+JSValue tryAwaitInCurrentStep(JSGlobalObject* globalObject, JSValue settlementTarget, JSValue awaited)
 {
     if (!findUnfinishedStep(settlementTarget))
         return { };
@@ -245,7 +245,7 @@ JSValue tryAwaitForStepInProgress(JSGlobalObject* globalObject, JSValue settleme
     return awaited;
 }
 
-bool tryFinishStepInProgress(JSValue settlementTarget, JSValue value, bool isDone)
+bool tryFinishCurrentStep(JSValue settlementTarget, JSValue value, bool isDone)
 {
     AsyncGeneratorStepInProgress* step = findUnfinishedStep(settlementTarget);
     if (!step)
@@ -299,7 +299,7 @@ static SavedFrame* savedFrameOfDriver(JSValue driver)
     return savedFrameIn(driver);
 }
 
-JSValue contextInWhichDriverGoesOn(JSValue settlementTarget)
+JSValue driverResumeContext(JSValue settlementTarget)
 {
     SavedFrame* saved = savedFrameOfDriver(settlementTarget);
     return saved && saved->goesOnInContextOfItsAwait() ? saved->contextOfAwait() : JSValue();
@@ -584,7 +584,7 @@ static void finishAdapterEntry(VM& vm, Instance& instance, const AdapterEntry& e
 
 static ALWAYS_INLINE void enterFunctionOfJob(JSGlobalObject* globalObject, VM& vm, JSValue promise, JSValue function, JSValue argument, bool endsJob, bool asyncContextIsPutBack)
 {
-    ASSERT(canEnterFunctionOfJob(globalObject, vm, function));
+    ASSERT(canEnterJobFunction(globalObject, vm, function));
     Instance* instance = Instance::of(globalObject);
 
     static_assert(static_cast<int32_t>(JSGenerator::Argument::Generator) == 1 && static_cast<int32_t>(JSGenerator::Argument::State) == 2 && static_cast<int32_t>(JSGenerator::Argument::Value) == 3);

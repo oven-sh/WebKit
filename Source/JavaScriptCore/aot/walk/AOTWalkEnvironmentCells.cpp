@@ -342,6 +342,25 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
         }
         return std::ranges::binary_search(placesReadInEveryTurn, variable ? PlaceRead { 1, variable.index(), 0, 0 } : PlaceRead { 0, holder.index(), place.layout.index(), place.field });
     };
+    BitVector variablesNamedInEveryTurn;
+    Vector<std::pair<uint32_t, ValueID>> readsAheadOfEveryStoreInTurn;
+    bool firstMentionsInEveryTurnAreListed = false;
+    auto readThatStandsAheadOfEveryStoreInTurn = [&](VariableID variable) -> ValueID {
+        if (!std::exchange(firstMentionsInEveryTurnAreListed, true)) {
+            Vector<BlockID, 8> passed;
+            for (BlockID block = passedInEveryTurn; passed.isEmpty() || passed.last() != inputHead; block = index.immediateDominator(block))
+                passed.append(block);
+            for (BlockID block : passed | std::views::reverse) {
+                for (BodyValue operation : index.block(block).values()) {
+                    if ((operation.opcode() == Opcode::GetModuleVariable || operation.opcode() == Opcode::PutModuleVariable) && variablesNamedInEveryTurn.add(operation.variable().index()) && operation.opcode() == Opcode::GetModuleVariable)
+                        readsAheadOfEveryStoreInTurn.append({ operation.variable().index(), operation.id() });
+                }
+            }
+            std::ranges::sort(readsAheadOfEveryStoreInTurn, { }, &std::pair<uint32_t, ValueID>::first);
+        }
+        auto found = std::ranges::lower_bound(readsAheadOfEveryStoreInTurn, variable.index(), { }, &std::pair<uint32_t, ValueID>::first);
+        return found != readsAheadOfEveryStoreInTurn.end() && found->first == variable.index() ? found->second : ValueID();
+    };
     for (BlockID member : index.membersOf(loop)) {
         for (BodyValue operation : index.block(member).values()) {
             VariableID variable = operation.opcode() == Opcode::PutModuleVariable ? operation.variable() : VariableID();
@@ -424,9 +443,16 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
             found.storedInTurns.append(stored);
             if (readTakenBySum)
                 found.readsTakenBySums.append(readTakenBySum);
+            if (variable)
+                found.readOfTextThatVouches = readThatStandsAheadOfEveryStoreInTurn(variable);
+            if (Draft read = draftOfReadOf(found); variable && !found.readOfTextThatVouches && !m_state.isPastDeadZone(variable) && leavesOutWordThatVariableIsBornWith(read, resultTypeOf(read)) && !takesVariablesReadInFrontOfLoopsToHoldWhatIsProven())
+                continue;
             Reference value = valueKnownOf(found);
-            if (!value && readsInFront && !mayBeInDeadZone(found))
-                value = build(draftOfReadOf(found));
+            if (!value && readsInFront && !mayBeInDeadZone(found)) {
+                if (variable)
+                    count(StatisticID::VariablesThatQuietTurnsStoreReadInFrontOfLoops);
+                value = build(draftOfReadInFrontOfHead(found, ReadInFrontOfHead::ComesRound));
+            }
             found.values.append(value);
             if (value || !readsInFront)
                 known.append(WTF::move(found));
@@ -500,6 +526,30 @@ Draft Walker::draftOfReadOf(const FieldOfScope& field)
     read.setVariable(field.variable);
     chooseConservativeFields(read);
     read.setFollowsItsStore(true);
+    return read;
+}
+
+Draft Walker::draftOfReadInFrontOfHead(const FieldOfScope& field, ReadInFrontOfHead use, bool fileMayNotHaveRun)
+{
+    Draft read = draftOfReadOf(field);
+    if (!field.variable) {
+        if (use == ReadInFrontOfHead::IsTestedInFront && !takesSlotsReadInFrontOfLoopsToFollowTheirStores())
+            read.setFollowsItsStore(false);
+        return read;
+    }
+    if (field.readOfTextThatVouches) {
+        read.setOrigin(originOf(currentBodyIndex().value(field.readOfTextThatVouches)));
+        read.inputValueGiven = field.readOfTextThatVouches;
+        return read;
+    }
+    if (takesVariablesReadInFrontOfLoopsToHoldWhatIsProven())
+        return read;
+    read.setFollowsItsStore(false);
+    if (fileMayNotHaveRun || (!m_state.isPastDeadZone(field.variable) && leavesOutWordThatVariableIsBornWith(read, resultTypeOf(read)))) {
+        read.setGivesWordAsItLies(true);
+        count(StatisticID::ReadsInFrontOfLoopsThatGiveTheWordAsItLies);
+    } else if (m_state.isPastDeadZone(field.variable))
+        read.setFollowsItsStore(true);
     return read;
 }
 
@@ -586,11 +636,11 @@ bool Walker::bringFieldsOfScopesRound(EdgeID& edge, BlockID head, Vector<Referen
             value = askAgainWhereItComesRound(edge, head, field.type, arguments.span().first(numberBesideFieldsOfScopes), scopedLambda<Reference()>([&] {
                 if (Reference atHand = valueKnownOf(field))
                     return atHand;
-                return build(draftOfReadOf(field));
+                return build(draftOfReadInFrontOfHead(field, ReadInFrontOfHead::ComesRound));
             }));
         }
         if (!value && !field.isHeld)
-            value = build(draftOfReadOf(field));
+            value = build(draftOfReadInFrontOfHead(field, ReadInFrontOfHead::ComesRound));
         if (!value) {
             if (!m_hasFailed && !isUnreachable())
                 fail("a field of a scope does not come round to the head of its loop"_s);

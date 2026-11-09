@@ -396,6 +396,7 @@ ValueID findOpeningThatAloneTakesParameter(const BodyIndex&, ValueID parameter);
 bool isIteratorOfTableJustMade(const Walker&, Reference);
 bool openOverListAsMadeGoesByIndex(Walker&, const BodyIndex&, ValueID open);
 ValueID openOfCleanupThatOnlyThrowsOn(const BodyIndex&, BodyBlock);
+ValueID openOfCleanupThatThrowsOnOutsideLoop(const BodyIndex&, BodyBlock, LoopID);
 bool mayCopyCallee(const Walker&, const Draft& site, FunctionID callee, const PlaceOfCall&);
 bool shouldCopyCallee(const Walker&, const Draft& site, FunctionID callee, std::span<const Reference> handedOver, bool callsParameterOfCopy = false);
 bool copyOfCalleeCalledInLoopPays(const Walker&, FunctionID callee, size_t numberOfArguments);
@@ -887,8 +888,9 @@ public:
     bool textNamesHolderOfCopyAtWork(ValueID written) const;
     bool isHolderOfCopyAtWork(Reference) const;
     bool isBeingWalked(FunctionID) const;
-    bool bodyAtWorkCallsItself() const;
+    bool bodyAtWorkCallsItself() const { return bodyOfFrameCallsItself(m_frames.last()); }
     TypeID typeThatCounterIsHeldTo(BlockID inputHead, uint32_t parameter) const;
+    bool linkComesRoundThatMayBearMark(BlockID head, uint32_t parameter, Reference comesRound);
     TypeID typeAskedOfWhatOtherCodeBringsRound(BlockID head, TypeID ofParameter, TypeID comingRound);
     size_t depthOfCopies() const { return m_frames.size() - 1; }
     std::pair<FunctionID, ValueID> callThatFrameAtWorkCopies() const { return m_frames.size() < 2 ? std::pair<FunctionID, ValueID>() : std::pair<FunctionID, ValueID>(m_frames[m_frames.size() - 2].function, m_frames.last().callCopied); }
@@ -941,6 +943,7 @@ public:
     };
     Vector<ValueDefinedBehindBirth, 8> takeWhatIsDefinedBehindBirthOf(LayoutID layout) { return layout == m_layoutOfBirthThatListsWhatIsBehind ? std::exchange(m_valuesDefinedBehindBirth, { }) : Vector<ValueDefinedBehindBirth, 8>(); }
     BlockID currentBlock() const { return m_block; }
+    static uint16_t wordThatVariableIsBornWith(const Program&, VariableID);
     Origin originOf(const BodyValue& value) const
     {
         Origin origin = value.origin();
@@ -1151,6 +1154,7 @@ public:
     std::optional<PassedTest> findWhatHoldsPositionInsideListMadeInSight(Reference list, Reference position);
     std::optional<PassedTest> findWhatHoldsWordInsideListMadeByWalk(Reference listInParameter, Reference listAsMade, Reference word);
     std::optional<PassedTest> findWhatHoldsPositionBehindTestOfLength(Reference list, Reference position, Reference length, Reference isBelowLength);
+    std::optional<PassedTest> findWhatHoldsPositionBehindRaise(Reference list, Reference position, Reference raise);
     std::optional<PassedTest> showElementPresentBehindTest(Reference list, Reference position, const std::optional<PassedTest>&);
     std::optional<PassedTest> showPositionInside(const GroundsOfPosition&);
     std::optional<PassedTest> showPositionInsideBehindTests(Reference view, Reference position, Reference length, const PassedTest& fromZeroUp, const PassedTest& below);
@@ -1158,6 +1162,7 @@ public:
     void switchOn(Reference subject, std::span<const int64_t> cases, std::span<const BlockID> targets, BlockID otherwise);
     Reference tryCallInline(TerminatorDraft&&, BlockID done, BlockID miss, const Effects* foundByCaller = nullptr);
     void continueIn(BlockID);
+    void leaveBlockPending();
     void letGoOfPendingBlocksThatHaveEnded();
     Reference addParameter(BlockID, TypeID, Representation);
     Representation formOfParameter(TypeID, std::span<const Representation> arguments);
@@ -1174,7 +1179,7 @@ public:
         Vector<ValueID, 8> mentionedBehind;
     };
     using ArmsThatMeet = Vector<ArmThatMeets, 4>;
-    StretchInArms stretchInArms(BlockID inputBlock, uint32_t begin, uint32_t end, bool armsMayEndWithReturn = false) const;
+    StretchInArms stretchInArms(BlockID inputBlock, uint32_t begin, uint32_t end) const;
     void listArm(const StretchInArms&, ArmsThatMeet&);
     void walkClosedArm(BlockID closed, const StretchInArms&, ArmsThatMeet&);
     bool letArmsMeet(const StretchInArms&, const ArmsThatMeet&, BlockID meeting);
@@ -1445,6 +1450,11 @@ public:
     bool makesCallsMadeInFrontAgainInTurns() const { return m_inputs.options.makesCallsMadeInFrontAgainInTurns && checksProofs(); }
     bool takesEveryBuiltinInLineToAnswerOutOfItsOperands() const { return m_inputs.options.takesEveryBuiltinInLineToAnswerOutOfItsOperands; }
     bool takesNumbersStoredIntoListsOfDoublesToBeNoNaN() const { return m_inputs.options.takesNumbersStoredIntoListsOfDoublesToBeNoNaN; }
+    bool takesRoomsAskedInFrontForGiven() const { return m_inputs.options.takesRoomsAskedInFrontForGiven; }
+    bool takesLengthsAskedInTurnsForGiven() const { return m_inputs.options.takesLengthsAskedInTurnsForGiven; }
+    bool takesStoresOfLengthsToEndNothing() const { return m_inputs.options.takesStoresOfLengthsToEndNothing; }
+    bool takesReadsOfConstructorsPrototypesToEndNoGuard() const { return m_inputs.options.takesReadsOfConstructorsPrototypesToEndNoGuard; }
+    bool takesKeysOfForInToBeAsStepFoundThem() const { return m_inputs.options.takesKeysOfForInToBeAsStepFoundThem; }
     bool takesOneRowToSpeakForAll() const { return m_inputs.options.takesOneRowToSpeakForAll; }
     bool takesNothingToBeDoneToFreshLists() const { return m_inputs.options.takesNothingToBeDoneToFreshLists; }
     bool takesBoundFunctionsToBindOneMore() const { return m_inputs.options.takesBoundFunctionsToBindOneMore; }
@@ -1615,7 +1625,7 @@ public:
     bool hasHandlerMadeOverCopies() const { return !!m_handlerMadeOverCopies; }
     ASCIILiteral failure() const { return m_failure; }
     InternalErrorKind kindOfFailure() const { return m_kindOfFailure; }
-    bool failureOutlivesTries() const { return m_hasFailed && (m_kindOfFailure == InternalErrorKind::GuessOpensAgain || m_kindOfFailure == InternalErrorKind::WordInFrontOfTypedBuildIsStale || m_kindOfFailure == InternalErrorKind::HandlerEdgeHandsOnStandIn || m_kindOfFailure == InternalErrorKind::OpcodeWithoutCode || m_kindOfFailure == InternalErrorKind::LastWalkOfLoopMisfitsRow); }
+    bool failureOutlivesTries() const { return m_hasFailed && (m_kindOfFailure == InternalErrorKind::GuessOpensAgain || m_kindOfFailure == InternalErrorKind::WordInFrontOfTypedBuildIsStale || m_kindOfFailure == InternalErrorKind::HandlerEdgeHandsOnStandIn || m_kindOfFailure == InternalErrorKind::OpcodeWithoutCode || m_kindOfFailure == InternalErrorKind::LastWalkOfLoopMisfitsRow || m_kindOfFailure == InternalErrorKind::OperandInFrontOfLoopIsMadeInItsTurns); }
     ALWAYS_INLINE bool isUnreachable() const { return m_block.hasEndedOrIsNone(); }
 
     TypeID resultTypeOf(const Draft&);
@@ -1702,6 +1712,7 @@ public:
     void keepStateBehindStoreToPutBack(uint32_t store) { m_statesBehindStoresToPutBack.append({ store, m_state }); }
     enum class TurnOfTypedCopy : uint8_t { HasDoneNothing, HasRunNoOtherCode, HasRunNoOtherCodeThoughCopiesBegan };
     bool standsInFrontOfTypedCopy(Reference, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing) const;
+    bool isWhereArmsMetInFrontOfTypedCopy(Reference) const;
     TurnOfTypedCopy turnInWhichListsAreAskedInFront() const { return turnOfTypedCopyHasDoneNothing() ? TurnOfTypedCopy::HasDoneNothing : TurnOfTypedCopy::HasRunNoOtherCode; }
     bool wasAskedForStorageOfNumbersInVain(Reference list) const { return list && list == m_listAskedForStorageOfNumbersInVain; }
     ArrayStorage storageAskedOfLiteralBeingBorn() const { return m_storageAskedOfLiteralBeingBorn; }
@@ -1726,11 +1737,30 @@ public:
     std::optional<PassedTest> goOnInTypedCopyWhereTestInFrontPasses(Reference test, bool passesWithYes, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing);
     bool turnsOfTypedCopyLeaveListsAsTheyAre(Reference list, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing);
     bool textOfLoopReckonsWithWhatItReads(BlockID inputHead) { return loopReckonsWithWhatItReads(inputHead); }
+    bool textOfLoopOrdersWhatItReads(BlockID inputHead);
     std::span<const uint64_t> holdersFromInFrontThatLoopReadsUnderIndexes(BlockID inputHead);
     bool takesReceiversOfMethodsOfListsToBeMadeHere() const { return m_inputs.options.takesReceiversOfMethodsOfListsToBeMadeHere; }
     bool takesElementsBesideSumsToComeOffListsOfNumbers() const { return m_inputs.options.takesElementsBesideSumsToComeOffListsOfNumbers; }
+    bool shouldAssumeArithmeticUsers() const { return m_inputs.options.shouldAssumeArithmeticUsers; }
     bool takesIterablesOfPatternsToStayAsMade() const { return m_inputs.options.takesIterablesOfPatternsToStayAsMade; }
+    bool takesValuesThatPatternsTakeApartInTurnsForListsAsMade() const { return m_inputs.options.takesValuesThatPatternsTakeApartInTurnsForListsAsMade; }
+    bool takesPartsOfPairsWhateverIsStepped() const { return m_inputs.options.takesPartsOfPairsWhateverIsStepped; }
+    bool takesListsSteppedByMethodsToBeAsMade() const { return m_inputs.options.takesListsSteppedByMethodsToBeAsMade; }
+    bool takesKindsAskedInFrontForGiven() const { return m_inputs.options.takesKindsAskedInFrontForGiven; }
+    bool takesVariablesReadInFrontOfLoopsToHoldWhatIsProven() const { return m_inputs.options.takesVariablesReadInFrontOfLoopsToHoldWhatIsProven; }
+    bool takesSlotsReadInFrontOfLoopsToFollowTheirStores() const { return m_inputs.options.takesSlotsReadInFrontOfLoopsToFollowTheirStores; }
+    bool takesWhatLoopsAskOfVariablesInFrontToHold() const { return m_inputs.options.takesWhatLoopsAskOfVariablesInFrontToHold; }
+    bool standsInTypedCopyWhoseTurnsAreTakenToHaveDoneNothing() const { return m_inputs.options.takesTurnsToHaveDoneNothingWherePatternsAreHeld && !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().isEntered && !isUnreachable() && m_waysIntoClosedCopies.last().looksCountOnTurnsThatBeginAgain; }
     bool passesGuardOfNameOverAtCallsThroughSuper() const { return m_inputs.options.passesGuardOfNameOverAtCallsThroughSuper; }
+    bool leavesLinksOfKinUnguarded() const { return m_inputs.options.leavesLinksOfKinUnguarded; }
+    bool letsMarkedObjectsPassTestsOfLinks() const { return m_inputs.options.letsMarkedObjectsPassTestsOfLinks; }
+    bool leavesLastArmOutOfRowsOfShapeTests() const { return m_inputs.options.leavesLastArmOutOfRowsOfShapeTests; }
+    bool leavesConditionsOfClassAskedForUnguarded() const { return m_inputs.options.leavesConditionsOfClassAskedForUnguarded; }
+    bool asksNoStrangerAmongKinWhereItStands() const { return m_inputs.options.asksNoStrangerAmongKinWhereItStands; }
+    bool asksNoObjectOfClassAskedForWhereItStands() const { return m_inputs.options.asksNoObjectOfClassAskedForWhereItStands; }
+    bool takesValuesAskedForClassesToStandWhereTheyWereMade() const { return m_inputs.options.takesValuesAskedForClassesToStandWhereTheyWereMade; }
+    bool takesLayoutsAboveClassAskedForForStrangers() const { return m_inputs.options.takesLayoutsAboveClassAskedForForStrangers; }
+    bool takesWhatConditionsOfArmsInFrontOfLoopsSpeakOfToStandInFront() const { return m_inputs.options.takesWhatConditionsOfArmsInFrontOfLoopsSpeakOfToStandInFront; }
     bool passesGuardOfLinkOverAtCallsThroughSuper() const { return m_inputs.options.passesGuardOfLinkOverAtCallsThroughSuper; }
     std::optional<BlockID> headOfInnermostTryInFrameOnTop() const { return !m_triesOfLoops.isEmpty() && m_triesOfLoops.last().frameIndex == m_frames.size() - 1 ? std::optional(m_triesOfLoops.last().inputHead) : std::nullopt; }
     using ObjectsMadeHereThatLoopMentions = Vector<uint32_t, 4>;
@@ -1789,6 +1819,7 @@ private:
         Vector<ValueID, 2> storedInTurns { };
         Vector<ValueID, 2> readsTakenBySums { };
         bool isReadBySumsAlone { false };
+        ValueID readOfTextThatVouches { };
     };
     Reference valueKnownOf(const FieldOfScope& field) const { return field.variable ? m_state.variable(field.variable) : m_state.environmentField(field.scope, field.field); }
     bool mayBeInDeadZone(const FieldOfScope&) const;
@@ -1811,6 +1842,8 @@ private:
     void keepFieldsOfScopesThatLoopWrites(BlockID inputHead, Vector<FieldOfScope, 4>&);
     Draft draftOfReadOfFieldThatComesRound(Reference scope, FieldReference);
     Draft draftOfReadOf(const FieldOfScope&);
+    enum class ReadInFrontOfHead : uint8_t { ComesRound, IsTestedInFront };
+    Draft draftOfReadInFrontOfHead(const FieldOfScope&, ReadInFrontOfHead, bool fileMayNotHaveRun = false);
     bool isFitForParameterOfField(const FieldOfScope&, Reference value);
     Reference fitForParameterOfField(const FieldOfScope&, Reference known);
     bool bringFieldsOfScopesRound(EdgeID&, BlockID head, Vector<Reference, 8>& arguments);
@@ -1905,6 +1938,15 @@ private:
         bool hasState { false };
         bool parametersAreSet { false };
         bool isMadeByAddBlock { false };
+
+        template<typename State> void addArrival(State&& arriving)
+        {
+            ++numberOfArrivals;
+            if (std::exchange(hasState, true))
+                state.meetWith(arriving);
+            else
+                state = std::forward<State>(arriving);
+        }
     };
 
     class CountOfFrame {
@@ -2243,6 +2285,7 @@ private:
         bool takeStateOfHandler(BlockID handler, WalkState&);
         HashMap<uint64_t, std::unique_ptr<AccessUnderProvenKey>> accessesUnderProvenKeys;
         BlockID blockOfNamesForHandler;
+        bool namesForHandlerWereNotedInFrontOfHead { false };
         Vector<std::pair<ValueID, Reference>> namesForHandler;
     };
 
@@ -2326,6 +2369,24 @@ private:
     void stopUnlessValueIsOf(Reference value, TypeID tested, ProofSource);
     ValueID m_accessWhoseKeyIsTested;
     ValueID m_questionOfTruthLeftToItsOwnTests;
+    struct RelationThatBeginsFirstTurn {
+        ValueID written;
+        Reference left;
+        Reference right;
+    };
+    std::optional<RelationThatBeginsFirstTurn> relationThatBeginsFirstTurnOfOpenLoop(uint32_t indexOfLoop) const;
+    struct ArmsWalkedInFrontOfLoop {
+        BlockID inputJoin;
+        uint32_t placeOfLoop { 0 };
+        BlockID blockOfTurn;
+        WalkState stateOfTurn;
+        uint32_t firstRecord { 0 };
+    };
+    std::optional<ArmsWalkedInFrontOfLoop> m_armsWalkedInFrontOfLoop;
+    void leaveTurnForArmsThatOnlyMakeConstants(const BodyTerminator& branch, Reference condition);
+    bool buildsInFrontOfLoop() const { return m_armsWalkedInFrontOfLoop || (m_block.index() < m_placesOfLoopsBehindBlocks.size() && m_placesOfLoopsBehindBlocks[m_block.index()]); }
+    bool operandsStandWhereOperationIsBuilt(const Draft&) const;
+    void standInFrontOfLoopWithArms(BlockID inputBlock);
     ValueID m_questionOfTruthAnsweredOnWays;
     bool m_answerOfThatQuestionOnWays { false };
     size_t m_frameOfThatQuestionOnWays { 0 };
@@ -3117,6 +3178,7 @@ private:
     void takeNamesOntoEdge(OpenEdge&, size_t frameIndex);
     void takeNamesOfWay(BlockID inputBlock, NamesOfWay&&);
     void forgetNamesOfWay(Frame&);
+    bool bodyOfFrameCallsItself(const Frame&) const;
     bool isNamedByWaysInto(const Frame&, ValueID, BlockID inputBlock) const;
     Reference nameBroughtByWay(const Frame&, ValueID) const;
     ALWAYS_INLINE Reference referenceBoundIn(const Frame& frame, ValueID input) const
@@ -3641,6 +3703,7 @@ private:
     };
     HolderThatIsNoBuiltin m_holderThatIsNoBuiltin;
     Vector<std::pair<size_t, BlockID>, 2> m_otherCopiesInsideTypedCopies;
+    Vector<std::pair<size_t, LoopID>, 2> m_reversionableLoops;
     bool m_isWalkingAccess { false };
     bool m_operationWritesWhatTurnHasMade { false };
     ListPutBackByLog<TextInStringBuilder, 2> m_textsInStringBuilders;
@@ -3885,7 +3948,8 @@ std::optional<Effects> effectsOfCallByOneRowAhead(Walker&, const BodyValue& call
 
 bool testOfBodyHoldsPositionBelowLengthOfText(Walker&, const BodyIndex&, BlockID block, ValueID text, ValueID position);
 bool testOfBodyHoldsPositionOfCharacterReadBelowLength(Walker&, const BodyValue& read);
-const Walker::IterationByIndex* findListSteppedByIndexAlone(Walker&, const BodyIndex&, const BodyValue& step);
+const Walker::IterationByIndex* findListSteppedByIndexAlone(Walker&, const BodyIndex&, const BodyValue& step, bool whateverStepsHandOut = false);
+const Walker::IterationByIndex* findListWhosePairsPatternTakesInParts(Walker&, const BodyIndex&, const BodyValue& open);
 bool stepsViewByIndexAlone(Walker&, const BodyIndex&, const BodyValue& step);
 bool stepsTextByIndexAlone(Walker&, const BodyIndex&, const BodyValue& step);
 bool cellAnswersWhetherValueIsArray(const Walker&, TypeID asked);
