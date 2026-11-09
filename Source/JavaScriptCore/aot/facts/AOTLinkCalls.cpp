@@ -7121,7 +7121,7 @@ void LinkFlow::callObserved(const FlowObserver& observer, const LinkType& told)
         return;
     uint32_t numberOfCallObserved = firstCallOfFunction[observer.function.index()] + observer.record;
     bool isEnteredNoMore = state.callsOfUnseen[numberOfCallObserved] == StateOfLinkCalls::hasGivenUpInSight || (state.callsOfUnseen[numberOfCallObserved] && !state.callsThatEnterMembersOfTable[numberOfCallObserved]);
-    if (isEnteredNoMore && namesSameObjectsAndFunctionsInLinkCalls(told, typeObservedBefore()) && told.holdsUnseenInSight() == typeObservedBefore().holdsUnseenInSight() && (told.holdsUnseen == typeObservedBefore().holdsUnseen || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CallsThatEnteredUnseenCodeDoNotHearTheUnknownCome)))
+    if (isEnteredNoMore && namesSameObjectsAndFunctionsInLinkCalls(told, typeObservedBefore()) && told.holdsUnseenInSight() == typeObservedBefore().holdsUnseenInSight() && (told.holdsUnseen == typeObservedBefore().holdsUnseen || summaries.at(observer.function).calls[observer.record].newTarget == noSummaryNode || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CallsThatEnteredUnseenCodeDoNotHearTheUnknownCome)))
         return;
     if (!std::exchange(state.callsToResolve[firstCallOfFunction[observer.function.index()] + observer.record], 1))
         state.observersToResolve[laneOfObserversOf(observer.function)].append(observer);

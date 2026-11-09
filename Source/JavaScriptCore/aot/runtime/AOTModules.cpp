@@ -3084,8 +3084,12 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
     m_outermostNamespaceReadWhileBeingMade = std::min(outermostReadBefore, outermostRead);
     RETURN_IF_EXCEPTION(scope, nullptr);
     namespaceObject->replaceDynamicExports(vm, exportObjects);
-    if (isRequired && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl()))
-        namespaceObject->setESModuleMarker(true);
+    if (isRequired && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl())) {
+        if (m_modulesWhoseMarkOfRequireWaitsForRun.get(module.index()))
+            namespaceObject->letESModuleMarkerWaitForRun(true);
+        else
+            namespaceObject->setESModuleMarker(true);
+    }
     if (JSObject* mock = phase == ModulePhase::Evaluation && isLeftAloneByMock(module) ? mockInPlace(module) : nullptr) [[unlikely]]
         namespaceObject->setMockOfView(vm, mock);
     setNamespace(module, phase, namespaceObject);
@@ -7403,6 +7407,13 @@ Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject* realm, StringView 
     return forms;
 }
 
+bool isSetAsideInMiddleOfEvaluation(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    ModuleRecord* record = modules ? modules->recordSetAside(module) : nullptr;
+    return record && !record->isSCCEvaluated();
+}
+
 bool isBeingEvaluated(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -7918,12 +7929,25 @@ void didStopLayingMock(JSGlobalObject* realm, ModuleID module)
 
 bool hasESModuleMarker(JSCell* moduleNamespace)
 {
-    return uncheckedDowncast<ModuleNamespace>(moduleNamespace)->hasESModuleMarker();
+    return uncheckedDowncast<ModuleNamespace>(moduleNamespace)->showsESModuleMarker();
 }
 
 void setESModuleMarker(JSCell* moduleNamespace, bool hasMarker)
 {
-    uncheckedDowncast<ModuleNamespace>(moduleNamespace)->setESModuleMarker(hasMarker);
+    uncheckedDowncast<ModuleNamespace>(moduleNamespace)->storeESModuleMarker(hasMarker);
+}
+
+bool ModuleNamespace::isRunThatESModuleMarkerWaitsForOver() const
+{
+    ModuleStatus status = modules().status(m_module);
+    return status != ModuleStatus::Evaluating && status != ModuleStatus::EvaluatingAsync && status != ModuleStatus::Failed;
+}
+
+void ModuleNamespace::storeESModuleMarker(bool hasMarker)
+{
+    if (m_esModuleMarkerWaitsForRun && isRunThatESModuleMarkerWaitsForOver())
+        m_esModuleMarkerWaitsForRun = false;
+    m_hasESModuleMarker = hasMarker;
 }
 
 static constexpr unsigned invalidIndex = static_cast<unsigned>(-1);

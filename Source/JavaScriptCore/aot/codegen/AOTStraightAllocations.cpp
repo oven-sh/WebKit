@@ -74,6 +74,8 @@ static bool allocationListsFieldInStraightForm(StraightEmitter& emitter, FieldRe
         return false;
     if (facts.facts.contains(FieldFact::IsAccessor) || facts.slotType || slot.provenType)
         return false;
+    if (!facts.formOfValue.isEmpty() && (emitter.index().isParameter(value) || emitter.index().opcodeOf(value) != Opcode::Absent))
+        return false;
     if (slot.representation == SlotRepresentation::JSValue)
         return !slot.type;
     std::optional<JSValue> constant = emitter.constantOf(value);

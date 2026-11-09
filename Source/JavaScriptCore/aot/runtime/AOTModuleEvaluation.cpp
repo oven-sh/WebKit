@@ -3275,6 +3275,10 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     const ModuleData& moduleData = data(module);
 
     auto throwAsyncModuleError = [&] {
+        if (reason == SynchronousEvaluationReason::Require) {
+            takeBackMarkOfRequireThatWaits(module);
+            forgetFirstRequireThatWasRefused(module);
+        }
         throwException(realm, scope, host().createAsyncModuleRequiredError(realm, m_table.pathText(module)));
     };
     if (factoryHasNotSettled && reason == SynchronousEvaluationReason::Require) [[unlikely]] {
@@ -4884,9 +4888,43 @@ void Modules::markNamespaceAsRequired(ModuleID module)
         return;
     willRequireESModule(module);
     m_modulesWithMarkOfRequire.set(module.index());
+    ModuleStatus current = status(module);
+    bool waitsForRun = current != ModuleStatus::Evaluated && (current != ModuleStatus::Evaluating || data(module).hasTopLevelAwait());
+    m_modulesWhoseMarkOfRequireWaitsForRun.set(module.index(), waitsForRun);
     auto* namespaceObject = uncheckedDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation));
-    if (namespaceObject && !namespaceObject->hasExport(m_instance.vm->propertyNames->__esModule.impl()))
+    if (!namespaceObject || namespaceObject->hasExport(m_instance.vm->propertyNames->__esModule.impl()))
+        return;
+    if (waitsForRun)
+        namespaceObject->letESModuleMarkerWaitForRun(true);
+    else
         namespaceObject->setESModuleMarker(true);
+}
+
+void Modules::takeBackMarkOfRequireThatWaits(ModuleID module)
+{
+    if (!m_modulesWhoseMarkOfRequireWaitsForRun.get(module.index()) || status(module) == ModuleStatus::Evaluated)
+        return;
+    m_modulesWhoseMarkOfRequireWaitsForRun.clear(module.index());
+    m_modulesWithMarkOfRequire.clear(module.index());
+    if (auto* namespaceObject = uncheckedDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation)))
+        namespaceObject->letESModuleMarkerWaitForRun(false);
+}
+
+void Modules::forgetFirstRequireThatWasRefused(ModuleID required)
+{
+    std::optional<ModuleID> requirer = firstRequirerOf(required);
+    if (!requirer)
+        return;
+    bool hadNotReturned = m_recordedRequires.removeIf([&](const auto& recorded) {
+        return static_cast<uint32_t>(recorded.key) == required.index() && recorded.value == RecordedRequire::BegunAndMadeObjectOfESModule;
+    });
+    if (!hadNotReturned)
+        return;
+    forgetFirstRequirerOf(required);
+    m_firstRequires.removeAllMatching([&](const FirstRequire& first) {
+        return first.requirer == *requirer && first.required == required;
+    });
+    m_modulesFirstRequiredByCallsInProgress.removeAll(required);
 }
 
 JSObject* Modules::namespaceThatAnswersRequire(ModuleID module)

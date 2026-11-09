@@ -284,6 +284,7 @@ JS_EXPORT_PRIVATE bool hasImportBegunToLoad(JSGlobalObject*, ModuleID fileOrFace
 JS_EXPORT_PRIVATE bool wasLoadedByImport(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModuleWhoseBodyRuns(VM&, CallFrame*, const ScopedLambda<void(ModuleID)>&);
 JS_EXPORT_PRIVATE bool isBeingEvaluated(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool isSetAsideInMiddleOfEvaluation(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasPulledInByLoadThatFailed(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLinkedByGraphThatFailedAndNeverRan(JSGlobalObject*, ModuleID, bool byEarlierTestFile = false);
 JS_EXPORT_PRIVATE bool isRootOfImportThatFailed(JSGlobalObject*, ModuleID);

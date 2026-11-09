@@ -192,6 +192,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::PortersTakeWhatIsOfTheMemberForTheUnknown:
     case Wire::TestingSwitch::ReadsThroughFamiliesAreTiedMemberByMember:
     case Wire::TestingSwitch::CallsThatEnteredUnseenCodeDoNotHearTheUnknownCome:
+    case Wire::TestingSwitch::WhatBirthsLayIsTakenToBeLaidByDefinitions:
     case Wire::TestingSwitch::ReadsByKeyOffFilledRecordsAreListed:
         return true;
     }

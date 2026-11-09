@@ -935,6 +935,7 @@ public:
     void setAsideErrorOfModuleThatRanBesideMock(ModuleID);
     void bringBackErrorOfModuleThatRanBesideMock(ModuleID);
     JSValue importModuleItselfBesideMock(ModuleID, JSValue answerOfImport);
+    JSValue answerImportWithModuleItself(ModuleID);
     JSValue continueImportAsFactorysOwn(ModuleID, ModuleID referrer);
     JSObject* namespaceOfModuleThatRanBesideMock(ModuleID);
     void willRunCopyFromDisk()
@@ -1469,6 +1470,8 @@ private:
     JSValue whatRequireMakesOfNamespace(JSObject* namespaceObject);
     void willRequireESModule(ModuleID);
     void markNamespaceAsRequired(ModuleID);
+    void takeBackMarkOfRequireThatWaits(ModuleID);
+    void forgetFirstRequireThatWasRefused(ModuleID);
 
     std::optional<ModuleID> findByName(const Identifier& key);
     enum class FormWithoutAttributes : bool { MayAnswer, IsAnotherModule };
@@ -1604,6 +1607,7 @@ private:
     Vector<TemplateObjectOfFile> m_templateObjectsOfFiles;
     void noteRequireOfFile(ModuleID file);
     BitVector m_modulesWithMarkOfRequire;
+    BitVector m_modulesWhoseMarkOfRequireWaitsForRun;
     BitVector m_modulesWithExtensibleNamespace;
     BitVector m_modulesWithEarlierNamespaceInValue;
     Vector<uint8_t> m_marksOfEvaluationsUnderOthers;

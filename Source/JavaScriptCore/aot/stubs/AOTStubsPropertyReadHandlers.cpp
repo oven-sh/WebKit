@@ -471,8 +471,11 @@ void generateReadSlot(StubAssembler& jit)
             jit.returnToCaller();
             return;
         case Slot::Kind::Uncacheable:
-            if (slot.form() == SlotForm::Slot && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal))
-                jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, operands.payload), throughProxy(TrapOfProxy::Get));
+            if (slot.form() == SlotForm::Slot) {
+                if (origin == SlotOrigin::ByIdInStubFrame)
+                    uncached.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::trapAwareSoftStackLimitWord()));
+                jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, operands.payload), throughProxy(TrapOfProxy::Get).withCallerFrame(callerFrameOf(origin)));
+            }
             uncached.append(jit.jump());
             return;
         case Slot::Kind::Setter:
@@ -550,7 +553,8 @@ void generateThroughProxy(StubAssembler& jit)
     const ScopedLambda<void()> askTarget = emitQuestionAboutTarget;
 
     jit.recordClobbers(RegisterSet(gprOf(slotHeaderRegister), gprOf(slotPayloadRegister)));
-    jit.checkStackBeforeEntering();
+    if (jit.key().callerFrame() != CallerFrame::StubFrame)
+        jit.checkStackBeforeEntering();
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = !isStore, .checksException = true, .emitBeforeReturn = trap == TrapOfProxy::Has ? &askTarget : nullptr }, [&] {
         JumpList isDone;
         JumpList isNoFunction;

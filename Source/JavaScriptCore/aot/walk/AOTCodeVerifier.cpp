@@ -161,6 +161,7 @@ private:
     void verifyReturn(BlockID, const Terminator&);
     void verifyArguments(BlockID from, const Edge&, uint32_t place, uint32_t numberOfDeclaredResults, bool isHandlerEdge);
     void verifyNarrowed(BlockID, ValueID, const Operation&);
+    void verifyFieldsLaidWithoutDefinition(BlockID, ValueID, const Operation&);
     void verifyPointerIntoStorage(BlockID, ValueID access, ValueID pointer, Opcode readOfPointer, ValueID owner);
     void verifyFramePointersTakenBy(BlockID, ValueID, const Operation&);
     void verifyFramePointersTakenByEnd(BlockID, const Terminator&);
@@ -900,10 +901,63 @@ void CodeVerifier::verifyOperation(BlockID block, uint32_t place, ValueID id, co
         if (kind.opcode != Opcode::HasArrayStorage || kind.arrayStorage() != ArrayStorage::Double || kind.admitsInt32Storage() || !areSameCells(kind.arrayOperand(), operation.arrayOperand()))
             return fail(block, id, "a read takes for the kind of its list what no question of that list for doubles gives"_s, operation.holdsDoublesOperand());
     }
+    verifyFieldsLaidWithoutDefinition(block, id, operation);
+    if (hasFailed())
+        return;
     if (OperandPosition::storage(opcode))
         verifyPointerIntoStorage(block, id, operation.storageOperand(), Opcode::GetArrayStorage, operation.arrayOperand());
     else if (OperandPosition::vector(opcode))
         verifyPointerIntoStorage(block, id, operation.vectorOperand(), Opcode::GetTypedArrayVector, operation.viewOperand());
+}
+
+void CodeVerifier::verifyFieldsLaidWithoutDefinition(BlockID block, ValueID id, const Operation& operation)
+{
+    if (!m_facts || !m_plan)
+        return;
+    auto refuseUnlessPlain = [&](FieldReference field, ASCIILiteral rule) {
+        FieldFacts facts = m_facts->field(field);
+        if (hasFailed() || (facts.formOfValue.isEmpty() && !facts.facts.contains(FieldFact::IsAccessor)))
+            return;
+        fail(block, id, rule);
+        Vector<char16_t> buffer;
+        PropertyKeyID key = m_plan->slots().keyOf(m_program, field);
+        m_failure = makeString(m_failure, ": L"_s, field.layout.index(), ".field"_s, field.field, " \""_s, key ? m_program.strings.viewOf(m_program.at(key).text, buffer) : StringView(), '"');
+    };
+    switch (operation.opcode) {
+    case Opcode::NewObject:
+        if (!operation.layout() || m_program.at(operation.layout()).isEnvironment())
+            return;
+        for (size_t place = 0; place < operation.fields().size(); ++place) {
+            ValueID value = place < operation.valuesOperands().size() ? operation.valuesOperands()[place] : ValueID();
+            if (!value || !m_types.isSubset(m_code.at(value).type, TypeTable::absent))
+                refuseUnlessPlain({ operation.layout(), operation.fields()[place] }, "a birth fills a field whose slot is planned in the form that definitions create"_s);
+        }
+        return;
+    case Opcode::TryCopyFields: {
+        static constexpr ASCIILiteral rule = "a copy of own keys fills a field whose slot is planned in the form that definitions create"_s;
+        LayoutID source = operation.sourceLayout() ? operation.sourceLayout() : operation.layout();
+        auto refuseUnlessBothArePlain = [&](uint32_t fieldOfSource) {
+            refuseUnlessPlain({ source, fieldOfSource }, rule);
+            PropertyKeyID key = source != operation.layout() ? m_plan->slots().keyOf(m_program, { source, fieldOfSource }) : PropertyKeyID();
+            if (std::optional<FieldIndex> field = key ? m_plan->slots().findField(m_program, operation.layout(), key) : std::nullopt)
+                refuseUnlessPlain({ operation.layout(), *field }, rule);
+        };
+        for (uint32_t field : operation.fields())
+            refuseUnlessBothArePlain(field);
+        for (uint32_t field = 0; operation.fields().empty() && field < m_plan->layout(source).slots.size(); ++field)
+            refuseUnlessBothArePlain(field);
+        return;
+    }
+    case Opcode::PutSlot:
+    case Opcode::PutSlotOrAdd:
+        for (LayoutID member : membersOf(m_types, operation.receivers())) {
+            if (std::optional<FieldIndex> field = m_plan->slots().findField(m_program, member, operation.key()))
+                refuseUnlessPlain({ member, *field }, "a store fills a field whose slot is planned in the form that definitions create"_s);
+        }
+        return;
+    default:
+        return;
+    }
 }
 
 ValueID CodeVerifier::cellBehindNames(ValueID id) const

@@ -309,7 +309,7 @@ static JSC_DECLARE_HOST_FUNCTION(importModuleItselfBehindFactoryInTestRunOrigina
 
 JSC_DEFINE_HOST_FUNCTION(answerImportWithModuleItselfInTestRunOriginals, (JSGlobalObject* realm, CallFrame* callFrame))
 {
-    return JSValue::encode(modulesOf(realm)->namespaceOfModuleItself(ModuleID(callFrame->argument(1).asUInt32())));
+    return JSValue::encode(modulesOf(realm)->answerImportWithModuleItself(ModuleID(callFrame->argument(1).asUInt32())));
 }
 
 bool Modules::isAskedForByOwnFactory(ModuleID module)
@@ -714,6 +714,22 @@ JSValue Modules::continueImportAsFactorysOwn(ModuleID module, ModuleID referrer)
     return names;
 }
 
+JSValue Modules::answerImportWithModuleItself(ModuleID module)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSPromise* underWay = evaluationUnderWayBelow(module);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!underWay)
+        RELEASE_AND_RETURN(scope, namespaceOfModuleItself(module));
+    JSPromise* answered = JSPromise::create(vm, realm->promiseStructure());
+    JSFunction* answer = JSFunction::create(vm, realm, 2, String(), answerImportWithModuleItselfInTestRunOriginals, ImplementationVisibility::Private);
+    JSFunction* fail = JSFunction::create(vm, realm, 2, String(), failImportOfModuleItselfInTestRunOriginals, ImplementationVisibility::Private);
+    underWay->performPromiseThenWithContext(vm, realm, answer, fail, answered, jsNumber(module.index()));
+    return answered;
+}
+
 JSValue Modules::importModuleItselfBesideMock(ModuleID module, JSValue answerOfImport)
 {
     VM& vm = *m_instance.vm;
@@ -732,6 +748,8 @@ JSValue Modules::importModuleItselfBesideMock(ModuleID module, JSValue answerOfI
     JSPromise* underWay = evaluationOfRecordSetAside(module);
     RETURN_IF_EXCEPTION(scope, { });
     if (hasBegun && !underWay) {
+        evaluateModulesOwedBelowOriginal(module);
+        RETURN_IF_EXCEPTION(scope, { });
         underWay = evaluationUnderWayBelow(module);
         RETURN_IF_EXCEPTION(scope, { });
     }

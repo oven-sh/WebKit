@@ -347,7 +347,16 @@ inline bool isFreeInRegisterOfChild(const Liveness& liveness, const Operation* o
     if (opcode != ZExt32)
         return false;
     const Operation* child = operation->child(0);
-    return clearsUpperHalfOfRegister(child) || (child->opcode() == Trunc && liveness.goesByOverflow(child->child(0)));
+    if (clearsUpperHalfOfRegister(child))
+        return true;
+    if (child->opcode() != Trunc || !liveness.goesByOverflow(child->child(0)))
+        return false;
+    const Operation* sum = child->child(0);
+    SumTestedByOverflow test = sumTestedByOverflowOf(liveness, sum);
+    if (!test.isWidenedWhereTestFails)
+        return true;
+    const Block* block = operation->owner();
+    return block == sum->owner() || block == sum->owner()->successor(test.successorThatPasses).block();
 }
 
 inline constexpr unsigned maxOperationsBetweenLoadAndUser = 4;

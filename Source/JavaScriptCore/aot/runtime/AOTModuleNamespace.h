@@ -63,8 +63,10 @@ public:
     void replaceDynamicExports(VM&, const DynamicExports&);
     JSValue capturedValueWithoutAllocating(UniquedStringImpl*) const;
 
-    bool hasESModuleMarker() const { return m_hasESModuleMarker; }
+    bool showsESModuleMarker() const { return m_hasESModuleMarker || (m_esModuleMarkerWaitsForRun && isRunThatESModuleMarkerWaitsForOver()); }
     void setESModuleMarker(bool hasMarker) { m_hasESModuleMarker = hasMarker; }
+    void letESModuleMarkerWaitForRun(bool waits) { m_esModuleMarkerWaitsForRun = waits; }
+    void storeESModuleMarker(bool hasMarker);
 
     bool hasOwnStructure() const { return m_hasOwnStructure; }
     void ensureOwnStructure(VM&);
@@ -91,6 +93,7 @@ private:
     JSValue readDynamicExport(JSGlobalObject*, PropertyName);
     bool getOwnPropertySlotOfMock(JSGlobalObject*, JSObject* mock, PropertyName, PropertySlot&);
     bool evaluateIfNeeded(JSGlobalObject*);
+    bool isRunThatESModuleMarkerWaitsForOver() const;
 
     WriteBarrier<JSCellButterfly> m_dynamicExportNames;
     WriteBarrier<JSObject> m_capturedValues;
@@ -101,6 +104,7 @@ private:
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
     bool m_hasESModuleMarker { false };
+    bool m_esModuleMarkerWaitsForRun { false };
     bool m_hasOwnStructure { false };
     bool m_keepsToModule { false };
 };

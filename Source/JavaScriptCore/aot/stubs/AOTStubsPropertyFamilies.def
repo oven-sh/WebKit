@@ -19,7 +19,7 @@ v(ReadFieldInExtension, CalledByCode, (Word64, Word32At0, Word32At4, ByteAt0, By
 
 v(ReadSlot, Handler, (ById, ByIdPacked, ByVal), FormAxis | CountAxis | CallerFrameAxis | StubFrameAxis, 0, 27, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlot)
 v(ReadSlotExit, InternalEntry, (ByIdMiss, ByIdUncached, ByValMiss, ByValUncached), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlotExit)
-v(ThroughProxy, InternalEntry, (Get, Has, Set), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThroughProxy)
+v(ThroughProxy, InternalEntry, (Get, Has, Set), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThroughProxy)
 
 v(SlotCannot, InternalEntry, (ReadField, CallGetter, StoreField, CreateField, CallSetterStrict, CallSetterSloppy, GrowStorage), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, SlotCannot)
 
