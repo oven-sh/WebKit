@@ -243,6 +243,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnPromises, ResolvePromiseOrReturnResult) \
     v(OperationsOnMapsAndSets, MapClear) \
     v(OperationsOnMapsAndSets, MapNext) \
+    v(OperationsOnMapsAndSets, MoveCollectionTableToHeap) \
     v(OperationsOnMapsAndSets, NewMap) \
     v(OperationsOnMapsAndSets, NewMapFromEntries) \
     v(OperationsOnMapsAndSets, NewMapIterator) \

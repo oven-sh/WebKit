@@ -322,7 +322,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray:
     case Opcode::TruncateNewArray:
     case Opcode::CollectionTable: case Opcode::CollectionIteratorClosedMark: case Opcode::GetCollectionIteratorTable: case Opcode::PutCollectionIteratorTable:
-    case Opcode::IsCollectionIteratorClosedMark: case Opcode::MapNext: case Opcode::SetNext:
+    case Opcode::IsCollectionIteratorClosedMark: case Opcode::MapNext: case Opcode::SetNext: case Opcode::CollectionTableFacts:
     case Opcode::KeyConstant: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::Parameter:
     case Opcode::CopyObjectAndDefine: case Opcode::CopyTwoObjects:
     case Opcode::Expect: case Opcode::CallTable: case Opcode::BeginMemberGuards: case Opcode::ForInOpenCountingNames:
