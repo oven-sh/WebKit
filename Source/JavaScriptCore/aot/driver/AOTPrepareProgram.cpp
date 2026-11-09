@@ -138,7 +138,10 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
             leaveOutCallsOfBuiltinsThatProgramCannotHold(options, program, facts);
             prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(options);
         },
-        [&] { prepared.facts->freeListsOfSummariesNotKeptForWalk(build.parallelLoops()); },
+        [&] {
+            if (!Typed::walkOptionsOf(build).verifiesCode)
+                prepared.facts->freeListsOfSummariesNotKeptForWalk(build.parallelLoops());
+        },
     });
     times.didFinish("make the stub catalog"_s);
     return true;

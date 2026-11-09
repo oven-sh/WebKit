@@ -533,21 +533,23 @@ Draft Walker::draftOfReadInFrontOfHead(const FieldOfScope& field, ReadInFrontOfH
 {
     Draft read = draftOfReadOf(field);
     if (!field.variable) {
-        if (use == ReadInFrontOfHead::IsTestedInFront)
+        if (use == ReadInFrontOfHead::IsTestedInFront && !takesSlotsReadInFrontOfLoopsToFollowTheirStores())
             read.setFollowsItsStore(false);
         return read;
     }
     if (field.readOfTextThatVouches) {
         read.setOrigin(originOf(currentBodyIndex().value(field.readOfTextThatVouches)));
+        read.inputValueGiven = field.readOfTextThatVouches;
         return read;
     }
-    read.setFollowsItsStore(false);
     if (takesVariablesReadInFrontOfLoopsToHoldWhatIsProven())
         return read;
+    read.setFollowsItsStore(false);
     if (fileMayNotHaveRun || (!m_state.isPastDeadZone(field.variable) && leavesOutWordThatVariableIsBornWith(read, resultTypeOf(read)))) {
         read.setGivesWordAsItLies(true);
         count(StatisticID::ReadsInFrontOfLoopsThatGiveTheWordAsItLies);
-    }
+    } else if (m_state.isPastDeadZone(field.variable))
+        read.setFollowsItsStore(true);
     return read;
 }
 

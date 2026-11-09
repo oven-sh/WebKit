@@ -255,13 +255,30 @@ static String computedFunctionName(JSGlobalObject* globalObject, const Identifie
     return name;
 }
 
+String nameThatComputedKeyGave(VM& vm, FunctionID function)
+{
+    FunctionID source = sourceFunctionOf(function);
+    if (functionKindData(source).isGenerator)
+        return emptyString();
+    String name = vm.aotState().namesThatComputedKeysGave.get(source.index());
+    return name.isNull() ? emptyString() : name;
+}
+
 void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, MethodKind kind)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     String name = computedFunctionName(closure->realm(), key, kind);
     RETURN_IF_EXCEPTION(scope, void());
-    if (std::optional<FunctionID> function = functionOf(closure); function && !closure->getDirect(vm, vm.propertyNames->name) && initialNameProperty(sourceFunctionOf(*function)) == name)
-        return;
+    if (std::optional<FunctionID> function = functionOf(closure)) {
+        FunctionID source = sourceFunctionOf(*function);
+        if (writtenFunctionName(source).isEmpty()) {
+            auto noted = vm.aotState().namesThatComputedKeysGave.add(source.index(), name);
+            if (!noted.isNewEntry && noted.iterator->value != name)
+                noted.iterator->value = String();
+        }
+        if (!closure->getDirect(vm, vm.propertyNames->name) && initialNameProperty(source) == name)
+            return;
+    }
     CompiledCallee::reifyProperties(vm, closure);
     closure->putDirect(vm, vm.propertyNames->name, jsString(vm, name), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     if (isCompiledClosure(closure)) {

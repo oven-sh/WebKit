@@ -147,7 +147,10 @@ String FunctionDescription::nameInFrames(VM& vm, JSCell*, bool) const
 {
     if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    return Image::current()->isObfuscated() ? emptyString() : functionName(*this, NameForm::InFrames);
+    if (Image::current()->isObfuscated())
+        return emptyString();
+    String name = functionName(*this, NameForm::InFrames);
+    return name.isEmpty() ? nameThatComputedKeyGave(vm, m_function) : name;
 }
 
 String FunctionDescription::calculatedDisplayName(VM& vm, JSCell*, bool) const

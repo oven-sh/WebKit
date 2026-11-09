@@ -148,6 +148,7 @@ struct WalkOptions {
     bool takesListsSteppedByMethodsToBeAsMade { false };
     bool takesKindsAskedInFrontForGiven { false };
     bool takesVariablesReadInFrontOfLoopsToHoldWhatIsProven { false };
+    bool takesSlotsReadInFrontOfLoopsToFollowTheirStores { false };
     bool takesWhatLoopsAskOfVariablesInFrontToHold { false };
     bool leavesLastArmOutOfRowsOfShapeTests { false };
     bool passesGuardOfNameOverAtCallsThroughSuper { false };

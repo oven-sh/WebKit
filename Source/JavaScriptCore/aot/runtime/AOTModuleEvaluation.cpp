@@ -578,6 +578,10 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     ASSERT(!bodyStoresStatus || data(module).evaluatesItself());
+    if (std::optional<ModuleID> file = m_table.fileBehindFace(module)) {
+        unbindModuleObjectOfRunThatThrew(*file);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     SetForScope rootWhoseFilesRun(m_rootWhoseFilesRun, runsImportedFilesAlone ? std::optional(module) : std::nullopt);
     SetForScope wordOfCompiledCode(m_instance.modules.runsImportedFilesAlone, runsImportedFilesAlone ? 1u : 0u);
 

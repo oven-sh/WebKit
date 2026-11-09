@@ -920,6 +920,7 @@ public:
     bool waitsForFactoryThatLoadInFlightCalled(ModuleID) const;
     void noteThatRequireGaveUpOn(ModuleID required, bool hasGivenUp = true);
     JSValue answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleID requirer);
+    void noteFilesLinkedToOriginalBelowRequire(ModuleID required, ModuleID mocked);
     bool isImportOfFactorysOwnBehindRequireThatGaveUp(ModuleID, ModuleID referrer);
     JSPromise* importAsFactorysOwnOnceTextHasCome(ModuleID, ModuleID referrer);
     void oweBodyBesideMock(ModuleID);

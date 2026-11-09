@@ -3523,7 +3523,8 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         endMockThatStandsForLoadsInFlight(module);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
-    if (!hasComeToItsJob && (m_modulesWithMockToRun.get(module.index()) || m_modulesWithMockToRun.get(fileOf(module).index())) && !m_modulesWithMockThatAsksAgain.get(module.index()) && !m_modulesWithMockThatAsksAgain.get(fileOf(module).index()) && options.isUndefined() && !m_instance.vm->synchronousModuleQueue()) [[unlikely]] {
+    bool hasMockToRun = (m_modulesWithMockToRun.get(module.index()) || m_modulesWithMockToRun.get(fileOf(module).index())) && !m_modulesWithMockThatAsksAgain.get(module.index()) && !m_modulesWithMockThatAsksAgain.get(fileOf(module).index()) && !m_instance.vm->synchronousModuleQueue();
+    if (!hasComeToItsJob && (hasMockToRun || m_mockWhoseOriginalIsEvaluated == module) && options.isUndefined()) [[unlikely]] {
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
         MarkedArgumentBuffer call;
         call.append(jsNumber(3));
@@ -3584,7 +3585,8 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         dropErrorOfMockKeptByLoader(module);
         m_modulesOwedBesideMock.clear(module.index());
     }
-    SetForScope importWhoseMocksRunWhenItsTextHasCome(m_importWhoseMocksRunWhenItsTextHasCome, mocksRunWhenTextOfImportHasCome(module) ? std::optional(module) : std::nullopt);
+    bool comesBehindCallAboveOriginal = hasComeToItsJob && referrer && lastCallOfImportBehindFactories(module) && importsByStatements(module, fileOf(referrer));
+    SetForScope importWhoseMocksRunWhenItsTextHasCome(m_importWhoseMocksRunWhenItsTextHasCome, !comesBehindCallAboveOriginal && mocksRunWhenTextOfImportHasCome(module) ? std::optional(module) : std::nullopt);
     if (!m_importWhoseMocksRunWhenItsTextHasCome && !mocksRunWhereLoaderFetchesThem(module) && !hasFailedWithPackageThatStaysFailed(module) && !hasFailedWithFileOfProjectThatStaysFailed(module)) {
         SetForScope moduleThatProgramImportsNow(m_moduleThatProgramImportsNow, m_modulesWhoseFactoryRuns.get(module.index()) ? std::nullopt : std::optional(module));
         SetForScope moduleThatImportAsksFor(m_moduleThatImportAsksFor, module);

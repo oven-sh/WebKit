@@ -943,6 +943,7 @@ public:
     };
     Vector<ValueDefinedBehindBirth, 8> takeWhatIsDefinedBehindBirthOf(LayoutID layout) { return layout == m_layoutOfBirthThatListsWhatIsBehind ? std::exchange(m_valuesDefinedBehindBirth, { }) : Vector<ValueDefinedBehindBirth, 8>(); }
     BlockID currentBlock() const { return m_block; }
+    static uint16_t wordThatVariableIsBornWith(const Program&, VariableID);
     Origin originOf(const BodyValue& value) const
     {
         Origin origin = value.origin();
@@ -1745,6 +1746,7 @@ public:
     bool takesListsSteppedByMethodsToBeAsMade() const { return m_inputs.options.takesListsSteppedByMethodsToBeAsMade; }
     bool takesKindsAskedInFrontForGiven() const { return m_inputs.options.takesKindsAskedInFrontForGiven; }
     bool takesVariablesReadInFrontOfLoopsToHoldWhatIsProven() const { return m_inputs.options.takesVariablesReadInFrontOfLoopsToHoldWhatIsProven; }
+    bool takesSlotsReadInFrontOfLoopsToFollowTheirStores() const { return m_inputs.options.takesSlotsReadInFrontOfLoopsToFollowTheirStores; }
     bool takesWhatLoopsAskOfVariablesInFrontToHold() const { return m_inputs.options.takesWhatLoopsAskOfVariablesInFrontToHold; }
     bool standsInTypedCopyWhoseTurnsAreTakenToHaveDoneNothing() const { return m_inputs.options.takesTurnsToHaveDoneNothingWherePatternsAreHeld && !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().isEntered && !isUnreachable() && m_waysIntoClosedCopies.last().looksCountOnTurnsThatBeginAgain; }
     bool passesGuardOfNameOverAtCallsThroughSuper() const { return m_inputs.options.passesGuardOfNameOverAtCallsThroughSuper; }

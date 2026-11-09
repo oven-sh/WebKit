@@ -619,9 +619,30 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleI
             requireModuleItselfBesideMock(mocked);
             RETURN_IF_EXCEPTION(scope, { });
         }
-        m_filesRequiredWithOriginalWhileFactoryRan.append({ target, mocked });
+        noteFilesLinkedToOriginalBelowRequire(target, mocked);
     }
     return { };
+}
+
+void Modules::noteFilesLinkedToOriginalBelowRequire(ModuleID required, ModuleID mocked)
+{
+    Vector<Vector<uint32_t, 2>> importersOf(m_table.size());
+    for (size_t importer : reachedByStatements(required, AtMock::Stops)) {
+        if (isMocked(ModuleID(importer)))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(ModuleID(importer)))
+            importersOf[moduleLoadedBy(request).index()].append(importer);
+    }
+    BitVector isNoted(m_table.size());
+    Vector<uint32_t, 16> toFollow { mocked.index() };
+    while (!toFollow.isEmpty()) {
+        for (uint32_t importer : importersOf[toFollow.takeLast()]) {
+            if (isNoted.quickSet(importer))
+                continue;
+            m_filesRequiredWithOriginalWhileFactoryRan.append({ ModuleID(importer), mocked });
+            toFollow.append(importer);
+        }
+    }
 }
 
 bool Modules::isImportOfFactorysOwnBehindRequireThatGaveUp(ModuleID module, ModuleID referrer)
