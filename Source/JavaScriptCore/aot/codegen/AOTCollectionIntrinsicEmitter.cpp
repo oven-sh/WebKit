@@ -232,6 +232,15 @@ CollectionIntrinsicEmitter::InlineWidths CollectionIntrinsicEmitter::inlineWidth
 
 CollectionIntrinsicEmitter::InlineWidths CollectionIntrinsicEmitter::inlineWidthsOf(Collection kind, ValueID collection)
 {
+    if (m_plan.usesWideReferences()) {
+        // Every column of every table is wide (CompactTable::tryCreateForFirstEntry), whatever the type says it holds.
+        InlineWidths widths;
+        widths.keysAreWide = true;
+        widths.readsKeysOfBothWidths = false;
+        if (kind == Collection::Map)
+            widths.valuesAreWide = true;
+        return widths;
+    }
     const PositionTypes& positions = PositionTypes::knowingNothing();
     TypingContext expecting { m_program, types(), positions, TypeLevel::Expected };
     constexpr uint16_t primitivesOfEitherWidth = Primitive::Undefined | Primitive::Null | Primitive::Boolean;

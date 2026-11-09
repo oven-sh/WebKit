@@ -166,7 +166,11 @@ void buildTableFactsInFrontOfLoop(Walker& walker, Walker::IterationByIndex& iter
         return;
 
     // A number takes a wide word of the table, a cell a narrow reference: what Link has proven of the contents settles the widths that the steps expect, and the facts leave a table of other widths to the runtime.
+    // Where the image's references are wide, every column is (CompactTable::tryCreateForFirstEntry), whatever it holds.
+    const bool everyColumnIsWide = walker.plan().usesWideReferences();
     auto widthOfProven = [&](TypeID proven) -> std::optional<bool> {
+        if (everyColumnIsWide)
+            return true;
         if (!proven)
             return std::nullopt;
         Type contents = walker.types().at(walker.types().withoutPrimitives(proven, Primitive::Undefined | Primitive::Null | Primitive::Boolean));

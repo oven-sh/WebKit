@@ -39,6 +39,8 @@
 # takes them in place of reading the table, testing its kind and computing its columns at every turn. The table that comes round in a parameter of the
 # head stays as it entered: no step reads it again. The loop is walked once as it is written, which shows what its turns do, and then on the facts.
 # A loop whose turns store into a collection (grow: set.add writes CollectionEntries) or call what may do anything (tell) steps the table as it is written.
+# What Link proves of the keys and the values settles the widths the steps expect: numbers take wide words, cells narrow references, and where the image's
+# references are wide every column is wide.
 # REQUIRES: entries-of-bun
 # RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+LoopInvariants+DirectCalls+Arrivals+EscapeAnalysis
 # CHECK-LABEL: code f1:Body
@@ -51,13 +53,15 @@
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK: = SetNext [[set]], {{*}} used=[[used]] keys=[[keys]] flags=[[flags]]
 # CHECK-NOT: = CollectionTable
+# REQUIRES(MAP): entries-of-bun
 # RUN(MAP): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+LoopInvariants+DirectCalls+Arrivals+EscapeAnalysis
 # MAP-LABEL: code f2:Body
-# MAP: [[facts]]: {{*}} = CollectionTableFacts [[map]]
+# MAP: [[facts]]: {{*}} = CollectionTableFacts [[map]] [keysProvenWide, valuesProvenNarrow]
 # MAP: [[values]]: {{*}} = ResultAt [[facts]] index=2
 # MAP: isInLoop=true isLoopHead=true
-# MAP: = MapNext [[map]], {{*}} values=[[values]]
+# MAP: = MapNext [[map]], {{*}} values=[[values]] flags={{*}} [keysProvenWide, valuesProvenNarrow]
 # MAP-NOT: = CollectionTable
+# REQUIRES(GROW): entries-of-bun
 # RUN(GROW): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+LoopInvariants+DirectCalls+Arrivals+EscapeAnalysis
 # GROW-LABEL: code f3:Body
 # GROW-NOT: CollectionTableFacts
@@ -65,6 +69,7 @@
 # GROW: = SetNext
 # GROW-NOT: used=
 # GROW: = CollectionTable
+# REQUIRES(TELL): entries-of-bun
 # RUN(TELL): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+LoopInvariants+DirectCalls+Arrivals+EscapeAnalysis
 # TELL-LABEL: code f4:Body
 # TELL-NOT: CollectionTableFacts
@@ -72,6 +77,7 @@
 # TELL: = SetNext
 # TELL-NOT: used=
 # TELL: = CollectionTable
+# REQUIRES(WITHHELD): entries-of-bun
 # RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+Folding+DirectCalls+Arrivals+EscapeAnalysis
 # WITHHELD-LABEL: code f1:Body
 # WITHHELD-NOT: CollectionTableFacts
