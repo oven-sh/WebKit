@@ -147,7 +147,8 @@ private:
     void verifyRecords();
     void verifyNarrowedValues();
     void verifyUsersOfHolesReadAsNaN();
-    bool takesUndefinedForNaN(const Operation& user, uint32_t operandIndex) const;
+    bool takesUndefinedForNaN(ValueID, const Operation& user, uint32_t operandIndex) const;
+    bool onlyChoosesFormOfOperatorAtItsPlace(ValueID test) const;
     void verifyTestsPassed();
     void verifyLengthsHeldAgainst();
     void verifyKindsOfStorageNamed();
@@ -1352,7 +1353,56 @@ void CodeVerifier::verifyNarrowedValues()
 
 static constexpr OpcodeSet arithmeticOnTwoNumbersInCodeVerifier { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
 
-bool CodeVerifier::takesUndefinedForNaN(const Operation& user, uint32_t operandIndex) const
+bool CodeVerifier::onlyChoosesFormOfOperatorAtItsPlace(ValueID test) const
+{
+    const Operation& asked = m_code.at(test);
+    BitVector names(m_code.numberOfValues());
+    bool isTakenWhereItPasses = false;
+    bool isTakenWhereItFails = false;
+    for (bool someNameIsNew = true; std::exchange(someNameIsNew, false);) {
+        for (BlockID block : m_reachedBlocks) {
+            for (ValueID id : operationsOf(block)) {
+                const Operation& record = m_code.at(id);
+                bool isName = record.opcode == Opcode::Narrowed ? record.testOperand() == test || names.get(record.valueOperand().index()) : opcodesThatGiveSameValue.contains(record.opcode) && names.get(record.operand(0).index());
+                if (isName && !names.set(id.index()))
+                    someNameIsNew = true;
+            }
+        }
+    }
+    auto passesBehind = [&](ValueID name) {
+        while (m_code.at(name).opcode != Opcode::Narrowed || m_code.at(name).testOperand() != test)
+            name = m_code.at(name).operand(0);
+        return m_code.at(name).isOnTakenEdge();
+    };
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            const Operation& user = m_code.at(id);
+            for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
+                if (user.operand(operandIndex) == test && (user.opcode != Opcode::Narrowed || user.valueOperand() == test))
+                    return false;
+                if (!user.operand(operandIndex) || !names.get(user.operand(operandIndex).index()) || names.get(id.index()))
+                    continue;
+                if (user.position != asked.position || user.inlineFrame != asked.inlineFrame)
+                    return false;
+                (passesBehind(user.operand(operandIndex)) ? isTakenWhereItPasses : isTakenWhereItFails) = true;
+            }
+        }
+        const Terminator& end = m_code.at(block).terminator;
+        for (uint32_t operandIndex = 0; operandIndex < end.numberOfOperands(); ++operandIndex) {
+            if (end.operand(operandIndex) == test && (!end.isConditionalBranch() || end.conditionOperand() != test))
+                return false;
+        }
+        bool isHandedOn = false;
+        m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+            isHandedOn |= std::ranges::contains(edge.arguments(), test);
+        });
+        if (isHandedOn)
+            return false;
+    }
+    return isTakenWhereItPasses && isTakenWhereItFails;
+}
+
+bool CodeVerifier::takesUndefinedForNaN(ValueID id, const Operation& user, uint32_t operandIndex) const
 {
     if (user.opcode == Opcode::Add) {
         if (operandIndex >= 2)
@@ -1366,7 +1416,9 @@ bool CodeVerifier::takesUndefinedForNaN(const Operation& user, uint32_t operandI
         return true;
     if (user.opcode == Opcode::TypeTest) {
         const Type& tested = m_types.at(user.testedType());
-        return !tested.mayBeNaN() && !(tested.primitives & Primitive::Undefined);
+        if (tested.mayBeNaN() == !!(tested.primitives & Primitive::Undefined))
+            return true;
+        return onlyChoosesFormOfOperatorAtItsPlace(id);
     }
     return user.opcode == Opcode::PutTypedArrayElement && user.valueOperand() == user.operand(operandIndex) && user.viewOperand() != user.operand(operandIndex) && user.positionOperand() != user.operand(operandIndex) && !isBigInt(user.typedArrayType());
 }
@@ -1435,6 +1487,8 @@ void CodeVerifier::verifyUsersOfHolesReadAsNaN()
             if (ValueID arrives = readsThatArriveInParameters[value.index()])
                 return arrives;
             const Operation& record = m_code.at(value);
+            if (record.opcode == Opcode::Narrowed && !m_types.at(record.type).mayBeNaN() && !(m_types.at(record.type).primitives & Primitive::Undefined))
+                return ValueID();
             const Operation* laidTogether = record.opcode == Opcode::ResultAt && m_code.at(record.resultsOperand()).opcode == Opcode::Results ? &m_code.at(record.resultsOperand()) : nullptr;
             if (opcodesThatGiveSameValue.contains(record.opcode))
                 value = record.operand(0);
@@ -1475,7 +1529,7 @@ void CodeVerifier::verifyUsersOfHolesReadAsNaN()
                 continue;
             for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
                 ValueID read = user.operand(operandIndex) ? readBehind(user.operand(operandIndex)) : ValueID();
-                if (read && !takesUndefinedForNaN(user, operandIndex))
+                if (read && !takesUndefinedForNaN(id, user, operandIndex))
                     return fail(block, id, "a hole is read as NaN for an operation that tells NaN from undefined"_s, read);
                 ValueID laid = user.operand(operandIndex) && user.opcode != Opcode::ResultAt ? readLaidInto(user.operand(operandIndex)) : ValueID();
                 if (laid)

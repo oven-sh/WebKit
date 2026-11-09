@@ -1740,6 +1740,7 @@ public:
     std::span<const uint64_t> holdersFromInFrontThatLoopReadsUnderIndexes(BlockID inputHead);
     bool takesReceiversOfMethodsOfListsToBeMadeHere() const { return m_inputs.options.takesReceiversOfMethodsOfListsToBeMadeHere; }
     bool takesElementsBesideSumsToComeOffListsOfNumbers() const { return m_inputs.options.takesElementsBesideSumsToComeOffListsOfNumbers; }
+    bool takesEveryUserOfElementToReckonWithIt() const { return m_inputs.options.takesEveryUserOfElementToReckonWithIt; }
     bool takesIterablesOfPatternsToStayAsMade() const { return m_inputs.options.takesIterablesOfPatternsToStayAsMade; }
     bool takesValuesThatPatternsTakeApartInTurnsForListsAsMade() const { return m_inputs.options.takesValuesThatPatternsTakeApartInTurnsForListsAsMade; }
     bool takesPartsOfPairsWhateverIsStepped() const { return m_inputs.options.takesPartsOfPairsWhateverIsStepped; }

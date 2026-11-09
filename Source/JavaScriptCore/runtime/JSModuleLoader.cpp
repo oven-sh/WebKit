@@ -1074,12 +1074,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     modulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
 
-    if (!deferredPromise || !mapEntry->loadPromise()) {
+    if (!deferredPromise || !mapEntry->loadPromise())
         mapEntry->setLoadPromise(vm, loadPromise);
-#if ENABLE(AOT)
-        mapEntry->setIsLoadPromiseOfSynchronousLoad(vm.synchronousModuleQueue());
-#endif
-    }
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) {
@@ -1686,6 +1682,11 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
     size_t i = 0;
     while (i < tasks.size()) {
         auto t = tasks[i++];
+#if ENABLE(AOT)
+        // A graph is loaded only when each CommonJS file that it imports has ended or a load has come back to it. Compiled code may have settled the entry of such a file ahead of its run, so it keeps the step that links the graph until then.
+        if (vm.hasCompiledCode() && AOT::ModuleRecord::holdsStepForRunningFile(globalObject, t)) [[unlikely]]
+            continue;
+#endif
         runInternalMicrotask(globalObject, vm, t.task, t.payload, t.arg0, t.arg1, t.arg2, t.arg3);
         if (scope.exception()) [[unlikely]] {
             // The remaining entries are reactions that performPromiseThen…/
@@ -1713,27 +1714,23 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
     VM::SynchronousModuleQueueScope queue(vm);
 
 #if ENABLE(AOT)
-    // The root is linked once the load promise in its entry settles. Where an import() left that promise there and has made the
-    // record, the ModuleLoadStep that settles it is on the normal microtask queue, which this load never drains.
-    auto waitsForStepOfImport = [&, type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript] {
+    // The root is linked once the load promise in its entry settles. Where another load left that promise there and has made the
+    // record, the ModuleLoadStep that settles it is on the normal microtask queue or in the queue of a synchronous load further out.
+    // This load drains neither.
+    auto waitsForStepOfAnotherLoad = [&, type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript] {
         ModuleRegistryEntry* entry = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, type) : nullptr;
         if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetched || !entry->loadPromise() || entry->loadPromise()->status() != JSPromise::Status::Pending)
             return false;
-        // import() of such a graph starts in a later turn, so no load step of its root is pending here.
-        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(entry->record()); compiled && compiled->takesEveryStepOfLoader())
+        // A graph that imports a CommonJS module that is still running is loaded when that module has ended.
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(entry->record()); compiled && compiled->importsFileThatRuns())
             return false;
-        // Not where the graph of the root waits for a step of a synchronous load further out, which goes on when this one returns.
+        // Not where an import() has begun the load of the root, and the step in which the root itself asks for what it imports waits in a synchronous load further out.
         for (auto* outer = vm.m_synchronousModuleQueue->prev; outer; outer = outer->prev) {
             for (const VM::SynchronousModuleTask& step : outer->tasks) {
                 if (step.task != InternalMicrotask::ModuleLoadStep || uncheckedDowncast<JSPromise>(step.arg0)->status() != JSPromise::Status::Pending)
                     continue;
                 auto* context = uncheckedDowncast<ModuleLoadingContext>(step.arg2);
-                auto* load = dynamicDowncast<ModuleGraphLoadingState>(context->payload());
-                // The step in which the root itself asks for what it imports, where an import() has begun the load of the root.
-                // Not where a graph has asked for the root: `bun run` reads the files of a graph on other threads and has taken that step by the time a file of the graph runs.
-                if (!load && context->entry() == entry)
-                    return false;
-                if (load && entry->isLoadPromiseOfSynchronousLoad() && load->containsVisited(entry->record()))
+                if (context->entry() == entry && !context->payload()->inherits<ModuleGraphLoadingState>())
                     return false;
             }
         }
@@ -1745,7 +1742,7 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
     RETURN_IF_EXCEPTION(scope, result);
     drainSynchronousModuleQueue(globalObject);
     RETURN_IF_EXCEPTION(scope, result);
-    if (result->status() != JSPromise::Status::Pending || !wasLoadBegunAhead || !waitsForStepOfImport())
+    if (result->status() != JSPromise::Status::Pending || !wasLoadBegunAhead || !waitsForStepOfAnotherLoad())
         return result;
     // The root is loaded again, and takes its own steps from the module promise.
     // Without it a require() that comes between the factory of a mock and the steps of the import() that called it throws: Bun's test/aot/parallel-test-runs/a-require-of-a-module-whose-load-an-import-has-begun.

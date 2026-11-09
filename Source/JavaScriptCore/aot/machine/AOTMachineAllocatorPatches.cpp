@@ -1837,7 +1837,7 @@ bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
 
 void Allocator::checkThatNoWayOnReadsWhatHintsReleased()
 {
-    if (m_releasesByWaysOn.isEmpty())
+    if (m_releasesByWaysOn.isEmpty() || m_proc.traits().takesReleasesByWaysOnToBeSound)
         return;
     std::sort(m_releasesByWaysOn.begin(), m_releasesByWaysOn.end(), [](const ReleaseByWaysOn& left, const ReleaseByWaysOn& right) {
         return left.value->index() < right.value->index();

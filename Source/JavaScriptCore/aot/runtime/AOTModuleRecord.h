@@ -83,6 +83,7 @@ public:
     void didReplaceRecordInRegistry();
     static std::optional<ModuleID> fileToWaitFor(JSGlobalObject*, const Identifier& key);
     static bool isFileBeingHandedToLoader(JSGlobalObject*, const Identifier& key);
+    static bool holdsStepForRunningFile(JSGlobalObject*, const VM::SynchronousModuleTask&);
     static bool hasLoadAroundAskedFor(JSGlobalObject*, const Identifier& key);
     static bool waitsForFileBeingHandedToLoader(JSGlobalObject*, const Identifier& key, bool& queuesStep);
     static JSPromise* deferRequest(JSGlobalObject*, ModuleID file, ModuleLoadingContext*, bool useImportMap);
@@ -93,6 +94,7 @@ public:
     void willBeLoadedByImport();
     bool takeStepOfMainModule();
     bool takesEveryStepOfLoader();
+    bool importsFileThatRuns();
     bool takeLoadPromiseBelowMainModule();
     JSPromise* evaluateMainModule(JSPromise* evaluation);
     static void didEvaluateModulesInJob(JSGlobalObject*);

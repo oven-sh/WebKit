@@ -29,6 +29,7 @@
 #include "config.h"
 #include "ExceptionHelpers.h"
 
+#include "AOTErrorMessages.h"
 #include "ErrorHandlingScope.h"
 #include "Exception.h"
 #include "JSCInlines.h"
@@ -70,6 +71,10 @@ JSObject* createUndefinedVariableError(JSGlobalObject* globalObject, const Ident
 
 String errorDescriptionForValue(JSGlobalObject* globalObject, JSValue v)
 {
+#if ENABLE(AOT)
+    if (String kind = AOT::kindOfPrimitiveWhereNoTextIsQuoted(v); !kind.isNull())
+        return kind;
+#endif
     if (v.isString()) {
         auto string = asString(v)->value(globalObject);
         if (!string)

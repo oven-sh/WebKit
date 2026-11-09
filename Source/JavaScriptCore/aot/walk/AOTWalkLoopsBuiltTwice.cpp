@@ -4053,6 +4053,8 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         for (BlockID member : index.membersOf(loop))
             inputBlock(frameIndex, member).firstNarrowerName = namesInFrontOfLoop;
         forgetValuesOfLoop(inputHead);
+        standInOtherBlock(inputHead);
+        m_frames[frameIndex].standsInFrontOfHead = true;
         if (!frontIsEnteredOutOfTurns || m_block != closedStart) {
             m_block = { };
             m_state.clear();

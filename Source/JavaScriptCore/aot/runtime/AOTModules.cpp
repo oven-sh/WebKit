@@ -128,6 +128,7 @@ void Modules::visitRoots(Visitor& visitor)
         visitor.appendUnbarriered(m_prototypeOfModuleObjects);
         visitor.appendUnbarriered(m_errorsOfExportsThatBuildFoundAbsent);
         visitor.appendUnbarriered(m_extensibleNamespaceStructure);
+        visitor.appendUnbarriered(m_objectOfEarlierRunThatAsksHost);
     });
 }
 
@@ -169,6 +170,7 @@ Modules::~Modules()
 void Modules::forgetUnfinishedLoads()
 {
     m_synchronousLoadsHandedToLoader.clear();
+    m_stepsHeldForRunningFiles.clear();
     m_evaluationOfImportOfMainModule.clear();
     m_capabilityOfMainModule.clear();
     m_loadsInFlight.clear();
@@ -5602,10 +5604,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* i
     OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).require(ModuleID(module), ModuleID(referrer))));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTRequireModuleOfRun, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer, EncodedJSValue objectOfRun))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireModuleOfRun);
+    Modules& modules = modulesOf(*instance);
+    OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer), Modules::RequiredBy::Referrer, modules.objectIfOfEarlierRun(ModuleID(referrer), JSValue::decode(objectOfRun)))));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTRecordRequire, void, (Instance* instance, uint32_t module, uint32_t referrer, uint32_t byMadeRequire))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRecordRequire);
     modulesOf(*instance).recordRequire<Modules::RequireAnsweredBy::CompiledCode>(ModuleID(module), ModuleID(referrer), byMadeRequire);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTRecordRequireOfRun, void, (Instance* instance, uint32_t module, uint32_t referrer, uint32_t byMadeRequire, uint32_t behindTheLoad, EncodedJSValue objectOfRun))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRecordRequireOfRun);
+    Modules& modules = modulesOf(*instance);
+    modules.recordRequire<Modules::RequireAnsweredBy::CompiledCode>(ModuleID(module), ModuleID(referrer), byMadeRequire && !Modules::isMadeRequire(JSValue::decode(objectOfRun)), modules.objectIfOfEarlierRun(ModuleID(referrer), JSValue::decode(objectOfRun)), behindTheLoad);
     OPERATION_RETURN(scope);
 }
 
@@ -5732,6 +5749,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireDynamic, EncodedJSValue, (Instance* 
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireDynamic);
     OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).requireSpecifier(JSValue::decode(specifier), ModuleID(referrer), Modules::NamedByBuild::No)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTRequireDynamicOfRun, EncodedJSValue, (Instance* instance, EncodedJSValue specifier, uint32_t referrer, EncodedJSValue objectOfRun))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireDynamicOfRun);
+    Modules& modules = modulesOf(*instance);
+    OPERATION_RETURN(scope, JSValue::encode(modules.requireSpecifier(JSValue::decode(specifier), ModuleID(referrer), Modules::NamedByBuild::No, modules.objectIfOfEarlierRun(ModuleID(referrer), JSValue::decode(objectOfRun)))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTResolveDynamic, EncodedJSValue, (Instance* instance, EncodedJSValue specifier, uint32_t referrer, uint32_t isURL, uint32_t isForRequire))
@@ -7114,7 +7138,7 @@ JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<Modu
         return { };
     modules->stopWhereExportsLeaveCompiledCode(module);
     modules->noteLoadBehindMock(module, true);
-    return modules->require(module, referrer.value_or(ModuleID()), Modules::RequiredBy::Program);
+    return modules->require(module, referrer.value_or(ModuleID()), Modules::RequiredBy::Program, modules->takeObjectOfEarlierRunThatAsksHost());
 }
 
 bool refusesToRunFileForDefaultLoader(JSGlobalObject* realm, ModuleID module)
@@ -8094,6 +8118,14 @@ bool ModuleRecord::hasLoadAroundAskedFor(JSGlobalObject* globalObject, const Ide
     return modules && modules->hasLoadAroundAskedFor(key);
 }
 
+bool ModuleRecord::holdsStepForRunningFile(JSGlobalObject* globalObject, const VM::SynchronousModuleTask& step)
+{
+    if (step.task != InternalMicrotask::ModuleLoadLinkEvaluateSettled && step.task != InternalMicrotask::DynamicImportLoadSettled)
+        return false;
+    Modules* modules = modulesOf(globalObject);
+    return modules && modules->holdStepForRunningFile(step);
+}
+
 bool ModuleRecord::isFileBeingHandedToLoader(JSGlobalObject* globalObject, const Identifier& key)
 {
     Modules* modules = modulesOf(globalObject);
@@ -8176,6 +8208,11 @@ void ModuleRecord::willBeLoadedByImport()
 bool ModuleRecord::takesEveryStepOfLoader()
 {
     return modules().isLoadedByLoader(m_module);
+}
+
+bool ModuleRecord::importsFileThatRuns()
+{
+    return modules().importsFileThatRuns(m_module);
 }
 
 bool ModuleRecord::takeStepOfMainModule()

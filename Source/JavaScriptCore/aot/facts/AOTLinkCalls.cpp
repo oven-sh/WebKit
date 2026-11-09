@@ -4973,6 +4973,12 @@ void CallInLinkCalls::applyAction(RowCall& call, const BuiltinPropertyAction& ac
     bool knowsThatLinkIsLeftAlone = false;
     switch (action.kind) {
     case BuiltinPropertyActionKind::TestsByKey:
+        if (call.isSeenByScan)
+            return;
+        forEachType(valuesAt(call, action.object), [&](const LinkType& type, const Source*) {
+            if (type.builtin)
+                m_flow.note(LinkFlow::Note::BuiltinUsedWhereFlowBroughtIt, m_builtins.canonicalID(type.builtin).index());
+        });
         return;
     case BuiltinPropertyActionKind::DescribesResult:
         escape(valuesAt(call, action.object));
@@ -5758,8 +5764,12 @@ void CallInLinkCalls::passOnPrimitivesThatFillMarkedWord(RowCall& call, std::spa
 void CallInLinkCalls::addInstanceOf(RowCall& call, const BuiltinTypePart& part, BuiltinClassID made, std::span<const BuiltinSlotContents> listed, bool isResult, Values& values, bool nobodyElseHoldsIt)
 {
     SiteID site = siteOf(part, made, isResult && nobodyElseHoldsIt && !call.isCalledByBuiltin);
-    if (TypedArrayType view = m_builtins.typedArrayTypeOf(made); isResult && view != NotTypedArray && view != TypeDataView)
-        m_flow.noteLengthIsWritten(site, lengthWrittenForView(call));
+    if (TypedArrayType view = m_builtins.typedArrayTypeOf(made); isResult && view != NotTypedArray && view != TypeDataView) {
+        uint32_t written = lengthWrittenForView(call);
+        if (written && AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::ViewsAreTakenToBeWrittenOneLonger) && !m_flow.codeAtWorkIsOfLibrary())
+            ++written;
+        m_flow.noteLengthIsWritten(site, written);
+    }
     add(values, m_flow.typeOf(site));
     bool isIteratorOverOperand = isResult && call.row->result.iteratedOperand;
     for (BuiltinSlotID id : m_builtins.at(made).slots) {

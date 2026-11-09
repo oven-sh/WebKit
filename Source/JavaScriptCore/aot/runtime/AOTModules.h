@@ -426,7 +426,6 @@ public:
         m_importsBehindFactoriesHaveYetToGoOn |= !m_modulesWhoseFactoryRuns.get(module.index());
     }
     bool standsForLoadsInFlight(ModuleID module) const { return m_modulesWithMockThatStandsForLoadsInFlight.get(module.index()); }
-    bool isAskedByLoadThatRequireLeft(ModuleID mocked) const { return m_loadLeftByRequireThatGoesOn && reachedByStatements(*m_loadLeftByRequireThatGoesOn, AtMock::Stops).get(mocked.index()); }
     void didGoOnBehindFactories() { m_importsBehindFactoriesHaveYetToGoOn = false; }
     bool letsMockOverModuleThatHasRunStandForLoadInFlight(ModuleID module, bool wasLaidOverMockOfPreload)
     {
@@ -1060,7 +1059,13 @@ public:
     void noteLoadOfFile(ModuleID fileOrFace, LoadOfFile = LoadOfFile::HasComeToFile);
     bool asyncLoadMustWaitFor(ModuleID fileOrFace) const;
     bool importsFileBeingEvaluated(ModuleID root) const;
+    enum class ModulesThatRan : bool { AreWalked, ArePassedOver };
+    bool anyImportedModule(ModuleID root, ModulesThatRan, const Invocable<bool(ModuleID)> auto&) const;
     bool importsFileThatRunsAhead(ModuleID root) const;
+    bool importsFileThatRuns(ModuleID root) const;
+    bool waitsForRunningFile(const VM::SynchronousModuleTask&, std::optional<ModuleID> fileThatEnded) const;
+    bool holdStepForRunningFile(const VM::SynchronousModuleTask&);
+    bool releaseStepsHeldForRunningFiles(std::optional<ModuleID> fileThatEnded);
     void evaluateRootThatWaitedForFile(ModuleID root);
     std::optional<ModuleID> fileToWaitFor(const Identifier& key);
     bool isFileBeingHandedToLoader(const Identifier& key) { return m_fileBeingHandedToLoader && hasKey(*m_fileBeingHandedToLoader, key); }
@@ -1090,7 +1095,7 @@ public:
     JSValue execute(ModuleID);
 
     enum class RequiredBy : uint8_t { Referrer, Program };
-    JSValue require(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer);
+    JSValue require(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer, JSObject* objectOfEarlierRun = nullptr);
     ModuleID formThatRequireFinds(ModuleID);
     void didMockTakeDataFileOutOfLoader(ModuleID);
     bool isOutOfLoaderBehindMock(ModuleID) const;
@@ -1108,7 +1113,9 @@ public:
     void mockWhatRequireCacheHolds(ModuleID, JSObject* exports);
     void letGoOfMockInRequireCache(ModuleID);
     enum class RequireAnsweredBy : bool { CompiledCode, RunTime };
-    template<RequireAnsweredBy> void recordRequire(ModuleID, ModuleID referrer, bool isByMadeRequire = false);
+    template<RequireAnsweredBy> void recordRequire(ModuleID, ModuleID referrer, bool isByMadeRequire = false, JSObject* objectOfEarlierRun = nullptr, bool isBehindLoad = false);
+    JSObject* objectIfOfEarlierRun(ModuleID file, JSValue moduleObjectOfRun);
+    static bool isMadeRequire(JSValue);
     void noteModuleObjectHeldByCompiledCode(ModuleID);
     void noteExportsStoredThroughModuleObject(ModuleID, JSValue exports);
     bool findWhetherExportsVariableIsTakenOffModuleObject(ModuleID);
@@ -1140,7 +1147,8 @@ public:
     JSObject* prototypeOfModuleObjects() const { return m_prototypeOfModuleObjects; }
     void dropNewChildren(ModuleID);
     enum class NamedByBuild : uint8_t { No, FileOfImage, WhatLiesOutsideImage };
-    JSValue requireSpecifier(JSValue specifier, ModuleID referrer, NamedByBuild);
+    JSValue requireSpecifier(JSValue specifier, ModuleID referrer, NamedByBuild, JSObject* objectOfEarlierRun = nullptr);
+    JSObject* takeObjectOfEarlierRunThatAsksHost() { return std::exchange(m_objectOfEarlierRunThatAsksHost, nullptr); }
     JSValue resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSpecifierForm);
 
     JSPromise* import(ModuleID, ModuleID referrer, JSValue options = jsUndefined());
@@ -1541,6 +1549,7 @@ private:
     const EvaluationInProgress* m_innermostEvaluation { nullptr };
     uint32_t m_synchronousLoadCount { 0 };
     uint32_t m_activeSynchronousLoad { 0 };
+    std::optional<ModuleID> m_rootOfInnermostSynchronousLoad;
     uint32_t m_outermostSynchronousLoad { 0 };
     Structure* m_namespaceStructure { nullptr };
     JSObject* m_prototypeOfModuleObjects { nullptr };
@@ -1555,6 +1564,7 @@ private:
     bool m_didSearchBelowEntryPoint { false };
     Vector<ModuleID, 4> m_modulesFirstRequiredByCallsInProgress;
     Vector<FirstRequire> m_firstRequires;
+    JSObject* m_objectOfEarlierRunThatAsksHost { nullptr };
     Vector<ModuleID, 2> m_firstFilesOfLoads;
     BitVector m_filesRequestedByLoader;
     struct FilesBeingRun {
@@ -1572,6 +1582,7 @@ private:
         Vector<ModuleID> importersOfNextLevel { };
         BitVector askedForByOuterLoads { };
         bool knowsWhatOuterLoadsAskedFor { false };
+        VM::SynchronousModuleQueue* queueOfLoad { nullptr };
     };
     std::optional<ModuleID> fileOrFaceEvaluatedIn(const FilesBeingRun&) const;
     bool isBegunForStatement(ModuleID fileOrFace) const;
@@ -1590,6 +1601,12 @@ private:
         Strong<JSPromise> promise;
     };
     Vector<LoadHandedToLoader, 1> m_synchronousLoadsHandedToLoader;
+    struct StepHeldForRunningFile {
+        InternalMicrotask task;
+        uint8_t payload;
+        std::array<Strong<Unknown>, 4> arguments;
+    };
+    Vector<StepHeldForRunningFile, 1> m_stepsHeldForRunningFiles;
     void captureNoExports(ModuleID file);
     void runStepsOfLoaderInFrontOf(ModuleID file);
     void finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error);
@@ -2302,7 +2319,6 @@ private:
     BitVector m_modulesWithLoadEndedByMock;
     ModuleID m_moduleThatRequireAsksFor;
     bool m_walkGoesOnPastFactoriesThatHaveNotSettled { false };
-    std::optional<ModuleID> m_loadLeftByRequireThatGoesOn;
     bool m_letsGoOfMocksAtLinkFromSource { false };
     ModuleID m_moduleThatRequires;
     ModuleID m_targetOfRequireRecordedAhead;

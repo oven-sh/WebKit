@@ -140,6 +140,7 @@ private:
 
     void checkBlock(Block*);
     bool enter(Block*);
+    bool isReleasedAndReadOnNoWayFrom(const Operation*, const Block* head);
     bool runSteps(uint32_t begin, uint32_t end, bool isOnEdge);
     void findNextExecute(uint32_t begin, uint32_t end);
     bool matchNextOperation(const Operation*, Position& early);
@@ -1216,7 +1217,7 @@ bool AllocationChecker::enter(Block* block)
             return fail(FailureKind::RegisterLacksItsValue, binding.value);
         if (m_state[binding.reg.index()] != id) {
             SpillIndex spill = binding.value->opcode() == Phi ? m_allocation.spillOf(binding.value) : noSpill;
-            if (spill >= m_spills.size() || !m_spills[spill].isSharedByPhis)
+            if ((spill >= m_spills.size() || !m_spills[spill].isSharedByPhis) && !isReleasedAndReadOnNoWayFrom(binding.value, block))
                 return fail(FailureKind::RegisterLacksItsValue, binding.value);
         }
     }
@@ -1236,6 +1237,35 @@ bool AllocationChecker::enter(Block* block)
             return fail(FailureKind::SpillSlotLacksItsValue, phi);
     }
     m_now.lower = m_head;
+    return true;
+}
+
+bool AllocationChecker::isReleasedAndReadOnNoWayFrom(const Operation* value, const Block* head)
+{
+    auto clearsSlotOfValue = [&](const Step& step) {
+        return step.kind == StepKind::ClearSpill && step.operation == value;
+    };
+    if (std::ranges::none_of(m_allocation.steps(), clearsSlotOfValue))
+        return false;
+
+    BitVector isEntered;
+    Vector<const Block*, 16> entered { head };
+    isEntered.set(head->index());
+    while (!entered.isEmpty()) {
+        const Block* block = entered.takeLast();
+        for (const Operation* operation : block->operations()) {
+            if (std::ranges::find(operation->children(), value) != operation->children().end())
+                return false;
+        }
+        for (const Operation* upsilon : block->upsilons()) {
+            if (upsilon->child(0) == value)
+                return false;
+        }
+        for (const Edge& successor : block->successors()) {
+            if (!isEntered.set(successor.block()->index()))
+                entered.append(successor.block());
+        }
+    }
     return true;
 }
 

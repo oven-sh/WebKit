@@ -193,6 +193,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOfDynamicImport, ImportModule) \
     v(OperationsOfDynamicImport, IsNamespaceOfModule) \
     v(OperationsOfDynamicImport, RequireDynamic) \
+    v(OperationsOfDynamicImport, RequireDynamicOfRun) \
     v(OperationsOfDynamicImport, RequireIfHeldForImport) \
     v(OperationsOfDynamicImport, ResolveDynamic) \
     v(OperationsOfDynamicImport, ResolveModule) \
@@ -203,6 +204,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnModulesThatFail, AbandonModuleEvaluation) \
     v(OperationsOnModulesThatFail, IsLinkedBelow) \
     v(OperationsOnModulesThatFail, RecordRequire) \
+    v(OperationsOnModulesThatFail, RecordRequireOfRun) \
     v(OperationsOnModulesThatFail, SeesMockOf) \
     v(OperationsOnModulesThatFail, StopLoadingBehindFile) \
     v(OperationsOnModulesThatFail, ThrowModuleFailure) \

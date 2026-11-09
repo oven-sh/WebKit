@@ -2604,7 +2604,6 @@ static constexpr WhatObserverDoesWithBuiltinInLinkFlow whatObserverDoesWithBuilt
         return WhatObserverDoesWithBuiltinInLinkFlow::AsksForItselfWhetherItIsSpelled;
     case FlowObserver::Kind::OperandOfOperator:
     case FlowObserver::Kind::OperandOnlyLookedAt:
-    case FlowObserver::Kind::KeysAreListed:
     case FlowObserver::Kind::FieldIsOnlyAsked:
         return WhatObserverDoesWithBuiltinInLinkFlow::OnlyLooks;
     case FlowObserver::Kind::MemberOfAccess:
@@ -2614,6 +2613,7 @@ static constexpr WhatObserverDoesWithBuiltinInLinkFlow whatObserverDoesWithBuilt
     case FlowObserver::Kind::SymbolOfPreparation:
     case FlowObserver::Kind::PassedToBeNamed:
     case FlowObserver::Kind::FieldOfAccessorLaid:
+    case FlowObserver::Kind::KeysAreListed:
         return WhatObserverDoesWithBuiltinInLinkFlow::Uses;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -2698,6 +2698,8 @@ void LinkFlow::tell(const FlowObserver& observer, const LinkType& now, const Lin
     case FlowObserver::Kind::FieldIsOnlyAsked:
         break;
     case FlowObserver::Kind::KeysAreListed:
+        static_assert(whatObserverDoesWithBuiltinInLinkFlow(FlowObserver::Kind::KeysAreListed) == WhatObserverDoesWithBuiltinInLinkFlow::Uses);
+        noteUseOfBuiltinAt(now);
         noteLossOfLightFormAmong(now);
         noteKeysBecomeTextsAmong(now);
         break;

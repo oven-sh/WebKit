@@ -543,10 +543,41 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetWithProxyTrap, EncodedJSValue, (Instance
     OPERATION_RETURN(scope, JSValue::encode(ProxyObject::getWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key, words.proxy)));
 }
 
+static bool isSeenToBeAllowedByTarget(VM& vm, JSObject* target, JSCell* key, JSValue answer)
+{
+    if (!key->isString())
+        return false;
+    StringImpl* impl = const_cast<StringImpl*>(uncheckedDowncast<JSString>(key)->tryGetValueImpl());
+    if (!impl || !impl->isAtom() || parseIndex(*impl))
+        return false;
+    auto* name = static_cast<UniquedStringImpl*>(impl);
+    JSObject* holder = target;
+    if (target->type() == CompiledObjectType) {
+        auto* object = uncheckedDowncast<Object>(target);
+        if (object->isFrozen() || object->isSealed() || !object->compiledStructure().isKnownThatEveryFieldIsBornConfigurable())
+            return false;
+        holder = extraPropertiesIfMade(*object);
+        if (!holder)
+            return !object->hasExtraProperties();
+    }
+    Structure* structure = holder->structure();
+    if (structure->typeInfo().overridesGetOwnPropertySlot() || structure->typeInfo().hasStaticPropertyTable())
+        return false;
+    unsigned attributes;
+    PropertyOffset offset = structure->get(vm, name, attributes);
+    if (!isValidOffset(offset) || !(attributes & PropertyAttribute::DontDelete))
+        return true;
+    if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+        return false;
+    return !(attributes & PropertyAttribute::ReadOnly) || holder->getDirect(offset) == answer;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTValidateAnswerOfProxyTrap, EncodedJSValue, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue answer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateAnswerOfProxyTrap);
     const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    if (isSeenToBeAllowedByTarget(vm, words.target, words.key, JSValue::decode(answer)))
+        OPERATION_RETURN(scope, answer);
     ProxyObject::validateGetTrapResultWhereBound(globalObject, JSValue::decode(answer), words.target, words.key);
     OPERATION_RETURN(scope, answer);
 }

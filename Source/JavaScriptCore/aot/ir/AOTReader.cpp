@@ -46,6 +46,8 @@ bool Reader::run()
         m_program.builtinWhoseRowWritesNullAlone = rowThatSaysLess.row;
     if (rowThatSaysLess.part == PartOfEffects::ContentsOfResult)
         m_program.builtinWhoseRowWritesThatItsResultHoldsNullAlone = rowThatSaysLess.row;
+    if (rowThatSaysLess.part == PartOfEffects::HoldersOfResult)
+        m_program.builtinWhoseRowWritesThatNobodyElseHoldsItsResult = rowThatSaysLess.row;
     m_program.admitsInspector = m_build.options().admitsUnseenCode();
     m_program.excludedCode = m_build.options().excludedCode;
 

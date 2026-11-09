@@ -140,6 +140,7 @@ struct WalkOptions {
     bool takesValuesThatComeLaterForOthersThanWhatIsMadeHere { false };
     bool takesReceiversOfMethodsOfListsToBeMadeHere { false };
     bool takesElementsBesideSumsToComeOffListsOfNumbers { false };
+    bool takesEveryUserOfElementToReckonWithIt { false };
     bool takesIterablesOfPatternsToStayAsMade { false };
     bool takesValuesThatPatternsTakeApartInTurnsForListsAsMade { false };
     bool takesTurnsToHaveDoneNothingWherePatternsAreHeld { false };

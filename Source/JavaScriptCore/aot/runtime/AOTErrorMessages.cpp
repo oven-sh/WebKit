@@ -108,6 +108,22 @@ String quotedTextOfFailedExpression(VM& vm)
     return quoted;
 }
 
+String kindOfPrimitiveWhereNoTextIsQuoted(JSValue value)
+{
+    if (value.isObject() || value.isUndefinedOrNull())
+        return { };
+    const Image* image = Image::current();
+    if (!image || !image->programTables().quotedTextGroups().empty())
+        return { };
+    if (value.isString())
+        return "a string"_s;
+    if (value.isSymbol())
+        return "a symbol"_s;
+    if (value.isBigInt())
+        return "a BigInt"_s;
+    return value.isBoolean() ? "a boolean"_s : "a number"_s;
+}
+
 static JSObject* createTypeErrorQuoting(JSGlobalObject* globalObject, JSValue value, const String& description, ASCIILiteral complaint, ErrorInstance::SourceAppender appender, const String& spelled)
 {
     String expression = quotedTextOfFailedExpression(globalObject->vm());
@@ -163,15 +179,9 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, con
     return createNotAnObjectErrorQuoting(globalObject, base, description, tryMakeString(description, "[Symbol("_s, StringView(member.impl()), ")]"_s));
 }
 
-JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSValue key)
+JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSValue)
 {
-    if (!key || key.isObject())
-        return JSC::createNotAnObjectError(globalObject, base);
-    String description = describeForErrorMessage(globalObject, base);
-    String descriptionOfKey = describeForErrorMessage(globalObject, key);
-    if (descriptionOfKey.isNull())
-        return JSC::createNotAnObjectError(globalObject, base);
-    return createNotAnObjectErrorQuoting(globalObject, base, description, tryMakeString(description, '[', descriptionOfKey, ']'));
+    return JSC::createNotAnObjectError(globalObject, base);
 }
 
 JSObject* createKeyTestOfNonObjectError(JSGlobalObject* globalObject, JSValue base)

@@ -1,15 +1,18 @@
 # function at(list, key) { try { return list[key]; } catch (error) { return error.message; } }
 # function put(list, key) { try { list[key] = 1; return 0; } catch (error) { return error.message; } }
 # report(at(null, 6)); report(at(undefined, "k 5")); report(put(null, "two words")); report(at(null, {}));
-# Built with --no-compile-function-source: the image holds no text to quote, so a message spells a computed key from its value
-# An object is not spelled: it is described by its class, which is not the key that it would become
+# Built with --no-compile-function-source: the image holds no text to quote. A computed key may be a text of the program's user: a message never spells it
 # OPTIONS: exclude=FunctionSource
 # RUN: run-in-shell globalThis.report = message => print(message);
-# CHECK: null is not an object (evaluating 'null[6]')
-# CHECK-NEXT: undefined is not an object (evaluating 'undefined["k 5"]')
-# CHECK-NEXT: null is not an object (evaluating 'null["two words"]')
-# CHECK-NEXT: null is not an object
-# CHECK-NEXT: exited with 0
+# CHECK: null is not an object
+# CHECK-NOT: evaluating
+# CHECK: undefined is not an object
+# CHECK-NOT: evaluating
+# CHECK: null is not an object
+# CHECK-NOT: evaluating
+# CHECK: null is not an object
+# CHECK-NOT: evaluating
+# CHECK: exited with 0
 
 module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 93, 194]}
 entry module=m0

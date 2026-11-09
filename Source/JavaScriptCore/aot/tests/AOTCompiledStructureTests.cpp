@@ -138,7 +138,7 @@ static Structure* createOrdinaryStructure(LoadedProgram& program, unsigned numbe
 
 static OptionSet<CompiledStructure::Flag> flagsOfVariant(const CompiledStructure* structure)
 {
-    return structure->flags() - OptionSet { CompiledStructure::Flag::HasFieldsWithSymbolKeys, CompiledStructure::Flag::HasOnlyPlainSlots, CompiledStructure::Flag::IsCopiedByWords };
+    return structure->flags() - OptionSet { CompiledStructure::Flag::HasFieldsWithSymbolKeys, CompiledStructure::Flag::HasOnlyPlainSlots, CompiledStructure::Flag::IsCopiedByWords, CompiledStructure::Flag::EveryFieldIsBornConfigurable };
 }
 
 template<typename T>
@@ -461,6 +461,7 @@ static void testComponentsOfVariantAreIndependent(LoadedProgram& program)
     CompiledStructure* otherWay = table.withPrototype(vm, *table.asPrototype(vm, *table.withExtraProperties(vm, *table.withOutOfLineKeyOrder(vm, *usual, entries), extra)), prototype);
     AOT_TEST_CHECK(oneWay == otherWay);
     AOT_TEST_CHECK(oneWay->storedPrototype() == JSValue(prototype) && oneWay->mayBePrototype() && oneWay->extraPropertiesStructure() == extra);
+    AOT_TEST_CHECK(oneWay->isKnownThatEveryFieldIsBornConfigurable());
     AOT_TEST_CHECK(flagsOfVariant(oneWay) == OptionSet({ CompiledStructure::Flag::HasExtraProperties, CompiledStructure::Flag::HasOtherPrototype, CompiledStructure::Flag::HasOutOfLineKeyOrder }));
 
     CompiledStructure* numbered = table.withNumberedKeyOrder(vm, *oneWay);

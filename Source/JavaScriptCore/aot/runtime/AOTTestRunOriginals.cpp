@@ -745,6 +745,10 @@ JSValue Modules::importModuleItselfBesideMock(ModuleID module, JSValue answerOfI
         RELEASE_AND_RETURN(scope, namespaceOfModuleItself(moduleWithExportsOf(fileOf(module))));
     }
     bool hasBegun = hasRunItself(module);
+    JSObject* original = hasBegun ? nullptr : originalThatLoaderHolds(fileOf(module));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (original)
+        return original;
     JSPromise* underWay = evaluationOfRecordSetAside(module);
     RETURN_IF_EXCEPTION(scope, { });
     if (hasBegun && !underWay) {

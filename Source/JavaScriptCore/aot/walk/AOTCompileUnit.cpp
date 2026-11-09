@@ -103,6 +103,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .takesValuesThatComeLaterForOthersThanWhatIsMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere),
         .takesReceiversOfMethodsOfListsToBeMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ReceiversOfMethodsOfListsAreTakenToBeMadeHere),
         .takesElementsBesideSumsToComeOffListsOfNumbers = AOT::hasFlag(options.lies, Wire::TestingLie::ElementsBesideSumsAreTakenToComeOffListsOfNumbers),
+        .takesEveryUserOfElementToReckonWithIt = AOT::hasFlag(options.lies, Wire::TestingLie::EveryUserOfAnElementIsTakenToReckonWithIt),
         .takesIterablesOfPatternsToStayAsMade = AOT::hasFlag(options.lies, Wire::TestingLie::IterablesOfPatternsAreTakenToStayAsMade),
         .takesValuesThatPatternsTakeApartInTurnsForListsAsMade = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesThatPatternsTakeApartInTurnsAreTakenForListsAsMade),
         .takesTurnsToHaveDoneNothingWherePatternsAreHeld = AOT::hasFlag(options.lies, Wire::TestingLie::TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld),

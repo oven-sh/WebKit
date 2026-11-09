@@ -948,6 +948,7 @@ struct ProcedureTraits {
     bool takesSpillsThatStepsReadToBeReadByNone { false };
     bool takesValuesKeptForCollectorToBeReadByStepsAlone { false };
     bool takesWaysOnToReadNothing { false };
+    bool takesReleasesByWaysOnToBeSound { false };
     bool notesRangesOfOrigins { false };
     CPUFeatureSet features;
 

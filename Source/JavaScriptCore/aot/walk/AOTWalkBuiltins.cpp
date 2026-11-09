@@ -2280,7 +2280,8 @@ bool CallInWalkBuiltins::makesFreshResult(Reference result) const
     if (!m_walker.has(Mechanism::EscapeAnalysis) || !result.isValue() || m_effects.mayRunOtherCode() || isDoneInPlace())
         return false;
     BuiltinTypeID written = m_overload->result.type;
-    return written && m_table.at(written).freshness == BuiltinFreshness::Yes && m_types.at(m_walker.typeOf(result)).isObject();
+    bool rowIsLaidFalse = m_program.builtinWhoseRowWritesThatNobodyElseHoldsItsResult == m_overload->builtin.index();
+    return written && (m_table.at(written).freshness == BuiltinFreshness::Yes || rowIsLaidFalse) && m_types.at(m_walker.typeOf(result)).isObject();
 }
 
 Vector<Reference, 4> CallInWalkBuiltins::freshOperandsThatStayHere() const

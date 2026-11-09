@@ -646,6 +646,11 @@ void ModuleEvaluationPlanner::chooseModulesWalkedByCode()
     BitVector leadsToCycle = modulesThatReach(components, [&](uint32_t index) {
         return components.membersOf(components.componentOf[index]).size() > 1;
     });
+    BitVector leadsToDataFileThatIsRequiredToo = modulesThatReach(components, [&](uint32_t index) {
+        return std::ranges::any_of(importsOf(index), [&](uint32_t target) {
+            return modules[target].requireResult == RequireResult::NamespaceIfImported;
+        });
+    });
     BitVector leadsToLoadInsideLoad = filesThatRequireModuleDuringLoad();
     if (!leadsToLoadInsideLoad.isEmpty()) {
         leadsToLoadInsideLoad = modulesThatReach(components, [&, files = leadsToLoadInsideLoad](uint32_t index) {
@@ -670,7 +675,8 @@ void ModuleEvaluationPlanner::chooseModulesWalkedByCode()
         bool isRequiredBetweenLoads = module.kind != ModuleKind::SourceText || (!loadsTwoGraphsAtOnce && !module.flags.contains(ModuleFlags::IsRequiredDuringLoad) && !leadsToLoadInsideLoad.quickGet(index));
         bool loaderIsSeenToAsk = somebodyAsksWhoRequiredWhom && module.requests.size() > 1 && module.requests[1].isHoisted;
         bool isListedFromRequireOn = module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::IsListedInCache);
-        if (!needsLink.quickGet(index) && !leadsToCycle.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk && !isListedFromRequireOn)
+        bool progressOfLoaderIsSeen = module.kind == ModuleKind::SourceText && !module.requests.isEmpty() && module.requests[0].isHoisted && leadsToDataFileThatIsRequiredToo.quickGet(index);
+        if (!needsLink.quickGet(index) && !leadsToCycle.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk && !isListedFromRequireOn && !progressOfLoaderIsSeen)
             isCalledWhereRequired.quickSet(index);
         if (!has(index, HasCode))
             continue;
