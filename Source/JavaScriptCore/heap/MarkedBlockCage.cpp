@@ -1029,7 +1029,8 @@ void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
         static std::atomic_flag isEnding = ATOMIC_FLAG_INIT;
         while (isEnding.test_and_set())
             pause();
-        dataLogLn("FATAL: out of memory. ", noRoomUnderLimitOnAddressSpace);
+        // As characters: a PrintStream makes a CString of an ASCIILiteral, and with nothing left that allocation crashes in the middle of the line.
+        dataLogLn("FATAL: out of memory. ", noRoomUnderLimitOnAddressSpace.characters());
         _exit(EXIT_FAILURE);
     }
 #endif
