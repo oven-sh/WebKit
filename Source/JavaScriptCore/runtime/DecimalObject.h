@@ -6,9 +6,15 @@
 #pragma once
 
 #include <JavaScriptCore/Decimal128.h>
+#include <JavaScriptCore/NativeFunction.h>
 #include <JavaScriptCore/JSObject.h>
 
 namespace JSC {
+
+namespace DOMJIT {
+class GetterSetter;
+class Signature;
+}
 
 // An object with the [[DecimalData]] internal slot of https://tc39.es/proposal-decimal/.
 class DecimalObject final : public JSNonFinalObject {
@@ -23,7 +29,14 @@ public:
         return vm.decimalObjectSpace<mode>();
     }
 
-    static DecimalObject* create(VM&, Structure*, const Decimal128&);
+    static DecimalObject* create(VM& vm, Structure* structure, const Decimal128& value)
+    {
+        auto* object = new (NotNull, allocateCell<DecimalObject>(vm)) DecimalObject(vm, structure, value);
+        object->finishCreation(vm);
+        return object;
+    }
+    static constexpr ptrdiff_t offsetOfValue() { return OBJECT_OFFSETOF(DecimalObject, m_value); }
+
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
     DECLARE_EXPORT_INFO;
@@ -32,6 +45,13 @@ public:
     static DecimalObject* tryCast(JSValue value) { return value.isObject() ? dynamicDowncast<DecimalObject>(asObject(value)) : nullptr; }
 
     const Decimal128& value() const { return m_value; }
+
+#if ENABLE(JIT)
+    // What optimized code has in place of a call of isNaN(), isFinite() and exponent().
+    static const DOMJIT::GetterSetter* inlinedMethod(TaggedNativeFunction);
+    // How it calls other methods without arguments.
+    static const DOMJIT::Signature* directMethod(TaggedNativeFunction);
+#endif
 
     // What Number(decimal) is.
     double toNumberValue() const;
@@ -43,7 +63,12 @@ public:
     JS_EXPORT_PRIVATE static DecimalObject* tryCreateFromCloneText(JSGlobalObject*, StringView);
 
 private:
-    DecimalObject(VM&, Structure*, const Decimal128&);
+    DecimalObject(VM& vm, Structure* structure, const Decimal128& value)
+        : Base(vm, structure)
+        , m_value(value)
+    {
+    }
+
     DECLARE_DEFAULT_FINISH_CREATION;
 
     Decimal128 m_value;

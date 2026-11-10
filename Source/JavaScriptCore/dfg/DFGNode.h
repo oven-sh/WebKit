@@ -303,6 +303,13 @@ struct CallDOMGetterData {
     DOMJIT::CallDOMGetterSnippet* snippet { nullptr };
     unsigned identifierNumber { 0 };
     const ClassInfo* requiredClassInfo { nullptr };
+
+    // Distinguishes the pure ones. One that is inlined for a method has no getter function.
+    uintptr_t identityForCSE() const
+    {
+        ASSERT(domJIT || customAccessorGetter);
+        return domJIT ? std::bit_cast<uintptr_t>(domJIT) : std::bit_cast<uintptr_t>(customAccessorGetter);
+    }
 };
 
 struct CallCustomAccessorData {

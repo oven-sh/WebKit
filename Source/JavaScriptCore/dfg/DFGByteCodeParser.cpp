@@ -40,6 +40,7 @@
 #include "CallVariantInlines.h"
 #include "CheckPrivateBrandStatus.h"
 #include "CodeBlock.h"
+#include "DecimalObject.h"
 #include "CodeBlockInlines.h"
 #include "CodeBlockWithJITType.h"
 #include "CommonSlowPaths.h"
@@ -4028,6 +4029,39 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             insertChecks();
             setResult(addToGraph(GlobalIsNaN, get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
 
+            return CallOptimizationResult::Inlined;
+        }
+
+        case DecimalPrototypeIntrinsic: {
+            if (!Options::useDOMJIT() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+
+            TaggedNativeFunction function = variant.nativeExecutable()->function();
+            if (const auto* signature = DecimalObject::directMethod(function)) {
+                // Here and not as the signature of the function: it makes its result in the realm of the caller, and only an intrinsic is checked for being of it.
+                if (!handleDOMJITCall(callee, resultOperand, signature, registerOffset, argumentCountIncludingThis, prediction, insertChecks))
+                    return CallOptimizationResult::DidNothing;
+                didSetResult = true;
+                return CallOptimizationResult::Inlined;
+            }
+            const auto* method = DecimalObject::inlinedMethod(function);
+            if (!method)
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+            addToGraph(CheckJSCast, OpInfo(DecimalObject::info()), base);
+
+            CallDOMGetterData* data = m_graph.m_callDOMGetterData.add();
+            data->domJIT = method;
+            data->requiredClassInfo = DecimalObject::info();
+            Ref<DOMJIT::CallDOMGetterSnippet> snippet = method->compiler()();
+            ASSERT(!snippet->requireGlobalObject && !snippet->effect.mustGenerate());
+            data->snippet = snippet.ptr();
+            m_graph.m_domJITSnippets.append(WTF::move(snippet));
+            Node* node = addToGraph(CallDOMGetter, OpInfo(data), OpInfo(prediction), base);
+            node->clearFlags(NodeMustGenerate);
+            setResult(node);
             return CallOptimizationResult::Inlined;
         }
 

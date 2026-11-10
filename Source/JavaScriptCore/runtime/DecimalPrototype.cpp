@@ -8,8 +8,19 @@
 
 #include "DecimalObject.h"
 #include "DecimalOperator.h"
+#include "DecimalStringCache.h"
 #include "IntlNumberFormatInlines.h"
 #include "JSCInlines.h"
+
+#if ENABLE(JIT)
+#include "CCallHelpers.h"
+#include "DOMJITCallDOMGetterSnippet.h"
+#include "DOMJITGetterSetter.h"
+#include "DOMJITSignature.h"
+#include "FrameTracers.h"
+#include "JITOperations.h"
+#include "SnippetParams.h"
+#endif
 
 namespace JSC {
 
@@ -51,12 +62,12 @@ const ClassInfo DecimalPrototype::s_info = { "Decimal"_s, &Base::s_info, &decima
 
 /* Source for DecimalPrototype.lut.h
 @begin decimalPrototypeTable
-  isNaN                decimalProtoFuncIsNaN                DontEnum|Function 0
-  isFinite             decimalProtoFuncIsFinite             DontEnum|Function 0
-  exponent             decimalProtoFuncExponent             DontEnum|Function 0
-  mantissa             decimalProtoFuncMantissa             DontEnum|Function 0
-  abs                  decimalProtoFuncAbs                  DontEnum|Function 0
-  negate               decimalProtoFuncNegate               DontEnum|Function 0
+  isNaN                decimalProtoFuncIsNaN                DontEnum|Function 0 DecimalPrototypeIntrinsic
+  isFinite             decimalProtoFuncIsFinite             DontEnum|Function 0 DecimalPrototypeIntrinsic
+  exponent             decimalProtoFuncExponent             DontEnum|Function 0 DecimalPrototypeIntrinsic
+  mantissa             decimalProtoFuncMantissa             DontEnum|Function 0 DecimalPrototypeIntrinsic
+  abs                  decimalProtoFuncAbs                  DontEnum|Function 0 DecimalPrototypeIntrinsic
+  negate               decimalProtoFuncNegate               DontEnum|Function 0 DecimalPrototypeIntrinsic
   add                  decimalProtoFuncAdd                  DontEnum|Function 1
   subtract             decimalProtoFuncSubtract             DontEnum|Function 1
   multiply             decimalProtoFuncMultiply             DontEnum|Function 1
@@ -71,9 +82,9 @@ const ClassInfo DecimalPrototype::s_info = { "Decimal"_s, &Base::s_info, &decima
   greaterThanOrEqual   decimalProtoFuncGreaterThanOrEqual   DontEnum|Function 1
   round                decimalProtoFuncRound                DontEnum|Function 1
   scale10              decimalProtoFuncScale10              DontEnum|Function 1
-  toString             decimalProtoFuncToString             DontEnum|Function 0
+  toString             decimalProtoFuncToString             DontEnum|Function 0 DecimalPrototypeIntrinsic
   toLocaleString       decimalProtoFuncToLocaleString       DontEnum|Function 0
-  toExponential        decimalProtoFuncToExponential        DontEnum|Function 0
+  toExponential        decimalProtoFuncToExponential        DontEnum|Function 0 DecimalPrototypeIntrinsic
   toFixed              decimalProtoFuncToFixed              DontEnum|Function 0
   toPrecision          decimalProtoFuncToPrecision          DontEnum|Function 0
   toJSON               decimalProtoFuncToJSON               DontEnum|Function 0
@@ -159,6 +170,26 @@ static ALWAYS_INLINE EncodedJSValue comparison(JSGlobalObject* globalObject, Cal
     });
 }
 
+static JSValue exponentOf(const Decimal128& value)
+{
+    if (value.isNaN())
+        return jsNaN();
+    if (value.isInfinity())
+        return jsNumber(std::numeric_limits<double>::infinity());
+    if (value.isZero())
+        return jsNumber(-std::numeric_limits<double>::infinity());
+    return jsNumber(value.scientificExponent());
+}
+
+static Decimal128 mantissaOf(const Decimal128& value)
+{
+    if (value.isInfinity())
+        return Decimal128::infinity(false);
+    if (value.isNaN() || value.isZero())
+        return value;
+    return value.significand();
+}
+
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.isnan
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncIsNaN, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -179,13 +210,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncIsFinite, (JSGlobalObject* globalObject
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncExponent, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     return unary(globalObject, callFrame, [](const Decimal128& value) {
-        if (value.isNaN())
-            return JSValue::encode(jsNaN());
-        if (value.isInfinity())
-            return JSValue::encode(jsNumber(std::numeric_limits<double>::infinity()));
-        if (value.isZero())
-            return JSValue::encode(jsNumber(-std::numeric_limits<double>::infinity()));
-        return JSValue::encode(jsNumber(value.scientificExponent()));
+        return JSValue::encode(exponentOf(value));
     });
 }
 
@@ -195,11 +220,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncExponent, (JSGlobalObject* globalObject
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncMantissa, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     return unary(globalObject, callFrame, [&](const Decimal128& value) {
-        if (value.isInfinity())
-            return newDecimal(globalObject, Decimal128::infinity(false));
-        if (value.isNaN() || value.isZero())
-            return newDecimal(globalObject, value);
-        return newDecimal(globalObject, value.significand());
+        return newDecimal(globalObject, mantissaOf(value));
     });
 }
 
@@ -288,22 +309,29 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncGreaterThanOrEqual, (JSGlobalObject* gl
 }
 
 // https://tc39.es/proposal-decimal/#dfn-decimal-rounding-mode
-static std::optional<Decimal128::RoundingMode> roundingModeFromName(const String& name)
+// Null if it names none, or threw.
+static ALWAYS_INLINE std::optional<Decimal128::RoundingMode> roundingModeFromName(JSGlobalObject* globalObject, JSString* string)
 {
-    if (name == "ceil"_s)
-        return Decimal128::RoundingMode::Ceil;
-    if (name == "floor"_s)
-        return Decimal128::RoundingMode::Floor;
-    if (name == "trunc"_s)
-        return Decimal128::RoundingMode::Trunc;
-    if (name == "halfExpand"_s)
-        return Decimal128::RoundingMode::HalfExpand;
-    if (name == "halfEven"_s)
-        return Decimal128::RoundingMode::HalfEven;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    using Mode = Decimal128::RoundingMode;
+    const std::pair<const Identifier&, Mode> modes[] = { { vm.propertyNames->floor, Mode::Floor }, { vm.propertyNames->halfExpand, Mode::HalfExpand }, { vm.propertyNames->ceil, Mode::Ceil }, { vm.propertyNames->trunc, Mode::Trunc }, { vm.propertyNames->halfEven, Mode::HalfEven } };
+    // The string of a literal is that of the identifier.
+    auto* impl = string->tryGetValueImpl();
+    for (auto& [name, mode] : modes) {
+        if (impl == name.impl())
+            return mode;
+    }
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    for (auto& [name, mode] : modes) {
+        if (view == name.string())
+            return mode;
+    }
     return std::nullopt;
 }
 
-static Decimal128::RoundingMode toRoundingMode(JSGlobalObject* globalObject, JSValue value)
+static ALWAYS_INLINE Decimal128::RoundingMode toRoundingMode(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -314,9 +342,9 @@ static Decimal128::RoundingMode toRoundingMode(JSGlobalObject* globalObject, JSV
         throwTypeError(globalObject, scope, "roundingMode must be a string"_s);
         return { };
     }
-    String name = asString(value)->value(globalObject);
+    auto mode = roundingModeFromName(globalObject, asString(value));
     RETURN_IF_EXCEPTION(scope, { });
-    if (auto mode = roundingModeFromName(name)) [[likely]]
+    if (mode) [[likely]]
         return *mode;
     throwRangeError(globalObject, scope, "roundingMode must be either \"ceil\", \"floor\", \"trunc\", \"halfExpand\", or \"halfEven\""_s);
     return { };
@@ -336,10 +364,36 @@ static JSObject* toOptions(JSGlobalObject* globalObject, JSValue value)
     return asObject(value);
 }
 
+// Get(options, name), without the general lookup where every object on the way is ordinary and the property is a value.
+static ALWAYS_INLINE JSValue getOption(JSGlobalObject* globalObject, JSObject* options, const Identifier& name)
+{
+    VM& vm = globalObject->vm();
+    JSObject* object = options;
+    for (unsigned i = 0; i < 4; ++i) {
+        Structure* structure = object->structure();
+        if (structure->typeInfo().overridesGetOwnPropertySlot() || structure->typeInfo().overridesGetPrototype() || structure->typeInfo().hasStaticPropertyTable())
+            break;
+        unsigned attributes;
+        PropertyOffset offset = structure->get(vm, name, attributes);
+        if (isValidOffset(offset)) {
+            if (attributes & (PropertyAttribute::AccessorOrCustomAccessorOrValue))
+                break;
+            return object->getDirect(offset);
+        }
+        JSValue prototype = structure->storedPrototype(object);
+        if (prototype.isNull())
+            return jsUndefined();
+        object = asObject(prototype);
+    }
+    return options->get(globalObject, name);
+}
+
 static double toIntegerOption(JSGlobalObject* globalObject, JSValue value, double minimum, ASCIILiteral typeMessage, ASCIILiteral rangeMessage)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (value.isInt32() && value.asInt32() >= minimum) [[likely]]
+        return value.asInt32();
     if (!value.isNumber()) [[unlikely]] {
         throwTypeError(globalObject, scope, typeMessage);
         return 0;
@@ -407,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToString, (JSGlobalObject* globalObject
     RETURN_IF_EXCEPTION(scope, { });
     toOptions(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, decimal->value().toString()));
+    return JSValue::encode(vm.decimalStringCache().toString(vm, decimal->value()));
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.tolocalestring
@@ -449,7 +503,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToExponential, (JSGlobalObject* globalO
     RETURN_IF_EXCEPTION(scope, { });
     toOptions(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, decimal->value().toExponentialString()));
+    return JSValue::encode(vm.decimalStringCache().toExponential(vm, decimal->value()));
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.tofixed
@@ -469,15 +523,17 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToFixed, (JSGlobalObject* globalObject,
     JSValue digitsValue = jsNumber(0);
     JSValue roundingModeValue = jsUndefined();
     if (options) {
-        digitsValue = options->get(globalObject, Identifier::fromString(vm, "digits"_s));
+        digitsValue = getOption(globalObject, options, vm.propertyNames->digits);
         RETURN_IF_EXCEPTION(scope, { });
-        roundingModeValue = options->get(globalObject, vm.propertyNames->roundingMode);
+        roundingModeValue = getOption(globalObject, options, vm.propertyNames->roundingMode);
         RETURN_IF_EXCEPTION(scope, { });
     }
     double digits = toIntegerOption(globalObject, digitsValue, 0, "digits must be a number"_s, "digits must be a non-negative integer"_s);
     RETURN_IF_EXCEPTION(scope, { });
     auto mode = toRoundingMode(globalObject, roundingModeValue);
     RETURN_IF_EXCEPTION(scope, { });
+    if (digits <= DecimalStringCache::maximumDigits && decimal->value().isShort()) [[likely]]
+        return JSValue::encode(vm.decimalStringCache().get(vm, decimal->value(), DecimalStringCache::Notation::Fixed, static_cast<unsigned>(digits), mode, [&] { return decimal->value().toFixed(digits, mode); }));
     RELEASE_AND_RETURN(scope, stringOrOutOfMemory(globalObject, decimal->value().toFixed(digits, mode)));
 }
 
@@ -496,7 +552,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToPrecision, (JSGlobalObject* globalObj
     RETURN_IF_EXCEPTION(scope, { });
     if (!options)
         return throwVMRangeError(globalObject, scope, "precision must be a positive integer"_s);
-    JSValue precisionValue = options->get(globalObject, Identifier::fromString(vm, "precision"_s));
+    JSValue precisionValue = getOption(globalObject, options, vm.propertyNames->precision);
     RETURN_IF_EXCEPTION(scope, { });
     if (precisionValue.isUndefined())
         return JSValue::encode(jsString(vm, decimal->value().toDecimalString()));
@@ -506,17 +562,19 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToPrecision, (JSGlobalObject* globalObj
     // -Infinity is not in this step. It throws below, behind the second Get.
     if (double number = precisionValue.asNumber(); std::isnan(number) || number == std::numeric_limits<double>::infinity()) [[unlikely]]
         return throwVMRangeError(globalObject, scope, "precision must be a positive integer"_s);
-    JSValue roundingModeValue = options->get(globalObject, vm.propertyNames->roundingMode);
+    JSValue roundingModeValue = getOption(globalObject, options, vm.propertyNames->roundingMode);
     RETURN_IF_EXCEPTION(scope, { });
     double precision = toIntegerOption(globalObject, precisionValue, 1, "precision must be a number"_s, "precision must be a positive integer"_s);
     RETURN_IF_EXCEPTION(scope, { });
     // The steps do not check the rounding mode, and round by anything that is not one as by undefined.
     auto mode = Decimal128::RoundingMode::HalfEven;
     if (roundingModeValue.isString()) {
-        String name = asString(roundingModeValue)->value(globalObject);
+        auto named = roundingModeFromName(globalObject, asString(roundingModeValue));
         RETURN_IF_EXCEPTION(scope, { });
-        mode = roundingModeFromName(name).value_or(mode);
+        mode = named.value_or(mode);
     }
+    if (precision <= DecimalStringCache::maximumDigits && decimal->value().isShort()) [[likely]]
+        return JSValue::encode(vm.decimalStringCache().get(vm, decimal->value(), DecimalStringCache::Notation::Precision, static_cast<unsigned>(precision), mode, [&] { return decimal->value().toPrecision(precision, mode); }));
     RELEASE_AND_RETURN(scope, stringOrOutOfMemory(globalObject, decimal->value().toPrecision(precision, mode)));
 }
 
@@ -529,7 +587,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToJSON, (JSGlobalObject* globalObject, 
         // Not in the proposal. A String and not a number, whose digits JSON.parse() and most other parsers would round to those of a double.
         auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
         RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(jsString(vm, decimal->value().toString()));
+        return JSValue::encode(vm.decimalStringCache().toString(vm, decimal->value()));
     }
     return throwVMTypeError(globalObject, scope, "Decimal cannot be serialized as JSON"_s);
 }
@@ -541,6 +599,156 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncValueOf, (JSGlobalObject* globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
     return throwVMTypeError(globalObject, scope, "Decimal.prototype.valueOf must not be called. To compare Decimals, use compare(), equals() or lessThan()"_s);
 }
+
+#if ENABLE(JIT)
+
+// The methods without arguments that optimized code calls directly, with a check of the receiver that it can hoist.
+#define FOR_EACH_DIRECT_METHOD(macro) \
+    macro(Mantissa, DecimalObject::create(vm, globalObject->decimalStructure(), mantissaOf(value)), SpecObjectOther) \
+    macro(Abs, DecimalObject::create(vm, globalObject->decimalStructure(), value.abs()), SpecObjectOther) \
+    macro(Negate, DecimalObject::create(vm, globalObject->decimalStructure(), value.negate()), SpecObjectOther) \
+    macro(ToString, vm.decimalStringCache().toString(vm, value), SpecString) \
+    macro(ToExponential, vm.decimalStringCache().toExponential(vm, value), SpecString)
+
+#define DEFINE_DIRECT_METHOD(name, result, type) \
+JSC_DECLARE_JIT_OPERATION(operationDecimal##name, EncodedJSValue, (JSGlobalObject*, DecimalObject*)); \
+JSC_DEFINE_JIT_OPERATION(operationDecimal##name, EncodedJSValue, (JSGlobalObject* globalObject, DecimalObject* decimal)) \
+{ \
+    VM& vm = globalObject->vm(); \
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    auto scope = DECLARE_THROW_SCOPE(vm); \
+    const Decimal128& value = decimal->value(); \
+    OPERATION_RETURN(scope, JSValue::encode(result)); \
+}
+
+FOR_EACH_DIRECT_METHOD(DEFINE_DIRECT_METHOD)
+
+// Makes an object, and reads and writes nothing else. Not pure: two calls make two objects.
+static constexpr DOMJIT::Effect effectOfAllocation { DOMJIT::HeapRange::none(), DOMJIT::HeapRange::none(), DOMJIT::HeapRange::top(), { DFG::HeapObjectCount, DFG::InvalidAbstractHeap, DFG::InvalidAbstractHeap, DFG::InvalidAbstractHeap }, { DFG::HeapObjectCount, DFG::InvalidAbstractHeap, DFG::InvalidAbstractHeap, DFG::InvalidAbstractHeap } };
+
+#define DEFINE_METHOD_SIGNATURE(name, result, type) \
+    static const DOMJIT::Signature signatureOfDecimal##name(operationDecimal##name, DecimalObject::info(), effectOfAllocation, type);
+FOR_EACH_DIRECT_METHOD(DEFINE_METHOD_SIGNATURE)
+
+// Answers the exponent of the representation in `result`.
+static void loadExponent(CCallHelpers& jit, GPRReg base, GPRReg result)
+{
+    constexpr int bitsAbove = 64 - Decimal128::shiftOfExponent - Decimal128::bitsOfExponent;
+    jit.load64(CCallHelpers::Address(base, DecimalObject::offsetOfValue() + Decimal128::offsetOfUpper()), result);
+    jit.lshift64(CCallHelpers::TrustedImm32(bitsAbove), result);
+    jit.rshift64(CCallHelpers::TrustedImm32(64 - Decimal128::bitsOfExponent), result);
+}
+
+// Of the 16 bits that hold the exponent, whether those in the mask are the expected ones.
+static Ref<DOMJIT::CallDOMGetterSnippet> testOfExponent(int32_t mask, CCallHelpers::RelationalCondition condition, int32_t expected)
+{
+    Ref<DOMJIT::CallDOMGetterSnippet> snippet = DOMJIT::CallDOMGetterSnippet::create();
+    snippet->requireGlobalObject = false;
+    snippet->effect = DOMJIT::Effect::forPure();
+    snippet->setGenerator([=](CCallHelpers& jit, SnippetParams& params) {
+        GPRReg result = params[0].gpr();
+        jit.load16(CCallHelpers::Address(params[1].gpr(), DecimalObject::offsetOfValue() + Decimal128::offsetOfUpper() + 6), result);
+        jit.and32(CCallHelpers::TrustedImm32(mask), result);
+        jit.compare32(condition, result, CCallHelpers::TrustedImm32(expected), result);
+        jit.or32(CCallHelpers::TrustedImm32(JSValue::ValueFalse), result);
+        return CCallHelpers::JumpList();
+    });
+    return snippet;
+}
+
+static constexpr int shiftOfExponentIn16Bits = Decimal128::shiftOfExponent - 48;
+static constexpr int32_t maskOfExponent = ((1 << Decimal128::bitsOfExponent) - 1) << shiftOfExponentIn16Bits;
+
+static Ref<DOMJIT::CallDOMGetterSnippet> isNaNSnippet()
+{
+    return testOfExponent(maskOfExponent, CCallHelpers::Equal, Decimal128::exponentOfNaN << shiftOfExponentIn16Bits);
+}
+
+static Ref<DOMJIT::CallDOMGetterSnippet> isFiniteSnippet()
+{
+    // NaN and infinity differ in the last bit only.
+    static_assert((Decimal128::exponentOfNaN ^ Decimal128::exponentOfInfinity) == 1);
+    return testOfExponent(maskOfExponent & ~(1 << shiftOfExponentIn16Bits), CCallHelpers::NotEqual, (Decimal128::exponentOfInfinity & ~1) << shiftOfExponentIn16Bits);
+}
+
+// Looks at no realm, so its caller passes none: the first operand is anything.
+JSC_DECLARE_JIT_OPERATION(operationDecimalExponent, EncodedJSValue, (JSGlobalObject*, void*));
+JSC_DEFINE_JIT_OPERATION(operationDecimalExponent, EncodedJSValue, (JSGlobalObject*, void* decimal))
+{
+    return { JSValue::encode(exponentOf(static_cast<DecimalObject*>(decimal)->value())), nullptr };
+}
+
+static Ref<DOMJIT::CallDOMGetterSnippet> exponentSnippet()
+{
+    Ref<DOMJIT::CallDOMGetterSnippet> snippet = DOMJIT::CallDOMGetterSnippet::create();
+    snippet->requireGlobalObject = false;
+    snippet->numGPScratchRegisters = 3;
+    snippet->effect = DOMJIT::Effect::forPure();
+    snippet->setGenerator([=](CCallHelpers& jit, SnippetParams& params) {
+        GPRReg result = params[0].gpr();
+        GPRReg base = params[1].gpr();
+        GPRReg low = params.gpScratch(0);
+        GPRReg digits = params.gpScratch(1);
+        GPRReg scratch = params.gpScratch(2);
+
+        // A coefficient of more than 64 bits, and the values that have none.
+        CCallHelpers::JumpList slow;
+        jit.load64(CCallHelpers::Address(base, DecimalObject::offsetOfValue() + Decimal128::offsetOfUpper()), scratch);
+        jit.lshift64(CCallHelpers::TrustedImm32(64 - Decimal128::shiftOfExponent), scratch);
+        slow.append(jit.branchTest64(CCallHelpers::NonZero, scratch));
+        jit.load64(CCallHelpers::Address(base, DecimalObject::offsetOfValue() + Decimal128::offsetOfLow()), low);
+        slow.append(jit.branchTest64(CCallHelpers::Zero, low));
+
+        // As numberOfDigits().
+        jit.countLeadingZeros64(low, scratch);
+        jit.move(CCallHelpers::TrustedImm32(64), digits);
+        jit.sub32(scratch, digits);
+        jit.mul32(CCallHelpers::TrustedImm32(1233), digits, digits);
+        jit.urshift32(CCallHelpers::TrustedImm32(12), digits);
+        jit.move(CCallHelpers::TrustedImmPtr(Decimal128::powersOf10()), scratch);
+        jit.load64(CCallHelpers::BaseIndex(scratch, digits, CCallHelpers::TimesEight), scratch);
+        jit.compare64(CCallHelpers::AboveOrEqual, low, scratch, scratch);
+        jit.add32(scratch, digits);
+
+        loadExponent(jit, base, scratch);
+        jit.add32(scratch, digits);
+        jit.sub32(CCallHelpers::TrustedImm32(1), digits);
+        jit.boxInt32(digits, result);
+        params.addSlowPathCall(slow, jit, operationDecimalExponent, result, base, base);
+        return CCallHelpers::JumpList();
+    });
+    return snippet;
+}
+
+// One intrinsic is enough: the function says which method it is.
+const DOMJIT::GetterSetter* DecimalObject::inlinedMethod(TaggedNativeFunction function)
+{
+    RELEASE_ASSERT(Decimal128::hasLayoutOfGeneratedCode());
+    static const DOMJIT::GetterSetter isNaN { nullptr, isNaNSnippet, SpecBoolean };
+    static const DOMJIT::GetterSetter isFinite { nullptr, isFiniteSnippet, SpecBoolean };
+    static const DOMJIT::GetterSetter exponent { nullptr, exponentSnippet, SpecBytecodeNumber };
+    if (function == TaggedNativeFunction { decimalProtoFuncIsNaN })
+        return &isNaN;
+    if (function == TaggedNativeFunction { decimalProtoFuncIsFinite })
+        return &isFinite;
+    if (function == TaggedNativeFunction { decimalProtoFuncExponent })
+        return &exponent;
+    return nullptr;
+}
+
+// Null if it is none of them.
+const DOMJIT::Signature* DecimalObject::directMethod(TaggedNativeFunction function)
+{
+#define ANSWER_SIGNATURE(name, result, type) \
+    if (function == TaggedNativeFunction { decimalProtoFunc##name }) \
+        return &signatureOfDecimal##name;
+    FOR_EACH_DIRECT_METHOD(ANSWER_SIGNATURE)
+#undef ANSWER_SIGNATURE
+    return nullptr;
+}
+
+#endif // ENABLE(JIT)
 
 // Not in the proposal, where operators throw. See --useDecimalOperators and BytecodeGenerator::emitDecimalOperator().
 JSC_DEFINE_HOST_FUNCTION(decimalOperator, (JSGlobalObject* globalObject, CallFrame* callFrame))

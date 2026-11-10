@@ -49,6 +49,7 @@
 #include "CustomGetterSetterInlines.h"
 #include "DOMAttributeGetterSetterInlines.h"
 #include "DateInstance.h"
+#include "DecimalStringCache.h"
 #include "Debugger.h"
 #include "DeferredWorkTimer.h"
 #include "Disassembler.h"
@@ -882,6 +883,13 @@ void VM::setLastStackTop(const Thread& thread)
 Ref<VM> VM::createContextGroup(HeapType heapType)
 {
     return adoptRef(*new VM(VMType::APIContextGroup, heapType));
+}
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DecimalStringCache);
+
+void VM::initializeDecimalStringCache()
+{
+    m_decimalStringCache = makeUnique<DecimalStringCache>();
 }
 
 Ref<VM> VM::create(HeapType heapType, WTF::RunLoop* runLoop)
@@ -2407,6 +2415,8 @@ void VM::visitAggregateImpl(Visitor& visitor)
     }
 #endif
     numericStrings.visitAggregate(visitor);
+    if (m_decimalStringCache)
+        m_decimalStringCache->visitAggregate(visitor);
     m_jsonCache->visitAggregate(visitor);
     m_builtinExecutables->visitAggregate(visitor);
     m_regExpCache->visitAggregate(visitor);

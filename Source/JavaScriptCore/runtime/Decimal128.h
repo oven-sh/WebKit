@@ -5,9 +5,11 @@
 
 #pragma once
 
+#include <array>
+#include <bit>
 #include <compare>
 #include <optional>
-#include <wtf/Vector.h>
+#include <span>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
@@ -27,9 +29,9 @@ public:
 
     constexpr Decimal128() = default; // +0
 
-    static constexpr Decimal128 nan() { return { Kind::NaN, false }; }
-    static constexpr Decimal128 infinity(bool isNegative) { return { Kind::Infinity, isNegative }; }
-    static constexpr Decimal128 zero(bool isNegative) { return { Kind::Finite, isNegative }; }
+    static constexpr Decimal128 nan() { return { exponentOfNaN, false }; }
+    static constexpr Decimal128 infinity(bool isNegative) { return { exponentOfInfinity, isNegative }; }
+    static constexpr Decimal128 zero(bool isNegative) { return { 0, isNegative }; }
     static constexpr Decimal128 one()
     {
         Decimal128 result;
@@ -40,9 +42,9 @@ public:
     // StrDecimalLiteral or "NaN". No white space, no numeric separators. nullopt is a syntax error.
     static std::optional<Decimal128> parse(StringView);
 
-    bool isNaN() const { return m_kind == Kind::NaN; }
-    bool isInfinity() const { return m_kind == Kind::Infinity; }
-    bool isFinite() const { return m_kind == Kind::Finite; }
+    bool isNaN() const { return m_exponent == exponentOfNaN; }
+    bool isInfinity() const { return m_exponent == exponentOfInfinity; }
+    bool isFinite() const { return m_exponent < exponentOfInfinity; }
     bool isZero() const { return isFinite() && !m_low && !m_high; }
     bool isNegative() const { return m_isNegative; } // Also true of -0. False for NaN.
     bool isInteger() const { return isFinite() && (isZero() || m_exponent >= 0); }
@@ -64,8 +66,39 @@ public:
     // As Object.is() of Numbers: NaN is itself, and -0 and +0 differ. The representation of a value is unique.
     bool isSameValueAs(const Decimal128& other) const
     {
-        return m_low == other.m_low && m_high == other.m_high && m_exponent == other.m_exponent && m_kind == other.m_kind && m_isNegative == other.m_isNegative;
+        return words() == other.words();
     }
+
+    // For generated code: the coefficient's lower 64 bits, and the rest. See the fields.
+    std::array<uint64_t, 2> words() const { return std::bit_cast<std::array<uint64_t, 2>>(*this); }
+    static constexpr ptrdiff_t offsetOfLow() { return 0; }
+    static constexpr ptrdiff_t offsetOfUpper() { return 8; }
+    static constexpr int shiftOfExponent = 49;
+    static constexpr int bitsOfExponent = 14;
+    // Above every exponent of a finite value.
+    static constexpr int exponentOfInfinity = 8190;
+    static constexpr int exponentOfNaN = 8191;
+    // Whether the compiler has laid out the fields so. A constant expression cannot tell.
+    static bool hasLayoutOfGeneratedCode()
+    {
+        using Words = std::array<uint64_t, 2>;
+        return nan().words() == Words { 0, static_cast<uint64_t>(exponentOfNaN) << shiftOfExponent } && one().words() == Words { 1, 0 } && zero(true).words() == Words { 0, 1ull << 63 };
+    }
+    // 10^i for i < 20.
+    static const uint64_t* powersOf10();
+
+    unsigned hash() const
+    {
+        auto [low, upper] = words();
+        return static_cast<unsigned>((low ^ upper * 0x9e3779b97f4a7c15ull) * 0xbf58476d1ce4e5b9ull >> 32);
+    }
+
+    // Whether its texts are short, with a number of digits after the point or in all that is.
+    bool isShort() const { return !isFinite() || std::abs(static_cast<int>(m_exponent)) <= 64; }
+
+    // Of an integer, and of what Number::toString gives for a double. -0 is +0.
+    static Decimal128 fromInteger(int64_t);
+    static Decimal128 fromDouble(double);
 
     // NaN is unordered. -0 and +0 are equivalent.
     static std::partial_ordering compare(const Decimal128&, const Decimal128&);
@@ -86,32 +119,41 @@ public:
 
 private:
     class Wide;
-    enum class Kind : uint8_t { Finite, Infinity, NaN };
 
-    constexpr Decimal128(Kind kind, bool isNegative)
-        : m_kind(kind)
+    constexpr Decimal128(int exponent, bool isNegative)
+        : m_exponent(exponent)
         , m_isNegative(isNegative)
     {
     }
 
     Wide coefficient() const;
-    // For a value that is only written: the coefficient may end in zeros, or be 10^34.
-    void setUnrestrictedCoefficient(const Wide&);
-    Vector<Latin1Character, 40> coefficientDigits() const;
+    struct Digits {
+        std::span<const Latin1Character> span() const { return std::span { characters }.subspan(start); }
+        size_t size() const { return characters.size() - start; }
+        std::array<Latin1Character, 40> characters;
+        unsigned start;
+    };
+    Digits coefficientDigits() const;
+
+    template<typename CharacterType> static std::optional<Decimal128> parse(std::span<const CharacterType>);
+    static Decimal128 fromExact(bool isNegative, uint64_t high, uint64_t low, int64_t exponent);
 
     // The value nearest to coefficient * 10^exponent, plus something greater than 0 and less than one unit of the coefficient if isInexact.
     // An inexact coefficient has to have more digits than the precision.
-    static Decimal128 roundToDomain(bool isNegative, Wide, int64_t exponent, bool isInexact = false);
-    static Wide roundedQuotientByPowerOf10(const Wide&, int64_t power, bool isInexact, RoundingMode);
-    // Rounds away everything below 10^exponent. Answers the count of that unit.
-    Wide magnitudeInUnitsOf(int64_t exponent, RoundingMode) const;
+    static Decimal128 roundToDomain(bool isNegative, uint64_t high, uint64_t low, int64_t exponent, bool isInexact);
+    static Decimal128 roundToDomainSlow(bool isNegative, uint64_t high, uint64_t low, int64_t exponent, bool isInexact);
+    static Decimal128 roundToDomain(bool isNegative, const Wide&, int64_t exponent, bool isInexact);
+    static Wide roundedQuotientByPowerOf10(const Wide&, int64_t power, bool isInexact);
+    void roundCoefficient(int64_t power, RoundingMode, uint64_t& high, uint64_t& low) const;
     static RoundingMode modeForMagnitude(bool isNegative, RoundingMode);
 
     uint64_t m_low { 0 };
-    uint64_t m_high { 0 };
-    int16_t m_exponent { 0 };
-    Kind m_kind { Kind::Finite };
-    bool m_isNegative { false };
+    // 10^34 is less than 2^113, and an exponent needs 14 bits.
+    uint64_t m_high : shiftOfExponent { 0 };
+    int64_t m_exponent : bitsOfExponent { 0 };
+    uint64_t m_isNegative : 1 { 0 };
 };
+
+static_assert(sizeof(Decimal128) == 16);
 
 } // namespace JSC

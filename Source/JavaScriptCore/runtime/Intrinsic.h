@@ -161,6 +161,7 @@ namespace JSC {
     macro(NumberPrototypeToStringIntrinsic) \
     macro(NumberIsFiniteIntrinsic) \
     macro(NumberIsNaNIntrinsic) \
+    macro(DecimalPrototypeIntrinsic) \
     macro(NumberIsSafeIntegerIntrinsic) \
     macro(NumberIsIntegerIntrinsic) \
     macro(NumberConstructorIntrinsic) \

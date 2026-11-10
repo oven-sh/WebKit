@@ -13,19 +13,6 @@ namespace JSC {
 
 const ClassInfo DecimalObject::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(DecimalObject) };
 
-DecimalObject::DecimalObject(VM& vm, Structure* structure, const Decimal128& value)
-    : Base(vm, structure)
-    , m_value(value)
-{
-}
-
-DecimalObject* DecimalObject::create(VM& vm, Structure* structure, const Decimal128& value)
-{
-    auto* object = new (NotNull, allocateCell<DecimalObject>(vm)) DecimalObject(vm, structure, value);
-    object->finishCreation(vm);
-    return object;
-}
-
 Structure* DecimalObject::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());

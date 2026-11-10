@@ -397,8 +397,9 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
         out.print(comma, "internalFieldIndex = "_s, node->internalFieldIndex());
     if (node->hasCallDOMGetterData()) {
         CallDOMGetterData* data = node->callDOMGetterData();
-        out.print(comma, "id"_s, data->identifierNumber, "{"_s, identifiers()[data->identifierNumber], "}"_s);
-        out.print(", domJIT = "_s, RawPointer(data->domJIT));
+        if (data->customAccessorGetter)
+            out.print(comma, "id"_s, data->identifierNumber, "{"_s, identifiers()[data->identifierNumber], "}"_s);
+        out.print(comma, "domJIT = "_s, RawPointer(data->domJIT));
     }
     if (node->hasIgnoreLastIndexIsWritable())
         out.print(comma, "ignoreLastIndexIsWritable = "_s, node->ignoreLastIndexIsWritable());

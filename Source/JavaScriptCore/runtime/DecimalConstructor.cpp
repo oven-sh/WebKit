@@ -58,12 +58,15 @@ JSC_DEFINE_HOST_FUNCTION(constructDecimal, (JSGlobalObject* globalObject, CallFr
 
     JSValue argument = callFrame->argument(0);
     String text;
+    std::optional<Decimal128> value;
     if (argument.isBigInt()) {
         text = argument.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-    } else if (argument.isNumber()) {
+    } else if (argument.isInt32())
+        value = Decimal128::fromInteger(argument.asInt32());
+    else if (argument.isNumber()) {
         // Number.prototype.toExponential gives the same digits as this, and like this it drops the sign of -0.
-        text = String::number(argument.asNumber() + 0.0);
+        value = Decimal128::fromDouble(argument.asNumber());
     } else if (argument.isString()) {
         text = asString(argument)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
@@ -75,7 +78,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDecimal, (JSGlobalObject* globalObject, CallFr
     Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, decimalStructure, newTarget, callFrame->jsCallee());
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto value = Decimal128::parse(text);
+    if (!value)
+        value = Decimal128::parse(text);
     if (!value) [[unlikely]] {
         throwSyntaxError(globalObject, scope, "Failed to parse String to Decimal"_s);
         return { };
