@@ -19,6 +19,10 @@
 #include "AOTTestHarness.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <set>
+#include <vector>
+#include <wtf/Threading.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {
@@ -212,6 +216,111 @@ static void testTellingNameOfFunctionAgainDoesNothing()
     });
 }
 
+static void testEightThreadsGetOneNumberForEachSetOfFour()
+{
+    constexpr unsigned numberOfThreads = 8;
+    constexpr uint32_t numberOfSets = 20000;
+    constexpr uint32_t steps[numberOfThreads] = { 1, 3, 7, 11, 13, 17, 19, 19999 };
+    using Members = std::array<FunctionID, SetsOfFunctionsInLinkFlow::mostMembers>;
+    auto sortedMembersOf = [](uint32_t index, Members& members) {
+        size_t size = 2 + index % 3;
+        for (size_t place = 0; place < size; ++place)
+            members[place] = FunctionID(1 + index * 4 + static_cast<uint32_t>(place));
+        return std::span<const FunctionID>(members).first(size);
+    };
+
+    SetsOfFunctionsInLinkFlow sets;
+    std::array<std::vector<uint32_t>, numberOfThreads> numbersOfThread;
+    std::array<bool, numberOfThreads> everySetWasReadBack { };
+    std::atomic<unsigned> numberOfThreadsAtStart { 0 };
+    Vector<Ref<Thread>> threads;
+    for (unsigned thread = 0; thread < numberOfThreads; ++thread) {
+        threads.append(Thread::create("AOT sets of four test"_s, [&, thread] {
+            std::vector<uint32_t>& numbers = numbersOfThread[thread];
+            numbers.resize(numberOfSets);
+            bool wasReadBack = true;
+            ++numberOfThreadsAtStart;
+            while (numberOfThreadsAtStart.load() < numberOfThreads)
+                Thread::yield();
+            for (uint32_t turn = 0; turn < numberOfSets; ++turn) {
+                uint32_t index = static_cast<uint32_t>((static_cast<uint64_t>(turn) * steps[thread] + thread * 2500) % numberOfSets);
+                Members members { };
+                std::span<const FunctionID> sortedMembers = sortedMembersOf(index, members);
+                numbers[index] = sets.numberOf(sortedMembers);
+                wasReadBack &= std::ranges::equal(sets.membersOf(numbers[index]), sortedMembers);
+            }
+            everySetWasReadBack[thread] = wasReadBack;
+        }));
+    }
+    for (Ref<Thread>& thread : threads)
+        thread->waitForCompletion();
+
+    for (unsigned thread = 0; thread < numberOfThreads; ++thread) {
+        AOT_TEST_CHECK(everySetWasReadBack[thread]);
+        AOT_TEST_CHECK(numbersOfThread[thread] == numbersOfThread[0]);
+    }
+    std::set<uint32_t> distinct(numbersOfThread[0].begin(), numbersOfThread[0].end());
+    AOT_TEST_CHECK(distinct.size() == numberOfSets && sets.size() == numberOfSets);
+}
+
+static void testEightThreadsFindWhatOneOfThemWasGiven()
+{
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        String text = makeString(
+            "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s,
+            "function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Undefined\n    Return v0\n}\n"_s);
+        std::unique_ptr<Program> program = parseProgram(withStandInLibrary(text), build);
+        AOT_TEST_CHECK(program);
+        const ParallelLoops& loops = build.parallelLoops();
+        ThinSummaries summaries = scanBodies(*program, build.diagnostics(), loops);
+        Families families(*program, Families::ClassesAlone, loops);
+        BodyIndexTable bodies(static_cast<uint32_t>(program->functions.size()), loops.width());
+        OwnedLooksAtBodies looks = makeEmptyLooksAtBodies(bodies);
+        LinkFlow flow(*program, summaries, families, *looks, allMechanisms, build);
+
+        constexpr unsigned numberOfThreads = 8;
+        constexpr uint32_t numberOfQuestions = 20000;
+        constexpr uint32_t steps[numberOfThreads] = { 1, 3, 7, 11, 13, 17, 19, 19999 };
+        constexpr LinkFlow::MadeOnDemand kind = LinkFlow::MadeOnDemand::Contents;
+        auto wordsOf = [](uint32_t index) {
+            return static_cast<uint64_t>(index) << 32 | (index * 7);
+        };
+        auto givenFor = [](uint32_t index) {
+            return index * 3 + 1;
+        };
+        AOT_TEST_CHECK(!flow.findWhatSomeLaneWasGiven(kind, wordsOf(0)));
+
+        std::array<bool, numberOfThreads> everyAnswerWasTheOneGiven { };
+        std::atomic<unsigned> numberOfThreadsAtStart { 0 };
+        Vector<Ref<Thread>> threads;
+        for (unsigned thread = 0; thread < numberOfThreads; ++thread) {
+            threads.append(Thread::create("AOT given to some lane test"_s, [&, thread] {
+                bool wasTheOneGiven = true;
+                ++numberOfThreadsAtStart;
+                while (numberOfThreadsAtStart.load() < numberOfThreads)
+                    Thread::yield();
+                for (uint32_t turn = 0; turn < numberOfQuestions; ++turn) {
+                    uint32_t index = static_cast<uint32_t>((static_cast<uint64_t>(turn) * steps[thread] + thread * 2500) % numberOfQuestions);
+                    if (std::optional<uint32_t> known = flow.findWhatSomeLaneWasGiven(kind, wordsOf(index)))
+                        wasTheOneGiven &= *known == givenFor(index);
+                    else
+                        flow.keepWhatSomeLaneWasGiven(kind, wordsOf(index), givenFor(index));
+                }
+                everyAnswerWasTheOneGiven[thread] = wasTheOneGiven;
+            }));
+        }
+        for (Ref<Thread>& thread : threads)
+            thread->waitForCompletion();
+
+        for (unsigned thread = 0; thread < numberOfThreads; ++thread)
+            AOT_TEST_CHECK(everyAnswerWasTheOneGiven[thread]);
+        for (uint32_t index = 0; index < numberOfQuestions; ++index)
+            AOT_TEST_CHECK(flow.findWhatSomeLaneWasGiven(kind, wordsOf(index)) == givenFor(index));
+        AOT_TEST_CHECK(!flow.findWhatSomeLaneWasGiven(LinkFlow::MadeOnDemand::ContentsOfFamily, wordsOf(0)));
+    });
+}
+
 std::span<const NativeTest> linkGrowthTests()
 {
     static constexpr NativeTest tests[] {
@@ -219,6 +328,8 @@ std::span<const NativeTest> linkGrowthTests()
         { "link-growth/callees-of-a-call-stay-as-listed-in-the-record-and-beyond-it"_s, testCalleesOfCallStayAsListedInRecordAndBeyondIt },
         { "link-growth/the-rehearsal-of-regexp-texts-opens-as-many-regions-as-a-number-says"_s, testRehearsalOpensAsManyRegionsAsNumberSays },
         { "link-growth/telling-the-name-of-a-function-again-does-nothing"_s, testTellingNameOfFunctionAgainDoesNothing },
+        { "link-growth/eight-threads-get-one-number-for-each-set-of-four"_s, testEightThreadsGetOneNumberForEachSetOfFour },
+        { "link-growth/eight-threads-find-what-one-of-them-was-given"_s, testEightThreadsFindWhatOneOfThemWasGiven },
     };
     return tests;
 }
