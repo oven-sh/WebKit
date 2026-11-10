@@ -43,6 +43,7 @@ enum class AnswerKeptInArena : uint8_t {
     ReadFindsFieldWithoutWrittenType,
     LayoutsThatStayWithCompiledCode,
     FieldOfLayoutsIsStable,
+    DeclaredFieldOfLayoutsIsStable,
     NumberOfAnswers,
 };
 

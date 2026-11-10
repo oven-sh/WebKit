@@ -1613,11 +1613,12 @@ void holdDoorsToProofsInSlotPlan(Program& program, const Facts& facts, const Par
                     if (const LinkedCell* cell = mayBeStable ? facts.linked().findCellOfField(reference) : nullptr)
                         slot.isStable = cell->everyWriterIsKnown && !cell->isWrittenAfterConstruction && cell->isFilledAtEveryRead;
                     TypeID proven = facts.linked().provenOfField(reference);
-                    slot.isStable &= !!proven;
+                    slot.isStable &= proven || !slot.type;
                     if (!proven)
                         continue;
                     slot.everyStoreFits = !slot.type || types.isSubset(proven, slot.type);
                     slot.isStable &= slot.everyStoreFits;
+                    slot.isStableWithoutNullish = slot.isStable && !(types.at(proven).primitives & (Primitive::UndefinedOrNull | Primitive::Absent));
                     if (!slot.everyStoreFits || !hasDoors || !slot.indexInLayoutRecord || !slot.hasStorage() || slot.holdsAccessor || slot.deferredFunction)
                         continue;
                     fieldsWithDoorsInRanges[range].append(reference);

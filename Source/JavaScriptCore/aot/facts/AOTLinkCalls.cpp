@@ -7237,7 +7237,11 @@ void LinkFlow::callObserved(const FlowObserver& observer, const LinkType& told)
         return;
     uint32_t numberOfCallObserved = firstCallOfFunction[observer.function.index()] + observer.record;
     bool isEnteredNoMore = state.callsOfUnseen[numberOfCallObserved] == StateOfLinkCalls::hasGivenUpInSight || (state.callsOfUnseen[numberOfCallObserved] && !state.callsThatEnterMembersOfTable[numberOfCallObserved]);
-    if (isEnteredNoMore && hasSameObjectsAndFunctions(told, typeObservedBefore()) && told.hasDirectUnknownObjects() == typeObservedBefore().hasDirectUnknownObjects() && (told.hasUnknownObjects == typeObservedBefore().hasUnknownObjects || summaries.at(observer.function).calls[observer.record].newTarget == noSummaryNode || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::IgnoreEscapeAfterUnknownCall)))
+    auto hasNewTarget = [&] {
+        return summaries.at(observer.function).calls[observer.record].newTarget != noSummaryNode;
+    };
+    bool ignoresNewTarget = AOT::hasFlag(build.options().testing, Wire::TestingSwitch::IgnoreEscapeAfterUnknownCall) && hasNewTarget();
+    if ((isEnteredNoMore || ignoresNewTarget) && hasSameObjectsAndFunctions(told, typeObservedBefore()) && (ignoresNewTarget || (told.hasDirectUnknownObjects() == typeObservedBefore().hasDirectUnknownObjects() && (told.hasUnknownObjects == typeObservedBefore().hasUnknownObjects || !hasNewTarget()))))
         return;
     if (!std::exchange(state.callsToResolve[firstCallOfFunction[observer.function.index()] + observer.record], 1))
         state.observersToResolve[laneOfObserversOf(observer.function)].append(observer);

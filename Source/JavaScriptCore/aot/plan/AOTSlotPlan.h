@@ -106,6 +106,7 @@ struct PlacedSlot {
     bool deferredClosureCapturesEnvironment { false };
     bool mayTakeWordLeftInCell { false };
     bool isStable { false };
+    bool isStableWithoutNullish { false };
     uint32_t offset { 0 };
     std::optional<uint16_t> indexInLayoutRecord;
     FunctionID deferredFunction;

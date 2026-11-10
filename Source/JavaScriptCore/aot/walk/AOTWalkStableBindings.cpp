@@ -70,18 +70,21 @@ bool Walker::framesKeepFields() const
     return *last.keepsFields;
 }
 
-bool Walker::isStableFieldOf(LayoutSetID receivers, PropertyKeyID key) const
+bool Walker::isStableFieldOf(LayoutSetID receivers, PropertyKeyID key, bool holdsDeclaredType) const
 {
     auto isStableIn = [&](LayoutID member) {
         std::optional<FieldIndex> field = plan().slots().findField(program(), member, key);
-        return field && plan().slots().slot(member, *field).isStable;
+        if (!field)
+            return false;
+        const PlacedSlot& slot = plan().slots().slot(member, *field);
+        return holdsDeclaredType ? slot.isStableWithoutNullish : slot.isStable;
     };
     std::span<const LayoutID> members = membersOf(m_types, receivers);
     if (members.size() <= 1)
         return !members.empty() && isStableIn(members.front());
     if (m_types.keeps() != ArenaKeeps::UntilReset)
         return std::ranges::all_of(members, isStableIn);
-    constexpr uint8_t question = static_cast<uint8_t>(AnswerKeptInArena::FieldOfLayoutsIsStable);
+    uint8_t question = static_cast<uint8_t>(holdsDeclaredType ? AnswerKeptInArena::DeclaredFieldOfLayoutsIsStable : AnswerKeptInArena::FieldOfLayoutsIsStable);
     TypeArena::SetOfRound round = m_types.setOfRound(receivers);
     if (std::optional<TypeArena::WordsOfRound> kept = m_types.rememberedRound(question, 1, round, key.bits()))
         return (*kept)[0];
@@ -92,7 +95,7 @@ bool Walker::isStableFieldOf(LayoutSetID receivers, PropertyKeyID key) const
 
 bool Walker::readsStableField(const Draft& read) const
 {
-    if (read.level() != KnowledgeLevel::Proven || read.holdsDeclaredType() || read.receiverMayBeInBirth() || !isStableFieldOf(read.receivers(), read.key()) || testsItsOwnGuess(read))
+    if (read.level() != KnowledgeLevel::Proven || read.receiverMayBeInBirth() || !isStableFieldOf(read.receivers(), read.key(), read.holdsDeclaredType()) || testsItsOwnGuess(read))
         return false;
     Reference object = read.objectOperand();
     if (!object || !object.isValue() || !framesKeepFields())

@@ -1510,7 +1510,7 @@ public:
     uint32_t& numberOfStretchesBehindBytesOfMembers() { return m_numberOfStretchesBehindBytesOfMembers; }
     bool shouldAssumeCalleesRetainNothing() const { return m_inputs.options.shouldAssumeCalleesRetainNothing; }
     bool framesKeepFields() const;
-    bool isStableFieldOf(LayoutSetID receivers, PropertyKeyID) const;
+    bool isStableFieldOf(LayoutSetID receivers, PropertyKeyID, bool holdsDeclaredType) const;
     bool readsStableField(const Draft& read) const;
     Reference valueOfStableField(const Draft& read, TypeID proven) const;
     void noteStableField(const Draft& read, Reference value);
