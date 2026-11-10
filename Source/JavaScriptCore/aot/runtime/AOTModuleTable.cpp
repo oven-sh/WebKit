@@ -57,7 +57,8 @@ const CyclesOfImports::Member* CyclesOfImports::find(ModuleID module) const
 }
 
 ReexportedNames::ReexportedNames(const ModuleTable& table)
-    : m_answers(FillWith { }, table.programTables().requiredNames().size(), Answer::NotAsked)
+    : m_answers(table.programTables().requiredNames().size())
+    , m_seen(table.size())
     , m_modulesWithNamesInTables(table.size())
     , m_modulesWithOtherNames(table.size())
 {
@@ -69,10 +70,6 @@ ReexportedNames::ReexportedNames(const ModuleTable& table)
             hasExportOfOtherModule |= entry.isFromStarExport;
             switch (entry.kind()) {
             case ModuleExportKind::Variable:
-                break;
-            case ModuleExportKind::Field:
-                if (ModuleID declaring = table.exportedField(entry).declaringModule(); declaring != reexporter)
-                    edges.append({ declaring.index(), index });
                 break;
             case ModuleExportKind::Namespace:
                 edges.append({ entry.targetModule().index(), index });
@@ -154,8 +151,6 @@ static bool haveSameBinding(const ModuleExportData& a, const ModuleExportData& b
     switch (a.kind()) {
     case ModuleExportKind::Variable:
         return a.variable == b.variable;
-    case ModuleExportKind::Field:
-        return a.exportedField == b.exportedField;
     case ModuleExportKind::Namespace:
         return a.module == b.module && a.isDeferred == b.isDeferred;
     case ModuleExportKind::Indirect:
@@ -164,82 +159,138 @@ static bool haveSameBinding(const ModuleExportData& a, const ModuleExportData& b
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool ReexportedNames::tryResolveInTables(const ModuleTable& table, ModuleID exporter, uint32_t name, BitVector& seen, const ModuleExportData*& found)
+static uint64_t keyOf(ModuleID exporter, uint32_t name)
 {
-    if (seen.quickSet(exporter.index()))
-        return true;
-    if (std::optional<unsigned> index = table.findExport(exporter, name)) {
-        const ModuleExportData& entry = table.exports(exporter)[*index];
-        if (entry.isHiddenUntilInitialized)
-            return false;
-        if (entry.kind() == ModuleExportKind::Indirect) {
-            const IndirectExportData& binding = table.indirectExport(entry);
-            return binding.importName == name && areNamesBehindStarsInTables(table, binding.targetModule())
-                && tryResolveInTables(table, binding.targetModule(), name, seen, found) && found;
-        }
-        if (found && !haveSameBinding(*found, entry))
-            return false;
-        found = &entry;
-        if (!entry.isFromStarExport)
-            return true;
-    } else if (table.isAmbiguousExport(exporter, ProgramStrings::viewInImage(table.programTables(), ProgramStrings::identifierString(table.programTables(), name))))
-        return false;
-    for (ModuleRequestData request : table.dynamicStars(exporter)) {
-        if (!tryResolveInTables(table, request.targetModule(), name, seen, found))
-            return false;
-    }
-    return true;
+    return static_cast<uint64_t>(exporter.index()) << 32 | name;
 }
 
-auto ReexportedNames::bindingsOf(const ModuleTable& table, ModuleID exporter) -> const Bindings&
+static bool hasDynamicStars(const ModuleTable& table, ModuleID module)
 {
-    std::unique_ptr<Bindings>& bindings = m_bindings.add(exporter.index(), nullptr).iterator->value;
-    if (bindings)
-        return *bindings;
-    bindings = makeUnique<Bindings>();
-    BitVector seen(table.size());
-    Vector<ModuleID, 8> toVisit { exporter };
-    while (!toVisit.isEmpty()) {
-        ModuleID visited = toVisit.takeLast();
-        if (seen.quickSet(visited.index()))
+    for ([[maybe_unused]] ModuleRequestData request : table.dynamicStars(module))
+        return true;
+    return false;
+}
+
+static bool isAmbiguousName(const ModuleTable& table, ModuleID exporter, uint32_t name)
+{
+    return table.isAmbiguousExport(exporter, ProgramStrings::viewInImage(table.programTables(), ProgramStrings::identifierString(table.programTables(), name)));
+}
+
+auto ReexportedNames::starsOf(const ModuleTable& table, ModuleID exporter) -> const Stars&
+{
+    std::unique_ptr<Stars>& stars = m_stars.add(exporter.index(), nullptr).iterator->value;
+    if (stars)
+        return *stars;
+    stars = makeUnique<Stars>();
+    for (ModuleRequestData request : table.dynamicStars(exporter)) {
+        ModuleID target = request.targetModule();
+        if (hasDynamicStars(table, target)) {
+            stars->reexporters.append(target);
             continue;
-        for (const ModuleExportData& entry : table.exports(visited)) {
+        }
+        stars->listsEveryName &= table.ambiguousExports(target).empty();
+        for (const ModuleExportData& entry : table.exports(target)) {
             bool isBinding = entry.kind() != ModuleExportKind::Indirect && !entry.isHiddenUntilInitialized;
-            auto added = bindings->byName.add(entry.name, isBinding ? &entry : nullptr);
+            auto added = stars->bindings.add(entry.name, isBinding ? &entry : nullptr);
             if (added.isNewEntry)
                 continue;
             const ModuleExportData*& binding = added.iterator->value;
             if (binding && !(isBinding && haveSameBinding(*binding, entry)))
                 binding = nullptr;
         }
-        bindings->listsEveryName &= table.ambiguousExports(visited).empty();
-        for (ModuleRequestData request : table.dynamicStars(visited))
-            toVisit.append(request.targetModule());
     }
-    return *bindings;
+    return *stars;
+}
+
+auto ReexportedNames::resolveHere(const ModuleTable& table, ModuleID exporter, uint32_t name, const Stars& stars) -> Resolution
+{
+    const ModuleExportData* found = nullptr;
+    if (std::optional<unsigned> index = table.findExport(exporter, name)) {
+        const ModuleExportData& entry = table.exports(exporter)[*index];
+        if (entry.isHiddenUntilInitialized)
+            return { };
+        if (entry.kind() == ModuleExportKind::Indirect) {
+            const IndirectExportData& binding = table.indirectExport(entry);
+            if (binding.importName != name || !areNamesBehindStarsInTables(table, binding.targetModule()))
+                return { };
+            Resolution resolution = resolve(table, binding.targetModule(), name);
+            return resolution.answer == Answer::Found ? resolution : Resolution { };
+        }
+        found = &entry;
+        if (!entry.isFromStarExport)
+            return { Answer::Found, found };
+    } else if (isAmbiguousName(table, exporter, name))
+        return { };
+
+    auto add = [&](Resolution resolution) {
+        if (resolution.answer == Answer::Unknown || (found && resolution.binding && !haveSameBinding(*found, *resolution.binding)))
+            return false;
+        if (resolution.binding)
+            found = resolution.binding;
+        return true;
+    };
+    auto binding = stars.bindings.find(name);
+    bool isInBindings = binding != stars.bindings.end();
+    if (stars.listsEveryName && (!isInBindings || binding->value)) {
+        if (isInBindings && !add({ Answer::Found, binding->value }))
+            return { };
+    } else {
+        for (ModuleRequestData request : table.dynamicStars(exporter)) {
+            if (ModuleID target = request.targetModule(); !hasDynamicStars(table, target) && !add(resolve(table, target, name)))
+                return { };
+        }
+    }
+    for (ModuleID reexporter : stars.reexporters) {
+        if (!add(resolve(table, reexporter, name)))
+            return { };
+    }
+    return { found ? Answer::Found : Answer::NotFound, found };
+}
+
+auto ReexportedNames::resolve(const ModuleTable& table, ModuleID exporter, uint32_t name) -> Resolution
+{
+    Vector<ModuleID, 8> modulesWithSameAnswer;
+    Resolution resolution;
+    while (true) {
+        if (auto known = m_resolutions.find(keyOf(exporter, name)); known != m_resolutions.end()) {
+            resolution = known->value;
+            break;
+        }
+        if (m_seen.quickSet(exporter.index())) {
+            m_isOnCycle = true;
+            return { Answer::NotFound, nullptr };
+        }
+        m_visited.append(exporter);
+        modulesWithSameAnswer.append(exporter);
+        const Stars& stars = starsOf(table, exporter);
+        bool hasAnswerOfReexporter = stars.reexporters.size() == 1 && stars.listsEveryName && !stars.bindings.contains(name)
+            && !table.findExport(exporter, name) && !isAmbiguousName(table, exporter, name);
+        if (!hasAnswerOfReexporter) {
+            resolution = resolveHere(table, exporter, name, stars);
+            break;
+        }
+        exporter = stars.reexporters[0];
+    }
+    if (!m_isOnCycle) {
+        for (ModuleID module : modulesWithSameAnswer)
+            m_resolutions.add(keyOf(module, name), resolution);
+    }
+    return resolution;
 }
 
 auto ReexportedNames::resolve(const ModuleTable& table, const RequiredNameData& requiredName) -> Answer
 {
-    Answer& answer = m_answers[&requiredName - table.programTables().requiredNames().data()];
-    if (answer != Answer::NotAsked)
-        return answer;
+    std::optional<Answer>& answer = m_answers[&requiredName - table.programTables().requiredNames().data()];
+    if (answer)
+        return *answer;
     answer = Answer::Unknown;
-    ModuleID exporter = requiredName.exporterModule();
-    if (areNamesBehindStarsInTables(table, exporter)) {
-        if (const Bindings& bindings = bindingsOf(table, exporter); bindings.listsEveryName) {
-            auto binding = bindings.byName.find(requiredName.name);
-            if (binding == bindings.byName.end())
-                return answer = Answer::NotFound;
-            if (binding->value)
-                return answer = Answer::Found;
-        }
-        BitVector seen(table.size());
-        const ModuleExportData* found = nullptr;
-        if (tryResolveInTables(table, exporter, requiredName.name, seen, found))
-            answer = found ? Answer::Found : Answer::NotFound;
+    if (ModuleID exporter = requiredName.exporterModule(); areNamesBehindStarsInTables(table, exporter)) {
+        m_isOnCycle = false;
+        answer = resolve(table, exporter, requiredName.name).answer;
+        for (ModuleID visited : std::exchange(m_visited, { }))
+            m_seen.quickClear(visited.index());
     }
-    return answer;
+    return *answer;
 }
 
 static std::strong_ordering compareCodePoints(StringView first, StringView second)

@@ -50,7 +50,7 @@ extern "C" void Bun__initializeSHA1(void* context);
 extern "C" void Bun__updateSHA1(void* context, std::span<const uint8_t>);
 extern "C" void Bun__finishSHA1(void* context, std::array<uint8_t, 20>&);
 
-// SHA-1 from the embedder's crypto library, which uses the processor's SHA instructions. Off macOS, WTF::SHA1 is portable code and several times slower.
+// SHA-1 with the processor's SHA instructions. WTF::SHA1 is several times slower off macOS.
 class SourceHasher {
 public:
     static constexpr size_t contextSize = 128;

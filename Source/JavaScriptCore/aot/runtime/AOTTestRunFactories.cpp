@@ -501,7 +501,7 @@ void Modules::deferMock(ModuleID module, FactoryFailurePolicy failurePolicy)
     noteDeedOnMockUnderCallsOfImport(module, DeedOnMock::LaysAnother);
     bool ranAheadOfThisTestFile = data(module).kind == ModuleKind::CommonJs && wasLoadedBeforeTestFile(module);
     if ((m_modulesWithDeferredMock.get(module.index()) || ranAheadOfThisTestFile) && !activeMock(module) && !isPatchedByMock(module))
-        letGoOfImportersOf(module, ImportersLetGo::All);
+        releaseImportersOf(module, ReleasedImporters::All);
     if (hasDeferredFetchOf(fileOf(module)))
         m_filesToEvictOnceFetched.set(fileOf(module).index());
     if (m_delayedImportTargets.contains(module))
@@ -663,7 +663,7 @@ void Modules::forgetMockThatWaits(ModuleID module)
     };
     if (m_modulesWithPendingMock.clear(module.index()) && !activeMock(module) && !m_mocksWhoseEntryProgramDeleted.get(module.index()) && wasAskedForByLoadThatFailed()) [[unlikely]]
         clearMockLoadErrors();
-    letGoOfNamespaceOfFileThatRanAheadOfMock(module);
+    releaseNamespaceBeforeMock(module);
     if (!m_modulesWithDeferredMock.get(module.index()))
         return;
     m_modulesWithDeferredMock.clear(module.index());
@@ -1578,7 +1578,7 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
                 links = &m_linksOfLoadsThatMayFail.last();
             }
             links->before.moments.appendVector(before.moments);
-            links->before.modulesThatLoaderLetGo.merge(before.modulesThatLoaderLetGo);
+            links->before.modulesReleasedByLoader.merge(before.modulesReleasedByLoader);
             links->before.importersOfMockThatEnded.merge(before.importersOfMockThatEnded);
         }
         if (!m_linksOfLoadsThatMayFail.isEmpty()) [[unlikely]]

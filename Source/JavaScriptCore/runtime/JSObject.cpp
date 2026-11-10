@@ -4499,7 +4499,7 @@ static bool onlyRepeatsOrRestrictsProperty(JSGlobalObject* globalObject, const P
     return !descriptor.value() || sameValue(globalObject, descriptor.value(), current.value());
 }
 
-// True for the descriptor that reflection reports for a locked property, with every field present, where that is not what the structure has.
+// True if reflection reports a locked property differently from the structure.
 static bool repeatsReportedDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
 {
     if (!descriptor.isDataDescriptor() || !descriptor.value() || !descriptor.writablePresent() || !descriptor.enumerablePresent() || !descriptor.configurablePresent())

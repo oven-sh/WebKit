@@ -5700,8 +5700,7 @@ BasicBlock* OMGIRGenerator::targetBlockForBranch(ControlData& data)
     if (!dispatch)
         return data.targetBlockForBranch();
 
-    // A branch to the state machine from a block that has stored a constant in the local can reach one
-    // case only, so it goes there directly.
+    // A branch from a block that has stored a constant in the local goes directly to its case.
     Variable* state = dispatch->child(0)->as<VariableValue>()->variable();
     for (unsigned index = m_currentBlock->size(); index--;) {
         auto* store = m_currentBlock->at(index)->as<VariableValue>();
@@ -5718,8 +5717,7 @@ BasicBlock* OMGIRGenerator::targetBlockForBranch(ControlData& data)
     return data.targetBlockForBranch();
 }
 
-// When every branch to a state machine went straight to its case, the switch runs once, on the way in.
-// A machine starts in its first state unless it is being resumed, so that state is tested for before the table.
+// When every branch went straight to its case, the switch runs once, on the way in, mostly in its first state.
 void OMGIRGenerator::emitFirstStateTest(const ControlData& loop)
 {
     BasicBlock* header = loop.special;

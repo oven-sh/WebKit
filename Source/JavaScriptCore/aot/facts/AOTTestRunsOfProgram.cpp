@@ -141,10 +141,6 @@ bool mayComeThroughMock(const Program& program, const MocksOfProgram& mocks, Mod
         return false;
     case ModuleExportKind::Indirect:
         return mocks.isAnyModuleMocked;
-    case ModuleExportKind::Field:
-        if (!entry.layout || entry.layout.index() >= program.layouts.size())
-            return true;
-        return program.at(entry.layout).module != exporter && mocks.modulesReachingMocks.get(exporter.index());
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

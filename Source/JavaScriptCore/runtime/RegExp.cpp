@@ -442,7 +442,7 @@ static Yarr::PatternAnalysis patternAnalysisFor(VM& vm)
     // validateRegExpFlatProgram lets a shell that runs no compiled program test the flat program.
     bool isPerformed = vm.hasCompiledCode() || Options::validateRegExpFlatProgram();
 #if ENABLE(AOT)
-    // The analysis is needed only where patterns are compiled as they are for an image. Otherwise the JIT takes the pattern as written.
+    // The analysis is needed only where patterns are compiled for an image.
     isPerformed |= Options::useRegExpImageMode();
 #endif
     return isPerformed ? Yarr::PatternAnalysis::Performed : Yarr::PatternAnalysis::Skipped;

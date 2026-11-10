@@ -2478,7 +2478,6 @@ void CallInLinkCalls::callExportOf(const Layout& layout)
                 callUnseen();
             return;
         case ModuleExportKind::Namespace:
-        case ModuleExportKind::Field:
             callUnseen();
             return;
         case ModuleExportKind::Indirect: {

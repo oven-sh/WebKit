@@ -516,7 +516,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
     const uint8_t* hasRunSinceClear = &instance->propertyCaches.hasRunSinceClear;
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()), hasRunSinceClear);
-    instance->state->caches->addClearedEachCollection("places hold copies of slots"_s, asMutableByteSpan(instance->propertyCaches.placesHoldCopiesOfSlots), hasRunSinceClear);
+    instance->state->caches->addClearedEachCollection("places hold copies of slots"_s, asMutableByteSpan(instance->propertyCaches.hasCachedSlotValues), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("access table"_s, asMutableByteSpan(accessTableOf(*instance, *instance->program)), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("keys of the access table that depend on chains"_s, asMutableByteSpan(instance->propertyCaches.accessTable.numberOfKeysThatDependOnChains), hasRunSinceClear);
@@ -539,6 +539,14 @@ Instance* Instance::create(JSGlobalObject* realm)
 #endif
     releaseUnusedPagesOfThread();
     return instance;
+}
+
+void VMState::didChangeInstances()
+{
+    onlyInstance = instances.size() == 1 ? instances.first() : nullptr;
+    if (onlyInstance)
+        onlyInstance->propertyCaches.hasRunSinceClear = true;
+    instanceOfRecentRun = { };
 }
 
 void Instance::destroy(Instance* instance)

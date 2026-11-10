@@ -295,7 +295,7 @@ static void checkModuleTables(const JoinedTables& check)
     std::span<const ModuleExportData> exports = tables.moduleExports();
     for (size_t index = 0; index < numberOfModules; ++index) {
         uint32_t endOfExports = modules[index + 1].firstExport;
-        while (endOfExports > modules[index].firstExport && endOfExports <= exports.size() && exports[endOfExports - 1].isHidden())
+        if (endOfExports > modules[index].firstExport && endOfExports <= exports.size() && exports[endOfExports - 1].kindBits == ModuleExportData::kindBitsOfWordOfMock)
             --endOfExports;
         checkNamesOfModule(check, exports, modules[index].firstExport, endOfExports);
         checkNamesOfModule(check, tables.syntheticExports(), modules[index].firstSyntheticExport, modules[index + 1].firstSyntheticExport);

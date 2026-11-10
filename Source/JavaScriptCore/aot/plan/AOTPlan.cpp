@@ -252,7 +252,7 @@ static BitVector variablesDescribedToRunTimeByPlan(const Program& program)
             add(binding.variable);
     }
     for (uint32_t index = 0; index < program.variables.size(); ++index) {
-        if (program.variables[index].flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::HoldsInstance, VariableFlags::GuardsInstance, VariableFlags::AllocatesInstance }) || program.variables[index].owner)
+        if (program.variables[index].flags.contains(VariableFlags::HoldsMock) || program.variables[index].owner)
             described.quickSet(index);
     }
     return described;
@@ -305,7 +305,7 @@ static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, con
                 continue;
             const LinkedCell& cell = linked.variable(definition.variable);
             if (!cell.everyWriterIsKnown || cell.isWrittenAfterConstruction || !cell.proven || variable.owner || variable.initialization == VariableInitialization::Function
-                || variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable, VariableFlags::HoldsInstance }))
+                || variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable }))
                 continue;
             if (!index)
                 index = facts.bodies().find(body);
@@ -372,7 +372,7 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
         if (declaration.owner)
             continue;
         if (holdsNumbersRaw && !planned.isDescribedToRunTime && declaration.initialization != VariableInitialization::Function && !filledByRunTime.get(index)
-            && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance }))
+            && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
             planned.representation = formOfNumbersProvenOfVariableInPlan(program, facts.linked(), VariableID(index));
         SlotTraits traits = traitsOf(planned.representation);
         switch (declaration.initialization) {

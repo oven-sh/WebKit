@@ -592,7 +592,7 @@ static void locateAcceptedKind(StubAssembler& jit, GPRReg value, GPRReg type, GP
 
 static void notePlaceCopiedFromSlot(StubAssembler& jit)
 {
-    jit.store8(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.placesHoldCopiesOfSlots)));
+    jit.store8(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.hasCachedSlotValues)));
 }
 
 void rememberPlaceOfValueInField(StubAssembler& jit, GPRReg object, GPRReg key, GPRReg value, GPRReg type, GPRReg address, GPRReg classOfSlot, GPRReg place, GPRReg scratch, GPRReg secondScratch)

@@ -325,8 +325,8 @@ static bool needsSourceDigest()
 #endif
 }
 
-// Compiled code does not depend on the payloads of data and custom sections, so the digest that finds a module's code in an image skips them.
-// Options::useEagerWasmModuleHashing() names a module by the same digest, so that name is not the SHA-1 of the module's file.
+// Compiled code does not depend on data and custom sections, so the digest of an image skips them.
+// Options::useEagerWasmModuleHashing() uses the same digest, not the SHA-1 of the file.
 void StreamingParser::hashConsumedBytes(std::span<const uint8_t> bytes)
 {
     if (!Options::useEagerWasmModuleHashing() && !needsSourceDigest()) [[likely]]

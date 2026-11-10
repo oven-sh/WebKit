@@ -405,22 +405,10 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     State& state = State::of(query.structureBefore->realm());
     const ModuleExportData& moduleExport = state.modules->table().exports(moduleNamespace->module())[*index];
     if (moduleExport.kind() == ModuleExportKind::Namespace) {
-        JSValue inner = state.modules->readExportIfInitialized(moduleNamespace->module(), *index, moduleNamespace->boundModuleInstance());
+        JSValue inner = state.modules->readExportIfInitialized(moduleNamespace->module(), *index);
         if (!inner)
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
-    }
-    if (moduleExport.kind() == ModuleExportKind::Field) {
-        const ExportedFieldData& field = state.modules->table().exportedField(moduleExport);
-        bool isDeferredClosure = traitsOf(field.slot.representation()).valueKind == SlotValueKind::DeferredClosure;
-        if (isDeferredClosure || state.modules->findMockForReexport(moduleNamespace->module(), moduleExport))
-            return PropertyAnswer::uncacheable(SlotAccess::Read);
-        bool isOfOtherModule = field.declaringModule() != moduleNamespace->module();
-        Environment* bound = moduleNamespace->boundModuleInstance();
-        Environment* instance = isOfOtherModule ? state.modules->instanceForField(moduleNamespace->module(), field, bound) : bound;
-        if (!instance || !state.modules->readExportIfInitialized(moduleNamespace->module(), *index, bound))
-            return uncacheableOnce(SlotAccess::Read);
-        return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .isInModuleInstance = true, .instanceOfOtherModule = isOfOtherModule ? instance : nullptr, .variable = field.slot };
     }
     if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->findMockForReexport(moduleNamespace->module(), moduleExport))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
@@ -1203,14 +1191,6 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
         return Slot::createInheritedField(id, flags, answer.holder, answer.wordOfInheritedField);
     case PropertyAnswerKind::Variable:
         RELEASE_ASSERT(isRead);
-        if (answer.isInModuleInstance)
-            flags |= Slot::isInModuleInstance;
-        if (JSCell* instance = answer.instanceOfOtherModule) {
-            uintptr_t cageBase = receiverStructure->vm().heap.cage().base();
-            if (MarkedBlockCage::baseOf(instance) != cageBase)
-                return Slot::createWithoutPayload(id, Kind::Uncacheable, 0);
-            return Slot::createField(id, Kind::Variable, flags, answer.variable, MarkedBlockCage::encode(cageBase, instance), 0);
-        }
         return Slot::createField(id, Kind::Variable, flags, answer.variable, 0, 0);
     case PropertyAnswerKind::ExtraProperty:
         return slotForExtraProperty(answer, id, receiverStructure, Kind::ExtraProperty, flags);

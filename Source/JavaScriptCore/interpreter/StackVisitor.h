@@ -103,7 +103,7 @@ public:
         JS_EXPORT_PRIVATE const AOT::CompiledFrame& compiledFrame() const;
         // This frame represents the built-in function that compiledFrame() calls and that compiled code runs inline.
         bool isInlinedBuiltinFrame() const { return m_isInlinedBuiltinFrame; }
-        // This frame represents a constructor that has no machine frame yet, and compiledFrame() is its caller's frame. See CompiledFrameIterator::elidedConstructorFrame().
+        // A constructor that has no machine frame yet: compiledFrame() is its caller's frame.
         bool isElidedConstructorFrame() const { return m_isElidedConstructorFrame; }
         JS_EXPORT_PRIVATE bool isConstructCall() const;
 #else

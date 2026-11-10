@@ -660,7 +660,6 @@ static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExp
         declared.establish(Proven::byPosition(typeOfNamespace));
         return declared;
     case ModuleExportKind::Indirect:
-    case ModuleExportKind::Field:
         return declared;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -731,14 +730,6 @@ void Program::appendNamespaceLayouts(const ParallelLoops& loops)
     Vector<TypeID> typesOfExportedNamespaces(numberOfExports);
     for (uint32_t number : exportedNamespaces)
         typesOfExportedNamespaces[number] = typeOfExportedNamespace(*this, exportNumbered(number), arenas.of(0));
-
-    m_derivedTables.exportedFields = collectInParallel<FieldReference>(loops, static_cast<unsigned>(modules.size()), [&](unsigned index, Vector<FieldReference>& found) {
-        for (const ModuleExport& entry : modules[index].exports) {
-            if (entry.kind == ModuleExportKind::Field && entry.field)
-                found.append({ entry.layout, *entry.field });
-        }
-    });
-    sortAndRemoveDuplicates(loops, m_derivedTables.exportedFields);
 
     forEachIndexInParallel(loops, static_cast<unsigned>(holders.size()), [&](unsigned holder) {
         size_t first = firstExportOfHolder[holder];

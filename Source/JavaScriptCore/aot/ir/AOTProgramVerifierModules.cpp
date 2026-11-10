@@ -101,16 +101,6 @@ static BitVector findModulesWithVariableThatHoldsMock(const Program& program)
     return modules;
 }
 
-static BitVector findModulesWithInstances(const Program& program)
-{
-    BitVector modules(program.modules.size());
-    for (const Variable& variable : program.variables) {
-        if (variable.flags.contains(VariableFlags::HoldsInstance))
-            modules.quickSet(variable.module.index());
-    }
-    return modules;
-}
-
 static bool hasRequiredIDs(const Module& module)
 {
     auto isSet = [](auto id) { return !!id; };
@@ -180,17 +170,9 @@ static bool isOmittedDataExport(const Program& program, const ModuleExport& entr
     return owner && program.at(owner).kind == ModuleKind::Data;
 }
 
-static bool isInstanceLayout(const Program& program, LayoutID id, const BitVector& modulesWithInstances)
-{
-    const Layout& layout = program.at(id);
-    return layout.kind == LayoutKind::Environment && layout.module && modulesWithInstances.quickGet(layout.module.index());
-}
-
-static bool hasOneBinding(const Program& program, const ModuleExport& entry, const BitVector& modulesWithVariableThatHoldsMock, const BitVector& modulesWithInstances)
+static bool hasOneBinding(const Program& program, const ModuleExport& entry, const BitVector& modulesWithVariableThatHoldsMock)
 {
     if (entry.isOmitted && !isOmittedDataExport(program, entry))
-        return false;
-    if ((entry.layout || entry.field) && entry.kind != ModuleExportKind::Field)
         return false;
     switch (entry.kind) {
     case ModuleExportKind::Variable:
@@ -199,9 +181,6 @@ static bool hasOneBinding(const Program& program, const ModuleExport& entry, con
         return entry.module && !entry.variable && !entry.importName;
     case ModuleExportKind::Indirect:
         return entry.module && entry.importName && !entry.variable && entry.phase == ImportPhase::Evaluation && (findsNamesAtRunTime(program.at(entry.module)) || modulesWithVariableThatHoldsMock.quickGet(entry.module.index()) || handsOnNameThatRunFinds(program, program.at(entry.module), entry.importName));
-    case ModuleExportKind::Field:
-        return entry.layout && isInstanceLayout(program, entry.layout, modulesWithInstances) && entry.field && *entry.field < program.at(entry.layout).fields.size()
-            && !entry.variable && !entry.module && !entry.importName && entry.phase == ImportPhase::Evaluation;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -305,7 +284,7 @@ static bool hasValidBundlerHelperFlag(const Program& program, const Module& modu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<InternalErrorKind> findModuleError(const Program& program, const Module& module, bool hasValidBody, const BitVector& modulesWithVariableThatHoldsMock, const BitVector& modulesWithInstances)
+static std::optional<InternalErrorKind> findModuleError(const Program& program, const Module& module, bool hasValidBody, const BitVector& modulesWithVariableThatHoldsMock)
 {
     ModuleKindRules rules = rulesOf(module.kind);
     bool isLibrary = module.flags.contains(ModuleFlags::IsLibrary);
@@ -326,7 +305,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         && (!module.typeAttribute || isUncompiledCode(module))
         && !!module.namespaceLayout == hasNamespaceLayout(module.kind);
     auto isBound = [&](const ModuleExport& entry) {
-        return hasOneBinding(program, entry, modulesWithVariableThatHoldsMock, modulesWithInstances);
+        return hasOneBinding(program, entry, modulesWithVariableThatHoldsMock);
     };
     if (!hasValidBody || !hasRequiredIDs(module) || !hasValidLists || !hasValidLibraryFlag || !hasValidImportOnlyFlag || !hasValidFlagsOfFiles || !hasValidExportsVariable(program, module) || !hasValidRuntimeModule || !hasValidLinks
         || !hasValidBundlerHelperFlag(program, module) || !hasValidInterop(program, module) || !std::ranges::all_of(module.exports, isBound))
@@ -342,9 +321,8 @@ void ProgramVerifier::verifyModules()
 {
     auto& modules = m_program.modules;
     BitVector modulesWithVariableThatHoldsMock = findModulesWithVariableThatHoldsMock(m_program);
-    BitVector modulesWithInstances = findModulesWithInstances(m_program);
     Vector<uint32_t> invalidModules = findIndicesInParallel(m_build.parallelLoops(), modules.size(), [&](unsigned index) {
-        return findModuleError(m_program, modules[index], hasValidBody(modules[index]), modulesWithVariableThatHoldsMock, modulesWithInstances).has_value();
+        return findModuleError(m_program, modules[index], hasValidBody(modules[index]), modulesWithVariableThatHoldsMock).has_value();
     });
     for (uint32_t index : invalidModules)
         verifyModule(ModuleID(index), modules[index]);
@@ -367,7 +345,7 @@ void ProgramVerifier::verifyModules()
 
 void ProgramVerifier::verifyModule(ModuleID id, const Module& module)
 {
-    if (auto kind = findModuleError(m_program, module, hasValidBody(module), findModulesWithVariableThatHoldsMock(m_program), findModulesWithInstances(m_program)))
+    if (auto kind = findModuleError(m_program, module, hasValidBody(module), findModulesWithVariableThatHoldsMock(m_program)))
         fail({ .kind = *kind, .count = id.index() });
 }
 
@@ -393,7 +371,7 @@ template<typename Functor>
 static void forEachNamedModule(const Program& program, const Module& module, const Functor& functor)
 {
     for (auto& entry : module.exports) {
-        ModuleID named = entry.module ? entry.module : entry.layout ? program.at(entry.layout).module : program.at(entry.variable).module;
+        ModuleID named = entry.module ? entry.module : program.at(entry.variable).module;
         if (named && &program.at(named) != &module)
             functor(named);
     }

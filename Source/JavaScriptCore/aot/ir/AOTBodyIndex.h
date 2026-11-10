@@ -158,14 +158,16 @@ public:
     static constexpr uint32_t maxCountedIncomingEdges = UINT16_MAX;
 
     const Body& body() const { return m_body; }
-    const KeptWithBodyIndex* keptByWalk() const { return m_keptByWalk.load(std::memory_order_acquire); }
+    const KeptWithBodyIndex* keptByWalk() const { return m_keptByWalk.load(); }
     const KeptWithBodyIndex& keepForWalk(std::unique_ptr<KeptWithBodyIndex>&& made) const
     {
         const KeptWithBodyIndex* kept = nullptr;
-        if (m_keptByWalk.compare_exchange_strong(kept, made.get(), std::memory_order_acq_rel, std::memory_order_acquire))
+        if (m_keptByWalk.compare_exchange_strong(kept, made.get()))
             return *made.release();
         return *kept;
     }
+    std::unique_ptr<const KeptWithBodyIndex> takeKeptByWalk() const { return std::unique_ptr<const KeptWithBodyIndex>(m_keptByWalk.exchange(nullptr)); }
+    std::unique_ptr<const BodyLivenessData> takeLiveness() const { return std::unique_ptr<const BodyLivenessData>(m_liveness.exchange(nullptr)); }
     uint32_t numberOfBlocks() const { return m_body.numberOfBlocks(); }
     uint32_t numberOfValues() const { return m_body.numberOfValues(); }
 

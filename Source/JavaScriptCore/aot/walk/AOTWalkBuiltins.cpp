@@ -2728,7 +2728,7 @@ void CallInWalkBuiltins::fillCodeInLine(CallDraft& call, std::span<const Referen
     for (uint8_t parameter : std::span(m_overload->code.implementation.inlineParameters).first(numberOfParametersOf(*m_inlineBuiltin)))
         parameters.append(parameter);
     if (*m_inlineBuiltin == InlineBuiltin::ObjectCreate && m_call.opcode() == Opcode::Call && arguments.size() == 1 && m_call.argumentsOperands().size() == 2)
-        parameters.append(numberOfDescriptorsWrittenFor(m_walker, m_call));
+        parameters.append(objectCreateDescriptorCount(m_walker, m_call));
     call.setInlineBuiltin(*m_inlineBuiltin);
     call.setInlineParameters(parameters.span());
     call.setOverload(m_overloadID);

@@ -72,7 +72,6 @@ public:
     void loadFirstPayloadWord(StubAssembler&, GPRReg result) const;
     GPRReg registerOfFirstPayloadWord() const;
     void loadSecondPayloadWord(StubAssembler&, GPRReg result) const;
-    void loadBaseOfVariable(StubAssembler&, GPRReg receiver, GPRReg result, GPRReg scratch) const;
     void loadPayloadBits(StubAssembler&, GPRReg result) const;
 
 private:

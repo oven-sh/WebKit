@@ -1753,7 +1753,7 @@ bool leavesDeadZoneForGood(const Program& program, VariableID id)
     const Variable& variable = program.at(id);
     if (variable.initialization != VariableInitialization::Uninitialized || variable.owner || !variable.module)
         return false;
-    if (variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance }))
+    if (variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
         return false;
     return loaderEntersBodyAtMostOnce(program.at(variable.module));
 }

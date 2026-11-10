@@ -64,7 +64,7 @@ JSWebAssemblyMemory::JSWebAssemblyMemory(VM& vm, Structure* structure)
 {
 }
 
-// A growth detaches a fixed-length buffer, so a program takes a new one after each. Its wrapper reports only the bytes that nothing has reported yet.
+// A wrapper reports only the bytes that nothing has reported yet.
 JSArrayBuffer* JSWebAssemblyMemory::createBufferWrapper(VM& vm, JSGlobalObject* globalObject)
 {
     size_t size = m_buffer->byteLength();

@@ -796,7 +796,7 @@ NEVER_INLINE void HashedSlotTable::forgetPlacesCopiedFromSlotForStores(const Slo
         return;
     for (Instance* instance : m_vm.aotState().instances) {
         PropertyCacheWords& words = instance->propertyCaches;
-        if (std::exchange(words.placesHoldCopiesOfSlots, 0))
+        if (std::exchange(words.hasCachedSlotValues, 0))
             zeroSpan(instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>());
     }
 }
@@ -1035,12 +1035,12 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
                 continue;
             zeroSpan(earlier->keyedValuePlaces());
             zeroSpan(earlier->acceptedKindsOfValues());
-            earlier->propertyCaches.placesHoldCopiesOfSlots = 0;
+            earlier->propertyCaches.hasCachedSlotValues = 0;
             earlier->propertyCaches.accessTable.forgetEverything();
             if (StringKeyCache* keys = earlier->state ? earlier->state->stringKeys.getIfCreated() : nullptr)
                 keys->forgetPlacesOfPairs();
             bool isRetired = earlier->globalObject && earlier->globalObject->microtaskRunnability() == QueuedTaskResult::Discard;
-            earlier->propertyCaches.hasRunSinceClear = !isRetired || m_vm.entryScope;
+            earlier->propertyCaches.hasRunSinceClear = !isRetired || m_vm.entryScope || m_vm.topEntryFrame;
         }
     }
     m_hasInstance = true;

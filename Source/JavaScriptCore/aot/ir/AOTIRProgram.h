@@ -172,7 +172,6 @@ public:
     LayoutID layoutOfWholeNamespace(ModuleID) const;
     LayoutID layoutOfNamespaceThatListsNoName(ModuleID) const;
     VariableID variableBehindExport(ModuleID, uint32_t index) const;
-    std::span<const FieldReference> exportedFields() const LIFETIME_BOUND { return m_derivedTables.exportedFields.span(); }
     void internBuiltinNameKeys();
     uint32_t numberInTextOf(LayoutID) const;
     LayoutID layoutNumberedInText(uint32_t) const;
@@ -215,7 +214,6 @@ private:
         Vector<std::pair<BuiltinID, ModuleID>> compiledModulesOfNamespaceObjects;
         Vector<uint8_t> locationBitsOfVariables;
         Vector<uint8_t> locationBitsOfLayouts;
-        Vector<FieldReference> exportedFields;
     };
 
     static std::optional<uint8_t> locationBitAt(const Vector<uint8_t>& bits, uint32_t index)

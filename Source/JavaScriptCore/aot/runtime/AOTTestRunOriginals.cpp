@@ -604,6 +604,10 @@ void Modules::recordRejectedRequire(ModuleID required, bool wasRejected)
         if (pair.call && !m_rejectedRequires.contains(pair))
             m_rejectedRequires.append(pair);
     }
+    if (LoadedModule* loaded = wasRejected ? loadedIfExists(required) : nullptr; loaded && loaded->requiredValue) {
+        loaded->requiredValueBeforeRefusal.set(*this, loaded->requiredValue.get());
+        loaded->requiredValue.set(*this, JSValue());
+    }
 }
 
 JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleID requirer)

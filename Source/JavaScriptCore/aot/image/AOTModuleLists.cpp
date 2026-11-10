@@ -14,7 +14,6 @@
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include <algorithm>
-#include <bit>
 #include <utility>
 #include <wtf/ASCIICType.h>
 #include <wtf/HashMap.h>
@@ -167,17 +166,6 @@ struct NumbersOfImageForModuleLists {
         }
         }
         RELEASE_ASSERT_NOT_REACHED();
-    }
-
-    SlotData slotOfField(LayoutID layout, uint32_t field) const
-    {
-        const Typed::PlacedSlot& slot = encoder.plan.slot(layout, field);
-        if (!slot.hasStorage()) {
-            if (encoder.plan.isInUse(layout))
-                encoder.fail("ExportedFieldHasNoSlot"_s, layout);
-            return { };
-        }
-        return slotAtOffsetForModuleLists(encoder, slot.offset, slot.representation);
     }
 
     bool hasWordOfModuleValue(ModuleID id) const
@@ -511,7 +499,7 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
         { static_cast<unsigned>(variablesThatHoldMocksInRanges.size()), [&](unsigned range) {
             auto [first, end] = boundsOfRangeOfIndices(range, numberOfVariables);
             for (size_t index = first; index < end; ++index) {
-                if (program.variables[index].flags.containsAny({ Typed::VariableFlags::HoldsMock, Typed::VariableFlags::HoldsInstance, Typed::VariableFlags::GuardsInstance, Typed::VariableFlags::AllocatesInstance }))
+                if (program.variables[index].flags.contains(Typed::VariableFlags::HoldsMock))
                     variablesThatHoldMocksInRanges[range].append(static_cast<uint32_t>(index));
             }
         } },
@@ -520,17 +508,9 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
     markModulesNotWorthVisiting(program, componentsOfRequests, answers);
     numberDirectoriesOfModulePaths(modulesOutsideCyclesOfImports, piecesOfPaths.span(), answers);
     answers.variablesThatHoldMocks = Vector<VariableID>(numberOfModules);
-    answers.instanceVariables = Vector<VariableID>(numberOfModules);
-    answers.instanceGuards = Vector<VariableID>(numberOfModules);
-    answers.instanceAllocators = Vector<VariableID>(numberOfModules);
     for (const Vector<uint32_t>& variables : variablesThatHoldMocksInRanges) {
         for (uint32_t index : variables) {
-            OptionSet<Typed::VariableFlags> flags = program.variables[index].flags;
-            Vector<VariableID>& found = flags.contains(Typed::VariableFlags::HoldsInstance) ? answers.instanceVariables
-                : flags.contains(Typed::VariableFlags::GuardsInstance) ? answers.instanceGuards
-                : flags.contains(Typed::VariableFlags::AllocatesInstance) ? answers.instanceAllocators
-                : answers.variablesThatHoldMocks;
-            VariableID& first = found[program.variables[index].module.index()];
+            VariableID& first = answers.variablesThatHoldMocks[program.variables[index].module.index()];
             if (!first)
                 first = VariableID(index);
         }
@@ -648,7 +628,6 @@ static bool isExportDescribedInModuleLists(const TableInputs& inputs, const Type
         return inputs.plan.variable(moduleExport.variable).isDescribedToRunTime;
     case ModuleExportKind::Namespace:
     case ModuleExportKind::Indirect:
-    case ModuleExportKind::Field:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -672,7 +651,7 @@ Vector<WriterOfExportData> listWritersOfExports(const TableInputs& inputs)
 }
 
 template<typename Numbers>
-static void appendExportsToModuleLists(const TableInputs& inputs, const AnswersAboutModules& answers, ModuleID id, const Numbers& numbers, ModuleLists& lists)
+static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, VariableID variableThatHoldsMock, const Numbers& numbers, ModuleLists& lists)
 {
     const Typed::Program& program = inputs.program;
     uint32_t indexInRecord = 0;
@@ -699,28 +678,13 @@ static void appendExportsToModuleLists(const TableInputs& inputs, const AnswersA
             entry.indirectExport = static_cast<uint32_t>(lists.indirectExports.size());
             lists.indirectExports.append({ moduleExport.module.index(), numbers.nameOfText(moduleExport.importName, "what another module exports under a name of"_s, id) });
             break;
-        case ModuleExportKind::Field: {
-            Typed::FieldReference exported { moduleExport.layout, *moduleExport.field };
-            std::span<const Typed::FieldReference> exportedFields = program.exportedFields();
-            entry.exportedField = static_cast<uint32_t>(std::ranges::lower_bound(exportedFields, exported) - exportedFields.begin());
-            entry.isReplaceable = !Typed::fieldAt(program, exported).flags.contains(Typed::FieldFlags::IsImmutable);
-            break;
-        }
         }
         lists.exports.append(entry);
     }
-    const std::pair<VariableID, uint32_t> hiddenVariables[] = {
-        { answers.variablesThatHoldMocks[id.index()], ModuleExportData::kindBitsOfWordOfMock },
-        { answers.instanceVariables[id.index()], ModuleExportData::kindBitsOfInstanceVariable },
-        { answers.instanceGuards[id.index()], ModuleExportData::kindBitsOfInstanceGuard },
-        { answers.instanceAllocators[id.index()], ModuleExportData::kindBitsOfInstanceAllocator },
-    };
-    for (auto [variable, kindBits] : hiddenVariables) {
-        if (!variable)
-            continue;
+    if (variableThatHoldsMock) {
         ModuleExportData entry { };
-        entry.kindBits = kindBits;
-        entry.variable = numbers.slotOfVariable(variable);
+        entry.kindBits = ModuleExportData::kindBitsOfWordOfMock;
+        entry.variable = numbers.slotOfVariable(variableThatHoldsMock);
         lists.exports.append(entry);
     }
 }
@@ -746,7 +710,7 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
             continue;
         lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
     }
-    appendExportsToModuleLists(inputs, answers, id, numbers, lists);
+    appendExportsToModuleLists(inputs, id, answers.variablesThatHoldMocks[id.index()], numbers, lists);
     for (const Typed::SyntheticExport& syntheticExport : module.syntheticExports) {
         SyntheticExportData entry { };
         entry.name = numbers.nameOfText(syntheticExport.name, "an export that the run time fills for"_s, id);
@@ -858,8 +822,6 @@ static ModuleLists joinModuleListsOfChunks(const ParallelLoops& loops, const Chu
         for (ModuleExportData& entry : part.exports) {
             if (entry.kindBits == static_cast<uint32_t>(ModuleExportKind::Indirect))
                 entry.indirectExport += start.indirectExports;
-            else if (entry.kindBits == static_cast<uint32_t>(ModuleExportKind::Field))
-                entry.exportedField += starts.last().indirectExports;
         }
         for (ExportStatementData& statement : part.exportStatements)
             statement.requiredName += start.requiredNames;
@@ -905,8 +867,6 @@ ModuleLists collectModuleLists(TableEncoder& encoder, const AnswersAboutModules&
     });
 
     ModuleLists lists = joinModuleListsOfChunks(loops, chunks, listsOfChunks);
-    for (Typed::FieldReference exported : program.exportedFields())
-        lists.indirectExports.append(std::bit_cast<IndirectExportData>(ExportedFieldData { program.at(exported.layout).module.index(), numbers.slotOfField(exported.layout, exported.field) }));
     ModuleData endRecord { };
     lists.setListStarts(endRecord);
     lists.modules.last() = endRecord;

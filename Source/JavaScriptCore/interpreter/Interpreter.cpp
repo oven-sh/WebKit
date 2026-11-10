@@ -1824,7 +1824,7 @@ NEVER_INLINE JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* func
 ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
 #if ENABLE(AOT)
-    // callCompiledCode() sets vm.didEnterVM itself. Nothing follows the call here, so this frame can be gone during the call.
+    // callCompiledCode() sets vm.didEnterVM itself. This frame can be gone during the call.
     if (callData.type == CallData::Type::Compiled)
         return AOT::callCompiledCode(vm, function, callData, thisValue, context, args);
 #endif

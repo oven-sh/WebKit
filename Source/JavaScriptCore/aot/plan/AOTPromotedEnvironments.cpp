@@ -278,8 +278,6 @@ void PlannerOfPromotedEnvironments::refuseScopesThatPositionsHold()
                 m_isRefused.quickSet(binding.layout.index());
         }
     }
-    for (FieldReference exported : m_program.exportedFields())
-        m_isRefused.quickSet(exported.layout.index());
 }
 
 uint32_t PlannerOfPromotedEnvironments::nodeOf(FunctionID function, uint32_t capture)

@@ -447,7 +447,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 // Most ropes that get resolved were just built from two or three short flat strings or substrings.
-// A fiber that was 8-bit when the rope was built may be 16-bit by now: a string that is atomized adopts the atom's characters, whatever their width.
+// A fiber may be 16-bit by now: a string that is atomized adopts the atom's characters.
 ALWAYS_INLINE bool JSRopeString::tryResolveFlatLatin1Parts(VM& vm) const
 {
     ASSERT(isRope());

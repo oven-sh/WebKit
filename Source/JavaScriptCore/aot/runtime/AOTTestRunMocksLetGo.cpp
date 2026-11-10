@@ -62,7 +62,7 @@ void Modules::releaseMockAtNextLoad(ModuleID module)
         loader()->removeEntriesForRecord(record);
 }
 
-bool Modules::letGoOfMockOfLibraryModuleAtNextLoad(ModuleID module)
+bool Modules::releaseLibraryMockOnLoad(ModuleID module)
 {
     if (!m_libraryModulesWithMock.get(module.index()) || !exportsWhatMockNamesAlone(module) || m_modulesWhoseMockOfPreloadIsPatched.get(module.index()) || isSomeLoadUnderWay() || isLoaderInMiddleOfGraph())
         return false;
@@ -114,11 +114,11 @@ bool Modules::wasLoadedByTestFile(ModuleID module) const
     return anew != m_momentsLoadedAnew.end() && anew->value.momentOfTestFile == momentOfTestFile;
 }
 
-void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
+void Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which)
 {
     if (m_momentsOfLoads.isEmpty())
         return;
-    bool keepsImportersOfTestFile = which == ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule;
+    bool keepsImportersOfTestFile = which == ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule;
     if (keepsImportersOfTestFile && wasLoadedByTestFile(mocked))
         return;
     listImportersAndRequirers();
@@ -239,7 +239,7 @@ BitVector Modules::transitiveImportersOf(std::span<const ModuleID> files)
     return reaching;
 }
 
-void Modules::letGoOfESModulesThatThrew()
+void Modules::releaseFailedESModules()
 {
     if (m_momentsOfLoads.isEmpty())
         return;
@@ -307,9 +307,9 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
         if (isSeen.quickSet(module.index()) || isMocked(module) || activeMock(module))
             continue;
         std::optional<ModuleID> file = m_table.moduleBehindFacade(module);
-        bool wasLetGo = take(m_modulesReleasedByLoader, &LinksBeforeLoad::modulesThatLoaderLetGo, module);
+        bool wasLetGo = take(m_modulesReleasedByLoader, &LinksBeforeLoad::modulesReleasedByLoader, module);
         if (file)
-            wasLetGo |= take(m_modulesReleasedByLoader, &LinksBeforeLoad::modulesThatLoaderLetGo, *file);
+            wasLetGo |= take(m_modulesReleasedByLoader, &LinksBeforeLoad::modulesReleasedByLoader, *file);
         if (!wasLetGo && status(module) > ModuleStatus::Linked)
             continue;
         if (wasLetGo)
@@ -427,7 +427,7 @@ void Modules::passModuleThatHasRun(ModuleID root, BitVector& isPassed)
     }
 }
 
-void Modules::letGoOfMocksThatEndedBelow(ModuleID root)
+void Modules::releaseRemovedMocksBelow(ModuleID root)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     BitVector isSeen(m_table.size());
@@ -449,13 +449,13 @@ void Modules::letGoOfMocksThatEndedBelow(ModuleID root)
     }
 }
 
-void Modules::letGoOfMocksThatEndedAtAndBelow(ModuleID root)
+void Modules::releaseRemovedMocksFrom(ModuleID root)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     SetForScope letsGoOfMocksAtLinkFromSource(m_letsGoOfMocksAtLinkFromSource, true);
     releaseRemovedMock(root);
     RETURN_IF_EXCEPTION(scope, void());
-    RELEASE_AND_RETURN(scope, letGoOfMocksThatEndedBelow(root));
+    RELEASE_AND_RETURN(scope, releaseRemovedMocksBelow(root));
 }
 
 void Modules::letStartsAskWhereSomethingIsDueBelow(ModuleID root)
@@ -534,7 +534,7 @@ void Modules::evaluateModulesOwedBelow(ModuleID root, bool hasImporterThatRan)
     }
     ModuleStatus statusOfRoot = status(root);
     if (statusOfRoot != ModuleStatus::Evaluated && statusOfRoot != ModuleStatus::EvaluatingAsync && !hasRun(root)) {
-        letGoOfMocksThatEndedBelow(root);
+        releaseRemovedMocksBelow(root);
         RETURN_IF_EXCEPTION(scope, void());
         letStartsAskWhereSomethingIsDueBelow(root);
         return;

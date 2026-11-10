@@ -1034,7 +1034,7 @@ BitVector StateOfLinkReach::findVariablesStoredFirst(Vector<LinkedVariableStored
         if (isLeftOut.quickGet(index))
             continue;
         for (SummaryPlaceInBody store : m_flow.summaries.at(m_program.modules[index].body).firstStoresOfBody) {
-            if (store.position > placeOfFirstReader[store.number] || m_program.variables[store.number].flags.contains(VariableFlags::HoldsInstance))
+            if (store.position > placeOfFirstReader[store.number])
                 continue;
             found.quickSet(store.number);
             if (functionWhoseUseCounts[store.number])
@@ -1126,12 +1126,6 @@ void StateOfLinkReach::fillFields()
         uint32_t numberOfFields = baseWhoseFieldListIsCopiedWhole(m_program, LayoutID(index)) ? layout.ownFieldCount : static_cast<uint32_t>(layout.fields.size());
         for (uint32_t field = 0; field < numberOfFields; ++field)
             arriveWhatNoNodeBrings(m_flow.field({ LayoutID(index), field }), layout.fields[field].declared);
-    }
-    for (FieldReference exported : m_program.exportedFields()) {
-        if (fieldAt(m_program, exported).flags.contains(FieldFlags::IsImmutable))
-            m_flow.addEdge(m_flow.field(exported), m_flow.unseen());
-        else
-            escapeField(exported);
     }
 }
 
@@ -1638,7 +1632,7 @@ void StateOfLinkReach::enterLoaderOfHost()
         for (RuntimeFunctionID function : m_program.builtins().moduleLoaderFunctions())
             enterLibraryFunction(function);
     }
-    if (!m_builtinsInReach.holdsBackNamesFromRunTime() && !std::exchange(m_hasEnteredWhatLoaderOfHostFinds, true)) {
+    if (!m_builtinsInReach.defersRuntimeNames() && !std::exchange(m_hasEnteredWhatLoaderOfHostFinds, true)) {
         for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
             const Module& module = m_program.modules[index];
             if (isProgramModuleOf(module.kind) && !module.flags.contains(ModuleFlags::IsLibrary))
@@ -1786,9 +1780,9 @@ bool StateOfLinkReach::enterLibraryInReach()
         for (RuntimeFunctionID function : m_program.builtins().moduleLoaderFunctions())
             enterLibraryFunction(function);
     }
-    if (m_builtinsInReach.holdsBackNamesFromRunTime() && m_builtinsInReach.unseenCodeCanRun())
+    if (m_builtinsInReach.defersRuntimeNames() && m_builtinsInReach.unseenCodeCanRun())
         letExportsOfEntriesEscape();
-    if (m_builtinsInReach.holdsBackNamesFromRunTime() && (m_builtinsInReach.unseenCodeCanRun() || m_builtinsInReach.loaderOfHostMayRun())) {
+    if (m_builtinsInReach.defersRuntimeNames() && (m_builtinsInReach.unseenCodeCanRun() || m_builtinsInReach.loaderOfHostMayRun())) {
         for (ModuleID module : m_builtinsInReach.takeModulesSpelledInTexts()) {
             evaluate(module);
             escapeExportsOf(module);
@@ -1801,7 +1795,7 @@ bool StateOfLinkReach::enterLibraryInReach()
     }
     if (m_builtinsInReach.loaderOfHostMayRun())
         enterLoaderOfHost();
-    if (m_builtinsInReach.unseenCodeCanRun() && !m_builtinsInReach.holdsBackNamesFromRunTime())
+    if (m_builtinsInReach.unseenCodeCanRun() && !m_builtinsInReach.defersRuntimeNames())
         enterWhatUnseenCodeFinds();
     letGoWhatNativeCodeReadsOffModules();
     handOutRecordsOfInternalFiles();

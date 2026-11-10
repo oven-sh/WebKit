@@ -20,7 +20,7 @@ record Layout wire extendedEngine {
 }
 
 enum VariableInitialization { Uninitialized Undefined Function }
-flags VariableFlags { IsImmutable IsReplaceable HoldsMock OriginalMayRun HoldsInstance GuardsInstance AllocatesInstance }
+flags VariableFlags { IsImmutable IsReplaceable HoldsMock OriginalMayRun }
 record Variable wire {
     name: String? module: Module(Referrer) declared: DeclaredType initialization: VariableInitialization function: Function(Closure)? owner: Layout?
     flags: VariableFlags place: UInt32?
@@ -69,7 +69,7 @@ enum SyntheticExportRule { None CommonJs CommonJsIgnoringAnnotation RuntimeModul
 enum RequireResult { Namespace ModuleExports DefaultExport NamespaceIfImported }
 enum ImportPhase { Evaluation Defer }
 enum ModuleRequestKind { Import Require }
-enum ModuleExportKind { Variable Namespace Indirect Field }
+enum ModuleExportKind { Variable Namespace Indirect }
 flags ModuleFlags {
     HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects CachesEvaluationError IsBundlerHelper ReachesModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad IsImportableDuringEvaluation IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache MayBeReevaluated LoaderReturnsNamespace RejectsRequireCacheOverride IsChangedOnDiskByRun IsExposedByRequireCache RejectsUncompiledCode HasReadOnlyBuiltins IsExposedByTestRunner IsImportedWithoutExtension IsImportedWithOtherExtension IsImportedAsDirectory ThrowsAtLoad IsImportedAsESModule DependsOnMoreThanSource
     | engine EvaluatesItself
@@ -80,7 +80,7 @@ record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<Col
 record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool starPlace: UInt32? }
 record ModuleExport wire {
     name: String kind: ModuleExportKind variable: Variable? module: Module(Target)? importName: String? phase: ImportPhase isFromStarExport: Bool
-    isHiddenUntilInitialized: Bool isOmitted: Bool writer: Module(Referrer)? layout: Layout? field: UInt32?
+    isHiddenUntilInitialized: Bool isOmitted: Bool writer: Module(Referrer)?
 }
 record SyntheticExport wire { name: String variable: Variable? isKnownMember: Bool isReplaceable: Bool }
 record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool isRequestedByStarExport: Bool }

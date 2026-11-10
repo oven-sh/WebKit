@@ -1440,9 +1440,6 @@ void AccessInLinkAccesses::giveExport(ModuleID module, uint32_t index)
             index = found;
             break;
         }
-        case ModuleExportKind::Field:
-            giveAnything();
-            return;
         }
     }
     if (LayoutID whole = m_program.layoutOfWholeNamespace(module); whole && std::ranges::any_of(m_program.at(module).requests, &ModuleRequest::isDynamicStarExport))

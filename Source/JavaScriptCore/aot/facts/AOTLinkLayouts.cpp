@@ -51,7 +51,7 @@ static void forEachVariableSharedWithUnseenCodeInLinkLayouts(const Program& prog
     for (uint32_t index = 0; index < program.variables.size(); ++index) {
         const Variable& variable = program.variables[index];
         const Module& module = program.at(variable.module);
-        if (variable.owner || variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance })
+        if (variable.owner || variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun })
             || !module.body || !variablesAreWrittenOnlyByBodiesInLinkLayouts(module.kind))
             functor(VariableID(index));
     }
@@ -4712,10 +4712,6 @@ void WriterOfLinkLayouts::lookAtSummaries()
     forEachFieldSharedWithEvaluatedTextInLinkLayouts(m_program, [&](FieldReference field) {
         m_fieldsWithUnseenWriters.quickSet(cellOf(field));
     });
-    for (FieldReference field : m_program.exportedFields()) {
-        if (!fieldAt(m_program, field).flags.contains(FieldFlags::IsImmutable))
-            m_fieldsWithUnseenWriters.quickSet(cellOf(field));
-    }
     noteLostClassObjects();
 
     for (size_t index : m_flow.reached) {

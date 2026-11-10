@@ -113,10 +113,10 @@ public:
     TypeID askedOfEachObject(QuestionOfEachObject question, TypeLevel level, ObjectSetID objects, uint32_t word, NOESCAPE const ScopedLambda<TypeID()>& askEachObject) const final { return askOnceForBuild(m_types, WhoAnswersInWalk::Nobody, static_cast<unsigned>(question), level, objects, word, askEachObject); }
     TypeID askedOfEachLayout(QuestionOfEachLayout question, TypeLevel level, LayoutSetID layouts, PropertyKeyID key, NOESCAPE const ScopedLambda<TypeID()>& askEachLayout) const final { return askOnceForBuild(m_types, WhoAnswersInWalk::Nobody, 2 + static_cast<unsigned>(question), level, layouts, key.bits(), askEachLayout); }
 
-    bool listLayoutsAskedAbout(PropertyKeyID key, LayoutSetID layouts, bool asksWhatIsWrittenAbove, Vector<LayoutID, 16>& asked) const final
+    bool collectQueriedLayouts(PropertyKeyID key, LayoutSetID layouts, bool includesInheritedWrites, Vector<LayoutID, 16>& asked) const final
     {
         uint32_t numberInUse = 0;
-        return layouts && !holdsOneMember(layouts) && m_plan.slots().listMembersAskedAbout(m_program, key, layouts, static_cast<SlotPlan::WhatIsWrittenAbove>(asksWhatIsWrittenAbove), asked, numberInUse);
+        return layouts && !holdsOneMember(layouts) && m_plan.slots().listMembersAskedAbout(m_program, key, layouts, static_cast<SlotPlan::WhatIsWrittenAbove>(includesInheritedWrites), asked, numberInUse);
     }
 
 private:
@@ -140,7 +140,7 @@ public:
     TypeID result(TypeLevel level, FunctionID function, uint32_t resultIndex) const final { return m_positionsOfBuild.result(level, function, resultIndex); }
     TypeID entryParameter(TypeLevel, FunctionID, uint32_t) const final { return { }; }
     TypeID resultOfCallBeingTyped(TypeLevel, uint32_t) const final { return { }; }
-    bool listLayoutsAskedAbout(PropertyKeyID key, LayoutSetID layouts, bool asksWhatIsWrittenAbove, Vector<LayoutID, 16>& asked) const final { return m_positionsOfBuild.listLayoutsAskedAbout(key, layouts, asksWhatIsWrittenAbove, asked); }
+    bool collectQueriedLayouts(PropertyKeyID key, LayoutSetID layouts, bool includesInheritedWrites, Vector<LayoutID, 16>& asked) const final { return m_positionsOfBuild.collectQueriedLayouts(key, layouts, includesInheritedWrites, asked); }
 
 private:
     const PositionTypes& m_positionsOfBuild;
@@ -250,10 +250,10 @@ public:
             return { };
         return m_types.forFunction(isSetter ? laid->setter : laid->getter);
     }
-    bool listLayoutsAskedAbout(PropertyKeyID key, LayoutSetID layouts, bool asksWhatIsWrittenAbove, Vector<LayoutID, 16>& asked) const final
+    bool collectQueriedLayouts(PropertyKeyID key, LayoutSetID layouts, bool includesInheritedWrites, Vector<LayoutID, 16>& asked) const final
     {
         uint32_t numberInUse = 0;
-        return layouts && !holdsOneMember(layouts) && m_plan.slots().listMembersAskedAbout(m_program, key, layouts, static_cast<SlotPlan::WhatIsWrittenAbove>(asksWhatIsWrittenAbove), asked, numberInUse);
+        return layouts && !holdsOneMember(layouts) && m_plan.slots().listMembersAskedAbout(m_program, key, layouts, static_cast<SlotPlan::WhatIsWrittenAbove>(includesInheritedWrites), asked, numberInUse);
     }
     std::optional<uint32_t> appendedField(LayoutID layout, PropertyKeyID key) const final
     {

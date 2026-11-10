@@ -1016,8 +1016,6 @@ JSValue RehearsalOfRegExpTexts::namespaceOf(ModuleID id)
     for (const ModuleExport& exported : module.exports) {
         if (exported.kind == ModuleExportKind::Variable && exported.variable)
             made->putDirect(vm, Identifier::fromString(vm, charactersOf(exported.name)), variable(exported.variable));
-        else if (exported.kind == ModuleExportKind::Field)
-            made->putDirect(vm, Identifier::fromString(vm, charactersOf(exported.name)), unknown());
     }
     for (const SyntheticExport& synthetic : module.syntheticExports) {
         if (synthetic.variable)

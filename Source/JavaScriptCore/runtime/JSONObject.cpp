@@ -2123,7 +2123,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendDate(DateInstance
 template<typename CharType, BufferMode bufferMode>
 bool FastStringifier<CharType, bufferMode>::datesHaveBuiltinToJSON(JSObject& datePrototype)
 {
-    // An immutable property stays immutable, and this realm is recorded only after one of its dates passed all of the checks below.
+    // This realm is recorded only after one of its dates passed all of the checks below.
     if (m_vm.aotState().realmWhoseDatesAreWrittenInPlace == &m_globalObject) [[likely]]
         return true;
     if (m_datesHaveBuiltinToJSON != TriState::Indeterminate)
@@ -2354,7 +2354,7 @@ static NEVER_INLINE ListedPropertiesWritten writeListedProperties(const JSObject
                 return { Status::NeedsRoom, index, next, keySize + 1 + length + 1 };
             *afterKey = '"';
             if (stringCopySameType<Latin1Character, true>(string->span8(), afterKey + 1)) [[unlikely]] {
-                // Read the characters again from `value`, which the return below needs anyway, so that nothing else has to stay in a register across the copy.
+                // Reads from `value` again, so that nothing else has to stay in a register across the copy.
                 auto characters = asString(value.asCell())->tryGetValueImpl()->span8();
                 if (static_cast<size_t>(limit - afterKey) < AOT::maxEscapedJSONStringLength(characters.size()))
                     return { Status::FoundOtherValue, index, afterKey, 0, value };
@@ -2485,7 +2485,7 @@ static ALWAYS_INLINE FieldsWrittenBySlot writeFieldsBySlotInline(Latin1Character
     for (; field != end; ++field) {
         const Latin1Character* key = field->jsonKey.data();
         const size_t keySize = field->jsonKey.size();
-        // The key is written right away and counts only if a value follows it. Keys are copied in whole blocks, so the copy may read past the end of a key into whatever follows it in the list's key storage.
+        // Keys are copied in whole blocks, so the copy may read past the end of a key.
         memcpy(next, key, blockSize);
         if (keySize > blockSize) [[unlikely]] {
             for (size_t offset = blockSize; offset < keySize; offset += blockSize)

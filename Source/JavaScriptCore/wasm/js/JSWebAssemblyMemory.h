@@ -87,7 +87,7 @@ private:
     Ref<Wasm::Memory> m_memory;
     WriteBarrier<JSArrayBuffer> m_bufferWrapper;
     RefPtr<ArrayBuffer> m_buffer;
-    // How much of the memory has been reported to the collector as allocated: by a buffer's wrapper or at a growth.
+    // How much of the memory has been reported to the collector.
     size_t m_reportedBytes { 0 };
 };
 

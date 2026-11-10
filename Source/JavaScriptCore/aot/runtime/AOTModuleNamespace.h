@@ -16,7 +16,6 @@
 
 namespace JSC { namespace AOT {
 
-class Environment;
 class Modules;
 struct ModuleExportData;
 
@@ -54,10 +53,6 @@ public:
     AbstractModuleRecord* recordForResolution();
     bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_facade == module) && !m_isDeferred && !m_mockOfView; }
     void setFacade(ModuleID facade) { m_facade = facade; }
-    Environment* bindModuleInstance();
-    bool needsModuleInstance() const { return m_hasInstances && !m_moduleInstance; }
-    Environment* boundModuleInstance() const;
-    static constexpr ptrdiff_t offsetOfModuleInstance() { return OBJECT_OFFSETOF(ModuleNamespace, m_moduleInstance); }
     std::optional<unsigned> find(UniquedStringImpl*) const;
     std::optional<unsigned> findWhetherShownOrNot(UniquedStringImpl*) const;
     bool hasExport(UniquedStringImpl* name) const { return findWhetherShownOrNot(name) || isDynamicExport(name); }
@@ -104,12 +99,10 @@ private:
     WriteBarrier<JSObject> m_capturedValues;
     WriteBarrier<JSObject> m_liveSources;
     WriteBarrier<JSObject> m_mockOfView;
-    WriteBarrier<JSCell> m_moduleInstance;
     ModuleID m_module;
     ModuleID m_facade;
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
-    bool m_hasInstances;
     bool m_hasESModuleMarker { false };
     bool m_isMarkerDeferred { false };
     bool m_hasOwnStructure { false };

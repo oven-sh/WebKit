@@ -340,7 +340,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyModule, (JSGlobalObject* globalOb
     if (!globalObject->webAssemblyEnabled()) [[unlikely]]
         return JSValue::encode(throwException(globalObject, scope, createJSWebAssemblyCompileError(globalObject, vm, globalObject->webAssemblyDisabledErrorMessage())));
 
-    // The bytes are copied because the program's code may run before they are parsed: the getters of the options, and of the prototype of new.target.
+    // The bytes are copied because getters of the program may run before they are parsed.
     if (callFrame->argument(1).isUndefined() && callFrame->newTarget() == JSValue(callFrame->jsCallee()) && hasUnsharedBytes(callFrame->argument(0)) && !Options::enableWasmDebugger()) {
         SourceProviderBufferGuard bufferGuard(nullptr);
         std::span<const uint8_t> bytes = getWasmBufferFromValue(globalObject, callFrame->argument(0), bufferGuard);

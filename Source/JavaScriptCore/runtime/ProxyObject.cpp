@@ -121,7 +121,7 @@ JSObject* ProxyObject::getHandlerTrap(JSGlobalObject* globalObject, JSObject* ha
     };
 
 #if ENABLE(AOT)
-    // For a compiled handler the cache holds the field's index, or a value below invalidOffset if the lookup found nothing while the field's slot was empty.
+    // For a compiled handler: the field's index, or a value below invalidOffset if the lookup found nothing.
     // It is valid only for an object whose properties are exactly its fields, each in its own slot.
     AOT::Object* compiledHandler = handler->type() == CompiledObjectType ? uncheckedDowncast<AOT::Object>(handler) : nullptr;
     bool mayUseCache = !compiledHandler || !compiledHandler->hasFlagsInOrderWord();
@@ -218,7 +218,7 @@ void ProxyObject::clearHandlerTrapsOffsetsCache()
 static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already been revoked. No more operations are allowed to be performed on it"_s };
 
 #if ENABLE(AOT)
-// All compiled objects of a layout share one Structure, so the Structure says nothing about extensibility or attributes. Changes to one object are recorded in the object, and the fields' initial attributes are in the layout.
+// Compiled objects of a layout share one Structure, so changes to one object are recorded in the object.
 static bool isExtensibleCompiledObjectWithConfigurablePropertiesOnly(JSObject* target)
 {
     constexpr size_t maxFieldsLookedAt = 32;

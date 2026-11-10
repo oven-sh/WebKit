@@ -200,9 +200,6 @@ struct AnswersAboutModules {
 
     Vector<OptionSet<Answer>> ofModules;
     Vector<VariableID> variablesThatHoldMocks;
-    Vector<VariableID> instanceVariables;
-    Vector<VariableID> instanceGuards;
-    Vector<VariableID> instanceAllocators;
     Vector<Directory> directories;
     Vector<uint32_t> directoryOf;
     Vector<StringID> pathOrNameOf;

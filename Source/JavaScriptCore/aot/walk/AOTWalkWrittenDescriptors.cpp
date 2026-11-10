@@ -391,10 +391,10 @@ static std::optional<BuiltinOverloadID> findUniqueBuiltinOverload(Walker& walker
     return rows[0];
 }
 
-uint32_t numberOfDescriptorsWrittenFor(Walker& walker, const BodyValue& callOfObjectCreate)
+uint32_t objectCreateDescriptorCount(Walker& walker, const BodyValue& objectCreateCall)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID map = callOfObjectCreate.argumentsOperands()[1];
+    ValueID map = objectCreateCall.argumentsOperands()[1];
     if (!index.isParameter(map) && index.opcodeOf(map) == Opcode::FinishObject)
         map = index.value(map).operand(0);
     if (index.isParameter(map) || index.opcodeOf(map) != Opcode::NewObject)
@@ -431,7 +431,7 @@ static Reference keyConstantInWrittenDescriptors(Walker& walker, PropertyKeyID k
 
 bool expandObjectCreateDescriptorsOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
-    if (walker.isUnreachable() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis) || call.argumentsOperands().size() != numberOfArgumentsOfObjectCreate)
+    if (walker.isUnreachable() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis) || call.argumentsOperands().size() != objectCreateArgumentCount)
         return false;
     if (!callsBuiltinInWrittenDescriptors(walker, call, Builtins::ObjectCreate) || !findUniqueBuiltinOverload(walker, call))
         return false;
@@ -538,7 +538,7 @@ bool expandObjectCreateAtDefinitionOfItsOpcodes(Walker& walker, const BodyValue&
     if (next >= endOfBlock || index.opcodeOf(ValueID(next)) != Opcode::Call || next - firstValue + 1 > walker.endOfStretchBeingWalked())
         return false;
     BodyValue call = index.value(ValueID(next));
-    if (call.argumentsOperands().size() != numberOfArgumentsOfObjectCreate || call.argumentsOperands()[1] != argument || !callsBuiltinInWrittenDescriptors(walker, call, Builtins::ObjectCreate))
+    if (call.argumentsOperands().size() != objectCreateArgumentCount || call.argumentsOperands()[1] != argument || !callsBuiltinInWrittenDescriptors(walker, call, Builtins::ObjectCreate))
         return false;
     const BuiltinTable& table = walker.program().builtins();
     BuiltinID builtin = table.canonicalID(Builtins::ObjectCreate);

@@ -146,7 +146,6 @@ std::optional<StarExportResolution::Type> Modules::tryResolveRequiredNameInTable
     if (reexportsFromMock(exporter))
         return std::nullopt;
     switch (reexportedNames().resolve(m_table, requiredName)) {
-    case ReexportedNames::Answer::NotAsked:
     case ReexportedNames::Answer::Unknown:
         return std::nullopt;
     case ReexportedNames::Answer::Found:
@@ -533,6 +532,8 @@ void Modules::didRemoveMock(ModuleID mocked)
     leaveImportersAbove(mocked);
     m_modulesRetainedByInFlightLoads.clear(mocked.index());
     m_modulesWithNoNamesOwedBelow.clearAll();
+    for (DetachedLoad& left : m_detachedLoads)
+        left.wasAwaitedMockRemoved |= left.awaitedFactoryCalls.containsIf([&](const auto& call) { return call.first == mocked; });
     if (!isMocked(mocked))
         return;
     if (!activeMock(mocked))
@@ -1107,7 +1108,7 @@ void Modules::endMockOfLibraryModule(ModuleID module)
     if (!found)
         return;
     LoadedModule& loaded = *found;
-    letGoOfMockInRequireCache(module);
+    releaseMockInRequireCache(module);
     loaded.exportsOfMock.set(*this, nullptr);
     if (!loaded.exportsWhatMockNamesAlone) {
         VM& vm = *m_instance.vm;
@@ -1203,7 +1204,6 @@ static Vector<ModuleID, 4> modulesThatKeepNamesHandedOnBy(Modules& modules, Modu
                 if (const Modules::SyntheticExportPlace* origin = modules.syntheticExportKeptIn(moduleExport.variable); origin && !isHolder.quickSet(origin->module.index()))
                     holders.append(origin->module);
                 break;
-            case ModuleExportKind::Field:
             case ModuleExportKind::Namespace:
                 break;
             case ModuleExportKind::Indirect:
@@ -1301,11 +1301,6 @@ void Modules::endMockLaidOverFile(ModuleID file)
             if (std::optional<uint32_t> encoded = parseIndex(place); encoded && kept != JSValue(variables))
                 ProgramStatics::writeVariable(m_instance, SlotData::decode(*encoded), kept);
         }
-        for (auto& [field, kept] : std::exchange(loaded.fieldsBeforeMock, { })) {
-            loaded.holdsValueOfMockThatEnded |= kept == JSValue(variables);
-            if (kept != JSValue(variables))
-                writeField(field.first, SlotData::decode(field.second), kept);
-        }
     }
     if (JSValue value = loaded.valueBeforeMock) {
         loaded.valueBeforeMock.set(*this, JSValue());
@@ -1348,7 +1343,7 @@ void Modules::endMockLaidOverFile(ModuleID file)
     RELEASE_AND_RETURN(scope, giveBackExports(module));
 }
 
-void Modules::letGoOfNamespaceOfFileThatRanAheadOfMock(ModuleID file)
+void Modules::releaseNamespaceBeforeMock(ModuleID file)
 {
     if (!m_modulesEvaluatedBeforeMock.get(file.index()))
         return;
@@ -1458,11 +1453,6 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
                 if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
                     return keptBy(origin->module, identifier(origin->name));
                 return variables ? storedValue(realm, variables, Identifier::from(vm, moduleExport.variable.encoded())) : JSValue();
-            case ModuleExportKind::Field: {
-                const ExportedFieldData& field = m_table.exportedField(moduleExport);
-                Environment* instance = variables ? currentInstance(ModuleID(field.module)) : nullptr;
-                return instance ? loaded->fieldsBeforeMock.get(std::pair { instance, field.slot.encoded() }) : JSValue();
-            }
             case ModuleExportKind::Namespace:
                 return { };
             case ModuleExportKind::Indirect: {

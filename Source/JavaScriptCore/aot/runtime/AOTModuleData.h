@@ -331,16 +331,10 @@ struct ModuleExportData {
         SlotData variable;
         uint32_t module;
         uint32_t indirectExport;
-        uint32_t exportedField;
     };
 
-    static constexpr uint32_t kindBitsOfInstanceAllocator = 4;
-    static constexpr uint32_t kindBitsOfInstanceGuard = 5;
-    static constexpr uint32_t kindBitsOfWordOfMock = 6;
-    static constexpr uint32_t kindBitsOfInstanceVariable = 7;
-    static_assert(numberOfEnumerators<ModuleExportKind> <= kindBitsOfInstanceAllocator);
+    static constexpr uint32_t kindBitsOfWordOfMock = 3;
 
-    bool isHidden() const { return kindBits >= kindBitsOfInstanceAllocator; }
     ModuleExportKind kind() const { return static_cast<ModuleExportKind>(kindBits); }
     ModuleID targetModule() const { return ModuleID(module); }
 };
@@ -350,13 +344,6 @@ struct IndirectExportData {
     uint32_t importName;
 
     ModuleID targetModule() const { return ModuleID(module); }
-};
-
-struct ExportedFieldData {
-    uint32_t module;
-    SlotData slot;
-
-    ModuleID declaringModule() const { return ModuleID(module); }
 };
 
 struct SyntheticExportData {
@@ -534,7 +521,6 @@ static_assert(ModuleRequestData::create(0xbcdef, true, false, true).target() == 
 static_assert(sizeof(LinkPlanStepData) == 4 && isImageRecord<LinkPlanStepData>);
 static_assert(sizeof(ModuleExportData) == 8 && isImageRecord<ModuleExportData>);
 static_assert(sizeof(IndirectExportData) == 8 && isImageRecord<IndirectExportData>);
-static_assert(sizeof(ExportedFieldData) == sizeof(IndirectExportData) && alignof(ExportedFieldData) == alignof(IndirectExportData) && isImageRecord<ExportedFieldData>);
 static_assert(sizeof(SyntheticExportData) == 8 && isImageRecord<SyntheticExportData>);
 static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
 static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);

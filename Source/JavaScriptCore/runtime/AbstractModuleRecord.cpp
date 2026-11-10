@@ -1161,14 +1161,14 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 #endif
 
 #if ENABLE(AOT)
-            // This record's export names come from a run-time value, so it has no `export *` and cannot be part of a star cycle. Its resolution depends on the module that re-exported it, so it is resolved once per re-exporter.
+            // Export names that come from a run-time value are resolved once per re-exporter.
             auto* compiled = vm.hasCompiledCode() ? dynamicDowncast<AOT::ModuleRecord>(moduleRecord) : nullptr;
             bool isReexporterDependent = compiled && compiled->resolvesPerReexporter();
-            // A module whose mock was removed is resolved again on every later visit, because a different re-exporter may see a different binding. Its `export *` targets were queued on the first visit.
+            // A module whose mock was removed is resolved again on every later visit.
             bool isRevisit = !isReexporterDependent && !resolveSet.add(task.query).isNewEntry;
             if (isRevisit && !(compiled && compiled->hasRemovedMockInUse()))
                 continue;
-            // Both kinds skip the resolveSet check, so they need a cycle check of their own. The same record, name and re-exporter a second time means a cycle of `export { x } from` statements, which resolves to nothing.
+            // Both kinds skip the resolveSet check, so they need a cycle check of their own.
             if ((isReexporterDependent || isRevisit) && !reexporterDependentVisits.add({ moduleRecord, query.exportName.get(), task.reexporter }).isNewEntry)
                 continue;
 #else
@@ -1178,7 +1178,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
 #if ENABLE(AOT)
             if (compiled) {
-                // A resolution stored for a compiled record is the complete result, star exports included, exactly as resolveExportByName() returns it.
+                // A resolution stored for a compiled record is the complete result, star exports included.
                 std::optional<Resolution> kept = compiled->hasAnyActiveMock() || isReexporterDependent || isRevisit ? std::nullopt : moduleRecord->tryGetCachedResolution(query.exportName.get());
                 if (const Resolution* keptForNow = kept || isReexporterDependent || isRevisit ? nullptr : compiled->storedResolution(query.exportName.get()))
                     kept = *keptForNow;

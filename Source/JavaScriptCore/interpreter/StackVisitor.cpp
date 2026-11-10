@@ -857,7 +857,7 @@ bool StackVisitor::Frame::isImplementationVisibilityPrivate() const
                     return ImplementationVisibility::Public;
                 }
 #if ENABLE(AOT)
-                // A native frame whose callee is a compiled function object only enters compiled code, whatever kind of function object it is.
+                // A native frame whose callee is a compiled function object only enters compiled code.
                 if (callee->vm().hasCompiledCode() && AOT::CompiledCallee::isCompiledCallee(callee))
                     return ImplementationVisibility::Private;
 #endif

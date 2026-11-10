@@ -17,8 +17,8 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker&, const BodyValue&);
 ALWAYS_INLINE bool buildDefinitionByWrittenDescriptor(Walker& walker, const BodyValue& value) { return value.opcode() == Opcode::Call && value.as<Opcode::Call>().argumentsOperands().size() == numberOfArgumentsOfDescriptorCall && buildDefinitionByWrittenDescriptorOfItsOpcodes(walker, value); }
 template<Opcode known> ALWAYS_INLINE bool buildDefinitionByWrittenDescriptor(Walker& walker, const BodyValueOf<known>& value) { return known == Opcode::Call && value.template as<Opcode::Call>().argumentsOperands().size() == numberOfArgumentsOfDescriptorCall && buildDefinitionByWrittenDescriptorOfItsOpcodes(walker, value); }
 
-inline constexpr unsigned numberOfArgumentsOfObjectCreate = 2;
-uint32_t numberOfDescriptorsWrittenFor(Walker&, const BodyValue& callOfObjectCreate);
+inline constexpr unsigned objectCreateArgumentCount = 2;
+uint32_t objectCreateDescriptorCount(Walker&, const BodyValue& objectCreateCall);
 AOT_LINK_OF_WALK(expandObjectCreateDescriptors, opcodesThatExpandObjectCreateDescriptorsTakes)
 AOT_LINK_OF_WALK(expandObjectCreateAtDefinition, opcodesThatExpandObjectCreateAtDefinitionTakes)
 

@@ -101,9 +101,9 @@ public:
     bool hostIsAskedForValueOfModule() const;
     bool unseenCodeCanRun() const;
     bool loaderOfMachineCodeIsInUse() const;
-    bool holdsBackNamesFromRunTime() const;
+    bool defersRuntimeNames() const;
     Vector<ModuleID> takeModulesSpelledInTexts();
-    bool letInNamesFromRunTime();
+    bool allowRuntimeNames();
     bool objectsMayHaveMethodCalledWithStartupLoads() const;
 
     bool takeForConstant(BuiltinID member);

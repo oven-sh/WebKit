@@ -3302,7 +3302,7 @@ public:
     bool loaderOfHostMayRun() const
     {
         return std::ranges::any_of(m_program.unseenCode, [&](const UnseenCodeRecord& record) {
-            return !m_holdsBackNamesFromRunTime || record.cause != UnseenCodeCause::EvaluatesText;
+            return !m_defersRuntimeNames || record.cause != UnseenCodeCause::EvaluatesText;
         });
     }
     bool hostIsAskedForValueOfModule() const { return m_hostIsAskedForValueOfModule; }
@@ -3316,10 +3316,10 @@ public:
             return isInUse(loader.callee) || isInUse(loader.named);
         });
     }
-    void holdBackNamesFromRunTime() { m_holdsBackNamesFromRunTime = true; }
-    bool holdsBackNamesFromRunTime() const { return m_holdsBackNamesFromRunTime; }
-    bool holdsBackMembersOf(BuiltinID canonicalHolder) const { return m_holdsBackNamesFromRunTime && (canonicalHolder == m_globalObject); }
-    bool hasHeldBackMembers() const { return m_holdsBackNamesFromRunTime && m_hasHeldBackMembers; }
+    void deferRuntimeNames() { m_defersRuntimeNames = true; }
+    bool defersRuntimeNames() const { return m_defersRuntimeNames; }
+    bool defersMembersOf(BuiltinID canonicalHolder) const { return m_defersRuntimeNames && (canonicalHolder == m_globalObject); }
+    bool hasDeferredMembers() const { return m_defersRuntimeNames && m_hasDeferredMembers; }
     BitVector classesWithObjects() const
     {
         BitVector classes(m_builtins.classCount());
@@ -3330,9 +3330,9 @@ public:
         return classes;
     }
     Vector<ModuleID> takeModulesSpelledInTexts() { return std::exchange(m_modulesSpelledInTexts, { }); }
-    BitVector letInNamesFromRunTime();
+    BitVector allowRuntimeNames();
     BitVector builtinsThatCodeInSightUses() const;
-    bool canBeFoundByNameOfProgram(BuiltinID member) const;
+    bool isReachableByName(BuiltinID member) const;
     template<typename Functor>
     bool programLetsUnseenCodeRunWhere(const Functor& counts) const
     {
@@ -3518,8 +3518,8 @@ private:
     BitVector m_isCalledByCodeInSight;
     BitVector m_isSpelledInTexts;
     bool m_eventsAreWithheld { true };
-    bool m_holdsBackNamesFromRunTime { false };
-    bool m_hasHeldBackMembers { false };
+    bool m_defersRuntimeNames { false };
+    bool m_hasDeferredMembers { false };
     Vector<ModuleID> m_modulesSpelledInTexts;
     BitVector m_keysAreListedInSight;
     Vector<BuiltinID, 32> m_holdersOfKeysThatPrinterLooksUnder;
@@ -4000,7 +4000,7 @@ bool BuilderOfProgramFacts::objectsMayExist(BuiltinClassID builtinClass) const
 {
     if (m_classesWithObjects.at(builtinClass.index()))
         return true;
-    return m_objectsOfAnyClassMayExist && (!m_holdsBackNamesFromRunTime || hostMakesInstancesOf(builtinClass));
+    return m_objectsOfAnyClassMayExist && (!m_defersRuntimeNames || hostMakesInstancesOf(builtinClass));
 }
 void BuilderOfProgramFacts::noteTypeIsMade(BuiltinTypeID type, BuiltinOrigin origin)
 {
@@ -4489,8 +4489,8 @@ void BuilderOfProgramFacts::spreadBelow(BuiltinID canonicalHolder)
     const Builtin& holder = m_builtins.at(canonicalHolder);
     if (m_followsClimbsFromWhatIsLetGo && holder.prototypeLink == BuiltinPrototypeLink::Builtin && holder.inheritsFrom)
         letGo(m_builtins.canonicalID(holder.inheritsFrom), witness);
-    if (holdsBackMembersOf(canonicalHolder)) {
-        m_hasHeldBackMembers = true;
+    if (defersMembersOf(canonicalHolder)) {
+        m_hasDeferredMembers = true;
         return;
     }
     bool handsOutEvents = !m_eventsAreWithheld || standsInTextOfProgram(witness);
@@ -4577,9 +4577,9 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
     if (mayHoldObjectInProgramFacts(m_builtins, canonicalHolder) && !m_builtins.at(objectAnsweredByBindingInProgramFacts(m_builtins, canonicalHolder)).flags.containsAny({ BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject }) && !liesInModuleThatProgramHolds(canonicalHolder) && (m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index()) || m_readsUnderNamesThatLoopsGave || !m_namesRead.isEmpty()))
         m_objectsMayHaveMethodCalledWithStartupLoads = true;
     BuiltinClassID classOfHolder = m_classOfPrototype[canonicalHolder.index()];
-    bool holdsBackMembers = holdsBackMembersOf(canonicalHolder);
-    if (holdsBackMembers && (m_readsUnderComputedKeys || m_readsUnderNamesThatLoopsGave || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index())))
-        m_hasHeldBackMembers = true;
+    bool defersMembers = defersMembersOf(canonicalHolder);
+    if (defersMembers && (m_readsUnderComputedKeys || m_readsUnderNamesThatLoopsGave || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index())))
+        m_hasDeferredMembers = true;
     bool isOfClassThatRowsOfHostName = classOfHolder && m_classesThatRowsOfHostName.get(classOfHolder.index());
     for (BuiltinID member : m_builtins.membersOf(canonicalHolder)) {
         BuiltinName name = m_builtins.at(member).name;
@@ -4593,8 +4593,8 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
         bool isCalledOffWhatRowsOfHostName = key && isOfClassThatRowsOfHostName && m_namesCalledByNativeCodeOffUnseenObjects.get(key.index());
         bool isNamed = isNamedByCode || isCalledOffWhatRowsOfHostName || (m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index())));
         bool canBeListed = m_builtins.at(member).canBeListed && !m_builtins.isSymbolName(name);
-        bool isReadUnderComputedKeys = !holdsBackMembers && (m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index()));
-        bool isValueReadProgramWide = isRead || (!holdsBackMembers && (m_readsUnderComputedKeys || (m_readsUnderNamesThatLoopsGave && (canBeListed || m_loopsMayGiveAnyName))));
+        bool isReadUnderComputedKeys = !defersMembers && (m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index()));
+        bool isValueReadProgramWide = isRead || (!defersMembers && (m_readsUnderComputedKeys || (m_readsUnderNamesThatLoopsGave && (canBeListed || m_loopsMayGiveAnyName))));
         bool isValueRead = isValueReadProgramWide || isReadUnderComputedKeys;
         if (!isNamed && !isValueRead)
             continue;
@@ -4725,7 +4725,7 @@ std::optional<UnseenCodeCause> BuilderOfProgramFacts::causeOfLettingCodeIn(Built
 
 void BuilderOfProgramFacts::listBuiltinsThatLetCodeIn()
 {
-    bool someAreNamedAtRunTime = m_inputs.linked.lookups.namesFromRunTimeWereHeldBack;
+    bool someAreNamedAtRunTime = m_inputs.linked.lookups.wereRuntimeNamesDeferred;
     BitVector usedByCodeInSight = someAreNamedAtRunTime ? builtinsThatCodeInSightUses() : BitVector();
     for (size_t index : m_rows.areEvents) {
         if (someAreNamedAtRunTime && !usedByCodeInSight.quickGet(index))
@@ -4742,7 +4742,7 @@ void BuilderOfProgramFacts::listBuiltinsThatLetCodeIn()
 
 void BuilderOfProgramFacts::listLoadsOfUnseenCode()
 {
-    if (m_holdsBackNamesFromRunTime)
+    if (m_defersRuntimeNames)
         return;
     auto admitting = std::ranges::find_if(m_program.unseenCode, admitsUnknownJavaScriptInProgramFacts, &UnseenCodeRecord::cause);
     if (admitting == m_program.unseenCode.end())
@@ -4773,11 +4773,11 @@ void BuilderOfProgramFacts::listLoadsOfMachineCode()
     }
 }
 
-BitVector BuilderOfProgramFacts::letInNamesFromRunTime()
+BitVector BuilderOfProgramFacts::allowRuntimeNames()
 {
-    m_holdsBackNamesFromRunTime = false;
+    m_defersRuntimeNames = false;
     m_classesWithObjectsHaveGrown |= m_objectsOfAnyClassMayExist;
-    if (m_hasHeldBackMembers) {
+    if (m_hasDeferredMembers) {
         if (m_isLetGo.quickGet(m_globalObject.index()))
             m_holdersToSpreadBelow.append(m_globalObject);
         m_holdersToLookThrough.append(m_globalObject);
@@ -4792,7 +4792,7 @@ BitVector BuilderOfProgramFacts::letInNamesFromRunTime()
     return used;
 }
 
-bool BuilderOfProgramFacts::canBeFoundByNameOfProgram(BuiltinID member) const
+bool BuilderOfProgramFacts::isReachableByName(BuiltinID member) const
 {
     const Builtin& entry = m_builtins.at(member);
     if (!entry.holder)
@@ -4800,20 +4800,20 @@ bool BuilderOfProgramFacts::canBeFoundByNameOfProgram(BuiltinID member) const
     BuiltinID holder = m_builtins.canonicalID(entry.holder);
     BuiltinClassID classOfPrototype = m_classOfPrototype[holder.index()];
     BuiltinClassID builtinClass = classOfPrototype ? classOfPrototype : m_builtins.at(holder).instanceClass;
-    if (!builtinClass || hostMakesInstancesOf(builtinClass) || m_inputs.linked.lookups.classesWithObjectsWithoutNamesFromRunTime.get(builtinClass.index()))
+    if (!builtinClass || hostMakesInstancesOf(builtinClass) || m_inputs.linked.lookups.staticallyInstantiatedClasses.get(builtinClass.index()))
         return true;
     return !classOfPrototype && entry.kind != BuiltinKind::Constant && entry.kind != BuiltinKind::Prototype;
 }
 BitVector BuilderOfProgramFacts::builtinsThatCodeInSightUses() const
 {
     const LookupsPastProgramObjects& lookups = m_inputs.linked.lookups;
-    BitVector used = lookups.builtinsUsedWithoutNamesFromRunTime;
+    BitVector used = lookups.staticallyUsedBuiltins;
     used.merge(m_isSpelledInTexts);
     for (size_t index : m_isFoundByName) {
         BuiltinID member(static_cast<uint32_t>(index));
         BuiltinName name = m_builtins.at(member).name;
         PropertyKeyID key = name ? m_source.keyOf(name) : PropertyKeyID();
-        if (!canBeFoundByNameOfProgram(member))
+        if (!isReachableByName(member))
             continue;
         if (!key || !lookups.namesSpelledByProgram.get(key.index()))
             continue;
@@ -4825,7 +4825,7 @@ BitVector BuilderOfProgramFacts::builtinsThatCodeInSightUses() const
 
 void BuilderOfProgramFacts::listBuiltinUses()
 {
-    bool someAreNamedAtRunTime = m_inputs.linked.lookups.namesFromRunTimeWereHeldBack;
+    bool someAreNamedAtRunTime = m_inputs.linked.lookups.wereRuntimeNamesDeferred;
     BitVector usedByCodeInSight = someAreNamedAtRunTime ? builtinsThatCodeInSightUses() : BitVector();
     for (uint32_t index = 0; index < m_uses.size(); ++index) {
         OptionSet<BuiltinUse> uses = m_uses[index];
@@ -6146,7 +6146,7 @@ void BuilderOfProgramFacts::settle()
         }
     }
 
-    if (hasRecordThat(admitsUnknownJavaScriptInProgramFacts) && !m_source.admitsInspector && !m_holdsBackNamesFromRunTime) {
+    if (hasRecordThat(admitsUnknownJavaScriptInProgramFacts) && !m_source.admitsInspector && !m_defersRuntimeNames) {
         letGo(m_globalObject, noWitness);
         if (!std::exchange(m_objectsOfAnyClassMayExist, true))
             m_classesWithObjectsHaveGrown = true;
@@ -6281,7 +6281,7 @@ BuiltinsInReach::BuiltinsInReach(const Program& program, const LooksAtBodies& lo
 {
     const BuiltinTable& builtins = program.builtins();
     if (build.options().excludesFeaturesNamedAtRunTime())
-        m_builder->holdBackNamesFromRunTime();
+        m_builder->deferRuntimeNames();
     m_builtinsWorthFollowingToWrites.ensureSize(builtins.builtinCount());
     if (program.admitsReplacedBuiltins) {
         for (BuiltinID member : program.builtinsWhoseLockIsLeftToProgram())
@@ -6843,9 +6843,9 @@ const BuiltinCondition* BuiltinsInReach::lightFormOf(BuiltinID canonical) const
     return m_builder->lightFormOf(canonical);
 }
 
-bool BuiltinsInReach::holdsBackNamesFromRunTime() const
+bool BuiltinsInReach::defersRuntimeNames() const
 {
-    return m_builder->holdsBackNamesFromRunTime();
+    return m_builder->defersRuntimeNames();
 }
 
 Vector<ModuleID> BuiltinsInReach::takeModulesSpelledInTexts()
@@ -6853,14 +6853,14 @@ Vector<ModuleID> BuiltinsInReach::takeModulesSpelledInTexts()
     return m_builder->takeModulesSpelledInTexts();
 }
 
-bool BuiltinsInReach::letInNamesFromRunTime()
+bool BuiltinsInReach::allowRuntimeNames()
 {
-    if (!m_builder->holdsBackNamesFromRunTime() || (!m_builder->hasRecordOfUnseenCode() && !m_builder->hasHeldBackMembers()))
+    if (!m_builder->defersRuntimeNames() || (!m_builder->hasRecordOfUnseenCode() && !m_builder->hasDeferredMembers()))
         return false;
     LookupsPastProgramObjects& lookups = m_linked->lookups;
-    lookups.namesFromRunTimeWereHeldBack = true;
-    lookups.classesWithObjectsWithoutNamesFromRunTime = m_builder->classesWithObjects();
-    lookups.builtinsUsedWithoutNamesFromRunTime = m_builder->letInNamesFromRunTime();
+    lookups.wereRuntimeNamesDeferred = true;
+    lookups.staticallyInstantiatedClasses = m_builder->classesWithObjects();
+    lookups.staticallyUsedBuiltins = m_builder->allowRuntimeNames();
     m_wasToldSomethingNew = true;
     return true;
 }

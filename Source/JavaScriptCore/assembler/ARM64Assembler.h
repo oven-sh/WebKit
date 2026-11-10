@@ -204,8 +204,7 @@ static constexpr bool isZr(RegisterID reg) { return reg == zr; }
 
 } // namespace ARM64Registers
 
-// Code that is longer than an unconditional branch reaches holds pools of branch islands. An island is an unconditional branch.
-// A branch that cannot reach its target goes to an island in a pool on the way, and from there to the next pool or to the target.
+// A branch that cannot reach its target goes through branch islands, which lie in pools within the code.
 struct ARM64BranchIslands {
     struct Pool {
         int32_t emittedOffset { 0 }; // In the assembler's buffer. The instruction before it is an unconditional branch.
@@ -4300,7 +4299,7 @@ public:
     ARM64BranchIslands* branchIslands() const { return m_branchIslands; }
     void setBranchIslands(ARM64BranchIslands* islands) { m_branchIslands = islands; }
 
-    // No hop spans more than half the reach in the assembler's buffer. The other half is room for the pools that the linked code holds in between.
+    // No hop spans more than half the reach. The other half is room for the pools of the linked code.
     ARM64BranchIslands planBranchIslands(int64_t reach)
     {
         ARM64BranchIslands plan;

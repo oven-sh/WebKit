@@ -107,9 +107,7 @@ public:
     std::span<const ModuleExportData> exports(ModuleID module) const
     {
         std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
-        while (!entries.empty() && entries.back().isHidden())
-            entries = entries.first(entries.size() - 1);
-        return entries;
+        return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? entries.first(entries.size() - 1) : entries;
     }
     bool someExportStaysIn(ModuleID module) const
     {
@@ -117,12 +115,12 @@ public:
             return entry.staysIn;
         });
     }
-    std::optional<SlotData> mockSlot(ModuleID module) const { return hiddenSlot(module, ModuleExportData::kindBitsOfWordOfMock); }
-    std::optional<SlotData> instanceVariable(ModuleID module) const { return hiddenSlot(module, ModuleExportData::kindBitsOfInstanceVariable); }
-    std::optional<SlotData> instanceGuard(ModuleID module) const { return hiddenSlot(module, ModuleExportData::kindBitsOfInstanceGuard); }
-    std::optional<SlotData> instanceAllocator(ModuleID module) const { return hiddenSlot(module, ModuleExportData::kindBitsOfInstanceAllocator); }
+    std::optional<SlotData> mockSlot(ModuleID module) const
+    {
+        std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
+        return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? std::optional(entries.back().variable) : std::nullopt;
+    }
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
-    const ExportedFieldData& exportedField(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
     bool dependsOnMoreThanSource(ModuleID module) const { return std::ranges::binary_search(m_tables->modulesThatDependOnMoreThanSource(), module.index()); }
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
@@ -173,7 +171,6 @@ private:
     ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
     std::optional<unsigned> findExport(ModuleID, StringView name) const;
     template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;
-    std::optional<SlotData> hiddenSlot(ModuleID, uint32_t kindBits) const;
 
     const ProgramTables* m_tables;
     std::span<const ModuleData> m_modules;
@@ -201,7 +198,7 @@ struct CyclesOfImports {
 struct ReexportedNames {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ReexportedNames);
 
-    enum class Answer : uint8_t { NotAsked, Unknown, Found, NotFound };
+    enum class Answer : uint8_t { Unknown, Found, NotFound };
 
     explicit ReexportedNames(const ModuleTable&);
 
@@ -209,21 +206,32 @@ struct ReexportedNames {
     BitVector transitiveReexportersOf(Vector<ModuleID, 16>&&) const;
 
 private:
-    struct Bindings {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Bindings);
+    struct Resolution {
+        Answer answer { Answer::Unknown };
+        const ModuleExportData* binding { nullptr };
+    };
 
-        UncheckedKeyHashMap<uint32_t, const ModuleExportData*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> byName;
+    struct Stars {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Stars);
+
+        Vector<ModuleID, 4> reexporters;
+        UncheckedKeyHashMap<uint32_t, const ModuleExportData*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bindings;
         bool listsEveryName { true };
     };
 
-    const Bindings& bindingsOf(const ModuleTable&, ModuleID exporter);
-    bool tryResolveInTables(const ModuleTable&, ModuleID exporter, uint32_t name, BitVector& seen, const ModuleExportData*& found);
+    const Stars& starsOf(const ModuleTable&, ModuleID exporter);
+    Resolution resolve(const ModuleTable&, ModuleID exporter, uint32_t name);
+    Resolution resolveHere(const ModuleTable&, ModuleID exporter, uint32_t name, const Stars&);
     bool areNamesBehindStarsInTables(const ModuleTable&, ModuleID);
 
     Vector<uint32_t> m_reexporters;
     Vector<uint32_t> m_firstReexporterOf;
-    Vector<Answer> m_answers;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<Bindings>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindings;
+    Vector<std::optional<Answer>> m_answers;
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<Stars>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_stars;
+    UncheckedKeyHashMap<uint64_t, Resolution, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_resolutions;
+    BitVector m_seen;
+    Vector<ModuleID, 16> m_visited;
+    bool m_isOnCycle { false };
     BitVector m_modulesWithNamesInTables;
     BitVector m_modulesWithOtherNames;
 };
@@ -240,16 +248,6 @@ inline List ModuleTable::listOf(List list, ModuleID module, Number24 ModuleData:
     size_t index = checkedIndex(module);
     uint32_t start = m_modules[index].*first;
     return list.subspan(start, m_modules[index + 1].*first - start);
-}
-
-inline std::optional<SlotData> ModuleTable::hiddenSlot(ModuleID module, uint32_t kindBits) const
-{
-    std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
-    for (; !entries.empty() && entries.back().isHidden(); entries = entries.first(entries.size() - 1)) {
-        if (entries.back().kindBits == kindBits)
-            return entries.back().variable;
-    }
-    return std::nullopt;
 }
 
 inline ModuleID ModuleTable::headOfLoadGroup(ModuleID module) const
@@ -275,14 +273,6 @@ inline const IndirectExportData& ModuleTable::indirectExport(const ModuleExportD
     std::span<const IndirectExportData> indirectExports = m_tables->indirectExports();
     RELEASE_ASSERT(moduleExport.indirectExport < indirectExports.size());
     return indirectExports[moduleExport.indirectExport];
-}
-
-inline const ExportedFieldData& ModuleTable::exportedField(const ModuleExportData& moduleExport) const
-{
-    RELEASE_ASSERT(moduleExport.kind() == ModuleExportKind::Field);
-    std::span<const ExportedFieldData> records = spanReinterpretCast<const ExportedFieldData>(m_tables->indirectExports());
-    RELEASE_ASSERT(moduleExport.exportedField < records.size());
-    return records[moduleExport.exportedField];
 }
 
 inline const ExportStatementData* ModuleTable::findExportStatement(const RequiredNameData& requiredName) const

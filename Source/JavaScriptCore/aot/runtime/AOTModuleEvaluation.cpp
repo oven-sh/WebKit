@@ -556,10 +556,6 @@ JSValue Modules::callBody(ModuleID module)
         giveStatementsFormsThatLoaderHas(module);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (hasInstances(module)) [[unlikely]] {
-        ensureInstance(module);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
     if ((moduleData.kind == ModuleKind::SourceText && !moduleData.hasTopLevelAwait()) || moduleData.kind == ModuleKind::CommonJs) {
         EncodedJSValue function = JSValue::encode(jsNumber(static_cast<int32_t>(closureNumberOf(*body))));
         m_instance.modules.moduleThatRunTimeStartsPlusOne = module.index() + 1;
@@ -570,19 +566,6 @@ JSValue Modules::callBody(ModuleID module)
         RELEASE_AND_RETURN(scope, callCompiledCode(vm, closures.calleeOfModuleBodies(vm, *body), entry, jsUndefined(), nullptr, ArgList(&function, 1)));
     }
     RELEASE_AND_RETURN(scope, callCompiledCode(realm, closures.createClosureForOneCall(vm, *body), jsUndefined(), ArgList()));
-}
-
-Environment* Modules::ensureInstance(ModuleID module)
-{
-    if (Environment* current = currentInstance(module))
-        return current;
-    std::optional<SlotData> allocator = m_table.instanceAllocator(module);
-    if (!allocator)
-        return nullptr;
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    callCompiledCode(m_instance.globalObject, ProgramStatics::readVariable(m_instance, *allocator).asCell(), jsUndefined(), ArgList());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return currentInstance(module);
 }
 
 auto Modules::noteModulesThatMayBeginUnder(uint8_t mark, ModuleID root) -> Vector<ModuleThatMayBegin, 8>
@@ -784,7 +767,7 @@ void Modules::makeRecordWithoutExports(ModuleID facade)
 void Modules::discardFailedEvaluation(ModuleID file)
 {
     saveFailedModuleObject(file);
-    letGoOfModuleObject(file);
+    discardModuleObject(file);
     forgetTemplateObjects(file);
     if (LoadedModule* loaded = loadedIfExists(file)) {
         loaded->requiredValue.set(*this, JSValue());
@@ -3269,6 +3252,7 @@ void Modules::didSettleDetachedFactory(unsigned number)
     if (left == notFound)
         return;
     if (thrown) {
+        restoreRequiredValue(required);
         m_detachedLoads[left].wait->reject(vm, thrown->value());
         return;
     }
@@ -3317,7 +3301,7 @@ void Modules::finishDetachedLoad(unsigned number)
     if (left == notFound)
         return;
     if (std::exchange(m_detachedLoads[left].isEvaluationDue, false)) {
-        for (ModuleID root : rootsInEvaluationOrder(m_detachedLoads[left])) {
+        for (ModuleID root : evaluationOrderedRoots(m_detachedLoads[left])) {
             if (status(root) != ModuleStatus::Unlinked && status(root) != ModuleStatus::Linked)
                 continue;
             JSPromise* evaluation = evaluate(root, std::nullopt, nullptr);
@@ -3331,7 +3315,18 @@ void Modules::finishDetachedLoad(unsigned number)
         if (left == notFound)
             return;
     }
+    restoreRequiredValue(m_detachedLoads[left].required);
     m_detachedLoads[left].wait->fulfill(vm, jsUndefined());
+}
+
+void Modules::restoreRequiredValue(ModuleID required)
+{
+    LoadedModule* loaded = loadedIfExists(required);
+    if (!loaded || !loaded->requiredValueBeforeRefusal)
+        return;
+    if (!loaded->requiredValue)
+        loaded->requiredValue.set(*this, loaded->requiredValueBeforeRefusal.get());
+    loaded->requiredValueBeforeRefusal.set(*this, JSValue());
 }
 
 void Modules::didFinishLoaderWait(unsigned number)
@@ -3434,7 +3429,7 @@ unsigned Modules::loaderStepsToMock(ModuleID root, ModuleID mock) const
     return visit(visit, root).value_or(1);
 }
 
-Vector<ModuleID, 2> Modules::rootsInEvaluationOrder(const DetachedLoad& load) const
+Vector<ModuleID, 2> Modules::evaluationOrderedRoots(const DetachedLoad& load) const
 {
     if (load.laterRootsBelow.isEmpty()) [[likely]]
         return { load.required };
@@ -3485,6 +3480,7 @@ void Modules::didFailDetachedFactory(unsigned number, JSValue error)
     JSPromise* wait = m_detachedLoads[left].wait.get();
     if (m_detachedLoads[left].keepsError)
         cacheDetachedFactoryError(m_detachedLoads[left].required, error);
+    restoreRequiredValue(m_detachedLoads[left].required);
     wait->reject(*m_instance.vm, error);
 }
 
@@ -3517,6 +3513,13 @@ void Modules::cacheDetachedFactoryError(ModuleID required, JSValue error)
         ensureLoaded(required).cachedLoadError.set(*this, error);
 }
 
+bool Modules::hasUnheardSettlement(ModuleID required) const
+{
+    return m_detachedLoads.containsIf([&](const DetachedLoad& left) {
+        return left.required == required && left.pendingFactoryCount && !left.wasAwaitedMockRemoved && left.wait->status() == JSPromise::Status::Pending && left.awaitedFactoryCalls.containsIf([&](const auto& call) { return pendingFactoryCallID(call.first) != call.second; });
+    });
+}
+
 bool Modules::isStillBlockedOnFactories(ModuleID required) const
 {
     bool isInFlight = m_detachedLoads.containsIf([&](const auto& left) { return left.required == required && left.wait->status() == JSPromise::Status::Pending; });
@@ -3525,6 +3528,10 @@ bool Modules::isStillBlockedOnFactories(ModuleID required) const
         if (pair.required != required || pair.mocked == required || m_modulesWithActiveMock.get(pair.mocked.index()))
             continue;
         uint64_t call = pendingFactoryCallID(pair.mocked);
+        if (!call && hasUnheardSettlement(required)) {
+            waits = true;
+            continue;
+        }
         if (!call || (!isInFlight && !m_rejectedRequires.containsIf([&](const RejectedRequire& other) { return other.required == required && other.mocked == pair.mocked && other.call == call; })))
             return false;
         waits = true;
@@ -3568,6 +3575,7 @@ void Modules::willRejectRequireAgain(ModuleID asked, ModuleID above)
         earlier.laterRootsBelow.removeAll(asked);
         earlier.laterRootsBelow.append(asked);
     }
+    bool joinsFailingLoad = hasUnheardSettlement(above);
     bool isHeardByWait = m_detachedLoads.containsIf([&](const auto& left) { return left.required == above && !hasOnlyStaleFactoryCalls(left); });
     if (isHeardByWait || m_detachedLoads.containsIf([&](const auto& left) { return left.required == above && !hasEnded(left); })) {
         JSValue state;
@@ -3576,7 +3584,7 @@ void Modules::willRejectRequireAgain(ModuleID asked, ModuleID above)
         if (original)
             original->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), JSPromise::create(vm, realm->promiseStructure()));
     }
-    if (!isHeardByWait)
+    if (!isHeardByWait && !joinsFailingLoad)
         RELEASE_AND_RETURN(scope, startDetachedLoad(above));
 }
 
@@ -5115,7 +5123,7 @@ void Modules::forgetRequestByLoader(ModuleID module)
 {
     ModuleID file = fileOf(module);
     if (data(file).kind == ModuleKind::CommonJs && status(file) <= ModuleStatus::Linked && !isEvicted(file))
-        letGoOfModuleObject(file);
+        discardModuleObject(file);
 }
 
 void Modules::layValueInPlaceOfExportsVariable(ModuleID file)
@@ -5129,7 +5137,7 @@ void Modules::layValueInPlaceOfExportsVariable(ModuleID file)
         loaded->requirer->putDirect(vm, vm.propertyNames->exports, commonJSExports(file));
 }
 
-void Modules::letGoOfModuleObject(ModuleID file)
+void Modules::discardModuleObject(ModuleID file)
 {
     m_filesRequestedByLoader.clear(file.index());
     for (EagerLoad* load = m_innermostEagerLoad; load; load = load->outer) {
@@ -5408,9 +5416,7 @@ JSValue Modules::readExportForRequire(JSObject* namespaceObject, const Identifie
     if (!index && !compiledNamespace->hasExport(name.impl()))
         return jsUndefined();
 
-    Environment* instance = compiledNamespace->bindModuleInstance();
-    RETURN_IF_EXCEPTION(scope, { });
-    JSValue exported = index ? readExport(compiledNamespace->module(), *index, MockMode::Use, instance) : namespaceObject->get(m_instance.globalObject, name);
+    JSValue exported = index ? readExport(compiledNamespace->module(), *index) : namespaceObject->get(m_instance.globalObject, name);
     if (scope.exception()) [[unlikely]] {
         TRY_CLEAR_EXCEPTION(scope, { });
         return { };

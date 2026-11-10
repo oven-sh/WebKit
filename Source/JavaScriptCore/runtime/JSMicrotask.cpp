@@ -1999,11 +1999,11 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue bareStep
 }
 
 #if ENABLE(AOT)
-// Compiled code runs the jobs that follow this one before it returns. runInternalMicrotask()'s frame holds this job's arguments, so the frame has to end here: the call is a tail call.
+// runInternalMicrotask()'s frame holds this job's arguments, so the frame has to end here: a tail call.
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
 #define LEAVE_FOR_COMPILED_JOB(call) do { call; return; } while (false)
 #elif OS(WINDOWS) && COMPILER(CLANG)
-// MUST_TAIL_CALL expands to nothing on Windows. With a job function's parameters, clang can make the tail call there too.
+// MUST_TAIL_CALL expands to nothing on Windows.
 #define LEAVE_FOR_COMPILED_JOB(call) [[clang::musttail]] return call
 #else
 #define LEAVE_FOR_COMPILED_JOB(call) MUST_TAIL_CALL return call

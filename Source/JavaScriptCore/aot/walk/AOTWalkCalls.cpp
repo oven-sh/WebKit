@@ -367,7 +367,7 @@ static Reference buildOperandInWalkCalls(Walker& walker, const CallInWalkCalls& 
 
 enum class UseOfRestParameter : bool { PassedToCall, PassedToCallOrSpread };
 
-static bool restArrayIsOnlyRead(Walker& walker, FunctionID id, UseOfRestParameter accepted)
+static bool isReadOnlyRestArray(Walker& walker, FunctionID id, UseOfRestParameter accepted)
 {
     static constexpr OpcodeSet arrayCallOpcodes { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList };
     const Function& function = walker.program().at(id);
@@ -391,7 +391,7 @@ static std::optional<uint32_t> restArrayFirstArgument(Walker& walker, Reference 
         return std::nullopt;
     const Code& code = walker.code();
     const Operation& allocation = code.at(underlyingCellOf(code, array.id()));
-    if (allocation.opcode != Opcode::CreateRest || !restArrayIsOnlyRead(walker, walker.unit().function, UseOfRestParameter::PassedToCallOrSpread))
+    if (allocation.opcode != Opcode::CreateRest || !isReadOnlyRestArray(walker, walker.unit().function, UseOfRestParameter::PassedToCallOrSpread))
         return std::nullopt;
     return allocation.firstArgument();
 }
@@ -521,7 +521,7 @@ static Reference proveResultThatPassesNoReturnInWalkCalls(Walker& walker, const 
     return walker.proveOrTrap(result, tested, ProofSource::ResultOfCall, origin);
 }
 
-static void countDirectEntryInWalkCalls(Walker& walker, FunctionID callee, CodeRole entered)
+static void countDirectEntry(Walker& walker, FunctionID callee, CodeRole entered)
 {
     if (!walker.plan().conventions().hasParameterGuard(callee))
         return;
@@ -580,7 +580,7 @@ static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, co
     Effects effects = effectsOfDirectCall(walker, request.callee, operands.span());
     Reference result = walker.buildCallThatMayBorrowScopes(WTF::move(direct), &effects);
     if (result) {
-        countDirectEntryInWalkCalls(walker, request.callee, entered.role);
+        countDirectEntry(walker, request.callee, entered.role);
         walker.leaveArrivals(request.callee, operands.span());
     }
     if (result && !walker.unitReturnsAtOnce(written))
@@ -1171,7 +1171,7 @@ static bool readParametersOutOfListInWalkCalls(Walker& walker, const Function& c
 
 static Reference findBorrowableSpreadSource(Walker& walker, const BodyValue& call, FunctionID calleeID, const Function& callee, Reference copy)
 {
-    if (callee.numberOfPositionalParameters() || !walker.has(Mechanism::TypedOperations) || !restArrayIsOnlyRead(walker, calleeID, UseOfRestParameter::PassedToCall))
+    if (callee.numberOfPositionalParameters() || !walker.has(Mechanism::TypedOperations) || !isReadOnlyRestArray(walker, calleeID, UseOfRestParameter::PassedToCall))
         return { };
     Reference source = findElidableSpreadSource(walker, call, copy);
     if (!source)
@@ -1481,7 +1481,7 @@ static bool walkDirectCallOfInputInWalkCalls(Walker& walker, const BodyValue& ca
     Reference result = walker.buildCallThatMayBorrowScopes(WTF::move(direct), effects ? &*effects : nullptr);
     if (!result)
         return true;
-    countDirectEntryInWalkCalls(walker, callee, entered);
+    countDirectEntry(walker, callee, entered);
     walker.bind(call.id(), result);
     if (entersBody)
         walker.leaveArrivals(callee, operands.span());

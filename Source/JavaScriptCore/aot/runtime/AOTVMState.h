@@ -79,11 +79,7 @@ public:
     void releaseImage(VM&);
     template<typename Visitor> void visitAggregate(Visitor&);
 
-    void didChangeInstances()
-    {
-        onlyInstance = instances.size() == 1 ? instances.first() : nullptr;
-        instanceOfRecentRun = { };
-    }
+    void didChangeInstances();
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }

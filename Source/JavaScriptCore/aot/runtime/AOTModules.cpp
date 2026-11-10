@@ -10,8 +10,6 @@
 
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTable.h"
-#include "AOTEffectsNet.h"
-#include "AOTEnvironment.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
@@ -29,7 +27,6 @@
 #include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
-#include "AOTSlotAccess.h"
 #include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
@@ -47,7 +44,6 @@
 #include "JSMicrotask.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
-#include "JSWeakMapInlines.h"
 #include "MicrotaskQueueInlines.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleRegistryEntry.h"
@@ -103,11 +99,6 @@ static AbstractModuleRecord::ModulePhase targetPhaseOf(const ModuleExportData& m
     return moduleExport.isDeferred ? AbstractModuleRecord::ModulePhase::Defer : AbstractModuleRecord::ModulePhase::Evaluation;
 }
 
-static bool hasStorage(const ModuleExportData& moduleExport)
-{
-    return moduleExport.kind() == ModuleExportKind::Variable || moduleExport.kind() == ModuleExportKind::Field;
-}
-
 static CyclicModuleRecord::Status recordStatusFor(ModuleStatus status)
 {
     RELEASE_ASSERT(status != ModuleStatus::Failed);
@@ -133,12 +124,7 @@ void Modules::visitRoots(Visitor& visitor)
 #define AOT_VISIT_REFERENCE(type, name) visitor.appendUnbarriered(loaded->name.get());
             FOR_EACH_REFERENCE_OF_LOADED_MODULE(AOT_VISIT_REFERENCE)
 #undef AOT_VISIT_REFERENCE
-            for (auto& [field, value] : loaded->fieldsBeforeMock) {
-                visitor.appendUnbarriered(field.first);
-                visitor.appendUnbarriered(value);
-            }
         }
-        visitor.appendUnbarriered(m_linksOfReleasedInstances.get());
         visitor.appendUnbarriered(m_namespaceStructure);
         visitor.appendUnbarriered(m_prototypeOfModuleObjects);
         visitor.appendUnbarriered(m_errorsOfExportsThatBuildFoundAbsent);
@@ -503,22 +489,6 @@ void Modules::resetPackageFailureIfNeeded(ModuleID module)
     m_modulesLoadedBesideGroups.clear(module.index());
 }
 
-static std::optional<ModuleID> reexportedModule(const ModuleTable& table, ModuleID module, const ModuleExportData& moduleExport)
-{
-    if (moduleExport.kind() == ModuleExportKind::Namespace)
-        return moduleExport.targetModule();
-    if (moduleExport.kind() != ModuleExportKind::Field || table.exportedField(moduleExport).declaringModule() == module)
-        return std::nullopt;
-    return table.exportedField(moduleExport).declaringModule();
-}
-
-static bool reexportsNamespaceOf(const ModuleTable& table, ModuleID module, ModuleID target)
-{
-    return std::ranges::any_of(table.exports(module), [&](const ModuleExportData& moduleExport) {
-        return moduleExport.kind() == ModuleExportKind::Namespace && moduleExport.targetModule() == target;
-    });
-}
-
 void Modules::resetFailedEvaluations()
 {
     Vector<ModuleID, 4> failed;
@@ -530,131 +500,8 @@ void Modules::resetFailedEvaluations()
         resetPackageFailureIfNeeded(module);
 }
 
-void Modules::releaseInstance(ModuleID module)
-{
-    std::optional<SlotData> guard = m_table.instanceGuard(module);
-    if (!guard)
-        return;
-    retainLinks(module);
-    ProgramStatics::writeVariable(m_instance, *guard, jsUndefined());
-    ProgramStatics::writeVariable(m_instance, *m_table.instanceVariable(module), JSValue());
-    discardNamespace(module);
-}
-
-std::span<const uint32_t> Modules::modulesReexportingFrom(ModuleID module)
-{
-    if (m_reexporters.isEmpty()) {
-        m_reexporters.grow(m_table.size());
-        for (unsigned index = 0; index < m_table.size(); ++index) {
-            for (const ModuleExportData& moduleExport : m_table.exports(ModuleID(index))) {
-                std::optional<ModuleID> target = reexportedModule(m_table, ModuleID(index), moduleExport);
-                if (target && (m_reexporters[target->index()].isEmpty() || m_reexporters[target->index()].last() != index))
-                    m_reexporters[target->index()].append(index);
-            }
-        }
-    }
-    return m_reexporters[module.index()].span();
-}
-
-static constexpr unsigned wordsOfLink = 3;
-
-void Modules::addLinkToReleasedInstance(ModuleID importer, ModuleID target, ReleasedLink link)
-{
-    VM& vm = *m_instance.vm;
-    JSCellButterfly* links = ensureLoaded(importer).linksToReleasedInstances;
-    if (!links) {
-        UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> targets;
-        for (const ModuleExportData& moduleExport : m_table.exports(importer)) {
-            if (std::optional<ModuleID> reexported = reexportedModule(m_table, importer, moduleExport))
-                targets.add(reexported->index());
-        }
-        links = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, targets.size() * wordsOfLink);
-        for (unsigned index = 0; index < links->length(); ++index)
-            links->setIndex(vm, index, jsUndefined());
-        ensureLoaded(importer).linksToReleasedInstances.set(*this, links);
-        m_hasLinksToReleasedInstances = true;
-    }
-    for (unsigned index = 0; index < links->length(); index += wordsOfLink) {
-        JSValue module = links->get(index);
-        if (module.isInt32() && module.asInt32() == static_cast<int32_t>(target.index()))
-            return;
-        if (module.isInt32())
-            continue;
-        links->setIndex(vm, index, jsNumber(static_cast<int32_t>(target.index())));
-        links->setIndex(vm, index + 1, link.instance ? JSValue(link.instance) : jsUndefined());
-        links->setIndex(vm, index + 2, link.namespaceObject ? JSValue(link.namespaceObject) : jsUndefined());
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-auto Modules::findLinkToReleasedInstance(ModuleID module, ModuleID target, Environment* boundInstance) const -> ReleasedLink
-{
-    if (!m_hasLinksToReleasedInstances) [[likely]]
-        return { };
-    JSCellButterfly* links = nullptr;
-    if (boundInstance && boundInstance != currentInstance(module)) {
-        JSValue retained = m_linksOfReleasedInstances ? m_linksOfReleasedInstances->get(boundInstance) : jsUndefined();
-        links = retained.isCell() ? uncheckedDowncast<JSCellButterfly>(retained.asCell()) : nullptr;
-    } else if (const LoadedModule* loaded = loadedIfExists(module))
-        links = loaded->linksToReleasedInstances;
-    if (!links)
-        return { };
-    for (unsigned index = 0; index < links->length(); index += wordsOfLink) {
-        JSValue linked = links->get(index);
-        if (!linked.isInt32() || linked.asInt32() != static_cast<int32_t>(target.index()))
-            continue;
-        JSValue instance = links->get(index + 1);
-        JSValue namespaceObject = links->get(index + 2);
-        return { instance.isCell() ? uncheckedDowncast<Environment>(instance.asCell()) : nullptr, namespaceObject.isObject() ? asObject(namespaceObject) : nullptr };
-    }
-    return { };
-}
-
-void Modules::retainLinks(ModuleID module)
-{
-    Environment* instance = currentInstance(module);
-    if (!instance)
-        return;
-    VM& vm = *m_instance.vm;
-    auto linkTo = [&](ModuleID target) -> ReleasedLink {
-        auto* namespaceObject = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(target, ModulePhase::Evaluation));
-        if (namespaceObject && currentInstance(target))
-            namespaceObject->bindModuleInstance();
-        return { currentInstance(target), namespaceObject };
-    };
-    ReleasedLink released = linkTo(module);
-    for (uint32_t index : modulesReexportingFrom(module)) {
-        ModuleID importer(index);
-        if (importer == module || (status(importer) <= ModuleStatus::Linked && !namespaceIfCreated(importer, ModulePhase::Evaluation)))
-            continue;
-        if (!released.namespaceObject && reexportsNamespaceOf(m_table, importer, module)) {
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            moduleNamespace(module, ModulePhase::Evaluation);
-            RELEASE_ASSERT(!scope.exception());
-            released = linkTo(module);
-        }
-        addLinkToReleasedInstance(importer, module, released);
-    }
-    if (released.namespaceObject) {
-        for (const ModuleExportData& moduleExport : m_table.exports(module)) {
-            std::optional<ModuleID> target = reexportedModule(m_table, module, moduleExport);
-            if (target && *target != module && currentInstance(*target))
-                addLinkToReleasedInstance(module, *target, linkTo(*target));
-        }
-    }
-    LoadedModule& loaded = ensureLoaded(module);
-    if (JSCellButterfly* links = loaded.linksToReleasedInstances) {
-        if (!m_linksOfReleasedInstances)
-            m_linksOfReleasedInstances.set(*this, JSWeakMap::create(vm, m_instance.globalObject->weakMapStructure()));
-        m_linksOfReleasedInstances->set(vm, instance, links);
-        loaded.linksToReleasedInstances.set(*this, nullptr);
-    }
-}
-
 void Modules::makeESModuleReadyToRunAgain(ModuleID module)
 {
-    releaseInstance(module);
     if (ModuleRecord* record = m_records.get(module)) {
         loader()->removeEntriesForRecord(record);
         takeOutRecord(module);
@@ -1285,50 +1132,7 @@ JSPromise* Modules::rejectedPromiseWithPendingException(JSGlobalObject* realm, T
     return JSPromise::create(realm->vm(), realm->promiseStructure());
 }
 
-Environment* Modules::currentInstance(ModuleID module) const
-{
-    std::optional<SlotData> guard = m_table.instanceGuard(module);
-    if (!guard || !ProgramStatics::readVariableWithoutAllocating(m_instance, *guard).isTrue())
-        return nullptr;
-    return uncheckedDowncast<Environment>(ProgramStatics::readVariableWithoutAllocating(m_instance, *m_table.instanceVariable(module)).asCell());
-}
-
-JSValue Modules::readField(const Environment* instance, SlotData field) const
-{
-    return instance ? readSlot(field.representation(), &instance->at<uint8_t>(field.offset), m_instance) : JSValue();
-}
-
-Environment* Modules::instanceForField(ModuleID module, const ExportedFieldData& field, Environment* instance) const
-{
-    if (instance && field.module == module.index())
-        return instance;
-    Environment* linked = findLinkToReleasedInstance(module, ModuleID(field.module), instance).instance;
-    return linked ? linked : currentInstance(ModuleID(field.module));
-}
-
-Environment* Modules::ensureInstanceForField(ModuleID module, const ExportedFieldData& field, Environment* instance)
-{
-    if (Environment* existing = instanceForField(module, field, instance))
-        return existing;
-    return ensureInstance(ModuleID(field.module));
-}
-
-JSValue Modules::readField(ModuleID module, const ModuleExportData& moduleExport, Environment* instance) const
-{
-    const ExportedFieldData& field = m_table.exportedField(moduleExport);
-    return readField(instanceForField(module, field, instance), field.slot);
-}
-
-void Modules::writeField(Environment* instance, SlotData field, JSValue value)
-{
-    if (readField(instance, field) != value)
-        m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
-    bool didWrite = tryWriteSlot(m_instance, field.representation(), &instance->at<uint8_t>(field.offset), value);
-    RELEASE_ASSERT(didWrite);
-    m_instance.vm->writeBarrier(instance, value);
-}
-
-JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index, Environment* instance) const
+JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index) const
 {
     std::span<const ModuleExportData> exports = m_table.exports(module);
     RELEASE_ASSERT(index < exports.size());
@@ -1338,13 +1142,9 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index, Enviro
     switch (moduleExport.kind()) {
     case ModuleExportKind::Variable:
         return ProgramStatics::readVariableWithoutAllocating(m_instance, moduleExport.variable);
-    case ModuleExportKind::Field:
-        return readField(module, moduleExport, instance);
     case ModuleExportKind::Namespace: {
         if (handedOnInPlaceOfNamespace(moduleExport)) [[unlikely]]
             return { };
-        if (JSObject* released = activeMock(moduleExport.targetModule()) ? nullptr : findLinkToReleasedInstance(module, moduleExport.targetModule(), instance).namespaceObject)
-            return released;
         if (JSObject* linkedWith = namespaceThatCompiledCodeHolds(moduleExport.targetModule(), targetPhaseOf(moduleExport)))
             return linkedWith;
         if (hasIntactOriginal(moduleExport.targetModule()) || indexOfEndedMockSeenBy(fileOf(moduleExport.targetModule()), module)) [[unlikely]]
@@ -1358,7 +1158,7 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index, Enviro
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-JSValue Modules::readExport(ModuleID module, unsigned index, MockMode mockOfModule, Environment* instance)
+JSValue Modules::readExport(ModuleID module, unsigned index, MockMode mockOfModule)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
@@ -1380,16 +1180,8 @@ JSValue Modules::readExport(ModuleID module, unsigned index, MockMode mockOfModu
         }
     }
     switch (moduleExport.kind()) {
-    case ModuleExportKind::Variable:
-    case ModuleExportKind::Field: {
-        JSValue value;
-        if (moduleExport.kind() == ModuleExportKind::Field) {
-            const ExportedFieldData& field = m_table.exportedField(moduleExport);
-            instance = ensureInstanceForField(module, field, instance);
-            RETURN_IF_EXCEPTION(scope, { });
-            value = readField(instance, field.slot);
-        } else
-            value = ProgramStatics::readVariable(m_instance, moduleExport.variable);
+    case ModuleExportKind::Variable: {
+        JSValue value = ProgramStatics::readVariable(m_instance, moduleExport.variable);
         if (!value) [[unlikely]] {
             DeferGCForAWhile deferGC(vm);
             throwException(realm, scope, createTDZError(realm, StringView(identifier(moduleExport.name).string())));
@@ -1399,8 +1191,6 @@ JSValue Modules::readExport(ModuleID module, unsigned index, MockMode mockOfModu
     case ModuleExportKind::Namespace:
         if (JSValue ofMock = handedOnInPlaceOfNamespace(moduleExport)) [[unlikely]]
             return ofMock;
-        if (JSObject* released = activeMock(moduleExport.targetModule()) ? nullptr : findLinkToReleasedInstance(module, moduleExport.targetModule(), instance).namespaceObject)
-            return released;
         if (JSObject* linkedWith = namespaceThatCompiledCodeHolds(moduleExport.targetModule(), targetPhaseOf(moduleExport)))
             return linkedWith;
         if (targetPhaseOf(moduleExport) == ModulePhase::Evaluation && !seesMockOf(moduleExport.targetModule(), module)) [[unlikely]]
@@ -1437,7 +1227,7 @@ std::optional<std::pair<ModuleID, unsigned>> Modules::exportThatStaysInBehindInd
     for (size_t steps = 0; steps <= m_table.size(); ++steps) {
         const ModuleExportData& entry = m_table.exports(module)[index];
         if (entry.kind() != ModuleExportKind::Indirect) {
-            if (!hasStorage(entry) || !entry.staysIn || (entry.isHiddenUntilInitialized && !readExportIfInitialized(module, index)))
+            if (entry.kind() != ModuleExportKind::Variable || !entry.staysIn || (entry.isHiddenUntilInitialized && !readExportIfInitialized(module, index)))
                 return std::nullopt;
             return std::pair { module, index };
         }
@@ -1468,15 +1258,7 @@ void Modules::fillExportsOfBodyThatNeverRuns(ModuleID module)
             }
         }
     }
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    Environment* instance = ensureInstance(module);
-    RETURN_IF_EXCEPTION(scope, void());
     for (const ModuleExportData& moduleExport : m_table.exports(module)) {
-        if (instance && moduleExport.kind() == ModuleExportKind::Field && moduleExport.isReplaceable) {
-            const ExportedFieldData& field = m_table.exportedField(moduleExport);
-            if (field.module == module.index() && !readField(instance, field.slot))
-                writeField(instance, field.slot, jsUndefined());
-        }
         if (moduleExport.kind() != ModuleExportKind::Variable || !moduleExport.isReplaceable || variablesOfOtherModules.contains(std::bit_cast<uint32_t>(moduleExport.variable)))
             continue;
         if (!ProgramStatics::readVariableWithoutAllocating(m_instance, moduleExport.variable))
@@ -1510,13 +1292,13 @@ bool Modules::wasLoadedWithImporter(ModuleID module) const
     return false;
 }
 
-bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, Environment* instance)
+bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value)
 {
     BitVector seenBehindStars;
-    return tryReplaceExport(module, name, value, seenBehindStars, instance);
+    return tryReplaceExport(module, name, value, seenBehindStars);
 }
 
-bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars, Environment* instance)
+bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars)
 {
     for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
         std::optional<unsigned> index = m_table.findExport(module, name);
@@ -1548,31 +1330,12 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
             }
             ProgramStatics::writeVariable(m_instance, moduleExport.variable, value);
             return true;
-        case ModuleExportKind::Field: {
-            if (!moduleExport.isReplaceable)
-                return false;
-            const ExportedFieldData& field = m_table.exportedField(moduleExport);
-            instance = ensureInstanceForField(module, field, instance);
-            if (!instance)
-                return false;
-            if (m_moduleBeingPatched) {
-                LoadedModule& mocked = ensureLoaded(*m_moduleBeingPatched);
-                if (!mocked.variablesBeforeMock)
-                    mocked.variablesBeforeMock.set(*this, createTableOfExports());
-                JSValue replaced = readField(instance, field.slot);
-                mocked.fieldsBeforeMock.add({ instance, field.slot.encoded() }, replaced ? replaced : JSValue(mocked.variablesBeforeMock.get()));
-                m_storedReferences.recordAll();
-            }
-            writeField(instance, field.slot, value);
-            return true;
-        }
         case ModuleExportKind::Namespace:
             return tryReplaceNamespaceHandedOn(moduleExport.targetModule(), value);
         case ModuleExportKind::Indirect: {
             const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
             module = moduleLoadedUnder(indirectExport.targetModule());
             name = identifier(indirectExport.importName).impl();
-            instance = nullptr;
             break;
         }
         }
@@ -1773,10 +1536,7 @@ bool Modules::dropExportThatFindsNothing(ModuleID importer, const RequiredNameDa
 
 bool Modules::isVariableOfExportEmpty(ModuleID module, unsigned index) const
 {
-    const ModuleExportData& moduleExport = m_table.exports(module)[index];
-    if (moduleExport.kind() == ModuleExportKind::Field)
-        return !readField(module, moduleExport, nullptr);
-    return ProgramStatics::isVariableEmpty(m_instance, moduleExport.variable);
+    return ProgramStatics::isVariableEmpty(m_instance, m_table.exports(module)[index].variable);
 }
 
 static bool exportSameBinding(const ModuleTable& table, const ModuleExportData& a, const ModuleExportData& b)
@@ -1786,8 +1546,6 @@ static bool exportSameBinding(const ModuleTable& table, const ModuleExportData& 
     switch (a.kind()) {
     case ModuleExportKind::Variable:
         return a.variable == b.variable;
-    case ModuleExportKind::Field:
-        return a.exportedField == b.exportedField;
     case ModuleExportKind::Namespace:
         return a.module == b.module;
     case ModuleExportKind::Indirect:
@@ -1948,7 +1706,7 @@ void Modules::mockWhatRequireCacheHolds(ModuleID module, JSObject* exports)
         entry->putDirect(*m_instance.vm, m_instance.vm->propertyNames->exports, exports);
 }
 
-void Modules::letGoOfMockInRequireCache(ModuleID module)
+void Modules::releaseMockInRequireCache(ModuleID module)
 {
     LoadedModule* loaded = loadedIfExists(module);
     if (!loaded || !loaded->valueInRequireCache)
@@ -2167,7 +1925,7 @@ void Modules::letRecordAnswerByMock(ModuleRecord* record, JSObject* mock)
     record->setLiveExportsSource(vm, mock);
 }
 
-void Modules::letGoOfRecordThatAnswersByMock(ModuleID module)
+void Modules::releaseMockRecord(ModuleID module)
 {
     ModuleRecord* record = m_records.get(module);
     if (!record || !record->hasLiveExports())
@@ -2233,7 +1991,7 @@ bool Modules::setMockInPlaceOfLibraryModule(ModuleID module, JSObject* mock, JSV
         willMockLibraryModule(module);
         if (!m_libraryModulesThatMockReplaces.get(module.index())) {
             if (ensureLoaded(module).preloadMock.get() == mock)
-                letGoOfEndedMocksLaidInPreload(module);
+                releaseRemovedPreloadMocks(module);
             return false;
         }
         auto standing = m_activeMockCalls.find(module);
@@ -2255,7 +2013,7 @@ bool Modules::setMockInPlaceOfLibraryModule(ModuleID module, JSObject* mock, JSV
     m_modulesWithActiveMock.set(module.index(), !!mock);
     ensureLoaded(module).activeMock.set(*this, mock);
     if (!mock)
-        letGoOfRecordThatAnswersByMock(module);
+        releaseMockRecord(module);
     else if (ModuleRecord* record = m_records.get(module))
         letRecordAnswerByMock(record, mock);
     if (endedMock) {
@@ -2308,7 +2066,7 @@ bool Modules::setActiveMock(ModuleID fileOrModule, JSObject* mock, JSValue requi
     ensureLoaded(module).activeMock.set(*this, mock);
     for (ModuleID each : { fileOrModule, module }) {
         if (!mock)
-            letGoOfRecordThatAnswersByMock(each);
+            releaseMockRecord(each);
         else if (ModuleRecord* record = m_records.get(each))
             letRecordAnswerByMock(record, mock);
     }
@@ -2356,14 +2114,14 @@ bool Modules::setActiveMock(ModuleID fileOrModule, JSObject* mock, JSValue requi
     bool wasEvaluatedUnderMock = m_originalsEvaluatedUnderMock.get(module.index());
     bool staysLoaded = wasEvaluatedUnderMock && m_originalsRetainedAfterMock.get(module.index());
     noteWhereOriginalLiesBehindEndOfMock(fileOrModule);
-    JSValue errorOfBodyLetGo = wasEvaluatedUnderMock && !staysLoaded ? ensureLoaded(module).errorOfModuleThatRanBesideMock.get() : JSValue();
-    if (errorOfBodyLetGo) [[unlikely]]
+    JSValue releasedBodyError = wasEvaluatedUnderMock && !staysLoaded ? ensureLoaded(module).errorOfModuleThatRanBesideMock.get() : JSValue();
+    if (releasedBodyError) [[unlikely]]
         ensureLoaded(module).errorOfModuleThatRanBesideMock.set(*this, JSValue());
     didRemoveMock(fileOrModule);
     forgetWhoLoadedItUnderMockInPlace(fileOrModule);
     bringBackErrorOfModuleThatRanBesideMock(module);
-    if (errorOfBodyLetGo) [[unlikely]]
-        ensureLoaded(module).errorOfModuleThatRanBesideMock.set(*this, errorOfBodyLetGo);
+    if (releasedBodyError) [[unlikely]]
+        ensureLoaded(module).errorOfModuleThatRanBesideMock.set(*this, releasedBodyError);
     loaded.wasRequiredUnderActiveMock = false;
     JSValue original = isFile ? loaded.exportsOfOriginalBesideMock.get() : JSValue();
     loaded.exportsOfOriginalBesideMock.set(*this, JSValue());
@@ -2785,7 +2543,7 @@ bool Modules::tryKeepOriginalIntact(ModuleID module, bool onlyIfLoadedInPreload,
         return false;
     bool isOfThisTestFile = wasLoadedByTestFile(withExports);
     if (!isOfThisTestFile)
-        letGoOfImportersOf(module, ImportersLetGo::All);
+        releaseImportersOf(module, ReleasedImporters::All);
     VMState& state = m_instance.vm->aotState();
     auto laid = m_mocksWithIntactOriginal.set(module, MockWithIntactOriginal { momentOfFirstMockInTestFile(module), state.momentOfTestFile });
     laid.iterator->value.momentThisWasLaid = ++state.momentOfLoads;
@@ -2936,7 +2694,7 @@ void Modules::removeMockWithIntactOriginal(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     MockWithIntactOriginal kept = m_mocksWithIntactOriginal.take(module);
-    letGoOfImportsThatHaveSettled();
+    releaseSettledImports();
     m_modulesWithPendingMock.clear(module.index());
     m_modulesEvaluatedBeforeMock.clear(module.index());
     m_modulesWithDeferredMock.clear(module.index());
@@ -3073,9 +2831,9 @@ bool Modules::isHiddenInModuleItself(ModuleID module, unsigned index) const
     return (m_table.exports(module)[index].isFromStarExport && isExportAmbiguous(module, index)) || isLeftOut(module, index, TablesBehindStars::MayLackName);
 }
 
-JSValue Modules::readExportOfModuleItself(ModuleID module, unsigned index, Environment* instance)
+JSValue Modules::readExportOfModuleItself(ModuleID module, unsigned index)
 {
-    return readExport(module, index, MockMode::Bypass, instance);
+    return readExport(module, index, MockMode::Bypass);
 }
 
 
@@ -6474,7 +6232,7 @@ void evictFailedModules(JSGlobalObject* realm)
     if (!modules)
         return;
     modules->resetFailedEvaluations();
-    modules->letGoOfESModulesThatThrew();
+    modules->releaseFailedESModules();
     modules->forgetFailuresOfExportsThatBuildFoundAbsent();
     if (!modules->holdsCodeThatMayBeEvicted())
         return;
@@ -7575,10 +7333,7 @@ bool isModuleNamespace(JSCell* cell)
 bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue value)
 {
     auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
-    auto scope = DECLARE_THROW_SCOPE(object->vm());
-    Environment* instance = object->bindModuleInstance();
-    RETURN_IF_EXCEPTION(scope, false);
-    RELEASE_AND_RETURN(scope, modulesOf(object->realm())->tryReplaceExport(object->module(), name, value, instance));
+    return modulesOf(object->realm())->tryReplaceExport(object->module(), name, value);
 }
 
 bool mayBeMocked(JSGlobalObject* realm, ModuleID module)
@@ -7659,11 +7414,11 @@ bool tryKeepActiveMock(JSGlobalObject* realm, ModuleID module, bool staysTheOrig
     Modules* modules = modulesOf(realm);
     if (staysTheOriginal || (keepsCurrentTestFileLoads && modules->wasLoadedUnderMockInPlaceByThisTestFile(module))) {
         modules->noteCallOfMock(module, true);
-        modules->letGoOfImportersOf(module, Modules::ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule);
+        modules->releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
         return true;
     }
     modules->forgetWhoLoadedItUnderMockInPlace(module);
-    modules->letGoOfImportersOf(module, Modules::ImportersLetGo::All);
+    modules->releaseImportersOf(module, Modules::ReleasedImporters::All);
     return true;
 }
 
@@ -8152,7 +7907,7 @@ void didRemoveMock(JSGlobalObject* realm, ModuleID module, RetainedOriginalPolic
     if (!wasLoadedAsMock && !modules->isPatchedByMock(module) && !modules->hasIntactOriginal(module))
         modules->noteEndOfMockThatOnlyWaited(module);
     if (wasLoadedAsMock || modules->isPatchedByMock(module) || modules->hasMockOfLibraryModule(module))
-        modules->letGoOfImportersOf(module, Modules::ImportersLetGo::All);
+        modules->releaseImportersOf(module, Modules::ReleasedImporters::All);
     if (modules->hasIntactOriginal(module)) {
         if (wasLoadedAsMock)
             modules->letGoOfModuleLoadedAsMock(module, restoresDisplacedModule);
@@ -8162,7 +7917,7 @@ void didRemoveMock(JSGlobalObject* realm, ModuleID module, RetainedOriginalPolic
         return;
     }
     bool isLibraryModule = modules->data(module).isOfLibrary() || !modules->table().hasFilePath(module);
-    if (isLibraryModule && modules->letGoOfMockOfLibraryModuleAtNextLoad(module)) {
+    if (isLibraryModule && modules->releaseLibraryMockOnLoad(module)) {
         modules->forgetMockThatWaits(module);
         modules->clearLoadErrorsForMock(module);
         return;
@@ -8212,7 +7967,6 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireRetur
         RETURN_IF_EXCEPTION(scope, void());
         if (comesAheadOfLoad) {
             modules.fillExportsOfBodyThatNeverRuns(module);
-            RETURN_IF_EXCEPTION(scope, void());
             modules.leaveOutWhatMockLacks(module, exports);
             RETURN_IF_EXCEPTION(scope, void());
             modules.takeWhatMockAdds(module, true);
@@ -8232,10 +7986,9 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireRetur
         if (!comesAheadOfLoad)
             modules.saveExportsBeforePatch(module);
         if (!comesAheadOfLoad && isFirstMock)
-            modules.letGoOfImportersOf(module, Modules::ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule);
+            modules.releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
         if (comesAheadOfLoad) {
             modules.fillExportsOfBodyThatNeverRuns(module);
-            RETURN_IF_EXCEPTION(scope, void());
             modules.leaveOutWhatMockLacks(module, exports);
             RETURN_IF_EXCEPTION(scope, void());
         }
@@ -8250,7 +8003,7 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireRetur
     else
         modules.saveExportsBeforePatch(module);
     if (hasRun && isFirstMock)
-        modules.letGoOfImportersOf(module, Modules::ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule);
+        modules.releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
     modules.setCommonJSExports(module, requireReturnValue);
     modules.exportWhatMockNamesAlone(module, hasRun);
 }
@@ -8711,7 +8464,7 @@ unsigned ModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, ModuleLi
     modules().didLoadGraph(m_module);
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, invalidIndex);
     if (!stack.isEmpty() && modules().someMockThatEndedWaits()) [[unlikely]] {
-        modules().letGoOfMocksThatEndedAtAndBelow(m_module);
+        modules().releaseRemovedMocksFrom(m_module);
         RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, invalidIndex);
     }
     {
@@ -9004,7 +8757,7 @@ bool ModuleRecord::originalShows(JSGlobalObject* globalObject, const Identifier&
 auto ModuleRecord::claimAsOwn(const Identifier& exportName) -> Resolution
 {
     std::optional<unsigned> index = modules().table().findExport(m_module, exportName.impl());
-    bool isVariable = index && hasStorage(modules().table().exports(m_module)[*index]);
+    bool isVariable = index && modules().table().exports(m_module)[*index].kind() == ModuleExportKind::Variable;
     return { Resolution::Type::Resolved, this, exportName, isVariable ? Markable<unsigned>(*index) : Markable<unsigned>() };
 }
 
@@ -9104,7 +8857,7 @@ auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifi
         if (record != this)
             return follow(record, answer->name);
     }
-    if (hasStorage(*entry) || (entry->kind() == ModuleExportKind::Namespace && entry->isDeferred)) {
+    if (entry->kind() == ModuleExportKind::Variable || (entry->kind() == ModuleExportKind::Namespace && entry->isDeferred)) {
         Resolution own { Resolution::Type::Resolved, this, exportName, *index };
         own.isFromRemovedMock = isSeenAsEndedMock;
         own.cameFromStarExportEntry = entry->isFromStarExport && isNamedByEndedMockInFrontOfItsStar(globalObject, exportName, *index);
@@ -9260,14 +9013,14 @@ void Modules::recordImportForOriginalBodies(ModuleID imported, std::optional<int
 {
     if (!promise || m_mocksWithIntactOriginal.isEmpty()) [[likely]]
         return;
-    if (m_importsCalledByBodiesSetAside.size() >= m_sizeAtWhichSettledImportsAreLetGo) {
-        letGoOfImportsThatHaveSettled();
-        m_sizeAtWhichSettledImportsAreLetGo = 2 * m_importsCalledByBodiesSetAside.size() + 1;
+    if (m_importsCalledByBodiesSetAside.size() >= m_settledImportsReleaseThreshold) {
+        releaseSettledImports();
+        m_settledImportsReleaseThreshold = 2 * m_importsCalledByBodiesSetAside.size() + 1;
     }
     m_importsCalledByBodiesSetAside.append({ imported, orderOfCaller, Strong<JSPromise>(*m_instance.vm, promise) });
 }
 
-void Modules::letGoOfImportsThatHaveSettled()
+void Modules::releaseSettledImports()
 {
     m_importsCalledByBodiesSetAside.removeAllMatching([](const ImportCalledByBodySetAside& call) {
         return call.promise->status() != JSPromise::Status::Pending;
@@ -9321,7 +9074,7 @@ void Modules::decideWhetherBodySetAsideWaits(JSArray* asked)
 
 bool Modules::bodySetAsideWaitsForItsMock(ModuleID module, std::optional<ModuleID> factoryCallerLoad)
 {
-    letGoOfImportsThatHaveSettled();
+    releaseSettledImports();
     ModuleRecord* record = displacedRecord(module);
     if (!record)
         return false;
@@ -9370,8 +9123,6 @@ static IdentityOfBinding identityOfBinding(const Modules& modules, const Abstrac
         const ModuleExportData& entry = modules.table().exports(module)[*resolution.compiledExportIndex];
         if (entry.kind() == ModuleExportKind::Variable)
             return { entry.variable, nullptr, nullptr };
-        if (entry.kind() == ModuleExportKind::Field)
-            return { std::nullopt, &modules.table().exportedField(entry), nullptr };
         RELEASE_ASSERT(entry.kind() == ModuleExportKind::Namespace && entry.isDeferred);
         return { std::nullopt, identityOfModule(modules, entry.targetModule()), nullptr };
     }
@@ -9420,7 +9171,6 @@ ModuleNamespace::ModuleNamespace(VM& vm, Structure* structure, ModuleID module, 
     , m_module(module)
     , m_isDeferred(phase == ModulePhase::Defer)
     , m_mayNeedEvaluation(m_isDeferred && modules().data(module).hasExportTable())
-    , m_hasInstances(modules().hasInstances(module))
 {
 }
 
@@ -9465,26 +9215,9 @@ void ModuleNamespace::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_capturedValues);
     visitor.append(thisObject->m_liveSources);
     visitor.append(thisObject->m_mockOfView);
-    visitor.append(thisObject->m_moduleInstance);
 }
 
 DEFINE_VISIT_CHILDREN(ModuleNamespace);
-
-Environment* ModuleNamespace::boundModuleInstance() const
-{
-    return uncheckedDowncast<Environment>(m_moduleInstance.get());
-}
-
-Environment* ModuleNamespace::bindModuleInstance()
-{
-    if (!m_hasInstances)
-        return nullptr;
-    if (!m_moduleInstance) {
-        if (Environment* current = modules().ensureInstance(m_module))
-            m_moduleInstance.set(vm(), this, current);
-    }
-    return uncheckedDowncast<Environment>(m_moduleInstance.get());
-}
 
 std::optional<unsigned> ModuleNamespace::findWhetherShownOrNot(UniquedStringImpl* name) const
 {
@@ -9511,12 +9244,10 @@ bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<Unique
     std::span<const ModuleExportData> entries = exports();
     if (modules.table().someExportStaysIn(m_module))
         return false;
-    Environment* instance = bindModuleInstance();
-    RETURN_IF_EXCEPTION(scope, true);
     for (unsigned index = 0; index < entries.size(); ++index) {
         if (isHiddenExport(index))
             continue;
-        JSValue value = modules.readExport(m_module, index, Modules::MockMode::Use, instance);
+        JSValue value = modules.readExport(m_module, index);
         RETURN_IF_EXCEPTION(scope, true);
         names.append(modules.identifier(entries[index].name).impl());
         values.appendWithCrashOnOverflow(value);
@@ -9758,8 +9489,6 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
     }
     JSValue value = jsUndefined();
     if (method != InternalMethodType::HasProperty) {
-        Environment* instance = thisObject->bindModuleInstance();
-        RETURN_IF_EXCEPTION(scope, false);
         if (auto kept = index && method == InternalMethodType::GetOwnProperty && !thisObject->keepsToModule() ? thisObject->modules().exportThatStaysInBehindIndirectEntries(thisObject->m_module, *index) : std::nullopt) {
             thisObject->modules().readExport(kept->first, kept->second);
             RETURN_IF_EXCEPTION(scope, false);
@@ -9767,9 +9496,9 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
             return true;
         }
         if (index && thisObject->keepsToModule()) [[unlikely]]
-            value = thisObject->modules().readExportOfModuleItself(thisObject->m_module, *index, instance);
+            value = thisObject->modules().readExportOfModuleItself(thisObject->m_module, *index);
         else
-            value = index ? thisObject->modules().readExport(thisObject->m_module, *index, Modules::MockMode::Use, instance) : thisObject->readDynamicExport(globalObject, name);
+            value = index ? thisObject->modules().readExport(thisObject->m_module, *index) : thisObject->readDynamicExport(globalObject, name);
         RETURN_IF_EXCEPTION(scope, false);
         if (index && thisObject->exports()[*index].staysIn) {
             slot.setCustom(thisObject, static_cast<unsigned>(PropertyAttribute::DontDelete), refuseToHandOutExport);
@@ -9791,8 +9520,6 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = uncheckedDowncast<ModuleNamespace>(object);
     thisObject->evaluateIfNeeded(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    thisObject->bindModuleInstance();
     RETURN_IF_EXCEPTION(scope, void());
     Modules& modules = thisObject->modules();
     std::span<const ModuleExportData> entries = thisObject->exports();

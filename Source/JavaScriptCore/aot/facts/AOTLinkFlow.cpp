@@ -3244,7 +3244,7 @@ std::pair<FlowObserver, FlowNodeID> LinkFlow::takeNewObserver()
 void LinkFlow::run()
 {
     flow();
-    while (layMembersThatCopiesBring() || fillParametersThatUnseenCodeAlonePasses() || builtinsInReach().letInNamesFromRunTime())
+    while (layMembersThatCopiesBring() || fillParametersThatUnseenCodeAlonePasses() || builtinsInReach().allowRuntimeNames())
         flow();
     noteLostLayoutsGainingProperties();
     countAllocatedMembersOfFamilies();

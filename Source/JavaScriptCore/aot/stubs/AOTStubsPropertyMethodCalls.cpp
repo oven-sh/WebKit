@@ -221,7 +221,7 @@ void generateTryGetSuperById(StubAssembler& jit)
         const FieldReadRegisters registers = fieldReadRegisters(cell, scratch);
         FieldReadExits exits;
         variable.loadFirstPayloadWord(jit, registers.field.slotData);
-        variable.loadBaseOfVariable(jit, R0, cell, structureID);
+        loadStaticsBase(jit, cell, structureID);
         computeFieldAddress(jit, registers.field, false, exits.isAbsent);
         readFieldAndReturn(jit, registers, exits);
         needsGenericRead.append(exits.isAbsent);

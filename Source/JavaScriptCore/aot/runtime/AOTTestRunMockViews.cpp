@@ -164,7 +164,7 @@ void Modules::didGiveUpLinksBeforeLoad(const LinksBeforeLoad& before)
     }
 }
 
-void Modules::letGoOfEndedMocksNobodySees()
+void Modules::releaseUnusedRemovedMocks()
 {
     if (m_endedMocksToAskAbout.isEmpty())
         return;
@@ -233,7 +233,7 @@ std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* 
     VMState& state = m_instance.vm->aotState();
     if (!momentEnded)
         momentEnded = ++state.momentOfLoads;
-    letGoOfEndedMocksNobodySees();
+    releaseUnusedRemovedMocks();
     Vector<EndedMock, 2>& ended = m_removedMocksInUse.add(fileOrModule, Vector<EndedMock, 2>()).iterator->value;
     std::optional<unsigned> placeOfMockThatWasPatched;
     if (JSObject* kept = ended.isEmpty() || ended.last().momentLaid != laid.moment || ended.last().momentEnded > ended.last().momentLaid ? nullptr : endedMock(fileOrModule, ended.size() - 1); kept && kept != mock) {
@@ -541,7 +541,7 @@ void Modules::bringBackLinks(const LinksBeforeLoad& before, LinksOfLoad links)
         } else
             m_momentsLoadedAnew.remove(module);
     }
-    m_modulesReleasedByLoader.merge(before.modulesThatLoaderLetGo);
+    m_modulesReleasedByLoader.merge(before.modulesReleasedByLoader);
     m_importersOfMockThatEnded.merge(before.importersOfMockThatEnded);
 }
 
@@ -676,7 +676,7 @@ void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
     while (!work.isEmpty()) {
         ModuleID module = work.takeLast();
         bool isLoaded = status(module) > ModuleStatus::Linked && !m_loadedInPreload.get(module.index());
-        bool loaderGoesBelow = !isLoaded || m_linksBeforeLoadInFlight->modulesThatLoaderLetGo.get(module.index());
+        bool loaderGoesBelow = !isLoaded || m_linksBeforeLoadInFlight->modulesReleasedByLoader.get(module.index());
         for (const ModuleRequestData& request : m_table.imports(module)) {
             ModuleID target = moduleLoadedBy(request);
             ModuleID mocked = m_table.moduleBehindFacade(target).value_or(target);
@@ -906,7 +906,7 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
         MomentMockWasLaid& itsOwn = m_preloadMockCalls.add(fileOrModule, MomentMockWasLaid { }).iterator->value;
         itsOwn.importsWrapWhatRequireMapHolds |= !held.wasImportedUnderPreloadMock;
         laid = itsOwn;
-        letGoOfEndedMocksLaidInPreload(fileOrModule);
+        releaseRemovedPreloadMocks(fileOrModule);
         bringBackNamespaceKeptFor(fileOrModule, mock);
     } else if (laid.isInPreload) {
         held.preloadMock.set(*this, mock);
@@ -917,7 +917,7 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
     m_keysWithoutEntryBehindMock.clear(fileOrModule.index());
 }
 
-void Modules::letGoOfEndedMocksLaidInPreload(ModuleID fileOrModule)
+void Modules::releaseRemovedPreloadMocks(ModuleID fileOrModule)
 {
     auto ended = m_removedMocksInUse.find(fileOrModule);
     if (ended == m_removedMocksInUse.end())
