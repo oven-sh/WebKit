@@ -137,8 +137,8 @@ static InlineForm chooseFormOfFunctionBind(const InlineBuiltinQuery& query)
 
 static bool standsInFunctionBehindCallOfInlineBuiltin(const InlineBuiltinQuery& query)
 {
-    RuntimeFunctionID behindCall = query.overload.slowPathFunction();
-    const RuntimeFunctionEntry* entry = behindCall ? findRuntimeFunction(query.context.program, behindCall) : nullptr;
+    RuntimeFunctionID slowPath = query.overload.slowPathFunction();
+    const RuntimeFunctionEntry* entry = slowPath ? findRuntimeFunction(query.context.program, slowPath) : nullptr;
     return entry && entry->function == query.context.writtenIn;
 }
 

@@ -84,6 +84,14 @@ Module::ValidationResult Module::validateSync(VM& vm, Vector<uint8_t>&& source)
     return makeValidationResult(plan.get());
 }
 
+Module::ValidationResult Module::validateSync(VM& vm, std::span<const uint8_t> source)
+{
+    Ref<IPIntPlan> plan = adoptRef(*new IPIntPlan(vm, source, CompilerMode::Validation, Plan::dontFinalize()));
+    Wasm::ensureWorklist().enqueue(plan.get());
+    plan->waitForCompletion();
+    return makeValidationResult(plan.get());
+}
+
 void Module::validateAsync(VM& vm, Vector<uint8_t>&& source, Module::AsyncValidationCallback&& callback)
 {
     validateAsync(vm, WTF::move(source), { }, WTF::move(callback));

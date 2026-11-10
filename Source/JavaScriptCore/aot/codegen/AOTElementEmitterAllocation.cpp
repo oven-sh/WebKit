@@ -63,19 +63,9 @@ static EmptyArray emptyNumberArray(const ArrayStorageForm& form)
 
 static std::optional<uint32_t> kindOfEmptyArrayLiteralAtSite(const Operation& literal, const ArrayStorageForm& form)
 {
-    bool kindIsDecided = false;
-    switch (literal.literalStorage()) {
-    case ArrayLiteralStorage::Fresh:
+    if (literal.literalStorage() == ArrayLiteralStorage::Fresh || !literal.elementsOperands().empty() || !literal.holes().empty())
         return std::nullopt;
-    case ArrayLiteralStorage::Profiled:
-        break;
-    case ArrayLiteralStorage::ProfiledForRoom:
-        kindIsDecided = true;
-        break;
-    }
-    if (!literal.elementsOperands().empty() || !literal.holes().empty())
-        return std::nullopt;
-    return static_cast<uint32_t>(elementKindOfForm(form)) << 1 | static_cast<uint32_t>(kindIsDecided);
+    return static_cast<uint32_t>(elementKindOfForm(form));
 }
 
 template<typename T>
@@ -164,7 +154,7 @@ static constexpr OpcodeSet opcodesThatAppendManyToLists { Opcode::AppendElements
 
 bool ArrayAllocationEmitter::isLeftToSpreadRightBehind(BlockID block, ValueID literal, const Operation& operation, std::span<const ValueID> behind)
 {
-    if (!generator().paysForCodeInLine(block) || operation.storage() != AllocationStorage::Heap || operation.literalStorage() == ArrayLiteralStorage::ProfiledForRoom)
+    if (!generator().paysForCodeInLine(block) || operation.storage() != AllocationStorage::Heap)
         return false;
     if (!operation.elementsOperands().empty() || !operation.holes().empty())
         return false;
@@ -211,7 +201,7 @@ void ArrayAllocationEmitter::bearLiteralHoldingList(const ValueContext& spread, 
     ValueID literal = std::exchange(generator().m_literalLeftToSpreadRightBehind, ValueID());
     AppendedBehindSpread appended = findWhatIsAppendedBehindSpread(spread.block(), literal, spread.id()).value();
     bool isContiguous = appended.holdsWhatIsNoNumber || hasArrayStorageForm(storageThatLiteralNames(literal, operationAt(literal)));
-    build().statistics().count(StatisticID::LiteralsBornHoldingTheListSpreadRightBehind);
+    build().statistics().count(StatisticID::ArrayLiteralsAllocatedFromSpread);
     LBasicBlock isNotServed = newBlock();
     Join<CellPointer> join(m_out);
     CellPointer born(callStub(spread, newArrayOfList(isContiguous), { iterable, m_out.constInt64(appended.room) }).first);
@@ -233,16 +223,16 @@ std::optional<Integer> ArrayAllocationEmitter::takeRoomAskedRightBehind(const Va
     if (behind.empty())
         return std::nullopt;
     const Operation& reservation = operationAt(behind[0]);
-    if (reservation.opcode != Opcode::ReserveArrayRoom || reservation.arrayOperand() != value.id() || !reservation.heldOperands().empty())
+    if (reservation.opcode != Opcode::ReserveArrayCapacity || reservation.arrayOperand() != value.id() || !reservation.heldOperands().empty())
         return std::nullopt;
-    ValueID room = reservation.roomOperand();
+    ValueID room = reservation.capacityOperand();
     if (operationAt(room).opcode == Opcode::IntegerToNumber)
         room = operationAt(room).operand(0);
     Representation kept = representationOf(room);
     if (!typeOf(room).isInteger() || (kept != Representation::Int32 && kept != Representation::Int64 && kept != Representation::Double))
         return std::nullopt;
     generator().m_reservationThatBirthHasServed = behind[0];
-    build().statistics().count(StatisticID::LiteralsBornWithTheRoomAskedRightBehind);
+    build().statistics().count(StatisticID::ArrayLiteralsAllocatedWithCapacity);
     return kept == Representation::Double ? emitter<ConversionEmitter>().toInteger(in<Number>(room)) : integerOf(room);
 }
 
@@ -272,7 +262,7 @@ CellPointer ArrayAllocationEmitter::newLiteralWithRoom(const OperationContext& c
 
     m_out.appendTo(isTooLong);
     CellPointer asWritten = newArrayInForm(context, elements, form);
-    callStub(context, reserveArrayRoom(), { asWritten.value(), toNumber(room).value() });
+    callStub(context, reserveArrayCapacity(), { asWritten.value(), toNumber(room).value() });
     join.add(asWritten);
 
     m_out.appendTo(slowPath);

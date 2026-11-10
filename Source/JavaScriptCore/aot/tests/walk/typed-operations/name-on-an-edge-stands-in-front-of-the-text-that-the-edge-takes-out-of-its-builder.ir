@@ -18,7 +18,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v3 = Call v2, -, v0
     Return v3
 }
-function f1 name="until" module=m0 position=1 text={start=1 end=135} length=2 thisType={type=anything} parameters=[{type=string}, {type=undefined|null|string}] results=[{type=anything}] {
+function f1 name="until" module=m0 position=1 sourceRange={start=1 end=135} length=2 thisType={type=anything} parameters=[{type=string}, {type=undefined|null|string}] results=[{type=anything}] {
   b0(v0: string, v1: undefined|null|string):
     v2 = String string="" @40
     v3 = Integer @48

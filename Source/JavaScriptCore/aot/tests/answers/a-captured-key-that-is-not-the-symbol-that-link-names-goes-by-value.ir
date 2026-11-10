@@ -5,10 +5,10 @@
 # const box = { [depth]: "deep", [width]: "wide" };
 # print(reader()(box));
 # print("went on");
-# As a-key-that-is-not-the-symbol-that-link-names-goes-by-value.ir, of a capture.
-# THE RED CONTROL. The lie, testing=UnseenCodeAnswersUndefined (false-proofs-are-stopped-where-the-value-comes-in.ir): Link takes what the shell's `id` gives for undefined, so nothing passes the test for a symbol,
-# and `depth` is the one symbol that Link names. It printed "deep" for "wide".
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# The same as a-key-that-is-not-the-symbol-that-link-names-goes-by-value.ir, with a captured variable as the key.
+# This is the failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined (see false-proofs-are-stopped-where-the-value-comes-in.ir): Link assumes that the shell's `id` returns undefined.
+# So nothing passes the program's test for a symbol, and `depth` is the only symbol that Link names. The program used to print "deep" instead of "wide".
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: wide
 # ALL-NEXT: went on

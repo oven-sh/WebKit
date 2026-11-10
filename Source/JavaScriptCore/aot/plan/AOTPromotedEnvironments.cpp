@@ -278,6 +278,8 @@ void PlannerOfPromotedEnvironments::refuseScopesThatPositionsHold()
                 m_isRefused.quickSet(binding.layout.index());
         }
     }
+    for (FieldReference exported : m_program.exportedFields())
+        m_isRefused.quickSet(exported.layout.index());
 }
 
 uint32_t PlannerOfPromotedEnvironments::nodeOf(FunctionID function, uint32_t capture)
@@ -320,7 +322,7 @@ void PlannerOfPromotedEnvironments::unite(uint32_t first, uint32_t second)
 
 bool PlannerOfPromotedEnvironments::mayLieInFrameOfCaller(FunctionID id, const BodyIndex& index, ValueID value) const
 {
-    while (!index.isParameter(value) && inputOperationsThatHandOn.contains(index.opcodeOf(value)) && index.value(value).operand(0))
+    while (!index.isParameter(value) && inputPassThroughOpcodes.contains(index.opcodeOf(value)) && index.value(value).operand(0))
         value = index.value(value).operand(0);
     if (!index.isParameter(value))
         return false;
@@ -341,7 +343,7 @@ static ValueID valueReturnedOnEveryWayForPromotedEnvironments(const BodyIndex& i
         if (end.kind() != TerminatorKind::Return)
             continue;
         ValueID value = end.as<TerminatorKind::Return>().valueOperand();
-        while (value && !index.isParameter(value) && inputOperationsThatOnlyHandOn.contains(index.opcodeOf(value)))
+        while (value && !index.isParameter(value) && inputIdentityOpcodes.contains(index.opcodeOf(value)))
             value = index.value(value).operand(0);
         if (!value || (returned && returned != value))
             return { };
@@ -523,7 +525,7 @@ bool PlannerOfPromotedEnvironments::isKeptByVariableThatStays(FunctionID maker, 
             if (kept)
                 return false;
             std::optional<BodyUser> user = index->onlyUser(call.site);
-            while (user && user->kind == BodyUseKind::Operand && inputOperationsThatOnlyHandOn.contains(index->opcodeOf(user->value)))
+            while (user && user->kind == BodyUseKind::Operand && inputIdentityOpcodes.contains(index->opcodeOf(user->value)))
                 user = index->onlyUser(user->value);
             if (!user || user->kind != BodyUseKind::Operand || index->opcodeOf(user->value) != Opcode::PutModuleVariable)
                 return false;

@@ -970,7 +970,7 @@ function applyUse(context: OverloadContext, state: OperandState, use: UseSpec): 
       if (from !== null) addTransfer(context, from, resultPlace, "Returns");
       return;
     }
-    case "HandsOutKept": {
+    case "ExposesKept": {
       const from = resolvePlace(context, { place: "NativeCell", cell: use.cell });
       if (from !== null) addStore(context, from, { place: "NativeMemory" });
       return;

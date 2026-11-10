@@ -24,6 +24,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTPropertyCaches.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "DeletePropertySlot.h"
@@ -297,13 +298,10 @@ static ExtraPropertyLookup lookUpExtraProperty(VM& vm, const CompiledStructure& 
 
 [[noreturn]] static NEVER_INLINE void stopAtExtraPropertiesOfAnotherStructure(JSGlobalObject* realm, Object& object, ASCIILiteral whatIsDoneHere)
 {
-    JSObject* extraProperties = object.extraProperties();
-    StringPrintStream reason;
-    reason.print("AOT: where ", whatIsDoneHere, ", the properties that an object holds beside its fields are not laid out as the structure of the object says: it names structure ", object.compiledStructure().extraPropertiesStructureID().bits(), ", they have ", extraProperties ? extraProperties->structureID().bits() : 0, ".");
-    dataLogLn(reason.toString(), " This is a bug in Bun.");
-    ASCIICString text = reason.toASCIICString();
-    if (auto* crashWithReason = moduleHostOf(realm).crashWithReason)
-        crashWithReason(text.span());
+    RuntimeCheckFailure failure("structure check failed"_s);
+    failure.detail("while ", whatIsDoneHere, ", the extra properties of an object", object.extraProperties() ? " do not have the Structure that the object's own Structure records"_s : " are missing, but the object's Structure records a Structure for them"_s);
+    failure.report();
+    failure.crashInHost(realm);
     CRASH();
 }
 
@@ -411,6 +409,18 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
         if (!inner)
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
+    }
+    if (moduleExport.kind() == ModuleExportKind::Field) {
+        const ExportedFieldData& field = state.modules->table().exportedField(moduleExport);
+        bool isDeferredClosure = traitsOf(field.slot.representation()).valueKind == SlotValueKind::DeferredClosure;
+        if (isDeferredClosure || state.modules->findMockForReexport(moduleNamespace->module(), moduleExport))
+            return PropertyAnswer::uncacheable(SlotAccess::Read);
+        bool isOfOtherModule = field.declaringModule() != moduleNamespace->module();
+        Environment* bound = moduleNamespace->boundModuleInstance();
+        Environment* instance = isOfOtherModule ? state.modules->currentInstance(field.declaringModule()) : bound;
+        if (!instance || !state.modules->readExportIfInitialized(moduleNamespace->module(), *index, bound))
+            return uncacheableOnce(SlotAccess::Read);
+        return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .isInModuleInstance = true, .instanceOfOtherModule = isOfOtherModule ? instance : nullptr, .variable = field.slot };
     }
     if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->findMockForReexport(moduleNamespace->module(), moduleExport))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
@@ -556,7 +566,7 @@ PropertyAnswer classifyRead(const ReadQuery& query)
     bool isOwn = !slot.isUnset() && slot.slotBase() == receiver;
     if (structure->isCompiledStructure()) {
         if (isCompiledObject(receiver) && receiver->structure() == structure)
-            holdExtraPropertiesToStructureThatIsNamed(query.globalObject, *uncheckedDowncast<Object>(receiver), "a read is answered"_s);
+            holdExtraPropertiesToStructureThatIsNamed(query.globalObject, *uncheckedDowncast<Object>(receiver), "reading a property"_s);
         if (Object::structureGuaranteesAbsence(structure, uid))
             return isOwn ? PropertyAnswer::uncacheable(access) : classifyReadAboveReceiver(query);
         if (!isCompiledObject(receiver) || receiver->structure() != structure)
@@ -1193,6 +1203,14 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
         return Slot::createInheritedField(id, flags, answer.holder, answer.wordOfInheritedField);
     case PropertyAnswerKind::Variable:
         RELEASE_ASSERT(isRead);
+        if (answer.isInModuleInstance)
+            flags |= Slot::isInModuleInstance;
+        if (JSCell* instance = answer.instanceOfOtherModule) {
+            uintptr_t cageBase = receiverStructure->vm().heap.cage().base();
+            if (MarkedBlockCage::baseOf(instance) != cageBase)
+                return Slot::createWithoutPayload(id, Kind::Uncacheable, 0);
+            return Slot::createField(id, Kind::Variable, flags, answer.variable, MarkedBlockCage::encode(cageBase, instance), 0);
+        }
         return Slot::createField(id, Kind::Variable, flags, answer.variable, 0, 0);
     case PropertyAnswerKind::ExtraProperty:
         return slotForExtraProperty(answer, id, receiverStructure, Kind::ExtraProperty, flags);

@@ -49,7 +49,7 @@ enum class Filter : uint8_t { EnumerableStrings, Strings, StringsAndSymbols };
 enum class Result : uint8_t { Completed, Stopped, NeedsGenericPath };
 enum class Presence : uint8_t { Present, Absent, Unknown };
 enum class Integrity : uint8_t { NonExtensible, Sealed, Frozen };
-enum class Elements : bool { NeedGenericPath, AreLeftOut };
+enum class Elements : bool { NeedGenericPath, Skip };
 enum class Preparations : bool { NeedGenericPath, AreDone };
 
 ALWAYS_INLINE bool isCompiledObject(const JSCell* cell) { return cell->type() == CompiledObjectType; }

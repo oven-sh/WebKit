@@ -2,7 +2,7 @@
 # let turns = 0;
 # while (true) turns++;
 # The start of the program comes first, and here it never ends. It has an allowance of its own: the function that makes patterns is still gone through.
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /^a+/
 # CHECK-NOT: text /

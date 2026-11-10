@@ -105,11 +105,11 @@ static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(cons
             return std::nullopt;
         return placedOffsetAt(statics.arrayProfileOffsets, *place);
     }
-    case NumberSpace::RowsOfReads: {
-        std::optional<uint32_t> place = numbers.rowsOfReads().find(key);
+    case NumberSpace::ReadGroupCache: {
+        std::optional<uint32_t> place = numbers.readGroupCaches().find(key);
         if (!place)
             return std::nullopt;
-        return placedOffsetAt(statics.rowsOfReadsOffsets, *place);
+        return placedOffsetAt(statics.readGroupCacheOffsets, *place);
     }
     case NumberSpace::EnvironmentHandedBack:
         return placedOffsetAt(statics.environmentHandedBackOffsets, key[0]);
@@ -192,7 +192,7 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
     case NumberSpace::ArrayProfile:
-    case NumberSpace::RowsOfReads:
+    case NumberSpace::ReadGroupCache:
     case NumberSpace::EnvironmentHandedBack:
         return byteOfStatics(offsetOfMentionedWordInStatics(numbers, space, key));
     case NumberSpace::CardOfVariable:
@@ -297,7 +297,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInL
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
     case NumberSpace::ArrayProfile:
-    case NumberSpace::RowsOfReads:
+    case NumberSpace::ReadGroupCache:
     case NumberSpace::EnvironmentHandedBack:
         return offsetOfMentionedWordInStatics(*this, space, key);
     case NumberSpace::DataElements: {
@@ -502,7 +502,7 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += numberPlaced(statics.regExpLiteralCellOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.templateObjectCellOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.arrayProfileOffsets, PlacedStatics::noOffset);
-    count += numberPlaced(statics.rowsOfReadsOffsets, PlacedStatics::noOffset);
+    count += numberPlaced(statics.readGroupCacheOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.environmentHandedBackOffsets, PlacedStatics::noOffset);
     count += numberPlaced(numbers.originsOfMethodSelectors(), PlacedStatics::noOffset);
     count += numberPlaced(statics.classGuardBits, noClassGuardBit);

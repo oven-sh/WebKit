@@ -32,11 +32,11 @@ static constexpr AbstractHeapSet heapsUnderElementsOfObjectsInKnownWriters { Abs
 static_assert(perObjectHeaps.containsAll(heapsOfObjectsJudgedInKnownWriters));
 static_assert(!perObjectHeaps.contains(AbstractHeap::MemberGuards));
 
-static constexpr OptionSet<FactOfCell> factsOfCellKnownInKnownWriters {
-    FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem, FactOfCell::BearsNoMark
+static constexpr OptionSet<CellFact> handledCellFacts {
+    CellFact::NotFrozen, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::HasLayoutPrototype, CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent, CellFact::BearsNoMark
 };
 
-static_assert(factsOfCellKnownInKnownWriters.toRaw() == (1u << numberOfFactsOfCell) - 1);
+static_assert(handledCellFacts.toRaw() == (1u << numberOfCellFacts) - 1);
 
 void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject)
 {
@@ -44,7 +44,7 @@ void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<b
         invalidate(effects);
         return;
     }
-    noteWhatOperationDoes(effects);
+    updateRestartMark(effects);
 
     auto endsAnswer = [&](const KnownAnswer& answer, bool isWrittenOutsideObjects) {
         return isWrittenOutsideObjects || !answer.holder || mayBeWritten(answer.holder);
@@ -70,7 +70,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     bool writesIntoObjects = writes.containsAny(heapsOfObjectsJudgedInKnownWriters);
     bool endsShapes = writes.contains(AbstractHeap::ShapeWords) && m_numberOfShapes;
     bool endsPlaces = writes.containsAny(heapsJudgedInKnownWriters) && m_numberOfPlaces;
-    OptionSet<FactOfCell> factsEnded = writesIntoObjects && m_numberOfHoldersWithFactsOfCell ? factsOfCellEndedBy(writes) : OptionSet<FactOfCell>();
+    OptionSet<CellFact> factsEnded = writesIntoObjects && m_numberOfFactHolders ? cellFactsInvalidatedBy(writes) : OptionSet<CellFact>();
     if (!endsShapes && !endsPlaces && factsEnded.isEmpty())
         return;
 
@@ -114,7 +114,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
 
     bool reachesPlaces = (writtenUnderPlacesReachedByEffects(writes) & m_maskOfPlacesReachedByEffects) || ((m_kindsOfPlacesReachedByEffects & ~kindsThatRestOnWhatIsKnown) && writesIntoObjects);
     bool reachesSomething = (endsShapes && m_numberOfShapesReachedByEffects)
-        || (m_numberOfHoldersWithFactsOfCellReachedByEffects && m_factsOfCellReachedByEffects.containsAny(factsEnded))
+        || (m_reachedFactHolderCount && m_cellFactsReachedByEffects.containsAny(factsEnded))
         || (m_numberOfPlacesReachedByEffects && reachesPlaces)
         || (endsElements && m_numberOfElementsReachedByEffects);
     if (!reachesSomething) {
@@ -128,7 +128,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
         return;
     }
 
-    OptionSet<FactOfCell> factsLeft;
+    OptionSet<CellFact> factsLeft;
     KindsOfPlaces kindsOfPlacesLeft = 0;
     uint64_t maskOfPlacesLeft = 0;
     for (size_t index = 0; index < m_holdersReachedByEffects.size();) {
@@ -143,8 +143,8 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
 
         if (endsShapes && m_holders[holder].shape && isWritten())
             endShape(holder);
-        if (m_holders[holder].factsOfCell.containsAny(factsEnded) && isWritten())
-            endFactsOfCell(holder, factsEnded);
+        if (m_holders[holder].cellFacts.containsAny(factsEnded) && isWritten())
+            invalidateCellFacts(holder, factsEnded);
 
         KindsOfPlaces kindsOfPlaces = m_holders[holder].kindsOfPlaces;
         uint64_t written = 0;
@@ -157,8 +157,8 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
         bool hasPlacesOfOtherKinds = kindsOfPlaces & ~kindsThatRestOnWhatIsKnown;
         if ((written & m_holders[holder].maskOfPlaces) || (hasPlacesOfOtherKinds && writesIntoObjects)) {
             noteRecordsGoneThrough(m_holders[holder].numberOfPlaces, placesFoundWithoutTable);
-            KindsOfPlaces kindsLeft = 0;
-            uint64_t maskLeft = 0;
+            KindsOfPlaces remainingKinds = 0;
+            uint64_t remainingMask = 0;
             endPlacesWhere(holder, false, [&](const Place& place) {
                 bool ends = false;
                 if (place.kind == PlaceKind::Slot)
@@ -171,27 +171,27 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
                     ends = writesIntoObjects && isWritten();
                 if (ends)
                     return true;
-                kindsLeft |= bitOfKind(place.kind);
-                maskLeft |= place.mask();
+                remainingKinds |= bitOfKind(place.kind);
+                remainingMask |= place.mask();
                 return false;
             });
             Holder& changed = m_holders.mutableAt(holder);
-            changed.kindsOfPlaces = kindsLeft;
-            changed.maskOfPlaces = maskLeft;
+            changed.kindsOfPlaces = remainingKinds;
+            changed.maskOfPlaces = remainingMask;
         }
         if (endsElements && m_holders[holder].firstElement != none && isWritten())
             endPlacesWhere(holder, true, endsAlways);
 
         const Holder& record = m_holders[holder];
-        if (record.shape || !record.factsOfCell.isEmpty() || record.firstPlace != none || record.firstElement != none) {
-            factsLeft.add(record.factsOfCell);
+        if (record.shape || !record.cellFacts.isEmpty() || record.firstPlace != none || record.firstElement != none) {
+            factsLeft.add(record.cellFacts);
             kindsOfPlacesLeft |= record.kindsOfPlaces;
             maskOfPlacesLeft |= record.maskOfPlaces;
             ++index;
         } else
             endHolder(holder);
     }
-    m_factsOfCellReachedByEffects = factsLeft;
+    m_cellFactsReachedByEffects = factsLeft;
     m_kindsOfPlacesReachedByEffects = kindsOfPlacesLeft;
     m_maskOfPlacesReachedByEffects = maskOfPlacesLeft;
     dropEndedRecordsIfMany();
@@ -201,11 +201,11 @@ static Reference rootInKnownWriters(const Code& code, Reference name)
 {
     if (!name.isValue())
         return name;
-    ValueID root = rootOfCellInSweptCode(code, name.id());
+    ValueID root = underlyingCellOf(code, name.id());
     return code.isConstant(root) ? Reference::constant(root) : Reference::value(root);
 }
 
-static bool makesNewCellInKnownWriters(const Operation& made)
+bool allocatesNewCell(const Operation& made)
 {
     Opcode opcode = made.opcode;
     if (resultRuleOf(opcode) != ResultRule::Allocation || boundToOf(opcode) == BoundTo::Site || made.traits().mayRunOtherCode())
@@ -240,7 +240,7 @@ bool mayBeSameObject(Walker& walker, Reference first, Reference second)
         return true;
 
     auto isMadeBehind = [&](Reference cell, Reference other) {
-        if (!cell.isValue() || !makesNewCellInKnownWriters(code.at(cell.id())))
+        if (!cell.isValue() || !allocatesNewCell(code.at(cell.id())))
             return false;
         return other.isConstant() || other.id().index() < cell.id().index();
     };
@@ -414,7 +414,7 @@ static bool isOnlyClosureOfClassWhoseGuardsHaveBegunInKnownWriters(const Walker&
     const Program& program = walker.program();
     LayoutID classLayout = declaredLayoutOf(program, made);
     AccessContext context { program, WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() };
-    if (!newTarget || (!walker.state().guardsHaveBegun(classLayout) && !walker.takesReadsOfConstructorsPrototypesToEndNoGuard()) || !prototypeOfConstructorFunctionIsLeftToGuards(context, classLayout))
+    if (!newTarget || (!walker.state().guardsHaveBegun(classLayout) && !walker.shouldIgnorePrototypeReads()) || !isConstructorPrototypeGuarded(context, classLayout))
         return false;
     Type type = walker.types().at(newTarget);
     return type.isObject() && type.hasOnlyClosures() && singleFunctionOf(walker.types(), type) == program.at(classLayout).constructor;
@@ -469,20 +469,15 @@ static NEVER_INLINE bool writesFreshObjectsOfTurnAloneInKnownWriters(Walker& wal
     std::optional<ObjectsWrittenAloneInKnownWriters> written = objectsWrittenAloneByInKnownWriters(walker, draft, effects, findElementStoreWithoutOtherCodeInKnownWriters(draft, effects));
     return written && std::ranges::all_of(*written, [&](Reference object) {
         Reference root = rootInKnownWriters(walker.code(), object);
-        return walker.state().isFresh(root) && walker.isBuiltInTurnThatMayBeginAgain(root);
+        return walker.state().isFresh(root) && walker.isBuiltInRestartableIteration(root);
     });
 }
 
 static ALWAYS_INLINE bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
 {
-    if (effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !walker.mayBeginTurnAgainInClosedCopy())
+    if (effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !walker.canRestartIteration())
         return false;
     return writesFreshObjectsOfTurnAloneInKnownWriters(walker, draft, effects);
-}
-
-bool makesNewCell(const Operation& made)
-{
-    return makesNewCellInKnownWriters(made);
 }
 
 static std::optional<Vector<uint32_t, 2>> objectsMadeHereInKnownWriters(Walker& walker, const ObjectsWrittenAloneInKnownWriters& written)
@@ -490,7 +485,7 @@ static std::optional<Vector<uint32_t, 2>> objectsMadeHereInKnownWriters(Walker& 
     Vector<uint32_t, 2> made;
     for (Reference object : written) {
         Reference root = rootInKnownWriters(walker.code(), object);
-        if (!root.isValue() || !makesNewCellInKnownWriters(walker.code().at(root.id())))
+        if (!root.isValue() || !allocatesNewCell(walker.code().at(root.id())))
             return std::nullopt;
         made.append(root.id().index());
     }
@@ -499,11 +494,11 @@ static std::optional<Vector<uint32_t, 2>> objectsMadeHereInKnownWriters(Walker& 
 
 static std::optional<Vector<uint32_t, 2>> listMadeHereThatLoopOnlyFillsInKnownWriters(Walker& walker, Reference receiver)
 {
-    if (walker.takesReceiversOfMethodsOfListsToBeMadeHere()) [[unlikely]]
+    if (walker.shouldAssumeLocalArrayReceivers()) [[unlikely]]
         return Vector<uint32_t, 2> { };
-    std::optional<BlockID> head = walker.headOfInnermostTryInFrameOnTop();
+    std::optional<BlockID> head = walker.innermostTrialVisitHeader();
     std::optional<Vector<uint32_t, 2>> made = head ? objectsMadeHereInKnownWriters(walker, ObjectsWrittenAloneInKnownWriters { receiver }) : std::nullopt;
-    if (!made || !textOfLoopOnlyFillsListAndReadsAnother(walker, *head, ValueID(made->first())) || (!walker.textOfLoopReckonsWithWhatItReads(*head) && !walker.textOfLoopOrdersWhatItReads(*head)))
+    if (!made || !hasOnlyOtherArrayReads(walker, *head, ValueID(made->first())) || (!walker.hasElementArithmeticInLoop(*head) && !walker.hasElementComparisonInLoop(*head)))
         return std::nullopt;
     return made;
 }
@@ -552,7 +547,7 @@ std::optional<MemoryLocation> locationThatStoreNames(const Program& program, con
 
 static NEVER_INLINE void endWhatWriterWritesInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
 {
-    if (draft.opcode == Opcode::SetArrayLength && walker.takesStoresOfLengthsToEndNothing()) [[unlikely]]
+    if (draft.opcode == Opcode::SetArrayLength && walker.shouldIgnoreLengthStores()) [[unlikely]]
         return;
     WalkState& state = walker.state();
     std::optional<MemoryLocation> locationWrittenAlone = storeMayLeaveWhatLiesBeside(state, draft) ? locationThatStoreNames(walker.program(), draft, effects) : std::nullopt;
@@ -630,7 +625,7 @@ static NEVER_INLINE void endWhatWriterWritesInKnownWriters(Walker& walker, const
             LayoutID only = type ? singleLayoutOf(walker.types(), walker.types().at(type)) : LayoutID();
             if (!only || !isOfLayoutAlone(walker, root, only))
                 return { };
-            return { only, holder == root && root.isValue() && makesNewCellInKnownWriters(code.at(root.id())) };
+            return { only, holder == root && root.isValue() && allocatesNewCell(code.at(root.id())) };
         };
         auto rootIsOfLayoutAlone = [&](Reference holder, LayoutID layout) {
             return isOfLayoutAlone(walker, rootInKnownWriters(code, holder), layout);
@@ -651,9 +646,9 @@ static ALWAYS_INLINE bool endWhatOperationWritesOrRunsInKnownWriters(Walker& wal
     if constexpr (netOfEffectsWatchesTurns)
         walker.noteWhetherOperationWritesWhatTurnHasMade(writesWhatTurnHasMade);
     if (!writesWhatTurnHasMade)
-        state.noteWhatOperationDoes(effects);
+        state.updateRestartMark(effects);
     if (draft.opcode == Opcode::ReleaseEnvironment)
-        state.noteSomethingWasDoneInTurn();
+        state.clearRestartMark();
     if (!walker.has(Mechanism::TypedOperations) || effects.mayRunOtherCode() || !effects.writes.containsAny(heapsEndedByWriterInKnownWriters) || state.isEmpty()) {
         if (storeMayLeaveWhatLiesBeside(state, draft)) [[unlikely]] {
             std::optional<MemoryLocation> writtenAlone = locationThatStoreNames(walker.program(), draft, effects);
@@ -669,10 +664,10 @@ static ALWAYS_INLINE bool endWhatOperationWritesOrRunsInKnownWriters(Walker& wal
 
 static NEVER_INLINE bool endWhatOperationWritesOrRunsWhereNetOfEffectsWatchesTurns(Walker& walker, const Draft& draft, const Effects& effects)
 {
-    uint32_t markOfTurnInFront = walker.state().markOfTurn();
+    uint32_t restartMarkBefore = walker.state().restartMark();
     bool writesWhatTurnHasMade = endWhatOperationWritesOrRunsInKnownWriters<true>(walker, draft, effects);
-    if (walker.turnsForgetWhatWasDone())
-        walker.state().layMarkOfTurnFalsely(markOfTurnInFront);
+    if (walker.shouldIgnoreIterationEffects())
+        walker.state().setRestartMarkForTesting(restartMarkBefore);
     return writesWhatTurnHasMade;
 }
 
@@ -692,11 +687,11 @@ bool writerEndsNoGuard(const Walker& walker, const Draft& writer)
 
 ALWAYS_INLINE_INTO_OTHER_FILES void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
 {
-    bool isPutBack = draft.opcode == Opcode::PutModuleVariable && walker.storeIsPutBackWhereTurnBeginsAgain(draft.variable());
-    uint32_t newestStoreInFront = isPutBack ? walker.state().newestStoreToPutBack() : 0;
+    bool isUndoableVariableStore = draft.opcode == Opcode::PutModuleVariable && walker.isVariableStoreUndoable(draft.variable());
+    uint32_t newestUndoableStoreBefore = isUndoableVariableStore ? walker.state().newestUndoableStore() : 0;
     bool writesWhatTurnHasMade = walker.netOfEffectsWatchesTurns() ? endWhatOperationWritesOrRunsWhereNetOfEffectsWatchesTurns(walker, draft, effects) : endWhatOperationWritesOrRunsInKnownWriters<false>(walker, draft, effects);
-    if (isPutBack) {
-        walker.state().noteStoreToPutBack(walker.numberOfTurnOfTypedCopy(), newestStoreInFront);
+    if (isUndoableVariableStore) {
+        walker.state().recordUndoableStore(walker.iterationRestartPoint(), newestUndoableStoreBefore);
         if (walker.netOfEffectsWatchesTurns()) [[unlikely]]
             walker.noteWhetherOperationWritesWhatTurnHasMade(true);
     }
@@ -706,24 +701,24 @@ ALWAYS_INLINE_INTO_OTHER_FILES void endWhatOperationWritesOrRuns(Walker& walker,
     }
     static_assert(!declaredBoundOf(Opcode::PutSlot).writes.contains(AbstractHeap::NamedProperties) && !declaredBoundOf(Opcode::PutSlotOrAdd).writes.contains(AbstractHeap::NamedProperties));
     if (draft.opcode == Opcode::PutDoubleIndex || draft.opcode == Opcode::PutPropertyOfHeir) {
-        if (uint32_t storeToPutBack = walker.takeStoreBeingBuiltToPutBack(); storeToPutBack && !writesWhatTurnHasMade) {
-            walker.state().noteStoreToPutBack(walker.numberOfTurnOfTypedCopy(), storeToPutBack);
-            walker.keepStateBehindStoreToPutBack(storeToPutBack);
+        if (uint32_t undoableStore = walker.takePendingUndoableStore(); undoableStore && !writesWhatTurnHasMade) {
+            walker.state().recordUndoableStore(walker.iterationRestartPoint(), undoableStore);
+            walker.saveUndoableStoreState(undoableStore);
         }
         return;
     }
     if (draft.opcode != Opcode::PutSlot && draft.opcode != Opcode::PutSlotOrAdd)
         return;
-    if (uint32_t storeToPutBack = walker.takeStoreBeingBuiltToPutBack(); storeToPutBack && !writesWhatTurnHasMade) {
-        walker.state().noteStoreToPutBack(walker.numberOfTurnOfTypedCopy(), storeToPutBack);
-        walker.keepStateBehindStoreToPutBack(storeToPutBack);
+    if (uint32_t undoableStore = walker.takePendingUndoableStore(); undoableStore && !writesWhatTurnHasMade) {
+        walker.state().recordUndoableStore(walker.iterationRestartPoint(), undoableStore);
+        walker.saveUndoableStoreState(undoableStore);
     }
     if (testsItsOwnGuess(draft) || !effects.writes.contains(AbstractHeap::NamedProperties))
         return;
     const Code& code = walker.code();
     for (Reference name = draft.objectOperand(); name.isValue(); name = Reference::value(code.at(name.id()).operand(0))) {
-        walker.state().endFactsOfCell(name, FactOfCell::BearsNoMark);
-        if (!opcodesThatGiveSameCell.contains(code.at(name.id()).opcode))
+        walker.state().invalidateCellFacts(name, CellFact::BearsNoMark);
+        if (!cellPreservingOpcodes.contains(code.at(name.id()).opcode))
             break;
     }
 }

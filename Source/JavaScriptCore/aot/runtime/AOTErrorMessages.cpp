@@ -55,30 +55,30 @@ static String describeForErrorMessage(JSGlobalObject* globalObject, JSValue valu
     return description;
 }
 
-static String findQuotedText(ModuleID module, LineColumn place)
+static String findQuotedSource(ModuleID module, LineColumn place)
 {
     const ProgramTables& tables = Image::current()->programTables();
     std::tuple wanted { static_cast<uint32_t>(module.index()), static_cast<uint32_t>(place.line), static_cast<uint32_t>(place.column) };
-    std::span<const QuotedTextGroupData> groups = tables.quotedTextGroups();
-    auto next = std::ranges::upper_bound(groups, wanted, { }, [](const QuotedTextGroupData& group) {
+    std::span<const QuotedSourceGroupData> groups = tables.quotedSourceGroups();
+    auto next = std::ranges::upper_bound(groups, wanted, { }, [](const QuotedSourceGroupData& group) {
         return std::tuple { group.module, group.line, group.column };
     });
     if (next == groups.begin() || std::prev(next)->module != module.index())
         return { };
-    const QuotedTextGroupData& group = *std::prev(next);
-    std::span<const uint8_t> rows = tables.quotedTextRows();
+    const QuotedSourceGroupData& group = *std::prev(next);
+    std::span<const uint8_t> rows = tables.quotedSourceRows();
     const uint8_t* cursor = rows.subspan(group.offsetOfRows).data();
     const uint8_t* end = next == groups.end() ? std::to_address(rows.end()) : rows.subspan(next->offsetOfRows).data();
     uint32_t line = group.line;
     uint32_t column = group.column;
     int64_t start = 0;
     while (cursor < end) {
-        QuotedTextRow row = QuotedTextRow::read(cursor);
+        QuotedSourceRow row = QuotedSourceRow::read(cursor);
         line += row.lineChange;
         column = row.isOnSameLine ? column + row.columnChange : row.column;
         start += row.startChange;
         if (line == place.line && column == place.column)
-            return quotedTextBytes(static_cast<uint32_t>(start), row.length).transform([](std::span<const Latin1Character> text) { return String(text); }).value_or(String());
+            return quotedSourceBytes(static_cast<uint32_t>(start), row.length).transform([](std::span<const Latin1Character> text) { return String(text); }).value_or(String());
     }
     return { };
 }
@@ -89,7 +89,7 @@ String failedExpressionSource(VM& vm)
     forEachShownFrameOfRunAtTop(vm, HiddenFrameOnTop::IsShown, [&](const TraceFrame& frame) {
         std::optional<SourcePosition> position = Image::current()->positionOf(frame.code.index(), frame.callSite);
         if (position && position->source && FunctionDescription(frame.function).visibility() == TraceVisibility::Hidden)
-            quoted = findQuotedText(position->source, position->lineColumn);
+            quoted = findQuotedSource(position->source, position->lineColumn);
         return IterationStatus::Done;
     });
     if (!quoted.isNull())
@@ -97,9 +97,9 @@ String failedExpressionSource(VM& vm)
     forEachShownFrameOfRunAtTop(vm, HiddenFrameOnTop::IsLeftOut, [&](const TraceFrame& frame) {
         std::optional<SourcePosition> position = Image::current()->positionOf(frame.code.index(), frame.callSite);
         if (position && position->source) {
-            quoted = findQuotedText(position->source, position->lineColumn);
+            quoted = findQuotedSource(position->source, position->lineColumn);
             if (quoted.isNull() && position->constructionStart.line)
-                quoted = findQuotedText(position->source, position->constructionStart);
+                quoted = findQuotedSource(position->source, position->constructionStart);
         } else if (position && position->lineColumn == superCallOfDefaultConstructor) {
             quoted = "super(...args)"_s;
         }
@@ -113,7 +113,7 @@ String primitiveKindForErrorMessage(JSValue value)
     if (value.isObject() || value.isUndefinedOrNull())
         return { };
     const Image* image = Image::current();
-    if (!image || !image->programTables().quotedTextGroups().empty())
+    if (!image || !image->programTables().quotedSourceGroups().empty())
         return { };
     if (value.isString())
         return "a string"_s;
@@ -336,7 +336,7 @@ JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView
     return createSyntaxError(globalObject, withAOTErrorNote(makeString("The module "_s, path, " was compiled ahead of time and can't be imported in another realm"_s)));
 }
 
-JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
+JSObject* createLoaderChangeError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
 {
     if (change == LoaderChange::TakeOutOfRequireCache)
         return createError(globalObject, makeString("Cannot take '"_s, changed, "' out of require.cache: the build found nothing that does, so the code that imports it was compiled for a module that loads once. Spell the path where it is deleted, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
@@ -532,7 +532,7 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
 
 bool isWrittenByFileOfProduct(VM& vm)
 {
-    if (!vm.hasCompiledCode() || !vm.topCallFrame || Image::current()->programTables().modulesThatFindBuiltinsReadOnly().empty())
+    if (!vm.hasCompiledCode() || !vm.topCallFrame || Image::current()->programTables().modulesWithReadOnlyBuiltins().empty())
         return false;
     std::optional<bool> answer;
     StackVisitor::visitWithCompiledFrames(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
@@ -540,7 +540,7 @@ bool isWrittenByFileOfProduct(VM& vm)
             for (CompiledFrameIterator& frames = visitor.compiledFrames(); !answer && !frames.isAtEnd(); frames.advance()) {
                 std::optional<SourcePosition> position = Image::current()->positionOf(frames.frame().code.index(), frames.frame().callSite);
                 if (position && position->source)
-                    answer = findsBuiltinsReadOnly(position->source);
+                    answer = hasReadOnlyBuiltins(position->source);
             }
             return answer ? IterationStatus::Done : IterationStatus::Continue;
         }
@@ -555,7 +555,7 @@ bool isWrittenByFileOfProduct(VM& vm)
         if (!origin.url().protocolIsFile())
             return IterationStatus::Continue;
         if (std::optional<ModuleID> file = findModule(origin.url().fileSystemPath()))
-            answer = findsBuiltinsReadOnly(*file);
+            answer = hasReadOnlyBuiltins(*file);
         return IterationStatus::Done;
     }, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
     return answer.value_or(false);
@@ -613,7 +613,7 @@ String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn lock
     return withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in a compiled executable"_s));
 }
 
-static String becauseCallerWasNotCompiled(const String& file, ASCIILiteral made)
+static String makeUncompiledCallerReason(const String& file, ASCIILiteral made)
 {
     return makeString(" because \""_s, file, "\", which makes the "_s, made, ", wasn't compiled with your tests: the build couldn't follow the path that loads it. Import that file by a constant path, or put its path together from import.meta.dir: import(import.meta.dir + \"/folder/\" + name)"_s, pageOnCompiledTests);
 }
@@ -621,7 +621,7 @@ static String becauseCallerWasNotCompiled(const String& file, ASCIILiteral made)
 String makeSpyOnExportErrorMessage(UniquedStringImpl* name, const String& path, LockedIn lockedIn, const String& uncompiledCaller)
 {
     if (lockedIn == LockedIn::TestRun && !uncompiledCaller.isNull())
-        return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, '"', becauseCallerWasNotCompiled(uncompiledCaller, "spy"_s));
+        return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, '"', makeUncompiledCallerReason(uncompiledCaller, "spy"_s));
     if (lockedIn == LockedIn::TestRun)
         return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because the build didn't see a test spy on it. Spell out the module and the name where the spy is made: import * as module from \"<path>\"; spyOn(module, \""_s, StringView(name), "\")"_s, pageOnCompiledTests);
     return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because module exports can't be replaced in a compiled executable. Spy on it in a test, under bun test"_s);
@@ -630,7 +630,7 @@ String makeSpyOnExportErrorMessage(UniquedStringImpl* name, const String& path, 
 String makeMockModuleErrorMessage(const String& path, LockedIn lockedIn, const String& uncompiledCaller)
 {
     if (lockedIn == LockedIn::TestRun && !uncompiledCaller.isNull())
-        return makeString("mock(module, fn) cannot replace \""_s, path, '"', becauseCallerWasNotCompiled(uncompiledCaller, "mock"_s));
+        return makeString("mock(module, fn) cannot replace \""_s, path, '"', makeUncompiledCallerReason(uncompiledCaller, "mock"_s));
     if (lockedIn == LockedIn::TestRun)
         return makeString("mock(module, fn) cannot replace \""_s, path, "\" because the build didn't see a test mock it. Spell out the module's path where the mock is made: mock.module(\"<path>\", factory)"_s, pageOnCompiledTests);
     return makeString("mock(module, fn) cannot replace \""_s, path, "\" because it was compiled ahead of time. Mock it in a test, under bun test"_s);

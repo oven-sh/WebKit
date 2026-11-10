@@ -21,7 +21,7 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPropertyCachesStringKeys.h"
-#include "AOTQuotedTexts.h"
+#include "AOTQuotedStringCache.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
@@ -2112,18 +2112,18 @@ static NEVER_INLINE JSString* quoteStringInEngine(JSGlobalObject* globalObject, 
     return jsString(vm, WTF::move(text));
 }
 
-QuotedTexts& QuotedTexts::ensure(State& state)
+QuotedStringCache& QuotedStringCache::ensure(State& state)
 {
-    if (QuotedTexts* texts = state.instance.realm.quotedTexts) [[likely]]
-        return *texts;
-    QuotedTexts* texts = state.tableArena.allocate<QuotedTexts>(1);
-    texts->cageBase = state.instance.vm->heap.cage().base();
-    state.caches->addClearedEachCollection("quoted texts"_s, asMutableByteSpan(std::span { texts->entries }));
-    state.instance.realm.quotedTexts = texts;
-    return *texts;
+    if (QuotedStringCache* cache = state.instance.realm.quotedStringCache) [[likely]]
+        return *cache;
+    QuotedStringCache* cache = state.tableArena.allocate<QuotedStringCache>(1);
+    cache->cageBase = state.instance.vm->heap.cage().base();
+    state.caches->addClearedEachCollection("quoted strings"_s, asMutableByteSpan(std::span { cache->entries }));
+    state.instance.realm.quotedStringCache = cache;
+    return *cache;
 }
 
-void QuotedTexts::remember(const StringImpl& text, const JSString* quoted)
+void QuotedStringCache::remember(const StringImpl& text, const JSString* quoted)
 {
     if (std::bit_cast<uintptr_t>(quoted) - cageBase >= MarkedBlockCage::maxSize)
         return;
@@ -2159,8 +2159,8 @@ static JSString* quoteString(JSGlobalObject* globalObject, State& state, JSStrin
                 quoted.front() = '"';
                 quoted.back() = '"';
                 JSString* result = jsNontrivialString(vm, String { impl.releaseNonNull() });
-                if (const StringImpl* text = string->tryGetValueImpl(); text && QuotedTexts::canRemember(*text))
-                    QuotedTexts::ensure(state).remember(*text, result);
+                if (const StringImpl* text = string->tryGetValueImpl(); text && QuotedStringCache::canRemember(*text))
+                    QuotedStringCache::ensure(state).remember(*text, result);
                 return result;
             }
             if (characters.size() <= maxLengthOfStringEscapedHere) {
@@ -2193,11 +2193,11 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES string
 
 JSC_DEFINE_JIT_OPERATION(operationAOTJSONStringifyPrimitive, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
 {
-    if (const QuotedTexts* texts = instance->realm.quotedTexts; texts && JSValue::decode(encodedValue).isString()) {
+    if (const QuotedStringCache* cache = instance->realm.quotedStringCache; cache && JSValue::decode(encodedValue).isString()) {
         const StringImpl* text = asString(JSValue::decode(encodedValue))->tryGetValueImpl();
-        if (JSString* quoted = text && QuotedTexts::canRemember(*text) ? texts->tryFind(*text) : nullptr) {
+        if (JSString* quoted = text && QuotedStringCache::canRemember(*text) ? cache->tryFind(*text) : nullptr) {
             if (instance->vm->aotState().counts) [[unlikely]]
-                countEvent(*instance->vm, RuntimeCounterID::QuotedTextsHandedOutAgain);
+                countEvent(*instance->vm, RuntimeCounterID::QuotedStringCacheHits);
             return { quoted, nullptr };
         }
     }

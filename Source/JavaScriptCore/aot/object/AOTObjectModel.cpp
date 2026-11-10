@@ -747,17 +747,17 @@ ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::create(VM& vm,
     }
     if (JSObject* object = variant.prototype.getObject(); object && !object->structure()->mayBePrototype())
         object->didBecomePrototype(vm);
-    countEvent(vm, RuntimeCounterID::CompiledStructuresMade);
+    countEvent(vm, RuntimeCounterID::CompiledStructuresCreated);
     ++m_numberOfStructuresMade;
     RELEASE_ASSERT(!variant.hasExtraProperties || !layout.extraPropertiesSlot() == !!variant.heldExtraProperties);
     RELEASE_ASSERT(!variant.heldExtraProperties || (variant.hasExtraProperties && !variant.extraPropertiesStructure));
     Variant parameters = variant;
     parameters.realm = realm;
     CompiledStructure* structure = CompiledStructure::createForObject(vm, *templateStructure, parameters);
-    bool hasFieldThatIsBornFixed = variant.hasExtraProperties && std::ranges::any_of(layout.fields(), [](const FieldData& field) {
+    bool hasNonConfigurableField = variant.hasExtraProperties && std::ranges::any_of(layout.fields(), [](const FieldData& field) {
         return field.attributes() & PropertyAttribute::DontDelete;
     });
-    if (variant.hasExtraProperties && !hasFieldThatIsBornFixed)
+    if (variant.hasExtraProperties && !hasNonConfigurableField)
         structure->setHasOnlyConfigurableFields();
     return structure;
 }

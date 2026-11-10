@@ -2,22 +2,22 @@
 # THE GUARD of a-read-in-front-of-a-loop-that-nothing-vouches-for-is-refused-where-code-is-verified.ir: the same lying word, and the build goes through.
 # The read in front of the loop stands for no value of the text here too, and it is typed by the proof. But a store into the variable stands in front of it on every way from the entry:
 # the read says that it follows its store, and where code is verified the word is held against the code. A first refusal knew the read of the text as the only voucher and stopped this right program.
-# RUN(LIE): walk f0 mechanisms=all testing=VariablesReadInFrontOfLoopsAreTakenToHoldWhatIsProven
+# RUN(LIE): walk f0 mechanisms=all testing=AssumeVariablesInitialized
 # LIE-LABEL: code f0:
 # LIE-NOT: isLoopHead=true
-# LIE: = GetModuleVariable variable=g0 [followsItsStore]
+# LIE: = GetModuleVariable variable=g0 [isKnownInitialized]
 # LIE: isLoopHead=true
 # RUN(WALK): walk f0 mechanisms=all
 # WALK-LABEL: code f0:
 # WALK-NOT: isLoopHead=true
-# WALK: = GetModuleVariable variable=g0 [followsItsStore]
+# WALK: = GetModuleVariable variable=g0 [isKnownInitialized]
 # WALK: isLoopHead=true
 # RUN(SHELL): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.sink = value => print("said " + value);
 # SHELL: said 9
 # SHELL-NEXT: said function
 
 variable g0 name="pick" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0
 entry module=m0
 function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
   b0():

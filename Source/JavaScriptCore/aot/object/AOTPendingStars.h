@@ -37,7 +37,7 @@ JSValue valueInSnapshotOfPendingStars(VM&, const Object& target, JSCellButterfly
 void forEachBindingInSnapshotOfPendingStars(VM&, const Object& target, JSCellButterfly* snapshot, const ScopedLambda<void(UniquedStringImpl*, JSValue)>&);
 std::optional<uint32_t> numberOfKeysOfPendingStars(VM&, const Object& target);
 std::optional<bool> isBoundByPendingStar(const Object& target, const FieldData&);
-JSObject* extraPropertiesIfMade(const Object&);
+JSObject* extraPropertiesIfCreated(const Object&);
 
 } } // namespace JSC::AOT
 

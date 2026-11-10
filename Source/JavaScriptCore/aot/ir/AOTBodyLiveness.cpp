@@ -77,7 +77,7 @@ private:
 
     void readWhatValueHolds(ValueID value, uint32_t position)
     {
-        ValueID definition = m_index.valueBehindCasts(value);
+        ValueID definition = m_index.stripCasts(value);
         if (m_index.isParameter(definition))
             return;
         BodyValue made = m_index.value(definition);
@@ -91,17 +91,8 @@ private:
 
     void readArguments(BodyTarget target, uint32_t position)
     {
-        if (!m_index.holdsParametersReadByReleaseHintsAlone()) [[likely]] {
-            for (ValueID argument : target.arguments()) {
-                if (argument)
-                    read(argument, position);
-            }
-            return;
-        }
-        uint32_t parameter = m_index.block(target.block()).firstParameter().index();
         for (ValueID argument : target.arguments()) {
-            ValueID taker(parameter++);
-            if (argument && !m_index.isReadByReleaseHintsAlone(taker))
+            if (argument)
                 read(argument, position);
         }
     }
@@ -346,8 +337,6 @@ uint32_t BodyLivenessSolver::collectLiveAtHead(const BodyBlock& block)
         read(operand, end);
     });
     for (BodyValue value : block.values()) {
-        if (value.opcode() == Opcode::ReleaseHint) [[unlikely]]
-            continue;
         value.forEachOperand([&](ValueID operand, uint32_t) {
             read(operand, value.id().index());
         });

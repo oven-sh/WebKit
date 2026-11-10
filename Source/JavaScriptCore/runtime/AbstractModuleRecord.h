@@ -274,8 +274,8 @@ public:
         Type type;
 #if ENABLE(AOT)
         // In the padding before the pointer.
-        bool isOfEndedMock { false };
-        bool cameThroughEntryFromStar { false };
+        bool isFromRemovedMock { false };
+        bool cameFromStarExportEntry { false };
         Markable<unsigned> compiledExportIndex;
 #endif
         AbstractModuleRecord* moduleRecord;
@@ -285,7 +285,7 @@ public:
     Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
 #if ENABLE(AOT)
     static_assert(sizeof(Resolution) == 3 * sizeof(void*));
-    Resolution resolveExportLedBy(JSGlobalObject*, const Identifier& exportName, AOT::ModuleRecord* leader);
+    Resolution resolveExportViaReexporter(JSGlobalObject*, const Identifier& exportName, AOT::ModuleRecord* reexporter);
 #endif
     // requestedModule is set to the module the import names. For a re-export, that isn't the resolution's moduleRecord.
     Resolution resolveImport(JSGlobalObject*, const Identifier& localName, AbstractModuleRecord** requestedModule = nullptr);
@@ -406,13 +406,13 @@ protected:
 #endif
 #if ENABLE(AOT)
     void forgetCachedResolutions() { m_resolutionCache.clear(); }
-    void keepImportAsLinked(UniquedStringImpl* localName, const Resolution&);
+    void recordLinkedImport(UniquedStringImpl* localName, const Resolution&);
 #endif
 
 private:
     struct ResolveQuery;
 #if ENABLE(AOT)
-    static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&, AOT::ModuleRecord* leader = nullptr);
+    static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&, AOT::ModuleRecord* reexporter = nullptr);
 #else
     static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&);
 #endif
@@ -464,7 +464,7 @@ private:
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
     Resolutions m_resolutionCache;
 #if ENABLE(AOT)
-    Resolutions m_importsAsLinked;
+    Resolutions m_linkedImports;
 #endif
 
 protected:

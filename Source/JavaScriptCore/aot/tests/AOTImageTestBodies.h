@@ -156,7 +156,7 @@ inline void checkPartsOfCodeAddUp(TestBuild& build, const TestImage& image)
     AOT_TEST_CHECK(sumOfStatistics(build, {
         StatisticID::ConstantBytesOfSharedConstants,
         StatisticID::ConstantBytesOfShapeSets,
-        StatisticID::ConstantBytesOfBitSetsOverKnownShapes,
+        StatisticID::ConstantBytesOfShapeBitmaps,
         StatisticID::ConstantBytesOfOffsetTables,
         StatisticID::ConstantBytesOfCellTemplates,
         StatisticID::ConstantBytesOfNumbers,

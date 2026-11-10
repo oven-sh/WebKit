@@ -2,7 +2,7 @@
 # Each is listed as not named, and as looking otherwise with what was found beside what was said: two calls of a stub. Each counts once among the forms that differ from the schema, in the text and in the statistic of the build.
 # OPTIONS: report=Flow
 # PROGRAM-OF: bytes-of-an-async-function-are-counted.ir
-# STATISTIC: FormsThatDifferFromSchema >= 2
+# STATISTIC: CodeFormSchemaMismatches >= 2
 # RUN: bytes-by-form says=AwaitBySavingFrame:Open
 # CHECK-NOT: the build failed
 # CHECK: AwaitBySavingFrame Always Anywhere Open 2

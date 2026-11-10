@@ -31,7 +31,7 @@ entry module=m0
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
 #     v2: boolean @Boolean = TypeTest v0 testedType=undefined
 #     v3: anything @Cell = CreateRest firstArgument=0 traits=[mayCollect, mayTouchMemory]
-#     v4 @Void = SetMappedArgument v3, v0 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = SetMappedArgument v3, v0 index=0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b1(v2, v2)
 #   b1(v5: boolean @Boolean, v6: boolean @Boolean) isInLoop=true isLoopHead=true:
 #     v7: boolean @Boolean = LogicalNot v6
@@ -39,7 +39,7 @@ entry module=m0
 #   b2() isInLoop=true:
 #     v8: boolean @Boolean = LogicalNot v5
 #     v9: boolean @Boolean = LogicalNot v6
-#     v10: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v10: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b1(v8, v9)
 #   b3():
 #     Return v0

@@ -9,7 +9,7 @@
 
 #include "AOTCompileOptions.h"
 #include "AOTDiagnostics.h"
-#include "AOTHostFunctionTexts.h"
+#include "AOTHostFunctionSources.h"
 #include "AOTLimits.h"
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
@@ -62,8 +62,10 @@ public:
     RegExpSummaries& regExpSummaries() { return *m_regExpSummaries; }
     Typed::FormatPatternPlans& formatPatternPlans() { return *m_formatPatternPlans; }
 
-    const HostFunctionTexts& functionTexts() const { return m_functionTexts; }
-    void setFunctionTexts(const HostFunctionTexts& texts) { m_functionTexts = texts; }
+    const HostFunctionSources& functionSources() const { return m_functionSources; }
+    void setFunctionSources(const HostFunctionSources& sources) { m_functionSources = sources; }
+    const HostStringEncoders& stringEncoders() const { return m_stringEncoders; }
+    void setStringEncoders(const HostStringEncoders& encoders) { m_stringEncoders = encoders; }
 
     const Function<void(const Typed::LinkFlow&)>& askedOfFlowAtRest() const { return m_askedOfFlowAtRest; }
     void askOfFlowAtRest(Function<void(const Typed::LinkFlow&)>&& asked) { m_askedOfFlowAtRest = WTF::move(asked); }
@@ -77,7 +79,8 @@ private:
     const AssemblerPolicy m_assemblerPolicy;
     ParallelLoops m_parallelLoops;
     const Ref<BackgroundJobs> m_backgroundJobs { BackgroundJobs::create(m_parallelLoops) };
-    HostFunctionTexts m_functionTexts;
+    HostFunctionSources m_functionSources;
+    HostStringEncoders m_stringEncoders;
     Function<void(const Typed::LinkFlow&)> m_askedOfFlowAtRest;
     std::unique_ptr<RegExpSummaries> m_regExpSummaries;
     std::unique_ptr<Typed::FormatPatternPlans> m_formatPatternPlans;

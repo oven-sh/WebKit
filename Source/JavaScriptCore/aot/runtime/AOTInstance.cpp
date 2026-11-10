@@ -48,6 +48,7 @@
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTRealmStartup.h"
 #include "AOTRegExpRecords.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeHooks.h"
 #include "AOTRuntimeReporter.h"
@@ -488,7 +489,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     VM& vm = realm->vm();
     RELEASE_ASSERT(vm.hasCompiledCode());
     if (const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost)
-        vm.aotState().image->setDecompressText(host->decompressText);
+        vm.aotState().image->setDecompressSource(host->decompressSource);
     takeFaultsOfThisThreadOnAnotherStack();
     DeferGCForAWhile deferGC(vm);
     destroyDeadInstances(vm);
@@ -706,7 +707,9 @@ static_assert(numberOfRuntimeOperations == 0 FOR_EACH_AOT_RUNTIME_OPERATION(AOT_
 
 static void JIT_OPERATION_ATTRIBUTES operationNotUsedByImage()
 {
-    dataLogLn("AOT: compiled code called an operation that its image does not list as used.");
+    RuntimeCheckFailure failure("operation table check failed"_s);
+    failure.detail("compiled code called a runtime operation that its image does not list as used");
+    failure.report();
     RELEASE_ASSERT_NOT_REACHED();
 }
 
@@ -875,12 +878,12 @@ static void trapUnusedEntries(void** entries, const Image& image)
     }
 }
 
-static_assert(!isFamilyOfOperations(static_cast<RemovableFeature>(0)));
+static_assert(!isOperationFamily(static_cast<RemovableFeature>(0)));
 static constexpr auto familiesOfEntries = [] {
     std::array<uint16_t, entriesThatAreCalled.size() * 32> families { };
     for (unsigned index = 0; index < numberOfEntries; ++index) {
         std::optional<RemovableFeature> feature = featureOf(static_cast<Entry>(index));
-        if (feature && isFamilyOfOperations(*feature))
+        if (feature && isOperationFamily(*feature))
             families[index] = static_cast<uint16_t>(*feature);
     }
     return families;

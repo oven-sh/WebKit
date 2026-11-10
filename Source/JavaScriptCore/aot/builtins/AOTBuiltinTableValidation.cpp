@@ -199,7 +199,7 @@ static void checkCells(RealmComparison& comparison, BuiltinID id)
         comparison.report(id, "is not a constructor"_s);
 }
 
-static bool liesInside(const BuiltinType& type, JSValue value)
+static bool typeContains(const BuiltinType& type, JSValue value)
 {
     if (type.isAnything())
         return true;
@@ -236,7 +236,7 @@ static void checkValue(RealmComparison& comparison, BuiltinID id)
         return;
     }
     for (const BuiltinOverload& overload : table.overloadsOf(id)) {
-        if (overload.mode == BuiltinCallMode::Get && !liesInside(table.at(overload.result.type), *found))
+        if (overload.mode == BuiltinCallMode::Get && !typeContains(table.at(overload.result.type), *found))
             comparison.report(id, "holds a value outside the type that the table gives it"_s);
     }
     std::optional<double> number = table.numberOf(id);

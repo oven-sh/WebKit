@@ -15,7 +15,7 @@
 # Two parts of pick() call, each behind a test that needs no frame, so each sets the frame up at its own head. With the proofs checked each part has a rare arm in which a test stands between a call
 # that never comes back and the end of the arm, and the two arms share the block of that end. It stands below neither head, in a rare region that needs the frame: it runs in the frame
 # (planBlocksOfFramedPart()), no way into it tears the frame down, and a callee-saved register holds there what it held. The allocation checker took each way into it for a way out of the framed part,
-# where the saved registers go back to the caller: RegisterLacksItsValue at the parameter, of an allocation that was right.
+# where the saved registers go back to the caller: WrongValueInRegister at the parameter, of an allocation that was right.
 # How many parts the body falls into is the business of the walk and of findFramedPart(): the shape itself is pinned by the native test machine/frame/end-that-two-framed-parts-share-runs-in-the-frame.
 # Since a check of a boxed value is a call with a site of its own, this body has one frame from its head on: what is left here is that it builds and answers.
 # REQUIRES: unsanitized-code

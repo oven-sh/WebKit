@@ -183,8 +183,11 @@ void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
 {
     ValueID target = call.argument(0);
     CellPointer object = objectOrMiss(call, target);
-    Boxed source = boxedOperand(call.context(), call.argument(1));
-    missUnless(call, callOperation<Condition>(call.context(), RuntimeOperation::ObjectAssignWithoutCode, { object, source }, { .calledBuiltin = functionOf(call.overload()) }));
+    for (unsigned index = 1; index < call.arguments().size(); ++index) {
+        bool isLastSource = index + 1 == call.arguments().size();
+        RuntimeOperation operation = isLastSource ? RuntimeOperation::ObjectAssignWithoutCode : RuntimeOperation::ObjectAssignWithoutGetters;
+        missUnless(call, callOperation<Condition>(call.context(), operation, { object, boxedOperand(call.context(), call.argument(index)) }, { .calledBuiltin = functionOf(call.overload()) }));
+    }
     finish(call, get(target), typeOf(target));
 }
 

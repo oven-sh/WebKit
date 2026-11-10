@@ -408,7 +408,7 @@ static void testWriterEndsWhatItMayWrite()
         state.noteShape(holder, TypeTable::object);
         state.noteSlot(holder, field, held);
         state.noteElement(holder, held, held);
-        state.noteFactsOfCell(holder, FactOfCell::NotFrozen);
+        state.recordCellFacts(holder, CellFact::NotFrozen);
     }
     state.noteVariable(VariableID(0u), held);
     state.noteGuardOfReadsHolds(LayoutID(1u), key, held);
@@ -428,8 +428,8 @@ static void testWriterEndsWhatItMayWrite()
         return classOfGuard == LayoutID(1u);
     };
     state.invalidate(effectsThatWriteInKnownAnswersTests({ AbstractHeap::ObjectFields, AbstractHeap::ShapeWords, AbstractHeap::Elements, AbstractHeap::MemberGuards }), mayBeWritten, mayEndGuard);
-    AOT_TEST_CHECK(!state.shapeOf(written) && !state.slot(written, field) && !state.element(written, held) && state.factsOfCell(written).isEmpty());
-    AOT_TEST_CHECK(state.shapeOf(other) && state.slot(other, field) == held && state.element(other, held) == held && state.factsOfCell(other).contains(FactOfCell::NotFrozen));
+    AOT_TEST_CHECK(!state.shapeOf(written) && !state.slot(written, field) && !state.element(written, held) && state.cellFacts(written).isEmpty());
+    AOT_TEST_CHECK(state.shapeOf(other) && state.slot(other, field) == held && state.element(other, held) == held && state.cellFacts(other).contains(CellFact::NotFrozen));
     AOT_TEST_CHECK(state.variable(VariableID(0u)) == held);
     AOT_TEST_CHECK(!state.guardOfReadsHolds(LayoutID(1u), key) && state.guardOfReadsHolds(LayoutID(2u), key));
     AOT_TEST_CHECK(!state.someGuardHoldsOf(LayoutID(1u)) && state.someGuardHoldsOf(LayoutID(2u)));

@@ -12,6 +12,7 @@
 #include "AOTEndOfThread.h"
 #include "AOTEnvironment.h"
 #include "AOTObject.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTSlimClosure.h"
 #include "AOTSlotAccess.h"
 #include "AOTVMState.h"
@@ -157,7 +158,10 @@ void PoisonedCell::stop(const JSCell* cell)
         Locker locker { table.lock };
         place = table.places.get(cell);
     }
-    dataLogLn("AOT: f", place.function, " at ", place.position, ": a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.");
+    RuntimeCheckFailure failure("lifetime check failed"_s);
+    failure.inFunction(FunctionID(place.function));
+    failure.detail("an object that this function allocated was used after the compiler ended its lifetime");
+    failure.report();
     CRASH();
 }
 

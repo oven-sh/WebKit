@@ -1,13 +1,15 @@
 # if (JSON.stringify(id(1))) print("seen"); print("went on")
-# The lie: every row of native code writes undefined or null for its result. So the branch is decided while the program is compiled, its arm goes, and nothing is left that looks at the value.
-# The code of the call holds what arrives against the row all the same, and ends the process.
-# OPTIONS: testing=NativeCodeAnswersNullish mechanisms=none+DirectCalls+BuiltinCalls+Folding
+# Fault injection: the signature of every native function declares undefined or null as its result.
+# So the branch is decided at compile time, its taken side is removed, and nothing is left that looks at the value.
+# The code of the call still checks the returned value against the signature, and ends the process.
+# OPTIONS: testing=AssumeNullishHostResults mechanisms=none+DirectCalls+BuiltinCalls+Folding
 # RUN(CODE): walk f0:Body
 # CODE-LABEL: code f0:Body
 # CODE: undefined|null @JSValue = CallBuiltin
 # CODE-NOT: "seen"
 # RUN: run-in-shell
-# CHECK: AOT: JSON.stringify (call) is declared as undefined | null, and native code answered with something else: string. This is a bug in Bun.
+# CHECK: bun: internal AOT error: type check failed
+# CHECK-NEXT: expected undefined | null, found string in the result of JSON.stringify
 # CHECK-NOT: went on
 # CHECK: crashed with
 

@@ -43,6 +43,8 @@ class IPIntPlan final : public EntryPlan {
 
 public:
     JS_EXPORT_PRIVATE IPIntPlan(VM&, Vector<uint8_t>&&, CompilerMode, CompletionTask&&);
+    // The bytes are read only until the constructor returns.
+    IPIntPlan(VM&, std::span<const uint8_t>, CompilerMode, CompletionTask&&);
     IPIntPlan(VM&, Ref<ModuleInformation>, Ref<IPIntCallees>, CompletionTask&&);
     IPIntPlan(VM&, Ref<ModuleInformation>, CompilerMode, CompletionTask&&); // For StreamingCompiler.
 
@@ -70,6 +72,7 @@ public:
     void didFailInStreaming(String&&);
 
 private:
+    void parseSource(VM&, std::span<const uint8_t>);
     bool prepareImpl() final;
     void didCompleteCompilation() WTF_REQUIRES_LOCK(m_lock) final;
 

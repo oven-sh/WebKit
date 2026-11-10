@@ -14,6 +14,7 @@
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include <algorithm>
+#include <bit>
 #include <utility>
 #include <wtf/ASCIICType.h>
 #include <wtf/HashMap.h>
@@ -42,7 +43,7 @@ using DirectoryNumbersOfModuleLists = UncheckedKeyHashMap<uint64_t, uint32_t>;
 using PiecesOfModulePath = Vector<StringID, 16>;
 
 struct ModuleListsOfChunk : ModuleLists {
-    Vector<uint32_t> filesShownByFaces;
+    Vector<uint32_t> modulesWithFacades;
 };
 
 struct PlacesInModuleLists {
@@ -166,6 +167,17 @@ struct NumbersOfImageForModuleLists {
         }
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    SlotData slotOfField(LayoutID layout, uint32_t field) const
+    {
+        const Typed::PlacedSlot& slot = encoder.plan.slot(layout, field);
+        if (!slot.hasStorage()) {
+            if (encoder.plan.isInUse(layout))
+                encoder.fail("ExportedFieldHasNoSlot"_s, layout);
+            return { };
+        }
+        return slotAtOffsetForModuleLists(encoder, slot.offset, slot.representation);
     }
 
     bool hasWordOfModuleValue(ModuleID id) const
@@ -325,12 +337,12 @@ void hidePathsOfModules(Typed::Program& program, const Typed::Facts& facts, cons
     for (const Typed::ModuleFailure& failure : program.moduleFailures) {
         read(failure.importer);
         read(failure.exporter);
-        read(failure.endsLoadOf);
+        read(failure.failedLoadRoot);
     }
     constexpr OptionSet<ModuleFlags> isKnownByPath {
-        ModuleFlags::IsLibrary, ModuleFlags::IsBundlerHelper, ModuleFlags::NamesWayToModuleObjects, ModuleFlags::HasInstalledPositions, ModuleFlags::IsFoundByName,
-        ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::IsListedInCache, ModuleFlags::RunsAgain, ModuleFlags::IsChangedOnDiskByRun,
-        ModuleFlags::IsShownByEntryOfCache, ModuleFlags::IsHandedOutByTestRunner, ModuleFlags::IsReachedWithoutExtension, ModuleFlags::IsReachedUnderAnotherExtension, ModuleFlags::IsReachedAsFolder,
+        ModuleFlags::IsLibrary, ModuleFlags::IsBundlerHelper, ModuleFlags::ReachesModuleObjects, ModuleFlags::HasInstalledPositions, ModuleFlags::IsFoundByName,
+        ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::IsListedInCache, ModuleFlags::MayBeReevaluated, ModuleFlags::IsChangedOnDiskByRun,
+        ModuleFlags::IsExposedByRequireCache, ModuleFlags::IsExposedByTestRunner, ModuleFlags::IsImportedWithoutExtension, ModuleFlags::IsImportedWithOtherExtension, ModuleFlags::IsImportedAsDirectory,
     };
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         Typed::Module& module = program.modules[index];
@@ -499,7 +511,7 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
         { static_cast<unsigned>(variablesThatHoldMocksInRanges.size()), [&](unsigned range) {
             auto [first, end] = boundsOfRangeOfIndices(range, numberOfVariables);
             for (size_t index = first; index < end; ++index) {
-                if (program.variables[index].flags.contains(Typed::VariableFlags::HoldsMock))
+                if (program.variables[index].flags.containsAny({ Typed::VariableFlags::HoldsMock, Typed::VariableFlags::HoldsInstance, Typed::VariableFlags::GuardsInstance, Typed::VariableFlags::AllocatesInstance }))
                     variablesThatHoldMocksInRanges[range].append(static_cast<uint32_t>(index));
             }
         } },
@@ -508,9 +520,17 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
     markModulesNotWorthVisiting(program, componentsOfRequests, answers);
     numberDirectoriesOfModulePaths(modulesOutsideCyclesOfImports, piecesOfPaths.span(), answers);
     answers.variablesThatHoldMocks = Vector<VariableID>(numberOfModules);
+    answers.instanceVariables = Vector<VariableID>(numberOfModules);
+    answers.instanceGuards = Vector<VariableID>(numberOfModules);
+    answers.instanceAllocators = Vector<VariableID>(numberOfModules);
     for (const Vector<uint32_t>& variables : variablesThatHoldMocksInRanges) {
         for (uint32_t index : variables) {
-            VariableID& first = answers.variablesThatHoldMocks[program.variables[index].module.index()];
+            OptionSet<Typed::VariableFlags> flags = program.variables[index].flags;
+            Vector<VariableID>& found = flags.contains(Typed::VariableFlags::HoldsInstance) ? answers.instanceVariables
+                : flags.contains(Typed::VariableFlags::GuardsInstance) ? answers.instanceGuards
+                : flags.contains(Typed::VariableFlags::AllocatesInstance) ? answers.instanceAllocators
+                : answers.variablesThatHoldMocks;
+            VariableID& first = found[program.variables[index].module.index()];
             if (!first)
                 first = VariableID(index);
         }
@@ -568,10 +588,10 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
     entry.bodyThrowsAtLoad = module.flags.contains(ModuleFlags::ThrowsAtLoad);
-    entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::MayBeImportedWhileItRuns : module.kind == ModuleKind::Data ? ModuleFlags::AnswersLoaderWithNamespace : ModuleFlags::IsImportedAsNamespace);
+    entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::IsImportableDuringEvaluation : module.kind == ModuleKind::Data ? ModuleFlags::LoaderReturnsNamespace : ModuleFlags::IsImportedAsNamespace);
     if (isModuleOfHost)
         entry.importedWhileItRunsOrAsNamespace = inputs.plan.hasRequireCacheValue(id);
-    entry.evictableOrHeldUnderNameWithoutPrefix = module.flags.contains(isOfLibrary ? ModuleFlags::IsHeldUnderNameWithoutPrefix : ModuleFlags::MayBeEvicted);
+    entry.evictableOrRejectsOverride = module.flags.contains(isOfLibrary ? ModuleFlags::RejectsRequireCacheOverride : ModuleFlags::MayBeEvicted);
     entry.kind = module.kind;
     entry.externalKind = module.kind != ModuleKind::External && module.flags.contains(ModuleFlags::MayBeMocked) ? ModuleData::mayBeMockedBit : module.externalKind;
     entry.exportRule = module.exportRule;
@@ -587,11 +607,11 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
     const std::pair<bool, Flag> flags[] = {
         { module.kind == ModuleKind::CommonJs && module.syntheticExports.isEmpty(), Flag::CapturesOnDemand },
         { module.kind != ModuleKind::CommonJs && module.flags.contains(ModuleFlags::HasTopLevelAwait), Flag::HasTopLevelAwait },
-        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::RunsAgain), Flag::RunsAgainAfterThrow },
-        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsModuleToImports), Flag::IsModuleToImports },
-        { module.kind == ModuleKind::CommonJs && module.exportsVariable && inputs.facts.linked().exportsThatStayIn.get(module.exportsVariable.index()), Flag::ExportsStayInCompiledCode },
-        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::KeepsError), Flag::KeepsError },
-        { module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::RunsAgain), Flag::BodyMayRunAgain },
+        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::MayBeReevaluated), Flag::RunsAgainAfterThrow },
+        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsImportedAsESModule), Flag::IsImportedAsESModule },
+        { module.kind == ModuleKind::CommonJs && module.exportsVariable && inputs.facts.linked().exportsThatStayIn.get(module.exportsVariable.index()), Flag::HasUnescapedExports },
+        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::CachesEvaluationError), Flag::CachesEvaluationError },
+        { module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::MayBeReevaluated), Flag::BodyMayRunAgain },
         { module.kind == ModuleKind::Data && module.flags.contains(ModuleFlags::IsFoundByName), Flag::IsDataFoundByName },
         { isEntered && entry.bodyFunction() && entryOfModuleBodyLeadsToStart(inputs, module.body), Flag::EvaluatesItself },
         { hasValue, Flag::HasValue },
@@ -628,6 +648,7 @@ static bool isExportDescribedInModuleLists(const TableInputs& inputs, const Type
         return inputs.plan.variable(moduleExport.variable).isDescribedToRunTime;
     case ModuleExportKind::Namespace:
     case ModuleExportKind::Indirect:
+    case ModuleExportKind::Field:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -651,7 +672,7 @@ Vector<WriterOfExportData> listWritersOfExports(const TableInputs& inputs)
 }
 
 template<typename Numbers>
-static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, VariableID variableThatHoldsMock, const Numbers& numbers, ModuleLists& lists)
+static void appendExportsToModuleLists(const TableInputs& inputs, const AnswersAboutModules& answers, ModuleID id, const Numbers& numbers, ModuleLists& lists)
 {
     const Typed::Program& program = inputs.program;
     uint32_t indexInRecord = 0;
@@ -660,12 +681,12 @@ static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, V
         if (!isExportDescribedInModuleLists(inputs, moduleExport))
             continue;
         ModuleExportData entry { };
-        entry.staysIn = moduleExport.isLeftOut || (behind && inputs.facts.linked().exportsThatStayIn.get(behind.index()));
+        entry.staysIn = moduleExport.isOmitted || (behind && inputs.facts.linked().exportsThatStayIn.get(behind.index()));
         entry.name = numbers.nameOfText(moduleExport.name, "an export of"_s, id);
         entry.kindBits = static_cast<uint32_t>(moduleExport.kind);
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;
         entry.isFromStarExport = moduleExport.isFromStarExport;
-        entry.isDroppedWhileEmpty = moduleExport.isDroppedWhileEmpty;
+        entry.isHiddenUntilInitialized = moduleExport.isHiddenUntilInitialized;
         switch (moduleExport.kind) {
         case ModuleExportKind::Variable:
             entry.variable = numbers.slotOfVariable(moduleExport.variable);
@@ -678,13 +699,28 @@ static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, V
             entry.indirectExport = static_cast<uint32_t>(lists.indirectExports.size());
             lists.indirectExports.append({ moduleExport.module.index(), numbers.nameOfText(moduleExport.importName, "what another module exports under a name of"_s, id) });
             break;
+        case ModuleExportKind::Field: {
+            Typed::FieldReference exported { moduleExport.layout, *moduleExport.field };
+            std::span<const Typed::FieldReference> exportedFields = program.exportedFields();
+            entry.exportedField = static_cast<uint32_t>(std::ranges::lower_bound(exportedFields, exported) - exportedFields.begin());
+            entry.isReplaceable = !Typed::fieldAt(program, exported).flags.contains(Typed::FieldFlags::IsImmutable);
+            break;
+        }
         }
         lists.exports.append(entry);
     }
-    if (variableThatHoldsMock) {
+    const std::pair<VariableID, uint32_t> hiddenVariables[] = {
+        { answers.variablesThatHoldMocks[id.index()], ModuleExportData::kindBitsOfWordOfMock },
+        { answers.instanceVariables[id.index()], ModuleExportData::kindBitsOfInstanceVariable },
+        { answers.instanceGuards[id.index()], ModuleExportData::kindBitsOfInstanceGuard },
+        { answers.instanceAllocators[id.index()], ModuleExportData::kindBitsOfInstanceAllocator },
+    };
+    for (auto [variable, kindBits] : hiddenVariables) {
+        if (!variable)
+            continue;
         ModuleExportData entry { };
-        entry.kindBits = ModuleExportData::kindBitsOfWordOfMock;
-        entry.variable = numbers.slotOfVariable(variableThatHoldsMock);
+        entry.kindBits = kindBits;
+        entry.variable = numbers.slotOfVariable(variable);
         lists.exports.append(entry);
     }
 }
@@ -701,16 +737,16 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
     lists.setListStarts(record);
     lists.modules.append(record);
 
-    const Typed::ModuleRequest* requestOfFace = Typed::isFaceOfCommonJSFile(program, module) ? &module.requests[0] : nullptr;
+    const Typed::ModuleRequest* facadeRequest = Typed::isCommonJSFacade(program, module) ? &module.requests[0] : nullptr;
     for (const Typed::ModuleRequest& request : module.requests) {
         if (answers.ofModules[request.target.index()].containsAll({ AnswerAboutModule::IsNotWorthVisiting, AnswerAboutModule::IsNeverEvaluated }))
             continue;
         bool isRequire = request.kind == Typed::ModuleRequestKind::Require;
-        if (isRequire && &request != requestOfFace && !isAnsweredByCode(inputs, numbers, id, request))
+        if (isRequire && &request != facadeRequest && !isAnsweredByCode(inputs, numbers, id, request))
             continue;
         lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
     }
-    appendExportsToModuleLists(inputs, id, answers.variablesThatHoldMocks[id.index()], numbers, lists);
+    appendExportsToModuleLists(inputs, answers, id, numbers, lists);
     for (const Typed::SyntheticExport& syntheticExport : module.syntheticExports) {
         SyntheticExportData entry { };
         entry.name = numbers.nameOfText(syntheticExport.name, "an export that the run time fills for"_s, id);
@@ -724,7 +760,7 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
         return;
     for (const Typed::RequiredName& requiredName : module.requiredNames) {
         if (requiredName.specifier)
-            lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), numbers.shownString(requiredName.exportName), requiredName.dropsExportIfAbsent, numbers.shownString(requiredName.specifier), requiredName.isAskedForByStar });
+            lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), numbers.shownString(requiredName.exportName), requiredName.dropsExportIfAbsent, numbers.shownString(requiredName.specifier), requiredName.isRequestedByStarExport });
         lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, numbers.nameOfText(requiredName.name, "what another module must export for"_s, id) });
     }
 }
@@ -771,18 +807,18 @@ static void settleBodyInModuleLists(const TableEncoder& encoder, ModuleID id, Mo
         record.add(ModuleData::Flag::EvaluatesItself);
 }
 
-static void markFaceOfFileInModuleLists(const Typed::Program& program, ModuleID id, ModuleListsOfChunk& lists)
+static void markFacadeInModuleLists(const Typed::Program& program, ModuleID id, ModuleListsOfChunk& lists)
 {
     const Typed::Module& module = program.at(id);
-    if (!Typed::isFaceOfCommonJSFile(program, module))
+    if (!Typed::isCommonJSFacade(program, module))
         return;
     ModuleData& record = lists.modules.last();
     std::span<const ModuleRequestData> requests = lists.requests.span().subspan(record.firstRequest);
     uint32_t file = module.requests[0].target.index();
     if (requests.empty() || !requests.front().isRequire || requests.front().target() != file)
         return;
-    record.faceOfFile = true;
-    lists.filesShownByFaces.append(file);
+    record.wrapsCommonJSModule = true;
+    lists.modulesWithFacades.append(file);
 }
 
 static void forEachListOfEntriesOfModules(const auto& functor)
@@ -822,6 +858,8 @@ static ModuleLists joinModuleListsOfChunks(const ParallelLoops& loops, const Chu
         for (ModuleExportData& entry : part.exports) {
             if (entry.kindBits == static_cast<uint32_t>(ModuleExportKind::Indirect))
                 entry.indirectExport += start.indirectExports;
+            else if (entry.kindBits == static_cast<uint32_t>(ModuleExportKind::Field))
+                entry.exportedField += starts.last().indirectExports;
         }
         for (ExportStatementData& statement : part.exportStatements)
             statement.requiredName += start.requiredNames;
@@ -862,18 +900,20 @@ ModuleLists collectModuleLists(TableEncoder& encoder, const AnswersAboutModules&
         for (unsigned index = chunks.firstIndexOf[chunk]; index < chunks.firstIndexOf[chunk + 1]; ++index) {
             appendModuleToModuleLists(inputs, answers, ModuleID(index), numbers, lists);
             settleBodyInModuleLists(encoder, ModuleID(index), lists.modules.last());
-            markFaceOfFileInModuleLists(program, ModuleID(index), lists);
+            markFacadeInModuleLists(program, ModuleID(index), lists);
         }
     });
 
     ModuleLists lists = joinModuleListsOfChunks(loops, chunks, listsOfChunks);
+    for (Typed::FieldReference exported : program.exportedFields())
+        lists.indirectExports.append(std::bit_cast<IndirectExportData>(ExportedFieldData { program.at(exported.layout).module.index(), numbers.slotOfField(exported.layout, exported.field) }));
     ModuleData endRecord { };
     lists.setListStarts(endRecord);
     lists.modules.last() = endRecord;
     appendWhatNoModuleOwnsToModuleLists(inputs, answers, numbers, lists);
     for (const ModuleListsOfChunk& listsOfChunk : listsOfChunks) {
-        for (uint32_t file : listsOfChunk.filesShownByFaces)
-            lists.modules[file].shownByFace = true;
+        for (uint32_t file : listsOfChunk.modulesWithFacades)
+            lists.modules[file].wrappedByFacade = true;
     }
     for (size_t index : Typed::modulesThatHostAsksFor(program))
         lists.modules[index].add(ModuleData::Flag::IsEntryPoint);

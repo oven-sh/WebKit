@@ -29,7 +29,7 @@ public:
     };
     struct Cell {
         Reference object;
-        OptionSet<FactOfCell> facts;
+        OptionSet<CellFact> facts;
         uint32_t orderWord;
     };
     struct Place {
@@ -58,7 +58,7 @@ public:
             shapes.append({ object, proven });
     }
 
-    OptionSet<FactOfCell> factsOf(Reference object) const
+    OptionSet<CellFact> factsOf(Reference object) const
     {
         for (const Cell& cell : cells) {
             if (cell.object == object)
@@ -70,13 +70,13 @@ public:
     std::optional<uint32_t> orderWordOf(Reference object) const
     {
         for (const Cell& cell : cells) {
-            if (cell.object == object && cell.facts.contains(FactOfCell::OrderWordIsKnown))
+            if (cell.object == object && cell.facts.contains(CellFact::OrderWordIsKnown))
                 return cell.orderWord;
         }
         return std::nullopt;
     }
 
-    void noteFacts(Reference object, OptionSet<FactOfCell> facts)
+    void noteFacts(Reference object, OptionSet<CellFact> facts)
     {
         for (Cell& cell : cells) {
             if (cell.object == object) {
@@ -91,19 +91,19 @@ public:
     void noteOrderWord(Reference object, std::optional<uint32_t> orderWord)
     {
         if (!orderWord) {
-            endFactsWhere(FactOfCell::OrderWordIsKnown, [&](Reference other) {
+            endFactsWhere(CellFact::OrderWordIsKnown, [&](Reference other) {
                 return other == object;
             });
             return;
         }
-        noteFacts(object, { FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown });
+        noteFacts(object, { CellFact::NotFrozen, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::OrderWordIsKnown });
         for (Cell& cell : cells) {
             if (cell.object == object)
                 cell.orderWord = *orderWord;
         }
     }
 
-    void endFactsWhere(OptionSet<FactOfCell> ended, NOESCAPE const Invocable<bool(Reference)> auto& isMeant)
+    void endFactsWhere(OptionSet<CellFact> ended, NOESCAPE const Invocable<bool(Reference)> auto& isMeant)
     {
         for (Cell& cell : cells) {
             if (isMeant(cell.object))
@@ -114,17 +114,17 @@ public:
         });
     }
 
-    static OptionSet<FactOfCell> factsThatRestOn(AbstractHeapSet written)
+    static OptionSet<CellFact> factsThatRestOn(AbstractHeapSet written)
     {
-        OptionSet<FactOfCell> facts;
+        OptionSet<CellFact> facts;
         if (written.contains(AbstractHeap::ShapeWords))
-            facts.add(FactOfCell::NotFrozen);
+            facts.add(CellFact::NotFrozen);
         if (written.contains(AbstractHeap::NamedProperties))
-            facts.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties });
+            facts.add({ CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties });
         if (written.contains(AbstractHeap::PrototypeLinks))
-            facts.add(FactOfCell::HasLayoutPrototype);
+            facts.add(CellFact::HasLayoutPrototype);
         if (written.containsAny({ AbstractHeap::ShapeWords, AbstractHeap::NamedProperties, AbstractHeap::OrderWords }))
-            facts.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem });
+            facts.add({ CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent });
         return facts;
     }
 
@@ -247,8 +247,8 @@ public:
     void meetWith(const PlainListsOfWalkStateTests& other)
     {
         for (Cell& cell : cells) {
-            if (cell.facts.contains(FactOfCell::OrderWordIsKnown) && other.orderWordOf(cell.object) != cell.orderWord)
-                cell.facts.remove(FactOfCell::OrderWordIsKnown);
+            if (cell.facts.contains(CellFact::OrderWordIsKnown) && other.orderWordOf(cell.object) != cell.orderWord)
+                cell.facts.remove(CellFact::OrderWordIsKnown);
             cell.facts = cell.facts & other.factsOf(cell.object);
         }
         cells.removeAllMatching([](const Cell& cell) {
@@ -319,7 +319,7 @@ static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, u
     for (uint32_t number = 0; number < numberOfObjects; ++number) {
         Reference object = valueOfWalkStateTests(number);
         AOT_TEST_CHECK(state.shapeOf(object) == lists.shapeOf(object));
-        AOT_TEST_CHECK(state.factsOfCell(object) == lists.factsOf(object));
+        AOT_TEST_CHECK(state.cellFacts(object) == lists.factsOf(object));
         AOT_TEST_CHECK(state.orderWordOf(object) == lists.orderWordOf(object));
         AOT_TEST_CHECK(state.isFresh(object) == lists.isFresh(object));
         for (uint32_t layout : layoutsOfWalkStateTests) {
@@ -346,8 +346,8 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
         AbstractHeap::Elements, AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage,
         AbstractHeap::NamedProperties, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards,
     };
-    static constexpr FactOfCell facts[] {
-        FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem,
+    static constexpr CellFact facts[] {
+        CellFact::NotFrozen, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::HasLayoutPrototype, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent,
     };
 
     WeakRandom random(seed);
@@ -500,8 +500,8 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
         case 24:
         case 25: {
             Reference base = object();
-            OptionSet<FactOfCell> noted { facts[random.getUint32(std::size(facts))], facts[random.getUint32(std::size(facts))] };
-            pair.state.noteFactsOfCell(base, noted);
+            OptionSet<CellFact> noted { facts[random.getUint32(std::size(facts))], facts[random.getUint32(std::size(facts))] };
+            pair.state.recordCellFacts(base, noted);
             pair.lists.noteFacts(base, noted);
             break;
         }
@@ -672,7 +672,7 @@ static void testOneChangeAmongManyFreshHoldersIsFoundInWhatIsNotShared()
         Reference object = valueOfWalkStateTests(number);
         believed.noteShape(object, TypeTable::object);
         believed.noteFresh(object);
-        believed.noteFactsOfCell(object, { FactOfCell::NotFrozen });
+        believed.recordCellFacts(object, { CellFact::NotFrozen });
         believed.noteSlot(object, fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(numberOfHolders + number));
     }
     Reference object = valueOfWalkStateTests(changed);
@@ -705,7 +705,7 @@ static void testOneChangeAmongManyFreshHoldersIsFoundInWhatIsNotShared()
     AOT_TEST_CHECK(onlyChangedHolderIsLacking(shaped, Reference()));
 
     WalkState frozen = believed;
-    frozen.endFactsOfCell(object, { FactOfCell::NotFrozen });
+    frozen.invalidateCellFacts(object, { CellFact::NotFrozen });
     AOT_TEST_CHECK(onlyChangedHolderIsLacking(frozen, Reference()));
 }
 

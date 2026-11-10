@@ -6,11 +6,11 @@
 # CHECK: object true
 # CHECK-NEXT: exited with 0
 
-module m0 path="/conf.toml?text" displayPath="conf.toml" kind=Data flags=[AnswersLoaderWithNamespace] requireResult=DefaultExport body=f0 exports=[{name="default" variable=g0}]
-module m1 path="/caller.mjs" displayPath="caller.mjs" flags=[KeepsError] body=f1
+module m0 path="/conf.toml?text" displayPath="conf.toml" kind=Data flags=[LoaderReturnsNamespace] requireResult=DefaultExport body=f0 exports=[{name="default" variable=g0}]
+module m1 path="/caller.mjs" displayPath="caller.mjs" flags=[CachesEvaluationError] body=f1
 module m2 path="/conf.toml?toml" displayPath="conf.toml" kind=Data requireResult=DefaultExport body=f2 data=d0 exports=[{name="default" variable=g2}]
-module m3 path="/holder.mjs" displayPath="holder.mjs" flags=[KeepsError] body=f3 requests=[{target=m2 completes=true}]
-module m4 path="/main.mjs" displayPath="main.mjs" flags=[HasTopLevelAwait, KeepsError] body=f4 requests=[{target=m1 completes=true}, {target=m3 completes=true}]
+module m3 path="/holder.mjs" displayPath="holder.mjs" flags=[CachesEvaluationError] body=f3 requests=[{target=m2 completes=true}]
+module m4 path="/main.mjs" displayPath="main.mjs" flags=[HasTopLevelAwait, CachesEvaluationError] body=f4 requests=[{target=m1 completes=true}, {target=m3 completes=true}]
 entry module=m4
 layout L0 fields=[{key="with" declared={type=anything}}] ownFieldCount=1
 layout L1 fields=[{key="type" declared={type=anything}}] ownFieldCount=1

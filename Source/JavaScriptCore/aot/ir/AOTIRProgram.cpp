@@ -660,6 +660,7 @@ static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExp
         declared.establish(Proven::byPosition(typeOfNamespace));
         return declared;
     case ModuleExportKind::Indirect:
+    case ModuleExportKind::Field:
         return declared;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -731,19 +732,27 @@ void Program::appendNamespaceLayouts(const ParallelLoops& loops)
     for (uint32_t number : exportedNamespaces)
         typesOfExportedNamespaces[number] = typeOfExportedNamespace(*this, exportNumbered(number), arenas.of(0));
 
+    m_derivedTables.exportedFields = collectInParallel<FieldReference>(loops, static_cast<unsigned>(modules.size()), [&](unsigned index, Vector<FieldReference>& found) {
+        for (const ModuleExport& entry : modules[index].exports) {
+            if (entry.kind == ModuleExportKind::Field && entry.field)
+                found.append({ entry.layout, *entry.field });
+        }
+    });
+    sortAndRemoveDuplicates(loops, m_derivedTables.exportedFields);
+
     forEachIndexInParallel(loops, static_cast<unsigned>(holders.size()), [&](unsigned holder) {
         size_t first = firstExportOfHolder[holder];
         size_t count = firstExportOfHolder[holder + 1] - first;
         appendFieldsOfNamespaceLayout(*this, modules[holders[holder]].namespaceLayout, keys.subspan(first, count), typesOfExportedNamespaces.subspan(first, count));
     });
     if (MocksOfProgram mocks = findMocksOfProgram(*this); mocks.isAnyModuleMocked) {
-        DeclaredType claimsNothing;
-        claimsNothing.establish(Proven::byPosition(TypeTable::anything));
+        DeclaredType declaredAnything;
+        declaredAnything.establish(Proven::byPosition(TypeTable::anything));
         for (uint32_t holder : holders) {
             Layout& layout = at(modules[holder].namespaceLayout);
             for (uint32_t index = 0; index < layout.fields.size(); ++index) {
                 if (mayComeThroughMock(*this, mocks, ModuleID(holder), index))
-                    layout.fields[index].declared = claimsNothing;
+                    layout.fields[index].declared = declaredAnything;
             }
         }
     }
@@ -782,7 +791,7 @@ LayoutID Program::layoutOfWholeNamespace(ModuleID id) const
 
 LayoutID Program::layoutOfNamespaceThatListsNoName(ModuleID id) const
 {
-    constexpr OptionSet<ModuleFlags> flagsOfModulesWithSeveralNamespaces { ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted };
+    constexpr OptionSet<ModuleFlags> flagsOfModulesWithSeveralNamespaces { ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted };
     const Module& module = at(id);
     if (module.kind != ModuleKind::RuntimeSource || (module.flags.containsAny(flagsOfModulesWithSeveralNamespaces)) || !objectOfLibraryFileIsResultOfBody(*this, id))
         return { };
@@ -1098,11 +1107,11 @@ ModuleID compiledModuleWithObject(const Program& program, BuiltinID builtin)
     return program.compiledModuleOfNamespaceObject(builtin);
 }
 
-ModuleID commonJsModuleCapturedBy(const Program& program, const Module& face)
+ModuleID commonJsModuleCapturedBy(const Program& program, const Module& facade)
 {
-    if (face.kind != ModuleKind::SourceText || face.exportRule == SyntheticExportRule::None || face.requests.isEmpty())
+    if (facade.kind != ModuleKind::SourceText || facade.exportRule == SyntheticExportRule::None || facade.requests.isEmpty())
         return { };
-    const ModuleRequest& first = face.requests[0];
+    const ModuleRequest& first = facade.requests[0];
     if (first.kind != ModuleRequestKind::Require)
         return { };
     const Module& file = program.at(first.target);
@@ -1136,7 +1145,7 @@ Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
 
 bool loaderEntersBodyAtMostOnce(const Module& module)
 {
-    if (!isEvaluatedAtMostOnceOf(module.kind) || module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked }))
+    if (!isEvaluatedAtMostOnceOf(module.kind) || module.flags.containsAny({ ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeMocked }))
         return false;
     if (!module.flags.contains(ModuleFlags::MayBeEvicted))
         return true;
@@ -1190,7 +1199,7 @@ bool loaderFillsVariablesOffValueOf(const Module& module)
     return module.kind == ModuleKind::RuntimeSource && module.body && module.exportRule == SyntheticExportRule::RuntimeModule && module.requireResult == RequireResult::DefaultExport;
 }
 
-BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
+BuiltinID hostRequireFunctionFor(const Module& module)
 {
     switch (module.kind) {
     case ModuleKind::CommonJs:
@@ -1207,10 +1216,10 @@ BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool namesWaysToModuleObjects(const Program& program)
+bool reachesModuleObjects(const Program& program)
 {
     return std::ranges::any_of(program.modules, [](const Module& module) {
-        return module.flags.contains(ModuleFlags::NamesWayToModuleObjects);
+        return module.flags.contains(ModuleFlags::ReachesModuleObjects);
     });
 }
 
@@ -1231,7 +1240,7 @@ bool parsersCouldMakeRecordsOf(const Program& program, LayoutID id)
     });
 }
 
-bool isFaceOfCommonJSFile(const Program& program, const Module& module)
+bool isCommonJSFacade(const Program& program, const Module& module)
 {
     if (module.kind != ModuleKind::SourceText || module.requests.isEmpty() || module.requests[0].kind != ModuleRequestKind::Require)
         return false;

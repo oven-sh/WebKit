@@ -18,7 +18,7 @@
 # HELD-NOT: = FlattenString
 # HELD: = TryPutValueAtPlaceInMap {{*}}, [[place]],
 # HELD: = StrictEq [[again]], [[place]]
-# HELD: source=WhatIsRemembered
+# HELD: source=RememberedFact
 # HELD-NOT: = FlattenString
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -55,7 +55,7 @@ bool CalleeSummarizerForLinkEffects::instancesAreAsClassMakesThem(const LinkType
                 if (!program.isLockLeftToProgram(member))
                     continue;
                 FlowNodeID written = m_flow.findWrittenAtMember(member);
-                if (!written || !m_flow.typeAt(written).isNothing())
+                if (!written || !m_flow.typeAt(written).isNever())
                     return false;
             }
             const Builtin& object = m_builtins.at(holder);
@@ -63,14 +63,14 @@ bool CalleeSummarizerForLinkEffects::instancesAreAsClassMakesThem(const LinkType
         }
     }
     FlowNodeID underUnknownNames = m_flow.findContentsOf(instances, SlotOfContents::underUnknownNames());
-    return !underUnknownNames || (underUnknownNames != m_flow.unseen() && m_flow.typeAt(underUnknownNames).isNothing());
+    return !underUnknownNames || (underUnknownNames != m_flow.unseen() && m_flow.typeAt(underUnknownNames).isNever());
 }
 
 bool CalleeSummarizerForLinkEffects::surelyTakes(const BuiltinType& accepted, const LinkType& type) const
 {
     if (accepted.isAnything())
         return true;
-    if (type.isNothing())
+    if (type.isNever())
         return false;
 
     if (type.primitives) {
@@ -89,7 +89,7 @@ bool CalleeSummarizerForLinkEffects::surelyTakes(const BuiltinType& accepted, co
 
     bool takesAnyObject = accepted.flags.contains(BuiltinTypeFlag::HasAnyObject);
     bool takesAnyFunction = takesAnyObject || accepted.flags.contains(BuiltinTypeFlag::HasAnyFunction);
-    if ((type.objects != LinkType::Objects::None || type.holdsUnseen) && !takesAnyObject)
+    if ((type.objects != LinkType::Objects::None || type.hasUnknownObjects) && !takesAnyObject)
         return false;
     if (type.functions != LinkType::Functions::None && !takesAnyFunction)
         return false;

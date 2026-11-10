@@ -52,7 +52,7 @@ void nameWhatConstantTablesName(const TableInputs& inputs, const GatheredMention
 template<typename Item>
 static void setConstantTableOfWords(TableEncoder& encoder, ProgramTableIndex table, std::span<const Item> items, const Invocable<uint32_t(const Item&)> auto& wordOf)
 {
-    encoder.part.setTableWrittenInPlace<uint32_t>(table, items.size(), [&](std::span<uint32_t> words) {
+    encoder.part.setTableInPlace<uint32_t>(table, items.size(), [&](std::span<uint32_t> words) {
         forEachRangeOfIndicesInParallel(encoder.build.parallelLoops(), items.size(), [&](size_t first, size_t end) {
             for (size_t place = first; place < end; ++place)
                 words[place] = wordOf(items[place]);
@@ -135,8 +135,8 @@ void encodeConstantTables(TableEncoder& encoder)
     const ImageNumbers& numbers = encoder.numbers;
     StepTimes times(encoder.build, "image: constant tables"_s);
     std::span<const BuiltinCellKey> builtinCells = numbers.builtinCells();
-    bool swapsFirstTwo = builtinCells.size() > 1 && AOT::hasFlag(encoder.build.options().lies, Wire::TestingLie::TwoCellsOfBuiltinsBearEachOthersNumbers);
-    encoder.part.setTableWrittenInPlace<uint32_t>(ProgramTableIndex::builtinCells, builtinCells.size(), [&](std::span<uint32_t> words) {
+    bool swapsFirstTwo = builtinCells.size() > 1 && AOT::hasFlag(encoder.build.options().injectedFaults, Wire::FaultInjection::SwapBuiltinCellNumbers);
+    encoder.part.setTableInPlace<uint32_t>(ProgramTableIndex::builtinCells, builtinCells.size(), [&](std::span<uint32_t> words) {
         for (size_t place = 0; place < words.size(); ++place)
             words[place] = builtinCells[swapsFirstTwo && place < 2 ? 1 - place : place].encoded();
         if (std::ranges::adjacent_find(words, std::ranges::greater_equal { }) != words.end())

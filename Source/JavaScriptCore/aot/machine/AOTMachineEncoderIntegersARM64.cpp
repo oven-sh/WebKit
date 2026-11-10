@@ -103,7 +103,7 @@ bool Encoder::tryEncodeSumAndConstant(const Step&, const Step&)
 
 void Encoder::encodeSumThatSetsFlags(const Step& step)
 {
-    SumTestedByOverflow test = sumTestedByOverflowOf(m_liveness, step.operation);
+    OverflowCheckedSum test = overflowCheckedSumOf(m_liveness, step.operation);
     RELEASE_ASSERT(step.destination.isRegister() && step.sources[0].isRegister());
     GPRReg destination = step.destination.gpr();
     GPRReg left = step.sources[0].gpr();
@@ -170,7 +170,7 @@ void Encoder::encodeInteger(const Step& step)
     }
 
     case Add: {
-        if (m_liveness.goesByOverflow(operation)) {
+        if (m_liveness.usesOverflowFlag(operation)) {
             encodeSumThatSetsFlags(step);
             return;
         }
@@ -191,7 +191,7 @@ void Encoder::encodeInteger(const Step& step)
     }
 
     case Sub: {
-        if (m_liveness.goesByOverflow(operation)) {
+        if (m_liveness.usesOverflowFlag(operation)) {
             encodeSumThatSetsFlags(step);
             return;
         }

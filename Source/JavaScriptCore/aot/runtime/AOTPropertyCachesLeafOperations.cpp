@@ -139,14 +139,14 @@ static StructuralRead readEmptyFieldByFiledSlot(const Object& object, UniquedStr
 
 static JSValue readModuleNamespaceExport(Instance* instance, ModuleNamespace* namespaceObject, UniquedStringImpl* uid)
 {
-    if (Instance::owning(namespaceObject) != instance || namespaceObject->isAnsweredByMock())
+    if (Instance::owning(namespaceObject) != instance || namespaceObject->isAnsweredByMock() || namespaceObject->needsModuleInstance())
         return { };
     const Modules& modules = *instance->state->modules;
     ModuleID module = namespaceObject->module();
     if (modules.status(module) != ModuleStatus::Evaluated)
         return { };
     auto index = namespaceObject->find(uid);
-    return index ? modules.readExportIfInitialized(module, *index) : JSValue();
+    return index ? modules.readExportIfInitialized(module, *index, namespaceObject->bindModuleInstance()) : JSValue();
 }
 
 static JSValue getDataProperty(JSObject* holder, PropertyOffset offset, unsigned attributes, PropertySlot& slot)

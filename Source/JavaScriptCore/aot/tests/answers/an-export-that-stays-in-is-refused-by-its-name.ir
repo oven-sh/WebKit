@@ -6,7 +6,7 @@
 # CHECK: exited with 0
 
 variable g0 name="port" module=m0 declared={type=anything|absent} flags=[IsImmutable]
-module m0 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 exports=[{name="port" variable=g0}]
+module m0 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f0 exports=[{name="port" variable=g0}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer

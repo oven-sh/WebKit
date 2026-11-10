@@ -53,6 +53,8 @@ void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue);
 JSObject* takePreallocatedStaticProperty(JSObject* holder, UniquedStringImpl* key);
 bool reportsCreationOfMember(JSObject* holder, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE void hostDidCreateStructure(JSGlobalObject*, Structure*);
+using BufferStructureProvider = Structure* (*)(JSGlobalObject*);
+JS_EXPORT_PRIVATE void setBufferStructureProvider(BufferStructureProvider);
 JS_EXPORT_PRIVATE void hostDidCreateConstructor(JSGlobalObject*, JSObject* constructor);
 JS_EXPORT_PRIVATE void hostDidCreateNodeModule(JSGlobalObject*, JSObject* constructor);
 JS_EXPORT_PRIVATE void hostDidCreateGlobalMember(JSGlobalObject*, UniquedStringImpl* key, JSObject*);

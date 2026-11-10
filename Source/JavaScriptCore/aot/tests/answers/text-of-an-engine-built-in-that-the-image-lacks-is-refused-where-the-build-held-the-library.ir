@@ -6,7 +6,7 @@
 # LIBRARY: own
 # OPTIONS: exclude=LibraryText
 # RUN: run-in-shell globalThis.report = message => print(message);
-# CHECK: Array.prototype.map was left out of the executable, because nothing seemed to use it. This is a bug in Bun.
+# CHECK: Array.prototype.map was used, but it was not compiled into this executable because nothing seemed to use it
 # CHECK-NOT: Array.prototype.filter
 # CHECK: crashed with
 # RUN(IMAGE): image

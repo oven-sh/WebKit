@@ -1,7 +1,7 @@
 # the same store into an object that the caller has made is a write of the call: the caller may know what the field held
 # function fill(o, a) { o.a = a; return o; }  fill({ a: 0 }, 1);
 # RUN: link functions mechanisms=all
-# CHECK: function f1 {{*}}mayWriteWhatIsSeen{{*}}fields-written=1 layouts-written=1
+# CHECK: function f1 {{*}}mayWriteObservableState{{*}}fields-written=1 layouts-written=1
 # RUN(NEVER): link functions mechanisms=all
 # NEVER-NOT: function f1 {{*}}layouts-written=none
 

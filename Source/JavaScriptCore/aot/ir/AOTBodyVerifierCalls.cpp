@@ -38,7 +38,7 @@ enum class EvaluationSiteRule : uint32_t {
 static BodyValue stripCastsForCallRules(const BodyIndex& index, ValueID id)
 {
     BodyValue value = index.value(id);
-    while (inputOperationsThatHandOn.contains(value.opcode()))
+    while (inputPassThroughOpcodes.contains(value.opcode()))
         value = index.value(value.operand(0));
     return value;
 }

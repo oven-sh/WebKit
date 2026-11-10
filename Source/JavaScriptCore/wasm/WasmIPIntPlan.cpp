@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRuntimeReporter.h"
 #include "CCallHelpers.h"
 #include "CalleeBits.h"
 #include "JITCompilation.h"
@@ -51,12 +52,33 @@ namespace JSC { namespace Wasm {
 IPIntPlan::IPIntPlan(VM& vm, Vector<uint8_t>&& source, CompilerMode compilerMode, CompletionTask&& task)
     : Base(vm, WTF::move(source), compilerMode, WTF::move(task))
 {
-    if (!parseAndValidateModule(m_source.span()))
+    parseSource(vm, m_source.span());
+}
+
+IPIntPlan::IPIntPlan(VM& vm, std::span<const uint8_t> source, CompilerMode compilerMode, CompletionTask&& task)
+    : Base(vm, Vector<uint8_t> { }, compilerMode, WTF::move(task))
+{
+    parseSource(vm, source);
+}
+
+void IPIntPlan::parseSource(VM& vm, std::span<const uint8_t> source)
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (!Options::useBBQJIT() && !Options::useOMGJIT())
+        m_moduleInformation->moduleWithSkippedFunctions = CodeInImage::findBeforeParsing(source, m_moduleInformation.get());
+#endif
+    if (!parseAndValidateModule(source))
         return;
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     if (!Options::useBBQJIT() && !Options::useOMGJIT()) {
+        bool hasSkippedBodies = m_moduleInformation->moduleWithSkippedFunctions;
         m_moduleInImage = CodeInImage::find(m_moduleInformation.get());
+        RELEASE_ASSERT(!hasSkippedBodies || m_moduleInImage);
         m_moduleInformation->moduleWithSkippedFunctions = m_moduleInImage;
+#if ENABLE(AOT)
+        if (hasSkippedBodies && vm.hasCompiledCode())
+            AOT::countEvent(vm, AOT::RuntimeCounterID::WasmModulesFoundBeforeParsing);
+#endif
     }
 #endif
     prepare();
@@ -104,7 +126,8 @@ void IPIntPlan::compileFunction(FunctionCodeIndex functionIndex)
         if (CodeInImage::functionsOf(*m_moduleInImage, ImageCodeFlavor::Checking)[functionIndex.rawIndex()].usesVectors)
             m_moduleInformation->markUsesSIMD(functionIndex);
         m_moduleInformation->doneSeeingFunction(functionIndex);
-        m_wasmInternalFunctions[functionIndex] = makeUnique<FunctionIPIntMetadataGenerator>(functionIndex, function.data.span());
+        static constexpr std::array<uint8_t, 1> noBytecode { };
+        m_wasmInternalFunctions[functionIndex] = makeUnique<FunctionIPIntMetadataGenerator>(functionIndex, function.data.isEmpty() ? std::span<const uint8_t> { noBytecode } : function.data.span());
     }
 #endif
     if (!m_wasmInternalFunctions[functionIndex]) {

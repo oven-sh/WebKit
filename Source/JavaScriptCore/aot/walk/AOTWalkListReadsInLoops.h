@@ -13,7 +13,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-struct ListTestedInFrontOfLoop {
+struct HoistedArrayGuard {
     Reference name;
     ArrayStorage storage { ArrayStorage::Other };
     bool admitsInt32Storage { false };
@@ -23,12 +23,12 @@ struct ListTestedInFrontOfLoop {
     bool takesInstancesBelow { false };
     bool isAskedForItsStorageAlone { false };
     WrittenListOfVariable written;
-    bool kindMayWellBeAnother { false };
-    ArrayStorage kindAskedOtherwise { ArrayStorage::Contiguous };
-    bool keepsKindWhereNoCopyIsWalkedForAnother { false };
+    bool hasAlternateStorage { false };
+    ArrayStorage alternateStorage { ArrayStorage::Contiguous };
+    bool keepsStorageWithoutAlternate { false };
 };
 
-inline bool isConvertedInFrontOfTypedCopy(const ListTestedInFrontOfLoop& list)
+inline bool isConvertedInPreheader(const HoistedArrayGuard& list)
 {
     return (list.storage == ArrayStorage::Double || !hasArrayStorageForm(list.storage)) && list.isWritable && !list.admitsInt32Storage;
 }
@@ -39,22 +39,23 @@ bool lengthOfViewTakesInstancesBelow(Walker&, TypeID typeOfView);
 Reference buildTestOfViewOrInstanceBelow(Walker&, Reference view, Origin);
 void noteThatLengthOfViewIsFoundAbove(Walker&, Reference view);
 void askAgainWhetherLengthOfViewIsFoundAbove(Walker&, Reference view, Origin);
-std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker&, const BodyValue& read);
-std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker&, Reference list);
-std::optional<ListTestedInFrontOfLoop> findListTestedForStoresInFrontOfLoop(Walker&, Reference list);
-std::optional<ListTestedInFrontOfLoop> askListOfNumbersInTurnOfTypedCopy(Walker&, const BodyValue& read, Reference list);
+std::optional<HoistedArrayGuard> findHoistedArrayGuard(Walker&, const BodyValue& read);
+std::optional<HoistedArrayGuard> findHoistedArrayGuard(Walker&, Reference list);
+std::optional<HoistedArrayGuard> findListTestedForStoresInFrontOfLoop(Walker&, Reference list);
+std::optional<HoistedArrayGuard> tryGuardNumericArrayInIteration(Walker&, const BodyValue& read, Reference list);
 bool isExpectedToBeListOfNumbers(Walker&, TypeID expected);
-bool turnsReadRowsOfNumbersThatTheyFind(Walker&, BlockID inputHead, std::span<const ListTestedInFrontOfLoop>, std::span<const GuessInFrontOfLoop>);
-bool turnOfTypedCopyMayAskList(Walker&, Reference list);
-bool goOnWhereListIsAsMadeOrBeginTurnAgain(Walker&, Reference list, Origin);
+bool turnsReadRowsOfNumbersThatTheyFind(Walker&, BlockID inputHead, std::span<const HoistedArrayGuard>, std::span<const HoistedSpeculation>);
+bool isFreshAllocation(Walker&, Reference name);
+bool canGuardArrayInIteration(Walker&, Reference list);
+bool guardPristineArrayInIteration(Walker&, Reference list, Origin);
 Reference askWhetherListIsAsMade(Walker&, Reference list, Origin);
 Reference askWhetherStorageOfListIsOfKind(Walker&, Reference list, ArrayStorage, Origin, bool isWritable = false);
 void noteKindOfStorageThatTurnFound(Walker&, Reference list, ArrayStorage, bool isWritable = false);
-std::optional<ListTestedInFrontOfLoop> askListTakenApartInFrontOfTypedCopy(Walker&, const BodyValue& open, Reference list);
-std::optional<ListTestedInFrontOfLoop> askListTakenApartInTurnOfTypedCopy(Walker&, const BodyValue& open, Reference list);
-bool listTakenApartIsExpectedToHoldNumbers(Walker&, const BodyValue& open, Reference list);
-std::optional<ListTestedInFrontOfLoop> askListInFrontOfTypedCopy(Walker&, const BodyValue& read, Reference list, ArrayStorage kindStoredInto = ArrayStorage::Other, bool goesByKindOfStorage = false);
-std::optional<PassedTest> askElementInFrontOfTypedCopy(Walker&, const BodyValue& read, const ListTestedInFrontOfLoop&, Reference list, Reference position);
+std::optional<HoistedArrayGuard> tryHoistDestructuredArrayGuard(Walker&, const BodyValue& open, Reference list);
+std::optional<HoistedArrayGuard> tryGuardDestructuredArrayInIteration(Walker&, const BodyValue& open, Reference list);
+bool isDestructuredArrayLikelyNumeric(Walker&, const BodyValue& open, Reference list);
+std::optional<HoistedArrayGuard> tryHoistArrayGuardForAccess(Walker&, const BodyValue& read, Reference list, ArrayStorage kindStoredInto = ArrayStorage::Other, bool goesByKindOfStorage = false);
+std::optional<PassedTest> tryHoistElementPresenceCheck(Walker&, const BodyValue& read, const HoistedArrayGuard&, Reference list, Reference position);
 struct WhatReadsFromInFrontOfLoopFind {
     BitVector found;
     BitVector refused;
@@ -64,70 +65,70 @@ void readListsOfStableBindingsInFrontOfLoop(Walker&, BlockID inputHead);
 Reference nameOfListThatEntersLoopAround(Walker&, const BodyIndex&, const BodyValue& access);
 bool copyOfCalleeReadsUnderKeyWhatNobodyKnows(Walker&, const BodyValue& call, uint32_t firstValueOfLoop);
 ValueID readOfVariableThatFindsReceiverInLoop(const BodyIndex&, const BodyValue& access, uint32_t firstValueOfLoop);
-bool storesIntoListTestedInFrontOfLoop(Walker&, const BodyIndex&, const BodyValue& store, uint32_t firstValueOfLoop, std::span<const ListTestedInFrontOfLoop>);
-void nameKindOfListTestedInFrontOfLoop(Draft& read, const ListTestedInFrontOfLoop&);
-void takeStorageAndLengthFromInFrontOfLoop(Walker&, Draft& read, const ListTestedInFrontOfLoop&);
+bool storesIntoListTestedInFrontOfLoop(Walker&, const BodyIndex&, const BodyValue& store, uint32_t firstValueOfLoop, std::span<const HoistedArrayGuard>);
+void nameKindOfListTestedInFrontOfLoop(Draft& read, const HoistedArrayGuard&);
+void takeStorageAndLengthFromInFrontOfLoop(Walker&, Draft& read, const HoistedArrayGuard&);
 bool positionIsKnownToLieInsideList(Walker&, Reference list, Reference position);
-Reference storageOfListFromInFrontOfLoop(Walker&, const ListTestedInFrontOfLoop&, Origin);
+Reference storageOfListFromInFrontOfLoop(Walker&, const HoistedArrayGuard&, Origin);
 
-bool holeLeavesTurnBehindRow(Walker&, const BodyValue& read, const ListTestedInFrontOfLoop&);
-bool textOfLoopOnlyFillsListAndReadsAnother(Walker&, BlockID inputHead, ValueID made);
+bool holeLeavesTurnBehindRow(Walker&, const BodyValue& read, const HoistedArrayGuard&);
+bool hasOnlyOtherArrayReads(Walker&, BlockID inputHead, ValueID made);
 enum class WhatStandsBesideRead : uint8_t { Number, NumberOrNothing };
 bool onlyUserTakesUndefinedForNaNInTypedElements(Walker&, const BodyValue& read, WhatStandsBesideRead = WhatStandsBesideRead::Number);
 bool readLeavesTurnAtHoleBehindRow(Walker&, const BodyValue& read);
-bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker&, const Effects&);
-bool leavesListsTestedInFrontOfLoopAsTheyAre(const Walker&, const Effects&, std::span<const ListTestedInFrontOfLoop>, const Walker::ObjectsMadeHereThatLoopMentions&);
-bool leavesListsTestedInFrontOfLoopAsTheyAre(Walker&, const Effects&, std::span<const ListTestedInFrontOfLoop>, BlockID inputHead);
+bool preservesHoistedArrayGuards(const Walker&, const Effects&);
+bool preservesHoistedArrayGuards(const Walker&, const Effects&, std::span<const HoistedArrayGuard>, const Walker::AllocationsUsedInLoop&);
+bool preservesHoistedArrayGuards(Walker&, const Effects&, std::span<const HoistedArrayGuard>, BlockID inputHead);
 Vector<ValueID, 2> namesInFrontThatLoopMentions(const Walker&, const BodyIndex&, LoopID, uint32_t firstValueOfLoop, Reference value);
 bool readsLengthOfViewTestedInFrontOfLoop(Walker&, const BodyValue& read);
 
 struct ListsReadInLoop {
-    Vector<ListTestedInFrontOfLoop, 2> lists;
+    Vector<HoistedArrayGuard, 2> lists;
     bool areLeftAsTheyAre { false };
     bool areTested { false };
     bool someListIsTakenUnderCounterAskedInFront { false };
-    BlockID whereKindIsAnother;
+    BlockID alternateStorageEntry;
 };
 
 template<typename Entry, Reference Entry::* nameOfEntry>
-class FirstPlacesByName {
+class FirstIndexByName {
 public:
     size_t find(std::span<const Entry> entries, Reference name)
     {
-        if (entries.size() <= mostEntriesWalked || !mayBeKey(name)) [[likely]] {
+        if (entries.size() <= linearSearchLimit || !mayBeKey(name)) [[likely]] {
             auto first = std::ranges::find(entries, name, nameOfEntry);
             return first == entries.end() ? notFound : static_cast<size_t>(first - entries.begin());
         }
-        for (; m_numberOfEntriesTakenIn < entries.size(); ++m_numberOfEntriesTakenIn) {
-            if (mayBeKey(entries[m_numberOfEntriesTakenIn].*nameOfEntry))
-                m_firstPlaces.add((entries[m_numberOfEntriesTakenIn].*nameOfEntry).bits(), static_cast<uint32_t>(m_numberOfEntriesTakenIn));
+        for (; m_indexedEntryCount < entries.size(); ++m_indexedEntryCount) {
+            if (mayBeKey(entries[m_indexedEntryCount].*nameOfEntry))
+                m_firstIndices.add((entries[m_indexedEntryCount].*nameOfEntry).bits(), static_cast<uint32_t>(m_indexedEntryCount));
         }
-        auto place = m_firstPlaces.find(name.bits());
-        return place == m_firstPlaces.end() ? notFound : place->value;
+        auto place = m_firstIndices.find(name.bits());
+        return place == m_firstIndices.end() ? notFound : place->value;
     }
 
     void forget()
     {
-        m_firstPlaces.clear();
-        m_numberOfEntriesTakenIn = 0;
+        m_firstIndices.clear();
+        m_indexedEntryCount = 0;
     }
 
-    static constexpr size_t mostEntriesWalked = 8;
+    static constexpr size_t linearSearchLimit = 8;
 
 private:
     static bool mayBeKey(Reference name) { return name.bits() < std::numeric_limits<uint32_t>::max() - 1; }
 
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstPlaces;
-    size_t m_numberOfEntriesTakenIn { 0 };
+    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstIndices;
+    size_t m_indexedEntryCount { 0 };
 };
 
-using PlacesOfListsByName = FirstPlacesByName<ListTestedInFrontOfLoop, &ListTestedInFrontOfLoop::name>;
-using PlacesOfGuessesByName = FirstPlacesByName<GuessInFrontOfLoop, &GuessInFrontOfLoop::value>;
+using ArrayLookupByName = FirstIndexByName<HoistedArrayGuard, &HoistedArrayGuard::name>;
+using SpeculationLookupByName = FirstIndexByName<HoistedSpeculation, &HoistedSpeculation::value>;
 
 void reserveRoomOfListsThatLoopFills(Walker&, BlockID inputHead, std::span<const Reference> entering);
 Reference literalThatCallPushesOntoInEveryTurn(Walker&, const BodyValue& call, BlockID inputHead);
-ListsReadInLoop findListsReadInLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
-void buildTestsOfListsReadInLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, ListsReadInLoop&, std::span<const GuessInFrontOfLoop>, std::span<const Reference> proofs, BlockID& closedStart, Origin);
+ListsReadInLoop findListsReadInLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses);
+void buildTestsOfListsReadInLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, ListsReadInLoop&, std::span<const HoistedSpeculation>, std::span<const Reference> proofs, BlockID& genericStart, Origin);
 
 } } } // namespace JSC::AOT::Typed
 

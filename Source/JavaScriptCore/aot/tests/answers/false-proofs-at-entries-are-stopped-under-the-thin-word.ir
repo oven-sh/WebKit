@@ -16,58 +16,74 @@
 # if (which === 6) print(captures()());
 # if (which === 7) print(new Map().getOrInsertComputed(id(7), compares));
 # print("went on");
-# testing=CheckProofsAtEntries: A THIN SISTER OF CheckProofsAtRunTime: only what goes into an entry parameter, by a call, by a copy or by value, and what a call or a copy gives is held against Link's word. Nothing that the whole word keeps from being folded or fused is kept from it here.
-# The program, the lie and the runs are those of false-proofs-are-stopped-where-the-value-comes-in.ir. What was captured is stopped where the closure is made, by the door that every build has. What goes into a variable is stopped at the store, by the door that every build has.
-# THE RED CONTROL OF THAT NET. The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so it proves too much of every place that the value flows to.
-# Without the net, and with nothing copied in line, every one of the first six prints "undefined" for a number or a text and goes on, and the seventh prints 0 for NaN, and nothing shows it.
-# The seventh: native code enters the function by value, through the few moves that the emitter lays in front of the body, for which no operation stands.
-# Map.prototype.getOrInsertComputed is native code whatever its operands are. A sort is not: a list as made and a comparator that is a function enter the sort of the library, and compiled code calls the comparator.
-# OPTIONS: testing=CheckProofsAtEntries,UnseenCodeAnswersUndefined
+# testing=CheckProofsAtEntries is a lighter variant of CheckProofsAtRunTime. It checks only two things against Link's proofs:
+# what goes into an entry parameter (by a direct call, by an inlined copy or by an indirect call), and what a call or an inlined copy returns.
+# Nothing that the full option keeps from being folded or fused is kept from it here.
+# The program, the injected fault and the runs are those of false-proofs-are-stopped-where-the-value-comes-in.ir.
+# A captured value is caught where the closure is created, by the entry check that every build has. A value that goes into a variable is caught at the store, by the entry check that every build has.
+# This is the failing control of those checks.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so it proves too much about every location that the value flows to.
+# Without the checks, and with nothing inlined, each of the first six cases prints "undefined" for a number or a string and continues, the seventh prints 0 instead of NaN, and nothing reveals it.
+# In the seventh case native code enters the function through its generic entry: the few moves that the emitter puts before the body, which no operation represents.
+# Map.prototype.getOrInsertComputed is native code whatever its operands are.
+# A sort is not: a pristine array and a comparator that is a function enter the library's sort, and compiled code calls the comparator.
+# OPTIONS: testing=CheckProofsAtEntries,AssumeUnknownCallsReturnUndefined
 # RUN(ENDS): run-in-shell mechanisms=-Inlining globalThis.which = 1;
-# ENDS: AOT: f{{*}} at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# ENDS: bun: internal AOT error: type check failed
+# ENDS-NEXT: found int32 in a call result
 # ENDS-NOT: went on
 # ENDS: crashed with
 # RUN(ENDSCOPY): run-in-shell mechanisms=all globalThis.which = 1;
-# ENDSCOPY: AOT: f{{*}} at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# ENDSCOPY: bun: internal AOT error: type check failed
+# ENDSCOPY-NEXT: found int32 in a call result
 # ENDSCOPY-NOT: went on
 # ENDSCOPY: crashed with
 # RUN(RETURNS): run-in-shell mechanisms=-Inlining globalThis.which = 2;
-# RETURNS: AOT: f{{*}} at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# RETURNS: bun: internal AOT error: type check failed
+# RETURNS-NEXT: found int32 in a call result
 # RETURNS-NOT: went on
 # RETURNS: crashed with
 # RUN(RETURNSCOPY): run-in-shell mechanisms=all globalThis.which = 2;
-# RETURNSCOPY: AOT: f{{*}} at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# RETURNSCOPY: bun: internal AOT error: type check failed
+# RETURNSCOPY-NEXT: found int32 in a call result
 # RETURNSCOPY-NOT: went on
 # RETURNSCOPY: crashed with
 # RUN(PARAMETER): run-in-shell mechanisms=-Inlining globalThis.which = 3;
-# PARAMETER: AOT: f{{*}} at {{*}}: an entry parameter is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# PARAMETER: bun: internal AOT error: type check failed
+# PARAMETER-NEXT: found int32 in an argument
 # PARAMETER-NOT: went on
 # PARAMETER: crashed with
 # RUN(OPERAND): run-in-shell mechanisms=all globalThis.which = 3;
-# OPERAND: AOT: f{{*}} at {{*}}: an entry parameter is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# OPERAND: bun: internal AOT error: type check failed
+# OPERAND-NEXT: found int32 in an argument
 # OPERAND-NOT: went on
 # OPERAND: crashed with
 # RUN(FIELD): run-in-shell mechanisms=all globalThis.which = 4;
-# FIELD: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that it never happens, and compiled code reads such objects without a look. This is a bug in Bun.
+# FIELD: bun: internal AOT error: object mutation check failed
+# FIELD-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that this never happens
 # FIELD-NOT: went on
 # FIELD: crashed with
 # RUN(VARIABLE): run-in-shell mechanisms=all globalThis.which = 5;
-# VARIABLE: AOT: f{{*}} at {{*}}: what a variable holds is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# VARIABLE: bun: internal AOT error: type check failed
+# VARIABLE-NEXT: found int32 in a local variable
 # VARIABLE-NOT: went on
 # VARIABLE: crashed with
 # RUN(CAPTURE): run-in-shell mechanisms=-Inlining globalThis.which = 6;
-# CAPTURE: AOT: f{{*}} at {{*}}: what was captured is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# CAPTURE: bun: internal AOT error: type check failed
+# CAPTURE-NEXT: found int32 in a captured variable
 # CAPTURE-NOT: went on
 # CAPTURE: crashed with
 # RUN(CAPTURECOPY): run-in-shell mechanisms=all globalThis.which = 6;
-# CAPTURECOPY: AOT: f{{*}} at {{*}}: what was captured is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# CAPTURECOPY: bun: internal AOT error: type check failed
+# CAPTURECOPY-NEXT: found int32 in a captured variable
 # CAPTURECOPY-NOT: went on
 # CAPTURECOPY: crashed with
 # RUN(BYVALUE): run-in-shell mechanisms=all globalThis.which = 7;
-# BYVALUE: AOT: f{{*}} at {{*}}: an entry parameter is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# BYVALUE: bun: internal AOT error: type check failed
+# BYVALUE-NEXT: found int32 in an argument
 # BYVALUE-NOT: went on
 # BYVALUE: crashed with
-# Where no false proof is come by, nothing stops.
+# Where the program reaches no false proof, nothing crashes.
 # RUN(NONE): run-in-shell globalThis.which = 0;
 # NONE: went on
 # NONE-NEXT: exited with 0

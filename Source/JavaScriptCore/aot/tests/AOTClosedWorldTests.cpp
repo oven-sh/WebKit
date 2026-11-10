@@ -25,7 +25,7 @@ using Flags = OptionSet<ImageFlag>;
 
 static constexpr Flags refusesOriginals { ImageFlag::RefusesOriginalsBesideMocks };
 static constexpr Flags closed = refusesOriginals;
-static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LetsGlobalObjectGo };
+static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AllowsLibrarySource, ImageFlag::LetsGlobalObjectGo };
 static constexpr Flags findsModulesByName = refusesOriginals | Flags { ImageFlag::LoadsModulesByName };
 static constexpr Flags loadsCodeFromOutside = runsModuleFromOutside | Flags { ImageFlag::LoadsCodeOutsideImage };
 static constexpr Flags showsWaysBetweenModuleObjects = refusesOriginals | Flags { ImageFlag::ShowsWaysBetweenModuleObjects };
@@ -212,8 +212,8 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
   b0():
 )IR"
 
-#define AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] body=f0 requests=[{target=m1 kind=Require completes=true}]
-module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] body=f1
+#define AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[CachesEvaluationError] body=f1
 entry module=m0
 function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE
 
@@ -225,8 +225,8 @@ function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE
 }
 )IR"_s
 
-static constexpr ASCIILiteral callsRequireAsValueUnderKnownName = R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] body=f0
-module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] body=f1
+static constexpr ASCIILiteral callsRequireAsValueUnderKnownName = R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] body=f0
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[CachesEvaluationError] body=f1
 entry module=m0
 entry module=m1
 function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
@@ -283,13 +283,13 @@ function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = Modu
 }
 )IR"_s
 
-static constexpr ASCIILiteral takesMainModuleAsFrontEndSays = AOT_TAKES_MAIN_MODULE_AS_VALUE("KeepsError, NamesWayToModuleObjects");
-static constexpr ASCIILiteral takesMainModuleBehindFrontEnd = AOT_TAKES_MAIN_MODULE_AS_VALUE("KeepsError");
+static constexpr ASCIILiteral takesMainModuleAsFrontEndSays = AOT_TAKES_MAIN_MODULE_AS_VALUE("CachesEvaluationError, ReachesModuleObjects");
+static constexpr ASCIILiteral takesMainModuleBehindFrontEnd = AOT_TAKES_MAIN_MODULE_AS_VALUE("CachesEvaluationError");
 
 #define AOT_HOLDS_MOCK_OF_FILE(flagsOfVariable) R"IR(variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 module=m1 declared={type=anything|absent} flags=[)IR" flagsOfVariable R"IR(]
 module m0 path="/main.js" displayPath="main.js" body=f0
-module m1 path="/mocked.cjs" displayPath="mocked.cjs" kind=CommonJs flags=[KeepsError, MayBeMocked] requireResult=ModuleExports body=f1 exportsVariable=g0
+module m1 path="/mocked.cjs" displayPath="mocked.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeMocked] requireResult=ModuleExports body=f1 exportsVariable=g0
 entry module=m0
 entry module=m1
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
@@ -410,7 +410,7 @@ static void testUncompiledModuleOpensTheProgram()
 {
     checkImageFlags({
         { importsUncompiledModule, runsModuleFromOutside, { "exclude=CodeOutsideImage"_s } },
-        { importsUncompiledModule, runsOnlyCodeOfImage ? runsModuleFromOutside : loadsCodeFromOutside },
+        { importsUncompiledModule, isHardenedBuild ? runsModuleFromOutside : loadsCodeFromOutside },
     });
 }
 
@@ -457,7 +457,7 @@ static void testLoadByUnknownNameOnlyExposesModules()
 {
     checkImageFlags({
         { otherModuleIsLoadedByUnknownName, findsModulesByName, { "exclude=CodeOutsideImage"_s } },
-        { otherModuleIsLoadedByUnknownName, runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside },
+        { otherModuleIsLoadedByUnknownName, isHardenedBuild ? findsModulesByName : loadsCodeFromOutside },
         { otherModuleIsLoadedByUnknownName, open, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
     });
 }
@@ -466,7 +466,7 @@ static void testLoaderCalledAsValueLoadsByName()
 {
     checkImageFlags({
         { callsRequireAsValueUnderKnownName, findsModulesByName, { "exclude=CodeOutsideImage"_s } },
-        { callsRequireAsValueUnderKnownName, runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside },
+        { callsRequireAsValueUnderKnownName, isHardenedBuild ? findsModulesByName : loadsCodeFromOutside },
     });
     checkShellOutput(callsRequireAsValueUnderKnownName, "other ran\n"_s, ""_s);
 }
@@ -492,8 +492,8 @@ static void testWhatIsDoneToModuleCacheLeavesTheProgramClosed()
 static void testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown()
 {
     checkImageFlags({
-        { takesMainModuleAsFrontEndSays, (runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside) | showsWaysBetweenModuleObjects },
-        { takesMainModuleBehindFrontEnd, runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside },
+        { takesMainModuleAsFrontEndSays, (isHardenedBuild ? findsModulesByName : loadsCodeFromOutside) | showsWaysBetweenModuleObjects },
+        { takesMainModuleBehindFrontEnd, isHardenedBuild ? findsModulesByName : loadsCodeFromOutside },
         { takesMainModuleAsFrontEndSays, open | showsWaysBetweenModuleObjects, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
     });
 }
@@ -585,7 +585,7 @@ static void testClosedProgramFindsNoModuleByName()
 static void testEvaluatedTextFindsNoModuleByName()
 {
     static constexpr ASCIILiteral textThatLoads = "globalThis.text = `for (const change of [() => runCompiledEntryPoint(2), () => overrideRequire(true)]) { try { change(); print('done'); } catch (error) { print(error.message); } }`;"_s;
-    checkShellOutput(evaluatesTextBesideOtherModule, runsOnlyCodeOfImage ? AOT_LOAD_BY_NAME_REFUSED "done\n"_s : AOT_COMPILED_FILE_REFUSED "done\n"_s, textThatLoads);
+    checkShellOutput(evaluatesTextBesideOtherModule, isHardenedBuild ? AOT_LOAD_BY_NAME_REFUSED "done\n"_s : AOT_COMPILED_FILE_REFUSED "done\n"_s, textThatLoads);
 }
 
 static void testProgramThatLoadsByNameFindsEntryPoints()

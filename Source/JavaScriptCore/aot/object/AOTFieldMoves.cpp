@@ -440,7 +440,7 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
     const FieldMovePlan* plan = plans.find(key);
     if (!plan) {
         plan = &plans.add(WTF::move(key), createPlanForOrdinaryCopy(vm, state, realm, source, excluded));
-        countEvent(vm, RuntimeCounterID::FieldMovePlansMade);
+        countEvent(vm, RuntimeCounterID::FieldMovePlansCreated);
     }
     if (!plan->isUsable())
         return nullptr;

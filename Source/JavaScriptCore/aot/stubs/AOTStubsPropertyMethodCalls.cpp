@@ -10,6 +10,7 @@
 
 #include "AOTClosureWord.h"
 #include "AOTConvention.h"
+#include "AOTModuleNamespace.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTStubFrames.h"
 #include "AOTStubsCalls.h"
@@ -221,9 +222,15 @@ void generateTryGetSuperById(StubAssembler& jit)
         const FieldReadRegisters registers = fieldReadRegisters(cell, scratch);
         FieldReadExits exits;
         variable.loadFirstPayloadWord(jit, registers.field.slotData);
+        Jump isInModuleInstance = variable.branchIfFlag(jit, Slot::isInModuleInstance);
         loadStaticsBase(jit, cell, structureID);
+        Label hasBase = jit.label();
         computeFieldAddress(jit, registers.field, false, exits.isAbsent);
         readFieldAndReturn(jit, registers, exits);
+
+        isInModuleInstance.link(&jit);
+        jit.loadPtr(Address(R0, ModuleNamespace::offsetOfModuleInstance()), cell);
+        jit.jump().linkTo(hasBase, &jit);
         needsGenericRead.append(exits.isAbsent);
         needsGenericRead.append(exits.cannot);
     }

@@ -25,7 +25,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 #   b2():
 #     Return v3
 #   b3() isInLoop=true:
-#     v4: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b1()
 # }
 # -- end of code

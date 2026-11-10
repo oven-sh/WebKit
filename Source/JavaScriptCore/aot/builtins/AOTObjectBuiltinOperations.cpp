@@ -419,9 +419,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadsIteratorOfListUnseen, size_t,
     return !structure->hasAnyKindOfGetterSetterProperties() && structure->storedPrototype() == JSValue(globalObject->arrayPrototype()) && globalObject->isArrayPrototypeIteratorProtocolFastAndNonObservable();
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance* instance, JSCell* target, EncodedJSValue encodedSource))
+template<Entry entry, bool mayCallGetters>
+static ALWAYS_INLINE OperationReturnType<size_t> assignSource(Instance* instance, CallerFrameAndPC* frameRecord, JSCell* target, EncodedJSValue encodedSource)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectAssignWithoutCode);
+    AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, entry);
     JSValue source = JSValue::decode(encodedSource);
     if (!source.isCell())
         OPERATION_RETURN(scope, true);
@@ -429,10 +430,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
         OPERATION_RETURN(scope, false);
     if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !compiled->hasOutOfLineKeyOrder() && !countOf(compiled->orderWord()))
         OPERATION_RETURN(scope, true);
-    JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
+    JSObject* object = cellArgument<JSObject>(target, entry);
     JSObject* from = asObject(source);
+    if (!mayCallGetters && isCompiledObject(from) && PropertyWalk::hasGetterToCall(from))
+        OPERATION_RETURN(scope, false);
     if (Object* record = compiledObjectOrNull(object))
         OPERATION_RETURN(scope, (!isCompiledObject(from) && &record->state() == instance->state && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssign(vm, object, from));
+    if (isCompiledObject(from) && tryAssignToOrdinaryObject(vm, *instance->state, object, from))
+        OPERATION_RETURN(scope, true);
     JSFinalObject* ordinary = dynamicDowncast<JSFinalObject>(object);
     if (!ordinary || !from->staticPropertiesReified() || !ordinary->isStructureExtensible() || !(ordinary->canPerformFastPutInlineExcludingProto() || PropertyWalk::wouldPerformFastPut(vm, ordinary)))
         OPERATION_RETURN(scope, false);
@@ -445,6 +450,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
         OPERATION_RETURN_IF_EXCEPTION(scope, true);
     }
     OPERATION_RETURN(scope, didAssign);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance* instance, JSCell* target, EncodedJSValue encodedSource))
+{
+    return assignSource<Entry::operationAOTObjectAssignWithoutCode, true>(instance, AOT_OPERATION_FRAME_RECORD(), target, encodedSource);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutGetters, size_t, (Instance* instance, JSCell* target, EncodedJSValue encodedSource))
+{
+    return assignSource<Entry::operationAOTObjectAssignWithoutGetters, false>(instance, AOT_OPERATION_FRAME_RECORD(), target, encodedSource);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTObjectCreate, JSCell*, (Instance* instance, JSCell* prototypeOrNull))
@@ -586,7 +601,7 @@ static void askAgainWhatWasReadBySlots(JSGlobalObject* globalObject, JSObject* s
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Instance& instance = uncheckedDowncast<Object>(source)->state().instance;
-    constexpr ASCIILiteral reader = "the reader of slots"_s;
+    constexpr ASCIILiteral reader = "the slot reader"_s;
     for (size_t index = 0; index < properties.names.size(); ++index) {
         UniquedStringImpl* name = properties.names[index];
         if (name->isSymbol()) {

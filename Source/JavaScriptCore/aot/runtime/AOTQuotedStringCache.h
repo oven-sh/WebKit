@@ -17,13 +17,13 @@ namespace JSC { namespace AOT {
 
 struct State;
 
-struct QuotedTexts {
-    static constexpr unsigned maxLengthOfRememberedText = 32;
+struct QuotedStringCache {
+    static constexpr unsigned maxRememberedStringLength = 32;
     static constexpr size_t numberOfEntries = 512;
 
-    static QuotedTexts& ensure(State&);
+    static QuotedStringCache& ensure(State&);
 
-    static ALWAYS_INLINE bool canRemember(const StringImpl& text) { return text.is8Bit() && text.length() <= maxLengthOfRememberedText && text.hasHash(); }
+    static ALWAYS_INLINE bool canRemember(const StringImpl& text) { return text.is8Bit() && text.length() <= maxRememberedStringLength && text.hasHash(); }
 
     ALWAYS_INLINE JSString* tryFind(const StringImpl& text) const
     {
@@ -42,7 +42,7 @@ struct QuotedTexts {
     uint64_t entries[numberOfEntries];
     uintptr_t cageBase;
 };
-static_assert(std::is_trivially_default_constructible_v<QuotedTexts>);
+static_assert(std::is_trivially_default_constructible_v<QuotedStringCache>);
 
 } } // namespace JSC::AOT
 

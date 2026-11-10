@@ -653,8 +653,8 @@ function mergeMembers(
       ...(modesHeld.has(written.mode) ? { resultIsHeld: true, throws: true, onlyPropagatesErrors: false } : {}),
     };
     const result = resultsByConstruction.get(signature.mode);
-    const saysNothing = signature.result.type === "Anything" && signature.result.freshness === undefined;
-    return result === undefined || !saysNothing || signature.isUndeclared ? signature : { ...signature, result };
+    const hasUninformativeResult = signature.result.type === "Anything" && signature.result.freshness === undefined;
+    return result === undefined || !hasUninformativeResult || signature.isUndeclared ? signature : { ...signature, result };
   };
   for (const { declaration, source } of handWrittenFirst) {
     if (declaration.isOwnPropertyOfInstances) addFlag(builtin, "IsOwnPropertyOfInstances");
@@ -1217,7 +1217,7 @@ function buildSlots(context: SlotContext, builtinClass: MutableClass, descendant
       indexInType: spec.contentsSlot === null ? null : slots.filter(other => other.contentsSlot !== null).length,
       holds: null,
       internalField: spec.internalField ?? null,
-      holdsWhatStepsHandOut: spec.holdsWhatStepsHandOut ?? false,
+      holdsStepValues: spec.holdsStepValues ?? false,
       holdsWhatIsThrown: spec.holdsWhatIsThrown ?? false,
       wordOfCell: spec.wordOfCell ?? "None",
     };

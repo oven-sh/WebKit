@@ -146,7 +146,7 @@ static constexpr uint8_t isOpcodeOfHeldBackAllocation = 2;
 static bool isAllocationWhoseStoresAreHeldBack(const BuiltinTable& builtins, const Operation& made, std::array<uint8_t, numberOfEnumerators<Opcode>>& answersOfSchema)
 {
     EffectTraits traits = made.traits();
-    if (traits.mayWriteWhatIsSeen() || traits.mayRunOtherCode())
+    if (traits.mayWriteObservableState() || traits.mayRunOtherCode())
         return false;
 
     Opcode opcode = made.opcode;
@@ -182,7 +182,7 @@ bool Sweep::isStoreIntoOwnObject(const Operation& operation, ValueID& object)
     if (!name)
         return false;
 
-    ValueID allocation = rootOfCellInSweptCode(*m_code, name);
+    ValueID allocation = underlyingCellOf(*m_code, name);
     const Operation& made = m_code->at(allocation);
     if (made.blockIndex == Operation::noBlock)
         return false;
@@ -325,7 +325,7 @@ SweepTotals Sweep::sweepAgainBehindMovedBirths(const SweepInputs& inputs, Code& 
     again.m_sweepsAgainBehindMovedBirths = true;
     SweepTotals totals = again.run(inputs, code);
     totals.operationsSwept += m_totals.operationsSwept;
-    totals.birthsMoved = m_totals.birthsMoved;
+    totals.allocationsSunk = m_totals.allocationsSunk;
     totals.branchesThatDecideNothing += m_totals.branchesThatDecideNothing;
     return totals;
 }
@@ -561,7 +561,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     m_totals.operationsSwept += numberOfOperationsLookedAt;
 
     Vector<OperationThatMoves, 8> moves;
-    uint32_t numberOfBirthsMoved = 0;
+    uint32_t numberOfAllocationsSunk = 0;
     for (size_t indexOfBirth = births.size(); indexOfBirth--;) {
         BirthThatMayMove& birth = births[indexOfBirth];
         const Operation& made = code.at(birth.allocation);
@@ -607,7 +607,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
             moves.shrink(numberOfMovesBefore);
             continue;
         }
-        ++numberOfBirthsMoved;
+        ++numberOfAllocationsSunk;
         birth.whereItComesToStand = to;
     }
     if (moves.isEmpty())
@@ -652,7 +652,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
         }
     }
 
-    m_totals.birthsMoved += numberOfBirthsMoved;
+    m_totals.allocationsSunk += numberOfAllocationsSunk;
     m_hasMovedBirths = true;
     return true;
 }

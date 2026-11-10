@@ -305,7 +305,7 @@ inline TypeID tryTypeWrittenForOverloadInResultRules(const TypingContext& contex
     const BuiltinOverload& overload = context.program.builtins().at(id);
     if (overload.isUndeclared() || (overload.resultIsDeclaredOnly() && context.level == TypeLevel::Proven))
         return { };
-    if (context.program.builtinWhoseRowWritesNullAlone == overload.builtin.index()) [[unlikely]]
+    if (context.program.builtinInjectedAsNull == overload.builtin.index()) [[unlikely]]
         return TypeArena::fromPrimitives(Primitive::Null);
     return typeOfBuiltinType(builtinTypeContextOfResultRules(context), overload.result.type);
 }
@@ -477,12 +477,10 @@ TypeID ResultRules::declared(const Operation& operation, VariableID variable)
     Opcode opcode = opcodeOf(operation);
     TypeID known = context.positions.variable(context.level, variable);
     TypeID held = typeHeldInVariableInResultRules(*this, known, variable, seedOfUnknownResultOf(opcode));
-    if (opcode == Opcode::GetModuleVariable && operation.followsItsStore())
+    if (opcode == Opcode::GetModuleVariable && operation.isKnownInitialized())
         held = context.types.withoutPrimitives(held, Primitive::Absent);
-    if (opcode == Opcode::GetModuleVariable && operation.givesWordAsItLies())
+    if (opcode == Opcode::GetModuleVariable && operation.returnsRawSlot())
         held = context.types.withPrimitives(held, context.program.at(variable).initialization == VariableInitialization::Undefined ? Primitive::Undefined : Primitive::Absent);
-    if (opcode == Opcode::GetModuleVariable && operation.mayPrecedeItsStore())
-        return context.types.withPrimitives(held, Primitive::Unspecified);
     return held;
 }
 
@@ -497,9 +495,9 @@ TypeID ResultRules::declared(const Operation& operation, LayoutID layout, uint32
 
     if (opcode == Opcode::GetEnvironmentField) {
         TypeID held = typeHeldAtPositionInResultRules(*this, context.positions.environmentField(context.level, layout, field), fields[field].declared, seed);
-        if (operation.followsItsStore())
+        if (operation.isKnownInitialized())
             held = context.types.withoutPrimitives(held, Primitive::Absent);
-        return operation.mayPrecedeItsStore() ? context.types.withPrimitives(held, Primitive::Unspecified) : held;
+        return held;
     }
 
     std::optional<uint8_t> receiver = receiverOf(opcode);
@@ -617,7 +615,7 @@ TypeID ResultRules::declared(const Operation& operation, BuiltinOverloadID overl
         if (!callsOfOverloadsInResultRules.contains(opcode))
         {
             TypeID written = tryTypeWrittenForOverloadInResultRules(context, overload);
-            if (opcode == Opcode::GetBuiltinValue && context.program.rowsOfNativeCodeWriteNullish)
+            if (opcode == Opcode::GetBuiltinValue && context.program.shouldAssumeNullishHostResults)
                 written = TypeArena::fromPrimitives(Primitive::UndefinedOrNull);
             if (opcode == Opcode::GetBuiltinValue && context.level == TypeLevel::Proven && written) {
                 Type type = context.types.at(written);

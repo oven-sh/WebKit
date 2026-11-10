@@ -6,21 +6,21 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = NewArray
-# CHECK: ReserveArrayRoom
+# CHECK: ReserveArrayCapacity
 # CHECK: LoopHint
-# CHECK-NOT: ReserveArrayRoom
+# CHECK-NOT: ReserveArrayCapacity
 # RUN(SOME): walk f2 mechanisms=all
 # SOME-LABEL: code f2:Body
-# SOME-NOT: ReserveArrayRoom
+# SOME-NOT: ReserveArrayCapacity
 # RUN(UNTIL): walk f3 mechanisms=all
 # UNTIL-LABEL: code f3:Body
-# UNTIL-NOT: ReserveArrayRoom
+# UNTIL-NOT: ReserveArrayCapacity
 # RUN(ONE): walk f4 mechanisms=all
 # ONE-LABEL: code f4:Body
-# ONE-NOT: ReserveArrayRoom
+# ONE-NOT: ReserveArrayCapacity
 # RUN(NONE): walk f1 mechanisms=none
 # NONE-LABEL: code f1:Body
-# NONE-NOT: ReserveArrayRoom
+# NONE-NOT: ReserveArrayCapacity
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

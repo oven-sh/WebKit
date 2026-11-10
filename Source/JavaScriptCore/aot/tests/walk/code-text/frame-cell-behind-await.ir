@@ -1,16 +1,16 @@
 # a saved frame resumes at another address: a cell of the frame that is made in one block is not read in a later one where a block between the two suspends
 # RUN: verify-code
-# CHECK: InvalidSuspension: f0 CoroutineBody b2 v4 (ReleaseHint): a cell of the frame of a coroutine body outlives a suspension: v2 (CreateRest)
+# CHECK: InvalidSuspension: f0 CoroutineBody b2 v4 (EndCellLifetime): a cell of the frame of a coroutine body outlives a suspension: v2 (CreateRest)
 # -- code
 # code f0:CoroutineBody {
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
 #     v2: object @Cell = CreateRest firstArgument=0 storage=Frame
 #     Jump -> next b1()
 #   b1():
-#     v3: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b2()
 #   b2():
-#     v4 @Void = ReleaseHint v2
+#     v4 @Void = EndCellLifetime v2
 #     Return v3
 # }
 # -- end of code

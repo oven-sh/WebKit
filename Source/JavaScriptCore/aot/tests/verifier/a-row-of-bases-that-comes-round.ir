@@ -2,7 +2,7 @@
 # Heir stands under Root, which has no base: that row ends, and nothing is said of it.
 # The front end's link cuts such rings (bun: src/aot/link/rings_of_bases.rs), so no wire of a build holds one: whoever writes bases anew and brings one is stopped here by name.
 # RUN: verify
-# DIAGNOSTIC: RingOfBases 3
+# DIAGNOSTIC: BaseChainCycle 3
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="X" module=m0 base=L1 supertypes=[L1] flags=[HasHeritage]

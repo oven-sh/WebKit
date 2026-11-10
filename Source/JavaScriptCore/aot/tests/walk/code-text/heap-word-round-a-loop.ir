@@ -6,12 +6,12 @@
 #   v0: undefined @JSValue = Undefined
 #   v1: true @JSValue = Boolean boolean=true
 #   b0(v2: anything @JSValue, v3: anything @JSValue) entry=0:
-#     v4: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=1 traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
-#     v5 @Void = PutHeapFrameWord v4, v0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v4: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=1 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v5 @Void = PutHeapFrameWord v4, v0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b1()
 #   b1() isInLoop=true isLoopHead=true:
 #     v6: undefined @JSValue = GetHeapFrameWord v4 valueType=undefined traits=[mayTouchMemory]
-#     v7 @Void = PutHeapFrameWord v4, v1 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v7 @Void = PutHeapFrameWord v4, v1 traits=[mayWriteObservableState, mayTouchMemory]
 #     v8: boolean @Boolean = TypeTest v2 testedType=undefined
 #     Branch v8 -> taken b1(), notTaken b2()
 #   b2():

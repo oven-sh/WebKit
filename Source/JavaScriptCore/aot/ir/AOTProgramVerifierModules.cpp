@@ -101,6 +101,16 @@ static BitVector findModulesWithVariableThatHoldsMock(const Program& program)
     return modules;
 }
 
+static BitVector findModulesWithInstances(const Program& program)
+{
+    BitVector modules(program.modules.size());
+    for (const Variable& variable : program.variables) {
+        if (variable.flags.contains(VariableFlags::HoldsInstance))
+            modules.quickSet(variable.module.index());
+    }
+    return modules;
+}
+
 static bool hasRequiredIDs(const Module& module)
 {
     auto isSet = [](auto id) { return !!id; };
@@ -123,7 +133,7 @@ static bool hasValidInterop(const Program& program, const Module& module)
 {
     if (module.requireResult == RequireResult::NamespaceIfImported && module.kind != ModuleKind::Data)
         return false;
-    if (module.flags.contains(ModuleFlags::AnswersLoaderWithNamespace) && module.kind != ModuleKind::Data)
+    if (module.flags.contains(ModuleFlags::LoaderReturnsNamespace) && module.kind != ModuleKind::Data)
         return false;
     switch (module.kind) {
     case ModuleKind::SourceText:
@@ -162,7 +172,7 @@ static bool handsOnNameThatRunFinds(const Program& program, const Module& module
     return entry != module.exports.end() && entry->kind == ModuleExportKind::Indirect && compareProgramStrings(program.string(entry->name), program.string(name)) == std::strong_ordering::equal;
 }
 
-static bool isLeftOutOfFileOfData(const Program& program, const ModuleExport& entry)
+static bool isOmittedDataExport(const Program& program, const ModuleExport& entry)
 {
     if (entry.kind != ModuleExportKind::Variable || !entry.variable)
         return false;
@@ -170,9 +180,17 @@ static bool isLeftOutOfFileOfData(const Program& program, const ModuleExport& en
     return owner && program.at(owner).kind == ModuleKind::Data;
 }
 
-static bool hasOneBinding(const Program& program, const ModuleExport& entry, const BitVector& modulesWithVariableThatHoldsMock)
+static bool isInstanceLayout(const Program& program, LayoutID id, const BitVector& modulesWithInstances)
 {
-    if (entry.isLeftOut && !isLeftOutOfFileOfData(program, entry))
+    const Layout& layout = program.at(id);
+    return layout.kind == LayoutKind::Environment && layout.module && modulesWithInstances.quickGet(layout.module.index());
+}
+
+static bool hasOneBinding(const Program& program, const ModuleExport& entry, const BitVector& modulesWithVariableThatHoldsMock, const BitVector& modulesWithInstances)
+{
+    if (entry.isOmitted && !isOmittedDataExport(program, entry))
+        return false;
+    if ((entry.layout || entry.field) && entry.kind != ModuleExportKind::Field)
         return false;
     switch (entry.kind) {
     case ModuleExportKind::Variable:
@@ -181,6 +199,9 @@ static bool hasOneBinding(const Program& program, const ModuleExport& entry, con
         return entry.module && !entry.variable && !entry.importName;
     case ModuleExportKind::Indirect:
         return entry.module && entry.importName && !entry.variable && entry.phase == ImportPhase::Evaluation && (findsNamesAtRunTime(program.at(entry.module)) || modulesWithVariableThatHoldsMock.quickGet(entry.module.index()) || handsOnNameThatRunFinds(program, program.at(entry.module), entry.importName));
+    case ModuleExportKind::Field:
+        return entry.layout && isInstanceLayout(program, entry.layout, modulesWithInstances) && entry.field && *entry.field < program.at(entry.layout).fields.size()
+            && !entry.variable && !entry.module && !entry.importName && entry.phase == ImportPhase::Evaluation;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -284,7 +305,7 @@ static bool hasValidBundlerHelperFlag(const Program& program, const Module& modu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<InternalErrorKind> findModuleError(const Program& program, const Module& module, bool hasValidBody, const BitVector& modulesWithVariableThatHoldsMock)
+static std::optional<InternalErrorKind> findModuleError(const Program& program, const Module& module, bool hasValidBody, const BitVector& modulesWithVariableThatHoldsMock, const BitVector& modulesWithInstances)
 {
     ModuleKindRules rules = rulesOf(module.kind);
     bool isLibrary = module.flags.contains(ModuleFlags::IsLibrary);
@@ -296,7 +317,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         && hasValidPlacesOfStars(module);
     bool hasValidLibraryFlag = !isLibrary || (rules.body != BodyRule::Absent && !module.body && module.exports.isEmpty());
     bool hasValidImportOnlyFlag = !module.flags.contains(ModuleFlags::IsLoadedByImportOnly) || module.runtimeModule;
-    bool hasValidFlagsOfFiles = !module.flags.containsAny({ ModuleFlags::HasNoSideEffects, ModuleFlags::KeepsError, ModuleFlags::NamesWayToModuleObjects }) || isFileOfProgram(module);
+    bool hasValidFlagsOfFiles = !module.flags.containsAny({ ModuleFlags::HasNoSideEffects, ModuleFlags::CachesEvaluationError, ModuleFlags::ReachesModuleObjects }) || isFileOfProgram(module);
     bool hasValidRuntimeModule = module.runtimeModule
         ? rules.hasRuntimeModule && program.builtins().contains(module.runtimeModule)
         : !rules.hasRuntimeModule || isLibrary;
@@ -305,7 +326,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         && (!module.typeAttribute || isUncompiledCode(module))
         && !!module.namespaceLayout == hasNamespaceLayout(module.kind);
     auto isBound = [&](const ModuleExport& entry) {
-        return hasOneBinding(program, entry, modulesWithVariableThatHoldsMock);
+        return hasOneBinding(program, entry, modulesWithVariableThatHoldsMock, modulesWithInstances);
     };
     if (!hasValidBody || !hasRequiredIDs(module) || !hasValidLists || !hasValidLibraryFlag || !hasValidImportOnlyFlag || !hasValidFlagsOfFiles || !hasValidExportsVariable(program, module) || !hasValidRuntimeModule || !hasValidLinks
         || !hasValidBundlerHelperFlag(program, module) || !hasValidInterop(program, module) || !std::ranges::all_of(module.exports, isBound))
@@ -321,8 +342,9 @@ void ProgramVerifier::verifyModules()
 {
     auto& modules = m_program.modules;
     BitVector modulesWithVariableThatHoldsMock = findModulesWithVariableThatHoldsMock(m_program);
+    BitVector modulesWithInstances = findModulesWithInstances(m_program);
     Vector<uint32_t> invalidModules = findIndicesInParallel(m_build.parallelLoops(), modules.size(), [&](unsigned index) {
-        return findModuleError(m_program, modules[index], hasValidBody(modules[index]), modulesWithVariableThatHoldsMock).has_value();
+        return findModuleError(m_program, modules[index], hasValidBody(modules[index]), modulesWithVariableThatHoldsMock, modulesWithInstances).has_value();
     });
     for (uint32_t index : invalidModules)
         verifyModule(ModuleID(index), modules[index]);
@@ -345,7 +367,7 @@ void ProgramVerifier::verifyModules()
 
 void ProgramVerifier::verifyModule(ModuleID id, const Module& module)
 {
-    if (auto kind = findModuleError(m_program, module, hasValidBody(module), findModulesWithVariableThatHoldsMock(m_program)))
+    if (auto kind = findModuleError(m_program, module, hasValidBody(module), findModulesWithVariableThatHoldsMock(m_program), findModulesWithInstances(m_program)))
         fail({ .kind = *kind, .count = id.index() });
 }
 
@@ -371,7 +393,7 @@ template<typename Functor>
 static void forEachNamedModule(const Program& program, const Module& module, const Functor& functor)
 {
     for (auto& entry : module.exports) {
-        ModuleID named = entry.module ? entry.module : program.at(entry.variable).module;
+        ModuleID named = entry.module ? entry.module : entry.layout ? program.at(entry.layout).module : program.at(entry.variable).module;
         if (named && &program.at(named) != &module)
             functor(named);
     }
@@ -639,7 +661,7 @@ void ProgramVerifier::verifyModuleFailures()
 {
     for (unsigned index = 0; index < m_program.moduleFailures.size(); ++index) {
         const ModuleFailure& failure = m_program.moduleFailures[index];
-        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter) || (failure.endsLoadOf && failure.exporter))
+        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter) || (failure.failedLoadRoot && failure.exporter))
             fail({ .kind = InternalErrorKind::InvalidModuleFailure, .count = index });
     }
 }

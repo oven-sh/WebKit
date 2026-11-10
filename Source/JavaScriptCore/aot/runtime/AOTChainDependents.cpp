@@ -73,6 +73,33 @@ ChainDependentOwnerID ChainDependents::addOwner(ChainDependentOwner& owner)
     return static_cast<ChainDependentOwnerID>(m_owners.size() - 1);
 }
 
+size_t ChainDependents::ObjectDependents::size() const
+{
+    size_t size = onAnyName.size();
+    for (const DependentSet& set : byName.values())
+        size += set.size();
+    return size;
+}
+
+void ChainDependents::ObjectDependents::forEach(const Invocable<void(const ChainDependent&)> auto& functor) const
+{
+    for (const ChainDependent& dependent : onAnyName)
+        functor(dependent);
+    for (const DependentSet& set : byName.values()) {
+        for (const ChainDependent& dependent : set)
+            functor(dependent);
+    }
+}
+
+void ChainDependents::ObjectDependents::removeIf(const Invocable<bool(const ChainDependent&)> auto& functor)
+{
+    onAnyName.removeIf(functor);
+    byName.removeIf([&](auto& entry) {
+        entry.value.removeIf(functor);
+        return entry.value.isEmpty();
+    });
+}
+
 void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDependent& dependent)
 {
     if (chainObjects.empty())
@@ -83,7 +110,10 @@ void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDe
         ObjectDependents& dependents = m_dependentsByObject.ensure(object, [] {
             return ObjectDependents();
         }).iterator->value;
-        if (!dependents.set.add(dependent).isNewEntry)
+        DependentSet& set = dependent.uidOrNull ? dependents.byName.ensure(dependent.uidOrNull, [] {
+            return DependentSet();
+        }).iterator->value : dependents.onAnyName;
+        if (!set.add(dependent).isNewEntry)
             continue;
         ++m_numberOfDependentsAddedSinceOwnersWereAsked;
     }
@@ -112,22 +142,18 @@ void ChainDependents::dropDependentsOn(JSObject* changed, UniquedStringImpl* uid
 
     if (!uidOrNull) {
         ObjectDependents dependents = m_dependentsByObject.take(iterator);
-        for (const ChainDependent& dependent : dependents.set)
-            drop(dependent);
+        dependents.forEach(drop);
         return;
     }
 
     ObjectDependents& all = iterator->value;
-    Vector<ChainDependent, 8> dependents;
-    all.set.removeIf([&](const ChainDependent& dependent) {
-        if (dependent.uidOrNull && dependent.uidOrNull != uidOrNull)
-            return false;
-        dependents.append(dependent);
-        return true;
-    });
-    if (all.set.isEmpty())
+    DependentSet onName = all.byName.take(uidOrNull);
+    DependentSet onAnyName = std::exchange(all.onAnyName, { });
+    if (all.isEmpty())
         m_dependentsByObject.remove(iterator);
-    for (const ChainDependent& dependent : dependents)
+    for (const ChainDependent& dependent : onName)
+        drop(dependent);
+    for (const ChainDependent& dependent : onAnyName)
         drop(dependent);
 }
 
@@ -142,13 +168,13 @@ void ChainDependents::didCreateMembers(const CreatedMembers& created)
     DeferGC deferGC(vm);
     ObjectDependents& all = iterator->value;
     Vector<ChainDependent, 8> dropped;
-    all.set.removeIf([&](const ChainDependent& dependent) {
+    all.removeIf([&](const ChainDependent& dependent) {
         if (ownerOf(dependent).keepChainDependent(vm, dependent.subject, dependent.uidOrNull, created))
             return false;
         dropped.append(dependent);
         return true;
     });
-    if (all.set.isEmpty())
+    if (all.isEmpty())
         m_dependentsByObject.remove(iterator);
     for (const ChainDependent& dependent : dropped)
         ownerOf(dependent).dropChainDependent(vm, dependent.subject, dependent.uidOrNull);
@@ -157,7 +183,7 @@ void ChainDependents::didCreateMembers(const CreatedMembers& created)
 size_t ChainDependents::numberOfDependents(JSObject* object) const
 {
     auto iterator = m_dependentsByObject.find(object);
-    return iterator == m_dependentsByObject.end() ? 0 : iterator->value.set.size();
+    return iterator == m_dependentsByObject.end() ? 0 : iterator->value.size();
 }
 
 size_t ChainDependents::removeDeadEntries(VM& vm, CollectionScope scope)
@@ -171,16 +197,16 @@ size_t ChainDependents::removeDeadEntries(VM& vm, CollectionScope scope)
     m_writtenSinceCollection.forEachRegionToSweep(scope, [&](size_t, size_t) {
         m_dependentsByObject.removeIf([&](auto& entry) {
             if (!vm.heap.isMarked(entry.key)) {
-                numberOfDependentsOfDeadObjects += entry.value.set.size();
+                numberOfDependentsOfDeadObjects += entry.value.size();
                 return true;
             }
             if (!dropsEvictedDependents)
                 return false;
-            entry.value.set.removeIf([&](const ChainDependent& dependent) {
+            entry.value.removeIf([&](const ChainDependent& dependent) {
                 return !ownerOf(dependent).hasChainDependent(vm, dependent.subject, dependent.uidOrNull);
             });
-            numberOfDependentsLeft += entry.value.set.size();
-            return entry.value.set.isEmpty();
+            numberOfDependentsLeft += entry.value.size();
+            return entry.value.isEmpty();
         });
     });
     if (dropsEvictedDependents) {

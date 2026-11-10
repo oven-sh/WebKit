@@ -23,22 +23,21 @@ function f1 name="keep" module=m0 flags=[IsChecked] parameters=[{type=anything},
     v14 = Call v0, -
     v15 = Convert v14 declared={type=number} illTypedCause=FromLooseType
     v16 = Call v0, -, v13
-    ReleaseHint v13
-    v18 = Call v0, -
-    v19 = Convert v18 declared={type=number} illTypedCause=FromLooseType
-    v20 = Add v15, v19
-    v21 = Add v20, v1
-    v22 = Add v21, v2
-    v23 = Add v22, v3
-    v24 = Add v23, v4
-    v25 = Add v24, v5
-    v26 = Add v25, v6
-    v27 = Add v26, v7
-    v28 = Add v27, v8
-    v29 = Add v28, v9
-    v30 = Add v29, v10
-    v31 = Add v30, v11
-    v32 = Add v31, v12
-    Return v32
+    v17 = Call v0, -
+    v18 = Convert v17 declared={type=number} illTypedCause=FromLooseType
+    v19 = Add v15, v18
+    v20 = Add v19, v1
+    v21 = Add v20, v2
+    v22 = Add v21, v3
+    v23 = Add v22, v4
+    v24 = Add v23, v5
+    v25 = Add v24, v6
+    v26 = Add v25, v7
+    v27 = Add v26, v8
+    v28 = Add v27, v9
+    v29 = Add v28, v10
+    v30 = Add v29, v11
+    v31 = Add v30, v12
+    Return v31
 }
 entry module=m0

@@ -43,6 +43,8 @@ struct WasmFunctionCode {
     uint16_t savedRegistersIndex { 0 };
     bool usesVectors { false };
     bool dependsOnFlavor { false };
+    bool isOptimized { false };
+    unsigned threadedJumps { 0 };
 };
 
 struct WasmJSEntrypointCode {

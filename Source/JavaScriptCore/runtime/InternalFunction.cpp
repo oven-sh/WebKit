@@ -52,8 +52,8 @@ bool InternalFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyN
     if (slot.thisValue() == JSValue(function) && rejectsNewProperty(vm, function, propertyName)) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         // Function.prototype[Symbol.hasInstance] is read-only, so the specification already rejects that store, silently in sloppy mode.
-        bool isTold = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
-        return typeError(globalObject, scope, isTold, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+        bool shouldThrow = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
+        return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
     }
     return Base::put(cell, globalObject, propertyName, value, slot);
 }

@@ -16,9 +16,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-Reference Walker::wordThatSaysNothing(TypeID type)
+Reference Walker::unspecifiedConstant(TypeID type)
 {
-    for (const auto& [known, word] : m_wordsThatSayNothing) {
+    for (const auto& [known, word] : m_unspecifiedConstants) {
         if (known == type)
             return word;
     }
@@ -28,13 +28,13 @@ Reference Walker::wordThatSaysNothing(TypeID type)
     word.setValueType(type);
     Reference built = constant(WTF::move(word));
     if (built)
-        m_wordsThatSayNothing.append({ type, built });
+        m_unspecifiedConstants.append({ type, built });
     return built;
 }
 
 Reference wordInPlaceOfRemovedCapture(Walker& walker, FunctionID function, uint32_t capture)
 {
-    return walker.wordThatSaysNothing(walker.program().provenTypeOf(walker.program().at(function).captures[capture]));
+    return walker.unspecifiedConstant(walker.program().provenTypeOf(walker.program().at(function).captures[capture]));
 }
 
 Reference valueNoLongerCaptured(Walker& walker, FunctionID function, uint32_t capture, Origin origin)
@@ -80,18 +80,12 @@ bool leaveEnvironmentAmongVariables(Walker& walker, const BodyValue& value)
     const PromotedEnvironments& promoted = walker.plan().promotedEnvironments();
     if (promoted.layouts.isEmpty())
         return false;
-    if (value.opcode() == Opcode::ReleaseHint) {
-        Reference released = walker.referenceBoundTo(value.operand(0));
-        TypeID type = released ? walker.typeOf(released) : TypeID();
-        LayoutID scope = type ? walker.types().at(type).environment : LayoutID();
-        return scope && promoted.isPromoted(scope);
-    }
 
     LayoutID layout = value.as<Opcode::NewObject>().layout();
     if (!promoted.isPromoted(layout))
         return false;
     Draft written = walker.draftOf(value);
-    Reference environment = walker.wordThatSaysNothing(walker.types().forEnvironment(layout));
+    Reference environment = walker.unspecifiedConstant(walker.types().forEnvironment(layout));
     if (!environment || walker.isUnreachable())
         return true;
     std::span<const FieldIndex> fields = written.fields();

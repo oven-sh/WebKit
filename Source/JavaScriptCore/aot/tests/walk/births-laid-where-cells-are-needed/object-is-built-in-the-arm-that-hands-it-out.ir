@@ -7,8 +7,8 @@
 # CHECK: = NewObject
 # CHECK: = Call
 # CHECK-NOT: = NewObject
-# RUN(COUNT): compile BirthsLaidWhereCellsAreNeeded mechanisms=none+TypedOperations+Folding+EscapeAnalysis
-# COUNT: statistic BirthsLaidWhereCellsAreNeeded 1
+# RUN(COUNT): compile AllocationsSunk mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# COUNT: statistic AllocationsSunk 1
 # Without the mechanism nothing moves
 # RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+Folding
 # WITHHELD-LABEL: code f1:Body

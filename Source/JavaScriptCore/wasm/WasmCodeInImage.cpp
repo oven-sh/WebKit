@@ -16,7 +16,10 @@
 #include "Options.h"
 #include "WasmModuleInformation.h"
 #include "WasmOperations.h"
+#include "WasmSections.h"
+#include "WasmStreamingParser.h"
 #include <algorithm>
+#include <wtf/LEBDecoder.h>
 #include <wtf/SHA1.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -66,8 +69,22 @@ ImagePointerTable ImagePointerTable::forModule(const ModuleInformation& info, ui
 
 std::array<uint8_t, 20> CodeInImage::digestOf(std::span<const uint8_t> source)
 {
-    SHA1 sha1;
-    sha1.addBytes(source);
+    SourceHasher sha1;
+    constexpr size_t headerSize = 8;
+    size_t hashedEnd = 0;
+    size_t offset = std::min(headerSize, source.size());
+    while (offset < source.size()) {
+        Section section;
+        uint32_t payloadSize;
+        if (!decodeSection(source[offset++], section) || !WTF::LEBDecoder::decodeUInt32(source, offset, payloadSize) || payloadSize > source.size() - offset)
+            break;
+        if (section == Section::Data || section == Section::Custom) {
+            sha1.addBytes(source.subspan(hashedEnd, offset - hashedEnd));
+            hashedEnd = offset + payloadSize;
+        }
+        offset += payloadSize;
+    }
+    sha1.addBytes(source.subspan(hashedEnd));
     SHA1::Digest digest;
     sha1.computeHash(digest);
     return digest;
@@ -178,6 +195,22 @@ ImageCodeFlavor CodeInImage::flavorFor(const ModuleInformation& info, MemoryMode
     if (!info.memoryCount() && Options::useWasmFaultSignalHandler())
         return ImageCodeFlavor::Trapping;
     return ImageCodeFlavor::Checking;
+}
+
+const ModuleInImage* CodeInImage::findBeforeParsing(std::span<const uint8_t> source, ModuleInformation& info)
+{
+    if (!needsSourceDigests())
+        return nullptr;
+    info.sourceDigest = digestOf(source);
+    info.sourceSize = source.size();
+    info.hasSourceDigest = true;
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        for (auto& module : modulesIn(image->directory.data())) {
+            if (module.sourceSize == info.sourceSize && module.digest == info.sourceDigest)
+                return usesDisabledVectors(module) ? nullptr : &module;
+        }
+    }
+    return nullptr;
 }
 
 const ModuleInImage* CodeInImage::find(const ModuleInformation& info)

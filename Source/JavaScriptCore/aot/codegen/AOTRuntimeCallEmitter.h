@@ -105,7 +105,7 @@ public:
         const WatchOfEffects* around { nullptr };
         uint8_t lanesNotWritten { 0 };
         uint8_t secondLanesNotWritten { 0 };
-        uint8_t countsHeld { 0 };
+        uint8_t stableCounts { 0 };
         LValue countsInFront { nullptr };
         LValue deedsInFront { nullptr };
         LValue loudDeedsInFront { nullptr };
@@ -126,6 +126,8 @@ public:
     };
     DeedsInFrontOfQuietCall countDeedOf(const ValueContext&);
     void putBackDeedsBehindQuietCall(DeedsInFrontOfQuietCall);
+
+    LValue readCollectionCount() { return readCollectionsForEffectsNet(nullptr); }
 
     Pointer argumentBuffer(std::span<const Boxed>);
     Pointer uninitializedArgumentBuffer(unsigned numberOfWords);
@@ -179,7 +181,7 @@ private:
     StubCallResult emitEntryCall(const OperationContext*, AOT::Entry, std::span<const LValue> arguments, const CallOptions&);
     StubCallResult emitCall(const OperationContext*, const CallRequest&);
     enum class EntersCompiledCode : bool { No, Yes };
-    void beginWatchOfEffects(const OperationContext&, const Effects&, EntersCompiledCode, uint32_t rows, WatchOfEffects&, uint8_t countsThatBeliefLeavesOpen = 0);
+    void beginWatchOfEffects(const OperationContext&, const Effects&, EntersCompiledCode, uint32_t rows, WatchOfEffects&, uint8_t exemptCounts = 0);
     LValue readCountsForEffectsNet(uint8_t counts, LValue behind);
     LValue digestForEffectsNet(LValue cell, uint64_t lanes);
     LValue restOfDigestForEffectsNet(LValue digest);

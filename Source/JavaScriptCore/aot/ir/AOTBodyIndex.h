@@ -178,12 +178,6 @@ public:
     Opcode opcodeOf(ValueID id) const { return value(id).opcode(); }
     const OpcodeSet& opcodes() const { return m_opcodes; }
     bool holdsAnyOf(const OpcodeSet& wanted) const { return m_opcodes.intersects(wanted); }
-    bool isReadByReleaseHintsAlone(ValueID parameter) const
-    {
-        size_t word = parameter.index() / bitsPerWord;
-        return word < m_parametersReadByReleaseHintsAlone.size() && (m_parametersReadByReleaseHintsAlone[word] >> (parameter.index() % bitsPerWord)) & 1;
-    }
-    bool holdsParametersReadByReleaseHintsAlone() const { return !m_parametersReadByReleaseHintsAlone.empty(); }
     BlockID blockOf(ValueID id) const
     {
         if (m_blocks.size() < 2 || id.index() < m_blocks[1].firstParameter)
@@ -227,11 +221,11 @@ public:
         });
         return m_mentionsOfIterations.subspan(found.begin() - m_mentionsOfIterations.begin(), found.size());
     }
-    ValueID valueBehindCasts(ValueID id) const
+    ValueID stripCasts(ValueID id) const
     {
         if (isParameter(id) || !opcodesThatStateTypes.contains(opcodeOf(id)))
             return id;
-        return valueBehindCastsFrom(id);
+        return stripCastsSlow(id);
     }
 
     BodyBlock block(BlockID id) const
@@ -351,7 +345,6 @@ private:
     static constexpr uint32_t isParameterBit = 1u << 31;
     static constexpr uint32_t bitsOfUseCount = 5;
     static_assert(maxCountedUses == (1u << bitsOfUseCount) - 1);
-    static constexpr uint32_t bitsPerWord = 32;
 
     enum BlockFlag : uint16_t {
         IsReachable = 1 << 0,
@@ -376,7 +369,7 @@ private:
 
     BodyIndex() = default;
 
-    JS_EXPORT_PRIVATE ValueID valueBehindCastsFrom(ValueID cast) const;
+    JS_EXPORT_PRIVATE ValueID stripCastsSlow(ValueID cast) const;
 
     Body m_body;
     std::span<const BlockPlace> m_blocks;
@@ -386,7 +379,6 @@ private:
     std::span<const uint32_t> m_placesOfValues;
     std::span<const uint32_t> m_onlyUsersOfValues;
     std::span<const uint8_t> m_usesOfValues;
-    std::span<const uint32_t> m_parametersReadByReleaseHintsAlone;
     std::span<const BodyMentionOfIteration> m_mentionsOfIterations;
     OpcodeSet m_opcodes;
     bool m_hasIrreducibleFlow { false };

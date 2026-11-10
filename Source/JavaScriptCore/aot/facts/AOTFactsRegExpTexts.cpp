@@ -1016,6 +1016,8 @@ JSValue RehearsalOfRegExpTexts::namespaceOf(ModuleID id)
     for (const ModuleExport& exported : module.exports) {
         if (exported.kind == ModuleExportKind::Variable && exported.variable)
             made->putDirect(vm, Identifier::fromString(vm, charactersOf(exported.name)), variable(exported.variable));
+        else if (exported.kind == ModuleExportKind::Field)
+            made->putDirect(vm, Identifier::fromString(vm, charactersOf(exported.name)), unknown());
     }
     for (const SyntheticExport& synthetic : module.syntheticExports) {
         if (synthetic.variable)
@@ -2030,7 +2032,6 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         return held == JSValue(m_absent.get()) ? unknown() : held;
     }
     case Opcode::LoopHint:
-    case Opcode::ReleaseHint:
     case Opcode::RecordRequire:
     case Opcode::SetFunctionName:
     case Opcode::DefineSetter:
@@ -3313,7 +3314,7 @@ static Vector<FunctionID> functionsThatCallRegExpWithTextsToWorkOut(const Progra
         if (!index || isLibraryCode(program, program.at(function)))
             continue;
         auto isWrittenAs = [&](ValueID operand, Opcode opcode) {
-            ValueID behindCasts = index->valueBehindCasts(operand);
+            ValueID behindCasts = index->stripCasts(operand);
             return !index->isParameter(behindCasts) && index->opcodeOf(behindCasts) == opcode;
         };
         auto namesRegExp = [&](BodyValue written) {
@@ -3323,11 +3324,11 @@ static Vector<FunctionID> functionsThatCallRegExpWithTextsToWorkOut(const Progra
                     callee = operand;
             });
             auto builtinWrittenAt = [&](ValueID operand) {
-                return operand && isWrittenAs(operand, Opcode::Builtin) ? index->value(index->valueBehindCasts(operand)).as<Opcode::Builtin>().builtin() : BuiltinID();
+                return operand && isWrittenAs(operand, Opcode::Builtin) ? index->value(index->stripCasts(operand)).as<Opcode::Builtin>().builtin() : BuiltinID();
             };
             BuiltinID named = builtinWrittenAt(callee);
             if (callee && isWrittenAs(callee, Opcode::PropGet)) {
-                auto read = index->value(index->valueBehindCasts(callee)).as<Opcode::PropGet>();
+                auto read = index->value(index->stripCasts(callee)).as<Opcode::PropGet>();
                 if (BuiltinID holder = builtinWrittenAt(read.objectOperand()); holder && read.key())
                     named = findOwnMember(program, table.canonicalID(holder), read.key());
             }

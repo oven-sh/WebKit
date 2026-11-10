@@ -5,11 +5,11 @@
 # code f0:CoroutineBody {
 #   v0: undefined @JSValue = Undefined
 #   b0(v1: anything @JSValue, v2: anything @JSValue) entry=0:
-#     v3: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=1 traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v3: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=1 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
 #     v4: boolean @Boolean = TypeTest v1 testedType=undefined
 #     Branch v4 -> taken b1(), notTaken b2()
 #   b1():
-#     v5 @Void = PutHeapFrameWord v3, v0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v5 @Void = PutHeapFrameWord v3, v0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b3()
 #   b2():
 #     Jump -> next b3()

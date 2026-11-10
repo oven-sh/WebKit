@@ -83,7 +83,7 @@ static void testUnfilledRoomOverVectorBytes()
     AOT_TEST_CHECK(part.size() == sizeOfLargeRecord);
     part.bytesAt(0, sizeOfLargeRecord).back() = 1;
     AOT_TEST_CHECK(!part.allocateUnfilled(8));
-    AOT_TEST_CHECK(!part.setTableWrittenInPlace<uint64_t>(ProgramTableIndex::types, 2, [](std::span<uint64_t> room) {
+    AOT_TEST_CHECK(!part.setTableInPlace<uint64_t>(ProgramTableIndex::types, 2, [](std::span<uint64_t> room) {
         std::ranges::fill(room, 1);
     }));
     AOT_TEST_CHECK(part.size() == sizeOfLargeRecord);

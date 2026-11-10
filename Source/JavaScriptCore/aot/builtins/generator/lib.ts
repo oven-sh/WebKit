@@ -389,7 +389,7 @@ export const anyKey: KeySpec = { key: "Any" };
 export const inspected: readonly UseSpec[] = [];
 export const everything: UseSpec = { use: "Everything" };
 export const retained: UseSpec = { use: "Retains", in: nativeMemory };
-export const handedOver: readonly UseSpec[] = [retained];
+export const retainedByNativeCode: readonly UseSpec[] = [retained];
 export const returned: UseSpec = { use: "Returns" };
 export const movesElements: UseSpec = { use: "MovesElements" };
 export const evaluatedAsText: UseSpec = { use: "Role", role: "EvaluatedAsText" };
@@ -600,7 +600,7 @@ export const createdIn = (value: TableType, place: PlaceLike): UseSpec => ({
 });
 export const returnedFrom = (cell: string): UseSpec => ({ use: "ReturnsKept", cell });
 export const handedBackFrom = (cell: string): UseSpec => ({ use: "ReturnsKept", cell, holdsOnlyWhatIsStored: true });
-export const handedOutFrom = (cell: string): UseSpec => ({ use: "HandsOutKept", cell });
+export const exposedFrom = (cell: string): UseSpec => ({ use: "ExposesKept", cell });
 
 export const functionIn = (file: string, name: string): FunctionRef => ({ file, name });
 export const generic: ImplementationSpec = { how: "Generic" };
@@ -1025,7 +1025,7 @@ export const internalField = (index: number, heap: Heap, holds?: TableType): Slo
   ...state(heap, holds),
   internalField: index,
 });
-export const handedOutBySteps = (heap: Heap): SlotSpec => ({ ...state(heap), holdsWhatStepsHandOut: true });
+export const stepValueSlot = (heap: Heap): SlotSpec => ({ ...state(heap), holdsStepValues: true });
 export const thrownValue = (slot: SlotSpec): SlotSpec => ({ ...slot, holdsWhatIsThrown: true });
 export const wordOfCell = (followed: Exclude<WordOfCell, "None">, slot: SlotSpec): SlotSpec => ({ ...slot, wordOfCell: followed });
 export const exactType = (path: string, ...typeArguments: readonly SlotName[]): TypeNameSpec => ({

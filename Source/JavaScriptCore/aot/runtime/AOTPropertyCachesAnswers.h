@@ -76,6 +76,8 @@ struct PropertyAnswer {
     bool undefinedNeedsNoStorage { false };
     bool fieldTakesAnyValue { false };
     bool readsByteOffset { false };
+    bool isInModuleInstance { false };
+    JSCell* instanceOfOtherModule { nullptr };
     std::optional<std::pair<uint32_t, uint32_t>> orderWords { };
     bool didFlatten { false };
     PropertyOffset offset { invalidOffset };

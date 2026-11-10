@@ -6,7 +6,7 @@
 
 variable g0 name="fetch" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="port" module=m0 declared={type=anything|absent} flags=[IsImmutable]
-module m0 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 exports=[{name="fetch" variable=g0}, {name="port" variable=g1}]
+module m0 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f0 exports=[{name="fetch" variable=g0}, {name="port" variable=g1}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer
@@ -14,7 +14,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v2 = Undefined
     Return v2
 }
-function f1 name="fetch" module=m0 text={start=7 end=37} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f1 name="fetch" module=m0 sourceRange={start=7 end=37} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
     Return v0

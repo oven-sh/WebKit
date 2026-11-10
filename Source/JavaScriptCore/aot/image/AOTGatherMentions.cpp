@@ -254,7 +254,7 @@ private:
         case NumberSpace::RegExpLiteralCell:
         case NumberSpace::TemplateObjectCell:
         case NumberSpace::ArrayProfile:
-        case NumberSpace::RowsOfReads:
+        case NumberSpace::ReadGroupCache:
         case NumberSpace::EnvironmentHandedBack:
         case NumberSpace::ClassRank:
         case NumberSpace::HeirLookedAt:

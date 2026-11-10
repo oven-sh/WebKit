@@ -8,7 +8,7 @@
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
 #     v4: opaque(FlatString) @Cell = FlattenString v3 traits=[mayThrow, mayCollect, mayTouchMemory]
 #     v5: int[0, 65535] @Int32 = GetStringCodeUnit v4, v2 traits=[mayTouchMemory]
-#     v6: anything?UndescribedNativeResult @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v6: anything?UndescribedNativeResult @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v7: opaque(FlatString) @Cell = FlattenString v3 traits=[mayThrow, mayCollect, mayTouchMemory]
 #     v8: int[0, 65535] @Int32 = GetStringCodeUnit v7, v2 traits=[mayTouchMemory]
 #     Return v6

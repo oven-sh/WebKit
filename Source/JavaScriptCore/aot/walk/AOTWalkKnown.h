@@ -25,7 +25,7 @@ enum class KnownNote : uint8_t {
     PositionFoundInsideList,
     FlatString,
     ValueKeptByPlace,
-    ListTestedInFrontOfLoop,
+    HoistedArrayGuard,
     NumberReadOutOfList,
     PassedTestOfBeingAsMade,
     AnswerOfQuestionStillStands,
@@ -43,13 +43,13 @@ enum class KnownNote : uint8_t {
     ElementReadOffFreshList,
     StructureOfClassIsSeen,
     ValueOfFieldOfHeir,
-    LoopFillsLiteralFromItsEnd,
-    ListEndsWhereCounterEntersLoop,
-    LengthThatLoopFillsLiteralTo,
-    RoomThatTurnsLeftWouldFill,
-    PushFillsLiteralFromItsEnd,
-    RoomOfListHoldsEveryTurn,
-    TestThatRoomOfListHoldsEveryTurn,
+    LoopAppendsToLiteral,
+    LengthEqualsInitialCounter,
+    FinalLiteralLength,
+    CapacityForRemainingIterations,
+    PushAppendsToLiteral,
+    CapacityCoversLoop,
+    LoopCapacityGuard,
     ClassesThatInstanceOfDenied,
     AnswerOfReadOfSlotThatMayBeEmpty,
     PieceIsStoredByBodyThatCutIt,
@@ -69,7 +69,7 @@ ALWAYS_INLINE void noteOperationBuilt(Walker& walker, const Draft& draft, const 
 }
 Reference findConversionMade(Walker&, Reference value, Representation wanted);
 void noteConversionMade(Walker&, Reference value, Representation wanted, Reference converted);
-void noteWhatBranchDecidesOnEdge(Walker&, BlockID from, uint32_t targetIndex);
+void recordEdgeOutcome(Walker&, BlockID from, uint32_t targetIndex);
 std::optional<bool> outcomeKnownOf(Walker&, Reference condition);
 
 void endWhatOperationWritesOrRuns(Walker&, const Draft&, const Effects&);
@@ -85,7 +85,7 @@ ALWAYS_INLINE void endWhatOperationWrites(Walker& walker, const Draft& draft, co
         endWhatOperationWritesOrRuns(walker, draft, effects);
 }
 bool writerEndsNoGuard(const Walker&, const Draft&);
-bool makesNewCell(const Operation&);
+bool allocatesNewCell(const Operation&);
 std::optional<Vector<uint32_t, 2>> objectsMadeHereThatAloneAreWritten(Walker&, const Draft&, const Effects&);
 std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker&, const TerminatorDraft&, const Effects&);
 bool mayBeSameObject(Walker&, Reference, Reference);

@@ -50,7 +50,7 @@ RefusedCode refusedCodeOf(const Program& program)
     return {
         .evaluatedText = hasFlag(program.excludedCode, ExcludedCode::EvaluatedText),
         .hostEvaluatedText = hasFlag(program.excludedCode, ExcludedCode::HostEvaluatedText),
-        .codeOutsideImage = !program.admitsInspector && (runsOnlyCodeOfImage || hasFlag(program.excludedCode, ExcludedCode::CodeOutsideImage)),
+        .codeOutsideImage = !program.admitsInspector && (isHardenedBuild || hasFlag(program.excludedCode, ExcludedCode::CodeOutsideImage)),
     };
 }
 
@@ -865,11 +865,11 @@ FunctionID Facts::functionThatCallEntersByBinding(const BodyIndex& index, const 
         return call.function();
     if (call.opcode() != Opcode::Call)
         return { };
-    ValueID read = index.valueBehindCasts(call.calleeOperand());
+    ValueID read = index.stripCasts(call.calleeOperand());
     if (!index.isParameter(read) && index.opcodeOf(read) == Opcode::CheckInitialized) {
         if (checkThatPasses)
             *checkThatPasses = read;
-        read = index.valueBehindCasts(index.value(read).valueOperand());
+        read = index.stripCasts(index.value(read).valueOperand());
     }
     if (index.isParameter(read) || index.opcodeOf(read) != Opcode::GetModuleVariable)
         return { };
@@ -948,8 +948,8 @@ static void orderFunctionsByReferrersForFacts([[maybe_unused]] Program& program,
     layReferrersOfHeldReadingOver(parts.linked, parts.held, loops);
     steps.didFinish("lay referrers over"_s);
     rankReferrersFirst(parts.linked);
-    findParametersThatAreOnlyCalled(program, *parts.bodies, *parts.summaries, loops, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded), parts.linked);
-    findParametersThatAreOnlyLookedAt(program, *parts.bodies, *parts.summaries, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded), parts.linked);
+    findParametersThatAreOnlyCalled(program, *parts.bodies, *parts.summaries, loops, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::AssumeCalleesRetainNothing), parts.linked);
+    findParametersThatAreOnlyLookedAt(program, *parts.bodies, *parts.summaries, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::AssumeCalleesRetainNothing), parts.linked);
     carryExpectationOfThisIntoCaptures(program, *parts.bodies, *parts.summaries, parts.linked);
     steps.didFinish("rank referrers"_s);
 }
@@ -986,7 +986,7 @@ static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodie
     parts.linked.fieldsStoredWhatIsNoInt32 = fieldsStoredWhatIsNoInt32In(*looks);
     parts.linked.fieldsStoredCounts = fieldsStoredCountsIn(*looks, program, parts.linked);
     parts.linked.keysStoredWhatIsNoInt32 = keysStoredWhatIsNoInt32In(*looks);
-    build.statistics().count(StatisticID::FieldsHeldToWhatIsSeen, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
+    build.statistics().count(StatisticID::FieldTypesEnforced, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
     if (parts.mechanisms.contains(Mechanism::Guesses))
         parts.tables.layoutsThatStayWithCompiledCode = layoutsThatStayWithCompiledCodeForFacts(program, parts.linked);
     steps.didFinish("tables of fields"_s);
@@ -1109,7 +1109,7 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     for (const RegExpCallWithoutText& call : parts.tables.program.regExpCallsWithoutText) {
         const BodyIndex& index = *parts.bodies->find(call.function);
         build.diagnostics().add(UserDiagnostic {
-            .kind = UserDiagnosticKind::RegExpTextKnownAtRunTime,
+            .kind = UserDiagnosticKind::RegExpPatternNotConstant,
             .function = call.function,
             .block = index.blockOf(call.site),
             .value = call.site,

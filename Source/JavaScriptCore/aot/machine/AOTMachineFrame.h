@@ -44,10 +44,10 @@ public:
 
     JS_EXPORT_PRIVATE bool isPinned(Reg) const;
 
-    static constexpr int32_t markOfSlotThatNoStepReads = 1;
-    int32_t offsetFromFPOf(SpillIndex spill) const { return m_offsetOfSpill[spill] & ~markOfSlotThatNoStepReads; }
-    int32_t offsetFromFPWithMarkOf(SpillIndex spill) const { return m_offsetOfSpill[spill]; }
-    void setOffsetFromFPForTesting(SpillIndex spill, int32_t offset) { m_offsetOfSpill[spill] = offset | (m_offsetOfSpill[spill] & markOfSlotThatNoStepReads); }
+    static constexpr int32_t deadSlotTag = 1;
+    int32_t offsetFromFPOf(SpillIndex spill) const { return m_offsetOfSpill[spill] & ~deadSlotTag; }
+    int32_t taggedOffsetOf(SpillIndex spill) const { return m_offsetOfSpill[spill]; }
+    void setOffsetFromFPForTesting(SpillIndex spill, int32_t offset) { m_offsetOfSpill[spill] = offset | (m_offsetOfSpill[spill] & deadSlotTag); }
 
     static constexpr uint8_t holdsSteps = 1 << 0;
     static constexpr uint8_t isSetUpAtHead = 1 << 1;

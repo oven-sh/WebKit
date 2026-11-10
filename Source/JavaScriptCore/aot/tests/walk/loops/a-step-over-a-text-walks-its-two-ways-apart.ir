@@ -14,7 +14,7 @@
 # POINTS-NOT: = GetStringLength {{*}}@Cell = CallInline
 # POINTS-NOT: = Substring
 # layout L909 kind=Closure
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 109, 240, 314] quotedTexts=[{position=30 start=79 end=91}, {position=55 start=91 end=100}, {position=140 start=107 end=119}, {position=165 start=119 end=128}, {position=192 start=133 end=146}, {position=194 start=133 end=149}, {position=211 start=152 end=164}, {position=213 start=152 end=167}, {position=240 end=15}, {position=251 end=72}, {position=256 start=16 end=42}, {position=262 start=22 end=39}, {position=273 start=22 end=41}, {position=284 start=44 end=71}, {position=291 start=51 end=68}, {position=302 start=51 end=70}] textOfQuotes="globalThis.sink(count(globalThis.source()), points(globalThis.source()))text = String(text)c of texttext = String(text)c of textn += c.codePointAt(0) + c.charCodeAt(0)"} functionText="function count(text) { text = String(text); let n = 0; for (const c of text) if (c === \x22x\x22) n++; return n; }\x0afunction points(text) { text = String(text); let n = 0; for (const c of text) n += c.codePointAt(0) + c.charCodeAt(0); return n; }\x0aglobalThis.sink(count(globalThis.source()), points(globalThis.source()));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 109, 240, 314] quotedSources=[{position=30 start=79 end=91}, {position=55 start=91 end=100}, {position=140 start=107 end=119}, {position=165 start=119 end=128}, {position=192 start=133 end=146}, {position=194 start=133 end=149}, {position=211 start=152 end=164}, {position=213 start=152 end=167}, {position=240 end=15}, {position=251 end=72}, {position=256 start=16 end=42}, {position=262 start=22 end=39}, {position=273 start=22 end=41}, {position=284 start=44 end=71}, {position=291 start=51 end=68}, {position=302 start=51 end=70}] quotedSourceText="globalThis.sink(count(globalThis.source()), points(globalThis.source()))text = String(text)c of texttext = String(text)c of textn += c.codePointAt(0) + c.charCodeAt(0)"} functionSource="function count(text) { text = String(text); let n = 0; for (const c of text) if (c === \x22x\x22) n++; return n; }\x0afunction points(text) { text = String(text); let n = 0; for (const c of text) n += c.codePointAt(0) + c.charCodeAt(0); return n; }\x0aglobalThis.sink(count(globalThis.source()), points(globalThis.source()));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -41,7 +41,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v21 = Undefined @240
     Return v21 @240
 }
-function f1 name="count" module=m0 text={end=108} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="count" module=m0 sourceRange={end=108} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
     v1 = Builtin builtin=String @30
     v2 = Call v1, -, v0 calleeName="String" @30
@@ -75,7 +75,7 @@ function f1 name="count" module=m0 text={end=108} flags=[HasExplicitName] length
     IteratorClose v6 completion=Throw @55
     Rethrow v17 @55
 }
-function f2 name="points" module=m0 position=109 text={start=109 end=239} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="points" module=m0 position=109 sourceRange={start=109 end=239} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
     v1 = Builtin builtin=String @140
     v2 = Call v1, -, v0 calleeName="String" @140

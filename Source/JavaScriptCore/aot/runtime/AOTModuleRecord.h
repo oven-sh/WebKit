@@ -134,11 +134,11 @@ public:
     struct Statement {
         AbstractModuleRecord* target { nullptr };
         Identifier importName;
-        ModuleRecord* leader { nullptr };
-        bool standsInEntryFromStar { false };
+        ModuleRecord* reexporter { nullptr };
+        bool isStarExportEntry { false };
         bool claimsWhatStarsFind { false };
     };
-    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&, ModuleRecord* leader, Statement&);
+    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&, ModuleRecord* reexporter, Statement&);
     Resolution claimAsOwn(const Identifier& exportName);
     struct Asker {
         ModuleRecord* record;
@@ -147,13 +147,13 @@ public:
     bool originalShows(JSGlobalObject*, const Identifier& exportName, std::span<const Asker>);
     bool originalShows(JSGlobalObject*, const Identifier& exportName, std::span<ModuleRecord* const> askersOfSameName);
     bool isNamedByEndedMockInFrontOfItsStar(JSGlobalObject*, const Identifier& exportName, unsigned index);
-    bool answersByWhoLedToIt() const;
-    bool keepsEndedMock() const;
-    bool someMockStandsInPlace() const;
+    bool resolvesPerReexporter() const;
+    bool hasRemovedMockInUse() const;
+    bool hasAnyActiveMock() const;
     bool mayOutlive(AbstractModuleRecord*) const;
-    const Resolution* resolutionKept(UniquedStringImpl* exportName);
-    void keepResolution(UniquedStringImpl* exportName, const Resolution&);
-    bool standsForMock() const;
+    const Resolution* storedResolution(UniquedStringImpl* exportName);
+    void storeResolution(UniquedStringImpl* exportName, const Resolution&);
+    bool isReplacedByMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);

@@ -9,7 +9,7 @@ module m1 path="other" displayPath="other"
 module m2 path="external" displayPath="external" kind=External referrer=m0
 module m3 path="badVariableExport" displayPath="badVariableExport" exports=[{name="a" variable=g0 phase=Defer}]
 module m4 path="badIndirectExport" displayPath="badIndirectExport" requests=[{target=m2 completes=true}] exports=[{name="a" kind=Indirect module=m2 importName="x" phase=Defer}]
-module m5 path="goodData" displayPath="goodData" kind=Data requireResult=DefaultExport exports=[{name="a" variable=g1 isLeftOut=true}, {name="default" variable=g1}]
-module m6 path="badNameLeftOutOfCode" displayPath="badNameLeftOutOfCode" exports=[{name="a" variable=g0 isLeftOut=true}]
-module m7 path="badNamespaceLeftOut" displayPath="badNamespaceLeftOut" requests=[{target=m1}] exports=[{name="a" kind=Namespace module=m1 isLeftOut=true}]
+module m5 path="goodData" displayPath="goodData" kind=Data requireResult=DefaultExport exports=[{name="a" variable=g1 isOmitted=true}, {name="default" variable=g1}]
+module m6 path="badNameLeftOutOfCode" displayPath="badNameLeftOutOfCode" exports=[{name="a" variable=g0 isOmitted=true}]
+module m7 path="badNamespaceLeftOut" displayPath="badNamespaceLeftOut" requests=[{target=m1}] exports=[{name="a" kind=Namespace module=m1 isOmitted=true}]
 entry module=m0

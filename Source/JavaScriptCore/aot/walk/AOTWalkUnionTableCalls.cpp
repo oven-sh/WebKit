@@ -209,7 +209,7 @@ static ALWAYS_INLINE std::optional<TableCallInUnionTableCalls> planTableCallInUn
         return std::nullopt;
 
     BodyTerminator end = index.terminator(index.blockOf(call));
-    if (end.kind() == TerminatorKind::ReturnCall && end.operand(0) && index.valueBehindCasts(end.operand(0)) == call) {
+    if (end.kind() == TerminatorKind::ReturnCall && end.operand(0) && index.stripCasts(end.operand(0)) == call) {
         bool everyMethodComesBack = !receivers.someRowIsGuarded && !someReceiverHasNoRow && std::ranges::all_of(receivers.methods, [&](FunctionID method) {
             return plan.endsItsTailCalls(method);
         });
@@ -327,7 +327,7 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         BlockID withRow = walker.addBlock();
         withoutRow = walker.addBlock(BlockFrequency::Rare);
         meeting = walker.addBlock();
-        walker.noteGuessOpened();
+        walker.recordSpeculation();
         walker.branch(passes, withRow, withoutRow);
         walker.continueIn(withRow);
         receiver = narrowedByInUnionTableCalls(walker, anyReceiver, passes, true, walker.originOf(call));

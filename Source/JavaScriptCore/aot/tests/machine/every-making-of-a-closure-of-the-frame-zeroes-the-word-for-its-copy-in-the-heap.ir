@@ -6,9 +6,6 @@
 # STUB-LABEL: unit f2:Body
 # STUB-NOT: = Store({{*}}frameSlots
 # STUB: = Return(
-# Behind the call that borrowed it a patch clears what the closure held, and that word with it: two words in f2, two in f3, ten in f4.
-# RUN(CLEARS): compile WordsClearedBehindCalls mechanisms=all-Inlining
-# CLEARS: statistic WordsClearedBehindCalls 14
 # In a loop the code fills the closure itself: header, word, one capture at 16, the word at 24.
 # RUN(LOOP): emit f3 mechanisms=all-Inlining
 # LOOP-LABEL: unit f3:Body

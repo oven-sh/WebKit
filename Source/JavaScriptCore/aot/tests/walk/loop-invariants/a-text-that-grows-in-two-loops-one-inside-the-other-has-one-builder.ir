@@ -11,7 +11,7 @@
 # ONE-NOT: = StackStringBuilderBegin
 # layout L906 kind=Closure
 variable g0 name="words" module=m0 declared={type=anything|absent} flags=[IsImmutable]
-module m0 path="/$bunfs/root/n.ts" displayPath="n.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 51, 199, 231] quotedTexts=[{position=175 start=26 end=34}, {position=200 end=15}, {position=219 end=21}] textOfQuotes="globalThis.sink(both)s += words[j]"} functionText="const words = [\x22alpha\x22, \x22beta\x22, \x22gamma\x22, \x22delta\x22];\x0afunction both(n) { let s = \x22\x22; for (let i = 0; i < n / 4; i++) { s += \x22[\x22; for (let j = 0; j < 3; j++) s += words[j]; } return s; }\x0a(globalThis).sink(both);\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/n.ts" displayPath="n.ts" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 51, 199, 231] quotedSources=[{position=175 start=26 end=34}, {position=200 end=15}, {position=219 end=21}] quotedSourceText="globalThis.sink(both)s += words[j]"} functionSource="const words = [\x22alpha\x22, \x22beta\x22, \x22gamma\x22, \x22delta\x22];\x0afunction both(n) { let s = \x22\x22; for (let i = 0; i < n / 4; i++) { s += \x22[\x22; for (let j = 0; j < 3; j++) s += words[j]; } return s; }\x0a(globalThis).sink(both);\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -26,7 +26,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v9 = Undefined @199
     Return v9 @199
 }
-function f1 name="both" module=m0 position=51 text={start=51 end=182} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="both" module=m0 position=51 sourceRange={start=51 end=182} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):
     v1 = String string="" @94
     v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @94

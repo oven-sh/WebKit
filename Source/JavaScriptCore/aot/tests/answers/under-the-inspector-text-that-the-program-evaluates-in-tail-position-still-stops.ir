@@ -2,19 +2,26 @@
 # function marks(b) { b.count = undefined; }
 # function texts(b) { b.inner = "text"; }
 # function lays(b) { Object.defineProperty(b, "x", { set(v) { this.kept = "other" + v; } }); }
-# function marksBox(b: Box) { b.count = undefined; }   function textsBox(b: Box) { b.inner = "text"; }   the layout of `box` is EXPECTED of the parameter: a typed store behind a guess
-# function assigns(b) { Object.assign(b, { inner: "text" }); }   stranger: a function of the shell's own text, which the interpreter runs
+# function marksBox(b: Box) { b.count = undefined; }   function textsBox(b: Box) { b.inner = "text"; }   the layout of `box` is speculated for the parameter: a typed store after a speculation
+# function assigns(b) { Object.assign(b, { inner: "text" }); }   stranger: a function in the shell's own source, which the interpreter runs
 # function count(b) { return b.count + 1; }   function inner(b) { return b.inner.n; }   function store(b) { b.x = 5; return b.kept; }
 # if (which === 1) id(marks)(box);   if (which === 2) id(texts)(box);   if (which === 3) id(lays)(box);   if (which === 4) id(marksBox)(box);   if (which === 5) id(textsBox)(box);   if (which === 6) id(stranger)(box);   if (which === 7) id(assigns)(box);
 # print(count(box), inner(box), store(box));   print("went on");
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so the call of it has no callee and `box` stays with compiled code, every writer known. The stranger is compiled code that stores by name.
-# The program of a-store-that-a-proof-rules-out-stops-at-the-door.ir, built to admit the inspector; `assigns` evaluates a text, the call in TAIL POSITION, and runs as a job: nobody stands below where the text is made, so it bears no origin, like the console's. Text without an origin is the console's only where the inspector's injected script lies below it. Here nothing does: the text's own try-catch swallows nothing: the stop. LATER: eval itself runs as a job.
-# OPTIONS: testing=UnseenCodeAnswersUndefined admit=Inspector
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So the call of that result has no callee, `box` never escapes from compiled code and every writer is known.
+# The writer that Link does not know about is compiled code that stores by name.
+# The program is that of a-store-that-a-proof-rules-out-stops-at-the-door.ir, built to allow the inspector. `assigns` evaluates a string, with the call in tail position, and runs as a job.
+# No frame is below it on the stack where the source is created, so the source carries no origin, like source from the console.
+# Source without an origin counts as the console's only where the inspector's injected script is below it on the stack.
+# Here nothing is, so the evaluated code's own try-catch swallows nothing and the process crashes. In the run LATER, eval itself runs as a job.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined admit=Inspector
 # RUN(HOST): run-in-shell mechanisms=all globalThis.which = 7; globalThis.id = f => b => { globalThis.held = b; Promise.resolve(b).then(f); }; globalThis.deed = eval; globalThis.stranger = "try { held.inner = 'text'; } catch (error) { print('caught', error.constructor.name); }";
-# HOST: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# HOST: bun: internal AOT error: object mutation check failed
+# HOST-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # HOST: crashed with
 # RUN(LATER): run-in-shell mechanisms=all globalThis.which = 7; globalThis.id = f => b => { globalThis.held = b; Promise.resolve("try { held.inner = 'text'; } catch (error) { print('caught', error.constructor.name); }").then(eval); };
-# LATER: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# LATER: bun: internal AOT error: object mutation check failed
+# LATER-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # LATER: crashed with
 # RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
 # NONE: 2 1 first5

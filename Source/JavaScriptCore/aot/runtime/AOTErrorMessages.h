@@ -64,7 +64,7 @@ JSObject* createCompiledModuleAccessError(JSGlobalObject*, StringView path, ASCI
 JSObject* createFormNotHeldError(JSGlobalObject*, StringView path, ASCIILiteral type);
 JSObject* createExportNotHandedOutError(JSGlobalObject*, StringView path, StringView name);
 JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
-JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
+JSObject* createLoaderChangeError(JSGlobalObject*, LoaderChange, StringView changed);
 JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject*, StringView path);
 JSObject* createComparisonOfPrivateFieldRefusedError(JSGlobalObject*, const String& field);
 JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer, ASCIILiteral code);

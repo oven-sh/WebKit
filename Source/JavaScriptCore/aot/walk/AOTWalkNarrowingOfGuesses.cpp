@@ -24,7 +24,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool saysNothingInNarrowingOfGuesses(const TypeArena& types, TypeID type)
+static bool isUninformativeInNarrowingOfGuesses(const TypeArena& types, TypeID type)
 {
     if (!type || isNeverType(type))
         return true;
@@ -50,7 +50,7 @@ static void meetWithWhatWasSeenToArriveInNarrowingOfGuesses(Walker& walker, uint
     if (walker.program().at(walker.currentFunction()).thisParameterIndex() == entryParameter)
         return;
     TypeID seen = typeSeenToArriveInNarrowingOfGuesses(walker, entryParameter);
-    if (saysNothingInNarrowingOfGuesses(types, seen))
+    if (isUninformativeInNarrowingOfGuesses(types, seen))
         return;
     TypeID met = types.intersectionOf(found, seen);
     if (!isNeverType(met) && types.at(met).hasObjects())
@@ -130,9 +130,9 @@ static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, V
 {
     TypeArena& types = walker.types();
     LayoutID expected = singleLayoutOf(types, types.at(found));
-    if (!expected || (!definition.isParameter() && inputOperationsThatHandOn.contains(definition.opcode())))
+    if (!expected || (!definition.isParameter() && inputPassThroughOpcodes.contains(definition.opcode())))
         return false;
-    if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && !saysNothingInNarrowingOfGuesses(types, typeSeenToArriveInNarrowingOfGuesses(walker, input.index())))
+    if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && !isUninformativeInNarrowingOfGuesses(types, typeSeenToArriveInNarrowingOfGuesses(walker, input.index())))
         return false;
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
     if (names.empty() || walker.onlyLayoutInSightWithAllNames(names, walker.isInLoop() && names.size() > 1, { }, walker.numberOfLongListOfNamesUsedOff(input, names)) != expected)
@@ -153,7 +153,7 @@ struct EdgeThatFillsParameterInNarrowingOfExpectations {
 
 } // anonymous namespace
 
-static bool saysNothingInNarrowingOfExpectations(const TypeArena& types, TypeID type)
+static bool isUninformativeInNarrowingOfExpectations(const TypeArena& types, TypeID type)
 {
     if (!type || isNeverType(type))
         return true;
@@ -186,7 +186,7 @@ static TypeID tagWrittenInMemberInNarrowingOfExpectations(Walker& walker, Layout
     if (field.form.contains(FieldForm::IsAccessor) || !field.flags.contains(FieldFlags::IsRequired))
         return { };
     TypeID written = field.declared.expected().predicted();
-    if (saysNothingInNarrowingOfExpectations(walker.types(), written))
+    if (isUninformativeInNarrowingOfExpectations(walker.types(), written))
         return { };
     if (asWritten)
         return written;
@@ -248,7 +248,7 @@ static void cutExpectationByTestedField(Walker& walker, ValueID input, TypeID& f
     Reference builtHolder = walker.referenceOf(narrowing.valueOperand());
     std::array<TypeID, 3> whatHolderMayBe { holder.isParameter() ? holder.parameterType() : TypeID(), found, builtHolder ? walker.typeOf(builtHolder) : TypeID() };
     for (TypeID inFront : whatHolderMayBe) {
-        if (saysNothingInNarrowingOfExpectations(types, inFront) || !types.at(inFront).hasOnlyLayouts() || types.at(inFront).hasOnlyClosures() || holdsOneMember(types.at(inFront).layouts))
+        if (isUninformativeInNarrowingOfExpectations(types, inFront) || !types.at(inFront).hasOnlyLayouts() || types.at(inFront).hasOnlyClosures() || holdsOneMember(types.at(inFront).layouts))
             continue;
         if (!selects && Walker::keepsRoundsOver(types, types.at(inFront).layouts))
             continue;
@@ -285,7 +285,7 @@ void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool
         return;
     if (!walker.walksOwnBodyOfUnit()) {
         bool statesType = !definition.isParameter() && opcodesThatStateTypes.contains(definition.opcode());
-        if (ValueID behindCasts = statesType ? index.valueBehindCasts(input) : input; index.isParameter(behindCasts) && index.blockOf(behindCasts) == entryBlock)
+        if (ValueID behindCasts = statesType ? index.stripCasts(input) : input; index.isParameter(behindCasts) && index.blockOf(behindCasts) == entryBlock)
             meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(walker, behindCasts, found);
     }
     if (isDeclared) {
@@ -305,7 +305,7 @@ void bindNamesBehindFailedTest(Walker& walker, Reference value, Reference test, 
     if (!test || !test.isValue() || !value || !value.isValue())
         return;
     const Code& code = walker.code();
-    ValueID root = rootOfCellInSweptCode(code, value.id());
+    ValueID root = underlyingCellOf(code, value.id());
     if (walker.state().isFresh(code.isConstant(root) ? Reference::constant(root) : Reference::value(root)))
         return;
     if (const Operation& asked = code.at(test.id()); asked.opcode == Opcode::ShapeTest) {

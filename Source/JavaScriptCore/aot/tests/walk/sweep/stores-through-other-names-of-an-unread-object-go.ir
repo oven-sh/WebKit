@@ -22,12 +22,12 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
 #     v2: anything @Cell = CreateRest firstArgument=0 traits=[mayCollect, mayTouchMemory]
 #     v3: anything @Cell = FinishObject v2
-#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
-#     v5 @Void = PropDefine v2, v1 key="name" traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v5 @Void = PropDefine v2, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
 #     v6: anything @Cell = CreateRest firstArgument=1 traits=[mayCollect, mayTouchMemory]
-#     v7 @Void = PropDefine v6, v1 key="name" traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v7 @Void = PropDefine v6, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v8: anything @Cell = CreateRest firstArgument=2 traits=[mayCollect, mayTouchMemory]
-#     v9 @Void = PropSet v8, v1 key="name" traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v9 @Void = PropSet v8, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
 #     Return
 # }
 # -- end of code

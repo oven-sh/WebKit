@@ -578,7 +578,7 @@ function f12 name="aliased" module=m3 position=2115 role=Library flags=[HasExpli
     v27 = Add v25, v26 @2338
     Return v27 @2338
 }
-function f13 name="awaited" module=m3 position=2356 role=Library flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+function f13 name="awaited" module=m3 position=2356 role=Library flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined @2402
     v4 = Undefined @2402

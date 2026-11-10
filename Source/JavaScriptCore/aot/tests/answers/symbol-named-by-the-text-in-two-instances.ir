@@ -21,7 +21,7 @@ layout L1
 variable g0 name="tag" module=m0 declared={type=undefined|null|symbol flags=[IsExpected]} flags=[IsImmutable]
 variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
-module m1 path="/again.cjs" displayPath="again.cjs" kind=CommonJs flags=[KeepsError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1
+module m1 path="/again.cjs" displayPath="again.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():

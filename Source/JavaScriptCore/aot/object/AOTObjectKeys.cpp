@@ -832,7 +832,7 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
         return nullptr;
     for (; nextExtraKey < extraKeys.size(); ++nextExtraKey)
         properties.append(extraKeys[nextExtraKey]);
-    countEvent(vm, RuntimeCounterID::PropertyListsMade);
+    countEvent(vm, RuntimeCounterID::PropertyListsCreated);
     return &propertyLists.add({ structure->id(), shapeWord, orderAndCount, WTF::move(properties) });
 }
 

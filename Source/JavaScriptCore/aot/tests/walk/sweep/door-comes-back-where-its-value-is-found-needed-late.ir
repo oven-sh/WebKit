@@ -18,7 +18,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #     v2: boolean @Boolean = TypeTest v0 testedType=undefined
 #     Jump -> next b1(v2)
 #   b1(v3: boolean @Boolean) isInLoop=true isLoopHead=true:
-#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v5: boolean @Boolean = LogicalNot v2
 #     v6 @Void = CheckProof v5 checkedType=true typeWithoutProof=boolean source=Field [goesWithItsValue]
 #     v7: boolean @Boolean = TypeTest v4 testedType=null

@@ -168,7 +168,7 @@ bool ModuleTable::hasAttributeVariant(StringView publicPath) const
     size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
         return comparePath(ModuleID(byPath[candidate]), start) < 0;
     }) - places.begin());
-    return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
+    return place < byPath.size() && fullPath(ModuleID(byPath[place])).startsWith(start);
 }
 
 Vector<ModuleID, 2> ModuleTable::importAttributeVariants(StringView publicPath) const
@@ -180,7 +180,7 @@ Vector<ModuleID, 2> ModuleTable::importAttributeVariants(StringView publicPath) 
         return comparePath(ModuleID(byPath[candidate]), start) < 0;
     }) - places.begin());
     Vector<ModuleID, 2> forms;
-    for (; place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start); ++place)
+    for (; place < byPath.size() && fullPath(ModuleID(byPath[place])).startsWith(start); ++place)
         forms.append(ModuleID(byPath[place]));
     return forms;
 }
@@ -192,7 +192,7 @@ bool ModuleTable::containsPathWithPrefix(StringView start) const
     size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
         return comparePath(ModuleID(byPath[candidate]), start) < 0;
     }) - places.begin());
-    return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
+    return place < byPath.size() && fullPath(ModuleID(byPath[place])).startsWith(start);
 }
 
 bool ModuleTable::mayContainPathWithPrefix(StringView start) const
@@ -272,13 +272,13 @@ std::optional<unsigned> ModuleTable::findExport(ModuleID module, UniquedStringIm
     return std::nullopt;
 }
 
-std::optional<ModuleID> ModuleTable::faceOfFile(ModuleID file) const
+std::optional<ModuleID> ModuleTable::facadeOf(ModuleID file) const
 {
-    if (!data(file).hasFace())
+    if (!data(file).hasFacade())
         return std::nullopt;
     for (unsigned distance = 1; distance < size(); ++distance) {
         ModuleID module((file.index() + distance) % size());
-        if (fileBehindFace(module) == file)
+        if (moduleBehindFacade(module) == file)
             return module;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -342,7 +342,7 @@ ModuleTable::PathInUTF8 ModuleTable::pathInUTF8(ModuleID module) const
     return path;
 }
 
-String ModuleTable::pathText(ModuleID module) const
+String ModuleTable::fullPath(ModuleID module) const
 {
     if (data(module).directory == Number24::max)
         return ProgramStrings::text(*m_tables, StringID(data(module).publicPathOrName));
@@ -366,7 +366,7 @@ String ModuleTable::displayPathText(ModuleID module) const
         auto listed = std::ranges::lower_bound(m_tables->moduleDisplayPaths(), module.index(), { }, [](const ModuleDisplayPathData& entry) -> uint32_t { return entry.module; });
         return ProgramStrings::text(*m_tables, StringID(listed->path));
     }
-    String path = pathText(module);
+    String path = fullPath(module);
     return charactersInFront ? path.substring(charactersInFront) : path;
 }
 
@@ -379,7 +379,7 @@ String ModuleTable::typeAttribute(ModuleID module) const
 
 String ModuleTable::pathTextForLineColumns(ModuleID module) const
 {
-    return data(module).hasInstalledPositions ? pathText(module) : displayPathText(module);
+    return data(module).hasInstalledPositions ? fullPath(module) : displayPathText(module);
 }
 
 IterationStatus ModuleTable::forEachFilePathWithPrefix(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor) const
@@ -391,7 +391,7 @@ IterationStatus ModuleTable::forEachFilePathWithPrefix(StringView start, const S
     }) - places.begin());
     for (; place < byPath.size(); ++place) {
         ModuleID module(byPath[place]);
-        String path = pathText(module);
+        String path = fullPath(module);
         if (!path.startsWith(start))
             break;
         bool isCode = data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs;

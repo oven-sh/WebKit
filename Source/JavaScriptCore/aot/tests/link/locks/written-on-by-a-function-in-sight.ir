@@ -1,7 +1,7 @@
 # the program hands a built-in object to a function of its own, which writes on it under a key that nobody knows: Link follows it there, and its members stay open. What goes nowhere keeps its locks
 # The twins: let-go-by-the-program.ir, handed-to-a-function-in-sight-that-writes-nothing.ir
 # function put(given, name, laid) { given[name] = laid; } put(Date, globalThis.name, globalThis.laid); Date.now(); Math.random();
-# DIAGNOSTIC: LockedBuiltinWriteUnderUnreadName 1
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 1
 # RUN: locks
 # CHECK-NOT: DateNow
 # CHECK: locked MathRandom constant

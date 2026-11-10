@@ -11,6 +11,7 @@
 #include "AOTCellFormat.h"
 #include "AOTClosureWord.h"
 #include "AOTCompiledStructure.h"
+#include "AOTModuleNamespace.h"
 #include "AOTProgramTables.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTStubRegisters.h"
@@ -370,9 +371,20 @@ void generateReadSlot(StubAssembler& jit)
             const FieldReadRegisters registers = allocateFieldReadRegisters(statics, T10);
             FieldReadExits exits;
             slot.loadFirstPayloadWord(jit, registers.field.slotData);
+            Jump isInModuleInstance = slot.branchIfFlag(jit, Slot::isInModuleInstance);
             loadStaticsBase(jit, statics, T11);
+            Label hasBase = jit.label();
             computeFieldAddress(jit, registers.field, false, exits.isAbsent);
             readFieldAndReturn(jit, registers, exits);
+
+            isInModuleInstance.link(&jit);
+            slot.loadSecondPayloadWord(jit, statics);
+            Jump isOfOtherModule = jit.branchTest32(CCallHelpers::NonZero, statics);
+            jit.loadPtr(Address(R0, ModuleNamespace::offsetOfModuleInstance()), statics);
+            jit.jump().linkTo(hasBase, &jit);
+            isOfOtherModule.link(&jit);
+            decodeCell32(jit, statics, statics);
+            jit.jump().linkTo(hasBase, &jit);
 
             uncached.append(exits.isAbsent);
             uncached.append(exits.cannot);

@@ -48,7 +48,6 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, const 
         return place;
     };
     placed.stackWordsToReserve = std::max(conventions().stackWordsReservedByCallersOf(m_program, callee), locations.numberOfStackWords());
-    uint64_t letGoByCallee = returnsResultOfFunction(callee.role) ? generator().facts().summaries().at(callee.function).entryParametersLetGo : 0;
     for (size_t i = 0; i < arguments.size(); ++i) {
         const ArgumentLocation& location = locations.parameters[i];
         unsigned place = 0;
@@ -61,8 +60,6 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, const 
             continue;
         RELEASE_ASSERT(isPassedAs(arguments[i].representation, location.representation));
         LValue argument = arguments[i].value;
-        if (i < 64 && (letGoByCallee >> i & 1) && argument->type() == Machine::Int64 && !argument->hasInt64())
-            placed.letGoByCallee.append(argument);
         switch (location.kind) {
         case ArgumentLocation::Kind::None:
             break;
@@ -238,8 +235,8 @@ void CallEmitter::callThroughMethodTable(const ValueContext& value, uint32_t pla
     CellPointer receiver = arguments[0].as<CellPointer>();
     if (receiverOfCall == ReceiverOfTableCall::IsAsked) {
         ThrowEmitter& throws = emitter<ThrowEmitter>();
-        throws.requireOrStopAtFalseProof(value, logicalAnd(isCell(boxCell(receiver)), isNotEmpty(boxCell(receiver))), boxCell(receiver), ProofSource::Test);
-        throws.requireOrStopAtFalseProof(value, shapes.hasShapeIn(receiver, typeOf(receiverAndArguments[0]).layouts, types().at(TypeTable::anything)), boxCell(receiver), ProofSource::Test);
+        throws.requireOrCrash(value, logicalAnd(isCell(boxCell(receiver)), isNotEmpty(boxCell(receiver))), boxCell(receiver), ProofSource::Test);
+        throws.requireOrCrash(value, shapes.hasShapeIn(receiver, typeOf(receiverAndArguments[0]).layouts, types().at(TypeTable::anything)), boxCell(receiver), ProofSource::Test);
     }
 
     m_out.clearDeclaredAccesses();

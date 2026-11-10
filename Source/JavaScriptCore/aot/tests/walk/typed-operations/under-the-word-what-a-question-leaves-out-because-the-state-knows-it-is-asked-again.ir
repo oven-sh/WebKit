@@ -15,7 +15,7 @@
 # THE NET ASKS WHAT THE OPERATION LEANS ON, NOT WHAT THE STATE REMEMBERS (the peer's f3): all that the lookup needs, less what the draft itself asks as it is about to be built, whatever the reason it was left out.
 # RUN(LEFTOUT): walk f2 mechanisms=all testing=CheckProofsAtRunTime
 # LEFTOUT: [[again]]: boolean @Boolean = FindsNoMember {{*}}key="missing" receivers=[L0] [asksForLayoutPrototype]
-# LEFTOUT-NEXT: CheckProof [[again]] checkedType=true {{*}}source=WhatIsRemembered
+# LEFTOUT-NEXT: CheckProof [[again]] checkedType=true {{*}}source=RememberedFact
 # LEFTOUT-NEXT: = FindsNoMember {{*}}key="missing" conditions=[{layout=L0 key="missing"}] receivers=[L0] [asksForNoExtraPropertyUnderKey]
 # A RIGHT PROGRAM IN WHICH WHAT IS LEFT OUT CHANGES BETWEEN TWO CALLS: an object is laid between the instance and its prototype: nothing stops.
 # RUN(LINK): run-in-shell mechanisms=all testing=CheckProofsAtRunTime change = function (made, Meter) { const link = Object.create(Meter.prototype); link.other = 4; Object.setPrototypeOf(made, link); };

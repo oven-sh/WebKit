@@ -509,7 +509,7 @@ void generateStartModule(StubAssembler& jit)
     hasTarget.link(&jit);
     jit.storePtr(nextStep, nextStepInFrame);
     jit.call(target, JSEntryPtrTag);
-    Label behindCall = jit.bindReturnLabel(StubFrameKind::ModuleStart);
+    Label afterCall = jit.bindReturnLabel(StubFrameKind::ModuleStart);
     jit.addPtr(TrustedImm32(-static_cast<int32_t>(ModuleStartFrame::size)), fp, sp);
     jit.loadPtr(nextStepInFrame, nextStep);
     jit.branchTestPtr(CCallHelpers::NonZero, nextStep).linkTo(takesNextStep, &jit);
@@ -581,7 +581,7 @@ void generateStartModule(StubAssembler& jit)
     jit.returnToCaller();
 
     hasThrown.link(&jit);
-    emitThrowFromAdapter(jit, behindCall, handleException(false));
+    emitThrowFromAdapter(jit, afterCall, handleException(false));
 }
 
 Address emitLocateRememberedConstructWord(StubAssembler& jit, GPRReg wordOfCall, GPRReg entry)

@@ -129,7 +129,7 @@ const CallingConventions& StraightEmitter::conventions() const
 
 void StraightEmitter::findValuesNobodyReads()
 {
-    static constexpr OpcodeSet operationsThatOnlyMakeValues = inputOperationsThatOnlyHandOn | opcodesWithoutCodeOfTheirOwn
+    static constexpr OpcodeSet operationsThatOnlyMakeValues = inputIdentityOpcodes | opcodesWithoutCodeOfTheirOwn
         | OpcodeSet { Opcode::String, Opcode::BigInt, Opcode::Data, Opcode::NewClosure, Opcode::GetModuleVariable, Opcode::TypeTest };
     uint32_t numberOfValues = m_index.numberOfValues();
     Vector<uint32_t, 128> readsLeft;
@@ -214,7 +214,7 @@ void StraightEmitter::measureFrame()
             }
             if (value.id() == returnedCall)
                 continue;
-            bool keepsWordOfWhatItHandsOn = inputOperationsThatHandOn.contains(opcode) && !takesWord(value.id());
+            bool keepsWordOfWhatItHandsOn = inputPassThroughOpcodes.contains(opcode) && !takesWord(value.id());
             value.forEachOperand([&](ValueID operand, uint32_t) {
                 if (!operand || m_index.isParameter(operand) || !block.holds(operand) || !m_index.hasOneUse(operand) || !takesWord(operand))
                     return;
@@ -376,12 +376,12 @@ bool StraightEmitter::isReadByNextCodeAlone(const BodyValue& value) const
             return false;
         for (uint32_t between = value.id().index() + 1; between < reader; ++between) {
             Opcode opcode = m_index.opcodeOf(ValueID(between));
-            if (!inputOperationsThatOnlyHandOn.contains(opcode) && !opcodesWithoutCodeOfTheirOwn.contains(opcode))
+            if (!inputIdentityOpcodes.contains(opcode) && !opcodesWithoutCodeOfTheirOwn.contains(opcode))
                 return false;
         }
         if (reader == end)
             return true;
-        if (!inputOperationsThatOnlyHandOn.contains(m_index.opcodeOf(user->value)))
+        if (!inputIdentityOpcodes.contains(m_index.opcodeOf(user->value)))
             return true;
         id = user->value;
     }
@@ -1260,12 +1260,12 @@ void StraightEmitter::generateBlock(BodyBlock block)
 
 bool StraightEmitter::leavesDefinitionToFirstRead(const BodyValue& value)
 {
-    static constexpr OpcodeSet opcodesOfDefinitions = inputOperationsThatHandOn | OpcodeSet { Opcode::NewRegExp, Opcode::Data, Opcode::PutModuleVariable };
+    static constexpr OpcodeSet opcodesOfDefinitions = inputPassThroughOpcodes | OpcodeSet { Opcode::NewRegExp, Opcode::Data, Opcode::PutModuleVariable };
     const DeferredDefinitions& definitions = m_inputs.plan.deferredDefinitions();
     if (!opcodesOfDefinitions.contains(value.opcode()) || !definitions.bodiesThatDefine.get(m_unit.function.index()))
         return false;
     ValueID made = value.opcode() == Opcode::PutModuleVariable ? value.valueOperand() : value.id();
-    while (!m_index.isParameter(made) && inputOperationsThatHandOn.contains(m_index.opcodeOf(made)))
+    while (!m_index.isParameter(made) && inputPassThroughOpcodes.contains(m_index.opcodeOf(made)))
         made = m_index.value(made).operand(0);
     const DeferredVariable* deferred = m_index.isParameter(made) ? nullptr : definitions.findMadeBy(m_unit.function, made);
     if (!deferred)
@@ -1293,7 +1293,7 @@ void StraightEmitter::generateOperation(const BodyValue& value)
 {
     if (isReadByNobody(value.id()) || leavesDefinitionToFirstRead(value))
         return;
-    if (m_valueInRegister && !inputOperationsThatOnlyHandOn.contains(value.opcode()) && !opcodesWithoutCodeOfTheirOwn.contains(value.opcode()) && !readsWhatWaitsInRegister(value))
+    if (m_valueInRegister && !inputIdentityOpcodes.contains(value.opcode()) && !opcodesWithoutCodeOfTheirOwn.contains(value.opcode()) && !readsWhatWaitsInRegister(value))
         storeWhatWaitsInRegister();
     switch (familyOf(value.opcode())) {
     case OperationFamily::Constant:

@@ -196,7 +196,7 @@ void Allocator::bindRegisterThatIsBound(Reg reg, Operation* value)
     if (previous == value)
         return;
     if (isLiveBehind(previous, m_position) && registerFileHoldsOnlyCopy(*this, reg))
-        m_proc.fail(FailureKind::RegisterLacksItsValue, previous);
+        m_proc.fail(FailureKind::WrongValueInRegister, previous);
     unbind(reg);
     bind(reg, value);
 }
@@ -300,7 +300,7 @@ Reg Allocator::bringIntoRegister(Operation* value, RegisterMask allowed, Reg pre
             appendRegisterFileTransfer(*this, StepKind::Reload, value, Location::reg(destination), memory);
             noteFrameUse();
         } else
-            m_proc.fail(FailureKind::RegisterLacksItsValue, value);
+            m_proc.fail(FailureKind::WrongValueInRegister, value);
     }
 
     bind(destination, value);
@@ -309,9 +309,9 @@ Reg Allocator::bringIntoRegister(Operation* value, RegisterMask allowed, Reg pre
 
 SpillIndex Allocator::markSpilled(Operation* value)
 {
-    if (m_isAheadOfFramedPart && isStoredAtHeadsOfFramedPart(value)) {
+    if (m_isOutsideFramedPart && isStoredAtHeadsOfFramedPart(value)) {
         const ValueFacts& factsOfValue = m_valueFacts[value->index()];
-        if (isInRareRegion() || isReadByMoreThanSteps(factsOfValue)) {
+        if (isInRareRegion() || hasImplicitReader(factsOfValue)) {
             m_allocation.m_needsFrameAheadOfFramedPart = true;
             m_allocation.m_needsFrameOutsideRareRegions = true;
         }
@@ -321,11 +321,22 @@ SpillIndex Allocator::markSpilled(Operation* value)
         return spill;
 
     const ValueFacts& facts = m_valueFacts[value->index()];
+    if (value->opcode() == Phi && facts.definition != noPosition) {
+        if (SpillIndex shared = findSpillOfDeadSource(value); shared != noSpill) {
+            SpillFacts& range = m_allocation.m_spills[shared];
+            range.isSharedByPhis = true;
+            range.end = facts.lastUse == noPosition ? facts.definition : std::max(facts.definition, facts.lastUse);
+            phisInSpill(shared).append(m_arena, value);
+            m_allocation.m_spillOfValue[value->index()] = shared;
+            stateOf(value).saveInRareRegion = noSpill;
+            return shared;
+        }
+    }
     SpillFacts spillFacts;
     spillFacts.value = value;
 
     if (value->hasNoPosition() || facts.definition == noPosition || !value->type().isNumeric()) [[unlikely]] {
-        m_proc.fail(FailureKind::SpillSlotLacksItsValue, value);
+        m_proc.fail(FailureKind::WrongValueInSpillSlot, value);
         spillFacts.begin = m_position;
         spillFacts.end = m_position;
     } else {

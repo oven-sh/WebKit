@@ -216,7 +216,7 @@ static std::optional<LinkedFunctions> linkCodeOfCompileThreads(std::span<OutputO
     });
 
     Vector<FusedCallEntry> described = describeFusedCallEntries(fusedCallEntries, inputs, loops);
-    if (AOT::hasFlag(build.options().lies, Wire::TestingLie::FusedCallEntriesAreListedBackwards))
+    if (AOT::hasFlag(build.options().injectedFaults, Wire::FaultInjection::ReverseFusedCallEntries))
         described.reverse();
     if (!std::ranges::is_sorted(described, { }, &FusedCallEntry::unitIndex) || !std::ranges::is_sorted(described, { }, &FusedCallEntry::place)) {
         build.diagnostics().add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .detail = "TableNotSorted: fusedCallEntries"_s });

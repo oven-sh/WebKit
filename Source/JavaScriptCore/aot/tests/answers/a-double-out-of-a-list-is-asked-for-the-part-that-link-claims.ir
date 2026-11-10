@@ -5,20 +5,23 @@
 # one.push(id(2147483650.5));
 # print(read(one));
 # print("went on");
-# The list is held to whole numbers past int32, so its storage holds doubles. In the typed copy of the loop the read comes out raw and is typed by Link's word (`int|whole`); the storage tells "number" alone, and no check of the walk stands behind a raw value. `held === 2147483650.5` was folded to false: 4 for 103, silently.
-# The double is asked for the part that Link claims WHERE IT LEAVES THE STORAGE OF DOUBLES, in the emitter (ElementAccessEmitter::convertRawElement()): a storage of int32s tells the part by itself and pays nothing.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# Link restricts the array to integers beyond the int32 range, so its storage holds doubles.
+# In the specialized version of the loop the read produces an unboxed value whose type is Link's claim (`int|whole`).
+# The storage guarantees only "number", and the walk puts no check after an unboxed value. `held === 2147483650.5` was folded to false, so the program silently printed 4 instead of 103.
+# The double is checked for the subset that Link claims where it leaves the double storage, in the emitter (ElementAccessEmitter::convertRawElement()).
+# Int32 storage guarantees the subset by itself and pays nothing.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f2 mechanisms=all
 # FORM: undefined|int|whole @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 3
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it.
+# ALL-NEXT: bun: internal AOT error: type check failed
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: 3
-# CALLS-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it.
+# CALLS-NEXT: bun: internal AOT error: type check failed
 # CALLS-NOT: went on
 # CALLS: crashed with
 

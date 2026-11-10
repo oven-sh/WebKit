@@ -458,7 +458,6 @@ ALWAYS_INLINE_INTO_OTHER_FILES Step& ParallelMoveResolver::append(StepKind kind,
         written |= maskOf(Reg(scratchGPR)) | maskOf(Reg(scratchFPR));
         break;
     case StepKind::Execute:
-    case StepKind::ClearSpill:
     case StepKind::KeepPointer:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -480,7 +479,7 @@ static NEVER_INLINE std::span<PendingMove> removeTrivialParallelMoves(std::span<
         if (!move.source) {
             Block* owner = move.value->owner();
             RELEASE_ASSERT(owner);
-            owner->procedure().fail(FailureKind::RegisterLacksItsValue, move.value);
+            owner->procedure().fail(FailureKind::WrongValueInRegister, move.value);
             continue;
         }
         if (move.source != move.destination)

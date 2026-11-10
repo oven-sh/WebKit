@@ -81,7 +81,7 @@ void TypeTestEmitter::forEachCellCase(CellPointer cell, const TypeTestPlan& plan
         if (test.kind == CellTestKind::IsClosureOf)
             functions.append(test.function);
     }
-    bool testsClosureNumber = functions.size() > 1 && !m_asksEachFunctionByItself;
+    bool testsClosureNumber = functions.size() > 1 && !m_isEmittingPerFunctionBranch;
     if (testsClosureNumber) {
         visit([&] {
             Machine::DeclaredAccessesSuspension suspension(m_out);

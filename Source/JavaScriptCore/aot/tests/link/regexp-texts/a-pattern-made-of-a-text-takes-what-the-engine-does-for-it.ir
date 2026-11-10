@@ -1,7 +1,7 @@
 # The list follows from the program alone. To make a pattern out of a text the engine goes through every character, at some 330 instructions: two operations: a new text takes them out of the pot of its file, which says what one file may cost the build.
 # Seven texts of 524,289 characters fit the pot of a small file; of the eighth no pattern is made and it is left to the run; a short one behind them is still found.
 # const long = doubled("a", 19); new RegExp(long + "1"); .. new RegExp(long + "9"); new RegExp("z".toUpperCase());   (doubled(text, k): text = text + text, k times)
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /Z/
 # CHECK: aaaa1/

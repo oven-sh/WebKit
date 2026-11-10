@@ -1,12 +1,12 @@
-# middle.js: export { default as renamed } from "./parse.cjs"; main.js: import("./middle.js"): what the variable of the face holds leaves with the namespace object of middle.js.
+# middle.js: export { default as renamed } from "./parse.cjs"; main.js: import("./middle.js"): what the variable of the facade holds leaves with the namespace object of middle.js.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions variables mechanisms=all
 # CHECK-NOT: function f2 callers-known
 # CHECK-NOT: variable g1 proven=
 
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true isHoisted=true}, {target=m3 completes=true}]
-module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
-module m2 path="#2" displayPath="parse.cjs" flags=[KeepsError] exportRule=CommonJs body=f3 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="#2" displayPath="parse.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f3 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
 module m3 path="/middle.js" displayPath="middle.js" body=f4 requests=[{target=m2 completes=true}] exports=[{name="renamed" variable=g1}]
 entry module=m0
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
@@ -29,7 +29,7 @@ function f2 name="parse" module=m1 length=1 parameters=[{type=anything}] results
   b0(v0: anything):
     Return v0
 }
-function f3 name="face" module=m1 kind=Module results=[{type=anything}] {
+function f3 name="facade" module=m1 kind=Module results=[{type=anything}] {
   b0():
     EvaluateModule module=m1 referrer=m2 [isBare]
     Return

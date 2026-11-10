@@ -71,7 +71,7 @@ static Reference buildCodeInLineInNumberBuiltins(Walker& walker, const CallByOne
 
 static ValueID recordBehindNamesInNumberBuiltins(const Code& code, ValueID record)
 {
-    while (opcodesThatGiveSameValue.contains(code.at(record).opcode))
+    while (valuePreservingOpcodes.contains(code.at(record).opcode))
         record = code.at(record).operand(0);
     return record;
 }

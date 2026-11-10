@@ -140,8 +140,6 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     if (call.thisValue)
         placed.inRegisters.append(Machine::ConstrainedValue(call.thisValue, Machine::ValueRep::reg(thisGPR)));
     for (size_t i = 0; i < call.arguments.size(); ++i) {
-        if (i < 64 && (call.argumentsLetGo >> i & 1) && !call.arguments[i]->hasInt64())
-            placed.letGoByCallee.append(call.arguments[i]);
         if (i < numberOfArgumentGPRs)
             placed.inRegisters.append(Machine::ConstrainedValue(call.arguments[i], Machine::ValueRep::reg(argumentGPR(static_cast<unsigned>(i)))));
         else
@@ -149,22 +147,6 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     }
     placed.stackWordsToReserve = static_cast<uint32_t>(placed.onStack.size());
     return placed;
-}
-
-ALWAYS_INLINE_INTO_OTHER_FILES void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params)
-{
-    RegisterSet released = params.value()->registersToRelease();
-    if (released.isEmpty())
-        return;
-    released.exclude(params.usedRegisters());
-    if (params.value()->leavesMoveOutOfResultToCallee()) {
-        released.remove(Reg(GPRInfo::returnValueGPR));
-        if (Reg moved = params.value()->registerThatCalleeMovesIntoResult())
-            released.remove(moved);
-    }
-    released.forEach([&](Reg reg) {
-        jit.move(CCallHelpers::TrustedImm32(0), reg.gpr());
-    });
 }
 
 Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed, std::span<const ArgumentLocation> results, const CallOptions& options, const AnswersOfCalledStub* answersOfCalledStub)
@@ -212,12 +194,6 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
         if (LValue argument = placed.onStack[stackIndex])
             patchpoint->append(Machine::ConstrainedValue(argument, callStackWordRep(stackIndex)));
     }
-    if (!placed.letGoByCallee.isEmpty()) {
-        for (unsigned child = 0; child < patchpoint->numChildren(); ++child) {
-            if (placed.letGoByCallee.contains(patchpoint->child(child)))
-                patchpoint->markChildAsLetGoByCallee(child);
-        }
-    }
 
     uint32_t stackWordsToReserve = placed.stackWordsToReserve;
     Vector<Machine::ValueRep, 2> resultConstraints;
@@ -258,7 +234,6 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
     }
     patchpoint->setGenerator([records = &m_records, wordsOfThrowSite, wordsThatAreMentions, kind = target.kind, calledUnit = target.calledUnit, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, numberedImmediate = options.numberedImmediate, site = OptionalIndex { site }, firstReadSite, callerSuspendsAtReturn = options.callerSuspendsAtReturn](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        emitClearOfReleasedRegisters(jit, params);
         if (callerSuspendsAtReturn)
             FrameMapEmitter::releaseSavedRegisters(jit, params);
         StubCalls& stubCalls = records->stubCalls;
@@ -355,7 +330,7 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
     for (Boxed argument : call.arguments)
         values.append(argument.value());
 
-    ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span(), .argumentsLetGo = call.argumentsLetGo };
+    ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
     LValue countOperand = nullptr;
     const bool comesBack = positionOf(context) == CallPosition::Ordinary || context.origin().inlineFrame;
     if (call.methodMayBeUnread) {
@@ -411,11 +386,6 @@ void CallEmitter::generateCall(const ValueContext& value)
     if (value.returnCall()) {
         tailCallValue(value, call);
         return;
-    }
-    if (value->isTailCall && !value.origin().inlineFrame && !type.hasOnlyBuiltins()) {
-        std::span<const ValueID> operands = value->argumentsOperands();
-        for (size_t i = 0; i < std::min<size_t>(operands.size(), 64); ++i)
-            call.argumentsLetGo |= static_cast<uint64_t>(typeOf(operands[i]).hasCells()) << i;
     }
     if (mayForwardCallToReceiver(value.value()))
         requireForwardedCallCanBeMade(value, call.callee, call.thisValue, value->isTailCall);

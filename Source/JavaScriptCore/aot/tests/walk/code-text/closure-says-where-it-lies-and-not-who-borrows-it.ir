@@ -6,7 +6,7 @@
 # code f4:Body {
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
 #     v2: f6 @Cell = NewClosure v1 function=f6 storage=Frame closureForm=Slim
-#     v3: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v3
 # }
 # -- end of code

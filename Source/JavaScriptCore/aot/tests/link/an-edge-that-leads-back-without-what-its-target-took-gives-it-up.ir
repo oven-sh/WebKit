@@ -5,7 +5,7 @@
 # CHECK-NOT: passes=undefined|null|false
 # CHECK: edge [[join]] -> Contents Element of ClassInstance Array
 
-module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, IsModuleToImports] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, IsImportedAsESModule] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 entry module=m0
 layout L0 module=m0 place=0
 layout L1 module=m0 place=0

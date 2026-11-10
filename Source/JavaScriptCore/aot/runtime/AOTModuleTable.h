@@ -107,7 +107,9 @@ public:
     std::span<const ModuleExportData> exports(ModuleID module) const
     {
         std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
-        return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? entries.first(entries.size() - 1) : entries;
+        while (!entries.empty() && entries.back().isHidden())
+            entries = entries.first(entries.size() - 1);
+        return entries;
     }
     bool someExportStaysIn(ModuleID module) const
     {
@@ -115,12 +117,12 @@ public:
             return entry.staysIn;
         });
     }
-    std::optional<SlotData> mockSlot(ModuleID module) const
-    {
-        std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
-        return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? std::optional(entries.back().variable) : std::nullopt;
-    }
+    std::optional<SlotData> mockSlot(ModuleID module) const { return hiddenSlot(module, ModuleExportData::kindBitsOfWordOfMock); }
+    std::optional<SlotData> instanceVariable(ModuleID module) const { return hiddenSlot(module, ModuleExportData::kindBitsOfInstanceVariable); }
+    std::optional<SlotData> instanceGuard(ModuleID module) const { return hiddenSlot(module, ModuleExportData::kindBitsOfInstanceGuard); }
+    std::optional<SlotData> instanceAllocator(ModuleID module) const { return hiddenSlot(module, ModuleExportData::kindBitsOfInstanceAllocator); }
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
+    const ExportedFieldData& exportedField(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
     bool dependsOnMoreThanSource(ModuleID module) const { return std::ranges::binary_search(m_tables->modulesThatDependOnMoreThanSource(), module.index()); }
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
@@ -149,12 +151,12 @@ public:
     bool valueOfRuntimeSourceStaysWithCompiledCode(uint32_t registryID) const;
     bool recordOfRuntimeSourceIsHandedOutFrozen(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
-    std::optional<ModuleID> fileBehindFace(ModuleID module) const { return data(module).isFaceOfFile() ? std::optional(requests(module).front().targetModule()) : std::nullopt; }
-    std::optional<ModuleID> faceOfFile(ModuleID) const;
+    std::optional<ModuleID> moduleBehindFacade(ModuleID module) const { return data(module).isFacade() ? std::optional(requests(module).front().targetModule()) : std::nullopt; }
+    std::optional<ModuleID> facadeOf(ModuleID) const;
     const CompiledRuntimeFunctionData* findRuntimeFunction(uint32_t id) const;
     bool isRuntimeFunction(FunctionID) const;
 
-    String pathText(ModuleID) const;
+    String fullPath(ModuleID) const;
     String displayPathText(ModuleID) const;
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
@@ -169,6 +171,7 @@ private:
     std::strong_ordering comparePath(ModuleID, StringView) const;
     ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
     template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;
+    std::optional<SlotData> hiddenSlot(ModuleID, uint32_t kindBits) const;
 
     const ProgramTables* m_tables;
     std::span<const ModuleData> m_modules;
@@ -207,6 +210,16 @@ inline List ModuleTable::listOf(List list, ModuleID module, Number24 ModuleData:
     return list.subspan(start, m_modules[index + 1].*first - start);
 }
 
+inline std::optional<SlotData> ModuleTable::hiddenSlot(ModuleID module, uint32_t kindBits) const
+{
+    std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
+    for (; !entries.empty() && entries.back().isHidden(); entries = entries.first(entries.size() - 1)) {
+        if (entries.back().kindBits == kindBits)
+            return entries.back().variable;
+    }
+    return std::nullopt;
+}
+
 inline ModuleID ModuleTable::headOfLoadGroup(ModuleID module) const
 {
     const ModuleData& moduleData = data(module);
@@ -230,6 +243,14 @@ inline const IndirectExportData& ModuleTable::indirectExport(const ModuleExportD
     std::span<const IndirectExportData> indirectExports = m_tables->indirectExports();
     RELEASE_ASSERT(moduleExport.indirectExport < indirectExports.size());
     return indirectExports[moduleExport.indirectExport];
+}
+
+inline const ExportedFieldData& ModuleTable::exportedField(const ModuleExportData& moduleExport) const
+{
+    RELEASE_ASSERT(moduleExport.kind() == ModuleExportKind::Field);
+    std::span<const ExportedFieldData> records = spanReinterpretCast<const ExportedFieldData>(m_tables->indirectExports());
+    RELEASE_ASSERT(moduleExport.exportedField < records.size());
+    return records[moduleExport.exportedField];
 }
 
 inline const ExportStatementData* ModuleTable::findExportStatement(const RequiredNameData& requiredName) const

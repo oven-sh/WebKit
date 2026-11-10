@@ -6,13 +6,13 @@
 #   v0: undefined @JSValue = Undefined
 #   v1: true @JSValue = Boolean boolean=true
 #   b0(v2: anything @JSValue, v3: anything @JSValue) entry=0:
-#     v4: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=1 traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
-#     v5 @Void = PutHeapFrameWord v4, v0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v4: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=1 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v5 @Void = PutHeapFrameWord v4, v0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b1()
 #   b1() handler=b3():
-#     v6 @Void = PutHeapFrameWord v4, v1 traits=[mayWriteWhatIsSeen, mayTouchMemory]
-#     v7: anything?UndescribedNativeResult @JSValue = AwaitBySavingFrame v2, v3, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
-#     v8 @Void = PutHeapFrameWord v4, v0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v6 @Void = PutHeapFrameWord v4, v1 traits=[mayWriteObservableState, mayTouchMemory]
+#     v7: anything?UndescribedNativeResult @JSValue = AwaitBySavingFrame v2, v3, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v8 @Void = PutHeapFrameWord v4, v0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b2()
 #   b2():
 #     v9: undefined @JSValue = GetHeapFrameWord v4 valueType=undefined traits=[mayTouchMemory]

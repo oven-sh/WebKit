@@ -571,9 +571,7 @@ private:
 
 struct FactsOfSuspension {
     std::optional<BitSpan> frameWordsDeadAcrossSuspension;
-    BitSpan frameWordsClearedInFrontOfSuspension;
     uint32_t operandEncodedAsFrameWordIndex { UINT32_MAX };
-    uint8_t numberOfFrameWordsToClearAtFirstSuspension { 0 };
 };
 inline constexpr FactsOfSuspension factsOfPatchThatIsToldNothingOfSuspensions { };
 
@@ -657,10 +655,6 @@ public:
         uint32_t child = factsOfSuspension().operandEncodedAsFrameWordIndex;
         return child == UINT32_MAX ? std::nullopt : std::optional<unsigned>(child);
     }
-    void setReleasesDeadValues(bool value) { setBit(ReleasesDeadValues, value); }
-    bool releasesDeadValues() const { return bit(ReleasesDeadValues); }
-    JS_EXPORT_PRIVATE void markChildAsLetGoByCallee(unsigned child);
-    std::span<const unsigned> childrenLetGoByCallee() const { return m_childrenLetGoByCallee.span(); }
     void setSharesLatePath(bool value) { setBit(SharesLatePath, value); }
     bool sharesLatePath() const { return bit(SharesLatePath); }
     bool failsWhenPredicateIsZero() const { return bit(FailsWhenPredicateIsZero); }
@@ -675,10 +669,7 @@ public:
     bool leavesMoveOutOfResultToCallee() const { return bit(LeavesMoveOutOfResultToCallee); }
 
     Reg registerToBringOperandTo(unsigned child) const { return child < m_registersToBringOperandsTo.size() ? m_registersToBringOperandsTo[child] : Reg(); }
-    RegisterSet registersToRelease() const { return registerSetOf(m_registersToRelease); }
     const std::optional<BitSpan>& frameWordsDeadAcrossSuspension() const { return factsOfSuspension().frameWordsDeadAcrossSuspension; }
-    unsigned numberOfFrameWordsToClearAtFirstSuspension() const { return factsOfSuspension().numberOfFrameWordsToClearAtFirstSuspension; }
-    const BitSpan& frameWordsClearedInFrontOfSuspension() const { return factsOfSuspension().frameWordsClearedInFrontOfSuspension; }
 
 private:
     friend class Allocator;
@@ -692,7 +683,6 @@ private:
         FollowsFrameSetup = 1 << 1,
         NeedsFrameRecord = 1 << 2,
         IsSuspension = 1 << 3,
-        ReleasesDeadValues = 1 << 4,
         SharesLatePath = 1 << 5,
         LeavesByReturning = 1 << 6,
         BringsOperandsToTheirRegisters = 1 << 7,
@@ -730,13 +720,11 @@ private:
     ArenaVector<Operation*> m_operands;
     ArenaVector<ValueRep> m_constraints;
     ArenaVector<SuccessorClobber> m_successorClobbers;
-    ArenaVector<unsigned> m_childrenLetGoByCallee;
     ArenaVector<Reg> m_registersToBringOperandsTo;
     Reg m_registerThatCalleeFillsOutOfResult;
     Reg m_registerThatCalleeMovesIntoResult;
     RegisterMask m_earlyClobbered { 0 };
     RegisterMask m_lateClobbered { 0 };
-    RegisterMask m_registersToRelease { 0 };
     RegisterMask m_registersOfResults { ~static_cast<RegisterMask>(0) };
     PatchGenerator* m_generator { nullptr };
     FactsOfSuspension* m_factsOfSuspension { nullptr };
@@ -943,12 +931,11 @@ struct ProcedureTraits {
     bool chargesForCalleeSaves { false };
     bool mayOmitFrameRecord { false };
     bool checksAllocation { false };
-    bool ordersBlocksAsWhenOrderedAgain { false };
-    bool leavesOutSavesThatPatchesAloneRead { false };
-    bool takesSpillsThatStepsReadToBeReadByNone { false };
-    bool takesValuesKeptForCollectorToBeReadByStepsAlone { false };
-    bool takesWaysOnToReadNothing { false };
-    bool skipsReleaseCheck { false };
+    bool shouldUseFallbackBlockOrder { false };
+    bool shouldDropPatchOnlySaves { false };
+    bool shouldAssumeSpillSlotsDead { false };
+    bool shouldAssumeClearUpperHalves { false };
+    bool shouldIgnoreCollectorSpillReads { false };
     bool notesRangesOfOrigins { false };
     CPUFeatureSet features;
 
@@ -1009,13 +996,13 @@ enum class FailureKind : uint8_t {
     MalformedProcedure,
     OutOfRegisters,
     AccessOutsideDeclaredEffects,
-    RegisterLacksItsValue,
-    SpillSlotLacksItsValue,
+    WrongValueInRegister,
+    WrongValueInSpillSlot,
     FrameAddressAcrossSuspension,
     NarrowReferenceWithoutPointer,
     InnerPointerWithoutOwner,
-    ReleasedValueIsReadOnWayOn,
-    NeedsFrameWhereNoneIsSetUp,
+    MissingFrameSetup,
+    UpperHalfIsNotClear,
 };
 
 struct PlaceOfCheck {
@@ -1115,7 +1102,7 @@ public:
     std::span<const FrameRange> frameRanges() const { return m_frameRanges.span(); }
     std::span<const RangeOfOrigin> rangesOfOrigins() const { return m_rangesOfOrigins.span(); }
     uint32_t numberOfOperationsEncoded() const { return m_numberOfOperationsEncoded; }
-    uint32_t numberOfSwitchWindowsToldByBits() const { return m_numberOfSwitchWindowsToldByBits; }
+    uint32_t switchBitTestCount() const { return m_switchBitTestCount; }
     uint32_t numberOfInnerPointersAcrossSafepoints() const { return m_numberOfInnerPointersAcrossSafepoints; }
     void noteInnerPointerAcrossSafepoint() { ++m_numberOfInnerPointersAcrossSafepoints; }
     uint32_t numberOfTrapsTakenOver() const { return m_numberOfTrapsTakenOver; }
@@ -1206,7 +1193,7 @@ private:
     ArenaVector<FrameRange> m_frameRanges;
     ArenaVector<RangeOfOrigin> m_rangesOfOrigins;
     uint32_t m_numberOfOperationsEncoded { 0 };
-    uint32_t m_numberOfSwitchWindowsToldByBits { 0 };
+    uint32_t m_switchBitTestCount { 0 };
     uint32_t m_numberOfInnerPointersAcrossSafepoints { 0 };
     uint32_t m_numberOfTrapsTakenOver { 0 };
     MacroAssembler::Label m_rareCodeStart;

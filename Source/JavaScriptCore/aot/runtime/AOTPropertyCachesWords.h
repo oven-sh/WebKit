@@ -247,7 +247,7 @@ struct ProxyAccessWords {
     uint64_t storeIsStrictOrHeaderOfSlot;
 };
 
-struct RowsOfReads {
+struct ReadGroupCache {
     static constexpr unsigned numberOfRows = 4;
     static constexpr unsigned numberOfPlaces = 6;
     static constexpr int16_t placeIsAskedOfStub = 0;
@@ -271,7 +271,7 @@ struct RowsOfReads {
     uint8_t samplesThatHadRow;
     uint8_t cameInLastSample[numberOfRows];
 };
-static_assert(sizeof(RowsOfReads::Row) == 16 && sizeof(RowsOfReads) == 80 && !OBJECT_OFFSETOF(RowsOfReads, hasGivenUp));
+static_assert(sizeof(ReadGroupCache::Row) == 16 && sizeof(ReadGroupCache) == 80 && !OBJECT_OFFSETOF(ReadGroupCache, hasGivenUp));
 
 struct FrontWords {
     const uint32_t* rowsForStructureIDZero;

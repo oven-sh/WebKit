@@ -5,14 +5,14 @@
 # const box = { [depth]: "deep", [width]: "wide" };
 # print(reader()(box));
 # print("went on");
-# As a-variable-is-held-to-the-one-symbol-that-link-names.ir, of a slot of a scope: compiled code alone fills it, and each store is held to the symbol that the type of the slot names.
-# THE RED CONTROL. The lie, testing=UnseenCodeAnswersUndefined (false-proofs-are-stopped-where-the-value-comes-in.ir): Link takes what the shell's `id` gives for undefined, so nothing passes the test for a symbol,
-# and `depth` is the one symbol that Link names. It printed "deep" for "wide" and went on.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# The same as a-variable-is-held-to-the-one-symbol-that-link-names.ir, for a slot of a scope. Only compiled code fills the slot, and each store is checked against the symbol that the slot's type names.
+# This is the failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined (see false-proofs-are-stopped-where-the-value-comes-in.ir): Link assumes that the shell's `id` returns undefined.
+# So nothing passes the program's test for a symbol, and `depth` is the only symbol that Link names. The program used to print "deep" instead of "wide" and continue.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(DOOR): walk f4 mechanisms=-Inlining
 # DOOR: CheckProof {{*}}symbol("depth")@m0:0
 # DOOR: PutEnvironmentField
-# The reader asks nothing.
+# The reader checks nothing.
 # RUN(READ): walk f3 mechanisms=-Inlining
 # READ-NOT: TypeTest
 # READ-NOT: ElemGet
@@ -20,12 +20,14 @@
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL-NOT: deep
 # ALL-NOT: went on
-# ALL: AOT: f{{*}} at {{*}}: what a slot of a scope holds is not of the type that the compiler has proven of it. It is: symbol. This is a bug in Bun.
+# ALL: bun: internal AOT error: type check failed
+# ALL-NEXT: found symbol in a closure variable
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS-NOT: deep
 # CALLS-NOT: went on
-# CALLS: AOT: f{{*}} at {{*}}: what a slot of a scope holds is not of the type that the compiler has proven of it. It is: symbol. This is a bug in Bun.
+# CALLS: bun: internal AOT error: type check failed
+# CALLS-NEXT: found symbol in a closure variable
 # CALLS: crashed with
 
 layout L0 module=m0 fields=[{key=symbol("depth")@m0:0 declared={type=anything} flags=[IsRequired]}, {key=symbol("width")@m0:1 declared={type=anything} flags=[IsRequired]}] ownFieldCount=2

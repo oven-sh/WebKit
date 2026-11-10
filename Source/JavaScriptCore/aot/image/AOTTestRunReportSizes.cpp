@@ -105,7 +105,7 @@ static CellOfTablesInSizesReport cellOfSectionInSizesReport(ImageSection section
 }
 
 static constexpr std::pair<ASCIILiteral, TablePartID> partsWithCellInSizesReport[] = {
-    { "functions"_s, TablePartID::Functions }, { "function texts"_s, TablePartID::FunctionTexts }, { "layouts"_s, TablePartID::Layouts }, { "field table"_s, TablePartID::FieldTable },
+    { "functions"_s, TablePartID::Functions }, { "function sources"_s, TablePartID::FunctionSources }, { "layouts"_s, TablePartID::Layouts }, { "field table"_s, TablePartID::FieldTable },
     { "types"_s, TablePartID::Types }, { "data"_s, TablePartID::Data }, { "modules"_s, TablePartID::Modules }, { "requests"_s, TablePartID::Requests },
     { "statics"_s, TablePartID::Statics }, { "constants"_s, TablePartID::Constants },
 };

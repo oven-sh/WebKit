@@ -141,6 +141,7 @@ struct alignas(16) Slot {
     static constexpr uint8_t leavesStateOfBirth = absentIsUndefined;
     static constexpr uint8_t readsByteOffset = isOutOfLine;
     static constexpr uint8_t isLastIndexOfRegExp = isOutOfLine;
+    static constexpr uint8_t isInModuleInstance = isOutOfLine;
     static constexpr unsigned absentPatternShift = 4;
     static constexpr uint8_t absentPatternMask = 7;
     static constexpr uint8_t allFlags = UINT8_MAX;
@@ -448,10 +449,11 @@ bool Slot::namesOnlyLiveCells(const Invocable<bool(JSCell*)> auto& isMarked, uin
     switch (payloadOf(kind)) {
     case SlotPayload::None:
     case SlotPayload::WordIndex:
-    case SlotPayload::Field:
     case SlotPayload::OrderWords:
     case SlotPayload::CustomAccessor:
         return true;
+    case SlotPayload::Field:
+        return kind != Kind::Variable || !field.type || isMarked(MarkedBlockCage::decode(cageBase, field.type));
     case SlotPayload::Holder:
     case SlotPayload::Key:
         return !holder || isMarked(holder);

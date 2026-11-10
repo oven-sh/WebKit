@@ -147,7 +147,7 @@ public:
     const void* returnAddressOfCallThatCollected { nullptr };
     void* stackPointerOfImport { nullptr };
     CallFrame* frameOfImportThatAsksLoader { nullptr };
-    bool askerLoadsCompiledFilesAlone { false };
+    bool requesterRejectsUncompiledCode { false };
     bool isResolvingImportCall { false };
     bool isResolvingImportCallWithoutAttributes { false };
     bool requireRunsMocks { false };

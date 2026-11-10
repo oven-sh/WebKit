@@ -14,7 +14,7 @@
 # SWEPT-LABEL: code f2:Body
 # SWEPT-NOT: form=StringAndPrimitive
 # layout L904 kind=Closure
-module m0 path="/$bunfs/root/front.ts" displayPath="front.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 163, 329, 371] quotedTexts=[{position=330 end=15}, {position=349 end=31}] textOfQuotes="globalThis.sink(labels, inside)"} functionText="function labels(a, most) { const head = a + \x22:\x22; let last = \x22\x22; for (let i = 0; i < most; i++) last = (head) + i; return last; }\x0afunction inside(a, most) { let last = \x22\x22; for (let i = 0; i < most; i++) { const head = a + \x22:\x22; if (i & 1) last = head + i; } return last; }\x0a(globalThis).sink(labels, inside);\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/front.ts" displayPath="front.ts" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 163, 329, 371] quotedSources=[{position=330 end=15}, {position=349 end=31}] quotedSourceText="globalThis.sink(labels, inside)"} functionSource="function labels(a, most) { const head = a + \x22:\x22; let last = \x22\x22; for (let i = 0; i < most; i++) last = (head) + i; return last; }\x0afunction inside(a, most) { let last = \x22\x22; for (let i = 0; i < most; i++) { const head = a + \x22:\x22; if (i & 1) last = head + i; } return last; }\x0a(globalThis).sink(labels, inside);\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -29,7 +29,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v9 = Undefined @329
     Return v9 @329
 }
-function f1 name="labels" module=m0 text={end=128} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="labels" module=m0 sourceRange={end=128} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number, v1: number):
     v2 = String string=":" @68
     v3 = Add v0, v2 @68
@@ -53,7 +53,7 @@ function f1 name="labels" module=m0 text={end=128} flags=[IsChecked, HasExplicit
     v17 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @155
     Return v17 @155
 }
-function f2 name="inside" module=m0 position=163 text={start=129 end=270} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="inside" module=m0 position=163 sourceRange={start=129 end=270} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number, v1: number):
     v2 = String string="" @225
     v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @225

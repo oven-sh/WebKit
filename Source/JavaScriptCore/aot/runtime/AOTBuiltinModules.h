@@ -62,7 +62,7 @@ bool isInterpretationDisallowed(JSGlobalObject*, ScriptExecutable&);
 JS_EXPORT_PRIVATE void allowTestRunnerFunction(VM&, FunctionExecutable&);
 JS_EXPORT_PRIVATE bool isFunctionDisallowed(JSFunction*);
 JS_EXPORT_PRIVATE bool isUnreachableLibraryFunction(JSFunction*);
-bool lacksOnlyWhatReachMissed(const Image&);
+bool isClosedWorld(const Image&);
 void throwLibraryFunctionNotCompiled(JSGlobalObject*, ScriptExecutable&);
 JS_EXPORT_PRIVATE void throwBuiltinNotCompiled(JSGlobalObject*, const String& builtin);
 JS_EXPORT_PRIVATE void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject*);

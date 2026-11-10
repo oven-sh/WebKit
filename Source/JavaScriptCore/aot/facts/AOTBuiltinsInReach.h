@@ -127,7 +127,7 @@ public:
     void noteObjectHandedToFormatter(bool isWalked);
     void noteInstancesLoseTheirConstructor();
     void noteTypeHandedToHandler(BuiltinTypeID);
-    void noteUsedWhereFlowBroughtIt(BuiltinID);
+    void recordUsedViaFlow(BuiltinID);
     void noteFoundWhereFlowBroughtHolder(BuiltinID, FunctionID reader);
     void noteStandsAboveClass(BuiltinID, FunctionID constructor);
     void noteEntryHandsHostNothing(uint32_t entry);

@@ -204,7 +204,7 @@ static void testSectionWithDifferentModules()
     Vector<uint64_t> statistics = context.statistics().values();
     AOT_TEST_CHECK(statistics[static_cast<unsigned>(StatisticID::WasmCodeBytesEmitted)] == section.code.size());
     AOT_TEST_CHECK(statistics[static_cast<unsigned>(StatisticID::WasmFunctionsCompiled)] == 4);
-    AOT_TEST_CHECK(statistics[static_cast<unsigned>(StatisticID::WasmCodeBytesOfSecondCopies)] < section.code.size());
+    AOT_TEST_CHECK(statistics[static_cast<unsigned>(StatisticID::WasmSecondCopyBytesEmitted)] < section.code.size());
     AOT_TEST_CHECK(holdsOneRecordOf(modulesOf(section), std::span<const uint8_t>(callModule)));
     AOT_TEST_CHECK(holdsOneRecordOf(modulesOf(section), std::span<const uint8_t>(catchModule)));
     for (const Wasm::ModuleInImage& module : modulesOf(section)) {
@@ -244,7 +244,7 @@ static void testModuleWithoutMemoryHasOneFlavor()
     AOT_TEST_CHECK(module.functions[checking].isEmpty());
 }
 
-static void testFlavorsShareWhatDoesNotTellThemApart()
+static void testMemoryModuleHasCopyPerFlavor()
 {
     Wasm::ModuleForImage module = compileModuleWithCode(memoryModule);
     AOT_TEST_CHECK(module.functions[trapping].size() == 3 && module.functions[checking].size() == 3);
@@ -253,9 +253,8 @@ static void testFlavorsShareWhatDoesNotTellThemApart()
 
     AOT_TEST_CHECK(module.functions[trapping][0].entry != module.functions[checking][0].entry);
     AOT_TEST_CHECK(module.functions[trapping][0].size < module.functions[checking][0].size);
-    AOT_TEST_CHECK(module.functions[trapping][1].entry == module.functions[checking][1].entry);
+    AOT_TEST_CHECK(module.functions[trapping][1].entry != module.functions[checking][1].entry);
     AOT_TEST_CHECK(module.functions[trapping][2].entry != module.functions[checking][2].entry);
-    AOT_TEST_CHECK(module.functions[trapping][2].size == module.functions[checking][2].size);
 }
 
 static void testHandlersLieInTheirFunction()
@@ -461,7 +460,7 @@ std::span<const NativeTest> webAssemblyImageTests()
         { "webassembly-image/module-imported-twice-is-compiled-once"_s, testModuleImportedTwiceIsCompiledOnce },
         { "webassembly-image/every-function-has-code"_s, testEveryFunctionHasCode },
         { "webassembly-image/module-without-memory-has-one-flavor"_s, testModuleWithoutMemoryHasOneFlavor },
-        { "webassembly-image/flavors-share-what-does-not-tell-them-apart"_s, testFlavorsShareWhatDoesNotTellThemApart },
+        { "webassembly-image/memory-module-has-copy-per-flavor"_s, testMemoryModuleHasCopyPerFlavor },
         { "webassembly-image/handlers-lie-in-their-function"_s, testHandlersLieInTheirFunction },
         { "webassembly-image/same-bytes-each-time"_s, testSameBytesEachTime },
         { "webassembly-image/call-goes-to-copy-of-its-flavor"_s, testCallGoesToCopyOfItsFlavor },

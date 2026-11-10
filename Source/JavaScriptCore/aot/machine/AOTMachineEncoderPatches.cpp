@@ -96,30 +96,6 @@ static void restoreValueRepFromConstant(CCallHelpers& jit, int64_t bits, Reg des
     jit.move64ToDouble(scratch, destination.fpr());
 }
 
-void clearFrameWordsInFrontOfSuspension(Encoder& encoder, const PatchOperation* suspension)
-{
-    const BitSpan& words = suspension->frameWordsClearedInFrontOfSuspension();
-    if (!words.size())
-        return;
-
-    RELEASE_ASSERT(encoder.m_frameIsSetUp);
-    AllowMacroScratchRegisterUsage allowScratch(encoder.m_jit);
-    auto addressOfWord = [&](size_t word) {
-        return encoder.m_frame.addressInFrame(-static_cast<intptr_t>(word * sizeof(uint64_t)));
-    };
-    for (size_t word = 0; word < words.size(); ++word) {
-        if (!words.get(word))
-            continue;
-#if CPU(ARM64)
-        if (words.get(word + 1)) {
-            encoder.m_jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, addressOfWord(++word));
-            continue;
-        }
-#endif
-        encoder.m_jit.store64(CCallHelpers::TrustedImm32(0), addressOfWord(word));
-    }
-}
-
 static std::span<MacroAssembler::Jump> oneJumpOfFailingCheck(Encoder& encoder, MacroAssembler::Jump jump)
 {
     ASSERT(jump.isSet());

@@ -59,7 +59,7 @@ Reference integerThatCharCodeIsKnownToBe(Walker& walker, Reference number)
 static ValueID valueBehindNamesOfBodyInCodeUnits(const BodyIndex& index, ValueID value)
 {
     while (value) {
-        value = index.valueBehindCasts(value);
+        value = index.stripCasts(value);
         ValueID tested = value ? index.valueNarrowedInto(value) : ValueID();
         if (!tested)
             break;
@@ -78,11 +78,11 @@ static bool standsBehindTestThatNaNFails(const BodyIndex& index, const BodyValue
         return false;
 
     bool holds = !edge->targetIndex;
-    ValueID condition = index.valueBehindCasts(branch.operand(0));
+    ValueID condition = index.stripCasts(branch.operand(0));
     while (condition && !index.isParameter(condition) && (index.opcodeOf(condition) == Opcode::LogicalNot || index.opcodeOf(condition) == Opcode::ToBoolean)) {
         if (index.opcodeOf(condition) == Opcode::LogicalNot)
             holds = !holds;
-        condition = index.valueBehindCasts(index.value(condition).valueOperand());
+        condition = index.stripCasts(index.value(condition).valueOperand());
     }
     if (!holds || !condition || index.isParameter(condition))
         return false;

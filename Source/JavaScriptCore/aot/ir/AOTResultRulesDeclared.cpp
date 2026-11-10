@@ -633,7 +633,7 @@ TypeID tryTypeOfArrayElementRead(const TypingContext& context, TypeID array, Arr
         result = context.types.unionOf(result, TypeTable::int32);
     bool mayBeFraction = context.at(result).holdsFractionsWithoutBounds();
     if (!readsHoleAsNaN)
-        return mayBeFraction && holdsOnlyNumbers(storage) ? context.types.withPrimitives(result, Primitive::Number) : result;
+        return mayBeFraction && isNumericStorage(storage) ? context.types.withPrimitives(result, Primitive::Number) : result;
     return context.types.withPrimitives(result, mayBeFraction ? Primitive::Number : Primitive::WholeNumber);
 }
 

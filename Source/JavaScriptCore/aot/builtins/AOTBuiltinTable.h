@@ -528,7 +528,7 @@ struct BuiltinSlot {
     AbstractHeap heap;
     BuiltinTypeID holds { };
     std::optional<uint8_t> internalField { };
-    bool holdsWhatStepsHandOut { false };
+    bool holdsStepValues { false };
     bool holdsWhatIsThrown { false };
     BuiltinWordOfCell wordOfCell { BuiltinWordOfCell::None };
 };
@@ -752,12 +752,12 @@ enum class BuiltinMark : uint8_t {
     IsReplacedByFakeTimers,
     RunsCodeThatLocksDoNotBind,
     RunsCodeWithLoader,
-    HandsOutWhatNativeCodeHolds,
+    ExposesNativeRoots,
     RegistersPreparationOfHolders,
     AnswersWithPathOfModule,
     IsKeyReadOnlyByRowsThatNameIt,
     LaysOperandAbovePrototype,
-    HandsOutNoOtherHostObject,
+    ExposesOnlyDescribedObjects,
     IsDeletedWhenModuleOfLibraryLoads,
     PassesOverListWhereItTakesRecordOfHandlers,
     AsksOptionsForListedNamesAlone,
@@ -790,7 +790,7 @@ struct RuntimeModuleData {
     OptionSet<RuntimeModuleFlag> flags { };
     std::span<const BuiltinName> exportsHeldByNamespace { };
     std::span<const BuiltinName> exportsReadByNativeCode { };
-    std::span<const BuiltinName> exportsOfWhichMembersAloneAreKept { };
+    std::span<const BuiltinName> memberOnlyExports { };
 };
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

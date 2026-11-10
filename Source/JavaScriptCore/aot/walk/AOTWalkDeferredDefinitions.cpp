@@ -16,7 +16,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet operationsThatMakeDeferredObjects { Opcode::NewRegExp, Opcode::Data };
-static constexpr OpcodeSet opcodesOfDeferredDefinitions = operationsThatMakeDeferredObjects | inputOperationsThatHandOn | OpcodeSet { Opcode::GetModuleVariable, Opcode::PutModuleVariable };
+static constexpr OpcodeSet opcodesOfDeferredDefinitions = operationsThatMakeDeferredObjects | inputPassThroughOpcodes | OpcodeSet { Opcode::GetModuleVariable, Opcode::PutModuleVariable };
 
 static const DeferredVariable* variableThatValueIsMadeFor(Walker& walker, ValueID value)
 {
@@ -25,7 +25,7 @@ static const DeferredVariable* variableThatValueIsMadeFor(Walker& walker, ValueI
     if (!value || !definitions.bodiesThatDefine.get(body.index()))
         return nullptr;
     const BodyIndex& index = walker.currentBodyIndex();
-    while (!index.isParameter(value) && inputOperationsThatHandOn.contains(index.value(value).opcode()))
+    while (!index.isParameter(value) && inputPassThroughOpcodes.contains(index.value(value).opcode()))
         value = index.value(value).operand(0);
     return index.isParameter(value) ? nullptr : definitions.findMadeBy(body, value);
 }

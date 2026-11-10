@@ -33,21 +33,21 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v5 = Call v1, -, v2, v3, v4
     Return v5
 }
-function f1 name="bag" module=m0 position=10 text={start=10 end=60} length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+function f1 name="bag" module=m0 position=10 sourceRange={start=10 end=60} length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="length" @30
     v2 = PropGet v0 key="limit" @45
     v3 = StrictEq v1, v2 @30
     Return v3 @30
 }
-function f2 name="list" module=m0 position=70 text={start=70 end=120} length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+function f2 name="list" module=m0 position=70 sourceRange={start=70 end=120} length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="length" @90
     v2 = PropGet v0 key="indexOf" @105
     v3 = StrictEq v1, v2 @90
     Return v3 @90
 }
-function f3 name="alone" module=m0 position=130 text={start=130 end=160} length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+function f3 name="alone" module=m0 position=130 sourceRange={start=130 end=160} length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="length" @150
     Return v1 @150

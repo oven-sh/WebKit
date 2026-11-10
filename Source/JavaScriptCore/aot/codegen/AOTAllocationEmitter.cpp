@@ -10,7 +10,6 @@
 
 #include "AOTAccessEmitter.h"
 #include "AOTCellFormat.h"
-#include "AOTClosuresLent.h"
 #include "AOTConstantEmitter.h"
 #include "AOTEnvironmentEmitter.h"
 #include "AOTIRProgram.h"
@@ -153,15 +152,6 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
         return;
     }
     CellPointer cell = allocateWithFields(value, allocation, value->fields(), value->valuesOperands(), value->storage());
-    if (ValueID call = callThatBorrowsObject(m_code, value.id())) {
-        Vector<uint32_t, 8> offsets;
-        for (FieldIndex field : collectSlotsThatMayHoldCells(operationAt(value.id())))
-            offsets.append(m_plan.layout(layout).slots[field].offset);
-        if (!offsets.isEmpty()) {
-            generator().noteObjectWhoseLifeEndsBehind(value.id(), call);
-            cellAllocation.noteWordsThatCellLentHolds(value.id(), offsets.span());
-        }
-    }
     if (ValueID prototype = value->prototypeOperand())
         storePrototype(value, cell, prototype);
     else
@@ -192,16 +182,6 @@ CellPointer AllocationEmitter::allocateCopyFromOtherLayout(const ValueContext& v
     emitter<BarrierEmitter>().fenceAfterInitialization();
     accesses.noteCopyMadeAtAllocation(copy);
     return cell;
-}
-
-AllocationEmitter::EmptySlots AllocationEmitter::collectSlotsThatMayHoldCells(const Operation& made)
-{
-    EmptySlots slots;
-    for (const InitialField& field : collectInitialFields(made.layout(), made.fields(), made.valuesOperands())) {
-        if (traitsOf(field.slot->representation).holdsCell && typeOf(field.value).hasCells())
-            slots.append(field.field);
-    }
-    return slots;
 }
 
 void AllocationEmitter::generateNewDictionary(const ValueContext& value)

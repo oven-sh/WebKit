@@ -68,7 +68,7 @@ void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& valu
     bool isEmpty = count.value()->hasInt64() && !count.value()->asInt64();
     ArrayAllocationEmitter allocation(generator());
     std::optional<Integer> roomOfEmptyList;
-    if (Operand room = value->roomOperand() ? get(value->roomOperand()) : Operand(); isEmpty && value->roomOperand() && room.is<Number>())
+    if (Operand room = value->capacityOperand() ? get(value->capacityOperand()) : Operand(); isEmpty && value->capacityOperand() && room.is<Number>())
         roomOfEmptyList = wholeNumberBehind(room.as<Number>()) ? Integer(wholeNumberBehind(room.as<Number>())) : emitter<ConversionEmitter>().toInteger(room.as<Number>());
     allocation.allocateListLike(value, array, count, roomOfEmptyList, asksRunTime, scopedLambda<void(CellPointer)>([&](CellPointer list) {
         join.add(Boxed(list.value()));

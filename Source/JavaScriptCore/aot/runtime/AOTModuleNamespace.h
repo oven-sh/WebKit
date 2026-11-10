@@ -16,6 +16,7 @@
 
 namespace JSC { namespace AOT {
 
+class Environment;
 class Modules;
 struct ModuleExportData;
 
@@ -51,8 +52,12 @@ public:
     void setMockOfView(VM& vm, JSObject* mock) { m_mockOfView.set(vm, this, mock); }
     void clearMockOfView() { m_mockOfView.clear(); }
     AbstractModuleRecord* recordForResolution();
-    bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_face == module) && !m_isDeferred && !m_mockOfView; }
-    void setFace(ModuleID face) { m_face = face; }
+    bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_facade == module) && !m_isDeferred && !m_mockOfView; }
+    void setFacade(ModuleID facade) { m_facade = facade; }
+    Environment* bindModuleInstance();
+    bool needsModuleInstance() const { return m_hasInstances && !m_moduleInstance; }
+    Environment* boundModuleInstance() const;
+    static constexpr ptrdiff_t offsetOfModuleInstance() { return OBJECT_OFFSETOF(ModuleNamespace, m_moduleInstance); }
     std::optional<unsigned> find(UniquedStringImpl*) const;
     std::optional<unsigned> findWhetherShownOrNot(UniquedStringImpl*) const;
     bool hasExport(UniquedStringImpl* name) const { return findWhetherShownOrNot(name) || isDynamicExport(name); }
@@ -63,9 +68,9 @@ public:
     void replaceDynamicExports(VM&, const DynamicExports&);
     JSValue capturedValueWithoutAllocating(UniquedStringImpl*) const;
 
-    bool showsESModuleMarker() const { return m_hasESModuleMarker || (m_esModuleMarkerWaitsForRun && isRunThatESModuleMarkerWaitsForOver()); }
+    bool showsESModuleMarker() const { return m_hasESModuleMarker || (m_isMarkerDeferred && isDeferredMarkerReady()); }
     void setESModuleMarker(bool hasMarker) { m_hasESModuleMarker = hasMarker; }
-    void letESModuleMarkerWaitForRun(bool waits) { m_esModuleMarkerWaitsForRun = waits; }
+    void setMarkerDeferred(bool isDeferred) { m_isMarkerDeferred = isDeferred; }
     void storeESModuleMarker(bool hasMarker);
 
     bool hasOwnStructure() const { return m_hasOwnStructure; }
@@ -93,18 +98,20 @@ private:
     JSValue readDynamicExport(JSGlobalObject*, PropertyName);
     bool getOwnPropertySlotOfMock(JSGlobalObject*, JSObject* mock, PropertyName, PropertySlot&);
     bool evaluateIfNeeded(JSGlobalObject*);
-    bool isRunThatESModuleMarkerWaitsForOver() const;
+    bool isDeferredMarkerReady() const;
 
     WriteBarrier<JSCellButterfly> m_dynamicExportNames;
     WriteBarrier<JSObject> m_capturedValues;
     WriteBarrier<JSObject> m_liveSources;
     WriteBarrier<JSObject> m_mockOfView;
+    WriteBarrier<JSCell> m_moduleInstance;
     ModuleID m_module;
-    ModuleID m_face;
+    ModuleID m_facade;
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
+    bool m_hasInstances;
     bool m_hasESModuleMarker { false };
-    bool m_esModuleMarkerWaitsForRun { false };
+    bool m_isMarkerDeferred { false };
     bool m_hasOwnStructure { false };
     bool m_keepsToModule { false };
 };

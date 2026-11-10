@@ -23,7 +23,7 @@ ValueID callThatBorrowsClosure(const Code& code, ValueID closure)
     if (made.opcode != Opcode::NewClosure || made.loan() == LoanOfClosure::None)
         return { };
     ValueID user = code.onlyUserOf(closure);
-    while (user && (opcodesThatGiveSameCell.contains(code.at(user).opcode) || code.at(user).opcode == Opcode::NewClosure))
+    while (user && (cellPreservingOpcodes.contains(code.at(user).opcode) || code.at(user).opcode == Opcode::NewClosure))
         user = code.onlyUserOf(user);
     RELEASE_ASSERT(user);
     return user;
@@ -35,7 +35,7 @@ ValueID callThatBorrowsObject(const Code& code, ValueID object)
     if (made.opcode != Opcode::NewObject || made.storage() != AllocationStorage::Frame)
         return { };
     ValueID user = code.onlyUserOf(object);
-    while (user && opcodesThatGiveSameCell.contains(code.at(user).opcode))
+    while (user && cellPreservingOpcodes.contains(code.at(user).opcode))
         user = code.onlyUserOf(user);
     return user && code.at(user).opcode == Opcode::CallDirect && code.at(user).blockIndex == made.blockIndex ? user : ValueID();
 }
@@ -45,7 +45,7 @@ static bool holdsLentClosure(const Code& code, const Operation& holder)
     return std::ranges::any_of(holder.capturesOperands(), [&](ValueID capture) {
         if (!capture || code.isConstant(capture))
             return false;
-        const Operation& held = code.at(rootOfCellInSweptCode(code, capture));
+        const Operation& held = code.at(underlyingCellOf(code, capture));
         return held.opcode == Opcode::NewClosure && held.loan() != LoanOfClosure::None;
     });
 }
@@ -61,7 +61,7 @@ bool lentClosureMayStandInHeap(const Code& code, ValueID closure)
         if (made.loan() != LoanOfClosure::ToFunctionEntered)
             return false;
         closure = code.onlyUserOf(closure);
-        while (closure && opcodesThatGiveSameCell.contains(code.at(closure).opcode))
+        while (closure && cellPreservingOpcodes.contains(code.at(closure).opcode))
             closure = code.onlyUserOf(closure);
         RELEASE_ASSERT(closure);
     }
@@ -74,7 +74,7 @@ uint8_t argumentsLentBy(const Code& code, const Operation& call)
     for (unsigned index = 0; index < arguments.size() && index < ClosureWord::numberOfBorrowedArguments; ++index) {
         if (code.isConstant(arguments[index]))
             continue;
-        const Operation& made = code.at(rootOfCellInSweptCode(code, arguments[index]));
+        const Operation& made = code.at(underlyingCellOf(code, arguments[index]));
         if (made.opcode == Opcode::NewClosure && made.loan() == LoanOfClosure::LeftToStubOfCall)
             lentArguments |= 1u << index;
     }

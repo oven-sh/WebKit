@@ -3,7 +3,7 @@
 # new RegExp("a" + /^(?:a|aa)+b/.test("a".repeat(30))): two to the power of thirty ways: not entered . ("b" + /^(?:a|aa)+b/.test("aaaab")): entered
 # ("c" + /^(?:a|aa)(?:a|aa) .. 34 in a row .. b/.test("a".repeat(50))): not entered . ("d" + /^(?:get|put)-(?:one|all)$/.test("put-all")): entered
 # ("e" + /^(?:a|a) .. 32 in a row .. (?:(?:a|a) .. 32 more ..)b/.test("b")): two to the power of 64 ways, which is more than a word holds: not entered
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /afalse/
 # CHECK: text /btrue/

@@ -18,7 +18,7 @@
 # OBJECT: Return
 layout L0 module=m0 position=194 fields=[{key="valueOf" declared={type=anything} flags=[IsRequired, IsMethod]}] place=194 ownFieldCount=1
 # layout L909 kind=Closure
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 104, 153, 227, 316] quotedTexts=[{position=73 start=94 end=109}, {position=80 start=101 end=108}, {position=135 start=110 end=123}, {position=227 end=15}, {position=238 end=87}, {position=243 start=16 end=30}, {position=259 start=32 end=59}, {position=266 start=39 end=56}, {position=277 start=39 end=58}, {position=288 start=61 end=86}, {position=293 start=66 end=83}, {position=304 start=66 end=85}] textOfQuotes="globalThis.sink(onceOfObject(), summed(globalThis.source()), once(globalThis.source()))sum += Number(list[i])[Number(value)][Number({  })]"} functionText="function summed(list) { let sum = 0; for (let i = 0; i < 64; i++) sum += Number(list[i]); return sum; }\x0afunction once(value) { return [Number(value)]; }\x0afunction onceOfObject() { return [Number({ valueOf() { return 5; } })]; }\x0aglobalThis.sink(onceOfObject(), summed(globalThis.source()), once(globalThis.source()));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 104, 153, 227, 316] quotedSources=[{position=73 start=94 end=109}, {position=80 start=101 end=108}, {position=135 start=110 end=123}, {position=227 end=15}, {position=238 end=87}, {position=243 start=16 end=30}, {position=259 start=32 end=59}, {position=266 start=39 end=56}, {position=277 start=39 end=58}, {position=288 start=61 end=86}, {position=293 start=66 end=83}, {position=304 start=66 end=85}] quotedSourceText="globalThis.sink(onceOfObject(), summed(globalThis.source()), once(globalThis.source()))sum += Number(list[i])[Number(value)][Number({  })]"} functionSource="function summed(list) { let sum = 0; for (let i = 0; i < 64; i++) sum += Number(list[i]); return sum; }\x0afunction once(value) { return [Number(value)]; }\x0afunction onceOfObject() { return [Number({ valueOf() { return 5; } })]; }\x0aglobalThis.sink(onceOfObject(), summed(globalThis.source()), once(globalThis.source()));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -48,7 +48,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v24 = Undefined @227
     Return v24 @227
 }
-function f1 name="summed" module=m0 text={end=103} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="summed" module=m0 sourceRange={end=103} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string|Array):
     v1 = Integer @34
     v2 = Convert v1 declared={type=number flags=[IsExpected]} @34
@@ -72,14 +72,14 @@ function f1 name="summed" module=m0 text={end=103} flags=[HasExplicitName] lengt
   b3():
     Return v5 @97
 }
-function f2 name="once" module=m0 position=104 text={start=104 end=152} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="once" module=m0 position=104 sourceRange={start=104 end=152} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = Builtin builtin=Number @135
     v2 = Call v1, -, v0 calleeName="Number" @135
     v3 = NewArray v2 contents=anything @134
     Return v3 @134
 }
-function f3 name="onceOfObject" module=m0 position=153 text={start=153 end=226} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="onceOfObject" module=m0 position=153 sourceRange={start=153 end=226} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Builtin builtin=Number @187
     v1 = NewClosure function=f4 @196
@@ -89,7 +89,7 @@ function f3 name="onceOfObject" module=m0 position=153 text={start=153 end=226} 
     v5 = NewArray v4 contents=anything @186
     Return v5 @186
 }
-function f4 name="valueOf" module=m0 position=196 text={start=196 end=219} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 name="valueOf" module=m0 position=196 sourceRange={start=196 end=219} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Integer integer=5 @215
     Return v0 @215

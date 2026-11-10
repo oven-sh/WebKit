@@ -252,7 +252,7 @@ static BitVector variablesDescribedToRunTimeByPlan(const Program& program)
             add(binding.variable);
     }
     for (uint32_t index = 0; index < program.variables.size(); ++index) {
-        if (program.variables[index].flags.contains(VariableFlags::HoldsMock) || program.variables[index].owner)
+        if (program.variables[index].flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::HoldsInstance, VariableFlags::GuardsInstance, VariableFlags::AllocatesInstance }) || program.variables[index].owner)
             described.quickSet(index);
     }
     return described;
@@ -305,7 +305,7 @@ static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, con
                 continue;
             const LinkedCell& cell = linked.variable(definition.variable);
             if (!cell.everyWriterIsKnown || cell.isWrittenAfterConstruction || !cell.proven || variable.owner || variable.initialization == VariableInitialization::Function
-                || variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable }))
+                || variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable, VariableFlags::HoldsInstance }))
                 continue;
             if (!index)
                 index = facts.bodies().find(body);
@@ -372,7 +372,7 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
         if (declaration.owner)
             continue;
         if (holdsNumbersRaw && !planned.isDescribedToRunTime && declaration.initialization != VariableInitialization::Function && !filledByRunTime.get(index)
-            && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
+            && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance }))
             planned.representation = formOfNumbersProvenOfVariableInPlan(program, facts.linked(), VariableID(index));
         SlotTraits traits = traitsOf(planned.representation);
         switch (declaration.initialization) {
@@ -454,7 +454,7 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
         const Module& module = program.modules[index];
         if (module.kind != ModuleKind::CommonJs)
             parts.modulesWithValue.quickSet(index);
-        bool isCommonJsWithOneNamespace = module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsImportedAsNamespace) && !module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted });
+        bool isCommonJsWithOneNamespace = module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsImportedAsNamespace) && !module.flags.containsAny({ ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted });
         if (module.kind == ModuleKind::Runtime || module.kind == ModuleKind::RuntimeSource || isCommonJsWithOneNamespace)
             parts.modulesWithNamespaceWord.quickSet(index);
         if (!module.body || !program.at(module.body).hasBody() || bodyOfModuleOnlyReturns(program.at(module.body).body))
@@ -467,7 +467,7 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
         }
     }
     for (const Module& module : program.modules) {
-        if (isFaceOfCommonJSFile(program, module))
+        if (isCommonJSFacade(program, module))
             parts.modulesWithNamespaceWord.quickClear(module.requests[0].target.index());
     }
     parts.modulesWithRequireCacheValue.filter(parts.modulesWithValue);
@@ -807,7 +807,7 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
         Representation result = parts.conventions.resultRepresentation({ FunctionID(index), CodeRole::Body });
         numberOfFunctionsThatReturnNumberOrUndefinedRaw += result == Representation::OptionalInt64 || result == Representation::OptionalDouble;
     }
-    build.statistics().count(StatisticID::AsyncWorkersMade, numberOfAsyncFunctionsThatNeverSuspend);
+    build.statistics().count(StatisticID::NonSuspendingAsyncFunctions, numberOfAsyncFunctionsThatNeverSuspend);
     build.statistics().count(StatisticID::NumbersOrUndefinedReturnedRaw, numberOfFunctionsThatReturnNumberOrUndefinedRaw);
 
 }
@@ -959,7 +959,7 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
         slots.variables = WTF::move(variables);
         slots.classCreation = WTF::move(classCreation);
         build.statistics().count(StatisticID::EnvironmentsPromotedToVariables, parts.promotedEnvironments.layouts.size());
-        build.statistics().count(StatisticID::CapturesOfClassesStoredForGoodPromoted, parts.promotedEnvironments.numberOfCapturesOfClassesStoredForGood);
+        build.statistics().count(StatisticID::PermanentClassCapturesPromoted, parts.promotedEnvironments.numberOfCapturesOfClassesStoredForGood);
         holdDoorsToProofsInSlotPlan(program, facts, build.parallelLoops(), slots);
         appendPromotedVariables(parts.promotedEnvironments, slots);
         markSlotsFilledAtBirthInPlan(program, facts, build.parallelLoops(), slots);

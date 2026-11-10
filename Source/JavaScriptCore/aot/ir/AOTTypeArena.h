@@ -114,7 +114,7 @@ public:
     }
 
     Type at(TypeID) const;
-    bool saysNothing(TypeID) const;
+    bool isUninformative(TypeID) const;
     const Type& recordOf(TypeID) const LIFETIME_BOUND;
     SetView<LayoutID, LayoutSetID> at(LayoutSetID set) const { return m_layoutSets.at(set); }
     std::span<const LayoutID> listOf(LayoutSetID set) const { return const_cast<TypeArena&>(*this).m_layoutSets.listOf(set); }
@@ -366,7 +366,7 @@ ALWAYS_INLINE Type TypeArena::at(TypeID id) const
     return recordOf(id);
 }
 
-ALWAYS_INLINE bool TypeArena::saysNothing(TypeID id) const
+ALWAYS_INLINE bool TypeArena::isUninformative(TypeID id) const
 {
     if (!id || isNeverType(id))
         return true;

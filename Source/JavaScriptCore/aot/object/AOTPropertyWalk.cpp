@@ -75,7 +75,7 @@ static bool extraPropertiesAreWalkedDirectly(JSObject* extra, Elements elements)
 {
     Structure* structure = extra->structure();
     return extra->type() == FinalObjectType
-        && (elements == Elements::AreLeftOut ? !extra->canHaveExistingOwnIndexedGetterSetterProperties() : !JSC::hasIndexedProperties(extra->indexingType()))
+        && (elements == Elements::Skip ? !extra->canHaveExistingOwnIndexedGetterSetterProperties() : !JSC::hasIndexedProperties(extra->indexingType()))
         && !structure->hasAnyKindOfGetterSetterProperties()
         && !extra->hasNonReifiedStaticProperties();
 }
@@ -322,7 +322,7 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
         return Result::NeedsGenericPath;
     bool isStopped = false;
     JSObject* extra = typed->extraProperties();
-    if (extra && elements == Elements::AreLeftOut && extra->structure() == typed->instance().realm.extraPropertiesWithElementsStructure)
+    if (extra && elements == Elements::Skip && extra->structure() == typed->instance().realm.extraPropertiesWithElementsStructure)
         extra = nullptr;
     if (!extra) {
         unsigned attributes = typed->attributesOfPublicFields();
@@ -914,7 +914,7 @@ static bool readPropertiesInOrderOfCreation(JSGlobalObject* realm, JSObject* sou
             names.append(own.name);
             values.appendWithCrashOnOverflow(own.value);
             return IterationStatus::Continue;
-        }, Elements::AreLeftOut);
+        }, Elements::Skip);
         return !scope.exception() && result == Result::Completed;
     }
     Structure* structure = source->structure();

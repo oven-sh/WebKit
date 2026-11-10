@@ -92,7 +92,6 @@ enum class StepKind : uint8_t {
     Save,
     Materialize,
     Swap,
-    ClearSpill,
     KeepPointer,
 };
 
@@ -126,7 +125,7 @@ struct SpillFacts {
     bool isStoredAtHeadOfFramedPart { false };
     bool isSharedByPhis { false };
     bool isRead { false };
-    bool isReadByNoStep { false };
+    bool isDeadSlot { false };
 
     bool hasGap() const { return beginOfGap != noPosition; }
     bool isInGap(Position position) const { return hasGap() && beginOfGap <= position && position <= endOfGap; }
@@ -176,8 +175,8 @@ public:
     const PatchAssignment& patchAssignment(uint32_t index) const { return m_patchAssignments[index]; }
     uint32_t numberOfPatchAssignments() const { return m_patchAssignments.size(); }
     uint32_t numberOfOperationsAllocated() const { return m_numberOfOperationsAllocated; }
-    uint64_t numberOfLaterReadsAskedWhetherTheyCount() const { return m_numberOfLaterReadsAskedWhetherTheyCount; }
-    uint64_t numberOfBlocksReachedBySearchesForWays() const { return m_numberOfBlocksReachedBySearchesForWays; }
+    uint64_t laterUsesScanned() const { return m_laterUsesScanned; }
+    uint64_t livenessSearchBlocksVisited() const { return m_livenessSearchBlocksVisited; }
 
     std::span<Step> stepsForTesting() { return m_steps.span(); }
     BlockSteps& stepsForTesting(const Block* block) { return m_blocks[block->index()]; }
@@ -192,14 +191,14 @@ public:
     bool isStoredBehindDefinition(const Operation* value) const
     {
         SpillIndex spill = spillOf(value);
-        return spill != noSpill && registerAtDefinitionOf(value).isSet() && !m_spills[spill].isStoredAtHeadOfFramedPart && !m_spills[spill].isReadByNoStep && !isWrittenByEdges(value);
+        return spill != noSpill && registerAtDefinitionOf(value).isSet() && !m_spills[spill].isStoredAtHeadOfFramedPart && !m_spills[spill].isDeadSlot && !isWrittenByEdges(value);
     }
     bool isWrittenByEdges(const Operation* phi) const { return m_phisWrittenByEdges.size() && m_phisWrittenByEdges.get(phi->index()); }
 
     std::span<const SpillFacts> spills() const { return m_spills.span(); }
     std::span<SpillFacts> spillsForTesting() { return m_spills.span(); }
     std::span<PatchOperation* const> suspensions() const { return m_suspensions.span(); }
-    const BitSpan& spillsHeldAt(uint32_t suspension) const { return m_spillsHeldAtSuspension[suspension]; }
+    const BitSpan& liveSpillsAt(uint32_t suspension) const { return m_liveSpillsAtSuspension[suspension]; }
 
     RegisterMask usedCalleeSaves() const { return m_usedCalleeSaves; }
     bool needsFrameOutsideRareRegions() const { return m_needsFrameOutsideRareRegions; }
@@ -257,12 +256,12 @@ private:
     ArenaVector<Reg> m_registerAtDefinition;
     ArenaVector<SpillFacts> m_spills;
     ArenaVector<PatchOperation*> m_suspensions;
-    ArenaVector<BitSpan> m_spillsHeldAtSuspension;
+    ArenaVector<BitSpan> m_liveSpillsAtSuspension;
     RegisterMask m_usedCalleeSaves { 0 };
     BitSpan m_phisWrittenByEdges;
     uint32_t m_numberOfOperationsAllocated { 0 };
-    uint64_t m_numberOfLaterReadsAskedWhetherTheyCount { 0 };
-    uint64_t m_numberOfBlocksReachedBySearchesForWays { 0 };
+    uint64_t m_laterUsesScanned { 0 };
+    uint64_t m_livenessSearchBlocksVisited { 0 };
     bool m_needsFrameOutsideRareRegions { false };
     bool m_needsFrameAheadOfFramedPart { false };
     bool m_recordsWhatCheckersRead { false };

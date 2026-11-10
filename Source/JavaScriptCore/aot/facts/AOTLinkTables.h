@@ -22,6 +22,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class BodyIndex;
 class BodyIndexTable;
 
 struct LinkedParameter {
@@ -346,7 +347,7 @@ struct LookupsPastProgramObjects {
     BitVector builtinsConstructed;
     BitVector builtinsCalledByCode;
     BitVector builtinsLetGo;
-    BitVector builtinsUsedWhereFlowBroughtThem;
+    BitVector builtinsUsedViaFlow;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> builtinsFoundWhereFlowBroughtHolders;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> constructorsBelowBuiltins;
     BitVector builtinsCalledOutOfSight;
@@ -780,12 +781,13 @@ struct LinkTables {
 
 bool isNameInTextOf(const Program&, PropertyKeyID symbol, FunctionID);
 PropertyKeyID keyOfWellKnownSymbol(const Program&, BuiltinID constant);
+PropertyKeyID provenSymbolAt(const Program&, const ThinSummaries&, FunctionID, const BodyIndex&, ValueID);
 bool isSymbolOfLibrary(const Program&, PropertyKeyID);
 
 LinkTables conservativeLinkTables(const Program&);
 LinkTables conservativeLinkTables(const Program&, const ParallelLoops&);
-void findParametersThatAreOnlyCalled(const Program&, const BodyIndexTable&, const ThinSummaries&, const ParallelLoops&, Mechanisms, bool takesCalleesToKeepNothing, LinkTables&);
-void findParametersThatAreOnlyLookedAt(const Program&, const BodyIndexTable&, const ThinSummaries&, Mechanisms, bool takesCalleesToKeepNothing, LinkTables&);
+void findParametersThatAreOnlyCalled(const Program&, const BodyIndexTable&, const ThinSummaries&, const ParallelLoops&, Mechanisms, bool shouldAssumeCalleesRetainNothing, LinkTables&);
+void findParametersThatAreOnlyLookedAt(const Program&, const BodyIndexTable&, const ThinSummaries&, Mechanisms, bool shouldAssumeCalleesRetainNothing, LinkTables&);
 void carryExpectationOfThisIntoCaptures(const Program&, const BodyIndexTable&, const ThinSummaries&, LinkTables&);
 
 BitVector bodiesThatLoaderEntersAtMostOnce(const Program&);

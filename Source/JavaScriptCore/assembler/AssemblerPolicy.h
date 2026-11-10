@@ -48,6 +48,8 @@ struct AssemblerPolicy {
     bool shortensEncodings { false };
     OopsForm oops { OopsForm::AbortWithReason };
     bool trapsWithIllegalInstruction { false };
+    // ARM64 only. LinkBuffer routes a branch of image code that spans more than half of this through branch islands. Tests lower it.
+    uint32_t branchReach { 128u << 20 };
 };
 
 } // namespace JSC

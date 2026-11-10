@@ -304,7 +304,7 @@ static std::optional<LineColumn> positionInBuiltin(const Program& program, const
         return owner.kind == FunctionKind::DerivedConstructor ? superCallOfDefaultConstructor : startOfBuiltinFunction;
     if (owner.syntax.contains(FunctionSyntax::IsShownAsNativeCode))
         return program.lineColumnFor(owner.module, owner.position);
-    if (owner.syntax.contains(FunctionSyntax::IsShownInModuleOfHelpers))
+    if (owner.syntax.contains(FunctionSyntax::IsShownInHelperModule))
         return startOfBuiltinFunction;
     if (!owner.enclosingRuntimeFunction)
         return std::nullopt;
@@ -871,7 +871,7 @@ static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Cod
         bytesByForm.last().bytes += entry.bytes;
         bytesByForm.last().countThatLooksOtherwise += entry.countThatLooksOtherwise;
         bytesByForm.last().countLongerThanCall += entry.countLongerThanCall;
-        bytesByForm.last().countThatDiffersFromSchema += entry.countThatDiffersFromSchema;
+        bytesByForm.last().schemaMismatchCount += entry.schemaMismatchCount;
         bytesByForm.last().countFoundOpen += entry.countFoundOpen;
         bytesByForm.last().countFoundClosed += entry.countFoundClosed;
         bytesByForm.last().countFoundRuntime += entry.countFoundRuntime;
@@ -1012,14 +1012,14 @@ CompiledCode describeCode(BuildContext& build, const CodeGenerationInputs& input
     if (emitted.procedure.traits().notesRangesOfOrigins) {
         MeasurementsOfCode& measurements = result.measurements.ensure();
         measurements.bytesByForm = describeBytesByForm(inputs.program, code, records.formsSaid, result.body, emitted, measurements);
-        uint64_t formsThatDifferFromSchema = 0;
-        uint64_t formsPickedByPlaceOtherThanLoop = 0;
+        uint64_t codeFormSchemaMismatches = 0;
+        uint64_t coldCodeFormsChosen = 0;
         for (const BytesOfForm& row : measurements.bytesByForm) {
-            formsThatDifferFromSchema += row.countThatDiffersFromSchema;
-            formsPickedByPlaceOtherThanLoop += row.isPickedByPlaceOtherThanLoop() ? row.count : 0;
+            codeFormSchemaMismatches += row.schemaMismatchCount;
+            coldCodeFormsChosen += row.isChosenForColdCode() ? row.count : 0;
         }
-        build.statistics().count(StatisticID::FormsThatDifferFromSchema, formsThatDifferFromSchema);
-        build.statistics().count(StatisticID::FormsPickedByPlaceOtherThanLoop, formsPickedByPlaceOtherThanLoop);
+        build.statistics().count(StatisticID::CodeFormSchemaMismatches, codeFormSchemaMismatches);
+        build.statistics().count(StatisticID::ColdCodeFormsChosen, coldCodeFormsChosen);
         measurements.bytesOutsideOperations = describeBytesOutsideOperations(result.body, emitted);
         measurements.ranges = describeRangesOfCode(code, result.body, emitted);
     }

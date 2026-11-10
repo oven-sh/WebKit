@@ -1769,7 +1769,7 @@ static void allocatorAsksEachLoopAroundBlockInTurn()
 {
     ProcedureTraits traits;
     traits.checksAllocation = true;
-    traits.ordersBlocksAsWhenOrderedAgain = true;
+    traits.shouldUseFallbackBlockOrder = true;
     TestProcedure test(traits);
     Output& out = test.out();
     LValue ways = test.argumentGPR(0);

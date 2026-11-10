@@ -2,7 +2,7 @@
 # nothing starts over, so a name that only the flow brings there is not opened. The build says so, and the run time refuses the store aloud
 # put(Object.prototype, 1)   with   put = (o, v) => { o.planted = v }
 # name-added-through-a-list-of-prototypes.ir is the control: the same store on another object is opened
-# DIAGNOSTIC: NameAddedToBuiltinWasNotOpened 1
+# DIAGNOSTIC: UndetectedBuiltinAddition 1
 # DIAGNOSTIC: LockedBuiltinWriteMayRun 1
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: test-run

@@ -60,7 +60,7 @@ public:
     Word32 orderWordOfAnyCell(CellPointer);
 
     Condition hasShapeIn(CellPointer, LayoutSetID tested, const Type& known, MarkedObjects = MarkedObjects::Pass);
-    bool lastTestRefusesMarkedObjects() const { return m_lastTestRefusesMarkedObjects; }
+    bool lastTestRejectsMarks() const { return m_lastTestRejectsMarks; }
     bool lastTestIsHeldAgainstEveryShape() const { return m_lastTestIsHeldAgainstEveryShape; }
     Condition isShapeOf(Word32 shapeWord, LayoutID);
     void branchOnShapeIn(CellPointer, LayoutSetID tested, const Type& known, BranchTargets, MarkedObjects = MarkedObjects::Pass);
@@ -98,7 +98,7 @@ private:
     LayoutSetID m_setWhoseShapesAreKept;
     bool m_keptSetHoldsCompiledObjectsAlone { true };
     bool m_shapesOfKeptSetAreListed { false };
-    bool m_lastTestRefusesMarkedObjects { false };
+    bool m_lastTestRejectsMarks { false };
     bool m_lastTestIsHeldAgainstEveryShape { false };
     bool m_wordIsAskedForMark { true };
     UncheckedKeyHashMap<LayoutSetID, bool> m_setsThatMayBearMark;

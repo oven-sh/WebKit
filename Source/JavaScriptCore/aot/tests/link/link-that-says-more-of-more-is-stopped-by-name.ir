@@ -1,7 +1,7 @@
-# THE RED CONTROL of check=FlowFindsNoLessFromMore. The program of link-given-more-finds-no-less.ir under a seed with its highest bit set (2147483648 + 16): the more is given to the run that stands for the program as it is,
+# THE RED CONTROL of check=FlowMonotonicity. The program of link-given-more-finds-no-less.ir under a seed with its highest bit set (2147483648 + 16): the more is given to the run that stands for the program as it is,
 # and the tables of the build are those of the program as it is (givesMoreToRunOnProgramAsItIs()). So they say more than the others: `value` of note() is proven a number where anything arrives in the other run. The build stops by name.
-# OPTIONS: testing=GiveLinkMore:2147483664 check=FlowFindsNoLessFromMore
-# STATISTIC: FactNodesGivenMore >= 1
-# DIAGNOSTIC: FlowFindsLessFromMore
+# OPTIONS: testing=WidenFlowNodes:2147483664 check=FlowMonotonicity
+# STATISTIC: FactNodesWidened >= 1
+# DIAGNOSTIC: FlowNotMonotonic
 # PROGRAM-OF: link-given-more-finds-no-less.ir
 # RUN: link functions mechanisms=all

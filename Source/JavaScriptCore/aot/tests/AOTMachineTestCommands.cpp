@@ -609,7 +609,7 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
         return index + 2 == key.size() ? WordOfMentionKey::Key : WordOfMentionKey::Number;
     case NumberSpace::ArrayProfile:
         return index + 1 < key.size() ? wordOfPlaceInMentionKeyAt(index) : WordOfMentionKey::Number;
-    case NumberSpace::RowsOfReads:
+    case NumberSpace::ReadGroupCache:
         return index ? WordOfMentionKey::Number : WordOfMentionKey::Function;
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
@@ -1139,7 +1139,7 @@ static void runMachineBytesByFormCommand(TestCommandContext& context)
         uint64_t countFoundOpen { 0 };
         uint64_t countFoundClosed { 0 };
         uint64_t countFoundRuntime { 0 };
-        bool isPickedByPlaceOtherThanLoop { false };
+        bool isChosenForColdCode { false };
     };
 
     setFormSaidFalsely(saidFalsely);
@@ -1149,8 +1149,8 @@ static void runMachineBytesByFormCommand(TestCommandContext& context)
     StagedBuild stage = context.stage();
     UncheckedKeyHashMap<uint64_t, TotalOfRow, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> totals;
     TotalOfCodeForm totalOfAllForms;
-    uint64_t formsThatDifferFromSchema = 0;
-    uint64_t formsPickedByPlaceOtherThanLoop = 0;
+    uint64_t codeFormSchemaMismatches = 0;
+    uint64_t coldCodeFormsChosen = 0;
     uint64_t bytesOfCode = 0;
     uint64_t bytesInInlineFrames = 0;
     uint64_t bytesInInlineFramesOfLibrary = 0;
@@ -1179,9 +1179,9 @@ static void runMachineBytesByFormCommand(TestCommandContext& context)
             total.countFoundOpen += row.countFoundOpen;
             total.countFoundClosed += row.countFoundClosed;
             total.countFoundRuntime += row.countFoundRuntime;
-            total.isPickedByPlaceOtherThanLoop = row.isPickedByPlaceOtherThanLoop();
-            formsThatDifferFromSchema += row.countThatDiffersFromSchema;
-            formsPickedByPlaceOtherThanLoop += row.isPickedByPlaceOtherThanLoop() ? row.count : 0;
+            total.isChosenForColdCode = row.isChosenForColdCode();
+            codeFormSchemaMismatches += row.schemaMismatchCount;
+            coldCodeFormsChosen += row.isChosenForColdCode() ? row.count : 0;
             totalOfAllForms.count += row.count;
             totalOfAllForms.bytes += row.bytes;
         }
@@ -1216,11 +1216,11 @@ static void runMachineBytesByFormCommand(TestCommandContext& context)
     }
     for (uint64_t key : keys) {
         const TotalOfRow& total = totals.find(key)->value;
-        if (total.isPickedByPlaceOtherThanLoop)
+        if (total.isChosenForColdCode)
             context.out.println("picked by the place: "_s, nameOfRowInBytesByFormText(key), " "_s, total.all.count, " "_s, total.all.bytes, " asked by "_s, questionInBytesByFormTextAbout(static_cast<Place>(key >> 8 & 0xFF)));
     }
-    context.out.println("forms that differ from the schema "_s, formsThatDifferFromSchema);
-    context.out.println("forms picked by a place other than a loop "_s, formsPickedByPlaceOtherThanLoop);
+    context.out.println("forms that differ from the schema "_s, codeFormSchemaMismatches);
+    context.out.println("forms picked by a place other than a loop "_s, coldCodeFormsChosen);
     if (rowsNotNamed)
         context.out.println("forms not named "_s, rowsNotNamed);
     else

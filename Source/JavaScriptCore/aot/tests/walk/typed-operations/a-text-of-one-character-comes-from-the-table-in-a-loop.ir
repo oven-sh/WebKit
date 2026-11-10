@@ -11,7 +11,7 @@
 # FIRST: = Substring
 # FIRST-NOT: inlineBuiltin=StringFromCharCode
 # layout L909 kind=Closure
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 133, 197, 269] quotedTexts=[{position=29 start=77 end=89}, {position=80 start=93 end=104}, {position=98 start=104 end=113}, {position=103 start=104 end=122}, {position=108 start=114 end=121}, {position=163 start=129 end=141}, {position=185 start=142 end=149}, {position=197 end=15}, {position=208 end=70}, {position=213 start=16 end=41}, {position=218 start=21 end=38}, {position=229 start=21 end=40}, {position=240 start=43 end=69}, {position=246 start=49 end=66}, {position=257 start=49 end=68}] textOfQuotes="globalThis.sink(keep(globalThis.source()), first(globalThis.source()))text = String(text)i < text.lengthlist.push(text[i])text = String(text)[text[0]]"} functionText="function keep(text) { text = String(text); const list = []; for (let i = 0; i < text.length; i++) list.push(text[i]); return list; }\x0afunction first(text) { text = String(text); return [text[0]]; }\x0aglobalThis.sink(keep(globalThis.source()), first(globalThis.source()));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 133, 197, 269] quotedSources=[{position=29 start=77 end=89}, {position=80 start=93 end=104}, {position=98 start=104 end=113}, {position=103 start=104 end=122}, {position=108 start=114 end=121}, {position=163 start=129 end=141}, {position=185 start=142 end=149}, {position=197 end=15}, {position=208 end=70}, {position=213 start=16 end=41}, {position=218 start=21 end=38}, {position=229 start=21 end=40}, {position=240 start=43 end=69}, {position=246 start=49 end=66}, {position=257 start=49 end=68}] quotedSourceText="globalThis.sink(keep(globalThis.source()), first(globalThis.source()))text = String(text)i < text.lengthlist.push(text[i])text = String(text)[text[0]]"} functionSource="function keep(text) { text = String(text); const list = []; for (let i = 0; i < text.length; i++) list.push(text[i]); return list; }\x0afunction first(text) { text = String(text); return [text[0]]; }\x0aglobalThis.sink(keep(globalThis.source()), first(globalThis.source()));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -38,7 +38,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v21 = Undefined @197
     Return v21 @197
 }
-function f1 name="keep" module=m0 text={end=132} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="keep" module=m0 sourceRange={end=132} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
     v1 = Builtin builtin=String @29
     v2 = Call v1, -, v0 calleeName="String" @29
@@ -62,7 +62,7 @@ function f1 name="keep" module=m0 text={end=132} flags=[HasExplicitName] length=
   b3():
     Return v4 @125
 }
-function f2 name="first" module=m0 position=133 text={start=133 end=196} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="first" module=m0 position=133 sourceRange={start=133 end=196} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
     v1 = Builtin builtin=String @163
     v2 = Call v1, -, v0 calleeName="String" @163

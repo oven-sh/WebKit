@@ -271,7 +271,7 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     const bool mayBeFirstStep = (origin.opcode == Opcode::Integer && !origin.integer()) || origin.opcode == Opcode::GetInternalField;
     const std::optional<CellPointer> ownerOfFirstStep = mayBeFirstStep ? std::optional { owner } : std::nullopt;
     if (mayBeFirstStep)
-        build().statistics().count(StatisticID::StepsThatKnowTheDeletedPrefix);
+        build().statistics().count(StatisticID::CollectionStepsSkippingDeletedPrefix);
 
     LBasicBlock isCurrent = newBlock();
     LBasicBlock isCompact = newBlock();
@@ -420,8 +420,8 @@ void CollectionIntrinsicEmitter::generateGetValueAtPlaceInMap(const ValueContext
     }, [&] {
         LValue table = reader.storageOf(map);
         LValue slot = m_out.add(table, place.value());
-        if (testsEveryPositionUnder(build().options().testing) || emittersCheckProofs()) {
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, Condition(m_out.notNull(table)), std::nullopt, ProofSource::WhatIsRemembered);
+        if (checksBoundsUnder(build().options().testing) || emittersCheckProofs()) {
+            emitter<ThrowEmitter>().requireOrCrash(value, Condition(m_out.notNull(table)), std::nullopt, ProofSource::RememberedFact);
             Condition placeIsOfNarrowValue = hasBits(place, placeInMapHoldsNarrowValue);
             Condition isLive(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfStatus())), m_out.constInt32(static_cast<int32_t>(CompactTable::Status::Live))));
             LValue widthThatPlaceSays = m_out.select(placeIsOfNarrowValue.value(), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow)), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Wide)));
@@ -432,8 +432,8 @@ void CollectionIntrinsicEmitter::generateGetValueAtPlaceInMap(const ValueContext
             LValue distance = m_out.sub(slot, values);
             LValue entry = m_out.select(placeIsOfNarrowValue.value(), m_out.lShr(m_out.sub(distance, m_out.constInt64(placeInMapHoldsNarrowValue)), m_out.constInt32(2)), m_out.lShr(distance, m_out.constInt32(3)));
             Condition isInUse(m_out.below(entry, m_out.zeroExtPtr(m_out.load32(reader.tableField(table, CompactTable::offsetOfUsed())))));
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(logicalAnd(isLive, holdsValuesOfThatWidth), isInUse), std::nullopt, ProofSource::WhatIsRemembered);
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, Condition(m_out.select(keysAreWide.value(), reader.isLiveKeyWord(CompactTable::Width::Wide, reader.loadKeyWord(CompactTable::Width::Wide, keys, entry)), reader.isLiveKeyWord(CompactTable::Width::Narrow, reader.loadKeyWord(CompactTable::Width::Narrow, keys, entry)))), std::nullopt, ProofSource::WhatIsRemembered);
+            emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(logicalAnd(isLive, holdsValuesOfThatWidth), isInUse), std::nullopt, ProofSource::RememberedFact);
+            emitter<ThrowEmitter>().requireOrCrash(value, Condition(m_out.select(keysAreWide.value(), reader.isLiveKeyWord(CompactTable::Width::Wide, reader.loadKeyWord(CompactTable::Width::Wide, keys, entry)), reader.isLiveKeyWord(CompactTable::Width::Narrow, reader.loadKeyWord(CompactTable::Width::Narrow, keys, entry)))), std::nullopt, ProofSource::RememberedFact);
         }
         return selectByBranch<Boxed>(hasBits(place, placeInMapHoldsNarrowValue), [&] {
             return reader.decodeNarrow(NarrowReference(m_out.load32(m_out.address(entries, slot, -placeInMapHoldsNarrowValue))));
@@ -476,8 +476,8 @@ void CollectionIntrinsicEmitter::generateTryPutValueAtPlaceInMap(const ValueCont
 
         m_out.appendTo(liesWhereItWasFound);
         LValue table = reader.storageOf(map);
-        if (testsEveryPositionUnder(build().options().testing) || emittersCheckProofs()) {
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, Condition(m_out.notNull(table)), std::nullopt, ProofSource::WhatIsRemembered);
+        if (checksBoundsUnder(build().options().testing) || emittersCheckProofs()) {
+            emitter<ThrowEmitter>().requireOrCrash(value, Condition(m_out.notNull(table)), std::nullopt, ProofSource::RememberedFact);
             Condition isLive(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfStatus())), m_out.constInt32(static_cast<int32_t>(CompactTable::Status::Live))));
             Condition holdsWideValues(m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfValueWidth())), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Wide))));
             LValue keys = reader.keysOf(table);
@@ -485,8 +485,8 @@ void CollectionIntrinsicEmitter::generateTryPutValueAtPlaceInMap(const ValueCont
             LValue values = m_out.select(keysAreWide.value(), reader.valuesBehind(CompactTable::Width::Wide, table, keys), reader.valuesBehind(CompactTable::Width::Narrow, table, keys));
             LValue entry = m_out.lShr(m_out.sub(m_out.add(table, place.value()), values), m_out.constInt32(3));
             Condition isInUse(m_out.below(entry, m_out.zeroExtPtr(m_out.load32(reader.tableField(table, CompactTable::offsetOfUsed())))));
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(logicalAnd(isLive, holdsWideValues), isInUse), std::nullopt, ProofSource::WhatIsRemembered);
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, Condition(m_out.select(keysAreWide.value(), reader.isLiveKeyWord(CompactTable::Width::Wide, reader.loadKeyWord(CompactTable::Width::Wide, keys, entry)), reader.isLiveKeyWord(CompactTable::Width::Narrow, reader.loadKeyWord(CompactTable::Width::Narrow, keys, entry)))), std::nullopt, ProofSource::WhatIsRemembered);
+            emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(logicalAnd(isLive, holdsWideValues), isInUse), std::nullopt, ProofSource::RememberedFact);
+            emitter<ThrowEmitter>().requireOrCrash(value, Condition(m_out.select(keysAreWide.value(), reader.isLiveKeyWord(CompactTable::Width::Wide, reader.loadKeyWord(CompactTable::Width::Wide, keys, entry)), reader.isLiveKeyWord(CompactTable::Width::Narrow, reader.loadKeyWord(CompactTable::Width::Narrow, keys, entry)))), std::nullopt, ProofSource::RememberedFact);
         }
         m_out.store64(stored.value(), m_out.address(m_heaps.entire(AbstractHeap::CollectionEntries), m_out.add(table, place.value())));
         barrierAfterStore(value, CellPointer(table), typeOf(value->valueOperand()));
