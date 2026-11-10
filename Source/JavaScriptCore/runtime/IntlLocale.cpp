@@ -32,10 +32,12 @@
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
 #include <unicode/ucal.h>
+#include <unicode/uchar.h>
 #include <unicode/ucol.h>
 #include <unicode/udatpg.h>
 #include <unicode/uloc.h>
 #include <unicode/unumsys.h>
+#include <unicode/uscript.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -990,37 +992,137 @@ JSValue IntlLocale::timeZones(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
 }
 
+enum class TextDirection : uint8_t { Unknown, LeftToRight, RightToLeft };
+
+// The RTL field of a script in CLDR's scriptMetadata.txt: YES, NO or UNKNOWN.
+static TextDirection directionOfScript(const char* script)
+{
+    int32_t value = u_getPropertyValueEnum(UCHAR_SCRIPT, script);
+    if (value < 0)
+        return TextDirection::Unknown;
+    auto code = static_cast<UScriptCode>(value);
+
+    // ICU also takes the aliases of the Script property ("Qaai" for Zinh, "Miao" for Plrd). They are not script subtags.
+    const char* shortName = uscript_getShortName(code);
+    if (!shortName || strcmp(shortName, script))
+        return TextDirection::Unknown;
+
+    // ICU keeps the field as one bit, so NO and UNKNOWN read the same. The UNKNOWN rows are Zyyy, Zinh, Zzzz and Brai,
+    // and the usage of the last two is UNKNOWN too. A script that the file does not list (Zxxx, Aran) is NOT_ENCODED.
+    if (code == USCRIPT_COMMON || code == USCRIPT_INHERITED)
+        return TextDirection::Unknown;
+    auto usage = uscript_getUsage(code);
+    if (usage == USCRIPT_USAGE_NOT_ENCODED || usage == USCRIPT_USAGE_UNKNOWN)
+        return TextDirection::Unknown;
+
+    return uscript_isRightToLeft(code) ? TextDirection::RightToLeft : TextDirection::LeftToRight;
+}
+
+static constexpr unsigned languageKey(char first, char second)
+{
+    return (static_cast<unsigned>(static_cast<uint8_t>(first)) << 8) | static_cast<uint8_t>(second);
+}
+
+// The languages that uloc_isRightToLeft answers from a list (LANG_DIR_STRING in ICU's loclikely.cpp). Their likely
+// script has this direction with every region, and the list keeps them from the first read of the likely subtags data.
+static std::optional<TextDirection> directionOfCommonLanguage(std::span<const char> language)
+{
+    if (language.size() != 2)
+        return std::nullopt;
+    switch (languageKey(language[0], language[1])) {
+    case languageKey('a', 'r'):
+    case languageKey('f', 'a'):
+    case languageKey('h', 'e'):
+        return TextDirection::RightToLeft;
+    case languageKey('d', 'e'):
+    case languageKey('e', 'n'):
+    case languageKey('e', 's'):
+    case languageKey('f', 'r'):
+    case languageKey('i', 't'):
+    case languageKey('j', 'a'):
+    case languageKey('k', 'o'):
+    case languageKey('n', 'l'):
+    case languageKey('p', 'l'):
+    case languageKey('p', 't'):
+    case languageKey('r', 'u'):
+    case languageKey('t', 'h'):
+    case languageKey('t', 'r'):
+    case languageKey('z', 'h'):
+        return TextDirection::LeftToRight;
+    default:
+        return std::nullopt;
+    }
+}
+
+// https://tc39.es/ecma402/#sec-textdirectionoflocale
+static TextDirection textDirectionOfLocale(const char* localeID)
+{
+    auto failed = [](UErrorCode status) {
+        return U_FAILURE(status) || status == U_STRING_NOT_TERMINATED_WARNING;
+    };
+
+    // A script in the tag decides alone. It is read before Add Likely Subtags, which replaces Zzzz.
+    UErrorCode status = U_ZERO_ERROR;
+    std::array<char, ULOC_SCRIPT_CAPACITY> script;
+    int32_t scriptLength = uloc_getScript(localeID, script.data(), script.size(), &status);
+    if (failed(status))
+        return TextDirection::Unknown;
+    if (scriptLength)
+        return directionOfScript(script.data());
+
+    std::array<char, ULOC_LANG_CAPACITY> language;
+    int32_t languageLength = uloc_getLanguage(localeID, language.data(), language.size(), &status);
+    if (failed(status))
+        return TextDirection::Unknown;
+    if (auto direction = directionOfCommonLanguage(std::span { language }.first(languageLength)))
+        return direction.value();
+
+    std::array<char, ULOC_COUNTRY_CAPACITY> region;
+    int32_t regionLength = uloc_getCountry(localeID, region.data(), region.size(), &status);
+    if (failed(status))
+        return TextDirection::Unknown;
+
+    // Add Likely Subtags reads the language and the region only. Without the variants and the keywords the ID has a
+    // length that every ICU takes.
+    Vector<char, ULOC_LANG_CAPACITY + ULOC_COUNTRY_CAPACITY> languageAndRegion;
+    languageAndRegion.append(std::span { language }.first(languageLength));
+    if (regionLength) {
+        languageAndRegion.append('_');
+        languageAndRegion.append(std::span { region }.first(regionLength));
+    }
+    languageAndRegion.append('\0');
+
+    std::array<char, ULOC_FULLNAME_CAPACITY> maximal;
+    uloc_addLikelySubtags(languageAndRegion.span().data(), maximal.data(), maximal.size(), &status);
+    if (failed(status))
+        return TextDirection::Unknown;
+
+    scriptLength = uloc_getScript(maximal.data(), script.data(), script.size(), &status);
+    if (failed(status) || !scriptLength)
+        return TextDirection::Unknown;
+    return directionOfScript(script.data());
+}
+
+// https://tc39.es/ecma402/#sec-Intl.Locale.prototype.getTextInfo
+// V8 gives "ltr" where the direction is not known. ECMA-402 and test262 give undefined.
 JSObject* IntlLocale::textInfo(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    UErrorCode status = U_ZERO_ERROR;
-    ULayoutType layout = uloc_getCharacterOrientation(m_localeID.data(), &status);
-    if (!U_SUCCESS(status)) {
-        throwTypeError(globalObject, scope, "invalid locale"_s);
-        return nullptr;
-    }
-
-    JSString* layoutString = nullptr;
-    switch (layout) {
-    default:
-    case ULOC_LAYOUT_LTR:
-        layoutString = jsNontrivialString(vm, "ltr"_s);
+    JSValue direction = jsUndefined();
+    switch (textDirectionOfLocale(m_localeID.data())) {
+    case TextDirection::LeftToRight:
+        direction = jsNontrivialString(vm, "ltr"_s);
         break;
-    case ULOC_LAYOUT_RTL:
-        layoutString = jsNontrivialString(vm, "rtl"_s);
+    case TextDirection::RightToLeft:
+        direction = jsNontrivialString(vm, "rtl"_s);
         break;
-    case ULOC_LAYOUT_TTB:
-        layoutString = jsNontrivialString(vm, "ttb"_s);
-        break;
-    case ULOC_LAYOUT_BTT:
-        layoutString = jsNontrivialString(vm, "btt"_s);
+    case TextDirection::Unknown:
         break;
     }
 
     JSObject* result = constructEmptyObject(globalObject);
-    result->putDirect(vm, Identifier::fromString(vm, "direction"_s), layoutString);
+    result->putDirect(vm, Identifier::fromString(vm, "direction"_s), direction);
     return result;
 }
 
