@@ -156,6 +156,4 @@ private:
     NODELETE bool shouldPopPath(unsigned);
 };
 
-NODELETE WTF_EXPORT_PRIVATE bool isForbiddenHostCodePoint(char16_t);
-
 }
