@@ -472,6 +472,10 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
             std::span<const ARM64BranchIslands::Island> chain = islands->islandsOf(nextFarBranch++);
             for (size_t index = chain.size(); index--;) {
                 const size_t offset = islands->pools[chain[index].pool].linkedOffset + chain[index].index * sizeof(uint32_t);
+                if (!Assembler::canEmitJump(codeOutData + offset, target)) [[unlikely]] {
+                    m_hasBranchOutOfReach = true;
+                    break;
+                }
                 if (shouldCopyDirectlyToJITRegion)
                     Assembler::linkBranchIsland<memcpyRepatch>(outData + offset, codeOutData + offset, target);
                 else
@@ -479,6 +483,11 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
                 target = codeOutData + offset;
             }
         }
+        // The executable allocator's jump islands serve its own pool only.
+        if (m_policy.recordsProcessAddresses && !linkRecord.isThunk() && !Assembler::canEmitJump(location, target)) [[unlikely]]
+            m_hasBranchOutOfReach = true;
+        if (m_hasBranchOutOfReach) [[unlikely]]
+            continue;
 #endif
         BranchEncoding encoding;
         if (shouldCopyDirectlyToJITRegion)

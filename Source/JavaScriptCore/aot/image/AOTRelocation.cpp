@@ -301,6 +301,8 @@ std::expected<Vector<Relocation>, LinkFailure> RelocationRecorder::link(ImageLin
     LinkBuffer& linkBuffer = buffer.linkBuffer();
     if (linkBuffer.hasProcessAddress())
         return makeUnexpected(LinkFailure::ProcessAddressInCode);
+    if (linkBuffer.hasBranchOutOfReach())
+        return makeUnexpected(LinkFailure::OutOfPCRelativeReach);
 
     std::span<uint8_t> bytes = buffer.bytes();
     std::span<const PendingRelocation> pendingRelocations = m_pending.span();

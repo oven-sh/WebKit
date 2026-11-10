@@ -252,6 +252,8 @@ static void runVerifyGroundsCommand(TestCommandContext& context)
             : named->first == "length"_s ? &GroundsOfPosition::length
             : named->first == "below"_s ? &GroundsOfPosition::isBelow
             : named->first == "from-zero-up"_s ? &GroundsOfPosition::isFromZeroUp
+            : named->first == "counter"_s ? &GroundsOfPosition::counter
+            : named->first == "start"_s ? &GroundsOfPosition::start
             : named->first == "length-holds-bound"_s ? &GroundsOfPosition::limitWithinLengthCheck
             : nullptr;
         if (!place) {

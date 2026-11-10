@@ -199,8 +199,10 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         && (m_builtins.at(overload.result.type).freshness == BuiltinFreshness::Yes || m_program.builtinInjectedAsFresh == overload.builtin.index());
     bool checksFreshness = ASSERT_ENABLED || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckResultFreshnessAtRunTime);
     std::optional<Integer> collectionsBefore;
-    if (checksFreshness && isDeclaredFresh && value->builtinCallForm() == BuiltinCallForm::Whole && !value->isDoneInPlace())
+    if (checksFreshness && isDeclaredFresh && value->builtinCallForm() == BuiltinCallForm::Whole && !value->isDoneInPlace()) {
         collectionsBefore = Integer(emitter<RuntimeCallEmitter>().readCollectionCount());
+        build().statistics().count(StatisticID::FreshResultsChecked);
+    }
 
     auto defineResult = [&](Boxed result) {
         stopUnlessNativeResultIsAsWritten(value, result, overload.builtin, overload.mode == BuiltinCallMode::Construct);

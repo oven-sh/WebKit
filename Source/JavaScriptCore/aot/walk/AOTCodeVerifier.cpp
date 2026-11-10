@@ -1838,6 +1838,8 @@ void CodeVerifier::verifyTestsPassed()
             bool stepHolds = !grounds.counter || !grounds.stepNonNegativeCheck || isAnsweredAt(grounds.stepNonNegativeCheck, true, m_code.blockOf(grounds.counter), 0);
             if (grounds.counter && !(stepHolds && everyWayStepsUpFrom(m_code, m_types, grounds.counter, grounds.start, grounds.stepNonNegativeCheck, scopedLambda<bool(ValueID)>([&](ValueID each) {
                 return isDefinedBefore(grounds.start, m_code.blockOf(each), m_places[each.index()]);
+            }), scopedLambda<bool(BlockID)>([&](BlockID each) {
+                return isReached(each);
             }))))
                 return fail(block, id, "the counter that an access counts on may lie below its start"_s, grounds.counter);
             if (!groundsShowPositionInside(m_code, m_types, access.operand(1), grounds, scopedLambda<bool(ValueID, bool)>([&](ValueID relation, bool testResult) {

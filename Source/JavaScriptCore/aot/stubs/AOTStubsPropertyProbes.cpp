@@ -12,6 +12,7 @@
 #include "AOTFieldTable.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
+#include "AOTModuleNamespace.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTPropertyCachesFront.h"
@@ -1527,6 +1528,27 @@ void CachedSlot::loadSecondPayloadWord(StubAssembler& jit, GPRReg result) const
         loadShortWordIndex(jit, m_form, m_header, result);
         computeStorageCapacity(jit, result);
     }
+}
+
+void CachedSlot::loadBaseOfVariable(StubAssembler& jit, GPRReg receiver, GPRReg result, GPRReg scratch) const
+{
+    RELEASE_ASSERT(m_kind == Slot::Kind::Variable && noOverlap(receiver, result, scratch));
+    RELEASE_ASSERT(m_form == SlotForm::PackedSlot || noOverlap(m_payload, receiver, result, scratch));
+    Jump isInModuleInstance = branchIfFlag(jit, Slot::isInModuleInstance);
+    loadStaticsBase(jit, result, scratch);
+    JumpList hasBase;
+    hasBase.append(jit.jump());
+
+    isInModuleInstance.link(&jit);
+    if (m_form == SlotForm::Slot) {
+        loadSecondPayloadWord(jit, result);
+        Jump isOfReceiver = jit.branchTest32(CCallHelpers::Zero, result);
+        decodeCell32(jit, result, result);
+        hasBase.append(jit.jump());
+        isOfReceiver.link(&jit);
+    }
+    jit.loadPtr(Address(receiver, ModuleNamespace::offsetOfModuleInstance()), result);
+    hasBase.link(&jit);
 }
 
 void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const

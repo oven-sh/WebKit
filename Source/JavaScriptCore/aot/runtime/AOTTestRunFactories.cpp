@@ -100,7 +100,7 @@ bool Modules::isImportedByGraphUnderEvaluation(ModuleID module, bool forIntactOr
     Vector<ModuleID, 16> importers;
     for (unsigned index = 0; index < m_table.size(); ++index) {
         ModuleStatus current = status(ModuleID(index));
-        if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || (shouldCountFailedImporters && (current == ModuleStatus::Failed || m_evictedFailedRoots.get(index)) && !failureByAbsentExport(ModuleID(index)) && !((forIntactOriginal || !isOfPackage(module)) && wasReleasedByLoader(ModuleID(index)))) || (wasMockedAfterFailure(ModuleID(index)) && !wasReleasedByLoader(ModuleID(index))))
+        if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || (shouldCountFailedImporters && current == ModuleStatus::Failed && !failureByAbsentExport(ModuleID(index)) && !((forIntactOriginal || !isOfPackage(module)) && wasReleasedByLoader(ModuleID(index)))) || (wasMockedAfterFailure(ModuleID(index)) && !wasReleasedByLoader(ModuleID(index))))
             importers.append(ModuleID(index));
     }
     while (!importers.isEmpty()) {
@@ -386,10 +386,7 @@ bool Modules::tryEvaluateESModuleBeforeMock(ModuleID module)
     RETURN_IF_EXCEPTION(scope, false);
     SetForScope shouldContinuePastPendingFactories(m_shouldContinuePastPendingFactories, true);
     evaluateSynchronously(module, SynchronousEvaluationReason::Require);
-    if (scope.exception()) [[unlikely]] {
-        m_failedOriginals.set(module.index());
-        return false;
-    }
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -1829,7 +1826,7 @@ bool evaluateLinkedModuleBeforeMock(JSGlobalObject* realm, ModuleID module, bool
         modules->forgetLoadThatFailed(module);
     modules->countMocksAnewBehindLoad(module);
     modules->noteCallOfMock(module);
-    modules->noteWhetherFileHasThrownWhereMockIsMade(module, displacesEarlierMock, displacesModule, keepsOriginalIntact);
+    modules->noteWhetherFileHasThrownWhereMockIsMade(module, displacesEarlierMock, displacesModule);
     modules->clearLoadErrorsForMock(module);
     RELEASE_AND_RETURN(scope, modules->evaluateLinkedModuleBeforeMock(module, keepsOriginalIntact));
 }

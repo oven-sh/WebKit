@@ -36,7 +36,7 @@ bool Modules::isSomeLoadUnderWay() const
 
 bool Modules::willReloadAfterMockRemoval(ModuleID module) const
 {
-    return hasRemovedMock(module) || ((data(module).kind == ModuleKind::CommonJs || data(module).kind == ModuleKind::Data) && !isImportedByModuleThatRequireAnswered(module));
+    return hasRemovedMock(module) || data(module).kind == ModuleKind::CommonJs || data(module).kind == ModuleKind::Data || isImportedByModuleThatRequireAnswered(module);
 }
 
 void Modules::bringBackMockOfPreloadThatWasPatched(ModuleID fileOrModule)

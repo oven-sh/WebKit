@@ -479,23 +479,18 @@ void Modules::resetEntryPointEvaluation(ModuleID module)
     makeESModuleReadyToRunAgain(module);
 }
 
-bool Modules::canResetFailedEvaluation(ModuleID module) const
+bool Modules::hasResettablePackageFailure(ModuleID module) const
 {
     if (!data(module).bodyOfESModuleMayRunAgain() || !mayBeMocked(module) || isEvicted(module))
         return false;
-    return status(module) == ModuleStatus::Failed || errorOfModuleThatRanBesideMock(module);
+    return (status(module) == ModuleStatus::Failed || errorOfModuleThatRanBesideMock(module)) && isOfPackage(module);
 }
 
 void Modules::resetPackageFailureIfNeeded(ModuleID module)
 {
-    if (hasResettablePackageFailure(module))
-        resetFailedEvaluation(module);
-}
-
-void Modules::resetFailedEvaluation(ModuleID module)
-{
+    if (!hasResettablePackageFailure(module))
+        return;
     m_modulesWithResetFailure.set(module.index());
-    m_failedOriginals.clear(module.index());
     makeESModuleReadyToRunAgain(module);
     LoadedModule& loaded = ensureLoaded(module);
     loaded.errorOfModuleThatRanBesideMock.set(*this, JSValue());
@@ -528,16 +523,11 @@ void Modules::resetFailedEvaluations()
 {
     Vector<ModuleID, 4> failed;
     for (ModuleID module : m_records.keys()) {
-        if (canResetFailedEvaluation(module))
+        if (hasResettablePackageFailure(module))
             failed.append(module);
     }
-    for (ModuleID module : failed) {
-        if (!isOfPackage(module)) {
-            m_evictedFailedRoots.set(module.index());
-            m_modulesReleasedByLoader.set(module.index());
-        }
-        resetFailedEvaluation(module);
-    }
+    for (ModuleID module : failed)
+        resetPackageFailureIfNeeded(module);
 }
 
 void Modules::releaseInstance(ModuleID module)
@@ -1633,8 +1623,6 @@ bool Modules::hasStartedLoading(ModuleID module) const
 
 bool Modules::wasMockedAfterFailure(ModuleID module) const
 {
-    if (m_evictedFailedRoots.get(module.index()))
-        return true;
     auto laid = m_mocksWithIntactOriginal.find(module);
     return laid != m_mocksWithIntactOriginal.end() && laid->value.wasInstalledAfterFailure;
 }
@@ -2686,7 +2674,7 @@ BitVector Modules::modulesThatWerePassedWithoutStatus() const
     };
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID importer(index);
-        if (!data(importer).isESModuleOfProgram() || !data(importer).needsEvaluation() || (status(importer) < ModuleStatus::Evaluating && !m_evictedFailedRoots.get(index)) || m_importersOfMockThatEnded.get(index) || keepsStatusOfRunBeforeLoadThatRuns(importer))
+        if (!data(importer).isESModuleOfProgram() || !data(importer).needsEvaluation() || status(importer) < ModuleStatus::Evaluating || m_importersOfMockThatEnded.get(index) || keepsStatusOfRunBeforeLoadThatRuns(importer))
             continue;
         bool isEntered = status(importer) == ModuleStatus::Evaluating;
         bool hasFailed = status(importer) == ModuleStatus::Failed || wasMockedAfterFailure(importer);
@@ -2694,7 +2682,7 @@ BitVector Modules::modulesThatWerePassedWithoutStatus() const
             ModuleID imported = moduleLoadedBy(request);
             if (isEntered && data(imported).needsEvaluation() && status(imported) == ModuleStatus::Evaluating)
                 break;
-            if (hasFailed && (status(imported) == ModuleStatus::Failed || m_evictedFailedRoots.get(imported.index())) && !data(imported).hasTopLevelAwait())
+            if (hasFailed && status(imported) == ModuleStatus::Failed && !data(imported).hasTopLevelAwait())
                 break;
             pass(imported);
         }

@@ -1170,18 +1170,13 @@ bool Modules::isFailedESModule(ModuleID file) const
     return data(file).isESModuleOfProgram() && !data(file).isFacade() && status(file) == ModuleStatus::Failed;
 }
 
-void Modules::noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displacesEarlierMock, bool displacesModule, bool keepsOriginalIntact)
+void Modules::noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displacesEarlierMock, bool displacesModule)
 {
     if (displacesEarlierMock && !displacesModule)
         return;
     LoadedModule& loaded = ensureLoaded(file);
     loaded.hadThrownWhenMockWasMade = !displacesModule && isFailedESModule(file) && !wasReleasedByLoader(file) && !loaded.holdsValueOfMockThatEnded;
-    bool isEvictedAfterFailure = displacesModule && isFailedESModule(file) && !wasLoadedWithImporter(file);
-    if (isEvictedAfterFailure && keepsOriginalIntact && canResetFailedEvaluation(file) && !m_failedOriginals.get(file.index())) {
-        m_evictedFailedRoots.set(file.index());
-        return resetFailedEvaluation(file);
-    }
-    loaded.wasDisplacedAfterFailure |= isEvictedAfterFailure;
+    loaded.wasDisplacedAfterFailure |= displacesModule && isFailedESModule(file) && !wasLoadedWithImporter(file);
 }
 
 void Modules::saveExportsBeforePatch(ModuleID file)

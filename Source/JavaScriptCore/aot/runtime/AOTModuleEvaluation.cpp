@@ -326,7 +326,6 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         }
 
         m_modulesWithResetFailure.clear(module.index());
-        m_evictedFailedRoots.clear(module.index());
         ModuleRecord* record = recordIfExists(module);
         if (!record && moduleData.evaluatesItself()) {
             evaluateByCallingBody(module);

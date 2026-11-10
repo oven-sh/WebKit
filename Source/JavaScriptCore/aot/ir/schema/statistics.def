@@ -143,6 +143,7 @@ enum StatisticID (stage: StatisticStage) {
     DivisorVariableReadsHoisted AbsenceTestedVariableReadsHoisted CalleeVariableReadsHoisted ImportedFunctionReadsHoisted LoopStoredVariableReadsHoisted RawVariableReadsHoisted
     BuiltinSubclassesCheckedByStructure
     ZeroOrOnePhisFolded NarrowedBindingsFoldedAtJoins NarrowedArgumentsFoldedAtJoins
+    ParameterGuardsSkipped ParameterGuardsEntered
     [Emit]
     NativeFunctionsCalledDirectly NativeFunctionTestsEmitted DoublesRecomputedAsIntegers UnboxingsFusedIntoTypeChecks CollectionStepsSkippingDeletedPrefix MapEntryAllocationsElided LoopsRotated
     InnerPointersAcrossSafepoints NullChecksFoldedIntoAccesses Int64ComparisonsWithBoxedNumbers ClosureChecksByNumberRanges
@@ -169,6 +170,7 @@ enum StatisticID (stage: StatisticStage) {
     AlternateShapesSpeculatedAtJoins
     RemaindersByConditionalSubtraction RemaindersByProvenConstantDivisor
     ReusedLoadsVerified
+    FreshResultsChecked
     [Image]
     InlineFramesEmitted FrameMapBytesEmitted RegExpCandidatesCompiled
     ThingsMentioned ThingsNumbered IdentifiersNumbered StringConstantsNumbered NamesWithoutColumn ColumnStubVariantsSelected MethodTableSelectors MethodTableBytes

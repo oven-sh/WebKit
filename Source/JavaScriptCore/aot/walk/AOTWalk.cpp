@@ -1065,7 +1065,8 @@ Reference Walker::rematerializeHiddenRestArray()
 {
     const Function& function = program().at(unit().function);
     for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index) {
-        if (function.entryParameterKind(index) != EntryParameter::HiddenRest)
+        EntryParameter kind = function.entryParameterKind(index);
+        if (kind != EntryParameter::HiddenRest && (kind != EntryParameter::Parameter || index - function.firstParameterIndex() < function.numberOfPositionalParameters()))
             continue;
         Reference list = (*m_restArrayAllocator)(index);
         if (list)

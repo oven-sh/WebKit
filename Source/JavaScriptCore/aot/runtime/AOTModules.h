@@ -663,7 +663,7 @@ public:
     void endMockOfLibraryModule(ModuleID);
     void createDynamicExports(ModuleID, JSCellButterfly*& names, JSObject*& capturedValues, JSObject*& liveSources);
     void takeNamesBehindFollowedStarsAnew();
-    void noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displacesEarlierMock, bool displacesModule, bool keepsOriginalIntact);
+    void noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displacesEarlierMock, bool displacesModule);
     bool isFailedESModule(ModuleID) const;
     void saveExportsBeforePatch(ModuleID);
     void didInstallMock() { m_moduleBeingPatched = std::nullopt; }
@@ -851,12 +851,10 @@ public:
     void retainNewlyEvaluatedModules();
     void restoreRetainedModules(const WTF::Function<void(const String&)>&);
     void resetEntryPointEvaluation(ModuleID);
-    bool canResetFailedEvaluation(ModuleID) const;
-    bool hasResettablePackageFailure(ModuleID module) const { return canResetFailedEvaluation(module) && isOfPackage(module); }
+    bool hasResettablePackageFailure(ModuleID) const;
     bool hasFailedWithoutMock(ModuleID module) const { return hasResettablePackageFailure(module) && !m_originalsEvaluatedUnderMock.get(module.index()) && !errorOfModuleThatRanBesideMock(module); }
     bool hasPermanentFailureInPackage(ModuleID root);
     bool hasPermanentFailureInProject(ModuleID root);
-    void resetFailedEvaluation(ModuleID);
     void resetPackageFailureIfNeeded(ModuleID);
     void resetFailedEvaluations();
     void makeESModuleReadyToRunAgain(ModuleID);
@@ -2189,8 +2187,6 @@ private:
     }
     BitVector m_originalsDueUnderMock;
     BitVector m_modulesWithResetFailure;
-    BitVector m_evictedFailedRoots;
-    BitVector m_failedOriginals;
     BitVector m_modulesThatOwnFactoryMayLoad;
     BitVector m_originalsBeingEvaluated;
     std::optional<ModuleID> m_moduleWhoseOwnNamespaceIsMade;

@@ -575,7 +575,7 @@ void Walker::claimThatCounterNeverLiesBelowItsStart()
     std::span<const ValueID> entering = m_openLoops.last().recordsEntering();
     if (trialVisit.frameIndex != versionedLoop.frameIndex || trialVisit.inputHead != versionedLoop.inputHead || m_loopSummaries[trialVisit.summaryIndex].counterWasSteppedDown || held.position >= entering.size() || held.position >= m_code.at(head).parameters().size())
         return;
-    if (!everyWayStepsUpFrom(m_code, m_types, entering[held.position], held.start, { }, scopedLambda<bool(ValueID)>([](ValueID) { return false; })))
+    if (!everyWayStepsUpFrom(m_code, m_types, entering[held.position], held.start, { }, scopedLambda<bool(ValueID)>([](ValueID) { return false; }), scopedLambda<bool(BlockID)>([](BlockID) { return true; })))
         return;
     held.counter = m_code.at(head).parameters()[held.position];
     noteKnown(*this, KnownNote::NeverLiesBelow, Reference::value(held.counter), referenceTo(held.start), 0, LocationMasks(), 1);
@@ -590,7 +590,7 @@ bool Walker::counterComesRoundNotBelowItself(BlockID head, std::span<const Refer
         bool stepHolds = !held.stepNonNegativeCheck || findPassedTest(referenceTo(held.stepNonNegativeCheck));
         if (stepHolds && held.position < arguments.size() && everyWayStepsUpFrom(m_code, m_types, arguments[held.position].id(), held.counter, held.stepNonNegativeCheck, scopedLambda<bool(ValueID)>([&](ValueID each) {
             return m_code.at(each).opcode != Opcode::Parameter || !m_code.at(m_code.blockOf(each)).isLoopHead;
-        })))
+        }), scopedLambda<bool(BlockID)>([](BlockID) { return true; })))
             continue;
         for (size_t place = m_trialVisits.size(); place--;) {
             TrialVisit& trialVisit = m_trialVisits[place];

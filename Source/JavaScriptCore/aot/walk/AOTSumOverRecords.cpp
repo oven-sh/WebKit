@@ -175,7 +175,7 @@ bool SumOverRecords::isFromZeroUp(size_t firstTerm, unsigned& sumsLeft) const
     return false;
 }
 
-bool everyWayStepsUpFrom(const Code& code, const TypeArena& types, ValueID value, ValueID from, ValueID stepNonNegativeCheck, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough)
+bool everyWayStepsUpFrom(const Code& code, const TypeArena& types, ValueID value, ValueID from, ValueID stepNonNegativeCheck, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough, NOESCAPE const ScopedLambda<bool(BlockID)>& isReached)
 {
     auto isFromZeroUp = [&](ValueID by) {
         SumOverRecords sum(code, types);
@@ -215,6 +215,8 @@ bool everyWayStepsUpFrom(const Code& code, const TypeArena& types, ValueID value
         std::span<const ValueID> parameters = code.at(record.block()).parameters();
         size_t position = std::ranges::find(parameters, each) - parameters.begin();
         for (EdgeID edge = code.at(record.block()).firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
+            if (!isReached(code.at(edge).from))
+                continue;
             if (position >= code.at(edge).arguments().size())
                 return false;
             waiting.append(code.at(edge).arguments()[position]);

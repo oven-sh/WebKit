@@ -775,7 +775,7 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
             });
             names |= isNamedHere;
             if (isNamedHere && isOnlyForwarded)
-                isOnlyForwarded = (value.opcode() == Opcode::Call && handsObjectToApply(value.as<Opcode::Call>())) || (value.opcode() == Opcode::AppendSpread && isElidableCallSpread(value));
+                isOnlyForwarded = (value.opcode() == Opcode::Call && handsObjectToApply(value.as<Opcode::Call>())) || (value.opcode() == Opcode::AppendSpread && isElidableCallSpread(value)) || (arrayCallOpcodes.contains(value.opcode()) && body.hasOneUse(value.listOperand()) && lists.contains(value.listOperand()));
         }
         bool isNamedAtEnd = false;
         BodyTerminator terminator = block.terminator();
