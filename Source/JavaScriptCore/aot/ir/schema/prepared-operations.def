@@ -8,7 +8,7 @@ enum MemberConditionKind { | engine MemberUnchanged PrototypeLinkUnchanged Class
 record MemberConditionRecord engine { kind: MemberConditionKind layout: Layout side: ClassSide key: PropertyKey? }
 
 family Guard Prepared..Placed ; branches = May ; interpreted = Test
-operation ShapeTest (object: Any/inspects, layouts: LayoutSet) [| engine rejectsMarkedObjects asksInFull] -> natural(boolean) ; reads(ShapeWords[layouts]) ; proves = Shape ; form = Open
+operation ShapeTest (object: Any/inspects, layouts: LayoutSet) [| engine rejectsMarkedObjects asksInFull] -> natural(boolean) ; reads(ShapeWords[layouts], NamedProperties) ; proves = Shape ; form = Open
 operation IsSlotFilled (object: Object/inspects, with SlotStamp) [holdsDeclaredType] -> natural(boolean) ; reads(ObjectFields[key]) ; proves = SlotFilled ; relies = Shape ; access = Has ; receiver = object ; accessClass = Slot ; replaces = PropHas, PropHasOwn, PrivateHas ; formDependsOnLoop = true ; openUnder = Always, FieldLeftOutByMakers, FieldInExtension ; openIn = Loop ; closedIn = RareBlock
 operation HasNoExtraProperties (object: Object/inspects) [| engine hasNoFieldOutsideSlot] -> natural(boolean) ; reads(NamedProperties) ; proves = NoExtraProperties ; relies = Shape ; form = Open
 operation HasNoFieldOutsideSlot (object: Object/inspects) [mayMeetUnfinishedObject] -> natural(boolean) ; reads(NamedProperties) ; proves = NoFieldOutsideSlot ; relies = Shape ; form = Open

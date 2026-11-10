@@ -196,6 +196,12 @@ static bool memberCapturesAtMostEnvironmentOfClassObject(const Typed::Program& p
     return environmentOfClassObject && captures.size() == 1 && captures[0].written() == program.at(layout.constructor).captures[0].written();
 }
 
+static bool codeCreatesClass(const TableEncoder& encoder, LayoutID classLayout)
+{
+    uint32_t request[] { static_cast<uint32_t>(RequestKind::NewClass), classLayout.index() };
+    return !!encoder.numbers.numberOf(NumberSpace::Request, request);
+}
+
 static MethodData describeMemberInClassRecord(const TableEncoder& encoder, LayoutID classLayout, LayoutID environmentOfClassObject, const Typed::ClassMember& member, Typed::MemberCreation creation, bool holdsOneFunction)
 {
     const Typed::Program& program = encoder.program;
@@ -216,6 +222,10 @@ static MethodData describeMemberInClassRecord(const TableEncoder& encoder, Layou
     case Typed::MemberCreation::ByClassRecord:
         if (!member.key || !member.function || !memberCapturesAtMostEnvironmentOfClassObject(program, program.at(classLayout), environmentOfClassObject, member.function)) {
             encoder.fail("ClassRecordCannotCreateMember"_s, classLayout);
+            break;
+        }
+        if (std::optional<FunctionID> entrypoint = encoder.findEntrypoint(member.function); entrypoint || !codeCreatesClass(encoder, classLayout)) {
+            method.function = entrypoint.value_or(FunctionID()).index();
             break;
         }
         method.function = encoder.entrypointOf(member.function, "a member that the run time creates for"_s, classLayout);
