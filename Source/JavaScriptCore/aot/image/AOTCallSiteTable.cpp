@@ -920,11 +920,17 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
     size_t place = (function * 31 + site.bits()) % numberOfRememberedPositions;
     {
         Locker locker { rememberedPositionsLock };
-        if (!rememberedPositions)
-            rememberedPositions = static_cast<RememberedPosition*>(fastZeroedMalloc(numberOfRememberedPositions * sizeof(RememberedPosition)));
-        const RememberedPosition& remembered = rememberedPositions[place];
-        if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
-            return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers, remembered.startIsWhereWritten };
+        // The first position that is asked for may be that of an error for memory that is used up. Without memory for them the positions are not remembered.
+        if (!rememberedPositions) {
+            void* memory = nullptr;
+            if (tryFastZeroedMalloc(numberOfRememberedPositions * sizeof(RememberedPosition)).getValue(memory))
+                rememberedPositions = static_cast<RememberedPosition*>(memory);
+        }
+        if (rememberedPositions) {
+            const RememberedPosition& remembered = rememberedPositions[place];
+            if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
+                return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers, remembered.startIsWhereWritten };
+        }
     }
     unsigned firstReadColumnDelta = site.bits() >> siteNumberBits;
     std::optional<SourcePosition> position = findPosition(*this, function, CallSiteIndex(site.bits() & ((1u << siteNumberBits) - 1)));
@@ -932,7 +938,8 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
         position = SourcePosition { { position->lineColumn.line, position->lineColumn.column - firstReadColumnDelta }, position->source };
     if (position) {
         Locker locker { rememberedPositionsLock };
-        rememberedPositions[place] = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers, position->startIsWhereWritten };
+        if (rememberedPositions)
+            rememberedPositions[place] = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers, position->startIsWhereWritten };
     }
     return position;
 }
