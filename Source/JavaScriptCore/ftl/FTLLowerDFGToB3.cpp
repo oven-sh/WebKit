@@ -14091,7 +14091,7 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
         TaggedNativeFunction nativeFunction;
-        if (executable->isHostFunction() && executable->intrinsic() == NoIntrinsic) {
+        if (executable->isHostFunction() && !mayHaveThunk(executable->intrinsic())) {
             if (isConstruct)
                 nativeFunction = uncheckedDowncast<NativeExecutable>(executable)->constructor();
             else
@@ -22247,6 +22247,9 @@ IGNORE_CLANG_WARNINGS_END
                     break;
                 case SpecBoolean:
                     operands.append(lowBoolean(edge));
+                    break;
+                case SpecObjectOther:
+                    operands.append(lowCell(edge));
                     break;
                 case SpecInt8Array: {
                     LValue cell = lowCell(edge);

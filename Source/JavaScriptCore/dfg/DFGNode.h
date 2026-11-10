@@ -3694,7 +3694,7 @@ public:
     bool hasSignature() const
     {
         // Note that this does not include TailCall node types intentionally.
-        // CallDOM node types are always converted from Call.
+        // CallDOM node types are converted from Call, or made for an intrinsic.
         return op() == Call || op() == CallDOM;
     }
 

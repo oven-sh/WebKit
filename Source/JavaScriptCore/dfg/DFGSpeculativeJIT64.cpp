@@ -989,7 +989,7 @@ void SpeculativeJIT::emitCall(Node* node)
             }
         }
         TaggedNativeFunction nativeFunction;
-        if (executable->isHostFunction() && executable->intrinsic() == NoIntrinsic) {
+        if (executable->isHostFunction() && !mayHaveThunk(executable->intrinsic())) {
             if (isConstruct)
                 nativeFunction = uncheckedDowncast<NativeExecutable>(executable)->constructor();
             else

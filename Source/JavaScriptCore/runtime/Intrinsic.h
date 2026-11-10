@@ -316,6 +316,9 @@ std::optional<IterationKind> LEGACY_NODELETE iterationKindForIntrinsic(Intrinsic
 
 ASCIILiteral intrinsicName(Intrinsic);
 
+// Where it has none, a call that is not inlined can go straight to the native function. See thunkGeneratorForIntrinsic().
+constexpr bool mayHaveThunk(Intrinsic intrinsic) { return intrinsic != NoIntrinsic && intrinsic != DecimalPrototypeIntrinsic; }
+
 } // namespace JSC
 
 namespace WTF {

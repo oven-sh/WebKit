@@ -575,16 +575,28 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
 
     case CallDOMGetter:
     case CallDOM: {
-        Node* thisNode = node->child1().node();
-        StructureAbstractValue& structures = state.forNode(thisNode).m_structure;
-        if (!structures.isFinite())
-            return false;
-        bool isSafe = true;
         const ClassInfo* classInfo = node->requiredDOMJITClassInfo();
-        structures.forEach([&] (RegisteredStructure structure) {
-            isSafe &= structure->classInfoForCells()->isSubClassOf(classInfo);
-        });
-        return isSafe;
+        auto isOfClass = [&](Edge edge) {
+            StructureAbstractValue& structures = state.forNode(edge).m_structure;
+            if (!structures.isFinite())
+                return false;
+            bool isSafe = true;
+            structures.forEach([&] (RegisteredStructure structure) {
+                isSafe &= structure->classInfoForCells()->isSubClassOf(classInfo);
+            });
+            return isSafe;
+        };
+        if (!isOfClass(node->child1()))
+            return false;
+        if (node->op() == CallDOM) {
+            // An argument that is an object is read as one of the class too, behind a check of its own.
+            const DOMJIT::Signature* signature = node->signature();
+            for (unsigned i = 0; i < signature->argumentCount; ++i) {
+                if (signature->arguments[i] == SpecObjectOther && !isOfClass(graph.child(node, i + 1)))
+                    return false;
+            }
+        }
+        return true;
     }
 
     case EnumeratorNextUpdateIndexAndMode:

@@ -5250,6 +5250,12 @@ private:
         if (!signature)
             return false;
 
+        // Those are made by DFGByteCodeParser, with the checks of their arguments.
+        for (unsigned i = 0; i < signature->argumentCount; ++i) {
+            if (signature->arguments[i] == SpecObjectOther)
+                return false;
+        }
+
         {
             unsigned index = 0;
             bool shouldConvertToCallDOM = true;
@@ -5420,7 +5426,8 @@ private:
             case SpecUint16Array: 
             case SpecUint32Array: 
             case SpecFloat32Array: 
-            case SpecFloat64Array: {
+            case SpecFloat64Array:
+            case SpecObjectOther: { // Of the class of the receiver, and a CheckJSCast is in front of the node.
                 fixEdge<CellUse>(edge);
                 break;
             }

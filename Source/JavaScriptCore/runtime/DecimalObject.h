@@ -49,7 +49,8 @@ public:
 #if ENABLE(JIT)
     // What optimized code has in place of a call of isNaN(), isFinite() and exponent().
     static const DOMJIT::GetterSetter* inlinedMethod(TaggedNativeFunction);
-    // How it calls other methods without arguments.
+    // How it calls the others with the arguments of the signature, so toString() and toExponential() without options and round() with
+    // an integer and no mode. Null for the rest.
     static const DOMJIT::Signature* directMethod(TaggedNativeFunction);
 #endif
 

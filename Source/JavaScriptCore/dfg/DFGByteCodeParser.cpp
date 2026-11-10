@@ -4033,15 +4033,37 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case DecimalPrototypeIntrinsic: {
-            if (!Options::useDOMJIT() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+            // Not where only the executable is known: code that sees Decimals of two realms would fail the check of the realm at one call after
+            // the other. And Uncountable is how an operand exits that is proven to be of another type.
+            if (realmToCheck)
+                return CallOptimizationResult::DidNothing;
+            if (!Options::useDOMJIT() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Uncountable))
                 return CallOptimizationResult::DidNothing;
 
             TaggedNativeFunction function = variant.nativeExecutable()->function();
             if (const auto* signature = DecimalObject::directMethod(function)) {
                 // Here and not as the signature of the function: it makes its result in the realm of the caller, and only an intrinsic is checked for being of it.
-                if (!handleDOMJITCall(callee, resultOperand, signature, registerOffset, argumentCountIncludingThis, prediction, insertChecks))
+                if (argumentCountIncludingThis != static_cast<int>(1 + signature->argumentCount))
                     return CallOptimizationResult::DidNothing;
-                didSetResult = true;
+
+                // As in round(2). A check of other counts would fail at each place where one is a double, and the function throws for what is no integer.
+                for (unsigned i = 0; i < signature->argumentCount; ++i) {
+                    if (signature->arguments[i] == SpecInt32Only && !get(virtualRegisterForArgumentIncludingThis(i + 1, registerOffset))->isInt32Constant())
+                        return CallOptimizationResult::DidNothing;
+                }
+
+                insertChecks();
+                ASSERT(argumentCountIncludingThis <= JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS);
+                std::array<Node*, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> operands { };
+                for (int i = 0; i < argumentCountIncludingThis; ++i) {
+                    operands[i] = get(virtualRegisterForArgumentIncludingThis(i, registerOffset));
+                    if (!i || signature->arguments[i - 1] == SpecObjectOther)
+                        addToGraph(CheckJSCast, OpInfo(signature->classInfo), operands[i]);
+                }
+                Node* node = addToGraph(CallDOM, OpInfo(signature), OpInfo(prediction), operands[0], operands[1], operands[2]);
+                if (!signature->effect.mustGenerate())
+                    node->clearFlags(NodeMustGenerate);
+                setResult(node);
                 return CallOptimizationResult::Inlined;
             }
             const auto* method = DecimalObject::inlinedMethod(function);

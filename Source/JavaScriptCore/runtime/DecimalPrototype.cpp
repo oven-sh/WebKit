@@ -68,19 +68,19 @@ const ClassInfo DecimalPrototype::s_info = { "Decimal"_s, &Base::s_info, &decima
   mantissa             decimalProtoFuncMantissa             DontEnum|Function 0 DecimalPrototypeIntrinsic
   abs                  decimalProtoFuncAbs                  DontEnum|Function 0 DecimalPrototypeIntrinsic
   negate               decimalProtoFuncNegate               DontEnum|Function 0 DecimalPrototypeIntrinsic
-  add                  decimalProtoFuncAdd                  DontEnum|Function 1
-  subtract             decimalProtoFuncSubtract             DontEnum|Function 1
-  multiply             decimalProtoFuncMultiply             DontEnum|Function 1
-  divide               decimalProtoFuncDivide               DontEnum|Function 1
-  remainder            decimalProtoFuncRemainder            DontEnum|Function 1
-  compare              decimalProtoFuncCompare              DontEnum|Function 1
-  equals               decimalProtoFuncEquals               DontEnum|Function 1
-  notEquals            decimalProtoFuncNotEquals            DontEnum|Function 1
-  lessThan             decimalProtoFuncLessThan             DontEnum|Function 1
-  lessThanOrEqual      decimalProtoFuncLessThanOrEqual      DontEnum|Function 1
-  greaterThan          decimalProtoFuncGreaterThan          DontEnum|Function 1
-  greaterThanOrEqual   decimalProtoFuncGreaterThanOrEqual   DontEnum|Function 1
-  round                decimalProtoFuncRound                DontEnum|Function 1
+  add                  decimalProtoFuncAdd                  DontEnum|Function 1 DecimalPrototypeIntrinsic
+  subtract             decimalProtoFuncSubtract             DontEnum|Function 1 DecimalPrototypeIntrinsic
+  multiply             decimalProtoFuncMultiply             DontEnum|Function 1 DecimalPrototypeIntrinsic
+  divide               decimalProtoFuncDivide               DontEnum|Function 1 DecimalPrototypeIntrinsic
+  remainder            decimalProtoFuncRemainder            DontEnum|Function 1 DecimalPrototypeIntrinsic
+  compare              decimalProtoFuncCompare              DontEnum|Function 1 DecimalPrototypeIntrinsic
+  equals               decimalProtoFuncEquals               DontEnum|Function 1 DecimalPrototypeIntrinsic
+  notEquals            decimalProtoFuncNotEquals            DontEnum|Function 1 DecimalPrototypeIntrinsic
+  lessThan             decimalProtoFuncLessThan             DontEnum|Function 1 DecimalPrototypeIntrinsic
+  lessThanOrEqual      decimalProtoFuncLessThanOrEqual      DontEnum|Function 1 DecimalPrototypeIntrinsic
+  greaterThan          decimalProtoFuncGreaterThan          DontEnum|Function 1 DecimalPrototypeIntrinsic
+  greaterThanOrEqual   decimalProtoFuncGreaterThanOrEqual   DontEnum|Function 1 DecimalPrototypeIntrinsic
+  round                decimalProtoFuncRound                DontEnum|Function 1 DecimalPrototypeIntrinsic
   scale10              decimalProtoFuncScale10              DontEnum|Function 1
   toString             decimalProtoFuncToString             DontEnum|Function 0 DecimalPrototypeIntrinsic
   toLocaleString       decimalProtoFuncToLocaleString       DontEnum|Function 0
@@ -265,14 +265,24 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncRemainder, (JSGlobalObject* globalObjec
     return arithmetic(globalObject, callFrame, Decimal128::remainder);
 }
 
+// Unlike != of Numbers this is false of a NaN.
+static bool isLessOrGreater(std::partial_ordering order)
+{
+    return order < 0 || order > 0;
+}
+
+static JSValue numberOfOrder(std::partial_ordering order)
+{
+    if (order == std::partial_ordering::unordered)
+        return jsNaN();
+    return jsNumber(order < 0 ? -1 : order > 0 ? 1 : 0);
+}
+
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.compare
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncCompare, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     return binary(globalObject, callFrame, [](const Decimal128& x, const Decimal128& y) {
-        auto order = Decimal128::compare(x, y);
-        if (order == std::partial_ordering::unordered)
-            return JSValue::encode(jsNaN());
-        return JSValue::encode(jsNumber(order < 0 ? -1 : order > 0 ? 1 : 0));
+        return JSValue::encode(numberOfOrder(Decimal128::compare(x, y)));
     });
 }
 
@@ -284,8 +294,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncEquals, (JSGlobalObject* globalObject, 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.notequals
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncNotEquals, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    // Unlike != of Numbers this is false of a NaN.
-    return comparison(globalObject, callFrame, [](std::partial_ordering order) { return order < 0 || order > 0; });
+    return comparison(globalObject, callFrame, isLessOrGreater);
 }
 
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncLessThan, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -423,6 +432,14 @@ static EncodedJSValue stringOrOutOfMemory(JSGlobalObject* globalObject, String&&
     return JSValue::encode(jsString(vm, WTF::move(string)));
 }
 
+// A negative count rounds to a power of ten above 1.
+static ALWAYS_INLINE double digitsOfRound(JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.isInt32()) [[likely]]
+        return value.asInt32();
+    return toIntegerOption(globalObject, value, -std::numeric_limits<double>::infinity(), "numFractionalDigits must be a number"_s, "numFractionalDigits must be an integer"_s);
+}
+
 // https://tc39.es/proposal-decimal/#sec-decimal-method-round
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncRound, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -430,8 +447,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncRound, (JSGlobalObject* globalObject, C
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
     RETURN_IF_EXCEPTION(scope, { });
-    // A negative count rounds to a power of ten above 1.
-    double digits = toIntegerOption(globalObject, callFrame->argument(0), -std::numeric_limits<double>::infinity(), "numFractionalDigits must be a number"_s, "numFractionalDigits must be an integer"_s);
+    double digits = digitsOfRound(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
     auto mode = toRoundingMode(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
@@ -769,13 +785,74 @@ const DOMJIT::GetterSetter* DecimalObject::inlinedMethod(TaggedNativeFunction fu
     return nullptr;
 }
 
+// The methods with a Decimal as their one argument, and round() with an integer and no mode.
+#define FOR_EACH_DIRECT_BINARY_METHOD(macro) \
+    macro(Add, add) \
+    macro(Subtract, subtract) \
+    macro(Multiply, multiply) \
+    macro(Divide, divide) \
+    macro(Remainder, remainder)
+
+#define FOR_EACH_DIRECT_COMPARISON(macro) \
+    macro(Compare, numberOfOrder(Decimal128::compare(x, y)), SpecBytecodeNumber) \
+    macro(Equals, jsBoolean(Decimal128::compare(x, y) == 0), SpecBoolean) \
+    macro(NotEquals, jsBoolean(isLessOrGreater(Decimal128::compare(x, y))), SpecBoolean) \
+    macro(LessThan, jsBoolean(Decimal128::compare(x, y) < 0), SpecBoolean) \
+    macro(LessThanOrEqual, jsBoolean(Decimal128::compare(x, y) <= 0), SpecBoolean) \
+    macro(GreaterThan, jsBoolean(Decimal128::compare(x, y) > 0), SpecBoolean) \
+    macro(GreaterThanOrEqual, jsBoolean(Decimal128::compare(x, y) >= 0), SpecBoolean)
+
+#define DEFINE_DIRECT_BINARY_METHOD(name, function) \
+JSC_DECLARE_JIT_OPERATION(operationDecimal##name, EncodedJSValue, (JSGlobalObject*, DecimalObject*, DecimalObject*)); \
+JSC_DEFINE_JIT_OPERATION(operationDecimal##name, EncodedJSValue, (JSGlobalObject* globalObject, DecimalObject* left, DecimalObject* right)) \
+{ \
+    VM& vm = globalObject->vm(); \
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    auto scope = DECLARE_THROW_SCOPE(vm); \
+    OPERATION_RETURN(scope, JSValue::encode(DecimalObject::create(vm, globalObject->decimalStructure(), Decimal128::function(left->value(), right->value())))); \
+} \
+static const DOMJIT::Signature signatureOfDecimal##name(operationDecimal##name, DecimalObject::info(), effectOfAllocation, SpecObjectOther, SpecObjectOther);
+
+// Neither allocates nor throws.
+#define DEFINE_DIRECT_COMPARISON(name, result, type) \
+JSC_DECLARE_JIT_OPERATION(operationDecimal##name, EncodedJSValue, (JSGlobalObject*, DecimalObject*, DecimalObject*)); \
+JSC_DEFINE_JIT_OPERATION(operationDecimal##name, EncodedJSValue, (JSGlobalObject*, DecimalObject* left, DecimalObject* right)) \
+{ \
+    const Decimal128& x = left->value(); \
+    const Decimal128& y = right->value(); \
+    return { JSValue::encode(result), nullptr }; \
+} \
+static const DOMJIT::Signature signatureOfDecimal##name(operationDecimal##name, DecimalObject::info(), effectOfComparison, type, SpecObjectOther);
+
+static constexpr DOMJIT::Effect effectOfComparison { DOMJIT::HeapRange::none(), DOMJIT::HeapRange::none(), DOMJIT::HeapRange::top() };
+
+FOR_EACH_DIRECT_BINARY_METHOD(DEFINE_DIRECT_BINARY_METHOD)
+FOR_EACH_DIRECT_COMPARISON(DEFINE_DIRECT_COMPARISON)
+
+// For a count that is an integer in the source.
+JSC_DECLARE_JIT_OPERATION(operationDecimalRound, EncodedJSValue, (JSGlobalObject*, DecimalObject*, int32_t));
+JSC_DEFINE_JIT_OPERATION(operationDecimalRound, EncodedJSValue, (JSGlobalObject* globalObject, DecimalObject* decimal, int32_t digits))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    OPERATION_RETURN(scope, JSValue::encode(DecimalObject::create(vm, globalObject->decimalStructure(), decimal->value().round(digits, Decimal128::RoundingMode::HalfEven))));
+}
+static const DOMJIT::Signature signatureOfDecimalRound(operationDecimalRound, DecimalObject::info(), effectOfAllocation, SpecObjectOther, SpecInt32Only);
+
 // Null if it is none of them.
 const DOMJIT::Signature* DecimalObject::directMethod(TaggedNativeFunction function)
 {
-#define ANSWER_SIGNATURE(name, result, type) \
+#define ANSWER_SIGNATURE(name, ...) \
     if (function == TaggedNativeFunction { decimalProtoFunc##name }) \
         return &signatureOfDecimal##name;
+    FOR_EACH_DIRECT_BINARY_METHOD(ANSWER_SIGNATURE)
+    FOR_EACH_DIRECT_COMPARISON(ANSWER_SIGNATURE)
     FOR_EACH_DIRECT_METHOD(ANSWER_SIGNATURE)
+    if (function == TaggedNativeFunction { decimalProtoFuncRound })
+        return &signatureOfDecimalRound;
 #undef ANSWER_SIGNATURE
     return nullptr;
 }

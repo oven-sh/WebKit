@@ -1142,6 +1142,7 @@ static Ref<NativeJITCode> jitCodeForConstructTrampoline()
 NEVER_INLINE static NativeExecutable* hostFunctionStubWithThunk(VM& vm, NativeFunction function, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature* signature, unsigned length, const String& name)
 {
     JSC_REMOVABLE_DEFINITION(JIT, hostFunctionStubWithThunk);
+    ASSERT(mayHaveThunk(intrinsic) || intrinsic == NoIntrinsic || !thunkGeneratorForIntrinsic(intrinsic));
     return vm.jitStubs->hostFunctionStub(
         vm, toTagged(function), toTagged(constructor),
         intrinsic != NoIntrinsic ? thunkGeneratorForIntrinsic(intrinsic) : nullptr,

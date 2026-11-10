@@ -1753,13 +1753,17 @@ private:
         case GetStack:
         case GetRegExpObjectLastIndex:
         case SetRegExpObjectLastIndex:
-        case RecordRegExpCachedResult:
-        case CallDOM: {
+        case RecordRegExpCachedResult: {
             // This node should never be visible at this stage of compilation.
             DFG_CRASH(m_graph, m_currentNode, "Unexpected node during prediction propagation"_s);
             break;
         }
         
+        case CallDOM:
+            // Those of DOM are still Call here. An intrinsic makes this one right away.
+            setPrediction(m_currentNode->getHeapPrediction());
+            break;
+
         case Phi:
             // Phis should not be visible here since we're iterating the all-but-Phi's
             // part of basic blocks.
