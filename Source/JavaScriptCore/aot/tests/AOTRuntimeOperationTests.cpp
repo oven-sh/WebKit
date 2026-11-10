@@ -502,19 +502,25 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
     AOT_TEST_CHECK(charactersOf(other) == makeString(repeated("ab"_s, numberOfPiecesOfOlderText), "XY"_s));
     AOT_TEST_CHECK(charactersOf(text) == repeated("ab"_s, numberOfPieces) && canGrowInPlace(instance, text));
 
-    JSString* doubled = joinFromNativeCode(program, text, text);
-    AOT_TEST_CHECK(charactersOf(doubled) == repeated("ab"_s, 2 * numberOfPieces) && canGrowInPlace(instance, doubled) && canGrowInPlace(instance, text));
+    AOT_TEST_CHECK(charactersOf(joinFromNativeCode(program, text, text)) == repeated("ab"_s, 2 * numberOfPieces) && canGrowInPlace(instance, text));
+
+    constexpr unsigned numberOfPiecesOfPart = 1000;
+    constexpr unsigned numberOfPiecesWithPart = numberOfPieces + numberOfPiecesOfPart;
+    JSString* lengthened = joinFromNativeCode(program, text, jsSubstring(program.realm(), text, 0, 2 * numberOfPiecesOfPart));
+    AOT_TEST_CHECK(charactersOf(lengthened) == repeated("ab"_s, numberOfPiecesWithPart) && canGrowInPlace(instance, lengthened));
+    bool isInBufferOfText = uncheckedDowncast<JSRopeString>(lengthened)->substringBase() == uncheckedDowncast<JSRopeString>(text)->substringBase();
+    AOT_TEST_CHECK(canGrowInPlace(instance, text) == !isInBufferOfText);
 
     const char16_t wideCharacters[] = { 0x20ac, 0x20ac };
     String wide { std::span<const char16_t> { wideCharacters } };
-    JSString* widened = joinFromNativeCode(program, doubled, jsNontrivialString(vm, wide));
+    JSString* widened = joinFromNativeCode(program, lengthened, jsNontrivialString(vm, wide));
     AOT_TEST_CHECK(!widened->is8Bit() && canGrowInPlace(instance, widened));
     JSString* longer = joinFromNativeCode(program, widened, piece);
     AOT_TEST_CHECK(uncheckedDowncast<JSRopeString>(longer)->substringBase() == uncheckedDowncast<JSRopeString>(widened)->substringBase());
-    AOT_TEST_CHECK(charactersOf(longer) == makeString(repeated("ab"_s, 2 * numberOfPieces), wide, "ab"_s));
-    AOT_TEST_CHECK(charactersOf(doubled) == repeated("ab"_s, 2 * numberOfPieces));
+    AOT_TEST_CHECK(charactersOf(longer) == makeString(repeated("ab"_s, numberOfPiecesWithPart), wide, "ab"_s));
+    AOT_TEST_CHECK(charactersOf(lengthened) == repeated("ab"_s, numberOfPiecesWithPart));
 
-    JSString* inBuffer = joinFromNativeCode(program, doubled, piece);
+    JSString* inBuffer = joinFromNativeCode(program, lengthened, piece);
     JSString* belowRopes = inBuffer;
     String expected = charactersOf(inBuffer);
     for (unsigned count = 0; count < 100; ++count) {
@@ -531,14 +537,14 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
 
     constexpr unsigned numberOfPiecesBetweenCollections = 100000;
     constexpr size_t maxNumberOfCellsLeft = 100;
-    text = doubled;
+    text = lengthened;
     vm.heap.collectNow(Sync, CollectionScope::Full);
     size_t numberOfCellsBefore = vm.heap.objectCount();
     for (unsigned count = 0; count < numberOfPiecesBetweenCollections; ++count)
         text = joinFromNativeCode(program, text, piece);
     vm.heap.collectNow(Sync, CollectionScope::Full);
     AOT_TEST_CHECK(vm.heap.objectCount() < numberOfCellsBefore + maxNumberOfCellsLeft);
-    AOT_TEST_CHECK(text->length() == 2 * (2 * numberOfPieces + numberOfPiecesBetweenCollections));
+    AOT_TEST_CHECK(text->length() == 2 * (numberOfPiecesWithPart + numberOfPiecesBetweenCollections));
 }
 
 static String copyIn16Bits(const String& text)
