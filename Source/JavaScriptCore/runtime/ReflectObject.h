@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "JSGlobalObject.h"
 #include "JSObject.h"
 #include "PropertyDescriptor.h"
 
