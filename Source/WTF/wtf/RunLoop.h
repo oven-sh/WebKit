@@ -121,6 +121,10 @@ public:
     WTF_EXPORT_PRIVATE static RunLoop* webIfExists();
 #endif
     WTF_EXPORT_PRIVATE static Ref<RunLoop> create(ASCIILiteral threadName, ThreadType = ThreadType::Unknown, ThreadQOS = ThreadQOS::UserInitiated);
+#if ENABLE(AOT)
+    // Returns nullptr if the thread could not be created (Thread::tryCreate).
+    WTF_EXPORT_PRIVATE static RefPtr<RunLoop> tryCreate(ASCIILiteral threadName, ThreadType = ThreadType::Unknown, ThreadQOS = ThreadQOS::UserInitiated);
+#endif
 
     static bool isMain() { return mainSingleton().isCurrent(); }
     WTF_EXPORT_PRIVATE bool isCurrent() const final;

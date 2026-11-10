@@ -74,8 +74,13 @@ void TerminationDeadlineSet::armTimerIfNeeded()
     MonotonicTime earliest = m_deadlines.first()->m_deadline;
     if (m_timerArmedFor <= earliest) // Also: never arm for a deadline at infinity.
         return;
+    // The system refused the queue's thread (the limit on threads is reached): the deadline is not enforced until a
+    // later arm can start it.
+    WorkQueue* queue = VMTraps::tryQueue();
+    if (!queue)
+        return;
     m_timerArmedFor = earliest;
-    VMTraps::queue().dispatchAfter(std::max(earliest - MonotonicTime::now(), 0_s), [protectedThis = Ref { *this }, earliest] {
+    queue->dispatchAfter(std::max(earliest - MonotonicTime::now(), 0_s), [protectedThis = Ref { *this }, earliest] {
         protectedThis->timerFired(earliest);
     });
 }

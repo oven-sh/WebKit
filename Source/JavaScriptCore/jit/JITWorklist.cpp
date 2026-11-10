@@ -144,7 +144,14 @@ void JITWorklist::wakeThreads(const AbstractLocker& locker, unsigned enqueuedTie
         targetNumThreads = std::min(targetNumThreads, maxThreads);
     }
     while (m_numberOfActiveThreads < targetNumThreads) {
+#if ENABLE(AOT)
+        // A thread the system refuses (Thread::survivesFailedCreation()) is not counted: enqueue() compiles on the
+        // calling thread when none is active.
+        if (!m_planEnqueued->tryNotifyOne(locker))
+            return;
+#else
         m_planEnqueued->notifyOne(locker);
+#endif
         m_numberOfActiveThreads++;
     }
     ASSERT(m_numberOfActiveThreads >= 1);
@@ -177,8 +184,27 @@ CompilationResult JITWorklist::enqueue(Ref<JITPlan> plan)
     ASSERT(m_plans.find(plan->key()) == m_plans.end());
     m_plans.add(plan->key(), plan.copyRef());
     m_totalLoad += planLoad(plan);
-    m_queues[tier].append(WTF::move(plan));
+    m_queues[tier].append(plan.copyRef());
     wakeThreads(locker, tier);
+#if ENABLE(AOT)
+    if (!m_numberOfActiveThreads) [[unlikely]] {
+        // The system refused a compiler thread (the limit on threads is reached) and none is awake to take the
+        // queue, so the plan would never be compiled. Compile it here instead, as without a concurrent JIT.
+        // Nothing ran between the append and here: the plan is still last in its queue.
+        RELEASE_ASSERT(m_queues[tier].last() == plan.ptr());
+        m_queues[tier].removeLast();
+        m_plans.remove(plan->key());
+        m_totalLoad -= planLoad(plan);
+        locker.unlockEarly();
+#if USE(PROTECTED_JIT)
+        ArenaLifetime saLifetime;
+#endif
+        plan->compileInThread(nullptr);
+        if (plan->stage() != JITPlanStage::Canceled)
+            plan->endSignpost();
+        return plan->finalize();
+    }
+#endif
     return CompilationResult::CompilationDeferred;
 }
 
