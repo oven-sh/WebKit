@@ -321,11 +321,6 @@ static constexpr std::array<uint8_t, 256> characterClassTable {
     QueryEncode, // 0xFF
 };
 
-bool isForbiddenHostCodePoint(char16_t character)
-{
-    return character <= 0x7F && characterClassTable[character] & ForbiddenHost;
-}
-
 template<typename CharacterType> ALWAYS_INLINE static bool isC0Control(CharacterType character) { return character <= 0x1F; }
 template<typename CharacterType> ALWAYS_INLINE static bool isC0ControlOrSpace(CharacterType character) { return character <= 0x20; }
 template<typename CharacterType> ALWAYS_INLINE static bool isTabOrNewline(CharacterType character) { return character <= 0xD && ((1u << character) & ((1u << '\t') | (1u << '\n') | (1u << '\r'))); }
@@ -706,7 +701,7 @@ template<typename CharacterType>
 ALWAYS_INLINE bool URLParser::isForbiddenHostCodePoint(CharacterType character)
 {
     ASSERT(!m_urlIsSpecial);
-    return WTF::isForbiddenHostCodePoint(character);
+    return character <= 0x7F && characterClassTable[character] & ForbiddenHost;
 }
 
 template<typename CharacterType>
