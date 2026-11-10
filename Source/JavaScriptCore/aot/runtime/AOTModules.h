@@ -209,10 +209,14 @@ public:
         }
         runScheduledVariantRestores();
         m_variantsFetchedByTestFile.clearAll();
+        BitVector evictedFailures = m_modulesReleasedByLoader;
+        evictedFailures.filter(m_loadedInPreload);
         for (BitVector* letGo : { &m_modulesReleasedByLoader, &m_importersOfMockThatEnded }) {
             letGo->exclude(m_loadedInPreload);
             letGo->exclude(m_filesThatRanInPreload);
         }
+        for (size_t module : evictedFailures)
+            releaseFailedESModule(ModuleID(module));
         m_factoryBlockedImportRoots.clear();
         m_factoryBlockedImports.clear();
         m_failuresOfFactories.clear();
@@ -507,6 +511,12 @@ public:
     }
     bool wasReleasedByLoader(ModuleID module) const { return m_modulesReleasedByLoader.get(module.index()); }
     void releaseFailedESModules();
+    bool hasFailedESModule(ModuleID module) const { return isFailedESModule(module) || errorOfModuleThatRanBesideMock(module); }
+    void releaseFailedESModule(ModuleID module)
+    {
+        if (hasFailedESModule(module))
+            m_modulesReleasedByLoader.set(module.index());
+    }
     void forgetFailuresOfExportsThatBuildFoundAbsent();
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
     void evaluateDueDependencies(ModuleID);

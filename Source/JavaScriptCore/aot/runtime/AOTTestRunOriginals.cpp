@@ -186,12 +186,14 @@ void Modules::evaluatePastPendingMock(ModuleID facade)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     ModuleID file = fileOf(facade);
-    if (file == facade || !isMocked(file) || activeMock(file) || hasIntactOriginal(file) || status(file) >= ModuleStatus::Evaluating)
+    bool wasEvaluatedByRequire = status(file) == ModuleStatus::Evaluated && m_modulesEvaluatedBeforeMock.get(file.index());
+    if (file == facade || !isMocked(file) || activeMock(file) || hasIntactOriginal(file) || (status(file) >= ModuleStatus::Evaluating && !wasEvaluatedByRequire))
         return;
     didRemoveMock(file);
     bool wasMockPending = m_modulesWithPendingMock.get(file.index());
     m_modulesWithPendingMock.clear(file.index());
-    evaluateCommonJS(file);
+    if (!wasEvaluatedByRequire)
+        evaluateCommonJS(file);
     if (scope.exception()) [[unlikely]] {
         if (!wasImportedDuringEvaluation(file))
             discardFailedEvaluation(file);

@@ -7551,6 +7551,18 @@ void markEntryOwnedByTestFile(JSGlobalObject* realm, ModuleID module)
         modules->markEntryOwnedByTestFile(module);
 }
 
+bool hasFailedESModule(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->hasFailedESModule(module);
+}
+
+void releaseFailedESModule(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->releaseFailedESModule(module);
+}
+
 void markVariantEvictedByMock(JSGlobalObject* realm, ModuleID form)
 {
     if (Modules* modules = modulesOf(realm))

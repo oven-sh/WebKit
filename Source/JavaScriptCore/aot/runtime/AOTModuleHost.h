@@ -297,6 +297,8 @@ JS_EXPORT_PRIVATE bool wasDisplacedAfterFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLoadedBeforeTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void clearLoadedBeforeTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void markEntryOwnedByTestFile(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool hasFailedESModule(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void releaseFailedESModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didRemoveEntryForMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void markFetchOrphaned(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasOrphanedFetch(JSGlobalObject*, ModuleID);
