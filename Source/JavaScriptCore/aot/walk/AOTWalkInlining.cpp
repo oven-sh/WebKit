@@ -2102,7 +2102,7 @@ bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& func
         m_block = returns[0].block;
         m_state = WTF::move(returns[0].state);
         if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine())
-            checkProofOfResultOfCopy(returns[0].value, linked.result, originOfCall);
+            checkProofOfResultOfCopy(returns[0].value, linked.result, originOfCall, holdsNaNForUndefined(returns[0].value));
         bind(call.id(), guardNumericCallResult(*this, call, returns[0].value, originOfCall));
         return true;
     }
@@ -2172,7 +2172,7 @@ bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& func
     if (!m_hasFailed)
         noteFieldsOfScopes(fieldsThatMeet.span());
     if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine())
-        checkProofOfResultOfCopy(result, linked.result, originOfCall);
+        checkProofOfResultOfCopy(result, linked.result, originOfCall, std::ranges::any_of(returns, [&](const ReturnOfCopy& returned) { return holdsNaNForUndefined(returned.value); }));
     bind(call.id(), guardNumericCallResult(*this, call, result, originOfCall));
     return true;
 }

@@ -385,8 +385,10 @@ std::optional<FindsNothing> LinkTables::findsNothing(const Program& program, Lay
     };
     for (LayoutID current = layout; current; current = of == Of::HolderAndAbove ? program.at(current).base : LayoutID()) {
         const Layout& written = program.at(current);
+        if (side == ClassSide::Prototype && (isLaidOnPrototypeOf(current, key) || mayBeLaidOnPrototypeUnderUnknownKey(program, current, key)))
+            return std::nullopt;
         if (written.has(LayoutFlags::IsConstructorFunction)) {
-            if (side == ClassSide::Static || isLaidOnPrototypeOf(current, key) || mayBeLaidOnPrototypeUnderUnknownKey(program, current, key))
+            if (side == ClassSide::Static)
                 return std::nullopt;
             continue;
         }
@@ -406,16 +408,15 @@ bool LinkTables::findFunctionsLaidAbove(const Program& program, LayoutID layout,
         return std::pair { laid.layout, laid.key };
     };
     for (LayoutID current = layout; current; current = program.at(current).base) {
-        if (program.at(current).has(LayoutFlags::IsConstructorFunction)) {
-            if (mayBeLaidOnPrototypeUnderUnknownKey(program, current, key))
+        if (mayBeLaidOnPrototypeUnderUnknownKey(program, current, key))
+            return false;
+        for (const LinkedNameOnPrototype& laid : std::ranges::equal_range(namesOnPrototypes, std::pair { current, key }, { }, placeOf)) {
+            if (!laid.function)
                 return false;
-            for (const LinkedNameOnPrototype& laid : std::ranges::equal_range(namesOnPrototypes, std::pair { current, key }, { }, placeOf)) {
-                if (!laid.function)
-                    return false;
-                functions.append(laid.function);
-            }
-            continue;
+            functions.append(laid.function);
         }
+        if (program.at(current).has(LayoutFlags::IsConstructorFunction))
+            continue;
         std::span<const uint32_t> places = membersUnder(current, ClassSide::Prototype, key);
         if (places.empty() && classHolderIsMadeWithName(program, ClassSide::Prototype, key))
             return false;
@@ -482,8 +483,13 @@ MemberFound LinkTables::findMember(const Program& program, LayoutID layout, Clas
         if (isKnown)
             firstClassAsked = nearest;
     }
+    auto isLaidOnPrototypeOf = [&](LayoutID holder) {
+        return std::ranges::binary_search(namesOnPrototypes, std::pair { holder, key }, { }, [](const LinkedNameOnPrototype& laid) {
+            return std::pair { laid.layout, laid.key };
+        });
+    };
     for (LayoutID current = firstClassAsked; current; current = program.at(current).base) {
-        if (side == ClassSide::Prototype && program.at(current).has(LayoutFlags::IsConstructorFunction))
+        if (side == ClassSide::Prototype && (program.at(current).has(LayoutFlags::IsConstructorFunction) || isLaidOnPrototypeOf(current)))
             return { };
         MemberFound found;
         unsigned numberFound = 0;

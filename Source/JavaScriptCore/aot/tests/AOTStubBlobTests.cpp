@@ -532,6 +532,13 @@ static void checkSubstringSummary(const StubCatalog& catalog)
         AOT_TEST_CHECK(!containsRegister(summary.clobbered, reg));
 }
 
+static void checkTextSearchSummary(const StubCatalog& catalog)
+{
+    const StubSummary& summary = catalog.summaryOf(findText8());
+    for (GPRReg reg : { A2, A3, gprOf(StubRegister::A4) })
+        AOT_TEST_CHECK(containsRegister(summary.clobbered, reg));
+}
+
 static void checkArrayCreationSummary(const StubCatalog& catalog, StubKey key, const StubSignature& largestLiteral)
 {
     const StubSummary& summary = catalog.summaryOf(key);
@@ -640,6 +647,7 @@ static void testSummaries()
     checkCoroutineSummaries(catalog);
     checkNumberConversionSummary(catalog);
     checkSubstringSummary(catalog);
+    checkTextSearchSummary(catalog);
     checkArraySummaries(catalog);
     checkEqualitySummaries(catalog);
 }

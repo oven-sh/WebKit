@@ -412,6 +412,8 @@ void generateFindText8(StubAssembler& jit)
 {
     static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1) && leafArgumentGPR(2) == gprOf(StubRegister::A2));
     static_assert(leafArgumentGPR(3) == gprOf(StubRegister::A3) && leafArgumentGPR(4) == gprOf(StubRegister::A4));
+    for (unsigned index : { 2, 3, 4 })
+        jit.clobberOperand(index);
     const GPRReg characters = jit.operand(0);
     const GPRReg length = jit.operand(1);
     const GPRReg sought = jit.operand(2);

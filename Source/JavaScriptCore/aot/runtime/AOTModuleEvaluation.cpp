@@ -2192,7 +2192,9 @@ bool Modules::isNotLoaded(ModuleID module)
 
 void Modules::noteModulesLoadedWith(ModuleID root)
 {
-    if (!data(root).isESModuleOfProgram() || (data(root).isFacade() && !m_loadsModulesIndividually) || wasLoadedWithGraph(root) || (m_rootWhoseLoadIsSwept && !m_originalBeingEvaluated))
+    if (!data(root).isESModuleOfProgram() || (data(root).isFacade() && !m_loadsModulesIndividually) || wasLoadedWithGraph(root))
+        return;
+    if (m_rootWhoseLoadIsSwept && (!m_originalBeingEvaluated || importsStatically(root, *m_rootWhoseLoadIsSwept)))
         return;
     if (m_loadsModulesIndividually) {
         noteLoadOfEachModuleWith(root);

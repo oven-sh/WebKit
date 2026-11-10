@@ -1272,7 +1272,7 @@ bool JumpThreader::leadToOnePlace(const Block* one, const Block* other)
     if (one == other)
         return true;
     auto onlyHandsOn = [](const Block* block) {
-        return block->numberOfIncomingEdges() == 1 && block->phis().empty() && !block->isLandingPad() && !block->isEntry() && !block->isEmpty() && block->last()->opcode() == Jump && block->size() == block->upsilons().size() + 1;
+        return block->numberOfIncomingEdges() == 1 && block->phis().empty() && !block->isLandingPad() && !block->isEntry() && block->size() == 1 && block->last()->opcode() == Jump;
     };
     if (!onlyHandsOn(one) || !onlyHandsOn(other) || one->successor(0).block() != other->successor(0).block() || one->successor(0).edgeClass() != other->successor(0).edgeClass() || one->upsilons().size() != other->upsilons().size())
         return false;

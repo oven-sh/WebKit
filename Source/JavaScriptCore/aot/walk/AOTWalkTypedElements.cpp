@@ -1207,12 +1207,12 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
         read.setReadsHoleAsNaN(false);
     bool givesNaNForHole = read.readsHoleAsNaN();
     Reference element = leavesTurnAtHole ? walker.state().element(access.base, access.key) : Reference();
-    bool isReadInFront = !!presentInFront;
     if (presentInFront) {
         if (std::exchange(read.testsPassed, std::nullopt))
             read.setIsInBounds(*presentInFront);
         read.setIsPresent(*presentInFront);
     }
+    bool isReadInFront = presentInFront && !isNeverType(walker.resultTypeOf(read));
     if (tested && !isReadInFront)
         takeStorageAndLengthFromInFrontOfLoop(walker, read, *tested);
     std::optional<Draft> readAgain;
@@ -1231,6 +1231,10 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
         Walker::SpecializedPreheaderScope preheaderScope(walker, isReadInFront, walker.arrayGuardPurity());
         WhatListWasMadeWith held = namesStorage && read.isPresent() && read.arrayStorage() == ArrayStorage::Contiguous ? whatListWasMadeWith(walker, access.base) : WhatListWasMadeWith();
         element = held.proven ? walker.buildReadTypedByWhatIsRemembered(WTF::move(read), held.proven, held.shown) : walker.build(WTF::move(read));
+    }
+    if (isReadInFront && !element && !walker.isUnreachable()) {
+        walker.endAsUnreachable(walker.originOf(access.value));
+        return true;
     }
     if (readAgain && element && element.isValue()) {
         WalkState believed = walker.state();

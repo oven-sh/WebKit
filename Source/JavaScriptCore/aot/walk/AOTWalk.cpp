@@ -4034,6 +4034,19 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
                 m_valueBeforePendingStore = readFilledFieldOfProvenObject(*this, draft.objectOperand(), draft.key(), draft.origin());
                 if (m_hasFailed || isUnreachable())
                     return { };
+                if (m_valueBeforePendingStore) {
+                    Draft undoing(Opcode::PutSlot, draft.origin());
+                    chooseConservativeFields(undoing);
+                    undoing.setObjectOperand(draft.objectOperand());
+                    undoing.setValueOperand(m_valueBeforePendingStore);
+                    undoing.setKey(draft.key());
+                    undoing.setReceivers(draft.receivers());
+                    undoing.setLevel(KnowledgeLevel::Proven);
+                    undoing.setMode(draft.mode());
+                    undoing.setIsDefinition(false);
+                    if (findIllTypedOperand(typing(), undoing, typesOfOperands(undoing)))
+                        m_valueBeforePendingStore = { };
+                }
             }
         }
         if (steps & Step::isTypeTest)
@@ -4685,6 +4698,8 @@ void Walker::leaveArrivals(FunctionID callee, std::span<const Reference> argumen
         Reference argument = arguments[entryParameter];
         bool goesByWhatIsShown = argument && argument.isRecord() && (entryParameter >= function.numberOfEntryParameters() || function.entryParameterKind(entryParameter) != EntryParameter::Capture);
         TypeID proven = goesByWhatIsShown ? typeShown(argument) : ownTypeOf(argument);
+        if (TypeID own = goesByWhatIsShown ? ownTypeOf(argument) : TypeID(); proven && own && m_types.at(own).isJavaScriptValue() && !m_types.isSubset(own, proven))
+            proven = m_types.unionOf(proven, own);
         if (!proven)
             proven = TypeTable::anything;
         m_arrivalsHeld.append({ callee, entryParameter, proven, ArrivalHeld::Kind::Proven });

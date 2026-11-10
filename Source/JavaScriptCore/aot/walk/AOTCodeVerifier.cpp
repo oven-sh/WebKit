@@ -1046,13 +1046,20 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
     BlockID home = m_code.blockOf(ground);
     BlockID block = m_code.blockOf(access);
     ValueID list = m_code.at(access).operand(0);
+    auto writesLists = [&](const Operation& operation) {
+        FunctionID callee = operation.opcode == Opcode::CallDirect && m_facts ? operation.function() : FunctionID();
+        if (!callee)
+            return declaredBoundOf(operation.opcode).writes.containsAny(heapsOfLists);
+        const LinkedFunction& linked = m_facts->linked().function(callee);
+        return linked.effectsOnReturn().writes.containsAny(heapsOfLists) || linked.effectsOnThrow().writes.containsAny(heapsOfLists);
+    };
     auto findIn = [&](BlockID in, uint32_t after, uint32_t before) -> ValueID {
         for (ValueID each : operationsOf(in)) {
             uint32_t place = m_places[each.index()];
             const Operation& operation = m_code.at(each);
             if (place <= after || place >= before || operation.opcode == Opcode::ExtendArrayLength || operation.traits().mayRunOtherCode() || !operation.traits().mayWriteObservableState())
                 continue;
-            if (declaredBoundOf(operation.opcode).writes.containsAny(heapsOfLists) && operation.numberOfOperands() && operation.operand(0) && areSameCells(operation.operand(0), list))
+            if (writesLists(operation) && operation.numberOfOperands() && operation.operand(0) && areSameCells(operation.operand(0), list))
                 return each;
         }
         return { };

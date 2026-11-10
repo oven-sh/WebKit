@@ -1047,8 +1047,16 @@ void Walker::appendCarriedResults(BlockID head, Vector<Reference, 8>& arguments)
     if (!loop || !loop->carriedResultCount)
         return;
     const Vector<CarriedResult>& requests = m_carriedResultRequests.find(loop->carriedResultsSummary)->value;
+    const BodyIndex& index = *m_frames[loop->frame].index;
+    auto isBoundByInnerLoop = [&](ValueID site) {
+        for (LoopID inner = index.loopOf(index.blockOf(site)); inner && inner != loop->loop; inner = index.loop(inner).parent) {
+            if (inputBlock(loop->frame, index.loop(inner).head).head)
+                return true;
+        }
+        return false;
+    };
     for (uint32_t slot = 0; slot < loop->carriedResultCount; ++slot) {
-        Reference result = referenceBoundIn(m_frames[loop->frame], requests[slot].site);
+        Reference result = isBoundByInnerLoop(requests[slot].site) ? Reference() : referenceBoundIn(m_frames[loop->frame], requests[slot].site);
         BlockID block = result && result.isValue() && !m_code.isConstant(result.id()) ? m_code.blockOf(result.id()) : BlockID();
         bool fits = block && block.index() > head.index() && ownTypeOf(result) && m_types.isSubset(ownTypeOf(result), requests[slot].type);
         arguments.append(fits ? result : constant(Draft(Opcode::Absent, m_origin)));

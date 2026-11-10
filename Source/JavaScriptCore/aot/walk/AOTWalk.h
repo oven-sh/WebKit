@@ -1573,10 +1573,13 @@ public:
     TypeID typeShown(Reference);
     bool isShown(Reference value, TypeID within) { return m_types.isSubset(typeShown(value), within); }
     TypeID typeThatStoreTakesOnWordOfWalk(const Draft& store);
-    void checkProofOfResultOfCopy(Reference value, TypeID proven, Origin origin)
+    bool holdsNaNForUndefined(Reference returned) { return returned && returned.isValue() && m_code.at(returned.id()).opcode == Opcode::GetArrayElement && m_code.at(returned.id()).readsHoleAsNaN(); }
+    void checkProofOfResultOfCopy(Reference value, TypeID proven, Origin origin, bool someReturnHoldsNaNForUndefined)
     {
         if (value && value.isValue() && (m_code.at(value.id()).opcode == Opcode::AwaitCallBySavingFrame || m_code.at(value.id()).opcode == Opcode::AwaitBySavingFrame))
             return;
+        if (someReturnHoldsNaNForUndefined && proven && (m_types.at(proven).primitives & Primitive::Undefined))
+            proven = m_types.unionOf(proven, TypeTable::number);
         checkProofOfCopy(value, proven, ProofSource::ResultOfCall, origin);
     }
     void checkFactsRememberedOfCell(Reference object, Origin, OptionSet<CellFact> leanedOn = { });
