@@ -1377,7 +1377,7 @@ auto SectionParser::parseData() -> PartialResult
         WASM_PARSER_FAIL_IF(source().size() < dataByteLength || (source().size() - dataByteLength) < m_offset, "can't get data bytes from "_s, segmentNumber, "th Data segment"_s);
         segment.bytes = source().subspan(m_offset, dataByteLength);
         m_offset += dataByteLength;
-        m_info->data.append(segment);
+        WASM_ALLOCATOR_FAIL_IF(!m_info->data.tryAppend(segment), "can't allocate enough memory for "_s, segmentNumber, "th Data segment of size "_s, dataByteLength);
     }
 
     return { };

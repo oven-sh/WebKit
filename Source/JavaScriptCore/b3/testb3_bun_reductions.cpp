@@ -14,7 +14,9 @@
 #include "B3FoldPathConstants.h"
 #include "B3IntRange.h"
 #include "B3OptimizeAssociativeExpressionTrees.h"
+#include "B3ReduceDoubleToFloat.h"
 #include "B3ThreadJumps.h"
+#include "MathCommon.h"
 
 static constexpr int64_t tag = static_cast<int64_t>(0xfffe000000000000ull);
 
@@ -1533,6 +1535,118 @@ static void testDifferencePlusSubtrahend()
     }
 }
 
+static void testFloatOfDoubleOfInteger()
+{
+    enum class Width { Narrow, Extended, Wide };
+    for (Width width : { Width::Narrow, Width::Extended, Width::Wide }) {
+        for (bool joins : { false, true }) {
+            auto build = [&](Procedure& proc) {
+                Graph graph { proc };
+                BasicBlock* root = proc.addBlock();
+                Value* argument = cCallArgumentValues<int64_t>(proc, root)[0];
+                Value* integer = width == Width::Wide ? argument : graph.make(root, Trunc, argument);
+                if (width == Width::Extended)
+                    integer = graph.make(root, ZExt32, integer);
+                Value* number = graph.make(root, IToD, integer);
+                if (joins) {
+                    BasicBlock* taken = proc.addBlock();
+                    BasicBlock* notTaken = proc.addBlock();
+                    BasicBlock* join = proc.addBlock();
+                    Value* phi = graph.phi(join, Double);
+                    graph.branch(root, integer, taken, notTaken);
+                    graph.upsilon(taken, number, phi);
+                    graph.jump(taken, join);
+                    graph.upsilon(notTaken, graph.number(notTaken, 1.5), phi);
+                    graph.jump(notTaken, join);
+                    graph.ret(join, graph.make(join, DoubleToFloat, phi));
+                } else
+                    graph.ret(root, graph.make(root, DoubleToFloat, number));
+                resetAndValidate(proc);
+            };
+            Procedure reduced;
+            build(reduced);
+            reduceDoubleToFloat(reduced);
+            validate(reduced);
+            CHECK_EQ(numberOfValues(reduced, IToF), width == Width::Wide ? 0u : 1u);
+
+            Procedure proc;
+            build(proc);
+            auto code = compileProc(proc);
+            for (int64_t value : { 0x1000001000000001ll, -0x1000001000000001ll, 0x4000004000000001ll, 0x7fffffbfffffffffll, 0x20000010000001ll, 0x1000001000000000ll, 16777217ll, 0x7fffffffll, -1ll, 1ll }) {
+                int64_t integer = value;
+                if (width == Width::Narrow)
+                    integer = static_cast<int32_t>(value);
+                if (width == Width::Extended)
+                    integer = static_cast<uint32_t>(value);
+                double expected = joins && !integer ? 1.5 : static_cast<double>(integer);
+                CHECK_EQ(invoke<float>(*code, value), static_cast<float>(expected));
+            }
+        }
+    }
+}
+
+static void testFloatThroughDoubleIsQuiet()
+{
+    enum class Shape { Pair, Neg, Abs, Join };
+    for (Shape shape : { Shape::Pair, Shape::Neg, Shape::Abs, Shape::Join }) {
+        Procedure proc;
+        proc.setIsWasm(true);
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        Value* bits = graph.make(root, Trunc, cCallArgumentValues<int64_t>(proc, root)[0]);
+        Value* number = graph.make(root, FloatToDouble, graph.make(root, BitwiseCast, bits));
+        BasicBlock* last = root;
+        if (shape == Shape::Neg || shape == Shape::Abs)
+            number = graph.make(root, shape == Shape::Neg ? Neg : Abs, number);
+        if (shape == Shape::Join) {
+            BasicBlock* taken = proc.addBlock();
+            BasicBlock* notTaken = proc.addBlock();
+            last = proc.addBlock();
+            Value* phi = graph.phi(last, Double);
+            graph.branch(root, bits, taken, notTaken);
+            graph.upsilon(taken, number, phi);
+            graph.jump(taken, last);
+            graph.upsilon(notTaken, graph.number(notTaken, 1.5), phi);
+            graph.jump(notTaken, last);
+            number = phi;
+        }
+        graph.ret(last, graph.make(last, BitwiseCast, graph.make(last, DoubleToFloat, number)));
+        resetAndValidate(proc);
+        auto code = compileProc(proc);
+        for (uint32_t value : { 0x7fa00000u, 0xffa12345u, 0x7fc54321u, 0x3f800001u, 0x80000001u, 0x80000000u, 0x7f7fffffu, 0xff800000u }) {
+            bool isNaN = (value & 0x7fffffff) > 0x7f800000;
+            uint32_t expected = isNaN ? value | 0x400000 : value;
+            if (shape == Shape::Neg)
+                expected ^= 0x80000000;
+            if (shape == Shape::Abs)
+                expected &= 0x7fffffff;
+            CHECK_EQ(static_cast<uint32_t>(invoke<int32_t>(*code, static_cast<int64_t>(value))), expected);
+        }
+    }
+}
+
+static void testMinWithConstantIsQuiet()
+{
+    for (B3::Opcode opcode : { FMin, FMax }) {
+        for (double constant : { 1.0, 0.0, -0.0 }) {
+            Procedure proc(selectionPolicy());
+            proc.setIsWasm(true);
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            Value* number = graph.make(root, BitwiseCast, cCallArgumentValues<int64_t>(proc, root)[0]);
+            graph.ret(root, graph.make(root, BitwiseCast, graph.make(root, opcode, number, graph.number(root, constant))));
+            resetAndValidate(proc);
+            auto code = compileProc(proc);
+            for (int64_t bits : { 0x7ff4000000000000ll, 0x7ff8000000054321ll })
+                CHECK_EQ(invoke<int64_t>(*code, bits), bits | 0x8000000000000ll);
+            for (double operand : { 2.0, -2.0, 1.0, 0.0, -0.0 }) {
+                double expected = opcode == FMin ? Math::fMin(operand, constant) : Math::fMax(operand, constant);
+                CHECK_EQ(invoke<int64_t>(*code, std::bit_cast<int64_t>(operand)), std::bit_cast<int64_t>(expected));
+            }
+        }
+    }
+}
+
 void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testMemoryNumberingIrreducibleCycle());
@@ -1569,6 +1683,9 @@ void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testPartOfAddressIsSharedWithSameSumFurtherDown());
     RUN(testPartOfAddressIsSharedBesideCycleThatLeavesProcedure());
     RUN(testDifferencePlusSubtrahend());
+    RUN(testFloatOfDoubleOfInteger());
+    RUN(testFloatThroughDoubleIsQuiet());
+    RUN(testMinWithConstantIsQuiet());
 }
 
 #endif // ENABLE(B3_JIT)

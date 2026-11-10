@@ -43,6 +43,8 @@ static_assert(ImageString::hashMask == StringHasher::maskHash && ImageIdentifier
 static_assert(!(imageSectionAlignment % alignof(ImageStringRecord)) && !(imageSectionAlignment % alignof(ImageStringHeader)));
 
 struct ImageText::DecodedTexts {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DecodedTexts);
+
     static constexpr size_t numberOfRecentTexts = 512;
 
     struct RecentText {
@@ -61,7 +63,7 @@ ImageText::ImageText(const Image& image)
     , m_strings(image.section<ImageStringWord>(ImageSection::Strings).first(image.header().numbers.numberOfStringWords))
     , m_codedTexts(image.section<uint8_t>(ImageSection::Strings).subspan(m_strings.size_bytes()))
     , m_numberOfCodedTexts(image.header().numbers.numberOfCodedTexts)
-    , m_decodedTexts(makeUniqueWithoutFastMallocCheck<DecodedTexts>())
+    , m_decodedTexts(makeUnique<DecodedTexts>())
     , m_listedStrings(image.section<uint32_t>(ImageSection::LongStrings))
     , m_text(image.section<uint8_t>(ImageSection::Text))
     , m_identifiers(image.section<uint8_t>(ImageSection::Identifiers).first(image.header().numbers.endOfIdentifiers))

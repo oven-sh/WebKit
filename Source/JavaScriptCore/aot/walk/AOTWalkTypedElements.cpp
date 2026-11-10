@@ -994,6 +994,22 @@ static std::optional<Range> indexesOverTurnsInTypedElements(Walker& walker, cons
     return found;
 }
 
+static std::optional<int64_t> greatestWrittenIndex(const BodyIndex& index, const BodyValue& firstAccess)
+{
+    static constexpr OpcodeSet accesses { Opcode::ElemGet, Opcode::ElemSet };
+    ValueID list = index.stripCasts(firstAccess.objectOperand());
+    std::optional<int64_t> greatest;
+    for (BodyValue access : index.block(index.blockOf(firstAccess.id())).values()) {
+        ValueID key = accesses.contains(access.opcode()) && index.stripCasts(access.objectOperand()) == list ? index.stripCasts(access.propertyOperand()) : ValueID();
+        if (!key || index.isParameter(key) || index.opcodeOf(key) != Opcode::Integer)
+            continue;
+        if (!greatest && access.id() != firstAccess.id())
+            return std::nullopt;
+        greatest = std::max(greatest.value_or(0), index.value(key).as<Opcode::Integer>().integer());
+    }
+    return greatest && *greatest <= std::numeric_limits<uint16_t>::max() ? greatest : std::nullopt;
+}
+
 static void hoistArrayBoundsCheck(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
@@ -1014,6 +1030,11 @@ static void hoistArrayBoundsCheck(const AccessOfTypedElements& access)
         mostOfTurns.setInteger(overTurns->maximum);
         most = walker.constant(WTF::move(mostOfTurns));
         walker.count(StatisticID::LengthsAskedForUnrolledTurns);
+    }
+    if (std::optional<int64_t> greatest = isInBody && access.key.isConstant() ? greatestWrittenIndex(index, access.value) : std::nullopt; greatest && *greatest > access.typeOfKey.integers.maximum) {
+        Draft mostOfBlock(Opcode::Integer, origin);
+        mostOfBlock.setInteger(*greatest);
+        most = walker.constant(WTF::move(mostOfBlock));
     }
     Reference length;
     Reference isBelow;

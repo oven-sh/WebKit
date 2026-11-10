@@ -48,20 +48,31 @@ bool WasmCallableFunction::isJS() const
 
 bool Segments::tryReserve(size_t numberOfSegments, size_t numberOfBytes, size_t numberOfIndices)
 {
+    m_expectedSize = numberOfSegments;
     m_hasIndices = numberOfIndices;
     return m_buffer.tryReserveInitialCapacity(numberOfSegments * sizeof(Header) + numberOfBytes) && m_segmentOffsets.tryReserveInitialCapacity(numberOfIndices);
 }
 
-void Segments::append(const Segment& segment)
+// Most modules have no long headers. The first one reserves for all segments that follow it.
+bool Segments::tryReserveLongHeaders()
 {
-    ++m_size;
-    if (m_hasIndices)
-        m_segmentOffsets.append(m_buffer.size());
+    if (m_hasReservedLongHeaders)
+        return true;
+    m_hasReservedLongHeaders = m_buffer.tryReserveCapacity(m_buffer.capacity() + (m_expectedSize - m_size) * sizeof(LongHeader));
+    return m_hasReservedLongHeaders;
+}
+
+bool Segments::tryAppend(const Segment& segment)
+{
+    ASSERT(m_size < m_expectedSize);
+    if (m_hasIndices && !m_segmentOffsets.tryAppend(static_cast<uint32_t>(m_buffer.size())))
+        return false;
 
     Header header { static_cast<uint32_t>(segment.bytes.size()), 0 };
     if (segment.isActive() && segment.offsetIfActive->isConst() && segment.offsetIfActive->bits() <= std::numeric_limits<uint32_t>::max() && !segment.memoryIndex) [[likely]] {
         header.offset = static_cast<uint32_t>(segment.offsetIfActive->bits());
-        m_buffer.append(asByteSpan(header));
+        if (!m_buffer.tryAppend(asByteSpan(header)))
+            return false;
     } else {
         LongHeader longHeader { };
         longHeader.memoryIndex = segment.memoryIndex;
@@ -72,10 +83,13 @@ void Segments::append(const Segment& segment)
             longHeader.isExtendedExpression = segment.offsetIfActive->isExtendedExpression();
         }
         header.size |= hasLongHeaderBit;
-        m_buffer.append(asByteSpan(header));
-        m_buffer.append(asByteSpan(longHeader));
+        if (!tryReserveLongHeaders() || !m_buffer.tryAppend(asByteSpan(header)) || !m_buffer.tryAppend(asByteSpan(longHeader)))
+            return false;
     }
-    m_buffer.append(segment.bytes);
+    if (!m_buffer.tryAppend(segment.bytes))
+        return false;
+    ++m_size;
+    return true;
 }
 
 void Segments::readLongHeader(size_t& place, Segment& segment) const
