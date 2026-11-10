@@ -23,10 +23,27 @@ static_assert(InstanceLayout::reachAboveInstance <= reachOfInstanceWord && Insta
 // LinkBuffer's shouldPerformBranchCompaction must stay true: on ARM64 only its compaction loop picks the encoding of a jump that was linked inside the assembler, and a jump without an encoding is never linked.
 ImageLinkBuffer::ImageLinkBuffer(CCallHelpers& jit, LinkBuffer::Profile profile)
     : m_end(jit.label())
-    , m_storage(roundUpToMultipleOf<sizeof(uint32_t)>(std::max<size_t>(jit.m_assembler.codeSize(), sizeof(uint32_t))))
+    , m_storage(roundUpToMultipleOf<sizeof(uint32_t)>(std::max<size_t>(jit.m_assembler.codeSize() + planBranchIslands(jit), sizeof(uint32_t))))
     , m_linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(m_storage.mutableSpan().data()), m_storage.size(), profile)
 {
     RELEASE_ASSERT(jit.policy().recordsProcessAddresses);
+}
+
+size_t ImageLinkBuffer::planBranchIslands([[maybe_unused]] CCallHelpers& jit)
+{
+#if CPU(ARM64)
+    const uint32_t reach = jit.policy().branchReach;
+    if (jit.m_assembler.codeSize() <= reach / 2) [[likely]]
+        return 0;
+    m_branchIslands = jit.m_assembler.planBranchIslands(reach);
+    if (m_branchIslands.islands.isEmpty())
+        return 0;
+    m_hasBranchIslands = true;
+    jit.m_assembler.setBranchIslands(&m_branchIslands);
+    return m_branchIslands.size();
+#else
+    return 0;
+#endif
 }
 
 void ImageLinkBuffer::finalize(bool dumpsDisassembly, ASCIILiteral name)
@@ -136,6 +153,53 @@ void RelocationRecorder::storeInstanceDouble(CodeSymbol symbol, FPRReg source, G
     append(m_jit.storeInstanceDouble(source, instance), RelocationKind::InstanceAccess, symbol);
 }
 
+bool RelocationRecorder::exceedsBranchReach() const
+{
+    return isARM64() && m_jit.m_assembler.codeSize() > m_jit.policy().branchReach / 2;
+}
+
+CCallHelpers::Label RelocationRecorder::returnAddressOf(uint32_t call) const
+{
+    RELEASE_ASSERT(m_pending[call].kind == RelocationKind::Call);
+    const CCallHelpers::Label start = CCallHelpers::Jump(AssemblerLabel(0)).label();
+    return CCallHelpers::Jump(AssemblerLabel(static_cast<uint32_t>(MacroAssembler::differenceBetween(start, m_pending[call].site) + sizeOfNearCall))).label();
+}
+
+void RelocationRecorder::routeTransfersThroughEnd()
+{
+#if CPU(ARM64)
+    if (!exceedsBranchReach()) [[likely]]
+        return;
+
+    const CCallHelpers::Label start = CCallHelpers::Jump(AssemblerLabel(0)).label();
+    auto labelOf = [&](CCallHelpers::Label site) {
+        return AssemblerLabel(static_cast<uint32_t>(MacroAssembler::differenceBetween(start, site)));
+    };
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> jumpOfSymbol;
+    Vector<PendingRelocation, 32> others;
+    Vector<PendingRelocation> jumps;
+    for (const PendingRelocation& pending : m_pending) {
+        if (pending.kind != RelocationKind::Call && pending.kind != RelocationKind::Jump) {
+            others.append(pending);
+            continue;
+        }
+        uint64_t key = static_cast<uint64_t>(pending.space) << 48 | static_cast<uint64_t>(pending.entry) << 32 | pending.symbol;
+        uint32_t jump = jumpOfSymbol.ensure(key, [&] {
+            CCallHelpers::Label site = m_jit.label();
+            m_jit.nearTailCall();
+            jumps.append(PendingRelocation { site, pending.symbol, pending.entry, RelocationKind::Jump, pending.space });
+            return static_cast<uint32_t>(jumps.size() - 1);
+        }).iterator->value;
+        if (pending.kind == RelocationKind::Call)
+            m_jit.m_assembler.linkNearCall(labelOf(pending.site), labelOf(jumps[jump].site));
+        else
+            m_jit.m_assembler.linkJump(labelOf(pending.site), labelOf(jumps[jump].site), ARM64Assembler::JumpNoCondition, ARM64Assembler::ConditionInvalid);
+    }
+    others.appendVector(jumps);
+    m_pending = WTF::move(others);
+#endif
+}
+
 std::expected<RelocatableCode, LinkFailure> RelocationRecorder::finalize(LinkBuffer::Profile profile, BuildContext* context)
 {
     if (!m_jit.m_assembler.codeSize())
@@ -213,6 +277,8 @@ public:
     ALWAYS_INLINE uint32_t offsetOf(CCallHelpers::Label site)
     {
         uint32_t distanceToEnd = static_cast<uint32_t>(MacroAssembler::differenceBetween(site, m_buffer.end()));
+        if (m_buffer.hasBranchIslands()) [[unlikely]]
+            return m_buffer.linkBuffer().offsetOf(site);
         if (m_isBehindLastShortenedJump)
             return m_sizeOfCode - distanceToEnd;
         uint32_t offset = m_buffer.linkBuffer().offsetOf(site);
@@ -235,6 +301,8 @@ std::expected<Vector<Relocation>, LinkFailure> RelocationRecorder::link(ImageLin
     LinkBuffer& linkBuffer = buffer.linkBuffer();
     if (linkBuffer.hasProcessAddress())
         return makeUnexpected(LinkFailure::ProcessAddressInCode);
+    if (linkBuffer.hasBranchOutOfReach())
+        return makeUnexpected(LinkFailure::OutOfPCRelativeReach);
 
     std::span<uint8_t> bytes = buffer.bytes();
     std::span<const PendingRelocation> pendingRelocations = m_pending.span();

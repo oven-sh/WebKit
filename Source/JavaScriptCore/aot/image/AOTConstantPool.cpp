@@ -57,12 +57,14 @@ static StatisticID byteStatisticFor(ConstantKind kind)
         return StatisticID::ConstantBytesOfNumbers;
     case ConstantKind::ShapeSet:
         return StatisticID::ConstantBytesOfShapeSets;
-    case ConstantKind::BitSetOverKnownShapes:
-        return StatisticID::ConstantBytesOfBitSetsOverKnownShapes;
+    case ConstantKind::ShapeBitmap:
+        return StatisticID::ConstantBytesOfShapeBitmaps;
     case ConstantKind::OffsetTable:
         return StatisticID::ConstantBytesOfOffsetTables;
     case ConstantKind::CellTemplate:
         return StatisticID::ConstantBytesOfCellTemplates;
+    case ConstantKind::ByteLiteral:
+        return StatisticID::ConstantBytesOfByteLiterals;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

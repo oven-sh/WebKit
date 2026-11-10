@@ -23,7 +23,7 @@ layout L0 module=m0 fields=[{key=symbol("tag")@m0:0 declared={type=number} flags
 layout L1 module=m0 fields=[{key=symbol("turn")@m0:1 declared={type=number} flags=[IsRequired]}] ownFieldCount=1
 layout L2 module=m1 fields=[{key=symbol("again")@m1:0 declared={type=number} flags=[IsRequired]}] ownFieldCount=1
 module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
-module m1 path="again.ts" displayPath="again.ts" flags=[RunsAgain] body=f2 namespaceLayout=L(m1)
+module m1 path="again.ts" displayPath="again.ts" flags=[MayBeReevaluated] body=f2 namespaceLayout=L(m1)
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1

@@ -329,7 +329,7 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::SyntheticExports:
     case ProgramList::RequiredNames:
     case ProgramList::ColumnAdjustments:
-    case ProgramList::QuotedTexts:
+    case ProgramList::QuotedSources:
     case ProgramList::EvalBindings:
     case ProgramList::Code:
     case ProgramList::DataNodes:

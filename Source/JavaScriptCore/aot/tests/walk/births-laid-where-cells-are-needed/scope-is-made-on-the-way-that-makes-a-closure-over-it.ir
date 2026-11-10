@@ -15,8 +15,8 @@
 # FRONT: = NewObject {{*}}layout=L1
 # FRONT: = NewClosure {{*}}function=f4
 # FRONT: = Call
-# RUN(COUNT): compile BirthsLaidWhereCellsAreNeeded mechanisms=none+TypedOperations+Folding+EscapeAnalysis
-# COUNT: statistic BirthsLaidWhereCellsAreNeeded 3
+# RUN(COUNT): compile AllocationsSunk mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# COUNT: statistic AllocationsSunk 3
 # The same with one thing changed: the closure is handed out in front of the branch. Closure and scope are needed in the block that makes them
 # function both(skip, publish) { let id = 0; publish(() => ++id); if (skip) return 1; return 2; }
 # RUN(STAYS): walk f5 mechanisms=none+TypedOperations+Folding+EscapeAnalysis

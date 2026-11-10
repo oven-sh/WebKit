@@ -6,7 +6,7 @@
 #   constants:
 #     v2: 1 @JSValue = Integer integer=1
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
-#     v3: int[0, 1] @Int32 = BitAnd v1, v2 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: int[0, 1] @Int32 = BitAnd v1, v2 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v4: Array @Cell = NewArray v0, v0 contents=anything traits=[mayCollect, mayTouchMemory]
 #     v5: boolean @Boolean = HasArrayStorage v4 arrayStorage=Double traits=[mayTouchMemory]
 #     Branch v5 -> taken b1(), notTaken b2()

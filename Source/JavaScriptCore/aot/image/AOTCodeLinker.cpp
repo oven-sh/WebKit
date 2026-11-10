@@ -177,7 +177,7 @@ struct CodeLinker {
         AOT_NAME_OF_NUMBER_SPACE(RegExpLiteralCell)
         AOT_NAME_OF_NUMBER_SPACE(TemplateObjectCell)
         AOT_NAME_OF_NUMBER_SPACE(ArrayProfile)
-        AOT_NAME_OF_NUMBER_SPACE(RowsOfReads)
+        AOT_NAME_OF_NUMBER_SPACE(ReadGroupCache)
         AOT_NAME_OF_NUMBER_SPACE(EnvironmentHandedBack)
         AOT_NAME_OF_NUMBER_SPACE(ClassGuard)
         AOT_NAME_OF_NUMBER_SPACE(ClassRank)

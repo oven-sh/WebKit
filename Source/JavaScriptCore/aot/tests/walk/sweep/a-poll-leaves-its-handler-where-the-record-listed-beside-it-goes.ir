@@ -32,7 +32,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #     Return
 #   b5() role=CatchHandler:
 #     v7: anything @JSValue = CatchValue traits=[mayCollect, mayTouchMemory]
-#     v8: anything @JSValue = Call v1, -, v7 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory]
+#     v8: anything @JSValue = Call v1, -, v7 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b4()
 #   poll v4 fate=LeavesHandler
 #   poll v4 fate=LeavesHandler unlessKept=v6

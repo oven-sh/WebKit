@@ -446,8 +446,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     return true;
 }
 
-// Most ropes that are read were joined of two or three short flat strings or slices a moment ago.
-// A part that was narrow when it was joined may be wide by now: a string that becomes a key takes the characters of the name, whatever their width.
+// Most ropes that get resolved were just built from two or three short flat strings or substrings.
+// A fiber may be 16-bit by now: a string that is atomized adopts the atom's characters.
 ALWAYS_INLINE bool JSRopeString::tryResolveFlatLatin1Parts(VM& vm) const
 {
     ASSERT(isRope());

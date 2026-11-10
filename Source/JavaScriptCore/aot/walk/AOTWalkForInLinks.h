@@ -11,8 +11,8 @@ namespace JSC { namespace AOT { namespace Typed {
 
 inline constexpr OpcodeSet opcodesThatBuildTypedForInTakes { Opcode::ForInOpen, Opcode::ForInStep };
 AOT_LINK_OF_WALK(buildTypedForIn, opcodesThatBuildTypedForInTakes)
-bool countOfNamesComesRound(Walker&, const Walker::IterationByIndex&);
-void noteKeysAreAsEnumeratorFoundThem(Walker&, Reference enumerator, Reference object);
+bool countOfNamesComesRound(Walker&, const Walker::IndexedIteration&);
+void markEnumeratorCurrent(Walker&, Reference enumerator, Reference object);
 
 inline constexpr OpcodeSet opcodesThatUseKeyOfForInBehindTestTakes { Opcode::ElemGet, Opcode::ElemHas, Opcode::Call };
 bool useKeyOfForInBehindTestOfItsOpcodes(Walker&, const BodyValue&);
@@ -22,7 +22,7 @@ inline constexpr OpcodeSet opcodesThatBuildAccessUnderIndexOfForInTakes { Opcode
 bool buildAccessUnderIndexOfForInOfItsOpcodes(Walker&, const BodyValue&);
 ALWAYS_INLINE bool buildAccessUnderIndexOfForIn(Walker& walker, const BodyValue& value) { return opcodesThatBuildAccessUnderIndexOfForInTakes.contains(value.opcode()) && walker.currentBodyIndex().opcodes().contains(Opcode::ForInStep) && buildAccessUnderIndexOfForInOfItsOpcodes(walker, value); }
 template<Opcode known> ALWAYS_INLINE bool buildAccessUnderIndexOfForIn(Walker& walker, const BodyValueOf<known>& value) { return opcodesThatBuildAccessUnderIndexOfForInTakes.contains(known) && walker.currentBodyIndex().opcodes().contains(Opcode::ForInStep) && buildAccessUnderIndexOfForInOfItsOpcodes(walker, value); }
-Walker::IterationByIndex* findForInThatHandedOut(Walker&, ValueID key);
+Walker::IndexedIteration* findForInOfKey(Walker&, ValueID key);
 
 } } } // namespace JSC::AOT::Typed
 

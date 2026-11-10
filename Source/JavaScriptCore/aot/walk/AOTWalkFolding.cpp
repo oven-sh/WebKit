@@ -45,7 +45,7 @@ static constexpr OpcodeSet readsOfFolding { Opcode::GetModuleVariable, Opcode::G
 static constexpr OpcodeSet storesThatStateFollowsForFolding { Opcode::PutModuleVariable, Opcode::PutEnvironmentField };
 static constexpr OpcodeSet placesThatStateFollowsForFolding = storesThatStateFollowsForFolding | OpcodeSet { Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
 static constexpr OpcodeSet conversionsToObjectsInFolding { Opcode::ToObject, Opcode::ToThis };
-static constexpr OpcodeSet opcodesOfFolding = operationsOnPrimitivesInFolding | testsThatTypesDecideInFolding | castsOfFolding | readsOfFolding | storesThatStateFollowsForFolding | checksThatHandOnOrThrow
+static constexpr OpcodeSet opcodesOfFolding = operationsOnPrimitivesInFolding | testsThatTypesDecideInFolding | castsOfFolding | readsOfFolding | storesThatStateFollowsForFolding | passThroughChecks
     | conversionsToObjectsInFolding | OpcodeSet { Opcode::TypeOf, Opcode::ToLength };
 
 static ALWAYS_INLINE PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, TypeID id)
@@ -626,8 +626,8 @@ static ALWAYS_INLINE std::optional<bool> answerThatTypesDecideInFolding(Walker& 
     }
 
     TypeArena& types = walker.types();
-    if (types.saysNothing(typesOfOperands[0])) {
-        if (test.opcode() == Opcode::ToBoolean || (test.opcode() == Opcode::TypeTest && !types.saysNothing(test.testedType())) || (numberOfOperands == 2 && types.saysNothing(typesOfOperands[1])))
+    if (types.isUninformative(typesOfOperands[0])) {
+        if (test.opcode() == Opcode::ToBoolean || (test.opcode() == Opcode::TypeTest && !types.isUninformative(test.testedType())) || (numberOfOperands == 2 && types.isUninformative(typesOfOperands[1])))
             return std::nullopt;
     }
 
@@ -661,7 +661,7 @@ static NEVER_INLINE void checkRawNumbersThatAnswerRestsOnInFolding(Walker& walke
 static Reference operandOfCheckThatPassesInFolding(Walker& walker, const BodyValue& check)
 {
     static_assert(!OperandIndex::CheckInitialized::value && !OperandIndex::RequireObjectCoercible::value && !OperandIndex::RequireObject::value);
-    static_assert(checksThatHandOnOrThrow == OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject });
+    static_assert(passThroughChecks == OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject });
     static_assert(!genericOperationOf(Opcode::CheckInitialized) && !genericOperationOf(Opcode::RequireObjectCoercible) && !genericOperationOf(Opcode::RequireObject));
     Reference checked = walker.referenceOf(check.operand(0));
     TypeID type = typeToJudgeByInFolding(walker, checked);
@@ -852,24 +852,24 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
     }
 }
 
-static Reference lookAtCellInFrontOfTypedCopyInFolding(Walker& walker, const BodyValue& check, Reference checked)
+static Reference tryHoistInitializationCheck(Walker& walker, const BodyValue& check, Reference checked)
 {
-    if (!walker.standsInFrontOfTypedCopy(checked) || isNeverType(walker.types().withoutPrimitives(walker.typeOf(checked), Primitive::Absent)))
+    if (!walker.isInvariantInSpecializedVersion(checked) || isNeverType(walker.types().withoutPrimitives(walker.typeOf(checked), Primitive::Absent)))
         return { };
     Origin origin = walker.originOf(check);
     origin.isTailCall = false;
     Reference isEmpty;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true);
         Draft test(Opcode::TypeTest, origin);
         test.setValueOperand(checked);
         test.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
         isEmpty = walker.build(WTF::move(test));
     }
-    if (!walker.branchInFrontOfTypedCopy(isEmpty, false))
+    if (!walker.tryBranchInPreheader(isEmpty, false))
         return { };
-    walker.noteGuessOpened();
-    Walker::InFrontOfTypedCopy inFront(walker, true);
+    walker.recordSpeculation();
+    Walker::SpecializedPreheaderScope preheaderScope(walker, true);
     Draft filled(Opcode::Narrowed, origin);
     filled.setValueOperand(checked);
     filled.setTestOperand(isEmpty);
@@ -897,7 +897,7 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
         field = FieldReference { read.layout(), read.field() };
     }
 
-    Reference passed = lookAtCellInFrontOfTypedCopyInFolding(walker, check, checked);
+    Reference passed = tryHoistInitializationCheck(walker, check, checked);
     if (!passed) {
         Draft draft = walker.draftOf(check);
         walker.chooseConservativeFields(draft);
@@ -928,7 +928,7 @@ static ALWAYS_INLINE Reference answerKnownToFolding(Walker& walker, const BodyVa
     Opcode opcode = value.opcode();
     if (readsOfFolding.contains(opcode))
         return answerOfReadInFolding(walker, value);
-    if (checksThatHandOnOrThrow.contains(opcode))
+    if (passThroughChecks.contains(opcode))
         return operandOfCheckThatPassesInFolding(walker, value);
     if (castsOfFolding.contains(opcode)) {
         Reference operand = walker.referenceOf(value.operand(0));

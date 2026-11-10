@@ -13,8 +13,8 @@
 # CHECK-NOT: = NewObject
 # CHECK-NOT: = AreMembersUnchanged
 # CHECK: = Add {{*}}form=Integers
-# RUN(TWICE): compile LoopsBuiltTwice mechanisms=all
-# TWICE: statistic LoopsBuiltTwice 1
+# RUN(TWICE): compile WalkLoopsVersioned mechanisms=all
+# TWICE: statistic WalkLoopsVersioned 1
 # RUN(ANSWER): run-in-shell let calls = 0, Add; globalThis.sink = (...all) => { if (!calls++) { Add = all[0]; return; } print(all.join(" "), globalThis.seen); Object.defineProperty(Add.prototype, "v", { set(x) { globalThis.seen = x; }, get() { return 1; }, configurable: true }); };
 # ANSWER: 2016 2017 undefined
 # ANSWER-NEXT: 64 63

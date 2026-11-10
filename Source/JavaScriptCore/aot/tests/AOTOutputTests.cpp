@@ -735,8 +735,8 @@ static void testOutputHandlerTakesItsParameterThroughAPhi()
     LValue caught = out.phiIn(handler, Int64);
     AOT_TEST_CHECK(caught->opcode() == Phi && caught->type() == Int64 && caught->owner() == handler && out.m_block == thrower);
     AOT_TEST_CHECK(handler->phis().size() == 1 && handler->phis()[0] == caught && handler->size() == 1 && handler->at(0) == addend);
-    LValue handedOver = out.upsilon(out.constInt64(77), caught);
-    AOT_TEST_CHECK(handedOver->opcode() == Upsilon && handedOver->phi() == caught && thrower->upsilons().size() == 1 && thrower->isEmpty());
+    LValue caughtUpsilon = out.upsilon(out.constInt64(77), caught);
+    AOT_TEST_CHECK(caughtUpsilon->opcode() == Upsilon && caughtUpsilon->phi() == caught && thrower->upsilons().size() == 1 && thrower->isEmpty());
     out.jump(handler);
 
     out.appendTo(site);

@@ -399,7 +399,7 @@ bool ClassTable::rememberStructureOfInstances(VM& vm, JSCell* cell, const Layout
         structures.layAtBack(structureID, verdict.passes());
         return verdict.passes();
     }
-    countEvent(vm, RuntimeCounterID::StructuresOfHeirsExamined);
+    countEvent(vm, RuntimeCounterID::BuiltinSubclassStructuresExamined);
     bool tells = structureTellsInstancesOf(classLayout, cell, structures.displacementsOfFields(numberOfFields));
     verdict = { structureID, offsetOfStructures | (tells ? VerdictOnStructureOfHeir::passesBit : 0) };
     m_verdictsOnStructuresOfHeirs.add(keyOfVerdict | (tells ? VerdictOnStructureOfHeir::passesBit : 0));

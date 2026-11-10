@@ -76,7 +76,7 @@ runtime SetArrayLength, SetArrayLengthInSloppyCode : void (JSCell* array, uint32
 runtime AppendMembers : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
 runtime AppendValuesOfMap : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
-runtime ReserveArrayRoom : void (JSCell* array, uint64_t room) ; reads(all) writes(ArrayStorage, AllocatorState, RuntimeState) collects
+runtime ReserveArrayCapacity : void (JSCell* array, uint64_t capacity) ; reads(all) writes(ArrayStorage, AllocatorState, RuntimeState) collects
 runtime ConvertToDoubleStorage : void (JSCell* array) ; reads(all) writes(Elements, ArrayStorage, ShapeWords, AllocatorState, RuntimeState) collects
 runtime TryFinishBirth : void (JSCell* object) ; reads(all) writes(RuntimeState)
 runtime AreHeldFieldsFilled : size_t (JSCell* object) ; reads(all)
@@ -84,6 +84,7 @@ runtime ArrayPutAtIndex, ArrayPutAtIndexInSloppyCode, ArrayPutNumberAtIndex : vo
 runtime ArrayPutAtNumber : void (JSCell* array, EncodedJSValue value, double position) ; unknownCode
 
 runtime NewTypedArray : JSCell* (uint32_t type, double length) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime CopyByteLiteral : JSCell* (const uint8_t* bytes, uint32_t size, uint32_t isBuffer) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime TypedArrayPut : void (JSCell* view, uint64_t position, double value) ; reads(all) writes(TypedArrayElements)
 runtime TypedArrayLength : uint64_t (JSCell* view) ; reads(all) ; leaf
 runtime ThrowIfTypedArrayIsDetached : void (JSCell* view) ; reads(all) throws
@@ -175,6 +176,7 @@ runtime NewSuppressedError : JSCell* (EncodedJSValue error, EncodedJSValue suppr
 runtime ThrowRuntimeError : void (uint32_t errorKind) ; reads(all) writes(AllocatorState, RuntimeState) throws
 runtime StopAtNativeResult : void (EncodedJSValue found, uint32_t written) ; reads(all) writes(ExternalState)
 runtime StopUnlessNativeResultIsIntegerAsWritten : void (EncodedJSValue found, uint32_t written) ; reads(all) writes(ExternalState)
+runtime CheckFreshResult : void (EncodedJSValue result, uint64_t collectionsBefore, uint32_t builtin, EncodedJSValue receiver, EncodedJSValue firstArgument) ; reads(all) writes(ExternalState)
 runtime PoisonCell : void (JSCell* cell, uint32_t function, uint32_t position) ; reads(all) writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements, AllocatorState, RuntimeState)
 runtime StopAtFalseProof : void (EncodedJSValue found, uint32_t function, uint32_t position, uint32_t source) ; reads(all) writes(ExternalState)
 runtime StopAtStaleLoad : void (uint32_t function, uint32_t position) ; reads(all) writes(ExternalState)
@@ -210,10 +212,10 @@ runtime GetNamespaceOfModuleItself : JSCell* (uint32_t module) ; unknownCode
 runtime IsNamespaceOfModule : size_t (JSCell* cell, uint32_t module) ; none ; leaf
 runtime ImportModule : EncodedJSValue (uint32_t module, EncodedJSValue options, uint32_t referrer) ; unknownCode
 runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
-runtime RequireModuleOfRun : EncodedJSValue (uint32_t module, uint32_t referrer, EncodedJSValue objectOfRun) ; unknownCode
-runtime RecordRequire : void (uint32_t module, uint32_t referrer, uint32_t byMadeRequire) ; unknownCode
-runtime RecordRequireOfRun : void (uint32_t module, uint32_t referrer, uint32_t byMadeRequire, uint32_t behindTheLoad, EncodedJSValue objectOfRun) ; unknownCode
-runtime RequireIfHeldForImport : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
+runtime RequireModuleWithRequirer : EncodedJSValue (uint32_t module, uint32_t referrer, EncodedJSValue requirerObject) ; unknownCode
+runtime RecordRequire : void (uint32_t module, uint32_t referrer, uint32_t fromCreatedRequire) ; unknownCode
+runtime RecordRequireWithRequirer : void (uint32_t module, uint32_t referrer, uint32_t fromCreatedRequire, uint32_t followsLoad, EncodedJSValue requirerObject) ; unknownCode
+runtime RequireIfImported : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime WasLoadedSynchronously : size_t (uint32_t module) ; reads(ExternalState) writes(ExternalState)
 runtime SeesMockOf : size_t (uint32_t module, uint32_t referrer, uint32_t reader, uint32_t thatKeepsNamesOfOriginal) ; reads(ExternalState) writes(ExternalState)
 runtime IsLinkedBelow : size_t (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
@@ -229,5 +231,5 @@ runtime StopLoadingBehindFile : size_t (uint32_t module) ; unknownCode
 runtime AbandonModuleEvaluation : void (uint32_t module, JSCell* exception) ; reads(all) writes(ExternalState, AllocatorState, RuntimeState) collects
 runtime ImportDynamic : EncodedJSValue (EncodedJSValue specifier, EncodedJSValue options, uint32_t referrer) ; unknownCode
 runtime RequireDynamic : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer) ; unknownCode
-runtime RequireDynamicOfRun : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer, EncodedJSValue objectOfRun) ; unknownCode
+runtime RequireDynamicWithRequirer : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer, EncodedJSValue requirerObject) ; unknownCode
 runtime ResolveDynamic : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer, uint32_t isURL, uint32_t isForRequire) ; unknownCode

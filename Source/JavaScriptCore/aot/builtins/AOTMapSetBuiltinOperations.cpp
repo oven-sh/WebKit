@@ -556,21 +556,21 @@ static OperationReturnType<void> JIT_OPERATION_ATTRIBUTES clearSetGeneric(Instan
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTMapClearOfAnyMap, EncodedJSValue, (Instance* instance, JSCell* collection))
+JSC_DEFINE_JIT_OPERATION(operationAOTMapClearGeneric, EncodedJSValue, (Instance* instance, JSCell* collection))
 {
     if (CompactTable::tryClearInPlace(asObject(collection))) [[likely]]
         return { JSValue::encode(jsUndefined()), nullptr };
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapClearOfAnyMap);
-    cellArgument<JSMap>(collection, Entry::operationAOTMapClearOfAnyMap)->clear(globalObject);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapClearGeneric);
+    cellArgument<JSMap>(collection, Entry::operationAOTMapClearGeneric)->clear(globalObject);
     OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTSetClearOfAnySet, EncodedJSValue, (Instance* instance, JSCell* collection))
+JSC_DEFINE_JIT_OPERATION(operationAOTSetClearGeneric, EncodedJSValue, (Instance* instance, JSCell* collection))
 {
     if (CompactTable::tryClearInPlace(asObject(collection))) [[likely]]
         return { JSValue::encode(jsUndefined()), nullptr };
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetClearOfAnySet);
-    cellArgument<JSSet>(collection, Entry::operationAOTSetClearOfAnySet)->clear(globalObject);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetClearGeneric);
+    cellArgument<JSSet>(collection, Entry::operationAOTSetClearGeneric)->clear(globalObject);
     OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 

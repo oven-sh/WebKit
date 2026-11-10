@@ -25,7 +25,7 @@ OpcodeSet StraightEmitter::opcodesOfModules()
     };
 }
 
-static StraightArgument moduleIndexInStraightForm(ModuleID module)
+static StraightArgument moduleIndexArgument(ModuleID module)
 {
     return StraightArgument::word(module.index());
 }
@@ -75,7 +75,7 @@ static void beginModuleInStraightForm(StraightEmitter& emitter, const BodyValue&
         isDone.append(jit.jump());
         isInRecord.link(&jit);
     }
-    emitter.callOperation(value, RuntimeOperation::BeginModuleEvaluation, { moduleIndexInStraightForm(module) }, { .origin = origin });
+    emitter.callOperation(value, RuntimeOperation::BeginModuleEvaluation, { moduleIndexArgument(module) }, { .origin = origin });
     isDone.link(&jit);
 }
 
@@ -137,7 +137,7 @@ static void generateEvaluateModule(StraightEmitter& emitter, const BodyValue& va
     const Module& target = emitter.program().at(module);
     Origin origin = value.origin();
     origin.isTailCall = false;
-    StraightCallOptions options { .origin = origin, .calledBuiltin = value.isCallOfRequire() ? functionOfHostThatRequireCallsFor(target) : BuiltinID() };
+    StraightCallOptions options { .origin = origin, .calledBuiltin = value.isCallOfRequire() ? hostRequireFunctionFor(target) : BuiltinID() };
 
     ModuleSitePlan site = evaluation.siteOf(emitter.function(), value.id(), module);
     if (site.asksLoader) {
@@ -145,7 +145,7 @@ static void generateEvaluateModule(StraightEmitter& emitter, const BodyValue& va
         CCallHelpers::Jump hasRun;
         if (!emitter.plan().importsWhatMayBeMocked(module))
             hasRun = jit.branch8(CCallHelpers::Equal, loadAddressOfModuleStatusInStraightForm(emitter, module), storedStatusInStraightForm(StoredModuleStatus::Evaluated));
-        emitter.callOperation(value, RuntimeOperation::RequireModule, { moduleIndexInStraightForm(module), moduleIndexInStraightForm(ModuleID()) }, options);
+        emitter.callOperation(value, RuntimeOperation::RequireModule, { moduleIndexArgument(module), moduleIndexArgument(ModuleID()) }, options);
         if (hasRun.isSet())
             hasRun.link(&jit);
         return;
@@ -172,12 +172,12 @@ static void generateRequireModule(StraightEmitter& emitter, const BodyValue& val
     ModuleID module = value.module();
     ModuleID referrer = value.referrer();
     mentionRequireEdgeInStraightForm(emitter, referrer, module, value.specifier());
-    if (value.ifHeldForImport())
-        emitter.callOperation(value, RuntimeOperation::RequireIfHeldForImport, { moduleIndexInStraightForm(module), moduleIndexInStraightForm(referrer) });
-    else if (value.objectOfRunOperand())
-        emitter.callOperation(value, RuntimeOperation::RequireModuleOfRun, { moduleIndexInStraightForm(module), moduleIndexInStraightForm(referrer), StraightArgument(value.objectOfRunOperand()) }, { .calledBuiltin = functionOfHostThatRequireCallsFor(emitter.program().at(module)) });
+    if (value.onlyIfImported())
+        emitter.callOperation(value, RuntimeOperation::RequireIfImported, { moduleIndexArgument(module), moduleIndexArgument(referrer) });
+    else if (value.requirerObjectOperand())
+        emitter.callOperation(value, RuntimeOperation::RequireModuleWithRequirer, { moduleIndexArgument(module), moduleIndexArgument(referrer), StraightArgument(value.requirerObjectOperand()) }, { .calledBuiltin = hostRequireFunctionFor(emitter.program().at(module)) });
     else
-        emitter.callOperation(value, RuntimeOperation::RequireModule, { moduleIndexInStraightForm(module), moduleIndexInStraightForm(referrer) }, { .calledBuiltin = functionOfHostThatRequireCallsFor(emitter.program().at(module)) });
+        emitter.callOperation(value, RuntimeOperation::RequireModule, { moduleIndexArgument(module), moduleIndexArgument(referrer) }, { .calledBuiltin = hostRequireFunctionFor(emitter.program().at(module)) });
     emitter.define(value);
 }
 
@@ -186,13 +186,13 @@ void StraightEmitter::generateModule(const BodyValue& value)
     switch (value.opcode()) {
     case Opcode::ModuleNamespace:
         if (value.ofModuleItself())
-            callOperation(value, RuntimeOperation::GetNamespaceOfModuleItself, { moduleIndexInStraightForm(value.module()) });
+            callOperation(value, RuntimeOperation::GetNamespaceOfModuleItself, { moduleIndexArgument(value.module()) });
         else
-            callOperation(value, RuntimeOperation::GetModuleNamespace, { moduleIndexInStraightForm(value.module()), StraightArgument::word(static_cast<uint32_t>(value.phase())) });
+            callOperation(value, RuntimeOperation::GetModuleNamespace, { moduleIndexArgument(value.module()), StraightArgument::word(static_cast<uint32_t>(value.phase())) });
         define(value);
         return;
     case Opcode::ImportModule:
-        callOperation(value, RuntimeOperation::ImportModule, { moduleIndexInStraightForm(value.module()), operandOrUndefinedInStraightModule(value.optionsOperand()), moduleIndexInStraightForm(value.referrer()) });
+        callOperation(value, RuntimeOperation::ImportModule, { moduleIndexArgument(value.module()), operandOrUndefinedInStraightModule(value.optionsOperand()), moduleIndexArgument(value.referrer()) });
         define(value);
         return;
     case Opcode::RequireModule:
@@ -202,31 +202,31 @@ void StraightEmitter::generateModule(const BodyValue& value)
         generateEvaluateModule(*this, value);
         return;
     case Opcode::RecordRequire:
-        if (plan().moduleEvaluation().recordsNothingThatIsSeen(value.module()))
+        if (plan().moduleEvaluation().canSkipRecordRequire(value.module()))
             return;
-        if (value.objectOfRunOperand())
-            callOperation(value, RuntimeOperation::RecordRequireOfRun, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), StraightArgument::word(value.byMadeRequire()), StraightArgument::word(value.behindTheLoad()), StraightArgument(value.objectOfRunOperand()) });
+        if (value.requirerObjectOperand())
+            callOperation(value, RuntimeOperation::RecordRequireWithRequirer, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), StraightArgument::word(value.fromCreatedRequire()), StraightArgument::word(value.followsLoad()), StraightArgument(value.requirerObjectOperand()) });
         else
-            callOperation(value, RuntimeOperation::RecordRequire, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), StraightArgument::word(value.byMadeRequire()) });
+            callOperation(value, RuntimeOperation::RecordRequire, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), StraightArgument::word(value.fromCreatedRequire()) });
         return;
     case Opcode::WasLoadedSynchronously:
-        callOperation(value, RuntimeOperation::WasLoadedSynchronously, { moduleIndexInStraightForm(value.module()) });
+        callOperation(value, RuntimeOperation::WasLoadedSynchronously, { moduleIndexArgument(value.module()) });
         defineBoolean(value);
         return;
     case Opcode::SeesMockOf:
-        callOperation(value, RuntimeOperation::SeesMockOf, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), moduleIndexInStraightForm(value.reader()), StraightArgument::word(value.thatKeepsNamesOfOriginal()) });
+        callOperation(value, RuntimeOperation::SeesMockOf, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), moduleIndexArgument(value.reader()), StraightArgument::word(value.thatKeepsNamesOfOriginal()) });
         defineBoolean(value);
         return;
     case Opcode::IsLinkedBelow:
-        callOperation(value, RuntimeOperation::IsLinkedBelow, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()) });
+        callOperation(value, RuntimeOperation::IsLinkedBelow, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()) });
         defineBoolean(value);
         return;
     case Opcode::MockSeenBy:
-        callOperation(value, RuntimeOperation::MockSeenBy, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), moduleIndexInStraightForm(value.reader()) });
+        callOperation(value, RuntimeOperation::MockSeenBy, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), moduleIndexArgument(value.reader()) });
         define(value);
         return;
     case Opcode::NamespaceSeenBy:
-        callOperation(value, RuntimeOperation::NamespaceSeenBy, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), moduleIndexInStraightForm(value.reader()) });
+        callOperation(value, RuntimeOperation::NamespaceSeenBy, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), moduleIndexArgument(value.reader()) });
         define(value);
         return;
     case Opcode::AreLoaderFunctionsStored:
@@ -234,28 +234,28 @@ void StraightEmitter::generateModule(const BodyValue& value)
         defineBoolean(value);
         return;
     case Opcode::CountExecution:
-        callOperation(value, RuntimeOperation::CountExecution, { moduleIndexInStraightForm(value.module()), stringNumberInStraightModule(*this, value.description()), StraightArgument::word(value.counter()) });
+        callOperation(value, RuntimeOperation::CountExecution, { moduleIndexArgument(value.module()), stringNumberInStraightModule(*this, value.description()), StraightArgument::word(value.counter()) });
         return;
     case Opcode::ResolveModule:
-        callOperation(value, RuntimeOperation::ResolveModule, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), stringNumberInStraightModule(*this, value.specifier()), StraightArgument::word(value.isURL()) });
+        callOperation(value, RuntimeOperation::ResolveModule, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), stringNumberInStraightModule(*this, value.specifier()), StraightArgument::word(value.isURL()) });
         define(value);
         return;
     case Opcode::ThrowModuleFailure:
         callOperation(value, RuntimeOperation::ThrowModuleFailure, { StraightArgument::word(value.failure().index()), StraightArgument::word(value.isForRequire()) }, { .neverReturns = true });
         return;
     case Opcode::ImportDynamic:
-        callOperation(value, RuntimeOperation::ImportDynamic, { value.specifierOperand(), operandOrUndefinedInStraightModule(value.optionsOperand()), moduleIndexInStraightForm(value.referrer()) });
+        callOperation(value, RuntimeOperation::ImportDynamic, { value.specifierOperand(), operandOrUndefinedInStraightModule(value.optionsOperand()), moduleIndexArgument(value.referrer()) });
         define(value);
         return;
     case Opcode::RequireDynamic:
-        if (value.objectOfRunOperand())
-            callOperation(value, RuntimeOperation::RequireDynamicOfRun, { value.specifierOperand(), moduleIndexInStraightForm(value.referrer()), StraightArgument(value.objectOfRunOperand()) });
+        if (value.requirerObjectOperand())
+            callOperation(value, RuntimeOperation::RequireDynamicWithRequirer, { value.specifierOperand(), moduleIndexArgument(value.referrer()), StraightArgument(value.requirerObjectOperand()) });
         else
-            callOperation(value, RuntimeOperation::RequireDynamic, { value.specifierOperand(), moduleIndexInStraightForm(value.referrer()) });
+            callOperation(value, RuntimeOperation::RequireDynamic, { value.specifierOperand(), moduleIndexArgument(value.referrer()) });
         define(value);
         return;
     case Opcode::ResolveDynamic:
-        callOperation(value, RuntimeOperation::ResolveDynamic, { value.specifierOperand(), moduleIndexInStraightForm(value.referrer()), StraightArgument::word(value.isURL()), StraightArgument::word(value.isForRequire()) });
+        callOperation(value, RuntimeOperation::ResolveDynamic, { value.specifierOperand(), moduleIndexArgument(value.referrer()), StraightArgument::word(value.isURL()), StraightArgument::word(value.isForRequire()) });
         define(value);
         return;
     default:

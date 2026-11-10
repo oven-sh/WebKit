@@ -48,6 +48,7 @@
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTRealmStartup.h"
 #include "AOTRegExpRecords.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeHooks.h"
 #include "AOTRuntimeReporter.h"
@@ -488,7 +489,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     VM& vm = realm->vm();
     RELEASE_ASSERT(vm.hasCompiledCode());
     if (const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost)
-        vm.aotState().image->setDecompressText(host->decompressText);
+        vm.aotState().image->setDecompressSource(host->decompressSource);
     takeFaultsOfThisThreadOnAnotherStack();
     DeferGCForAWhile deferGC(vm);
     destroyDeadInstances(vm);
@@ -513,11 +514,12 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
-    instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
-    instance->state->caches->addClearedEachCollection("places hold copies of slots"_s, asMutableByteSpan(instance->propertyCaches.placesHoldCopiesOfSlots));
-    instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()));
-    instance->state->caches->addClearedEachCollection("access table"_s, asMutableByteSpan(accessTableOf(*instance, *instance->program)));
-    instance->state->caches->addClearedEachCollection("keys of the access table that depend on chains"_s, asMutableByteSpan(instance->propertyCaches.accessTable.numberOfKeysThatDependOnChains));
+    const uint8_t* hasRunSinceClear = &instance->propertyCaches.hasRunSinceClear;
+    instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()), hasRunSinceClear);
+    instance->state->caches->addClearedEachCollection("places hold copies of slots"_s, asMutableByteSpan(instance->propertyCaches.hasCachedSlotValues), hasRunSinceClear);
+    instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()), hasRunSinceClear);
+    instance->state->caches->addClearedEachCollection("access table"_s, asMutableByteSpan(accessTableOf(*instance, *instance->program)), hasRunSinceClear);
+    instance->state->caches->addClearedEachCollection("keys of the access table that depend on chains"_s, asMutableByteSpan(instance->propertyCaches.accessTable.numberOfKeysThatDependOnChains), hasRunSinceClear);
     fillInstanceClassInfos(*instance);
     initializeRuntimeWords(*instance);
 
@@ -537,6 +539,14 @@ Instance* Instance::create(JSGlobalObject* realm)
 #endif
     releaseUnusedPagesOfThread();
     return instance;
+}
+
+void VMState::didChangeInstances()
+{
+    onlyInstance = instances.size() == 1 ? instances.first() : nullptr;
+    if (onlyInstance)
+        onlyInstance->propertyCaches.hasRunSinceClear = true;
+    instanceOfRecentRun = { };
 }
 
 void Instance::destroy(Instance* instance)
@@ -706,7 +716,9 @@ static_assert(numberOfRuntimeOperations == 0 FOR_EACH_AOT_RUNTIME_OPERATION(AOT_
 
 static void JIT_OPERATION_ATTRIBUTES operationNotUsedByImage()
 {
-    dataLogLn("AOT: compiled code called an operation that its image does not list as used.");
+    RuntimeCheckFailure failure("operation table check failed"_s);
+    failure.detail("compiled code called a runtime operation that its image does not list as used");
+    failure.report();
     RELEASE_ASSERT_NOT_REACHED();
 }
 
@@ -875,12 +887,12 @@ static void trapUnusedEntries(void** entries, const Image& image)
     }
 }
 
-static_assert(!isFamilyOfOperations(static_cast<RemovableFeature>(0)));
+static_assert(!isOperationFamily(static_cast<RemovableFeature>(0)));
 static constexpr auto familiesOfEntries = [] {
     std::array<uint16_t, entriesThatAreCalled.size() * 32> families { };
     for (unsigned index = 0; index < numberOfEntries; ++index) {
         std::optional<RemovableFeature> feature = featureOf(static_cast<Entry>(index));
-        if (feature && isFamilyOfOperations(*feature))
+        if (feature && isOperationFamily(*feature))
             families[index] = static_cast<uint16_t>(*feature);
     }
     return families;
@@ -1054,6 +1066,7 @@ void VMState::releaseImage(VM& vm)
     propertyCaches = nullptr;
     functionTables = nullptr;
     cyclesOfImports = nullptr;
+    reexportedNames = nullptr;
     callSiteCache = nullptr;
     runtimeTable = nullptr;
     identifiers = nullptr;

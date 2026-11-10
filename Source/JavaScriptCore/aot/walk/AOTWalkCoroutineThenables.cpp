@@ -97,7 +97,7 @@ static bool nothingEverLiesUnderKeyFromForThenables(const Program& program, Buil
 
 static bool isFreshListWithoutThenForThenables(Walker& walker, Reference value)
 {
-    if (!walker.has(Mechanism::TypedOperations) || !isFreshListAsMade(walker, value))
+    if (!walker.has(Mechanism::TypedOperations) || !isFreshPristineArray(walker, value))
         return false;
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
@@ -122,7 +122,7 @@ bool leansOnProofOfNoThen(Walker& walker, Reference value, Origin origin)
     if (!isProvenToHaveNoThen(walker, value))
         return false;
     TypeID type = walker.typeOf(value);
-    if (!walker.checksProofsOf(ProofSource::WhatIsRemembered) || !value.isRecord() || !type || !walker.types().at(type).hasObjects() || walker.isUnreachable())
+    if (!walker.checksProofsOf(ProofSource::RememberedFact) || !value.isRecord() || !type || !walker.types().at(type).hasObjects() || walker.isUnreachable())
         return true;
     origin.isTailCall = false;
     for (BuiltinName name : walker.program().builtins().keysReadBy(Protocol::Thenable)) {
@@ -132,7 +132,7 @@ bool leansOnProofOfNoThen(Walker& walker, Reference value, Origin origin)
         test.setKey(walker.program().keyOf(name));
         test.setAsksRunTime(true);
         test.setAsksObjectByInquiry(true);
-        walker.askAgainWhereAnswerIsLeanedOn(WTF::move(test));
+        walker.verifyRememberedTest(WTF::move(test));
     }
     return true;
 }

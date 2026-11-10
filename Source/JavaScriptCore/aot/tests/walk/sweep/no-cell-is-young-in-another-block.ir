@@ -19,10 +19,10 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 #     v3: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
 #     Branch v2 -> taken b1(), notTaken b2()
 #   b1():
-#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b2()
 #   b2():
-#     v5 @Void = SetMappedArgument v3, v1 index=1 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v5 @Void = SetMappedArgument v3, v1 index=1 traits=[mayWriteObservableState, mayTouchMemory]
 #     Return v3
 # }
 # -- end of code

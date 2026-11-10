@@ -31,7 +31,7 @@ public:
     unsigned addData(Body body = Body::Absent) { return add(ModuleKind::Data, ExternalKind::UncompiledCode, SyntheticExportRule::None, body, { }); }
     unsigned addLibrarySource() { return add(ModuleKind::RuntimeSource, ExternalKind::UncompiledCode, SyntheticExportRule::RuntimeModule, Body::Present, { }); }
     unsigned addCommonJS(Body body = Body::Present) { return add(ModuleKind::CommonJs, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, body, Flag::CapturesOnDemand); }
-    unsigned addFaceThatCaptures() { return add(ModuleKind::SourceText, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, Body::Present, { }); }
+    unsigned addCapturingFacade() { return add(ModuleKind::SourceText, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, Body::Present, { }); }
     unsigned addRuntimeModule() { return add(ModuleKind::Runtime, ExternalKind::UncompiledCode, SyntheticExportRule::RuntimeModule, Body::Absent, { }); }
     unsigned addUncompiledCode() { return add(ModuleKind::External, ExternalKind::UncompiledCode, SyntheticExportRule::None, Body::Absent, { }); }
 
@@ -339,9 +339,9 @@ struct StepsOfTestWalk {
 };
 
 struct LinksOfGraph {
-    LinksOfGraph(const Graph& graph, bool goesModuleByModule)
+    LinksOfGraph(const Graph& graph, bool loadsModulesIndividually)
         : graph(graph)
-        , goesOneByOne(goesModuleByModule)
+        , goesOneByOne(loadsModulesIndividually)
     {
         settled.fill(0, graph.size() / 64 + 1);
     }
@@ -362,7 +362,7 @@ struct LinksOfGraph {
         return isSettled;
     }
     std::span<const uint64_t> modulesSettledForLinks() const { return settled.span(); }
-    bool goesModuleByModule() const { return goesOneByOne; }
+    bool loadsModulesIndividually() const { return goesOneByOne; }
     bool goesByAllRequests(uint32_t module) const { return goesOneByOne || leadersThatGoByAllRequests.get(module); }
     void didGetStateOfItsOwn(uint32_t module) const
     {

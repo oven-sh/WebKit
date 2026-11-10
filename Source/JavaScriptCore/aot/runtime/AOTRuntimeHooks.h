@@ -32,6 +32,7 @@ namespace AOT::RuntimeHooks {
 using AOT::didCreateClass;
 using AOT::didCreateStaticProperty;
 using AOT::didRejectWrite;
+using AOT::isReportedAsReadOnly;
 using AOT::lockedObjectErrorMessage;
 using AOT::reflectThrowsOnLockedProperty;
 using AOT::takePreallocatedStaticProperty;

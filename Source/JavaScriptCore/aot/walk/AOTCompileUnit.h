@@ -11,6 +11,7 @@
 #include "AOTCompileFunctions.h"
 #include "AOTCompileOptions.h"
 #include "AOTFacts.h"
+#include "AOTHostFunctionSources.h"
 #include "AOTMechanisms.h"
 #include "AOTPlan.h"
 #include "AOTSweep.h"
@@ -55,8 +56,8 @@ constexpr bool isEnforced(ProofSource source)
     case ProofSource::Contents:
     case ProofSource::OtherOperation:
     case ProofSource::Test:
-    case ProofSource::WhatIsRemembered:
-    case ProofSource::CallMadeInFront:
+    case ProofSource::RememberedFact:
+    case ProofSource::HoistedCall:
     case ProofSource::Lifetime:
         return false;
     }
@@ -74,9 +75,9 @@ uint16_t sourcesOfProofsCheckedUnder(Switches testing)
 }
 
 template<typename Switches>
-bool testsEveryPositionUnder(Switches testing)
+bool checksBoundsUnder(Switches testing)
 {
-    return AOT::hasFlag(testing, Wire::TestingSwitch::TestsEveryPosition) || AOT::hasFlag(testing, Wire::TestingSwitch::CheckProofsAtRunTime);
+    return AOT::hasFlag(testing, Wire::TestingSwitch::CheckBoundsAtRunTime) || AOT::hasFlag(testing, Wire::TestingSwitch::CheckProofsAtRunTime);
 }
 
 struct WalkOptions {
@@ -86,85 +87,85 @@ struct WalkOptions {
     Mechanisms mechanisms { allMechanisms };
     bool checksProofs { false };
     uint16_t sourcesOfProofsChecked { 0 };
-    bool testsEveryPosition { false };
-    bool takesPositionsToLieInside { false };
-    bool showsPositionsTakenToLieInsideToVerifier { false };
-    bool leavesOutReadsBehindTestsOfLengths { false };
-    bool takesVariablesThatBoundToBeAsInFront { false };
-    bool takesStorageAndLengthsToBeAsInFront { false };
-    bool namesOperandsOfRowsByWhatTheirVariablesHoldNow { false };
-    bool takesDividendsOfReciprocalsToFit32Bits { false };
-    bool roundsBoundsOfCountersTheOtherWay { false };
-    bool takesGuardsAndFactsToHold { false };
-    bool makesCallsMadeInFrontAgainInTurns { false };
-    bool takesEveryBuiltinInLineToAnswerOutOfItsOperands { false };
-    bool takesNumbersStoredIntoListsOfDoublesToBeNoNaN { false };
-    bool takesRoomsAskedInFrontForGiven { false };
-    bool takesLengthsAskedInTurnsForGiven { false };
-    bool takesStoresOfLengthsToEndNothing { false };
-    bool takesReadsOfConstructorsPrototypesToEndNoGuard { false };
-    bool takesKeysOfForInToBeAsStepFoundThem { false };
-    bool takesOneRowToSpeakForAll { false };
-    bool takesNothingToBeDoneToFreshLists { false };
-    bool typedTurnsPassStoresIntoListsOver { false };
-    bool takesBoundFunctionsToBindOneMore { false };
-    bool handsGroundsOfPositionsBelowSumsOverUnproven { false };
-    bool sweepTurnsBranchThatDecidesIntoJump { false };
-    bool sweepLetsGoEdgeThatIsTaken { false };
+    bool checksBounds { false };
+    bool shouldAssumeIndexesInBounds { false };
+    bool shouldVerifyAssumedBounds { false };
+    bool shouldDropLengthCheckedReads { false };
+    bool shouldAssumeInvariantLoopBounds { false };
+    bool shouldAssumeInvariantArrayStorage { false };
+    bool shouldMisidentifyHoistedReadOperands { false };
+    bool shouldAssumeUInt32Dividends { false };
+    bool shouldMisroundLoopBounds { false };
+    bool shouldAssumeGuardsAndFacts { false };
+    bool checksHoistedCalls { false };
+    bool shouldAssumeInlineBuiltinsPure { false };
+    bool shouldAssumeNoNaNStores { false };
+    bool shouldSkipCapacityChecks { false };
+    bool shouldSkipLengthChecks { false };
+    bool shouldIgnoreLengthStores { false };
+    bool shouldIgnorePrototypeReads { false };
+    bool shouldAssumeEnumeratorCurrent { false };
+    bool shouldIgnoreAlternativeOverloads { false };
+    bool shouldIgnoreFreshArrayEscapes { false };
+    bool shouldIgnoreLoopArrayStores { false };
+    bool shouldOverstateBoundArgumentCount { false };
+    bool shouldSkipBoundsProof { false };
+    bool shouldMisfoldBranchInSweep { false };
+    bool shouldDropEdgeInSweep { false };
     bool handlerEdgesTakeWhatStandsIn { false };
     bool everyClosureStandsBehindCopies { false };
-    bool takesCalleesToKeepNothing { false };
-    bool writesBodiesStraight { false };
+    bool shouldAssumeCalleesRetainNothing { false };
+    bool forcesStraightCompilation { false };
     bool checksEffects { false };
     bool checksWalk { false };
-    bool walksLastWalksOfLoopsAlone { false };
-    bool walksLoopsThatFitAgain { false };
-    bool undoLeavesExpectations { false };
-    bool laterUnitsOpenNoGuesses { false };
-    uint32_t rowThatSaysLess { 0 };
+    bool replaysFinalLoopVisits { false };
+    bool repeatsFittingLoopVisits { false };
+    bool shouldDisableLaterUnitSpeculation { false };
+    uint32_t understatedEffects { 0 };
     bool ignoresBranchHints { false };
     bool shufflesBlockFrequencies { false };
     bool ignoresExpectedTypes { false };
     bool shufflesExpectedTypes { false };
-    bool failsGuesses { false };
-    bool turnsForgetWhatWasDone { false };
-    bool notesRowsOfLoopsThatSayLess { false };
+    bool shouldFailSpeculations { false };
+    bool shouldIgnoreIterationEffects { false };
+    bool shouldUnderstateLoopEffects { false };
     bool netOfEffectsWatchesTurns { false };
     bool shufflesChoices { false };
     bool judgesInt32Promises { true };
-    uint32_t seedOfShuffles { 0 };
-    WayOfWalking wayForcedOnUnits { WayOfWalking::AsBuilt };
-    uint32_t periodOfUnitsWalkedThatWay { 0 };
-    uint32_t periodOfHearingsThatCutWalks { 0 };
-    uint32_t phaseOfHearingsThatCutWalks { 0 };
-    bool takesValuesThatComeLaterForOthersThanWhatIsMadeHere { false };
-    bool takesReceiversOfMethodsOfListsToBeMadeHere { false };
-    bool takesElementsBesideSumsToComeOffListsOfNumbers { false };
+    uint32_t shuffleSeed { 0 };
+    WalkMode forcedWalkMode { WalkMode::AsBuilt };
+    uint32_t forcedWalkModePeriod { 0 };
+    uint32_t loopVisitAbortPeriod { 0 };
+    uint32_t loopVisitAbortPhase { 0 };
+    bool shouldAssumeLaterValuesUnaliased { false };
+    bool shouldAssumeLocalArrayReceivers { false };
+    bool shouldAssumeNumericAddends { false };
     bool shouldAssumeArithmeticUsers { false };
-    bool takesIterablesOfPatternsToStayAsMade { false };
-    bool takesValuesThatPatternsTakeApartInTurnsForListsAsMade { false };
-    bool takesTurnsToHaveDoneNothingWherePatternsAreHeld { false };
-    bool letsMarkedObjectsPassTestsOfLinks { false };
-    bool takesPartsOfPairsWhateverIsStepped { false };
-    bool takesListsSteppedByMethodsToBeAsMade { false };
-    bool takesKindsAskedInFrontForGiven { false };
-    bool takesVariablesReadInFrontOfLoopsToHoldWhatIsProven { false };
-    bool takesSlotsReadInFrontOfLoopsToFollowTheirStores { false };
-    bool takesWhatLoopsAskOfVariablesInFrontToHold { false };
-    bool leavesLastArmOutOfRowsOfShapeTests { false };
-    bool passesGuardOfNameOverAtCallsThroughSuper { false };
-    bool leavesLinksOfKinUnguarded { false };
-    bool leavesConditionsOfClassAskedForUnguarded { false };
-    bool asksNoStrangerAmongKinWhereItStands { false };
-    bool asksNoObjectOfClassAskedForWhereItStands { false };
-    bool takesValuesAskedForClassesToStandWhereTheyWereMade { false };
-    bool takesLayoutsAboveClassAskedForForStrangers { false };
-    bool passesGuardOfLinkOverAtCallsThroughSuper { false };
-    bool loopsAreTakenToNameNothingFromInFront { false };
-    bool objectsWrittenInLoopsAreTakenToBeOnlyForgotten { false };
-    bool objectsNamedInLoopsAreTakenToBeOnlyForgotten { false };
-    bool takesWhatConditionsOfArmsInFrontOfLoopsSpeakOfToStandInFront { false };
+    bool shouldAssumePermanentlyPristineIterables { false };
+    bool shouldAssumePristineDestructuring { false };
+    bool shouldAssumeIterationsRestartable { false };
+    bool shouldAllowMarkedObjects { false };
+    bool shouldSkipPairGuard { false };
+    bool shouldAssumePristineReceivers { false };
+    bool shouldSkipStorageChecks { false };
+    bool shouldAssumeVariablesInitialized { false };
+    bool shouldAssumeSlotsInitialized { false };
+    bool shouldIgnoreVariableChecks { false };
+    bool shouldDropLastCase { false };
+    bool shouldSkipSuperMethodGuard { false };
+    bool shouldSkipHierarchyGuards { false };
+    bool shouldSkipClassGuards { false };
+    bool shouldIgnoreSiblingPrototypes { false };
+    bool shouldSkipPrototypeChecks { false };
+    bool shouldAssumeLayoutPrototype { false };
+    bool shouldSkipSuperclassCheck { false };
+    bool shouldSkipSuperPrototypeGuard { false };
+    bool shouldIgnoreLoopEscapes { false };
+    bool shouldIgnoreLoopWrites { false };
+    bool shouldIgnoreLoopUses { false };
+    bool shouldAssumeInvariantOperands { false };
     PrintStream* explainsClosedAccessesTo { nullptr };
+    const HostStringEncoders* stringEncoders { nullptr };
 };
 
 struct WalkInputs {
@@ -207,7 +208,7 @@ void listFunctionsUsedBy(const Program& program, const BodyIndex& index, const O
     if (!usesOperands)
         return;
     user.forEachOperand([&](ValueID made, uint32_t) {
-        while (made && !index.isParameter(made) && inputOperationsThatHandOn.contains(index.value(made).opcode()))
+        while (made && !index.isParameter(made) && inputPassThroughOpcodes.contains(index.value(made).opcode()))
             made = index.value(made).operand(0);
         if (made && !index.isParameter(made) && index.value(made).opcode() == Opcode::NewClosure)
             functions.append(index.value(made).template as<Opcode::NewClosure>().function());
@@ -217,7 +218,7 @@ void listFunctionsUsedBy(const Program& program, const BodyIndex& index, const O
 inline void listFunctionsUsedByOperation(const Program& program, const BodyIndex& index, const BodyValue& value, Vector<FunctionID, 4>& functions)
 {
     Opcode opcode = value.opcode();
-    listFunctionsUsedBy(program, index, value, opcode != Opcode::NewClosure, !inputOperationsThatHandOn.contains(opcode), opcode == Opcode::GetModuleVariable ? value.variable() : VariableID(), functions);
+    listFunctionsUsedBy(program, index, value, opcode != Opcode::NewClosure, !inputPassThroughOpcodes.contains(opcode), opcode == Opcode::GetModuleVariable ? value.variable() : VariableID(), functions);
 }
 
 struct CompileInputs {
@@ -237,7 +238,7 @@ public:
 
     std::optional<CompiledCode> compile(CodeUnit);
     bool walkAndSweep(CodeUnit);
-    bool walkAndSweep(CodeUnit, WayOfWalking);
+    bool walkAndSweep(CodeUnit, WalkMode);
 
     bool compile(CodeUnit unit, Vector<CompiledCode, 2>& finished) { return append(compile(unit), finished); }
 

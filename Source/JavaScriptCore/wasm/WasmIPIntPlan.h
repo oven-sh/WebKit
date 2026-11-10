@@ -42,7 +42,11 @@ class IPIntPlan final : public EntryPlan {
     using Base = EntryPlan;
 
 public:
-    JS_EXPORT_PRIVATE IPIntPlan(VM&, Vector<uint8_t>&&, CompilerMode, CompletionTask&&);
+    // No: the function bodies are kept and validated even if an image of this process holds the module's code.
+    enum class UsesCodeInImage : bool { No, Yes };
+    JS_EXPORT_PRIVATE IPIntPlan(VM&, Vector<uint8_t>&&, CompilerMode, CompletionTask&&, UsesCodeInImage = UsesCodeInImage::Yes);
+    // The bytes are read only until the constructor returns.
+    IPIntPlan(VM&, std::span<const uint8_t>, CompilerMode, CompletionTask&&);
     IPIntPlan(VM&, Ref<ModuleInformation>, Ref<IPIntCallees>, CompletionTask&&);
     IPIntPlan(VM&, Ref<ModuleInformation>, CompilerMode, CompletionTask&&); // For StreamingCompiler.
 
@@ -70,6 +74,7 @@ public:
     void didFailInStreaming(String&&);
 
 private:
+    void parseSource(VM&, std::span<const uint8_t>, UsesCodeInImage = UsesCodeInImage::Yes);
     bool prepareImpl() final;
     void didCompleteCompilation() WTF_REQUIRES_LOCK(m_lock) final;
 

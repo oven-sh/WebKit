@@ -5,8 +5,8 @@
 # CHECK: Call Stub ReadAtSiteAskingStructureFirst.OfAnyValue
 # CHECK-NOT: UnderNameWithColumn
 # The image, which gives the names their numbers, lays the call on the stub's sibling under a name with a column: `m` has one.
-# RUN(LAID): compile StubKeysLaidOnSiblingsUnderNamesWithColumn NamesWithoutColumn
-# LAID: StubKeysLaidOnSiblingsUnderNamesWithColumn 1
+# RUN(LAID): compile ColumnStubVariantsSelected NamesWithoutColumn
+# LAID: ColumnStubVariantsSelected 1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

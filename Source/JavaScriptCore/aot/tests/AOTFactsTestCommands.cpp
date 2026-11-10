@@ -36,7 +36,7 @@ static constexpr TraitInFactsText traitsInFactsText[] = {
     { "mayCallUnknownCode"_s, &EffectTraits::mayCallUnknownCode },
     { "maySuspend"_s, &EffectTraits::maySuspend },
     { "mayBeTerminated"_s, &EffectTraits::mayBeTerminated },
-    { "mayWriteWhatIsSeen"_s, &EffectTraits::mayWriteWhatIsSeen },
+    { "mayWriteObservableState"_s, &EffectTraits::mayWriteObservableState },
     { "mayTouchMemory"_s, &EffectTraits::mayTouchMemory },
     { "mayWriteOutsideObjects"_s, &EffectTraits::mayWriteOutsideObjects },
 };
@@ -1847,7 +1847,7 @@ static void printWhyGone(PrintStream& out, const LinkFlow& flow, const String& a
     }
     auto holdsWhatIsUnseen = [&](uint32_t node) {
         LinkType type = flow.typeAt(FlowNodeID(node));
-        return type.holdsUnseen || type.objects == LinkType::Objects::Lost || type.functions == LinkType::Functions::Lost;
+        return type.hasUnknownObjects || type.objects == LinkType::Objects::Lost || type.functions == LinkType::Functions::Lost;
     };
     out.println("why-gone "_s, asked, holdsWhatIsUnseen(*subject) ? ": it holds what is unseen"_s : ": it holds nothing unseen"_s);
     if (!holdsWhatIsUnseen(*subject)) {
@@ -2155,7 +2155,7 @@ static void runLackedCommand(TestCommandContext& context)
     const Facts* facts = stage.facts();
     if (!facts)
         return;
-    for (RuntimeFunctionID function : facts->libraryFunctionsLacked())
+    for (RuntimeFunctionID function : facts->missingLibraryFunctions())
         context.out.println("lacked "_s, tokenOf(stage.program().builtins(), function));
 }
 

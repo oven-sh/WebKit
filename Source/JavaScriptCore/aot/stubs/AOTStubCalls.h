@@ -195,6 +195,7 @@ public:
     void moveAddressOfFunction(Typed::CodeUnit callee, uint16_t entry, GPRReg destination);
     void moveAddressOfStub(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, GPRReg destination);
 
+    void routeTransfersThroughEnd();
     void describeCalls(std::span<const Relocation>, CodeBody&, LinkBuffer* = nullptr);
 
 private:

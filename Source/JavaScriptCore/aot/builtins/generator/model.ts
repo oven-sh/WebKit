@@ -553,7 +553,7 @@ export interface ModelSlot {
   indexInType: number | null;
   holds: ModelType | null;
   internalField: number | null;
-  holdsWhatStepsHandOut: boolean;
+  holdsStepValues: boolean;
   holdsWhatIsThrown: boolean;
   wordOfCell: WordOfCell;
 }

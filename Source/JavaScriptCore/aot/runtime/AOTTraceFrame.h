@@ -23,7 +23,6 @@ struct TraceFrame {
     uint32_t isClassCalledWithoutNew : 1 { false };
     uint32_t isAsyncFrame : 1 { false };
     uint32_t isCaller : 1 { false };
-    uint32_t hasCalleeInFrame : 1 { false };
     uint32_t isAtFailedTailCall : 1 { false };
 
     static TraceFrame of(CompiledFrameIterator&);

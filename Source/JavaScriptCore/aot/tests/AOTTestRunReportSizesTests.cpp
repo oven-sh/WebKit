@@ -51,7 +51,7 @@ static void testCellsOfEachLineAddUp()
 
     AOT_TEST_CHECK(cellForSizesTests(sizes.image, "functions emitted"_s) == build.statistic(StatisticID::ImageFunctionsEmitted));
     AOT_TEST_CHECK(cellForSizesTests(sizes.image, "code bytes"_s) == build.statistic(StatisticID::CodeBytesEmitted));
-    AOT_TEST_CHECK(cellForSizesTests(sizes.image, "text bytes"_s) == build.statistic(StatisticID::TextBytesEmitted));
+    AOT_TEST_CHECK(cellForSizesTests(sizes.image, "text bytes"_s) == build.statistic(StatisticID::StringBytesEmitted));
     AOT_TEST_CHECK(cellForSizesTests(sizes.image, "identifiers"_s) == image.image->text().numberOfIdentifiers());
 
     uint64_t tableBytes = cellForSizesTests(sizes.image, "table bytes"_s);

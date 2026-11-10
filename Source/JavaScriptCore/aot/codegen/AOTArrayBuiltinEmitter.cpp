@@ -196,8 +196,8 @@ void ArrayBuiltinEmitter::removeElementAtEnd(const InlineCall& call, bool remove
 bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
 {
     const Code& code = generator().code();
-    std::span<const ValueID> handedOver = call.terminator() ? code.at(code.at((*call.terminator())->done()).to).parameters() : std::span<const ValueID>();
-    ValueID made = call.value() ? call.value()->id() : handedOver.empty() ? ValueID() : handedOver.front();
+    std::span<const ValueID> continuationParameters = call.terminator() ? code.at(code.at((*call.terminator())->done()).to).parameters() : std::span<const ValueID>();
+    ValueID made = call.value() ? call.value()->id() : continuationParameters.empty() ? ValueID() : continuationParameters.front();
     return made && generator().isStoredIntoByName(made);
 }
 

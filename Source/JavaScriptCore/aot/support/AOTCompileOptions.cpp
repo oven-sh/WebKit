@@ -29,7 +29,7 @@ using WireOptions = Wire::CompileOptions;
 static_assert(std::is_same_v<decltype(WireOptions::sizeClassProgression), decltype(CompileOptions::sizeClassProgression)>);
 static_assert(std::is_same_v<decltype(WireOptions::executableIdentity), decltype(CompileOptions::executableIdentity)>);
 static_assert(std::is_same_v<decltype(WireOptions::removedFeatures), decltype(CompileOptions::removedFeatures)>);
-static_assert(std::is_same_v<decltype(Wire::TargetOptions::featuresKeptOnlyWhenNamed), decltype(CompileOptions::featuresKeptOnlyWhenNamed)>);
+static_assert(std::is_same_v<decltype(Wire::TargetOptions::featuresRetainedByName), decltype(CompileOptions::featuresRetainedByName)>);
 
 static_assert(numberOfEnumerators<Architecture> <= 256);
 static_assert(numberOfEnumerators<ReferenceWidth> <= 256);
@@ -99,18 +99,18 @@ public:
         readChecks(options);
         readThreadCount(options);
         readSizeClassProgression(options);
-        readOutput(options);
         readTesting(options);
 
         recorded.admittedCode = static_cast<uint8_t>(m_wire.admittedCode);
 
         options.action = m_wire.action;
         options.reports = m_wire.reports;
+        options.output = m_wire.output;
         options.excludedCode = m_wire.excludedCode;
         recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
         options.executableIdentity = m_wire.executableIdentity;
         options.removedFeatures = m_wire.removedFeatures;
-        options.featuresKeptOnlyWhenNamed = m_wire.target.featuresKeptOnlyWhenNamed;
+        options.featuresRetainedByName = m_wire.target.featuresRetainedByName;
         options.logging = readLoggingOptions();
         return options;
     }
@@ -152,10 +152,10 @@ private:
         options.recorded.validates = hasFlag(checks, CheckSet::Validate);
         options.verifiesCode = options.recorded.validates || hasFlag(checks, CheckSet::VerifyEachStage);
         options.verifiesMachineCode = options.verifiesCode || Options::verifyAOTMachineCode();
-        options.asksWhetherFlowOfLinkIsClosed = hasFlag(checks, CheckSet::FlowFixpoint);
-        options.walksLastWalksOfLoopsAlone = hasFlag(checks, CheckSet::LastWalksOfLoopsAlone);
-        options.walksLoopsThatFitAgain = hasFlag(checks, CheckSet::WalksOfLoopsThatFitAgain);
-        options.asksWhetherLinkFindsLessFromMore = hasFlag(checks, CheckSet::FlowFindsNoLessFromMore);
+        options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
+        options.replaysFinalLoopVisits = hasFlag(checks, CheckSet::ReplayFinalLoopVisits);
+        options.repeatsFittingLoopVisits = hasFlag(checks, CheckSet::RepeatFittingLoopVisits);
+        options.checksFlowMonotonicity = hasFlag(checks, CheckSet::FlowMonotonicity);
     }
 
     void readThreadCount(CompileOptions& options)
@@ -177,46 +177,37 @@ private:
         options.sizeClassProgression = progression;
     }
 
-    void readOutput(CompileOptions& options)
-    {
-        if (hasFlag(m_wire.output, OutputOptions::SharesRealms))
-            reportInvalid(m_wire.output);
-        if (m_wire.target.imagesBelow.address || m_wire.target.imagesBelow.size)
-            reportInvalid(m_wire.target.imagesBelow);
-        options.output = m_wire.output;
-    }
-
     void readTesting(CompileOptions& options)
     {
         options.testing = m_wire.testing;
-        options.lies = m_wire.lies;
+        options.injectedFaults = m_wire.injectedFaults;
         options.recorded.verifiesFastPathAnswers = hasFlag(m_wire.testing, TestingSwitch::CheckWalkAtRunTime);
-        if (m_wire.rowThatSaysLess && !hasFlag(m_wire.testing, TestingSwitch::RowSaysLess))
-            reportInvalid(m_wire.rowThatSaysLess);
-        options.rowThatSaysLess = m_wire.rowThatSaysLess;
+        if (m_wire.understatedEffects && !hasFlag(m_wire.testing, TestingSwitch::UnderstateEffects))
+            reportInvalid(m_wire.understatedEffects);
+        options.understatedEffects = m_wire.understatedEffects;
 
-        bool failsGuesses = hasFlag(m_wire.testing, TestingSwitch::FailGuesses);
+        bool shouldFailSpeculations = hasFlag(m_wire.testing, TestingSwitch::FailSpeculations);
         bool drawsBySeed = hasFlag(m_wire.testing, TestingSwitch::ShuffleBlockFrequencies) || hasFlag(m_wire.testing, TestingSwitch::ShuffleExpectedTypes)
-            || hasFlag(m_wire.testing, TestingSwitch::GiveLinkMore) || hasFlag(m_wire.testing, TestingSwitch::ShuffleChoices);
-        bool forcesWay = hasFlag(m_wire.testing, TestingSwitch::WalksUnitsBy);
-        if (drawsBySeed ? !m_wire.seedOfShuffles : m_wire.seedOfShuffles && !failsGuesses && !forcesWay)
-            reportInvalid(m_wire.seedOfShuffles);
-        if (forcesWay != !!m_wire.periodOfUnitsWalkedThatWay)
-            reportInvalid(m_wire.periodOfUnitsWalkedThatWay);
-        if (forcesWay ? !m_wire.wayForcedOnUnits || m_wire.wayForcedOnUnits > 2 : !!m_wire.wayForcedOnUnits)
-            reportInvalid(m_wire.wayForcedOnUnits);
-        options.wayForcedOnUnits = m_wire.wayForcedOnUnits;
-        options.periodOfUnitsWalkedThatWay = m_wire.periodOfUnitsWalkedThatWay;
-        if (hasFlag(m_wire.testing, TestingSwitch::CutWalksOfLoopsShort) != !!m_wire.periodOfHearingsThatCutWalks)
-            reportInvalid(m_wire.periodOfHearingsThatCutWalks);
-        if (m_wire.phaseOfHearingsThatCutWalks && m_wire.phaseOfHearingsThatCutWalks >= m_wire.periodOfHearingsThatCutWalks)
-            reportInvalid(m_wire.phaseOfHearingsThatCutWalks);
-        options.periodOfHearingsThatCutWalks = m_wire.periodOfHearingsThatCutWalks;
-        options.phaseOfHearingsThatCutWalks = m_wire.phaseOfHearingsThatCutWalks;
-        if (failsGuesses != !!m_wire.periodOfGuessesThatFail)
-            reportInvalid(m_wire.periodOfGuessesThatFail);
-        options.seedOfShuffles = m_wire.seedOfShuffles;
-        options.periodOfGuessesThatFail = m_wire.periodOfGuessesThatFail;
+            || hasFlag(m_wire.testing, TestingSwitch::WidenFlowNodes) || hasFlag(m_wire.testing, TestingSwitch::ShuffleChoices);
+        bool forcesWay = hasFlag(m_wire.testing, TestingSwitch::ForceWalkMode);
+        if (drawsBySeed ? !m_wire.shuffleSeed : m_wire.shuffleSeed && !shouldFailSpeculations && !forcesWay)
+            reportInvalid(m_wire.shuffleSeed);
+        if (forcesWay != !!m_wire.forcedWalkModePeriod)
+            reportInvalid(m_wire.forcedWalkModePeriod);
+        if (forcesWay ? !m_wire.forcedWalkMode || m_wire.forcedWalkMode > 2 : !!m_wire.forcedWalkMode)
+            reportInvalid(m_wire.forcedWalkMode);
+        options.forcedWalkMode = m_wire.forcedWalkMode;
+        options.forcedWalkModePeriod = m_wire.forcedWalkModePeriod;
+        if (hasFlag(m_wire.testing, TestingSwitch::AbortLoopVisits) != !!m_wire.loopVisitAbortPeriod)
+            reportInvalid(m_wire.loopVisitAbortPeriod);
+        if (m_wire.loopVisitAbortPhase && m_wire.loopVisitAbortPhase >= m_wire.loopVisitAbortPeriod)
+            reportInvalid(m_wire.loopVisitAbortPhase);
+        options.loopVisitAbortPeriod = m_wire.loopVisitAbortPeriod;
+        options.loopVisitAbortPhase = m_wire.loopVisitAbortPhase;
+        if (shouldFailSpeculations != !!m_wire.speculationFailurePeriod)
+            reportInvalid(m_wire.speculationFailurePeriod);
+        options.shuffleSeed = m_wire.shuffleSeed;
+        options.speculationFailurePeriod = m_wire.speculationFailurePeriod;
     }
 
     WireOptions m_wire;

@@ -6,13 +6,13 @@
 # CHECK-LABEL: code f1:Body
 # CHECK: PutModuleVariable
 # CHECK-NOT: GetModuleVariable
-# RUN(CLOSED): walk f1 mechanisms=all testing=WalksUnitsBy:Closed
+# RUN(CLOSED): walk f1 mechanisms=all testing=ForceWalkMode:Closed
 # CLOSED-LABEL: code f1:Body
 # CLOSED: PutModuleVariable
 # CLOSED: [[one]]: {{*}} = GetModuleVariable {{*}}variable=g0
 # CLOSED: [[other]]: {{*}} = GetModuleVariable {{*}}variable=g0
 # CLOSED: = StrictEq [[one]], [[other]]
-# RUN(CONSTANTS): walk f1 mechanisms=all testing=WalksUnitsBy:Closed
+# RUN(CONSTANTS): walk f1 mechanisms=all testing=ForceWalkMode:Closed
 # CONSTANTS-NOT: key="never"
 # CONSTANTS-NOT: = Less
 

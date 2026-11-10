@@ -23,7 +23,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet opcodesFollowedForInt32Failure = opcodesThatGiveSameValue | allSums | OpcodeSet { Opcode::ToNumber, Opcode::ToNumeric, Opcode::Negate };
+static constexpr OpcodeSet opcodesFollowedForInt32Failure = valuePreservingOpcodes | allSums | OpcodeSet { Opcode::ToNumber, Opcode::ToNumeric, Opcode::Negate };
 static constexpr OpcodeSet operatorsJudgedByWrittenTypes = allNumericOperators;
 
 static bool numbersKeepInt32Promise(const Type& type)
@@ -245,7 +245,7 @@ bool TypesAsWritten::restsOnWordThatIsOnlyExpected(ValueID value) const
             if (m_input.isParameter(open) || m_input.opcodeOf(open) != Opcode::IteratorOpen)
                 return false;
             value = m_input.value(open).as<Opcode::IteratorOpen>().iterableOperand();
-        } else if (opcode == Opcode::CheckInitialized || opcode == Opcode::NarrowByTest || opcodesThatGiveSameValue.contains(opcode))
+        } else if (opcode == Opcode::CheckInitialized || opcode == Opcode::NarrowByTest || valuePreservingOpcodes.contains(opcode))
             value = written.operand(0);
         else
             return false;
@@ -333,7 +333,7 @@ void TypesAsWritten::forEachRelationInFront(ValueAtPlace asked, const BodyIncomi
         if (!bounds)
             return;
         for (const BodyEdgeResult& bound : *bounds) {
-            if (m_input.valueBehindCasts(bound.subject) == asked.value)
+            if (m_input.stripCasts(bound.subject) == asked.value)
                 functor(bound, block);
         }
     };
@@ -370,7 +370,7 @@ TypeAsWritten TypesAsWritten::cutByRelationsInFront(ValueAtPlace asked, TypeAsWr
         TypeID other = judged.restsOnWrittenType && !(hasFailed && judged.restsOnCastAlone) ? judged.type : TypeID();
         if (!other && !hasFailed)
             other = typeStatedByCastsOf(otherSide);
-        if (ValueID made = m_input.valueBehindCasts(otherSide); !other && made) {
+        if (ValueID made = m_input.stripCasts(otherSide); !other && made) {
             TypeAsWritten ofOtherSide = typeWrittenOf(made);
             written.countsInItsAskingAlone |= ofOtherSide.countsInItsAskingAlone;
             bool isConstant = !m_input.isParameter(made) && primitiveConstants.contains(m_input.opcodeOf(made));
@@ -429,12 +429,12 @@ BuiltinID TypesAsWritten::methodCalledOnWrittenText(BodyValue written) const
     if (written.opcode() != Opcode::Call)
         return { };
     auto call = written.as<Opcode::Call>();
-    ValueID text = call.thisValueOperand() ? m_input.valueBehindCasts(call.thisValueOperand()) : ValueID();
-    ValueID read = call.calleeOperand() ? m_input.valueBehindCasts(call.calleeOperand()) : ValueID();
+    ValueID text = call.thisValueOperand() ? m_input.stripCasts(call.thisValueOperand()) : ValueID();
+    ValueID read = call.calleeOperand() ? m_input.stripCasts(call.calleeOperand()) : ValueID();
     if (!text || !read || m_input.isParameter(read) || m_input.opcodeOf(read) != Opcode::PropGet || std::ranges::contains(call.argumentsOperands(), ValueID()))
         return { };
     BodyValue readOfMethod = m_input.value(read);
-    if (readOfMethod.isFreeName() || m_input.valueBehindCasts(readOfMethod.objectOperand()) != text)
+    if (readOfMethod.isFreeName() || m_input.stripCasts(readOfMethod.objectOperand()) != text)
         return { };
     TypeAsWritten ofText = typeWrittenOf(text);
     bool isWritten = ofText.restsOnWrittenType || (!m_input.isParameter(text) && primitiveConstants.contains(m_input.opcodeOf(text)));
@@ -531,7 +531,7 @@ TypesAsWritten::Parts TypesAsWritten::partsOfParameterOfHead(ValueID parameter) 
     for (const BodyIncomingEdge& edge : m_walker.incomingEdgesOf(m_input, head)) {
         std::span<const ValueID> arguments = edge.target.arguments();
         if (edge.from >= head && index < arguments.size() && arguments[index])
-            parts.appendVector(otherSidesOfRelationsInFront({ m_input.valueBehindCasts(arguments[index]), edge.from }, &edge));
+            parts.appendVector(otherSidesOfRelationsInFront({ m_input.stripCasts(arguments[index]), edge.from }, &edge));
     }
     return parts;
 }
@@ -601,7 +601,7 @@ TypeAsWritten TypesAsWritten::typeAtHeadOfLoop(BodyValue parameter, const Parts&
     TypeAsWritten met = held;
     met.type = { };
     for (ValueAtPlace part : entering) {
-        ValueID made = m_input.valueBehindCasts(part.value);
+        ValueID made = m_input.stripCasts(part.value);
         TypeAsWritten typeOfPart = isConstant(made) ? TypeAsWritten { typeOfConstant(typing, m_input.value(made)), true } : known(part);
         TypeID both = typeOfPart.type && typeOfPart.restsOnWrittenType ? types.intersectionOf(typeOfPart.type, held.type) : TypeID();
         held.countsInItsAskingAlone |= typeOfPart.countsInItsAskingAlone;
@@ -618,8 +618,8 @@ TypeAsWritten TypesAsWritten::typeAtHeadOfLoop(BodyValue parameter, const Parts&
         if (edge.from < head)
             continue;
         std::span<const ValueID> arguments = edge.target.arguments();
-        ValueID comesRound = index < arguments.size() ? m_input.valueBehindCasts(arguments[index]) : ValueID();
-        TypeAsWritten cut = comesRound ? cutByRelationsInFront({ comesRound, edge.from }, held, &edge) : held;
+        ValueID loopCarriedValue = index < arguments.size() ? m_input.stripCasts(arguments[index]) : ValueID();
+        TypeAsWritten cut = loopCarriedValue ? cutByRelationsInFront({ loopCarriedValue, edge.from }, held, &edge) : held;
         TypeID round = cut.type;
         held.countsInItsAskingAlone |= cut.countsInItsAskingAlone;
         met.countsInItsAskingAlone |= cut.countsInItsAskingAlone;
@@ -664,7 +664,7 @@ TypeAsWritten TypesAsWritten::typeBehindConvertOf(BodyValue convert, TypeAsWritt
             entering.type = both;
             return entering;
         }
-        ValueID made = m_input.valueBehindCasts(convert.id());
+        ValueID made = m_input.stripCasts(convert.id());
         return { .type = stated, .restsOnWrittenType = true, .restsOnCastAlone = !made || m_input.isParameter(made) || !primitiveConstants.contains(m_input.opcodeOf(made)) };
     }
     bool isPromise = declared.has(PositionFlags::IsInt32Promise) && writtenTypeKeepsInt32Promise(m_walker, stated);
@@ -834,13 +834,13 @@ void checkInt32Promise(Walker& walker, const DeclaredType& position, ValueID ent
     TypeID judgedID = isJudgedAsWritten ? asWritten.type : walked;
     Type judged = walker.types().at(judgedID);
     const BodyIndex& input = walker.currentBodyIndex();
-    ValueID producer = input.valueBehindCasts(entering);
+    ValueID producer = input.stripCasts(entering);
     bool isConstant = producer && !input.isParameter(producer) && primitiveConstants.contains(input.opcodeOf(producer));
     bool hasOnlyIntegersAmongNumbers = (judged.primitives & Primitive::Number) == Primitive::Integer;
     bool isOneNumber = (hasOnlyIntegersAmongNumbers && judged.integers.isSingleValue()) || (isConstant && judged.isNumber());
 
     UserDiagnostic diagnostic {
-        .kind = position.has(PositionFlags::IsDeclaredByDependency) ? UserDiagnosticKind::Int32OfDependencyNotProven : isOneNumber ? UserDiagnosticKind::ConstantNotInt32 : UserDiagnosticKind::UnprovenInt32,
+        .kind = position.has(PositionFlags::IsDeclaredByDependency) ? UserDiagnosticKind::UnprovenDependencyInt32 : isOneNumber ? UserDiagnosticKind::ConstantNotInt32 : UserDiagnosticKind::UnprovenInt32,
         .function = walker.currentFunction(),
         .location = walker.code().locationOf(walker.program(), origin),
     };
@@ -849,7 +849,7 @@ void checkInt32Promise(Walker& walker, const DeclaredType& position, ValueID ent
         diagnostic.origin = { site.module.index(), site.position };
         diagnostic.siteKind = site.kind;
     }
-    if (diagnostic.kind != UserDiagnosticKind::Int32OfDependencyNotProven) {
+    if (diagnostic.kind != UserDiagnosticKind::UnprovenDependencyInt32) {
         Int32ProofFailure failure = Int32ProofFailure::Unknown;
         if (!numbersKeepInt32Promise(judged))
             failure = judged.primitives & Primitive::Double ? typesAsWritten.failureNamedByProducerOf(entering) : Int32ProofFailure::OutOfRange;

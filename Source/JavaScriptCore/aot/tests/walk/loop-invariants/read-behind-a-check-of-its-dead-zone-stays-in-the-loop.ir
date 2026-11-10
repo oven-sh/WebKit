@@ -1,11 +1,11 @@
 # function measure(flag, turns) { let total = 0; for (let i = 0; i < turns; i++) { total += flag ? text.length : text.length + 1; total += text.length; } return total; }      let text = ..
-# Each arm checks the dead zone of `text`. Behind the arms the state knows that the binding has left it, so the third read is built [followsItsStore]: no check, and a type without the empty word.
+# Each arm checks the dead zone of `text`. Behind the arms the state knows that the binding has left it, so the third read is built [isKnownInitialized]: no check, and a type without the empty word.
 # If that read left the loop, it would stand in front of both checks, and its `.length` with it: a call with no turn in front of the `let` would load through the empty word.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:
-# CHECK-NOT: [followsItsStore]
+# CHECK-NOT: [isKnownInitialized]
 # CHECK: isLoopHead=true
-# CHECK: [followsItsStore]
+# CHECK: [isKnownInitialized]
 
 variable g0 name="text" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}
 module m0 path="main.ts" displayPath="main.ts" body=f0

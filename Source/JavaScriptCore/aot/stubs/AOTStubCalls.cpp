@@ -328,6 +328,17 @@ void StubCalls::moveAddressOfStub(CCallHelpers& jit, StubKey key, std::optional<
     m_relocations.moveAddress({ SymbolSpace::Stub, indexOf(prepare(jit, key, immediate)) }, destination, PCRelativeReach::Far);
 }
 
+void StubCalls::routeTransfersThroughEnd()
+{
+    if (!m_relocations.exceedsBranchReach()) [[likely]]
+        return;
+    for (RecordedCall& call : m_calls) {
+        if (!call.returnAddress)
+            call.returnAddress = m_relocations.returnAddressOf(call.relocation);
+    }
+    m_relocations.routeTransfersThroughEnd();
+}
+
 void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody& body, LinkBuffer* linkBuffer)
 {
     for (size_t index = 0; index < m_stubKeys.size(); ++index) {

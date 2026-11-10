@@ -199,20 +199,6 @@ void Encoder::encodeSwap(const Step& step)
     m_jit.swapDouble(first.fpr(), second.fpr());
 }
 
-void Encoder::encodeClearSpill(const Step& step)
-{
-    ASSERT(step.kind == StepKind::ClearSpill);
-    RELEASE_ASSERT(step.destination.isSpill() && m_frameIsSetUp);
-    Width width = m_allocation.spills()[step.destination.spillIndex()].width;
-    MacroAssembler::Address address = addressOf(step.destination, MemoryOfEncodedMove::IsWritten);
-
-    AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    if (encodedMoveIsWide(width))
-        m_jit.store64(CCallHelpers::TrustedImm32(0), address);
-    else
-        m_jit.store32(CCallHelpers::TrustedImm32(0), address);
-}
-
 void Encoder::encodeKeepPointer(const Step& step)
 {
     ASSERT(step.kind == StepKind::KeepPointer);

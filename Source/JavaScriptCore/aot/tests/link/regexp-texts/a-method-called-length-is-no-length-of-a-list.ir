@@ -1,7 +1,7 @@
 # The list follows from the program alone. An object may have a method called length. A built-in that never reads the length of what it is handed, Object.keys among them, takes such an object like any other;
 # one that goes through what it is handed by its length is refused it, as ever.
 # const schema = { length() {}, parse() { return "^p"; } }; new RegExp(schema.parse() + Object.keys(schema).length); new RegExp(Array.prototype.join.call(schema) + "joined");
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /^p2/
 # CHECK-NOT: joined

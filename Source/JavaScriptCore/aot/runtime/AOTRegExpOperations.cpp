@@ -456,7 +456,7 @@ static String textOfImageForPattern(VM& vm, JSString& text, OptionSet<Yarr::Flag
         const ImageRegExp* record = findRegExpRecordWithoutCounting(vm, pattern, hash, flags);
         if (!record)
             return { };
-        countEvent(vm, RuntimeCounterID::RegExpTextsTakenOutOfImage);
+        countEvent(vm, RuntimeCounterID::RegExpPatternsFoundInImage);
         return vm.aotState().image->text().createString(StringID(record->pattern));
     };
     if (StringImpl* flat = text.tryGetValueImpl())

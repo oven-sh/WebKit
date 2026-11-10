@@ -1,7 +1,7 @@
 # The list follows from the program alone. The search for a text in a text knows the last 250 characters of what is sought; for a longer one it may take as many steps as the product of the two lengths, and that is what it pays.
 # export function long() { return new RegExp("x".toUpperCase() + doubled("a", 15).indexOf("b" + doubled("a", 9))); }   (doubled(text, k): text = text + text, k times)
 # export function short() { return new RegExp("y".toUpperCase() + doubled("a", 15).indexOf("b" + doubled("a", 7))); }
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /X-1/
 # CHECK: text /Y-1/

@@ -28,7 +28,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
+OperatorForm operatorFormFor(Walker&, const Draft&);
 std::optional<uint32_t> orderWordWithFieldListedNext(const Walker&, LayoutID, PropertyKeyID, uint32_t orderWord);
 
 static_assert(!static_cast<uint32_t>(StepArrayIteratorResult::Done) && static_cast<uint32_t>(StepArrayIteratorResult::Value) == 1);
@@ -102,7 +102,7 @@ public:
         m_walker.chooseConservativeFields(operation);
         operation.setLeftOperand(left);
         operation.setRightOperand(right);
-        operation.setForm(formAllowedForTypedOperator(m_walker, operation));
+        operation.setForm(operatorFormFor(m_walker, operation));
         return buildAsItStands(WTF::move(operation));
     }
 
@@ -386,7 +386,7 @@ static const Operation* findMakerOfArrayIteratorForReplacement(const Code& code,
         const Operation& operation = code.at(iterator.id());
         if (operation.opcode == Opcode::CallInline)
             return operation.inlineBuiltin() == InlineBuiltin::ArrayIterator && operation.receiverOperand() ? &operation : nullptr;
-        if (!opcodesThatGiveSameCell.contains(operation.opcode))
+        if (!cellPreservingOpcodes.contains(operation.opcode))
             return nullptr;
         iterator = Reference::value(operation.operand(0));
     }
@@ -641,7 +641,7 @@ static void buildEvaluationOfModuleAsReplacement(Walker& walker, const BodyValue
     BuilderOfReplacements builder(walker, evaluation);
     ModuleSitePlan site = walker.plan().moduleEvaluation().siteOf(walker.currentFunction(), evaluation.id(), written.module());
     if (!site.asksLoader) {
-        buildModuleStepsAsReplacement(builder, site.steps, written.isCallOfRequire() ? functionOfHostThatRequireCallsFor(target) : BuiltinID());
+        buildModuleStepsAsReplacement(builder, site.steps, written.isCallOfRequire() ? hostRequireFunctionFor(target) : BuiltinID());
         return;
     }
     Draft request = builder.draft(Opcode::EvaluateRequiredModule);
@@ -649,7 +649,7 @@ static void buildEvaluationOfModuleAsReplacement(Walker& walker, const BodyValue
     request.setReferrer(written.referrer());
     request.setSpecifier(target.path);
     if (written.isCallOfRequire())
-        request.setCalledBuiltin(functionOfHostThatRequireCallsFor(target));
+        request.setCalledBuiltin(hostRequireFunctionFor(target));
     builder.build(WTF::move(request));
 }
 
@@ -1022,7 +1022,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         Reference holder = referenceOf(written.objectOperand());
         bool holderIsOfLayouts = holder && (saysLayouts(typeOf(holder)) || saysLayouts(findExpectation(*this, written.objectOperand()).type));
         const BodyIndex& body = currentBodyIndex();
-        ValueID definition = body.valueBehindCasts(written.propertyOperand());
+        ValueID definition = body.stripCasts(written.propertyOperand());
         bool isKeyOfForIn = definition && !body.isParameter(definition) && body.opcodeOf(definition) == Opcode::ResultAt && !body.isParameter(body.value(definition).operand(0)) && body.opcodeOf(body.value(definition).operand(0)) == Opcode::ForInStep;
         if (holderIsOfLayouts && !isKeyOfForIn && present && !isNeverType(present) && holdsWrittenTextsAlone(m_types.at(present)) && m_types.isSubset(present, proven)) {
             type = m_types.at(present);
@@ -1050,11 +1050,11 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     uint32_t begin = written.id().index() - block.firstValue().index();
     uint32_t end = begin + 1;
     if (textsAreOnlyExpected) {
-        ValueID rootOfKey = index.valueBehindCasts(written.propertyOperand());
+        ValueID rootOfKey = index.stripCasts(written.propertyOperand());
         uint32_t limit = limitOfStretchOfArms(*this, block);
         for (uint32_t place = end; place < limit; ++place) {
             BodyValue later = index.value(ValueID(block.firstValue().index() + place));
-            if ((later.opcode() == Opcode::ElemGet || later.opcode() == Opcode::ElemSet) && index.valueBehindCasts(later.propertyOperand()) == rootOfKey)
+            if ((later.opcode() == Opcode::ElemGet || later.opcode() == Opcode::ElemSet) && index.stripCasts(later.propertyOperand()) == rootOfKey)
                 end = place + 1;
         }
     }
@@ -1074,7 +1074,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     ArmsThatMeet built;
     ValueID nameOfKey = written.propertyOperand();
     Reference boundBefore = referenceBoundTo(nameOfKey);
-    ValueID definitionOfKey = index.valueBehindCasts(nameOfKey);
+    ValueID definitionOfKey = index.stripCasts(nameOfKey);
     Reference definitionBoundBefore = referenceBoundTo(definitionOfKey);
     auto walkArmWith = [&](Reference narrowed) {
         SetForScope accessWhoseKeyArmHolds(m_accessWhoseKeyArmHolds, written.id());
@@ -1098,12 +1098,12 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     };
 
     BlockID meeting = addBlock();
-    noteGuessOpened();
-    count(StatisticID::AccessesToldApartByTextsOfKey);
+    recordSpeculation();
+    count(StatisticID::AccessesDispatchedByKeyString);
     Reference left = key;
     static_assert(OperandIndex::StringEqualsLiteral::string == OperandIndex::ValueEqualsLiteral::value);
     size_t numberOfTests = textsAreOnlyExpected ? texts.size() : texts.size() - 1;
-    bool comparesInFront = textsAreOnlyExpected && standsInFrontOfTypedCopy(key) && goOnInFrontOfTypedCopyWhereItsFirstTurnBegins();
+    bool comparesInFront = textsAreOnlyExpected && isInvariantInSpecializedVersion(key) && tryHoistEntryTest();
     if (textsAreOnlyExpected && !comparesInFront && texts.size() >= 2) {
         Vector<BlockID, mostTextsToldApart> underNames;
         for (size_t place = 0; place < texts.size(); ++place)
@@ -1130,7 +1130,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         test.setLiteral(texts[place]);
         Reference passes;
         {
-            InFrontOfTypedCopy inFront(*this, comparesInFront);
+            SpecializedPreheaderScope preheaderScope(*this, comparesInFront);
             passes = build(WTF::move(test));
         }
         if (!passes)
@@ -1156,7 +1156,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     } else if (!isUnreachable() && !hasFailed())
         walkArmWith(left);
     if (!hasFailed())
-        letArmsMeet(stretch, built, meeting);
+        joinArms(stretch, built, meeting);
     return KeyOfAccess::ArmsHaveWalkedAccess;
 }
 
@@ -1224,7 +1224,7 @@ static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
     }
 
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID holder = index.valueBehindCasts(access.objectOperand());
+    ValueID holder = index.stripCasts(access.objectOperand());
     if (index.isParameter(holder) || index.opcodeOf(holder) != Opcode::Builtin || !walker.plan().globalName(key).isStoredThroughBinding)
         return false;
     Draft store(Opcode::SetGlobalBinding, written.origin());
@@ -1300,8 +1300,8 @@ static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& creat
     walker.chooseConservativeFields(list);
     list.setLengthOperand(length);
     list.setSourceOperand(operation.likeOperand() ? walker.referenceOf(operation.likeOperand()) : source);
-    if (Reference room = operation.roomOperand() ? walker.referenceOf(operation.roomOperand()) : Reference(); room && walker.types().at(walker.typeOf(room)).isInteger())
-        list.setRoomOperand(room);
+    if (Reference room = operation.capacityOperand() ? walker.referenceOf(operation.capacityOperand()) : Reference(); room && walker.types().at(walker.typeOf(room)).isInteger())
+        list.setCapacityOperand(room);
     list.setArrayStorage(ArrayStorage::Other);
     list.inputValueGiven = created.id();
     Reference made = walker.build(WTF::move(list));
@@ -1309,7 +1309,7 @@ static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& creat
         walker.noteListThatRunOverBoxedValuesTakesFirst(made.id());
     noteLengthThatListIsBornWith(walker, made);
     walker.bind(created.id(), made);
-    walker.count(StatisticID::NewListsInPlaceOfSpecies);
+    walker.count(StatisticID::ArraySpeciesLookupsElided);
     return true;
 }
 
@@ -1334,7 +1334,7 @@ bool replaceOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
     if (opcode == Opcode::DefineGetter || opcode == Opcode::DefineSetter)
         return layAccessorsOfLiteralTogether(walker, value) || defineAccessorUnderNameThatKeyIs(walker, value);
 
-    if (opcode == Opcode::Call && walker.nothingIsProvenOf(walker.referenceOf(value.calleeOperand())))
+    if (opcode == Opcode::Call && walker.hasUninformativeType(walker.referenceOf(value.calleeOperand())))
         return false;
     if (opcode == Opcode::Call && (replaceCallDoneInPlace(walker, value) || replaceCallThatMakesSymbolOnce(walker, value)))
         return true;
@@ -1346,7 +1346,7 @@ bool replaceOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
         return true;
     }
     if (opcode == Opcode::RecordRequire)
-        return walker.plan().moduleEvaluation().recordsNothingThatIsSeen(value.as<Opcode::RecordRequire>().module());
+        return walker.plan().moduleEvaluation().canSkipRecordRequire(value.as<Opcode::RecordRequire>().module());
 
     bool isReplaced = true;
     if (opcodesOfIterationReplacements.contains(opcode))

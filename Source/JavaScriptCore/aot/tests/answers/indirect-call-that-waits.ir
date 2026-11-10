@@ -18,7 +18,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v4 = Call v2, -, v1, v3 calleeName="start"
     Return v4
 }
-function f1 name="walked" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=13 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f1 name="walked" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=13 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|L0>, v1: number, v2: number, v3: number, v4: number, v5: number, v6: number, v7: number, v8: number, v9: number, v10: number, v11: number, v12: number) handler=b10():
     v13 = Null
     v14 = Await v13, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12
@@ -49,7 +49,7 @@ function f1 name="walked" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] 
     v35 = Add v34, v12
     Return v35
   b3() handler=b9():
-    v36 = Convert v24 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v36 = Convert v24 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
     v37 = PropGet v36 key="path"
     v38 = String string="q"
     v39 = StrictEq v37, v38

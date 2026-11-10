@@ -244,7 +244,7 @@ private:
         static_assert(maxLengthOfTextComparedInPlace <= mostCharactersWrittenDown);
         m_out.appendTo(needsStub);
         if (generator().isInLoop(m_terminator.block())) {
-            build().statistics().count(StatisticID::SwitchesThatAskLengthsOfRopesInFront);
+            build().statistics().count(StatisticID::StringSwitchRopeLengthChecks);
             unsigned shortest = cases[0]->text.length();
             unsigned longest = shortest;
             for (const SwitchCase* switchCase : cases) {

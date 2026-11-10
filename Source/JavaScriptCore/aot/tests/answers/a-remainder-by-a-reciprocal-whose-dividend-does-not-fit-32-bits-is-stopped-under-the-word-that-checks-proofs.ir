@@ -2,21 +2,24 @@
 # const shell = globalThis as any;
 # shell.print(far(Number(shell.divisor ?? 2147483647)));
 # shell.print("went on");
-# The remainder by a reciprocal is exact for a dividend of at most 32 bits that is not negative and a divisor that is an int32 of at least one, and the walk takes the form only where the types of both say so. The code asks nothing.
-# THE LIE, testing=DividendsOfReciprocalsAreTakenToFit32Bits: the walk does not ask the range of the dividend: at 2^52 the two multiplications give a wrong number, in silence. Under testing=CheckProofsAtRunTime the divisor is held in front
-# of the division that makes the reciprocal, dividend and divisor are held in the turn, and the answer is held against a remainder by division.
+# The remainder by a reciprocal is exact for a non-negative dividend of at most 32 bits and a divisor that is an int32 of at least one. The walk chooses that form only where the types of both say so.
+# The code checks nothing.
+# Fault injection, testing=AssumeUInt32Dividends: the walk does not look at the range of the dividend. At 2^52 the two multiplications silently produce a wrong number.
+# With testing=CheckProofsAtRunTime the divisor is checked before the division that computes the reciprocal, the dividend and the divisor are checked in each iteration,
+# and the result is checked against a remainder by division.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 2097651500
 # RIGHT: went on
 # RUN(CHECKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # CHECKED: 2097651500
 # CHECKED: went on
-# RUN(LIE): run-in-shell mechanisms=all testing=DividendsOfReciprocalsAreTakenToFit32Bits
+# RUN(LIE): run-in-shell mechanisms=all testing=AssumeUInt32Dividends
 # REQUIRES(LIE): as-written
 # LIE-NOT: 2097651500
 # LIE: went on
-# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,DividendsOfReciprocalsAreTakenToFit32Bits
-# STOPPED: AOT: f{{*}} at {{*}}: what an operation gives is not of the type that the compiler has proven of it.
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeUInt32Dividends
+# STOPPED: bun: internal AOT error: type check failed
+# STOPPED-NEXT: in the result of an operation
 # STOPPED-NOT: went on
 # STOPPED: crashed with
 

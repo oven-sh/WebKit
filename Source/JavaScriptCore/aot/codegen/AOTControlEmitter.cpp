@@ -170,7 +170,7 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
         takenIn.otherwise = otherwiseOfNext;
         generator().noteSwitchTakenIntoSwitchInFront(rest);
         rest = restOfNext;
-        build().statistics().count(StatisticID::SwitchesTakenIntoSwitchInFront);
+        build().statistics().count(StatisticID::SwitchesMergedIntoPredecessor);
     }
     if (takenIn.otherwise) {
         takenIn.firstCaseOfPlace = firstCaseOfPlace;
@@ -204,7 +204,7 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
     for (uint8_t& entry : isListed)
         entry &= leadsToPlace;
     uint32_t constant = m_out.addConstantData(isListed.span(), ConstantKind::Unlabeled);
-    build().statistics().count(StatisticID::SwitchesAnsweredByByteOfTable);
+    build().statistics().count(StatisticID::SwitchesLoweredToByteTables);
 
     LBasicBlock isInTable = newBlock();
     Integer position;

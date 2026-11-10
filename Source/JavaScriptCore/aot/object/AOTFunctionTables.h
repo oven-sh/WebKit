@@ -92,12 +92,12 @@ struct FunctionTables {
     }
     NativeExecutable* executableOf(FunctionID) const;
 
-    using TextsByFunction = UncheckedKeyHashMap<FunctionID, Weak<JSString>>;
+    using SourceTextMap = UncheckedKeyHashMap<FunctionID, Weak<JSString>>;
 
     const uint64_t* words;
     std::array<Strong<JSCell>, numberOfExecutables> executables;
     Vector<Strong<Structure>> closureStructuresWithoutTable;
-    TextsByFunction sourceTexts;
+    SourceTextMap sourceTexts;
 };
 
 } } // namespace JSC::AOT

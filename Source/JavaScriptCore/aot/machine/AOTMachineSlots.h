@@ -13,12 +13,6 @@ namespace JSC { namespace AOT { namespace Machine {
 
 struct SpillPlaceRange;
 
-struct WordsClearedAtSuspension {
-    uint32_t numberOfLowestWords { 0 };
-    BitSpan others;
-    bool wordAboveFirstPart { false };
-};
-
 class SlotAssignment {
     WTF_MAKE_NONCOPYABLE(SlotAssignment);
 public:
@@ -32,8 +26,6 @@ public:
 
     std::span<const uint64_t> wordsDeadAcross(uint32_t suspension) const { return m_wordsDeadAcrossSuspension[suspension]; }
 
-    const WordsClearedAtSuspension& wordsClearedAt(uint32_t suspension) const { return m_wordsClearedAtSuspension[suspension]; }
-
     uint32_t firstWordClearedAtSetup() const { return m_firstWordClearedAtSetup; }
     uint32_t endOfWordsClearedAtSetup() const { return m_endOfWordsClearedAtSetup; }
 
@@ -46,7 +38,6 @@ private:
     ArenaVector<uint32_t> m_distanceOfSpill;
     ArenaVector<uint32_t> m_distanceOfStackSlot;
     ArenaVector<std::span<uint64_t>> m_wordsDeadAcrossSuspension;
-    ArenaVector<WordsClearedAtSuspension> m_wordsClearedAtSuspension;
     uint32_t m_firstWordClearedAtSetup { 0 };
     uint32_t m_endOfWordsClearedAtSetup { 0 };
     uint32_t m_bytesKeptAtSuspensions { 0 };

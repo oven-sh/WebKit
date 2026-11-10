@@ -40,17 +40,17 @@ struct ModulesListedInChunk {
     Vector<std::pair<uint32_t, uint32_t>> entriesByHashOfPath;
     Vector<uint32_t> hashesOfDirectories;
     Vector<CompiledRuntimeModuleData> runtimeModules;
-    Vector<uint32_t> modulesThatLoadCompiledFilesAlone;
-    Vector<uint32_t> modulesThatFindBuiltinsReadOnly;
-    Vector<uint32_t> modulesReachedUnderOtherNames;
+    Vector<uint32_t> modulesRejectingUncompiledCode;
+    Vector<uint32_t> modulesWithReadOnlyBuiltins;
+    Vector<uint32_t> importedModuleAliases;
     Vector<uint32_t> modulesThatDependOnMoreThanSource;
 };
 
 struct FunctionsListedInRange {
     Vector<StateOfLibraryModuleData> stateOfLibraryModules;
     Vector<uint32_t> asyncFunctionsWithoutAwait;
-    Vector<uint32_t> functionsThatMayAskForOwnOriginal;
-    Vector<OriginalAskedForData> originalsAskedFor;
+    Vector<uint32_t> functionsImportingOwnOriginal;
+    Vector<RequestedOriginalData> requestedOriginals;
 };
 
 struct RequestsThatWalksFollow {
@@ -121,8 +121,8 @@ static Vector<ModuleFailureData> listFailuresForModuleTables(const Typed::Progra
     Vector<ModuleFailureData> failedLoads;
     failures.reserveInitialCapacity(program.moduleFailures.size());
     for (const Typed::ModuleFailure& failure : program.moduleFailures) {
-        if (failure.endsLoadOf)
-            failedLoads.append(ModuleFailureData::ofLoad(failure.endsLoadOf, ModuleFailureID(failures.size())));
+        if (failure.failedLoadRoot)
+            failedLoads.append(ModuleFailureData::ofLoad(failure.failedLoadRoot, ModuleFailureID(failures.size())));
         uint32_t specifier = numberOfString(failure.specifier);
         if (failure.exportSpecifier)
             failures.append(ModuleFailureData::ofExportStatement(failure.importer, numberOfString(failure.exportSpecifier), specifier));
@@ -180,7 +180,7 @@ void nameWhatModuleTablesName(const TableInputs& inputs, const GatheredMentions&
     listFailuresForModuleTables(inputs.program, noteString);
     listNamesOfStatements(inputs.program, noteString);
     for (const Typed::Function& function : inputs.program.functions) {
-        for (StringID specifier : function.originalsAskedFor)
+        for (StringID specifier : function.requestedOriginals)
             noteString(specifier);
     }
     for (uint32_t place : answers.compiledRuntimeFunctions)
@@ -217,10 +217,10 @@ static void appendImportsOfHeldFiles(const ModuleLists& lists, uint32_t importer
         if (request.isRequire)
             continue;
         const ModuleData& target = lists.modules[request.target()];
-        uint32_t file = target.isFaceOfFile() ? lists.requests[target.firstRequest].target() : request.target();
+        uint32_t file = target.isFacade() ? lists.requests[target.firstRequest].target() : request.target();
         const ModuleData& held = lists.modules[file];
         bool isOfLibraryAndMayBeMocked = (held.kind == ModuleKind::RuntimeSource || held.kind == ModuleKind::Runtime) && held.mayBeMocked();
-        if (held.requireResult == RequireResult::NamespaceIfImported || held.mayBeImportedWhileItRuns() || isOfLibraryAndMayBeMocked)
+        if (held.requireResult == RequireResult::NamespaceIfImported || held.isImportableDuringEvaluation() || isOfLibraryAndMayBeMocked)
             result.append(ImportOfHeldFileData { file, importer });
     }
 }
@@ -264,19 +264,19 @@ static RequestsThatWalksFollow listRequestsThatWalksFollow(const ParallelLoops& 
     return result;
 }
 
-static void appendOtherNamesThatReachModule(const Typed::Module& module, uint32_t index, Vector<uint32_t>& result)
+static void appendModuleAliases(const Typed::Module& module, uint32_t index, Vector<uint32_t>& result)
 {
     using Typed::ModuleFlags;
     constexpr std::pair<ModuleFlags, ModuleAliasKind> otherNames[] = {
-        { ModuleFlags::IsReachedWithoutExtension, ModuleAliasKind::WithoutExtension },
-        { ModuleFlags::IsReachedUnderAnotherExtension, ModuleAliasKind::WithOtherExtension },
-        { ModuleFlags::IsReachedAsFolder, ModuleAliasKind::AsDirectory },
+        { ModuleFlags::IsImportedWithoutExtension, ModuleAliasKind::WithoutExtension },
+        { ModuleFlags::IsImportedWithOtherExtension, ModuleAliasKind::WithOtherExtension },
+        { ModuleFlags::IsImportedAsDirectory, ModuleAliasKind::AsDirectory },
     };
     if (!module.flags.contains(ModuleFlags::MayBeMocked))
         return;
     for (auto [flag, name] : otherNames) {
         if (module.flags.contains(flag))
-            result.append(moduleReachedUnder(index, name));
+            result.append(encodeModuleAlias(index, name));
     }
 }
 
@@ -300,11 +300,11 @@ static void listModulesOfChunkForModuleTables(const TableInputs& inputs, const A
     for (uint32_t index = first; index < end; ++index) {
         ModuleID id(index);
         const Typed::Module& module = program.modules[index];
-        if (module.flags.contains(ModuleFlags::LoadsCompiledFilesAlone))
-            listed.modulesThatLoadCompiledFilesAlone.append(index);
-        if (module.flags.contains(ModuleFlags::FindsBuiltinsReadOnly))
-            listed.modulesThatFindBuiltinsReadOnly.append(index);
-        appendOtherNamesThatReachModule(module, index, listed.modulesReachedUnderOtherNames);
+        if (module.flags.contains(ModuleFlags::RejectsUncompiledCode))
+            listed.modulesRejectingUncompiledCode.append(index);
+        if (module.flags.contains(ModuleFlags::HasReadOnlyBuiltins))
+            listed.modulesWithReadOnlyBuiltins.append(index);
+        appendModuleAliases(module, index, listed.importedModuleAliases);
         if (module.flags.contains(ModuleFlags::DependsOnMoreThanSource))
             listed.modulesThatDependOnMoreThanSource.append(index);
 
@@ -420,10 +420,10 @@ static void listFunctionsForModuleTables(const TableEncoder& encoder, size_t fir
         const Typed::Function& function = program.functions[index];
         if (Typed::isAsyncFunctionWithoutAwait(program, function))
             listed.asyncFunctionsWithoutAwait.append(static_cast<uint32_t>(index));
-        if (function.syntax.contains(Typed::FunctionSyntax::MayAskForOwnOriginal))
-            listed.functionsThatMayAskForOwnOriginal.append(static_cast<uint32_t>(index));
-        for (StringID specifier : function.originalsAskedFor)
-            listed.originalsAskedFor.append({ static_cast<uint32_t>(index), encoder.stringNumber(specifier) });
+        if (function.syntax.contains(Typed::FunctionSyntax::MayImportOwnOriginal))
+            listed.functionsImportingOwnOriginal.append(static_cast<uint32_t>(index));
+        for (StringID specifier : function.requestedOriginals)
+            listed.requestedOriginals.append({ static_cast<uint32_t>(index), encoder.stringNumber(specifier) });
         uint32_t cell = encoder.numbers.closureCellNumber(FunctionID(static_cast<uint32_t>(index)));
         if (cell && isLibraryModuleWithBodyForModuleTables(program, function.module))
             listed.stateOfLibraryModules.append(StateOfLibraryModuleData::create(function.module.index(), StateOfLibraryModuleData::Kind::Closures, cell, 1));
@@ -598,13 +598,13 @@ void encodeModuleTables(TableEncoder& encoder)
     Vector<StarAsWrittenData> starsAsWritten = listStarsAsWritten(program, answers);
     Vector<WriterOfExportData> writersOfExports = listWritersOfExports(encoder.inputs);
     Vector<UncompiledModuleData> modulesOfUncompiledCode = listModulesOfUncompiledCode(program, answers, numberOfString);
-    Vector<uint32_t> modulesThatLoadCompiledFilesAlone = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatLoadCompiledFilesAlone);
-    Vector<uint32_t> modulesThatFindBuiltinsReadOnly = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatFindBuiltinsReadOnly);
-    Vector<uint32_t> modulesReachedUnderOtherNames = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesReachedUnderOtherNames);
+    Vector<uint32_t> modulesRejectingUncompiledCode = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesRejectingUncompiledCode);
+    Vector<uint32_t> modulesWithReadOnlyBuiltins = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesWithReadOnlyBuiltins);
+    Vector<uint32_t> importedModuleAliases = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::importedModuleAliases);
     Vector<uint32_t> modulesThatDependOnMoreThanSource = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatDependOnMoreThanSource);
     Vector<uint32_t> asyncFunctionsWithoutAwait = joinListsForModuleTables(functionsListed, &FunctionsListedInRange::asyncFunctionsWithoutAwait);
-    Vector<uint32_t> functionsThatMayAskForOwnOriginal = joinListsForModuleTables(functionsListed, &FunctionsListedInRange::functionsThatMayAskForOwnOriginal);
-    Vector<OriginalAskedForData> originalsAskedFor = joinListsForModuleTables(functionsListed, &FunctionsListedInRange::originalsAskedFor);
+    Vector<uint32_t> functionsImportingOwnOriginal = joinListsForModuleTables(functionsListed, &FunctionsListedInRange::functionsImportingOwnOriginal);
+    Vector<RequestedOriginalData> requestedOriginals = joinListsForModuleTables(functionsListed, &FunctionsListedInRange::requestedOriginals);
     Vector<CompiledRuntimeModuleData> compiledRuntimeModules = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::runtimeModules);
     AOT::sort(compiledRuntimeModules, { }, &CompiledRuntimeModuleData::registryID);
     Vector<CompiledRuntimeFunctionData> compiledRuntimeFunctions = listCompiledRuntimeFunctions(encoder, answers);
@@ -621,7 +621,7 @@ void encodeModuleTables(TableEncoder& encoder)
     };
     part.reserveRoomFor(roomFor(lists.modules, lists.directories, lists.displayPaths, lists.requests, linkRequests, evaluationRequests, groupsLoadedWithGroups, entryPointLinkPlan,
         lists.exports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
-        moduleFailures, modulesOfUncompiledCode, modulesThatLoadCompiledFilesAlone, modulesThatFindBuiltinsReadOnly, modulesReachedUnderOtherNames, modulesThatDependOnMoreThanSource, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait, functionsThatMayAskForOwnOriginal, originalsAskedFor,
+        moduleFailures, modulesOfUncompiledCode, modulesRejectingUncompiledCode, modulesWithReadOnlyBuiltins, importedModuleAliases, modulesThatDependOnMoreThanSource, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait, functionsImportingOwnOriginal, requestedOriginals,
         byPath.modulesByPath, byPath.modulesByHashOfPath, byPath.firstModulesByHashOfPath, byPath.directoriesOfModulesByPath, compiledRuntimeModules, compiledRuntimeFunctions, stateOfLibraryModules,
         startsOfModules.firstSteps, startsOfModules.steps, namesOfStatements, starsAsWritten, writersOfExports));
     part.setTable(ProgramTableIndex::modules, lists.modules);
@@ -644,14 +644,14 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::starsAsWritten, starsAsWritten);
     part.setTable(ProgramTableIndex::writersOfExports, writersOfExports);
     part.setTable(ProgramTableIndex::modulesOfUncompiledCode, modulesOfUncompiledCode);
-    part.setTable(ProgramTableIndex::modulesThatLoadCompiledFilesAlone, modulesThatLoadCompiledFilesAlone);
-    part.setTable(ProgramTableIndex::modulesThatFindBuiltinsReadOnly, modulesThatFindBuiltinsReadOnly);
-    part.setTable(ProgramTableIndex::modulesReachedUnderOtherNames, modulesReachedUnderOtherNames);
+    part.setTable(ProgramTableIndex::modulesRejectingUncompiledCode, modulesRejectingUncompiledCode);
+    part.setTable(ProgramTableIndex::modulesWithReadOnlyBuiltins, modulesWithReadOnlyBuiltins);
+    part.setTable(ProgramTableIndex::importedModuleAliases, importedModuleAliases);
     part.setTable(ProgramTableIndex::modulesThatDependOnMoreThanSource, modulesThatDependOnMoreThanSource);
     part.setTable(ProgramTableIndex::importsOfHeldFiles, followed.importsOfHeldFiles);
     part.setTable(ProgramTableIndex::asyncFunctionsWithoutAwait, asyncFunctionsWithoutAwait);
-    part.setTable(ProgramTableIndex::functionsThatMayAskForOwnOriginal, functionsThatMayAskForOwnOriginal);
-    part.setTable(ProgramTableIndex::originalsAskedFor, originalsAskedFor);
+    part.setTable(ProgramTableIndex::functionsImportingOwnOriginal, functionsImportingOwnOriginal);
+    part.setTable(ProgramTableIndex::requestedOriginals, requestedOriginals);
     part.setTable(ProgramTableIndex::modulesByPath, byPath.modulesByPath);
     part.setTable(ProgramTableIndex::modulesByHashOfPath, byPath.modulesByHashOfPath);
     part.setTable(ProgramTableIndex::firstModulesByHashOfPath, byPath.firstModulesByHashOfPath);

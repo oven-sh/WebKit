@@ -25,7 +25,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #     v3: anything @Cell = CreateRest firstArgument=1 traits=[mayThrow, mayCollect, mayTouchMemory]
 #     Jump -> next b3()
 #   b2(v4: anything @JSValue) role=CatchHandler:
-#     v5: anything @JSValue = Call v1, -, v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @JSValue = Call v1, -, v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v5
 #   b3():
 #     Return v3

@@ -21,16 +21,16 @@ namespace JSC { namespace AOT {
 
 static constexpr uint32_t constructorIsNewTarget = FunctionRareData::maxCompiledAllocationConstructor;
 static constexpr uint32_t bitOfConstructorWithBody = 1u << 16;
-static constexpr uint32_t constructorIsNewTargetAndOnlyReturns = constructorIsNewTarget & ~bitOfConstructorWithBody;
-static_assert(ClosureWord::functionMask < constructorIsNewTargetAndOnlyReturns && ClosureWord::functionMask >> 16 < constructorIsNewTargetAndOnlyReturns >> 16);
+static constexpr uint32_t trivialConstructorIsNewTarget = constructorIsNewTarget & ~bitOfConstructorWithBody;
+static_assert(ClosureWord::functionMask < trivialConstructorIsNewTarget && ClosureWord::functionMask >> 16 < trivialConstructorIsNewTarget >> 16);
 constexpr bool isConstructorThatIsNewTarget(uint32_t rememberedConstructor) { return (rememberedConstructor | bitOfConstructorWithBody) == constructorIsNewTarget; }
 
 namespace Interpreter {
 
-inline constexpr uint8_t trivialConstructorHighBits = constructorIsNewTargetAndOnlyReturns >> 16;
-inline constexpr size_t sizeOfDefaultFinalObject = sizeof(JSObjectWithButterfly) + JSFinalObject::defaultInlineCapacity * sizeof(EncodedJSValue);
+inline constexpr uint8_t trivialConstructorHighBits = trivialConstructorIsNewTarget >> 16;
+inline constexpr size_t defaultFinalObjectSize = sizeof(JSObjectWithButterfly) + JSFinalObject::defaultInlineCapacity * sizeof(EncodedJSValue);
 static_assert(JSFinalObject::defaultInlineCapacity == 6, "llint_aot_op_construct clears them one by one");
-inline constexpr ptrdiff_t offsetOfDefaultFinalObjectAllocator = OBJECT_OFFSETOF(VM, heap) + OBJECT_OFFSETOF(Heap, cellSpace) + CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeOfDefaultFinalObject) * sizeof(Allocator);
+inline constexpr ptrdiff_t offsetOfDefaultFinalObjectAllocator = OBJECT_OFFSETOF(VM, heap) + OBJECT_OFFSETOF(Heap, cellSpace) + CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(defaultFinalObjectSize) * sizeof(Allocator);
 
 } // namespace Interpreter
 

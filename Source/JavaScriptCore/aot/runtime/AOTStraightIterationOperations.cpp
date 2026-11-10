@@ -153,7 +153,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTOpenIteration, JSCell*, (Instance* instance
     JSValue iterator = callMethodOfStraightIteration(globalObject, method, iterable);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     if (!iterator.isObject()) [[unlikely]] {
-        throwException(globalObject, scope, createRuntimeError(globalObject, Typed::RuntimeErrorKind::IteratorIsNotAnObject, nullptr));
+        throwException(globalObject, scope, createRuntimeError(globalObject, Typed::RuntimeErrorKind::IteratorNotObject, nullptr));
         OPERATION_RETURN(scope, nullptr);
     }
     JSValue next = asObject(iterator)->get(globalObject, vm.propertyNames->next);

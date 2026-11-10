@@ -77,7 +77,7 @@ private:
 
     void readWhatValueHolds(ValueID value, uint32_t position)
     {
-        ValueID definition = m_index.valueBehindCasts(value);
+        ValueID definition = m_index.stripCasts(value);
         if (m_index.isParameter(definition))
             return;
         BodyValue made = m_index.value(definition);
@@ -91,17 +91,8 @@ private:
 
     void readArguments(BodyTarget target, uint32_t position)
     {
-        if (!m_index.holdsParametersReadByReleaseHintsAlone()) [[likely]] {
-            for (ValueID argument : target.arguments()) {
-                if (argument)
-                    read(argument, position);
-            }
-            return;
-        }
-        uint32_t parameter = m_index.block(target.block()).firstParameter().index();
         for (ValueID argument : target.arguments()) {
-            ValueID taker(parameter++);
-            if (argument && !m_index.isReadByReleaseHintsAlone(taker))
+            if (argument)
                 read(argument, position);
         }
     }
@@ -346,8 +337,6 @@ uint32_t BodyLivenessSolver::collectLiveAtHead(const BodyBlock& block)
         read(operand, end);
     });
     for (BodyValue value : block.values()) {
-        if (value.opcode() == Opcode::ReleaseHint) [[unlikely]]
-            continue;
         value.forEachOperand([&](ValueID operand, uint32_t) {
             read(operand, value.id().index());
         });
@@ -467,13 +456,13 @@ void BodyLiveness::countHeadsWhereLive(std::span<const BlockID> blocks, std::spa
 void BodyLiveness::compute(const BodyIndex& index)
 {
     m_index = &index;
-    m_data = index.m_liveness.load(std::memory_order_acquire);
+    m_data = index.m_liveness.load();
     if (m_data)
         return;
 
     BodyLivenessSolver(index, false, { }, m_ownData, m_scratch).run();
     auto* made = new BodyLivenessData { Vector<uint32_t>(m_ownData.lastUses.span()), Vector<uint32_t>(m_ownData.liveAtHeads.span()), Vector<BodyLivenessData::Branches>(m_ownData.branches.span()), Vector<uint64_t>(m_ownData.words.span()), m_ownData.levels };
-    if (index.m_liveness.compare_exchange_strong(m_data, made, std::memory_order_acq_rel, std::memory_order_acquire))
+    if (index.m_liveness.compare_exchange_strong(m_data, made))
         m_data = made;
     else
         delete made;

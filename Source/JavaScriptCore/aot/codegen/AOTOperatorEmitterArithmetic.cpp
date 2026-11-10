@@ -124,7 +124,7 @@ public:
             return heldToWhatNumbersGive(value, op, left, right, mul(left, right));
         case ArithmeticOperator::Mod:
             if (checksProofs())
-                emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(greaterThanOrEqual(left, constant<T>(0)), logicalAnd(isNotZero(right), lessThanOrEqual(left, constant<T>(typeOf(value->leftOperand()).integers.maximum)))), std::nullopt, ProofSource::OtherOperation);
+                emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(greaterThanOrEqual(left, constant<T>(0)), logicalAnd(isNotZero(right), lessThanOrEqual(left, constant<T>(typeOf(value->leftOperand()).integers.maximum)))), std::nullopt, ProofSource::OtherOperation);
             return remainderOfNonNegative(left, right, typeOf(value->leftOperand()).integers.maximum);
         case ArithmeticOperator::Div:
         case ArithmeticOperator::Pow:
@@ -151,7 +151,7 @@ public:
                 if (checksProofs()) {
                     Number x = toNumber(left);
                     Condition holds = logicalAnd(equal(mul(x, toNumber(right)), product), logicalOr(isNotZero(exact), greaterThanOrEqual(bitOr(left, right), constant<T>(0))));
-                    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, holds, std::nullopt, ProofSource::OtherOperation);
+                    emitter<ThrowEmitter>().requireOrCrash(value, holds, std::nullopt, ProofSource::OtherOperation);
                 }
                 return product;
             }
@@ -177,7 +177,7 @@ public:
         bool mayBeNegative = dividends.minimum < 0;
         bool mayOverflow = dividends.minimum <= (std::is_same_v<T, Word32> ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int64_t>::min());
         if (checksProofs() && !mayOverflow)
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, greaterThanOrEqual(dividend, constant<T>(dividends.minimum)), std::nullopt, ProofSource::OtherOperation);
+            emitter<ThrowEmitter>().requireOrCrash(value, greaterThanOrEqual(dividend, constant<T>(dividends.minimum)), std::nullopt, ProofSource::OtherOperation);
         auto zeroWithSignOfDividend = [&] {
             return mayBeNegative ? select(lessThan(dividend, constant<T>(0)), number(-0.0), number(0)) : number(0);
         };
@@ -302,7 +302,7 @@ private:
         Condition holds = equal(ofNumbers, toNumber(result));
         if (op == ArithmeticOperator::Mul)
             holds = logicalAnd(holds, logicalOr(isNotZero(result), greaterThanOrEqual(bitOr(left, right), constant<T>(0))));
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, holds, std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().requireOrCrash(value, holds, std::nullopt, ProofSource::OtherOperation);
         return result;
     }
 
@@ -363,9 +363,9 @@ private:
         if (value.opcode() == Opcode::Mod) {
             const Type& divisor = typeOf(value->rightOperand());
             if (divisor.isInteger() && divisor.integers.isSingleValue()) {
-                build().statistics().count(StatisticID::RemaindersByDivisorsOfOneInteger);
+                build().statistics().count(StatisticID::RemaindersByProvenConstantDivisor);
                 if (checksProofs())
-                    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, equal(in<T>(value->rightOperand()), constant<T>(divisor.integers.minimum)), std::nullopt, ProofSource::OtherOperation);
+                    emitter<ThrowEmitter>().requireOrCrash(value, equal(in<T>(value->rightOperand()), constant<T>(divisor.integers.minimum)), std::nullopt, ProofSource::OtherOperation);
                 return { in<T>(value->leftOperand()), constant<T>(divisor.integers.minimum) };
             }
         }
@@ -399,7 +399,7 @@ private:
             if (hasOneBitSet(static_cast<uint64_t>(*magnitude)))
                 return bitAnd(dividend, constant<T>(*magnitude - 1));
             if (greatestDividend >= 0 && greatestDividend - *magnitude < *magnitude) {
-                build().statistics().count(StatisticID::RemaindersOfDividendsBelowTwiceTheDivisor);
+                build().statistics().count(StatisticID::RemaindersByConditionalSubtraction);
                 T lessened = sub(dividend, constant<T>(*magnitude));
                 return select(below(dividend, constant<T>(*magnitude)), dividend, lessened);
             }
@@ -701,7 +701,7 @@ Number OperatorEmitter::asNumericOperand(ValueID id, const OperationContext* use
         if (!emittersCheckProofs())
             return taken;
         if (user) {
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(*user, equal(numericOperandAsItComes(id), taken), std::nullopt, ProofSource::OtherOperation);
+            emitter<ThrowEmitter>().requireOrCrash(*user, equal(numericOperandAsItComes(id), taken), std::nullopt, ProofSource::OtherOperation);
             return taken;
         }
     }

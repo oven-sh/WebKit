@@ -188,6 +188,30 @@ void secondInstanceClearsOnce()
     instances.clear();
 }
 
+void onlyInstanceCountsAsRun()
+{
+    TableFixture fixture;
+    VMState& state = fixture.vm().aotState();
+    std::array<ZeroedInstance, 2> storage { createZeroedInstance(), createZeroedInstance() };
+    Instance* first = storage[0].get();
+    uint8_t& hasRun = first->propertyCaches.hasRunSinceClear;
+
+    state.instances.append(first);
+    state.didChangeInstances();
+    AOT_TEST_CHECK(state.onlyInstance == first && hasRun);
+
+    state.instances.append(storage[1].get());
+    state.didChangeInstances();
+    AOT_TEST_CHECK(!state.onlyInstance);
+    hasRun = false;
+
+    state.instances.removeLast();
+    state.didChangeInstances();
+    AOT_TEST_CHECK(state.onlyInstance == first && hasRun);
+    state.instances.clear();
+    state.didChangeInstances();
+}
+
 void absenceBesidePairDoesNotOutliveItsCount()
 {
     using KeyOfPair = StringKeyCache::KeyOfPair;
@@ -244,6 +268,7 @@ std::span<const NativeTest> propertyLookupTableTests()
         { "property-lookup-table/growth-keeps-entries-and-publishes-words"_s, growthKeepsEntriesAndPublishesWords },
         { "property-lookup-table/front-growth-keeps-rows-and-publishes-words"_s, frontGrowthKeepsRowsAndPublishesWords },
         { "property-lookup-table/second-instance-clears-once"_s, secondInstanceClearsOnce },
+        { "property-lookup-table/only-instance-counts-as-run"_s, onlyInstanceCountsAsRun },
         { "property-lookup-table/absence-beside-pair-does-not-outlive-its-count"_s, absenceBesidePairDoesNotOutliveItsCount },
     };
     return tests;

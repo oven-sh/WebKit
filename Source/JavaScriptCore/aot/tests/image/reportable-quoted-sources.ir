@@ -6,17 +6,17 @@
 # other.js:
 # function first(list) { try { return list.first; } catch (error) { return error.message; } }
 # report(first(null));
-# The image holds the text that a message quotes only for a place at which code reports, and holds equal texts once
+# The image stores a quoted source only for a location at which emitted code can report, and stores equal sources once
 # main.js lists five places. No operation stands at 5, so "absent" is left out
-# `task.run` at 126 lies in `task.run(1)` at 131, so the two are one text. The read of `message` at 73 quotes a second copy of "task.title", which lies where the first does
+# `task.run` at 126 lies in `task.run(1)` at 131, so the two share one range. The read of `message` at 73 quotes a second copy of "task.title", which shares the bytes of the first
 # What is left of main.js are "task.title" and "task.run(1)": 21 bytes
 # other.js has its places where main.js has two of its own. At 36 it quotes "list.first", 10 bytes more. At 73 it quotes "task.title" again, which lies where that of main.js does
 # A group holds places of one module, and each module has fewer than a group holds
 # RUN: image ProgramTables
 # CHECK-LABEL: ProgramTables:
-# CHECK: quotedTextGroups 2
-# CHECK-NEXT: quotedTextRows
-# CHECK-NEXT: textOfQuotes 31
+# CHECK: quotedSourceGroups 2
+# CHECK-NEXT: quotedSourceRows
+# CHECK-NEXT: quotedSourceText 31
 # RUN(SHELL): run-in-shell globalThis.report = message => print(message);
 # SHELL: null is not an object (evaluating 'list.first')
 # SHELL-NEXT: undefined is not an object (evaluating 'task.title')
@@ -24,8 +24,8 @@
 # SHELL-NEXT: null is not an object (evaluating 'task.run')
 # SHELL-NEXT: exited with 0
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}] positions={lineStarts=[0, 92, 183] quotedTexts=[{position=5 start=21 end=27}, {position=36 end=10}, {position=73 start=27 end=37}, {position=126 start=10 end=18}, {position=131 start=10 end=21}] textOfQuotes="task.titletask.run(1)absenttask.title"}
-module m1 path="other.js" displayPath="other.js" body=f3 positions={lineStarts=[0, 92] quotedTexts=[{position=36 end=10}, {position=73 start=10 end=20}] textOfQuotes="list.firsttask.title"}
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}] positions={lineStarts=[0, 92, 183] quotedSources=[{position=5 start=21 end=27}, {position=36 end=10}, {position=73 start=27 end=37}, {position=126 start=10 end=18}, {position=131 start=10 end=21}] quotedSourceText="task.titletask.run(1)absenttask.title"}
+module m1 path="other.js" displayPath="other.js" body=f3 positions={lineStarts=[0, 92] quotedSources=[{position=36 end=10}, {position=73 start=10 end=20}] quotedSourceText="list.firsttask.title"}
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():

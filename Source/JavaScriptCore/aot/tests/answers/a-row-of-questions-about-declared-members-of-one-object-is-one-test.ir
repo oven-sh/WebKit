@@ -952,7 +952,7 @@ function f14 name="alias" module=m4 position=2773 role=Library flags=[HasExplici
     v33 = String string="-" @2902
     Return v33 @2902
 }
-function f15 name="awaited" module=m4 position=3051 role=Library flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+function f15 name="awaited" module=m4 position=3051 role=Library flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
   b0(v0: anything, v1: undefined|null|L1):
     v2 = Undefined @3090
     v3 = Undefined @3090

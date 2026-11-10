@@ -74,22 +74,22 @@ struct TestsOfPositionsInTexts final : Walker::KeptForBuild {
 
 static ValueID textAsAskedAboutInPositionsInTexts(const BodyIndex& index, ValueID text)
 {
-    return index.valueBehindCasts(text);
+    return index.stripCasts(text);
 }
 
 static std::optional<LengthOfTextAsWritten> findLengthOfTextAsWritten(const Program& program, const BodyIndex& index, ValueID bound)
 {
     LengthOfTextAsWritten found;
-    bound = index.valueBehindCasts(bound);
+    bound = index.stripCasts(bound);
     if (bound && !index.isParameter(bound) && index.opcodeOf(bound) == Opcode::Sub) {
         BodyValue difference = index.value(bound);
-        ValueID less = index.valueBehindCasts(difference.operand(1));
+        ValueID less = index.stripCasts(difference.operand(1));
         if (!less || index.isParameter(less) || index.opcodeOf(less) != Opcode::Integer)
             return std::nullopt;
         found.distanceBelowLength = index.value(less).as<Opcode::Integer>().integer();
         if (found.distanceBelowLength < 0)
             return std::nullopt;
-        bound = index.valueBehindCasts(difference.operand(0));
+        bound = index.stripCasts(difference.operand(0));
     }
     if (!bound || index.isParameter(bound) || index.opcodeOf(bound) != Opcode::PropGet)
         return std::nullopt;
@@ -131,7 +131,7 @@ static Vector<TestOfPositionInText> collectTestsOfPositionsInTexts(const Program
             std::optional<LengthOfTextAsWritten> bound = findLengthOfTextAsWritten(program, index, relation.operand(1 - placeOfPosition));
             if (!bound || !relationHoldsPositionBelowLength(relation.opcode(), holds, placeOfPosition, bound->distanceBelowLength))
                 continue;
-            ValueID position = index.valueBehindCasts(relation.operand(placeOfPosition));
+            ValueID position = index.stripCasts(relation.operand(placeOfPosition));
             if (position)
                 tests.append(TestOfPositionInText { position, bound->text, index.dominatorNumber(entered), index.lastDominatorNumberBelow(entered) });
         }
@@ -152,7 +152,7 @@ static Vector<TestOfPositionInText> collectTestsOfPositionsInTexts(const Program
 bool testOfBodyHoldsPositionBelowLengthOfText(Walker& walker, const BodyIndex& index, BlockID block, ValueID text, ValueID position)
 {
     text = textAsAskedAboutInPositionsInTexts(index, text);
-    position = index.valueBehindCasts(position);
+    position = index.stripCasts(position);
     if (!text || !position || !index.isReachable(block))
         return false;
 

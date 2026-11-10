@@ -4,14 +4,14 @@
 # -- code
 # code f0:CoroutineBody {
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
-#     v2: opaque(StringBuilder) @Cell = StackStringBuilderBegin traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v2: opaque(StringBuilder) @Cell = StackStringBuilderBegin traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b1()
 #   b1():
-#     v3: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b2()
 #   b2():
 #     v4: opaque(BuilderCursor) @RawWord = StackStringBuilderCursor v2 traits=[mayTouchMemory]
-#     v5: string @Cell = StackStringBuilderFinish v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v5: string @Cell = StackStringBuilderFinish v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
 #     Return v3
 # }
 # -- end of code

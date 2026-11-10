@@ -174,22 +174,6 @@ static std::optional<uint32_t> savedRegistersWordOf(const Machine::Frame& frame)
 #endif
 }
 
-bool FrameMapEmitter::savesDeadPreservedRegister(const Machine::PatchParameters& params)
-{
-    if constexpr (SavedFrame::preservedRegister == InvalidGPRReg)
-        return false;
-    else {
-        constexpr Reg reg { SavedFrame::preservedRegister };
-        if (!params.frame().calleeSaveRegisters().contains(reg, IgnoreVectors) || params.usedRegisters().contains(reg, IgnoreVectors))
-            return false;
-        for (const Machine::ValueRep& rep : params) {
-            if (rep.isGPR() && rep.gpr() == SavedFrame::preservedRegister)
-                return false;
-        }
-        return true;
-    }
-}
-
 void FrameMapEmitter::releaseSavedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params)
 {
     const Machine::Frame& frame = params.frame();
@@ -219,8 +203,6 @@ void FrameMapEmitter::releaseSavedRegisters(CCallHelpers& jit, const Machine::Pa
 #endif
         jit.loadPtr(address, saves.at(index).reg().gpr());
     }
-    if (savesDeadPreservedRegister(params))
-        jit.move(CCallHelpers::TrustedImm32(0), SavedFrame::preservedRegister);
 }
 
 std::optional<uint64_t> FrameMapEmitter::siteWordOfFrameOnHeap(const Machine::PatchParameters& params)
@@ -280,20 +262,10 @@ std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, c
         return std::nullopt;
 
     if (const std::optional<Machine::BitSpan>& deadWords = params.value()->frameWordsDeadAcrossSuspension()) {
-        builder.setListsEveryLiveWord();
-        for (uint32_t location = numberOfSaves + 1; location <= lastLocationKept; ++location) {
-            bool holdsReference = builder.listsReferenceIn(location);
-            RELEASE_ASSERT(!holdsReference || !deadWords->get(location));
-            if (!holdsReference && !deadWords->get(location))
-                builder.addOtherLiveWord(location);
-        }
-        if constexpr (SavedFrame::preservedRegister != InvalidGPRReg) {
-            bool isLive = *promiseLocation == SavedFrame::locationInRegister || params.usedRegisters().contains(SavedFrame::preservedRegister, IgnoreVectors);
-            if (isLive && !builder.listsReferenceIn(SavedFrame::locationInRegister))
-                builder.addOtherLiveWord(SavedFrame::locationInRegister);
-        }
+        for (uint32_t location = numberOfSaves + 1; location <= lastLocationKept; ++location)
+            RELEASE_ASSERT(!builder.listsReferenceIn(location) || !deadWords->get(location));
     }
-    return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame, params.value()->numberOfFrameWordsToClearAtFirstSuspension());
+    return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame);
 }
 
 } } } // namespace JSC::AOT::Typed

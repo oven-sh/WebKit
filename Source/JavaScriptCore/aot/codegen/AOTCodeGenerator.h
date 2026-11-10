@@ -154,8 +154,7 @@ public:
             return nullptr;
         return slotOfScopeReadInPlaceOfClosureSlow(id, read);
     }
-    void noteClosureWhoseLifeEndsBehind(ValueID closure, ValueID call) { m_closuresWhoseLivesEndBehindCalls.append({ closure, call }); }
-    void noteObjectWhoseLifeEndsBehind(ValueID object, ValueID call) { m_closuresWhoseLivesEndBehindCalls.append({ object, call }); }
+    void scheduleClosureLifetimeEnd(ValueID closure, ValueID call) { m_scheduledLifetimeEnds.append({ closure, call }); }
     const PlacedSlot* slotOfScopeOfClosureWithoutValue(ValueID closure) const { return closure == m_closureReadForItsScope ? m_slotOfScopeOfClosureRead : nullptr; }
     const Effects& effectsOf(const OperationContext& context LIFETIME_BOUND) const
     {
@@ -299,7 +298,7 @@ private:
     Vector<std::pair<ValueID, ValueID>> m_usersOfLiteralsInBlock;
 public:
 private:
-    Vector<std::pair<ValueID, ValueID>, 2> m_closuresWhoseLivesEndBehindCalls;
+    Vector<std::pair<ValueID, ValueID>, 2> m_scheduledLifetimeEnds;
     const PlacedSlot* m_slotOfScopeOfClosureRead { nullptr };
     void computeEffectsOf(const OperationContext&) const;
     bool hasResults(size_t indexOfValue) const { return !m_resultRanges.empty() && m_resultRanges[indexOfValue]; }
@@ -427,9 +426,9 @@ private:
         ValueID holdsDoubles;
         uint32_t numberOfReads { 0 };
     };
-    struct StoreOfWhatComesRound {
+    struct LoopCarriedValueStore {
         size_t indexOfParameter { 0 };
-        ValueID comesRound;
+        ValueID loopCarriedValue;
         ValueID box;
         ValueID store;
     };
@@ -449,7 +448,7 @@ private:
         bool turnsForWideTextsFollow { false };
         bool asksTextsForWide { false };
         Vector<SumOfIntegers, 2> sumsOfIntegers;
-        Vector<StoreOfWhatComesRound, 2> storesOfWhatComesRound;
+        Vector<LoopCarriedValueStore, 2> loopCarriedValueStores;
         Vector<ListAskedForKind, 2> listsAskedForKind;
         bool asksListsForAnotherKind() const { return std::ranges::any_of(listsAskedForKind, [](const ListAskedForKind& asked) { return !asked.hasOneKind; }); }
         Vector<ValueID, 2> listsWhoseKindIsRead;
@@ -470,7 +469,7 @@ private:
         bool layoutWithoutQuestionFollows { false };
     };
     bool findStoresOfWhatComesRound(CountedLoop&, const Edge& back) const;
-    void storeWhatComesRound(const CountedLoop&, const StoreOfWhatComesRound&, LValue);
+    void storeLoopCarriedValue(const CountedLoop&, const LoopCarriedValueStore&, LValue);
     static void askKindsReadWhereLoopIsComeBackTo(CountedLoop&);
     struct LimitOfWrittenLoop {
         BlockID asking;
@@ -537,11 +536,9 @@ private:
     Output m_out;
     const bool m_checksAllocation;
     const bool m_checksEffects;
-    const uint32_t m_rowThatSaysLess;
+    const uint32_t m_understatedEffects;
     bool m_watchesOperations { false };
     bool m_notesForms { false };
-    bool m_mayReleaseBehindLastReads { false };
-    bool m_mayLendCells { false };
     bool m_keepsValuesInHeapFrame { false };
     BitVector m_switchesTakenIntoSwitchInFront;
     bool m_looksBehindEachOperation { false };
@@ -554,9 +551,9 @@ private:
     bool m_nextBlockGoesOnHere { false };
     Vector<LBasicBlock, 4> m_blocksLeftOut;
     BlockID m_headOfTurnsLaidOut;
-    mutable size_t m_positionOfHeadLastAskedForKinds { std::numeric_limits<size_t>::max() };
-    mutable size_t m_positionLastAskedForKindsFrom { std::numeric_limits<size_t>::max() };
-    mutable std::optional<CountedLoop> m_loopLastAskedForKinds;
+    mutable size_t m_cachedLoopHeaderPosition { std::numeric_limits<size_t>::max() };
+    mutable size_t m_cachedLoopQueryPosition { std::numeric_limits<size_t>::max() };
+    mutable std::optional<CountedLoop> m_cachedCountedLoop;
     ValueID m_readLeftToBranch;
     Vector<Operand, 8> m_argumentsForNextTurn;
     std::span<const BlockID> m_turnLaidOut;

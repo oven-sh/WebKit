@@ -592,7 +592,7 @@ static void locateAcceptedKind(StubAssembler& jit, GPRReg value, GPRReg type, GP
 
 static void notePlaceCopiedFromSlot(StubAssembler& jit)
 {
-    jit.store8(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.placesHoldCopiesOfSlots)));
+    jit.store8(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.hasCachedSlotValues)));
 }
 
 void rememberPlaceOfValueInField(StubAssembler& jit, GPRReg object, GPRReg key, GPRReg value, GPRReg type, GPRReg address, GPRReg classOfSlot, GPRReg place, GPRReg scratch, GPRReg secondScratch)
@@ -1116,7 +1116,7 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
     if (!baseIsCell)
         baseIsNoCell = jit.branchIfNotCell(base);
     jit.load32(Address(base, JSCell::structureIDOffset()), structureID);
-    Jump saysNothingOfStructure = jit.branch32(CCallHelpers::NotEqual, inPair(OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, structureIDOfPlace)), structureID);
+    Jump structureMismatch = jit.branch32(CCallHelpers::NotEqual, inPair(OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, structureIDOfPlace)), structureID);
     jit.load32(inPair(OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, slotOfPlace)), slot);
 
     using Read = StringKeyCache::KeyOfPair::Read;
@@ -1234,7 +1234,7 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
 
     absenceIsForgotten.link(&jit);
     jit.store32(TrustedImm32(0), inPair(OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, structureIDOfPlace)));
-    saysNothingOfStructure.link(&jit);
+    structureMismatch.link(&jit);
     jit.loadPtr(inPair(OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, key)), key);
     locateKeyedValuePlace(jit, SlotAccess::Read, key, structureID, registers.entry);
     jit.linkToStub(jit.branchPtr(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, key)), key), getByValCachedBehindPlaces(RegistersOfCaller::AreKept));

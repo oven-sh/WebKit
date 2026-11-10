@@ -22,11 +22,11 @@ constexpr OpcodeSet opcodesWhere(const Holds& holds)
     return opcodes;
 }
 
-constexpr OpcodeSet opcodesThatHandOn(std::initializer_list<HandedOn> ways)
+constexpr OpcodeSet opcodesWithPassThrough(std::initializer_list<PassThroughKind> ways)
 {
     return opcodesWhere([&](Opcode opcode) {
-        for (HandedOn way : ways) {
-            if (handsOnOf(opcode) == way)
+        for (PassThroughKind way : ways) {
+            if (passThroughOf(opcode) == way)
                 return true;
         }
         return false;
@@ -49,19 +49,19 @@ constexpr OpcodeSet opcodesOfFamily(OperationFamily family)
     return opcodesWhere([&](Opcode opcode) { return familyOf(opcode) == family; });
 }
 
-inline constexpr OpcodeSet conversionsOfForm = opcodesThatHandOn({ HandedOn::Form });
-inline constexpr OpcodeSet opcodesThatNameTheirOperand = opcodesThatHandOn({ HandedOn::NarrowerType, HandedOn::PassedCheck, HandedOn::Mark });
-inline constexpr OpcodeSet checksThatHandOnOrThrow = opcodesThatHandOn({ HandedOn::PassedCheck });
-inline constexpr OpcodeSet opcodesThatGiveSameValue = opcodesThatHandOn({ HandedOn::Form, HandedOn::NarrowerType });
-inline constexpr OpcodeSet opcodesThatGiveSameCell = conversionsOfForm | opcodesThatNameTheirOperand;
-inline constexpr OpcodeSet opcodesThatStateTypes = opcodesThatHandOn({ HandedOn::UnclaimedType, HandedOn::ClaimedType, HandedOn::TestedField });
-inline constexpr OpcodeSet castsThatClaimNothing = opcodesThatHandOn({ HandedOn::UnclaimedType });
-inline constexpr OpcodeSet inputOperationsThatHandOn = opcodesThatHandOn({ HandedOn::UnclaimedType, HandedOn::ClaimedType, HandedOn::TestedField, HandedOn::PassedCheck, HandedOn::Mark });
-inline constexpr OpcodeSet inputOperationsThatOnlyHandOn = opcodesThatHandOn({ HandedOn::UnclaimedType, HandedOn::ClaimedType, HandedOn::TestedField, HandedOn::Mark });
+inline constexpr OpcodeSet conversionsOfForm = opcodesWithPassThrough({ PassThroughKind::Form });
+inline constexpr OpcodeSet opcodesThatNameTheirOperand = opcodesWithPassThrough({ PassThroughKind::NarrowerType, PassThroughKind::PassedCheck, PassThroughKind::Mark });
+inline constexpr OpcodeSet passThroughChecks = opcodesWithPassThrough({ PassThroughKind::PassedCheck });
+inline constexpr OpcodeSet valuePreservingOpcodes = opcodesWithPassThrough({ PassThroughKind::Form, PassThroughKind::NarrowerType });
+inline constexpr OpcodeSet cellPreservingOpcodes = conversionsOfForm | opcodesThatNameTheirOperand;
+inline constexpr OpcodeSet opcodesThatStateTypes = opcodesWithPassThrough({ PassThroughKind::UnclaimedType, PassThroughKind::ClaimedType, PassThroughKind::TestedField });
+inline constexpr OpcodeSet castsThatClaimNothing = opcodesWithPassThrough({ PassThroughKind::UnclaimedType });
+inline constexpr OpcodeSet inputPassThroughOpcodes = opcodesWithPassThrough({ PassThroughKind::UnclaimedType, PassThroughKind::ClaimedType, PassThroughKind::TestedField, PassThroughKind::PassedCheck, PassThroughKind::Mark });
+inline constexpr OpcodeSet inputIdentityOpcodes = opcodesWithPassThrough({ PassThroughKind::UnclaimedType, PassThroughKind::ClaimedType, PassThroughKind::TestedField, PassThroughKind::Mark });
 
 static_assert(conversionsOfForm == opcodesOfFamily(OperationFamily::Representation));
-static_assert(opcodesWhere([](Opcode opcode) { return resultRuleOf(opcode) == ResultRule::Cast && handsOnOf(opcode) == HandedOn::Nothing; }).isEmpty());
-static_assert(opcodesWhere([](Opcode opcode) { return interpretedOf(opcode) == Interpretation::Cast && handsOnOf(opcode) == HandedOn::Nothing; }).isEmpty());
+static_assert(opcodesWhere([](Opcode opcode) { return resultRuleOf(opcode) == ResultRule::Cast && passThroughOf(opcode) == PassThroughKind::Nothing; }).isEmpty());
+static_assert(opcodesWhere([](Opcode opcode) { return interpretedOf(opcode) == Interpretation::Cast && passThroughOf(opcode) == PassThroughKind::Nothing; }).isEmpty());
 
 inline constexpr OpcodeSet allSums = operatorsOfKinds({ OperatorKind::Additive });
 inline constexpr OpcodeSet allBitwiseOperators = operatorsOfKinds({ OperatorKind::Bitwise });
@@ -69,7 +69,7 @@ inline constexpr OpcodeSet allRelations = operatorsOfKinds({ OperatorKind::Relat
 inline constexpr OpcodeSet allEqualities = operatorsOfKinds({ OperatorKind::Equality });
 inline constexpr OpcodeSet allNumericOperators = operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative, OperatorKind::Bitwise, OperatorKind::NumberConversion });
 inline constexpr OpcodeSet operationsThatJoinTexts = opcodesWhere([](Opcode opcode) { return joinsTextsOf(opcode); });
-inline constexpr OpcodeSet operatorsThatMakeNumbers = opcodesWhere([](Opcode opcode) { return allNumericOperators.contains(opcode) && !joinsTextsOf(opcode); });
+inline constexpr OpcodeSet numberProducingOperators = opcodesWhere([](Opcode opcode) { return allNumericOperators.contains(opcode) && !joinsTextsOf(opcode); });
 
 inline constexpr OpcodeSet callsByValue = opcodesWhere([](Opcode opcode) { return entersByValueOf(opcode) == EntryByValue::Call; });
 inline constexpr OpcodeSet constructionsByValue = opcodesWhere([](Opcode opcode) { return entersByValueOf(opcode) == EntryByValue::Construction; });

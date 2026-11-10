@@ -4,13 +4,13 @@
 # function fillAndCut(n) { const list = []; for (let i = 0; i < n; i++) { list[list.length] = i; list.length = 0; } return list; }
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK-NOT: ReserveArrayRoom
+# CHECK-NOT: ReserveArrayCapacity
 # RUN(NAME): walk f2 mechanisms=all
 # NAME-LABEL: code f2:Body
-# NAME-NOT: ReserveArrayRoom
+# NAME-NOT: ReserveArrayCapacity
 # RUN(CUT): walk f3 mechanisms=all
 # CUT-LABEL: code f3:Body
-# CUT-NOT: ReserveArrayRoom
+# CUT-NOT: ReserveArrayCapacity
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

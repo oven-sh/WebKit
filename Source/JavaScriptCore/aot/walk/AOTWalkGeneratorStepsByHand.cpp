@@ -20,10 +20,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
+OperatorForm operatorFormFor(Walker&, const Draft&);
 bool canWaitForStepOfAsyncGenerator(Walker&);
 Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Reference goesByDriver, Origin);
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 
 namespace {
@@ -62,8 +62,8 @@ static Reference buildTestOfStatusInStepsByHand(Walker& walker, Reference status
     Draft test = draftOfCoroutineCalls(walker, Opcode::StrictEq, origin);
     test.setOperand(0, status);
     test.setOperand(1, walker.constant(WTF::move(written)));
-    test.setForm(formAllowedForTypedOperator(walker, test));
-    return boxedUnlessNumbersAreUnboxed(walker, walker.build(WTF::move(test)), origin);
+    test.setForm(operatorFormFor(walker, test));
+    return boxNumberIfNeeded(walker, walker.build(WTF::move(test)), origin);
 }
 
 static Reference buildResultObjectInStepsByHand(Walker& walker, Reference value, Reference done, Origin origin)
@@ -126,12 +126,12 @@ static bool calleeIsNextOfEngineInStepsByHand(Walker& walker, const BodyValue& c
         return table.canonicalID(named) == next;
 
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID read = index.valueBehindCasts(call.calleeOperand());
+    ValueID read = index.stripCasts(call.calleeOperand());
     if (index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet)
         return false;
     BodyValue access = index.value(read);
     PropertyKeyID key = program.keyOf(BuiltinNames::next);
-    if (access.isFreeName() || access.key() != key || index.valueBehindCasts(access.objectOperand()) != index.valueBehindCasts(call.thisValueOperand()))
+    if (access.isFreeName() || access.key() != key || index.stripCasts(access.objectOperand()) != index.stripCasts(call.thisValueOperand()))
         return false;
     if (!nothingSeenHappensBetweenInStepsByHand(index, read, call.id()))
         return false;
@@ -177,7 +177,7 @@ static const BitVector& findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(Walker
             Opcode opcode = user.opcode();
             if (opcodesThatStateTypes.contains(opcode))
                 callsBehindNames[user.id().index()] = callBehind(user.operand(0));
-            else if (ValueID awaited = isAwaited && opcode == Opcode::Await ? index.valueBehindCasts(user.valueOperand()) : ValueID(); awaited && callBehind(awaited) == awaited.index()) {
+            else if (ValueID awaited = isAwaited && opcode == Opcode::Await ? index.stripCasts(user.valueOperand()) : ValueID(); awaited && callBehind(awaited) == awaited.index()) {
                 callsBehindNames[user.id().index()] = awaited.index();
                 for (ValueID held : user.heldOperands())
                     refuse(held);
@@ -267,7 +267,7 @@ static bool buildStepInStepsByHand(Walker& walker, const BodyValue& call, Refere
 static std::optional<StepAtHandInStepsByHand> findStepBehindInStepsByHand(const Walker& walker, Reference name)
 {
     const Code& code = walker.code();
-    while (name && name.isValue() && opcodesThatGiveSameCell.contains(code.at(name.id()).opcode)) {
+    while (name && name.isValue() && cellPreservingOpcodes.contains(code.at(name.id()).opcode)) {
         ValueID record = code.at(name.id()).operand(0);
         name = code.isConstant(record) ? Reference::constant(record) : Reference::value(record);
     }
@@ -352,7 +352,7 @@ bool buildStepWrittenByHand(Walker& walker, const BodyValue& call)
     return sent && buildStepInStepsByHand(walker, call, generator, sent);
 }
 
-static Reference goOnWhereTestPassesInStepsByHand(Walker& walker, Reference value, TypeID tested, BlockID otherwise, bool& someWayTurnsAway, Origin origin)
+static Reference continueIfHasType(Walker& walker, Reference value, TypeID tested, BlockID otherwise, bool& someWayTurnsAway, Origin origin)
 {
     if (walker.isUnreachable() || walker.types().isSubset(walker.typeOf(value), tested))
         return value;
@@ -396,13 +396,13 @@ static Reference buildAwaitedStepInStepsByHand(Walker& walker, const BodyValue& 
     bool someWayArrives = false;
     bool someWayTurnsAway = false;
 
-    goOnWhereTestPassesInStepsByHand(walker, callee, types.forBuiltin(next), byCall, someWayTurnsAway, origin);
-    Reference generator = goOnWhereTestPassesInStepsByHand(walker, receiver, types.builtinClass(BuiltinClasses::AsyncGenerator), byCall, someWayTurnsAway, origin);
-    if (walker.failsGuesses() && !walker.isUnreachable()) [[unlikely]] {
+    continueIfHasType(walker, callee, types.forBuiltin(next), byCall, someWayTurnsAway, origin);
+    Reference generator = continueIfHasType(walker, receiver, types.builtinClass(BuiltinClasses::AsyncGenerator), byCall, someWayTurnsAway, origin);
+    if (walker.shouldFailSpeculations() && !walker.isUnreachable()) [[unlikely]] {
         walker.letGuessFailUnasked(byCall, origin);
         someWayTurnsAway = true;
     }
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     Reference stepped = walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(walker, generator, sent, held, next, { }, origin);
     Reference value = buildResultAtInStepsByHand(walker, stepped, StepGeneratorResult::Value, origin);
     Reference status = buildResultAtInStepsByHand(walker, stepped, StepGeneratorResult::Status, origin);

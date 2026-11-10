@@ -26,7 +26,7 @@ struct GeneratorTakenByConsumer {
     uint32_t callPosition { 0 };
     uint64_t numberOfOperationsOfRegion { 0 };
     bool regionHoldsIterations { false };
-    bool comesRound { false };
+    bool hasBackEdge { false };
     bool takerCallsMethodItself { false };
     Reference state;
     Vector<Reference, 8> entryArguments;
@@ -53,12 +53,12 @@ struct GeneratorWalkedInConsumer {
     Vector<BlockID, 2> inputHeadsThatCarryValues;
     Vector<Vector<Reference, 4>, 2> carriedAtReturns;
     uint32_t namesAtHead { 0 };
-    Vector<std::pair<ValueID, Reference>, 8> namesInFrontOfLoop;
+    Vector<std::pair<ValueID, Reference>, 8> bindingsBeforeLoop;
     ValueID yieldStoodAt;
 };
 
-bool callMayEnterCopyOfBody(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> handedOver);
-Vector<Reference, 8> buildEntryArgumentsOfCopy(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> handedOver);
+bool callMayEnterCopyOfBody(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> passedOperands);
+Vector<Reference, 8> buildEntryArgumentsOfCopy(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> passedOperands);
 bool operationsFitWindowOfCallWrittenInLoop(const Walker&, uint64_t numberOfOperations);
 bool calleeIsCopiedInLoopsAlone(const Walker&, FunctionID callee, size_t numberOfOperands);
 bool nobodyLooksAboveGeneratorsOf(const Walker&, FunctionID generatorFunction, uint32_t* numberOfListedCalls);

@@ -1,6 +1,6 @@
 # The list follows from the program alone. A built-in that is handed a function that asks the world outside (as `this`, as an argument) would call it: it is refused like that function itself, and gives what nobody knows.
 # new RegExp("a" + Array.from([0, 0], Math.random).join("")) . ("b" + Reflect.apply(Date.now, undefined, [])) . ("c" + [0].map(Date.now)) . ("d" + Date.now.call(null)) . ("z+" + 1)
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /z+1/
 # CHECK-NOT: text /

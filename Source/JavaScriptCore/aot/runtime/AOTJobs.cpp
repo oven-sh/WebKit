@@ -305,7 +305,7 @@ JSValue driverResumeContext(JSValue settlementTarget)
     return saved && saved->goesOnInContextOfItsAwait() ? saved->contextOfAwait() : JSValue();
 }
 
-bool takesBareSteps(JSValue settlementTarget)
+bool acceptsBareSteps(JSValue settlementTarget)
 {
     return savedFrameOfDriver(settlementTarget);
 }

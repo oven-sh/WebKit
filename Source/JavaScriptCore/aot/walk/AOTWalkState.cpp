@@ -26,17 +26,17 @@ static_assert(perObjectHeaps.containsAll(heapsUnderPlacesInWalkState - heapsUnde
 static_assert(perObjectHeaps.contains(AbstractHeap::ShapeWords));
 static_assert(perObjectHeaps.contains(AbstractHeap::NamedProperties) && perObjectHeaps.contains(AbstractHeap::OrderWords) && perObjectHeaps.contains(AbstractHeap::PrototypeLinks));
 
-OptionSet<FactOfCell> factsOfCellEndedBy(const LocationMasks& writes)
+OptionSet<CellFact> cellFactsInvalidatedBy(const LocationMasks& writes)
 {
-    OptionSet<FactOfCell> ended;
+    OptionSet<CellFact> ended;
     if (writes.contains(AbstractHeap::ShapeWords))
-        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem, FactOfCell::BearsNoMark });
+        ended.add({ CellFact::NotFrozen, CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent, CellFact::BearsNoMark });
     if (writes.contains(AbstractHeap::NamedProperties))
-        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem, FactOfCell::BearsNoMark });
+        ended.add({ CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent, CellFact::BearsNoMark });
     if (writes.contains(AbstractHeap::OrderWords))
-        ended.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem });
+        ended.add({ CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent });
     if (writes.contains(AbstractHeap::PrototypeLinks))
-        ended.add(FactOfCell::HasLayoutPrototype);
+        ended.add(CellFact::HasLayoutPrototype);
     return ended;
 }
 
@@ -93,7 +93,7 @@ struct WalkState::Held::Lists {
     static constexpr uint32_t entryInChain = 2;
     static constexpr uint32_t standsInChain = notListed - 1;
 
-    static constexpr uint32_t listOfShapes = numberOfFactsOfCell;
+    static constexpr uint32_t listOfShapes = numberOfCellFacts;
     static constexpr uint32_t listOfElements = listOfShapes + 1;
     static constexpr uint32_t listsOfHolders = listOfElements + 1;
     static constexpr uint32_t listOfHoldersNotAsked = listsOfHolders;
@@ -106,10 +106,10 @@ struct WalkState::Held::Lists {
     static constexpr uint32_t wordOfNewCells = 1;
     static constexpr uint32_t wordOfFirstHolder = 2;
 
-    static uint32_t listOf(FactOfCell fact)
+    static uint32_t listOf(CellFact fact)
     {
-        uint32_t list = std::countr_zero(static_cast<OptionSet<FactOfCell>::StorageType>(fact));
-        RELEASE_ASSERT(list < numberOfFactsOfCell);
+        uint32_t list = std::countr_zero(static_cast<OptionSet<CellFact>::StorageType>(fact));
+        RELEASE_ASSERT(list < numberOfCellFacts);
         return list;
     }
 
@@ -282,13 +282,13 @@ WalkState::Held::Held(const Held& other)
     , m_numberOfHolders(other.m_numberOfHolders)
     , m_numberOfPlaces(other.m_numberOfPlaces)
     , m_numberOfShapes(other.m_numberOfShapes)
-    , m_numberOfHoldersWithFactsOfCell(other.m_numberOfHoldersWithFactsOfCell)
+    , m_numberOfFactHolders(other.m_numberOfFactHolders)
     , m_numberOfFreshHolders(other.m_numberOfFreshHolders)
     , m_numberOfShapesReachedByEffects(other.m_numberOfShapesReachedByEffects)
-    , m_numberOfHoldersWithFactsOfCellReachedByEffects(other.m_numberOfHoldersWithFactsOfCellReachedByEffects)
+    , m_reachedFactHolderCount(other.m_reachedFactHolderCount)
     , m_numberOfPlacesReachedByEffects(other.m_numberOfPlacesReachedByEffects)
     , m_numberOfElementsReachedByEffects(other.m_numberOfElementsReachedByEffects)
-    , m_factsOfCellReachedByEffects(other.m_factsOfCellReachedByEffects)
+    , m_cellFactsReachedByEffects(other.m_cellFactsReachedByEffects)
     , m_kindsOfPlacesReachedByEffects(other.m_kindsOfPlacesReachedByEffects)
     , m_maskOfPlacesReachedByEffects(other.m_maskOfPlacesReachedByEffects)
     , m_filterOfHolders(other.m_filterOfHolders)
@@ -540,7 +540,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findOrAddHolder(Referen
     if (position != none) {
         if (m_holders[position].hasEnded) {
             Holder& record = m_holders.mutableAt(position);
-            ASSERT(record.firstPlace == none && record.firstElement == none && !record.shape && record.factsOfCell.isEmpty() && !record.isFresh);
+            ASSERT(record.firstPlace == none && record.firstElement == none && !record.shape && record.cellFacts.isEmpty() && !record.isFresh);
             record.hasEnded = false;
             record.layoutsOfSlots = LayoutsOfSlots::None;
             record.kindsOfPlaces = 0;
@@ -735,18 +735,18 @@ void WalkState::Held::endShape(uint32_t holder)
         --m_numberOfShapesReachedByEffects;
 }
 
-void WalkState::Held::endFactsOfCell(uint32_t holder, OptionSet<FactOfCell> ended)
+void WalkState::Held::invalidateCellFacts(uint32_t holder, OptionSet<CellFact> ended)
 {
-    OptionSet<FactOfCell> known = m_holders[holder].factsOfCell;
+    OptionSet<CellFact> known = m_holders[holder].cellFacts;
     if (!known.containsAny(ended))
         return;
     Holder& record = m_holders.mutableAt(holder);
-    record.factsOfCell = known - ended;
+    record.cellFacts = known - ended;
     if (!ended.containsAll(known))
         return;
-    --m_numberOfHoldersWithFactsOfCell;
+    --m_numberOfFactHolders;
     if (!record.isFresh)
-        --m_numberOfHoldersWithFactsOfCellReachedByEffects;
+        --m_reachedFactHolderCount;
 }
 
 void WalkState::Held::endHolder(uint32_t holder)
@@ -758,7 +758,7 @@ void WalkState::Held::endHolder(uint32_t holder)
     endPlacesOf(holder, ListOfPlaces::AllButElements, endsAlways);
     endPlacesOf(holder, ListOfPlaces::Elements, endsAlways);
     endShape(holder);
-    endFactsOfCell(holder, m_holders[holder].factsOfCell);
+    invalidateCellFacts(holder, m_holders[holder].cellFacts);
     if (m_holders[holder].isFresh)
         --m_numberOfFreshHolders;
     else
@@ -784,10 +784,10 @@ void WalkState::Held::letLeave(uint32_t holder)
 void WalkState::Held::countAmongReachedByEffects(const Holder& holder)
 {
     m_numberOfShapesReachedByEffects += !!holder.shape;
-    m_numberOfHoldersWithFactsOfCellReachedByEffects += !holder.factsOfCell.isEmpty();
+    m_reachedFactHolderCount += !holder.cellFacts.isEmpty();
     m_numberOfPlacesReachedByEffects += holder.numberOfPlaces;
     m_numberOfElementsReachedByEffects += holder.numberOfElements;
-    m_factsOfCellReachedByEffects.add(holder.factsOfCell);
+    m_cellFactsReachedByEffects.add(holder.cellFacts);
     m_kindsOfPlacesReachedByEffects |= holder.kindsOfPlaces;
     m_maskOfPlacesReachedByEffects |= holder.maskOfPlaces;
 }
@@ -795,7 +795,7 @@ void WalkState::Held::countAmongReachedByEffects(const Holder& holder)
 void WalkState::Held::countNoLongerAmongReachedByEffects(const Holder& holder)
 {
     m_numberOfShapesReachedByEffects -= !!holder.shape;
-    m_numberOfHoldersWithFactsOfCellReachedByEffects -= !holder.factsOfCell.isEmpty();
+    m_reachedFactHolderCount -= !holder.cellFacts.isEmpty();
     m_numberOfPlacesReachedByEffects -= holder.numberOfPlaces;
     m_numberOfElementsReachedByEffects -= holder.numberOfElements;
 }
@@ -830,22 +830,22 @@ void WalkState::Held::listAsFreshWithElements(uint32_t holder)
 
 void WalkState::Held::forEachHolderReachedByEffects(NOESCAPE const Invocable<void(uint32_t holder)> auto& functor)
 {
-    OptionSet<FactOfCell> facts;
+    OptionSet<CellFact> facts;
     uint16_t kindsOfPlaces = 0;
     uint64_t maskOfPlaces = 0;
     for (uint32_t index = 0; index < m_holdersReachedByEffects.size();) {
         uint32_t holder = m_holdersReachedByEffects[index];
         functor(holder);
         const Holder& record = m_holders[holder];
-        if (record.shape || !record.factsOfCell.isEmpty() || record.firstPlace != none || record.firstElement != none) {
-            facts.add(record.factsOfCell);
+        if (record.shape || !record.cellFacts.isEmpty() || record.firstPlace != none || record.firstElement != none) {
+            facts.add(record.cellFacts);
             kindsOfPlaces |= record.kindsOfPlaces;
             maskOfPlaces |= record.maskOfPlaces;
             ++index;
         } else
             endHolder(holder);
     }
-    m_factsOfCellReachedByEffects = facts;
+    m_cellFactsReachedByEffects = facts;
     m_kindsOfPlacesReachedByEffects = kindsOfPlaces;
     m_maskOfPlacesReachedByEffects = maskOfPlaces;
 }
@@ -868,7 +868,7 @@ void WalkState::Held::dropEndedRecords()
     m_holdersReachedByEffects.shrink(0);
     m_firstFreshHolderWithElements = none;
     m_filterOfHolders = 0;
-    m_factsOfCellReachedByEffects = { };
+    m_cellFactsReachedByEffects = { };
     m_kindsOfPlacesReachedByEffects = 0;
     m_maskOfPlacesReachedByEffects = 0;
 
@@ -906,13 +906,13 @@ void WalkState::Held::dropEndedRecords()
             holder.kindsOfPlaces = 0;
             holder.maskOfPlaces = 0;
         }
-        if (!holder.isFresh && !holder.shape && holder.factsOfCell.isEmpty() && holder.firstPlace == none && holder.firstElement == none)
+        if (!holder.isFresh && !holder.shape && holder.cellFacts.isEmpty() && holder.firstPlace == none && holder.firstElement == none)
             continue;
         m_holders.append(holder);
         m_filterOfHolders |= bitInFilterOfHolders(holder.object);
         if (!holder.isFresh) {
             listAsReachedByEffects(position);
-            m_factsOfCellReachedByEffects.add(holder.factsOfCell);
+            m_cellFactsReachedByEffects.add(holder.cellFacts);
             m_kindsOfPlacesReachedByEffects |= holder.kindsOfPlaces;
             m_maskOfPlacesReachedByEffects |= holder.maskOfPlaces;
         } else if (holder.firstElement != none)
@@ -960,38 +960,38 @@ TypeID WalkState::Held::shapeOfHolderOf(Reference object) const
     return record ? record->shape : TypeID();
 }
 
-void WalkState::Held::noteFactsOfCell(Reference object, OptionSet<FactOfCell> facts)
+void WalkState::Held::recordCellFacts(Reference object, OptionSet<CellFact> facts)
 {
     ASSERT(object);
     if (facts.isEmpty())
         return;
     uint32_t holder = findOrAddHolder(object);
-    OptionSet<FactOfCell> known = m_holders[holder].factsOfCell;
+    OptionSet<CellFact> known = m_holders[holder].cellFacts;
     if (known.containsAll(facts))
         return;
     Holder& record = m_holders.mutableAt(holder);
-    record.factsOfCell = known | facts;
+    record.cellFacts = known | facts;
     if (known.isEmpty())
-        ++m_numberOfHoldersWithFactsOfCell;
+        ++m_numberOfFactHolders;
     if (record.isFresh)
         return;
     if (known.isEmpty())
-        ++m_numberOfHoldersWithFactsOfCellReachedByEffects;
-    m_factsOfCellReachedByEffects.add(facts);
+        ++m_reachedFactHolderCount;
+    m_cellFactsReachedByEffects.add(facts);
     if (m_lists) [[unlikely]]
         listHolder(holder);
 }
 
-void WalkState::Held::endFactsOfCellOfHolderOf(Reference object, OptionSet<FactOfCell> ended)
+void WalkState::Held::invalidateCellFactsOfHolder(Reference object, OptionSet<CellFact> ended)
 {
     if (uint32_t holder = findHolder(object); holder != none)
-        endFactsOfCell(holder, ended);
+        invalidateCellFacts(holder, ended);
 }
 
-OptionSet<FactOfCell> WalkState::Held::factsOfCellOfHolderOf(Reference object) const
+OptionSet<CellFact> WalkState::Held::cellFactsOfHolder(Reference object) const
 {
     const Holder* record = findRecordOfHolderThatHasNotEnded(object);
-    return record ? record->factsOfCell : OptionSet<FactOfCell>();
+    return record ? record->cellFacts : OptionSet<CellFact>();
 }
 
 void WalkState::Held::noteOrderWord(Reference object, std::optional<uint32_t> orderWord)
@@ -999,10 +999,10 @@ void WalkState::Held::noteOrderWord(Reference object, std::optional<uint32_t> or
     ASSERT(object);
     if (!orderWord) {
         if (uint32_t holder = findHolder(object); holder != none)
-            endFactsOfCell(holder, FactOfCell::OrderWordIsKnown);
+            invalidateCellFacts(holder, CellFact::OrderWordIsKnown);
         return;
     }
-    noteFactsOfCell(object, { FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown });
+    recordCellFacts(object, { CellFact::NotFrozen, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::OrderWordIsKnown });
     uint32_t holder = findHolder(object);
     if (m_holders[holder].orderWord != *orderWord)
         m_holders.mutableAt(holder).orderWord = *orderWord;
@@ -1010,10 +1010,10 @@ void WalkState::Held::noteOrderWord(Reference object, std::optional<uint32_t> or
 
 std::optional<uint32_t> WalkState::Held::orderWordOf(Reference object) const
 {
-    if (!m_numberOfHoldersWithFactsOfCell)
+    if (!m_numberOfFactHolders)
         return std::nullopt;
     const Holder* record = findRecordOfHolderThatHasNotEnded(object);
-    if (!record || !record->factsOfCell.contains(FactOfCell::OrderWordIsKnown))
+    if (!record || !record->cellFacts.contains(CellFact::OrderWordIsKnown))
         return std::nullopt;
     return record->orderWord;
 }
@@ -1238,7 +1238,7 @@ void WalkState::Held::listPlace(uint32_t position)
 void WalkState::Held::listHolder(uint32_t holder)
 {
     const Holder& record = m_holders[holder];
-    for (FactOfCell fact : record.factsOfCell)
+    for (CellFact fact : record.cellFacts)
         m_lists->addHolder(Lists::listOf(fact), holder);
     if (record.shape)
         m_lists->addHolder(Lists::listOfShapes, holder);
@@ -1258,7 +1258,7 @@ void WalkState::Held::listWhatHangsOn(uint32_t holder)
 void WalkState::Held::endHolderIfNothingHangsOn(uint32_t holder)
 {
     const Holder& record = m_holders[holder];
-    if (!record.hasEnded && !record.isFresh && !record.shape && record.factsOfCell.isEmpty() && !record.numberOfPlaces && !record.numberOfElements)
+    if (!record.hasEnded && !record.isFresh && !record.shape && record.cellFacts.isEmpty() && !record.numberOfPlaces && !record.numberOfElements)
         endHolder(holder);
 }
 
@@ -1318,7 +1318,7 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
     if (writer && (ends.shapes || ends.elements || !ends.facts.isEmpty())) {
         auto hasWhatListsOfHoldersHold = [&](uint32_t holder) {
             const Holder& record = m_holders[holder];
-            return !record.hasEnded && !record.isFresh && (record.shape || !record.factsOfCell.isEmpty() || record.numberOfElements);
+            return !record.hasEnded && !record.isFresh && (record.shape || !record.cellFacts.isEmpty() || record.numberOfElements);
         };
         Vector<uint32_t, 16> holdersToAsk;
         m_lists->goThroughHoldersByClass(Lists::listOfHoldersNotAsked, [&](uint32_t holder) {
@@ -1344,8 +1344,8 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
                 endShape(holder);
                 lostSomething = true;
             }
-            if (m_holders[holder].factsOfCell.containsAny(ends.facts)) {
-                endFactsOfCell(holder, ends.facts);
+            if (m_holders[holder].cellFacts.containsAny(ends.facts)) {
+                invalidateCellFacts(holder, ends.facts);
                 lostSomething = true;
             }
             if (ends.elements && m_holders[holder].numberOfElements) {
@@ -1376,11 +1376,11 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
             endShape(holder);
         });
     }
-    for (FactOfCell fact : writer ? OptionSet<FactOfCell>() : ends.facts) {
+    for (CellFact fact : writer ? OptionSet<CellFact>() : ends.facts) {
         goThroughHolders(Lists::listOf(fact), [&](const Holder& record) {
-            return record.factsOfCell.contains(fact);
+            return record.cellFacts.contains(fact);
         }, [&](uint32_t holder) {
-            endFactsOfCell(holder, ends.facts);
+            invalidateCellFacts(holder, ends.facts);
         });
     }
     if (ends.slots) {
@@ -1599,7 +1599,7 @@ bool WalkState::Held::restsOnHeapsAmong(const LocationMasks& writes) const
 {
     return (writes.contains(AbstractHeap::ShapeWords) && m_numberOfShapes)
         || (writes.containsAny(heapsUnderPlacesInWalkState) && m_numberOfPlaces)
-        || (m_numberOfHoldersWithFactsOfCell && !factsOfCellEndedBy(writes).isEmpty());
+        || (m_numberOfFactHolders && !cellFactsInvalidatedBy(writes).isEmpty());
 }
 
 void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effects& effects, const MemoryLocation* writtenAlone)
@@ -1612,7 +1612,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     const LocationMasks& writes = effects.writes;
     bool endsShapes = writes.contains(AbstractHeap::ShapeWords) && m_numberOfShapes;
     bool endsPlaces = writes.containsAny(heapsUnderPlacesInWalkState) && m_numberOfPlaces;
-    OptionSet<FactOfCell> factsEnded = m_numberOfHoldersWithFactsOfCell ? factsOfCellEndedBy(writes) : OptionSet<FactOfCell>();
+    OptionSet<CellFact> factsEnded = m_numberOfFactHolders ? cellFactsInvalidatedBy(writes) : OptionSet<CellFact>();
     if (!endsShapes && !endsPlaces && factsEnded.isEmpty())
         return;
 
@@ -1622,7 +1622,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     uint64_t guardsWritten = writes.maskOf(AbstractHeap::MemberGuards);
     bool endsElements = endsPlaces && writes.containsAny(heapsUnderElementsInWalkState);
     bool reachesSomething = (endsShapes && m_numberOfShapesReachedByEffects)
-        || (m_numberOfHoldersWithFactsOfCellReachedByEffects && m_factsOfCellReachedByEffects.containsAny(factsEnded))
+        || (m_reachedFactHolderCount && m_cellFactsReachedByEffects.containsAny(factsEnded))
         || (m_numberOfPlacesReachedByEffects && (writtenUnderPlacesReachedByEffects(writes) & m_maskOfPlacesReachedByEffects))
         || (endsElements && m_numberOfElementsReachedByEffects);
     auto writtenOfKind = [&](PlaceKind kind) {
@@ -1653,26 +1653,26 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
         }
         bool endsPlacesOfHolder = written & record.maskOfPlaces;
         bool endsElementsOfHolder = endsElements && record.firstElement != none && (!record.elementsLieOutsideViews || writes.containsAny(heapsUnderElementsOutsideViewsInWalkState));
-        bool endsFactsOfHolder = record.factsOfCell.containsAny(factsEnded);
+        bool endsFactsOfHolder = record.cellFacts.containsAny(factsEnded);
         uint32_t numberOfPlaces = record.numberOfPlaces;
         if (endsShapes && record.shape)
             endShape(holder);
         if (endsFactsOfHolder)
-            endFactsOfCell(holder, factsEnded);
+            invalidateCellFacts(holder, factsEnded);
         if (endsPlacesOfHolder) {
             noteRecordsGoneThrough(numberOfPlaces, placesFoundWithoutTable);
-            uint8_t kindsLeft = 0;
-            uint64_t maskLeft = 0;
+            uint8_t remainingKinds = 0;
+            uint64_t remainingMask = 0;
             endPlacesOf(holder, ListOfPlaces::AllButElements, [&](const Place& place) {
                 if ((writtenOfKind(place.kind) & place.mask()) && !liesBesideWhatIsWritten(program, place, writtenOfKind(place.kind), writtenAlone))
                     return true;
-                kindsLeft |= 1 << static_cast<unsigned>(place.kind);
-                maskLeft |= place.mask();
+                remainingKinds |= 1 << static_cast<unsigned>(place.kind);
+                remainingMask |= place.mask();
                 return false;
             });
             Holder& changed = m_holders.mutableAt(holder);
-            changed.kindsOfPlaces = kindsLeft;
-            changed.maskOfPlaces = maskLeft;
+            changed.kindsOfPlaces = remainingKinds;
+            changed.maskOfPlaces = remainingMask;
         }
         if (endsElementsOfHolder)
             endPlacesOf(holder, ListOfPlaces::Elements, endsAlways);
@@ -1724,13 +1724,13 @@ void WalkState::Held::dropAllRecords()
     m_numberOfHolders = 0;
     m_numberOfPlaces = 0;
     m_numberOfShapes = 0;
-    m_numberOfHoldersWithFactsOfCell = 0;
+    m_numberOfFactHolders = 0;
     m_numberOfFreshHolders = 0;
     m_numberOfShapesReachedByEffects = 0;
-    m_numberOfHoldersWithFactsOfCellReachedByEffects = 0;
+    m_reachedFactHolderCount = 0;
     m_numberOfPlacesReachedByEffects = 0;
     m_numberOfElementsReachedByEffects = 0;
-    m_factsOfCellReachedByEffects = { };
+    m_cellFactsReachedByEffects = { };
     m_kindsOfPlacesReachedByEffects = 0;
     m_maskOfPlacesReachedByEffects = 0;
     m_filterOfHolders = 0;
@@ -1758,7 +1758,7 @@ bool leavesDeadZoneForGood(const Program& program, VariableID id)
     return loaderEntersBodyAtMostOnce(program.at(variable.module));
 }
 
-void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
+void SharedSetOfNumbers::keepMembersOfSlowCase(const SharedSetOfNumbers& other)
 {
     if (!other.m_size) {
         clear();
@@ -1796,12 +1796,12 @@ void WalkState::meetWith(const WalkState& other, RecordsLastMet* last)
     if (&other == this)
         return;
     m_answers.meetWith(other.m_answers);
-    if (uint32_t newest = newestStoreToPutBack(); m_marks.turnInWhichNothingWasDone != other.m_marks.turnInWhichNothingWasDone || newest != other.newestStoreToPutBack()) {
-        bool storesOfBothCanBePutBack = !((m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone) & placesWereWrittenInTurn) && newest == other.newestStoreToPutBack();
-        m_marks.kinds = (m_marks.kinds & ~placeOfNewestStoreToPutBack) | newest << shiftOfPlaceOfNewestStoreToPutBack;
-        m_marks.turnInWhichNothingWasDone = turnOfMark(m_marks.turnInWhichNothingWasDone) != turnOfMark(other.m_marks.turnInWhichNothingWasDone) ? 0
-            : storesOfBothCanBePutBack ? m_marks.turnInWhichNothingWasDone | other.m_marks.turnInWhichNothingWasDone
-            : turnOfMark(m_marks.turnInWhichNothingWasDone) | placesWereWrittenInTurn;
+    if (uint32_t newest = newestUndoableStore(); m_marks.restartMark != other.m_marks.restartMark || newest != other.newestUndoableStore()) {
+        bool areBothUndoable = !((m_marks.restartMark | other.m_marks.restartMark) & irreversibleWritesBit) && newest == other.newestUndoableStore();
+        m_marks.kinds = (m_marks.kinds & ~newestUndoableStoreMask) | newest << newestUndoableStoreShift;
+        m_marks.restartMark = restartPointOf(m_marks.restartMark) != restartPointOf(other.m_marks.restartMark) ? 0
+            : areBothUndoable ? m_marks.restartMark | other.m_marks.restartMark
+            : restartPointOf(m_marks.restartMark) | irreversibleWritesBit;
     }
     if (m_held == other.m_held || holdsNothing())
         return;
@@ -1897,12 +1897,12 @@ void WalkState::Held::meetWith(const Held& other, RecordsLastMet* last)
                 lieAsOwn = false;
             const Holder& same = other.m_holders[holderInOther];
             bool leaves = record.isFresh && !same.isFresh;
-            OptionSet<FactOfCell> factsKnownHereAlone = record.factsOfCell - same.factsOfCell;
+            OptionSet<CellFact> factsKnownHereAlone = record.cellFacts - same.cellFacts;
             if (record.orderWord != same.orderWord)
-                factsKnownHereAlone.add(FactOfCell::OrderWordIsKnown);
+                factsKnownHereAlone.add(CellFact::OrderWordIsKnown);
             if (record.shape != same.shape)
                 endShape(holder);
-            endFactsOfCell(holder, factsKnownHereAlone);
+            invalidateCellFacts(holder, factsKnownHereAlone);
             if (record.elementsLieOutsideViews && !same.elementsLieOutsideViews)
                 m_holders.mutableAt(holder).elementsLieOutsideViews = false;
             if (leaves)

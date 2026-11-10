@@ -80,7 +80,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::FinishObject: case Opcode::FinishClass:
     case Opcode::Convert: case Opcode::Check: case Opcode::Expect: case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::NarrowByTest:
         return RepresentationRule::Forwarding;
-    case Opcode::TypeTest: case Opcode::ReleaseHint: case Opcode::EndLifeOfCell: case Opcode::CheckProof: case Opcode::AskObjectAgain: case Opcode::TurnBeginsAgain: case Opcode::CopyLeavesForCall: case Opcode::TurnWasQuiet:
+    case Opcode::TypeTest: case Opcode::EndCellLifetime: case Opcode::CheckProof: case Opcode::AskObjectAgain: case Opcode::CheckIterationRestart: case Opcode::CheckInlineeFallback: case Opcode::CheckReloadBypass:
         return RepresentationRule::AsItIs;
     case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::Negate: case Opcode::Increment: case Opcode::Decrement:
     case Opcode::BitAnd: case Opcode::BitOr: case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::BitNot:
@@ -143,7 +143,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::ToObject: case Opcode::ToThis: case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::HasArrayStorage: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ReciprocalOfDivisor: case Opcode::RemainderByReciprocal: case Opcode::ToIntegerOrInfinity:
     case Opcode::IntegerBound: case Opcode::StringOrder: case Opcode::StringOrderToCharacter: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::LogicalNot:
     case Opcode::NumberOrNaN:
-    case Opcode::TypeOf: case Opcode::InstanceOf: case Opcode::HasInPrototypeChain: case Opcode::FindInPrototypeChainUnlessTrapped: case Opcode::FindsDefaultHasInstanceUnlessTrapped: case Opcode::ToPropertyKey:
+    case Opcode::TypeOf: case Opcode::InstanceOf: case Opcode::HasInPrototypeChain: case Opcode::TryFindInPrototypeChain: case Opcode::HasDefaultHasInstance: case Opcode::ToPropertyKey:
     case Opcode::Call: case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::Construct: case Opcode::GetConstructPrototype: case Opcode::CallList: case Opcode::ConstructList: case Opcode::NewArgumentList: case Opcode::NewArrayOfGiven:
     case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::GetMappedArgument: case Opcode::SetMappedArgument: case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest:
     case Opcode::CatchValue: case Opcode::CatchException: case Opcode::NewRuntimeError: case Opcode::NewSuppressedError: case Opcode::LoopHint:
@@ -157,10 +157,10 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
     case Opcode::GetOwnContiguousIndex: case Opcode::GetOwnDoubleIndex: case Opcode::GetOwnInt32Index: case Opcode::PutOwnContiguousIndex: case Opcode::PutOwnDoubleIndex: case Opcode::PutOwnInt32Index:
     case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray:
-    case Opcode::NewContiguousArray: case Opcode::NewArrayLike: case Opcode::TruncateNewArray: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::AppendValuesOfMap: case Opcode::ReserveArrayRoom: case Opcode::ConvertToDoubleStorage:
+    case Opcode::NewContiguousArray: case Opcode::NewArrayLike: case Opcode::TruncateNewArray: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::AppendValuesOfMap: case Opcode::ReserveArrayCapacity: case Opcode::ConvertToDoubleStorage:
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::RequireAttachedTypedArray: case Opcode::RequireLengthFitsList: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit: case Opcode::Substring: case Opcode::FlattenString: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
     case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
-    case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt: case Opcode::GuessFailsUnasked: case Opcode::BeginsWhatMayRunAgain:
+    case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt: case Opcode::GuessFailsUnasked: case Opcode::BeginEffectsCheck:
     case Opcode::FindStringRangeInMap: case Opcode::FindKeyInMap: case Opcode::GetValueAtPlaceInMap: case Opcode::MovesOfEntriesInCollections: case Opcode::TryPutValueAtPlaceInMap:
     case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish:
     case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack:
@@ -190,7 +190,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::GetCachedGetter: case Opcode::ElemGetOrOwnAccessor: case Opcode::GetGetterOfAccessorOrUndefined: case Opcode::GetValueAtSiteOrAbsent: case Opcode::GetOwnValueUnderKeyOrAbsent: case Opcode::GetElementInStorageOrAbsent: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
     case Opcode::RegExpMatchLiteralInParts: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
     case Opcode::BoundsOfStringSplit: case Opcode::NewStringSplitArray:
-    case Opcode::GetArrayRoom: case Opcode::ExtendArrayLength: case Opcode::SetArrayLength:
+    case Opcode::GetArrayCapacity: case Opcode::ExtendArrayLength: case Opcode::SetArrayLength:
         return RepresentationRule::BySchema;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();

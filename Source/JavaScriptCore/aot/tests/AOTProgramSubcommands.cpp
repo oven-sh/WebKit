@@ -182,7 +182,7 @@ static int reportDiagnostics(const Diagnostics& diagnostics, PrintStream& errors
 static bool saysWhatTestsOfFrontEndWaitFor(const CompileOutput& output)
 {
     for (const Wire::UserDiagnosticRecord& record : output.records<Wire::UserDiagnosticRecord>(Wire::ResultSection::UserDiagnostics)) {
-        if (failsBuild(record.kind) || record.kind == UserDiagnosticKind::Int32OfDependencyNotProven)
+        if (failsBuild(record.kind) || record.kind == UserDiagnosticKind::UnprovenDependencyInt32)
             return true;
     }
     return !output.section(Wire::ResultSection::InternalErrors).empty();

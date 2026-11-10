@@ -423,6 +423,9 @@ ALLOW_NONLITERAL_FORMAT_END
         return m_records->externalLinks;
     }
 
+    // A branch of code for an image could not be encoded, and was left as it was emitted. The code must not be used.
+    bool hasBranchOutOfReach() const { return m_hasBranchOutOfReach; }
+
     bool hasProcessAddress() const
     {
         RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
@@ -559,6 +562,7 @@ private:
 #endif
     bool m_didAllocate { false };
     bool m_didFinalize { false };
+    bool m_hasBranchOutOfReach { false };
     AssemblerPolicy m_policy;
 #ifndef NDEBUG
     bool m_completed { false };

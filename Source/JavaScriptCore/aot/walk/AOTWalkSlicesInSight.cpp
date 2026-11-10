@@ -34,7 +34,7 @@ Reference buildSliceOfElementsInSight(Walker& walker, const SliceOfElementsInSig
     if (!walker.has(Mechanism::EscapeAnalysis) || !walker.has(Mechanism::Folding) || !asked.sliced || walker.isUnreachable())
         return { };
     std::optional<Vector<Reference, 8>> elements = elementsOfFreshArguments(walker, asked.sliced);
-    if (!elements && asked.isListByItsRow && isFreshListAsMade(walker, asked.sliced))
+    if (!elements && asked.isListByItsRow && isFreshPristineArray(walker, asked.sliced))
         elements = elementsOfFreshList(walker, asked.sliced);
     if (!elements)
         return { };
@@ -56,7 +56,7 @@ Reference buildSliceOfElementsInSight(Walker& walker, const SliceOfElementsInSig
     Reference list = walker.build(WTF::move(literal));
     noteFreshList(walker, list);
     if (list)
-        walker.noteSliceMadeOfElementsInSight();
+        walker.recordFoldedSlice();
     return list;
 }
 

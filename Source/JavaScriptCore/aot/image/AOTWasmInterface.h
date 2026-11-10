@@ -24,6 +24,11 @@ namespace AOT {
 class RelocationRecorder;
 }
 
+namespace B3 {
+class CompilationScratch;
+struct Policy;
+}
+
 namespace Wasm {
 
 class RTT;
@@ -254,6 +259,11 @@ struct CodeForImage {
 
     bool dependsOnFlavor { false };
     ImageCodeFailure failure { ImageCodeFailure::None };
+    const B3::Policy* policy { nullptr };
+    B3::CompilationScratch* scratch { nullptr };
+    uint32_t pointerSpace { 0 };
+    unsigned threadedJumps { 0 };
+    unsigned firstStateTests { 0 };
 };
 
 } } // namespace JSC::Wasm

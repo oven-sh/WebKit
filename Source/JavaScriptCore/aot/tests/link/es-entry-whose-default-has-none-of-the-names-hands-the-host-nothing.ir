@@ -8,7 +8,7 @@ data d0 root=Object{layout=L1 members=[{key="port" value=Number{}}, {key="routes
 layout L0 module=m0
 layout L1 module=m0 fields=[{key="port" declared={type=anything} flags=[IsRequired]}, {key="routes" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 variable g0 name="default" module=m0 declared={type=anything|absent} flags=[IsImmutable]
-module m0 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 exports=[{name="default" variable=g0}]
+module m0 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f0 exports=[{name="default" variable=g0}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Data data=d0

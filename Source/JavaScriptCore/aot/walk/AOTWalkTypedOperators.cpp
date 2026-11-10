@@ -24,7 +24,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool buildOperatorOnNumbers(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool isTakenAsItIsByFormNumbers(const Type&);
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet arithmeticAmongTypedOperators = operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative, OperatorKind::Bitwise });
 static constexpr OpcodeSet conversionsAmongTypedOperators { Opcode::ToNumber, Opcode::ToNumeric, Opcode::ToString, Opcode::ToBoolean };
@@ -52,7 +52,7 @@ static constexpr TypeAskedByTypeOfOperator typesAskedByTypeOfOperator[] {
     { BuiltinNames::function, TypeTable::function },
 };
 
-OperatorForm formAllowedForTypedOperator(Walker& walker, const Draft& draft)
+OperatorForm operatorFormFor(Walker& walker, const Draft& draft)
 {
     OperatorTypes operands { walker.typeOf(draft.operand(0)), { } };
     if (draft.numberOfNamedOperands() == 2)
@@ -71,7 +71,7 @@ OperatorForm formAllowedForTypedOperator(Walker& walker, const Draft& draft)
     return form;
 }
 
-OperatorForm formAllowedForTypedOperator(Walker& walker, Opcode opcode, const BodyValue& value, const InputsOfTypedOperation& inputs)
+OperatorForm operatorFormFor(Walker& walker, Opcode opcode, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (!hasOperatorForm(opcode))
         return OperatorForm::Generic;
@@ -84,15 +84,15 @@ OperatorForm formAllowedForTypedOperator(Walker& walker, Opcode opcode, const Bo
 static ALWAYS_INLINE bool buildInFormOfTypedOperator(Walker& walker, Draft&& draft, OperatorForm form, ValueID input)
 {
     walker.chooseConservativeFields(draft);
-    if (form == OperatorForm::NumberAndValue && holdOperandBesideNumberToNumberOrBeginTurnAgain(walker, draft, input))
-        form = formAllowedForTypedOperator(walker, draft);
+    if (form == OperatorForm::NumberAndValue && tryGuardNumericOperand(walker, draft, input))
+        form = operatorFormFor(walker, draft);
     else if (Walker::NumberAskedBesideNumber asked = form == OperatorForm::NumberAndValue ? walker.askValueBesideNumberForNumber(walker.currentBodyIndex().value(input)) : Walker::NumberAskedBesideNumber()) {
         draft.setOperand(asked.operandIndex, asked.proven);
-        form = formAllowedForTypedOperator(walker, draft);
+        form = operatorFormFor(walker, draft);
     }
     draft.setForm(form);
     Origin origin = draft.origin();
-    walker.bind(input, boxedUnlessNumbersAreUnboxed(walker, walker.build(WTF::move(draft)), origin));
+    walker.bind(input, boxNumberIfNeeded(walker, walker.build(WTF::move(draft)), origin));
     return true;
 }
 
@@ -276,12 +276,12 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
         form = OperatorForm::Numbers;
     }
     if (opcode == Opcode::StrictEq && form == OperatorForm::Int32AndValue && walker.has(Mechanism::Guesses) && walker.opensGuesses()) {
-        constexpr Walker::TurnOfTypedCopy turn = Walker::TurnOfTypedCopy::HasRunNoOtherCode;
+        constexpr Walker::IterationPurity purity = Walker::IterationPurity::KnownEffectsOnly;
         Reference boxed = leftIsInt32 ? draft.rightOperand() : draft.leftOperand();
-        if (walker.standsInFrontOfTypedCopy(boxed, turn) && walker.types().saysNothing(walker.typeOf(boxed)) && rowsOfMethodThatGaveValueGiveNumbersAlone(walker, boxed)) {
+        if (walker.isInvariantInSpecializedVersion(boxed, purity) && walker.types().isUninformative(walker.typeOf(boxed)) && rowsOfMethodThatGaveValueGiveNumbersAlone(walker, boxed)) {
             Reference test;
             {
-                Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+                Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
                 Draft question(Opcode::TypeTest, draft.origin());
                 question.setValueOperand(boxed);
                 question.setTestedType(TypeTable::int32);
@@ -289,17 +289,17 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
             }
             if (walker.hasFailed())
                 return true;
-            if (walker.branchInFrontOfTypedCopy(test, true, turn)) {
+            if (walker.tryBranchInPreheader(test, true, purity)) {
                 Reference fails;
                 {
-                    Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+                    Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
                     fails = walker.drawWhetherGuessFails(draft.origin());
                 }
                 if (fails)
-                    walker.branchInFrontOfTypedCopy(fails, false, turn);
-                walker.noteGuessOpened();
-                walker.count(StatisticID::ValuesComparedWithIntegersAskedOnceInFrontOfLoops);
-                Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+                    walker.tryBranchInPreheader(fails, false, purity);
+                walker.recordSpeculation();
+                walker.count(StatisticID::Int32GuardsHoistedForComparisons);
+                Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
                 Draft proof(Opcode::Narrowed, draft.origin());
                 proof.setValueOperand(boxed);
                 proof.setTestOperand(test);
@@ -321,7 +321,7 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
 
 static bool buildRelationAsTypedOperator(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
-    OperatorForm form = formAllowedForTypedOperator(walker, value.opcode(), value, inputs);
+    OperatorForm form = operatorFormFor(walker, value.opcode(), value, inputs);
     if (form == OperatorForm::Numbers) {
         bool isEachTakenAsItIs = true;
         value.forEachOperand([&](ValueID operand, uint32_t) {
@@ -348,7 +348,7 @@ bool buildTypedOperator(Walker& walker, const BodyValue& value, const InputsOfTy
     if (allRelations.contains(opcode))
         return buildRelationAsTypedOperator(walker, value, inputs);
 
-    OperatorForm form = formAllowedForTypedOperator(walker, opcode, value, inputs);
+    OperatorForm form = operatorFormFor(walker, opcode, value, inputs);
     if (form == OperatorForm::Generic || inputs.areOnlyTypes())
         return form != OperatorForm::Generic;
     return buildInFormOfTypedOperator(walker, walker.draftOf(value), form, value.id());

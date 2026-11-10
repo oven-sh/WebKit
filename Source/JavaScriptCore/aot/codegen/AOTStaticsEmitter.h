@@ -17,7 +17,7 @@ public:
 
     TypedPointer addressOf(VariableID);
     Operand loadVariable(VariableID);
-    void storeVariable(VariableID, Operand, bool isPutBackWhereTurnBeginsAgain);
+    void storeVariable(VariableID, Operand, bool isUndoneAtRestart);
     TypedPointer addressOfStaticField(VariableID);
     bool holdsStaticField(VariableID) const;
     void storeStaticField(VariableID, Boxed);

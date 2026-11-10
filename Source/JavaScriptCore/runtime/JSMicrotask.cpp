@@ -244,11 +244,11 @@ JSC_FOR_EACH_INTERNAL_MICROTASK(JSC_DECLARE_INTERNAL_MICROTASK_JOB)
 #undef JSC_DECLARE_INTERNAL_MICROTASK_JOB
 
 #if ENABLE(AOT)
-// Compiled code runs the jobs after this one before it returns. The frame of the job that leaves for it holds this job's arguments, so it ends here.
+// The frame of the job that leaves for compiled code holds this job's arguments, so the frame has to end here: a tail call.
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
 #define LEAVE_FOR_COMPILED_JOB(call) do { call; return; } while (false)
 #elif OS(WINDOWS) && COMPILER(CLANG)
-// MUST_TAIL_CALL is empty on Windows. With the parameters of a job function the compiler makes the tail call there too.
+// MUST_TAIL_CALL expands to nothing on Windows.
 #define LEAVE_FOR_COMPILED_JOB(call) [[clang::musttail]] return call
 #else
 #define LEAVE_FOR_COMPILED_JOB(call) MUST_TAIL_CALL return call
@@ -386,7 +386,7 @@ static ALWAYS_INLINE void settleDriverWithIteratorResult(JSGlobalObject* globalO
         if (vm.hasCompiledCode()) {
             if (AOT::tryFinishCurrentStep(target, value, done))
                 return;
-            if (AOT::takesBareSteps(target)) {
+            if (AOT::acceptsBareSteps(target)) {
                 realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsBoolean(done), value, target BUN_ASYNC_CONTEXT);
                 return;
             }

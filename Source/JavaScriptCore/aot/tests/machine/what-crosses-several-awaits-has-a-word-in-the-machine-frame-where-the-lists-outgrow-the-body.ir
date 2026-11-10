@@ -31,7 +31,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v12 = Undefined
     Return v12
 }
-function f1 name="sums" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f1 name="sums" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
     v2 = Await v1, v1, v0
     v3 = Await v1, v1, v0
@@ -48,7 +48,7 @@ function f1 name="sums" module=m0 flags=[IsAsync, HasThis, HasExplicitName] leng
     v14 = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13 contents=anything
     Return v14
 }
-function f2 name="small" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f2 name="small" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Await v1, v1, v2, v0
     v4 = Await v1, v1, v2, v0

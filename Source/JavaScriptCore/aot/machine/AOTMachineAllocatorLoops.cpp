@@ -51,7 +51,7 @@ static RegisterMask registersLoopMayTake(const Allocator& allocator, const Block
     RegisterMask registers = allocator.m_file.allocatableIn(bank);
     if (allocator.m_order.of(head).isRare())
         registers &= ~allocator.m_file.calleeSaved | allocator.m_calleeSavesTakenOutsideRareRegions;
-    if (allocator.isAheadOfFramedPart(head))
+    if (allocator.isOutsideFramedPart(head))
         registers &= ~allocator.m_file.calleeSaved;
     return registers;
 }
@@ -147,7 +147,7 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
     const Block* head = m_order.blocksInOrder()[loop.firstBlock];
     ASSERT(m_order.of(head).isLoopHead && m_order.headOf(head) == loop.begin);
     bool loopIsRare = m_order.of(head).isRare();
-    bool comesRound = hasBackEdgeOutsideRareRegions(loop);
+    bool hasHotBackEdge = hasBackEdgeOutsideRareRegions(loop);
     const LoopFacts& loopFacts = m_liveness.of(loop, m_order);
     const RegisterMask takenByPatches = loopFacts.registersTakenByPatches;
 
@@ -174,7 +174,7 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
     auto mayBeSpilledAheadOfLoop = [&](const Operation* value) {
         bool wouldBeStoredOutsideRareRegion = loopIsRare && isDefinedOutsideRareRegion(value) && !spillHoldsValueAtHeadOf(head, value);
         const ValueFacts& facts = m_liveness.of(value);
-        bool spillWouldHoldNothing = isReadByMoreThanSteps(facts) && headIsAheadOfFramedPart(head) && isStoredAtHeadsOfFramedPart(value);
+        bool spillWouldHoldNothing = hasImplicitReader(facts) && startsOutsideFramedPart(head) && isStoredAtHeadsOfFramedPart(value);
         return value->type().isNumeric() && !isDefinedOnEdgeIntoLoop(m_block, value) && !wouldBeStoredOutsideRareRegion && !spillWouldHoldNothing;
     };
 
@@ -202,7 +202,7 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
                 valuesInRegistersPatchesTake[numberInRegistersPatchesTake++] = value;
             return;
         }
-        if (!comesRound)
+        if (!hasHotBackEdge)
             return;
         if (isReadInside(value, loop)) {
             ++numberOfSpareRegisters[static_cast<unsigned>(bankOf(reg))];
@@ -213,7 +213,7 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
             takeSpareRegister(reg);
             return;
         }
-        if (!(maskOf(reg) & registersWorthKeepingThroughLoop(m_file, facts, isAheadOfFramedPart(head) && !loopIsRare) & ~takenByPatches)) {
+        if (!(maskOf(reg) & registersWorthKeepingThroughLoop(m_file, facts, isOutsideFramedPart(head) && !loopIsRare) & ~takenByPatches)) {
             spillAheadOfLoop(value);
             return;
         }
@@ -234,7 +234,7 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
         if (!takeSpareRegister(anyRegisterOf(value, stateOf(value).registers)))
             spillAheadOfLoop(value);
     }
-    if (!takenByPatches || !comesRound)
+    if (!takenByPatches || !hasHotBackEdge)
         return;
 
     auto registersLeftAlone = [&](Bank bank) {
@@ -265,7 +265,7 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
             bind(target, value);
         } else if (spillHoldsValueAtHeadOf(head, value))
             unbindAll(value);
-        else if (RegisterMask held = stateOf(value).registers; !(held & (held - 1)) && !isAheadOfFramedPart(head) && mayBeSpilledAheadOfLoop(value) && firstCallBehindHeadReadsValueElsewhere(head, anyRegisterOf(value, held), value))
+        else if (RegisterMask held = stateOf(value).registers; !(held & (held - 1)) && !isOutsideFramedPart(head) && mayBeSpilledAheadOfLoop(value) && firstCallBehindHeadReadsValueElsewhere(head, anyRegisterOf(value, held), value))
             spillAheadOfLoop(value);
     }
 }
@@ -475,7 +475,7 @@ static bool isDeadOnEveryPathFromBlock(LoopsAroundBlock loopsAround, Allocator& 
         }
         uint32_t firstInDoubt = use;
         for (; use; use = liveness.use(use).next) {
-            ++allocator.m_numberOfLaterReadsAskedWhetherTheyCount;
+            ++allocator.m_laterUsesScanned;
             const Use& read = liveness.use(use);
             if (read.position >= startOfReadsBehindLoop)
                 break;

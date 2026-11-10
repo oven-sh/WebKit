@@ -465,16 +465,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteAnswers, void, (Instance* 
     caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use & ~(stubOfSiteFollowsFurtherAnswers | stubJumpsToArmOfAnswer)), use & stubOfSiteFollowsFurtherAnswers, use & stubJumpsToArmOfAnswer);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTClaimRowOfReads, size_t, (Instance* instance, EncodedJSValue base, EncodedJSValue* group))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTClaimReadGroupRow, size_t, (Instance* instance, EncodedJSValue base, EncodedJSValue* group))
 {
     LeafOperationScope leaf(*instance->vm);
-    return std::bit_cast<size_t>(PropertyCaches::claimRowOfReads(JSValue::decode(base), *std::bit_cast<RowsOfReads*>(group)));
+    return std::bit_cast<size_t>(PropertyCaches::claimReadGroupRow(JSValue::decode(base), *std::bit_cast<ReadGroupCache*>(group)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindPlaceInRowOfReads, void, (Instance* instance, JSCell* base, uint32_t key, EncodedJSValue* row, uint32_t index))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillReadGroupOffset, void, (Instance* instance, JSCell* base, uint32_t key, EncodedJSValue* row, uint32_t index))
 {
     LeafOperationScope leaf(*instance->vm);
-    instance->state->propertyCaches->findPlaceInRowOfReads(base, key, *std::bit_cast<RowsOfReads::Row*>(row), index);
+    instance->state->propertyCaches->fillReadGroupOffset(base, key, *std::bit_cast<ReadGroupCache::Row*>(row), index);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedConstructor))
@@ -556,7 +556,7 @@ static bool isTrapResultAllowed(VM& vm, JSObject* target, JSCell* key, JSValue a
         auto* object = uncheckedDowncast<Object>(target);
         if (object->isFrozen() || object->isSealed() || !object->compiledStructure().hasOnlyConfigurableFields())
             return false;
-        holder = extraPropertiesIfMade(*object);
+        holder = extraPropertiesIfCreated(*object);
         if (!holder)
             return !object->hasExtraProperties();
     }
@@ -670,7 +670,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnValueUnderKeyOrEmpty, EncodedJS
     return JSValue::encode(asObject(base)->getDirect(offset));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindsDefaultHasInstance, size_t, (EncodedJSValue encodedConstructor))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTHasDefaultHasInstance, size_t, (EncodedJSValue encodedConstructor))
 {
     JSValue constructor = JSValue::decode(encodedConstructor);
     if (!constructor.isObject())

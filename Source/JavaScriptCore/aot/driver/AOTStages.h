@@ -76,7 +76,7 @@ inline std::unique_ptr<const Typed::CompileInputs> createCompileInputs(const Pre
 template<typename Switches>
 Typed::Mechanisms withoutMechanismsThatOptionsWithhold(Typed::Mechanisms mechanisms, Switches testing)
 {
-    if (AOT::hasFlag(testing, Wire::TestingSwitch::KeepsCellsOutOfFrames))
+    if (AOT::hasFlag(testing, Wire::TestingSwitch::DisableFrameCells))
         mechanisms.remove(Typed::Mechanism::CellsInFrames);
     return mechanisms;
 }

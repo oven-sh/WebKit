@@ -1,5 +1,5 @@
 # const holder = { get text() { count++; return "a+"; } };   new RegExp(holder.text + "b");      What a read of the name gives is what the function answers then, and what it does besides is done then: it is not run.
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /c+0/
 # CHECK-NOT: text /

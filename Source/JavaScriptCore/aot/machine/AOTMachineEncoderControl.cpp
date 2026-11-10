@@ -187,7 +187,7 @@ void Encoder::encodeBranch(Block* block, const Step& step)
         encodeBranchInMemory(block, step);
         return;
     }
-    if (facts.has(ValueFlag::GoesByOverflow)) {
+    if (facts.has(ValueFlag::UsesOverflowFlag)) {
         encodeBranchOnOverflow(block, step);
         return;
     }
@@ -247,9 +247,9 @@ NEVER_INLINE void Encoder::encodeBranchOnTest(Block* block, const Step& step, co
 
 void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
 {
-    SumTestedByOverflow test = sumTestedByOverflowOf(m_liveness, step.operation);
-    const Block* passes = block->successor(test.successorThatPasses).block();
-    const Block* fails = block->successor(!test.successorThatPasses).block();
+    OverflowCheckedSum test = overflowCheckedSumOf(m_liveness, step.operation);
+    const Block* passes = block->successor(test.passingSuccessor).block();
+    const Block* fails = block->successor(!test.passingSuccessor).block();
 
     GPRReg sum = InvalidGPRReg;
     if (test.branchReadsSum()) {
@@ -257,8 +257,8 @@ void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
         sum = step.sources[0].gpr();
     }
 
-    bool widensWhereItOverflowed = test.isWidenedWhereTestFails && test.mayFallBelowInt32;
-    bool widensBelowLeastResult = test.isWidenedWhereTestFails && test.leastResult;
+    bool widensWhereItOverflowed = test.isWidenedOnFailure && test.mayFallBelowInt32;
+    bool widensBelowLeastResult = test.isWidenedOnFailure && test.leastResult;
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     if (!step.other && !widensWhereItOverflowed && !widensBelowLeastResult) {
         if (test.leastResult) {
@@ -277,7 +277,7 @@ void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
             return;
         }
         unsigned successorOfBranch = m_order.successorOfConditionalJump(block);
-        addPendingJump(jumpOnOverflow(successorOfBranch != test.successorThatPasses), block->successor(successorOfBranch).block());
+        addPendingJump(jumpOnOverflow(successorOfBranch != test.passingSuccessor), block->successor(successorOfBranch).block());
         jumpTo(block->successor(1 - successorOfBranch).block());
         return;
     }
@@ -288,14 +288,14 @@ void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
     if (step.other) {
         const Step* stepOfSum = m_allocation.findExecuteOf(test.sum);
         unsigned index = step.other == test.left() ? 0 : 1;
-        RELEASE_ASSERT(stepOfSum && stepOfSum->destination.isRegister() && stepOfSum->sources[index] == stepOfSum->destination && !test.isWidenedWhereTestFails);
+        RELEASE_ASSERT(stepOfSum && stepOfSum->destination.isRegister() && stepOfSum->sources[index] == stepOfSum->destination && !test.isWidenedOnFailure);
         operandTakenBack = stepOfSum->destination.gpr();
         otherOperand = stepOfSum->sources[1 - index];
         RELEASE_ASSERT(otherOperand.isRegister() || (otherOperand.isImmediate() && !index));
         if (otherOperand.isImmediate())
             otherConstant = static_cast<int32_t>(test.right()->asInt());
     }
-    bool storesSumAnew = test.isWidenedWhereTestFails && m_allocation.isStoredBehindDefinition(test.sum);
+    bool storesSumAnew = test.isWidenedOnFailure && m_allocation.isStoredBehindDefinition(test.sum);
     MacroAssembler::Address spillOfSum = storesSumAnew ? addressOf(Location::spill(m_allocation.spillOf(test.sum)), MemoryOfEncodedMove::IsWritten) : MacroAssembler::Address(InvalidGPRReg, 0);
 
     MacroAssembler::Jump overflowed = jumpOnOverflow(true);
@@ -518,7 +518,7 @@ void Encoder::encodeSwitchByBits(Block* block, GPRReg value, Width width, unsign
         goOnOtherwise();
         return;
     }
-    ++m_proc.m_numberOfSwitchWindowsToldByBits;
+    ++m_proc.m_switchBitTestCount;
     AOT::stableSort(places, [](const PlaceToldByBits& a, const PlaceToldByBits& b) {
         return std::popcount(a.mask) > std::popcount(b.mask);
     });

@@ -17,11 +17,11 @@ variable g0 name="once" module=m0 declared={type=f2 flags=[IsFromCompiler]} init
 variable g1 name="exports" module=m6 declared={type=anything} initialization=Undefined
 module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 completes=true}, {target=m4 completes=true}, {target=m6 kind=Require completes=true}]
 module m1 path="#1" displayPath="main.js" kind=CommonJs requireResult=ModuleExports body=f1
-module m2 path="again.js" displayPath="again.js" flags=[MayBeEvicted, RunsAgain] body=f3 requests=[{target=m3 kind=Require completes=true}]
+module m2 path="again.js" displayPath="again.js" flags=[MayBeEvicted, MayBeReevaluated] body=f3 requests=[{target=m3 kind=Require completes=true}]
 module m3 path="#3" displayPath="again.js" kind=CommonJs requireResult=ModuleExports body=f4
 module m4 path="mocked.js" displayPath="mocked.js" flags=[MayBeMocked, MayBeEvicted] body=f5 requests=[{target=m5 kind=Require completes=true}]
 module m5 path="#5" displayPath="mocked.js" kind=CommonJs requireResult=ModuleExports body=f6
-module m6 path="/required.cjs" displayPath="required.cjs" kind=CommonJs flags=[KeepsError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f7 exportsVariable=g1 requests=[{target=m7 kind=Require completes=true}]
+module m6 path="/required.cjs" displayPath="required.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f7 exportsVariable=g1 requests=[{target=m7 kind=Require completes=true}]
 module m7 path="#7" displayPath="required.cjs" kind=CommonJs requireResult=ModuleExports body=f8
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {

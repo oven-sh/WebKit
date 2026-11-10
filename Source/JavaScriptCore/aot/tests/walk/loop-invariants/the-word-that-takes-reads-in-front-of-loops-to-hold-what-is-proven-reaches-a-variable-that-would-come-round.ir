@@ -1,13 +1,13 @@
 # main.cjs    var pick; let total = 0; let turn = 0; do { pick = turn => turn + 1; total += pick(turn); turn++; } while (turn < Number("3")); sink(total); function peek() { return pick; } sink(typeof peek());
-# The program of a-variable-that-every-turn-stores-ahead-of-its-reads-is-not-read-in-front-of-the-loop.ir under the lying word VariablesReadInFrontOfLoopsAreTakenToHoldWhatIsProven.
+# The program of a-variable-that-every-turn-stores-ahead-of-its-reads-is-not-read-in-front-of-the-loop.ir under the lying word AssumeVariablesInitialized.
 # The word lives where every read in front of a loop is drafted, so it brings back each of the old faults: here the variable comes round again, and the read that nothing vouches for is laid with the proof.
 # A net that is measured by the word is measured on this maker too: where code is verified the read is refused by name, for it goes to the head of the loop and no operation on the variable stands in front of it.
 # Without the word no read is laid here, and nothing is refused: a-variable-that-every-turn-stores-ahead-of-its-reads-is-not-read-in-front-of-the-loop.ir.
 # DIAGNOSTIC: TypeOutOfDate
-# RUN: walk f0 mechanisms=all testing=CheckProofsAtRunTime,VariablesReadInFrontOfLoopsAreTakenToHoldWhatIsProven
+# RUN: walk f0 mechanisms=all testing=CheckProofsAtRunTime,AssumeVariablesInitialized
 
 variable g0 name="pick" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0
 entry module=m0
 function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
   b0():

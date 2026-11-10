@@ -157,7 +157,7 @@ static Reference nameWhoseOrderWordIsKnownInCopiesOwnKeys(Walker& walker, Refere
 {
     if (walker.state().orderWordOf(object))
         return object;
-    ValueID cell = rootOfCellInSweptCode(walker.code(), object.id());
+    ValueID cell = underlyingCellOf(walker.code(), object.id());
     if (walker.code().isConstant(cell))
         return { };
     Reference root = Reference::value(cell);
@@ -395,7 +395,7 @@ OwnKeyPlan planOwnKeyWalk(Walker& walker, ValueID source, Reference built, size_
     return plan;
 }
 
-static bool goOnWhereTestPassesInCopiesOwnKeys(Walker& walker, Reference test, BlockID whereTestFails)
+static bool continueIfKeysMatch(Walker& walker, Reference test, BlockID whereTestFails)
 {
     if (!test)
         return false;
@@ -405,7 +405,7 @@ static bool goOnWhereTestPassesInCopiesOwnKeys(Walker& walker, Reference test, B
     return !walker.isUnreachable() && !walker.hasFailed();
 }
 
-bool goOnWhereObjectHasOwnKeys(Walker& walker, Reference& object, const OwnKeyOrder& order, bool layoutIsProven, Origin origin, const WaysOutOfOwnKeyTests& waysOut)
+bool continueIfOwnKeys(Walker& walker, Reference& object, const OwnKeyOrder& order, bool layoutIsProven, Origin origin, const WaysOutOfOwnKeyTests& waysOut)
 {
     origin.isTailCall = false;
     if (!layoutIsProven) {
@@ -413,7 +413,7 @@ bool goOnWhereObjectHasOwnKeys(Walker& walker, Reference& object, const OwnKeyOr
         test.setObjectOperand(object);
         test.setLayouts(walker.types().at(walker.types().forLayout(order.layout)).layouts);
         Reference hasShape = walker.build(WTF::move(test));
-        if (!goOnWhereTestPassesInCopiesOwnKeys(walker, hasShape, waysOut.whereLayoutDiffers))
+        if (!continueIfKeysMatch(walker, hasShape, waysOut.whereLayoutDiffers))
             return false;
         Draft narrowed(Opcode::Narrowed, origin);
         narrowed.setValueOperand(object);
@@ -429,7 +429,7 @@ bool goOnWhereObjectHasOwnKeys(Walker& walker, Reference& object, const OwnKeyOr
     hasOrder.setObjectOperand(object);
     hasOrder.setLayout(order.layout);
     hasOrder.setFields(order.created.span());
-    if (!goOnWhereTestPassesInCopiesOwnKeys(walker, walker.build(WTF::move(hasOrder)), waysOut.whereOrderDiffers))
+    if (!continueIfKeysMatch(walker, walker.build(WTF::move(hasOrder)), waysOut.whereOrderDiffers))
         return false;
 
     BlockID whereGuessFails = waysOut.whereTestFails;
@@ -437,16 +437,16 @@ bool goOnWhereObjectHasOwnKeys(Walker& walker, Reference& object, const OwnKeyOr
     Draft hasNothingElse(Opcode::HasNoExtraProperties, origin);
     hasNothingElse.setObjectOperand(object);
     hasNothingElse.setHasNoFieldOutsideSlot(true);
-    if (!goOnWhereTestPassesInCopiesOwnKeys(walker, walker.build(WTF::move(hasNothingElse)), waysOut.whereTestFails))
+    if (!continueIfKeysMatch(walker, walker.build(WTF::move(hasNothingElse)), waysOut.whereTestFails))
         return false;
-    walker.state().noteFactsOfCell(object, FactOfCell::NoFieldOutsideSlot);
+    walker.state().recordCellFacts(object, CellFact::NoFieldOutsideSlot);
     walker.checkFactsRememberedOfCell(object, origin);
     return !walker.isUnreachable();
 }
 
-bool goOnWhereObjectHasOwnKeys(Walker& walker, Reference& object, const OwnKeyOrder& order, bool layoutIsProven, Origin origin, BlockID whereTestFails)
+bool continueIfOwnKeys(Walker& walker, Reference& object, const OwnKeyOrder& order, bool layoutIsProven, Origin origin, BlockID whereTestFails)
 {
-    return goOnWhereObjectHasOwnKeys(walker, object, order, layoutIsProven, origin, WaysOutOfOwnKeyTests { whereTestFails, whereTestFails, whereTestFails });
+    return continueIfOwnKeys(walker, object, order, layoutIsProven, origin, WaysOutOfOwnKeyTests { whereTestFails, whereTestFails, whereTestFails });
 }
 
 Reference valueOfOwnKey(Walker& walker, Reference object, LayoutID layout, FieldIndex field, Origin origin)
@@ -456,7 +456,7 @@ Reference valueOfOwnKey(Walker& walker, Reference object, LayoutID layout, Field
     FieldReference place = findField(program, layout, key).value_or(FieldReference { layout, field });
 
     if (walker.has(Mechanism::Folding)) {
-        Reference names[] { object, object.isValue() ? Reference::value(rootOfCellInSweptCode(walker.code(), object.id())) : Reference() };
+        Reference names[] { object, object.isValue() ? Reference::value(underlyingCellOf(walker.code(), object.id())) : Reference() };
         for (Reference name : names) {
             for (FieldReference known : { place, FieldReference { layout, field } }) {
                 Reference held = name ? walker.state().slot(name, known) : Reference();

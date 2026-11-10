@@ -214,8 +214,6 @@ private:
         ValueID current = atEntry;
         bool mayThrowBehindGrowth = false;
         for (BodyValue operation : block.values()) {
-            if (operation.opcode() == Opcode::ReleaseHint)
-                continue;
             mayThrowBehindGrowth |= current != atEntry && mayThrowUnderHandlerInTextBuilderHandlers(declaredBoundInTable(operation.opcode()));
             bool mentionsOlderState = false;
             operation.forEachOperand([&](ValueID operand, uint32_t) {
@@ -297,21 +295,21 @@ static bool writesCharactersInTextBuilderHandlers(const Walker& walker, Referenc
     return constant.opcode != Opcode::String || constant.string() != walker.program().strings.emptyString();
 }
 
-static bool handlerInForceReadsTextInTextBuilderHandlers(Walker& walker, const TextInStringBuilder& text)
+static bool handlerInForceReadsTextInTextBuilderHandlers(Walker& walker, const StringInBuilder& text)
 {
-    if (walker.indexOfFrameOnTop() != text.frameIndex)
+    if (walker.topFrameIndex() != text.frameIndex)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(walker.inputBlockBeingWalked());
     return block.hasHandler() && classifyHandlerInTextBuilderHandlers(index, text.web, block.handler()) != HandlerOfTextInBuilder::LetsTextGo;
 }
 
-bool handlerInForceReadsTextInStringBuilder(Walker& walker, const TextInStringBuilder& text)
+bool handlerReadsStringInBuilder(Walker& walker, const StringInBuilder& text)
 {
     return text.web.standsUnderHandlers && handlerInForceReadsTextInTextBuilderHandlers(walker, text);
 }
 
-void appendPartsRolledBackWhereTheyFail(Walker& walker, TextInStringBuilder& text, Reference name, std::span<const Reference> parts, Origin origin)
+void appendPartsRolledBackWhereTheyFail(Walker& walker, StringInBuilder& text, Reference name, std::span<const Reference> parts, Origin origin)
 {
     size_t numberOfPartsWritten = std::ranges::count_if(parts, [&](Reference part) {
         return writesCharactersInTextBuilderHandlers(walker, part);
@@ -374,10 +372,10 @@ std::optional<size_t> Walker::findTextHeldInFrame(size_t frameIndex, ValueID val
 {
     const Frame& frame = m_frames[frameIndex];
     Reference bound = frame.lastNameOf(value);
-    if (!isTextInStringBuilder(*this, bound) && !(bound.isValue() && m_code.at(bound.id()).opcode == Opcode::StringBuilderToString))
+    if (!isStringInBuilder(*this, bound) && !(bound.isValue() && m_code.at(bound.id()).opcode == Opcode::StringBuilderToString))
         return std::nullopt;
-    for (size_t place = m_textsInStringBuilders.size(); place--;) {
-        const TextInStringBuilder& text = m_textsInStringBuilders[place];
+    for (size_t place = m_stringsInBuilders.size(); place--;) {
+        const StringInBuilder& text = m_stringsInBuilders[place];
         if (text.frameIndex != frameIndex || !text.builder.isValue() || m_code.at(text.builder.id()).origin().inlineFrame != frame.inlineFrame)
             continue;
         if (frame.index->isInLoop(frame.block, frame.index->loopOf(text.web.loopHead)) && findNameInTextBuilderHandlers(text.web, value))
@@ -395,7 +393,7 @@ bool Walker::leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget t
         std::optional<size_t> found = findTextHeldInFrame(frameIndex, written[place]);
         if (!found)
             continue;
-        const TextInStringBuilder& text = m_textsInStringBuilders[*found];
+        const StringInBuilder& text = m_stringsInBuilders[*found];
         if (!index.isInLoop(target.block(), index.loopOf(text.web.loopHead))) {
             taken.append({ place, text.builder });
             continue;
@@ -451,7 +449,7 @@ bool Walker::leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget t
     open.types = WTF::move(types);
     takeNamesOntoEdge(open, frameIndex);
     for (auto [value, name] : names)
-        m_frames[frameIndex].valuesBuiltTwice->nameOtherwiseOn(open.names, value, name);
+        m_frames[frameIndex].duplicatedValues->nameOtherwiseOn(open.names, value, name);
     endWithRethrow(exception, origin);
     return goOnWhereBlockMayThrow();
 }
@@ -461,8 +459,8 @@ void Walker::bindTextsAtHeadOfHandlerBlock(BlockID inputBlock)
     size_t frameIndex = m_frames.size() - 1;
     const BodyIndex& index = *m_frames[frameIndex].index;
     Vector<ValueID, 2> parametersOfHeadsSeen;
-    for (size_t place = m_textsInStringBuilders.size(); place--;) {
-        const TextInStringBuilder& text = m_textsInStringBuilders[place];
+    for (size_t place = m_stringsInBuilders.size(); place--;) {
+        const StringInBuilder& text = m_stringsInBuilders[place];
         if (text.frameIndex != frameIndex || !text.builder.isValue() || m_code.at(text.builder.id()).origin().inlineFrame != m_frames[frameIndex].inlineFrame)
             continue;
         if (text.web.names.isEmpty() || !index.isInLoop(inputBlock, index.loopOf(text.web.loopHead)) || parametersOfHeadsSeen.contains(text.web.names[0].value))

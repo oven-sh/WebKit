@@ -121,7 +121,7 @@ public:
     TypeID readOfSlot(TypeLevel level, LayoutID layout, uint32_t field) const final { return m_positionsOfWalk.readOfSlot(level, layout, field); }
     TypeID halfOfAccessorOfField(TypeLevel level, LayoutID layout, uint32_t field, bool isSetter) const final { return m_positionsOfWalk.halfOfAccessorOfField(level, layout, field, isSetter); }
     std::optional<uint32_t> appendedField(LayoutID layout, PropertyKeyID key) const final { return m_positionsOfWalk.appendedField(layout, key); }
-    bool listLayoutsAskedAbout(PropertyKeyID key, LayoutSetID layouts, bool asksWhatIsWrittenAbove, Vector<LayoutID, 16>& asked) const final { return m_positionsOfWalk.listLayoutsAskedAbout(key, layouts, asksWhatIsWrittenAbove, asked); }
+    bool collectQueriedLayouts(PropertyKeyID key, LayoutSetID layouts, bool includesInheritedWrites, Vector<LayoutID, 16>& asked) const final { return m_positionsOfWalk.collectQueriedLayouts(key, layouts, includesInheritedWrites, asked); }
     TypeID foundAboveObjectsOf(TypeLevel level, LayoutID layout, PropertyKeyID key) const final { return m_positionsOfWalk.foundAboveObjectsOf(level, layout, key); }
     TypeID readByNameOffObjectsOf(TypeLevel level, LayoutID layout, PropertyKeyID key) const final { return m_positionsOfWalk.readByNameOffObjectsOf(level, layout, key); }
     LayoutID classAbove(LayoutID classLayout) const final { return m_positionsOfWalk.classAbove(classLayout); }
@@ -804,7 +804,7 @@ TypeID CodeTypeVerifier::typeArrivingOn(EdgeID id, BlockID target, ValueID param
 std::optional<Range> CodeTypeVerifier::changeSinceHeadOfLoop(ValueID parameterOfHead, ValueID value)
 {
     auto behindConversions = [&](ValueID name) {
-        while (opcodesThatGiveSameValue.contains(m_code.at(name).opcode) && m_code.at(name).operand(0).index() < name.index())
+        while (valuePreservingOpcodes.contains(m_code.at(name).opcode) && m_code.at(name).operand(0).index() < name.index())
             name = m_code.at(name).operand(0);
         return name;
     };

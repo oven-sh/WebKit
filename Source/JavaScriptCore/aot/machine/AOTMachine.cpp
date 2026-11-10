@@ -128,16 +128,6 @@ FactsOfSuspension& PatchOperation::ensureFactsOfSuspension()
     return *m_factsOfSuspension;
 }
 
-void PatchOperation::markChildAsLetGoByCallee(unsigned child)
-{
-    RELEASE_ASSERT(m_opcode == Patch && child < m_operands.size());
-    for (unsigned marked : childrenLetGoByCallee()) {
-        if (this->child(marked) == this->child(child))
-            return;
-    }
-    m_childrenLetGoByCallee.append(m_procedure.arena(), child);
-}
-
 ALWAYS_INLINE_INTO_OTHER_FILES void PatchOperation::leaveOperandsWhereTheyLie()
 {
     RELEASE_ASSERT(m_opcode == Patch && bringsOperandsToTheirRegisters() && m_registersToBringOperandsTo.isEmpty());

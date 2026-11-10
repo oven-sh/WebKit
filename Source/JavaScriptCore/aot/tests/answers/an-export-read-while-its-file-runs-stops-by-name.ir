@@ -9,14 +9,15 @@
 # WALK: [[read]]: {{*}} = GetModuleVariable variable=g0
 # WALK-NEXT: CheckProof [[read]] {{*}}source=Variable
 # RUN(SHELL): run-in-shell mechanisms=all globalThis.box = { undefined: "right" }; globalThis.sink = value => print("said " + String(value));
-# SHELL: AOT: f1 at {{*}}: what a variable holds is not of the type that the compiler has proven of it. It is: undefined.
+# SHELL: bun: internal AOT error: type check failed at {{*}}
+# SHELL-NEXT: found undefined in a local variable
 # SHELL-NOT: said
 
 layout L0 module=m0 fields=[{key=symbol("b")@m2:1 declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated]
 variable g0 name="kB" module=m2 declared={type=anything} initialization=Undefined
-module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 requests=[{target=m2 kind=Require completes=true}]
-module m1 path="early.cjs" displayPath="early.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require completes=true}]
-module m2 path="ring.cjs" displayPath="ring.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m1 kind=Require completes=true}]
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="early.cjs" displayPath="early.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="ring.cjs" displayPath="ring.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m1 kind=Require completes=true}]
 entry module=m0
 function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
   b0():

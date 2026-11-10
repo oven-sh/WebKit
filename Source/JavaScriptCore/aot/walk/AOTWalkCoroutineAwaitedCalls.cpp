@@ -63,7 +63,7 @@ bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block
     ValueID call(firstValue + wait.placeOfCall);
     for (uint32_t place = wait.placeOfCall + 1; place < wait.endOfWait; ++place) {
         ValueID between(firstValue + place);
-        if (opcodesThatStateTypes.contains(index.opcodeOf(between)) && index.valueBehindCasts(between) == call)
+        if (opcodesThatStateTypes.contains(index.opcodeOf(between)) && index.stripCasts(between) == call)
             continue;
         walker.walkStretch(block.id(), place, place + 1);
         if (walker.isUnreachable() || walker.hasFailed())
@@ -213,7 +213,7 @@ static void noteAwaitForCopyInAwaitedCalls(Walker& walker, const BodyIndex& inde
     uint32_t firstValue = block.firstValue().index();
     for (uint32_t place = wait.placeOfCall + 1; place < wait.endOfWait; ++place) {
         ValueID between(firstValue + place);
-        if (!opcodesThatStateTypes.contains(index.opcodeOf(between)) || index.valueBehindCasts(between) != call.id())
+        if (!opcodesThatStateTypes.contains(index.opcodeOf(between)) || index.stripCasts(between) != call.id())
             return;
     }
 

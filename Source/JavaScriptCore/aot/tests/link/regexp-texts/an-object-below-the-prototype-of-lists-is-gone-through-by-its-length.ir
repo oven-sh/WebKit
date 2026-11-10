@@ -3,7 +3,7 @@
 # export function below() { const bag = Object.create(Array.prototype); bag.length = 3000000; return new RegExp("x".toUpperCase() + [...bag].length); }
 # export function under() { const long = []; long.length = 3000000; return new RegExp("y".toUpperCase() + [...Object.create(long)].length); }
 # export function words() { const bag = Object.create(Array.prototype); bag.length = 3000000; return new RegExp("z".toUpperCase() + ("" + bag).length); }
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: 3000000
 # CHECK-NOT: 2999999

@@ -30,7 +30,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #     v5: boolean @Boolean = TypeTest v3 testedType=null
 #     Branch v5 -> taken b4(), notTaken b5()
 #   b4():
-#     v6 @Void = PropDefine v4, v3 key="name" traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v6 @Void = PropDefine v4, v3 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b5()
 #   b5():
 #     Return v1

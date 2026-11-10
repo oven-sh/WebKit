@@ -136,7 +136,7 @@ void ClassEmitter::generateGetConstructPrototype(const ValueContext& value)
     LayoutID classLayout = declaredLayoutOf(m_program, value->layout());
     FunctionID constructor = singleFunctionOf(types(), typeOf(value->newTargetOperand()));
     AccessContext context { m_program, WalkFacts(m_facts), m_plan, types(), { } };
-    bool guardAnswers = constructor &&m_program.at(constructor).constructedClass == classLayout && prototypeOfConstructorFunctionIsLeftToGuards(context, classLayout);
+    bool guardAnswers = constructor &&m_program.at(constructor).constructedClass == classLayout && isConstructorPrototypeGuarded(context, classLayout);
     if (std::optional<Word32> rank = guardAnswers ? rankOfClassWithOnePrototypeObject(value) : std::nullopt) {
         m_out.noteForm(Form::Open, StateOfKnowledge::PrototypeInTable);
         LBasicBlock guardHolds = newBlock();

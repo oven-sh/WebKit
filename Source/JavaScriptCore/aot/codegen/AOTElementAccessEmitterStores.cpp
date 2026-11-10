@@ -137,7 +137,7 @@ ValueID ElementAccessEmitter::int32ThatArmOfValuesStoresInEitherKind(ValueID sto
         return { };
     if (representationOf(stored) != Representation::JSValue && representationOf(stored) != Representation::Int32)
         return { };
-    build().statistics().count(StatisticID::StoresOfInt32ThatAdmitTwoKindsOfStorage);
+    build().statistics().count(StatisticID::Int32StoresSharingBoxedPath);
     return stored;
 }
 
@@ -179,7 +179,7 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
     const Type& type = typeOf(stored);
     Operand operand = get(stored);
     auto numberToStore = [&](Number number) -> Operand {
-        if (!canStoreWithoutConversion(types(), form.kind, typeIDOf(stored)) && !AOT::hasFlag(build().options().testing, Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN))
+        if (!canStoreWithoutConversion(types(), form.kind, typeIDOf(stored)) && !AOT::hasFlag(build().options().testing, Wire::TestingSwitch::AssumeNoNaNStores))
             branchUnless(equal(number, number), doesNotFit);
         return number;
     };
@@ -354,15 +354,15 @@ void ElementAccessEmitter::storeInProvenList(const ValueContext& value, const Ar
         }
         LengthTest test = testLength(index, elements);
         if (!value->isInBounds() && generator().takesFormOfLoops(value)) {
-            LBasicBlock liesInside = newBlock();
-            LBasicBlock liesBehind = newBlock();
-            m_out.branch(test.isInside.value(), normalEdge(liesInside), normalEdge(liesBehind));
-            m_out.appendTo(liesBehind);
+            LBasicBlock inBounds = newBlock();
+            LBasicBlock pastEnd = newBlock();
+            m_out.branch(test.isInside.value(), normalEdge(inBounds), normalEdge(pastEnd));
+            m_out.appendTo(pastEnd);
             branchUnless(equal(test.indexInside, publicLength(elements)), outOfLine);
             branchUnless(below(test.indexInside, vectorLength(elements)), outOfLine);
             setPublicLength(elements, add(test.indexInside, integer(1)));
-            m_out.jump(liesInside);
-            m_out.appendTo(liesInside);
+            m_out.jump(inBounds);
+            m_out.appendTo(inBounds);
         } else if (!value->isInBounds())
             branchUnless(test.isInside, outOfLine);
         stopWhereHoleWouldBeStored(value, form, *rawElement);
@@ -406,7 +406,7 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
 
     bool isWholeNumberOfAnySize = storedType.isNumberLike() && !storedType.isInt32() && !(storedType.primitives & Primitive::FractionalNumber);
     if (isWholeNumberOfAnySize)
-        build().statistics().count(StatisticID::WholeNumbersStoredOutOfLineAsTheyAre);
+        build().statistics().count(StatisticID::IntegralStoresWithoutDoubleConversion);
     bool mayConvertToDouble = storedType.isNumberLike() && !storedType.isInt32() && !isWholeNumberOfAnySize;
     ArrayStoredValue storedValue = mayConvertToDouble ? ArrayStoredValue::Number : ArrayStoredValue::Value;
     if (key.is<Number>()) {

@@ -319,7 +319,7 @@ static void emitHandOverToWaiter(StubAssembler& jit, GPRReg waiter, GPRReg value
     jit.storePtr(waiter, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.waiterToResume)));
     jit.store64(value, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.waiterResolution)));
     jit.store64(registers.queue, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.waiterAsyncContext)));
-    Jump isHandedOver = jit.jump();
+    Jump done = jit.jump();
 
     isQueued.link(&jit);
     emitReserveJob(jit, registers, needsOperation);
@@ -327,7 +327,7 @@ static void emitHandOverToWaiter(StubAssembler& jit, GPRReg waiter, GPRReg value
     jit.store64(registers.scratch, argumentOfJob(registers.slot, 3));
     beforeHandOver();
     emitFillJob(jit, { InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled, value, waiter, JobAsyncContext::IsStored }, registers);
-    isHandedOver.link(&jit);
+    done.link(&jit);
 }
 
 StubSignature signatureOfReturnAsyncResult(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }).fillingOperandInFront(1); }

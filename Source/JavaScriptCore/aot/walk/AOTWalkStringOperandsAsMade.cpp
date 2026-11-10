@@ -36,7 +36,7 @@ bool goesByOneRowOnOperandAsMade(Walker& walker, const BodyValue& call, BuiltinI
         if (!operand)
             return;
         type = operand == value ? behindTest : walker.typeOf(operand);
-        if (operand == value || isListAsMade(walker, operand))
+        if (operand == value || isKnownPristine(walker, operand))
             aspects = aspectsThatLookAtCellProvesForStringOperands;
     };
     if (ValueID receiver = call.thisValueOperand())
@@ -123,8 +123,8 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
     BuiltinID member = findOwnMember(program, table.at(builtinClass).prototype, read.key());
     if (!member)
         return false;
-    bool copiesLibraryText = !!findLibraryFunctionsBehindBuiltin(walker, types.forBuiltin(table.canonicalID(member))).enteredByValue;
-    if (!copiesLibraryText && ((builtinClass != BuiltinClasses::Map && builtinClass != BuiltinClasses::Set) || !table.boxedCallStubOf(table.canonicalID(member))))
+    bool hasLibraryImplementation = !!findLibraryFunctionsBehindBuiltin(walker, types.forBuiltin(table.canonicalID(member))).enteredByValue;
+    if (!hasLibraryImplementation && ((builtinClass != BuiltinClasses::Map && builtinClass != BuiltinClasses::Set) || !table.boxedCallStubOf(table.canonicalID(member))))
         return false;
 
     const BodyIndex& index = walker.currentBodyIndex();
@@ -137,16 +137,16 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
     auto arguments = call.as<Opcode::Call>().argumentsOperands();
     if (call.calleeOperand() != read.id() || call.thisValueOperand() != receiverID)
         return false;
-    ValueID handedOver = copiesLibraryText && !arguments.empty() ? index.valueBehindCasts(arguments[0]) : ValueID();
-    FunctionID functionHandedOver;
-    if (handedOver && !index.isParameter(handedOver) && index.opcodeOf(handedOver) == Opcode::NewClosure)
-        functionHandedOver = index.value(handedOver).function();
-    else if (handedOver && !index.isParameter(handedOver) && index.opcodeOf(handedOver) == Opcode::GetModuleVariable) {
-        const Variable& variable = program.at(index.value(handedOver).as<Opcode::GetModuleVariable>().variable());
+    ValueID callbackArgument = hasLibraryImplementation && !arguments.empty() ? index.stripCasts(arguments[0]) : ValueID();
+    FunctionID callbackFunction;
+    if (callbackArgument && !index.isParameter(callbackArgument) && index.opcodeOf(callbackArgument) == Opcode::NewClosure)
+        callbackFunction = index.value(callbackArgument).function();
+    else if (callbackArgument && !index.isParameter(callbackArgument) && index.opcodeOf(callbackArgument) == Opcode::GetModuleVariable) {
+        const Variable& variable = program.at(index.value(callbackArgument).as<Opcode::GetModuleVariable>().variable());
         if (variable.initialization == VariableInitialization::Function && variable.flags.contains(VariableFlags::IsImmutable))
-            functionHandedOver = variable.function;
+            callbackFunction = variable.function;
     }
-    if (copiesLibraryText && (!functionHandedOver || walker.facts().linked().function(functionHandedOver).weightAsLeaf == LinkedFunction::notLeaf))
+    if (hasLibraryImplementation && (!callbackFunction || walker.facts().linked().function(callbackFunction).weightAsLeaf == LinkedFunction::notLeaf))
         return false;
     for (uint32_t number = read.id().index() + 1; number < callID.index(); ++number) {
         ValueID user = index.onlyUsingValue(ValueID(number));
@@ -155,16 +155,16 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
     }
 
     TypeID instances = types.builtinClass(builtinClass);
-    if (!types.isSubset(proven, instances) || isListAsMade(walker, receiver) || receiverStaysAsMadeByLink(walker, read))
+    if (!types.isSubset(proven, instances) || isKnownPristine(walker, receiver) || receiverStaysAsMadeByLink(walker, read))
         return false;
     Vector<ValueID, 4> readsOffHolders;
-    ValueID last = !copiesLibraryText ? findLastCallInRowOfCallsOfMethodsOfTable(walker, read, call, builtinClass, readsOffHolders) : callID;
+    ValueID last = !hasLibraryImplementation ? findLastCallInRowOfCallsOfMethodsOfTable(walker, read, call, builtinClass, readsOffHolders) : callID;
     if (last == callID)
         readsOffHolders.shrink(0);
     else
-        walker.count(StatisticID::RowsOfCallsOfMethodsOfOneTableBehindOneTest);
-    if (copiesLibraryText && index.opcodeOf(handedOver) == Opcode::GetModuleVariable)
-        walker.count(StatisticID::GuessesAtListsOpenedForFunctionsHandedByName);
+        walker.count(StatisticID::CollectionCallRunsGuardedOnce);
+    if (hasLibraryImplementation && index.opcodeOf(callbackArgument) == Opcode::GetModuleVariable)
+        walker.count(StatisticID::ReceiversSpeculatedForNamedCallbacks);
     openGuessAtOperandTakenAsMade(walker, index.value(last), receiver, instances, read.id().index() - block.firstValue().index(), readsOffHolders.span());
     return true;
 }
@@ -187,7 +187,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
     Origin origin = walker.originOf(call);
     origin.isTailCall = false;
     BlockID closedBlock;
-    auto goOnWhereTestPasses = [&](Reference test) {
+    auto continueIfCheckPasses = [&](Reference test) {
         BlockID passed = walker.addBlock();
         if (!closedBlock)
             closedBlock = walker.addBlock(BlockFrequency::Rare);
@@ -200,17 +200,17 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         Reference isOfClass = buildTypeTestForStrings(walker, value, tested, origin);
         if (!isOfClass)
             return;
-        goOnWhereTestPasses(isOfClass);
+        continueIfCheckPasses(isOfClass);
         proven = buildProofBehindTestForStrings(walker, value, isOfClass, OperandIndex::TypeTest::value, origin);
     }
     TestOfObjectAsMade asked = walker.program().admitsReplacedBuiltins ? TestOfObjectAsMade::AsksObjectAlone : TestOfObjectAsMade::AsksWhatWasWrittenAboveToo;
     if (Reference isAsMade = proven ? buildTestOfObjectAsMade(walker, proven, origin, asked) : Reference()) {
-        goOnWhereTestPasses(isAsMade);
-        noteListAsMade(walker, proven);
+        continueIfCheckPasses(isAsMade);
+        markObjectPristine(walker, proven);
     }
     struct HolderShaped {
         ValueID name;
-        GuessInFrontOfLoop guess;
+        HoistedSpeculation guess;
         Reference shaped;
     };
     Vector<HolderShaped, 2> holdersShaped;
@@ -219,16 +219,16 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
     for (ValueID readOffHolder : readsOffHolders) {
         if (walker.isUnreachable() || walker.hasFailed())
             break;
-        walker.letGoOfPendingBlocksThatHaveEnded();
+        walker.releaseEndedPendingBlocks();
         BodyValue read = index.value(readOffHolder);
         ValueID name = read.objectOperand();
         auto place = placesOfHolders.find(name.index());
         if (place == placesOfHolders.end()) {
-            std::optional<GuessInFrontOfLoop> guess = guessAtShapeOfHolderReadByName(walker, read);
+            std::optional<HoistedSpeculation> guess = guessAtShapeOfHolderReadByName(walker, read);
             Reference hasShape = guess ? buildTestInFrontOfLoop(walker, *guess, origin) : Reference();
             if (!hasShape || !hasShape.isValue())
                 continue;
-            goOnWhereTestPasses(hasShape);
+            continueIfCheckPasses(hasShape);
             Reference shaped = walker.isUnreachable() ? Reference() : buildProofInFrontOfLoop(walker, *guess, hasShape, origin);
             if (!shaped)
                 continue;
@@ -242,7 +242,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         if (!isFilled)
             continue;
         if (isFilled.isValue())
-            goOnWhereTestPasses(isFilled);
+            continueIfCheckPasses(isFilled);
         if (!walker.isUnreachable())
             readSlotFilledBehindShape(walker, holder.guess, holder.shaped, read);
     }
@@ -251,19 +251,19 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         return;
     BlockID typedBlock = walker.isUnreachable() ? BlockID() : walker.currentBlock();
     BlockID meetingBlock = walker.addBlock();
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     auto walkCallToEndOfArm = [&] {
         walker.walkStretch(inputBlock, firstPlace.value_or(place), place + 1);
         if (isReturnedAtOnce)
-            walker.endArmWithReturnOf(inputBlock);
+            walker.threadReturnOf(inputBlock);
         if (walker.isUnreachable())
             return;
         Reference result = isReadBehind ? walker.referenceOf(call.id()) : Reference();
         if (isReadBehind && (!result || !result.isRecord()))
             return walker.fail("an arm of a guess at an operand has no value for what is read behind it"_s);
-        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { result } });
+        arms.append(Walker::JoinArm { walker.currentBlock(), { result } });
     };
 
     walker.continueIn(closedBlock);
@@ -296,7 +296,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         return;
 
     Reference met;
-    if (walker.letArmsMeet(arms.span(), meetingBlock, singleElementSpan(met).first(isReadBehind)) && isReadBehind)
+    if (walker.joinArms(arms.span(), meetingBlock, singleElementSpan(met).first(isReadBehind)) && isReadBehind)
         walker.bind(call.id(), met);
 }
 

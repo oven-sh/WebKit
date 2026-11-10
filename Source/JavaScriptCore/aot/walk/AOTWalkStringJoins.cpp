@@ -96,7 +96,7 @@ static std::optional<TestAgainstJoinOfTexts> findTestAgainstJoinForStringJoins(W
         return std::nullopt;
     std::optional<InlineBuiltin> codeInLine = testOfEndCalledForStringJoins(walker, call);
     Reference string = walker.referenceOf(receiver);
-    if (string && walker.hasTextsInStringBuilders() && isTextInStringBuilder(walker, string))
+    if (string && walker.hasStringsInBuilders() && isStringInBuilder(walker, string))
         return std::nullopt;
     if (!codeInLine || !string || !isProvenString(walker, walker.typeOf(string)))
         return std::nullopt;
@@ -178,8 +178,8 @@ bool buildTestAgainstJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& jo
     BlockID inputBlock = index.blockOf(join.id());
     uint32_t firstValue = index.block(inputBlock).firstValue().index();
     uint32_t placeOfJoin = join.id().index() - firstValue;
-    uint32_t behindCall = test->call.index() + 1 - firstValue;
-    Walker::StretchInArms stretch = walker.stretchInArms(inputBlock, placeOfJoin, behindCall);
+    uint32_t afterCall = test->call.index() + 1 - firstValue;
+    Walker::StretchInArms stretch = walker.stretchInArms(inputBlock, placeOfJoin, afterCall);
 
     if (FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), join.id()))
         walker.leaveAnythingAt(callee);
@@ -198,18 +198,18 @@ bool buildTestAgainstJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& jo
     Vector<Reference, 8> met(stretch.mentionedBehind.size());
     bool isBuilt = buildArmsForStrings(walker, fitsWithUnit, BlockFrequency::Rare, [&](std::span<Reference> results) {
         walker.bind(join.id(), part);
-        walker.walkStretch(inputBlock, placeOfJoin + 1, behindCall);
+        walker.walkStretch(inputBlock, placeOfJoin + 1, afterCall);
         Reference holdsOfPart = walker.isUnreachable() ? Reference() : walker.referenceOf(test->call);
         walker.bind(test->call, buildTestOfCodeUnitBesidePartOfJoin(walker, test->string, lengthOfPart, holdsOfPart, test->unitBeside, test->testsStart, origin));
         bringWhatIsReadBehind(results);
     }, [&](std::span<Reference> results) {
         Walker::ClosedArm closedArm(walker);
-        walker.walkStretch(inputBlock, placeOfJoin, behindCall);
+        walker.walkStretch(inputBlock, placeOfJoin, afterCall);
         if (stretch.isReturnedAtOnce)
-            walker.endArmWithReturnOf(inputBlock);
+            walker.threadReturnOf(inputBlock);
         bringWhatIsReadBehind(results);
     }, met.mutableSpan());
-    for (uint32_t place = placeOfJoin; place < behindCall; ++place)
+    for (uint32_t place = placeOfJoin; place < afterCall; ++place)
         walker.bind(ValueID(firstValue + place), Reference());
     for (size_t position = 0; position < met.size() && isBuilt; ++position)
         walker.bind(stretch.mentionedBehind[position], met[position]);

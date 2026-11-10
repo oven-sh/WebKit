@@ -96,9 +96,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnInt32AndHandItOn(con
     ValueID unboxing = unboxingBehindTestForInt32(test);
     if (!unboxing)
         return false;
-    RELEASE_ASSERT(!m_integersHandedOn.containsIf([&](const IntegerHandedOn& handedOn) {
-        return handedOn.unboxing == unboxing;
-    }));
+    RELEASE_ASSERT(!m_integersHandedOn.contains(unboxing.index()));
 
     Boxed value = operand.as<Boxed>();
     BranchTargets targets = test.branchTargets();
@@ -122,8 +120,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnInt32AndHandItOn(con
     m_out.appendTo(isDouble);
     handOn(emitter<ConversionEmitter>().int32OrElse(unboxDouble(value), targets.notTaken.block()));
 
-    m_integersHandedOn.append({ unboxing, isWide ? Operand(Integer(integer)) : Operand(Word32(integer)) });
-    build().statistics().count(StatisticID::IntegersHandedOnByTheirTests);
+    m_integersHandedOn.add(unboxing.index(), isWide ? Operand(Integer(integer)) : Operand(Word32(integer)));
+    build().statistics().count(StatisticID::UnboxingsFusedIntoTypeChecks);
     return true;
 }
 
@@ -163,9 +161,6 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnNumberAndHandItOn(co
     ValueID unboxing = unboxingToDoubleBehindTestForNumber(test);
     if (!unboxing)
         return false;
-    m_integersHandedOn.removeAllMatching([&](const IntegerHandedOn& handedOn) {
-        return handedOn.unboxing == unboxing;
-    });
 
     Boxed value = operand.as<Boxed>();
     BranchTargets targets = test.branchTargets();
@@ -186,21 +181,14 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnNumberAndHandItOn(co
     m_out.upsilon(unboxDouble(value).value(), number);
     m_out.jump(targets.taken);
 
-    m_integersHandedOn.append({ unboxing, Operand(Number(number)) });
-    build().statistics().count(StatisticID::IntegersHandedOnByTheirTests);
+    m_integersHandedOn.set(unboxing.index(), Operand(Number(number)));
+    build().statistics().count(StatisticID::UnboxingsFusedIntoTypeChecks);
     return true;
 }
 
 std::optional<Operand> CastEmitter::takeIntegerHandedOnTo(ValueID unboxing)
 {
-    size_t place = m_integersHandedOn.findIf([&](const IntegerHandedOn& handedOn) {
-        return handedOn.unboxing == unboxing;
-    });
-    if (place == notFound)
-        return std::nullopt;
-    Operand integer = m_integersHandedOn[place].integer;
-    m_integersHandedOn.removeAt(place);
-    return integer;
+    return m_integersHandedOn.takeOptional(unboxing.index());
 }
 
 void CastEmitter::generateTypeTest(const ValueContext& value)
@@ -213,8 +201,8 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
     SetForScope wordAsked(generator().wordWhoseHoleIsLeftToTestAtWork(), holeIsLeftToThisTest ? operand.value : nullptr);
     TypeID whatMayCome = hasTestedForHole(operationAt(definitionOf(source))) && !holeIsLeftToThisTest ? TypeTable::anything : TypeTable::anythingOrAbsent;
     bool passesWhateverComes = false;
-    if (uint32_t word = build().options().rowThatSaysLess) [[unlikely]] {
-        RowThatSaysLess row = RowThatSaysLess::decode(word);
+    if (uint32_t word = build().options().understatedEffects) [[unlikely]] {
+        UnderstatedEffects row = UnderstatedEffects::decode(word);
         CodeUnit unit = generator().unit();
         passesWhateverComes = row.part == PartOfEffects::TestsOfGuard && unit.role == CodeRole::ParameterGuard && unit.function.index() == row.row;
     }
@@ -274,8 +262,9 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     if (value->isLeftToTestBehind())
         return;
     Operand source = get(value->valueOperand());
+    uint32_t expectedType = FalseProofWord::summarize(types().at(value->checkedType()).primitives, types().at(value->checkedType()).hasObjects());
     if (numberRepresentations.contains(source.representation) || optionalRepresentations.contains(source.representation)) {
-        emitter<ThrowEmitter>().checkOrStopAtFalseProof(value, hasType(source, typeTestPlanFor(value->typeWithoutProof(), source.representation, value->checkedType())), value->source());
+        emitter<ThrowEmitter>().checkOrCrash(value, hasType(source, typeTestPlanFor(value->typeWithoutProof(), source.representation, value->checkedType())), value->source(), expectedType);
         return;
     }
     if (source.representation == Representation::Cell32) {
@@ -286,13 +275,13 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
             if (checked.primitives & primitive)
                 isWordOfCheckedType = logicalOr(isWordOfCheckedType, equal(Word32(word.value()), word32(static_cast<int32_t>(marker))));
         }
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, isWordOfCheckedType, std::nullopt, value->source());
+        emitter<ThrowEmitter>().requireOrCrash(value, isWordOfCheckedType, std::nullopt, value->source(), expectedType);
         source = emitter<ConversionEmitter>().decode(word, types().at(TypeTable::cellOrMarker), Representation::JSValue);
     }
     bool isAnswerOfTest = source.representation == Representation::Boolean;
     Boxed found(isAnswerOfTest ? m_out.constInt64(JSValue::encode(JSValue())) : source.value);
     if (isAnswerOfTest) {
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, Condition(source.value), std::nullopt, value->source());
+        emitter<ThrowEmitter>().requireOrCrash(value, Condition(source.value), std::nullopt, value->source());
         return;
     }
     bool asksForType = value->checkedType() != value->typeWithoutProof();
@@ -311,7 +300,7 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     ScopeFork fork = m_out.forkScope();
     if (asksForType) {
         LBasicBlock hasCheckedType = looksAtCell ? newBlock() : continuation;
-        emitter<TypeTestEmitter>().emitBranchAskingEachFunctionByItself(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType()), { normalEdge(hasCheckedType), rareEdge(stops) });
+        emitter<TypeTestEmitter>().emitPerFunctionBranch(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType()), { normalEdge(hasCheckedType), rareEdge(stops) });
         if (looksAtCell)
             m_out.appendToJoin(hasCheckedType, fork);
     }
@@ -326,7 +315,7 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
         m_out.branch(logicalOr(hasCellTypeIn(cell, { StringType, SymbolType }), isObjectCell(cell)).value(), normalEdge(continuation), rareEdge(stops));
     }
     m_out.appendToJoin(stops, fork);
-    emitter<ThrowEmitter>().stopAtFalseProof(value, found, value->source());
+    emitter<ThrowEmitter>().crashOnFalseProof(value, found, value->source(), expectedType);
     m_out.appendToJoin(continuation, fork);
 }
 

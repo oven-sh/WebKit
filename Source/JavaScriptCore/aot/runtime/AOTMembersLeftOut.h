@@ -29,7 +29,7 @@ struct OmittedFunction {
     bool canBeConstructed { false };
     bool hasPrototype { true };
 };
-JS_EXPORT_PRIVATE JSValue takeOmittedFunctionPlaceholder(JSGlobalObject*, const OmittedFunction&, JSObject* answeredBy);
+JS_EXPORT_PRIVATE JSValue takeOmittedFunctionPlaceholder(JSGlobalObject*, const OmittedFunction&, JSObject* owner);
 bool isOmittedFunctionPlaceholder(JSCell*);
 JS_EXPORT_PRIVATE bool isPlaceholderForOmittedBuiltin(JSCell*);
 class MemberReificationScope {

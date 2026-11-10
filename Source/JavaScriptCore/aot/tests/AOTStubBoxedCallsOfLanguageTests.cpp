@@ -557,7 +557,7 @@ static void testShiftOfFewValuesInLanguageCallTests()
     FakeObject<sizeof(JSFunction)> callee;
     constexpr StubKey key = callBoxedBuiltin(BoxedCallForm::ArrayShift, 0);
     constexpr uint64_t answerOfOperation = int32InLanguageCallTests(99);
-    runner.recordCallsOf(Entry::operationAOTArrayShiftOfAnyList);
+    runner.recordCallsOf(Entry::operationAOTArrayShiftGeneric);
     runner.setResultOfRecordedOperation(answerOfOperation);
 
     auto isShiftedByStub = [&](ListInLanguageCallTests& list, uint64_t first) {
@@ -816,8 +816,8 @@ static void testSpliceOfOneItemInLanguageCallTests()
     constexpr uint64_t one = int32InLanguageCallTests(1);
     constexpr uint64_t none = int32InLanguageCallTests(0);
     constexpr uint64_t come = int32InLanguageCallTests(77);
-    runner.recordCallsOf(Entry::operationAOTArraySpliceOfAnyList);
-    runner.recordCallsOf(Entry::operationAOTArraySpliceItemIntoAnyList);
+    runner.recordCallsOf(Entry::operationAOTArraySpliceGeneric);
+    runner.recordCallsOf(Entry::operationAOTArraySpliceItemGeneric);
     runner.setResultOfRecordedOperation(answerOfOperation);
     constexpr StubKey takesOut = callBoxedBuiltin(BoxedCallForm::ArraySplice, 2);
     constexpr StubKey putsIn = callBoxedBuiltin(BoxedCallForm::ArraySplice, 3);

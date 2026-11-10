@@ -103,8 +103,8 @@ public:
         JS_EXPORT_PRIVATE const AOT::CompiledFrame& compiledFrame() const;
         // This frame represents the built-in function that compiledFrame() calls and that compiled code runs inline.
         bool isInlinedBuiltinFrame() const { return m_isInlinedBuiltinFrame; }
-        // compiledFrame() is the frame of its caller: CompiledFrameIterator::constructedFunctionThatLeft().
-        bool isOfConstructedFunctionThatLeft() const { return m_isOfConstructedFunctionThatLeft; }
+        // A constructor that has no machine frame yet: compiledFrame() is its caller's frame.
+        bool isElidedConstructorFrame() const { return m_isElidedConstructorFrame; }
         JS_EXPORT_PRIVATE bool isConstructCall() const;
 #else
         static constexpr bool isCompiledFrame() { return false; }
@@ -183,7 +183,7 @@ public:
 #if ENABLE(AOT)
         AOT::CompiledFrameIterator* m_compiledFrames { nullptr };
         bool m_isInlinedBuiltinFrame { false };
-        bool m_isOfConstructedFunctionThatLeft { false };
+        bool m_isElidedConstructorFrame { false };
 #endif
 
         friend class StackVisitor;
@@ -301,7 +301,7 @@ private:
     AOT::ShownFrameFilter m_shownFrameFilter;
     CompiledFrameVisit m_compiledFrameVisit;
     bool m_nextFrameIsPublished { false };
-    // The frame that returns to m_previousReturnPC, while m_frame has no frame.
+    // The callee frame that returns to m_previousReturnPC, for when m_frame has no call frame.
     CallFrame* m_previousCalleeFrame { nullptr };
     alignas(void*) std::byte m_compiledFramesStorage[compiledFrameIteratorCapacity];
 };

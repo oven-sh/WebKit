@@ -228,9 +228,9 @@ bool foldCallAnsweredByEngine(Walker& walker, const CallByOneRow& call)
     }
 
     std::optional<Effects> effects = effectsOfRowOnOperandsWithoutCode(walker, call);
-    if (!effects || !effects->alwaysCompletes() || !effects->writes.containsOnly(heapsWhoseWritesNobodySees | AbstractHeapSet { AbstractHeap::RegExpState }))
+    if (!effects || !effects->alwaysCompletes() || !effects->writes.containsOnly(unobservableWriteHeaps | AbstractHeapSet { AbstractHeap::RegExpState }))
         return false;
-    if (!effects->writes.containsOnly(heapsWhoseWritesNobodySees) && walker.facts().mayReadLegacyRegExpStatics())
+    if (!effects->writes.containsOnly(unobservableWriteHeaps) && walker.facts().mayReadLegacyRegExpStatics())
         return false;
     std::optional<InlineBuiltin> method = call.codeInLine;
     for (const BuiltinOverload& other : walker.program().builtins().overloadsOf(call.builtin)) {

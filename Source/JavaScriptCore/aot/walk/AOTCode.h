@@ -851,19 +851,19 @@ struct GroundsOfPosition {
     ValueID position;
     ValueID length;
     ValueID isBelow;
-    bool isBelowAnswersYes { true };
+    bool isBelowResult { true };
     ValueID isFromZeroUp;
     ValueID counter;
     ValueID start;
-    ValueID stepIsFromZeroUp;
-    ValueID lengthHoldsBound;
+    ValueID stepNonNegativeCheck;
+    ValueID limitWithinLengthCheck;
 };
 
 class PassedTest {
 public:
     struct Side {
         ValueID test;
-        bool answersYes { true };
+        bool testResult { true };
     };
     std::span<const Side> sides() const LIFETIME_BOUND { return std::span(m_sides).first(m_numberOfSides); }
     const std::optional<GroundsOfPosition>& groundsOfPosition() const LIFETIME_BOUND { return m_groundsOfPosition; }
@@ -881,11 +881,11 @@ private:
     friend class Walker;
     friend struct GroundsWrittenInTests;
     PassedTest() = default;
-    PassedTest(ValueID test, bool answersYes) { add({ test, answersYes }); }
+    PassedTest(ValueID test, bool testResult) { add({ test, testResult }); }
     void add(const Side& added)
     {
         for (const Side& side : sides()) {
-            if (side.test == added.test && side.answersYes == added.answersYes)
+            if (side.test == added.test && side.testResult == added.testResult)
                 return;
         }
         RELEASE_ASSERT(m_numberOfSides < m_sides.size());
@@ -968,12 +968,6 @@ struct LiveAtSuspension {
     uint32_t count { 0 };
 };
 
-struct ReleaseBehindLastRead {
-    BlockID block;
-    ValueID behind;
-    ValueID released;
-};
-
 class Code {
     WTF_MAKE_NONCOPYABLE(Code);
 public:
@@ -1024,13 +1018,13 @@ public:
     bool has(Mechanism mechanism, const Facts& facts) const { return facts.mechanisms().contains(mechanism) && !m_mechanismsWithheld.contains(mechanism); }
     const OpcodeSet& opcodesOfValues() const LIFETIME_BOUND { return m_opcodesOfValues; }
 
-    class AllEdgesInto {
+    class AllIncomingEdges {
     public:
-        void forEach(NOESCAPE const Invocable<void(const Edge&)> auto& functor) const { m_code.forEachEdgeIntoSoFar(m_block, functor); }
+        void forEach(NOESCAPE const Invocable<void(const Edge&)> auto& functor) const { m_code.forEachIncomingEdgeUnsealed(m_block, functor); }
 
     private:
         friend class Code;
-        AllEdgesInto(const Code& code, BlockID block)
+        AllIncomingEdges(const Code& code, BlockID block)
             : m_code(code)
             , m_block(block)
         {
@@ -1039,9 +1033,9 @@ public:
         const Code& m_code;
         BlockID m_block;
     };
-    AllEdgesInto seal(BlockID);
-    AllEdgesInto allEdgesIntoBlockOfFinishedCode(BlockID block) const { return { *this, block }; }
-    void forEachEdgeIntoSoFar(BlockID block, NOESCAPE const Invocable<void(const Edge&)> auto& functor) const
+    AllIncomingEdges seal(BlockID);
+    AllIncomingEdges allIncomingEdges(BlockID block) const { return { *this, block }; }
+    void forEachIncomingEdgeUnsealed(BlockID block, NOESCAPE const Invocable<void(const Edge&)> auto& functor) const
     {
         for (EdgeID edge = at(block).firstEdgeIn(); edge; edge = at(edge).nextInto())
             functor(at(edge));
@@ -1097,11 +1091,6 @@ public:
     ValueID parameterFedBy(ValueID id) const { return m_parametersFed[id.index()]; }
     std::span<const ValueID> liveAt(ValueID suspension) const LIFETIME_BOUND;
     std::span<const LiveAtSuspension> suspensions() const LIFETIME_BOUND { return m_suspensions.span(); }
-    std::span<const ReleaseBehindLastRead> releasesBehindLastReadsIn(BlockID id) const LIFETIME_BOUND
-    {
-        auto found = std::ranges::equal_range(m_releasesBehindLastReads.span(), id, { }, &ReleaseBehindLastRead::block);
-        return { found.begin(), found.end() };
-    }
 
     BlockID addBlock(BlockRole = BlockRole::Ordinary, BlockFrequency = BlockFrequency::Normal);
     BlockID addBlockBehindEdge(EdgeID, BlockFrequency, bool isInLoop);
@@ -1170,13 +1159,13 @@ public:
         m_cellsMadeForOneOperation.append(noted);
     }
     std::span<const CellsMadeForOneOperation> cellsMadeForOneOperation() const LIFETIME_BOUND { return m_cellsMadeForOneOperation.span(); }
-    void noteReadOfVariableThatStandsForNoValueOfText(ValueID read)
+    void recordSyntheticVariableRead(ValueID read)
     {
-        while (!m_readsOfVariablesThatStandForNoValueOfText.isEmpty() && m_readsOfVariablesThatStandForNoValueOfText.last().index() >= read.index())
-            m_readsOfVariablesThatStandForNoValueOfText.removeLast();
-        m_readsOfVariablesThatStandForNoValueOfText.append(read);
+        while (!m_syntheticVariableReads.isEmpty() && m_syntheticVariableReads.last().index() >= read.index())
+            m_syntheticVariableReads.removeLast();
+        m_syntheticVariableReads.append(read);
     }
-    std::span<const ValueID> readsOfVariablesThatStandForNoValueOfText() const LIFETIME_BOUND { return m_readsOfVariablesThatStandForNoValueOfText.span(); }
+    std::span<const ValueID> syntheticVariableReads() const LIFETIME_BOUND { return m_syntheticVariableReads.span(); }
     void noteValueThatFoldedArithmeticGives(ValueID given) { m_valuesThatFoldedArithmeticGives.append(given); }
     std::span<const ValueID> valuesThatFoldedArithmeticGives() const LIFETIME_BOUND { return m_valuesThatFoldedArithmeticGives.span(); }
     ValueID appendConversion(BlockID, Opcode, ValueID operand, Representation, TypeID proven, Origin);
@@ -1278,7 +1267,7 @@ private:
     Vector<InputOfHoleReadAsNaN> m_inputsOfHolesReadAsNaN;
     Vector<InputOfHoleReadAsNaN> m_readsAnsweredByHolesReadAsNaN;
     Vector<CellsMadeForOneOperation> m_cellsMadeForOneOperation;
-    Vector<ValueID> m_readsOfVariablesThatStandForNoValueOfText;
+    Vector<ValueID> m_syntheticVariableReads;
     Vector<ValueID> m_valuesThatFoldedArithmeticGives;
     Vector<PollWithFate> m_pollsWithFates;
     struct ChangeToOlderPart {
@@ -1348,7 +1337,6 @@ private:
     BitVector m_storesWhoseBarriersAreCountedOn;
     Vector<LiveAtSuspension> m_suspensions;
     Vector<ValueID> m_liveValues;
-    Vector<ReleaseBehindLastRead> m_releasesBehindLastReads;
 };
 
 struct CodeTextContext {

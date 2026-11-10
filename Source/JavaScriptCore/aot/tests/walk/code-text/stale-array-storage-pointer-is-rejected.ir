@@ -1,0 +1,20 @@
+# The pointer into the array's storage is read, the capacity is reserved, which may move the storage, and a read goes through the old pointer.
+# RUN: verify-code
+# CHECK: the storage of an array is written between the read of a pointer into it and an access through that pointer
+# -- code
+# code f0:Body {
+#   b0(v0: Array @Cell, v1: int[0, 100] @Int32, v2: number @Double, v3: anything @JSValue) entry=0:
+#     v4: opaque(ArrayStoragePointer) @RawWord = GetArrayStorage v0 traits=[mayTouchMemory]
+#     v5 @Void = ReserveArrayCapacity v0, v2 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v6: int[0, 4294967295] @Int64 = GetArrayLength v0 traits=[mayTouchMemory]
+#     v7: boolean @Boolean = IsElementPresent v0, v1, v4, v6 arrayStorage=Double [keyIsIntegral] traits=[mayTouchMemory]
+#     Return v3
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="asks" parameters=[{type=Array}, {type=i32}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32, v2: number, v3: anything):
+    Return v3
+}
+entry module=m0

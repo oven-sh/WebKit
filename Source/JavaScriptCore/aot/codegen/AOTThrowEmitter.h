@@ -27,9 +27,9 @@ public:
     void throwAt(const OperationContext&, const ThrowSite&, std::optional<Operand>);
     void requireOrThrow(const OperationContext&, Condition mustHold, const ThrowSite&, std::optional<Operand>);
     void throwError(const OperationContext&, ErrorKind, StringID message, std::optional<uint32_t> throwPosition);
-    void stopAtFalseProof(const OperationContext&, std::optional<Boxed> found, ProofSource);
-    void checkOrStopAtFalseProof(const OperationContext&, Condition holds, ProofSource);
-    void requireOrStopAtFalseProof(const OperationContext&, Condition holds, std::optional<Boxed> found, ProofSource);
+    void crashOnFalseProof(const OperationContext&, std::optional<Boxed> found, ProofSource, uint32_t expectedType = 0);
+    void checkOrCrash(const OperationContext&, Condition holds, ProofSource, uint32_t expectedType = 0);
+    void requireOrCrash(const OperationContext&, Condition holds, std::optional<Boxed> found, ProofSource, uint32_t expectedType = 0);
     void stopUnlessStubPasses(const OperationContext&, Boxed found, StubKey, uint32_t kinds, ProofSource, std::optional<uint32_t> mentionAboveKinds = std::nullopt, std::optional<uint32_t> numberInRegister = std::nullopt);
 
     void requireNotNullish(const OperationContext&, Operand, const Type&, NullishAccess, StringID name);

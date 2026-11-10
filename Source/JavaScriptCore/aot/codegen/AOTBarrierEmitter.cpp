@@ -110,7 +110,7 @@ bool BarrierEmitter::shouldEmitBarrier(const ValueContext& store, bool mayStoreC
 void BarrierEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, const Type& storedType)
 {
     if (!shouldEmitBarrier(store, storedType.hasCells() && !storesOnlyStringsOfVM(store.value()))) {
-        if (m_generator.ownerIsYoung(store.id()) && (AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition)))
+        if (m_generator.ownerIsYoung(store.id()) && (AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckBoundsInEmittersOnly)))
             stopIfCellIsOldAndNotRemembered(store, owner);
         return;
     }
@@ -121,7 +121,7 @@ void BarrierEmitter::barrierAfterStore(const ValueContext& store, CellPointer ow
 void BarrierEmitter::stopIfCellIsOldAndNotRemembered(const ValueContext& store, CellPointer owner)
 {
     LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, owner.value(), JSCell::cellStateOffset()));
-    emitter<ThrowEmitter>().requireOrStopAtFalseProof(store, Condition(m_out.notEqual(state, m_out.constInt32(static_cast<int32_t>(CellState::PossiblyBlack)))), std::nullopt, ProofSource::WhatIsRemembered);
+    emitter<ThrowEmitter>().requireOrCrash(store, Condition(m_out.notEqual(state, m_out.constInt32(static_cast<int32_t>(CellState::PossiblyBlack)))), std::nullopt, ProofSource::RememberedFact);
 }
 
 void BarrierEmitter::callBarrierStub(const OperationContext& context, StubKey key, std::initializer_list<LValue> operands, CallOptions options)
@@ -213,7 +213,7 @@ void BarrierEmitter::fenceAfterInitialization(const OperationContext& allocation
 
 void BarrierEmitter::fenceAfterLateStores()
 {
-    if (AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::FencesBehindLateStoresAreLeftOut)) [[unlikely]]
+    if (AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::SkipFencesAfterLateStores)) [[unlikely]]
         return;
     mutatorFence();
 }

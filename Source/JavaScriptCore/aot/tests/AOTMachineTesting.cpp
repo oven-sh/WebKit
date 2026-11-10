@@ -81,13 +81,13 @@ struct TestProcedure::Storage {
         case FailureKind::InnerPointerWithoutOwner:
             return TestProcedureStage::Scanned;
         case FailureKind::OutOfRegisters:
-        case FailureKind::RegisterLacksItsValue:
-        case FailureKind::SpillSlotLacksItsValue:
+        case FailureKind::WrongValueInRegister:
+        case FailureKind::WrongValueInSpillSlot:
         case FailureKind::FrameAddressAcrossSuspension:
         case FailureKind::NarrowReferenceWithoutPointer:
-        case FailureKind::ReleasedValueIsReadOnWayOn:
+        case FailureKind::UpperHalfIsNotClear:
             return TestProcedureStage::Allocated;
-        case FailureKind::NeedsFrameWhereNoneIsSetUp:
+        case FailureKind::MissingFrameSetup:
             return TestProcedureStage::Framed;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -288,7 +288,7 @@ bool TestProcedure::prepare()
     return !m_procedure->failure();
 }
 
-bool TestProcedure::compile(void* instance)
+bool TestProcedure::compile(void* instance, std::optional<uint32_t> branchReach)
 {
     if (!prepare())
         return false;
@@ -302,11 +302,15 @@ bool TestProcedure::compile(void* instance)
     storage.didGenerate = true;
 
     CCallHelpers jit;
-    RelocationRecorder recorder(jit, AssemblerPolicy::forImage(features));
+    AssemblerPolicy policy = AssemblerPolicy::forImage(features);
+    if (branchReach)
+        policy.branchReach = *branchReach;
+    RelocationRecorder recorder(jit, policy);
     readTagsFromInstance(jit);
     generate(procedure, jit, recorder);
     if (procedure.failure())
         return false;
+    recorder.routeTransfersThroughEnd();
     emitPadding(jit);
 
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::FTL);

@@ -77,10 +77,9 @@ struct ProgramFactTables {
 
     Vector<WorkerEntry> workerEntries;
     Vector<Witness> workerStartsWithoutName;
-    Vector<Witness> urlsThatStartWorkers;
-    Vector<RuntimeFunctionID> libraryFunctionsLacked;
-    Vector<ModuleID> libraryModulesLacked;
-    Vector<RuntimeModuleID> libraryModulesWithoutRecord;
+    Vector<Witness> workerURLs;
+    Vector<RuntimeFunctionID> missingLibraryFunctions;
+    Vector<ModuleID> missingLibraryModules;
     Vector<RegExpTextInSight> regExpTextsInSight;
     Vector<RegExpTextWorkedOut> regExpTextsWorkedOut;
     Vector<RegExpCallWithoutText> regExpCallsWithoutText;
@@ -195,7 +194,7 @@ public:
         LayoutsByNames layoutsByNames;
     };
     WhatMiddleAloneReads takeWhatMiddleAloneReads() { return { WTF::move(m_bodies), WTF::move(m_summaries), WTF::move(m_families), std::exchange(m_held, { }), std::exchange(m_layoutsByNames, { }) }; }
-    void freeListsOfSummariesNotKeptForWalk(const ParallelLoops& loops) { m_summaries->freeListsNotKeptForWalk(loops); }
+    void trimSummariesForWalk(const ParallelLoops& loops) { m_summaries->trimForWalk(loops); }
     const BodyIndexTable& bodies() const { return *m_bodies; }
     FunctionID functionThatCallEntersByBinding(const BodyIndex&, const BodyValue& call, ValueID* checkThatPasses = nullptr) const;
     bool testMentionsWhatIsOutOfReach(TypeReader, TypeID tested, NOESCAPE const ScopedLambda<bool(FunctionID)>& isInReach) const;
@@ -292,7 +291,7 @@ public:
     std::span<const RegExpTextWorkedOut> regExpTextsWorkedOut() const LIFETIME_BOUND { return m_tables.program.regExpTextsWorkedOut.span(); }
     std::span<const WorkerEntry> workerEntries() const LIFETIME_BOUND { return m_tables.program.workerEntries.span(); }
     const Vector<Witness>& workerStartsWithoutName() const { return m_tables.program.workerStartsWithoutName; }
-    std::span<const RuntimeFunctionID> libraryFunctionsLacked() const LIFETIME_BOUND { return m_tables.program.libraryFunctionsLacked.span(); }
+    std::span<const RuntimeFunctionID> missingLibraryFunctions() const LIFETIME_BOUND { return m_tables.program.missingLibraryFunctions.span(); }
 
 private:
     static Effects effectsSeenByCaller(Effects effects)

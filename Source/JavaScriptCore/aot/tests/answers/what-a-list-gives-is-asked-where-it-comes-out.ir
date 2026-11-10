@@ -4,20 +4,23 @@
 # print(read(0));
 # print(read(1));
 # print("went on");
-# WHAT A CONTAINER HOLDS HAS NO DOOR: native code stores in lists, Maps and Sets, so no list of the roads into one can be made. What Link says of it is asked of each value where it comes out: in every build, and a misfit stops by name.
-# THE RED CONTROL. The lie, testing=UnseenCodeAnswersUndefined (false-proofs-are-stopped-where-the-value-comes-in.ir): Link takes what the shell's `id` gives for undefined,
-# so all that it sees go into the container is an object of one layout, and undefined. The read of `kept` off the text took a word out of the text's cell for a slot: SIGSEGV.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# The contents of a container have no entry check. Native code stores into arrays, Maps and Sets, so the paths into a container cannot be enumerated.
+# What Link says about the contents is checked on each value where it is read, in every build, and a mismatch crashes with a named error.
+# This is the failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined (see false-proofs-are-stopped-where-the-value-comes-in.ir): Link assumes that the shell's `id` returns undefined.
+# So all that it sees stored into the container is an object of one layout, and undefined. The read of `kept` from the string used a word of the string's cell as a slot: SIGSEGV.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f1 mechanisms=all
 # FORM: CheckProof {{*}} source=Contents
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 1
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found string in an element
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: 1
-# CALLS-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found string in an element
 # CALLS-NOT: went on
 # CALLS: crashed with
 

@@ -10,7 +10,9 @@
 
 #include "AOTArrayStorageForms.h"
 #include "AOTBarrierEmitter.h"
+#include "AOTBuildContext.h"
 #include "AOTBuiltinTypes.h"
+#include "AOTByteLiterals.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTElementEmitterAllocation.h"
@@ -115,10 +117,24 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArrayWithLength(const InlineCal
     finish(call, CellPointer(view.first));
 }
 
+void ArrayBufferViewBuiltinEmitter::generateByteLiteral(const InlineCall& call)
+{
+    auto stringOf = [&](ValueID argument) {
+        const Operation& definition = operationAt(definitionOf(argument));
+        RELEASE_ASSERT(definition.opcode == Opcode::String);
+        return definition.string();
+    };
+    auto kind = call.parameter<ByteLiteralKind>(0);
+    ValueID encoding = call.argumentOrNull(1);
+    std::optional<Vector<uint8_t>> bytes = encodeByteLiteral(types(), build().stringEncoders(), kind, stringOf(call.argument(0)), encoding ? stringOf(encoding) : StringID());
+    RELEASE_ASSERT(bytes);
+    Pointer address(bytes->isEmpty() ? m_out.constInt64(0) : m_out.relocatable(SymbolSpace::Constant, m_out.addConstantData(bytes->span(), ConstantKind::ByteLiteral)));
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::CopyByteLiteral, { address, word32(static_cast<uint32_t>(bytes->size())), word32(kind == ByteLiteralKind::BufferFrom) }, { .calledBuiltin = functionOf(call.overload()) }));
+}
 CellPointer ArrayBufferViewBuiltinEmitter::askedAnewWherePositionsAreTested(CellPointer view)
 {
     ElementAccessEmitter& accesses = emitter<ElementAccessEmitter>();
-    return accesses.testsEveryPosition() ? accesses.askedAnew(view) : view;
+    return accesses.checksBounds() ? accesses.askedAnew(view) : view;
 }
 
 void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call)

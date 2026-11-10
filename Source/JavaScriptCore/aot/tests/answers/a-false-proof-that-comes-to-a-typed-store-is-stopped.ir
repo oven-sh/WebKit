@@ -21,23 +21,30 @@
 # if (which === 3) throughASlot(holder, new Carrier(), new Other());
 # print(read(holder));
 # print("went on");
-# A typed store of compiled code passes no door of the run time. Where the unit itself does not show that the value lies within what the slot is held to, the value is asked in front of the store, in every build, and the failing side stops by name.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so an Other comes to a slot that is held to `Leaf | undefined` through a result, a variable and a slot of another object.
-# Without the check each of the three prints 14 and goes on. Nothing is copied in line: in a copy the walk sees the call itself, knows nothing of what it gives, and the store tests.
-# As a user builds, the first two say "what a field holds is"; the third is stopped one store earlier, at the door of the carrier's own slot. Where a run adds testing=CheckProofsAtRunTime the check of the place that the value comes out of stops it first: "the result of a call is", "what a variable holds is".
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# A typed store in compiled code passes no entry check of the runtime.
+# Where the unit itself does not show that the value is within the type that the slot is restricted to, the value is checked before the store.
+# That happens in every build, and the failing side crashes with a named error.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So an Other reaches a slot that is restricted to `Leaf | undefined` through a result, a variable and a slot of another object.
+# Without the check each of the three cases prints 14 and continues. Nothing is inlined: in an inlined copy the walk sees the call itself, knows nothing about its result, and the store tests the value.
+# In a user's build the first two cases report "what a field holds is". The third crashes one store earlier, at the entry check of the carrier's own slot.
+# Where a run adds testing=CheckProofsAtRunTime, the check at the place that the value is read from crashes first: "the result of a call is", "what a variable holds is".
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(TRUE): run-in-shell mechanisms=-Inlining globalThis.which = 0;
 # TRUE: went on
 # RUN(RESULT): run-in-shell mechanisms=-Inlining globalThis.which = 1;
-# RESULT: AOT: f{{*}} at {{*}}: {{*}} not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# RESULT: bun: internal AOT error: type check failed
+# RESULT-NEXT: found object in
 # RESULT-NOT: went on
 # RESULT: crashed with
 # RUN(VARIABLE): run-in-shell mechanisms=-Inlining globalThis.which = 2;
-# VARIABLE: AOT: f{{*}} at {{*}}: {{*}} not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# VARIABLE: bun: internal AOT error: type check failed
+# VARIABLE-NEXT: found object in
 # VARIABLE-NOT: went on
 # VARIABLE: crashed with
 # RUN(SLOT): run-in-shell mechanisms=-Inlining globalThis.which = 3;
-# SLOT: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that it never happens, and compiled code reads such objects without a look. This is a bug in Bun.
+# SLOT: bun: internal AOT error: object mutation check failed
+# SLOT-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that this never happens
 # SLOT-NOT: went on
 # SLOT: crashed with
 

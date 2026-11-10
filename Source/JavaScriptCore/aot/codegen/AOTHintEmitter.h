@@ -16,19 +16,17 @@ public:
     explicit HintEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateLoopHint(const ValueContext&);
-    void generateReleaseHint(const ValueContext&);
-    void release(ValueID);
-    void generateEndLifeOfCell(const ValueContext&);
+    void generateEndCellLifetime(const ValueContext&);
     void generateGuessFailsUnasked(const ValueContext&);
-    void generateBeginsWhatMayRunAgain(const ValueContext&);
-    void generateTurnBeginsAgain(const ValueContext&);
-    void generateCopyLeavesForCall(const ValueContext&);
-    void generateTurnWasQuiet(const ValueContext&);
+    void generateBeginEffectsCheck(const ValueContext&);
+    void generateCheckIterationRestart(const ValueContext&);
+    void generateCheckInlineeFallback(const ValueContext&);
+    void generateCheckReloadBypass(const ValueContext&);
     void generateAskObjectAgain(const ValueContext&);
-    bool endsLivesAtRunTime();
-    void endLifeOf(const OperationContext&, ValueID cell);
+    bool shouldEmitLifetimeEnds();
+    void emitLifetimeEnd(const OperationContext&, ValueID cell);
     void noteThatCellIsLent(const ValueContext& made, CellPointer);
-    void stopWhereLifeHasEnded(const OperationContext&, CellPointer);
+    void crashIfLifetimeEnded(const OperationContext&, CellPointer);
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:

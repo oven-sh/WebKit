@@ -189,7 +189,7 @@ struct SummaryCall {
     bool passesOnGatheredArguments : 1 { false };
     bool expectsCalleeItself : 1 { false };
     bool isMadeByHost : 1 { false };
-    bool handsOverLiteral : 1 { false };
+    bool passesLiteral : 1 { false };
     uint16_t lengthOfWrittenList : 13 { 0 };
     FunctionID function;
     BuiltinID builtin;
@@ -429,7 +429,6 @@ struct SummaryWrittenListOfVariable {
 
 struct SummaryWithoutLists {
     uint64_t entryParametersCalledInLoops { 0 };
-    uint64_t entryParametersLetGo { 0 };
     uint32_t numberOfOperations { 0 };
     uint32_t numberOfOperationsThatOnlyTurnTruthRound { 0 };
     uint32_t weightOfOperations { 0 };
@@ -591,10 +590,10 @@ struct ThinSummary : SummaryWithoutLists {
             std::ranges::destroy(scopesStoredFirst.mutableSpan());
             fastFree(nodes.m_storage.blockKeptForWalk);
         }
-        freeListsNotKeptForWalk();
+        trimForWalk();
     }
 
-    void freeListsNotKeptForWalk()
+    void trimForWalk()
     {
         SummaryStorage& storage = nodes.m_storage;
         if (!storage.listsInRecord[0])
@@ -787,11 +786,11 @@ public:
     size_t size() const { return m_summaries.size(); }
     void append(ThinSummary&& summary) { m_summaries.append(WTF::move(summary)); }
 
-    void freeListsNotKeptForWalk(const ParallelLoops& loops)
+    void trimForWalk(const ParallelLoops& loops)
     {
         forEachRangeOfIndicesInParallel(loops, m_summaries.size(), [&](size_t first, size_t end) {
             for (ThinSummary& summary : m_summaries.mutableSpan().subspan(first, end - first))
-                summary.freeListsNotKeptForWalk();
+                summary.trimForWalk();
         });
     }
 
@@ -815,6 +814,8 @@ public:
         return found != m_makersAboveCopiesOfMembers.end() && found->closure == closure ? found->maker : FunctionID();
     }
     void setMakersAboveCopiesOfMembers(Vector<MakerOfClosures>&& makers) { m_makersAboveCopiesOfMembers = WTF::move(makers); }
+    PropertyKeyID symbolHeldBy(VariableID variable) const { return variable.index() < m_symbolsOfVariables.size() ? m_symbolsOfVariables[variable.index()] : PropertyKeyID(); }
+    void setSymbolsOfVariables(Vector<PropertyKeyID>&& symbols) { m_symbolsOfVariables = WTF::move(symbols); }
 
 private:
     LargeList<ThinSummary> m_summaries;
@@ -824,6 +825,7 @@ private:
     uint64_t m_numberOfValuesScanned { 0 };
     Vector<FunctionID> m_functionsThatCopyMembers;
     Vector<MakerOfClosures> m_makersAboveCopiesOfMembers;
+    Vector<PropertyKeyID> m_symbolsOfVariables;
 };
 
 ThinSummaries scanBodies(const Program&, Diagnostics&, const ParallelLoops&, Mechanisms = allMechanisms);

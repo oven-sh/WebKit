@@ -1,5 +1,5 @@
 # main.mjs: import * as all from "./barrel.mjs"; all.helper(handed) . barrel.mjs: export * from "./lib.cjs" . lib.cjs: exports.helper = ..; exports.spare = ..
-# The front end lists on the face of the file every name that the text asks through the barrel. The namespace of the barrel does not list `helper`; its star goes onto that face, so the read gives what the face's variable holds.
+# The front end lists on the facade of the file every name that the text asks through the barrel. The namespace of the barrel does not list `helper`; its star goes onto that facade, so the read gives what the facade's variable holds.
 # The star binds like an import: the exports of the file stay in sight, and `spare`, which nobody asks for, is reached by nobody.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions modules lookups mechanisms=all
@@ -8,10 +8,10 @@
 layout L0 module=m0 fields=[{key="helper" declared={type=anything}}, {key="spare" declared={type=anything}}] ownFieldCount=2
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="helper" module=m1 declared={type=anything|absent}
-module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
-module m1 path="#1" displayPath="lib.cjs" flags=[KeepsError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}] syntheticExports=[{name="helper" variable=g1 isKnownMember=true}]
-module m2 path="/barrel.mjs" displayPath="barrel.mjs" flags=[KeepsError, IsImportedAsNamespace] body=f4 requests=[{target=m1 isDynamicStarExport=true completes=true}]
-module m3 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f5 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true}]
+module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="#1" displayPath="lib.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}] syntheticExports=[{name="helper" variable=g1 isKnownMember=true}]
+module m2 path="/barrel.mjs" displayPath="barrel.mjs" flags=[CachesEvaluationError, IsImportedAsNamespace] body=f4 requests=[{target=m1 isDynamicStarExport=true completes=true}]
+module m3 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f5 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true}]
 function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = NewObject layout=L0
@@ -34,12 +34,12 @@ function f1 module=m0 kind=Module flags=[IsHiddenInStackTraces] thisType={type=a
     v1 = Undefined
     Return v1
 }
-function f2 name="helper" module=m0 text={start=17 end=59} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+function f2 name="helper" module=m0 sourceRange={start=17 end=59} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: undefined|null|function):
     v1 = Call v0 calleeName="given"
     Return v1
 }
-function f3 name="spare" module=m0 text={start=77 end=107} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f3 name="spare" module=m0 sourceRange={start=77 end=107} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=3
     Return v0
@@ -62,14 +62,14 @@ function f5 module=m3 kind=Module thisType={type=anything} results=[{type=anythi
     v8 = Undefined
     Return v8
 }
-function f6 name="handed" module=m3 text={start=37 end=68} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f6 name="handed" module=m3 sourceRange={start=37 end=68} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
     Return v0
 }
-function f7 name="other" module=m3 text={start=69 end=99} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f7 name="other" module=m3 sourceRange={start=69 end=99} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
-    v0 = NewRuntimeError runtimeError=LeftOutOfExecutable name="other"
+    v0 = NewRuntimeError runtimeError=OmittedFromExecutable name="other"
     Throw v0
 }
 entry module=m3 hostReads=[{exportName="default" builtin=ObjectKeys namesLookedFor=["fetch", "app"]}, {exportName="then"}]

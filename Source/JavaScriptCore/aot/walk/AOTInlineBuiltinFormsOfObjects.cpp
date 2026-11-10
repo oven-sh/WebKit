@@ -164,7 +164,7 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinQuery& query)
     case InlineBuiltin::SetPrototypeOf:
         return rules.forSetPrototypeOf();
     case InlineBuiltin::ObjectAssign:
-        return query.numberOfArguments() == 2 ? rules.formWhereInlineCodeHandlesSomeObjects(query.argument(0)) : rules.call();
+        return query.numberOfArguments() >= 2 ? rules.formWhereInlineCodeHandlesSomeObjects(query.argument(0)) : rules.call();
     case InlineBuiltin::ObjectIs:
         return rules.forObjectIs();
     case InlineBuiltin::ReturnThis:

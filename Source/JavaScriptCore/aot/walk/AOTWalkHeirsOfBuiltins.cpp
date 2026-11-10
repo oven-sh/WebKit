@@ -61,7 +61,7 @@ Reference buildLookAtStructureOfClass(Walker& walker, Reference value, LayoutID 
     look.setLayout(layout);
     Reference built = walker.build(WTF::move(look));
     if (built)
-        walker.count(StatisticID::HeirsTestedByTheirStructure);
+        walker.count(StatisticID::BuiltinSubclassesCheckedByStructure);
     return built;
 }
 
@@ -78,7 +78,7 @@ Reference buildNameBehindLookAtStructureOfClass(Walker& walker, Reference value,
     Reference name = walker.build(WTF::move(proof));
     if (!name || !name.isValue() || walker.isUnreachable())
         return name;
-    ValueID root = rootOfCellInSweptCode(walker.code(), name.id());
+    ValueID root = underlyingCellOf(walker.code(), name.id());
     if (!walker.state().isFresh(walker.code().isConstant(root) ? Reference::constant(root) : Reference::value(root)))
         noteKnown(walker, KnownNote::StructureOfClassIsSeen, { }, name, layout.index(), LocationMasks(heapsUnderStructureInHeirsOfBuiltins), name.bits());
     return name;
@@ -102,7 +102,7 @@ void checkStructureOfClassThatIsRemembered(Walker& walker, Reference name, Layou
     look.setLayout(layout);
     Reference holds = walker.buildTestOfCheck(WTF::move(look));
     if (holds && holds.isValue() && !walker.isUnreachable())
-        walker.checkProof(holds, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::WhatIsRemembered, origin);
+        walker.checkProof(holds, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::RememberedFact, origin);
 }
 
 void nameFieldInEffectsOfAccessToHeir(const Program& program, Opcode opcode, PropertyKeyID key, Effects& effects)
@@ -146,7 +146,7 @@ Reference buildReadOfFieldOfHeir(Walker& walker, Reference name, LayoutID layout
 Reference buildStoreIntoFieldOfHeir(Walker& walker, Reference name, Reference stored, LayoutID layout, uint32_t field, Origin origin)
 {
     origin.isTailCall = false;
-    Reference heldInFrontOfStore = walker.storeIntoElementCanBePutBack() ? buildReadOfFieldOfHeir(walker, name, layout, field, origin) : Reference();
+    Reference valueBeforeStore = walker.canRecordUndoableStore() ? buildReadOfFieldOfHeir(walker, name, layout, field, origin) : Reference();
     if (walker.hasFailed() || walker.isUnreachable())
         return { };
     Draft store(Opcode::PutPropertyOfHeir, origin);
@@ -154,10 +154,10 @@ Reference buildStoreIntoFieldOfHeir(Walker& walker, Reference name, Reference st
     store.setValueOperand(stored);
     store.setLayout(layout);
     store.setField(field);
-    if (heldInFrontOfStore && walker.storeIntoElementCanBePutBack())
-        walker.noteStoreIntoFieldOfHeirToPutBack(name, layout, field, heldInFrontOfStore);
+    if (valueBeforeStore && walker.canRecordUndoableStore())
+        walker.recordUndoableFieldStore(name, layout, field, valueBeforeStore);
     Reference built = walker.build(WTF::move(store));
-    walker.takeStoreBeingBuiltToPutBack();
+    walker.takePendingUndoableStore();
     if (built && !walker.isUnreachable())
         noteKnown(walker, KnownNote::ValueOfFieldOfHeir, { }, name, field, heapsUnderValueOfFieldInHeirsOfBuiltins(walker.program(), layout, field), stored.bits());
     return built;

@@ -151,8 +151,6 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
             jit.move(CCallHelpers::TrustedImm64(*word), siteWordGPR);
         else
             jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(*word)), siteWordGPR);
-        if (FrameMapEmitter::savesDeadPreservedRegister(params))
-            jit.move(CCallHelpers::TrustedImm32(0), SavedFrame::preservedRegister);
         if (params.value()->leavesMoveOutOfResultToCallee())
             records->stubCalls.enterNextStubInFront(params.value()->registerThatCalleeFillsOutOfResult(), params.value()->registerThatCalleeMovesIntoResult());
         records->stubCalls.call(jit, key, OptionalIndex { site });
@@ -563,7 +561,7 @@ bool SavedFrameEmitter::choosesWordFor(Representation representation, bool isRea
 
 bool SavedFrameEmitter::layOutHeapFrame()
 {
-    if (!m_facts.mechanisms().contains(Mechanism::TypedOperations) || m_code.opcodesOfValues().contains(Opcode::ReleaseHint))
+    if (!m_facts.mechanisms().contains(Mechanism::TypedOperations))
         return false;
     if (kindOfFunction() != CoroutineKind::AsyncFunction) {
         if (conventions().entryConventionOf(m_unit) != EntryConvention::Direct || m_code.suspensions().size() >= fusedCallEntry)

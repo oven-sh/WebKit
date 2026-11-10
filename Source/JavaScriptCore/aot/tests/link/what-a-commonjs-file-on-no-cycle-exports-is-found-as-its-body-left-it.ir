@@ -16,10 +16,10 @@
 # RING: ElemGet
 
 layout L0 module=m0 fields=[{key=symbol("a")@m0:0 declared={type=anything} flags=[IsNeverWritten]}, {key=symbol("b")@m2:1 declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated]
-module m0 path="symbols.cjs" displayPath="symbols.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0
-module m1 path="early.cjs" displayPath="early.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require}]
-module m2 path="ring.cjs" displayPath="ring.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m1 kind=Require}]
-module m3 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 requests=[{target=m0 kind=Require completes=true}, {target=m2 kind=Require}]
+module m0 path="symbols.cjs" displayPath="symbols.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="early.cjs" displayPath="early.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require}]
+module m2 path="ring.cjs" displayPath="ring.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m1 kind=Require}]
+module m3 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3 requests=[{target=m0 kind=Require completes=true}, {target=m2 kind=Require}]
 entry module=m3
 variable g0 name="kA" module=m3 declared={type=anything|absent} flags=[IsImmutable]
 variable g1 name="kB" module=m3 declared={type=anything|absent} flags=[IsImmutable]

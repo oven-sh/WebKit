@@ -51,6 +51,7 @@
 #include "PropertyNameArray.h"
 #include "PropertyRun.h"
 #include "ProxyObject.h"
+#include "ReflectObject.h"
 #include "RegExpObject.h"
 #include "ResourceExhaustion.h"
 #include "StringObject.h"
@@ -4553,6 +4554,15 @@ static bool onlyRepeatsOrRestrictsProperty(JSGlobalObject* globalObject, const P
     return !descriptor.value() || sameValue(globalObject, descriptor.value(), current.value());
 }
 
+// True if reflection reports a locked property differently from the structure.
+static bool repeatsReportedDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
+{
+    if (!descriptor.isDataDescriptor() || !descriptor.value() || !descriptor.writablePresent() || !descriptor.enumerablePresent() || !descriptor.configurablePresent())
+        return false;
+    PropertyDescriptor reported = current;
+    return reportIfLocked(object, propertyName, reported) && reported.equalTo(globalObject, descriptor);
+}
+
 // https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor
 bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, bool isExtensible,
     const PropertyDescriptor& descriptor, bool isCurrentDefined, const PropertyDescriptor& current, bool throwException)
@@ -4601,6 +4611,10 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
         if (isUnchanged)
+            return true;
+        bool repeatsReported = repeatsReportedDescriptor(globalObject, object, propertyName, current, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (repeatsReported)
             return true;
         bool onlyRestricts = onlyRepeatsOrRestrictsProperty(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);

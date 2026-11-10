@@ -2,7 +2,7 @@
 # What only keeps a text pays for its characters: sixteen to the operation.
 # export function gone() { return new RegExp("x".toUpperCase() + new Set(doubled("ab", 17)).size); }   (doubled(text, k): text = text + text, k times)
 # export function kept() { const list = []; list.push(doubled("ab", 17)); return new RegExp("y".toUpperCase() + list.length); }
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /X2/
 # CHECK: text /Y1/

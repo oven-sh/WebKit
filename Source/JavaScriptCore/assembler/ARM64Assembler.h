@@ -204,6 +204,43 @@ static constexpr bool isZr(RegisterID reg) { return reg == zr; }
 
 } // namespace ARM64Registers
 
+// A branch that cannot reach its target goes through branch islands, which lie in pools within the code.
+struct ARM64BranchIslands {
+    struct Pool {
+        int32_t emittedOffset { 0 }; // In the assembler's buffer. The instruction before it is an unconditional branch.
+        uint32_t numberOfIslands { 0 };
+        int32_t linkedOffset { 0 };
+    };
+    struct Island {
+        uint32_t pool;
+        uint32_t index;
+    };
+    struct FarBranch {
+        uint32_t record; // An index into the sorted jumps to link.
+        uint32_t firstIsland;
+    };
+
+    size_t size() const { return islands.size() * sizeof(uint32_t); }
+
+    std::span<const Island> islandsOf(size_t farBranch) const
+    {
+        size_t end = farBranch + 1 < farBranches.size() ? farBranches[farBranch + 1].firstIsland : islands.size();
+        return islands.span().subspan(farBranches[farBranch].firstIsland, end - farBranches[farBranch].firstIsland);
+    }
+
+    size_t sizeOfPoolsBetween(size_t firstPool, int64_t emittedEnd) const
+    {
+        size_t size = 0;
+        for (size_t index = firstPool; index < pools.size() && pools[index].emittedOffset <= emittedEnd; ++index)
+            size += pools[index].numberOfIslands * sizeof(uint32_t);
+        return size;
+    }
+
+    Vector<Pool> pools;
+    Vector<Island> islands;
+    Vector<FarBranch> farBranches;
+};
+
 class ARM64Assembler {
 public:
     static constexpr size_t instructionSize = sizeof(unsigned);
@@ -4258,6 +4295,76 @@ public:
         return linkType;
     }
 
+    void linkNearCall(AssemblerLabel from, AssemblerLabel to)
+    {
+        ASSERT(to.isSet());
+        ASSERT(from.isSet());
+        m_jumpsToLink.append(LinkRecord(this, from.offset(), to.offset(), ThunkOrNot::NotThunk));
+    }
+
+    ARM64BranchIslands* branchIslands() const { return m_branchIslands; }
+    void setBranchIslands(ARM64BranchIslands* islands) { m_branchIslands = islands; }
+
+    // No hop spans more than half the reach. The other half is room for the pools of the linked code.
+    ARM64BranchIslands planBranchIslands(int64_t reach)
+    {
+        ARM64BranchIslands plan;
+        const int64_t longestHop = reach / 2;
+        const int64_t spacing = longestHop / 2;
+        auto& jumps = jumpsToLink();
+        int64_t lastPool = 0;
+        for (const LinkRecord& jump : jumps) {
+            bool isUnconditionalJump = (jump.type() == JumpNoCondition || jump.type() == JumpNoConditionFixedSize) && jump.branchType() == BranchType_JMP;
+            int64_t offset = jump.from() + static_cast<int64_t>(sizeof(int32_t));
+            if (!isUnconditionalJump || offset - lastPool < spacing)
+                continue;
+            plan.pools.append(ARM64BranchIslands::Pool { static_cast<int32_t>(offset) });
+            lastPool = offset;
+        }
+
+        auto offsetOf = [](const ARM64BranchIslands::Pool& pool) {
+            return static_cast<int64_t>(pool.emittedOffset);
+        };
+        for (unsigned record = 0; record < jumps.size(); ++record) {
+            const LinkRecord& jump = jumps[record];
+            if (jump.isThunk())
+                continue;
+            const int64_t target = jump.to(this);
+            int64_t position = jump.from();
+            const uint32_t firstIsland = plan.islands.size();
+            while (std::abs(target - position) > longestHop) {
+                size_t pool;
+                if (target > position) {
+                    pool = std::ranges::upper_bound(plan.pools, position + longestHop, { }, offsetOf) - plan.pools.begin();
+                    if (pool && plan.pools[pool - 1].emittedOffset > position)
+                        --pool;
+                    else if (pool == plan.pools.size() || plan.pools[pool].emittedOffset >= target)
+                        break;
+                } else {
+                    pool = std::ranges::lower_bound(plan.pools, position - longestHop, { }, offsetOf) - plan.pools.begin();
+                    if (pool == plan.pools.size() || plan.pools[pool].emittedOffset >= position) {
+                        if (!pool || plan.pools[pool - 1].emittedOffset <= target)
+                            break;
+                        --pool;
+                    }
+                }
+                plan.islands.append(ARM64BranchIslands::Island { static_cast<uint32_t>(pool), plan.pools[pool].numberOfIslands++ });
+                position = plan.pools[pool].emittedOffset;
+            }
+            if (plan.islands.size() > firstIsland)
+                plan.farBranches.append(ARM64BranchIslands::FarBranch { record, firstIsland });
+        }
+        if (plan.islands.isEmpty())
+            plan.pools.clear();
+        return plan;
+    }
+
+    template<RepatchingInfo repatch>
+    static void linkBranchIsland(uint8_t* island, const uint8_t* islandInstruction, uint8_t* to)
+    {
+        linkJumpOrCall<BranchType_JMP, repatch>(reinterpret_cast<int*>(island), reinterpret_cast<const int*>(islandInstruction), to);
+    }
+
     Vector<LinkRecord, 0, UnsafeVectorOverflow>& jumpsToLink()
     {
         std::ranges::sort(m_jumpsToLink, { }, &LinkRecord::from);
@@ -5128,6 +5235,7 @@ protected:
     }
 
     Vector<LinkRecord, 0, UnsafeVectorOverflow> m_jumpsToLink;
+    ARM64BranchIslands* m_branchIslands { nullptr };
     int m_indexOfLastWatchpoint;
     int m_indexOfTailOfLastWatchpoint;
     AssemblerBuffer m_buffer;

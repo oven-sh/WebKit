@@ -66,7 +66,7 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     Branch v17 -> taken b7(), notTaken b8()
   b7():
     v18 = ElemGet v1, v11
-    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
     v20 = PropGet v19 key="n"
     v21 = Add v14, v20
     v22 = Increment v15
@@ -109,7 +109,7 @@ function f2 name="stores" module=m0 flags=[IsChecked, HasExplicitName] length=2 
     Branch v18 -> taken b7(), notTaken b8()
   b7():
     v19 = ElemGet v2, v12
-    v20 = Convert v19 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v20 = Convert v19 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
     v21 = PropGet v20 key="n"
     v22 = Add v15, v21
     ElemSet v2, v12, v1
@@ -153,7 +153,7 @@ function f3 name="shortens" module=m0 flags=[IsChecked, HasExplicitName] length=
     Branch v17 -> taken b7(), notTaken b8()
   b7():
     v18 = ElemGet v1, v11
-    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
     v20 = PropGet v19 key="n"
     v21 = Add v14, v20
     v22 = PropGet v1 key="pop"
@@ -198,7 +198,7 @@ function f4 name="rowOfTurn" module=m0 flags=[IsChecked, HasExplicitName] length
     Branch v17 -> taken b7(), notTaken b8()
   b7():
     v18 = ElemGet v1, v15
-    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
     v20 = PropGet v19 key="n"
     v21 = Add v14, v20
     v22 = Increment v15
@@ -243,7 +243,7 @@ function f5 name="arm" module=m0 flags=[IsChecked, HasExplicitName] length=2 thi
     Branch v1 -> taken b8(), notTaken b9(v15)
   b8():
     v19 = ElemGet v2, v12
-    v20 = Convert v19 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v20 = Convert v19 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
     v21 = PropGet v20 key="n"
     v22 = Add v15, v21
     Jump -> next b9(v22)

@@ -233,12 +233,12 @@ static LinkType typeOfPrototypesInLinkLayouts(FamilyID family)
 static LinkType typeOfUnseenObjectsInLinkLayouts()
 {
     LinkType type;
-    type.holdsUnseen = true;
+    type.hasUnknownObjects = true;
     return type;
 }
 
 template<typename Functor>
-static void forEachLayoutNamedInLinkLayouts(const LinkFlow& flow, const LinkType& type, const Functor& functor)
+static void forEachLayoutInType(const LinkFlow& flow, const LinkType& type, const Functor& functor)
 {
     switch (type.objects) {
     case LinkType::Objects::None:
@@ -318,7 +318,7 @@ static bool namesBuiltinAloneInLinkLayouts(const LinkType& type)
     LinkType beside = type;
     beside.builtin = { };
     beside.primitives = 0;
-    return type.builtin && beside.isNothing();
+    return type.builtin && beside.isNever();
 }
 
 using NodesStoredInLinkLayouts = Vector<FlowNodeID, SetsOfLayoutsInLinkFlow::mostMembers>;
@@ -363,7 +363,7 @@ static void addChangesInLinkLayouts(LinkFlow& flow, LayoutID layout, OptionSet<L
 
 static void addChangesToLayoutsNamedInLinkLayouts(LinkFlow& flow, const LinkType& type, OptionSet<LayoutChange> changes)
 {
-    forEachLayoutNamedInLinkLayouts(flow, type, [&](LayoutID layout) {
+    forEachLayoutInType(flow, type, [&](LayoutID layout) {
         addChangesInLinkLayouts(flow, layout, changes);
     });
 }
@@ -468,7 +468,7 @@ static bool layKnownAccessorInLinkLayouts(LinkFlow& flow, const ObservedChangeIn
     if (field ? !fieldAt(program, *field).form.isEmpty() : !change.descriptorIsInSight)
         return false;
     bool namesNothingElse = change.subject == objectsOfLayout;
-    if (change.other.isNothing())
+    if (change.other.isNever())
         return namesNothingElse;
     if (change.other.functions != LinkType::Functions::Closure)
         return false;
@@ -484,7 +484,7 @@ static bool layKnownAccessorInLinkLayouts(LinkFlow& flow, const ObservedChangeIn
 
     flow.noteAccessorLaid(layout, field ? AccessorLaidInField { *field, id, isGetter, { } } : AccessorLaidInField { { layout, 0 }, id, isGetter, change.key });
     FlowNodeID held = field ? flow.field(*field) : flow.appendedField(layout, change.key);
-    if (!change.fieldIsAsked && flow.typeAt(held).isNothing()) {
+    if (!change.fieldIsAsked && flow.typeAt(held).isNever()) {
         if (flow.copiesObservedIn(change.function).accessorsThatWait.add(static_cast<uint64_t>(change.function.index()) << 32 | change.record).isNewEntry)
             flow.observe(held, FlowObserver { FlowObserver::Kind::FieldOfAccessorLaid, change.function, change.record });
         return namesNothingElse;
@@ -544,7 +544,7 @@ static bool handObjectToHalvesInSightInLinkLayouts(LinkFlow& flow, const Observe
             continue;
         LinkType held = flow.typeAt(half);
         held.primitives = 0;
-        if (held.isNothing())
+        if (held.isNever())
             continue;
         if (held.functions != LinkType::Functions::Closure || held != typeOfClosuresInLinkLayouts(held.function))
             return false;
@@ -571,7 +571,7 @@ static bool halvesInSightTakeNoReceiverInLinkLayouts(const LinkFlow& flow, const
             continue;
         LinkType held = flow.typeAt(half);
         held.primitives = 0;
-        if (held.isNothing())
+        if (held.isNever())
             continue;
         if (held.functions != LinkType::Functions::Closure || held != typeOfClosuresInLinkLayouts(held.function))
             return false;
@@ -602,7 +602,7 @@ static bool namesOnlyPlainClosuresMadeWithInLinkLayouts(const LinkFlow& flow, co
 {
     if (!key || (key != flow.program.keyOf(BuiltinNames::name) && key != flow.program.keyOf(BuiltinNames::length)))
         return false;
-    LinkType others = subject.asSeen();
+    LinkType others = subject.directPart();
     others.primitives = 0;
     bool areMadeWithName = false;
     if (subject.functions == LinkType::Functions::Closure)
@@ -611,7 +611,7 @@ static bool namesOnlyPlainClosuresMadeWithInLinkLayouts(const LinkFlow& flow, co
         areMadeWithName = subject.functions == LinkType::Functions::Set || subject.functions == LinkType::Functions::Lost;
     others.functions = LinkType::Functions::None;
     others.function = { };
-    return areMadeWithName && !subject.holdsUnseen && others.isNothing();
+    return areMadeWithName && !subject.hasUnknownObjects && others.isNever();
 }
 
 static void expectValueOfDescriptorUnderNameInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
@@ -627,14 +627,14 @@ static void expectValueOfDescriptorUnderNameInLinkLayouts(LinkFlow& flow, const 
     else if (change.other.objects == LinkType::Objects::Lost)
         held.append(flow.fieldReadThroughLost(change.other.layout, value));
     else {
-        forEachLayoutNamedInLinkLayouts(flow, change.other, [&](LayoutID descriptor) {
+        forEachLayoutInType(flow, change.other, [&](LayoutID descriptor) {
             if (std::optional<FieldReference> field = findField(flow.program, descriptor, value))
                 held.append(flow.field(*field));
         });
     }
     if (held.isEmpty() || (change.subject.objects != LinkType::Objects::Layout && change.subject.objects != LinkType::Objects::Set))
         return;
-    forEachLayoutNamedInLinkLayouts(flow, change.subject, [&](LayoutID layout) {
+    forEachLayoutInType(flow, change.subject, [&](LayoutID layout) {
         FlowNodeID laid = flow.laidByDescriptorsOn(layout, change.key);
         for (FlowNodeID from : held)
             flow.addEdge(from, laid);
@@ -659,14 +659,14 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
 {
     LinkType whatCanBeDefinedOn = change.subject;
     whatCanBeDefinedOn.primitives = 0;
-    if (whatCanBeDefinedOn.isNothing())
+    if (whatCanBeDefinedOn.isNever())
         return;
     bool isStore = change.laysValueInSight && change.key && definitionInSightIsStoreInLinkLayouts(flow, change.subject, change.key);
     bool namesObjectsOfLayoutsAlone = (change.subject.objects == LinkType::Objects::Layout || change.subject.objects == LinkType::Objects::Set || change.subject.objects == LinkType::Objects::Family) && change.subject.functions == LinkType::Functions::None && change.subject.classes == LinkType::Classes::None && !change.subject.builtin;
-    bool objectMayBeOutOfSight = change.subject.holdsUnseen || change.subject.holdsLostBuiltins;
+    bool objectMayBeOutOfSight = change.subject.hasUnknownObjects || change.subject.holdsLostBuiltins;
     bool isOneClosureWhoseNamesAreFollowed = change.key && change.subject.functions == LinkType::Functions::Closure && change.subject == typeOfClosuresInLinkLayouts(change.subject.function) && flow.isPlainClosureOrConstructorFunction(change.subject.function) && flow.followsNamesOnClosuresOf(change.subject.function, change.key);
     bool accessLaysValue = change.key && change.descriptorIsInSight && change.descriptorLaysNoAccessor && ((namesObjectsOfLayoutsAlone && !objectMayBeOutOfSight) || isOneClosureWhoseNamesAreFollowed);
-    if (change.valueInSight && !isStore && !accessLaysValue && !change.subject.isNothing())
+    if (change.valueInSight && !isStore && !accessLaysValue && !change.subject.isNever())
         flow.addEdge(change.valueInSight, flow.unseen());
     if (change.descriptorLaysNoAccessor && namesBuiltinAloneInLinkLayouts(change.subject)) {
         if (change.otherNode)
@@ -699,7 +699,7 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
         }
     }
     if (change.descriptorIsInSight && namesObjectsOfLayoutsAlone && handObjectToHalvesInSightInLinkLayouts(flow, change)) {
-        forEachLayoutNamedInLinkLayouts(flow, change.subject, [&](LayoutID layout) {
+        forEachLayoutInType(flow, change.subject, [&](LayoutID layout) {
             if (std::optional<FieldReference> field = change.descriptorLaysNoAccessor || !change.key ? std::nullopt : findField(flow.program, layout, change.key))
                 flow.noteFieldGivenAccessorByDescriptorInSight(*field);
             else if (!change.descriptorLaysNoAccessor && !flow.layoutsGivenAccessorsByDescriptorsInSight.get(layout.index()))
@@ -709,7 +709,7 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
             if (!change.keyIsWritten && !flow.layoutsDefinedOnUnderKeysThatAreNotWritten.get(layout.index()))
                 flow.note(LinkFlow::Note::LayoutDefinedOnUnderKeyThatIsNotWritten, layout.index());
             if (!change.key) {
-                flow.addEdge(flow.unseen(), flow.storedBesideFieldsOf(layout));
+                flow.addEdge(flow.unseen(), flow.extraPropertyStoreNode(layout));
                 return;
             }
             if (change.setterInSight) {
@@ -726,7 +726,7 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
     bool descriptorIsOnlyRead = false;
     bool isAccessorWrittenInMap = change.laysAccessorAsWritten && change.isEntryWrittenInMap;
     if (change.key && change.otherNode && !change.descriptorIsInSight && !isAccessorWrittenInMap) {
-        if (change.other.isNothing())
+        if (change.other.isNever())
             return;
         Vector<FlowNodeID, 4> values;
         FlowObserver toldAgain { FlowObserver::Kind::OtherOfChange, change.function, change.record };
@@ -737,7 +737,7 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
         }
         if (descriptorIsOnlyRead && namesObjectsOfLayoutsAlone) {
             expectValueOfDescriptorUnderNameInLinkLayouts(flow, change);
-            forEachLayoutNamedInLinkLayouts(flow, change.subject, [&](LayoutID layout) {
+            forEachLayoutInType(flow, change.subject, [&](LayoutID layout) {
                 if (!flow.layoutsDefinedOnUnderWrittenKeys.get(layout.index()))
                     flow.note(LinkFlow::Note::LayoutDefinedOnUnderWrittenKeys, layout.index());
                 if (!change.keyIsWritten && !flow.layoutsDefinedOnUnderKeysThatAreNotWritten.get(layout.index()))
@@ -781,7 +781,7 @@ static bool agreesWithLayoutsInLinkLayouts(const LinkFlow&, const LinkType& abov
 
 static bool holdsNoObjectBesideLayoutsInLinkLayouts(const LinkType& type)
 {
-    return type.functions == LinkType::Functions::None && type.classes == LinkType::Classes::None && !type.builtin && !type.builtinClass && !type.holdsUnseen && !type.holdsLostBuiltins;
+    return type.functions == LinkType::Functions::None && type.classes == LinkType::Classes::None && !type.builtin && !type.builtinClass && !type.hasUnknownObjects && !type.holdsLostBuiltins;
 }
 
 static bool putsNullAloneAboveRecordsInLinkLayouts(const LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
@@ -791,7 +791,7 @@ static bool putsNullAloneAboveRecordsInLinkLayouts(const LinkFlow& flow, const O
     if ((change.subject.objects != LinkType::Objects::Layout && change.subject.objects != LinkType::Objects::Set) || !holdsNoObjectBesideLayoutsInLinkLayouts(change.subject))
         return false;
     bool areRecords = true;
-    forEachLayoutNamedInLinkLayouts(flow, change.subject, [&](LayoutID layout) {
+    forEachLayoutInType(flow, change.subject, [&](LayoutID layout) {
         const Layout& named = flow.program.at(layout);
         areRecords &= named.kind == LayoutKind::Record && !named.constructor && !named.has(LayoutFlags::IsConstructorFunction) && !named.has(LayoutFlags::IsOfCreatedObject);
     });
@@ -801,7 +801,7 @@ static bool putsNullAloneAboveRecordsInLinkLayouts(const LinkFlow& flow, const O
 static void observeChangeOfPrototypeInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
 {
     if (putsNullAloneAboveRecordsInLinkLayouts(flow, change)) {
-        forEachLayoutNamedInLinkLayouts(flow, change.subject, [&](LayoutID layout) {
+        forEachLayoutInType(flow, change.subject, [&](LayoutID layout) {
             if (!flow.layoutsThatGetNullAbove.get(layout.index()))
                 flow.note(LinkFlow::Note::LayoutGetsNullAbove, layout.index());
         });
@@ -811,7 +811,7 @@ static void observeChangeOfPrototypeInLinkLayouts(LinkFlow& flow, const Observed
     FunctionID functionLinked = onlyConstructorFunctionInLinkLayouts(flow, change.subject);
     if (functionLinked && !everyFunctionAboveIsConstructorFunctionWithBodyInLinkLayouts(flow, functionLinked))
         functionLinked = { };
-    if (change.otherNode && !mayPutNullAbove && (functionLinked || onlyPrototypeOfConstructorFunctionInLinkLayouts(flow, change.subject)) && (change.other.isNothing() || agreesWithLayoutsInLinkLayouts(flow, change.other, change.subject))) {
+    if (change.otherNode && !mayPutNullAbove && (functionLinked || onlyPrototypeOfConstructorFunctionInLinkLayouts(flow, change.subject)) && (change.other.isNever() || agreesWithLayoutsInLinkLayouts(flow, change.other, change.subject))) {
         if (functionLinked)
             flow.arrive(flow.foundOnClosuresOf(functionLinked), LinkType::anything());
         return;
@@ -850,7 +850,7 @@ static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType&
     if (classOfClosureBelow) {
         if (above.primitives & Primitive::Null)
             return false;
-        if (aboveWithoutPrimitives.isNothing())
+        if (aboveWithoutPrimitives.isNever())
             return true;
         LayoutID base = program.at(classOfClosureBelow).base;
         FunctionID constructorOfBase = base ? program.at(base).constructor : FunctionID();
@@ -860,7 +860,7 @@ static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType&
     }
 
     if (below.objects == LinkType::Objects::Prototype && below == typeOfPrototypeInLinkLayouts(below.layout)) {
-        if (aboveWithoutPrimitives.isNothing())
+        if (aboveWithoutPrimitives.isNever())
             return true;
         LayoutID base = program.at(below.layout).base;
         if (isWrittenRightAboveInLinkLayouts(program, below.layout, above, &BuiltinClass::prototype))
@@ -952,7 +952,7 @@ static void tieHeirToWhatStandsAboveInLinkLayouts(LinkFlow& flow, const Observed
 {
     const LinkType whatStandsAbove = change.laidAboveByConstructor ? flow.typeAt(change.laidAboveByConstructor) : change.subject;
     Vector<FlowNodeID, 4> heirsOfWhatStandsAbove;
-    forEachLayoutNamedInLinkLayouts(flow, whatStandsAbove, [&](LayoutID above) {
+    forEachLayoutInType(flow, whatStandsAbove, [&](LayoutID above) {
         heirsOfWhatStandsAbove.append(flow.whatStandsBelow(above));
     });
     if (whatStandsAbove.classes == LinkType::Classes::Site)
@@ -962,7 +962,7 @@ static void tieHeirToWhatStandsAboveInLinkLayouts(LinkFlow& flow, const Observed
         for (FlowNodeID heirs : heirsOfWhatStandsAbove)
             flow.addEdge(belowHeir, heirs);
     };
-    forEachLayoutNamedInLinkLayouts(flow, change.other, [&](LayoutID heir) {
+    forEachLayoutInType(flow, change.other, [&](LayoutID heir) {
         if (flow.program.at(heir).has(LayoutFlags::IsOfCreatedObject))
             tie(flow.whatStandsAbove(heir), flow.whatStandsBelow(heir));
     });
@@ -985,7 +985,7 @@ static void observeNewHeirInLinkLayouts(LinkFlow& flow, const ObservedChangeInLi
         handToUnseenCodeInLinkLayouts(flow, change.subjectNode, change.subject);
         return;
     }
-    if (change.other.isNothing())
+    if (change.other.isNever())
         return;
     if (change.subject.objects == LinkType::Objects::None && holdsNoObjectBesideLayoutsInLinkLayouts(change.subject) && namesOnlyInstancesInLinkLayouts(change.other))
         return;
@@ -1012,7 +1012,7 @@ static NodesStoredInLinkLayouts nodesLaidUnderAnyKeyByCopyInLinkLayouts(LinkFlow
     if (subject.objects != LinkType::Objects::Layout && subject.objects != LinkType::Objects::Set)
         return nodesStoredUnderInLinkLayouts(flow, subject, { }, definesWhatItCopies ? LinkFlow::Lays::Defines : LinkFlow::Lays::Assigns);
     NodesStoredInLinkLayouts nodes;
-    forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID layout) {
+    forEachLayoutInType(flow, subject, [&](LayoutID layout) {
         bool isDefinedOn = definesWhatItCopies && flow.program.at(layout).kind == LayoutKind::Record && !listsAccessorInLinkLayouts(flow, layout);
         nodes.append(isDefinedOn ? flow.anyFieldDefinedOn(layout) : nodeStoredInLayoutUnderInLinkLayouts(flow, layout, { }));
     });
@@ -1041,10 +1041,10 @@ static bool isListedOnBothSidesInLinkLayouts(LinkFlow& flow, const LinkType& sub
         return false;
 
     bool isListed = true;
-    forEachLayoutNamedInLinkLayouts(flow, other, [&](LayoutID layout) {
+    forEachLayoutInType(flow, other, [&](LayoutID layout) {
         isListed &= !flow.ownValuesOf(layout).empty();
     });
-    forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID layout) {
+    forEachLayoutInType(flow, subject, [&](LayoutID layout) {
         isListed &= flow.program.at(layout).kind == LayoutKind::Record && !listsAccessorInLinkLayouts(flow, layout);
     });
     return isListed;
@@ -1060,7 +1060,7 @@ static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, FunctionID function, c
     auto& layoutsTied = flow.copiesObservedIn(function).layoutsTiedByCopies[definesWhatItCopies << 1 | appendsNames];
     bool keepsTies = subject.objects == LinkType::Objects::Layout && !flow.tellsObserversOnceMore();
     NodesStoredInLinkLayouts underAnyKey = nodesLaidUnderAnyKeyByCopyInLinkLayouts(flow, subject, definesWhatItCopies);
-    forEachLayoutNamedInLinkLayouts(flow, other, [&](LayoutID layout) {
+    forEachLayoutInType(flow, other, [&](LayoutID layout) {
         std::span<const LinkFlow::OwnValue> values = flow.ownValuesOf(layout);
         uint64_t pair = static_cast<uint64_t>(layout.index()) << 32 | subject.layout.index();
         bool foundFieldsInTargetBefore = keys.findFieldsInTarget;
@@ -1074,11 +1074,11 @@ static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, FunctionID function, c
         for (const LinkFlow::OwnValue& value : values) {
             if (definesWhatItCopies && !value.key) {
                 const LinkType& held = flow.typeAt(value.node);
-                keys.somethingLiesBesideFields |= !held.isNothing();
-                keys.somethingSeenLiesBesideFields |= !held.asSeen().isNothing();
+                keys.somethingLiesBesideFields |= !held.isNever();
+                keys.somethingSeenLiesBesideFields |= !held.directPart().isNever();
             }
             if (definesWhatItCopies && value.key && !appendsNames) {
-                forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID target) {
+                forEachLayoutInType(flow, subject, [&](LayoutID target) {
                     keys.findFieldsInTarget &= !!findField(flow.program, target, value.key);
                 });
             }
@@ -1088,9 +1088,9 @@ static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, FunctionID function, c
                 flow.addEdge(value.node, stored ? stored : flow.unseen());
             };
             if (appendsNames && definesWhatItCopies && value.key) {
-                forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID target) {
+                forEachLayoutInType(flow, subject, [&](LayoutID target) {
                     std::optional<FieldReference> found = findField(flow.program, target, value.key);
-                    copyInto(found ? flow.field(*found) : flow.appendedFieldAsStoredThroughItsLayout(target, value.key));
+                    copyInto(found ? flow.field(*found) : flow.appendedStoreNode(target, value.key));
                 });
                 continue;
             }
@@ -1107,9 +1107,9 @@ static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, FunctionID function, c
 static bool mayHaveOwnValueUnderPrototypeLinkInLinkLayouts(LinkFlow& flow, const LinkType& source)
 {
     bool mayHave = false;
-    forEachLayoutNamedInLinkLayouts(flow, source, [&](LayoutID layout) {
+    forEachLayoutInType(flow, source, [&](LayoutID layout) {
         for (const LinkFlow::OwnValue& value : flow.ownValuesOf(layout))
-            mayHave |= value.key ? flow.nameClassOf(value.key) == NameClass::Proto : !flow.typeAt(value.node).isNothing();
+            mayHave |= value.key ? flow.nameClassOf(value.key) == NameClass::Proto : !flow.typeAt(value.node).isNever();
     });
     return mayHave;
 }
@@ -1131,7 +1131,7 @@ static bool holdsOnlyObjectsWithListedOwnValuesInLinkLayouts(LinkFlow& flow, con
         break;
     }
     bool isListed = true;
-    forEachLayoutNamedInLinkLayouts(flow, source, [&](LayoutID layout) {
+    forEachLayoutInType(flow, source, [&](LayoutID layout) {
         isListed &= !flow.ownValuesOf(layout).empty();
     });
     return isListed;
@@ -1148,13 +1148,13 @@ uint32_t LinkFlow::sourceOfCopySpelledByLoop(FunctionID function, ValueID site) 
 
 bool LinkFlow::followsCopySpelledByLoop(const LinkType& target, const LinkType& source) const
 {
-    auto namesRecordsAlone = [&](const LinkType& type) {
+    auto hasOnlyRecords = [&](const LinkType& type) {
         if (type.objects != LinkType::Objects::Layout && type.objects != LinkType::Objects::Set)
             return false;
-        if (type.holdsUnseen || type.holdsLostBuiltins || type.builtin || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || (type.primitives & LinkType::closed(Primitive::AnyString)))
+        if (type.hasUnknownObjects || type.holdsLostBuiltins || type.builtin || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || (type.primitives & LinkType::closed(Primitive::AnyString)))
             return false;
         bool areRecords = true;
-        forEachLayoutNamedInLinkLayouts(*this, type, [&](LayoutID layout) {
+        forEachLayoutInType(*this, type, [&](LayoutID layout) {
             areRecords &= program.at(layout).kind == LayoutKind::Record && !listsAccessorInLinkLayouts(*this, layout);
         });
         return areRecords;
@@ -1169,7 +1169,7 @@ bool LinkFlow::followsCopySpelledByLoop(const LinkType& target, const LinkType& 
     auto listSameNames = [&](const LinkType& type) {
         LayoutID first;
         bool listSame = true;
-        forEachLayoutNamedInLinkLayouts(*this, type, [&](LayoutID layout) {
+        forEachLayoutInType(*this, type, [&](LayoutID layout) {
             if (!first)
                 first = layout;
             else
@@ -1177,14 +1177,14 @@ bool LinkFlow::followsCopySpelledByLoop(const LinkType& target, const LinkType& 
         });
         return listSame;
     };
-    return namesRecordsAlone(target) && (source.isNothing() || (namesRecordsAlone(source) && listSameNames(source)));
+    return hasOnlyRecords(target) && (source.isNever() || (hasOnlyRecords(source) && listSameNames(source)));
 }
 
 enum class CopyWaitsForInLinkLayouts : uint8_t { WhateverLiesBesideFields, WhatIsSeenAlone, Nothing };
 
 static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
 {
-    if (change.otherNode && change.other.isNothing())
+    if (change.otherNode && change.other.isNever())
         return CopyWaitsForInLinkLayouts::WhateverLiesBesideFields;
     FlowNodeID unseen = flow.unseen();
     LinkType anything = LinkType::anything();
@@ -1192,9 +1192,9 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
     const LinkType& other = change.other;
     bool onlyWritesOnBuiltin = namesBuiltinAloneInLinkLayouts(subject) && (change.namesOfCopyLeaveLinkAlone || flow.program.builtins().hasLockedPrototypeLink(subject.builtin))
         && (change.definesWhatItCopies || !lookupPassesHolderLinkedAnew(flow.program, subject.builtin, { }));
-    bool landsOnObjectsOfProgramAlone = !subject.holdsUnseen && !subject.builtin && subject.functions == LinkType::Functions::None && subject.classes == LinkType::Classes::None;
+    bool landsOnObjectsOfProgramAlone = !subject.hasUnknownObjects && !subject.builtin && subject.functions == LinkType::Functions::None && subject.classes == LinkType::Classes::None;
     auto isOfObjectsThatNobodyLists = [](const LinkType& type) {
-        return type.holdsUnseen || type.builtin || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || (type.primitives & LinkType::closed(Primitive::AnyString));
+        return type.hasUnknownObjects || type.builtin || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || (type.primitives & LinkType::closed(Primitive::AnyString));
     };
     bool assignmentFindsNoSetter = !flow.program.admitsReplacedBuiltins && !change.definesWhatItCopies && change.otherNode && landsOnObjectsOfProgramAlone && !isOfObjectsThatNobodyLists(other)
         && isListedOnBothSidesInLinkLayouts(flow, subject, other) && !mayHaveOwnValueUnderPrototypeLinkInLinkLayouts(flow, other);
@@ -1205,7 +1205,7 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
         flow.observe(field, FlowObserver { FlowObserver::Kind::FieldIsOnlyAsked, change.function, change.record });
     bool copiesFieldByField = isListedOnBothSides && landsOnObjectsOfProgramAlone;
     if (change.otherNode && subject.functions != LinkType::Functions::None) {
-        forEachLayoutNamedInLinkLayouts(flow, other, [&](LayoutID layout) {
+        forEachLayoutInType(flow, other, [&](LayoutID layout) {
             for (const LinkFlow::OwnValue& value : flow.ownValuesOf(layout)) {
                 if (value.key)
                     flow.addEdge(value.node, flow.foundBesideFieldsUnder(value.key));
@@ -1213,7 +1213,7 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
         });
     }
 
-    forEachLayoutNamedInLinkLayouts(flow, other, [&](LayoutID layout) {
+    forEachLayoutInType(flow, other, [&](LayoutID layout) {
         if (listsAccessorInLinkLayouts(flow, layout))
             flow.escape(layout);
     });
@@ -1248,26 +1248,26 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
 
     uint16_t texts = LinkType::closed(Primitive::AnyString);
     bool isNoObjectOfProgram = other.builtin || other.functions != LinkType::Functions::None || other.classes != LinkType::Classes::None;
-    bool gainsInSight = !isListedOnBothSides || isNoObjectOfProgram || other.holdsUnseenInSight() || (other.primitivesSeen() & texts) || !keys.findFieldsInTarget || keys.somethingSeenLiesBesideFields;
-    bool gainsAtAll = gainsInSight || other.holdsUnseen || (other.primitives & texts) || keys.somethingLiesBesideFields;
+    bool gainsInSight = !isListedOnBothSides || isNoObjectOfProgram || other.hasDirectUnknownObjects() || (other.directPrimitives() & texts) || !keys.findFieldsInTarget || keys.somethingSeenLiesBesideFields;
+    bool gainsAtAll = gainsInSight || other.hasUnknownObjects || (other.primitives & texts) || keys.somethingLiesBesideFields;
     if (!definesWhatItCopies)
         addChangesToLayoutsNamedInLinkLayouts(flow, subject, changesMadeByInLinkLayouts(SummaryChange::Kind::CopiesInto));
     else if (gainsInSight)
         addChangesToLayoutsNamedInLinkLayouts(flow, subject, { LayoutChange::GainsProperty });
     else if (gainsAtAll) {
-        forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID layout) {
+        forEachLayoutInType(flow, subject, [&](LayoutID layout) {
             if (!flow.layoutsThatGainWhatUnseenCodeGaveSources.get(layout.index()))
                 flow.note(LinkFlow::Note::LayoutGainsWhatUnseenCodeGaveSources, layout.index());
         });
     }
-    forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID layout) {
+    forEachLayoutInType(flow, subject, [&](LayoutID layout) {
         if (flow.program.at(layout).kind != LayoutKind::Record || listsAccessorInLinkLayouts(flow, layout))
             flow.escape(layout);
     });
     if (subject.objects == LinkType::Objects::Lost)
         handToUnseenCodeInLinkLayouts(flow, change.subjectNode, subject);
 
-    bool copiesWhatNobodyLists = !copiesFieldByField || other.holdsUnseen || other.builtin || other.functions != LinkType::Functions::None || other.classes != LinkType::Classes::None || (other.primitives & LinkType::closed(Primitive::AnyString));
+    bool copiesWhatNobodyLists = !copiesFieldByField || other.hasUnknownObjects || other.builtin || other.functions != LinkType::Functions::None || other.classes != LinkType::Classes::None || (other.primitives & LinkType::closed(Primitive::AnyString));
     bool mayLayPrototype = !onlyWritesOnBuiltin && !definesWhatItCopies && (copiesWhatNobodyLists || mayHaveOwnValueUnderPrototypeLinkInLinkLayouts(flow, other));
     if (mayLayPrototype) {
         ObservedChangeInLinkLayouts relink = change;
@@ -1309,14 +1309,14 @@ bool LinkFlow::isWatchedForFirstTime(FlowNodeID node, const FlowObserver& observ
 
 bool LinkFlow::descriptorsInSightLayValuesAlone(const LinkType& descriptors, const FlowObserver* toldAgain, Vector<FlowNodeID, 4>& values)
 {
-    bool namesRecordsAlone = (descriptors.objects == LinkType::Objects::Layout || descriptors.objects == LinkType::Objects::Set) && descriptors.functions == LinkType::Functions::None && descriptors.classes == LinkType::Classes::None
-        && !descriptors.builtin && !descriptors.holdsUnseen && !descriptors.holdsLostBuiltins;
-    if (!namesRecordsAlone)
+    bool hasOnlyRecords = (descriptors.objects == LinkType::Objects::Layout || descriptors.objects == LinkType::Objects::Set) && descriptors.functions == LinkType::Functions::None && descriptors.classes == LinkType::Classes::None
+        && !descriptors.builtin && !descriptors.hasUnknownObjects && !descriptors.holdsLostBuiltins;
+    if (!hasOnlyRecords)
         return false;
     PropertyKeyID halves[] { program.keyOf(BuiltinNames::get), program.keyOf(BuiltinNames::set) };
     PropertyKeyID value = program.keyOf(BuiltinNames::value);
     for (BuiltinName name : { BuiltinNames::enumerable, BuiltinNames::configurable, BuiltinNames::writable, BuiltinNames::value, BuiltinNames::get, BuiltinNames::set }) {
-        if (!isAbsentAboveClasses(program.keyOf(name)))
+        if (!isAbsentFromObjectPrototype(program.keyOf(name)))
             return false;
     }
     auto nodeUnder = [&](LayoutID layout, PropertyKeyID key) {
@@ -1325,7 +1325,7 @@ bool LinkFlow::descriptorsInSightLayValuesAlone(const LinkType& descriptors, con
     };
     bool laysValuesAlone = true;
     auto staysEmpty = [&](FlowNodeID node) {
-        if (!typeAt(node).isNothing()) {
+        if (!typeAt(node).isNever()) {
             laysValuesAlone = false;
             return;
         }
@@ -1343,7 +1343,7 @@ bool LinkFlow::descriptorsInSightLayValuesAlone(const LinkType& descriptors, con
             return;
         }
         staysEmpty(whereLossIsTold(layout));
-        staysEmpty(foundBesideFieldsOf(layout));
+        staysEmpty(extraPropertyReadNode(layout));
         for (PropertyKeyID half : halves)
             staysEmpty(nodeUnder(layout, half));
         values.append(nodeUnder(layout, value));
@@ -1383,7 +1383,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
         return type;
     };
     const SummaryChange& record = summaries.at(observer.function).changes[observer.record];
-    if (record.keyNode == noSummaryNode && !typeObservedBefore().isNothing() && withoutKindsOfPrimitives(typeObservedBefore()) == withoutKindsOfPrimitives(now) && typeObservedBefore().holdsUnseenInSight() == now.holdsUnseenInSight())
+    if (record.keyNode == noSummaryNode && !typeObservedBefore().isNever() && withoutKindsOfPrimitives(typeObservedBefore()) == withoutKindsOfPrimitives(now) && typeObservedBefore().hasDirectUnknownObjects() == now.hasDirectUnknownObjects())
         return;
 
     UnknownByEscapeAlone unknownByEscapeAlone(isUnknownByEscapeAloneIfAtAll(typeAt(nodeOf(observer.function, record.subject))) && (record.other == noSummaryNode || isUnknownByEscapeAloneIfAtAll(typeAt(nodeOf(observer.function, record.other)))), UnknownByEscapeAlone::Marks::OfRule);
@@ -1397,7 +1397,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     change.keyIsWritten = (record.key && record.keyNode == noSummaryNode) || record.isUnderNameThatNobodyElseNames;
     if (record.keyNode != noSummaryNode) {
         const LinkType& key = typeAt(nodeOf(observer.function, record.keyNode));
-        if (key.isNothing())
+        if (key.isNever())
             return;
         change.key = keyHeldAt(observer.function, record.keyNode);
         change.keyIsSomeSymbol = holdsSymbolsAlone(key);
@@ -1424,15 +1424,15 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
         change.otherNode = nodeOf(observer.function, record.other);
         change.other = typeAt(change.otherNode);
     }
-    if (change.subject.isNothing() || (change.isSpelledByLoop && !followsCopySpelledByLoop(change.subject, change.other)))
+    if (change.subject.isNever() || (change.isSpelledByLoop && !followsCopySpelledByLoop(change.subject, change.other)))
         return;
     noteLossOfLightFormAmong(change.subject);
     noteLossOfLightFormAmong(change.other);
     if (record.kind != SummaryChange::Kind::BecomesPrototype) {
         if (change.subject.builtin && !isSpelledInBody(observer.function, record.subject))
-            note(Note::BuiltinUsedWhereFlowBroughtIt, program.builtins().canonicalID(change.subject.builtin).index());
+            note(Note::BuiltinUsedViaFlow, program.builtins().canonicalID(change.subject.builtin).index());
         if (change.other.builtin && !isSpelledInBody(observer.function, record.other))
-            note(Note::BuiltinUsedWhereFlowBroughtIt, program.builtins().canonicalID(change.other.builtin).index());
+            note(Note::BuiltinUsedViaFlow, program.builtins().canonicalID(change.other.builtin).index());
     }
 
     CopiesObserved& copies = copiesObservedIn(observer.function);
@@ -1441,7 +1441,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
         auto lookedAt = copies.lookedAt.find(placeOfCopy);
         if (lookedAt != copies.lookedAt.end() && lookedAt->value.subject == change.subject && lookedAt->value.other == change.other
             && lookedAt->value.subject.hasSameShadowsAs(change.subject) && lookedAt->value.other.hasSameShadowsAs(change.other)
-            && (lookedAt->value.waitsForNothingBesideFields || (lookedAt->value.waitsForWhatIsSeenAlone && now.asSeen().isNothing())))
+            && (lookedAt->value.waitsForNothingBesideFields || (lookedAt->value.waitsForWhatIsSeenAlone && now.directPart().isNever())))
             return;
     }
 
@@ -1457,15 +1457,15 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
             noteSiteOfWrite(observer.function, record.site, change.subjectNode);
     } else if (record.kind == SummaryChange::Kind::CopiesInto) {
         Vector<PropertyKeyID> keys;
-        bool knowsEveryKey = change.subject.builtin && record.other != noSummaryNode && !change.other.holdsUnseen && !change.other.holdsLostBuiltins
+        bool knowsEveryKey = change.subject.builtin && record.other != noSummaryNode && !change.other.hasUnknownObjects && !change.other.holdsLostBuiltins
             && !(change.other.primitives & LinkType::closed(Primitive::AnyString)) && holdsOnlyObjectsWithListedOwnValuesInLinkLayouts(*this, change.other);
         if (knowsEveryKey) {
-            forEachLayoutNamedInLinkLayouts(*this, change.other, [&](LayoutID layout) {
+            forEachLayoutInType(*this, change.other, [&](LayoutID layout) {
                 for (const OwnValue& value : ownValuesOf(layout)) {
                     if (value.key)
                         keys.append(value.key);
                     else
-                        knowsEveryKey &= typeAt(value.node).isNothing();
+                        knowsEveryKey &= typeAt(value.node).isNever();
                 }
             });
         }
@@ -1478,7 +1478,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
         }
         change.namesOfCopyLeaveLinkAlone = knowsEveryKey && std::ranges::none_of(keys, [&](PropertyKeyID key) { return nameClassOf(key) == NameClass::Proto; });
     if (record.kind == SummaryChange::Kind::CopiesInto) {
-        forEachLayoutNamedInLinkLayouts(*this, change.other, [&](LayoutID layout) {
+        forEachLayoutInType(*this, change.other, [&](LayoutID layout) {
             for (const OwnValue& value : ownValuesThatMayHaveNoKeyOf(layout)) {
                 if (!value.key && copies.toldOfWhatLiesBesideFields.add(std::pair { static_cast<uint64_t>(value.node.index()) << 32 | observer.function.index(), observer.record }).isNewEntry)
                     observe(value.node, FlowObserver { FlowObserver::Kind::OtherOfChange, observer.function, observer.record });
@@ -1724,7 +1724,7 @@ private:
             return Found::Accessor;
         if (std::optional<FieldReference> field = findField(m_program, m_made, key); field && fieldAt(m_program, *field).form.contains(FieldForm::IsAccessor))
             return Found::Accessor;
-        Found found = m_flow.isAbsentAboveClasses(key) ? Found::Nothing : Found::Method;
+        Found found = m_flow.isAbsentFromObjectPrototype(key) ? Found::Nothing : Found::Method;
         for (const LinkFlow::FoundMember& member : m_flow.findMembers(m_made, ClassSide::Prototype, key)) {
             if (member.kind != MethodKind::Method)
                 return Found::Accessor;
@@ -2163,7 +2163,7 @@ private:
     static constexpr uint8_t everyFieldIsWrittenWithoutDefinition = 1 << 3;
     static constexpr uint8_t everyFieldIsWrittenLate = 1 << 2;
     Vector<uint8_t> m_whatIsNotedOfEveryField;
-    struct SaidByEdges {
+    struct FieldFactsFromEdges {
         BitVector fieldsGivenValues;
         BitVector fieldsGivenUndefinedByMakers;
         BitVector fieldsFilledByConstructors;
@@ -2172,7 +2172,7 @@ private:
         Vector<uint32_t> unitsListedForFields;
         Vector<uint32_t> whatMakersLayInFields;
     };
-    SaidByEdges m_saidByEdges;
+    FieldFactsFromEdges m_fieldFactsFromEdges;
     BitVector m_keysOfTestedFields;
     BitVector m_fieldsGivenUndefinedByMakers;
     BitVector m_fieldsFilledByConstructors;
@@ -2242,7 +2242,7 @@ private:
         Vector<PropertyKeyID, 8> keys;
         FunctionID givenBy;
         bool isMadeHere { false };
-        bool isHandedOn { false };
+        bool isReturned { false };
         FunctionID body;
         ValueID firstStore;
         uint64_t keysOnlyGivenUndefined { 0 };
@@ -2357,7 +2357,7 @@ TypeID WriterOfLinkLayouts::claimedTypeAt(FlowNodeID node, Numbers numbers)
     if (numbers == Numbers::ByKindAlone)
         type.counts = LinkType::Counts::Unknown;
     if (m_flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls) {
-        type.holdsUnseen = false;
+        type.hasUnknownObjects = false;
         type.holdsLostBuiltins = false;
         type.builtin = { };
         if (type.functions != LinkType::Functions::None && type.functions != LinkType::Functions::Closure && type.functions != LinkType::Functions::Set) {
@@ -2365,7 +2365,7 @@ TypeID WriterOfLinkLayouts::claimedTypeAt(FlowNodeID node, Numbers numbers)
             type.function = { };
         }
     }
-    return type.isNothing() ? TypeID() : unlessAnything(typesTurned().turn(m_flow, types(), type));
+    return type.isNever() ? TypeID() : unlessAnything(typesTurned().turn(m_flow, types(), type));
 }
 
 bool WriterOfLinkLayouts::claimLeavesOutWhatArrivesAt(FlowNodeID node) const
@@ -2373,14 +2373,14 @@ bool WriterOfLinkLayouts::claimLeavesOutWhatArrivesAt(FlowNodeID node) const
     if (m_flow.reading() != WhatUnseenCodeDoes::OnlyReadsAndCalls)
         return false;
     LinkType type = m_flow.typeAt(node);
-    return type.holdsUnseen || type.holdsLostBuiltins || type.builtin || (type.functions != LinkType::Functions::None && type.functions != LinkType::Functions::Closure && type.functions != LinkType::Functions::Set);
+    return type.hasUnknownObjects || type.holdsLostBuiltins || type.builtin || (type.functions != LinkType::Functions::None && type.functions != LinkType::Functions::Closure && type.functions != LinkType::Functions::Set);
 }
 
 TypeID WriterOfLinkLayouts::claimedTypeAtEither(FlowNodeID first, FlowNodeID second)
 {
-    if (first == second || m_flow.typeAt(second).isNothing())
+    if (first == second || m_flow.typeAt(second).isNever())
         return claimedTypeAt(first);
-    if (m_flow.typeAt(first).isNothing())
+    if (m_flow.typeAt(first).isNever())
         return claimedTypeAt(second);
     TypeID atFirst = claimedTypeAt(first);
     TypeID atSecond = claimedTypeAt(second);
@@ -2543,18 +2543,18 @@ ALWAYS_INLINE void WriterOfLinkLayouts::lookAtEdges(FunctionID id, const ThinSum
         const SummaryNode& to = summary.nodes[edge.to];
         if (to.kind == SummaryNode::Kind::Field) {
             LayoutID layout(to.first);
-            m_saidByEdges.fieldsGivenValues.quickSet(cellOf({ layout, to.second }));
-            if (uint32_t made = m_saidByEdges.whatMakersLayInFields.isEmpty() ? 0 : whatIsMadeInSightAt(id, summary, edge.from))
-                noteWhatMakerLays(m_saidByEdges.whatMakersLayInFields[cellOf({ layout, to.second })], made);
+            m_fieldFactsFromEdges.fieldsGivenValues.quickSet(cellOf({ layout, to.second }));
+            if (uint32_t made = m_fieldFactsFromEdges.whatMakersLayInFields.isEmpty() ? 0 : whatIsMadeInSightAt(id, summary, edge.from))
+                noteWhatMakerLays(m_fieldFactsFromEdges.whatMakersLayInFields[cellOf({ layout, to.second })], made);
             uint32_t listed = summary.nodes[edge.from].kind == SummaryNode::Kind::Constant && summary.nodes[edge.from].second && !edge.passes ? summary.nodes[edge.from].second : otherThanOneUnit;
-            if (uint32_t& unit = m_saidByEdges.unitsListedForFields[cellOf({ layout, to.second })]; unit != listed)
+            if (uint32_t& unit = m_fieldFactsFromEdges.unitsListedForFields[cellOf({ layout, to.second })]; unit != listed)
                 unit = unit ? otherThanOneUnit : listed;
             if (!m_asksWhatMakersGive) {
             } else if (isConstantUndefinedInLinkLayouts(summary.nodes[edge.from])) {
-                m_saidByEdges.fieldsGivenUndefinedByMakers.quickSet(cellOf({ layout, to.second }));
-                m_saidByEdges.layoutsGivenUndefinedByMakers.quickSet(layout.index());
+                m_fieldFactsFromEdges.fieldsGivenUndefinedByMakers.quickSet(cellOf({ layout, to.second }));
+                m_fieldFactsFromEdges.layoutsGivenUndefinedByMakers.quickSet(layout.index());
             } else
-                m_saidByEdges.fieldsFilledByConstructors.quickSet(cellOf({ layout, to.second }));
+                m_fieldFactsFromEdges.fieldsFilledByConstructors.quickSet(cellOf({ layout, to.second }));
             if (const SummaryNode& from = summary.nodes[edge.from]; from.kind == SummaryNode::Kind::Closure && !m_flow.taggedMakers.isEmpty()) {
                 if (PropertyKeyID key = fieldAt(m_program, { layout, to.second }).key) {
                     Vector<FunctionID, 4>& functions = m_functionsLaidIntoFieldsUnderKey.add(key.bits(), Vector<FunctionID, 4> { }).iterator->value;
@@ -2563,11 +2563,11 @@ ALWAYS_INLINE void WriterOfLinkLayouts::lookAtEdges(FunctionID id, const ThinSum
                 }
             }
             if (m_program.at(layout).isEnvironment() || !std::ranges::binary_search(m_layoutsAllocatedHere, layout))
-                m_saidByEdges.fieldsWrittenLate.quickSet(cellOf({ layout, to.second }));
+                m_fieldFactsFromEdges.fieldsWrittenLate.quickSet(cellOf({ layout, to.second }));
         } else if (to.kind == SummaryNode::Kind::Variable) {
             const Variable& variable = m_program.variables[to.first];
             bool isStoredOnce = function.isModuleBody() && function.module == variable.module && variable.flags.contains(VariableFlags::IsImmutable)
-                && !m_program.at(variable.module).flags.contains(ModuleFlags::RunsAgain);
+                && !m_program.at(variable.module).flags.contains(ModuleFlags::MayBeReevaluated);
             if (!isStoredOnce)
                 m_variablesWrittenLate.quickSet(to.first);
         }
@@ -2828,14 +2828,14 @@ void WriterOfLinkLayouts::finishRunsOnObjectsInFieldsIn(FunctionID id)
     }
     for (RunOnObjectInField& run : m_runsOnObjectsInFieldsInFunction) {
         const LinkType& subject = typeAt(id, run.subject);
-        if (subject.isNothing())
+        if (subject.isNever())
             continue;
         if (subject.objects == LinkType::Objects::Layout || subject.objects == LinkType::Objects::Set) {
-            forEachLayoutNamedInLinkLayouts(m_flow, subject, [&](LayoutID layout) {
+            forEachLayoutInType(m_flow, subject, [&](LayoutID layout) {
                 run.layouts.append(layout);
             });
         }
-        run.isOnObjectThatLinkHasLost = subject.holdsUnseen || subject.objects == LinkType::Objects::Lost;
+        run.isOnObjectThatLinkHasLost = subject.hasUnknownObjects || subject.objects == LinkType::Objects::Lost;
         if (const SummaryNode& holder = summary.nodes[run.holder]; holder.kind == SummaryNode::Kind::ResultOfCall && !summary.calls[holder.first].isConstruction) {
             const LinkFlow::CalleesOfCall& callees = m_flow.calleesOfCallsAsSettled()[m_flow.firstCallOfFunction[id.index()] + holder.first];
             if (callees.listed().size() == 1)
@@ -2873,21 +2873,21 @@ void WriterOfLinkLayouts::finishRunsOfMakersIn(FunctionID id)
         m_runsOfMakersInFunction.append(RunOfMaker { returned, { }, { }, { }, false, false, { }, { } });
     for (RunOfMaker& run : m_runsOfMakersInFunction) {
         const LinkType& subject = typeAt(id, run.subject);
-        if (subject.isNothing())
+        if (subject.isNever())
             continue;
         if (subject.objects == LinkType::Objects::Layout || subject.objects == LinkType::Objects::Set) {
-            forEachLayoutNamedInLinkLayouts(m_flow, subject, [&](LayoutID layout) {
+            forEachLayoutInType(m_flow, subject, [&](LayoutID layout) {
                 run.layouts.append(layout);
             });
         }
-        run.isOnObjectThatLinkHasLost = subject.holdsUnseen || subject.objects == LinkType::Objects::Lost;
+        run.isOnObjectThatLinkHasLost = subject.hasUnknownObjects || subject.objects == LinkType::Objects::Lost;
         if (const SummaryNode& node = summary.nodes[run.subject]; node.kind == SummaryNode::Kind::ResultOfCall && !summary.calls[node.first].isConstruction) {
             const LinkFlow::CalleesOfCall& callees = m_flow.calleesOfCallsAsSettled()[m_flow.firstCallOfFunction[id.index()] + node.first];
             if (callees.listed().size() == 1)
                 run.givenBy = callees.listed()[0];
         }
         run.isMadeHere = summary.nodes[run.subject].kind == SummaryNode::Kind::Allocation || summary.calls[summary.nodes[run.subject].first].isConstruction;
-        run.isHandedOn = run.subject == returned;
+        run.isReturned = run.subject == returned;
         run.body = id;
         if (const BodyIndex* index = run.keys.size() > 1 ? bodiesLookedAt(m_flow.looks).find(id) : nullptr) {
             ValueID lastStore = *std::ranges::max_element(run.firstStoresOfKeys, { }, &ValueID::index);
@@ -2963,8 +2963,8 @@ ALWAYS_INLINE void WriterOfLinkLayouts::lookAtChanges(FunctionID id, const ThinS
                     m_tables.recordsThatSpreadsFill.set(filled.index());
             });
         }
-        bool waitsForOther = change.kind == SummaryChange::Kind::CopiesInto && change.other != noSummaryNode && typeAt(id, change.other).isNothing();
-        if (subject.isNothing() || waitsForOther || (change.isSpelledByLoop && !m_flow.followsCopySpelledByLoop(subject, typeAt(id, change.other))))
+        bool waitsForOther = change.kind == SummaryChange::Kind::CopiesInto && change.other != noSummaryNode && typeAt(id, change.other).isNever();
+        if (subject.isNever() || waitsForOther || (change.isSpelledByLoop && !m_flow.followsCopySpelledByLoop(subject, typeAt(id, change.other))))
             continue;
         noteChangeOfClosure(subject, change.kind == SummaryChange::Kind::DefinesByDescriptor ? change.key : PropertyKeyID());
         if (change.kind != SummaryChange::Kind::DefinesByDescriptor || !change.laysValueInSight || !change.key)
@@ -3010,7 +3010,7 @@ ALWAYS_INLINE void WriterOfLinkLayouts::lookAtChanges(FunctionID id, const ThinS
             noteWrite(subject, { }, { Trait::ComesAfterConstruction, Trait::MayGiveValue });
             if (change.isSpelledByLoop) {
                 const LinkType& sources = typeAt(id, change.other);
-                forEachLayoutNamedInLinkLayouts(m_flow, sources, [&](LayoutID source) {
+                forEachLayoutInType(m_flow, sources, [&](LayoutID source) {
                     for (const Field& field : m_program.at(source).fields) {
                         if (!field.key || field.computedKey || isPrivateNameInLink(m_program, field.key))
                             continue;
@@ -3140,7 +3140,7 @@ void WriterOfLinkLayouts::writeNamesOnFunctions()
 {
     for (const LinkFlow::NameOnClosures& name : m_flow.namesOnClosures()) {
         const LinkType& held = m_flow.typeAt(name.laid);
-        if (held.isNothing())
+        if (held.isNever())
             continue;
         if (m_flow.lostFunctions.get(name.function.index()) && !m_namesThatStatementsLayOnLostFunctions.contains(static_cast<uint64_t>(name.function.index()) << 32 | name.key.bits()))
             continue;
@@ -3276,8 +3276,8 @@ void WriterOfLinkLayouts::noteNameWrittenOnPrototype(FunctionID id, const ThinSu
     const SummaryAccess& taken = summary.accesses[summary.nodes[access.descriptorFromElsewhere].first];
     LinkType map = typeAt(id, taken.subject);
     if (isLibraryCode(m_program, m_program.at(id)))
-        map = map.asSeen();
-    if (taken.kind == SummaryAccess::Kind::Read && taken.key && map.objects == LinkType::Objects::Layout && map.functions == LinkType::Functions::None && !map.holdsUnseen)
+        map = map.directPart();
+    if (taken.kind == SummaryAccess::Kind::Read && taken.key && map.objects == LinkType::Objects::Layout && map.functions == LinkType::Functions::None && !map.hasUnknownObjects)
         m_namesLaidOutOfMaps.append({ static_cast<uint64_t>(layout.index()) << 32 | key.bits(), static_cast<uint64_t>(map.layout.index()) << 32 | taken.key.bits() });
 }
 
@@ -3297,7 +3297,7 @@ bool WriterOfLinkLayouts::isWrittenOnPrototypeAbove(LayoutID layout, PropertyKey
 
 void WriterOfLinkLayouts::noteWrite(const LinkType& subject, PropertyKeyID key, Traits traits)
 {
-    if (key && traits.contains(Trait::AddsWhatIsNotListed) && (subject.holdsUnseen || subject.objects == LinkType::Objects::Lost))
+    if (key && traits.contains(Trait::AddsWhatIsNotListed) && (subject.hasUnknownObjects || subject.objects == LinkType::Objects::Lost))
         m_keysStoredOnUnknownObjects.add(key.bits());
 
     switch (subject.objects) {
@@ -3626,7 +3626,7 @@ void WriterOfLinkLayouts::noteNamesThatMakersGive()
     }
     Vector<const RunOfMaker*, 8> makersInFront;
     for (const RunOfMaker& run : m_runsOfMakers) {
-        if (!run.isHandedOn || run.keys.isEmpty() || !bodiesThatOtherMakersBuildOn.quickGet(run.body.index()))
+        if (!run.isReturned || run.keys.isEmpty() || !bodiesThatOtherMakersBuildOn.quickGet(run.body.index()))
             continue;
         makersInFront.shrink(0);
         const RunOfMaker* first = &run;
@@ -4035,14 +4035,14 @@ void WriterOfLinkLayouts::writeAppendedFields()
         std::span<const PropertyKeyID> keys = m_tables.appendedKeysOf(id);
         for (uint32_t place = 0; place < keys.size(); ++place) {
             FlowNodeID node = m_flow.findAppendedField(id, keys[place]);
-            if (FlowNodeID stored = m_flow.reading() != WhatUnseenCodeDoes::Anything ? m_flow.findAppendedFieldAsStoredThroughItsLayout(id, keys[place]) : FlowNodeID())
+            if (FlowNodeID stored = m_flow.reading() != WhatUnseenCodeDoes::Anything ? m_flow.findAppendedStoreNode(id, keys[place]) : FlowNodeID())
                 node = stored;
             if (!node || m_namesStoredThroughWhatIsExpected.contains(static_cast<uint64_t>(index) << 32 | keys[place].bits()))
                 continue;
             LinkedCell& cell = m_tables.appendedFields[m_tables.firstAppendedFieldOfLayout[index] + place];
             cell.everyWriterIsKnown = true;
             cell.liesBesideWhatDescriptorsDefine = m_isRedefinedByWrittenDefinitionsAlone.quickGet(index) && !m_appendedKeysThatDescriptorsDefine.get(m_tables.firstAppendedFieldOfLayout[index] + place);
-            cell.proven = m_flow.typeAt(node).isNothing() ? TypeID(TypeTable::never) : claimedTypeAt(node, Numbers::ByKindAlone);
+            cell.proven = m_flow.typeAt(node).isNever() ? TypeID(TypeTable::never) : claimedTypeAt(node, Numbers::ByKindAlone);
             cell.leavesOutWhatArrives = claimLeavesOutWhatArrivesAt(node);
             cell.keepsAccessorOnceLaid = cell.proven && !m_flow.lostLayouts.get(index) && m_flow.reading() == WhatUnseenCodeDoes::Anything && m_isRedefinedByWrittenDefinitionsAlone.quickGet(index)
                 && m_appendedKeysThatDescriptorsAloneWrite.get(m_tables.firstAppendedFieldOfLayout[index] + place) && cell.formThatDefinitionsCreate.containsAll({ FieldForm::IsAccessor, FieldForm::IsNotConfigurable });
@@ -4432,12 +4432,12 @@ void WriterOfLinkLayouts::writeFields()
                 RELEASE_ASSERT(node == m_flow.field(declared));
                 continue;
             }
-            if (m_flow.typeAt(node).isNothing())
+            if (m_flow.typeAt(node).isNever())
                 continue;
             uint32_t cell = cellOf(reference);
             TypeID arrived = claimedTypeAt(node, m_program.layouts[index].isEnvironment() ? Numbers::AsHeld : Numbers::ByKindAlone);
             if (PropertyKeyID key = fieldAt(m_program, reference).key; key && arrived && m_flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls) {
-                if (FlowNodeID laid = m_flow.findLaidByDescriptorsOn(LayoutID(index), key); laid && !m_flow.typeAt(laid).isNothing()) {
+                if (FlowNodeID laid = m_flow.findLaidByDescriptorsOn(LayoutID(index), key); laid && !m_flow.typeAt(laid).isNever()) {
                     TypeID byDescriptors = claimedTypeAt(laid);
                     arrived = byDescriptors ? types().unionOf(arrived, byDescriptors) : TypeID();
                 }
@@ -4445,7 +4445,7 @@ void WriterOfLinkLayouts::writeFields()
             if (m_program.layouts[index].isEnvironment())
                 arrived = namingSymbolAt(node, arrived);
             bool saysWhatMakersLay = false;
-            if (uint32_t laid = (arrived && !types().saysNothing(arrived)) || m_classesThatMakersLayInFields.isEmpty() ? 0 : m_classesThatMakersLayInFields[cell]; laid && laid != severalClasses) {
+            if (uint32_t laid = (arrived && !types().isUninformative(arrived)) || m_classesThatMakersLayInFields.isEmpty() ? 0 : m_classesThatMakersLayInFields[cell]; laid && laid != severalClasses) {
                 TypeID made = laid & layoutAmongWhatMakersLay ? types().forLayout(LayoutID((laid & ~layoutAmongWhatMakersLay) - 1)) : types().builtinClass(BuiltinClassID(laid - 1));
                 arrived = types().withPrimitives(made, Primitive::UndefinedOrNull);
                 saysWhatMakersLay = true;
@@ -4517,7 +4517,7 @@ void WriterOfLinkLayouts::writeFields()
             numberOfCellsWrittenOneByOne -= length;
         }
     }
-    m_flow.build.statistics().count(StatisticID::CellsOfInheritedFieldsWrittenOneByOne, numberOfCellsWrittenOneByOne);
+    m_flow.build.statistics().count(StatisticID::InheritedFieldEntriesWrittenIndividually, numberOfCellsWrittenOneByOne);
 
     writeOnAllThreads(numberOfLayouts, [&](unsigned index) {
         uint32_t numberOfFields = takesCellsOfBase.quickGet(index) ? m_program.layouts[index].ownFieldCount : m_tables.firstFieldOfLayout[index + 1] - m_tables.firstFieldOfLayout[index];
@@ -4611,11 +4611,11 @@ void WriterOfLinkLayouts::writeVariables()
         cell.proven = namingSymbolAt(m_flow.variable(VariableID(index)), cell.proven);
         const LinkType& arrived = m_flow.typeAt(m_flow.variable(VariableID(index)));
         if (m_flow.reading() != WhatUnseenCodeDoes::Anything || arrived.classes != LinkType::Classes::Site || arrived.objects != LinkType::Objects::None || arrived.functions != LinkType::Functions::None
-            || arrived.holdsUnseen || arrived.holdsLostBuiltins || arrived.builtin || m_flow.hasEscaped(arrived.site))
+            || arrived.hasUnknownObjects || arrived.holdsLostBuiltins || arrived.builtin || m_flow.hasEscaped(arrived.site))
             return isOfProgramInLink(cell.proven);
         cell.staysAsItsClassMakesIt = std::ranges::all_of(std::array { SlotOfContents::underUnknownNames(), SlotOfContents::noLongerAsMade() }, [&](SlotOfContents slot) {
             FlowNodeID held = m_flow.findContentsOf(arrived, slot);
-            return !held || (held != m_flow.unseen() && m_flow.typeAt(held).isNothing());
+            return !held || (held != m_flow.unseen() && m_flow.typeAt(held).isNever());
         });
         return isOfProgramInLink(cell.proven);
     });
@@ -4725,15 +4725,15 @@ void WriterOfLinkLayouts::lookAtSummaries()
         }
     }
 
-    m_saidByEdges.fieldsGivenValues.ensureSize(m_tables.fields.size());
-    m_saidByEdges.fieldsGivenUndefinedByMakers.ensureSize(m_tables.fields.size());
-    m_saidByEdges.fieldsFilledByConstructors.ensureSize(m_tables.fields.size());
-    m_saidByEdges.fieldsWrittenLate.ensureSize(m_tables.fields.size());
-    m_saidByEdges.layoutsGivenUndefinedByMakers.ensureSize(m_program.layouts.size());
-    m_saidByEdges.unitsListedForFields.fill(0, m_tables.fields.size());
+    m_fieldFactsFromEdges.fieldsGivenValues.ensureSize(m_tables.fields.size());
+    m_fieldFactsFromEdges.fieldsGivenUndefinedByMakers.ensureSize(m_tables.fields.size());
+    m_fieldFactsFromEdges.fieldsFilledByConstructors.ensureSize(m_tables.fields.size());
+    m_fieldFactsFromEdges.fieldsWrittenLate.ensureSize(m_tables.fields.size());
+    m_fieldFactsFromEdges.layoutsGivenUndefinedByMakers.ensureSize(m_program.layouts.size());
+    m_fieldFactsFromEdges.unitsListedForFields.fill(0, m_tables.fields.size());
     if (m_flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls)
         m_classesThatMakersLayInFields.fill(0, m_tables.fields.size());
-    m_saidByEdges.whatMakersLayInFields.fill(0, m_classesThatMakersLayInFields.size());
+    m_fieldFactsFromEdges.whatMakersLayInFields.fill(0, m_classesThatMakersLayInFields.size());
     runLanes(m_flow.loopsOfReading().ofCurrentThread(), {
         [&] {
             for (size_t index : m_flow.reached) {
@@ -4749,23 +4749,23 @@ void WriterOfLinkLayouts::lookAtSummaries()
                 lookAtEdges(FunctionID(index), m_flow.summaries.at(FunctionID(index)));
         },
     });
-    m_fieldsGivenValues.merge(m_saidByEdges.fieldsGivenValues);
+    m_fieldsGivenValues.merge(m_fieldFactsFromEdges.fieldsGivenValues);
     if (!AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::TreatLiteralFieldsAsDefined))
-        m_fieldsWrittenWithoutDefinition.merge(m_saidByEdges.fieldsGivenValues);
-    m_fieldsGivenUndefinedByMakers.merge(m_saidByEdges.fieldsGivenUndefinedByMakers);
-    m_fieldsFilledByConstructors.merge(m_saidByEdges.fieldsFilledByConstructors);
-    m_fieldsWrittenLate.merge(m_saidByEdges.fieldsWrittenLate);
-    m_layoutsGivenUndefinedByMakers.merge(m_saidByEdges.layoutsGivenUndefinedByMakers);
-    for (size_t cell : m_saidByEdges.fieldsGivenValues) {
-        if (uint32_t made = m_classesThatMakersLayInFields.isEmpty() ? 0 : m_saidByEdges.whatMakersLayInFields[cell])
+        m_fieldsWrittenWithoutDefinition.merge(m_fieldFactsFromEdges.fieldsGivenValues);
+    m_fieldsGivenUndefinedByMakers.merge(m_fieldFactsFromEdges.fieldsGivenUndefinedByMakers);
+    m_fieldsFilledByConstructors.merge(m_fieldFactsFromEdges.fieldsFilledByConstructors);
+    m_fieldsWrittenLate.merge(m_fieldFactsFromEdges.fieldsWrittenLate);
+    m_layoutsGivenUndefinedByMakers.merge(m_fieldFactsFromEdges.layoutsGivenUndefinedByMakers);
+    for (size_t cell : m_fieldFactsFromEdges.fieldsGivenValues) {
+        if (uint32_t made = m_classesThatMakersLayInFields.isEmpty() ? 0 : m_fieldFactsFromEdges.whatMakersLayInFields[cell])
             noteWhatMakerLays(m_classesThatMakersLayInFields[cell], made);
-        uint32_t listed = m_saidByEdges.unitsListedForFields[cell];
+        uint32_t listed = m_fieldFactsFromEdges.unitsListedForFields[cell];
         if (uint32_t& unit = m_unitsListedForFields[cell]; listed && unit != listed)
             unit = unit ? otherThanOneUnit : listed;
     }
     noteNamesStoredThroughWhatFieldsAreExpectedToHold();
     noteFormsOfNamesDefinedThroughWrittenTypesOfParameters();
-    m_saidByEdges = { };
+    m_fieldFactsFromEdges = { };
     m_whatIsNotedOfEveryField = { };
 }
 

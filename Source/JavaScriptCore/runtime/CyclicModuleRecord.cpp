@@ -341,7 +341,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 #endif
 #if ENABLE(AOT)
                     if (importedModule->inherits<AOT::ModuleRecord>())
-                        keepImportAsLinked(in.localName.impl(), resolution);
+                        recordLinkedImport(in.localName.impl(), resolution);
 #endif
                 }
                 break;
@@ -907,7 +907,7 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     // (Note: it's safe to use a Vector instead of a MarkedArgumentsBuffer here because all the contents are accessed through WriteBarriers starting at `this`.)
     Vector<CyclicModuleRecord*, 8> execList;
 #if ENABLE(AOT)
-    EnsureStillAliveScope keepsParentsAlive(this);
+    EnsureStillAliveScope keepAliveScope(this);
 #endif
     // 9. Perform GatherAvailableAncestors(module, execList).
     gatherAvailableAncestors(this, execList);

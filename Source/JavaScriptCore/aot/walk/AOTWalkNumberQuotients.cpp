@@ -40,7 +40,7 @@ static bool isExactIntegerInQuotients(Walker& walker, TypeID id)
 
 static ValueID recordBehindNamesAndFormsInQuotients(const Code& code, ValueID record)
 {
-    while (opcodesThatGiveSameCell.contains(code.at(record).opcode))
+    while (cellPreservingOpcodes.contains(code.at(record).opcode))
         record = code.at(record).operand(0);
     return record;
 }
@@ -65,7 +65,7 @@ static bool operandsAreInSightInQuotients(Walker& walker, const BodyValue& opera
 static ALWAYS_INLINE std::optional<BodyValue> findOperatorOnExactIntegersInQuotients(Walker& walker, Opcode opcode, ValueID number, const InputsOfTypedOperation& inputs)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID written = number ? index.valueBehindCasts(number) : ValueID();
+    ValueID written = number ? index.stripCasts(number) : ValueID();
     if (!written || index.isParameter(written) || index.opcodeOf(written) != opcode)
         return std::nullopt;
     BodyValue operation = index.value(written);
@@ -271,7 +271,7 @@ Reference buildComparisonWhereDivisorsAreNotZero(Walker& walker, Draft&& compari
     BlockID whereSomeDivisorIsZero = walker.addBlock(BlockFrequency::Rare);
     BlockID meeting = walker.addBlock();
     for (Reference isNotZero : testsThatDivisorsAreNotZero)
-        goOnWhereTestPassesInNumberForms(walker, isNotZero, whereSomeDivisorIsZero);
+        continueIfTrue(walker, isNotZero, whereSomeDivisorIsZero);
     Reference compared = buildInAllowedFormInNumberForms(walker, WTF::move(comparison));
     BlockID endOfComparison = compared ? walker.currentBlock() : BlockID();
 

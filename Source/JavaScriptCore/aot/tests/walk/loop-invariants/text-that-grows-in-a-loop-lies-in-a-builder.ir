@@ -100,9 +100,8 @@ function f3 name="hinted" module=m0 thisType={type=anything} results=[{type=anyt
   b2():
     v7 = String string="k"
     v8 = Add v2, v7
-    ReleaseHint v2
-    v10 = Increment v3
-    Jump -> next b1(v8, v10)
+    v9 = Increment v3
+    Jump -> next b1(v8, v9)
   b3():
     Return v2
 }

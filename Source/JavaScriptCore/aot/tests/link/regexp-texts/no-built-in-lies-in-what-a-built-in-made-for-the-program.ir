@@ -3,7 +3,7 @@
 # What lies there is what the program gets wherever it reads the same thing: ("b" + Object.values(Object.getOwnPropertyDescriptor(Math, "max")).includes(Math.max))
 # An object inside a list pays by its length like one that is handed over: const small = Object.create(Array.prototype); small.length = 3; ("d" + [small].join().length)
 # heir.length = 1000000; const holder = [heir]; ("c" + (holder.join().length + .. nine times ..)): the nine together are more than a start may do.
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /aNaN/
 # CHECK: text /btrue/

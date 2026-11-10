@@ -14,7 +14,7 @@
 # RUN(THIRD): regexp-texts mechanisms=all
 # THIRD: text /z2?/
 
-module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait, KeepsError] body=f0 exports=[{name="third" variable=g0}] namespaceLayout=L(m0)
+module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait, CachesEvaluationError] body=f0 exports=[{name="third" variable=g0}] namespaceLayout=L(m0)
 entry module=m0
 variable g0 name="third" module=m0 declared={type=anything|absent} flags=[IsImmutable]
 variable g1 name="load" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
@@ -48,7 +48,7 @@ function f1 name="load" module=m0 flags=[IsAsync, HasThis, HasExplicitName] leng
     v3 = Add v1, v2 @42
     Return v3 @42
 }
-function f2 name="main" module=m0 position=49 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f2 name="main" module=m0 position=49 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: anything, v1: undefined|null|string):
     Jump -> next b1() @49
   b1():

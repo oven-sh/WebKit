@@ -15,11 +15,11 @@ entry module=m0
 # -- code
 # code f0:CoroutineBody {
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
-#     v2: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v2: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v3: boolean @Boolean = TypeTest v2 testedType=undefined
 #     Branch v3 -> taken b1(), notTaken b2()
 #   b1():
-#     v4: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v4
 #   b2():
 #     Return v2

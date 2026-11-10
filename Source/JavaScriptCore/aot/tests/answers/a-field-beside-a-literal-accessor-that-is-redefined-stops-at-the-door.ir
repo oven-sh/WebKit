@@ -3,11 +3,13 @@
 # function inner(b) { return b.inner.n; }
 # if (which === 1) id(redefines)(box);
 # print(inner(box));   print("went on");
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so `box` stays with compiled code.
-# Link calls `inner` filled because it lies beside accessors that literals alone lay, and inner() reads the slot without a look. A redefinition with other attributes empties the slot: SIGSEGV; plain prints undefined.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so `box` never escapes from compiled code.
+# Link calls `inner` filled because the only accessors next to it are defined by object literals, and inner() reads the slot without a check. A redefinition with other attributes empties the slot.
+# The compiled program then died with SIGSEGV, where the program without AoT prints undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(BESIDEANACCESSOR): run-in-shell mechanisms=all globalThis.which = 1;
-# BESIDEANACCESSOR: AOT: RedefineProperty of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# BESIDEANACCESSOR: bun: internal AOT error: object mutation check failed
+# BESIDEANACCESSOR-NEXT: RedefineProperty on an {{*}}, but the compiler proved that
 # BESIDEANACCESSOR-NOT: went on
 # BESIDEANACCESSOR: crashed with
 # RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;

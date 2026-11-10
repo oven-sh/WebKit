@@ -1,10 +1,12 @@
 # const box = { inner: { n: 1 } };   box.inner = id("text");
 # function read(b) { const inner = b.inner; return inner === undefined ? -1 : inner.n; }
 # print(read(box));   print("went on");
-# The lie: Link takes what the shell's `id` gives for undefined. One reference field stays boxed, and the receiver of the store is proven: the stub that is told the record of the field.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# Fault injection: Link assumes that the shell's `id` returns undefined.
+# A single reference field stays boxed, and the receiver of the store is proven, so the store uses the stub that is passed the field's record.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN: run-in-shell mechanisms=all
-# CHECK: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# CHECK: bun: internal AOT error: object mutation check failed
+# CHECK-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # CHECK-NOT: went on
 # CHECK: crashed with
 

@@ -1230,6 +1230,29 @@ private:
         return loadPromise(loadValue, Load, AddrRequestMode::NoRestriction);
     }
 
+    // An instruction that reads fewer bytes than the load does not trap where only the other bytes are out of bounds.
+    bool canReadInPlace(Value* value, Width width)
+    {
+        if (!m_procedure.policy().selection.extendsInstructionSelection || !value->traps())
+            return true;
+        auto* memory = value->as<MemoryValue>();
+        return !memory || memory->accessWidth() <= width;
+    }
+
+    static Width maxWidthRead(Air::Opcode opcode)
+    {
+        switch (opcode) {
+        case Air::ZeroExtend8To32:
+        case Air::SignExtend8To32:
+            return Width8;
+        case Air::ZeroExtend16To32:
+        case Air::SignExtend16To32:
+            return Width16;
+        default:
+            return Width128;
+        }
+    }
+
     Arg imm(int64_t intValue)
     {
         if (Arg::isValidImmForm(intValue))
@@ -1499,7 +1522,7 @@ private:
         //     b = Op a
 
         ArgPromise addr = loadPromise(value);
-        if (isValidForm(opcode, addr.kind(), Arg::Tmp)) {
+        if (isValidForm(opcode, addr.kind(), Arg::Tmp) && canReadInPlace(value, maxWidthRead(opcode))) {
             append(addr.inst(opcode, m_value, addr.consume(*this), result));
             return;
         }
@@ -2942,7 +2965,7 @@ private:
                 }
                 
                 auto tryTestLoadImm = [&] (Width width, Arg::Signedness signedness, B3::Opcode loadOpcode) -> Inst {
-                    if (!hasRightConst || left->opcode() != loadOpcode)
+                    if (!hasRightConst || left->opcode() != loadOpcode || !canReadInPlace(left, width))
                         return Inst();
                     // Signed loads will create high bits, so if the immediate has high bits
                     // then we cannot proceed. Consider BitAnd(Load8S(ptr), 0x101). This cannot

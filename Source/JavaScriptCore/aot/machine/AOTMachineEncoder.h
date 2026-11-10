@@ -284,13 +284,13 @@ public:
     }
     AddressForm resolveAddressSlowCase(const Operation* access, LeafCursor&);
     AddressForm resolveScaledSum(const Operation* sum, LeafCursor&);
-    NEVER_INLINE void failBecauseSlotThatNoStepReadsIsRead() const;
+    NEVER_INLINE void reportDeadSlotRead() const;
     ALWAYS_INLINE int32_t offsetOfSlot(SpillIndex spill, MemoryOfEncodedMove use) const
     {
-        int32_t offset = m_frame.offsetFromFPWithMarkOf(spill);
+        int32_t offset = m_frame.taggedOffsetOf(spill);
         if (use == MemoryOfEncodedMove::IsRead)
-            m_marksOfSlotsRead |= offset;
-        return offset & ~Frame::markOfSlotThatNoStepReads;
+            m_readSlotTags |= offset;
+        return offset & ~Frame::deadSlotTag;
     }
     ALWAYS_INLINE MacroAssembler::Address addressOf(Location memory, MemoryOfEncodedMove use = MemoryOfEncodedMove::IsRead) const
     {
@@ -322,7 +322,6 @@ public:
     ALWAYS_INLINE void encodeReload(const Step&);
     ALWAYS_INLINE void encodeSave(const Step&);
     void encodeSwap(const Step&);
-    void encodeClearSpill(const Step&);
     void encodeKeepPointer(const Step&);
     void encodeMaterialize(const Operation*, Reg destination);
     bool tryEncodePairOfMoves(const Step& first, const Step& second);
@@ -429,7 +428,7 @@ public:
     const Step* const m_steps;
     const SpillIndex* const m_spillsOfValues;
     const ValueFacts* const m_valueFacts;
-    mutable int32_t m_marksOfSlotsRead { 0 };
+    mutable int32_t m_readSlotTags { 0 };
 
     UncheckedSpan<MacroAssembler::Label> m_labels;
     UncheckedSpan<const Block*> m_blocksEntered;
@@ -628,8 +627,6 @@ ALWAYS_INLINE bool patchRegisterAnswersConstraint(const ValueRep& answer, const 
     return constraint.kind() < ValueRep::Register || answer == constraint;
 }
 
-void clearFrameWordsInFrontOfSuspension(Encoder&, const PatchOperation* suspension);
-
 template<bool isCheck>
 ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const Step& step, PatchOperation* patch)
 {
@@ -716,9 +713,6 @@ ALWAYS_INLINE void Encoder::encodePatch(const Step& step, PatchOperation* patch)
     ASSERT(!patch->onlyKeepsChildrenAlive);
     RELEASE_ASSERT(patch->generator());
     RELEASE_ASSERT(m_frameIsSetUp || patch->runsWithoutFrame());
-
-    if (patch->isSuspension())
-        clearFrameWordsInFrontOfSuspension(*this, patch);
 
     PatchParameters parameters(*this, patch);
     fillParameters<false>(parameters, step, patch);

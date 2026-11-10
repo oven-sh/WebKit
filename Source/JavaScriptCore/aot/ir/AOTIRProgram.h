@@ -101,11 +101,11 @@ public:
     Vector<BuiltinUsedAtStart> builtinsUsedAtStart;
     Wire::ExcludedCode excludedCode { };
     bool admitsReplacedBuiltins { false };
-    bool rowsOfNativeCodeWriteNullish { false };
-    uint16_t builtinWhoseRowWritesItsLeastIntegerAlone { 0 };
-    uint16_t builtinWhoseRowWritesNullAlone { 0 };
-    uint16_t operationWhoseRuleWritesAnotherKind { 0 };
-    uint16_t builtinWhoseRowWritesThatItsResultHoldsNullAlone { 0 };
+    bool shouldAssumeNullishHostResults { false };
+    uint16_t builtinInjectedAsMinimumInteger { 0 };
+    uint16_t builtinInjectedAsNull { 0 };
+    uint16_t opcodeInjectedAsOtherKind { 0 };
+    uint16_t builtinInjectedAsHoldingNull { 0 };
     uint16_t builtinInjectedAsFresh { 0 };
     bool admitsInspector { false };
 
@@ -316,7 +316,7 @@ FunctionID findNakedConstructorOf(const Program&, BuiltinID);
 FunctionID functionThatSorts(const Program&);
 bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);
-bool isFaceOfCommonJSFile(const Program&, const Module&);
+bool isCommonJSFacade(const Program&, const Module&);
 bool parsersCouldMakeRecordsOf(const Program&, LayoutID);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 BitVector modulesThatHostAsksFor(const Program&, bool beginsModulesOfData = false);
@@ -328,10 +328,10 @@ constexpr bool hasNamespaceLayout(ModuleKind kind)
 {
     return kind == ModuleKind::SourceText || kind == ModuleKind::RuntimeSource;
 }
-ModuleID commonJsModuleCapturedBy(const Program&, const Module& face);
+ModuleID commonJsModuleCapturedBy(const Program&, const Module& facade);
 Vector<ModuleID, 2> formsInImage(const Program&, ModuleID named);
-bool namesWaysToModuleObjects(const Program&);
-BuiltinID functionOfHostThatRequireCallsFor(const Module&);
+bool reachesModuleObjects(const Program&);
+BuiltinID hostRequireFunctionFor(const Module&);
 bool loaderEntersBodyAtMostOnce(const Module&);
 bool isBodyWrittenInAnotherFile(const Program&, FunctionID);
 bool importMayAnswerWithMock(const Module&);

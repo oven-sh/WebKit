@@ -32,8 +32,8 @@
 # KEPT-LABEL: code f3:Body
 # KEPT-NOT: InParts
 # KEPT: = RegExpMatchLiteral {{*}}matchForm=Exec
-# RUN(COUNTED): compile MatchesTakenInParts mechanisms=all
-# COUNTED: statistic MatchesTakenInParts 2
+# RUN(COUNTED): compile RegExpMatchAllocationsElided mechanisms=all
+# COUNTED: statistic RegExpMatchAllocationsElided 2
 # What it leans on withheld, nothing is taken in parts.
 # RUN(WITHHELD): walk f1 mechanisms=all-EscapeAnalysis
 # WITHHELD-NOT: InParts

@@ -25,7 +25,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v12 = Undefined
     Return v12
 }
-function f1 name="g3" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length=9 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f1 name="g3" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length=9 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything):
     v10 = Await v1, v1, v0
     v11 = Await v1, v1, v0
@@ -45,7 +45,7 @@ function f1 name="g3" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length
     v25 = NewArray v2, v3, v4, v5, v6, v7, v8, v9 contents=anything
     Return v25
 }
-function f2 name="g6" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length=9 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f2 name="g6" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length=9 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything):
     v10 = Await v1, v1, v0
     v11 = Await v1, v1, v0

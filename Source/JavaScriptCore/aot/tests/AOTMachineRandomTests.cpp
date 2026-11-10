@@ -25,6 +25,7 @@ struct RandomTestCase {
     RandomProcedureOptions options { };
     bool savesFrameOnSuspend { false };
     bool usesFeaturesOfHost { false };
+    std::optional<uint32_t> branchReach { };
 };
 
 static constexpr unsigned numberOfSeedsInRandomTest = 300;
@@ -133,7 +134,7 @@ static void runRandomTestCase(const RandomTestCase& testCase, RandomTestCensus& 
     TestInstance instance;
     AOT_RANDOM_TEST_CHECK(testCase, test, test.procedure().traits().checksAllocation);
     AOT_RANDOM_TEST_CHECK(testCase, test, test.prepare());
-    AOT_RANDOM_TEST_CHECK(testCase, test, test.compile(instance.pointer()));
+    AOT_RANDOM_TEST_CHECK(testCase, test, test.compile(instance.pointer(), testCase.branchReach));
     placePinnedConstantsForRandomTest(test.procedure(), instance);
     countScaledSumsOfRandomTest(test.procedure(), census);
 
@@ -225,6 +226,11 @@ static void testRandomProceduresThatSaveTheirFrame()
 static void testRandomProceduresWithFeaturesOfHost()
 {
     runRandomTestCases({ .options = { .seed = 9001 }, .usesFeaturesOfHost = true });
+}
+
+static void testRandomProceduresWithShortBranchReach()
+{
+    runRandomTestCases({ .options = { .seed = 14000 }, .branchReach = 256 });
 }
 
 static void testRandomProceduresWithScaledSums()
@@ -353,6 +359,7 @@ std::span<const NativeTest> machineRandomTests()
         { "machine/random/functions-that-save-their-frame"_s, Machine::testRandomProceduresThatSaveTheirFrame },
         { "machine/random/features-of-the-host"_s, Machine::testRandomProceduresWithFeaturesOfHost },
         { "machine/random/scaled-sums"_s, Machine::testRandomProceduresWithScaledSums },
+        { "machine/random/short-branch-reach"_s, Machine::testRandomProceduresWithShortBranchReach },
         { "machine/random/same-seed-same-bytes"_s, Machine::testRandomProceduresAreBuiltTheSameWayTwice },
         { "machine/random/twice-the-operations-cost-twice-the-arena"_s, Machine::testRandomProceduresCostArenaBytesByTheOperation },
     };

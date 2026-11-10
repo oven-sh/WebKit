@@ -15,10 +15,12 @@
 # if (which === 1) { keep(new Other()); storeTwice(first, second, 1); }
 # print(spell(first) + spell(second));
 # print("went on");
-# WHAT HAS BEEN ASKED IS SHOWN. A check that is built in the block of the record that it asks stands above every use that is built from there on. So the type that it has tested counts as shown of the value:
-# whoever stores the value typed, once or twice, asks nothing more. Without that the element of the list was asked three times for one type: behind the read, and in front of each store.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so the list is taken to hold `undefined | string`, and an Other comes out of it. The one check that is left stops it by name.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# A type that has been checked counts as shown.
+# A check that is built in the block of the operation that it checks dominates every use that is built from there on. So the type that it has tested counts as shown for the value:
+# a typed store of the value, once or twice, checks nothing more. Without that rule the array's element was checked three times for one type: after the read, and before each store.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so the array is assumed to hold `undefined | string`, and an Other is read from it.
+# The one check that is left crashes with a named error.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(ONCE): walk f3 mechanisms=all-Inlining
 # ONCE-LABEL: code f3:Body
 # ONCE: [[got]]: undefined|string @JSValue = GetArrayElement
@@ -30,7 +32,8 @@
 # RUN(TRUE): run-in-shell mechanisms=-Inlining globalThis.which = 0;
 # TRUE: went on
 # RUN(LIE): run-in-shell mechanisms=-Inlining globalThis.which = 1;
-# LIE: AOT: f{{*}} at {{*}}: {{*}} not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# LIE: bun: internal AOT error: type check failed
+# LIE-NEXT: found object in
 # LIE-NOT: went on
 # LIE: crashed with
 

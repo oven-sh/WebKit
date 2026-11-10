@@ -139,7 +139,6 @@ private:
     BitSpan m_isFrameAddress;
     ArenaVector<uint32_t> m_liveRangeIn;
     ArenaVector<uint32_t> m_firstLiveRangeIn;
-    BitSpan m_isCleared;
 
     const Block* m_block { nullptr };
     const Operation* m_valueIn[numberOfRegisters] { };
@@ -166,7 +165,6 @@ CollectorRulesChecker::CollectorRulesChecker(Procedure& proc)
     m_isFrameAddress = BitSpan::create(m_arena, numberOfOperations);
     m_liveRangeIn.fill(m_arena, proc.numberOfBlocks(), none);
     m_firstLiveRangeIn.fill(m_arena, proc.numberOfBlocks(), none);
-    m_isCleared = BitSpan::create(m_arena, m_spills.size());
 }
 
 bool CollectorRulesChecker::needsPointerBeside(const Operation* value) const
@@ -432,10 +430,6 @@ void CollectorRulesChecker::pass(const Step& step)
             m_saveOf[step.operation->index()] = spill;
         return;
     }
-    case StepKind::ClearSpill:
-        if (step.destination.isSpill() && step.destination.spillIndex() < m_spills.size())
-            m_isCleared.set(step.destination.spillIndex());
-        return;
     case StepKind::KeepPointer: {
         uint32_t watched = step.operation ? m_watchedOf[step.operation->index()] : none;
         if (watched == none || !step.destination.isSpill())
@@ -559,7 +553,7 @@ bool CollectorRulesChecker::checkAcross(const Operation* value, const Safepoint&
 
 bool CollectorRulesChecker::spillHolds(SpillIndex spill, const Operation* value, bool holdsPointer, const Safepoint& safepoint) const
 {
-    if (spill >= m_spills.size() || m_isCleared.get(spill) || m_spills[spill].isReadByNoStep)
+    if (spill >= m_spills.size() || m_spills[spill].isDeadSlot)
         return false;
     const SpillFacts& facts = m_spills[spill];
     if (facts.value != value || facts.isPointerBesideNarrowReference != holdsPointer || facts.begin > safepoint.late || safepoint.late > facts.end)
@@ -581,7 +575,7 @@ bool CollectorRulesChecker::spillHolds(SpillIndex spill, const Operation* value,
     auto listed = std::partition_point(suspensions.begin(), suspensions.end(), [&](const PatchOperation* candidate) {
         return m_order.latePositionOf(candidate) < safepoint.late;
     });
-    return listed != suspensions.end() && *listed == safepoint.patch && m_allocation.spillsHeldAt(static_cast<uint32_t>(listed - suspensions.begin())).get(spill);
+    return listed != suspensions.end() && *listed == safepoint.patch && m_allocation.liveSpillsAt(static_cast<uint32_t>(listed - suspensions.begin())).get(spill);
 }
 
 bool CollectorRulesChecker::isHeld(const Operation* value, const Safepoint& safepoint) const

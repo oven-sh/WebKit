@@ -13,17 +13,17 @@
 # CHECK: Jump
 # CHECK: = NewArray
 # CHECK-NOT: Jump
-# CHECK: ReserveArrayRoom
+# CHECK: ReserveArrayCapacity
 # CHECK-NOT: = NewArray
-# RUN(COUNT): compile LiteralsBornBehindWhatReckonsTheirRoom mechanisms=all
-# COUNT: statistic LiteralsBornBehindWhatReckonsTheirRoom 2
+# RUN(COUNT): compile ArrayLiteralAllocationsSunk mechanisms=all
+# COUNT: statistic ArrayLiteralAllocationsSunk 2
 # RUN(NAMED): walk f2 mechanisms=all
 # NAMED-LABEL: code f2:Body
 # NAMED: = NewArray
 # NAMED: = NewArray
 # NAMED: Jump
 # NAMED-NOT: = NewArray
-# NAMED: ReserveArrayRoom
+# NAMED: ReserveArrayCapacity
 # NAMED-NOT: = NewArray
 # RUN(ROUND): walk f3 mechanisms=all
 # ROUND-LABEL: code f3:Body
@@ -36,7 +36,7 @@
 # TURN: Jump
 # TURN: = NewArray
 # TURN-NOT: Jump
-# TURN: ReserveArrayRoom
+# TURN: ReserveArrayCapacity
 # TURN-NOT: = NewArray
 # RUN(TWICE): walk f5 mechanisms=all
 # TWICE-LABEL: code f5:Body

@@ -26,7 +26,7 @@ RepresentationEmitter::RepresentationEmitter(CodeGenerator& generator)
 Integer RepresentationEmitter::heldToWhatConversionGives(const OperationContext& context, Number number, Integer integer)
 {
     if (emittersCheckProofs())
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(context, equal(integer, emitter<ConversionEmitter>().toInteger(number)), std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().requireOrCrash(context, equal(integer, emitter<ConversionEmitter>().toInteger(number)), std::nullopt, ProofSource::OtherOperation);
     return integer;
 }
 

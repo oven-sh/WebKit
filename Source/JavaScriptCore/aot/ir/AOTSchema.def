@@ -19,7 +19,7 @@ enum FlowRule { | engine General Arithmetic Await Call ConversionToObject Conver
 enum BoundTo { | engine Nothing Frame Function Site }
 enum ProgramEvent { | engine None EvaluatesText LoadsModule }
 enum AccessClass { | engine None Slot ByName DirectCall IndirectCall }
-enum HandedOn { | engine Nothing Form NarrowerType UnclaimedType ClaimedType TestedField PassedCheck Mark }
+enum PassThroughKind { | engine Nothing Form NarrowerType UnclaimedType ClaimedType TestedField PassedCheck Mark }
 enum OperatorKind { | engine None Additive Multiplicative Bitwise Relation Equality NumberConversion }
 enum EntryByValue { | engine None Call Construction }
 enum Form { | engine Open Closed Runtime }
@@ -168,7 +168,7 @@ column runsBeforeCallee : Bool
 column hasKnownValueRule : Bool
 column hasOwnFoldingRule : Bool
 column writesOnlyItsAnswer : Bool
-column handsOn : HandedOn
+column passThrough : PassThroughKind
 column operatorKind : OperatorKind
 column joinsTexts : Bool
 column entersByValue : EntryByValue

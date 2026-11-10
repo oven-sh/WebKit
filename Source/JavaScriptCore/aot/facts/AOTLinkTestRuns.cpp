@@ -140,13 +140,13 @@ void TestRunsInLink::lookAtWhatHasSettled()
     for (SpyOutOfSight& spy : m_spiesOutOfSight) {
         LinkType holder = m_flow.typeAt(spy.holder);
         LayoutID layout = holder.objects == LinkType::Objects::Layout || holder.objects == LinkType::Objects::Set ? holder.layout : LayoutID();
-        if (holder.builtin == spy.builtin && layout == spy.layout && static_cast<uint8_t>(holder.objects) == spy.kindOfObjects && holder.holdsLostBuiltins == spy.holdsLostBuiltins && holder.holdsUnseen == spy.holdsUnseen)
+        if (holder.builtin == spy.builtin && layout == spy.layout && static_cast<uint8_t>(holder.objects) == spy.kindOfObjects && holder.holdsLostBuiltins == spy.holdsLostBuiltins && holder.hasUnknownObjects == spy.hasUnknownObjects)
             continue;
         spy.builtin = holder.builtin;
         spy.layout = layout;
         spy.kindOfObjects = static_cast<uint8_t>(holder.objects);
         spy.holdsLostBuiltins = holder.holdsLostBuiltins;
-        spy.holdsUnseen = holder.holdsUnseen;
+        spy.hasUnknownObjects = holder.hasUnknownObjects;
         noteHolderOfSpy(holder, { }, spy.caller, spy.site);
         hasNoted = true;
     }
@@ -184,7 +184,7 @@ FlowNodeID TestRunsInLink::nodeOfSomeNameAdded()
 
 bool TestRunsInLink::isNameAdded(FlowNodeID nodeOfNameAdded) const
 {
-    return !m_flow.typeAt(nodeOfNameAdded).isNothing();
+    return !m_flow.typeAt(nodeOfNameAdded).isNever();
 }
 
 BuiltinID TestRunsInLink::prototypeAboveClosuresOf(FunctionID function) const
@@ -256,7 +256,7 @@ bool TestRunsInLink::takesWriteOnBuiltin(BuiltinID holder, PropertyKeyID key, Fu
 
 BuiltinID TestRunsInLink::memberThatMayStandAt(const BodyIndex& index, ValueID value) const
 {
-    while (value && inputOperationsThatHandOn.contains(index.opcodeOf(value)))
+    while (value && inputPassThroughOpcodes.contains(index.opcodeOf(value)))
         value = index.value(value).operand(0);
     if (!value)
         return { };
@@ -311,7 +311,7 @@ PropertyKeyID TestRunsInLink::keyWrittenAtSpy(FunctionID caller, ValueID site) c
         if (operandIndex == operandOfName)
             name = operand;
     });
-    name = name ? index->valueBehindCasts(name) : ValueID();
+    name = name ? index->stripCasts(name) : ValueID();
     if (!name || index->isParameter(name) || index->opcodeOf(name) != Opcode::String)
         return { };
     std::optional<PropertyKeyID> spelled = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = index->value(name).as<Opcode::String>().string() });

@@ -136,7 +136,7 @@ void ConstantEmitter::generateModuleBuiltin(const ValueContext& value)
     auto callModuleBuiltinCell = [&](bool isOnRarePath) {
         return callOperation<CellPointer>(value, RuntimeOperation::ModuleBuiltinCell, { word32(static_cast<int32_t>(builtin.index())), word32(static_cast<int32_t>(module.index())) }, { .isOnRarePath = isOnRarePath });
     };
-    if (m_program.at(module).flags.contains(ModuleFlags::RunsAgain)) {
+    if (m_program.at(module).flags.contains(ModuleFlags::MayBeReevaluated)) {
         defineCell(value, callModuleBuiltinCell(false));
         return;
     }

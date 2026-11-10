@@ -33,7 +33,7 @@ Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Re
 bool canWaitForStepOfAsyncGenerator(Walker&);
 Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Reference goesByDriver, Origin);
 bool engineAnswersAboveGenerators(const Walker&);
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
+OperatorForm operatorFormFor(Walker&, const Draft&);
 
 static constexpr OpcodeSet operationsOfFamilyCoroutine { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope };
 
@@ -190,7 +190,7 @@ static void branchOnResumeModeOfCoroutine(Walker& walker, Reference mode, Resume
     Draft test = draftForCoroutine(walker, Opcode::StrictEq, origin);
     test.setLeftOperand(mode);
     test.setRightOperand(walker.constant(WTF::move(asked)));
-    test.setForm(formAllowedForTypedOperator(walker, test));
+    test.setForm(operatorFormFor(walker, test));
     Reference isResumedToLeave = walker.build(WTF::move(test));
 
     BlockID leaves = walker.addBlock(BlockFrequency::Rare);

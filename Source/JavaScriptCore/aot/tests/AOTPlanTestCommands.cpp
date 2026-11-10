@@ -366,7 +366,7 @@ static void printPlannedModuleStarts(IRPrinter& printer, const Plan& plan)
         ModuleID module(index);
         bool isCalled = evaluation.isCalledWhereRequired(module);
         bool isAlone = evaluation.isEvaluatedByCodeAlone(module);
-        bool recordsNothing = evaluation.recordsNothingThatIsSeen(module);
+        bool recordsNothing = evaluation.canSkipRecordRequire(module);
         if (!isCalled && !isAlone && !evaluation.startsItself(module) && !recordsNothing)
             continue;
         out.print("module "_s);

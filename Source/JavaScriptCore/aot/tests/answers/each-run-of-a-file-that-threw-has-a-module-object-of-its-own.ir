@@ -7,8 +7,8 @@
 # CHECK-NEXT: 3 module objects in 3 runs
 # CHECK: exited with 0
 
-module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
-module m1 path="/t.cjs" displayPath="t.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects, RunsAgain] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/t.cjs" displayPath="t.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects, MayBeReevaluated] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
 entry module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined

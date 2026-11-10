@@ -9,31 +9,38 @@
 # CHECK-NEXT: exited with 0
 # Every call of `twice` is copied and no compiled code enters it by value: its entry is closed.
 # RUN(ENTERS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { print(aotFindObjectOfLayout(0).twice()); print("went on"); });
-# ENTERS: AOT: {{*}}an entry parameter is not of the type that the compiler has proven of it
+# ENTERS: bun: internal AOT error: type check failed
+# ENTERS-NEXT: in an argument
 # ENTERS-NOT: went on
 # ENTERS: crashed with
 # RUN(STORES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { aotFindObjectOfLayout(0).count = "text"; print("went on"); });
-# STORES: AOT: StoreOfOtherType of an object of layout L0, field 0: the compiler has proven that it never happens, and compiled code reads such objects without a look. This is a bug in Bun.
+# STORES: bun: internal AOT error: object mutation check failed
+# STORES-NEXT: StoreOfOtherType on an instance of class 'Closed'{{*}}, but the compiler proved that this never happens
 # STORES-NOT: went on
 # STORES: crashed with
 # RUN(DELETES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { delete aotFindObjectOfLayout(0).label; print("went on"); });
-# DELETES: AOT: DeleteField of an object of layout L0
+# DELETES: bun: internal AOT error: object mutation check failed
+# DELETES-NEXT: DeleteField on an instance of class 'Closed'
 # DELETES-NOT: went on
 # DELETES: crashed with
 # RUN(REDEFINES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { Object.defineProperty(aotFindObjectOfLayout(0), "label", { get() { return "got"; } }); print("went on"); });
-# REDEFINES: AOT: RedefineProperty of an object of layout L0
+# REDEFINES: bun: internal AOT error: object mutation check failed
+# REDEFINES-NEXT: RedefineProperty on an instance of class 'Closed'
 # REDEFINES-NOT: went on
 # REDEFINES: crashed with
 # RUN(ADDS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { aotFindObjectOfLayout(0).other = 1; print("went on"); });
-# ADDS: AOT: AddProperty of an object of layout L0
+# ADDS: bun: internal AOT error: object mutation check failed
+# ADDS-NEXT: AddProperty on an instance of class 'Closed'
 # ADDS-NOT: went on
 # ADDS: crashed with
 # RUN(FREEZES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { Object.freeze(aotFindObjectOfLayout(0)); print("went on"); });
-# FREEZES: AOT: ChangeIntegrity of an object of layout L0
+# FREEZES: bun: internal AOT error: object mutation check failed
+# FREEZES-NEXT: ChangeIntegrity on an instance of class 'Closed'
 # FREEZES-NOT: went on
 # FREEZES: crashed with
 # RUN(RELINKS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { Object.setPrototypeOf(aotFindObjectOfLayout(0), null); print("went on"); });
-# RELINKS: AOT: ChangePrototype of an object of layout L0
+# RELINKS: bun: internal AOT error: object mutation check failed
+# RELINKS-NEXT: ChangePrototype on an instance of class 'Closed'
 # RELINKS-NOT: went on
 # RELINKS: crashed with
 

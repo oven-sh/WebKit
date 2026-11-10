@@ -1,11 +1,11 @@
 # function swap(bytes: Uint8Array, table: Uint8Array, start: number, end: number) { let i = start, j = end - 1;
 #   while (i < j) { const a = bytes[i], b = bytes[j]; bytes[i++] = table[b]; bytes[j--] = table[a]; } }
-# The guess at an element of a view has one contract with its producer, buildReadOfElementOfViewBehindTestOfLength(): on every way that goes on, the read is built and noted. The typed arm then
-# walks the stretch from its first operation on, which is that same read, and only the note keeps the read from opening the guess once more.
-# THE LIE, testing=ReadsBehindTestsOfLengthsAreLeftOut: the producer lays its tests and returns nothing. Without the stop the walk opens the same guess inside itself until the stack ends:
-# 201,048 frames and "out of stack" in a real program. The same read opening the same guess again inside its own stretch stops the build by name.
-# DIAGNOSTIC: GuessOpensAgain
-# RUN: walk f1 mechanisms=all testing=ReadsBehindTestsOfLengthsAreLeftOut
+# The speculation on an element of a view has one contract with its producer, buildReadOfElementOfViewBehindTestOfLength(): on every path that continues, the read is built and recorded.
+# The specialized branch then visits the region from its first operation, which is that same read, and only the record keeps the read from opening the speculation again.
+# Fault injection, testing=DropLengthCheckedReads: the producer emits its tests and returns nothing. Without the check the walk opens the same speculation inside itself until the stack runs out:
+# 201,048 frames and "out of stack" in a real program. When the same read opens the same speculation again inside its own region, the build fails with a named internal error.
+# DIAGNOSTIC: RecursiveSpeculation
+# RUN: walk f1 mechanisms=all testing=DropLengthCheckedReads
 
 module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

@@ -42,11 +42,7 @@ private:
     ValueID unboxingToDoubleBehindTestForNumber(const ValueContext& test);
     bool tryBranchOnNumberAndHandItOn(const ValueContext& test, Operand);
 
-    struct IntegerHandedOn {
-        ValueID unboxing;
-        Operand integer;
-    };
-    Vector<IntegerHandedOn, 1> m_integersHandedOn;
+    UncheckedKeyHashMap<uint32_t, Operand, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersHandedOn;
 };
 
 } } } // namespace JSC::AOT::Typed

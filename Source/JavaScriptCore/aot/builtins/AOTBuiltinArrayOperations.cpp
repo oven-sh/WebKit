@@ -277,7 +277,7 @@ static bool trySortStrings(JSGlobalObject* globalObject, State& state, JSArray* 
     JSCellButterfly* shared = isCopyOnWrite(array->indexingMode()) && !JSCellButterfly::isOutsideHeap(&butterfly) ? JSCellButterfly::fromButterfly(&butterfly) : nullptr;
     if (const SortedStorage* known = shared ? state.instance.realm.sortedStorage : nullptr) {
         if (JSCellButterfly* sorted = known->tryFind(shared)) {
-            countEvent(vm, RuntimeCounterID::SortedStorageLaidUnderListsAgain);
+            countEvent(vm, RuntimeCounterID::SortedStorageCacheHits);
             if (sorted != shared)
                 array->setButterfly(vm, sorted->toButterfly());
             return true;
@@ -433,7 +433,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshift, EncodedJSValue, (Instance* in
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayUnshift);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayUnshift);
-    if (mayRefuseOrRunOtherCode(array) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
+    if (mayRejectOrInterceptWrites(array) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
         OPERATION_RETURN(scope, encodedJSValue());
     uint64_t length = array->length();
     unshift(globalObject, array, 0, 0, 1, length);
@@ -453,31 +453,31 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayIterator, JSCell*, (Instan
     return JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), cellArgument<JSObject>(array, Entry::operationAOTNewArrayIterator), static_cast<IterationKind>(kind));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTArrayPopOfAnyList, EncodedJSValue, (Instance* instance, JSCell* cell))
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayPopGeneric, EncodedJSValue, (Instance* instance, JSCell* cell))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayPopOfAnyList);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayPopOfAnyList);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayPopGeneric);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayPopGeneric);
     unsigned length = array->length();
-    bool popsByItself = length ? array->canGetIndexQuickly(length - 1) : hasIndexedProperties(array->indexingType()) && !hasAnyArrayStorage(array->indexingType());
-    if (!popsByItself || mayRefuseOrRunOtherCode(array)) [[unlikely]]
+    bool canPopDirectly = length ? array->canGetIndexQuickly(length - 1) : hasIndexedProperties(array->indexingType()) && !hasAnyArrayStorage(array->indexingType());
+    if (!canPopDirectly || mayRejectOrInterceptWrites(array)) [[unlikely]]
         OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypePop, array)));
     OPERATION_RETURN(scope, JSValue::encode(array->pop(globalObject)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTArrayShiftOfAnyList, EncodedJSValue, (Instance* instance, JSCell* cell))
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayShiftGeneric, EncodedJSValue, (Instance* instance, JSCell* cell))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayShiftOfAnyList);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayShiftOfAnyList);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayShiftGeneric);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayShiftGeneric);
     if (JSValue first = array->fastShift(vm))
         OPERATION_RETURN(scope, JSValue::encode(first));
     OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeShift, array)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshiftOfAnyList, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue item))
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshiftGeneric, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue item))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayUnshiftOfAnyList);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayUnshiftOfAnyList);
-    if (mayRefuseOrRunOtherCode(array) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayUnshiftGeneric);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayUnshiftGeneric);
+    if (mayRejectOrInterceptWrites(array) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
         OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeUnshift, array, JSValue::decode(item))));
     uint64_t length = array->length();
     unshift(globalObject, array, 0, 0, 1, length);
@@ -576,10 +576,10 @@ static JSArray* tryInsertItemFast(JSGlobalObject* globalObject, VM& vm, JSArray*
     return removed;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTArraySpliceOfAnyList, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue start, EncodedJSValue deleteCount))
+JSC_DEFINE_JIT_OPERATION(operationAOTArraySpliceGeneric, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue start, EncodedJSValue deleteCount))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySpliceOfAnyList);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySpliceOfAnyList);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySpliceGeneric);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySpliceGeneric);
     if (JSArray* removed = tryRemoveItemFast(globalObject, vm, array, JSValue::decode(start), JSValue::decode(deleteCount))) [[likely]]
         OPERATION_RETURN(scope, JSValue::encode(removed));
     JSArray* result = trySpliceFast(globalObject, vm, array, JSValue::decode(start), JSValue::decode(deleteCount), { });
@@ -612,10 +612,10 @@ static JSArray* tryReplaceItemFast(JSGlobalObject* globalObject, VM& vm, JSArray
     return removed;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTArraySpliceItemIntoAnyList, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue start, EncodedJSValue deleteCount, EncodedJSValue item))
+JSC_DEFINE_JIT_OPERATION(operationAOTArraySpliceItemGeneric, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue start, EncodedJSValue deleteCount, EncodedJSValue item))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySpliceItemIntoAnyList);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySpliceItemIntoAnyList);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySpliceItemGeneric);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySpliceItemGeneric);
     if (JSArray* removed = tryInsertItemFast(globalObject, vm, array, JSValue::decode(start), JSValue::decode(deleteCount), JSValue::decode(item))) [[likely]]
         OPERATION_RETURN(scope, JSValue::encode(removed));
     if (JSArray* removed = tryReplaceItemFast(globalObject, vm, array, JSValue::decode(start), JSValue::decode(deleteCount), JSValue::decode(item)))

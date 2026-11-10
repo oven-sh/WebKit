@@ -21,12 +21,12 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 #     v4: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
 #     Branch v2 -> taken b1(), notTaken b2()
 #   b1():
-#     v5 @Void = SetMappedArgument v4, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v5 @Void = SetMappedArgument v4, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b2()
 #   b2():
 #     Branch v3 -> taken b3(), notTaken b4()
 #   b3():
-#     v6: anything @JSValue = Call v1, -, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v6: anything @JSValue = Call v1, -, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b4()
 #   b4():
 #     Return v0

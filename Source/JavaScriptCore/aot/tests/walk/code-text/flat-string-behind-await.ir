@@ -9,7 +9,7 @@
 #     v4: opaque(FlatString) @Cell = FlattenString v3 traits=[mayThrow, mayCollect, mayTouchMemory]
 #     Jump -> next b1()
 #   b1():
-#     v5: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b2()
 #   b2():
 #     v6: int[0, 65535] @Int32 = GetStringCodeUnit v4, v2 traits=[mayTouchMemory]

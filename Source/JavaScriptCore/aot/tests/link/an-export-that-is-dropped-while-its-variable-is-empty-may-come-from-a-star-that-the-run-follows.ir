@@ -8,7 +8,7 @@
 # CHECK: variable g4 proven=int
 
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
-module m1 path="/t.js" displayPath="t.js" body=f1 requests=[{target=m2 isDynamicStarExport=true completes=true}, {target=m3 completes=true}] exports=[{name="kept" variable=g3}, {name="sep" variable=g0 isDroppedWhileEmpty=true}]
+module m1 path="/t.js" displayPath="t.js" body=f1 requests=[{target=m2 isDynamicStarExport=true completes=true}, {target=m3 completes=true}] exports=[{name="kept" variable=g3}, {name="sep" variable=g0 isHiddenUntilInitialized=true}]
 module m2 path="/stars.js" displayPath="stars.js" body=f2 exports=[{name="sep" variable=g1}]
 module m3 path="/lacks.js" displayPath="lacks.js" body=f3
 entry module=m0

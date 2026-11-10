@@ -7,7 +7,7 @@
 # CHECK: = GetStringCodeUnit
 # CHECK-NOT: = ElemGet
 # layout L909 kind=Closure
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 179, 244] quotedTexts=[{position=35 start=70 end=82}, {position=56 start=89 end=101}, {position=105 start=105 end=116}, {position=135 start=116 end=123}, {position=179 end=15}, {position=190 end=63}, {position=195 start=16 end=62}, {position=200 start=21 end=38}, {position=211 start=21 end=40}, {position=221 start=42 end=59}, {position=232 start=42 end=61}] textOfQuotes="globalThis.sink(skip(globalThis.source(), globalThis.source()))line = String(line)step = Number(step)i < line.lengthline[i] === \x22x\x22"} functionText="function skip(line, step) { line = String(line); step = Number(step); let count = 0; for (let i = 0; i < line.length; i += step) { if (line[i] === \x22x\x22) count++; } return count; }\x0aglobalThis.sink(skip(globalThis.source(), globalThis.source()));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 179, 244] quotedSources=[{position=35 start=70 end=82}, {position=56 start=89 end=101}, {position=105 start=105 end=116}, {position=135 start=116 end=123}, {position=179 end=15}, {position=190 end=63}, {position=195 start=16 end=62}, {position=200 start=21 end=38}, {position=211 start=21 end=40}, {position=221 start=42 end=59}, {position=232 start=42 end=61}] quotedSourceText="globalThis.sink(skip(globalThis.source(), globalThis.source()))line = String(line)step = Number(step)i < line.lengthline[i] === \x22x\x22"} functionSource="function skip(line, step) { line = String(line); step = Number(step); let count = 0; for (let i = 0; i < line.length; i += step) { if (line[i] === \x22x\x22) count++; } return count; }\x0aglobalThis.sink(skip(globalThis.source(), globalThis.source()));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -31,7 +31,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v18 = Undefined @179
     Return v18 @179
 }
-function f1 name="skip" module=m0 text={end=178} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="skip" module=m0 sourceRange={end=178} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: anything):
     v2 = Builtin builtin=String @35
     v3 = Call v2, -, v0 calleeName="String" @35

@@ -17,7 +17,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #     v2: boolean @Boolean = TypeTest v0 testedType=undefined
 #     Branch v2 -> taken b1(), notTaken b2()
 #   b1():
-#     v3: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b2()
 #   b2():
 #     Return v1

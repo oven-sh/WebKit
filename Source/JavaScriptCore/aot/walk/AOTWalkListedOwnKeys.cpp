@@ -182,7 +182,7 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     BodyBlock block = index.block(index.blockOf(call));
     uint32_t place = call.index() - block.firstValue().index();
 
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     BlockID asWritten = walker.addBlock(BlockFrequency::Unlikely);
     BlockID meeting = walker.addBlock();
 
@@ -190,7 +190,7 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     for (size_t number = 0; number < plan.orders.size() && !walker.isUnreachable(); ++number) {
         BlockID whereTestFails = number + 1 == plan.orders.size() ? asWritten : walker.addBlock();
         Reference object = source;
-        if (goOnWhereObjectHasOwnKeys(walker, object, plan.orders[number], plan.layoutsAreProven, asked.origin, whereTestFails))
+        if (continueIfOwnKeys(walker, object, plan.orders[number], plan.layoutsAreProven, asked.origin, whereTestFails))
             tested.append({ walker.currentBlock(), object, number });
         if (walker.hasFailed())
             return true;
@@ -221,7 +221,7 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
             return true;
     }
 
-    if (!walker.letArmsMeet(stretch, ends, meeting))
+    if (!walker.joinArms(stretch, ends, meeting))
         return true;
     if (Reference met = end == place + 1 ? walker.referenceBoundTo(call) : Reference(); met && walker.program().builtins().mayHavePristineInstances(BuiltinClasses::Array))
         noteListMadeByCaller(walker, met);

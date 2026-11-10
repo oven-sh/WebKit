@@ -90,7 +90,7 @@ Vector<BuiltinOverloadID, 4> overloadsReachedBy(const BuiltinTypeContext&, Built
 bool rowsSpeakOfCallOnReceiver(const BuiltinTypeContext&, BuiltinID, TypeID receiverOrNotPassed);
 bool overloadTakesOperands(const BuiltinTypeContext&, BuiltinOverloadID, BuiltinCallForm, const BuiltinOperandTypes&);
 bool distinguishesOmittedFromUndefined(const BuiltinTable&, const BuiltinParameter&);
-bool isCallThatTheWalkMustLower(const BuiltinTable&, BuiltinID);
+bool requiresWalkLowering(const BuiltinTable&, BuiltinID);
 
 } } } // namespace JSC::AOT::Typed
 

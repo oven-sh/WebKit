@@ -1,6 +1,6 @@
 # The list follows from the program alone. What a built-in is to pay is asked for before it is entered, whatever else it is handed: a written RegExp handed along with a long text that is sought changes nothing.
 # export function sought() { return new RegExp("x".toUpperCase() + doubled("a", 15).indexOf("b" + doubled("a", 9), /x/)); }   (doubled(text, k): text = text + text, k times)
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /X-1/
 

@@ -8,7 +8,7 @@
 # REPLACED-NOT: replaces ArrayPrototypePush
 
 module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}]
-module m1 path="/src/patch.js" displayPath="src/patch.js" flags=[FindsBuiltinsReadOnly] body=f2
+module m1 path="/src/patch.js" displayPath="src/patch.js" flags=[HasReadOnlyBuiltins] body=f2
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():

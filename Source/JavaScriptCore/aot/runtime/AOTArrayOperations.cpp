@@ -190,10 +190,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Ins
     array->tryMakeWritableDouble(vm);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayRoom, void, (Instance* instance, JSCell* cell, uint64_t room))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t room))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayRoom);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayRoom);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayCapacity);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayCapacity);
     IndexingType mode = array->indexingMode();
     if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
         return;
@@ -230,7 +230,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, 
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendElements);
     JSArray* target = cellArgument<JSArray>(cell, Entry::operationAOTAppendElements);
     JSArray* source = cellArgument<JSArray>(sourceCell, Entry::operationAOTAppendElements);
-    if (hasAnyArrayStorage(target->indexingType()) || mayRefuseOrRunOtherCode(target)) [[unlikely]] {
+    if (hasAnyArrayStorage(target->indexingType()) || mayRejectOrInterceptWrites(target)) [[unlikely]] {
         MarkedArgumentBuffer elements;
         for (unsigned i = 0, length = source->length(); i < length; ++i) {
             elements.append(source->getIndex(globalObject, i));
@@ -476,7 +476,7 @@ static EncodedJSValue pushToArray(Instance* instance, JSArray* array, JSValue va
     if (unsigned newLength = pushToFullVector(vm, array, value))
         return JSValue::encode(jsNumber(newLength));
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (mayRefuseOrRunOtherCode(array)) [[unlikely]]
+    if (mayRejectOrInterceptWrites(array)) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypePush, array, value)));
     array->push(globalObject, value);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());

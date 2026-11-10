@@ -56,7 +56,7 @@ static Reference flattenInFrontOfLoopForFlattening(Walker& walker, Reference str
     if (!loop)
         return { };
     Draft flatten = draftOfFlatStringForFlattening(string, origin);
-    if (Reference begins = walker.askInFrontOfOpenLoopWhetherItsFirstTurnBegins(*loop))
+    if (Reference begins = walker.buildLoopEntryCondition(*loop))
         flatten.setIsReadOperand(begins);
     return walker.buildInFrontOfOpenLoop(*loop, WTF::move(flatten));
 }

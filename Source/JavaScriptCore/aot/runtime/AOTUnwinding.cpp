@@ -276,7 +276,7 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
             }
             place.framePointer = callFrame->callerFrame();
         }
-        place.stackPointer = stackPointerOfCaller(callFrame, bytesAboveReturnAddressOf(*site));
+        place.stackPointer = callerStackPointer(callFrame, bytesAboveReturnAddressOf(*site));
         place.rawPC = callFrame->rawReturnPC();
         place.callee = callFrame;
     }
@@ -284,7 +284,7 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
     return result;
 }
 
-static NEVER_INLINE void endLivesOfCellsLentToCallsGivenUp(VM& vm, const CompiledUnwindResult& result)
+static NEVER_INLINE void poisonBorrowedCellsOnUnwind(VM& vm, const CompiledUnwindResult& result)
 {
     bool isCaught = result.status == CompiledUnwindStatus::FoundHandler;
     countEvent(vm, RuntimeCounterID::CellsPoisoned, PoisonedCell::poisonCellsLentBelow(vm, isCaught ? result.handler.framePointer : result.exit.callFrame, isCaught));
@@ -294,7 +294,7 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
 {
     CompiledUnwindResult result = unwindFramesOfRun(vm, start, entryFrame, record, isTermination, asyncGeneratorBodyFrameLeft, nullptr);
     if (PoisonedCell::someCellIsLent()) [[unlikely]]
-        endLivesOfCellsLentToCallsGivenUp(vm, result);
+        poisonBorrowedCellsOnUnwind(vm, result);
     return result;
 }
 
@@ -302,7 +302,7 @@ CompiledUnwindResult unwindRunOfThrow(VM& vm, Instance& instanceThatThrows, cons
 {
     CompiledUnwindResult result = unwindFramesOfRun(vm, start, entryFrame, record, false, nullptr, &instanceThatThrows);
     if (PoisonedCell::someCellIsLent()) [[unlikely]]
-        endLivesOfCellsLentToCallsGivenUp(vm, result);
+        poisonBorrowedCellsOnUnwind(vm, result);
     return result;
 }
 
@@ -408,7 +408,7 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
                 return std::nullopt;
         }
         callee = frameAtReturnSite(site->frame, stackPointer, static_cast<CallFrame*>(framePointer));
-        stackPointer = stackPointerOfCaller(callee, bytesAboveReturnAddressOf(*site));
+        stackPointer = callerStackPointer(callee, bytesAboveReturnAddressOf(*site));
         if (site->frame.hasFrameRecord())
             framePointer = callee->callerFrameOrEntryFrame();
     }
@@ -427,7 +427,7 @@ std::optional<HandlerType> findNearestHandler(VM& vm, CallFrame* stubFrame)
             return std::nullopt;
         entryFrame = entry->prevTopEntryFrame();
     }
-    return findHandlerInRun<HandlerSearch::Nearest>(vm, stubFrame, stackPointerOfCaller(stubFrame), stubFrame->callerFrameOrEntryFrame(), entryFrame);
+    return findHandlerInRun<HandlerSearch::Nearest>(vm, stubFrame, callerStackPointer(stubFrame), stubFrame->callerFrameOrEntryFrame(), entryFrame);
 }
 
 bool nearestHandlerIgnoresValue(VM& vm, const Instance&, CallFrame* stubFrame)
@@ -479,7 +479,7 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
             return false;
         if (void* taker = vm.aotState().exceptionCatcherStackPointer; taker && taker < static_cast<void*>(exit.callFrame))
             return false;
-        if (findHandlerInRun<HandlerSearch::NearestThatEndsThrow>(vm, exit.callFrame, stackPointerOfCaller(exit.callFrame), exit.callFrame->callerFrameOrEntryFrame(), exit.entryFrame))
+        if (findHandlerInRun<HandlerSearch::NearestThatEndsThrow>(vm, exit.callFrame, callerStackPointer(exit.callFrame), exit.callFrame->callerFrameOrEntryFrame(), exit.entryFrame))
             return true;
         std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, exit.callFrame, exit.entryFrame);
         if (!frames || frames->isAtEnd())

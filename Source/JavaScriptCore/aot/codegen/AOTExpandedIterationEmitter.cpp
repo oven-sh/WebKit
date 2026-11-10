@@ -122,7 +122,7 @@ void ExpandedIterationEmitter::generateEnumeratorGetByVal(const ValueContext& va
     Integer position = integerOf(value->positionOperand());
     ForInEmitter::EnumeratorFields fields = forIn.loadFields(enumerator);
     Integer index = forIn.nameIndexOf(fields, position);
-    if (emitter<ElementAccessEmitter>().testsEveryPosition()) {
+    if (emitter<ElementAccessEmitter>().checksBounds()) {
         emitter<ElementAccessEmitter>().stopUnlessInside(value, isCell(boxedObject));
         emitter<ElementAccessEmitter>().stopUnlessInside(value, forIn.hasCachedKeys(enumerator, fields, object));
     }

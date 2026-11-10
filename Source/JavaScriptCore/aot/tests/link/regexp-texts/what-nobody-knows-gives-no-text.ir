@@ -2,7 +2,7 @@
 # export function fromCaller(word) { return new RegExp("^" + word); }      export const fromHost = new RegExp("^" + process.argv0);
 # export const fromChance = new RegExp("a{" + Math.random() + "}"), fromClock = new RegExp("b{" + Date.now() + "}");
 # A list with such a value among its elements has no text either: export const joined = new RegExp(["a", process.argv0].join("|"));
-# DIAGNOSTIC: RegExpTextKnownAtRunTime 5
+# DIAGNOSTIC: RegExpPatternNotConstant 5
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /
 

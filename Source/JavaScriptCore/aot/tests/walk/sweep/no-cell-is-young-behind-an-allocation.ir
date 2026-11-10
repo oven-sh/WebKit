@@ -17,10 +17,10 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 #   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
 #     v3: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
 #     v4: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
-#     v5 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
-#     v6 @Void = SetMappedArgument v4, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
-#     v7 @Void = SetMappedArgument v0, v3 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
-#     v8 @Void = SetMappedArgument v0, v4 index=1 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v5 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v6 @Void = SetMappedArgument v4, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v7 @Void = SetMappedArgument v0, v3 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v8 @Void = SetMappedArgument v0, v4 index=1 traits=[mayWriteObservableState, mayTouchMemory]
 #     Return
 # }
 # -- end of code

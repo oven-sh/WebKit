@@ -19,13 +19,6 @@ struct BodyFlowEdge {
     BlockID to;
 };
 
-struct BodyArgumentLink {
-    ValueID argument;
-    BlockID from;
-    BlockID to;
-    uint32_t indexOfParameter { 0 };
-};
-
 struct BodyIndexTable::Worker {
     static constexpr size_t bytesPerChunk = 1 * MB;
 
@@ -39,20 +32,18 @@ struct BodyIndexTable::Worker {
 
     Vector<BodyFlowEdge> edges;
     Vector<BodyFlowEdge> retreatingEdges;
-    Vector<BodyArgumentLink> argumentLinks;
     Vector<uint32_t> firstPredecessor;
     Vector<BlockID> predecessors;
     Vector<uint32_t> sizesOfSubtrees;
     Vector<uint32_t> nextNumbersBelow;
     Vector<BlockID> worklist;
     Vector<BodyLoop> loops;
-    Vector<ValueID> releaseHints;
     Vector<BodyMentionOfIteration> mentionsOfIterations;
 };
 
 inline constexpr OpcodeSet opcodesThatMayNameIterationsInBodyIndex {
     Opcode::IteratorResume, Opcode::IteratorClose, Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::StepAsyncGenerator, Opcode::AwaitBySavingFrame, Opcode::AwaitCallBySavingFrame,
-    Opcode::YieldBySavingFrame, Opcode::AsyncGeneratorYield, Opcode::ReleaseHint
+    Opcode::YieldBySavingFrame, Opcode::AsyncGeneratorYield
 };
 
 class BodyIndexBuilder {
@@ -77,7 +68,6 @@ private:
     using BlockPlace = BodyIndex::BlockPlace;
 
     void indexWords();
-    void findParametersReadByReleaseHintsAlone();
     void adoptLoops();
     void adoptMentionsOfIterations();
 

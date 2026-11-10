@@ -15,8 +15,8 @@ layout L0 module=m0 fields=[{key="other" declared={type=anything} flags=[IsRequi
 layout L1 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
 module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/barrel.mjs" displayPath="barrel.mjs" body=f4 requests=[{target=m3 isDynamicStarExport=true completes=true}] exports=[{name="own" variable=g0}]
-module m2 path="/legacy.cjs" displayPath="legacy.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g1
-module m3 path="#3" displayPath="legacy.cjs" flags=[KeepsError] exportRule=CommonJs body=f6 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
+module m2 path="/legacy.cjs" displayPath="legacy.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g1
+module m3 path="#3" displayPath="legacy.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f6 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
 entry module=m0
 variable g0 name="own" module=m1 declared={type=anything}
 variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
@@ -68,7 +68,7 @@ function f5 name="legacy" module=m2 kind=CommonJsModule flags=[IsSloppy] thisTyp
     v0 = Undefined
     Return v0
 }
-function f6 name="faceOfLegacy" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+function f6 name="facadeOfLegacy" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     EvaluateModule module=m2 referrer=m3 [isBare]
     v1 = Undefined

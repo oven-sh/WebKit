@@ -5,8 +5,8 @@
 # CHECK: code f0
 # CHECK-NOT: RecordRequire
 
-module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
-module m1 path="/app/helper.cjs" displayPath="helper.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/helper.cjs" displayPath="helper.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
 entry module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined

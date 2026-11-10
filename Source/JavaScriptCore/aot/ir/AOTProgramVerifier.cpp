@@ -269,7 +269,7 @@ void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const Functi
         checker.checkRequired(functionType);
     for (BuiltinID member : function.builtinMembers)
         checker.checkRequired(member);
-    for (StringID specifier : function.originalsAskedFor)
+    for (StringID specifier : function.requestedOriginals)
         checker.checkRequired(specifier);
 }
 
@@ -873,7 +873,7 @@ void ProgramVerifier::verifyClasses()
     });
     for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
         if (!rowsThatEnd.quickGet(index))
-            fail({ .kind = InternalErrorKind::RingOfBases, .layout = LayoutID(index) });
+            fail({ .kind = InternalErrorKind::BaseChainCycle, .layout = LayoutID(index) });
     }
 }
 

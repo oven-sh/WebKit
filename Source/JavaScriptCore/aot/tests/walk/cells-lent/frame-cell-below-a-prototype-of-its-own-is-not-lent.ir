@@ -8,7 +8,7 @@
 #     v2: L0 @Cell = NewObject -, v0, v0 layout=L0 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
 #     v3: L0 @Cell = NewObject v2, v0, v0 layout=L0 fields=[0, 1] storage=Frame traits=[mayCollect, mayTouchMemory]
 #     v4: L0 @JSValue = Box v3
-#     v5: anything?ResultOfUnknownCallee @JSValue = CallDirect v4 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything?ResultOfUnknownCallee @JSValue = CallDirect v4 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v5
 # }
 # -- end of code

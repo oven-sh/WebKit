@@ -9,13 +9,15 @@
 # if (which === 3) print(handsOnFlag());
 # if (which === 4) print(leavesByIt());
 # print("went on");
-# A DIRECT CALL THAT IS WRITTEN STRAIGHT BRINGS ITS OPERANDS INTO THE RAW FORMS OF THE CALLEE, which the plan chose by what Link has proven of the parameters. Straight code has no types of its own: so each such operand is tested for that type
-# in front of the call, IN EVERY BUILD, and the failing side traps, as the entry by value does for whoever comes by value and the walk for a caller that it has walked.
-# THE RED CONTROL. THE LIE IS WRITTEN BY HAND: the first two parameters of `takes` stand here as positions of the compiler's own (IsFromCompiler), of which Link takes what is written for proven whatever arrives. A text arrives.
-# Without the test the text was unboxed as it lay, some integer, some number, and the program printed a number and went on.
+# A direct call in straight code converts its operands to the callee's unboxed representations, which the plan chose from what Link has proven about the parameters. Straight code has no types of its own.
+# So each such operand is tested for that type before the call, in every build, and the failing side traps.
+# The generic entry does the same for indirect callers, and the walk does it for a caller that it has visited.
+# This is the failing control. The fault is written by hand: the first two parameters of `takes` are marked here as the compiler's own positions (IsFromCompiler).
+# Link treats the written type of such a position as proven, whatever arrives. A string arrives.
+# Without the test the string's bits were unboxed as they were, as some integer or some number, and the program printed a number and continued.
 # RUN(FORM): plan units mechanisms=all
 # FORM: f1:Body (Int32, Double, JSValue) -> (Double)
-# OPTIONS: testing=WritesBodiesStraight
+# OPTIONS: testing=ForceStraightCompilation
 # RUN(WHOLE): run-in-shell mechanisms=all globalThis.which = 1;
 # WHOLE: 4.5
 # WHOLE-NOT: went on
@@ -28,7 +30,7 @@
 # LEAVES: 4.5
 # LEAVES-NOT: went on
 # LEAVES: crashed with
-# Where no false proof is come by, nothing stops.
+# Where the program reaches no false proof, nothing crashes.
 # RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
 # NONE: 4.5
 # NONE-NEXT: went on

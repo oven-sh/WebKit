@@ -14,6 +14,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 enum class EdgeSide : uint8_t { Taken, NotTaken };
 
+template<typename Test>
+bool canFailForMarkedObject(const Test& test) { return opcodeOf(test) == Opcode::ShapeTest && test.rejectsMarkedObjects(); }
+
 template<typename Operation> TypeID typeOfEdgeResult(const TypingContext&, const Operation& test, OperandTypes operandsOfTest, uint32_t narrowedOperandIndex, EdgeSide);
 template<typename Terminator> TypeID typeOfCaseResult(const TypingContext&, const Terminator&, TypeID subject, uint32_t targetIndex);
 

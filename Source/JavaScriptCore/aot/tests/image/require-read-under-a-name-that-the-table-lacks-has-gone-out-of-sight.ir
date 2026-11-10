@@ -6,7 +6,7 @@
 # RUN: image
 # CHECK: flags {{*}}LoadsModulesByName
 
-module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 entry module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 openedname holder=FunctionPrototype name="me"

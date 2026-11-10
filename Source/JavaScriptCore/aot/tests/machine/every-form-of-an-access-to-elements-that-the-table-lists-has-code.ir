@@ -1,7 +1,7 @@
 # The walk writes a test for the storage of a list, a test for an element and a read of an element with a kind of storage and two flags; the emitters have code for some of the combinations. Twice in two hours a
 # hand of the walk wrote one that has none, and a right, everyday program did not build ("OpcodeWithoutCode"): only a user's program could tell.
 # One table says which forms have code: accessToElementsHasCode() (walk/AOTArrayStorageForms.h). The emitters go by it; a note on a list is shown to reads only where it says yes; and where the walk builds an
-# operation in a form that has none, a test answers no and a read is widened to the form that takes nothing for granted: the program builds and is right, and AccessesToElementsWrittenInFormsWithoutCode counts it.
+# operation in a form that has none, a test answers no and a read is widened to the form that takes nothing for granted: the program builds and is right, and UnsupportedElementAccessesDemoted counts it.
 # This test takes EVERY row of the table through the emitters: the row is laid into the Code below and emitted. A row that the table lists and that has no code says so here, or stops at the emitter's own assertion.
 # A row more or less is a line more or less.
 # RUN: emit-forms-of-accesses-to-elements

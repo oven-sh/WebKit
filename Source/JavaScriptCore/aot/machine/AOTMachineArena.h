@@ -148,6 +148,7 @@ private:
     };
 
     static constexpr size_t smallestChunkSize = 64 * KB;
+    static constexpr size_t largestChunkKept = MB;
     static constexpr size_t smallestRoomKept = 512;
     static_assert(smallestRoomKept >= sizeof(RoomLetGo) && smallestRoomKept <= smallestRoomLetGo);
 

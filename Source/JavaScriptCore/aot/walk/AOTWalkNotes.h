@@ -36,7 +36,6 @@ struct WalkNote {
     UnprovenCause cause { UnprovenCause::Unknown };
     ObjectBuiltCause objectBuilt { ObjectBuiltCause::None };
     AccessCost cost { AccessCost::ByName };
-    IllTypedCause illTypedCause { };
     uint16_t loopDepth { 0 };
     Origin origin;
     FunctionID writtenIn;

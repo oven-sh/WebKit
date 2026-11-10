@@ -214,7 +214,7 @@ private:
         m_statics.regExpLiteralCellOffsets = withoutOffsets(m_mentions.keys(NumberSpace::RegExpLiteralCell).size());
         m_statics.templateObjectCellOffsets = withoutOffsets(m_mentions.keys(NumberSpace::TemplateObjectCell).size());
         m_statics.arrayProfileOffsets = withoutOffsets(m_mentions.keys(NumberSpace::ArrayProfile).size());
-        m_statics.rowsOfReadsOffsets = withoutOffsets(m_mentions.keys(NumberSpace::RowsOfReads).size());
+        m_statics.readGroupCacheOffsets = withoutOffsets(m_mentions.keys(NumberSpace::ReadGroupCache).size());
         m_statics.environmentHandedBackOffsets = withoutOffsets(m_program.layouts.size());
         m_statics.classGuardBits = Vector<uint32_t>(FillWith { }, m_program.layouts.size() * numberOfClassSides, noClassGuardBit);
     }
@@ -388,7 +388,7 @@ private:
             if (!m_plan.hasModuleValue(module))
                 continue;
             const Typed::Module& record = m_program.modules[index];
-            if ((record.kind == ModuleKind::SourceText || record.kind == ModuleKind::Data) && !isNamedByCode.get(index) && !m_plan.hasRequireCacheValue(module) && !Typed::isFaceOfCommonJSFile(m_program, record))
+            if ((record.kind == ModuleKind::SourceText || record.kind == ModuleKind::Data) && !isNamedByCode.get(index) && !m_plan.hasRequireCacheValue(module) && !Typed::isCommonJSFacade(m_program, record))
                 continue;
             uint32_t offset = allocateRoot();
             m_statics.moduleValueOffsets[index] = offset;
@@ -494,11 +494,11 @@ private:
 
     bool placeRowsOfReads()
     {
-        if (m_statics.rowsOfReadsOffsets.isEmpty())
+        if (m_statics.readGroupCacheOffsets.isEmpty())
             return true;
         uint32_t first = alignToWord();
-        for (uint32_t& offset : m_statics.rowsOfReadsOffsets)
-            offset = allocate(WTF::roundUpToMultipleOf<wordSize>(sizeof(RowsOfReads)), wordSize);
+        for (uint32_t& offset : m_statics.readGroupCacheOffsets)
+            offset = allocate(WTF::roundUpToMultipleOf<wordSize>(sizeof(ReadGroupCache)), wordSize);
         if (!fitsWithin(m_limit))
             return false;
         m_statics.clearedEachCollection.append({ first, static_cast<uint32_t>(m_end - first) });
@@ -640,7 +640,7 @@ void ImageNumbersBuilder::layOutStatics()
     numbers.m_regExpLiteralCells = mentions.takeKeys(NumberSpace::RegExpLiteralCell);
     numbers.m_templateObjectCells = mentions.takeKeys(NumberSpace::TemplateObjectCell);
     numbers.m_arrayProfiles = mentions.takeKeys(NumberSpace::ArrayProfile);
-    numbers.m_rowsOfReads = mentions.takeKeys(NumberSpace::RowsOfReads);
+    numbers.m_readGroupCaches = mentions.takeKeys(NumberSpace::ReadGroupCache);
     numbers.m_classGuards = mentions.takeKeys(NumberSpace::ClassGuard);
 
     if (!fits)

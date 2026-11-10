@@ -47,7 +47,7 @@ bool Walker::handlerInForceIgnoresWhatIsThrown() const
 {
     if (isUnreachable())
         return false;
-    if (hasTextsInStringBuilders() || handlerMadeOverCopiesIsInForce())
+    if (hasStringsInBuilders() || handlerMadeOverCopiesIsInForce())
         return false;
     if (EdgeID led = m_code.at(m_block).handler; led && !m_code.at(led).isOpen())
         return false;
@@ -89,7 +89,7 @@ bool Walker::jumpToHandlerInPlaceOfThrow(const BodyTerminator&)
             return true;
         }
         if (m_inputs.options.verifiesCode && !isWhatHeadNamesForHandler(frameIndex, argument, reference)) [[unlikely]] {
-            fail("a handler edge hands on what stands in for a value"_s, InternalErrorKind::HandlerEdgeHandsOnStandIn);
+            fail("a handler edge passes a placeholder for a value"_s, InternalErrorKind::HandlerEdgePassesPlaceholder);
             return true;
         }
         arguments.append(reference);

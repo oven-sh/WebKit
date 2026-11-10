@@ -52,7 +52,7 @@ public:
     JS_EXPORT_PRIVATE void addWrite(Reg, Tmp, unsigned instIndex);
     JS_EXPORT_PRIVATE void addClobber(Reg, unsigned instIndex);
 
-    // False, and the procedure has failed with FailureKind::SpillSlotLacksItsValue or RegisterLacksItsValue, if some read does not see its value. The failure's detail names the
+    // False, and the procedure has failed with FailureKind::WrongValueInSpillSlot or WrongValueInRegister, if some read does not see its value. The failure's detail names the
     // place, the instruction that reads it, the instruction that wrote something else, and a path.
     JS_EXPORT_PRIVATE bool check(ASCIILiteral where);
 

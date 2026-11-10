@@ -70,21 +70,21 @@ struct MethodTableDependentData {
 };
 static_assert(sizeof(MethodTableDependentData) == 12 && isImageRecord<MethodTableDependentData>);
 
-struct NameLaidOnClosuresData {
+struct ClosurePropertyNameData {
     uint32_t function;
     uint32_t name;
 
-    friend auto operator<=>(const NameLaidOnClosuresData&, const NameLaidOnClosuresData&) = default;
+    friend auto operator<=>(const ClosurePropertyNameData&, const ClosurePropertyNameData&) = default;
 };
-static_assert(sizeof(NameLaidOnClosuresData) == 8 && isImageRecord<NameLaidOnClosuresData>);
+static_assert(sizeof(ClosurePropertyNameData) == 8 && isImageRecord<ClosurePropertyNameData>);
 
-struct NameLaidOutsideClassRecordData {
+struct AddedPrototypeNameData {
     uint32_t classLayout;
     uint32_t name;
 
-    friend auto operator<=>(const NameLaidOutsideClassRecordData&, const NameLaidOutsideClassRecordData&) = default;
+    friend auto operator<=>(const AddedPrototypeNameData&, const AddedPrototypeNameData&) = default;
 };
-static_assert(sizeof(NameLaidOutsideClassRecordData) == 8 && isImageRecord<NameLaidOutsideClassRecordData>);
+static_assert(sizeof(AddedPrototypeNameData) == 8 && isImageRecord<AddedPrototypeNameData>);
 
 constexpr uint32_t distanceToMethodTableEntry(uint32_t distanceToWordOfSelector, uint32_t shape) { return distanceToWordOfSelector - shape * static_cast<uint32_t>(sizeof(uint32_t)); }
 constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape) { return originOfSelector - shape; }
@@ -107,8 +107,8 @@ constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape)
     v(classGuardCounts, ClassGuardCountData) \
     v(namesOfClassGuards, uint32_t) \
     v(classesBelowWithGuardsOfNames, ClassBelowWithGuardOfNameData) \
-    v(namesLaidOnClosures, NameLaidOnClosuresData) \
-    v(namesLaidOutsideClassRecords, NameLaidOutsideClassRecordData) \
+    v(closurePropertyNames, ClosurePropertyNameData) \
+    v(addedPrototypeNames, AddedPrototypeNameData) \
     v(parsedRecordFields, ParsedRecordFieldData)
 
 #define FOR_EACH_AOT_PROGRAM_TABLE(v) \
@@ -183,7 +183,7 @@ struct ProgramTables {
     }
 
     template<typename Row>
-    static const Row& rowThatMarkPromises(std::span<const Row> rows, uint32_t number, const auto& numberOf)
+    static const Row& findRequiredEntry(std::span<const Row> rows, uint32_t number, const auto& numberOf)
     {
         auto found = std::ranges::lower_bound(rows, number, { }, numberOf);
         RELEASE_ASSERT(found != rows.end() && static_cast<uint32_t>(std::invoke(numberOf, *found)) == number);
@@ -193,7 +193,7 @@ struct ProgramTables {
     {
         if (!allocations()[number].isConstructed)
             return AllocationData::notConstructed;
-        return rowThatMarkPromises(constructedAllocations(), number, [](const ConstructedAllocationData& entry) -> uint32_t { return entry.allocation; }).constructedBy;
+        return findRequiredEntry(constructedAllocations(), number, [](const ConstructedAllocationData& entry) -> uint32_t { return entry.allocation; }).constructedBy;
     }
     bool hasLayoutForShape(uint32_t shape) const { return shape < firstEnvironmentShape && layouts()[shape]; }
     const LayoutData& layoutForShape(uint32_t shape) const
@@ -267,7 +267,7 @@ struct ProgramTables {
     }
     const FunctionWithLargeCountsData& largeCountsOf(uint32_t function) const
     {
-        return rowThatMarkPromises(functionsWithLargeCounts(), function, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
+        return findRequiredEntry(functionsWithLargeCounts(), function, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
     }
     bool hasClosureNumber(uint32_t number) const { return number < closureFunctions.end - closureFunctions.first; }
     uint32_t closureNumberOf(uint32_t function) const
@@ -304,9 +304,9 @@ struct ProgramTables {
     const FunctionRecordData& recordOfFunction(uint32_t function) const
     {
         uint8_t number = functionRecordNumbers()[function];
-        if (number != functionRecordIsListedByFunction) [[likely]]
+        if (number != unsharedFunctionRecord) [[likely]]
             return functionRecords()[number];
-        return rowThatMarkPromises(functionRecordsByFunction(), function, &FunctionRecordByFunctionData::function).record;
+        return findRequiredEntry(unsharedFunctionRecords(), function, &UnsharedFunctionRecordData::function).record;
     }
     const FunctionTraceData& traceOfFunction(uint32_t function) const { return recordOfFunction(function).trace; }
     FunctionKindData kindOfFunction(uint32_t function) const
@@ -319,7 +319,7 @@ struct ProgramTables {
     }
     uint32_t sourceFunctionOf(uint32_t function) const
     {
-        std::span<const Number24> sources = functionSources();
+        std::span<const Number24> sources = sourceFunctions();
         size_t firstListed = numberOfFunctions() - sources.size();
         return function < firstListed ? function : sources[function - firstListed];
     }
@@ -336,7 +336,7 @@ struct ProgramTables {
     {
         if (!traceOfFunction(function).implementsBuiltin)
             return std::nullopt;
-        return rowThatMarkPromises(implementedBuiltins(), function, &ImplementedBuiltinData::function).builtin;
+        return findRequiredEntry(implementedBuiltins(), function, &ImplementedBuiltinData::function).builtin;
     }
 };
 static_assert(std::is_trivially_copyable_v<ProgramTables> && isImageRecord<ProgramTables>);

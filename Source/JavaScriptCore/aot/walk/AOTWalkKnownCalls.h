@@ -11,6 +11,7 @@
 #include "AOTBuiltinTypes.h"
 #include "AOTSchemaInlineBuiltins.h"
 #include "AOTWalk.h"
+#include "AOTWalkLinks.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -22,6 +23,8 @@ Effects effectsOfLibraryFunctionBehindRow(const Walker&, const BuiltinOverload&)
 std::optional<Effects> effectsOfSearchForWhatIsNoString(const TypeArena&, InlineBuiltin, TypeID searchedOrNotPassed);
 bool buildToStringOfPrimitiveByRows(Walker&, const BodyValue& call);
 bool callLibraryFunctionBehindRows(Walker&, const BodyValue& call);
+inline constexpr OpcodeSet byteLiteralOpcodes { Opcode::Call };
+AOT_LINK_OF_WALK(buildByteLiteral, byteLiteralOpcodes)
 bool isPrivateAliasOfBuiltinMember(const Program&, PropertyKeyID);
 
 } } } // namespace JSC::AOT::Typed

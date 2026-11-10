@@ -244,13 +244,13 @@ void ConversionEmitter::stopUnlessBoxHolds(Boxed value, TypeID kinds)
     const OperationContext* context = generator().contextBeingGenerated();
     if (!context || !sourcesOfProofsCheckedUnder(build().options().testing))
         return;
-    emitter<ThrowEmitter>().requireOrStopAtFalseProof(*context, hasType(value, typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, kinds)), value, ProofSource::OtherOperation);
+    emitter<ThrowEmitter>().requireOrCrash(*context, hasType(value, typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, kinds)), value, ProofSource::OtherOperation);
 }
 
 void ConversionEmitter::stopUnlessToldRangeHolds(Condition holds)
 {
     if (const OperationContext* context = generator().contextBeingGenerated())
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(*context, holds, std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().requireOrCrash(*context, holds, std::nullopt, ProofSource::OtherOperation);
 }
 
 Word32 ConversionEmitter::lowHalfOfIntegerToldInsideInt32(Integer wide)
@@ -770,7 +770,7 @@ ConversionEmitter::ExactInteger ConversionEmitter::computeIntegerBehind(LValue n
     }
     case Machine::Select: {
         Boxed element(m_int32ElementsBehindNumbersOrNaN.get(number));
-        build().statistics().count(StatisticID::Int32ElementsBehindCutNumbers);
+        build().statistics().count(StatisticID::TruncatedElementsReadAsInt32);
         return ExactInteger { .value = ofWord(unboxInt32(element)), .holdsWhile = isNotEmpty(element) };
     }
     case Machine::Neg: {
@@ -838,7 +838,7 @@ std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)
     std::optional<ExactInteger> exact = findExactIntegerBehind(number.value(), ExactIntegerUse::Whole);
     if (!exact)
         return std::nullopt;
-    build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
+    build().statistics().count(StatisticID::DoublesRecomputedAsIntegers);
     return Integer(exact->value);
 }
 
@@ -859,7 +859,7 @@ Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)
     if (!exact)
         return toInt32OfAnyNumber(value, bits);
 
-    build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
+    build().statistics().count(StatisticID::DoublesRecomputedAsIntegers);
     Word32 word = exact->mayBeRounded ? low32(Integer(exact->value)) : Word32(exact->value);
     Condition isExact = exact->holdsWhile;
     if (exact->mayBeRounded) {

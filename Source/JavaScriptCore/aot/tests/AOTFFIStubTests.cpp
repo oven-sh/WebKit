@@ -315,9 +315,9 @@ static void testUnseenCodeWithoutForeignCalls()
 {
     AOT_TEST_CHECK(headerOf(*compileOpenProgram()).code.ffiCodeSize);
     std::unique_ptr<CompileOutput> output = compileProgram(evaluatesText, { noCodeFromDiskWord, "exclude=ForeignCallsOfUnseenCode"_s });
-    AOT_TEST_CHECK(!headerOf(*output).code.ffiCodeSize && headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript) && !headerOf(*output).has(ImageFlag::AdmitsLibraryText));
+    AOT_TEST_CHECK(!headerOf(*output).code.ffiCodeSize && headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript) && !headerOf(*output).has(ImageFlag::AllowsLibrarySource));
     std::unique_ptr<CompileOutput> withLibrary = compileProgram(importsModuleOutsideImage, { "exclude=ForeignCallsOfUnseenCode"_s });
-    AOT_TEST_CHECK(headerOf(*withLibrary).code.ffiCodeSize && headerOf(*withLibrary).has(ImageFlag::AdmitsLibraryText));
+    AOT_TEST_CHECK(headerOf(*withLibrary).code.ffiCodeSize && headerOf(*withLibrary).has(ImageFlag::AllowsLibrarySource));
     AOT_TEST_CHECK(headerOf(*compileEmptyProgram({ "admit=Inspector"_s, "exclude=ForeignCallsOfUnseenCode"_s })).code.ffiCodeSize);
 }
 

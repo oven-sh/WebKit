@@ -53,7 +53,7 @@ struct ReadOfSubjectInUnionSwitches {
 
 static ValueID valueBehindNamesInUnionSwitches(const Code& code, ValueID value)
 {
-    return code.valueBehindNames<opcodesThatGiveSameValue, Code::SourcesOfNames::StandEarlier>(value);
+    return code.valueBehindNames<valuePreservingOpcodes, Code::SourcesOfNames::StandEarlier>(value);
 }
 
 static bool isOperationOfBlockInUnionSwitches(const BodyIndex& index, BodyBlock block, ValueID value)
@@ -63,13 +63,13 @@ static bool isOperationOfBlockInUnionSwitches(const BodyIndex& index, BodyBlock 
 
 static bool isConstantBehindCastsInUnionSwitches(const BodyIndex& index, ValueID value)
 {
-    ValueID root = index.valueBehindCasts(value);
+    ValueID root = index.stripCasts(value);
     return root && !index.isParameter(root) && primitiveConstants.contains(index.opcodeOf(root));
 }
 
 static std::optional<ConstantOfUnionSwitches> caseBehindCastsInUnionSwitches(const BodyIndex& index, ValueID value)
 {
-    ValueID root = index.valueBehindCasts(value);
+    ValueID root = index.stripCasts(value);
     if (!root || index.isParameter(root))
         return std::nullopt;
     BodyValue operation = index.value(root);
@@ -132,7 +132,7 @@ static ReadOfSubjectInUnionSwitches findReadThatMayBeRepeatedInUnionSwitches(con
         if (!built || !code.at(built).traits().isRemovableWhenUnused())
             return { };
     }
-    return { index.valueBehindCasts(written.objectOperand()), written.key() };
+    return { index.stripCasts(written.objectOperand()), written.key() };
 }
 
 static void removeRepeatedCasesInUnionSwitches(Vector<CaseOfUnionSwitches, 16>& cases)
@@ -201,7 +201,7 @@ public:
             return false;
         m_isDisjunction = !first.isNegated;
         m_comparesTexts = first.constant.isText;
-        m_rootOfSubject = m_index.valueBehindCasts(first.subject);
+        m_rootOfSubject = m_index.stripCasts(first.subject);
         m_subject = m_walker.referenceOf(first.subject);
         if (!m_rootOfSubject || !m_subject || !m_subject.isValue())
             return false;
@@ -286,11 +286,11 @@ private:
 
     bool readsSubjectAnew(BodyBlock block, ValueID value) const
     {
-        ValueID root = m_index.valueBehindCasts(value);
+        ValueID root = m_index.stripCasts(value);
         if (!m_readOfSubject.object || !isOperationOfBlockInUnionSwitches(m_index, block, root) || m_index.opcodeOf(root) != Opcode::PropGet)
             return false;
         BodyOperation<Opcode::PropGet> read = m_index.value(root).as<Opcode::PropGet>();
-        return !read.isFreeName() && read.key() == m_readOfSubject.key && m_index.valueBehindCasts(read.objectOperand()) == m_readOfSubject.object;
+        return !read.isFreeName() && read.key() == m_readOfSubject.key && m_index.stripCasts(read.objectOperand()) == m_readOfSubject.object;
     }
 
     bool holdsNothingBesideAlternative(BodyBlock block, const Alternative& alternative) const
@@ -343,7 +343,7 @@ private:
             return false;
         if (alternative.isNegated == m_isDisjunction || alternative.constant.isText != m_comparesTexts)
             return false;
-        if (m_index.valueBehindCasts(alternative.subject) != m_rootOfSubject && !readsSubjectAnew(rightSide, alternative.subject))
+        if (m_index.stripCasts(alternative.subject) != m_rootOfSubject && !readsSubjectAnew(rightSide, alternative.subject))
             return false;
         if (!holdsNothingBesideAlternative(rightSide, alternative) || m_index.numberOfIncomingEdges(toJoin.block()) != 2 || toJoin.block() == m_head.id())
             return false;
@@ -415,7 +415,7 @@ void Walker::endWithSwitchOverOwnBlocks(TerminatorDraft& terminator, std::span<c
         if (isUnreachable())
             return;
     }
-    hearEffectsInTries(effects);
+    recordTrialEffects(effects);
     m_state.invalidate(effects);
     if (effects.mayThrow && has(Mechanism::Handlers))
         noteStateAtThrowForHandler(terminator.operands());
@@ -468,13 +468,13 @@ bool Walker::endBlockWithSwitchOverAlternatives(const BodyTerminator& terminator
     if (!has(Mechanism::TypedOperations) || terminator.kind() != TerminatorKind::Branch || isUnreachable())
         return false;
     const BodyIndex& index = currentBodyIndex();
-    if (index.hasIrreducibleFlow() || isWalkingBlockForEachWay(m_frames.size() - 1))
+    if (index.hasIrreducibleFlow() || isTailDuplicatingBlock(m_frames.size() - 1))
         return false;
 
     RowOfAlternativesInUnionSwitches row(*this, index.block(terminator.block()));
     if (!row.find() || row.cases().size() < leastCasesOfUnionSwitches)
         return false;
-    if (m_makerOfListsBehindEntry && m_frames.last().isOfUnit && std::ranges::contains(row.blocksPassedBy(), m_whereListsAreMadeBehindEntry))
+    if (m_restArrayAllocator && m_frames.last().isOfUnit && std::ranges::contains(row.blocksPassedBy(), m_restArrayAllocationBlock))
         return false;
     Reference subject = row.subject();
     TypeID typeOfSubject = typeOf(subject);

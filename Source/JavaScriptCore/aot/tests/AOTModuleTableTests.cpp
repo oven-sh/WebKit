@@ -183,12 +183,12 @@ static void checkFindByPath(LoadedProgram&)
     ModuleTable table = tableOfImage();
     for (unsigned index = 0; index < numberOfModules; ++index) {
         ModuleID module(index);
-        AOT_TEST_CHECK(table.findByPath(table.pathText(module)) == module);
+        AOT_TEST_CHECK(table.findByPath(table.fullPath(module)) == module);
     }
     AOT_TEST_CHECK(table.data(mainModule).directory != Number24::max && table.data(mainModule).directory == table.data(leftModule).directory && table.data(mainModule).directory != table.data(entryModule).directory);
-    AOT_TEST_CHECK(table.data(sharedModule).directory == Number24::max && table.pathText(sharedModule) == "/app/shared.js"_s);
-    AOT_TEST_CHECK(table.pathText(mainModule) == "/app/main.js"_s && table.pathText(entryModule) == "/entry.js"_s && table.pathText(shortModule) == "/a"_s);
-    AOT_TEST_CHECK(table.pathText(faceModule) == fromUTF8("/app/\xf0\x9f\x98\x80.js"));
+    AOT_TEST_CHECK(table.data(sharedModule).directory == Number24::max && table.fullPath(sharedModule) == "/app/shared.js"_s);
+    AOT_TEST_CHECK(table.fullPath(mainModule) == "/app/main.js"_s && table.fullPath(entryModule) == "/entry.js"_s && table.fullPath(shortModule) == "/a"_s);
+    AOT_TEST_CHECK(table.fullPath(faceModule) == fromUTF8("/app/\xf0\x9f\x98\x80.js"));
     AOT_TEST_CHECK(table.displayPathText(mainModule) == "main.js"_s && table.displayPathText(entryModule) == "entry.js"_s && table.displayPathText(mapModule) == "shared.js.map.js"_s);
     AOT_TEST_CHECK(table.displayPathText(accentModule) == "e.js"_s && table.displayPathText(tildeModule) == "tilde.js"_s && table.displayPathText(faceModule) == "face.js"_s);
 

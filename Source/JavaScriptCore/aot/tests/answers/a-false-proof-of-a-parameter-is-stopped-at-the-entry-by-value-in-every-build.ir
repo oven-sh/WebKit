@@ -1,12 +1,13 @@
 # function compares(one, other) { return typeof one === "number" ? other - one : 0; }
 # if (which === 7) print(new Map().getOrInsertComputed(id(7), compares));
 # print("went on");
-# false-proofs-are-stopped-where-the-value-comes-in.ir, its program and its lie (testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so it proves `one` undefined), WITH NO WORD THAT CHECKS PROOFS: AS A USER BUILDS.
+# false-proofs-are-stopped-where-the-value-comes-in.ir, its program and its lie (testing=AssumeUnknownCallsReturnUndefined: Link takes what the shell's `id` gives for undefined, so it proves `one` undefined), WITH NO WORD THAT CHECKS PROOFS: AS A USER BUILDS.
 # Native code enters the function by value. THE ENTRY BY VALUE ASKS FOR THE TYPE that the body takes for proven, not for the form alone (a boxed word has every form): the number is stopped there, by name.
 # BELIEVED, the body folded `typeof one === "number"` away, printed 0 for NaN and went on.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(BYVALUE): run-in-shell mechanisms=all globalThis.which = 7;
-# BYVALUE: AOT: f{{*}} at {{*}}: an entry parameter is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# BYVALUE: bun: internal AOT error: type check failed
+# BYVALUE-NEXT: found int32 in an argument
 # BYVALUE-NOT: went on
 # BYVALUE: crashed with
 # RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;

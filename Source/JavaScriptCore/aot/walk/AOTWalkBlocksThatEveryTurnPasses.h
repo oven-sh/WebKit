@@ -11,9 +11,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class BlocksThatEveryTurnPasses {
+class BackEdgeDominators {
 public:
-    BlocksThatEveryTurnPasses(const BodyIndex& index, LoopID loop)
+    BackEdgeDominators(const BodyIndex& index, LoopID loop)
         : m_index(index)
         , m_loop(loop)
     {
@@ -23,7 +23,7 @@ public:
                 BlockID head = target.block();
                 if (!index.isLoopHead(head) || !index.isInLoop(head, loop) || !index.isInLoop(member, index.loopOf(head)))
                     continue;
-                BlockID& last = within(index.loopOf(head)).lastThatEveryTurnPasses;
+                BlockID& last = within(index.loopOf(head)).lastDominator;
                 if (!last)
                     last = member;
                 while (!index.dominates(last, member))
@@ -35,13 +35,13 @@ public:
     bool contains(BlockID block) { return contains(block, m_index.loopOf(block)); }
     BlockID lastOf(LoopID loop)
     {
-        BlockID last = within(loop).lastThatEveryTurnPasses;
+        BlockID last = within(loop).lastDominator;
         return last ? last : m_index.loop(loop).head;
     }
 
 private:
     struct LoopWithin {
-        BlockID lastThatEveryTurnPasses;
+        BlockID lastDominator;
         std::optional<bool> headIsPassed;
     };
     LoopWithin& within(LoopID loop) { return m_loopsWithin[m_index.loop(loop).placeAmongLoops - m_index.loop(m_loop).placeAmongLoops]; }

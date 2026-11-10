@@ -6,7 +6,7 @@
 # RUN: walk f1 mechanisms=none+Folding
 # CHECK-LABEL: code f1:Body
 # CHECK-COUNT-1: = CheckInitialized
-# CHECK: = GetModuleVariable {{*}}followsItsStore
+# CHECK: = GetModuleVariable {{*}}isKnownInitialized
 # CHECK-NOT: = CheckInitialized
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="held"}] ownFieldCount=1

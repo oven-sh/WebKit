@@ -137,7 +137,13 @@ private:
     };
     using DependentSet = UncheckedKeyHashSet<ChainDependent, Hash, HashTraits>;
     struct ObjectDependents {
-        DependentSet set;
+        bool isEmpty() const { return onAnyName.isEmpty() && byName.isEmpty(); }
+        size_t size() const;
+        void forEach(const Invocable<void(const ChainDependent&)> auto&) const;
+        void removeIf(const Invocable<bool(const ChainDependent&)> auto&);
+
+        DependentSet onAnyName;
+        UncheckedKeyHashMap<UniquedStringImpl*, DependentSet> byName;
     };
 
     void dropDependentsOn(JSObject* changed, UniquedStringImpl* uidOrNull);

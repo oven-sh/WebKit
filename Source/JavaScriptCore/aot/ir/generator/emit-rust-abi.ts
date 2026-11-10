@@ -60,7 +60,7 @@ const abiFiles: readonly AbiFile[] = [
     imports: [
       "super::compile_call_enums::*",
       "super::diagnostics::{InternalErrorKind, UserDiagnosticKind}",
-      "super::enums::{IllTypedCause, TypeSiteKind}",
+      "super::enums::TypeSiteKind",
       "super::limits::{LimitId, Stage}",
       "crate::ir::ids::*",
     ],

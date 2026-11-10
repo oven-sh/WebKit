@@ -81,6 +81,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTWasmInterface.h
     aot/ir/AOTID.h
     aot/ir/AOTNameClass.h
+    aot/ir/AOTPrimitives.h
     aot/object/AOTCellFormat.h
     aot/object/AOTClosure.h
     aot/object/AOTClosureWord.h
@@ -165,7 +166,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/support/AOTCompileOptionWords.h
     aot/support/AOTCompileOptions.h
     aot/support/AOTCurrentWork.h
-    aot/support/AOTHostFunctionTexts.h
+    aot/support/AOTHostFunctionSources.h
     aot/support/AOTLimits.h
     aot/support/AOTSort.h
     aot/support/AOTThreads.h

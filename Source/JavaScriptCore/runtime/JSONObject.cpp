@@ -148,7 +148,7 @@ private:
         Vector<std::tuple<PropertyName, unsigned>, 8> m_propertiesAndOffsets;
 #if ENABLE(AOT)
         // A compiled object's own properties at the start of the walk, if they were all fields. The list lives as long as the program.
-        std::span<const AOT::FieldAsProperty> m_listedFields;
+        std::span<const AOT::FieldAsProperty> m_initialFields;
 #endif
     };
 
@@ -528,7 +528,7 @@ inline void Stringifier::startNewLine(StringBuilder& builder) const
 
 #if ENABLE(AOT)
 // The fields of a compiled object that has no other own properties, if each field has its key precomputed in JSON form.
-static std::optional<std::span<const AOT::FieldAsProperty>> listedFieldsWithJSONKeys(JSObject* object)
+static std::optional<std::span<const AOT::FieldAsProperty>> fieldsWithJSONKeys(JSObject* object)
 {
     if (object->type() != CompiledObjectType)
         return std::nullopt;
@@ -594,9 +594,9 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
                 });
                 m_size = m_propertiesAndOffsets.size();
 #if ENABLE(AOT)
-            } else if (auto fields = listedFieldsWithJSONKeys(m_object)) {
-                m_listedFields = *fields;
-                m_size = m_listedFields.size();
+            } else if (auto fields = fieldsWithJSONKeys(m_object)) {
+                m_initialFields = *fields;
+                m_size = m_initialFields.size();
 #endif
             } else {
                 PropertyNameArrayBuilder objectPropertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -649,13 +649,13 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
         JSValue value;
 #if ENABLE(AOT)
         std::span<const Latin1Character> keyAsWritten;
-        if (!m_listedFields.empty()) {
-            const AOT::FieldAsProperty& field = m_listedFields[index];
+        if (!m_initialFields.empty()) {
+            const AOT::FieldAsProperty& field = m_initialFields[index];
             propertyName = field.name;
             keyAsWritten = field.jsonKey.subspan(1);
             // Code that ran for an earlier member may have changed the object.
             auto currentFields = AOT::PropertyWalk::fieldsInKeyOrder(m_object);
-            if (currentFields && currentFields->data() == m_listedFields.data()) [[likely]]
+            if (currentFields && currentFields->data() == m_initialFields.data()) [[likely]]
                 value = AOT::PropertyWalk::readListedField(m_object, field);
             if (!value) [[unlikely]] {
                 value = m_object->get(globalObject, propertyName);
@@ -1273,12 +1273,12 @@ NEVER_INLINE bool FastStringifier<CharType, bufferMode>::hasStackSpaceAtWatchedL
             recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
             return false;
         }
-        bool goesOn = !m_watchedLevels.isWatching() || !value.isObject() || m_watchedLevels.enter(JSValue::encode(value), m_depth);
+        bool shouldContinue = !m_watchedLevels.isWatching() || !value.isObject() || m_watchedLevels.enter(JSValue::encode(value), m_depth);
         if (!m_watchedLevels.isWatching())
             m_stackLimit = stackLimit;
-        if (!goesOn)
+        if (!shouldContinue)
             recordFailure("object inside itself"_s);
-        return goesOn;
+        return shouldContinue;
     } else {
         UNUSED_PARAM(value);
         UNUSED_PARAM(stackPointer);
@@ -2513,7 +2513,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendDate(DateInstance
 template<typename CharType, BufferMode bufferMode>
 bool FastStringifier<CharType, bufferMode>::datesHaveBuiltinToJSON(JSObject& datePrototype)
 {
-    // A name that is immutable stays so, and a date of this realm has been written in place only behind all that is asked below.
+    // This realm is recorded only after one of its dates passed all of the checks below.
     if (m_vm.aotState().realmWhoseDatesAreWrittenInPlace == &m_globalObject) [[likely]]
         return true;
     if (m_datesHaveBuiltinToJSON != TriState::Indeterminate)
@@ -2744,7 +2744,7 @@ static NEVER_INLINE ListedPropertiesWritten writeListedProperties(const JSObject
                 return { Status::NeedsRoom, index, next, keySize + 1 + length + 1 };
             *afterKey = '"';
             if (stringCopySameType<Latin1Character, true>(string->span8(), afterKey + 1)) [[unlikely]] {
-                // Asked of what the return below holds anyway: nothing more stays in a register over the copy.
+                // Reads from `value` again, so that nothing else has to stay in a register across the copy.
                 auto characters = asString(value.asCell())->tryGetValueImpl()->span8();
                 if (static_cast<size_t>(limit - afterKey) < AOT::maxEscapedJSONStringLength(characters.size()))
                     return { Status::FoundOtherValue, index, afterKey, 0, value };
@@ -2875,7 +2875,7 @@ static ALWAYS_INLINE FieldsWrittenBySlot writeFieldsBySlotInline(Latin1Character
     for (; field != end; ++field) {
         const Latin1Character* key = field->jsonKey.data();
         const size_t keySize = field->jsonKey.size();
-        // The key is written at once and counts only if a value follows it. Where there is none this copies what lies behind the keys of the list.
+        // Keys are copied in whole blocks, so the copy may read past the end of a key.
         memcpy(next, key, blockSize);
         if (keySize > blockSize) [[unlikely]] {
             for (size_t offset = blockSize; offset < keySize; offset += blockSize)
@@ -2899,7 +2899,7 @@ static ALWAYS_INLINE FieldsWrittenBySlot writeFieldsBySlotInline(Latin1Character
             next = AOT::appendJSONNumber(afterKey, WTF::unalignedLoad<double>(slot));
             continue;
         case AOT::SlotRepresentation::OptionalDouble: {
-            // A few other NaNs go with the three words that are no numbers.
+            // The range check also catches a few other NaNs besides the three sentinels (undefined, null, absent).
             uint64_t bits = WTF::unalignedLoad<uint64_t>(slot);
             if ((bits >> 48) - (AOT::undefinedDouble >> 48) <= (AOT::absentDouble - AOT::undefinedDouble) >> 48) [[unlikely]]
                 return { next, field };
@@ -3532,7 +3532,7 @@ static NEVER_INLINE void checkAgainstGeneralStringifier(JSGlobalObject& globalOb
     VM& vm = globalObject.vm();
     DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    AOT::countEvent(vm, AOT::RuntimeCounterID::AnswersAskedAgain);
+    AOT::countEvent(vm, AOT::RuntimeCounterID::FastPathResultsVerified);
     String general = Stringifier::stringify(globalObject, value, replacer, space);
     if (scope.exception()) [[unlikely]] {
         scope.clearException();

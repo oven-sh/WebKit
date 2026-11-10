@@ -2,7 +2,7 @@
 # by a trap, a callback. So what is not written down is entered by no road, and what is written down is paid for at the moment of the call.
 # new RegExp("a" + ("x" in new Proxy({}, { has: Array.of }))): Array.of is not written down, and gives a list, which counts as true . ("f" + [4, 9].map(Math.sqrt))
 # It is the same thing each time that it is read, and it looks like what it stands for: ("c" + (Math.max === Math.max)) . ("d" + [Math.max].includes(Math.max)) . ("e" + Math.max.name) . ("g" + [4, 9].map(Number))
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /atrue/
 # CHECK: text /ctrue/

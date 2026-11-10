@@ -610,13 +610,13 @@ static void checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth(LoadedProg
         JSString* second = makeNarrow(40);
         JSString* third = makeNarrow(5);
         JSString* added = jsString(realm, jsString(realm, first, piece), jsString(realm, second, third, first));
-        JSString* handedOver = jsString(realm, jsString(realm, third, second), piece);
+        JSString* appendedRope = jsString(realm, jsString(realm, third, second), piece);
         JSString* joined = jsString(realm, text, added);
-        expected = makeString(expected, charactersOf(added), charactersOf(handedOver));
+        expected = makeString(expected, charactersOf(added), charactersOf(appendedRope));
         for (JSString* leaf : { first, second, third })
             turnWide(leaf);
-        AOT_TEST_CHECK(joined->is8Bit() && handedOver->is8Bit() && handedOver->isNonSubstringRope());
-        text = append(joined, { handedOver });
+        AOT_TEST_CHECK(joined->is8Bit() && appendedRope->is8Bit() && appendedRope->isNonSubstringRope());
+        text = append(joined, { appendedRope });
         AOT_TEST_CHECK(text->is8Bit() && bufferOf(text) == buffer && charactersOf(text) == expected);
         text = append(text, { third });
         AOT_TEST_CHECK(!text->is8Bit() && bufferOf(text) != buffer && charactersOf(text) == makeString(expected, charactersOf(third)));
@@ -1067,7 +1067,7 @@ static void arrayLiteralsArePristineAndContiguous()
 
 static void realmWithImageThatBeginsToHaveABadTimeStops()
 {
-    runWithLoadedProgramThatStops(badTimeStopsTest, programText, haveABadTime, "AOT: the realm of a compiled program is having a bad time"_s);
+    runWithLoadedProgramThatStops(badTimeStopsTest, programText, haveABadTime, "internal AOT error: array prototype check failed"_s);
 }
 
 static void literalsAreBornHoldingLists()

@@ -45,6 +45,27 @@ struct ModuleInformation;
 
 enum class CompilerMode : uint8_t { FullCompile, Validation };
 
+#if ENABLE(AOT)
+extern "C" void Bun__initializeSHA1(void* context);
+extern "C" void Bun__updateSHA1(void* context, std::span<const uint8_t>);
+extern "C" void Bun__finishSHA1(void* context, std::array<uint8_t, 20>&);
+
+// SHA-1 with the processor's SHA instructions. WTF::SHA1 is several times slower off macOS.
+class SourceHasher {
+public:
+    static constexpr size_t contextSize = 128;
+
+    SourceHasher() { Bun__initializeSHA1(m_context.data()); }
+    void addBytes(std::span<const uint8_t> bytes) { Bun__updateSHA1(m_context.data(), bytes); }
+    void computeHash(std::array<uint8_t, 20>& digest) { Bun__finishSHA1(m_context.data(), digest); }
+
+private:
+    alignas(8) std::array<uint8_t, contextSize> m_context;
+};
+#else
+using SourceHasher = WTF::SHA1;
+#endif
+
 class StreamingParserClient {
 public:
     virtual ~StreamingParserClient() = default;
@@ -99,19 +120,22 @@ private:
     State parseModuleHeader(Vector<uint8_t>&&);
     State parseSectionID(Vector<uint8_t>&&);
     NODELETE State parseSectionSize(uint32_t);
-    State parseSectionPayload(Vector<uint8_t>&&);
+    State parseSectionPayload(std::span<const uint8_t>);
 
     State parseCodeSectionSize(uint32_t);
     State parseFunctionSize(uint32_t);
     State parseFunctionPayload(Vector<uint8_t>&&);
 
     std::optional<Vector<uint8_t>> consume(std::span<const uint8_t> bytes, size_t&, size_t);
+    std::optional<std::span<const uint8_t>> consumeInPlace(std::span<const uint8_t> bytes, size_t&, size_t);
     std::expected<uint32_t, State> consumeVarUInt32(std::span<const uint8_t> bytes, size_t&, IsEndOfStream);
 
     void moveToStateIfNotFailed(State);
     template <typename ...Args> [[nodiscard]] NEVER_INLINE State fail(Args...);
 
     State failOnState(State);
+
+    void hashConsumedBytes(std::span<const uint8_t>);
 
     const Ref<ModuleInformation> m_info;
     StreamingParserClient& m_client;
@@ -123,7 +147,7 @@ private:
     size_t m_nextOffset { 0 };
     size_t m_codeOffset { 0 };
 
-    SHA1 m_hasher;
+    SourceHasher m_hasher;
 
     uint32_t m_sectionLength { 0 };
 

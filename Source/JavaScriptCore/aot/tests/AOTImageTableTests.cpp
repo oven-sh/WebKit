@@ -501,7 +501,7 @@ static void testRuntimeFactsNameWhatEmittedCodeTakes()
     std::span<const ASCIILiteral> names = namesOfRuntimeFacts();
     for (ASCIILiteral name : {
         "the names of the entries in the table of the run time in the order of their numbers"_s,
-        "runsOnlyCodeOfImage"_s,
+        "isHardenedBuild"_s,
         "sizeOfLoopPoll"_s,
         "sizeof(InlineAllocationData)"_s,
         "sizeof(BuiltinDirectFunctionBinding)"_s,

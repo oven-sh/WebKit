@@ -7,7 +7,7 @@
 #     v2: Array @Cell = CreateRest firstArgument=0 storage=Frame
 #     Jump -> next b1(v2)
 #   b1(v3: Array @Cell):
-#     v4 @Void = ReleaseHint v3
+#     v4 @Void = EndCellLifetime v3
 #     Return v0
 # }
 # -- end of code

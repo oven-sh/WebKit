@@ -8,7 +8,7 @@
 #   b0(v0: anything @JSValue) entry=0:
 #     v2: Array @Cell = NewArray v0, v0 contents=anything traits=[mayCollect, mayTouchMemory]
 #     v3: Array @JSValue = Box v2
-#     v4 @Void = PutArrayElement v3, v1, v0 level=Expected [keyIsIntegral, fillsPlaceOfListMadeHere] traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4 @Void = PutArrayElement v3, v1, v0 level=Expected [keyIsIntegral, fillsPlaceOfListMadeHere] traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v0
 # }
 # -- end of code

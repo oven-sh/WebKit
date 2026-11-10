@@ -3,47 +3,58 @@
 # Built to admit the inspector, the same deeds are taken back and get a TypeError: under-the-inspector-a-change-of-a-class-that-a-proof-rules-out-is-taken-back.ir.
 # OPTIONS: mechanisms=all
 # RUN(REPLACES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { holder.twice = function () { return 0; }; print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# REPLACES: AOT: ReplaceMember of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# REPLACES: bun: internal AOT error: object mutation check failed
+# REPLACES-NEXT: ReplaceMember on the prototype of class 'Closed', but the compiler proved that this never happens
 # REPLACES-NOT: went on
 # REPLACES: crashed with
 # RUN(REFLECTS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { Reflect.set(holder, "twice", 1); print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# REFLECTS: AOT: ReplaceMember of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# REFLECTS: bun: internal AOT error: object mutation check failed
+# REFLECTS-NEXT: ReplaceMember on the prototype of class 'Closed', but the compiler proved that this never happens
 # REFLECTS-NOT: went on
 # REFLECTS: crashed with
 # RUN(REDEFINES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { Object.defineProperty(holder, "twice", { get() { return 0; } }); print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# REDEFINES: AOT: ReplaceMember of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# REDEFINES: bun: internal AOT error: object mutation check failed
+# REDEFINES-NEXT: ReplaceMember on the prototype of class 'Closed', but the compiler proved that this never happens
 # REDEFINES-NOT: went on
 # REDEFINES: crashed with
 # RUN(ASSIGNS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { Object.assign(holder, { twice: 1 }); print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# ASSIGNS: AOT: ReplaceMember of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# ASSIGNS: bun: internal AOT error: object mutation check failed
+# ASSIGNS-NEXT: ReplaceMember on the prototype of class 'Closed', but the compiler proved that this never happens
 # ASSIGNS-NOT: went on
 # ASSIGNS: crashed with
 # RUN(DELETES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { delete holder.twice; print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# DELETES: AOT: DeleteMember of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# DELETES: bun: internal AOT error: object mutation check failed
+# DELETES-NEXT: DeleteMember on the prototype of class 'Closed', but the compiler proved that this never happens
 # DELETES-NOT: went on
 # DELETES: crashed with
 # RUN(REFLECTDELETES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { Reflect.deleteProperty(holder, "twice"); print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# REFLECTDELETES: AOT: DeleteMember of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# REFLECTDELETES: bun: internal AOT error: object mutation check failed
+# REFLECTDELETES-NEXT: DeleteMember on the prototype of class 'Closed', but the compiler proved that this never happens
 # REFLECTDELETES-NOT: went on
 # REFLECTDELETES: crashed with
 # RUN(ADDS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { holder.other = 1; print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# ADDS: AOT: AddName of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# ADDS: bun: internal AOT error: object mutation check failed
+# ADDS-NEXT: AddProperty on the prototype of class 'Closed', but the compiler proved that this never happens
 # ADDS-NOT: went on
 # ADDS: crashed with
 # RUN(DEFINESNEW): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { Object.defineProperty(holder, "other", { value: 1 }); print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# DEFINESNEW: AOT: AddName of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# DEFINESNEW: bun: internal AOT error: object mutation check failed
+# DEFINESNEW-NEXT: AddProperty on the prototype of class 'Closed', but the compiler proved that this never happens
 # DEFINESNEW-NOT: went on
 # DEFINESNEW: crashed with
 # RUN(RELINKS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { Object.setPrototypeOf(holder, null); print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# RELINKS: AOT: ChangePrototype of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# RELINKS: bun: internal AOT error: object mutation check failed
+# RELINKS-NEXT: ChangePrototype on the prototype of class 'Closed', but the compiler proved that this never happens
 # RELINKS-NOT: went on
 # RELINKS: crashed with
 # RUN(PROTO): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { holder.__proto__ = {}; print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# PROTO: AOT: ChangePrototype of the prototype object of the class of layout L0: the compiler has proven that it never happens
+# PROTO: bun: internal AOT error: object mutation check failed
+# PROTO-NEXT: ChangePrototype on the prototype of class 'Closed', but the compiler proved that this never happens
 # PROTO-NOT: went on
 # PROTO: crashed with
 # RUN(RELINKSCLASS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { "use strict"; const kept = aotFindObjectOfLayout(0); const holder = Object.getPrototypeOf(kept); const Closed = holder.constructor; const twice = holder.twice; try { Object.setPrototypeOf(Closed, null); print("taken"); } catch (error) { print(error.constructor.name, error.message.split(" because")[0]); } print(holder.twice === twice); print(typeof holder.twice, Object.getOwnPropertyNames(holder).join(), Object.getPrototypeOf(holder) === Object.prototype, typeof Closed.prototype, Object.getPrototypeOf(Closed) === Function.prototype, "went on"); });
-# RELINKSCLASS: AOT: ChangePrototype of the class object of the class of layout L0: the compiler has proven that it never happens
+# RELINKSCLASS: bun: internal AOT error: object mutation check failed
+# RELINKSCLASS-NEXT: ChangePrototype on the constructor of class 'Closed', but the compiler proved that this never happens
 # RELINKSCLASS-NOT: went on
 # RELINKSCLASS: crashed with
 

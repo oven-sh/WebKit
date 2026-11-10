@@ -283,7 +283,7 @@ static void checkGrowthByReservation(GrowingArrays& arrays, const ArrayKind& kin
     arrays.makeRoomFor(allocator, cellSize);
     arrays.setAllocator(sizeStep, &allocator);
 
-    StubRun run = arrays.runner.run(reserveArrayRoom(), { array.address(), std::bit_cast<uint64_t>(static_cast<double>(room)) });
+    StubRun run = arrays.runner.run(reserveArrayCapacity(), { array.address(), std::bit_cast<uint64_t>(static_cast<double>(room)) });
     AOT_TEST_CHECK(!run.calledOperation && !allocator.hasRoom());
     AOT_TEST_CHECK(std::bit_cast<uintptr_t>(array.butterfly) == arrays.addressOfCell() + sizeof(IndexingHeader));
     AOT_TEST_CHECK(arrays.isWrittenOnlyInCell(cellSize));

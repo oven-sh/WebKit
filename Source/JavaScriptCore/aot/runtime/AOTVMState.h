@@ -44,6 +44,7 @@ struct CyclesOfImports;
 struct FormatPatternState;
 struct FunctionTables;
 struct Instance;
+struct ReexportedNames;
 
 class StructuresWithFastIndexing {
 public:
@@ -78,11 +79,7 @@ public:
     void releaseImage(VM&);
     template<typename Visitor> void visitAggregate(Visitor&);
 
-    void didChangeInstances()
-    {
-        onlyInstance = instances.size() == 1 ? instances.first() : nullptr;
-        instanceOfRecentRun = { };
-    }
+    void didChangeInstances();
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
@@ -106,6 +103,7 @@ public:
     std::unique_ptr<CallSiteCache> callSiteCache;
     std::unique_ptr<FunctionTables> functionTables;
     std::unique_ptr<CyclesOfImports> cyclesOfImports;
+    std::unique_ptr<ReexportedNames> reexportedNames;
     std::unique_ptr<RegExpLiterals> regExpLiterals;
     std::unique_ptr<FormatPatternState, FormatPatternStateDeleter> formatPatternState;
     BitVector filesWithKnownFirstLoad;
@@ -114,6 +112,7 @@ public:
     BitVector filesWhoseKeptTextWasCompiled;
     BitVector filesWhoseKeptTextWasReadBelowVitest;
     BitVector filesStartedByHost;
+    BitVector filesReportedAsKept;
     BitVector modulesWithHostCachedSource;
     BitVector builtinMembersWrittenInSomeRealm;
     BitVector builtinHoldersWithNamesAddedInSomeRealm;
@@ -147,7 +146,7 @@ public:
     const void* returnAddressOfCallThatCollected { nullptr };
     void* stackPointerOfImport { nullptr };
     CallFrame* frameOfImportThatAsksLoader { nullptr };
-    bool askerLoadsCompiledFilesAlone { false };
+    bool requesterRejectsUncompiledCode { false };
     bool isResolvingImportCall { false };
     bool isResolvingImportCallWithoutAttributes { false };
     bool requireRunsMocks { false };

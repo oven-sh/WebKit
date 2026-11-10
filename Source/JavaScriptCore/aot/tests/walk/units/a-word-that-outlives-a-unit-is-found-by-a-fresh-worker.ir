@@ -1,7 +1,7 @@
 # THE RED CONTROL of `same-bytes-alone` for what a worker hands on from unit to unit. The program of a-worker-that-has-walked-other-units-emits-what-a-fresh-one-emits.ir under
-# testing=LaterUnitsOpenNoGuesses: `KeptBetweenUnits` remembers that the worker has begun a unit, and every later walk of that worker opens no guess: right code of another form, by what the worker did before.
+# testing=DisableLaterUnitSpeculation: `KeptBetweenUnits` remembers that the worker has begun a unit, and every later walk of that worker opens no guess: right code of another form, by what the worker did before.
 # The fresh worker opens the guesses, and the run fails.
-# OPTIONS: testing=LaterUnitsOpenNoGuesses threads=1
+# OPTIONS: testing=DisableLaterUnitSpeculation threads=1
 # PROGRAM-OF: a-worker-that-has-walked-other-units-emits-what-a-fresh-one-emits.ir
 # DIAGNOSTIC: UnitCompiledAloneDiffers
 # RUN: same-bytes-alone mechanisms=all

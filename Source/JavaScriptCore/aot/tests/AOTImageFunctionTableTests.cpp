@@ -473,12 +473,12 @@ static constexpr uint32_t numberOfVariedFunctions = 9000;
 static constexpr uint32_t closuresHandedToOneCall = 50;
 static constexpr std::array<unsigned, 3> threadCountsOfFunctionTables { 1, 2, 16 };
 static constexpr std::array flagsOfVariedFunctions { "IsSloppy"_s, "IsHiddenInStackTraces"_s, "HasExplicitName"_s, "IsNamedByComputedKey"_s };
-static constexpr std::array syntaxOfVariedFunctions { "IsEvaluatedScript"_s, "IsShownAsNativeCode"_s, "IsShownInModuleOfHelpers"_s };
+static constexpr std::array syntaxOfVariedFunctions { "IsEvaluatedScript"_s, "IsShownAsNativeCode"_s, "IsShownInHelperModule"_s };
 static constexpr uint32_t numberOfWrittenForms = (1u << flagsOfVariedFunctions.size()) * 2 * 2 * 3;
 static constexpr uint32_t lengthThatFitsNoByte = 300;
 static constexpr unsigned numberOfCapturesThatFitNoHalfByte = 16;
 static_assert(numberOfVariedFunctions > 2 * indicesInRangeOfLoop);
-static_assert(numberOfWrittenForms / 2 * 3 > functionRecordIsListedByFunction);
+static_assert(numberOfWrittenForms / 2 * 3 > unsharedFunctionRecord);
 
 static bool variedFunctionHasName(uint32_t function) { return function % 3; }
 static bool variedFunctionHasCode(uint32_t function) { return function % 11 != 3; }
@@ -667,9 +667,9 @@ static void checkTablesOfVariedFunctions(const TestBuild& build, const TestImage
     }));
     AOT_TEST_CHECK(equalSpans(asBytes(namedCapturesInTable.span()), asBytes(namedCaptures.span())));
 
-    AOT_TEST_CHECK(tables.functionRecords().size() == functionRecordIsListedByFunction);
-    AOT_TEST_CHECK(!tables.functionRecordsByFunction().empty() && !tables.functionsWithLargeCounts().empty() && !tables.constructEntrypoints().empty() && !namedCaptures.isEmpty());
-    AOT_TEST_CHECK(lieInSeveralRangesOfLoop(tables.functionRecordsByFunction().front().function, tables.functionRecordsByFunction().back().function));
+    AOT_TEST_CHECK(tables.functionRecords().size() == unsharedFunctionRecord);
+    AOT_TEST_CHECK(!tables.unsharedFunctionRecords().empty() && !tables.functionsWithLargeCounts().empty() && !tables.constructEntrypoints().empty() && !namedCaptures.isEmpty());
+    AOT_TEST_CHECK(lieInSeveralRangesOfLoop(tables.unsharedFunctionRecords().front().function, tables.unsharedFunctionRecords().back().function));
     AOT_TEST_CHECK(lieInSeveralRangesOfLoop(tables.functionsWithLargeCounts().front().function, tables.functionsWithLargeCounts().back().function));
     AOT_TEST_CHECK(lieInSeveralRangesOfLoop(closureFunctions.first + tables.constructEntrypoints().front().function, closureFunctions.first + tables.constructEntrypoints().back().function));
     AOT_TEST_CHECK(lieInSeveralRangesOfLoop(closureFunctions.first + namedCaptures.first().closureNumber, closureFunctions.first + namedCaptures.last().closureNumber));

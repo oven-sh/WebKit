@@ -27,10 +27,8 @@ static bool isNamedBehindInKnownLeaving(const BodyIndex& index, const BodyLivene
     auto look = [&](ValueID operand, uint32_t) {
         isNamed |= operand == value;
     };
-    for (uint32_t next = point.index() + 1; !isNamed && next < block.endOfValues().index(); ++next) {
-        if (index.opcodeOf(ValueID(next)) != Opcode::ReleaseHint)
-            index.value(ValueID(next)).forEachOperand(look);
-    }
+    for (uint32_t next = point.index() + 1; !isNamed && next < block.endOfValues().index(); ++next)
+        index.value(ValueID(next)).forEachOperand(look);
     block.terminator().forEachOperand(look);
     for (BodyTarget target : block.terminator().targets())
         isNamed |= std::ranges::contains(target.arguments(), value) || liveness.isLiveAtHead(value, target.block());
@@ -55,7 +53,7 @@ static bool isOnlyReadAndHandedOutLastInKnownLeaving(const BodyIndex& index, con
             continue;
         mentionsLeft -= mentions;
         Opcode opcode = user.opcode();
-        if (opcode == Opcode::ReleaseHint || opcode == Opcode::GetMappedArgument || (opcode == Opcode::PropGet && !user.isFreeName() && user.key() == length) || (opcode == Opcode::ElemGet && user.propertyOperand() != arguments))
+        if (opcode == Opcode::GetMappedArgument || (opcode == Opcode::PropGet && !user.isFreeName() && user.key() == length) || (opcode == Opcode::ElemGet && user.propertyOperand() != arguments))
             continue;
         if (!opcodesThatMayTakeArgumentsLast.contains(opcode) || index.loopOf(index.blockOf(user.id())) != loop || isNamedBehindInKnownLeaving(index, liveness, arguments, user.id()))
             return false;
@@ -82,9 +80,9 @@ static bool collectNamesOfListOnlyReadInKnownLeaving(const BodyIndex& index, Pro
             continue;
         mentionsLeft -= mentions;
         Opcode opcode = user.opcode();
-        if (opcode == Opcode::ReleaseHint || (opcode == Opcode::PropGet && !user.isFreeName() && user.key() == length) || (opcode == Opcode::ElemGet && user.propertyOperand() != name))
+        if ((opcode == Opcode::PropGet && !user.isFreeName() && user.key() == length) || (opcode == Opcode::ElemGet && user.propertyOperand() != name))
             continue;
-        if (inputOperationsThatHandOn.contains(opcode) && mentions == 1 && user.operand(0) == name) {
+        if (inputPassThroughOpcodes.contains(opcode) && mentions == 1 && user.operand(0) == name) {
             if (!collectNamesOfListOnlyReadInKnownLeaving(index, length, user.id(), names, takers))
                 return false;
             continue;
@@ -137,7 +135,7 @@ void ArgumentsMadeWhereTheyLeave::makeRestListOfCopyWhereItLeaves(const BodyValu
     if (!bound || !bound.isValue())
         return;
     const Code& code = walker.code();
-    ValueID cell = rootOfCellInSweptCode(code, bound.id());
+    ValueID cell = underlyingCellOf(code, bound.id());
     if (code.isConstant(cell) || code.at(cell).opcode != Opcode::NewArray || code.at(cell).block() == walker.currentBlock() || !walker.state().isFresh(Reference::value(cell)))
         return;
     std::optional<Vector<Reference, 8>> elements = elementsOfFreshList(walker, bound);
@@ -160,7 +158,7 @@ void ArgumentsMadeWhereTheyLeave::makeRestListOfCopyWhereItLeaves(const BodyValu
     if (!made)
         return;
     noteFreshList(walker, made);
-    walker.count(StatisticID::RestListsMadeWhereTheyLeave);
+    walker.count(StatisticID::RestArrayAllocationsSunk);
     m_name = name;
     m_boundBefore = bound;
     walker.bind(name, made);
@@ -182,7 +180,7 @@ ArgumentsMadeWhereTheyLeave::ArgumentsMadeWhereTheyLeave(Walker& walker, const B
     if (!bound || !bound.isValue() || walker.isUnreachable() || walker.standsUnderHandler())
         return;
     const Code& code = walker.code();
-    ValueID cell = rootOfCellInSweptCode(code, bound.id());
+    ValueID cell = underlyingCellOf(code, bound.id());
     if (code.isConstant(cell) || !opcodesThatMakeArguments.contains(code.at(cell).opcode) || code.at(cell).block() == walker.currentBlock() || !walker.state().isFresh(Reference::value(cell)))
         return;
     FunctionID function = walker.currentFunction();
@@ -199,7 +197,7 @@ ArgumentsMadeWhereTheyLeave::ArgumentsMadeWhereTheyLeave(Walker& walker, const B
     m_boundBefore = bound;
     ValueID list = walker.walksBodyBehindEntry() && index.opcodeOf(name) == Opcode::CreateUnmappedArguments ? index.value(name).as<Opcode::CreateUnmappedArguments>().restOperand() : ValueID();
     Reference listBefore = list ? walker.referenceBoundTo(list) : Reference();
-    if (Reference again = listBefore ? walker.makeHiddenListOfEntryAgain() : Reference())
+    if (Reference again = listBefore ? walker.rematerializeHiddenRestArray() : Reference())
         walker.bind(list, again);
     buildFreshObject(walker, index.value(name));
     if (listBefore)

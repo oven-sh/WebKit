@@ -5,18 +5,22 @@
 # function sum(list) { let total = 0; for (let at = 0; at < list.length; at++) total += list[at]; return total; }
 # print(sum(sizes));
 # print("went on");
-# Link has seen numbers go into the list, so the read gives a raw double. Out of a storage of doubles or of int32 nothing else can come: the engine keeps that. Out of a boxed storage, and out of the stub, comes a boxed value,
-# which was unboxed on Link's word. No check behind the read can ask a raw word, so the emitter asks the boxed one in front of the conversion, and a misfit stops by name.
-# THE RED CONTROL. The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined. It printed NaN for "2text" and went on.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# Link has seen numbers stored into the array, so the read produces an unboxed double. Double storage and int32 storage can produce nothing else: the engine guarantees that.
+# Boxed storage and the stub produce a boxed value, which used to be unboxed on the strength of Link's proof alone.
+# No check after the read can test an unboxed value, so the emitter checks the boxed value before the conversion, and a mismatch crashes with a named error.
+# This is the failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# Before the check existed, the program printed NaN instead of "2text" and continued.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f1 mechanisms=all
 # FORM: @OptionalDouble = GetArrayElement
 # RUN(ALL): run-in-shell mechanisms=all
-# ALL: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL: bun: internal AOT error: type check failed
+# ALL-NEXT: found string in
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
-# CALLS: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS: bun: internal AOT error: type check failed
+# CALLS-NEXT: found string in
 # CALLS-NOT: went on
 # CALLS: crashed with
 

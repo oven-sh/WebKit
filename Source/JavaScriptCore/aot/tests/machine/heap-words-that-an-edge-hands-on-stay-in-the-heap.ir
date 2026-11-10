@@ -5,8 +5,8 @@
 # -- code
 # code f1:Body {
 #   b0(v0: anything @JSValue) entry=0:
-#     v1: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=3 traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
-#     v2 @Void = PutHeapFrameWord v1, v0 [remembersFrame] traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v1: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=3 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v2 @Void = PutHeapFrameWord v1, v0 [remembersFrame] traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b1(v1)
 #   b1(v3: anything?UndescribedNativeResult @JSValue):
 #     v4: anything @JSValue = GetHeapFrameWord v3 valueType=anything traits=[mayTouchMemory]

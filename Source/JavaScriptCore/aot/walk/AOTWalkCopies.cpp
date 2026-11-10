@@ -38,7 +38,7 @@ bool openGuessOfKeyOrdersOfItsOpcodes(Walker& walker, const BodyValue& value)
 
 static ALWAYS_INLINE ValueID valueBehindNamesInWalkCopies(const Code& code, ValueID value)
 {
-    while (!code.isConstant(value) && opcodesThatGiveSameCell.contains(code.at(value).opcode))
+    while (!code.isConstant(value) && cellPreservingOpcodes.contains(code.at(value).opcode))
         value = code.at(value).operand(0);
     return value;
 }

@@ -9,6 +9,7 @@ enum AccessDirection { | engine Read Write }
 enum NumberKind { | engine Signed Unsigned Float BigInt }
 enum Endianness { | engine Little Big }
 enum SearchValueKind { | engine String RegExp }
+enum ByteLiteralKind { | engine BufferFrom Uint8ArrayFromBase64 Uint8ArrayFromHex }
 
 inline ArrayAt ; reads(ArrayStorage, Elements[Array]) ; family ArrayBuiltin
 inline ArrayIndexOf ArrayIncludes ; ResolvesRopes reads(ArrayStorage, Elements[Array]) ; family ArrayBuiltin
@@ -20,6 +21,7 @@ inline ArrayLength ; reads(ArrayStorage, ArrayLengths) ; family ArrayStorageBuil
 inline TypedArrayLength TypedArrayByteLength TypedArrayByteOffset ; reads(TypedArrayStorage) ; family ArrayBufferViewBuiltin
 inline TypedArrayWithLength ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
 inline TypedArraySet ; reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) ; family ArrayBufferViewBuiltin
+inline ByteLiteral(ByteLiteralKind) ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
 inline OwnPropertyKeys(OwnKeysKind) ObjectGetOwnPropertyDescriptor ; asOverload ; family OwnPropertyBuiltin
 inline ObjectHasOwn ObjectPropertyIsEnumerable ObjectValues ObjectEntries ; asOverload ; family OwnPropertyBuiltin ; optionalSlowPath
 inline ObjectCreate GetPrototypeOf(PrototypeQuery) SetPrototypeOf(PrototypeChange) CallObjectConstructor ObjectPrototypeToString ObjectAssign ; asOverload ; family ObjectBuiltin

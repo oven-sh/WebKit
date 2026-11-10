@@ -94,7 +94,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRememberStructureOfClass, size_t, 
     VM& vm = *instance->vm;
     ClassTable& classes = instance->state->objects->classes;
     bool isRemembered = classes.rememberStructureOfInstances(vm, cell, classLayoutAt(classes, classIndex), offsetOfStructures);
-    countEvent(vm, isRemembered ? RuntimeCounterID::StructuresOfHeirsRemembered : RuntimeCounterID::StructuresOfHeirsRefused);
+    countEvent(vm, isRemembered ? RuntimeCounterID::BuiltinSubclassStructuresAccepted : RuntimeCounterID::BuiltinSubclassStructuresRejected);
     return isRemembered;
 }
 
@@ -191,7 +191,7 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisOfOtherNe
 static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisSlow(Instance* instance, JSCell* constructor, JSCell* newTarget)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCreateThis);
-    countEvent(vm, RuntimeCounterID::ThisMadeBySlowOperation);
+    countEvent(vm, RuntimeCounterID::CreateThisSlowPaths);
     JSObject* constructorObject = cellArgument<JSObject>(constructor, Entry::operationAOTCreateThis);
     JSObject* newTargetObject = cellArgument<JSObject>(newTarget, Entry::operationAOTCreateThis);
     OPERATION_RETURN(scope, instance->state->objects->classes.createThis(globalObject, constructorObject, newTargetObject));
@@ -222,7 +222,7 @@ static PropertyOffset offsetAt(int32_t location)
 static JSObject* holderOfNamesWithoutField(JSObject* object)
 {
     Object* compiledObject = compiledObjectOrNull(object);
-    return compiledObject ? extraPropertiesIfMade(*compiledObject) : object;
+    return compiledObject ? extraPropertiesIfCreated(*compiledObject) : object;
 }
 
 static std::optional<PropertyOffset> findInKnownStructure(JSCellButterfly* token, uint32_t field, JSObject* object)
@@ -294,7 +294,7 @@ static void rememberDefinition(VM& vm, JSCellButterfly* token, uint32_t field, S
 
 static void rememberDefinitionAmongExtraProperties(VM& vm, JSCellButterfly* token, uint32_t field, Object& object, const CompiledStructure& before, JSObject* extraBefore, Structure* extraStructureBefore, std::optional<PropertyOffset> brand)
 {
-    JSObject* extra = extraPropertiesIfMade(object);
+    JSObject* extra = extraPropertiesIfCreated(object);
     if (!extra || (extraBefore && extra != extraBefore) || before.mayBePrototype() || object.isNotExtensible())
         return;
     if (extraBefore && before.extraPropertiesStructureID() != extraStructureBefore->id())
@@ -760,7 +760,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
                 validateMutation(vm, *compiledObject, *own, ObjectMutation::StoreOfOtherType);
             const CompiledStructure& before = compiledObject->compiledStructure();
             bool hadExtraProperties = compiledObject->hasExtraProperties();
-            JSObject* extraBefore = extraPropertiesIfMade(*compiledObject);
+            JSObject* extraBefore = extraPropertiesIfCreated(*compiledObject);
             Structure* extraStructureBefore = extraBefore ? extraBefore->structure() : instance->realm.emptyExtraPropertiesStructure;
             vm.aotState().somePrivateNameLiesBesideFields = true;
             compiledObject->putDirectFromNativeCode(vm, uid, defined, attributesOfNameWithoutField);
@@ -840,7 +840,7 @@ UniquedStringImpl* ClassToken::declaredNameUnder(VM& vm, Object& holder, Uniqued
         if (field.isBrand())
             findNameAmongThoseOf(state, findFieldProperty(vm, holder, field).valueOrAccessor, nameOfEvaluation, found);
     }
-    JSObject* extra = !found.token && vm.aotState().somePrivateNameLiesBesideFields ? extraPropertiesIfMade(holder) : nullptr;
+    JSObject* extra = !found.token && vm.aotState().somePrivateNameLiesBesideFields ? extraPropertiesIfCreated(holder) : nullptr;
     if (extra && !extra->structure()->isQuickPropertyAccessAllowedForEnumeration()) {
         extra->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
             if (PropertyName(entry.key()).isPrivateName())

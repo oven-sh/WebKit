@@ -31,6 +31,7 @@
 #include "OwedOutOfMemoryError.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
+#include "ReflectObject.h"
 #include "Symbol.h"
 
 #if ENABLE(AOT)
@@ -190,12 +191,13 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorSetPrototypeOf, (JSGlobalObject* globa
     return JSValue::encode(objectValue);
 }
 
-JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
+// Inlined into the host function, as the compiler did by itself before the test for locked properties was added.
+static ALWAYS_INLINE JSValue describeOwnProperty(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertyDescriptor descriptor;
-    if (!object->getOwnPropertyDescriptor(globalObject, propertyName, descriptor))
+    if (!getReportedDescriptor(globalObject, object, propertyName, descriptor))
         RELEASE_AND_RETURN(scope, jsUndefined());
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -203,6 +205,11 @@ JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject* globalObject, 
     scope.assertNoException();
     ASSERT(result);
     return result;
+}
+
+JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
+{
+    return describeOwnProperty(globalObject, object, propertyName);
 }
 
 JSValue objectConstructorGetOwnPropertyDescriptors(JSGlobalObject* globalObject, JSObject* object)
@@ -218,7 +225,7 @@ JSValue objectConstructorGetOwnPropertyDescriptors(JSGlobalObject* globalObject,
 
     for (auto& propertyName : properties) {
         PropertyDescriptor descriptor;
-        bool didGetDescriptor = object->getOwnPropertyDescriptor(globalObject, propertyName, descriptor);
+        bool didGetDescriptor = getReportedDescriptor(globalObject, object, propertyName, descriptor);
         RETURN_IF_EXCEPTION(scope, { });
 
         if (!didGetDescriptor)
@@ -244,7 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorGetOwnPropertyDescriptor, (JSGlobalObj
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     auto propertyName = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    RELEASE_AND_RETURN(scope, JSValue::encode(objectConstructorGetOwnPropertyDescriptor(globalObject, object, propertyName)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(describeOwnProperty(globalObject, object, propertyName)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(objectConstructorGetOwnPropertyDescriptors, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -290,7 +297,7 @@ static void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* 
 
 #if ENABLE(AOT)
     if (target->structure()->isCompiledStructure() && !goesOnKeyByKey) {
-        // As for an ordinary target that takes properties directly.
+        // Same as for an ordinary target that accepts direct property puts.
         if (source->hasNonReifiedStaticProperties() && AOT::PropertyWalk::testIntegrity(target, AOT::PropertyWalk::Integrity::NonExtensible) == AOT::PropertyWalk::Presence::Absent) {
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());

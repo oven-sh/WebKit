@@ -845,12 +845,12 @@ public:
 
     void andb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_AND_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_AND_EvGb, src, base, offset);
     }
 
     void andb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_AND_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_AND_EvGb, src, base, index, scale, offset);
     }
 
     void andl_ir(int imm, RegisterID dst)
@@ -1159,12 +1159,12 @@ public:
 
     void orb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_OR_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_OR_EvGb, src, base, offset);
     }
 
     void orb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_OR_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_OR_EvGb, src, base, index, scale, offset);
     }
 
     void orl_ir(int imm, RegisterID dst)
@@ -1339,12 +1339,12 @@ public:
 
     void subb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_SUB_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_SUB_EvGb, src, base, offset);
     }
 
     void subb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_SUB_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_SUB_EvGb, src, base, index, scale, offset);
     }
 
     void subl_ir(int imm, RegisterID dst)
@@ -1586,12 +1586,12 @@ public:
 
     void xorb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_XOR_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_XOR_EvGb, src, base, offset);
     }
 
     void xorb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_XOR_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_XOR_EvGb, src, base, index, scale, offset);
     }
 
     void xorb_im(int imm, int offset, RegisterID base)

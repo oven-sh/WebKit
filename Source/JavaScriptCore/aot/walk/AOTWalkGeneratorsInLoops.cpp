@@ -184,8 +184,6 @@ static GeneratorFunctionDescribed describeGeneratorFunction(const Walker& walker
         return described;
     if (body->hasIrreducibleFlow() || body->holdsAnyOf(opcodesOfMappedArguments) || body->holdsAnyOf(opcodesThatBindGeneratorToItsFrame))
         return described;
-    if (body->opcodes().contains(Opcode::ReleaseHint) || body->holdsParametersReadByReleaseHintsAlone())
-        return described;
     if (!walker.plan().conventions().exists({ id, CodeRole::Body }))
         return described;
     BodyBlock entry = body->block(entryBlock);
@@ -248,7 +246,7 @@ static bool stepStandsUnderHandlerOfCall(const BodyIndex& index, BodyBlock block
 static bool blockOfStepOnlySteps(const BodyIndex& index, BodyBlock blockOfCall, ValueID open, const LoopOverIterator& found)
 {
     BlockID inputHead = found.blockOfStep;
-    if (index.hasIrreducibleFlow() || index.isEnteredByHandlerEdge(inputHead) || index.holdsParametersReadByReleaseHintsAlone())
+    if (index.hasIrreducibleFlow() || index.isEnteredByHandlerEdge(inputHead))
         return false;
     bool standsInBlockOfCall = inputHead == blockOfCall.id();
     if (!standsInBlockOfCall) {
@@ -365,9 +363,9 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
     ValueID taker = takerCallsMethodItself ? call.id() : index.onlyUsingValue(call.id());
     if (!taker || (index.opcodeOf(taker) != Opcode::IteratorOpen && index.opcodeOf(taker) != Opcode::AppendSpread))
         return false;
-    if (!has(Mechanism::TypedOperations) || !has(Mechanism::Folding) || !has(Mechanism::Handlers) || !m_opensGuesses || m_numberOfCopiesBuiltForSize || (!takerCallsMethodItself && call.isDoneInPlace()))
+    if (!has(Mechanism::TypedOperations) || !has(Mechanism::Folding) || !has(Mechanism::Handlers) || !m_opensGuesses || m_coldCopyDepth || (!takerCallsMethodItself && call.isDoneInPlace()))
         return false;
-    if (hasTextsInStringBuilders() || !m_waysIntoClosedCopies.isEmpty() || !m_frames[frameIndex].blocksWalkedForEachWay.isEmpty())
+    if (hasStringsInBuilders() || !m_versionedLoops.isEmpty() || !m_frames[frameIndex].blocksBeingTailDuplicated.isEmpty())
         return false;
     BodyBlock blockOfCall = index.block(index.blockOf(call.id()));
     if ((!takerCallsMethodItself && taker.index() != call.id().index() + 1) || !blockOfCall.holds(taker) || taker.index() - blockOfCall.firstValue().index() >= endOfStretchBeingWalked() || walksStretchInsideAnother())
@@ -428,12 +426,12 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         taken.step = found->step;
         taken.inputHead = found->blockOfStep;
         taken.callPosition = index.value(found->step).position();
-        taken.comesRound = found->stepStandsInHeadOfLoop;
-        LoopID loop = taken.comesRound ? index.loopOf(taken.inputHead) : LoopID();
+        taken.hasBackEdge = found->stepStandsInHeadOfLoop;
+        LoopID loop = taken.hasBackEdge ? index.loopOf(taken.inputHead) : LoopID();
         size_t numberOfRegionsBeingWalked = m_frames[frameIndex].references.size() > index.numberOfValues();
         for (const GeneratorWalkedInConsumer& around : m_generatorsWalkedInConsumers)
             numberOfRegionsBeingWalked += around.inputHead && (around.frameOfTurn == UINT32_MAX ? around.frameOfConsumer : around.frameOfTurn) == frameIndex;
-        if (m_frames[frameIndex].loopsBeingBuiltTwice.size() != numberOfRegionsBeingWalked)
+        if (m_frames[frameIndex].loopsBeingVersioned.size() != numberOfRegionsBeingWalked)
             return false;
 
         if (!m_liveness.isComputedFor(index))
@@ -445,7 +443,7 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         auto isInRegion = [&](BlockID block) {
             return std::ranges::binary_search(taken.region, block.index(), { }, [](BlockID each) { return each.index(); });
         };
-        if (m_makerOfListsBehindEntry && m_frames[frameIndex].isOfUnit && isInRegion(m_whereListsAreMadeBehindEntry))
+        if (m_restArrayAllocator && m_frames[frameIndex].isOfUnit && isInRegion(m_restArrayAllocationBlock))
             return false;
         auto noteName = [&](ValueID named, auto...) {
             if (named && !isInRegion(index.blockOf(named)))
@@ -480,7 +478,7 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         std::ranges::sort(taken.valuesThatRegionNamesFromOutside, { }, &ValueID::index);
         taken.valuesThatRegionNamesFromOutside.shrink(std::ranges::unique(taken.valuesThatRegionNamesFromOutside).begin() - taken.valuesThatRegionNamesFromOutside.begin());
 
-        ValueID firstValue = taken.comesRound ? index.block(taken.inputHead).firstParameter() : ValueID(taken.step.index() + 1);
+        ValueID firstValue = taken.hasBackEdge ? index.block(taken.inputHead).firstParameter() : ValueID(taken.step.index() + 1);
         ValueID endOfValues = firstValue;
         for (BlockID member : taken.region)
             endOfValues = std::max(endOfValues, index.block(member).endOfValues(), [](ValueID one, ValueID other) { return one.index() < other.index(); });
@@ -533,15 +531,15 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         site.setCalleeOperand(method);
         site.setThisValueOperand(iterable);
     }
-    Vector<Reference, 8> handedOver = operandsHandedToCopy(site, program().at(callee));
-    if (hasFailed() || !callMayEnterCopyOfBody(*this, site, callee, handedOver.span()))
+    Vector<Reference, 8> passedOperands = collectPassedOperands(site, program().at(callee));
+    if (hasFailed() || !callMayEnterCopyOfBody(*this, site, callee, passedOperands.span()))
         return false;
 
     m_environmentCellsOfUnit.mayNameSome |= isHandedEnvironmentWithByte(*this, callee);
-    taken.entryArguments = buildEntryArgumentsOfCopy(*this, site, callee, handedOver.span());
+    taken.entryArguments = buildEntryArgumentsOfCopy(*this, site, callee, passedOperands.span());
     if (isUnreachable())
         return true;
-    taken.state = addIterationByIndex(IterationByIndex { });
+    taken.state = addIndexedIteration(IndexedIteration { });
 
     if (!depthOfCopies())
         m_operationsCopiedAtWrittenCall = 0;
@@ -557,7 +555,7 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         bind(call.id(), state);
         return true;
     }
-    count(StatisticID::GeneratorMethodsWalkedInPlaceOfIterations);
+    count(StatisticID::GeneratorMethodsInlinedIntoIterations);
     if (call.opcode() == Opcode::AppendSpread)
         return spreadGeneratorTakenAt(m_generatorsTakenByConsumers.size() - 1, call);
     buildFirstReadsThatOpenOfGeneratorLeavesOut(*this, originOf(call), false);
@@ -632,9 +630,9 @@ void Walker::layFrameOfGenerator(FunctionID callee, uint32_t callPosition, uint3
         .module = function.module,
     });
     for (uint32_t place = 0; place < numberOfCarriedValues; ++place)
-        frame.listAsBuiltTwice(ValueID(body.numberOfValues() + place));
+        frame.addDuplicatedValue(ValueID(body.numberOfValues() + place));
     if (numberOfCarriedValues)
-        frame.loopsBeingBuiltTwice.append(LoopID(body.numberOfLoops()));
+        frame.loopsBeingVersioned.append(LoopID(body.numberOfLoops()));
     m_frames.append(WTF::move(frame));
 }
 
@@ -671,14 +669,14 @@ void Walker::bindValuesThatLoopBringsRound(BlockID inputHead, std::span<const Re
 void Walker::bindInFrame(size_t frameIndex, ValueID input, Reference reference)
 {
     Reference& bound = m_frames[frameIndex].references.placeOf<NamesOfValues::Writer::LogsWhatStoodThere>(input.index());
-    if (m_numberOfClosedArms || m_numberOfMarksOfTries)
+    if (m_numberOfClosedArms || m_trialVisitDepth)
         m_bindings.append(Binding { static_cast<uint32_t>(frameIndex), input, bound });
     bound = reference;
 }
 
 void Walker::moveFrame(size_t from, size_t to)
 {
-    RELEASE_ASSERT(m_hasFailed || (!m_waysIntoClosedCopies.containsIf([&](const WayIntoClosedCopy& way) { return way.frameIndex == from; }) && !m_closedCopiesShared.containsIf([&](const ClosedCopyShared& copy) { return copy.frameIndex == from; })));
+    RELEASE_ASSERT(m_hasFailed || (!m_versionedLoops.containsIf([&](const VersionedLoop& versionedLoop) { return versionedLoop.frameIndex == from; }) && !m_sharedGenericVersions.containsIf([&](const SharedGenericVersion& copy) { return copy.frameIndex == from; })));
     if (to == m_frames.size()) {
         size_t lowestNotAsked = from + 1;
         while (lowestNotAsked && m_frames[lowestNotAsked - 1].numberOfFramesUpToHandlerBelow == Frame::notAskedYet)
@@ -701,9 +699,9 @@ void Walker::moveFrame(size_t from, size_t to)
         if (walked.frameOfTurn == from)
             walked.frameOfTurn = static_cast<uint32_t>(to);
     }
-    for (size_t place = 0; place < m_textsInStringBuilders.size(); ++place) {
-        if (std::as_const(m_textsInStringBuilders)[place].frameIndex == from)
-            m_textsInStringBuilders[place].frameIndex = static_cast<uint32_t>(to);
+    for (size_t place = 0; place < m_stringsInBuilders.size(); ++place) {
+        if (std::as_const(m_stringsInBuilders)[place].frameIndex == from)
+            m_stringsInBuilders[place].frameIndex = static_cast<uint32_t>(to);
     }
     for (size_t& resumption : m_resumptionsToLeave) {
         if (resumption == from)
@@ -732,34 +730,34 @@ void Walker::forgetRegionOfIteration(size_t frameIndex, const GeneratorWalkedInC
     }
     inputBlock(frameIndex, walked.inputHead).firstNarrowerName = walked.namesAtHead;
     uint32_t numberInFront = m_numberOfIterationsInFrontOfTheirLoops;
-    for (size_t place = m_iterationsByIndex.size(); place-- && numberInFront;) {
-        const IterationByIndex& iteration = std::as_const(m_iterationsByIndex)[place];
+    for (size_t place = m_indexedIterations.size(); place-- && numberInFront;) {
+        const IndexedIteration& iteration = std::as_const(m_indexedIterations)[place];
         if (iteration.head || !iteration.inputHead)
             continue;
         --numberInFront;
         if (iteration.inlineFrame != m_frames[frameIndex].inlineFrame || !std::ranges::binary_search(walked.region, iteration.inputHead.index(), { }, [](BlockID each) { return each.index(); }))
             continue;
-        m_iterationsByIndex[place].inputHead = { };
+        m_indexedIterations[place].inputHead = { };
         --m_numberOfIterationsInFrontOfTheirLoops;
     }
-    bindNamesInFrontOfLoop(walked);
+    restoreBindingsBeforeLoop(walked);
 }
 
-void Walker::bindNamesInFrontOfLoop(const GeneratorWalkedInConsumer& walked)
+void Walker::restoreBindingsBeforeLoop(const GeneratorWalkedInConsumer& walked)
 {
-    for (auto [value, name] : walked.namesInFrontOfLoop) {
+    for (auto [value, name] : walked.bindingsBeforeLoop) {
         if (referenceBoundIn(m_frames.last(), value) != name)
             bind(value, name);
     }
 }
 
-void Walker::walkHeadOfLoopBehindStep(BlockID inputHead, ValueID step, std::span<const Reference> carried, bool isDone, Reference handedOut)
+void Walker::walkHeadOfLoopBehindStep(BlockID inputHead, ValueID step, std::span<const Reference> carried, bool isDone, Reference stepValue)
 {
     size_t frameIndex = m_frames.size() - 1;
     const BodyIndex& index = *m_frames[frameIndex].index;
     BodyBlock head = index.block(inputHead);
     m_frames[frameIndex].block = { };
-    standIn(inputHead);
+    setCurrentInputBlock(inputHead);
     m_origin = originOf(index.value(step));
     m_origin.isTailCall = false;
 
@@ -770,7 +768,7 @@ void Walker::walkHeadOfLoopBehindStep(BlockID inputHead, ValueID step, std::span
     Reference done = constant(WTF::move(answer));
     for (uint32_t number = step.index() + 1; number < head.endOfValues().index(); ++number) {
         bool readsDone = index.value(ValueID(number)).as<Opcode::ResultAt>().index() == static_cast<uint32_t>(IteratorResumeResult::Done);
-        bind(ValueID(number), readsDone ? done : handedOut);
+        bind(ValueID(number), readsDone ? done : stepValue);
         storeValueBehindItsDefinition(ValueID(number));
     }
     if (head.hasHandler())
@@ -838,7 +836,7 @@ bool Walker::walkYieldOfGeneratorInConsumer(const BodyValue& yield)
     m_generatorsWalkedInConsumers[place].yieldStoodAt = yield.id();
     moveFrame(frameOfConsumer, frameOfTurn);
     m_generatorsWalkedInConsumers[place].frameOfTurn = static_cast<uint32_t>(frameOfTurn);
-    RELEASE_ASSERT(!m_frames[frameOfTurn].loopsBeingBuiltTwice.isEmpty());
+    RELEASE_ASSERT(!m_frames[frameOfTurn].loopsBeingVersioned.isEmpty());
     if (!frameOfConsumer)
         m_frames[frameOfTurn].returnsInPlaceOfUnit = true;
     forgetRegionOfIteration(frameOfTurn, m_generatorsWalkedInConsumers[place]);
@@ -855,19 +853,19 @@ bool Walker::walkYieldOfGeneratorInConsumer(const BodyValue& yield)
     m_block = { };
     m_state.clear();
 
-    bool comesRound = !m_hasFailed && inputBlock(frameOfTurn, inputHead).firstOpenEdge != noOpenEdge;
-    if (comesRound) {
+    bool hasBackEdge = !m_hasFailed && inputBlock(frameOfTurn, inputHead).firstOpenEdge != noOpenEdge;
+    if (hasBackEdge) {
         m_frames[frameOfTurn].block = { };
-        standIn(inputHead);
+        setCurrentInputBlock(inputHead);
         m_origin = originOf(m_frames[frameOfTurn].index->value(step));
         m_origin.isTailCall = false;
         Vector<uint32_t, 4> edges = takeOpenEdges(inputHead);
         closeEdgesInto(addBlockFor(inputHead), inputHead, edges.span(), false);
         carried = valuesThatLoopBringsRound(frameOfTurn, inputHead);
     }
-    bindNamesInFrontOfLoop(m_generatorsWalkedInConsumers[place]);
+    restoreBindingsBeforeLoop(m_generatorsWalkedInConsumers[place]);
     m_frames[frameOfTurn].block = { };
-    standIn(inputHead);
+    setCurrentInputBlock(inputHead);
     if (!frameOfConsumer)
         m_frames[frameOfTurn].returnsInPlaceOfUnit = false;
     m_generatorsWalkedInConsumers[place].frameOfTurn = UINT32_MAX;
@@ -875,7 +873,7 @@ bool Walker::walkYieldOfGeneratorInConsumer(const BodyValue& yield)
     m_generatorsWalkedInConsumers[place].yieldStoodAt = { };
     m_frames[frameOfGenerator].hasHandler = generatorStoodUnderHandler;
     m_origin = originAtYield;
-    if (m_hasFailed || !comesRound) {
+    if (m_hasFailed || !hasBackEdge) {
         m_block = { };
         m_state.clear();
         return true;
@@ -896,7 +894,7 @@ bool Walker::loopCarriesValuesOfConsumerRound(BlockID inputHead) const
     return placeOfGeneratorOnTop() != notFound && loopHoldsYield(body, body.loopOf(inputHead));
 }
 
-bool Walker::turnsOfConsumerFitLoopBuiltTwice(BlockID inputHead, uint64_t largestLoop) const
+bool Walker::isConsumerSmallEnoughToVersion(BlockID inputHead, uint64_t largestLoop) const
 {
     const GeneratorWalkedInConsumer& walked = m_generatorsWalkedInConsumers[placeOfGeneratorOnTop()];
     if (walked.regionHoldsIterations)
@@ -977,8 +975,8 @@ void Walker::bindParametersOfHeadForHandlerOfStep(size_t frameIndex)
         uint32_t firstCarried = generator.index->numberOfValues();
         for (uint32_t number = 0; firstCarried + number < generator.references.size(); ++number) {
             uint32_t name = number < numberOfParameters ? frame.index->block(walked.inputHead).parameter(number).index() : frame.index->numberOfValues() + number - numberOfParameters;
-            if (frame.valuesBuiltTwice)
-                frame.valuesBuiltTwice->noteBoundOnWay(ValueID(name), generator.references[firstCarried + number]);
+            if (frame.duplicatedValues)
+                frame.duplicatedValues->noteBoundOnWay(ValueID(name), generator.references[firstCarried + number]);
             bindInFrame(walked.frameOfConsumer, ValueID(name), generator.references[firstCarried + number]);
         }
     }
@@ -988,7 +986,7 @@ void Walker::nameCarriedValuesOnEdge(OpenEdge& open, size_t frameIndex)
 {
     Frame& frame = m_frames[frameIndex];
     for (uint32_t value = frame.index->numberOfValues(); value < frame.references.size(); ++value)
-        frame.valuesBuiltTwice->nameOtherwiseOn(open.names, ValueID(value), frame.references[value]);
+        frame.duplicatedValues->nameOtherwiseOn(open.names, ValueID(value), frame.references[value]);
 }
 
 BlockID Walker::handlerOfCodeInForce(size_t numberOfFramesUpToHandler) const
@@ -1047,17 +1045,13 @@ Vector<Reference, 4> Walker::walkBodyOfGeneratorToItsEnd(size_t place, Origin or
         }
         carried.append(addParameter(ended, type, formOfParameter(type, forms.span())));
     }
-    WalkState stateWhereEnded;
     for (size_t number = 0; number < returns.size() && !m_hasFailed; ++number) {
         m_block = returns[number].block;
         m_state = WTF::move(returns[number].state);
         jumpTo(ended, carriedAtReturns[number].span());
-        if (number)
-            stateWhereEnded.meetWith(m_state);
-        else
-            stateWhereEnded = WTF::move(m_state);
+        if (number + 1 < returns.size())
+            leaveBlockPending();
     }
-    m_state = WTF::move(stateWhereEnded);
     return carried;
 }
 
@@ -1091,7 +1085,7 @@ bool Walker::walkGeneratorInPlaceOfLoop(BlockID inputHead, std::span<const TypeI
     walked.namesAtHead = inputBlock(frameOfConsumer, inputHead).firstNarrowerName;
     for (ValueID value : taken.valuesThatRegionNamesFromOutside) {
         if (Reference name = referenceBoundIn(m_frames[frameOfConsumer], value))
-            walked.namesInFrontOfLoop.append({ value, name });
+            walked.bindingsBeforeLoop.append({ value, name });
     }
     for (size_t parameter = 0; parameter < entering.size(); ++parameter) {
         TypeID type = typesOfParameters[parameter];
@@ -1115,12 +1109,12 @@ bool Walker::walkGeneratorInPlaceOfLoop(BlockID inputHead, std::span<const TypeI
     {
         Frame& frame = m_frames[frameOfConsumer];
         for (ValueID value : taken.valuesReadBehindRegion)
-            frame.listAsBuiltTwice(value);
-        frame.loopsBeingBuiltTwice.append(taken.comesRound ? index.loopOf(inputHead) : LoopID(index.numberOfLoops()));
-        frame.standsInFrontOfHead = false;
+            frame.addDuplicatedValue(value);
+        frame.loopsBeingVersioned.append(taken.hasBackEdge ? index.loopOf(inputHead) : LoopID(index.numberOfLoops()));
+        frame.isInPreheader = false;
     }
 
-    layFrameOfGenerator(taken.function, taken.callPosition, m_frames[frameOfConsumer].loopDepthAtCall + index.loopDepthOf(inputHead) - taken.comesRound, static_cast<uint32_t>(carried.size()));
+    layFrameOfGenerator(taken.function, taken.callPosition, m_frames[frameOfConsumer].loopDepthAtCall + index.loopDepthOf(inputHead) - taken.hasBackEdge, static_cast<uint32_t>(carried.size()));
     m_generatorsWalkedInConsumers.append(WTF::move(walked));
     const size_t place = m_generatorsWalkedInConsumers.size() - 1;
 
@@ -1144,7 +1138,7 @@ bool Walker::walkGeneratorInPlaceOfLoop(BlockID inputHead, std::span<const TypeI
         inputBlock(frameOfConsumer, member).firstNarrowerName = m_generatorsWalkedInConsumers[place].namesAtHead;
         inputBlock(frameOfConsumer, member).isEntered = true;
     }
-    m_frames[frameOfConsumer].loopsBeingBuiltTwice.removeLast();
+    m_frames[frameOfConsumer].loopsBeingVersioned.removeLast();
     m_generatorsWalkedInConsumers.removeLast();
     m_block = { };
     m_state.clear();
@@ -1156,7 +1150,7 @@ bool Walker::stepGeneratorTakenOutsideLoops(const BodyValue& step)
     if (m_generatorsTakenByConsumers.isEmpty())
         return false;
     uint32_t inlineFrame = m_frames.last().inlineFrame;
-    if (!m_generatorsTakenByConsumers.containsIf([&](const GeneratorTakenByConsumer& taken) { return taken.step == step.id() && taken.inlineFrame == inlineFrame && !taken.comesRound; }))
+    if (!m_generatorsTakenByConsumers.containsIf([&](const GeneratorTakenByConsumer& taken) { return taken.step == step.id() && taken.inlineFrame == inlineFrame && !taken.hasBackEdge; }))
         return false;
     BlockID blockOfStep = m_frames.last().block;
     return walkGeneratorInPlaceOfLoop(blockOfStep, { }, { });
@@ -1272,9 +1266,9 @@ void Walker::resumeGeneratorToLeave(size_t place, ResumeMode mode, bool dropsWha
         frame.index = suspended.index;
         frame.references = suspended.references;
         frame.references.shrink(suspended.index->numberOfValues());
-        if (suspended.valuesBuiltTwice) {
-            for (uint32_t number = 0; number < suspended.valuesBuiltTwice->slots.size(); ++number) {
-                const Frame::ValuesBuiltTwice::Slot& slot = suspended.valuesBuiltTwice->slots[number];
+        if (suspended.duplicatedValues) {
+            for (uint32_t number = 0; number < suspended.duplicatedValues->slots.size(); ++number) {
+                const Frame::DuplicatedValues::Slot& slot = suspended.duplicatedValues->slots[number];
                 if (slot.value.index() < frame.references.size())
                     frame.references.placeOf<NamesOfValues::Writer::LaysFrame>(slot.value.index()) = referenceBoundIn(suspended, slot.value);
             }
@@ -1295,7 +1289,7 @@ void Walker::resumeGeneratorToLeave(size_t place, ResumeMode mode, bool dropsWha
     m_frames.last().returnsOfCopy = &returns;
     inputBlock(m_frames.size() - 1, block.id()).isEntered = true;
     inputBlock(m_frames.size() - 1, block.id()).firstNarrowerName = noNarrowerName;
-    standIn(block.id());
+    setCurrentInputBlock(block.id());
     m_origin = origin;
     m_origin.inlineFrame = m_frames.last().inlineFrame;
     if (Reference resumption = resumptionOfGenerator({ }, mode, m_origin))
@@ -1317,18 +1311,15 @@ void Walker::resumeGeneratorToLeave(size_t place, ResumeMode mode, bool dropsWha
         return;
 
     BlockID after = addBlock();
-    WalkState stateBehind;
     bool someWayArrives = false;
     for (Frame::ReturnOfCopy& returned : returns) {
         if (m_hasFailed)
             return;
+        leaveBlockPending();
         m_block = returned.block;
         m_state = WTF::move(returned.state);
         jumpTo(after);
-        if (std::exchange(someWayArrives, true))
-            stateBehind.meetWith(m_state);
-        else
-            stateBehind = WTF::move(m_state);
+        someWayArrives = true;
     }
     if (handler && m_code.at(handler).firstEdgeIn()) {
         continueIn(handler);
@@ -1337,16 +1328,14 @@ void Walker::resumeGeneratorToLeave(size_t place, ResumeMode mode, bool dropsWha
         chooseConservativeFields(caught);
         build(WTF::move(caught));
         jumpTo(after);
-        stateBehind.clear();
+        m_state.clear();
         someWayArrives = true;
     } else if (handler)
         m_code.end(handler, TerminatorDraft(TerminatorKind::Unreachable, origin), 0);
     if (!someWayArrives) {
         m_block = { };
         m_state.clear();
-        return;
     }
-    m_state = WTF::move(stateBehind);
 }
 
 } } } // namespace JSC::AOT::Typed

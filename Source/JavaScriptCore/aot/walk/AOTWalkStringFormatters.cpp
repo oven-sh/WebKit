@@ -120,7 +120,7 @@ static bool addOptionsOfDataThatCallAloneSeesInStringFormatters(Walker& walker, 
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID argument = written[1];
-    ValueID definition = index.valueBehindCasts(argument);
+    ValueID definition = index.stripCasts(argument);
     if (!definition || index.isParameter(definition) || index.opcodeOf(definition) != Opcode::Data)
         return false;
     for (ValueID link = definition; link != argument;) {

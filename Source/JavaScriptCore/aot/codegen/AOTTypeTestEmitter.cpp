@@ -112,9 +112,9 @@ const TypeTestPlan& TypeTestEmitter::planFor(TypeID from, Representation represe
     return *m_plans[static_cast<size_t>(representation)].ensure(key, compute).iterator->value;
 }
 
-void TypeTestEmitter::emitBranchAskingEachFunctionByItself(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
+void TypeTestEmitter::emitPerFunctionBranch(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
 {
-    SetForScope eachByItself(m_asksEachFunctionByItself, true);
+    SetForScope isEmittingPerFunctionBranch(m_isEmittingPerFunctionBranch, true);
     emitBranch(operand, plan, targets);
 }
 

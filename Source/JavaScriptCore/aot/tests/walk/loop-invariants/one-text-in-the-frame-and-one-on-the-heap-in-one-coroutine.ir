@@ -8,7 +8,7 @@
 # CHECK: # live at [[await]] [{{*}}[[builder]]
 # layout L904 kind=Closure
 variable g0 name="L" module=m0 declared={type=anything|absent} flags=[IsImmutable]
-module m0 path="/$bunfs/root/both.mjs" displayPath="both.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 14, 183, 194, 214] quotedTexts=[{position=168 start=27 end=33}, {position=170 start=27 end=36}, {position=183 end=9}, {position=194 start=9 end=24}, {position=205 start=9 end=27}] textOfQuotes="g(\x22k\x22, 3)globalThis.sink(L)L.push(a)"} functionText="const L = [];\x0aasync function g(h, n) { let a = h, b = \x22\x22; for (let k = 0; k < n; k++) b += k; try { for (let k = 0; k < n; k++) a += k; await null; a += b; } finally { L.push(a); } }\x0ag(\x22k\x22, 3);\x0aglobalThis.sink(L);\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/both.mjs" displayPath="both.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 14, 183, 194, 214] quotedSources=[{position=168 start=27 end=33}, {position=170 start=27 end=36}, {position=183 end=9}, {position=194 start=9 end=24}, {position=205 start=9 end=27}] quotedSourceText="g(\x22k\x22, 3)globalThis.sink(L)L.push(a)"} functionSource="const L = [];\x0aasync function g(h, n) { let a = h, b = \x22\x22; for (let k = 0; k < n; k++) b += k; try { for (let k = 0; k < n; k++) a += k; await null; a += b; } finally { L.push(a); } }\x0ag(\x22k\x22, 3);\x0aglobalThis.sink(L);\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -26,7 +26,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v12 = Undefined @194
     Return v12 @194
 }
-function f1 name="g" module=m0 position=14 text={start=14 end=182} flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f1 name="g" module=m0 position=14 sourceRange={start=14 end=182} flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: anything, v1: undefined|null|string, v2: anything):
     v3 = Convert v1 declared={type=number flags=[IsExpected]} @47
     v4 = String string="" @54

@@ -11,6 +11,7 @@
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramTables.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTRuntimeTable.h"
 #include "ArgList.h"
 #include "JSObject.h"
@@ -25,7 +26,9 @@ namespace JSC { namespace AOT {
 
 [[noreturn]] inline NEVER_INLINE void crashOnWrongOperand(Entry entry)
 {
-    dataLogLn("AOT: an operand of ", nameOf(entry), " has the wrong kind");
+    RuntimeCheckFailure failure("operand check failed"_s);
+    failure.detail("compiled code passed a cell of the wrong class to ", nameOf(entry));
+    failure.report();
     CRASH();
 }
 

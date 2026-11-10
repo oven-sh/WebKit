@@ -47,7 +47,7 @@ Vector<uint64_t> bitsOfLayoutsInKnownEffects(const Program&);
 inline constexpr AbstractHeapSet heapsOfObjectsWithLayouts {
     AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks
 };
-inline constexpr AbstractHeapSet heapsOfPartsOfObjects = perObjectHeaps - heapsWhoseWritesNobodySees - AbstractHeapSet { AbstractHeap::EnvironmentFields };
+inline constexpr AbstractHeapSet heapsOfPartsOfObjects = perObjectHeaps - unobservableWriteHeaps - AbstractHeapSet { AbstractHeap::EnvironmentFields };
 
 struct LinkedEffectsGivenArguments {
     FunctionID function;

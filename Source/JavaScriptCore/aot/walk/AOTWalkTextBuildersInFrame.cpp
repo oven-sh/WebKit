@@ -73,7 +73,7 @@ static Reference newestCursorOfTextInFrame(Walker& walker, Reference name, Origi
     return walker.build(WTF::move(read));
 }
 
-void becomeOperationOfStringBuilderInFrame(Walker& walker, TextInStringBuilder& text, Reference name, Draft& draft, Opcode inFrame)
+void becomeOperationOfStringBuilderInFrame(Walker& walker, StringInBuilder& text, Reference name, Draft& draft, Opcode inFrame)
 {
     if (!text.liesInFrame)
         return;

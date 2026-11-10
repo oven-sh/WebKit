@@ -179,7 +179,7 @@ static std::optional<RowInStringURLs> findRowInStringURLs(Walker& walker, const 
         bool listsPairs = *question == QuestionInStringURLs::Entries || *question == QuestionInStringURLs::Keys || *question == QuestionInStringURLs::Values;
         if ((row.goesThroughSearchParams && !asksForName) || (listsPairs && !isTakenByWalkAloneInStringURLs(index, callOfMethod)))
             return std::nullopt;
-        if (asksForName && isNameOfTextInStringBuilder(walker, arguments[0]))
+        if (asksForName && isBoundToStringInBuilder(walker, arguments[0]))
             return std::nullopt;
         row.question = *question;
         row.reads.append(user.id());
@@ -420,7 +420,7 @@ static bool everyMentionIsAnsweredOutOfTextInStringURLs(Walker& walker, ValueID 
                     return false;
                 if (user.argumentsOperands().size() != 1 || user.isDoneInPlace() || index.blockOf(method) != index.blockOf(user.id()))
                     return false;
-                if (index.valueBehindCasts(index.value(method).objectOperand()) != index.valueBehindCasts(query))
+                if (index.stripCasts(index.value(method).objectOperand()) != index.stripCasts(query))
                     return false;
                 account(method);
                 account(query);
@@ -491,14 +491,14 @@ static Reference isPlainInStringURLs(Walker& walker, const URLThatIsNeverMade& u
 
 static Reference meetInStringURLs(Walker& walker, BlockID meeting, Reference answer, BlockID endOfPlain, Reference written, BlockID endOfWritten)
 {
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     if (endOfPlain)
-        arms.append(Walker::ArmThatMeets { endOfPlain, { answer } });
+        arms.append(Walker::JoinArm { endOfPlain, { answer } });
     if (endOfWritten)
-        arms.append(Walker::ArmThatMeets { endOfWritten, { written } });
+        arms.append(Walker::JoinArm { endOfWritten, { written } });
     Reference met;
     if (!arms.isEmpty())
-        walker.letArmsMeet(arms.span(), meeting, singleElementSpan(met));
+        walker.joinArms(arms.span(), meeting, singleElementSpan(met));
     return met;
 }
 
@@ -619,7 +619,7 @@ bool answerFromURLThatIsNeverMadeOfItsOpcodes(Walker& walker, const BodyValue& v
         return true;
     }
     if (value.opcode() == Opcode::Call && mention == MentionInStringURLs::Query && mentionInStringURLs(*url, value.calleeOperand()) == MentionInStringURLs::Method)
-        return answerCallOnQueryInStringURLs(walker, *url, value, index.value(index.valueBehindCasts(subject)));
+        return answerCallOnQueryInStringURLs(walker, *url, value, index.value(index.stripCasts(subject)));
     walker.fail("an operation takes a URL that is never made, and the look at the body has not seen it"_s);
     return true;
 }
@@ -630,9 +630,9 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID made = call.call.id();
-    if (walker.hasTextsInStringBuilders()) {
+    if (walker.hasStringsInBuilders()) {
         for (ValueID argument : call.writtenArguments()) {
-            if (findTextNamedBy(walker, argument))
+            if (findStringInBuilder(walker, argument))
                 return false;
         }
     }
@@ -682,7 +682,7 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
         return true;
     BlockID plain = walker.addBlock();
     walker.branch(isPlain, plain, asWritten);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
 
     walker.continueIn(asWritten);
     Reference object;
@@ -702,14 +702,14 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     url.inlineFrame = walker.originOfOperation().inlineFrame;
     url.made = made;
     url.typeOfObject = typeOfObject;
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     if (endOfWritten) {
         Reference noText = walker.constant(PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
-        arms.append(Walker::ArmThatMeets { endOfWritten, { object, noText, integerForStrings(walker, PlainURL::notPlain) } });
+        arms.append(Walker::JoinArm { endOfWritten, { object, noText, integerForStrings(walker, PlainURL::notPlain) } });
     }
-    arms.append(Walker::ArmThatMeets { plain, { nothing, string, scan } });
+    arms.append(Walker::JoinArm { plain, { nothing, string, scan } });
     std::array<Reference, 3> met;
-    if (!walker.letArmsMeet(arms.span(), meeting, met))
+    if (!walker.joinArms(arms.span(), meeting, met))
         return true;
     url.object = met[0];
     url.text = met[1];
@@ -722,7 +722,7 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     });
     urls.append(WTF::move(url));
     walker.noteURLThatIsNeverMade();
-    walker.count(StatisticID::URLsLeftUnbuilt);
+    walker.count(StatisticID::URLAllocationsElided);
     return true;
 }
 
@@ -786,8 +786,8 @@ bool buildURLCallByScan(Walker& walker, const CallByOneRow& call)
     BlockID meeting = walker.addBlock();
     walker.letGuessFailUnasked(asWritten, origin);
     walker.branch(isPlain, plain, asWritten);
-    walker.noteGuessOpened();
-    walker.count(StatisticID::URLsLeftUnbuilt);
+    walker.recordSpeculation();
+    walker.count(StatisticID::URLAllocationsElided);
 
     walker.continueIn(plain);
     Reference answer = answerFromPlainTextInStringURLs(walker, *row, text, scan, asWritten, origin);

@@ -2,7 +2,7 @@
 # function keepLast(list, n) { const at = list.length; for (let i = 0; i < n; i++) list[at] = i; return list; }
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK-NOT: ReserveArrayRoom
+# CHECK-NOT: ReserveArrayCapacity
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

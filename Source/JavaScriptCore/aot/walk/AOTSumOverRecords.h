@@ -23,7 +23,7 @@ public:
     }
 
     bool add(ValueID, int64_t times);
-    bool takeAwayWhatIsFromZeroUp(ValueID, bool answersYes = true);
+    bool takeAwayWhatIsFromZeroUp(ValueID, bool testResult = true);
     bool isFromZeroUp() const;
 
 private:
@@ -42,8 +42,8 @@ private:
     Vector<Term, 4> m_terms;
 };
 
-bool everyWayStepsUpFrom(const Code&, const TypeArena&, ValueID, ValueID from, ValueID stepIsFromZeroUp, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough);
-bool groundsShowPositionInside(const Code&, const TypeArena&, ValueID position, const GroundsOfPosition&, NOESCAPE const ScopedLambda<bool(ValueID, bool answersYes)>& holds);
+bool everyWayStepsUpFrom(const Code&, const TypeArena&, ValueID, ValueID from, ValueID stepNonNegativeCheck, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough, NOESCAPE const ScopedLambda<bool(BlockID)>& isReached);
+bool groundsShowPositionInside(const Code&, const TypeArena&, ValueID position, const GroundsOfPosition&, NOESCAPE const ScopedLambda<bool(ValueID, bool testResult)>& holds);
 bool testsShowElementPresent(const Code&, ValueID list, ValueID position, std::span<const PassedTest::Side>);
 
 } } } // namespace JSC::AOT::Typed

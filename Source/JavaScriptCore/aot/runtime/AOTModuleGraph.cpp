@@ -153,7 +153,7 @@ LinkRequestsOfModules contractLinkRequests(std::span<ModuleData> modulesAndEndRe
 
     auto mayOnlyPassLinkOn = [&](uint32_t index) {
         const ModuleData& module = graph[index];
-        return module.isESModuleOfProgram() && !module.isFaceOfFile() && !module.capturesExports() && !graph.resolvesNames(index)
+        return module.isESModuleOfProgram() && !module.isFacade() && !module.capturesExports() && !graph.resolvesNames(index)
             && module.isSynchronous() && !module.reachesUncompiledCode() && components.membersOf(components.componentOf[index]).size() == 1;
     };
 

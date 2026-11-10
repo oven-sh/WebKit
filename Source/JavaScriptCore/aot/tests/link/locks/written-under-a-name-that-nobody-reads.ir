@@ -1,7 +1,7 @@
 # a store under a key that nobody can read may land on every member of the object that it names, and on no other object
 # so may a row that writes under a key of its call: Reflect.set(JSON, name, f)
 # Date.now(); Math.random(); JSON.parse("0"); JSON.stringify(0); Date[name] = f; Reflect.set(JSON, name, f);
-# DIAGNOSTIC: LockedBuiltinWriteUnderUnreadName 2
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 2
 # RUN: locks
 # CHECK-NOT: DateNow
 # CHECK-NOT: JSONParse

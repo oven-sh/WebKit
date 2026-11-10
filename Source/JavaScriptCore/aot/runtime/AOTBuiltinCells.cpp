@@ -24,6 +24,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTRealmStartup.h"
 #include "AOTRemovableFeature.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTRuntimeHooks.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
@@ -55,6 +56,13 @@
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
+
+static void reportMissingHolder(const BuiltinTable& table, BuiltinID builtin)
+{
+    RuntimeCheckFailure failure("built-in lookup failed"_s);
+    failure.detail("the object that holds ", table.textOf(builtin), " is not in this realm");
+    failure.report();
+}
 
 [[noreturn]] static void exitForWantOfHost(const BuiltinTable& table, BuiltinID builtin)
 {
@@ -199,7 +207,7 @@ static JSObject* requireModule(Modules& modules, const BuiltinTable& table, Runt
         }
         return value ? value.getObject() : nullptr;
     }
-    HostRequestScope requestToHost(modules);
+    HostRequestScope uncompiledModuleRequest(modules);
     JSValue exports;
     if (table.at(module).flags.contains(RuntimeModuleFlag::HasSource)) {
         if (auto* requireBuiltinModule = methodTable->requireBuiltinModule)
@@ -403,7 +411,9 @@ JSCell* BuiltinCells::cell(uint32_t number)
     bool isImmutable = isImmutableLocation(table, m_tables, key->builtin());
     if (!found) {
         if (isImmutable && BuiltinBindings::provides(table.at(key->builtin()).origin) && !table.has(BuiltinMark::MayBeAbsent, key->builtin())) {
-            dataLogLn("AOT: built-in cell ", number, " (key ", key->encoded(), ", ", table.textOf(key->builtin()), ") is not in this realm: ", static_cast<unsigned>(found.error()));
+            RuntimeCheckFailure failure("built-in lookup failed"_s);
+            failure.detail(table.textOf(key->builtin()), " is not in this realm");
+            failure.report();
             CRASH();
         }
         if (JSFunction* function = makeFunctionOfMissingHost(m_instance.globalObject, table, *key)) {
@@ -533,7 +543,7 @@ JSValue BuiltinCells::fillValue(JSGlobalObject* realm, BuiltinCellKey key)
     if (!holder) {
         if (!BuiltinBindings::provides(member.origin))
             exitForWantOfHost(table, key.builtin());
-        dataLogLn("AOT: the holder of the built-in value ", table.textOf(key.builtin()), " (key ", key.encoded(), ") is not in this realm");
+        reportMissingHolder(table, key.builtin());
         CRASH();
     }
     JSValue value = asObject(holder)->get(realm, privateName ? Identifier::fromUid(*privateName) : table.identifierOf(vm, member.name));
@@ -561,7 +571,7 @@ JSValue BuiltinCells::fillWatchedValue(JSGlobalObject* realm, BuiltinCellKey key
     if (!holder) {
         if (!BuiltinBindings::provides(member.origin))
             exitForWantOfHost(table, key.builtin());
-        dataLogLn("AOT: the holder of the built-in value ", table.textOf(key.builtin()), " (key ", key.encoded(), ") is not in this realm");
+        reportMissingHolder(table, key.builtin());
         CRASH();
     }
     Identifier name = table.identifierOf(vm, member.name);
@@ -1046,6 +1056,17 @@ String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedString
     return change == RejectedWrite::Deletion ? deletionFromLockedBuiltinMessage(vm, id, key, lockedIn) : assignmentToLockedBuiltinMessage(vm, id, key, lockedIn);
 }
 
+bool isReportedAsReadOnly(JSObject* lockedObject, UniquedStringImpl* key)
+{
+    BuiltinID holder = builtinOfLockedObject(instanceOfRealmOf(lockedObject), lockedObject);
+    if (!holder)
+        return false;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(lockedObject->vm(), key);
+    BuiltinID member = name ? table.findOwnMember(holder, name) : BuiltinID();
+    return member && table.has(BuiltinMark::IsReportedAsReadOnly, member);
+}
+
 bool rejectsOwnPropertyOnLibraryFunction(JSObject* object, UniquedStringImpl* key)
 {
     auto* closure = dynamicDowncast<Closure>(object);
@@ -1074,7 +1095,7 @@ String spyOnExportErrorMessage(JSCell* moduleNamespace, UniquedStringImpl* name,
 {
     auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
     JSGlobalObject* realm = object->realm();
-    return makeSpyOnExportErrorMessage(name, modulesOf(realm)->table().pathText(object->module()), kindOfRun(realm), uncompiledCaller);
+    return makeSpyOnExportErrorMessage(name, modulesOf(realm)->table().fullPath(object->module()), kindOfRun(realm), uncompiledCaller);
 }
 
 String mockModuleErrorMessage(JSGlobalObject* realm, const String& path, const String& uncompiledCaller)
@@ -1172,7 +1193,9 @@ void rejectEvaluationUnlessAllowed(JSGlobalObject* realm)
 
 [[noreturn]] static NEVER_INLINE void crashOnBuiltinHolder(BuiltinID holder, ASCIILiteral problem)
 {
-    dataLogLn("AOT: built-in holder ", BuiltinTable::singleton().textOf(holder), " ", problem);
+    RuntimeCheckFailure failure("built-in lock failed"_s);
+    failure.detail(BuiltinTable::singleton().textOf(holder), " ", problem);
+    failure.report();
     CRASH();
 }
 

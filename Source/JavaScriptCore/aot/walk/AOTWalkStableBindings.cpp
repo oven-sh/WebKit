@@ -29,7 +29,7 @@ Reference findCaptureAtHand(Walker& walker, FunctionID callee, uint32_t capture,
         return { };
 
     const Code& code = walker.code();
-    const Operation& read = code.at(rootOfCellInSweptCode(code, closure.id()));
+    const Operation& read = code.at(underlyingCellOf(code, closure.id()));
     if (read.opcode != Opcode::GetEnvironmentField || read.layout() != scope)
         return { };
     if (functionDeclaredInScopeSlot(program, scope, read.field()) != callee)
@@ -77,8 +77,8 @@ static bool keepsNotesOfStableBindings(const Walker& walker)
 static ALWAYS_INLINE bool isValueOfFilledBinding(Walker& walker, Reference value, bool hasDeadZone)
 {
     TypeID type = value ? walker.typeOf(value) : TypeID();
-    uint16_t saysNothing = Primitive::Absent | Primitive::Unspecified | (hasDeadZone ? 0 : Primitive::Undefined);
-    return type && !(walker.types().at(type).primitives & saysNothing);
+    uint16_t unfilledPrimitives = Primitive::Absent | Primitive::Unspecified | (hasDeadZone ? 0 : Primitive::Undefined);
+    return type && !(walker.types().at(type).primitives & unfilledPrimitives);
 }
 
 static bool hasDeadZone(const Walker& walker, VariableID variable)

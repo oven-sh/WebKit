@@ -18,7 +18,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
 #     v2 @Void = CheckProof v0 checkedType=undefined typeWithoutProof=anything source=Field [goesWithItsValue]
 #     v3: anything @Cell = NewSuppressedError v1, v1 traits=[mayCollect, mayTouchMemory]
-#     v4 @Void = PropDefine v3, v0 key="name" traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = PropDefine v3, v0 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
 #     Return v0
 # }
 # -- end of code

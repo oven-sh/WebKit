@@ -13,9 +13,9 @@
 # COMPUTED: StrictEq
 # COMPUTED: PutDoubleIndex
 # COMPUTED: frequency=Rare
-# COMPUTED: PutOwnDoubleIndex {{*}}putsBackWhatTurnStored
-# RUN(COUNT): compile NumbersMovedOutOfDoubleStorage mechanisms=all
-# COUNT-NOT: statistic NumbersMovedOutOfDoubleStorage 0
+# COMPUTED: PutOwnDoubleIndex {{*}}undoesIterationStore
+# RUN(COUNT): compile DoubleElementsCopiedUnchecked mechanisms=all
+# COUNT-NOT: statistic DoubleElementsCopiedUnchecked 0
 # RUN(SHELL): run-in-shell globalThis.sink = (...all) => { print(all.join(" ")); };
 # SHELL: 5.5 4.5 0.5 2.75 0.25
 # SHELL: exited with 0

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAssignmentPlans.h"
+#include "AOTClosure.h"
 #include "AOTFieldMoves.h"
 #include "AOTInliningAcrossFiles.h"
 #include "AOTKeyOrderTable.h"
@@ -1726,7 +1727,7 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     AssignmentPlan* plan = extra || !excludedNames.empty() ? nullptr : plans.recentPlan(target.structureID(), source->structureID(), assignmentSource->propertyStorageStructureID(), assignmentSource->orderWord, 0);
     if (!plan || !plan->isFor(target.structureID(), StructureID(), *assignmentSource))
         plan = plans.planFor(vm, &target, extra, *assignmentSource);
-    if (!defines && plan->isUsable && plan->storesNameBehindSymbol) {
+    if (!defines && plan->isUsable && plan->storesNameAfterSymbol) {
         if (!PropertyWalk::wouldPerformFastPut(vm, &target))
             return false;
         plan = plans.planFor(vm, &target, extra, *assignmentSource);
@@ -1746,7 +1747,7 @@ bool tryAssignOrdinaryObjectAsBefore(VM& vm, State& state, Object& target, JSObj
         return false;
     StructureID ofSource = source->structureID();
     bool isThePlan = plan->target == target.structureID() && plan->source == ofSource && !plan->sourceOrderWord && plan->sourcePropertyStorage == ofSource && !plan->extraPropertiesBefore
-        && plan->isUsable && !plan->servesDefinitionsOnly && !plan->storesNameBehindSymbol && !plan->excludedList && plan->excludedNames.isEmpty() && plan->orderWordBeforeRun == target.orderWord();
+        && plan->isUsable && !plan->servesDefinitionsOnly && !plan->storesNameAfterSymbol && !plan->excludedList && plan->excludedNames.isEmpty() && plan->orderWordBeforeRun == target.orderWord();
     if (!isThePlan)
         return false;
     DeferGC deferGC(vm);
@@ -1776,7 +1777,7 @@ static ALWAYS_INLINE bool tryCopyFieldsLeavingElementsOut(VM& vm, Object& target
     State& state = target.state();
     JSObject* extra = target.extraProperties();
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, &target, extra, assignmentSource);
-    if (!plan->isUsable || (!defines && plan->storesNameBehindSymbol))
+    if (!plan->isUsable || (!defines && plan->storesNameAfterSymbol))
         return false;
     plan->leavesElementsOut = true;
     assignByPlan(vm, target, state, *plan, extra, assignmentSource);
@@ -1803,19 +1804,43 @@ bool tryDefinePropertiesOf(VM& vm, Object& target, JSObject* source, std::span<U
     return tryAssignOrDefinePropertiesOf(vm, target, source, excludedNames, true);
 }
 
-bool tryDefinePropertiesOnOrdinaryObject(VM& vm, State& state, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames)
+static bool hasPlainPropertyStorage(Structure* target)
 {
-    ASSERT(target->type() == FinalObjectType && !isCompiledObject(target));
+    return !target->isCompiledStructure()
+        && !target->mayHaveImmutableProperties()
+        && !target->mayBePrototype()
+        && !target->isWatchingReplacement()
+        && !target->isDictionary()
+        && target->isStructureExtensible()
+        && !target->hasPolyProto();
+}
+
+bool takesPlainPropertiesDirectly(Structure* target)
+{
+    return target->typeInfo().type() == FinalObjectType && hasPlainPropertyStorage(target);
+}
+
+static bool takesPlainPropertiesDirectly(const Closure& closure)
+{
+    FunctionKindData kind = closure.kind();
+    Structure* structure = closure.structure();
+    return !kind.isConstructor && !kind.isInRuntimeModule && !kind.closuresGetOnlyListedNames
+        && hasPlainPropertyStorage(structure) && !structure->hasFrozenElementsInPlace() && !structure->hasNonReifiedStaticProperties();
+}
+
+static bool tryCopyByPlan(VM& vm, State& state, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, bool defines)
+{
+    ASSERT(!isCompiledObject(target));
     if (source == target || hasIndexedProperties(target->indexingType()))
         return false;
-    std::optional<AssignmentSource> assignmentSource = assignmentSourceFor(source, excludedNames, true);
+    std::optional<AssignmentSource> assignmentSource = assignmentSourceFor(source, excludedNames, defines);
     if (!assignmentSource)
         return false;
     if (assignmentSource->compiledObject && &assignmentSource->compiledObject->state() != &state)
         return false;
     DeferGC deferGC(vm);
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFromSecondCopyOn(vm, target, nullptr, *assignmentSource);
-    if (!plan || !plan->isUsable)
+    if (!plan || !plan->isUsable || (!defines && plan->storesNameAfterSymbol))
         return false;
     Vector<EncodedJSValue, 16> values;
     for (auto& store : plan->extraPropertyStores) {
@@ -1834,6 +1859,18 @@ bool tryDefinePropertiesOnOrdinaryObject(VM& vm, State& state, JSObject* target,
     if (before != after || before->outOfLineCapacity() != after->outOfLineCapacity())
         target->setStructure(vm, after);
     return true;
+}
+
+bool tryDefinePropertiesOnOrdinaryObject(VM& vm, State& state, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames)
+{
+    ASSERT(target->type() == FinalObjectType);
+    return tryCopyByPlan(vm, state, target, source, excludedNames, true);
+}
+
+bool tryAssignToOrdinaryObject(VM& vm, State& state, JSObject* target, JSObject* source)
+{
+    bool takesProperties = target->type() == CompiledClosureType ? takesPlainPropertiesDirectly(*uncheckedDowncast<Closure>(target)) : takesPlainPropertiesDirectly(target->structure());
+    return takesProperties && tryCopyByPlan(vm, state, target, source, { }, false);
 }
 
 JSFinalObject* tryCopyTwoObjects(VM& vm, State& state, JSGlobalObject* realm, JSValue first, JSValue second)

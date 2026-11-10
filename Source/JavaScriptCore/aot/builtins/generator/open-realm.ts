@@ -24,7 +24,7 @@ function isLoaderOrEvaluator(builtin: ModelBuiltin): boolean {
     builtin.marks.includes("ReadLoadsCodeByName") ||
     builtin.marks.includes("EvaluatesTextInGlobalScope") ||
     builtin.marks.includes("RunsCodeWithLoader") ||
-    builtin.marks.includes("HandsOutWhatNativeCodeHolds") ||
+    builtin.marks.includes("ExposesNativeRoots") ||
     builtin.overloads.some(({ result }) =>
       result.type.parts.some(
         part => part.part === "Builtin" && letsInUnseenCodeWhenCalled(part.builtin.sameObjectAs ?? part.builtin),

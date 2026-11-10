@@ -1,13 +1,16 @@
 # if (parseFloat("3.5")) print("seen"); print("went on")
-# The lie: every row of native code writes undefined or null for its result. So the test is answered while the program is compiled, its arm goes, and nothing is left that reads the call.
-# The row of parseFloat neither throws nor writes, so by its effects the call might go where nothing reads it. The stop that holds what arrives against the row lies in the code of the call: the call stays.
-# OPTIONS: testing=NativeCodeAnswersNullish
+# Fault injection: the signature of every native function declares undefined or null as its result.
+# So the condition is folded at compile time, its branch is removed, and nothing is left that uses the call's result.
+# The signature of parseFloat neither throws nor writes, so by its effects the call could be removed where nothing uses its result.
+# The check of the returned value against the signature is part of the call's own code, so the call stays.
+# OPTIONS: testing=AssumeNullishHostResults
 # RUN(CODE): walk f0:Body mechanisms=all
 # CODE-LABEL: code f0:Body
 # CODE: undefined|null @JSValue = CallBuiltin
 # CODE-NOT: "seen"
 # RUN: run-in-shell mechanisms=all
-# CHECK: AOT: parseFloat (call) is declared as undefined | null, and native code answered with something else: number. This is a bug in Bun.
+# CHECK: bun: internal AOT error: type check failed
+# CHECK-NEXT: expected undefined | null, found double in the result of parseFloat
 # CHECK-NOT: went on
 # CHECK: crashed with
 

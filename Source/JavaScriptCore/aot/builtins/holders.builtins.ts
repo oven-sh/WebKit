@@ -68,7 +68,7 @@ const iteratorColumns = {
 
 const lockedIteratorColumns = {
   ...iteratorColumns,
-  slots: { ...iteratorColumns.slots, element: b.handedOutBySteps(internalFields) },
+  slots: { ...iteratorColumns.slots, element: b.stepValueSlot(internalFields) },
   extends: "Iterator",
   lockedMembers: ["prototype"],
 } satisfies b.ClassOptions;
@@ -92,7 +92,7 @@ const libraryStep = (file: string, name: string, returns: b.TableType) =>
     implementation: b.compiled(file, name),
   }) satisfies b.FunctionField;
 
-const handsOutWhatIteratorHolds = b.createdIn(
+const returnsStepValue = b.createdIn(
   b.union(b.slot("this", "element"), b.undefined),
   b.resultFieldHoldingOnlyWhatIsStored("value"),
 );
@@ -102,7 +102,7 @@ const libraryStepOfOwnIterator = (file: string) =>
     returns: iteratorResult,
     capability: "js",
     throws: true,
-    uses: { this: [...advances, handsOutWhatIteratorHolds] },
+    uses: { this: [...advances, returnsStepValue] },
     implementation: b.compiled(file, "next"),
   }) satisfies b.FunctionField;
 
@@ -526,7 +526,7 @@ export default b.declarations(
   }),
   b.class("%StringIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: hostStep([...advances, handsOutWhatIteratorHolds]) },
+    proto: { next: hostStep([...advances, returnsStepValue]) },
   }),
   b.class("%RegExpStringIterator%", {
     ...lockedIteratorColumns,

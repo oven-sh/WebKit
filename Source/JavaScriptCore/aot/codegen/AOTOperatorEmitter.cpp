@@ -82,7 +82,7 @@ void OperatorEmitter::defineHeldToItsType(const ValueContext& value, Operand res
     if (!walkHasAsked && emittersCheckProofs() && numberRepresentations.contains(result.representation)) {
         const TypeTestPlan& plan = typeTestPlanFor(widestTypeOf(result.representation), result.representation, typeIDOf(value.id()));
         if (plan.verdict != TypeTestVerdict::AlwaysPasses)
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, hasType(result, plan), std::nullopt, ProofSource::OtherOperation);
+            emitter<ThrowEmitter>().requireOrCrash(value, hasType(result, plan), std::nullopt, ProofSource::OtherOperation);
     }
     define(value, result);
 }

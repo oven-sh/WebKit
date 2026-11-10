@@ -21,12 +21,26 @@
 #include "JSLock.h"
 #include "JSWebAssemblyInstance.h"
 #include "VM.h"
+#include "B3ArgumentRegValue.h"
+#include "B3CompilationReport.h"
+#include "B3InsertionSetInlines.h"
+#include "B3MemoryValue.h"
+#include "B3Operations.h"
+#include "B3PatchpointValue.h"
+#include "B3Policy.h"
+#include "B3Procedure.h"
+#include "B3RelocatableValue.h"
+#include "B3RelocationLowering.h"
+#include "B3StackmapGenerationParams.h"
+#include "B3ValueInlines.h"
 #include "WasmBBQJIT.h"
+#include "WasmOMGIRGenerator.h"
 #include "WasmBinding.h"
 #include "WasmCallee.h"
 #include "WasmCalleeGroup.h"
 #include "WasmCodeInImage.h"
 #include "WasmCompilationContext.h"
+#include "WasmIPIntPlan.h"
 #include "WasmLimits.h"
 #include "WasmModule.h"
 #include "WasmModuleInformation.h"
@@ -34,7 +48,9 @@
 #include "WasmToJS.h"
 #include "WasmTypeDefinition.h"
 #include "WasmTypeDefinitionInlines.h"
+#include "WasmWorklist.h"
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <type_traits>
 #include <wtf/HashSet.h>
@@ -161,6 +177,152 @@ struct WasmFunctionFailure {
     Wasm::ImageCodeFailure failure { Wasm::ImageCodeFailure::None };
 };
 
+enum class WasmRelocationSpace : uint32_t {
+    Pointers = 1,
+    Constants,
+    JumpTables,
+};
+
+class WasmRelocationLowering final : public B3::RelocationLowering {
+public:
+    B3::Value* lower(B3::Procedure& procedure, B3::InsertionSet& insertionSet, size_t index, const B3::RelocatableValue& value) final
+    {
+        B3::RelocationSymbol symbol = value.symbol();
+        B3::Origin origin = value.origin();
+        B3::Value* address = nullptr;
+        if (symbol.space == static_cast<uint32_t>(WasmRelocationSpace::Pointers)) {
+            B3::Value* instance = insertionSet.insert<B3::ArgumentRegValue>(index, origin, GPRInfo::wasmContextInstancePointer);
+            B3::Value* table = insertImmutableLoad(insertionSet, index, origin, instance, safeCast<int32_t>(JSWebAssemblyInstance::offsetOfImageCodePointers()));
+            address = insertImmutableLoad(insertionSet, index, origin, table, safeCast<int32_t>(symbol.index * sizeof(void*)));
+        } else if (symbol.space == static_cast<uint32_t>(WasmRelocationSpace::JumpTables))
+            address = insertJumpTableAddress(procedure, insertionSet, index, origin, symbol.index);
+        else if (symbol.space == static_cast<uint32_t>(WasmRelocationSpace::Constants))
+            address = insertConstantsAddress(procedure, insertionSet, index, origin, symbol.index);
+        else if (symbol.space == B3::runtimeFunctionSpace) {
+            std::optional<uint32_t> slot = slotOfRuntimeFunction(static_cast<B3::RuntimeFunction>(symbol.index));
+            if (!slot)
+                return nullptr;
+            B3::Value* instance = insertionSet.insert<B3::ArgumentRegValue>(index, origin, GPRInfo::wasmContextInstancePointer);
+            B3::Value* table = insertImmutableLoad(insertionSet, index, origin, instance, safeCast<int32_t>(JSWebAssemblyInstance::offsetOfImageCodePointers()));
+            address = insertImmutableLoad(insertionSet, index, origin, table, safeCast<int32_t>(*slot * sizeof(void*)));
+        } else
+            return nullptr;
+        if (!value.addend())
+            return address;
+        B3::Value* addend = insertionSet.insertIntConstant(index, origin, B3::pointerType(), value.addend());
+        return insertionSet.insert<B3::Value>(index, B3::Add, origin, address, addend);
+    }
+
+    bool isOutOfReach() const { return m_isOutOfReach; }
+
+    void fillJumpTables(B3::Procedure& procedure, ImageLinkBuffer& buffer)
+    {
+        std::span<uint8_t> bytes = buffer.bytes();
+        for (auto& [table, start] : m_tables) {
+            uint32_t place = buffer.linkBuffer().offsetOf(*start);
+            const Vector<uint32_t>& targets = procedure.jumpTable(table).targetOffsets;
+            RELEASE_ASSERT(place + targets.size() * sizeof(int32_t) <= bytes.size());
+            for (size_t entry = 0; entry < targets.size(); ++entry) {
+                int32_t distance = static_cast<int32_t>(targets[entry]) - static_cast<int32_t>(place);
+                memcpySpan(bytes.subspan(place + entry * sizeof(int32_t), sizeof(int32_t)), asByteSpan(distance));
+            }
+        }
+    }
+
+private:
+    static std::optional<uint32_t> slotOfRuntimeFunction(B3::RuntimeFunction function)
+    {
+        switch (function) {
+        case B3::RuntimeFunction::MemoryMove:
+            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationMemoryMove)));
+        case B3::RuntimeFunction::GCSafeMemoryMove:
+            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationGCSafeMemoryMove)));
+        case B3::RuntimeFunction::MemoryFill:
+            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationMemoryFill)));
+        default:
+            return std::nullopt;
+        }
+    }
+
+    static B3::Value* insertImmutableLoad(B3::InsertionSet& insertionSet, size_t index, B3::Origin origin, B3::Value* base, int32_t offset)
+    {
+        B3::MemoryValue* load = insertionSet.insert<B3::MemoryValue>(index, B3::Load, B3::pointerType(), origin, base, offset);
+        load->setControlDependent(false);
+        load->setReadsMutability(B3::Mutability::Immutable);
+        return load;
+    }
+
+    B3::Value* insertJumpTableAddress(B3::Procedure& procedure, B3::InsertionSet& insertionSet, size_t index, B3::Origin origin, unsigned table)
+    {
+        size_t numberOfEntries = procedure.jumpTable(table).targetOffsets.size();
+        B3::PatchpointValue* patchpoint = insertionSet.insert<B3::PatchpointValue>(index, B3::pointerType(), origin);
+        patchpoint->effects = B3::Effects::none();
+        patchpoint->resultConstraints = { B3::ValueRep::SomeRegister };
+        patchpoint->setRunsWithoutFrame(true);
+        patchpoint->setGenerator([this, table, numberOfEntries](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            Box<CCallHelpers::Label> start;
+            for (auto& [known, label] : m_tables) {
+                if (known == table)
+                    start = label;
+            }
+            if (!start) {
+                start = Box<CCallHelpers::Label>::create();
+                m_tables.append({ table, start });
+                params.addLatePath([start, numberOfEntries](CCallHelpers& jit) {
+                    *start = jit.label();
+                    for (size_t entry = 0; entry < numberOfEntries; ++entry)
+                        jit.m_assembler.buffer().putInt(0);
+                });
+            }
+            linkAddress(jit, params[0].gpr(), start);
+        });
+        return patchpoint;
+    }
+
+    B3::Value* insertConstantsAddress(B3::Procedure& procedure, B3::InsertionSet& insertionSet, size_t index, B3::Origin origin, unsigned section)
+    {
+        B3::Procedure::DataSectionRecord record = procedure.dataSections()[section];
+        B3::PatchpointValue* patchpoint = insertionSet.insert<B3::PatchpointValue>(index, B3::pointerType(), origin);
+        patchpoint->effects = B3::Effects::none();
+        patchpoint->resultConstraints = { B3::ValueRep::SomeRegister };
+        patchpoint->setRunsWithoutFrame(true);
+        patchpoint->setGenerator([this, section, record](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            Box<CCallHelpers::Label> start;
+            for (auto& [known, label] : m_constants) {
+                if (known == section)
+                    start = label;
+            }
+            if (!start) {
+                start = Box<CCallHelpers::Label>::create();
+                m_constants.append({ section, start });
+                params.addLatePath([start, record](CCallHelpers& jit) {
+                    while (jit.m_assembler.buffer().codeSize() % sizeof(v128_t))
+                        jit.nop();
+                    *start = jit.label();
+                    RELEASE_ASSERT(!(record.size % sizeof(int32_t)));
+                    for (int32_t word : unsafeMakeSpan(static_cast<const int32_t*>(record.data), record.size / sizeof(int32_t)))
+                        jit.m_assembler.buffer().putInt(word);
+                });
+            }
+            linkAddress(jit, params[0].gpr(), start);
+        });
+        return patchpoint;
+    }
+
+    void linkAddress(CCallHelpers& jit, GPRReg destination, Box<CCallHelpers::Label> target)
+    {
+        CCallHelpers::Label site = jit.movePCRelativeAddress(destination, PCRelativeReach::Far);
+        jit.addLinkTask([this, site, target](LinkBuffer& linkBuffer) {
+            if (!linkBuffer.link(site, RelocationKind::AddressFar, *target))
+                m_isOutOfReach = true;
+        });
+    }
+
+    Vector<std::pair<unsigned, Box<CCallHelpers::Label>>> m_tables;
+    Vector<std::pair<unsigned, Box<CCallHelpers::Label>>> m_constants;
+    bool m_isOutOfReach { false };
+};
+
 struct WasmModuleCompiler {
     Ref<Wasm::Module> module;
     Ref<Wasm::CalleeGroup> group;
@@ -169,6 +331,7 @@ struct WasmModuleCompiler {
     Wasm::ImagePointerTable pointers { };
     UncheckedKeyHashMap<const Wasm::RTT*, uint32_t> typeIndices { };
     Vector<Wasm::StructLayoutInImage> structLayouts { };
+    bool usesGCTypes { false };
 
     void numberTypes()
     {
@@ -186,6 +349,8 @@ struct WasmModuleCompiler {
         structLayouts = Vector<Wasm::StructLayoutInImage>(info.typeCount());
         for (uint32_t type = 0; type < info.typeCount(); ++type) {
             const Wasm::RTT& rtt = info.rtt(Wasm::TypeSignatureIndex(type));
+            if (rtt.kind() != Wasm::RTTKind::Function)
+                usesGCTypes = true;
             if (typeIndices.add(&rtt, type).isNewEntry && rtt.kind() == Wasm::RTTKind::Struct)
                 structLayouts[type] = layOutStruct(rtt);
         }
@@ -204,8 +369,82 @@ struct WasmModuleCompiler {
         return layout;
     }
 
+    WasmFunctionFailure compileWithOptimizingTier(Wasm::FunctionCodeIndex functionIndex, Wasm::ImageCodeFlavor flavor, BuildContext& buildContext, WasmFunctionCode& result) const
+    {
+        Wasm::FunctionSpaceIndex functionIndexSpace = info.toSpaceIndex(functionIndex);
+        const Wasm::RTT& signature = info.rtt(info.internalFunctionTypeSignatureIndices[functionIndex]);
+        Ref<Wasm::IPIntCallee> profiledCallee = group->ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
+        Ref<Wasm::OMGCallee> callee = Wasm::OMGCallee::create(functionIndexSpace, info.nameSection().get(functionIndexSpace), Ref { profiledCallee });
+        Vector<Wasm::UnlinkedWasmToWasmCall> unlinkedCalls;
+        Wasm::CompilationContext context;
+        context.wasmEntrypointJIT = makeUnique<CCallHelpers>();
+        AssemblerPolicy assemblerPolicy = buildContext.assemblerPolicy();
+        RelocationRecorder recorder(*context.wasmEntrypointJIT, assemblerPolicy);
+        WasmRelocationLowering lowering;
+        B3::Policy policy;
+        policy.upstream.allowsSIMD = true;
+        bool usesTraps = flavor == Wasm::ImageCodeFlavor::Trapping && info.memoryCount();
+        policy.upstream.usesWasmFaultSignalHandler = usesTraps;
+        policy.optimization.narrowsIntegers = true;
+        policy.selection.extendsInstructionSelection = true;
+        policy.air.layout.mergesIdenticalBlocks = true;
+        policy.addressing.isPositionIndependent = true;
+        policy.addressing.dataSectionSpace = static_cast<uint32_t>(WasmRelocationSpace::Constants);
+        policy.addressing.jumpTableSpace = static_cast<uint32_t>(WasmRelocationSpace::JumpTables);
+        policy.addressing.relocationLowering = &lowering;
+        policy.air.peepholes.emitsShufflesInPairOrder = true;
+        policy.targetFeatures = assemblerPolicy.features;
+        Wasm::CodeForImage codeForImage { pointers, typeIndices, structLayouts, recorder, flavor };
+        codeForImage.dependsOnFlavor = true;
+        codeForImage.policy = &policy;
+        codeForImage.pointerSpace = static_cast<uint32_t>(WasmRelocationSpace::Pointers);
+        context.codeForImage = &codeForImage;
+        MemoryMode mode = usesTraps ? MemoryMode::Signaling : MemoryMode::BoundsChecking;
+        auto compiled = Wasm::parseAndCompileOMG(context, profiledCallee.get(), callee.get(), info.functions[functionIndex], signature, unlinkedCalls, module.get(), group.get(), info, mode, Wasm::CompilationMode::OMGMode, functionIndex, UINT32_MAX);
+        if (!compiled || !unlinkedCalls.isEmpty() || context.procedure->report().failure || !(*compiled)->exceptionHandlers.isEmpty()) {
+            return { .wasRefusedByGenerator = true };
+        }
+        if (codeForImage.failure != Wasm::ImageCodeFailure::None)
+            return { .failure = codeForImage.failure };
+
+        ImageLinkBuffer buffer(*context.wasmEntrypointJIT, LinkBuffer::Profile::WasmOMG);
+        if (buffer.didFailToAllocate())
+            return { .failure = Wasm::ImageCodeFailure::OutOfMemory };
+        buffer.finalize(false, "WebAssembly function"_s);
+        if (context.procedure->report().failure)
+            return { .wasRefusedByGenerator = true };
+        if (lowering.isOutOfReach())
+            return { .failure = Wasm::ImageCodeFailure::OutOfPCRelativeReach };
+        lowering.fillJumpTables(*context.procedure, buffer);
+        auto relocations = recorder.link(buffer, &buildContext);
+        if (!relocations)
+            return { .failure = codeFailureFor(relocations.error()) };
+        auto savedRegisters = encodeSavedRegisters((*compiled)->entrypoint.calleeSaveRegisters);
+        if (!savedRegisters)
+            return { .failure = savedRegisters.error() };
+
+        result.usesVectors = false;
+        result.code = RelocatableCode { Vector<uint8_t>(buffer.bytes()), WTF::move(*relocations) };
+        result.savedRegisters = *savedRegisters;
+        result.dependsOnFlavor = true;
+        result.threadedJumps = codeForImage.threadedJumps;
+        result.firstStateTests = codeForImage.firstStateTests;
+        for (size_t directCallee : (*compiled)->outgoingJITDirectCallees)
+            result.directCallees.set(directCallee);
+        return { };
+    }
+
     WasmFunctionFailure compileFunction(Wasm::FunctionCodeIndex functionIndex, Wasm::ImageCodeFlavor flavor, BuildContext& buildContext, WasmFunctionCode& result) const
     {
+        bool usesOptimizingTier = flavor == Wasm::ImageCodeFlavor::Trapping || !info.memoryCount();
+        if (usesOptimizingTier && !usesGCTypes && !info.usesSIMD(functionIndex)) {
+            WasmFunctionCode optimized;
+            if (!compileWithOptimizingTier(functionIndex, flavor, buildContext, optimized).isSet()) {
+                result = WTF::move(optimized);
+                result.isOptimized = true;
+                return { };
+            }
+        }
         result.usesVectors = info.usesSIMD(functionIndex);
 
         Wasm::FunctionSpaceIndex functionIndexSpace = info.toSpaceIndex(functionIndex);
@@ -261,14 +500,8 @@ struct WasmModuleCompiler {
         return { };
     }
 
-    bool compileFunctions(Vector<WasmFunctionCode>& functions, Wasm::ImageCodeFlavor flavor, const BitVector* selection, BuildContext& context, SourceLocation location) const
+    bool reportFailures(const Vector<WasmFunctionFailure>& failures, BuildContext& context, SourceLocation location) const
     {
-        Vector<WasmFunctionFailure> failures(functions.size());
-        forEachIndexInParallel(context.parallelLoops(), safeCast<unsigned>(functions.size()), [&](unsigned index) {
-            if (!selection || selection->get(index))
-                failures[index] = compileFunction(Wasm::FunctionCodeIndex(index), flavor, context, functions[index]);
-        });
-
         bool isComplete = true;
         for (uint32_t index = 0; index < failures.size(); ++index) {
             if (!failures[index].isSet())
@@ -364,42 +597,136 @@ static bool internSavedRegisters(WasmModuleCode& module, BuildContext& context, 
     return true;
 }
 
-WasmModuleOrDecline compileWasmModule(VM& vm, std::span<const uint8_t> source, const CodeTemplates& templates, BuildContext& context, SourceLocation location)
+namespace {
+
+struct PendingWasmModule {
+    WasmModuleCompiler compiler;
+    WasmModuleCode code { };
+    SourceLocation location { };
+    Vector<WasmFunctionFailure> failures { };
+    Vector<WasmFunctionFailure> checkingFailures { };
+};
+
+struct WasmFunctionTask {
+    PendingWasmModule* module;
+    uint32_t function;
+    uint32_t bodySize;
+    Wasm::ImageCodeFlavor flavor;
+};
+
+}
+
+static std::expected<std::unique_ptr<PendingWasmModule>, Wasm::ImageDeclineReason> prepareWasmModule(VM& vm, std::span<const uint8_t> source, SourceLocation location)
 {
     if (source.size() > Wasm::maxModuleSize)
         return makeUnexpected(Wasm::ImageDeclineReason::InvalidModule);
-    auto validated = Wasm::Module::validateSync(vm, Vector<uint8_t>(source));
-    if (!validated)
+    Ref<Wasm::IPIntPlan> plan = adoptRef(*new Wasm::IPIntPlan(vm, Vector<uint8_t>(source), Wasm::CompilerMode::Validation, Wasm::Plan::dontFinalize(), Wasm::IPIntPlan::UsesCodeInImage::No));
+    Wasm::ensureWorklist().enqueue(plan.get());
+    plan->waitForCompletion();
+    if (plan->failed())
         return makeUnexpected(Wasm::ImageDeclineReason::InvalidModule);
-    const Wasm::ModuleInformation& info = (*validated)->moduleInformation();
-    if (!info.internalFunctionCount())
+    Ref<Wasm::Module> validated = Wasm::Module::create(plan.get());
+    size_t numberOfFunctions = validated->moduleInformation().internalFunctionCount();
+    if (!numberOfFunctions)
         return makeUnexpected(Wasm::ImageDeclineReason::None);
-    Ref<Wasm::CalleeGroup> group = (*validated)->compileSync(vm, MemoryMode::BoundsChecking);
+    Ref<Wasm::CalleeGroup> group = validated->compileSync(vm, MemoryMode::BoundsChecking);
     if (!group->runnable())
         return makeUnexpected(Wasm::ImageDeclineReason::InvalidModule);
 
-    WasmModuleCompiler compiler { WTF::move(*validated), WTF::move(group) };
-    compiler.numberTypes();
+    std::unique_ptr<PendingWasmModule> module { new PendingWasmModule { { WTF::move(validated), WTF::move(group) } } };
+    module->compiler.numberTypes();
+    module->location = location;
+    module->code.digest = Wasm::CodeInImage::digestOf(source);
+    module->code.sourceSize = static_cast<uint32_t>(source.size());
+    module->code.functions = Vector<WasmFunctionCode>(numberOfFunctions);
+    module->code.functionsThatCheck = Vector<WasmFunctionCode>(numberOfFunctions);
+    module->failures = Vector<WasmFunctionFailure>(numberOfFunctions);
+    module->checkingFailures = Vector<WasmFunctionFailure>(numberOfFunctions);
+    return module;
+}
 
-    WasmModuleCode code;
-    code.digest = Wasm::CodeInImage::digestOf(source);
-    code.sourceSize = static_cast<uint32_t>(source.size());
-    code.functions = Vector<WasmFunctionCode>(info.internalFunctionCount());
-    code.functionsThatCheck = Vector<WasmFunctionCode>(info.internalFunctionCount());
-    if (!compiler.compileFunctions(code.functions, Wasm::ImageCodeFlavor::Trapping, nullptr, context, location))
-        return makeUnexpected(Wasm::ImageDeclineReason::FunctionNotCompiled);
+static bool hasSameCode(const WasmFunctionCode& a, const WasmFunctionCode& b)
+{
+    return a.isOptimized == b.isOptimized && a.code.bytes == b.code.bytes && a.code.relocations == b.code.relocations && a.handlers.isEmpty() && b.handlers.isEmpty()
+        && a.directCallees == b.directCallees && a.savedRegisters == b.savedRegisters && a.usesVectors == b.usesVectors;
+}
 
-    BitVector functionsThatDependOnFlavor;
-    for (size_t index = 0; index < code.functions.size(); ++index) {
-        if (code.functions[index].dependsOnFlavor)
-            functionsThatDependOnFlavor.set(index);
+static void compileFunctions(std::span<const std::unique_ptr<PendingWasmModule>> modules, BuildContext& context)
+{
+    Vector<WasmFunctionTask> tasks;
+    for (auto& module : modules) {
+        if (!module)
+            continue;
+        for (uint32_t function = 0; function < module->code.functions.size(); ++function) {
+            auto& body = module->compiler.info.functions[Wasm::FunctionCodeIndex(function)];
+            uint32_t bodySize = safeCast<uint32_t>(body.end - body.start);
+            tasks.append(WasmFunctionTask { module.get(), function, bodySize, Wasm::ImageCodeFlavor::Trapping });
+            tasks.append(WasmFunctionTask { module.get(), function, bodySize, Wasm::ImageCodeFlavor::Checking });
+        }
     }
-    if (!compiler.compileFunctions(code.functionsThatCheck, Wasm::ImageCodeFlavor::Checking, &functionsThatDependOnFlavor, context, location))
-        return makeUnexpected(Wasm::ImageDeclineReason::FunctionNotCompiled);
+    std::ranges::stable_sort(tasks, std::ranges::greater { }, &WasmFunctionTask::bodySize);
+    forEachIndexInParallel(context.parallelLoops(), safeCast<unsigned>(tasks.size()), [&](unsigned index) {
+        const WasmFunctionTask& task = tasks[index];
+        bool isChecking = task.flavor == Wasm::ImageCodeFlavor::Checking;
+        WasmFunctionCode& result = (isChecking ? task.module->code.functionsThatCheck : task.module->code.functions)[task.function];
+        (isChecking ? task.module->checkingFailures : task.module->failures)[task.function] = task.module->compiler.compileFunction(Wasm::FunctionCodeIndex(task.function), task.flavor, context, result);
+    });
+    for (auto& module : modules) {
+        if (!module)
+            continue;
+        for (uint32_t function = 0; function < module->code.functions.size(); ++function) {
+            WasmFunctionCode& trapping = module->code.functions[function];
+            if (trapping.isOptimized && hasSameCode(trapping, module->code.functionsThatCheck[function]))
+                trapping.dependsOnFlavor = false;
+            if (trapping.dependsOnFlavor)
+                continue;
+            module->code.functionsThatCheck[function] = { };
+            module->checkingFailures[function] = { };
+        }
+    }
+}
 
-    if (!internSavedRegisters(code, context, location) || !compiler.generateStubs(code, context, location))
+static WasmModuleOrDecline finishWasmModule(PendingWasmModule& module, const CodeTemplates& templates, BuildContext& context)
+{
+    if (!module.compiler.reportFailures(module.failures, context, module.location) || !module.compiler.reportFailures(module.checkingFailures, context, module.location))
         return makeUnexpected(Wasm::ImageDeclineReason::FunctionNotCompiled);
-    return linkWasmModule(WTF::move(code), templates, context);
+    if (!internSavedRegisters(module.code, context, module.location) || !module.compiler.generateStubs(module.code, context, module.location))
+        return makeUnexpected(Wasm::ImageDeclineReason::FunctionNotCompiled);
+    unsigned optimizedCopies = 0;
+    unsigned baselineCopies = 0;
+    unsigned optimizedCheckingCopies = 0;
+    unsigned baselineCheckingCopies = 0;
+    unsigned threadedJumps = 0;
+    unsigned firstStateTests = 0;
+    auto countCopy = [&](const WasmFunctionCode& copy) {
+        ++(copy.isOptimized ? optimizedCopies : baselineCopies);
+        threadedJumps += copy.threadedJumps;
+        firstStateTests += copy.firstStateTests;
+    };
+    for (size_t function = 0; function < module.code.functions.size(); ++function) {
+        countCopy(module.code.functions[function]);
+        if (module.code.functions[function].dependsOnFlavor) {
+            const WasmFunctionCode& checking = module.code.functionsThatCheck[function];
+            countCopy(checking);
+            ++(checking.isOptimized ? optimizedCheckingCopies : baselineCheckingCopies);
+        }
+    }
+    context.statistics().count(StatisticID::WasmOptimizedCopies, optimizedCopies);
+    context.statistics().count(StatisticID::WasmBaselineCopies, baselineCopies);
+    context.statistics().count(StatisticID::WasmOptimizedCheckingCopies, optimizedCheckingCopies);
+    context.statistics().count(StatisticID::WasmBaselineCheckingCopies, baselineCheckingCopies);
+    context.statistics().count(StatisticID::WasmJumpsThreaded, threadedJumps);
+    context.statistics().count(StatisticID::WasmFirstStateTests, firstStateTests);
+    return linkWasmModule(WTF::move(module.code), templates, context);
+}
+
+WasmModuleOrDecline compileWasmModule(VM& vm, std::span<const uint8_t> source, const CodeTemplates& templates, BuildContext& context, SourceLocation location)
+{
+    auto module = prepareWasmModule(vm, source, location);
+    if (!module)
+        return makeUnexpected(module.error());
+    compileFunctions(std::span<const std::unique_ptr<PendingWasmModule>>(&*module, 1), context);
+    return finishWasmModule(**module, templates, context);
 }
 
 static BitVector findFunctionsWithTwoCopies(const WasmModuleCode& module)
@@ -659,16 +986,16 @@ static void countFunctions(const Wasm::ModuleForImage& module, Statistics& stati
     auto& trapping = module.functions[static_cast<size_t>(Wasm::ImageCodeFlavor::Trapping)];
     auto& checking = module.functions[static_cast<size_t>(Wasm::ImageCodeFlavor::Checking)];
     uint64_t functionsWithTwoCopies = 0;
-    uint64_t bytesOfSecondCopies = 0;
+    uint64_t secondCopyBytes = 0;
     for (size_t index = 0; index < checking.size(); ++index) {
         if (checking[index].entry == trapping[index].entry)
             continue;
         ++functionsWithTwoCopies;
-        bytesOfSecondCopies += checking[index].size;
+        secondCopyBytes += checking[index].size;
     }
     statistics.count(StatisticID::WasmFunctionsCompiled, trapping.size());
     statistics.count(StatisticID::WasmFunctionsWithTwoCopies, functionsWithTwoCopies);
-    statistics.count(StatisticID::WasmCodeBytesOfSecondCopies, bytesOfSecondCopies);
+    statistics.count(StatisticID::WasmSecondCopyBytesEmitted, secondCopyBytes);
 }
 
 WebAssemblyImageInputs WasmSectionBuilder::finish(BuildContext& context)
@@ -721,16 +1048,12 @@ static std::span<const uint8_t> base64OfEmbeddedModule(std::span<const uint8_t> 
 {
     auto modulePrefix = "AGFzbQEAAA"_span;
     auto base64Marker = "base64,"_span;
-    constexpr size_t minLength = 64;
     constexpr size_t maxPrefixLength = 64;
-    static_assert(maxPrefixLength <= minLength);
-    if (text.size() < minLength)
-        return { };
     if (spanHasPrefix(text, modulePrefix))
         return text;
-    if (text[0] != 'd')
+    if (text.empty() || text[0] != 'd')
         return { };
-    size_t at = WTF::find(text.first(maxPrefixLength), base64Marker);
+    size_t at = WTF::find(text.first(std::min(text.size(), maxPrefixLength)), base64Marker);
     if (at == notFound)
         return { };
     text = text.subspan(at + base64Marker.size());
@@ -739,63 +1062,149 @@ static std::span<const uint8_t> base64OfEmbeddedModule(std::span<const uint8_t> 
     return text;
 }
 
-static WebAssemblyImageInputs compileWebAssemblyModules(VM& vm, const Typed::Program& program, const CodeTemplates& templates, BuildContext& context, const BitVector* stringsInImage)
+static bool isHexOfEmbeddedModule(std::span<const uint8_t> text)
 {
-    WasmSectionBuilder builder;
-    Vector<KnownModule> modules;
-    auto add = [&](std::span<const uint8_t> bytes, SourceLocation location) -> Wasm::ImageDeclineReason {
+    return !(text.size() % 2) && (spanHasPrefix(text, "0061736d01000000"_span) || spanHasPrefix(text, "0061736D01000000"_span));
+}
+
+static std::optional<Vector<uint8_t>> decodeEmbeddedModule(std::span<const uint8_t> text)
+{
+    if (std::span<const uint8_t> base64 = base64OfEmbeddedModule(text); !base64.empty()) {
+        std::optional<Vector<uint8_t>> bytes = base64Decode(base64, { Base64DecodeOption::IgnoreWhitespace });
+        return bytes ? bytes : base64Decode(base64, { Base64DecodeOption::URL, Base64DecodeOption::IgnoreWhitespace });
+    }
+    if (!isHexOfEmbeddedModule(text))
+        return std::nullopt;
+    Vector<uint8_t> bytes(text.size() / 2);
+    for (size_t index = 0; index < bytes.size(); ++index) {
+        if (!isASCIIHexDigit(text[2 * index]) || !isASCIIHexDigit(text[2 * index + 1]))
+            return std::nullopt;
+        bytes[index] = toASCIIHexValue(text[2 * index], text[2 * index + 1]);
+    }
+    return bytes;
+}
+
+namespace {
+
+struct WasmModuleSet final : EarlyWasmModules {
+    struct Mention {
+        size_t module;
+        SourceLocation location;
+        bool isBase64;
+    };
+
+    ~WasmModuleSet() final
+    {
+        JSLockHolder locker(*vm);
+        pendingModules.clear();
+        vm = nullptr;
+    }
+
+    void add(std::span<const uint8_t> bytes, SourceLocation location, bool isBase64)
+    {
         auto digest = Wasm::CodeInImage::digestOf(bytes);
         size_t index = modules.findIf([&](auto& known) {
             return known.digest == digest && known.size == bytes.size();
         });
-        if (index != notFound)
-            return modules[index].declineReason;
-
-        WasmModuleOrDecline module = compileWasmModule(vm, bytes, templates, context, location);
-        std::optional<Wasm::ImageDeclineReason> reason;
-        if (!module)
-            reason = module.error();
-        else if (!builder.append(WTF::move(*module)))
-            reason = Wasm::ImageDeclineReason::CodeTooLarge;
-        if (reason)
-            builder.appendDeclined({ digest, static_cast<uint32_t>(bytes.size()) });
-        modules.append(KnownModule { digest, bytes.size(), reason.value_or(Wasm::ImageDeclineReason::None) });
-        return modules.last().declineReason;
-    };
-    auto report = [&](Wasm::ImageDeclineReason reason, SourceLocation location) {
-        if (reason != Wasm::ImageDeclineReason::None && reason != Wasm::ImageDeclineReason::FunctionNotCompiled)
-            reportDecline(context, location, diagnosticKindOf(reason), limitOf(reason), 1);
-    };
-
-    for (auto& entry : program.webAssemblyModules) {
-        SourceLocation location { entry.module.index(), 0 };
-        report(add(entry.bytes, location), location);
+        if (index == notFound) {
+            index = modules.size();
+            auto module = prepareWasmModule(*vm, bytes, location);
+            modules.append(KnownModule { digest, bytes.size(), module ? Wasm::ImageDeclineReason::None : module.error() });
+            pendingModules.append(module ? WTF::move(*module) : nullptr);
+            finishedModules.append(std::nullopt);
+        }
+        mentions.append(Mention { index, location, isBase64 });
     }
+
+    void compileAddedModules(const CodeTemplates& templates, BuildContext& context)
+    {
+        compileFunctions(pendingModules.span().subspan(numberCompiled), context);
+        for (size_t index = numberCompiled; index < pendingModules.size(); ++index) {
+            std::unique_ptr<PendingWasmModule> pending = WTF::move(pendingModules[index]);
+            if (!pending)
+                continue;
+            WasmModuleOrDecline module = finishWasmModule(*pending, templates, context);
+            if (module)
+                finishedModules[index] = WTF::move(*module);
+            else
+                modules[index].declineReason = module.error();
+        }
+        numberCompiled = pendingModules.size();
+    }
+
+    RefPtr<VM> vm { VM::create(HeapType::Small) };
+    Vector<KnownModule> modules;
+    Vector<std::unique_ptr<PendingWasmModule>> pendingModules;
+    Vector<std::optional<Wasm::ModuleForImage>> finishedModules;
+    Vector<Mention> mentions;
+    size_t numberCompiled { 0 };
+};
+
+}
+
+static std::unique_ptr<WasmModuleSet> compileFileModules(const Typed::Program& program, const CodeTemplates& templates, BuildContext& context)
+{
+    auto set = makeUniqueWithoutFastMallocCheck<WasmModuleSet>();
+    JSLockHolder locker(*set->vm);
+    for (auto& entry : program.webAssemblyModules)
+        set->add(entry.bytes, SourceLocation { entry.module.index(), 0 }, false);
+    set->compileAddedModules(templates, context);
+    return set;
+}
+
+std::unique_ptr<EarlyWasmModules> compileWebAssemblyFiles(const Typed::Program& program, BuildContext& context)
+{
+    if (program.webAssemblyModules.isEmpty())
+        return nullptr;
+    auto templates = CodeTemplates::create(context.assemblerPolicy(), &context);
+    if (!templates)
+        return nullptr;
+    return compileFileModules(program, *templates, context);
+}
+
+WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program& program, const CodeTemplates& templates, BuildContext& context, const BitVector* stringsInImage, std::unique_ptr<EarlyWasmModules> early, const LinkedFunctions* functions)
+{
+    if (!mayHaveWebAssemblyModules(program))
+        return { };
+    std::unique_ptr<WasmModuleSet> set { static_cast<WasmModuleSet*>(early.release()) };
+    if (!set)
+        set = compileFileModules(program, templates, context);
+    JSLockHolder locker(*set->vm);
 
     for (size_t index = 0; index < program.strings.size(); ++index) {
         if (stringsInImage && !stringsInImage->get(index))
             continue;
-        std::span<const uint8_t> base64 = base64OfEmbeddedModule(program.strings[Typed::StringID(index)]);
-        std::optional<Vector<uint8_t>> bytes = base64.empty() ? std::nullopt : base64Decode(base64);
-        if (!bytes)
+        std::optional<Vector<uint8_t>> bytes = decodeEmbeddedModule(program.strings[Typed::StringID(index)]);
+        if (bytes)
+            set->add(bytes->span(), noSourceLocation, true);
+    }
+    constexpr std::array<uint8_t, 8> moduleHeader { 0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00 };
+    for (size_t position = 0; functions && position < functions->size(); ++position) {
+        for (const ConstantData& constant : (*functions)[position].body.rareLists->constants) {
+            if (constant.kind == ConstantKind::ByteLiteral && spanHasPrefix(constant.bytes.span(), std::span<const uint8_t>(moduleHeader)))
+                set->add(constant.bytes.span(), noSourceLocation, true);
+        }
+    }
+    set->compileAddedModules(templates, context);
+
+    WasmSectionBuilder builder;
+    for (size_t index = 0; index < set->modules.size(); ++index) {
+        KnownModule& known = set->modules[index];
+        if (std::optional<Wasm::ModuleForImage>& module = set->finishedModules[index]) {
+            if (builder.append(WTF::move(*module)))
+                continue;
+            known.declineReason = Wasm::ImageDeclineReason::CodeTooLarge;
+        }
+        builder.appendDeclined({ known.digest, static_cast<uint32_t>(known.size) });
+    }
+    for (const WasmModuleSet::Mention& mention : set->mentions) {
+        Wasm::ImageDeclineReason reason = set->modules[mention.module].declineReason;
+        if (reason == Wasm::ImageDeclineReason::None || reason == Wasm::ImageDeclineReason::FunctionNotCompiled)
             continue;
-        Wasm::ImageDeclineReason reason = add(bytes->span(), noSourceLocation);
-        if (reason != Wasm::ImageDeclineReason::InvalidModule)
-            report(reason, noSourceLocation);
+        if (!mention.isBase64 || reason != Wasm::ImageDeclineReason::InvalidModule)
+            reportDecline(context, mention.location, diagnosticKindOf(reason), limitOf(reason), 1);
     }
     return builder.finish(context);
-}
-
-WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program& program, const CodeTemplates& templates, BuildContext& context, const BitVector* stringsInImage)
-{
-    if (!mayHaveWebAssemblyModules(program))
-        return { };
-
-    RefPtr<VM> vm = VM::create(HeapType::Small);
-    JSLockHolder locker(*vm);
-    WebAssemblyImageInputs modules = compileWebAssemblyModules(*vm, program, templates, context, stringsInImage);
-    vm = nullptr;
-    return modules;
 }
 
 bool mayHaveWebAssemblyModules(const Typed::Program& program)
@@ -803,7 +1212,7 @@ bool mayHaveWebAssemblyModules(const Typed::Program& program)
     if (!program.webAssemblyModules.isEmpty())
         return true;
     for (size_t index = 0; index < program.strings.size(); ++index) {
-        if (!base64OfEmbeddedModule(program.strings[Typed::StringID(index)]).empty())
+        if (!base64OfEmbeddedModule(program.strings[Typed::StringID(index)]).empty() || isHexOfEmbeddedModule(program.strings[Typed::StringID(index)]))
             return true;
     }
     return false;
@@ -811,12 +1220,17 @@ bool mayHaveWebAssemblyModules(const Typed::Program& program)
 
 #else
 
-WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program& program, const CodeTemplates&, BuildContext& context, const BitVector*)
+std::unique_ptr<EarlyWasmModules> compileWebAssemblyFiles(const Typed::Program&, BuildContext&)
+{
+    return nullptr;
+}
+
+WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program& program, const CodeTemplates&, BuildContext& context, const BitVector*, std::unique_ptr<EarlyWasmModules>, const LinkedFunctions*)
 {
 #if ENABLE(WEBASSEMBLY)
     constexpr UserDiagnosticKind reason = UserDiagnosticKind::WasmUnsupportedCPU;
 #else
-    constexpr UserDiagnosticKind reason = UserDiagnosticKind::WasmLeftOutOfThisBuild;
+    constexpr UserDiagnosticKind reason = UserDiagnosticKind::WasmDisabledInBuild;
 #endif
     for (auto& entry : program.webAssemblyModules)
         reportDecline(context, SourceLocation { entry.module.index(), 0 }, reason, LimitID::None, 1);

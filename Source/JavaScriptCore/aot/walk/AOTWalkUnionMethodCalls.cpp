@@ -27,7 +27,7 @@ static ValueID findCallOfMethodReadInUnionMethodCalls(const BodyIndex& index, co
 {
     ValueID call = index.onlyUsingValue(read.id());
     ValueID callee = read.id();
-    while (call && inputOperationsThatHandOn.contains(index.opcodeOf(call))) {
+    while (call && inputPassThroughOpcodes.contains(index.opcodeOf(call))) {
         callee = call;
         call = index.onlyUsingValue(call);
     }
@@ -65,7 +65,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
     TypeID proven = walker.typeOf(receiver);
     bool isOnlyExpected = false;
     if (takesWhatIsOnlyExpected) {
-        if (!proven || !types.saysNothing(proven) || liesInThread(lookup.key()))
+        if (!proven || !types.isUninformative(proven) || liesInThread(lookup.key()))
             return false;
         TypeID expected = objectsExpectedOfOperandOfQuestion(walker, lookup.objectOperand());
         Vector<LayoutID, mostArmsInUnionMethodCalls> holders;
@@ -126,7 +126,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
     arms.appendVector(armsThatFindNeitherGetterNorField);
     if (arms.isEmpty() || (!call && !someAnswerByGetter && !walker.isInLoop()))
         return false;
-    if (walker.leavesLastArmOutOfRowsOfShapeTests() && !somethingIsLeft && arms.size() > 1)
+    if (walker.shouldDropLastCase() && !somethingIsLeft && arms.size() > 1)
         arms.removeLast();
 
     uint32_t firstOfStretch = first + begin;
@@ -157,9 +157,9 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         return walker.build(WTF::move(narrowed));
     };
 
-    walker.count(call ? StatisticID::MethodCallsToldApartByShape : StatisticID::ReadsToldApartByShape);
+    walker.count(call ? StatisticID::MethodCallsDispatchedByShape : StatisticID::PropertyReadsDispatchedByShape);
     if (isOnlyExpected)
-        walker.count(StatisticID::MethodCallsOnExpectedReceiversToldApartByShape);
+        walker.count(StatisticID::SpeculatedReceiversDispatchedByShape);
     Reference left = receiver;
     if (mayBeNothing) {
         Draft check(Opcode::RequireObjectCoercible, origin);
@@ -182,12 +182,12 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
     if (closedArmOfAll)
         walker.code().markRareBlockThatKeepsSites(closedArmOfAll);
     SetForScope failingLooksOfArmsGoThere(walker.closedArmOfRowOfShapeTests(), Walker::ClosedArmOfRowOfShapeTests { closedArmOfAll, read.id(), walker.depthOfCopies() });
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     for (size_t place = 0; place < arms.size() && !walker.isUnreachable(); ++place) {
         Draft test(Opcode::ShapeTest, origin);
         test.setObjectOperand(left);
         test.setLayouts(types.at(arms[place]).layouts);
-        test.setRefusesMarkedObjects(isOnlyExpected);
+        test.setRejectsMarkedObjects(isOnlyExpected);
         Reference passes = walker.build(WTF::move(test));
         if (!passes)
             return true;
@@ -228,7 +228,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         }
     }
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, built, meeting);
+        walker.joinArms(stretch, built, meeting);
     return true;
 }
 

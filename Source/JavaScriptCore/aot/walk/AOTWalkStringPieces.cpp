@@ -85,14 +85,14 @@ static bool bodyStoresValueForStringPieces(Walker& walker, const BodyIndex& inde
             case Opcode::NewArray:
                 operation.forEachOperand([&](ValueID operand, uint32_t) {
                     if (operand)
-                        found.set(index.valueBehindCasts(operand).index());
+                        found.set(index.stripCasts(operand).index());
                 });
                 break;
             case Opcode::PropSet:
             case Opcode::PropDefine:
             case Opcode::ElemSet:
                 if (ValueID laid = operation.valueOperand())
-                    found.set(index.valueBehindCasts(laid).index());
+                    found.set(index.stripCasts(laid).index());
                 break;
             default:
                 break;
@@ -356,7 +356,7 @@ static void buildArmsAroundCallUnderPieceForStringPieces(Walker& walker, const C
     BlockID meeting = walker.addBlock();
     walker.branch(isAnswered, answering, calling);
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     walker.continueIn(answering);
     Reference answer = answerWithoutCall();
     if (walker.hasFailed())
@@ -364,7 +364,7 @@ static void buildArmsAroundCallUnderPieceForStringPieces(Walker& walker, const C
     if (!walker.isUnreachable()) {
         if (!answer)
             return walker.fail("a lookup under a piece of a text has no answer"_s);
-        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { answer } });
+        arms.append(Walker::JoinArm { walker.currentBlock(), { answer } });
     }
 
     walker.continueIn(calling);
@@ -379,11 +379,11 @@ static void buildArmsAroundCallUnderPieceForStringPieces(Walker& walker, const C
         if (walker.hasFailed())
             return;
         if (!walker.isUnreachable())
-            arms.append(Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceOf(written) } });
+            arms.append(Walker::JoinArm { walker.currentBlock(), { walker.referenceOf(written) } });
     }
 
     std::array<Reference, 1> met;
-    if (!arms.isEmpty() && walker.letArmsMeet(arms.span(), meeting, met))
+    if (!arms.isEmpty() && walker.joinArms(arms.span(), meeting, met))
         walker.bind(written, met[0]);
 }
 
@@ -418,7 +418,7 @@ static bool answerByPlaceForStringPieces(Walker& walker, const CallByOneRow& cal
     buildArmsAroundCallUnderPieceForStringPieces(walker, call, piece, isTold, BlockFrequency::Rare, AnswerWithoutCallForStringPieces(readAtPlace));
     if (!walker.hasFailed() && !walker.isUnreachable()) {
         noteKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], 0, { }, static_cast<uint64_t>(moves.bits()) << 32 | place.bits(), true);
-        walker.count(StatisticID::LookupsThatKeepTheirPlace);
+        walker.count(StatisticID::MapEntryIndicesCached);
     }
     return true;
 }
@@ -431,7 +431,7 @@ static bool someCallStoresUnderKeyForStringPieces(Walker& walker, const BodyInde
             if (index.isParameter(ValueID(number)) || index.opcodeOf(ValueID(number)) != Opcode::Call)
                 continue;
             if (auto passed = index.value(ValueID(number)).as<Opcode::Call>().argumentsOperands(); passed.size() == 2)
-                found.append({ index.valueBehindCasts(passed[0]).index(), number });
+                found.append({ index.stripCasts(passed[0]).index(), number });
         }
         std::ranges::sort(found);
         return found;
@@ -475,7 +475,7 @@ static bool buildLookupUnderKeyStoredBehindIt(Walker& walker, const CallByOneRow
     if (!walker.isInLoop() || !walker.opensGuesses() || !walker.has(Mechanism::Folding) || call.isForwarded || !call.receiver || call.arguments.size() != 1 || !call.arguments[0] || call.writtenArguments().size() != 1)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID key = index.valueBehindCasts(call.writtenArguments()[0]);
+    ValueID key = index.stripCasts(call.writtenArguments()[0]);
     if (index.useCount(key) < 2 && index.useCount(call.writtenArguments()[0]) < 2)
         return false;
     Reference root = rootForStrings(walker, call.arguments[0]);
@@ -499,7 +499,7 @@ static bool someLaterCallGetsUnderKeyForStringPieces(Walker& walker, const BodyI
         if (index.isParameter(value) || index.opcodeOf(value) != Opcode::PropGet)
             return std::nullopt;
         auto read = index.value(value).as<Opcode::PropGet>();
-        return std::array { index.valueBehindCasts(read.objectOperand()).index(), read.key().index() };
+        return std::array { index.stripCasts(read.objectOperand()).index(), read.key().index() };
     };
     auto& calls = notesOfStrings(walker).callsThatGetUnderOneKey.ensure(&index, [&] {
         Vector<std::array<uint32_t, 3>> found;
@@ -510,7 +510,7 @@ static bool someLaterCallGetsUnderKeyForStringPieces(Walker& walker, const BodyI
             auto taking = index.value(ValueID(number)).as<Opcode::Call>();
             if (taking.calleeKey() != get || taking.argumentsOperands().size() != 1)
                 continue;
-            ValueID under = index.valueBehindCasts(taking.argumentsOperands()[0]);
+            ValueID under = index.stripCasts(taking.argumentsOperands()[0]);
             found.append({ under.index(), isValueItself, number });
             if (auto read = asReadOfName(under))
                 found.append({ (*read)[0], (*read)[1], number });
@@ -536,7 +536,7 @@ bool buildTestForKeyLookedUpBehindIt(Walker& walker, const CallByOneRow& call)
     Reference root = rootForStrings(walker, call.arguments[0]);
     bool mayBeRope = root.isValue() && operationsThatJoinTexts.contains(walker.code().at(root.id()).opcode) && (walker.types().at(walker.typeOf(call.arguments[0])).primitives & Primitive::AnyString);
     bool nameReadAgainGivesSameValue = !root.isValue() || !walker.code().at(root.id()).traits().mayCallUnknownCode();
-    if (mayBeRope || !someLaterCallGetsUnderKeyForStringPieces(walker, index, call.call.id(), index.valueBehindCasts(call.writtenArguments()[0]), nameReadAgainGivesSameValue))
+    if (mayBeRope || !someLaterCallGetsUnderKeyForStringPieces(walker, index, call.call.id(), index.stripCasts(call.writtenArguments()[0]), nameReadAgainGivesSameValue))
         return false;
     Draft find(Opcode::FindKeyInMap, call.origin);
     find.setMapOperand(call.receiver);
@@ -551,7 +551,7 @@ bool buildTestForKeyLookedUpBehindIt(Walker& walker, const CallByOneRow& call)
     buildArmsAroundCallUnderPieceForStringPieces(walker, call, nullptr, isTold, BlockFrequency::Rare, AnswerWithoutCallForStringPieces(isFound));
     if (!walker.hasFailed() && !walker.isUnreachable()) {
         noteKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), place.bits() | static_cast<uint64_t>(walker.referenceOf(call.call.id()).bits()) << 32, true);
-        walker.count(StatisticID::LookupsThatKeepTheirPlace);
+        walker.count(StatisticID::MapEntryIndicesCached);
     }
     return true;
 }
@@ -621,7 +621,7 @@ static void holdPlaceKeptAgainstFreshSearchForStringPieces(Walker& walker, Refer
     walker.continueIn(whereOther);
     Reference isNotTold = buildOperatorForStrings(walker, Opcode::Less, foundAgain, integerForStrings(walker, placeOfAbsentKeyInMap), origin);
     if (isNotTold && !walker.isUnreachable())
-        walker.checkProof(isNotTold, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::WhatIsRemembered, origin);
+        walker.checkProof(isNotTold, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::RememberedFact, origin);
     if (!walker.isUnreachable())
         walker.jumpTo(whereSame);
     walker.continueIn(whereSame);
@@ -649,7 +649,7 @@ static bool buildStoreWhereTestFoundNoKeyForStringPieces(Walker& walker, const C
         return true;
     walker.bind(written, stored);
     noteKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), *kept, true);
-    walker.count(StatisticID::PlacesOfKeysThatStandBehindStoresWhereTestsFoundNoKey);
+    walker.count(StatisticID::MapEntryIndicesSurvivingInserts);
     return true;
 }
 

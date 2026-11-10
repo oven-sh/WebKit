@@ -29,7 +29,7 @@ public:
     LValue argumentFPR(unsigned index) { return out().argumentRegister(FPRInfo::toArgumentRegister(index)); }
 
     bool prepare();
-    bool compile(void* instance = nullptr);
+    bool compile(void* instance = nullptr, std::optional<uint32_t> branchReach = std::nullopt);
 
     template<typename Result, typename... Arguments>
     Result call(Arguments... arguments)

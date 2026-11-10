@@ -8,16 +8,16 @@
 # `area` believes that `this` has the one shape of its class: a simple question, and the entry is written by hand, without a walk.
 # `grown` believes also that `by` is a whole number, which is asked of an int32 and of a double: no simple question, and the entry is walked.
 # Every `new` is copied and nothing enters the four constructors by value: their entries are closed, by hand too, and their bodies are not compiled.
-# RUN: compile EntriesWrittenByHand UnitsCompiled mechanisms=all-UnboxedNumbers
-# CHECK: statistic EntriesWrittenByHand 8
+# RUN: compile GenericEntryThunksEmitted UnitsCompiled mechanisms=all-UnboxedNumbers
+# CHECK: statistic GenericEntryThunksEmitted 8
 # CHECK-NEXT: statistic UnitsCompiled 21
 # Where numbers cross calls raw the four bodies of `area` hand back a raw number, for the call in the loop. Whoever comes by value gets it boxed: that entry calls, boxes and returns: it is walked.
-# RUN(RAW): compile EntriesWrittenByHand UnitsCompiled mechanisms=all
-# RAW: statistic EntriesWrittenByHand 4
+# RUN(RAW): compile GenericEntryThunksEmitted UnitsCompiled mechanisms=all
+# RAW: statistic GenericEntryThunksEmitted 4
 # RAW-NEXT: statistic UnitsCompiled 21
 # Where proofs are checked at run time every entry is walked.
-# RUN(CHECKED): compile EntriesWrittenByHand UnitsCompiled mechanisms=all testing=CheckProofsAtRunTime
-# CHECKED: statistic EntriesWrittenByHand 0
+# RUN(CHECKED): compile GenericEntryThunksEmitted UnitsCompiled mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic GenericEntryThunksEmitted 0
 # CHECKED-NEXT: statistic UnitsCompiled 21
 # RUN(SIMPLE): walk f2:GenericCallEntry mechanisms=all
 # SIMPLE: = TypeTest {{*}}testedType=L0

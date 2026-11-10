@@ -79,8 +79,8 @@ bool storeLaysWhatSlotOfFreshObjectHolds(Walker& walker, Reference object, Refer
     if (!held || !held.isRecord() || !stored || !stored.isRecord() || !walker.state().isFresh(object))
         return false;
     const Code& code = walker.code();
-    ValueID first = rootOfCellInSweptCode(code, held.id());
-    ValueID second = rootOfCellInSweptCode(code, stored.id());
+    ValueID first = underlyingCellOf(code, held.id());
+    ValueID second = underlyingCellOf(code, stored.id());
     if (first == second)
         return true;
     const Operation& one = code.at(first);
@@ -100,7 +100,7 @@ static bool markAnswersForSomeFieldInBirths(const Plan& plan, LayoutID layout)
 
 bool lookMayFinishBirthOf(Walker& walker, Reference object)
 {
-    if (object && walker.state().factsOfCell(object).contains(FactOfCell::BearsNoMark))
+    if (object && walker.state().cellFacts(object).contains(CellFact::BearsNoMark))
         return false;
     TypeID proven = object ? walker.typeOf(object) : TypeID();
     if (!proven)
@@ -134,7 +134,7 @@ static void showWhatIsHeldFilledOfLayoutInBirths(Walker& walker, Reference objec
     if (plan.shapes().shapesOf(layout).isEmpty() || (proven && !types.overlap(proven, tested)))
         return;
     origin.isTailCall = false;
-    GuessInFrontOfLoop isOfLayout { object, tested, types.at(tested).layouts, { } };
+    HoistedSpeculation isOfLayout { object, tested, types.at(tested).layouts, { } };
     Reference test = buildTestInFrontOfLoop(walker, isOfLayout, origin);
     if (!test)
         return;
@@ -188,7 +188,7 @@ void finishBirthAtReturnOfClassConstructor(Walker& walker, Reference returned, O
     LayoutID own = function.constructedClass;
     if (!isClassConstructorOf(function.kind) || !own || !plan.isInUse(own) || !plan.layout(own).holdsCompiledObjects() || !markAnswersForSomeFieldInBirths(plan, own))
         return;
-    if (walker.state().factsOfCell(returned).contains(FactOfCell::BearsNoMark))
+    if (walker.state().cellFacts(returned).contains(CellFact::BearsNoMark))
         return;
     origin.isTailCall = false;
     auto tryFinish = [&](Reference object) {
@@ -209,7 +209,7 @@ void finishBirthAtReturnOfClassConstructor(Walker& walker, Reference returned, O
 
     if (plan.shapes().shapesOf(own).isEmpty())
         return;
-    GuessInFrontOfLoop isOfOwnClass { returned, tested, types.at(tested).layouts, { } };
+    HoistedSpeculation isOfOwnClass { returned, tested, types.at(tested).layouts, { } };
     Reference test = buildTestInFrontOfLoop(walker, isOfOwnClass, origin);
     if (!test)
         return;
@@ -243,7 +243,7 @@ static Reference constantWrittenInBodyForBirths(Walker& walker, const BodyValue&
 
 static ValueID valueBehindNamesInBodyForBirths(const BodyIndex& index, ValueID value)
 {
-    while (value && !index.isParameter(value) && (inputOperationsThatHandOn.contains(index.opcodeOf(value)) || index.opcodeOf(value) == Opcode::ToThis))
+    while (value && !index.isParameter(value) && (inputPassThroughOpcodes.contains(index.opcodeOf(value)) || index.opcodeOf(value) == Opcode::ToThis))
         value = index.value(value).operand(0);
     return value;
 }
@@ -253,7 +253,7 @@ bool BodyReadInBirths::names(ValueID value) const
     return namesOfObject.contains(valueBehindNamesInBodyForBirths(index, value));
 }
 
-static HeadOfBodyInBirths collectStoresAtHeadOfBodyInBirths(Walker&, FunctionID, std::span<const Reference> handedOver, StoresBehindAllocationInBirths&);
+static HeadOfBodyInBirths collectStoresAtHeadOfBodyInBirths(Walker&, FunctionID, std::span<const Reference> passedOperands, StoresBehindAllocationInBirths&);
 
 static FunctionID functionHeldByVariableInBirths(Walker& walker, VariableID variable)
 {
@@ -291,7 +291,7 @@ static FunctionID functionWhoseCallIsReadInBirths(Walker& walker, const BodyRead
 
 static Reference valueWrittenInBodyForBirths(Walker& walker, const BodyIndex& index, ValueID written, NOESCAPE const ScopedLambda<Reference(ValueID)>& valueInFrontOfAllocation)
 {
-    ValueID root = index.valueBehindCasts(written);
+    ValueID root = index.stripCasts(written);
     bool isWrittenConstant = !index.isParameter(root) && constantsListedAtBirth.contains(index.opcodeOf(root));
     return isWrittenConstant ? constantWrittenInBodyForBirths(walker, index.value(root)) : valueInFrontOfAllocation(root);
 }
@@ -324,22 +324,22 @@ static bool collectStoresOfBaseCalledInBirths(Walker& walker, BodyReadInBirths& 
         return before.head != HeadOfBodyInBirths::EndsInFrontOfOtherOperations;
     }
 
-    Vector<Reference, 8> handedOver;
+    Vector<Reference, 8> passedOperands;
     size_t nextArgument = 1;
     for (unsigned parameter = 0; parameter < entered.numberOfEntryParameters(); ++parameter) {
         if (entered.entryParameterKind(parameter) != EntryParameter::Parameter)
-            handedOver.append(Reference());
+            passedOperands.append(Reference());
         else if (nextArgument < arguments.size())
-            handedOver.append(valueWrittenInBodyForBirths(walker, index, arguments[nextArgument++], valueInFrontOfAllocation));
+            passedOperands.append(valueWrittenInBodyForBirths(walker, index, arguments[nextArgument++], valueInFrontOfAllocation));
         else
-            handedOver.append(walker.constant(Draft(Opcode::Undefined)));
+            passedOperands.append(walker.constant(Draft(Opcode::Undefined)));
     }
     size_t numberOfStoresInFront = stores.keys.size();
     stores.functionsRead.set(base.index(), FunctionReadInBirths { });
     HeadOfBodyInBirths bodyOfBase = HeadOfBodyInBirths::EndsInFrontOfOtherOperations;
     {
         SetForScope readsFunctionAgain(stores.readsFunctionAgain, stores.readsFunctionAgain || wasRead);
-        bodyOfBase = collectStoresAtHeadOfBodyInBirths(walker, base, handedOver.span(), stores);
+        bodyOfBase = collectStoresAtHeadOfBodyInBirths(walker, base, passedOperands.span(), stores);
     }
     stores.functionsRead.set(base.index(), FunctionReadInBirths { stores.keys.size() > numberOfStoresInFront, bodyOfBase });
     bool isWholeBody = bodyOfBase != HeadOfBodyInBirths::EndsInFrontOfOtherOperations;
@@ -364,7 +364,7 @@ static bool collectStoresInBirths(Walker& walker, BodyReadInBirths& body, const 
             continue;
         if (opcode == Opcode::GetModuleVariable && functionHeldByVariableInBirths(walker, operation.variable()))
             continue;
-        if (opcode == Opcode::ToBoolean && body.callOfBase && index.valueBehindCasts(operation.operand(0)) == body.callOfBase && body.bodyOfBase != HeadOfBodyInBirths::IsWholeBody) {
+        if (opcode == Opcode::ToBoolean && body.callOfBase && index.stripCasts(operation.operand(0)) == body.callOfBase && body.bodyOfBase != HeadOfBodyInBirths::IsWholeBody) {
             body.testOfWhatBaseReturned = operation.id();
             continue;
         }
@@ -381,7 +381,7 @@ static bool collectStoresInBirths(Walker& walker, BodyReadInBirths& body, const 
             return false;
 
         Reference value = valueWrittenInBodyForBirths(walker, index, operation.valueOperand(), valueInFrontOfAllocation);
-        if (value && walker.hasTextsInStringBuilders() && isTextInStringBuilder(walker, value))
+        if (value && walker.hasStringsInBuilders() && isStringInBuilder(walker, value))
             return false;
         TypeID type = value && value.isRecord() ? walker.typeOf(value) : TypeID();
         if (!type)
@@ -408,7 +408,7 @@ static std::span<const PropertyKeyID> keysThatBodyFillsOfThisInBirths(const Thin
     return { };
 }
 
-static HeadOfBodyInBirths collectStoresAtHeadOfBodyInBirths(Walker& walker, FunctionID function, std::span<const Reference> handedOver, StoresBehindAllocationInBirths& stores)
+static HeadOfBodyInBirths collectStoresAtHeadOfBodyInBirths(Walker& walker, FunctionID function, std::span<const Reference> passedOperands, StoresBehindAllocationInBirths& stores)
 {
     const Function& entered = walker.program().at(function);
     const BodyIndex* found = walker.facts().bodies().find(function);
@@ -417,7 +417,7 @@ static HeadOfBodyInBirths collectStoresAtHeadOfBodyInBirths(Walker& walker, Func
         return HeadOfBodyInBirths::EndsInFrontOfOtherOperations;
     const BodyIndex& body = *found;
     BodyBlock entry = body.block(entryBlock);
-    if (entry.numberOfParameters() != handedOver.size())
+    if (entry.numberOfParameters() != passedOperands.size())
         return HeadOfBodyInBirths::EndsInFrontOfOtherOperations;
     BodyReadInBirths read { function, body, { entry.parameter(*thisParameter) }, { }, HeadOfBodyInBirths::EndsInFrontOfOtherOperations, { } };
     auto nameParametersOf = [&](BodyTarget target) {
@@ -432,7 +432,7 @@ static HeadOfBodyInBirths collectStoresAtHeadOfBodyInBirths(Walker& walker, Func
         std::optional<uint32_t> parameter = entry.indexOfParameter(root);
         if (!parameter || entered.entryParameterKind(*parameter) != EntryParameter::Parameter)
             return { };
-        return handedOver[*parameter];
+        return passedOperands[*parameter];
     };
     walker.count(StatisticID::BodiesReadForBirths);
     for (BlockID current = entryBlock;;) {
@@ -445,7 +445,7 @@ static HeadOfBodyInBirths collectStoresAtHeadOfBodyInBirths(Walker& walker, Func
                 return HeadOfBodyInBirths::IsWholeBody;
             if (read.names(end.operand(0)))
                 return HeadOfBodyInBirths::IsWholeBodyThatReturnsObject;
-            ValueID returned = body.valueBehindCasts(end.operand(0));
+            ValueID returned = body.stripCasts(end.operand(0));
             bool returnsUndefined = returned && !body.isParameter(returned) && body.opcodeOf(returned) == Opcode::Undefined;
             return returnsUndefined ? HeadOfBodyInBirths::IsWholeBodyThatReturnsUndefined : HeadOfBodyInBirths::IsWholeBody;
         }
@@ -478,16 +478,16 @@ static HeadOfBodyInBirths collectStoresAtHeadOfBodyInBirths(Walker& walker, Func
     }
 }
 
-static bool copyTakesOperandsInBirths(Walker& walker, FunctionID callee, const Function& constructor, std::span<const Reference> handedOver, unsigned thisParameter, TypeID typeOfThis)
+static bool copyTakesOperandsInBirths(Walker& walker, FunctionID callee, const Function& constructor, std::span<const Reference> passedOperands, unsigned thisParameter, TypeID typeOfThis)
 {
-    if (handedOver.size() != constructor.numberOfEntryParameters())
+    if (passedOperands.size() != constructor.numberOfEntryParameters())
         return false;
     TypeArena& types = walker.types();
     const CallingConventions& conventions = walker.plan().conventions();
-    for (unsigned index = 0; index < handedOver.size(); ++index) {
+    for (unsigned index = 0; index < passedOperands.size(); ++index) {
         EntryParameter kind = constructor.entryParameterKind(index);
-        TypeID arriving = index == thisParameter ? typeOfThis : walker.typeOf(handedOver[index]);
-        if (!arriving && (handedOver[index] || kind == EntryParameter::Callee))
+        TypeID arriving = index == thisParameter ? typeOfThis : walker.typeOf(passedOperands[index]);
+        if (!arriving && (passedOperands[index] || kind == EntryParameter::Callee))
             return false;
         const DeclaredType* declared = constructor.declaredEntryParameter(index);
         if (declared && declared->isEstablished() && (arriving || (kind != EntryParameter::Capture && kind != EntryParameter::ArgumentCount))) {
@@ -548,7 +548,7 @@ std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction
     const Program& program = walker.program();
     LayoutID classLayout = declaredLayoutOf(program, program.at(constructor).constructedClass);
     AccessContext context { program, WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() };
-    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.isInLoop() || program.at(classLayout).constructor != constructor || !prototypeOfConstructorFunctionIsLeftToGuards(context, classLayout))
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.isInLoop() || program.at(classLayout).constructor != constructor || !isConstructorPrototypeGuarded(context, classLayout))
         return std::nullopt;
 
     GuardOfPrototypeAtConstruction guard { { MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Static, program.keyOf(BuiltinNames::prototype) } };
@@ -570,7 +570,7 @@ void checkPrototypeOfCellMadeBehindGuard(Walker& walker, Reference object, Refer
     look.setObjectOperand(object);
     Reference passes = walker.buildTestOfCheck(WTF::move(look));
     if (passes && passes.isValue() && !walker.isUnreachable())
-        walker.checkProof(passes, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::WhatIsRemembered, origin);
+        walker.checkProof(passes, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::RememberedFact, origin);
 
     auto readOfPrototype = [&](bool readsClassObjectItself) {
         Draft read(Opcode::GetClassPrototype, origin);
@@ -644,11 +644,11 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         return false;
     Origin origin = written.origin();
     origin.isTailCall = false;
-    Vector<Reference, 8> handedOver = operandsHandedToCopy(written, constructor);
+    Vector<Reference, 8> passedOperands = collectPassedOperands(written, constructor);
 
     Reference standIn = walker.constant(Draft(Opcode::Undefined, origin));
     Vector<Reference, 8> operandsAskedAbout;
-    for (Reference operand : handedOver)
+    for (Reference operand : passedOperands)
         operandsAskedAbout.append(operand ? operand : standIn);
     Draft site(Opcode::CallDirect, origin);
     site.setFunction(callee);
@@ -659,8 +659,8 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
 
     StoresBehindAllocationInBirths stores;
     stores.constructor = callee;
-    collectStoresAtHeadOfBodyInBirths(walker, callee, handedOver.span(), stores);
-    if (stores.keys.isEmpty() || stores.laysKeyTwice || !copyTakesOperandsInBirths(walker, callee, constructor, handedOver.span(), *thisParameter, walker.types().forLayout(constructed)))
+    collectStoresAtHeadOfBodyInBirths(walker, callee, passedOperands.span(), stores);
+    if (stores.keys.isEmpty() || stores.laysKeyTwice || !copyTakesOperandsInBirths(walker, callee, constructor, passedOperands.span(), *thisParameter, walker.types().forLayout(constructed)))
         return false;
 
     Vector<ValueAskedInFrontOfAllocationInBirths, 4> valuesAsked = findValuesToAskInFrontOfAllocationInBirths(walker, constructed, stores);
@@ -688,7 +688,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     uint32_t place = call.id().index() - block.firstValue().index();
 
     BlockID closedBlock;
-    auto goOnWhereLookPasses = [&](Reference look) {
+    auto continueIfGuardHolds = [&](Reference look) {
         BlockID passed = walker.addBlock();
         if (!closedBlock)
             closedBlock = walker.addBlock(BlockFrequency::Rare);
@@ -715,9 +715,9 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         guardsHold = walker.isUnreachable() ? Reference() : walker.build(WTF::move(look));
         if (!guardsHold)
             return true;
-        goOnWhereLookPasses(guardsHold);
+        continueIfGuardHolds(guardsHold);
     }
-    if (walker.checksProofs() && guardsHold && !walker.isBuiltWhereItStandsSince(numberOfRecordsInFrontOfLook, guardsHold))
+    if (walker.checksProofs() && guardsHold && !walker.wasBuiltInPlaceSince(numberOfRecordsInFrontOfLook, guardsHold))
         checkGuardsThatAreRemembered(walker, listed.conditions.span(), origin);
     checkGuardsThatAreRemembered(walker, listed.conditionsRemembered.span(), origin);
 
@@ -729,7 +729,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         Reference passes = walker.isUnreachable() ? Reference() : walker.build(WTF::move(look));
         if (!passes)
             return true;
-        goOnWhereLookPasses(passes);
+        continueIfGuardHolds(passes);
         Draft proof(Opcode::Narrowed, origin);
         proof.setValueOperand(each.value);
         proof.setTestOperand(passes);
@@ -742,7 +742,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
             if (value == each.value)
                 value = narrowed;
         }
-        for (Reference& operand : handedOver) {
+        for (Reference& operand : passedOperands) {
             if (operand == each.value)
                 operand = narrowed;
         }
@@ -774,7 +774,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     noteFreshObject(walker, object, listed.fields.size());
     if (program.at(declaredLayoutOf(program, constructed)).has(LayoutFlags::IsConstructorFunction))
         walker.noteBirthInTries(declaredLayoutOf(program, constructed));
-    walker.count(StatisticID::FieldsListedAtBirthsByConstructors, listed.fields.size());
+    walker.count(StatisticID::ConstructorFieldsFoldedIntoAllocations, listed.fields.size());
 
     if (listed.asksForLayoutPrototype && !guardOfPrototype) {
         Draft look(Opcode::HasLayoutPrototype, origin);
@@ -782,19 +782,19 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         Reference passes = walker.build(WTF::move(look));
         if (!passes)
             return true;
-        goOnWhereLookPasses(passes);
+        continueIfGuardHolds(passes);
     }
     if (guardOfPrototype)
         checkPrototypeOfCellMadeBehindGuard(walker, object, closure, constructed, origin);
     if (listed.asksForLayoutPrototype || guardOfPrototype)
-        walker.state().noteFactsOfCell(object, FactOfCell::HasLayoutPrototype);
+        walker.state().recordCellFacts(object, CellFact::HasLayoutPrototype);
     if (guardsHold)
         noteGuardsShownByTest(walker, listed.conditions.span(), guardsHold);
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     auto endArm = [&](Reference value) {
         if (!walker.isUnreachable() && !walker.hasFailed())
-            arms.append(Walker::ArmThatMeets { walker.currentBlock(), { value } });
+            arms.append(Walker::JoinArm { walker.currentBlock(), { value } });
     };
     auto walkAsWritten = [&] {
         Walker::ClosedArm closedArm(walker);
@@ -814,7 +814,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
 
     BlockID typedBlock = walker.currentBlock();
     if (closedBlock) {
-        walker.noteGuessOpened();
+        walker.recordSpeculation();
         walker.continueIn(closedBlock);
         constructAsWritten();
         if (walker.hasFailed())
@@ -822,8 +822,8 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         walker.continueIn(typedBlock);
     }
 
-    handedOver[*thisParameter] = object;
-    if (walker.walkInline(call, callee, handedOver.span())) {
+    passedOperands[*thisParameter] = object;
+    if (walker.walkInline(call, callee, passedOperands.span())) {
         Reference returned = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());
         if (returned && listed.isBornUnfinished && lookMayFinishBirthOf(walker, object)) {
             Draft finish(Opcode::TryFinishBirth, origin);
@@ -847,7 +847,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
 
     BlockID meeting = walker.addBlock();
     Reference met;
-    if (walker.letArmsMeet(arms.span(), meeting, singleElementSpan(met)))
+    if (walker.joinArms(arms.span(), meeting, singleElementSpan(met)))
         walker.bind(call.id(), met);
     return true;
 }

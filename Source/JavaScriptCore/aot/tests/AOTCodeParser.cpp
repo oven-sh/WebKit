@@ -95,7 +95,7 @@ static constexpr TraitReadByCodeParser traitsReadByCodeParser[] = {
     { "mayCallUnknownCode"_s, &EffectTraits::mayCallUnknownCode },
     { "maySuspend"_s, &EffectTraits::maySuspend },
     { "mayBeTerminated"_s, &EffectTraits::mayBeTerminated },
-    { "mayWriteWhatIsSeen"_s, &EffectTraits::mayWriteWhatIsSeen },
+    { "mayWriteObservableState"_s, &EffectTraits::mayWriteObservableState },
     { "mayTouchMemory"_s, &EffectTraits::mayTouchMemory },
     { "mayWriteOutsideObjects"_s, &EffectTraits::mayWriteOutsideObjects },
 };

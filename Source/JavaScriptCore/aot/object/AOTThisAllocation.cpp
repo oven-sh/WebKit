@@ -177,7 +177,7 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
         uint32_t number = m_tables.closureNumberOf(function->index());
         if (constructor == newTarget) {
             bool isWholeConstruction = !compiledLayoutOrNull(structure) && structure->inlineCapacity() == JSFinalObject::defaultInlineCapacity && m_tables.closureNumberOnlyReturns(number);
-            number = isWholeConstruction ? constructorIsNewTargetAndOnlyReturns : constructorIsNewTarget;
+            number = isWholeConstruction ? trivialConstructorIsNewTarget : constructorIsNewTarget;
         }
         target->ensureRareData(vm)->setCompiledAllocation(vm, structure, number);
     } else if (resolved->wasReadWithoutSideEffects && function && constructor == newTarget)
@@ -365,7 +365,7 @@ void ClassTable::rememberInstanceBelow(VM& vm, uint32_t allocationOfSite, JSObje
         m_wordsOfInstancesWithoutFields.append(WTF::move(words));
         entry = { prototype, allocationOfSite, allocator, m_wordsOfInstancesWithoutFields.last().span().data() };
         ++m_numberOfInstancesBelowPrototypes;
-        countEvent(vm, RuntimeCounterID::InstancesRememberedBelowPrototypes);
+        countEvent(vm, RuntimeCounterID::InstanceTemplatesCached);
     }
     m_state.instance.classes.instancesBelowPrototypes = { m_instancesBelowPrototypes.span().data(), (m_instancesBelowPrototypes.size() - 1) << shiftOfInstanceBelowPrototype };
 }

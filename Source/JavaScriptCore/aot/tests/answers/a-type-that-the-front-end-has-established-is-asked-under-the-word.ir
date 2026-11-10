@@ -5,18 +5,23 @@
 # print(text(1));
 # print(hand()(1));
 # print("went on");
-# THE LIE IS LAID BY HAND IN THE TEXT BELOW: `variable g0 name="one" declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f2`: the front end says that the variable holds `one`, and it is made with `text`. No legal program makes the front end say so; no verifier compares the two.
-# Under testing=CheckProofsAtRunTime a type that the front end has established counted as known "without proofs" too, so only `absent` was asked of it. It is asked like any other now: the whole suite under the word is the oracle of the front end's rules.
+# The fault is written by hand in the IR below: `variable g0 name="one" declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f2`.
+# The front end claims that the variable holds `one`, and the variable is initialized with `text`. No legal program makes the front end claim that, and no verifier compares the two.
+# With testing=CheckProofsAtRunTime, a type that the front end has established used to count as known "without proofs" too, so it was checked only for `absent`.
+# It is now checked like any other type, so the whole suite run with that option is the oracle for the front end's rules.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(ALL): run-in-shell mechanisms=all
-# ALL: AOT: f{{*}} at {{*}}: what a variable holds is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# ALL: bun: internal AOT error: type check failed
+# ALL-NEXT: found function in a local variable
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
-# CALLS: AOT: f{{*}} at {{*}}: what a variable holds is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# CALLS: bun: internal AOT error: type check failed
+# CALLS-NEXT: found function in a local variable
 # CALLS-NOT: went on
 # CALLS: crashed with
-# Where the type names another function than the variable is made with, the closure itself is asked, at every site: the word as it lies would be empty until somebody makes the closure.
+# Where the type names a different function from the one that the variable is initialized with, the closure itself is checked, at every site.
+# The variable's stored word would be empty until something creates the closure.
 # RUN(FORM): walk f0 mechanisms=-Inlining
 # FORM: [[held]]: f1 @JSValue = GetModuleVariable variable=g0
 # FORM-NEXT: CheckProof [[held]] checkedType=f1 typeWithoutProof=absent|anything{{*}} source=Variable

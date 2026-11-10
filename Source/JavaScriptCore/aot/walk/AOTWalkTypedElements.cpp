@@ -25,8 +25,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+OperatorForm operatorFormFor(Walker&, const Draft&);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet opcodesOfTypedElements { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::PropGet, Opcode::PropSet };
 
@@ -119,7 +119,7 @@ static Reference freshObjectNamedInTypedElements(Walker& walker, Reference name)
     if (!name || !name.isValue())
         return { };
     const Code& code = walker.code();
-    ValueID cell = rootOfCellInSweptCode(code, name.id());
+    ValueID cell = underlyingCellOf(code, name.id());
     if (code.isConstant(cell))
         return { };
     Reference object = Reference::value(cell);
@@ -150,11 +150,11 @@ static KnowledgeLevel levelOfArrayAccessOfTypedElements(const AccessOfTypedEleme
 
 static LevelOfArrayReadOfTypedElements levelOfArrayReadOfTypedElements(const AccessOfTypedElements& access)
 {
-    if (access.base && isFreshListAsMade(access.walker, access.base))
+    if (access.base && isFreshPristineArray(access.walker, access.base))
         return { KnowledgeLevel::Proven, false };
     if (!readsOffListThatStaysAsMadeByLink(access.walker, access.value))
         return { levelOfArrayAccessOfTypedElements(access), false };
-    return { KnowledgeLevel::Proven, !access.isOnlyAskedAbout && !isListAsMade(access.walker, access.base) };
+    return { KnowledgeLevel::Proven, !access.isOnlyAskedAbout && !isKnownPristine(access.walker, access.base) };
 }
 
 static ArrayStorage storageDeclaredForTypedElements(const AccessOfTypedElements& access)
@@ -177,7 +177,7 @@ static TypeID typeWrittenOfInputInTypedElements(Walker& walker, ValueID input)
         return definition.parameterType();
     if (definition.opcode() != Opcode::ElemGet)
         return { };
-    BodyValue list = index.value(index.valueBehindCasts(definition.objectOperand()));
+    BodyValue list = index.value(index.stripCasts(definition.objectOperand()));
     if (!list.isParameter() || !list.parameterType())
         return { };
     TypingContext expecting { walker.program(), walker.types(), walker.positionsKnowingNothing(), TypeLevel::Expected };
@@ -309,7 +309,7 @@ static bool bindNumberReadBehindTestsOfTypedElements(const AccessOfTypedElements
 
 static Representation formOfNumberThatLinkHasTypedOfTypedElements(const AccessOfTypedElements& access, KnowledgeLevel level)
 {
-    static constexpr OpcodeSet operatorsThatTakeDoubles = operatorsThatMakeNumbers | allSums;
+    static constexpr OpcodeSet operatorsThatTakeDoubles = numberProducingOperators | allSums;
     Walker& walker = access.walker;
     TypeArena& types = walker.types();
     if (!walker.has(Mechanism::UnboxedNumbers) || !access.key || !access.key.isRecord() || !numberOfProvenListIsReadUnboxed(types, access.typeOfBase, walker.typeOf(access.key), walker.representationOf(access.key), level == KnowledgeLevel::Expected))
@@ -334,7 +334,7 @@ static Representation formOfNumberThatLinkHasTypedOfTypedElements(const AccessOf
                 return;
             TypeID beside;
             if (operand.index() > read.index()) {
-                ValueID readToCome = index.valueBehindCasts(operand);
+                ValueID readToCome = index.stripCasts(operand);
                 if (!index.isParameter(readToCome) && index.opcodeOf(readToCome) == Opcode::ElemGet)
                     beside = walker.facts().linked().resultOfReadByKey(walker.currentFunction(), readToCome);
             } else if (Reference other = walker.referenceOf(operand); other && other.isRecord())
@@ -357,8 +357,8 @@ static Representation formOfNumberThatLinkHasTypedOfTypedElements(const AccessOf
                 if (operand == taken)
                     return;
                 if (operand.index() > read.index()) {
-                    ValueID readToCome = index.valueBehindCasts(operand);
-                    standsBesideNumbers &= !index.isParameter(readToCome) && (operatorsThatMakeNumbers.contains(index.opcodeOf(readToCome)) || (index.opcodeOf(readToCome) == Opcode::ElemGet && isNumberOrUndefined(walker.facts().linked().resultOfReadByKey(walker.currentFunction(), readToCome))));
+                    ValueID readToCome = index.stripCasts(operand);
+                    standsBesideNumbers &= !index.isParameter(readToCome) && (numberProducingOperators.contains(index.opcodeOf(readToCome)) || (index.opcodeOf(readToCome) == Opcode::ElemGet && isNumberOrUndefined(walker.facts().linked().resultOfReadByKey(walker.currentFunction(), readToCome))));
                     return;
                 }
                 Reference other = walker.referenceOf(operand);
@@ -379,7 +379,7 @@ static Representation formOfNumberThatLinkHasTypedOfTypedElements(const AccessOf
     }
     ValueID taken = read;
     ValueID reader = index.onlyUsingValue(read);
-    while (reader && inputOperationsThatOnlyHandOn.contains(index.opcodeOf(reader))) {
+    while (reader && inputIdentityOpcodes.contains(index.opcodeOf(reader))) {
         taken = reader;
         reader = index.onlyUsingValue(reader);
     }
@@ -408,11 +408,11 @@ static bool elementIsReadAgainInLoopInTypedElements(const BodyIndex& index, cons
     LoopID loop = index.loopOf(index.blockOf(read.id()));
     if (!loop)
         return false;
-    ValueID list = index.valueBehindCasts(read.objectOperand());
-    ValueID key = index.valueBehindCasts(read.propertyOperand());
+    ValueID list = index.stripCasts(read.objectOperand());
+    ValueID key = index.stripCasts(read.propertyOperand());
     for (BlockID member : index.membersOf(loop)) {
         for (BodyValue other : index.block(member).values()) {
-            if (other.opcode() == Opcode::ElemGet && other.id() != read.id() && index.valueBehindCasts(other.objectOperand()) == list && index.valueBehindCasts(other.propertyOperand()) == key && (readers == ReadersOfElement::All || !onlyUserReckonsInTypedElements(index, other.id())))
+            if (other.opcode() == Opcode::ElemGet && other.id() != read.id() && index.stripCasts(other.objectOperand()) == list && index.stripCasts(other.propertyOperand()) == key && (readers == ReadersOfElement::All || !onlyUserReckonsInTypedElements(index, other.id())))
                 return true;
         }
     }
@@ -422,13 +422,13 @@ static bool elementIsReadAgainInLoopInTypedElements(const BodyIndex& index, cons
 static bool isNumberCutByWrittenMaskInTypedElements(Walker& walker, ValueID key, ValueID firstValueNotBuilt)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID written = index.valueBehindCasts(key);
+    ValueID written = index.stripCasts(key);
     if (!written || index.isParameter(written) || index.opcodeOf(written) != Opcode::BitAnd)
         return false;
     bool hasMask = false;
     bool restIsNumber = true;
     index.value(written).forEachOperand([&](ValueID operand, uint32_t) {
-        ValueID cut = index.valueBehindCasts(operand);
+        ValueID cut = index.stripCasts(operand);
         if (cut && !index.isParameter(cut) && index.opcodeOf(cut) == Opcode::Integer && index.value(cut).integer() >= 0 && index.value(cut).integer() <= INT32_MAX) {
             hasMask = true;
             return;
@@ -445,14 +445,14 @@ static bool comesOffListOfNumbersTestedInFrontInTypedElements(Walker& walker, co
         return false;
     if (later.propertyOperand().index() >= firstValueNotBuilt.index()) {
         const BodyIndex& index = walker.currentBodyIndex();
-        ValueID written = index.valueBehindCasts(later.propertyOperand());
+        ValueID written = index.stripCasts(later.propertyOperand());
         bool isWrittenPosition = written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::Integer && index.value(written).integer() >= 0 && index.value(written).integer() < UINT32_MAX;
         if (!isWrittenPosition && !isNumberCutByWrittenMaskInTypedElements(walker, later.propertyOperand(), firstValueNotBuilt))
             return false;
     } else if (Reference key = walker.referenceOf(later.propertyOperand()); !key || !isArrayIndexInTypedElements(walker.types().at(walker.typeOf(key))))
         return false;
-    std::optional<ListTestedInFrontOfLoop> tested = findListTestedInFrontOfLoop(walker, later);
-    return tested && holdsOnlyNumbers(tested->storage);
+    std::optional<HoistedArrayGuard> tested = findHoistedArrayGuard(walker, later);
+    return tested && isNumericStorage(tested->storage);
 }
 
 static bool userTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyValue& read, ValueID name, ValueID user, WhatStandsBesideRead beside, bool isOneOfSeveral, bool readGivesUpItsHole)
@@ -474,7 +474,7 @@ static bool userTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyVa
     ValueID other = operation.operand(0) == name ? operation.operand(1) : operation.operand(0);
     if (other == name)
         return isOneOfSeveral;
-    ValueID written = index.valueBehindCasts(other);
+    ValueID written = index.stripCasts(other);
     if (written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::Integer && (takesBits || isRelation || std::abs(index.value(written).integer()) > 1))
         return true;
     Reference built = other.index() < read.id().index() ? walker.referenceOf(other) : Reference();
@@ -495,7 +495,7 @@ static bool userTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyVa
             if (!primitiveConstants.contains(index.opcodeOf(ValueID(between))) && !opcodesThatStateTypes.contains(index.opcodeOf(ValueID(between))))
                 return false;
         }
-        return (!readGivesUpItsHole || !elementIsReadAgainInLoopInTypedElements(index, read, ReadersOfElement::ThoseThatDoMoreThanReckon)) && (comesOffListOfNumbersTestedInFrontInTypedElements(walker, index.value(written), read.id()) || walker.takesElementsBesideSumsToComeOffListsOfNumbers());
+        return (!readGivesUpItsHole || !elementIsReadAgainInLoopInTypedElements(index, read, ReadersOfElement::ThoseThatDoMoreThanReckon)) && (comesOffListOfNumbersTestedInFrontInTypedElements(walker, index.value(written), read.id()) || walker.shouldAssumeNumericAddends());
     }
     TypeID seenByLink = walker.facts().linked().resultOfReadByKey(walker.currentFunction(), written);
     return (seenByLink && isNumberOrNothing(seenByLink)) || ((!readGivesUpItsHole || !elementIsReadAgainInLoopInTypedElements(index, read, ReadersOfElement::ThoseThatDoMoreThanReckon)) && comesOffListOfNumbersTestedInFrontInTypedElements(walker, index.value(written), read.id()));
@@ -549,7 +549,7 @@ static Reference numberMadeOnceOfElementInTypedElements(Walker& walker, const Bo
     Draft conversion(Opcode::ToNumber, origin);
     conversion.setValueOperand(element);
     walker.chooseConservativeFields(conversion);
-    conversion.setForm(formAllowedForTypedOperator(walker, conversion));
+    conversion.setForm(operatorFormFor(walker, conversion));
     Reference number = walker.build(WTF::move(conversion));
     return number && number.isValue() ? number : element;
 }
@@ -570,7 +570,7 @@ static bool onlyUserHoldsItAgainstNumberInTypedElements(Walker& walker, const Bo
     ValueID other = operation.operand(0) == name ? operation.operand(1) : operation.operand(0);
     if (other == name)
         return false;
-    ValueID written = index.valueBehindCasts(other);
+    ValueID written = index.stripCasts(other);
     if (written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::Integer)
         return true;
     Reference built = other.index() < read.id().index() ? walker.referenceOf(other) : Reference();
@@ -609,35 +609,35 @@ static bool turnTakesWhatIsReadForKeyOrStoresItIntoViewInTypedElements(Walker& w
     return false;
 }
 
-static void beginAgainInTypedElements(Walker& walker)
+static void jumpToGuardFallback(Walker& walker)
 {
     if (walker.stretchMayRunAsWrittenInstead())
         walker.runStretchAsWrittenInstead();
     else
-        walker.beginTurnAgainInClosedCopy();
+        walker.restartIteration();
 }
 
-static bool goOnOrBeginTurnAgainInTypedElements(Walker& walker, Reference test, bool laysWhatTestDecidesOnItsEdges = false)
+static bool continueOrRestartIteration(Walker& walker, Reference test, bool shouldRecordEdgeOutcomes = false)
 {
     if (!test)
         return false;
     BlockID passed = walker.addBlock();
     BlockID failed = walker.addBlock(BlockFrequency::Rare);
-    walker.branch(test, passed, failed, laysWhatTestDecidesOnItsEdges);
+    walker.branch(test, passed, failed, shouldRecordEdgeOutcomes);
     walker.continueIn(failed);
     if (!walker.isUnreachable())
-        beginAgainInTypedElements(walker);
+        jumpToGuardFallback(walker);
     walker.continueIn(passed);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     return !walker.isUnreachable() && !walker.hasFailed();
 }
 
-static bool turnMayBeginAgainInTypedElements(const AccessOfTypedElements& access)
+static bool canGuardAccess(const AccessOfTypedElements& access)
 {
-    return access.isOnlyAskedAbout ? access.walker.looksTakeFormsBehindLooksAsBuilt() : access.walker.stretchMayRunAsWrittenInstead() || access.walker.standsInTurnThatLooksCountOn() || access.walker.standsInTurnThatLooksCountOnAndCanPutBack();
+    return access.isOnlyAskedAbout ? access.walker.looksTakeFormsBehindLooksAsBuilt() : access.walker.stretchMayRunAsWrittenInstead() || access.walker.canBuildIterationGuard() || access.walker.canGuardAfterStores();
 }
 
-static bool askElementInTurnOfTypedElements(const AccessOfTypedElements& access, Draft& read, const ListTestedInFrontOfLoop& tested)
+static bool askElementInTurnOfTypedElements(const AccessOfTypedElements& access, Draft& read, const HoistedArrayGuard& tested)
 {
     Walker& walker = access.walker;
     if (!read.keyIsIntegral() || !hasArrayStorageForm(read.arrayStorage()))
@@ -661,9 +661,9 @@ static bool askElementInTurnOfTypedElements(const AccessOfTypedElements& access,
     walker.branchOnTest(test, found, absent);
     walker.continueIn(absent);
     if (!walker.isUnreachable())
-        beginAgainInTypedElements(walker);
+        jumpToGuardFallback(walker);
     walker.continueIn(found);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     std::optional<PassedTest> present = walker.isUnreachable() || walker.hasFailed() ? std::nullopt : walker.showElementPresentBehindTest(access.base, access.key, walker.findPassedTest(test));
     if (!present)
         return false;
@@ -715,7 +715,7 @@ static bool looksCountOnTurnsOfLoopAroundInTypedElements(const AccessOfTypedElem
     if (access.value.id().index() >= index.numberOfValues() || index.value(access.value.id()).words() != access.value.words())
         return false;
     LoopID loop = index.loopOf(index.blockOf(access.value.id()));
-    return loop && access.walker.looksCountOnTurnsThatBeginAgain(index.loop(loop).head);
+    return loop && access.walker.canUseIterationGuards(index.loop(loop).head);
 }
 
 static bool someElementMeetsWhatGoesRoundInTypedElements(const AccessOfTypedElements& access)
@@ -751,8 +751,8 @@ bool Walker::findsElementThatMeetsWhatGoesRound(const BodyIndex& index, LoopID l
             if (!operatorsOfRunningValues.contains(operation.opcode()))
                 continue;
             for (uint32_t side = 0; side < 2; ++side) {
-                ValueID element = index.valueBehindCasts(operation.operand(side));
-                ValueID goesRound = index.valueBehindCasts(operation.operand(1 - side));
+                ValueID element = index.stripCasts(operation.operand(side));
+                ValueID goesRound = index.stripCasts(operation.operand(1 - side));
                 if (element && goesRound && !index.isParameter(element) && index.opcodeOf(element) == Opcode::ElemGet && head.indexOfParameter(goesRound))
                     return true;
             }
@@ -764,7 +764,7 @@ bool Walker::findsElementThatMeetsWhatGoesRound(const BodyIndex& index, LoopID l
 static bool buildReadBehindTestsInTurnOfTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
-    if (!walker.has(Mechanism::Folding) || !access.base || !access.base.isValue() || !access.typeOfKey.isInteger() || !walker.mayBeginTurnAgainInClosedCopy() || walker.turnsOfTypedCopyCall() || walker.readStandsUnderHandler() || (walker.standsInFrontOfTypedCopy(access.base) && !looksCountOnTurnsOfLoopAroundInTypedElements(access) && someElementMeetsWhatGoesRoundInTypedElements(access)))
+    if (!walker.has(Mechanism::Folding) || !access.base || !access.base.isValue() || !access.typeOfKey.isInteger() || !walker.canRestartIteration() || walker.hasCallInSpecializedIteration() || walker.readStandsUnderHandler() || (walker.isInvariantInSpecializedVersion(access.base) && !looksCountOnTurnsOfLoopAroundInTypedElements(access) && someElementMeetsWhatGoesRoundInTypedElements(access)))
         return false;
     ArrayStorage storage = kindAskedInTurnOfTypedElements(access);
     if (!hasArrayStorageForm(storage))
@@ -778,7 +778,7 @@ static bool buildReadBehindTestsInTurnOfTypedElements(const AccessOfTypedElement
     hasKind.setArrayOperand(access.base);
     hasKind.setArrayStorage(storage);
     hasKind.setAdmitsInt32Storage(admitsInt32Storage);
-    if (!goOnOrBeginTurnAgainInTypedElements(walker, walker.build(WTF::move(hasKind))))
+    if (!continueOrRestartIteration(walker, walker.build(WTF::move(hasKind))))
         return true;
 
     Draft isPresent(Opcode::IsElementPresent, origin);
@@ -798,9 +798,9 @@ static bool buildReadBehindTestsInTurnOfTypedElements(const AccessOfTypedElement
     walker.branchOnTest(test, found, absent);
     walker.continueIn(absent);
     if (!walker.isUnreachable())
-        beginAgainInTypedElements(walker);
+        jumpToGuardFallback(walker);
     walker.continueIn(found);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     std::optional<PassedTest> present = walker.isUnreachable() || walker.hasFailed() ? std::nullopt : walker.showElementPresentBehindTest(access.base, access.key, walker.findPassedTest(test));
     if (!present)
         return true;
@@ -819,7 +819,7 @@ static bool buildReadBehindTestsInTurnOfTypedElements(const AccessOfTypedElement
         walker.state().noteElementsLieOutsideViews(access.base);
     }
     walker.bind(access.value.id(), element);
-    walker.count(StatisticID::ElementsAskedInTurnsOfTypedCopies);
+    walker.count(StatisticID::ElementsGuardedInIterations);
     return true;
 }
 
@@ -831,7 +831,7 @@ static Reference mostBelowWrittenBoundInTypedElements(Walker& walker, Reference 
         return { };
     const Code& code = walker.code();
     static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub };
-    bool changesFromTurnToTurn = !walker.standsInFrontOfTypedCopy(position);
+    bool changesFromTurnToTurn = !walker.isInvariantInSpecializedVersion(position);
     ValueID held = position.id();
     while (conversionsOfForm.contains(code.at(held).opcode) || (changesFromTurnToTurn && sums.contains(code.at(held).opcode) && code.isConstant(code.at(held).operand(1))))
         held = code.at(held).operand(0);
@@ -846,11 +846,11 @@ static Reference mostBelowWrittenBoundInTypedElements(Walker& walker, Reference 
     return walker.constant(WTF::move(most));
 }
 
-static void holdSmallRangeBelowLengthOfListInFrontOfTypedCopy(const AccessOfTypedElements& access, const ListTestedInFrontOfLoop& tested)
+static void hoistArrayBoundsCheck(const AccessOfTypedElements& access, const HoistedArrayGuard& tested)
 {
     Walker& walker = access.walker;
-    Walker::TurnOfTypedCopy turn = walker.turnInWhichListsAreAskedInFront();
-    if (tested.isWritable || tested.turnsStoreIntoLists || !access.typeOfKey.isInteger() || !walker.standsInFrontOfTypedCopy(access.base, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(access.base, turn))
+    Walker::IterationPurity purity = walker.arrayGuardPurity();
+    if (tested.isWritable || tested.turnsStoreIntoLists || !access.typeOfKey.isInteger() || !walker.isInvariantInSpecializedVersion(access.base, purity) || !walker.iterationsPreserveArrayGuards(access.base, purity))
         return;
     if (walker.findWhatHoldsPositionInsideList(access.base, access.key) || walker.findWhatHoldsPositionBelowRoomOfView(access.base, access.key))
         return;
@@ -862,22 +862,22 @@ static void holdSmallRangeBelowLengthOfListInFrontOfTypedCopy(const AccessOfType
     Reference length;
     Reference isBelow;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true, turn);
-        length = buildLengthOfListInFrontOfLoop(walker, access.base, origin);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
+        length = buildArrayLength(walker, access.base, origin);
         if (!length || !length.isValue())
             return;
         Draft test(Opcode::Less, origin);
         walker.chooseConservativeFields(test);
         test.setLeftOperand(most);
         test.setRightOperand(length);
-        test.setForm(formAllowedForTypedOperator(walker, test));
+        test.setForm(operatorFormFor(walker, test));
         isBelow = walker.build(WTF::move(test));
     }
-    if (!isBelow || !isBelow.isValue() || !walker.goOnInTypedCopyWhereTestInFrontPasses(isBelow, true, turn))
+    if (!isBelow || !isBelow.isValue() || !walker.tryHoistConditionalCheck(isBelow, true, purity))
         return;
     Reference held;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
         Draft narrowed(Opcode::Narrowed, origin);
         narrowed.setValueOperand(length);
         narrowed.setTestOperand(isBelow);
@@ -888,8 +888,8 @@ static void holdSmallRangeBelowLengthOfListInFrontOfTypedCopy(const AccessOfType
     if (!held || !held.isValue() || held == length)
         return;
     noteKnown(walker, KnownNote::LengthOfList, access.base, { }, 0, placesUnderLengthsOfLists, held.bits());
-    walker.noteGuessOpened();
-    walker.count(StatisticID::WrittenBoundsAskedOfListsInFrontOfTypedCopies);
+    walker.recordSpeculation();
+    walker.count(StatisticID::ArrayBoundsChecksHoisted);
 }
 
 static constexpr AbstractHeapSet heapsUnderElementOfFreshListInTypedElements {
@@ -902,32 +902,32 @@ static bool keyGoesRoundLoopInTypedElements(const AccessOfTypedElements& access)
     const BodyIndex& index = access.walker.currentBodyIndex();
     if (access.value.id().index() >= index.numberOfValues() || index.value(access.value.id()).words() != access.value.words())
         return false;
-    ValueID key = index.valueBehindCasts(access.value.propertyOperand());
+    ValueID key = index.stripCasts(access.value.propertyOperand());
     for (OpcodeSet made : { OpcodeSet { Opcode::Increment, Opcode::Decrement }, OpcodeSet { Opcode::ToNumeric } }) {
         if (key && !index.isParameter(key) && made.contains(index.opcodeOf(key)))
-            key = index.valueBehindCasts(index.value(key).operand(0));
+            key = index.stripCasts(index.value(key).operand(0));
     }
     return key && index.isParameter(key) && index.isLoopHead(index.blockOf(key));
 }
 
-static std::optional<AccessOfTypedElements> holdKeyToWholeNumberOrBeginTurnAgainInTypedElements(const AccessOfTypedElements& access)
+static std::optional<AccessOfTypedElements> tryGuardIntegerKey(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
     if (access.isOnlyAskedAbout || !access.key || !access.key.isValue() || !access.typeOfKey.isNumber() || access.typeOfKey.isNumberWithoutFraction())
         return std::nullopt;
-    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.mayBeginTurnAgainInClosedCopy() || walker.readStandsUnderHandler())
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.canRestartIteration() || walker.readStandsUnderHandler())
         return std::nullopt;
     if (keyGoesRoundLoopInTypedElements(access) || !isDeclaredToHoldNumbersAlone(walker.program(), walker.types(), access.typeOfBase))
         return std::nullopt;
     Origin origin = walker.originOf(access.value);
     origin.isTailCall = false;
     Reference isWhole = buildTestOfNumber(walker, access.key, TypeTable::int32, origin);
-    if (!isWhole || !isWhole.isValue() || !goOnOrBeginTurnAgainInTypedElements(walker, isWhole))
+    if (!isWhole || !isWhole.isValue() || !continueOrRestartIteration(walker, isWhole))
         return std::nullopt;
     Reference whole = buildProofOfNumber(walker, access.key, isWhole, origin);
     if (!whole || !whole.isValue() || !walker.types().at(walker.typeOf(whole)).isInteger())
         return std::nullopt;
-    walker.count(StatisticID::KeysHeldToWholeNumbersInTurnsOfTypedCopies);
+    walker.count(StatisticID::NumberKeysGuardedInIterations);
     return AccessOfTypedElements { walker, access.value, access.base, whole, access.stored, access.typeOfBase, walker.types().at(walker.typeOf(whole)), access.typeOfStored, false, access.counterThatPushGoesBy };
 }
 
@@ -937,17 +937,17 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     if (!access.isOnlyAskedAbout && bindNumberReadBehindTestsOfTypedElements(access))
         return true;
     bool walkStoodInFront = !walker.isUnreachable() && !walker.hasFailed();
-    if (std::optional<AccessOfTypedElements> held = holdKeyToWholeNumberOrBeginTurnAgainInTypedElements(access))
+    if (std::optional<AccessOfTypedElements> held = tryGuardIntegerKey(access))
         return buildArrayReadOfTypedElements(*held);
     if (walkStoodInFront && (walker.isUnreachable() || walker.hasFailed()))
         return true;
     auto [level, restsOnLinksWordAlone] = levelOfArrayReadOfTypedElements(access);
-    std::optional<PassedTest> presentAtHead = level != KnowledgeLevel::Unknown && !access.isOnlyAskedAbout ? walker.askListAtHeadOfTypedCopy(access.value) : std::nullopt;
-    std::optional<ListTestedInFrontOfLoop> tested = level == KnowledgeLevel::Unknown ? std::nullopt : findListTestedInFrontOfLoop(walker, access.value);
+    std::optional<PassedTest> presentAtHead = level != KnowledgeLevel::Unknown && !access.isOnlyAskedAbout ? walker.tryGuardArrayAtHeader(access.value) : std::nullopt;
+    std::optional<HoistedArrayGuard> tested = level == KnowledgeLevel::Unknown ? std::nullopt : findHoistedArrayGuard(walker, access.value);
     if (!tested && level != KnowledgeLevel::Unknown && !access.isOnlyAskedAbout)
-        tested = askListInFrontOfTypedCopy(walker, access.value, access.base);
+        tested = tryHoistArrayGuardForAccess(walker, access.value, access.base);
     if (!tested && level != KnowledgeLevel::Unknown && !access.isOnlyAskedAbout)
-        tested = askListOfNumbersInTurnOfTypedCopy(walker, access.value, access.base);
+        tested = tryGuardNumericArrayInIteration(walker, access.value, access.base);
     if (!tested && level == KnowledgeLevel::Expected && !access.isOnlyAskedAbout && buildReadBehindTestsInTurnOfTypedElements(access))
         return true;
     if (!tested && level == KnowledgeLevel::Expected && access.isOnlyAskedAbout && walker.purchaseAsksWhetherTurnsCanBeQuiet() && walker.looksTakeFormsBehindLooksAsBuilt() && access.typeOfKey.isInteger() && hasArrayStorageForm(kindAskedInTurnOfTypedElements(access)))
@@ -972,7 +972,7 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     read.setAsksCellWhereNothingIsFound(restsOnLinksWordAlone && !tested);
     read.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
     if (tested && !lengthOfListMadeInSight(walker, access.base))
-        holdSmallRangeBelowLengthOfListInFrontOfTypedCopy(access, *tested);
+        hoistArrayBoundsCheck(access, *tested);
     std::optional<PassedTest> inside = walker.findWhatHoldsPositionInsideList(access.base, access.key);
     if (!inside && tested && access.typeOfKey.isInteger())
         inside = walker.findWhatHoldsPositionBelowRoomOfView(access.base, access.key);
@@ -992,7 +992,7 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
             walker.checkThatMemoryAnswersAsBelieved(known, WTF::move(read));
             walker.state() = WTF::move(believed);
         }
-        walker.count(StatisticID::ElementsOfFreshListsKnownAgain);
+        walker.count(StatisticID::FreshArrayElementReadsEliminated);
         walker.bind(access.value.id(), numberMadeOnceOfElementInTypedElements(walker, access.value, known));
         return true;
     }
@@ -1002,18 +1002,18 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
         read.setIsPresent(*insideAsWritten);
     }
     bool takesNaNForHole = tested && read.isInBounds() && read.arrayStorage() == ArrayStorage::Double && !read.admitsInt32Storage() && everyUserTakesUndefinedForNaNInTypedElements(walker, access.value, WhatStandsBesideRead::NumberOrNothing);
-    if (!takesNaNForHole && tested && tested->turnsStoreIntoLists && !tested->isWritable && holdsOnlyNumbers(read.arrayStorage()) && onlyUserHoldsItAgainstNumberInTypedElements(walker, access.value))
+    if (!takesNaNForHole && tested && tested->turnsStoreIntoLists && !tested->isWritable && isNumericStorage(read.arrayStorage()) && onlyUserHoldsItAgainstNumberInTypedElements(walker, access.value))
         takesNaNForHole = true;
     if (takesNaNForHole && tested->turnsStoreIntoLists)
-        walker.count(StatisticID::HolesReadAsNaNInTurnsThatStore);
-    bool leavesTurnAtHole = !presentAtHead && !takesNaNForHole && tested && turnMayBeginAgainInTypedElements(access) && holeLeavesTurnBehindRow(walker, access.value, *tested);
+        walker.count(StatisticID::StoringLoopHoleChecksRemoved);
+    bool leavesTurnAtHole = !presentAtHead && !takesNaNForHole && tested && canGuardAccess(access) && holeLeavesTurnBehindRow(walker, access.value, *tested);
     bool findsNothingOutsideList = read.isInBounds() || isArrayIndexInTypedElements(access.typeOfKey);
-    if (!leavesTurnAtHole && tested && findsNothingOutsideList && holdsOnlyNumbers(read.arrayStorage()) && everyUserTakesUndefinedForNaNInTypedElements(walker, access.value, WhatStandsBesideRead::NumberOrNothing))
+    if (!leavesTurnAtHole && tested && findsNothingOutsideList && isNumericStorage(read.arrayStorage()) && everyUserTakesUndefinedForNaNInTypedElements(walker, access.value, WhatStandsBesideRead::NumberOrNothing))
         read.setReadsHoleAsNaN(true);
     if (level == KnowledgeLevel::Expected)
         markBaseAsPassedInTypedElements(walker, access.base);
-    bool takesNumber = !holdsOnlyNumbers(read.arrayStorage()) || read.readsHoleAsNaN() || leavesTurnAtHole;
-    std::optional<PassedTest> presentInFront = tested && takesNumber && read.keyIsIntegral() && !presentAtHead ? askElementInFrontOfTypedCopy(walker, access.value, *tested, access.base, access.key) : std::nullopt;
+    bool takesNumber = !isNumericStorage(read.arrayStorage()) || read.readsHoleAsNaN() || leavesTurnAtHole;
+    std::optional<PassedTest> presentInFront = tested && takesNumber && read.keyIsIntegral() && !presentAtHead ? tryHoistElementPresenceCheck(walker, access.value, *tested, access.base, access.key) : std::nullopt;
     if (tested && presentAtHead) {
         read.testsPassed = std::nullopt;
         read.setReadsHoleAsNaN(false);
@@ -1036,16 +1036,16 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     if (givesNaNForHole && !isReadInFront) {
         element = walker.state().elementWithNaNForHole(access.base, access.key);
         if (element) {
-            walker.count(StatisticID::NumbersReadOffListsKnownAgain);
+            walker.count(StatisticID::NumericElementReadsEliminated);
             walker.noteReadAnsweredByHoleReadAsNaN(access.value.id(), element);
         }
     }
     if (!element || !walker.types().at(walker.typeOf(element)).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined)) {
         if (leavesTurnAtHole && !isReadInFront && !askElementInTurnOfTypedElements(access, read, *tested))
             return true;
-        if (isReadInFront && walker.testsEveryPosition())
+        if (isReadInFront && walker.checksBounds())
             readAgain = read;
-        Walker::InFrontOfTypedCopy inFront(walker, isReadInFront, walker.turnInWhichListsAreAskedInFront());
+        Walker::SpecializedPreheaderScope preheaderScope(walker, isReadInFront, walker.arrayGuardPurity());
         WhatListWasMadeWith held = namesStorage && read.isPresent() && read.arrayStorage() == ArrayStorage::Contiguous ? whatListWasMadeWith(walker, access.base) : WhatListWasMadeWith();
         element = held.proven ? walker.buildReadTypedByWhatIsRemembered(WTF::move(read), held.proven, held.shown) : walker.build(WTF::move(read));
     }
@@ -1058,7 +1058,7 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
         Origin origin = walker.originOf(access.value);
         origin.isTailCall = false;
         Reference isNumber = buildTestOfNumber(walker, element, TypeTable::number, origin);
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, isNumber))
+        if (!continueOrRestartIteration(walker, isNumber))
             return true;
         element = buildProofOfNumber(walker, element, isNumber, origin);
     }
@@ -1070,7 +1070,7 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
         walker.state().noteElementsLieOutsideViews(access.base);
     }
     if (freshListReadUnderKey && element && element.isValue())
-        noteKnown(walker, KnownNote::ElementReadOffFreshList, freshListReadUnderKey, access.key, 0, elementIsKnownToBeThere ? LocationMasks(heapsUnderElementOfFreshListInTypedElements) : LocationMasks::top().without(heapsWhoseWritesNobodySees), element.bits());
+        noteKnown(walker, KnownNote::ElementReadOffFreshList, freshListReadUnderKey, access.key, 0, elementIsKnownToBeThere ? LocationMasks(heapsUnderElementOfFreshListInTypedElements) : LocationMasks::top().without(unobservableWriteHeaps), element.bits());
     walker.bind(access.value.id(), numberMadeOnceOfElementInTypedElements(walker, access.value, element));
     return true;
 }
@@ -1106,8 +1106,8 @@ static bool keyIsLengthOfListItselfInTypedElements(const AccessOfTypedElements& 
     if (!access.key.isValue() || !access.base.isValue())
         return false;
     const Code& code = access.walker.code();
-    const Operation& key = code.at(rootOfCellInSweptCode(code, access.key.id()));
-    return key.opcode == Opcode::GetArrayLength && rootOfCellInSweptCode(code, key.arrayOperand()) == rootOfCellInSweptCode(code, access.base.id());
+    const Operation& key = code.at(underlyingCellOf(code, access.key.id()));
+    return key.opcode == Opcode::GetArrayLength && underlyingCellOf(code, key.arrayOperand()) == underlyingCellOf(code, access.base.id());
 }
 
 static bool isReadOutOfDoubleStorageInTypedElements(Walker& walker, Reference stored)
@@ -1116,7 +1116,7 @@ static bool isReadOutOfDoubleStorageInTypedElements(Walker& walker, Reference st
         return false;
     const Code& code = walker.code();
     auto behindNames = [&](ValueID held) {
-        while (opcodesThatGiveSameValue.contains(code.at(held).opcode))
+        while (valuePreservingOpcodes.contains(code.at(held).opcode))
             held = code.at(held).operand(0);
         return held;
     };
@@ -1134,7 +1134,7 @@ static bool isReadOutOfDoubleStorageInTypedElements(Walker& walker, Reference st
     std::span<const ValueID> parameters = code.at(join).parameters();
     size_t position = std::ranges::find(parameters, held) - parameters.begin();
     bool everyArmIsSuchRead = position < parameters.size();
-    code.forEachEdgeIntoSoFar(join, [&](const Edge& edge) {
+    code.forEachIncomingEdgeUnsealed(join, [&](const Edge& edge) {
         everyArmIsSuchRead = everyArmIsSuchRead && position < edge.arguments().size() && isSuchRead(edge.arguments()[position]);
     });
     return everyArmIsSuchRead;
@@ -1150,7 +1150,7 @@ static bool askKeyOfLaterStoresOfTypedElements(const AccessOfTypedElements& acce
     for (auto [blockAndKey, numberOfLater] : walker.laterStoresUnderSameKeyInBlockInCurrentBody(first)) {
         BodyValue later = index.value(ValueID(numberOfLater));
         Reference list = nameOfListThatEntersLoopAround(walker, index, later);
-        std::optional<ListTestedInFrontOfLoop> tested = list && list != access.base ? findListTestedForStoresInFrontOfLoop(walker, list) : std::nullopt;
+        std::optional<HoistedArrayGuard> tested = list && list != access.base ? findListTestedForStoresInFrontOfLoop(walker, list) : std::nullopt;
         if (!tested || !tested->isWritable || positionIsKnownToLieInsideList(walker, list, access.key))
             continue;
         Draft length(Opcode::GetArrayLength, origin);
@@ -1159,18 +1159,18 @@ static bool askKeyOfLaterStoresOfTypedElements(const AccessOfTypedElements& acce
         Reference held = walker.build(WTF::move(length));
         if (!held)
             return false;
-        Draft isBelowLength(Opcode::Less, origin);
-        walker.chooseConservativeFields(isBelowLength);
-        isBelowLength.setLeftOperand(access.key);
-        isBelowLength.setRightOperand(held);
-        isBelowLength.setForm(formAllowedForTypedOperator(walker, isBelowLength));
-        Reference test = walker.build(WTF::move(isBelowLength));
+        Draft lengthComparison(Opcode::Less, origin);
+        walker.chooseConservativeFields(lengthComparison);
+        lengthComparison.setLeftOperand(access.key);
+        lengthComparison.setRightOperand(held);
+        lengthComparison.setForm(operatorFormFor(walker, lengthComparison));
+        Reference test = walker.build(WTF::move(lengthComparison));
         if (!test || !test.isValue())
             return false;
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, test, true))
+        if (!continueOrRestartIteration(walker, test, true))
             return false;
         noteKnown(walker, KnownNote::LengthOfList, list, { }, 0, placesUnderLengthsOfLists, held.bits());
-        walker.count(StatisticID::KeysOfLaterStoresAskedInFrontOfTheFirst);
+        walker.count(StatisticID::LaterStoreBoundsChecksHoisted);
     }
     return true;
 }
@@ -1181,10 +1181,10 @@ static bool textOfLoopsReadsListByKeyInTypedElements(const BodyIndex& index, con
     if (!outermost)
         return true;
     outermost = index.loop(outermost).outermost;
-    ValueID list = index.valueBehindCasts(store.objectOperand());
+    ValueID list = index.stripCasts(store.objectOperand());
     for (BlockID member : index.membersOf(outermost)) {
         for (BodyValue value : index.block(member).values()) {
-            if (value.opcode() == Opcode::ElemGet && index.valueBehindCasts(value.objectOperand()) == list)
+            if (value.opcode() == Opcode::ElemGet && index.stripCasts(value.objectOperand()) == list)
                 return true;
         }
     }
@@ -1226,7 +1226,7 @@ std::span<const std::pair<uint64_t, uint32_t>> Walker::laterStoresUnderSameKeyIn
 {
     const BodyIndex& index = currentBodyIndex();
     auto blockAndKeyOf = [&](const BodyValue& store) {
-        ValueID key = index.valueBehindCasts(store.propertyOperand());
+        ValueID key = index.stripCasts(store.propertyOperand());
         return static_cast<uint64_t>(index.blockOf(store.id()).index()) << 32 | (key ? key.index() : std::numeric_limits<uint32_t>::max());
     };
     const Vector<std::pair<uint64_t, uint32_t>>& stores = m_storesByKeyOfBlocks.ensure(&index, [&] {
@@ -1251,14 +1251,14 @@ std::span<const std::pair<uint64_t, uint32_t>> Walker::laterStoresUnderSameKeyIn
 static_assert(declaredBoundOf(Opcode::PutContiguousIndex).writes.isSubsetOf(declaredBoundOf(Opcode::ExtendArrayLength).writes) && declaredBoundOf(Opcode::PutDoubleIndex).writes.isSubsetOf(declaredBoundOf(Opcode::ExtendArrayLength).writes));
 static_assert(declaredBoundOf(Opcode::PutContiguousIndex).reads.isSubsetOf(declaredBoundOf(Opcode::ExtendArrayLength).reads) && declaredBoundOf(Opcode::PutDoubleIndex).reads.isSubsetOf(declaredBoundOf(Opcode::ExtendArrayLength).reads));
 
-static bool literalMayHoldStorageAskedInTypedElements(Walker& walker, const ListTestedInFrontOfLoop& tested)
+static bool literalMayHoldStorageAskedInTypedElements(Walker& walker, const HoistedArrayGuard& tested)
 {
-    const Operation& made = walker.code().at(rootOfCellInSweptCode(walker.code(), tested.name.id()));
+    const Operation& made = walker.code().at(underlyingCellOf(walker.code(), tested.name.id()));
     ArrayStorage born = made.opcode == Opcode::NewArray ? storageThatLiteralIsSurelyBornWith(walker.program(), walker.types(), walker.code(), made) : ArrayStorage::Other;
     return !hasArrayStorageForm(born) || !hasArrayStorageForm(tested.storage) || born == tested.storage || (born == ArrayStorage::Int32 && tested.storage == ArrayStorage::Double);
 }
 
-static std::optional<uint32_t> placeOfCounterNotedInTypedElements(const AccessOfTypedElements& access, KnownNote note, Reference list)
+static std::optional<uint32_t> notedCounterPosition(const AccessOfTypedElements& access, KnownNote note, Reference list)
 {
     const BodyIndex& index = access.walker.currentBodyIndex();
     if (access.value.id().index() >= index.numberOfValues() || index.value(access.value.id()).words() != access.value.words())
@@ -1271,11 +1271,11 @@ static std::optional<uint32_t> placeOfCounterNotedInTypedElements(const AccessOf
     if (!noted || *noted >> 32 != access.walker.currentFunction().index())
         return std::nullopt;
     uint32_t place = static_cast<uint32_t>(*noted);
-    ValueID key = access.counterThatPushGoesBy ? access.counterThatPushGoesBy : index.valueBehindCasts(access.value.propertyOperand());
+    ValueID key = access.counterThatPushGoesBy ? access.counterThatPushGoesBy : index.stripCasts(access.value.propertyOperand());
     return place <= head.numberOfParameters() && key == head.parameter(place - 1) ? std::optional(place) : std::nullopt;
 }
 
-static bool standsInHeadOfItsLoopInTypedElements(const AccessOfTypedElements& access)
+static bool isAccessInLoopHeader(const AccessOfTypedElements& access)
 {
     const BodyIndex& index = access.walker.currentBodyIndex();
     BlockID block = index.blockOf(access.value.id());
@@ -1283,64 +1283,64 @@ static bool standsInHeadOfItsLoopInTypedElements(const AccessOfTypedElements& ac
     return !loop || index.loop(loop).head == block;
 }
 
-static std::optional<PassedTest> findWhatHoldsKeyBelowRoomAskedInFrontInTypedElements(const AccessOfTypedElements& access, const ListTestedInFrontOfLoop& tested)
+static std::optional<PassedTest> findHoistedCapacityProof(const AccessOfTypedElements& access, const HoistedArrayGuard& tested)
 {
     Walker& walker = access.walker;
     const BodyIndex& index = walker.currentBodyIndex();
     LoopID loop = index.loopOf(index.blockOf(access.value.id()));
-    std::optional<uint64_t> noted = loop ? findKnown(walker, KnownNote::TestThatRoomOfListHoldsEveryTurn, tested.name, { }, index.loop(loop).head.index()) : std::nullopt;
-    std::optional<uint64_t> filledTo = noted ? findKnown(walker, KnownNote::LengthThatLoopFillsLiteralTo, tested.name, { }, index.loop(loop).head.index()) : std::nullopt;
-    Reference roomHoldsEveryTurn = filledTo ? Reference::fromBits(static_cast<uint32_t>(*noted)) : Reference();
-    if (!roomHoldsEveryTurn || !roomHoldsEveryTurn.isValue() || walker.code().at(roomHoldsEveryTurn.id()).opcode != Opcode::LessEq || !access.base.isRecord() || !access.key.isRecord())
+    std::optional<uint64_t> noted = loop ? findKnown(walker, KnownNote::LoopCapacityGuard, tested.name, { }, index.loop(loop).head.index()) : std::nullopt;
+    std::optional<uint64_t> filledTo = noted ? findKnown(walker, KnownNote::FinalLiteralLength, tested.name, { }, index.loop(loop).head.index()) : std::nullopt;
+    Reference loopCapacityGuard = filledTo ? Reference::fromBits(static_cast<uint32_t>(*noted)) : Reference();
+    if (!loopCapacityGuard || !loopCapacityGuard.isValue() || walker.code().at(loopCapacityGuard.id()).opcode != Opcode::LessEq || !access.base.isRecord() || !access.key.isRecord())
         return std::nullopt;
-    std::optional<PassedTest> below = walker.findWhatHoldsBelow(access.key, Reference::fromBits(static_cast<uint32_t>(*filledTo)));
+    std::optional<PassedTest> below = walker.findUpperBoundProof(access.key, Reference::fromBits(static_cast<uint32_t>(*filledTo)));
     if (BodyTerminator testOfHead = index.terminator(index.loop(loop).head); !below && testOfHead.isConditionalBranch())
         below = walker.findPassedTest(walker.referenceOf(testOfHead.operand(0)));
     if (!below)
         return std::nullopt;
-    GroundsOfPosition grounds { .view = access.base.id(), .position = access.key.id(), .length = walker.code().at(roomHoldsEveryTurn.id()).rightOperand(), .lengthHoldsBound = roomHoldsEveryTurn.id() };
+    GroundsOfPosition grounds { .view = access.base.id(), .position = access.key.id(), .length = walker.code().at(loopCapacityGuard.id()).rightOperand(), .limitWithinLengthCheck = loopCapacityGuard.id() };
     if (!below->sides().empty()) {
         grounds.isBelow = below->sides().front().test;
-        grounds.isBelowAnswersYes = below->sides().front().answersYes;
+        grounds.isBelowResult = below->sides().front().testResult;
     }
     return walker.showPositionInside(grounds);
 }
 
-static bool goOnWhereListIsLengthenedInTypedElements(const AccessOfTypedElements& access, const ListTestedInFrontOfLoop& tested, Origin origin, std::optional<PassedTest>& insideBehindRaise)
+static bool buildLengthExtension(const AccessOfTypedElements& access, const HoistedArrayGuard& tested, Origin origin, std::optional<PassedTest>& newBoundsProof)
 {
     Walker& walker = access.walker;
-    std::optional<PassedTest> belowRoom;
-    if (!walker.takesRoomsAskedInFrontForGiven() && placeOfCounterNotedInTypedElements(access, KnownNote::RoomOfListHoldsEveryTurn, tested.name) && !standsInHeadOfItsLoopInTypedElements(access))
-        belowRoom = findWhatHoldsKeyBelowRoomAskedInFrontInTypedElements(access, tested);
-    if (belowRoom)
-        walker.count(StatisticID::ListsLengthenedOnRoomAskedInFront);
-    if (!belowRoom && !walker.takesRoomsAskedInFrontForGiven()) {
-        Draft room(Opcode::GetArrayRoom, origin);
+    std::optional<PassedTest> capacityProof;
+    if (!walker.shouldSkipCapacityChecks() && notedCounterPosition(access, KnownNote::CapacityCoversLoop, tested.name) && !isAccessInLoopHeader(access))
+        capacityProof = findHoistedCapacityProof(access, tested);
+    if (capacityProof)
+        walker.count(StatisticID::AppendsUsingLoopCapacityGuards);
+    if (!capacityProof && !walker.shouldSkipCapacityChecks()) {
+        Draft room(Opcode::GetArrayCapacity, origin);
         walker.chooseConservativeFields(room);
         room.setArrayOperand(tested.name);
-        Draft isBelowRoom(Opcode::Less, origin);
-        walker.chooseConservativeFields(isBelowRoom);
-        isBelowRoom.setLeftOperand(access.key);
-        isBelowRoom.setRightOperand(walker.build(WTF::move(room)));
-        if (!isBelowRoom.rightOperand())
+        Draft capacityComparison(Opcode::Less, origin);
+        walker.chooseConservativeFields(capacityComparison);
+        capacityComparison.setLeftOperand(access.key);
+        capacityComparison.setRightOperand(walker.build(WTF::move(room)));
+        if (!capacityComparison.rightOperand())
             return false;
-        isBelowRoom.setForm(formAllowedForTypedOperator(walker, isBelowRoom));
-        Reference roomOfTurn = isBelowRoom.rightOperand();
-        Reference keyLiesBelowRoom = walker.build(WTF::move(isBelowRoom));
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, keyLiesBelowRoom, true))
+        capacityComparison.setForm(operatorFormFor(walker, capacityComparison));
+        Reference currentCapacity = capacityComparison.rightOperand();
+        Reference isKeyWithinCapacity = walker.build(WTF::move(capacityComparison));
+        if (!continueOrRestartIteration(walker, isKeyWithinCapacity, true))
             return false;
-        belowRoom = walker.findWhatHoldsPositionBehindTestOfLength(access.base, access.key, roomOfTurn, keyLiesBelowRoom);
+        capacityProof = walker.boundsProofAfterComparison(access.base, access.key, currentCapacity, isKeyWithinCapacity);
     }
     Draft extend(Opcode::ExtendArrayLength, origin);
     walker.chooseConservativeFields(extend);
     extend.setArrayOperand(access.base);
     extend.setPositionOperand(access.key);
-    if (belowRoom)
-        extend.restOn(*belowRoom);
+    if (capacityProof)
+        extend.restOn(*capacityProof);
     if (Reference pointer = storageOfListFromInFrontOfLoop(walker, tested, origin))
         extend.setStorageOperand(pointer);
-    insideBehindRaise = walker.findWhatHoldsPositionBehindRaise(access.base, access.key, walker.build(WTF::move(extend)));
-    walker.count(StatisticID::StoresThatLengthenTheirListInEveryTurn);
+    newBoundsProof = walker.boundsProofAfterExtension(access.base, access.key, walker.build(WTF::move(extend)));
+    walker.count(StatisticID::IndexedStoresCompiledAsAppends);
     return !walker.isUnreachable() && !walker.hasFailed();
 }
 
@@ -1351,19 +1351,19 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
     if (!access.typeOfKey.isInteger() || !access.typeOfStored || !types.at(access.typeOfStored).isNumber())
         return false;
     bool isPush = !!access.counterThatPushGoesBy;
-    std::optional<ListTestedInFrontOfLoop> tested = isPush ? findListTestedForStoresInFrontOfLoop(walker, access.base) : findListTestedInFrontOfLoop(walker, access.value);
+    std::optional<HoistedArrayGuard> tested = isPush ? findListTestedForStoresInFrontOfLoop(walker, access.base) : findHoistedArrayGuard(walker, access.value);
     bool rowAsksForWritableList = tested && tested->isWritable;
     if (isPush && !rowAsksForWritableList)
         return false;
     if (!rowAsksForWritableList && !access.isOnlyAskedAbout) {
         ArrayStorage asked = types.at(access.typeOfStored).primitives & Primitive::FractionalNumber ? ArrayStorage::Double : ArrayStorage::Int32;
-        bool mayGoByKind = !tested && (asked == ArrayStorage::Double || types.isSubset(access.typeOfStored, TypeTable::int32)) && walker.standsInFrontOfTypedCopy(access.base) && !textOfLoopsReadsListByKeyInTypedElements(walker.currentBodyIndex(), access.value);
-        tested = askListInFrontOfTypedCopy(walker, access.value, access.base, asked, mayGoByKind);
+        bool mayGoByKind = !tested && (asked == ArrayStorage::Double || types.isSubset(access.typeOfStored, TypeTable::int32)) && walker.isInvariantInSpecializedVersion(access.base) && !textOfLoopsReadsListByKeyInTypedElements(walker.currentBodyIndex(), access.value);
+        tested = tryHoistArrayGuardForAccess(walker, access.value, access.base, asked, mayGoByKind);
     }
     bool goesByKind = tested && tested->isWritable && tested->storage == ArrayStorage::Other;
     if (goesByKind && tested->admitsInt32Storage && !types.isSubset(access.typeOfStored, TypeTable::int32))
         return false;
-    if (!tested || !tested->isWritable || (!goesByKind && (!holdsOnlyNumbers(tested->storage) || tested->admitsInt32Storage)))
+    if (!tested || !tested->isWritable || (!goesByKind && (!isNumericStorage(tested->storage) || tested->admitsInt32Storage)))
         return false;
 
     std::optional<PassedTest> inside = access.isOnlyAskedAbout ? std::nullopt : walker.findWhatHoldsPositionInsideList(access.base, access.key);
@@ -1374,18 +1374,18 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
     bool isMovedOutOfDoubleStorage = !fits && (goesByKind || tested->storage == ArrayStorage::Double) && isReadOutOfDoubleStorageInTypedElements(walker, access.stored);
     if (isMovedOutOfDoubleStorage)
         fits = true;
-    if (walker.takesNumbersStoredIntoListsOfDoublesToBeNoNaN() && (goesByKind || tested->storage == ArrayStorage::Double) && types.at(access.typeOfStored).isNumber())
+    if (walker.shouldAssumeNoNaNStores() && (goesByKind || tested->storage == ArrayStorage::Double) && types.at(access.typeOfStored).isNumber())
         fits = true;
-    if ((!isInside || !fits) && !turnMayBeginAgainInTypedElements(access))
+    if ((!isInside || !fits) && !canGuardAccess(access))
         return false;
     Opcode opcode = tested->storage == ArrayStorage::Double ? Opcode::PutDoubleIndex : Opcode::PutContiguousIndex;
-    bool fillsLiteralFromItsEnd = !isInside && placeOfCounterNotedInTypedElements(access, KnownNote::LoopFillsLiteralFromItsEnd, tested->name) && literalMayHoldStorageAskedInTypedElements(walker, *tested);
+    bool appendsToLiteral = !isInside && notedCounterPosition(access, KnownNote::LoopAppendsToLiteral, tested->name) && literalMayHoldStorageAskedInTypedElements(walker, *tested);
     if (access.isOnlyAskedAbout)
-        return answerAheadOfTypedElements(access, fillsLiteralFromItsEnd ? Opcode::ExtendArrayLength : opcode, KnowledgeLevel::Proven);
+        return answerAheadOfTypedElements(access, appendsToLiteral ? Opcode::ExtendArrayLength : opcode, KnowledgeLevel::Proven);
 
     Origin origin = walker.originOf(access.value);
     origin.isTailCall = false;
-    Reference keyIsFromZeroUp;
+    Reference isKeyNonNegative;
     if (!isInside && access.typeOfKey.integers.minimum < 0) {
         Draft zero(Opcode::Integer, origin);
         zero.setInteger(0);
@@ -1393,72 +1393,72 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
         walker.chooseConservativeFields(isNotNegative);
         isNotNegative.setLeftOperand(access.key);
         isNotNegative.setRightOperand(walker.constant(WTF::move(zero)));
-        isNotNegative.setForm(formAllowedForTypedOperator(walker, isNotNegative));
-        keyIsFromZeroUp = walker.build(WTF::move(isNotNegative));
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, keyIsFromZeroUp, true))
+        isNotNegative.setForm(operatorFormFor(walker, isNotNegative));
+        isKeyNonNegative = walker.build(WTF::move(isNotNegative));
+        if (!continueOrRestartIteration(walker, isKeyNonNegative, true))
             return true;
     }
-    bool lengthensList = fillsLiteralFromItsEnd && !turnStoresAgainBehindInTypedElements(access) && walker.mayBeginTurnAgainInClosedCopy() && placeOfCounterNotedInTypedElements(access, KnownNote::ListEndsWhereCounterEntersLoop, tested->name);
-    if (isPush && !lengthensList)
+    bool extendsLength = appendsToLiteral && !turnStoresAgainBehindInTypedElements(access) && walker.canRestartIteration() && notedCounterPosition(access, KnownNote::LengthEqualsInitialCounter, tested->name);
+    if (isPush && !extendsLength)
         return false;
-    if (!isInside && !lengthensList && !walker.takesLengthsAskedInTurnsForGiven()) {
+    if (!isInside && !extendsLength && !walker.shouldSkipLengthChecks()) {
         Draft length(Opcode::GetArrayLength, origin);
         walker.chooseConservativeFields(length);
         length.setArrayOperand(tested->name);
-        Draft isBelowLength(Opcode::Less, origin);
-        walker.chooseConservativeFields(isBelowLength);
-        isBelowLength.setLeftOperand(access.key);
-        isBelowLength.setRightOperand(walker.build(WTF::move(length)));
-        if (!isBelowLength.rightOperand())
+        Draft lengthComparison(Opcode::Less, origin);
+        walker.chooseConservativeFields(lengthComparison);
+        lengthComparison.setLeftOperand(access.key);
+        lengthComparison.setRightOperand(walker.build(WTF::move(length)));
+        if (!lengthComparison.rightOperand())
             return true;
-        isBelowLength.setForm(formAllowedForTypedOperator(walker, isBelowLength));
-        Reference lengthOfTurn = isBelowLength.rightOperand();
-        Reference keyLiesBelowLength = walker.build(WTF::move(isBelowLength));
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, keyLiesBelowLength, true))
+        lengthComparison.setForm(operatorFormFor(walker, lengthComparison));
+        Reference currentLength = lengthComparison.rightOperand();
+        Reference isKeyWithinLength = walker.build(WTF::move(lengthComparison));
+        if (!continueOrRestartIteration(walker, isKeyWithinLength, true))
             return true;
-        std::optional<PassedTest> below = walker.findPassedTest(keyLiesBelowLength);
-        std::optional<PassedTest> fromZeroUp = keyIsFromZeroUp ? walker.findPassedTest(keyIsFromZeroUp) : walker.findWhatHoldsFromZeroUp(access.key);
+        std::optional<PassedTest> below = walker.findPassedTest(isKeyWithinLength);
+        std::optional<PassedTest> fromZeroUp = isKeyNonNegative ? walker.findPassedTest(isKeyNonNegative) : walker.findNonNegativeProof(access.key);
         if (below && fromZeroUp)
-            inside = walker.showPositionInsideBehindTests(access.base, access.key, lengthOfTurn, *fromZeroUp, *below);
+            inside = walker.boundsProofFromChecks(access.base, access.key, currentLength, *fromZeroUp, *below);
     }
     Reference stored = access.stored;
     if (!fits && tested->storage == ArrayStorage::Int32) {
         Reference isInt32 = buildTestOfNumber(walker, stored, TypeTable::int32, origin);
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, isInt32))
+        if (!continueOrRestartIteration(walker, isInt32))
             return true;
         stored = buildProofOfNumber(walker, stored, isInt32, origin);
         if (stored && stored.isValue() && access.stored.isValue() && stored != access.stored && !walker.state().checkedNameOf(access.stored)) {
             walker.state().noteCheckedName(access.stored, stored);
-            walker.count(StatisticID::NumbersKnownBehindTypedStores);
+            walker.count(StatisticID::StoredValuesNarrowedToInt32);
         }
     } else if (!fits) {
         Draft isItself(Opcode::StrictEq, origin);
         walker.chooseConservativeFields(isItself);
         isItself.setLeftOperand(stored);
         isItself.setRightOperand(stored);
-        isItself.setForm(formAllowedForTypedOperator(walker, isItself));
-        if (!goOnOrBeginTurnAgainInTypedElements(walker, walker.build(WTF::move(isItself))))
+        isItself.setForm(operatorFormFor(walker, isItself));
+        if (!continueOrRestartIteration(walker, walker.build(WTF::move(isItself))))
             return true;
     }
     if (!stored)
         return true;
-    if (!walker.standsInStretchWithArmsAsWritten() && turnMayBeginAgainInTypedElements(access) && !askKeyOfLaterStoresOfTypedElements(access, origin))
+    if (!walker.standsInStretchWithArmsAsWritten() && canGuardAccess(access) && !askKeyOfLaterStoresOfTypedElements(access, origin))
         return true;
 
-    if (lengthensList && !goOnWhereListIsLengthenedInTypedElements(access, *tested, origin, inside))
+    if (extendsLength && !buildLengthExtension(access, *tested, origin, inside))
         return true;
-    Reference heldInFrontOfStore;
-    if (opcode == Opcode::PutDoubleIndex && !goesByKind && walker.storeIntoElementCanBePutBack() && turnStoresAgainBehindInTypedElements(access)) {
-        heldInFrontOfStore = walker.state().element(access.base, access.key);
-        if (!heldInFrontOfStore || !types.at(walker.typeOf(heldInFrontOfStore)).isNumber()) {
+    Reference valueBeforeStore;
+    if (opcode == Opcode::PutDoubleIndex && !goesByKind && walker.canRecordUndoableStore() && turnStoresAgainBehindInTypedElements(access)) {
+        valueBeforeStore = walker.state().element(access.base, access.key);
+        if (!valueBeforeStore || !types.at(walker.typeOf(valueBeforeStore)).isNumber()) {
             Draft read(Opcode::GetOwnDoubleIndex, origin);
             walker.chooseConservativeFields(read);
             read.setArrayOperand(access.base);
             read.setPositionOperand(access.key);
             if (Reference pointer = storageOfListFromInFrontOfLoop(walker, *tested, origin))
                 read.setStorageOperand(pointer);
-            heldInFrontOfStore = walker.build(WTF::move(read));
-            if (!heldInFrontOfStore)
+            valueBeforeStore = walker.build(WTF::move(read));
+            if (!valueBeforeStore)
                 return true;
         }
     }
@@ -1466,7 +1466,7 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
     Draft put = isPush ? Draft(opcode, origin) : draftOfTypedElements(walker, access.value, opcode);
     if (isPush) {
         walker.chooseConservativeFields(put);
-        walker.count(StatisticID::PushesThatLengthenTheirListInEveryTurn);
+        walker.count(StatisticID::PushesCompiledAsAppends);
     }
     put.setArrayOperand(access.base);
     put.setPositionOperand(access.key);
@@ -1475,14 +1475,14 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
         put.setIsInBounds(*inside);
     if (goesByKind)
         put.setGoesByKindOfStorage(true);
-    if (heldInFrontOfStore && walker.storeIntoElementCanBePutBack())
-        walker.noteStoreIntoElementToPutBack(access.base, access.key, heldInFrontOfStore);
+    if (valueBeforeStore && walker.canRecordUndoableStore())
+        walker.recordUndoableElementStore(access.base, access.key, valueBeforeStore);
     if (Reference pointer = storageOfListFromInFrontOfLoop(walker, *tested, origin))
         put.setStorageOperand(pointer);
     if (isMovedOutOfDoubleStorage)
-        walker.count(StatisticID::NumbersMovedOutOfDoubleStorage);
+        walker.count(StatisticID::DoubleElementsCopiedUnchecked);
     Reference store = walker.build(WTF::move(put));
-    walker.takeStoreBeingBuiltToPutBack();
+    walker.takePendingUndoableStore();
     noteStoredElementInTypedElements(walker, access.base, access.key, stored);
     walker.bind(access.value.id(), store);
     walker.letRestOfStretchRunAsWrittenBehindFirstStore(access.value.id());
@@ -1491,12 +1491,12 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
 static bool storesUnderKnownIndexIntoFreshListInTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
-    if (access.isOnlyAskedAbout || !access.base || !access.key || !access.key.isConstant() || !isFreshListAsMade(walker, access.base) || !indexesAreAbsentAboveLists(walker))
+    if (access.isOnlyAskedAbout || !access.base || !access.key || !access.key.isConstant() || !isFreshPristineArray(walker, access.base) || !isArrayPrototypeChainSane(walker))
         return false;
     const Code& code = walker.code();
     const Operation& key = code.at(access.key.id());
     std::optional<uint32_t> length = lengthOfFreshList(walker, access.base);
-    std::optional<uint64_t> lengthAsMade = lengthThatListIsMadeWith(code, code.at(rootOfCellInSweptCode(code, access.base.id())));
+    std::optional<uint64_t> lengthAsMade = lengthThatListIsMadeWith(code, code.at(underlyingCellOf(code, access.base.id())));
     return length && lengthAsMade && key.opcode == Opcode::Integer && key.integer() >= 0 && key.integer() < static_cast<int64_t>(UINT32_MAX);
 }
 
@@ -1612,7 +1612,7 @@ static bool viewIsUsedElsewhereInTypedElements(Walker& walker, const BodyValue& 
 {
     const BodyIndex& index = walker.currentBodyIndex();
     bool isOfThisBody = access.id().index() < index.numberOfValues() && index.value(access.id()).words() == access.words();
-    return isOfThisBody && !index.hasOneUse(index.valueBehindCasts(access.objectOperand()));
+    return isOfThisBody && !index.hasOneUse(index.stripCasts(access.objectOperand()));
 }
 
 static Reference mostOfSmallRangeInTypedElements(Walker& walker, Reference position, Origin origin)
@@ -1639,34 +1639,34 @@ static void noteLengthOfViewAboveWhatPassedInTypedElements(Walker& walker, Refer
         noteKnown(walker, KnownNote::LengthOfList, view, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }), held.bits());
 }
 
-static std::optional<PassedTest> holdPositionBelowLengthOrBeginTurnAgainInTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType, Origin origin)
+static std::optional<PassedTest> tryGuardIndexInBounds(const AccessOfTypedElements& access, TypedArrayType typedArrayType, Origin origin)
 {
     Walker& walker = access.walker;
-    if ((!walker.mayBeginTurnAgainInClosedCopy() && !walker.stretchMayRunAsWrittenInstead()) || !walker.opensGuesses() || !readsElementsInLineInTypedElements(typedArrayType))
+    if ((!walker.canRestartIteration() && !walker.stretchMayRunAsWrittenInstead()) || !walker.opensGuesses() || !readsElementsInLineInTypedElements(typedArrayType))
         return std::nullopt;
     if (!access.typeOfKey.isInteger() || positionIsKnownToLieInsideList(walker, access.base, access.key))
         return std::nullopt;
     bool turnNeedsNumber = turnTakesWhatIsReadForKeyOrStoresItIntoViewInTypedElements(walker, access.value);
-    std::optional<PassedTest> fromZeroUp = walker.findWhatHoldsFromZeroUp(access.key);
+    std::optional<PassedTest> fromZeroUp = walker.findNonNegativeProof(access.key);
     if ((!fromZeroUp && !turnNeedsNumber) || (!turnNeedsNumber && !walker.stretchMayRunAsWrittenInstead() && !onlyUserTakesUndefinedForNaNInTypedElements(walker, access.value)))
         return std::nullopt;
     origin.isTailCall = false;
     Reference length = lengthOfViewInTypedElements(access, typedArrayType, origin);
     if (!length || walker.isUnreachable())
         return std::nullopt;
-    auto goOnOrBeginTurnAgain = [&](Reference test) -> std::optional<PassedTest> {
+    auto continueOrFallBack = [&](Reference test) -> std::optional<PassedTest> {
         if (!test || !test.isValue())
             return std::nullopt;
         if (std::optional<PassedTest> known = walker.findPassedTest(test))
             return known;
         BlockID failed = walker.addBlock(BlockFrequency::Rare);
-        std::optional<PassedTest> passes = walker.goOnWhereTestPasses(test, failed);
+        std::optional<PassedTest> passes = walker.continueIfCheckPasses(test, failed);
         BlockID passed = walker.currentBlock();
         walker.continueIn(failed);
         if (!walker.isUnreachable())
-            beginAgainInTypedElements(walker);
+            jumpToGuardFallback(walker);
         walker.continueIn(passed);
-        walker.noteGuessOpened();
+        walker.recordSpeculation();
         return walker.isUnreachable() ? std::nullopt : passes;
     };
     Reference key = access.key;
@@ -1677,10 +1677,10 @@ static std::optional<PassedTest> holdPositionBelowLengthOrBeginTurnAgainInTypedE
         walker.chooseConservativeFields(isNotNegative);
         isNotNegative.setLeftOperand(key);
         isNotNegative.setRightOperand(walker.constant(WTF::move(zero)));
-        isNotNegative.setForm(formAllowedForTypedOperator(walker, isNotNegative));
+        isNotNegative.setForm(operatorFormFor(walker, isNotNegative));
         Reference isFromZeroUp = walker.build(WTF::move(isNotNegative));
         BlockID whereSignIsAsked = walker.currentBlock();
-        fromZeroUp = goOnOrBeginTurnAgain(isFromZeroUp);
+        fromZeroUp = continueOrFallBack(isFromZeroUp);
         if (!fromZeroUp)
             return std::nullopt;
         if (walker.currentBlock() != whereSignIsAsked && key.isValue() && isFromZeroUp.isValue() && !walker.state().checkedNameOf(key)) {
@@ -1703,15 +1703,15 @@ static std::optional<PassedTest> holdPositionBelowLengthOrBeginTurnAgainInTypedE
     walker.chooseConservativeFields(test);
     test.setLeftOperand(most ? most : key);
     test.setRightOperand(length);
-    test.setForm(formAllowedForTypedOperator(walker, test));
+    test.setForm(operatorFormFor(walker, test));
     Reference isBelow = walker.build(WTF::move(test));
     BlockID whereBoundIsAsked = walker.currentBlock();
-    std::optional<PassedTest> below = goOnOrBeginTurnAgain(isBelow);
+    std::optional<PassedTest> below = continueOrFallBack(isBelow);
     if (!below)
         return std::nullopt;
     if (most && walker.currentBlock() != whereBoundIsAsked)
         noteLengthOfViewAboveWhatPassedInTypedElements(walker, access.base, length, isBelow, origin);
-    return walker.showPositionInsideBehindTests(access.base, access.key, length, *fromZeroUp, *below);
+    return walker.boundsProofFromChecks(access.base, access.key, length, *fromZeroUp, *below);
 }
 
 static std::optional<PassedTest> holdPositionBelowLengthOrStopInTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType, Origin origin)
@@ -1723,13 +1723,13 @@ static std::optional<PassedTest> holdPositionBelowLengthOrStopInTypedElements(co
     if (access.value.id().index() >= index.numberOfValues() || index.value(access.value.id()).words() != access.value.words() || !linksWordCanBeHeldAgainst(walker, access.base))
         return std::nullopt;
     uint32_t least = walker.facts().linked().leastLengthOfViewsReadAt(walker.currentFunction(), access.value.id());
-    std::optional<PassedTest> fromZeroUp = least ? walker.findWhatHoldsFromZeroUp(access.key) : std::nullopt;
+    std::optional<PassedTest> fromZeroUp = least ? walker.findNonNegativeProof(access.key) : std::nullopt;
     if (!fromZeroUp)
         return std::nullopt;
     origin.isTailCall = false;
     Draft written(Opcode::Integer, origin);
     written.setInteger(least);
-    if (!walker.findWhatHoldsBelow(access.key, walker.constant(WTF::move(written))))
+    if (!walker.findUpperBoundProof(access.key, walker.constant(WTF::move(written))))
         return std::nullopt;
     Draft read(Opcode::GetTypedArrayLength, origin);
     walker.chooseConservativeFields(read);
@@ -1744,7 +1744,7 @@ static std::optional<PassedTest> holdPositionBelowLengthOrStopInTypedElements(co
     greatest.setInteger(least - 1);
     test.setLeftOperand(walker.constant(WTF::move(greatest)));
     test.setRightOperand(length);
-    test.setForm(formAllowedForTypedOperator(walker, test));
+    test.setForm(operatorFormFor(walker, test));
     Reference isBelow = walker.build(WTF::move(test));
     if (!isBelow || !isBelow.isValue())
         return std::nullopt;
@@ -1752,7 +1752,7 @@ static std::optional<PassedTest> holdPositionBelowLengthOrStopInTypedElements(co
     bool standsAtHeadOfBlock = !below;
     if (!below) {
         BlockID failed = walker.addBlock(BlockFrequency::Rare);
-        below = walker.goOnWhereTestPasses(isBelow, failed);
+        below = walker.continueIfCheckPasses(isBelow, failed);
         BlockID passed = walker.currentBlock();
         walker.continueIn(failed);
         if (!walker.isUnreachable())
@@ -1763,7 +1763,7 @@ static std::optional<PassedTest> holdPositionBelowLengthOrStopInTypedElements(co
         return std::nullopt;
     if (standsAtHeadOfBlock)
         noteLengthOfViewAboveWhatPassedInTypedElements(walker, access.base, length, isBelow, origin);
-    return walker.showPositionInsideBehindTests(access.base, access.key, length, *fromZeroUp, *below);
+    return walker.boundsProofFromChecks(access.base, access.key, length, *fromZeroUp, *below);
 }
 
 static bool onlyUserTakesNumberInTypedElements(Walker& walker, const BodyValue& read)
@@ -1816,13 +1816,13 @@ bool isViewOfNumbersReadInLine(Walker& walker, TypeID typeOfView)
     return base.kind == KindOfBaseOfTypedElements::TypedArray && readsElementsInLineInTypedElements(base.typedArrayType) && !isBigInt(base.typedArrayType);
 }
 
-Reference buildOperatorOnIntegersOfLoop(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
+Reference buildIntegerOperator(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
 {
     Draft draft(opcode, origin);
     walker.chooseConservativeFields(draft);
     draft.setLeftOperand(left);
     draft.setRightOperand(right);
-    draft.setForm(formAllowedForTypedOperator(walker, draft));
+    draft.setForm(operatorFormFor(walker, draft));
     return walker.build(WTF::move(draft));
 }
 
@@ -1834,11 +1834,11 @@ Reference buildRoomOfViewBesideAddend(Walker& walker, Reference view, Reference 
     length.setTypedArrayType(classifyBaseOfTypedElements(walker, walker.typeOf(view)).typedArrayType);
     Reference room = walker.build(WTF::move(length));
     if (room && addend && !walker.isUnreachable())
-        room = buildOperatorOnIntegersOfLoop(walker, Opcode::Sub, room, addend, origin);
+        room = buildIntegerOperator(walker, Opcode::Sub, room, addend, origin);
     return room && room.isRecord() && walker.types().at(walker.typeOf(room)).isInteger() ? room : Reference();
 }
 
-Reference buildLengthOfListInFrontOfLoop(Walker& walker, Reference list, Origin origin)
+Reference buildArrayLength(Walker& walker, Reference list, Origin origin)
 {
     Draft draft(Opcode::GetArrayLength, origin);
     walker.chooseConservativeFields(draft);
@@ -1847,11 +1847,11 @@ Reference buildLengthOfListInFrontOfLoop(Walker& walker, Reference list, Origin 
     return length && length.isRecord() && walker.types().at(walker.typeOf(length)).isInteger() ? length : Reference();
 }
 
-static void holdSmallRangeBelowLengthOfViewInFrontOfTypedCopy(const AccessOfTypedElements& access, TypedArrayType typedArrayType)
+static void hoistTypedArrayBoundsCheck(const AccessOfTypedElements& access, TypedArrayType typedArrayType)
 {
-    constexpr Walker::TurnOfTypedCopy turn = Walker::TurnOfTypedCopy::HasRunNoOtherCode;
+    constexpr Walker::IterationPurity purity = Walker::IterationPurity::KnownEffectsOnly;
     Walker& walker = access.walker;
-    if (!walker.opensGuesses() || !readsElementsInLineInTypedElements(typedArrayType) || !access.typeOfKey.isInteger() || !walker.standsInFrontOfTypedCopy(access.base, turn) || !walker.turnsOfTypedCopyLeaveViewsAsTheyAre(turn) || walker.leavesOutQuestionThatEveryTurnWouldAsk(Walker::QuestionIsAsked::Anywhere))
+    if (!walker.opensGuesses() || !readsElementsInLineInTypedElements(typedArrayType) || !access.typeOfKey.isInteger() || !walker.isInvariantInSpecializedVersion(access.base, purity) || !walker.iterationsPreserveTypedArrays(purity) || walker.leavesOutQuestionThatEveryTurnWouldAsk(Walker::QuestionIsAsked::Anywhere))
         return;
     Origin origin = walker.originOf(access.value);
     origin.isTailCall = false;
@@ -1863,7 +1863,7 @@ static void holdSmallRangeBelowLengthOfViewInFrontOfTypedCopy(const AccessOfType
     Reference length;
     Reference isBelow;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
         Draft draft(Opcode::GetTypedArrayLength, origin);
         walker.chooseConservativeFields(draft);
         draft.setViewOperand(access.base);
@@ -1875,14 +1875,14 @@ static void holdSmallRangeBelowLengthOfViewInFrontOfTypedCopy(const AccessOfType
         walker.chooseConservativeFields(test);
         test.setLeftOperand(most);
         test.setRightOperand(length);
-        test.setForm(formAllowedForTypedOperator(walker, test));
+        test.setForm(operatorFormFor(walker, test));
         isBelow = walker.build(WTF::move(test));
     }
-    if (!isBelow || !isBelow.isValue() || !walker.goOnInTypedCopyWhereTestInFrontPasses(isBelow, true, turn))
+    if (!isBelow || !isBelow.isValue() || !walker.tryHoistConditionalCheck(isBelow, true, purity))
         return;
     Reference held;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
         Draft narrowed(Opcode::Narrowed, origin);
         narrowed.setValueOperand(length);
         narrowed.setTestOperand(isBelow);
@@ -1893,14 +1893,14 @@ static void holdSmallRangeBelowLengthOfViewInFrontOfTypedCopy(const AccessOfType
     if (!held || !held.isValue() || held == length)
         return;
     noteKnown(walker, KnownNote::LengthOfList, access.base, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }), held.bits());
-    walker.noteGuessOpened();
-    walker.noteListAskedInFrontOfTypedCopy();
-    walker.count(StatisticID::BoundsAskedOfViewsInFrontOfTypedCopies);
+    walker.recordSpeculation();
+    walker.recordHoistedArrayGuard();
+    walker.count(StatisticID::TypedArrayBoundsChecksHoisted);
 }
 
 Reference buildReadOfElementOfViewBehindTestOfLength(Walker& walker, const BodyValue& read, Reference view, Origin origin, BlockID whereItLiesOutside, bool readIsUpdated)
 {
-    if (walker.leavesOutReadsBehindTestsOfLengths())
+    if (walker.shouldDropLengthCheckedReads())
         return { };
     Reference position = walker.referenceOf(read.propertyOperand());
     TypedArrayType typedArrayType = classifyBaseOfTypedElements(walker, walker.typeOf(view)).typedArrayType;
@@ -1915,7 +1915,7 @@ Reference buildReadOfElementOfViewBehindTestOfLength(Walker& walker, const BodyV
         if (!length || walker.isUnreachable())
             return { };
     }
-    std::optional<PassedTest> fromZeroUp = walker.findWhatHoldsFromZeroUp(position);
+    std::optional<PassedTest> fromZeroUp = walker.findNonNegativeProof(position);
     if (!fromZeroUp) {
         Draft zero(Opcode::Integer, origin);
         zero.setInteger(0);
@@ -1923,8 +1923,8 @@ Reference buildReadOfElementOfViewBehindTestOfLength(Walker& walker, const BodyV
         walker.chooseConservativeFields(isNotNegative);
         isNotNegative.setLeftOperand(position);
         isNotNegative.setRightOperand(walker.constant(WTF::move(zero)));
-        isNotNegative.setForm(formAllowedForTypedOperator(walker, isNotNegative));
-        fromZeroUp = walker.goOnWhereTestPasses(walker.build(WTF::move(isNotNegative)), whereItLiesOutside);
+        isNotNegative.setForm(operatorFormFor(walker, isNotNegative));
+        fromZeroUp = walker.continueIfCheckPasses(walker.build(WTF::move(isNotNegative)), whereItLiesOutside);
         if (!fromZeroUp)
             return { };
     }
@@ -1935,10 +1935,10 @@ Reference buildReadOfElementOfViewBehindTestOfLength(Walker& walker, const BodyV
     walker.chooseConservativeFields(isBelow);
     isBelow.setLeftOperand(most ? most : position);
     isBelow.setRightOperand(length);
-    isBelow.setForm(formAllowedForTypedOperator(walker, isBelow));
+    isBelow.setForm(operatorFormFor(walker, isBelow));
     Reference test = walker.build(WTF::move(isBelow));
     BlockID whereItIsAsked = walker.currentBlock();
-    std::optional<PassedTest> below = walker.goOnWhereTestPasses(test, whereItLiesOutside);
+    std::optional<PassedTest> below = walker.continueIfCheckPasses(test, whereItLiesOutside);
     if (!below)
         return { };
     if (most && walker.currentBlock() != whereItIsAsked)
@@ -1963,7 +1963,7 @@ Reference buildReadOfElementOfViewBehindTestOfLength(Walker& walker, const BodyV
     element.setViewOperand(view);
     element.setPositionOperand(position);
     element.setTypedArrayType(typedArrayType);
-    if (std::optional<PassedTest> inside = walker.showPositionInsideBehindTests(view, position, length, *fromZeroUp, *below))
+    if (std::optional<PassedTest> inside = walker.boundsProofFromChecks(view, position, length, *fromZeroUp, *below))
         element.setIsInsideView(*inside);
     element.setLevel(KnowledgeLevel::Proven);
     element.setKeyIsIntegral(true);
@@ -1983,20 +1983,20 @@ static bool buildViewReadOfTypedElements(const AccessOfTypedElements& access, Ty
     if (!inside && access.key.isConstant()) {
         inside = walker.findWhatHoldsPositionInsideList(access.base, access.key);
         if (!inside) {
-            holdSmallRangeBelowLengthOfViewInFrontOfTypedCopy(access, typedArrayType);
+            hoistTypedArrayBoundsCheck(access, typedArrayType);
             inside = walker.findWhatHoldsPositionInsideList(access.base, access.key);
         }
     }
-    if (!inside && walker.turnOfTypedCopyHasDoneNothing())
-        inside = holdPositionBelowLengthOrBeginTurnAgainInTypedElements(access, typedArrayType, read.origin());
+    if (!inside && walker.isIterationEffectFree())
+        inside = tryGuardIndexInBounds(access, typedArrayType, read.origin());
     if (!inside)
         inside = walker.findWhatHoldsPositionInsideList(access.base, access.key);
     if (!inside) {
-        holdSmallRangeBelowLengthOfViewInFrontOfTypedCopy(access, typedArrayType);
+        hoistTypedArrayBoundsCheck(access, typedArrayType);
         inside = walker.findWhatHoldsPositionInsideList(access.base, access.key);
     }
     if (!inside)
-        inside = holdPositionBelowLengthOrBeginTurnAgainInTypedElements(access, typedArrayType, read.origin());
+        inside = tryGuardIndexInBounds(access, typedArrayType, read.origin());
     if (!inside)
         inside = holdPositionBelowLengthOrStopInTypedElements(access, typedArrayType, read.origin());
     read.setViewOperand(access.base);
@@ -2044,12 +2044,12 @@ static bool buildViewStoreOfTypedElements(const AccessOfTypedElements& access, T
         if (isInt(typedArrayType) && walker.types().at(access.typeOfStored).isNumberOrNullish()) {
             Draft zero(Opcode::Integer, origin);
             zero.setInteger(0);
-            stored = buildOperatorOnIntegersOfLoop(walker, Opcode::BitOr, stored, walker.constant(WTF::move(zero)), origin);
+            stored = buildIntegerOperator(walker, Opcode::BitOr, stored, walker.constant(WTF::move(zero)), origin);
         } else {
             Draft conversion(Opcode::ToNumber, origin);
             conversion.setValueOperand(stored);
             walker.chooseConservativeFields(conversion);
-            conversion.setForm(formAllowedForTypedOperator(walker, conversion));
+            conversion.setForm(operatorFormFor(walker, conversion));
             stored = walker.build(WTF::move(conversion));
         }
         if (!stored)
@@ -2064,7 +2064,7 @@ static bool buildViewStoreOfTypedElements(const AccessOfTypedElements& access, T
     if (!inside && level == KnowledgeLevel::Proven && access.typeOfKey.isInteger())
         inside = walker.findWhatHoldsPositionBelowRoomOfView(access.base, access.key);
     if (!inside && level == KnowledgeLevel::Proven && access.key.isConstant()) {
-        holdSmallRangeBelowLengthOfViewInFrontOfTypedCopy(access, typedArrayType);
+        hoistTypedArrayBoundsCheck(access, typedArrayType);
         inside = walker.findWhatHoldsPositionInsideList(access.base, access.key);
     }
     if (inside)
@@ -2103,12 +2103,12 @@ static bool buildAccessByIndexOfTypedElements(const AccessOfTypedElements& acces
     draft.setKeyIsIntegral(keyIsIntegral);
     draft.setExpectedElements(elementsExpectedByTypedElements(typedArrayType));
     if (typedArrayType == TypeFloat64)
-        walker.count(StatisticID::GenericAccessesThatExpectViewsOfDoubles);
+        walker.count(StatisticID::Float64ArrayGenericAccessesHinted);
     if (!access.typeOfKey.isNumber())
-        walker.count(StatisticID::GenericAccessesThatExpectViewsUnderKeysOfWhichNothingIsKnown);
+        walker.count(StatisticID::UntypedKeyGenericAccessesHinted);
     if (draft.opcode == Opcode::ElemGet && keyIsIntegral && walker.isInLoop() && isExpectedToBeArgumentsObject(walker, access.value.objectOperand())) {
         draft.setReceiverIsExpectedToBeArguments(true);
-        walker.count(StatisticID::ElementsOfArgumentsObjectsReadInLine);
+        walker.count(StatisticID::ArgumentsElementsReadInline);
     }
     markBaseAsPassedInTypedElements(walker, access.base);
     walker.bind(access.value.id(), walker.build(WTF::move(draft)));
@@ -2146,7 +2146,7 @@ static bool buildReadOfFreshArgumentsOfTypedElements(const AccessOfTypedElements
         walker.chooseConservativeFields(test);
         test.setLeftOperand(access.key);
         test.setRightOperand(walker.constant(WTF::move(number)));
-        test.setForm(formAllowedForTypedOperator(walker, test));
+        test.setForm(operatorFormFor(walker, test));
         Reference isParameter = walker.build(WTF::move(test));
         if (!isParameter)
             return true;
@@ -2170,11 +2170,11 @@ static bool buildReadOfFreshArgumentsOfTypedElements(const AccessOfTypedElements
         walker.chooseConservativeFields(difference);
         difference.setLeftOperand(position);
         difference.setRightOperand(walker.constant(WTF::move(first)));
-        difference.setForm(formAllowedForTypedOperator(walker, difference));
+        difference.setForm(operatorFormFor(walker, difference));
         position = walker.build(WTF::move(difference));
         if (!position)
             return true;
-        position = boxedUnlessNumbersAreUnboxed(walker, position, origin);
+        position = boxNumberIfNeeded(walker, position, origin);
     }
 
     Draft read = draftOfTypedElements(walker, access.value, Opcode::GetArrayElement);
@@ -2406,7 +2406,7 @@ constinit const OpcodeSet opcodesThatHearRaiseWherePushIsBuiltAsWrittenTakes { O
 
 bool hearRaiseWherePushIsBuiltAsWrittenOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
-    if (!walker.has(Mechanism::TypedOperations) || !walker.standsInTryOfLoopOfBodyAtWork() || walker.standsInTurnOfTypedCopy() || walker.isUnreachable())
+    if (!walker.has(Mechanism::TypedOperations) || !walker.isInTrialVisitOfCurrentFrame() || walker.isInSpecializedIteration() || walker.isUnreachable())
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     if (call.id().index() >= index.numberOfValues() || index.value(call.id()).words() != call.words())
@@ -2414,7 +2414,7 @@ bool hearRaiseWherePushIsBuiltAsWrittenOfItsOpcodes(Walker& walker, const BodyVa
     LoopID loop = index.loopOf(index.blockOf(call.id()));
     if (!loop || !walker.pushOfLoopFillsLiteral(index.loop(loop).head) || !literalThatCallPushesOntoInEveryTurn(walker, call, index.loop(loop).head))
         return false;
-    walker.hearInTriesWhatTypedCopyDoesInstead(declaredBoundOf(Opcode::ExtendArrayLength));
+    walker.recordTrialEffects(declaredBoundOf(Opcode::ExtendArrayLength));
     return true;
 }
 
@@ -2422,7 +2422,7 @@ constinit const OpcodeSet opcodesThatBuildPushOntoLiteralThatLoopFillsTakes { Op
 
 bool buildPushOntoLiteralThatLoopFillsOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
-    if (!walker.has(Mechanism::TypedOperations) || !walker.standsInTurnOfTypedCopy() || walker.isUnreachable())
+    if (!walker.has(Mechanism::TypedOperations) || !walker.isInSpecializedIteration() || walker.isUnreachable())
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     if (call.id().index() >= index.numberOfValues() || index.value(call.id()).words() != call.words())
@@ -2432,7 +2432,7 @@ bool buildPushOntoLiteralThatLoopFillsOfItsOpcodes(Walker& walker, const BodyVal
         return false;
     BodyBlock head = index.block(index.loop(loop).head);
     Reference list = literalThatCallPushesOntoInEveryTurn(walker, call, head.id());
-    std::optional<uint64_t> noted = list ? findKnown(walker, KnownNote::LoopFillsLiteralFromItsEnd, list, { }, head.id().index()) : std::nullopt;
+    std::optional<uint64_t> noted = list ? findKnown(walker, KnownNote::LoopAppendsToLiteral, list, { }, head.id().index()) : std::nullopt;
     if (!noted || *noted >> 32 != walker.currentFunction().index() || !static_cast<uint32_t>(*noted) || static_cast<uint32_t>(*noted) > head.numberOfParameters())
         return false;
     ValueID counter = head.parameter(static_cast<uint32_t>(*noted) - 1);
@@ -2466,7 +2466,7 @@ bool buildReadByIndexOffAnyBaseOfItsOpcodes(Walker& walker, const BodyValue& val
 {
     if (!walker.has(Mechanism::TypedOperations))
         return false;
-    if (walker.textNamesHolderThatIsNoBuiltin(value.objectOperand()) && readAtSiteOrBeginTurnAgain(walker, value))
+    if (walker.textNamesHolderThatIsNoBuiltin(value.objectOperand()) && tryReadAtSite(walker, value))
         return true;
     Reference object = walker.referenceOf(value.objectOperand());
     Reference key = walker.referenceOf(value.propertyOperand());

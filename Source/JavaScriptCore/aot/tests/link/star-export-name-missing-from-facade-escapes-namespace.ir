@@ -1,4 +1,4 @@
-# main.mjs: pick(all), where pick(space) returns space.spare: the namespace flows, and the front end cannot tell whose name that is: the face of lib.cjs does not list it.
+# main.mjs: pick(all), where pick(space) returns space.spare: the namespace flows, and the front end cannot tell whose name that is: the facade of lib.cjs does not list it.
 # Link lays no read on demand: the read gives anything, AND THE NAMESPACE IS LET GO THEN: what its stars pass on goes with it. The control of ..-is-what-the-face-of-the-file-holds-under-it.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions modules lookups mechanisms=all
@@ -6,10 +6,10 @@
 
 layout L0 module=m0 fields=[{key="helper" declared={type=anything}}, {key="spare" declared={type=anything}}] ownFieldCount=2
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
-module m1 path="#1" displayPath="lib.cjs" flags=[KeepsError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}]
-module m2 path="/barrel.mjs" displayPath="barrel.mjs" flags=[KeepsError, IsImportedAsNamespace] body=f4 requests=[{target=m1 isDynamicStarExport=true completes=true}]
-module m3 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f5 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true}]
+module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="#1" displayPath="lib.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}]
+module m2 path="/barrel.mjs" displayPath="barrel.mjs" flags=[CachesEvaluationError, IsImportedAsNamespace] body=f4 requests=[{target=m1 isDynamicStarExport=true completes=true}]
+module m3 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f5 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true}]
 function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = NewObject layout=L0
@@ -32,12 +32,12 @@ function f1 module=m0 kind=Module flags=[IsHiddenInStackTraces] thisType={type=a
     v1 = Undefined
     Return v1
 }
-function f2 name="helper" module=m0 text={start=17 end=48} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f2 name="helper" module=m0 sourceRange={start=17 end=48} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
     Return v0
 }
-function f3 name="spare" module=m0 text={start=66 end=96} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f3 name="spare" module=m0 sourceRange={start=66 end=96} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=3
     Return v0
@@ -56,7 +56,7 @@ function f5 module=m3 kind=Module thisType={type=anything} results=[{type=anythi
     v4 = Undefined
     Return v4
 }
-function f6 name="pick" module=m3 text={start=37 end=81} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
+function f6 name="pick" module=m3 sourceRange={start=37 end=81} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: undefined|null|object):
     v1 = PropGet v0 key="spare"
     Return v1

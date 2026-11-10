@@ -5075,6 +5075,135 @@ void testSignExtend16To64()
 
 #if CPU(ARM64)
 
+struct ContendedWord {
+    alignas(64) std::atomic<uint64_t> word { 0 };
+    std::atomic<uint64_t> neighbor { 0 };
+};
+
+// Calls the functor while another thread stores beside the word, so that store-exclusives to it are lost.
+template<typename Functor>
+static void withContendedWord(const Functor& functor)
+{
+    ContendedWord contended;
+    std::atomic<bool> isDone { false };
+    std::atomic<bool> hasStarted { false };
+    Ref thread = Thread::create("testmasm contender"_s, [&] {
+        hasStarted.store(true);
+        while (!isDone.load(std::memory_order_relaxed))
+            contended.neighbor.fetch_add(1, std::memory_order_relaxed);
+    });
+    while (!hasStarted.load())
+        Thread::yield();
+    functor(contended.word);
+    isDone.store(true);
+    thread->waitForCompletion();
+}
+
+struct CompareExchangeResult {
+    uint64_t value { 0 };
+    uint64_t status { 0 };
+};
+
+// The function takes the expected value, the new value, the address, and where its results go.
+template<typename Emit>
+static MacroAssemblerCodeRef<JSEntryPtrTag> compileCompareExchange(const Emit& emit)
+{
+    return compile([&](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        GPRReg status = GPRInfo::argumentGPR4;
+        emit(jit, GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, CCallHelpers::Address(GPRInfo::argumentGPR2), status);
+        jit.store64(GPRInfo::argumentGPR0, CCallHelpers::Address(GPRInfo::argumentGPR3, OBJECT_OFFSETOF(CompareExchangeResult, value)));
+        jit.store64(status, CCallHelpers::Address(GPRInfo::argumentGPR3, OBJECT_OFFSETOF(CompareExchangeResult, status)));
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+}
+
+template<typename Emit>
+static void checkStrongCAS(unsigned width, MacroAssembler::StatusCondition condition, const Emit& emit)
+{
+    auto code = compileCompareExchange(emit);
+    constexpr uint64_t old = 0x1122334455667788;
+    uint64_t mask = width == 64 ? std::numeric_limits<uint64_t>::max() : (1ull << width) - 1;
+    uint64_t unexpected = (old ^ 1) & mask;
+    uint64_t replacement = ~old & mask;
+    constexpr unsigned numberOfAttempts = 200000;
+    withContendedWord([&](std::atomic<uint64_t>& word) {
+        for (unsigned attempt = 0; attempt < numberOfAttempts; ++attempt) {
+            word.store(old);
+            CompareExchangeResult result;
+            invoke<void>(code, unexpected, replacement, &word, &result);
+            CHECK_EQ(word.load(), old);
+            CHECK_EQ(result.value & mask, old & mask);
+            CHECK_EQ(!!result.status, condition == MacroAssembler::Failure);
+        }
+        for (unsigned attempt = 0; attempt < numberOfAttempts / 100; ++attempt) {
+            word.store(old);
+            CompareExchangeResult result;
+            invoke<void>(code, old & mask, replacement, &word, &result);
+            CHECK_EQ(word.load(), (old & ~mask) | replacement);
+            CHECK_EQ(result.value & mask, old & mask);
+            CHECK_EQ(!!result.status, condition == MacroAssembler::Success);
+        }
+    });
+}
+
+template<typename Emit>
+static void checkBranchOnWeakCAS(unsigned width, MacroAssembler::StatusCondition condition, const Emit& emit)
+{
+    auto code = compileCompareExchange([&](CCallHelpers& jit, GPRReg expected, GPRReg newValue, CCallHelpers::Address address, GPRReg status) {
+        jit.move(CCallHelpers::TrustedImm32(0), status);
+        CCallHelpers::JumpList taken = emit(jit, expected, newValue, address);
+        CCallHelpers::Jump done = jit.jump();
+        taken.link(&jit);
+        jit.move(CCallHelpers::TrustedImm32(1), status);
+        done.link(&jit);
+    });
+    constexpr uint64_t old = 0x1122334455667788;
+    uint64_t mask = width == 64 ? std::numeric_limits<uint64_t>::max() : (1ull << width) - 1;
+    uint64_t unexpected = (old ^ 1) & mask;
+    uint64_t replacement = ~old & mask;
+    withContendedWord([&](std::atomic<uint64_t>& word) {
+        for (unsigned attempt = 0; attempt < 20000; ++attempt) {
+            word.store(old);
+            CompareExchangeResult result;
+            invoke<void>(code, unexpected, replacement, &word, &result);
+            CHECK_EQ(word.load(), old);
+            CHECK_EQ(!!result.status, condition == MacroAssembler::Failure);
+            invoke<void>(code, old & mask, replacement, &word, &result);
+            bool hasSucceeded = !!result.status == (condition == MacroAssembler::Success);
+            CHECK_EQ(word.load(), hasSucceeded ? (old & ~mask) | replacement : old);
+        }
+    });
+}
+
+static void testCompareExchangeWithLostStores()
+{
+    using JIT = CCallHelpers;
+    for (auto condition : { MacroAssembler::Success, MacroAssembler::Failure }) {
+#define CHECK_STRONG_CAS(width, name) \
+        checkStrongCAS(width, condition, [&](JIT& jit, GPRReg expected, GPRReg newValue, JIT::Address address, GPRReg status) { \
+            jit.name##width(condition, expected, newValue, address, status); \
+        });
+#define CHECK_BRANCH_ON_WEAK_CAS(width, name) \
+        checkBranchOnWeakCAS(width, condition, [&](JIT& jit, GPRReg expected, GPRReg newValue, JIT::Address address) { \
+            return jit.name##width(condition, expected, newValue, address); \
+        });
+#define CHECK_EVERY_WIDTH(check, name) \
+        check(8, name) \
+        check(16, name) \
+        check(32, name) \
+        check(64, name)
+        CHECK_EVERY_WIDTH(CHECK_STRONG_CAS, atomicStrongCAS)
+        CHECK_EVERY_WIDTH(CHECK_STRONG_CAS, atomicRelaxedStrongCAS)
+        CHECK_EVERY_WIDTH(CHECK_BRANCH_ON_WEAK_CAS, branchAtomicWeakCAS)
+        CHECK_EVERY_WIDTH(CHECK_BRANCH_ON_WEAK_CAS, branchAtomicRelaxedWeakCAS)
+#undef CHECK_EVERY_WIDTH
+#undef CHECK_BRANCH_ON_WEAK_CAS
+#undef CHECK_STRONG_CAS
+    }
+}
+
 void testAtomicStrongCASFill8()
 {
     auto test = compile([] (CCallHelpers& jit) {
@@ -8964,6 +9093,193 @@ static void testPrefetch()
     CHECK_EQ(invoke<void*>(prefetchAround, bytes.data() + 64), static_cast<void*>(bytes.data() + 64));
     CHECK_EQ(std::ranges::count(bytes, 0), static_cast<ptrdiff_t>(bytes.size()));
     CHECK_EQ(invoke<void*>(prefetchAround, nullptr), static_cast<void*>(nullptr));
+}
+
+struct NarrowOperationContext {
+    static constexpr unsigned positionOfBase = 16;
+
+    uint64_t operand { 0 };
+    uint64_t registerAfter { 0 };
+    uint64_t comparand { 0 };
+    std::array<uint8_t, 64> memory { };
+};
+
+struct NarrowOperation {
+    using RegisterID = X86Registers::RegisterID;
+
+    void (*emitWithBase)(X86Assembler&, RegisterID operand, int offset, RegisterID base);
+    void (*emitWithIndex)(X86Assembler&, RegisterID operand, int offset, RegisterID base, RegisterID index, int scale);
+    unsigned width;
+    uint64_t (*result)(uint64_t memory, uint64_t operand);
+    bool writesOperand { false };
+    bool comparesWithEAX { false };
+};
+
+static void checkNarrowOperation(const NarrowOperation& operation, X86Registers::RegisterID operandGPR, X86Registers::RegisterID base, std::optional<X86Registers::RegisterID> index)
+{
+    constexpr int offset = 5;
+    constexpr unsigned valueOfIndex = 3;
+    bool isFrameRegister = operandGPR == X86Registers::esp || operandGPR == X86Registers::ebp;
+    auto isUsed = [&](X86Registers::RegisterID gpr) {
+        return gpr == operandGPR || gpr == base || gpr == index || (gpr == X86Registers::eax && operation.comparesWithEAX);
+    };
+
+    auto code = compile([&](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        constexpr std::array saved { X86Registers::ebx, X86Registers::esi, X86Registers::edi, X86Registers::r12, X86Registers::r13, X86Registers::r14, X86Registers::r15 };
+        for (auto gpr : saved)
+            jit.push(gpr);
+        jit.push(GPRInfo::argumentGPR0);
+        CCallHelpers::Address context(X86Registers::esp);
+
+        // Without the prefix, one of the second bytes of these is the operand.
+        for (auto gpr : { X86Registers::eax, X86Registers::ecx, X86Registers::edx, X86Registers::ebx }) {
+            if (!isUsed(gpr))
+                jit.move(CCallHelpers::TrustedImm32(0x5a5a), gpr);
+        }
+        jit.loadPtr(context, base);
+        jit.addPtr(CCallHelpers::TrustedImm32(OBJECT_OFFSETOF(NarrowOperationContext, memory) + NarrowOperationContext::positionOfBase), base);
+        if (index)
+            jit.move(CCallHelpers::TrustedImm32(valueOfIndex), *index);
+        if (operation.comparesWithEAX) {
+            jit.loadPtr(context, X86Registers::eax);
+            jit.load64(CCallHelpers::Address(X86Registers::eax, OBJECT_OFFSETOF(NarrowOperationContext, comparand)), X86Registers::eax);
+        }
+        if (!isFrameRegister) {
+            jit.loadPtr(context, operandGPR);
+            jit.load64(CCallHelpers::Address(operandGPR, OBJECT_OFFSETOF(NarrowOperationContext, operand)), operandGPR);
+        }
+
+        if (index)
+            operation.emitWithIndex(jit.m_assembler, operandGPR, offset, base, *index, CCallHelpers::TimesTwo);
+        else
+            operation.emitWithBase(jit.m_assembler, operandGPR, offset, base);
+
+        auto pointer = operandGPR == X86Registers::r10 ? X86Registers::r9 : X86Registers::r10;
+        jit.loadPtr(context, pointer);
+        jit.store64(operandGPR, CCallHelpers::Address(pointer, OBJECT_OFFSETOF(NarrowOperationContext, registerAfter)));
+        jit.addPtr(CCallHelpers::TrustedImm32(sizeof(void*)), X86Registers::esp);
+        for (size_t i = saved.size(); i--;)
+            jit.pop(saved[i]);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    NarrowOperationContext context;
+    context.operand = 0x8877665544332211;
+    for (size_t i = 0; i < context.memory.size(); ++i)
+        context.memory[i] = static_cast<uint8_t>(i * 37 + 11);
+    size_t position = NarrowOperationContext::positionOfBase + offset + (index ? valueOfIndex * 2 : 0);
+    uint64_t mask = (1ull << (8 * operation.width)) - 1;
+    uint64_t before = 0;
+    memcpy(&before, context.memory.data() + position, operation.width);
+    context.comparand = before;
+    std::array<uint8_t, 64> expected = context.memory;
+    invoke<void>(code, &context);
+
+    uint64_t operand = isFrameRegister ? context.registerAfter : context.operand;
+    uint64_t after = operation.result(before, operand) & mask;
+    memcpy(expected.data() + position, &after, operation.width);
+    CHECK_EQ(context.memory == expected, true);
+    if (!isFrameRegister)
+        CHECK_EQ(context.registerAfter, operation.writesOperand ? (operand & ~mask) | before : operand);
+}
+
+static void testNarrowOperationsEncodeEveryRegister()
+{
+#define NARROW_OPERATION(name) \
+    [](X86Assembler& assembler, X86Registers::RegisterID operand, int offset, X86Registers::RegisterID base) { \
+        assembler.name(operand, offset, base); \
+    }, [](X86Assembler& assembler, X86Registers::RegisterID operand, int offset, X86Registers::RegisterID base, X86Registers::RegisterID index, int scale) { \
+        assembler.name(operand, offset, base, index, scale); \
+    }
+#define RESULT(expression) [](uint64_t memory, uint64_t operand) -> uint64_t { UNUSED_PARAM(memory); UNUSED_PARAM(operand); return expression; }
+
+    const NarrowOperation operations[] = {
+        { NARROW_OPERATION(addb_rm), 1, RESULT(memory + operand) },
+        { NARROW_OPERATION(subb_rm), 1, RESULT(memory - operand) },
+        { NARROW_OPERATION(andb_rm), 1, RESULT(memory & operand) },
+        { NARROW_OPERATION(orb_rm), 1, RESULT(memory | operand) },
+        { NARROW_OPERATION(xorb_rm), 1, RESULT(memory ^ operand) },
+        { NARROW_OPERATION(movb_rm), 1, RESULT(operand) },
+        { NARROW_OPERATION(xchgb_rm), 1, RESULT(operand), true },
+        { NARROW_OPERATION(xaddb_rm), 1, RESULT(memory + operand), true },
+        { NARROW_OPERATION(cmpxchgb_rm), 1, RESULT(operand), false, true },
+        { NARROW_OPERATION(addw_rm), 2, RESULT(memory + operand) },
+        { NARROW_OPERATION(subw_rm), 2, RESULT(memory - operand) },
+        { NARROW_OPERATION(andw_rm), 2, RESULT(memory & operand) },
+        { NARROW_OPERATION(orw_rm), 2, RESULT(memory | operand) },
+        { NARROW_OPERATION(xorw_rm), 2, RESULT(memory ^ operand) },
+        { NARROW_OPERATION(movw_rm), 2, RESULT(operand) },
+        { NARROW_OPERATION(xchgw_rm), 2, RESULT(operand), true },
+        { NARROW_OPERATION(xaddw_rm), 2, RESULT(memory + operand), true },
+        { NARROW_OPERATION(cmpxchgw_rm), 2, RESULT(operand), false, true },
+    };
+#undef NARROW_OPERATION
+#undef RESULT
+
+    constexpr std::array bases { X86Registers::ecx, X86Registers::esi, X86Registers::r8, X86Registers::r13 };
+    constexpr std::array indices { X86Registers::edx, X86Registers::edi, X86Registers::r12 };
+    for (const NarrowOperation& operation : operations) {
+        for (unsigned number = X86Registers::eax; number <= X86Registers::r15; ++number) {
+            auto operandGPR = static_cast<X86Registers::RegisterID>(number);
+            bool isFrameRegister = operandGPR == X86Registers::esp || operandGPR == X86Registers::ebp;
+            if ((isFrameRegister && operation.writesOperand) || (operandGPR == X86Registers::eax && operation.comparesWithEAX))
+                continue;
+            for (auto base : bases) {
+                if (base == operandGPR)
+                    continue;
+                checkNarrowOperation(operation, operandGPR, base, std::nullopt);
+                for (auto index : indices) {
+                    if (index != operandGPR)
+                        checkNarrowOperation(operation, operandGPR, base, index);
+                }
+            }
+        }
+    }
+}
+
+static void testByteRegistersEncodeEveryRegister()
+{
+    for (unsigned number = X86Registers::eax; number <= X86Registers::r15; ++number) {
+        auto gpr = static_cast<X86Registers::RegisterID>(number);
+        if (gpr == X86Registers::esp || gpr == X86Registers::ebp)
+            continue;
+        auto compileWith = [&](const auto& emit) {
+            return compile([&](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+                jit.push(gpr);
+                jit.move(GPRInfo::argumentGPR0, gpr);
+                emit(jit.m_assembler);
+                if (gpr == X86Registers::eax)
+                    jit.addPtr(CCallHelpers::TrustedImm32(sizeof(void*)), X86Registers::esp);
+                else
+                    jit.pop(gpr);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            });
+        };
+        auto zeroExtend = compileWith([&](X86Assembler& assembler) { assembler.movzbl_rr(gpr, X86Registers::eax); });
+        auto signExtend = compileWith([&](X86Assembler& assembler) { assembler.movsbl_rr(gpr, X86Registers::eax); });
+        auto signExtendTo64 = compileWith([&](X86Assembler& assembler) { assembler.movsbq_rr(gpr, X86Registers::eax); });
+        auto testAndSet = compileWith([&](X86Assembler& assembler) {
+            assembler.testb_rr(gpr, gpr);
+            assembler.setnz_r(gpr);
+            assembler.movzbl_rr(gpr, X86Registers::eax);
+        });
+        auto testBit = compileWith([&](X86Assembler& assembler) {
+            assembler.testb_i8r(0x10, gpr);
+            assembler.setnz_r(gpr);
+            assembler.movzbl_rr(gpr, X86Registers::eax);
+        });
+        for (uint64_t value : { 0x8877665544332211ull, 0x1122334455667788ull, 0xffffffffffffff00ull, 0xffull, 0xff80ull, 0x1000ull }) {
+            CHECK_EQ(invoke<uint32_t>(zeroExtend, value), static_cast<uint8_t>(value));
+            CHECK_EQ(invoke<uint32_t>(signExtend, value), static_cast<uint32_t>(static_cast<int8_t>(value)));
+            CHECK_EQ(invoke<int64_t>(signExtendTo64, value), static_cast<int8_t>(value));
+            CHECK_EQ(invoke<uint32_t>(testAndSet, value), static_cast<uint32_t>(!!static_cast<uint8_t>(value)));
+            CHECK_EQ(invoke<uint32_t>(testBit, value), static_cast<uint32_t>(!!(value & 0x10)));
+        }
+    }
 }
 
 static void testAtomicAndEmitsCode()
@@ -13292,6 +13608,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #endif
 
 #if CPU(ARM64)
+    RUN(testCompareExchangeWithLostStores());
     if (isARM64_LSE()) {
         RUN(testAtomicStrongCASFill8());
         RUN(testAtomicStrongCASFill16());
@@ -13385,6 +13702,8 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testTagsInMemory());
     RUN(testPrefetch());
     RUN(testAtomicAndEmitsCode());
+    RUN(testNarrowOperationsEncodeEveryRegister());
+    RUN(testByteRegistersEncodeEveryRegister());
 #endif
 
     RUN(testOrImmMem());

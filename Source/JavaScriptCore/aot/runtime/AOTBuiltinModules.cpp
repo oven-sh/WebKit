@@ -20,6 +20,7 @@
 #include "AOTMembersLeftOut.h"
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTState.h"
 #include "AOTStubsCompiledMethods.h"
 #include "BuiltinExecutables.h"
@@ -87,7 +88,9 @@ void willExposeBuiltinModuleToNativeCode(JSGlobalObject* globalObject, uint32_t 
 {
     if (!buildKeptForCompiledCode(globalObject, id))
         return;
-    dataLogLn("AOT: native code takes all that the library module ", BuiltinTable::singleton().tokenOf(RuntimeModuleID(id)), " gives, and the build has kept it for compiled code alone: what it has proven of it no longer holds.");
+    RuntimeCheckFailure failure("escape check failed"_s);
+    failure.detail("native code takes the exports of the built-in module ", BuiltinTable::singleton().tokenOf(RuntimeModuleID(id)), ", but the compiler assumed that only compiled code uses them");
+    failure.report();
     CRASH();
 }
 
@@ -97,9 +100,11 @@ void willExposeBuiltinExportToNativeCode(JSGlobalObject* globalObject, uint32_t 
         return;
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(byteCast<uint8_t>(exportName.span()));
-    if (name && std::ranges::contains(table.at(RuntimeModuleID(id)).exportsReadByNativeCode, name) && !std::ranges::contains(table.at(RuntimeModuleID(id)).exportsOfWhichMembersAloneAreKept, name))
+    if (name && std::ranges::contains(table.at(RuntimeModuleID(id)).exportsReadByNativeCode, name) && !std::ranges::contains(table.at(RuntimeModuleID(id)).memberOnlyExports, name))
         return;
-    dataLogLn("AOT: native code reads the export ", exportName, " of the library module ", table.tokenOf(RuntimeModuleID(id)), ", and no row of the table of built-ins lists that read. The build has kept the module for compiled code alone: what it has proven of it no longer holds.");
+    RuntimeCheckFailure failure("escape check failed"_s);
+    failure.detail("native code reads the export '", exportName, "' of the built-in module ", table.tokenOf(RuntimeModuleID(id)), ", which the table of built-ins does not list, so the compiler assumed that only compiled code uses it");
+    failure.report();
     CRASH();
 }
 
@@ -121,7 +126,7 @@ JSValue evaluateEveryBuiltinModuleForTesting(JSGlobalObject* globalObject)
         if (modules.table().data(module).kind != ModuleKind::RuntimeSource)
             continue;
         modules.require(module);
-        String line = modules.table().pathText(module);
+        String line = modules.table().fullPath(module);
         if (Exception* exception = scope.exception()) {
             JSValue thrown = exception->value();
             scope.clearException();
@@ -267,13 +272,13 @@ static std::optional<uint32_t> builtinFunctionHolding(const FunctionExecutable& 
     return executable.source().provider()->builtinFunctionAt(executable.source().startOffset());
 }
 
-static bool isTextOfLibrary(ScriptExecutable& executable, bool countsTextOfEngine)
+static bool isLibraryFunction(ScriptExecutable& executable, bool includesEngineBuiltins)
 {
     auto* function = dynamicDowncast<FunctionExecutable>(&executable);
     if (!function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
         return false;
     std::optional<uint32_t> id = builtinFunctionHolding(*function);
-    return countsTextOfEngine || !id || *id >= numberOfBuiltinCodes;
+    return includesEngineBuiltins || !id || *id >= numberOfBuiltinCodes;
 }
 
 static Lock s_functionsOfTestRunnerLock;
@@ -302,7 +307,7 @@ static bool isOfTestRunner(ScriptExecutable& executable)
 
 bool isInterpretationDisallowed(JSGlobalObject* realm, ScriptExecutable& executable)
 {
-    return rejectsLibrarySource(realm) && isTextOfLibrary(executable, Image::current()->isBuiltWithLibrary()) && !isOfTestRunner(executable);
+    return rejectsLibrarySource(realm) && isLibraryFunction(executable, Image::current()->isBuiltWithLibrary()) && !isOfTestRunner(executable);
 }
 
 bool isFunctionDisallowed(JSFunction* function)
@@ -314,7 +319,7 @@ bool isFunctionDisallowed(JSFunction* function)
 bool isUnreachableLibraryFunction(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
-    if (!executable || !Instance::of(function->realm()) || !isTextOfLibrary(*executable, false))
+    if (!executable || !Instance::of(function->realm()) || !isLibraryFunction(*executable, false))
         return false;
     return !Image::current()->allowsLibrarySource();
 }
@@ -344,7 +349,7 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
     return names;
 }
 
-bool lacksOnlyWhatReachMissed(const Image& image)
+bool isClosedWorld(const Image& image)
 {
     return image.isBuiltWithLibrary() && !image.admitsUnknownJavaScript() && !image.loadsCodeOutsideImage() && !hasFlag(image.header().options.admitted(), AdmittedCode::Inspector);
 }
@@ -356,23 +361,25 @@ void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject* realm)
     if (!Instance::of(realm))
         return;
     const Image& image = *Image::current();
-    if (!image.letsGlobalObjectGo() && lacksOnlyWhatReachMissed(image))
+    if (!image.letsGlobalObjectGo() && isClosedWorld(image))
         t_eventMayExposeGlobalObject = true;
 }
 
-[[noreturn]] static void stopAtMissOfReach(const String& leftOut)
+[[noreturn]] static void crashOnReachabilityBug(const String& leftOut)
 {
-    dataLogLn(leftOut, " was left out of the executable, because nothing seemed to use it. This is a bug in Bun.");
+    RuntimeCheckFailure failure("reachability check failed"_s);
+    failure.detail(leftOut, " was used, but it was not compiled into this executable because nothing seemed to use it");
+    failure.report();
     CRASH();
 }
 
 void throwBuiltinNotCompiled(JSGlobalObject* realm, const String& builtin)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isReifyingForPresenceCheck();
-    if (isMissOfReach && !t_eventMayExposeGlobalObject)
-        stopAtMissOfReach(builtin);
-    JSObject* error = isMissOfReach ? createBuiltinBehindTargetOfEventNotCompiledError(realm, builtin) : createBuiltinNotCompiledError(realm, builtin);
+    bool isReachabilityBug = isClosedWorld(*Image::current()) && !isReifyingForPresenceCheck();
+    if (isReachabilityBug && !t_eventMayExposeGlobalObject)
+        crashOnReachabilityBug(builtin);
+    JSObject* error = isReachabilityBug ? createBuiltinBehindTargetOfEventNotCompiledError(realm, builtin) : createBuiltinNotCompiledError(realm, builtin);
     noteOmittedCodeError(realm, error);
     throwException(realm, scope, error);
 }
@@ -386,11 +393,11 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
     Vector<String, 4> names = id ? globalBuiltinsThatRun(RuntimeFunctionID(*id)) : Vector<String, 4>();
     if (id && std::ranges::contains(table.moduleLoaderFunctions(), RuntimeFunctionID(*id)))
         names = { "The module loader"_str };
-    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isReifyingForPresenceCheck();
-    String leftOut = !isMissOfReach ? String() : names.isEmpty() ? makeString("The built-in function '"_s, function.name().string(), '\'') : makeStringByJoining(names.span(), " or "_s);
-    if (isMissOfReach && !t_eventMayExposeGlobalObject)
-        stopAtMissOfReach(leftOut);
-    JSObject* error = isMissOfReach ? createBuiltinBehindTargetOfEventNotCompiledError(realm, leftOut) : names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span());
+    bool isReachabilityBug = isClosedWorld(*Image::current()) && !isReifyingForPresenceCheck();
+    String leftOut = !isReachabilityBug ? String() : names.isEmpty() ? makeString("The built-in function '"_s, function.name().string(), '\'') : makeStringByJoining(names.span(), " or "_s);
+    if (isReachabilityBug && !t_eventMayExposeGlobalObject)
+        crashOnReachabilityBug(leftOut);
+    JSObject* error = isReachabilityBug ? createBuiltinBehindTargetOfEventNotCompiledError(realm, leftOut) : names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span());
     bool isGetterOfAccessor = id && table.contains(RuntimeFunctionID(*id)) && std::ranges::any_of(table.at(RuntimeFunctionID(*id)).implements, [&](BuiltinID builtin) {
         return table.at(builtin).kind == BuiltinKind::Accessor;
     });

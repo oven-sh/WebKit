@@ -19,8 +19,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+OperatorForm operatorFormFor(Walker&, const Draft&);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 void prepareOperandsForFormNumbers(Walker&, Draft&);
 
 bool hasMechanismsOfNumberForms(const Walker& walker)
@@ -124,9 +124,9 @@ Reference buildInAllowedFormInNumberForms(Walker& walker, Draft&& draft)
         }
     }
     walker.chooseConservativeFields(draft);
-    draft.setForm(formAllowedForTypedOperator(walker, draft));
+    draft.setForm(operatorFormFor(walker, draft));
     Origin origin = draft.origin();
-    return boxedUnlessNumbersAreUnboxed(walker, walker.build(WTF::move(draft)), origin);
+    return boxNumberIfNeeded(walker, walker.build(WTF::move(draft)), origin);
 }
 
 Reference buildOperatorInNumberForms(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
@@ -138,7 +138,7 @@ Reference buildOperatorInNumberForms(Walker& walker, Opcode opcode, Reference le
     return buildInAllowedFormInNumberForms(walker, WTF::move(draft));
 }
 
-void goOnWhereTestPassesInNumberForms(Walker& walker, Reference passes, BlockID otherwise)
+void continueIfTrue(Walker& walker, Reference passes, BlockID otherwise)
 {
     BlockID next = walker.addBlock();
     walker.branch(passes, next, otherwise);
@@ -161,19 +161,19 @@ Reference meetInNumberForms(Walker& walker, BlockID meeting, std::span<const Way
     auto isValue = [&](Reference brought) {
         return brought && walker.code().at(brought.id()).type;
     };
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     size_t numberOfValues = 0;
     for (const WayInNumberForms& way : ways) {
         if (!way.end)
             continue;
-        arms.append(Walker::ArmThatMeets { way.end, { way.brought, way.broughtBeside } });
+        arms.append(Walker::JoinArm { way.end, { way.brought, way.broughtBeside } });
         numberOfValues = std::max<size_t>(numberOfValues, !isValue(way.brought) ? 0 : isValue(way.broughtBeside) ? 2 : 1);
     }
     if (arms.isEmpty())
         return { };
 
     std::array<Reference, 2> met;
-    walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(met).first(numberOfValues));
+    walker.joinArms(arms.span(), meeting, std::span<Reference>(met).first(numberOfValues));
     if (metBeside)
         *metBeside = met[1];
     return met[0];

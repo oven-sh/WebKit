@@ -19,7 +19,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 #     v3: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
 #     Branch v2 -> taken b1(), notTaken b3()
 #   b1() handler=b2(v3):
-#     v4: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b3()
 #   b2(v5: Array @Cell) role=CatchHandler:
 #     v6: Array @JSValue = Box v5

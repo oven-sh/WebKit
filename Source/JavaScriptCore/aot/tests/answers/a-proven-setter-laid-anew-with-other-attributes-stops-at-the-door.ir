@@ -3,11 +3,14 @@
 # function store(b) { b.x = 5; return b.kept; }
 # if (which === 1) id(hides)(box);
 # print(store(box));   print("went on");
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so `box` stays with compiled code and the setter that its literal lays is proven: store() calls it without a look.
-# With the same attributes the pair stays in its slot and the door there asks. With others the pair leaves its slot: it printed first5 and went on; plain prints other5.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So `box` never escapes from compiled code and the setter that its literal defines is proven: store() calls it without a check.
+# With the same attributes the accessor pair stays in its slot, and the entry check of that slot tests the redefinition. With other attributes the pair leaves its slot.
+# The compiled program then printed first5 and continued, where the program without AoT prints other5.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(OTHERATTRIBUTES): run-in-shell mechanisms=all globalThis.which = 1;
-# OTHERATTRIBUTES: AOT: RedefineProperty of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# OTHERATTRIBUTES: bun: internal AOT error: object mutation check failed
+# OTHERATTRIBUTES-NEXT: RedefineProperty on an {{*}}, but the compiler proved that
 # OTHERATTRIBUTES-NOT: went on
 # OTHERATTRIBUTES: crashed with
 # RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;

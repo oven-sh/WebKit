@@ -73,7 +73,7 @@ constexpr bool accessToElementsHasCode(Opcode opcode, ArrayStorage kind, bool ad
     return !admitsInt32Storage || (kind != ArrayStorage::Int32 && !isWritable);
 }
 
-constexpr bool holdsOnlyNumbers(ArrayStorage kind)
+constexpr bool isNumericStorage(ArrayStorage kind)
 {
     const ArrayStorageForm* form = findArrayStorageForm(kind);
     return form && !form->holdsCells;

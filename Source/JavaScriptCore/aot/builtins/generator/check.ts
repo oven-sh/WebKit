@@ -1332,7 +1332,7 @@ export function checkMarksOfTestRunner(
 const marksOfReach: readonly BuiltinMark[] = [
   "RunsCodeThatLocksDoNotBind",
   "RunsCodeWithLoader",
-  "HandsOutWhatNativeCodeHolds",
+  "ExposesNativeRoots",
 ];
 
 function checkMarksOfReach(model: Pick<TableModel, "builtins">, problems: Problems): void {
