@@ -38,8 +38,16 @@ namespace WTF {
     {
         static constexpr bool needsInitialization = true;
         static constexpr bool canInitializeWithMemset = false;
+#if USE(BUN_JSC_ADDITIONS)
+        // Moving with memcpy needs "trivially relocatable" (true for trivial_abi classes and aggregates of them), copying needs "trivially copyable".
+IGNORE_CLANG_WARNINGS_BEGIN("deprecated-builtins")
+        static constexpr bool canMoveWithMemcpy = __is_trivially_relocatable(T);
+IGNORE_CLANG_WARNINGS_END
+        static constexpr bool canCopyWithMemcpy = std::is_trivially_copyable_v<T>;
+#else
         static constexpr bool canMoveWithMemcpy = false;
         static constexpr bool canCopyWithMemcpy = false;
+#endif
         static constexpr bool canFillWithMemset = false;
         static constexpr bool canCompareWithMemcmp = false;
     };
