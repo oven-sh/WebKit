@@ -236,13 +236,35 @@ bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID
     if (!isFromZeroUp && grounds.counter && !(fromZero.add(grounds.counter, -1) && fromZero.add(grounds.start, 1)))
         return false;
     isFromZeroUp = isFromZeroUp || fromZero.isFromZeroUp() || (mayBeTaken(grounds.isFromZeroUp) && fromZero.takeAwayWhatIsFromZeroUp(grounds.isFromZeroUp) && fromZero.isFromZeroUp());
-    auto isShownBelow = [&](SumOverRecords sum) {
+    auto isShownBelow = [&](const SumOverRecords& sum) {
         SumOverRecords behindTest(sum);
-        return (mayBeTaken(grounds.isBelow, grounds.isBelowAnswersYes) && behindTest.takeAwayWhatIsFromZeroUp(grounds.isBelow, grounds.isBelowAnswersYes) && behindTest.isFromZeroUp()) || sum.isFromZeroUp();
+        bool isBehindTest = mayBeTaken(grounds.isBelow, grounds.isBelowAnswersYes) && behindTest.takeAwayWhatIsFromZeroUp(grounds.isBelow, grounds.isBelowAnswersYes);
+        if ((isBehindTest && behindTest.isFromZeroUp()) || sum.isFromZeroUp())
+            return true;
+        SumOverRecords withinLength(isBehindTest ? behindTest : sum);
+        return mayBeTaken(grounds.lengthHoldsBound) && withinLength.takeAwayWhatIsFromZeroUp(grounds.lengthHoldsBound) && withinLength.isFromZeroUp();
     };
     int64_t most = isIntegerInSumOverRecords(code, types, position) ? types.at(code.at(position).type).integers.maximum : Range::full().maximum;
     SumOverRecords wholePosition(code, types, -1 - most);
     return isFromZeroUp && ((wholePosition.add(grounds.length, 1) && isShownBelow(wholePosition)) || isShownBelow(belowLength));
+}
+
+bool testsShowElementPresent(const Code& code, ValueID list, ValueID position, std::span<const PassedTest::Side> sides)
+{
+    auto behindNames = [&](ValueID record) {
+        while (opcodesThatGiveSameCell.contains(code.at(record).opcode))
+            record = code.at(record).operand(0);
+        return record;
+    };
+    auto isSame = [&](ValueID one, ValueID other) {
+        one = behindNames(one);
+        other = behindNames(other);
+        return one == other || (code.at(one).opcode == Opcode::Integer && code.at(other).opcode == Opcode::Integer && code.at(one).integer() == code.at(other).integer());
+    };
+    return std::ranges::all_of(sides, [&](const PassedTest::Side& side) {
+        const Operation& test = code.at(side.test);
+        return side.answersYes && test.opcode == Opcode::IsElementPresent && isSame(test.arrayOperand(), list) && isSame(test.positionOperand(), position);
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

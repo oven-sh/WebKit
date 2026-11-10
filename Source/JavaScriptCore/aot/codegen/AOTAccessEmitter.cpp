@@ -890,7 +890,7 @@ void AccessEmitter::returnWhatMethodOfBuiltinClassGives(const ValueContext& read
         .thisValue = boxed(read->objectOperand()),
         .arguments = arguments.span(),
     };
-    Boxed answer = calls.callByConvention(read, conventionCall);
+    Boxed answer = calls.callByConvention(read, conventionCall, { .origin = call.origin() });
     LBasicBlock returns = newBlock();
     LBasicBlock goesOn = newBlock();
     branch(isNotEmpty(answer), { normalEdge(returns), rareEdge(goesOn) });

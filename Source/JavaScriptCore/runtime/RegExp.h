@@ -193,10 +193,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     bool wasUsedInCurrentFullCollectionCycle(VM&) const;
 
 #if ENABLE(AOT)
-    // A global search of a pattern that is one set or a run of one set, in one pass. False: search match by match.
+    // Runs a global search for a pattern that is one character class, or a repetition of one, in a single pass. Returns false if the caller has to search match by match.
     bool collectMatchesOfOneSetOrRun(VM&, StringView, Vector<unsigned, 128>& matches);
     bool hasImageCodeFor(bool subjectIs8Bit) const { return m_state == ImageCode && (subjectIs8Bit || m_regExpJITCode->has16BitCode()); }
-    // The start of the match, -1, or Yarr::JSRegExpResult::JITCodeFailure: then match() finds it.
+    // Returns the start of the match, -1, or Yarr::JSRegExpResult::JITCodeFailure, in which case the caller falls back to match().
     template<typename CharacterType>
     int executeImageCode(std::span<const CharacterType> subject, unsigned start, Yarr::MatchingContextHolder& context) { return m_regExpJITCode->execute(subject, start, m_ovector.mutableSpan().data(), &context).start; }
 #endif

@@ -1326,7 +1326,7 @@ void Frame::dump(PrintStream& out) const
     if (m_beginOfWordsClearedAtSetup != m_endOfWordsClearedAtSetup)
         out.println("wordsClearedAtSetup = [", m_beginOfWordsClearedAtSetup, ", ", m_endOfWordsClearedAtSetup, ")");
     for (size_t spill = 0; spill < m_offsetOfSpill.size(); ++spill)
-        out.println("s", spill, " at ", m_offsetOfSpill[spill]);
+        out.println("s", spill, " at ", offsetFromFPOf(static_cast<SpillIndex>(spill)));
 }
 
 } } } // namespace JSC::AOT::Machine

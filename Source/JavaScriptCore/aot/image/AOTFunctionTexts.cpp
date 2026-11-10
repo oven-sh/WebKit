@@ -591,6 +591,10 @@ void encodeFunctionTexts(TableEncoder& encoder)
             entries[index] = FunctionTextEntry { Number24(functions[index].closureEntry.index()), Number32(start), Number32(start + (function.text.end - function.text.start)) };
         }
     });
+    if (AOT::hasFlag(encoder.build.options().lies, Wire::TestingLie::TextsOfFunctionsAreListedBackwards))
+        entries.reverse();
+    if (!std::ranges::is_sorted(entries, { }, [](const FunctionTextEntry& entry) -> uint32_t { return entry.function; }))
+        encoder.fail("TableNotSorted"_s, { }, "functionTexts"_s);
 
     TextLaidInBlocks laid = layTextInBlocks(loops, host, runs.span(), placed);
     if (host.mostBytesCompressed && host.compress)

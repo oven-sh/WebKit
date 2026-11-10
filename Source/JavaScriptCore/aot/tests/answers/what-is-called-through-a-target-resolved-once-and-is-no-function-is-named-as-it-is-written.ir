@@ -6,7 +6,7 @@
 # CHECK: = CallResolved
 # RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = each => { for (const value of [undefined, 5, {}, x => print("called", x)]) { try { each(value, 2); } catch (error) { print(error.constructor.name, error.message); } } };
 # ANSWER: TypeError cb is not a function. (In 'cb()', 'cb' is undefined)
-# ANSWER-NEXT: TypeError cb is not a function. (In 'cb()', 'cb' is 5)
+# ANSWER-NEXT: TypeError cb is not a function. (In 'cb()', 'cb' is a number)
 # ANSWER-NEXT: TypeError cb is not a function. (In 'cb()', 'cb' is an instance of Object)
 # ANSWER-NEXT: called 0
 # ANSWER-NEXT: called 1

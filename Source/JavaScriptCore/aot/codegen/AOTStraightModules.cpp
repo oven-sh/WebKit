@@ -174,6 +174,8 @@ static void generateRequireModule(StraightEmitter& emitter, const BodyValue& val
     mentionRequireEdgeInStraightForm(emitter, referrer, module, value.specifier());
     if (value.ifHeldForImport())
         emitter.callOperation(value, RuntimeOperation::RequireIfHeldForImport, { moduleIndexInStraightForm(module), moduleIndexInStraightForm(referrer) });
+    else if (value.objectOfRunOperand())
+        emitter.callOperation(value, RuntimeOperation::RequireModuleOfRun, { moduleIndexInStraightForm(module), moduleIndexInStraightForm(referrer), StraightArgument(value.objectOfRunOperand()) }, { .calledBuiltin = functionOfHostThatRequireCallsFor(emitter.program().at(module)) });
     else
         emitter.callOperation(value, RuntimeOperation::RequireModule, { moduleIndexInStraightForm(module), moduleIndexInStraightForm(referrer) }, { .calledBuiltin = functionOfHostThatRequireCallsFor(emitter.program().at(module)) });
     emitter.define(value);
@@ -200,8 +202,12 @@ void StraightEmitter::generateModule(const BodyValue& value)
         generateEvaluateModule(*this, value);
         return;
     case Opcode::RecordRequire:
-        if (!plan().moduleEvaluation().recordsNothingThatIsSeen(value.module()))
-            callOperation(value, RuntimeOperation::RecordRequire, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()) });
+        if (plan().moduleEvaluation().recordsNothingThatIsSeen(value.module()))
+            return;
+        if (value.objectOfRunOperand())
+            callOperation(value, RuntimeOperation::RecordRequireOfRun, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), StraightArgument::word(value.byMadeRequire()), StraightArgument::word(value.behindTheLoad()), StraightArgument(value.objectOfRunOperand()) });
+        else
+            callOperation(value, RuntimeOperation::RecordRequire, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), StraightArgument::word(value.byMadeRequire()) });
         return;
     case Opcode::WasLoadedSynchronously:
         callOperation(value, RuntimeOperation::WasLoadedSynchronously, { moduleIndexInStraightForm(value.module()) });
@@ -242,7 +248,10 @@ void StraightEmitter::generateModule(const BodyValue& value)
         define(value);
         return;
     case Opcode::RequireDynamic:
-        callOperation(value, RuntimeOperation::RequireDynamic, { value.specifierOperand(), moduleIndexInStraightForm(value.referrer()) });
+        if (value.objectOfRunOperand())
+            callOperation(value, RuntimeOperation::RequireDynamicOfRun, { value.specifierOperand(), moduleIndexInStraightForm(value.referrer()), StraightArgument(value.objectOfRunOperand()) });
+        else
+            callOperation(value, RuntimeOperation::RequireDynamic, { value.specifierOperand(), moduleIndexInStraightForm(value.referrer()) });
         define(value);
         return;
     case Opcode::ResolveDynamic:

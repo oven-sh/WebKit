@@ -394,7 +394,7 @@ static int openExecutableAt(std::span<const uint8_t> bytes, int64_t offsetInFile
     });
 }
 
-int openExecutableThatHolds(const Image& image)
+int openExecutableContaining(const Image& image)
 {
     const std::optional<Image::PlaceInExecutable>& place = image.placeInExecutable();
     if (!place)
@@ -524,7 +524,7 @@ bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pa
     int64_t offsetInFile = place->offset + (pages.data() - image.bytes().data());
     if (offsetInFile % static_cast<int64_t>(pageSize()))
         return false;
-    int descriptor = openExecutableThatHolds(image);
+    int descriptor = openExecutableContaining(image);
     if (descriptor < 0)
         return false;
     bool isMapped = mmap(target, pages.size(), PROT_READ, MAP_PRIVATE | MAP_FIXED, descriptor, offsetInFile) == target;

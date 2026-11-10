@@ -1,6 +1,6 @@
 # take(Function)
 # The text of the program names the evaluator and hands it on: whoever gets it may give it any text, so the image admits code that nobody has read.
-# It is the control of holder-that-the-library-lets-go-hands-out-no-evaluator.ir and name-read-off-a-value-nobody-knows-finds-no-evaluator.ir: what those two withhold is withheld from the lookups of the library and from whoever merely holds the holder.
+# It is the control of Bun's test/aot/engine-tests/image/holder-that-the-library-lets-go-hands-out-no-evaluator.ir and Bun's test/aot/engine-tests/image/name-read-off-a-value-nobody-knows-finds-no-evaluator.ir: what those two withhold is withheld from the lookups of the library and from whoever merely holds the holder.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: image
 # CHECK: flags {{*}}AdmitsUnknownJavaScript

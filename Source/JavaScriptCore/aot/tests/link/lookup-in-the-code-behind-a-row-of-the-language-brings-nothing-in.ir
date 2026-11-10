@@ -1,7 +1,7 @@
 # [1].map(f)        Array.prototype.map: function map(callback) { return this.filter(callback); }
 # The code behind a built-in of the language is entered from outside, with `anything` for every parameter, so each of its lookups goes off a value that nobody knows. The row of the built-in says what it does with its operands.
 # If its lookups counted beside the row, one `constructor` and one key that nobody knows in the code behind `map` would find a member on every prototype that is looked through, and a program of one line would hold the library
-# `filter` stands for what such a lookup finds. The control: lookup-in-code-of-the-hosts-library-finds-what-it-names.ir.
+# `filter` stands for what such a lookup finds. The control: Bun's test/aot/engine-tests/link/lookup-in-code-of-the-hosts-library-finds-what-it-names.ir.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
 # CHECK-NOT: function f1 unreached

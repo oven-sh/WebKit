@@ -81,8 +81,8 @@ private:
     const char* const m_step;
 };
 
-JS_EXPORT_PRIVATE size_t describeWhereThisThreadStopped(std::span<char>);
-JS_EXPORT_PRIVATE size_t describeWhatThreadsAreCompiling(std::span<char>);
+JS_EXPORT_PRIVATE size_t describeCurrentThreadWork(std::span<char>);
+JS_EXPORT_PRIVATE size_t describeAllThreadsWork(std::span<char>);
 
 } } // namespace JSC::AOT
 

@@ -149,7 +149,7 @@ static std::optional<MappedImage> mapFile(const char* path)
 }
 #endif
 
-void enableGlobalsOfBuiltinTable()
+void enableBuiltinTableGlobals()
 {
     if (!Options::aotImagePath())
         return;
@@ -375,7 +375,7 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTFindObjectOfLayout, (JSGlobalObject* globalO
 JSC_DEFINE_HOST_FUNCTION(functionFilesInRequireCache, (JSGlobalObject* globalObject, CallFrame*))
 {
     StringBuilder files;
-    forEachEvaluatedFile(globalObject, [&](const String& path) {
+    forEachRequireCacheKey(globalObject, [&](const String& path) {
         if (findModule(path))
             files.append(files.isEmpty() ? ""_s : ","_s, path);
     });
@@ -581,7 +581,7 @@ std::span<const ASCIILiteral> shellFunctionNames()
     return functionNames;
 }
 
-bool isKeyOfCompiledModule(const String& key)
+bool isCompiledModuleKey(const String& key)
 {
     std::optional<ModuleID> module = findModule(key);
     if (module && s_terminateOnResolveModule == module) [[unlikely]] {
@@ -835,7 +835,7 @@ static JSObject* createAsyncModuleRequiredError(JSGlobalObject* globalObject, co
 static std::optional<ModuleID> findModuleWithAttributes(JSGlobalObject* globalObject, const String& path, const ScriptFetchParameters& attributes)
 {
     String pathOfForm = makeString(path, '?', attributes.hostDefinedImportType());
-    for (ModuleID form : formsThatAttributesAskFor(globalObject, path)) {
+    for (ModuleID form : importAttributeVariants(globalObject, path)) {
         if (modulePath(form) == pathOfForm)
             return form;
     }

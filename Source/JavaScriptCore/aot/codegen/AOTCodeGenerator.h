@@ -554,6 +554,9 @@ private:
     bool m_nextBlockGoesOnHere { false };
     Vector<LBasicBlock, 4> m_blocksLeftOut;
     BlockID m_headOfTurnsLaidOut;
+    mutable size_t m_positionOfHeadLastAskedForKinds { std::numeric_limits<size_t>::max() };
+    mutable size_t m_positionLastAskedForKindsFrom { std::numeric_limits<size_t>::max() };
+    mutable std::optional<CountedLoop> m_loopLastAskedForKinds;
     ValueID m_readLeftToBranch;
     Vector<Operand, 8> m_argumentsForNextTurn;
     std::span<const BlockID> m_turnLaidOut;

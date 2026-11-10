@@ -708,44 +708,21 @@ static Vector<NativeCellInLinkCalls> nativeCellsOfTableForLinkCalls(const Builti
             }
         }
     }
-    for (uint32_t index = 0; index < table.builtinCount(); ++index) {
-        for (const BuiltinModuleLoad& load : table.moduleLoadsOf(BuiltinID(index))) {
-            for (size_t place = 0; place < load.usesOfExports.size(); ++place) {
-                for (const BuiltinHostUse& use : load.usesOfExports[place].list) {
-                    size_t position = use.use == BuiltinHostReadUse::Kept ? cells.findIf([&](const NativeCellInLinkCalls& cell) { return cell.name == use.nativeCell; }) : notFound;
-                    if (position != notFound)
-                        cells[position].exportsKept.append({ load.module, load.exports[place], use.memberPath });
-                }
+    auto gatherExportsKept = [&](const BuiltinModuleLoad& load) {
+        for (size_t place = 0; place < load.usesOfExports.size(); ++place) {
+            for (const BuiltinHostUse& use : load.usesOfExports[place].list) {
+                size_t position = use.use == BuiltinHostReadUse::Kept ? cells.findIf([&](const NativeCellInLinkCalls& cell) { return cell.name == use.nativeCell; }) : notFound;
+                bool staysBecauseLinkFollowsCell = std::ranges::contains(table.at(load.module).exportsOfWhichMembersAloneAreKept, load.exports[place]);
+                RELEASE_ASSERT(!staysBecauseLinkFollowsCell || (position != notFound && cells[position].isCalled && !cells[position].isHandedOut));
+                if (position != notFound)
+                    cells[position].exportsKept.append({ load.module, load.exports[place], use.memberPath });
             }
-        }
-    }
-    return cells;
-}
-
-Vector<std::pair<RuntimeModuleID, BuiltinName>> exportsThatHostOnlyKeepsWhereLinkFollows(const BuiltinTable& table)
-{
-    Vector<NativeCellInLinkCalls> cells = nativeCellsOfTableForLinkCalls(table);
-    Vector<std::pair<RuntimeModuleID, BuiltinName>> followed;
-    Vector<std::pair<RuntimeModuleID, BuiltinName>> usedOtherwise;
-    auto lookAt = [&](const BuiltinModuleLoad& load) {
-        for (size_t place = 0; place < load.exports.size(); ++place) {
-            bool isOnlyKept = !load.readsEveryExport && place < load.usesOfExports.size() && load.usesOfExports[place].areListed && !load.usesOfExports[place].list.empty();
-            for (size_t index = 0; isOnlyKept && index < load.usesOfExports[place].list.size(); ++index) {
-                const BuiltinHostUse& use = load.usesOfExports[place].list[index];
-                isOnlyKept = use.use == BuiltinHostReadUse::Kept && !use.memberPath.empty() && cells.containsIf([&](const NativeCellInLinkCalls& cell) {
-                    return cell.name == use.nativeCell && cell.isCalled && !cell.isHandedOut;
-                });
-            }
-            (isOnlyKept ? followed : usedOtherwise).append({ load.module, load.exports[place] });
         }
     };
     for (uint32_t index = 0; index < table.builtinCount(); ++index)
-        std::ranges::for_each(table.moduleLoadsOf(BuiltinID(index)), lookAt);
-    std::ranges::for_each(table.startupLoads(), lookAt);
-    followed.removeAllMatching([&](const std::pair<RuntimeModuleID, BuiltinName>& exported) {
-        return usedOtherwise.contains(exported);
-    });
-    return followed;
+        std::ranges::for_each(table.moduleLoadsOf(BuiltinID(index)), gatherExportsKept);
+    std::ranges::for_each(table.startupLoads(), gatherExportsKept);
+    return cells;
 }
 
 StateOfLinkCalls::StateOfLinkCalls(const LinkFlow& flow)
@@ -4996,6 +4973,12 @@ void CallInLinkCalls::applyAction(RowCall& call, const BuiltinPropertyAction& ac
     bool knowsThatLinkIsLeftAlone = false;
     switch (action.kind) {
     case BuiltinPropertyActionKind::TestsByKey:
+        if (call.isSeenByScan)
+            return;
+        forEachType(valuesAt(call, action.object), [&](const LinkType& type, const Source*) {
+            if (type.builtin)
+                m_flow.note(LinkFlow::Note::BuiltinUsedWhereFlowBroughtIt, m_builtins.canonicalID(type.builtin).index());
+        });
         return;
     case BuiltinPropertyActionKind::DescribesResult:
         escape(valuesAt(call, action.object));
@@ -5426,6 +5409,8 @@ ALWAYS_INLINE void CallInLinkCalls::addResult(RowCall& call)
 
     if (result.iteratedOperand) {
         Values handedOut = valuesHandedOutBy(result.iterationKind, valuesAt(call, *result.iteratedOperand));
+        if (const BuiltinParameter* iterated = m_builtins.parameterFor(row, *result.iteratedOperand); iterated && iterated->conversion == BuiltinConversion::ToString)
+            add(handedOut, primitivesForLinkCalls(Primitive::String));
         bool everyIteratorIsFollowed = forEachSiteOfResult(call, [&](SiteID made, const BuiltinTypePart&) {
             bool hasSlot = false;
             for (BuiltinSlotID id : m_builtins.at(m_flow.classOf(made)).slots) {
@@ -5779,8 +5764,12 @@ void CallInLinkCalls::passOnPrimitivesThatFillMarkedWord(RowCall& call, std::spa
 void CallInLinkCalls::addInstanceOf(RowCall& call, const BuiltinTypePart& part, BuiltinClassID made, std::span<const BuiltinSlotContents> listed, bool isResult, Values& values, bool nobodyElseHoldsIt)
 {
     SiteID site = siteOf(part, made, isResult && nobodyElseHoldsIt && !call.isCalledByBuiltin);
-    if (TypedArrayType view = m_builtins.typedArrayTypeOf(made); isResult && view != NotTypedArray && view != TypeDataView)
-        m_flow.noteLengthIsWritten(site, lengthWrittenForView(call));
+    if (TypedArrayType view = m_builtins.typedArrayTypeOf(made); isResult && view != NotTypedArray && view != TypeDataView) {
+        uint32_t written = lengthWrittenForView(call);
+        if (written && AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::OverstateTypedArrayLength) && !m_flow.codeAtWorkIsOfLibrary())
+            ++written;
+        m_flow.noteLengthIsWritten(site, written);
+    }
     add(values, m_flow.typeOf(site));
     bool isIteratorOverOperand = isResult && call.row->result.iteratedOperand;
     for (BuiltinSlotID id : m_builtins.at(made).slots) {
@@ -7002,6 +6991,23 @@ static bool namesSameObjectsAndFunctionsInLinkCalls(LinkType first, LinkType sec
     return first == second;
 }
 
+bool LinkFlow::describeSharedCallNode(PrintStream& out, FlowNodeID id) const
+{
+    if (!m_stateOfLinkCalls)
+        return false;
+    for (const auto& shared : m_stateOfLinkCalls->sharedCalls) {
+        size_t place = shared->nodes.find(id);
+        if (place == notFound && shared->result != id && shared->thrown != id)
+            continue;
+        out.print("(", place != notFound ? "operand" : shared->result == id ? "result" : "thrown");
+        if (place != notFound)
+            out.print(" ", place);
+        out.print(" of the shared call ", shared->index, ")");
+        return true;
+    }
+    return false;
+}
+
 void LinkFlow::wakeEverySleeperToSeeThatNothingGrows()
 {
     if (!m_stateOfLinkCalls)
@@ -7125,7 +7131,7 @@ void LinkFlow::callObserved(const FlowObserver& observer, const LinkType& told)
         return;
     uint32_t numberOfCallObserved = firstCallOfFunction[observer.function.index()] + observer.record;
     bool isEnteredNoMore = state.callsOfUnseen[numberOfCallObserved] == StateOfLinkCalls::hasGivenUpInSight || (state.callsOfUnseen[numberOfCallObserved] && !state.callsThatEnterMembersOfTable[numberOfCallObserved]);
-    if (isEnteredNoMore && namesSameObjectsAndFunctionsInLinkCalls(told, typeObservedBefore()) && told.holdsUnseenInSight() == typeObservedBefore().holdsUnseenInSight())
+    if (isEnteredNoMore && namesSameObjectsAndFunctionsInLinkCalls(told, typeObservedBefore()) && told.holdsUnseenInSight() == typeObservedBefore().holdsUnseenInSight() && (told.holdsUnseen == typeObservedBefore().holdsUnseen || summaries.at(observer.function).calls[observer.record].newTarget == noSummaryNode || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::IgnoreEscapeAfterUnknownCall)))
         return;
     if (!std::exchange(state.callsToResolve[firstCallOfFunction[observer.function.index()] + observer.record], 1))
         state.observersToResolve[laneOfObserversOf(observer.function)].append(observer);

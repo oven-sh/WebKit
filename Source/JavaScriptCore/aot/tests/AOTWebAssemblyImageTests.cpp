@@ -273,9 +273,32 @@ static void testHandlersLieInTheirFunction()
     AOT_TEST_CHECK(handler.code > catcher.entry && handler.code < catcher.entry + catcher.size);
 }
 
+static Vector<uint8_t> moduleOfSwitches(uint8_t numberOfFunctions)
+{
+    static constexpr uint8_t body[] = {
+        0x34, 0x00,
+        0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40,
+        0x20, 0x00, 0x0e, 0x0a, 0x00, 0x00, 0x01, 0x01, 0x02, 0x02, 0x03, 0x03, 0x04, 0x04, 0x05,
+        0x0b, 0x41, 0x00, 0x0f, 0x0b, 0x41, 0x01, 0x0f, 0x0b, 0x41, 0x02, 0x0f, 0x0b, 0x41, 0x03, 0x0f, 0x0b, 0x41, 0x04, 0x0f,
+        0x0b, 0x41, 0x05, 0x0b,
+    };
+    static_assert(body[0] == sizeof(body) - 1);
+    size_t sizeOfCodeSection = 1 + numberOfFunctions * sizeof(body);
+    RELEASE_ASSERT(numberOfFunctions < 0x7f && sizeOfCodeSection >= 0x80 && sizeOfCodeSection < 0x4000);
+    Vector<uint8_t> module { 0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f };
+    module.appendList({ static_cast<uint8_t>(0x03), static_cast<uint8_t>(numberOfFunctions + 1), numberOfFunctions });
+    for (uint8_t function = 0; function < numberOfFunctions; ++function)
+        module.append(static_cast<uint8_t>(0x00));
+    module.appendList({ static_cast<uint8_t>(0x0a), static_cast<uint8_t>((sizeOfCodeSection & 0x7f) | 0x80), static_cast<uint8_t>(sizeOfCodeSection >> 7), numberOfFunctions });
+    for (uint8_t function = 0; function < numberOfFunctions; ++function)
+        module.append(std::span<const uint8_t>(body));
+    return module;
+}
+
 static void testSameBytesEachTime()
 {
-    for (std::span<const uint8_t> source : { std::span<const uint8_t>(callModule), std::span<const uint8_t>(memoryModule), std::span<const uint8_t>(catchModule) }) {
+    Vector<uint8_t> switchModule = moduleOfSwitches(16);
+    for (std::span<const uint8_t> source : { std::span<const uint8_t>(callModule), std::span<const uint8_t>(memoryModule), std::span<const uint8_t>(catchModule), std::span<const uint8_t>(switchModule.span()) }) {
         Wasm::ModuleForImage first = compileModuleWithCode(source);
         Wasm::ModuleForImage second = compileModuleWithCode(source);
         AOT_TEST_CHECK(first.code == second.code);

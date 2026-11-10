@@ -69,7 +69,7 @@ struct RuntimeDifference {
 
 JS_EXPORT_PRIVATE std::span<const uint8_t> descriptionOfThisRuntime();
 JS_EXPORT_PRIVATE std::span<const ASCIILiteral> namesOfRuntimeFacts();
-JS_EXPORT_PRIVATE std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const uint8_t> other);
+JS_EXPORT_PRIVATE std::optional<RuntimeDifference> findRuntimeDifference(std::span<const uint8_t> other);
 
 } } // namespace JSC::AOT
 

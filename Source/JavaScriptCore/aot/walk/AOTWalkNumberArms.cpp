@@ -112,7 +112,7 @@ Reference buildProofOfNumber(Walker& walker, Reference value, Reference test, Or
     walker.chooseConservativeFields(narrowed);
     narrowed.setValueOperand(value);
     narrowed.setTestOperand(test);
-    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+    narrowed.setOperandIndex(test.isValue() && walker.code().at(test.id()).opcode == Opcode::ShapeTest ? OperandIndex::ShapeTest::object : OperandIndex::TypeTest::value);
     narrowed.setIsOnTakenEdge(true);
     return walker.build(WTF::move(narrowed));
 }

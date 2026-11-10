@@ -10,6 +10,7 @@
 
 #include "AOTSavedFrame.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -39,8 +40,46 @@ private:
         Place place { 0 };
         ValueID value { nothing };
     };
+    static constexpr unsigned bitsOfFanOut = 5;
+    static constexpr uint32_t fanOut = 1u << bitsOfFanOut;
+    struct BoundsOfSpillsHeld {
+        void include(const BoundsOfSpillsHeld& other)
+        {
+            earliestBegin = std::min(earliestBegin, other.earliestBegin);
+            latestBegin = std::max(latestBegin, other.latestBegin);
+            earliestEnd = std::min(earliestEnd, other.earliestEnd);
+            latestEnd = std::max(latestEnd, other.latestEnd);
+            earliestBeginOfGap = std::min(earliestBeginOfGap, other.earliestBeginOfGap);
+            latestEndOfGap = std::max(latestEndOfGap, other.latestEndOfGap);
+            latestDefinition = std::max(latestDefinition, other.latestDefinition);
+        }
+
+        Position earliestBegin { noPosition };
+        Position latestBegin { 0 };
+        Position earliestEnd { noPosition };
+        Position latestEnd { 0 };
+        Position earliestBeginOfGap { noPosition };
+        Position latestEndOfGap { 0 };
+        Position latestDefinition { 0 };
+    };
+    struct SpillsHeld {
+        BoundsOfSpillsHeld bounds;
+    };
+    using ValuesOfSpillsHeld = std::array<ValueID, fanOut>;
+    using PartsOfSpillsHeld = std::array<const SpillsHeld*, fanOut>;
+    struct LeafOfSpillsHeld : SpillsHeld {
+        ValuesOfSpillsHeld values;
+    };
+    struct BranchOfSpillsHeld : SpillsHeld {
+        PartsOfSpillsHeld parts;
+    };
+    struct EdgeOfSpillsHeld {
+        Position head { 0 };
+        Position definitionOfLostResults { noPosition };
+    };
     struct Head {
         std::span<Entry> entries;
+        const SpillsHeld* spills { nullptr };
         bool isSet { false };
         bool isDirty { false };
     };
@@ -79,6 +118,20 @@ private:
     bool forgetWhatSuspensionLoses(const PatchOperation*);
     void clearState();
 
+    static const ValuesOfSpillsHeld& valuesOf(const SpillsHeld* leaf) { return static_cast<const LeafOfSpillsHeld*>(leaf)->values; }
+    static const PartsOfSpillsHeld& partsOf(const SpillsHeld* branch) { return static_cast<const BranchOfSpillsHeld*>(branch)->parts; }
+    static SpillIndex spillsInPartAt(unsigned level) { return SpillIndex { 1 } << (bitsOfFanOut * level); }
+    const SpillsHeld* makeLeafOfSpillsHeld(const ValuesOfSpillsHeld&, SpillIndex first);
+    const SpillsHeld* makeBranchOfSpillsHeld(const PartsOfSpillsHeld&);
+    const SpillsHeld* withSpillsChanged(const SpillsHeld*, unsigned level, SpillIndex first, std::span<const SpillIndex> changed);
+    const SpillsHeld* withSpill(const SpillsHeld*, unsigned level, SpillIndex first, SpillIndex, ValueID);
+    bool edgeKeeps(SpillIndex, ValueID, const EdgeOfSpillsHeld&) const;
+    const SpillsHeld* spillsKeptAlong(const EdgeOfSpillsHeld&, const SpillsHeld*, unsigned level, SpillIndex first);
+    const SpillsHeld* spillsHeldOnBothWays(const SpillsHeld* held, const SpillsHeld* arriving, unsigned level, SpillIndex first);
+    void takeSpillsHeld(const SpillsHeld* from, const SpillsHeld* to, unsigned level, SpillIndex first);
+    void holdSpillsChanged();
+    template<typename Functor> void forEachSpillHeld(const SpillsHeld*, unsigned level, SpillIndex first, const Functor&) const;
+
     bool isInRange(const SpillFacts& facts) const { return facts.begin <= m_now.upper && m_now.lower <= facts.end && !(facts.isInGap(m_now.lower) && facts.isInGap(m_now.upper)); }
     bool isPhiOfOnlySuccessor(const Operation*) const;
     bool beginsBehindExtractsAlone(const SpillFacts&) const;
@@ -87,6 +140,7 @@ private:
 
     void checkBlock(Block*);
     bool enter(Block*);
+    bool isReleasedAndDeadAt(const Operation*, const Block* head);
     bool runSteps(uint32_t begin, uint32_t end, bool isOnEdge);
     void findNextExecute(uint32_t begin, uint32_t end);
     bool matchNextOperation(const Operation*, Position& early);
@@ -125,6 +179,10 @@ private:
     ArenaVector<ValueID> m_onEdge;
     BitSpan m_isTouched;
     ArenaVector<Place> m_touched;
+    const SpillsHeld* m_spillsHeld { nullptr };
+    unsigned m_levelOfSpillsHeld { 0 };
+    BitSpan m_isSpillChanged;
+    ArenaVector<SpillIndex> m_spillsChanged;
     ArenaVector<ValueID> m_incoming;
 
     Block* m_block { nullptr };
@@ -159,8 +217,11 @@ AllocationChecker::AllocationChecker(Procedure& proc)
     m_firstSpillPlace = numberOfRegisters + static_cast<Place>((proc.callArgAreaSizeInBytes() + sizeof(uint64_t) - 1) / sizeof(uint64_t));
     Place numberOfPlaces = m_firstSpillPlace + static_cast<Place>(m_spills.size());
     m_state.fill(m_arena, numberOfPlaces, nothing);
-    m_onEdge.fill(m_arena, numberOfPlaces, nothing);
-    m_isTouched = BitSpan::create(m_arena, numberOfPlaces);
+    m_onEdge.fill(m_arena, m_firstSpillPlace, nothing);
+    m_isTouched = BitSpan::create(m_arena, m_firstSpillPlace);
+    m_isSpillChanged = BitSpan::create(m_arena, m_spills.size());
+    while (m_spills.size() >> (bitsOfFanOut * (m_levelOfSpillsHeld + 1)))
+        ++m_levelOfSpillsHeld;
     m_incoming.fill(m_arena, proc.numberOfOperations(), nothing);
     m_heads.grow(m_arena, proc.numberOfBlocks());
     numberValues();
@@ -292,11 +353,214 @@ AllocationChecker::ValueID AllocationChecker::valueIn(Reg reg, const Operation* 
 
 void AllocationChecker::set(Place place, ValueID value)
 {
+    if (place >= m_firstSpillPlace) {
+        if (m_state[place] == value)
+            return;
+        m_state[place] = value;
+        SpillIndex spill = place - m_firstSpillPlace;
+        if (m_isSpillChanged.get(spill))
+            return;
+        m_isSpillChanged.set(spill);
+        m_spillsChanged.append(m_arena, spill);
+        return;
+    }
     m_state[place] = value;
     if (!value || m_isTouched.get(place))
         return;
     m_isTouched.set(place);
     m_touched.append(m_arena, place);
+}
+
+const AllocationChecker::SpillsHeld* AllocationChecker::makeLeafOfSpillsHeld(const ValuesOfSpillsHeld& values, SpillIndex first)
+{
+    BoundsOfSpillsHeld bounds;
+    bool holdsSome = false;
+    for (uint32_t index = 0; index < fanOut; ++index) {
+        ValueID value = values[index];
+        if (!value)
+            continue;
+        holdsSome = true;
+        const SpillFacts& facts = m_spills[first + index];
+        BoundsOfSpillsHeld ofSpill { facts.begin, facts.begin, facts.end, facts.end, noPosition, 0, m_values[value & ~isPointerOfReference].definition };
+        if (facts.hasGap()) {
+            ofSpill.earliestBeginOfGap = facts.beginOfGap;
+            ofSpill.latestEndOfGap = facts.endOfGap;
+        }
+        bounds.include(ofSpill);
+    }
+    if (!holdsSome)
+        return nullptr;
+    LeafOfSpillsHeld* leaf = m_arena.create<LeafOfSpillsHeld>();
+    leaf->bounds = bounds;
+    leaf->values = values;
+    return leaf;
+}
+
+const AllocationChecker::SpillsHeld* AllocationChecker::makeBranchOfSpillsHeld(const PartsOfSpillsHeld& parts)
+{
+    BoundsOfSpillsHeld bounds;
+    bool holdsSome = false;
+    for (const SpillsHeld* part : parts) {
+        if (!part)
+            continue;
+        holdsSome = true;
+        bounds.include(part->bounds);
+    }
+    if (!holdsSome)
+        return nullptr;
+    BranchOfSpillsHeld* branch = m_arena.create<BranchOfSpillsHeld>();
+    branch->bounds = bounds;
+    branch->parts = parts;
+    return branch;
+}
+
+const AllocationChecker::SpillsHeld* AllocationChecker::withSpillsChanged(const SpillsHeld* held, unsigned level, SpillIndex first, std::span<const SpillIndex> changed)
+{
+    bool differs = false;
+    if (!level) {
+        ValuesOfSpillsHeld values = held ? valuesOf(held) : ValuesOfSpillsHeld { };
+        for (SpillIndex spill : changed) {
+            ValueID value = m_state[m_firstSpillPlace + spill];
+            differs |= values[spill - first] != value;
+            values[spill - first] = value;
+        }
+        return differs ? makeLeafOfSpillsHeld(values, first) : held;
+    }
+    PartsOfSpillsHeld parts = held ? partsOf(held) : PartsOfSpillsHeld { };
+    while (!changed.empty()) {
+        uint32_t part = (changed.front() - first) >> (bitsOfFanOut * level);
+        size_t count = 1;
+        while (count < changed.size() && (changed[count] - first) >> (bitsOfFanOut * level) == part)
+            ++count;
+        const SpillsHeld* made = withSpillsChanged(parts[part], level - 1, first + part * spillsInPartAt(level), changed.first(count));
+        differs |= made != parts[part];
+        parts[part] = made;
+        changed = changed.subspan(count);
+    }
+    return differs ? makeBranchOfSpillsHeld(parts) : held;
+}
+
+const AllocationChecker::SpillsHeld* AllocationChecker::withSpill(const SpillsHeld* held, unsigned level, SpillIndex first, SpillIndex spill, ValueID value)
+{
+    if (!level) {
+        ValuesOfSpillsHeld values = held ? valuesOf(held) : ValuesOfSpillsHeld { };
+        if (values[spill - first] == value)
+            return held;
+        values[spill - first] = value;
+        return makeLeafOfSpillsHeld(values, first);
+    }
+    PartsOfSpillsHeld parts = held ? partsOf(held) : PartsOfSpillsHeld { };
+    uint32_t part = (spill - first) >> (bitsOfFanOut * level);
+    const SpillsHeld* made = withSpill(parts[part], level - 1, first + part * spillsInPartAt(level), spill, value);
+    if (made == parts[part])
+        return held;
+    parts[part] = made;
+    return makeBranchOfSpillsHeld(parts);
+}
+
+bool AllocationChecker::edgeKeeps(SpillIndex spill, ValueID value, const EdgeOfSpillsHeld& edge) const
+{
+    Position definition = m_values[value & ~isPointerOfReference].definition;
+    if (definition >= edge.head || definition == edge.definitionOfLostResults)
+        return false;
+    const SpillFacts& facts = m_spills[spill];
+    return facts.begin <= edge.head + 1 && facts.end >= edge.head && !facts.isInGap(edge.head);
+}
+
+const AllocationChecker::SpillsHeld* AllocationChecker::spillsKeptAlong(const EdgeOfSpillsHeld& edge, const SpillsHeld* held, unsigned level, SpillIndex first)
+{
+    if (!held)
+        return nullptr;
+    const BoundsOfSpillsHeld& bounds = held->bounds;
+    if (bounds.latestEnd < edge.head || bounds.earliestBegin > edge.head + 1)
+        return nullptr;
+    if (bounds.latestDefinition < edge.head && bounds.latestDefinition < edge.definitionOfLostResults
+        && bounds.latestBegin <= edge.head + 1 && bounds.earliestEnd >= edge.head
+        && (bounds.earliestBeginOfGap > edge.head || bounds.latestEndOfGap < edge.head))
+        return held;
+
+    bool differs = false;
+    if (!level) {
+        ValuesOfSpillsHeld values = valuesOf(held);
+        for (uint32_t index = 0; index < fanOut; ++index) {
+            if (!values[index] || edgeKeeps(first + index, values[index], edge))
+                continue;
+            values[index] = nothing;
+            differs = true;
+        }
+        return differs ? makeLeafOfSpillsHeld(values, first) : held;
+    }
+    PartsOfSpillsHeld parts = partsOf(held);
+    for (uint32_t part = 0; part < fanOut; ++part) {
+        const SpillsHeld* kept = spillsKeptAlong(edge, parts[part], level - 1, first + part * spillsInPartAt(level));
+        differs |= kept != parts[part];
+        parts[part] = kept;
+    }
+    return differs ? makeBranchOfSpillsHeld(parts) : held;
+}
+
+const AllocationChecker::SpillsHeld* AllocationChecker::spillsHeldOnBothWays(const SpillsHeld* held, const SpillsHeld* arriving, unsigned level, SpillIndex first)
+{
+    if (held == arriving || !held)
+        return held;
+    if (!arriving)
+        return nullptr;
+    bool differs = false;
+    if (!level) {
+        ValuesOfSpillsHeld values = valuesOf(held);
+        for (uint32_t index = 0; index < fanOut; ++index) {
+            if (values[index] == valuesOf(arriving)[index])
+                continue;
+            differs |= !!values[index];
+            values[index] = nothing;
+        }
+        return differs ? makeLeafOfSpillsHeld(values, first) : held;
+    }
+    PartsOfSpillsHeld parts = partsOf(held);
+    for (uint32_t part = 0; part < fanOut; ++part) {
+        const SpillsHeld* onBoth = spillsHeldOnBothWays(parts[part], partsOf(arriving)[part], level - 1, first + part * spillsInPartAt(level));
+        differs |= onBoth != parts[part];
+        parts[part] = onBoth;
+    }
+    return differs ? makeBranchOfSpillsHeld(parts) : held;
+}
+
+void AllocationChecker::takeSpillsHeld(const SpillsHeld* from, const SpillsHeld* to, unsigned level, SpillIndex first)
+{
+    if (from == to)
+        return;
+    if (!level) {
+        uint32_t count = std::min<uint32_t>(fanOut, static_cast<uint32_t>(m_spills.size()) - first);
+        for (uint32_t index = 0; index < count; ++index)
+            m_state[m_firstSpillPlace + first + index] = to ? valuesOf(to)[index] : nothing;
+        return;
+    }
+    for (uint32_t part = 0; part < fanOut; ++part)
+        takeSpillsHeld(from ? partsOf(from)[part] : nullptr, to ? partsOf(to)[part] : nullptr, level - 1, first + part * spillsInPartAt(level));
+}
+
+void AllocationChecker::holdSpillsChanged()
+{
+    if (m_spillsChanged.isEmpty())
+        return;
+    std::sort(m_spillsChanged.begin(), m_spillsChanged.end());
+    m_spillsHeld = withSpillsChanged(m_spillsHeld, m_levelOfSpillsHeld, 0, m_spillsChanged.span());
+    for (SpillIndex spill : m_spillsChanged)
+        m_isSpillChanged.clear(spill);
+    m_spillsChanged.clear();
+}
+
+template<typename Functor>
+void AllocationChecker::forEachSpillHeld(const SpillsHeld* held, unsigned level, SpillIndex first, const Functor& functor) const
+{
+    if (!held)
+        return;
+    for (uint32_t index = 0; index < fanOut; ++index) {
+        if (level)
+            forEachSpillHeld(partsOf(held)[index], level - 1, first + index * spillsInPartAt(level), functor);
+        else if (valuesOf(held)[index])
+            functor(first + index);
+    }
 }
 
 void AllocationChecker::killRegisters(RegisterMask mask)
@@ -335,10 +599,11 @@ bool AllocationChecker::forgetWhatSuspensionLoses(const PatchOperation* suspensi
             kept = maskOf(preserved);
     }
     killRegisters(~kept);
-    for (Place place : m_touched) {
-        if (place >= m_firstSpillPlace && !spillsHeld.get(place - m_firstSpillPlace))
-            m_state[place] = nothing;
-    }
+    holdSpillsChanged();
+    forEachSpillHeld(m_spillsHeld, m_levelOfSpillsHeld, 0, [&](SpillIndex spill) {
+        if (!spillsHeld.get(spill))
+            set(m_firstSpillPlace + spill, nothing);
+    });
     return true;
 }
 
@@ -389,7 +654,7 @@ bool AllocationChecker::noteSpillRead(SpillIndex spill, const Operation* reader)
 bool AllocationChecker::noteSpillWrite(SpillIndex spill, Width width, const Operation* writer)
 {
     const SpillFacts& facts = m_spills[spill];
-    if (bytesForWidth(width) > bytesForWidth(facts.width))
+    if (bytesForWidth(width) > bytesForWidth(facts.width) || facts.isReadByNoStep)
         return fail(FailureKind::SpillSlotLacksItsValue, writer);
     m_wroteSpillBehindLastExecute = true;
     if (isInRange(facts))
@@ -867,7 +1132,7 @@ bool AllocationChecker::transfer(const Step& step)
             return fail(FailureKind::SpillSlotLacksItsValue, step.operation);
         const SpillFacts& facts = m_spills[step.destination.spillIndex()];
         bool standsRightBehindLastRead = m_now.lower == facts.end + 1 && facts.begin <= m_now.upper && !m_wroteSpillBehindLastExecute;
-        if (!isInRange(facts) && !standsRightBehindLastRead)
+        if (facts.isReadByNoStep || (!isInRange(facts) && !standsRightBehindLastRead))
             return fail(FailureKind::SpillSlotLacksItsValue, step.operation);
         set(place, nothing);
         killSecondScratchGPR();
@@ -934,6 +1199,9 @@ bool AllocationChecker::enter(Block* block)
     clearState();
     for (const Entry& entry : m_heads[block->index()].entries)
         set(entry.place, entry.value);
+    holdSpillsChanged();
+    takeSpillsHeld(m_spillsHeld, m_heads[block->index()].spills, m_levelOfSpillsHeld, 0);
+    m_spillsHeld = m_heads[block->index()].spills;
     if (block->isEntry()) {
         for (Operation* operation : block->operations()) {
             if (operation->opcode() == ArgumentReg && !(maskOf(operation->argumentReg()) & (m_pinned | m_scratch)))
@@ -949,7 +1217,7 @@ bool AllocationChecker::enter(Block* block)
             return fail(FailureKind::RegisterLacksItsValue, binding.value);
         if (m_state[binding.reg.index()] != id) {
             SpillIndex spill = binding.value->opcode() == Phi ? m_allocation.spillOf(binding.value) : noSpill;
-            if (spill >= m_spills.size() || !m_spills[spill].isSharedByPhis)
+            if ((spill >= m_spills.size() || !m_spills[spill].isSharedByPhis) && !isReleasedAndDeadAt(binding.value, block))
                 return fail(FailureKind::RegisterLacksItsValue, binding.value);
         }
     }
@@ -963,10 +1231,41 @@ bool AllocationChecker::enter(Block* block)
             continue;
         }
         SpillIndex spill = m_allocation.spillOf(phi);
+        if (spill < m_spills.size() && m_spills[spill].isReadByNoStep)
+            continue;
         if (spill >= m_spills.size() || m_state[m_firstSpillPlace + spill] != idOf(phi))
             return fail(FailureKind::SpillSlotLacksItsValue, phi);
     }
     m_now.lower = m_head;
+    return true;
+}
+
+bool AllocationChecker::isReleasedAndDeadAt(const Operation* value, const Block* head)
+{
+    auto clearsValueSlot = [&](const Step& step) {
+        return step.kind == StepKind::ClearSpill && step.operation == value;
+    };
+    if (std::ranges::none_of(m_allocation.steps(), clearsValueSlot))
+        return false;
+
+    BitVector isEntered;
+    Vector<const Block*, 16> entered { head };
+    isEntered.set(head->index());
+    while (!entered.isEmpty()) {
+        const Block* block = entered.takeLast();
+        for (const Operation* operation : block->operations()) {
+            if (std::ranges::find(operation->children(), value) != operation->children().end())
+                return false;
+        }
+        for (const Operation* upsilon : block->upsilons()) {
+            if (upsilon->child(0) == value)
+                return false;
+        }
+        for (const Edge& successor : block->successors()) {
+            if (!isEntered.set(successor.block()->index()))
+                entered.append(successor.block());
+        }
+    }
     return true;
 }
 
@@ -1007,16 +1306,12 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
         if (place < numberOfRegisters) {
             if (killed >> place & 1)
                 continue;
-        } else if (place < m_firstSpillPlace) {
-            if (target->isLandingPad())
-                continue;
-        } else {
-            const SpillFacts& facts = m_spills[place - m_firstSpillPlace];
-            if (facts.begin > head + 1 || facts.end < head || facts.isInGap(head))
-                continue;
-        }
+        } else if (target->isLandingPad())
+            continue;
         m_onEdge[place] = value;
     }
+    holdSpillsChanged();
+    const SpillsHeld* spillsArriving = leavesFramedPart ? nullptr : spillsKeptAlong({ head, definitionOfLostResults }, m_spillsHeld, m_levelOfSpillsHeld, 0);
 
     if (from->last()->opcode() == Branch && m_liveness.goesByOverflow(from->last())) {
         const Operation* operandTakenBack = m_allocation.step(m_allocation.stepsOf(from).terminator).other;
@@ -1041,9 +1336,8 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
         SpillIndex spill = m_allocation.spillOf(phi);
         if (m_liveness.isDropped(phi) || spill >= m_spills.size() || (m_allocation.registerAtDefinitionOf(phi).isSet() && !m_allocation.isWrittenByEdges(phi)))
             continue;
-        Place place = m_firstSpillPlace + spill;
         ValueID incoming = m_incoming[phi->index()];
-        m_onEdge[place] = incoming && m_state[place] == incoming ? idOf(phi) : nothing;
+        spillsArriving = withSpill(spillsArriving, m_levelOfSpillsHeld, 0, spill, incoming && m_state[m_firstSpillPlace + spill] == incoming ? idOf(phi) : nothing);
     }
     for (Operation* upsilon : from->upsilons()) {
         if (Operation* phi = upsilon->phi())
@@ -1062,6 +1356,7 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
             if (m_onEdge[place])
                 headOfTarget.entries[next++] = { place, m_onEdge[place] };
         }
+        headOfTarget.spills = spillsArriving;
         headOfTarget.isSet = true;
         hasChanged = true;
     } else {
@@ -1070,8 +1365,10 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
             if (m_onEdge[entry.place] == entry.value)
                 headOfTarget.entries[kept++] = entry;
         }
-        hasChanged = kept != headOfTarget.entries.size();
+        const SpillsHeld* spillsOnBothWays = spillsHeldOnBothWays(headOfTarget.spills, spillsArriving, m_levelOfSpillsHeld, 0);
+        hasChanged = kept != headOfTarget.entries.size() || spillsOnBothWays != headOfTarget.spills;
         headOfTarget.entries = headOfTarget.entries.first(kept);
+        headOfTarget.spills = spillsOnBothWays;
     }
     for (Place place : m_touched)
         m_onEdge[place] = nothing;

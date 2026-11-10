@@ -68,16 +68,16 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             // LazyProperty::callFunc) so it can't return with one pending.
             DeferTerminationForAWhile deferScope(vm);
 #if ENABLE(AOT)
-            std::optional<AOT::MakingOfMemberForLook> making;
+            std::optional<AOT::MemberReificationScope> reificationScope;
             if (vm.hasCompiledCode()) [[unlikely]]
-                making.emplace(slot.internalMethodType() != PropertySlot::InternalMethodType::Get);
+                reificationScope.emplace(slot.internalMethodType() != PropertySlot::InternalMethodType::Get);
 #endif
 #if ENABLE(AOT)
-            // Compiled code may hold the object already. The property is that object.
-            JSObject* madeAhead = vm.hasCompiledCode() && !isAccessor ? AOT::RuntimeHooks::takeStaticPropertyMadeAhead(thisObject, propertyName.uid()) : nullptr;
-            if (madeAhead) [[unlikely]] {
+            // Compiled code may already hold the object for this property. If so, store that same object.
+            JSObject* preallocated = vm.hasCompiledCode() && !isAccessor ? AOT::RuntimeHooks::takePreallocatedStaticProperty(thisObject, propertyName.uid()) : nullptr;
+            if (preallocated) [[unlikely]] {
                 AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-                thisObject->putDirect(vm, propertyName, madeAhead, attributesForStructure(entry->attributes()));
+                thisObject->putDirect(vm, propertyName, preallocated, attributesForStructure(entry->attributes()));
             } else
 #endif
                 reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
@@ -89,11 +89,11 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
         // lookup, and callers of getOwnPropertySlot don't check for one.
         if (vm.exceptionForInspection()) [[unlikely]] {
 #if ENABLE(AOT)
-            JSValue standIn = vm.hasCompiledCode() && !isAccessor ? AOT::takeStandInForMemberLeftOut(thisObject->realm(), String(propertyName.uid())) : JSValue();
-            if (!standIn)
+            JSValue placeholder = vm.hasCompiledCode() && !isAccessor ? AOT::takeOmittedMemberPlaceholder(thisObject->realm(), String(propertyName.uid())) : JSValue();
+            if (!placeholder)
                 return false;
-            // Nothing is stored: the property stays unmade, and a read behind this look asks its builder again.
-            slot.setValue(thisObject, attributesForStructure(entry->attributes()), standIn);
+            // Nothing is stored. The property stays unreified, and the next read calls its builder again.
+            slot.setValue(thisObject, attributesForStructure(entry->attributes()), placeholder);
             return true;
 #else
             return false;

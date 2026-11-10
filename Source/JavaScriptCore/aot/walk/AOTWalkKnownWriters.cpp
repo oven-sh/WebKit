@@ -33,13 +33,10 @@ static_assert(perObjectHeaps.containsAll(heapsOfObjectsJudgedInKnownWriters));
 static_assert(!perObjectHeaps.contains(AbstractHeap::MemberGuards));
 
 static constexpr OptionSet<FactOfCell> factsOfCellKnownInKnownWriters {
-    FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark
+    FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::KeysAreAsEnumeratorFoundThem, FactOfCell::BearsNoMark
 };
 
-static OptionSet<FactOfCell> factsOfCellEndedInKnownWriters(const LocationMasks& writes)
-{
-    return factsOfCellEndedBy(writes) | OptionSet<FactOfCell>::fromRaw(static_cast<OptionSet<FactOfCell>::StorageType>(~factsOfCellKnownInKnownWriters.toRaw()));
-}
+static_assert(factsOfCellKnownInKnownWriters.toRaw() == (1u << numberOfFactsOfCell) - 1);
 
 void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject)
 {
@@ -73,7 +70,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     bool writesIntoObjects = writes.containsAny(heapsOfObjectsJudgedInKnownWriters);
     bool endsShapes = writes.contains(AbstractHeap::ShapeWords) && m_numberOfShapes;
     bool endsPlaces = writes.containsAny(heapsJudgedInKnownWriters) && m_numberOfPlaces;
-    OptionSet<FactOfCell> factsEnded = writesIntoObjects && m_numberOfHoldersWithFactsOfCell ? factsOfCellEndedInKnownWriters(writes) : OptionSet<FactOfCell>();
+    OptionSet<FactOfCell> factsEnded = writesIntoObjects && m_numberOfHoldersWithFactsOfCell ? factsOfCellEndedBy(writes) : OptionSet<FactOfCell>();
     if (!endsShapes && !endsPlaces && factsEnded.isEmpty())
         return;
 
@@ -417,7 +414,7 @@ static bool isOnlyClosureOfClassWhoseGuardsHaveBegunInKnownWriters(const Walker&
     const Program& program = walker.program();
     LayoutID classLayout = declaredLayoutOf(program, made);
     AccessContext context { program, WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() };
-    if (!newTarget || !walker.state().guardsHaveBegun(classLayout) || !prototypeOfConstructorFunctionIsLeftToGuards(context, classLayout))
+    if (!newTarget || (!walker.state().guardsHaveBegun(classLayout) && !walker.takesReadsOfConstructorsPrototypesToEndNoGuard()) || !prototypeOfConstructorFunctionIsLeftToGuards(context, classLayout))
         return false;
     Type type = walker.types().at(newTarget);
     return type.isObject() && type.hasOnlyClosures() && singleFunctionOf(walker.types(), type) == program.at(classLayout).constructor;
@@ -506,7 +503,7 @@ static std::optional<Vector<uint32_t, 2>> listMadeHereThatLoopOnlyFillsInKnownWr
         return Vector<uint32_t, 2> { };
     std::optional<BlockID> head = walker.headOfInnermostTryInFrameOnTop();
     std::optional<Vector<uint32_t, 2>> made = head ? objectsMadeHereInKnownWriters(walker, ObjectsWrittenAloneInKnownWriters { receiver }) : std::nullopt;
-    if (!made || !textOfLoopOnlyFillsListAndReadsAnother(walker, *head, ValueID(made->first())) || !walker.textOfLoopReckonsWithWhatItReads(*head))
+    if (!made || !textOfLoopOnlyFillsListAndReadsAnother(walker, *head, ValueID(made->first())) || (!walker.textOfLoopReckonsWithWhatItReads(*head) && !walker.textOfLoopOrdersWhatItReads(*head)))
         return std::nullopt;
     return made;
 }
@@ -555,6 +552,8 @@ std::optional<MemoryLocation> locationThatStoreNames(const Program& program, con
 
 static NEVER_INLINE void endWhatWriterWritesInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
 {
+    if (draft.opcode == Opcode::SetArrayLength && walker.takesStoresOfLengthsToEndNothing()) [[unlikely]]
+        return;
     WalkState& state = walker.state();
     std::optional<MemoryLocation> locationWrittenAlone = storeMayLeaveWhatLiesBeside(state, draft) ? locationThatStoreNames(walker.program(), draft, effects) : std::nullopt;
     const MemoryLocation* writtenAlone = locationWrittenAlone ? &*locationWrittenAlone : nullptr;

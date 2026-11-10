@@ -112,6 +112,11 @@ void ImageNumbersBuilder::numberFunctions(const NumberingInputs& inputs, ImageNu
     };
     numberUnitsInAscendingOrder(closureEntries);
     numberUnitsInAscendingOrder(otherDerivedUnits);
+    if (hasFlag(context.options().lies, Wire::TestingLie::TwoClosureNumbersChangePlaces) && numberOfClosureFunctions > 1) {
+        std::swap(unitOfDerived[0], unitOfDerived[1]);
+        setIDOfUnit(unitOfDerived[0], FunctionID(firstDerived));
+        setIDOfUnit(unitOfDerived[1], FunctionID(firstDerived + 1));
+    }
     AOT::sortInLine(idsOfUnitsBehindFunctions, { }, &FunctionNumbers::IDOfUnit::unit);
 }
 
@@ -270,6 +275,13 @@ static void putNumbersInThrowWordsOfAccess(const CompiledCode& code, FaultingAcc
 
 void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& numbers, BuildContext& context)
 {
+    if (!numbers.functions().closureNumbersRiseAsTestsOfClosuresInCompiledCodeExpect()) {
+        context.diagnostics().add(InternalError {
+            .kind = InternalErrorKind::PlacementCheckFailed,
+            .detail = "closure numbers do not rise with the numbers of the functions, as the tests of closures in compiled code expect"_s,
+        });
+        return;
+    }
     forEachRangeOfIndicesInParallel(context.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
         uint64_t stubKeysLaidOnSiblings = 0;
         auto countAtEnd = makeScopeExit([&] {

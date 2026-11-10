@@ -1,6 +1,7 @@
 list(TRANSFORM JavaScriptCore_AOT_PROGRAM_SOURCES PREPEND ../ OUTPUT_VARIABLE aotProgramSources)
 list(TRANSFORM JavaScriptCore_AOT_SHELL_SOURCES PREPEND ../ OUTPUT_VARIABLE aotShellSources)
 list(TRANSFORM JavaScriptCore_AOT_TEST_SOURCES PREPEND ../ OUTPUT_VARIABLE aotTestSources)
+list(TRANSFORM JavaScriptCore_AOT_STAND_IN_HOST_TEST_SOURCES PREPEND ../ OUTPUT_VARIABLE aotStandInHostTestSources)
 list(APPEND aotTestSources ${JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES})
 
 # A static JavaScriptCore leaves the table of built-ins to the program that links it. Compiled once, for all of them.
@@ -134,7 +135,7 @@ if (USE_BUN_JSC_ADDITIONS)
     add_library(jscLibrary STATIC $<FILTER:$<TARGET_OBJECTS:jsc>,EXCLUDE,ExternalMimallocShims>)
     set_target_properties(jscLibrary PROPERTIES OUTPUT_NAME jsc-objects LINKER_LANGUAGE CXX)
 
-    set(testaot_SOURCES $<TARGET_OBJECTS:testaotObjects> ${aotBuiltinTableObjects})
+    set(testaot_SOURCES $<TARGET_OBJECTS:testaotObjects> ${aotBuiltinTableObjects} ${aotStandInHostTestSources})
     set(testaot_DEPENDENCIES testaotLibrary jscLibrary)
     set(testaot_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testaot_FRAMEWORKS ${jsc_FRAMEWORKS})

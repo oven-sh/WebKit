@@ -273,7 +273,7 @@ public:
 
         Type type;
 #if ENABLE(AOT)
-        // In the padding in front of the pointer.
+        // In the padding before the pointer.
         bool isOfEndedMock { false };
         bool cameThroughEntryFromStar { false };
         Markable<unsigned> compiledExportIndex;

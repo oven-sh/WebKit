@@ -108,6 +108,7 @@ public:
 
 private:
     Walker::Frame& frame() { return m_walker.m_frames[m_frameIndex]; }
+    bool bodyOfFrameCallsItself() { return m_walker.bodyOfFrameCallsItself(frame()); }
     uint32_t firstValue() const { return m_block.firstValue().index(); }
     bool operationsMayBeWalkedAgain(uint32_t begin, uint32_t end);
     bool terminatorMayBeWalkedAgain();
@@ -551,7 +552,8 @@ bool KnownThreading::looksAhead(LookAhead& look, const Functor& isLeanedOn)
         for (uint32_t position = place.begin; position < here.m_block.numberOfValues(); ++position) {
             BodyValue operation = here.m_index.value(ValueID(here.firstValue() + position));
             bool asksForClassInLoop = operation.opcode() == Opcode::InstanceOf && !hasPassedWhereSidesOfChoiceMeet && (walker.isInLoop() || walker.bodyAtWorkCallsItself());
-            if (!asksForClassInLoop && !(hasPassedWhereSidesOfChoiceMeet ? operatorsOnNumbersInKnownThreading : operationsTypedByWayInKnownThreading).contains(operation.opcode()))
+            bool isEquality = allEqualities.contains(operation.opcode());
+            if (!asksForClassInLoop && !isEquality && !(hasPassedWhereSidesOfChoiceMeet ? operatorsOnNumbersInKnownThreading : operationsTypedByWayInKnownThreading).contains(operation.opcode()))
                 continue;
             bool looks = false;
             std::optional<bool> copyOfCalleePays;
@@ -572,6 +574,8 @@ bool KnownThreading::looksAhead(LookAhead& look, const Functor& isLeanedOn)
                     looks = name && isLeanedOn(ValueID(), name);
                 }
             });
+            if (looks && isEquality)
+                looks = here.frame().loopDepthAtCall || here.m_index.loopDepthOf(place.block) || here.bodyOfFrameCallsItself();
             if (looks)
                 return true;
         }

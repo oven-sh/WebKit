@@ -373,6 +373,182 @@ static void checkerRefusesDroppedEdgeMove()
     expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { diamond.phi });
 }
 
+static void expectCheckerToRefuseSlotThatOneOfTwoEdgesDoesNotWrite(SpillIndex slotsInFront)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    unsigned count = static_cast<unsigned>(std::popcount(registerFileFor(test.procedure().traits()).allocatableIn(Bank::GP))) + slotsInFront + 8;
+    Operation* selector = test.argumentGPR(0);
+    Operation* seed = test.argumentGPR(1);
+    Block* left = out.newBlock();
+    Block* right = out.newBlock();
+    Block* join = out.newBlock();
+    Vector<Operation*> phis;
+    for (unsigned index = 0; index < count; ++index)
+        phis.append(out.phiIn(join, Int64));
+    out.branch(out.testNonZero64(selector, 1), normalEdge(left), normalEdge(right));
+    for (Block* arm : { left, right }) {
+        out.appendTo(arm);
+        Vector<Operation*> values = defineValues(test, arm == left ? seed : selector, count, Int64);
+        for (unsigned index = 0; index < count; ++index)
+            out.upsilon(values[index], phis[index]);
+        out.jump(normalEdge(join));
+    }
+    out.appendTo(join);
+    Operation* sum = phis[0];
+    for (Operation* phi : phis.span().subspan(1))
+        sum = appendPatchForCheckerTest(out, Int64, { sum, phi });
+    out.ret(sum);
+    prepareForCheckerTest(test);
+
+    const Allocation& allocation = test.procedure().allocation();
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().order().of(left).orderIndex < test.procedure().order().of(right).orderIndex);
+    const BlockSteps& range = allocation.stepsOf(right);
+    const Operation* leftOut = nullptr;
+    uint32_t save = range.endOfEdgeMoves;
+    for (const Operation* phi : phis) {
+        SpillIndex spill = allocation.spillOf(phi);
+        if (leftOut || spill == noSpill || spill < slotsInFront)
+            continue;
+        for (uint32_t index = range.beginOfEdgeMoves; index < range.endOfEdgeMoves; ++index) {
+            const Step& step = allocation.step(index);
+            if (step.kind != StepKind::Save || !step.destination.isSpill() || step.destination.spillIndex() != spill)
+                continue;
+            leftOut = phi;
+            save = index;
+        }
+    }
+    AOT_CHECKER_TEST_CHECK(test, leftOut);
+    dropStepForCheckerTest(test, right, save);
+    expectCheckerRefusal(test, checkAllocation, FailureKind::SpillSlotLacksItsValue, { leftOut });
+}
+
+static void checkerRefusesSlotBeyondFirstThirtyTwoThatOneOfTwoEdgesDoesNotWrite()
+{
+    expectCheckerToRefuseSlotThatOneOfTwoEdgesDoesNotWrite(32);
+}
+
+static void checkerRefusesSlotBeyondFirst32768ThatOneOfTwoEdgesDoesNotWrite()
+{
+    expectCheckerToRefuseSlotThatOneOfTwoEdgesDoesNotWrite(32768);
+}
+
+static SpillFacts& findSlotBeyondFirstThirtyTwoReloadedInForCheckerTest(TestProcedure& test, const Block* block)
+{
+    const Allocation& allocation = test.procedure().allocation();
+    const BlockSteps& range = allocation.stepsOf(block);
+    for (uint32_t index = range.begin; index < range.end; ++index) {
+        const Step& step = allocation.step(index);
+        if (step.kind == StepKind::Reload && step.sources[0].isSpill() && step.sources[0].spillIndex() >= 32)
+            return test.procedure().allocationForTesting().spillsForTesting()[step.sources[0].spillIndex()];
+    }
+    failCheckerTest(test, __FILE__, __LINE__, "the block reloads a slot beyond the first thirty-two");
+}
+
+static void expectCheckerToMissValueOfSlot(TestProcedure& test)
+{
+    AOT_CHECKER_TEST_CHECK(test, !checkAllocation(test.procedure()));
+    const std::optional<Failure>& failure = test.procedure().failure();
+    AOT_CHECKER_TEST_CHECK(test, failure && (failure->kind == FailureKind::RegisterLacksItsValue || failure->kind == FailureKind::SpillSlotLacksItsValue));
+}
+
+static void checkerRefusesSlotBeyondFirstThirtyTwoWhoseGapLiesOverRareBlock()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    unsigned count = static_cast<unsigned>(std::popcount(registerFileFor(test.procedure().traits()).allocatableIn(Bank::GP))) + 40;
+    Operation* selector = test.argumentGPR(0);
+    Vector<Operation*> values = defineValues(test, test.argumentGPR(1), count, Int64);
+    Block* slow = out.newBlock();
+    Block* join = out.newBlock();
+    out.branch(out.testNonZero64(selector, 1), rareEdge(slow), normalEdge(join));
+    out.appendTo(slow);
+    appendPatchForCheckerTest(out, Void, { });
+    out.jump(normalEdge(join));
+    out.appendTo(join);
+    Operation* sum = values[0];
+    for (Operation* value : values.span().subspan(1))
+        sum = appendPatchForCheckerTest(out, Int64, { sum, value });
+    out.ret(sum);
+    prepareForCheckerTest(test);
+
+    Position headOfSlow = test.procedure().order().headOf(slow);
+    Position headOfJoin = test.procedure().order().headOf(join);
+    SpillFacts& facts = findSlotBeyondFirstThirtyTwoReloadedInForCheckerTest(test, join);
+    AOT_CHECKER_TEST_CHECK(test, facts.begin < headOfSlow && headOfSlow < headOfJoin && headOfJoin <= facts.end && !facts.hasGap());
+    facts.beginOfGap = headOfSlow;
+    facts.endOfGap = headOfJoin - 1;
+    expectCheckerToMissValueOfSlot(test);
+}
+
+static void checkerRefusesSlotBeyondFirstThirtyTwoWhoseRangeEndsInFrontOfLatch()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    unsigned count = static_cast<unsigned>(std::popcount(registerFileFor(test.procedure().traits()).allocatableIn(Bank::GP))) + 40;
+    Operation* rounds = test.argumentGPR(0);
+    Vector<Operation*> values = defineValues(test, test.argumentGPR(1), count, Int64);
+    Block* head = out.newBlock();
+    Block* latch = out.newBlock();
+    Block* exit = out.newBlock();
+    Operation* counter = out.phiIn(head, Int64);
+    out.upsilon(rounds, counter);
+    out.jump(normalEdge(head));
+    out.appendTo(head);
+    for (Operation* value : values)
+        appendPatchForCheckerTest(out, Void, { value });
+    out.branch(out.notZero64(counter), normalEdge(latch), normalEdge(exit));
+    out.appendTo(latch);
+    out.upsilon(out.sub(counter, 1), counter);
+    out.jump(normalEdge(head));
+    out.appendTo(exit);
+    out.ret(counter);
+    prepareForCheckerTest(test);
+
+    Position headOfLatch = test.procedure().order().headOf(latch);
+    SpillFacts& facts = findSlotBeyondFirstThirtyTwoReloadedInForCheckerTest(test, head);
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().order().headOf(head) < headOfLatch && headOfLatch <= facts.end && !facts.hasGap());
+    facts.end = headOfLatch - 1;
+    expectCheckerToMissValueOfSlot(test);
+}
+
+static std::optional<uint64_t> checkerTestInstructionsToCheckValuesHeldAcrossBlocks(unsigned count)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* selector = test.argumentGPR(0);
+    Vector<Operation*> values = defineValues(test, test.argumentGPR(1), count, Int64);
+    for (unsigned number = 0; number < count; ++number) {
+        Block* taken = out.newBlock();
+        Block* next = out.newBlock();
+        out.branch(out.testNonZero64(selector, number + 1), normalEdge(taken), normalEdge(next));
+        out.appendTo(taken);
+        appendPatchForCheckerTest(out, Void, { });
+        out.jump(normalEdge(next));
+        out.appendTo(next);
+    }
+    Operation* sum = values[0];
+    for (Operation* value : values.span().subspan(1))
+        sum = appendPatchForCheckerTest(out, Int64, { sum, value });
+    out.ret(sum);
+    prepareOrFail(test);
+
+    bool findsNothing = false;
+    std::optional<uint64_t> instructions = instructionsOfCurrentThreadIn([&] {
+        findsNothing = checkAllocation(test.procedure());
+    });
+    AOT_CHECKER_TEST_CHECK(test, findsNothing);
+    return instructions;
+}
+
+static void checkerWorkGrowsAsValuesHeldAcrossBlocksDo()
+{
+    constexpr unsigned count = 400;
+    std::optional<uint64_t> smaller = checkerTestInstructionsToCheckValuesHeldAcrossBlocks(count);
+    std::optional<uint64_t> large = checkerTestInstructionsToCheckValuesHeldAcrossBlocks(4 * count);
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
 static void checkerRefusesExchangedMovesOfCycle()
 {
     constexpr unsigned length = 3;
@@ -607,8 +783,10 @@ static std::optional<CheckerTestThreeHeads> buildHeadEnteredOutOfOtherPartsForCh
     }
     bool hasShape = heads.saveAtThirdOfWhatOthersSave != UINT32_MAX;
     AOT_CHECKER_TEST_CHECK(test, hasShape || !isX86_64());
-    if (!hasShape)
+    if (!hasShape) {
+        dataLogLn("NOT RUN, the allocator makes no head here that is entered out of other parts and saves what their heads save");
         return std::nullopt;
+    }
     AOT_CHECKER_TEST_CHECK(test, checkSavesAtHeads(test.procedure()) && !test.procedure().failure());
     return heads;
 }
@@ -644,10 +822,10 @@ static void checkerOfSavesAtHeadsPassesSlotThatWasEmptiedAndIsMovedOn()
     Allocation& allocation = test.procedure().allocationForTesting();
     Location slot = allocation.step(heads->saveAtThirdOfWhatOthersSave).destination;
     const BlockSteps& range = allocation.stepsOf(heads->third);
-    bool isReadBehindFirstStep = false;
+    bool isReloadedBehindFirstStep = false;
     for (uint32_t index = range.begin + 1; index < range.end; ++index)
-        isReadBehindFirstStep |= std::ranges::find(allocation.step(index).sources, slot) != std::ranges::end(allocation.step(index).sources);
-    AOT_CHECKER_TEST_CHECK(test, isReadBehindFirstStep);
+        isReloadedBehindFirstStep |= allocation.step(index).kind == StepKind::Reload && allocation.step(index).sources[0] == slot;
+    AOT_CHECKER_TEST_CHECK(test, isReloadedBehindFirstStep);
     Step empties { StepKind::ClearSpill };
     empties.destination = slot;
     empties.operation = allocation.step(heads->saveAtThirdOfWhatOthersSave).operation;
@@ -933,6 +1111,11 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/changed-source-register"_s, Machine::checkerRefusesChangedSourceRegister },
         { "machine-checker/dropped-reload"_s, Machine::checkerRefusesDroppedReload },
         { "machine-checker/dropped-edge-move"_s, Machine::checkerRefusesDroppedEdgeMove },
+        { "machine-checker/a-slot-beyond-the-first-thirty-two-that-one-of-two-edges-does-not-write"_s, Machine::checkerRefusesSlotBeyondFirstThirtyTwoThatOneOfTwoEdgesDoesNotWrite },
+        { "machine-checker/a-slot-beyond-the-first-32768-that-one-of-two-edges-does-not-write"_s, Machine::checkerRefusesSlotBeyondFirst32768ThatOneOfTwoEdgesDoesNotWrite },
+        { "machine-checker/a-slot-beyond-the-first-thirty-two-whose-range-ends-in-front-of-the-latch"_s, Machine::checkerRefusesSlotBeyondFirstThirtyTwoWhoseRangeEndsInFrontOfLatch },
+        { "machine-checker/a-slot-beyond-the-first-thirty-two-whose-gap-lies-over-a-rare-block"_s, Machine::checkerRefusesSlotBeyondFirstThirtyTwoWhoseGapLiesOverRareBlock },
+        { "machine-checker/work-grows-as-values-held-across-blocks-do"_s, Machine::checkerWorkGrowsAsValuesHeldAcrossBlocksDo },
         { "machine-checker/exchanged-moves-of-a-cycle"_s, Machine::checkerRefusesExchangedMovesOfCycle },
         { "machine-checker/value-left-in-a-clobbered-register"_s, Machine::checkerRefusesValueLeftInClobberedRegister },
         { "machine-checker/landing-pad-reads-a-caller-saved-register"_s, Machine::checkerRefusesLandingPadThatReadsCallerSavedRegister },

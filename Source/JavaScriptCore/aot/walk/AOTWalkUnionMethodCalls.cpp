@@ -126,6 +126,8 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
     arms.appendVector(armsThatFindNeitherGetterNorField);
     if (arms.isEmpty() || (!call && !someAnswerByGetter && !walker.isInLoop()))
         return false;
+    if (walker.leavesLastArmOutOfRowsOfShapeTests() && !somethingIsLeft && arms.size() > 1)
+        arms.removeLast();
 
     uint32_t firstOfStretch = first + begin;
     uint32_t size = end - begin;
@@ -173,6 +175,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         walker.state().noteCheckedName(receiver, left);
     }
 
+    Reference asItEnteredRow = left;
     SetForScope standsInArm(walker.numberOfFramesAtRowOfShapeTests(), walker.depthOfCopies() + 1);
     BlockID meeting = walker.addBlock();
     BlockID closedArmOfAll = isOnlyExpected ? walker.addBlock(BlockFrequency::Rare) : BlockID();
@@ -216,8 +219,13 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
             walker.closedArmOfRowOfShapeTests() = { };
             Walker::ClosedArm closedArm(walker);
             walkArm();
-        } else
+        } else {
+            TypeID layoutsOfArms = arms[0];
+            for (TypeID arm : arms)
+                layoutsOfArms = types.unionOf(layoutsOfArms, arm);
+            walker.checkProof(asItEnteredRow, layoutsOfArms, TypeWithoutProof(TypeTable::anything), ProofSource::OtherOperation, origin);
             walker.endAsUnreachable(origin);
+        }
     }
     if (!walker.hasFailed())
         walker.letArmsMeet(stretch, built, meeting);

@@ -251,7 +251,9 @@ void RegExp::finishCreationFromImage(VM& vm, const AOT::ImageRegExp& record)
         return;
 
     m_numSubpatterns = record.numSubpatterns;
-    m_minimumSize = record.minimumSize;
+    // Without code the first use compiles the pattern to bytecode, which can fail. compile() sets the minimum size once that has succeeded, so no subject is rejected before.
+    if (record.form() != AOT::RegExpRecordForm::NoCode)
+        m_minimumSize = record.minimumSize;
     m_specificPattern = record.specificPattern();
     if (record.form() == AOT::RegExpRecordForm::Atom) {
         m_atom = AOT::regExpAtomOf(vm, record);

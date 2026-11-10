@@ -109,7 +109,7 @@ std::optional<Stubs::BlockOfCallbackEntries> Stubs::tryMapCallbackEntries() cons
     int descriptor = m_callbackEntries.descriptor;
 #if ENABLE(AOT)
     if (m_callbackEntries.imageInExecutable)
-        descriptor = AOT::openExecutableThatHolds(*m_callbackEntries.imageInExecutable);
+        descriptor = AOT::openExecutableContaining(*m_callbackEntries.imageInExecutable);
 #endif
     auto closeExecutable = makeScopeExit([&] {
         if (m_callbackEntries.imageInExecutable && descriptor >= 0)

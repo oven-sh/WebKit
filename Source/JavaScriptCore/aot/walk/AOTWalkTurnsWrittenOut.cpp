@@ -793,7 +793,7 @@ void Walker::standAtHeadOfTurnOfForIn(BlockID inputHead)
     TurnsOfForInWrittenOut& turns = *m_frames.last().turnsOfForIn;
     if (!turns.enumerator)
         return;
-    bool noKeyHasChangedSince = m_state.factsOfCell(turns.enumerator).contains(FactOfCell::IsLikelyAsAllocated);
+    bool noKeyHasChangedSince = m_state.factsOfCell(turns.enumerator).contains(FactOfCell::KeysAreAsEnumeratorFoundThem);
     bool isFirstTurn = !std::exchange(turns.enumeratorIsAsked, true);
     if (!isFirstTurn && noKeyHasChangedSince)
         return;
@@ -830,7 +830,7 @@ void Walker::standAtHeadOfTurnOfForIn(BlockID inputHead)
     }
     continueIn(current);
     if (!isUnreachable())
-        m_state.noteFactsOfCell(turns.enumerator, FactOfCell::IsLikelyAsAllocated);
+        noteKeysAreAsEnumeratorFoundThem(*this, turns.enumerator, std::as_const(m_iterationsByIndex)[turns.place].subject);
 }
 
 bool Walker::writeOutTurnsOfForIn(BlockID inputHead, std::span<const Reference> entering)
@@ -868,7 +868,7 @@ bool Walker::writeOutTurnsOfForIn(BlockID inputHead, std::span<const Reference> 
     Reference firstPosition = asItEntered.position;
     if (integerBuiltForTurnsWrittenOut(*this, firstPosition) != std::optional<int64_t>(0))
         return false;
-    if (!m_state.factsOfCell(turns.enumerator).contains(FactOfCell::IsLikelyAsAllocated))
+    if (!m_state.factsOfCell(turns.enumerator).contains(FactOfCell::KeysAreAsEnumeratorFoundThem))
         return false;
     Reference object = referenceOf(objectInBody);
     if (!object || !object.isValue())

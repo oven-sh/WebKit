@@ -389,6 +389,11 @@ const LinkType LinkFlow::s_nothing;
 
 LinkFlow::~LinkFlow() = default;
 
+static constexpr bool hasNodeOfItsOwnInLinkFlow(const SummaryNode& node)
+{
+    return node.kind >= SummaryNode::Kind::Contents;
+}
+
 LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Families& families, const LooksAtBodies& looks, Mechanisms mechanisms, BuildContext& build, OrderOfWorklist order)
     : program(program)
     , summaries(summaries)
@@ -683,7 +688,11 @@ void LinkFlow::numberNodes(Vector<uint32_t>&& numbersOfMemberNodesOfSides)
             const ThinSummary& summary = summaries.at(FunctionID(index));
             m_nodesOfFunctions[index].firstParameter = function.numberOfEntryParameters();
             m_nodesOfFunctions[index].firstResult = function.results.size();
-            m_nodesOfFunctions[index].base = summary.nodes.size();
+            uint32_t numberOfNodesOfItsOwn = 0;
+            for (uint32_t inSummary = 0; inSummary < summary.nodes.size(); ++inSummary)
+                numberOfNodesOfItsOwn += hasNodeOfItsOwnInLinkFlow(summary.nodes[inSummary]);
+            m_nodesOfFunctions[index].base = numberOfNodesOfItsOwn;
+            m_nodesOfFunctions[index].firstPlaceInSummaries = summary.nodes.size();
             firstCallOfFunction[index] = summary.calls.size();
             whoseFunctionsAre[index] = 0;
             if (!isLibraryCode(program, function))
@@ -694,19 +703,21 @@ void LinkFlow::numberNodes(Vector<uint32_t>&& numbersOfMemberNodesOfSides)
         }
     });
     uint64_t numberOfCalls = 0;
+    uint64_t numberOfPlacesInSummaries = 0;
     for (size_t index = 0; index < numberOfFunctions; ++index) {
         NodesOfFunction& nodes = m_nodesOfFunctions[index];
         nodes.firstParameter = take(nodes.firstParameter);
         nodes.firstResult = take(nodes.firstResult);
         nodes.thrown = take(1);
         nodes.base = take(nodes.base);
+        numberOfPlacesInSummaries += std::exchange(nodes.firstPlaceInSummaries, static_cast<uint32_t>(numberOfPlacesInSummaries));
         numberOfCalls += std::exchange(firstCallOfFunction[index], static_cast<uint32_t>(numberOfCalls));
     }
     RELEASE_ASSERT(next <= FlowNodeID::largestIndex);
     RELEASE_ASSERT(numberOfCalls < UINT32_MAX);
+    RELEASE_ASSERT(numberOfPlacesInSummaries < UINT32_MAX);
     uint32_t endOfFunctions = static_cast<uint32_t>(next);
-    m_nodesOfFunctions[numberOfFunctions] = NodesOfFunction { endOfFunctions, endOfFunctions, endOfFunctions, endOfFunctions };
-    m_firstNodeOfFunctions = m_nodesOfFunctions[0].firstParameter;
+    m_nodesOfFunctions[numberOfFunctions] = NodesOfFunction { endOfFunctions, endOfFunctions, endOfFunctions, endOfFunctions, static_cast<uint32_t>(numberOfPlacesInSummaries) };
     firstCallOfFunction[numberOfFunctions] = static_cast<uint32_t>(numberOfCalls);
 
     m_nodeOfField.grow(numberOfFields);
@@ -748,7 +759,7 @@ void LinkFlow::numberNodes(Vector<uint32_t>&& numbersOfMemberNodesOfSides)
         }
     }
 
-    size_t roomForNodes = next + next / 4 + 64;
+    size_t roomForNodes = next + next / 2 + 64;
     runLanes(loopsOfLane, {
         [&] {
             m_nodes.reserve(roomForNodes);
@@ -793,17 +804,18 @@ void LinkFlow::numberNodes(Vector<uint32_t>&& numbersOfMemberNodesOfSides)
             });
         },
         [&] {
-            m_nodesOfSummaries.grow(next - m_nodesOfFunctions[0].firstParameter);
+            m_nodesOfSummaries.grow(m_nodesOfFunctions[numberOfFunctions].firstPlaceInSummaries);
             m_firstSiteOfFunction.grow(numberOfFunctions + 1);
             m_firstSiteOfFunction[0] = 0;
             forEachRangeOfIndicesInParallel(build.parallelLoops(), numberOfFunctions, [&](size_t first, size_t end) {
                 for (size_t index = first; index < end; ++index) {
-                    uint32_t numberOfNodes = m_nodesOfFunctions[index + 1].firstParameter - m_nodesOfFunctions[index].base;
-                    std::span<uint32_t> nodes = m_nodesOfSummaries.mutableSpan().subspan(m_nodesOfFunctions[index].base - m_nodesOfFunctions[0].firstParameter, numberOfNodes);
+                    uint32_t numberOfNodes = m_nodesOfFunctions[index + 1].firstPlaceInSummaries - m_nodesOfFunctions[index].firstPlaceInSummaries;
+                    std::span<uint32_t> nodes = m_nodesOfSummaries.mutableSpan().subspan(m_nodesOfFunctions[index].firstPlaceInSummaries, numberOfNodes);
                     const ThinSummary& summary = summaries.at(FunctionID(index));
                     uint32_t numberOfSites = 0;
+                    uint32_t nextNodeOfItsOwn = m_nodesOfFunctions[index].base;
                     for (uint32_t node = 0; node < numberOfNodes; ++node) {
-                        nodes[node] = findNodeOf(FunctionID(index), node).index();
+                        nodes[node] = hasNodeOfItsOwnInLinkFlow(summary.nodes[node]) ? nextNodeOfItsOwn++ : findSharedNodeOf(FunctionID(index), node).index();
                         numberOfSites += summary.nodes[node].kind == SummaryNode::Kind::ClassInstance;
                     }
                     m_firstSiteOfFunction[index + 1] = numberOfSites;
@@ -822,9 +834,11 @@ void LinkFlow::numberNodes(Vector<uint32_t>&& numbersOfMemberNodesOfSides)
                 if (!whoseFunctionsAre[index])
                     return;
                 const ThinSummary& summary = summaries.at(FunctionID(index));
+                uint32_t nextNodeOfItsOwn = m_nodesOfFunctions[index].base;
                 for (uint32_t inSummary = 0; inSummary < summary.nodes.size(); ++inSummary) {
                     if (summary.nodes[inSummary].kind == SummaryNode::Kind::Contents)
-                        found.append(m_nodesOfFunctions[index].base + inSummary);
+                        found.append(nextNodeOfItsOwn);
+                    nextNodeOfItsOwn += hasNodeOfItsOwnInLinkFlow(summary.nodes[inSummary]);
                 }
             });
             for (size_t index = 0; index < numberOfFunctions; ++index) {
@@ -920,12 +934,12 @@ void LinkFlow::prefetchNodesOf(FunctionID function) const
     };
     size_t first = m_nodesOfFunctions[function.index()].firstParameter;
     size_t end = m_nodesOfFunctions[function.index() + 1].firstParameter;
-    prefetch(m_nodesOfSummaries, m_nodesOfFunctions[function.index()].base - m_nodesOfFunctions[0].firstParameter, end - m_nodesOfFunctions[0].firstParameter);
+    prefetch(m_nodesOfSummaries, m_nodesOfFunctions[function.index()].firstPlaceInSummaries, m_nodesOfFunctions[function.index() + 1].firstPlaceInSummaries);
     prefetch(m_nodes, first, end);
     prefetch(m_listsOfNodes, first, end);
 }
 
-ALWAYS_INLINE_INTO_OTHER_FILES FlowNodeID LinkFlow::findNodeOf(FunctionID function, uint32_t nodeInSummary) const
+ALWAYS_INLINE_INTO_OTHER_FILES FlowNodeID LinkFlow::findSharedNodeOf(FunctionID function, uint32_t nodeInSummary) const
 {
     static constexpr uint32_t staticSideBit = 1u << 31;
     const SummaryNode& node = summaries.at(function).nodes[nodeInSummary];
@@ -957,7 +971,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES FlowNodeID LinkFlow::findNodeOf(FunctionID functi
     case SummaryNode::Kind::ResultOfAccess:
     case SummaryNode::Kind::ResultOfOperator:
     case SummaryNode::Kind::ResultOfConversion:
-        return FlowNodeID(m_nodesOfFunctions[function.index()].base + nodeInSummary);
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -2590,7 +2604,6 @@ static constexpr WhatObserverDoesWithBuiltinInLinkFlow whatObserverDoesWithBuilt
         return WhatObserverDoesWithBuiltinInLinkFlow::AsksForItselfWhetherItIsSpelled;
     case FlowObserver::Kind::OperandOfOperator:
     case FlowObserver::Kind::OperandOnlyLookedAt:
-    case FlowObserver::Kind::KeysAreListed:
     case FlowObserver::Kind::FieldIsOnlyAsked:
         return WhatObserverDoesWithBuiltinInLinkFlow::OnlyLooks;
     case FlowObserver::Kind::MemberOfAccess:
@@ -2600,6 +2613,7 @@ static constexpr WhatObserverDoesWithBuiltinInLinkFlow whatObserverDoesWithBuilt
     case FlowObserver::Kind::SymbolOfPreparation:
     case FlowObserver::Kind::PassedToBeNamed:
     case FlowObserver::Kind::FieldOfAccessorLaid:
+    case FlowObserver::Kind::KeysAreListed:
         return WhatObserverDoesWithBuiltinInLinkFlow::Uses;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -2684,6 +2698,8 @@ void LinkFlow::tell(const FlowObserver& observer, const LinkType& now, const Lin
     case FlowObserver::Kind::FieldIsOnlyAsked:
         break;
     case FlowObserver::Kind::KeysAreListed:
+        static_assert(whatObserverDoesWithBuiltinInLinkFlow(FlowObserver::Kind::KeysAreListed) == WhatObserverDoesWithBuiltinInLinkFlow::Uses);
+        noteUseOfBuiltinAt(now);
         noteLossOfLightFormAmong(now);
         noteKeysBecomeTextsAmong(now);
         break;
@@ -3788,6 +3804,8 @@ void LinkFlow::receiveInLane(unsigned index)
             after.setOfClasses = 0;
         if (after == before && after.hasSameShadowsAs(before))
             continue;
+        if (m_breachesOfClosure) [[unlikely]]
+            noteBreachOfClosure({ .node = node, .before = before, .after = after });
         m_nodes[node.index()].type = after;
         if (!m_isOnWorklist.quickSet(node.index())) {
             lane.worklist.append(node);
@@ -4456,6 +4474,14 @@ Vector<BreachOfClosure> LinkFlow::findBreachesOfClosure()
     for (size_t index : BitVector(m_lostFunctionsTied))
         tieInLostFunction(FunctionID(index));
     wakeEverySleeperToSeeThatNothingGrows();
+    m_holdsBack = true;
+    m_tellsObservers = true;
+    while (resolveCallsThatWereTold())
+        takeNotesOfPassOnOneThread();
+    m_tellsObservers = false;
+    settle();
+    m_holdsBack = false;
+    takeInWhatWasHeldBack();
     flow();
 
     for (const SetOfFlow& set : sets) {
@@ -4540,6 +4566,49 @@ void FlowObserver::dump(PrintStream& out) const
     out.print(names[static_cast<size_t>(kind)], " ", record, " of f", function.index());
 }
 
+void LinkFlow::describeLazyNode(PrintStream& out, FlowNodeID id) const
+{
+    auto printKey = [&](PropertyKeyID key) {
+        if (!key)
+            return;
+        Vector<char16_t> buffer;
+        out.print(" under \"", program.strings.viewOf(program.at(key).text, buffer), "\"");
+    };
+    for (const auto& [word, place] : m_placesOfAppendedFields) {
+        const AppendedField& field = m_appendedFields[place];
+        if (field.node != id && field.storedThroughItsLayout != id)
+            continue;
+        out.print(field.node == id ? "(born beside the fields of L" : "(stored through its layout beside the fields of L", word >> 32);
+        printKey(field.key);
+        out.print(")");
+        return;
+    }
+    auto printIfListed = [&](const Vector<uint32_t>& nodes, size_t nodesOfLayout, size_t which, ASCIILiteral what) {
+        for (size_t place = which; place < nodes.size(); place += nodesOfLayout) {
+            if (nodes[place] != id.index())
+                continue;
+            out.print("(", what, " L", place / nodesOfLayout, ")");
+            return true;
+        }
+        return false;
+    };
+    if (printIfListed(m_nodesBesideFields, 2, 0, "found beside the fields of"_s) || printIfListed(m_nodesBesideFields, 2, 1, "stored beside the fields of"_s)
+        || printIfListed(m_nodesFoundUnderNamesThatNoNumberSpells, 1, 0, "found under names that no number spells beside the fields of"_s)
+        || printIfListed(m_nodesStoredUnderUnknownNames, 1, 0, "stored under unknown names on"_s) || printIfListed(m_nodesStoredUnderNumbers, 1, 0, "stored under numbers on"_s))
+        return;
+    static constexpr ASCIILiteral kinds[] { "read through family"_s, "laid through family"_s, "any field read of L"_s, "any field stored of L"_s, "any field read of family"_s, "any field stored of family"_s, "any field read of set"_s, "element read of set"_s, "any field stored of set"_s, "element stored of set"_s, "found beside fields"_s, "laid on closures"_s, "any field defined on L"_s, "what stands above"_s, "what stands below"_s, "laid on constructor functions from"_s };
+    static_assert(std::size(kinds) == static_cast<size_t>(NodeOnDemand::LaidOnConstructorFunctionsFrom) + 1);
+    for (const auto& [word, node] : m_nodesOnDemand) {
+        if (node != id.index())
+            continue;
+        out.print("(", kinds[word >> 60], " ", (word >> 32) & ((1u << 28) - 1));
+        printKey(PropertyKeyID::fromBits(static_cast<uint32_t>(word)));
+        out.print(")");
+        return;
+    }
+    describeSharedCallNode(out, id);
+}
+
 void LinkFlow::describe(PrintStream& out, FlowNodeID id) const
 {
     size_t node = id.index();
@@ -4568,6 +4637,7 @@ void LinkFlow::describe(PrintStream& out, FlowNodeID id) const
     }
     if (node >= m_nodesOfFunctions[numberOfFunctions].firstParameter) {
         out.print("madeOnDemand", node - m_nodesOfFunctions[numberOfFunctions].firstParameter);
+        describeLazyNode(out, id);
         return;
     }
     size_t function = std::ranges::upper_bound(m_nodesOfFunctions, static_cast<uint32_t>(node), { }, &NodesOfFunction::firstParameter) - m_nodesOfFunctions.begin() - 1;
@@ -4579,7 +4649,7 @@ void LinkFlow::describe(PrintStream& out, FlowNodeID id) const
     else if (node == nodes.thrown)
         out.print("f", function, ".thrown");
     else
-        out.print("f", function, ".node", node - nodes.base);
+        out.print("f", function, ".node", std::ranges::find(nodesOfSummaryOf(FunctionID(static_cast<uint32_t>(function))), static_cast<uint32_t>(node)) - nodesOfSummaryOf(FunctionID(static_cast<uint32_t>(function))).begin());
 }
 
 void LinkFlow::noteLostLayoutsGainingProperties()

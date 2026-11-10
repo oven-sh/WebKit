@@ -790,6 +790,7 @@ struct RuntimeModuleData {
     OptionSet<RuntimeModuleFlag> flags { };
     std::span<const BuiltinName> exportsHeldByNamespace { };
     std::span<const BuiltinName> exportsReadByNativeCode { };
+    std::span<const BuiltinName> exportsOfWhichMembersAloneAreKept { };
 };
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

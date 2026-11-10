@@ -50,6 +50,7 @@ inline Wire::CompileOptions makeOptionsOfTestedProgram()
 namespace Typed {
 
 class Code;
+struct CompileInputs;
 class Facts;
 class Plan;
 class TypeArena;
@@ -105,6 +106,7 @@ public:
     const Facts* facts();
     const Plan* plan();
     const PreparedProgram* prepared();
+    std::unique_ptr<CompileInputs> prepareInputsForVerification();
 
     TypeArena& types();
     const Code* code(CodeUnit);

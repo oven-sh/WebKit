@@ -286,7 +286,7 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
             messageWithSource = appendSourceToErrorMessage(codeBlock, bytecodeIndex, message, type, appender);
         }
 #if ENABLE(AOT)
-        else if (String quoted = AOT::quotedTextOfFailedExpression(vm); !quoted.isNull() && !message.isNull()) {
+        else if (String quoted = AOT::failedExpressionSource(vm); !quoted.isNull() && !message.isNull()) {
             ErrorInstance::SourceAppender appender = sourceAppender();
             clearSourceAppender();
             RuntimeType type = runtimeTypeForCause();

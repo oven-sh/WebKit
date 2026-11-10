@@ -597,14 +597,14 @@ public:
         std::span<const NodesOfFunction> nodesOfFunctions = m_nodesOfFunctions.span();
         size_t index = function.index();
         RELEASE_ASSERT(index + 1 < nodesOfFunctions.size());
-        uint32_t base = nodesOfFunctions[index].base;
-        RELEASE_ASSERT(nodeInSummary < nodesOfFunctions[index + 1].firstParameter - base);
-        return FlowNodeID(m_nodesOfSummaries[base - m_firstNodeOfFunctions + nodeInSummary]);
+        uint32_t firstPlace = nodesOfFunctions[index].firstPlaceInSummaries;
+        RELEASE_ASSERT(nodeInSummary < nodesOfFunctions[index + 1].firstPlaceInSummaries - firstPlace);
+        return FlowNodeID(m_nodesOfSummaries[firstPlace + nodeInSummary]);
     }
     std::span<const uint32_t> nodesOfSummaryOf(FunctionID function) const LIFETIME_BOUND
     {
-        uint32_t base = m_nodesOfFunctions[function.index()].base;
-        return m_nodesOfSummaries.span().subspan(base - m_nodesOfFunctions[0].firstParameter, m_nodesOfFunctions[function.index() + 1].firstParameter - base);
+        uint32_t firstPlace = m_nodesOfFunctions[function.index()].firstPlaceInSummaries;
+        return m_nodesOfSummaries.span().subspan(firstPlace, m_nodesOfFunctions[function.index() + 1].firstPlaceInSummaries - firstPlace);
     }
     void prefetchNodesOf(FunctionID) const;
 
@@ -822,6 +822,8 @@ public:
     LinkType withoutObjectsThatHaveEscaped(LinkType) const;
     Vector<BreachOfClosure> findBreachesOfClosure();
     void describe(PrintStream&, FlowNodeID) const;
+    void describeLazyNode(PrintStream&, FlowNodeID) const;
+    bool describeSharedCallNode(PrintStream&, FlowNodeID) const;
     size_t numberOfNodesWithLists() const { return m_listsOfNodes.size(); }
     Vector<FlowNodeID> endsOfEdgesOutOf(FlowNodeID) const;
     Vector<FlowObserver> observersOf(FlowNodeID) const;
@@ -1762,9 +1764,9 @@ private:
         uint32_t firstResult;
         uint32_t thrown;
         uint32_t base;
+        uint32_t firstPlaceInSummaries;
     };
     Vector<NodesOfFunction> m_nodesOfFunctions;
-    uint32_t m_firstNodeOfFunctions { 0 };
     Vector<uint32_t> m_nodesOfSummaries;
     Vector<NameClass> m_nameClassesOfKeys;
 
@@ -1884,7 +1886,7 @@ private:
     Vector<uint32_t> indexMembersOfClasses();
     void numberNodes(Vector<uint32_t>&& numbersOfMemberNodesOfSides);
     void makeTablesThatNeedNoNodes();
-    FlowNodeID findNodeOf(FunctionID, uint32_t nodeInSummary) const;
+    FlowNodeID findSharedNodeOf(FunctionID, uint32_t nodeInSummary) const;
     FlowNodeID makeNode();
     std::span<const MemberOfClass> membersOf(LayoutID, ClassSide) const LIFETIME_BOUND;
     std::span<const MemberOfClass> membersFoundUnder(LayoutID, ClassSide, PropertyKeyID) const LIFETIME_BOUND;
@@ -2418,7 +2420,6 @@ void summarizeCallees(const LinkFlow&, LinkTables&);
 void writePrototypeObjectsThatAreSettled(const LinkFlow&, LinkTables&);
 void layReferrersOfHeldReadingOver(LinkTables& proven, LinkTables& held, const ParallelLoops&);
 void rankReferrersFirst(LinkTables&);
-Vector<std::pair<RuntimeModuleID, BuiltinName>> exportsThatHostOnlyKeepsWhereLinkFollows(const BuiltinTable&);
 
 } } } // namespace JSC::AOT::Typed
 

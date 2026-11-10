@@ -100,6 +100,12 @@ void GuardEmitter::generateIsEnumeratorCurrent(const ValueContext& value)
     ForInEmitter::EnumeratorFields fields = forIn.loadFields(enumerator);
     Integer nameIndex = forIn.nameIndexOf(fields, integerOf(value->positionOperand()));
     Condition isInStructurePart = forIn.isInStructurePart(enumerator, nameIndex);
+    if (value->currentNamesOperand()) {
+        defineTestByBranching(value, [&](BranchTargets targets) {
+            branch(logicalAnd(isInStructurePart, below(nameIndex, integerOf(value->currentNamesOperand()))), targets);
+        });
+        return;
+    }
     defineTestByBranching(value, [&](BranchTargets targets) {
         CellPointer object = cellOrElse(value, value->objectOperand(), targets.notTaken);
         branch(logicalAnd(isInStructurePart, forIn.hasCachedKeys(enumerator, fields, object)), targets);
@@ -116,6 +122,10 @@ void ExpandedIterationEmitter::generateEnumeratorGetByVal(const ValueContext& va
     Integer position = integerOf(value->positionOperand());
     ForInEmitter::EnumeratorFields fields = forIn.loadFields(enumerator);
     Integer index = forIn.nameIndexOf(fields, position);
+    if (emitter<ElementAccessEmitter>().testsEveryPosition()) {
+        emitter<ElementAccessEmitter>().stopUnlessInside(value, isCell(boxedObject));
+        emitter<ElementAccessEmitter>().stopUnlessInside(value, forIn.hasCachedKeys(enumerator, fields, object));
+    }
     const Machine::AbstractHeap& properties = m_heaps.entire(AbstractHeap::NamedProperties);
     LBasicBlock isOrdinaryObject = newBlock();
     LBasicBlock isCompiledObject = newBlock();

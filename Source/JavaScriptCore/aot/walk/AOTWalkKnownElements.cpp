@@ -55,7 +55,10 @@ std::optional<PassedTest> Walker::showPositionInsideBehindTestOfSum(Reference li
         const Operation& record = m_code.at(term);
         if (record.opcode == Opcode::Narrowed && record.narrowsTermOfOperand()) {
             GroundsOfPosition grounds { .view = list.id(), .position = position.id(), .length = length.id(), .isBelow = record.testOperand(), .isBelowAnswersYes = record.isOnTakenEdge() };
-            if (std::optional<PassedTest> shown = showPositionInside(grounds))
+            std::optional<PassedTest> shown = m_inputs.options.handsGroundsOfPositionsBelowSumsOverUnproven ? findPassedTest(referenceTo(grounds.isBelow), grounds.isBelowAnswersYes) : showPositionInside(grounds);
+            if (shown && m_inputs.options.handsGroundsOfPositionsBelowSumsOverUnproven)
+                shown->m_groundsOfPosition = grounds;
+            if (shown)
                 return shown;
         }
         if (opcodesThatGiveSameValue.contains(record.opcode) || record.opcode == Opcode::Increment) {

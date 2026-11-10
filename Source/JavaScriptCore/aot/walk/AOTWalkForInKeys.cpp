@@ -139,6 +139,10 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     test.setEnumeratorOperand(iteration->list);
     test.setObjectOperand(object);
     test.setPositionOperand(iteration->foundAt);
+    if (iteration->count && (walker.takesKeysOfForInToBeAsStepFoundThem() || walker.state().factsOfCell(iteration->list).contains(FactOfCell::KeysAreAsEnumeratorFoundThem))) {
+        test.setCurrentNamesOperand(iteration->count);
+        walker.count(StatisticID::TestsOfEnumeratorsThatTakeTheWordOfTheStep);
+    }
     Reference isCurrent = walker.build(WTF::move(test));
     if (!isCurrent)
         return true;

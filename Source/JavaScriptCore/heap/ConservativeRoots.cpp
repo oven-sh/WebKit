@@ -276,13 +276,15 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
     auto addFrameCell = [&](char** header) ALWAYS_INLINE_LAMBDA {
 #if ENABLE(AOT)
         constexpr uint64_t typeAndStateMask = 0xff00ff0000000000ull;
-        constexpr uint64_t typeAndStateOfFrameCell = static_cast<uint64_t>(AOT::frameCellState) << 56 | static_cast<uint64_t>(CompiledObjectType) << 40;
+        constexpr uint64_t frameCellTypeAndState = static_cast<uint64_t>(AOT::frameCellState) << 56 | static_cast<uint64_t>(CompiledObjectType) << 40;
         uint64_t word = std::bit_cast<uintptr_t>(*header);
         StructureID structureID = std::bit_cast<StructureID>(static_cast<uint32_t>(word));
-        if ((word & typeAndStateMask) != typeAndStateOfFrameCell || !structureID.decontaminate()) [[likely]]
+        if ((word & typeAndStateMask) != frameCellTypeAndState || !structureID.decontaminate()) [[likely]]
             return;
         Structure* structure = structureID.tryDecode();
         if (!structure)
+            return;
+        if (!MarkedBlock::isAtomAligned(structure))
             return;
         genericAddPointer<false>(std::bit_cast<char*>(structure), markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
         // Any number may look like a header.
@@ -290,7 +292,7 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
         if (jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(block)) || !space.blocks().set().contains(block) || !block->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, structure))
             return;
         size_t bytesUntilEnd = static_cast<char*>(end) - reinterpret_cast<char*>(header);
-        for (uint32_t offset : AOT::HeapHooks::offsetsOfNarrowReferences(structure)) {
+        for (uint32_t offset : AOT::HeapHooks::narrowReferenceOffsets(structure)) {
             if (offset + sizeof(uint32_t) <= bytesUntilEnd)
                 addNarrowReference(*reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(header) + offset));
         }

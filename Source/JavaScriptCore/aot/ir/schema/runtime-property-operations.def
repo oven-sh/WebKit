@@ -21,6 +21,7 @@ runtime SetGlobalBinding, SetGlobalBindingSloppy, SetGlobalObjectBinding, SetGlo
 
 runtime GetByVal, GetByValAndCache : EncodedJSValue (EncodedJSValue base, EncodedJSValue property) ; unknownCode
 runtime OwnValueUnderKeyOrEmpty : EncodedJSValue (EncodedJSValue base, EncodedJSValue property) ; reads(ShapeWords, NamedProperties) ; leaf
+runtime FindsDefaultHasInstance : size_t (EncodedJSValue constructor) ; reads(NamedProperties, PrototypeLinks) ; leaf
 runtime PutByVal : void (EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict) ; unknownCode
 runtime PutByValAndCache, PutByValAndCacheSloppy : void (EncodedJSValue base, EncodedJSValue property, EncodedJSValue value) ; unknownCode
 runtime InByValAndCache, HasOwnByValAndCache, DeleteByVal, DeleteByValSloppy : size_t (EncodedJSValue base, EncodedJSValue property) ; unknownCode

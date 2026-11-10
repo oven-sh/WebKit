@@ -1017,6 +1017,14 @@ void AccessInLinkAccesses::resolve()
     if (m_access.kind == Kind::Has) {
         if (!isNamed())
             m_flow.noteKeysBecomeTextsAmong(subject);
+        if (subject.builtin && (m_shared || !m_flow.isSpelledInBody(m_function, m_access.subject))) {
+            BuiltinID member;
+            LookupInLinkAccesses outcome = isNamed() ? lookUpFrom(subject.builtin, member) : m_keySpellsNoMemberOfTable ? LookupInLinkAccesses::Absent : LookupInLinkAccesses::Unknown;
+            if (outcome == LookupInLinkAccesses::Found)
+                m_flow.note(LinkFlow::Note::BuiltinRead, member.index());
+            else if (outcome == LookupInLinkAccesses::Unknown)
+                m_flow.note(LinkFlow::Note::BuiltinUsedWhereFlowBroughtIt, m_table.canonicalID(subject.builtin).index());
+        }
         mayThrow();
         if (m_value)
             m_flow.arrive(m_value, primitivesForLinkAccesses(Primitive::Boolean));

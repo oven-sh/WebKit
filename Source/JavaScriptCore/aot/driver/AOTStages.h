@@ -45,7 +45,13 @@ struct PreparedProgram {
     CheckOfPlan checkOfPlan { CheckOfPlan::InFrontOfCompile };
     void (*changePlan)(Typed::Plan&) { nullptr };
     Typed::Mechanisms mechanisms { Typed::allMechanisms };
+    bool isVerifiedByCaller { false };
 };
+
+inline bool willVerifyCode(const PreparedProgram& prepared, const BuildContext& build)
+{
+    return prepared.isVerifiedByCaller || Typed::walkOptionsOf(build).verifiesCode;
+}
 
 JS_EXPORT_PRIVATE bool prepareProgram(PreparedProgram&, BuildContext&);
 

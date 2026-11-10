@@ -59,7 +59,7 @@ struct RangeOfBytes {
 
 class ReaderOfImage {
 public:
-    ReaderOfImage(std::span<const uint8_t> file, size_t offsetInFile, unsigned number, StoredStrings& result, OpenCompressedText open)
+    ReaderOfImage(std::span<const uint8_t> file, size_t offsetInFile, unsigned number, StoredStrings& result, DecompressTextFunction open)
         : m_image(file.subspan(offsetInFile))
         , m_offsetInFile(offsetInFile)
         , m_number(number)
@@ -97,7 +97,7 @@ private:
     size_t m_offsetInFile;
     unsigned m_number;
     StoredStrings& m_result;
-    OpenCompressedText m_open;
+    DecompressTextFunction m_open;
     ImageHeader m_header;
 };
 
@@ -340,7 +340,7 @@ static bool isHeaderOfImage(std::span<const uint8_t> file, size_t at)
     return size && !(size % smallestPageOfImage) && codeOffset && !(codeOffset % smallestPageOfImage) && codeOffset < size && size <= file.size() - at;
 }
 
-StoredStrings readStoredStrings(std::span<const uint8_t> file, OpenCompressedText open)
+StoredStrings readStoredStrings(std::span<const uint8_t> file, DecompressTextFunction open)
 {
     StoredStrings result;
     unsigned numberOfImages = 0;

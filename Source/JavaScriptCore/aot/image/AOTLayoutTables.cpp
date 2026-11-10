@@ -178,7 +178,6 @@ static void nameWhatObjectLayoutRecordNames(const TableInputs& inputs, LayoutID 
         nameKey(describeFieldOfLayoutRecord(inputs, reference, inputs.facts.field(reference)).key);
         names.types.append(typeRecordedForSlot(slot));
     }
-    nameStringShownByLayoutTables(inputs, layout.name, names);
     if (layout.kind != LayoutKind::Instance)
         return;
     for (const Typed::StaticField& field : layout.staticFields)
@@ -584,7 +583,6 @@ static LayoutRecordParts collectPartsOfObjectLayoutRecord(const TableEncoder& en
     data.hasExtensionData = planned.hasExtension();
     data.hasExtraPropertiesSlot = planned.hasExtraPropertiesWord();
     data.index = id.index();
-    data.name = encoder.shownNameNumber(layout.name);
     data.size = planned.size;
     data.numberOfFields = static_cast<uint16_t>(fields.size());
     data.numberOfFieldOperands = static_cast<uint16_t>(fieldOperands.size());

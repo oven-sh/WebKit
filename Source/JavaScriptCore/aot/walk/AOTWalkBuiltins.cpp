@@ -20,12 +20,14 @@
 #include "AOTIRProgram.h"
 #include "AOTInliningAcrossFiles.h"
 #include "AOTLimits.h"
+#include "AOTOperatorForms.h"
 #include "AOTSchemaInlineBuiltins.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCompiledMethods.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
+#include "AOTWalkLoopsOverGeneratorsBuilder.h"
 #include "AOTWalkTextBuilderRows.h"
 #include "AOTWalkNumberForms.h"
 #include "AOTWalkNumberGuesses.h"
@@ -2278,7 +2280,8 @@ bool CallInWalkBuiltins::makesFreshResult(Reference result) const
     if (!m_walker.has(Mechanism::EscapeAnalysis) || !result.isValue() || m_effects.mayRunOtherCode() || isDoneInPlace())
         return false;
     BuiltinTypeID written = m_overload->result.type;
-    return written && m_table.at(written).freshness == BuiltinFreshness::Yes && m_types.at(m_walker.typeOf(result)).isObject();
+    bool isInjectedAsFresh = m_program.builtinInjectedAsFresh == m_overload->builtin.index();
+    return written && (m_table.at(written).freshness == BuiltinFreshness::Yes || isInjectedAsFresh) && m_types.at(m_walker.typeOf(result)).isObject();
 }
 
 Vector<Reference, 4> CallInWalkBuiltins::freshOperandsThatStayHere() const
@@ -2422,14 +2425,22 @@ bool CallInWalkBuiltins::settle(Operand& operand, Origin origin)
             continue;
         if (opcode == Opcode::ToString && holdOperandToTextOrBeginTurnAgain(operand, origin))
             continue;
-        if (m_walker.has(Mechanism::TypedOperations)) {
-            operand.value = buildOperatorForStrings(m_walker, opcode, operand.value, { }, origin);
-            continue;
-        }
-        Draft conversion(opcode, origin);
+        bool isTyped = m_walker.has(Mechanism::TypedOperations);
+        if (isTyped && m_walker.isUnreachable())
+            return false;
+        bool namesBuiltin = Operation::opcodesWithCalledBuiltin.contains(opcode);
+        Origin originOfConversion = origin;
+        originOfConversion.isTailCall = namesBuiltin && m_origin.isTailCall;
+        Draft conversion(opcode, originOfConversion);
         m_walker.chooseConservativeFields(conversion);
         conversion.setOperand(0, operand.value);
+        if (namesBuiltin)
+            conversion.setCalledBuiltin(m_builtin);
+        if (isTyped && hasOperatorForm(opcode))
+            conversion.setForm(formAllowedForTypedOperator(m_walker, conversion));
         operand.value = m_walker.build(WTF::move(conversion));
+        if (isTyped && operand.value)
+            operand.value = boxedUnlessNumbersAreUnboxed(m_walker, operand.value, origin);
     }
     return !!operand.value;
 }

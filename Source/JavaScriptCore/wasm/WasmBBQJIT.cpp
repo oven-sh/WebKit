@@ -4157,7 +4157,7 @@ void BBQJIT::prepareForExceptions()
         }
         ASSERT(runs.size() == runCount);
 
-        BinarySwitch binarySwitch(wasmScratchGPR, runs.span());
+        BinarySwitch binarySwitch(wasmScratchGPR, runs.span(), m_jit.debugOffset());
         while (binarySwitch.advance(m_jit)) {
             unsigned index = binarySwitch.caseIndex();
             ASSERT(index < targets.size());

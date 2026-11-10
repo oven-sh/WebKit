@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTChildProcess.h"
-#include "AOTHostEntriesTestSupport.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <span>
@@ -31,8 +30,6 @@ void failNativeTest(const char* file, int line, const char* condition)
     WTFReportAssertionFailure(file, line, whereChecksOfNativeTestsFail.characters(), condition);
     CRASH();
 }
-
-using NativeTestProvider = std::span<const NativeTest> (*)();
 
 static std::span<const NativeTestProvider> nativeTestProviders()
 {
@@ -61,9 +58,11 @@ static constexpr ASCIILiteral longNativeTests[] = {
 static void forEachNativeTest(NOESCAPE const Invocable<void(const NativeTest&)> auto& functor)
 {
     auto forEachInWrittenOrder = [](NOESCAPE const Invocable<void(const NativeTest&)> auto& visit) {
-        for (auto provider : nativeTestProviders()) {
-            for (const NativeTest& test : provider())
-                visit(test);
+        for (std::span<const NativeTestProvider> providers : { nativeTestProviders(), nativeTestProvidersOfHost() }) {
+            for (NativeTestProvider provider : providers) {
+                for (const NativeTest& test : provider())
+                    visit(test);
+            }
         }
     };
     for (ASCIILiteral name : longNativeTests) {
@@ -78,10 +77,6 @@ static void forEachNativeTest(NOESCAPE const Invocable<void(const NativeTest&)> 
     });
 }
 
-static constexpr ASCIILiteral testsOfHostEntries[] = {
-#include "AOTNativeTestsOfHostEntries.inc"
-};
-
 static void checkNativeTests()
 {
     HashSet<ASCIILiteral> names;
@@ -92,26 +87,13 @@ static void checkNativeTests()
         RELEASE_ASSERT_WITH_MESSAGE(isNewName, "Two native tests are named %s", test.name.characters());
         RELEASE_ASSERT_WITH_MESSAGE(test.todo.isNull() || StringView(test.todo).find(": "_s) != notFound, "The todo of native test %s names no owner", test.name.characters());
     });
-    for (ASCIILiteral name : testsOfHostEntries)
-        RELEASE_ASSERT_WITH_MESSAGE(names.contains(name), "AOTNativeTestsOfHostEntries.inc names %s, which is no native test", name.characters());
 }
 
 using NativeTestList = std::span<const NativeTest* const>;
 
-static bool needsHostEntries(const NativeTest& test)
+static Vector<const NativeTest*> selectNativeTests(const NativeTestRequest& request)
 {
-    return std::ranges::contains(testsOfHostEntries, StringView(test.name), [](ASCIILiteral name) { return StringView(name); });
-}
-
-struct SelectedNativeTests {
-    Vector<const NativeTest*> run;
-    Vector<const NativeTest*> leftOut;
-};
-
-static SelectedNativeTests selectNativeTests(const NativeTestRequest& request)
-{
-    SelectedNativeTests tests;
-    bool leavesOutTestsOfHostEntries = hasStandInHost();
+    Vector<const NativeTest*> tests;
     bool isPastPreviousTest = request.previousTest.isEmpty();
     unsigned ordinal = 0;
     forEachNativeTest([&](const NativeTest& test) {
@@ -121,7 +103,7 @@ static SelectedNativeTests selectNativeTests(const NativeTestRequest& request)
             return;
         }
         if (isSelected)
-            (leavesOutTestsOfHostEntries && needsHostEntries(test) ? tests.leftOut : tests.run).append(&test);
+            tests.append(&test);
     });
     return tests;
 }
@@ -134,7 +116,7 @@ static NativeTestSummary runInThisProcess(NativeTestList tests, PrintStream& out
         out.flush();
         test->run();
     }
-    return { static_cast<unsigned>(tests.size()), 0, 0, 0 };
+    return { static_cast<unsigned>(tests.size()), 0, 0 };
 }
 
 struct ChildProgress {
@@ -256,12 +238,8 @@ NativeTestSummary runNativeTests(const NativeTestRequest& request, PrintStream& 
 {
     checkNativeTests();
 
-    SelectedNativeTests tests = selectNativeTests(request);
-    for (const NativeTest* test : tests.leftOut)
-        out.println("LEFT OUT ", test->name);
-    NativeTestSummary summary = request.launcher ? runInChildProcesses(request, tests.run.span(), out) : runInThisProcess(tests.run.span(), out);
-    summary.leftOut = tests.leftOut.size();
-    return summary;
+    Vector<const NativeTest*> tests = selectNativeTests(request);
+    return request.launcher ? runInChildProcesses(request, tests.span(), out) : runInThisProcess(tests.span(), out);
 }
 
 } } // namespace JSC::AOT

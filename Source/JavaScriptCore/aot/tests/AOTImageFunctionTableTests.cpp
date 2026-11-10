@@ -171,7 +171,7 @@ static SUPPRESS_ASAN void testSampleInNativeCode()
     stack[recordOfCaller + 1] = returnAddressIn(2);
     auto isTop = [&](const SampledRegisters& registers, size_t record, const void* pc) {
         std::optional<SampledTop> top = findSampledTop(loaded, registers, nullptr, bounds);
-        return top && top->callFrame == std::bit_cast<CallFrame*>(&stack[record]) && top->pc == pc && !top->callerPCOfFramelessTop && !top->framePointer;
+        return top && top->callFrame == std::bit_cast<CallFrame*>(&stack[record]) && top->pc == pc && !top->framelessTopCallerPC && !top->framePointer;
     };
 
     SampledRegisters withoutFrameRecord { &stack[recordOfCaller], nativeCode, nullptr, &stack[endOfNativeFrame - 8] };

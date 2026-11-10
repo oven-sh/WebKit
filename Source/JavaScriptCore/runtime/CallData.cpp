@@ -79,7 +79,7 @@ JSValue call(JSGlobalObject* globalObject, JSValue functionObject, const CallDat
 #if ENABLE(AOT)
     std::optional<SetForScope<void*>> takesException;
     if (vm.hasCompiledCode()) [[unlikely]]
-        takesException.emplace(vm.aotState().stackPointerOfExceptionTaker, currentStackPointer());
+        takesException.emplace(vm.aotState().exceptionCatcherStackPointer, currentStackPointer());
 #endif
     JSValue result = call(globalObject, functionObject, callData, thisValue, args);
     if (scope.exception()) [[unlikely]] {

@@ -1266,7 +1266,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    // The prototype object of a compiled class is an ordinary object once it has its members, and takes the one transition below like any other.
+    // Once its members exist, the prototype object of a compiled class is an ordinary object and takes the single transition below like any other.
     AOT::ClassPrototype::ensureMembers(object);
 #endif
 
@@ -1312,7 +1312,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    // The prototype object of a compiled class is an ordinary object once it has its members, and takes the one transition below like any other.
+    // Once its members exist, the prototype object of a compiled class is an ordinary object and takes the single transition below like any other.
     AOT::ClassPrototype::ensureMembers(object);
 #endif
 
@@ -1330,7 +1330,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
         RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
-    // A slim closure is an ordinary object once it has its properties: JSObject::freeze() gives it them and takes the one transition. Its `prototype` object is still made at the first read.
+    // Once its properties exist, a slim closure is an ordinary object: JSObject::freeze() creates them and takes the single transition. Its `prototype` object is still created on first read.
     if (isSlimClosureType(object->type()) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->freeze(vm);
         return object;

@@ -854,7 +854,7 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
 
 static Reference lookAtCellInFrontOfTypedCopyInFolding(Walker& walker, const BodyValue& check, Reference checked)
 {
-    if (!walker.standsInFrontOfTypedCopy(checked))
+    if (!walker.standsInFrontOfTypedCopy(checked) || isNeverType(walker.types().withoutPrimitives(walker.typeOf(checked), Primitive::Absent)))
         return { };
     Origin origin = walker.originOf(check);
     origin.isTailCall = false;
