@@ -376,7 +376,7 @@ static std::optional<BuiltinOverloadID> findUniqueBuiltinOverload(Walker& walker
         passed.receiver = typeOfOperand(thisValue);
     for (ValueID argument : call.argumentsOperands())
         passed.arguments.append(typeOfOperand(argument));
-    if (!isCallableBuiltin(table, builtin) || hasFeatureGuard(table, builtin) || isCallThatTheWalkMustLower(table, builtin) || !rowsSpeakOfCallOnReceiver(context, builtin, passed.receiver))
+    if (!isCallableBuiltin(table, builtin) || hasFeatureGuard(table, builtin) || requiresWalkLowering(table, builtin) || !rowsSpeakOfCallOnReceiver(context, builtin, passed.receiver))
         return std::nullopt;
 
     Vector<BuiltinOverloadID, 4> rows;
@@ -389,6 +389,17 @@ static std::optional<BuiltinOverloadID> findUniqueBuiltinOverload(Walker& walker
     if (rows.size() != 1)
         return std::nullopt;
     return rows[0];
+}
+
+uint32_t numberOfDescriptorsWrittenFor(Walker& walker, const BodyValue& callOfObjectCreate)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID map = callOfObjectCreate.argumentsOperands()[1];
+    if (!index.isParameter(map) && index.opcodeOf(map) == Opcode::FinishObject)
+        map = index.value(map).operand(0);
+    if (index.isParameter(map) || index.opcodeOf(map) != Opcode::NewObject)
+        return 0;
+    return index.value(map).as<Opcode::NewObject>().fields().size() + index.useCount(map) - 1;
 }
 
 constinit const OpcodeSet opcodesThatExpandObjectCreateDescriptorsTakes { Opcode::Call };
@@ -531,7 +542,7 @@ bool expandObjectCreateAtDefinitionOfItsOpcodes(Walker& walker, const BodyValue&
         return false;
     const BuiltinTable& table = walker.program().builtins();
     BuiltinID builtin = table.canonicalID(Builtins::ObjectCreate);
-    if (!isCallableBuiltin(table, builtin) || hasFeatureGuard(table, builtin) || isCallThatTheWalkMustLower(table, builtin))
+    if (!isCallableBuiltin(table, builtin) || hasFeatureGuard(table, builtin) || requiresWalkLowering(table, builtin))
         return false;
     Reference madeMap = walker.referenceOf(map);
     if (!madeMap || !madeMap.isValue() || !walker.state().isFresh(rootOfObjectInWrittenDescriptors(walker, madeMap)))

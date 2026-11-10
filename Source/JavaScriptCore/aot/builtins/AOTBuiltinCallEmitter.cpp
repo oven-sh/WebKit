@@ -188,7 +188,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
     RELEASE_ASSERT(!value.returnCall());
     BuiltinOverloadID id = value->overload();
     const BuiltinOverload& overload = m_builtins.at(id);
-    if (isCallThatTheWalkMustLower(m_builtins, overload.builtin)) {
+    if (requiresWalkLowering(m_builtins, overload.builtin)) {
         failBuiltinOperationWithZero(generator(), value, InternalErrorKind::RequiredPassLeftOperation);
         return;
     }

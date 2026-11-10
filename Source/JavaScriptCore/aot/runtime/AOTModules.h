@@ -71,6 +71,7 @@ struct LinkContext {
 
 #define FOR_EACH_REFERENCE_OF_LOADED_MODULE(macro) \
     macro(JSObject*, namespaceObject) \
+    macro(JSCellButterfly*, linksToReleasedInstances) \
     macro(JSObject*, deferredNamespaceObject) \
     macro(JSObject*, importMeta) \
     macro(JSObject*, requirer) \
@@ -170,6 +171,7 @@ public:
     JSValue value(ModuleID) const;
     bool hasInstances(ModuleID module) const { return m_table.instanceVariable(module).has_value(); }
     Environment* currentInstance(ModuleID) const;
+    Environment* instanceForField(ModuleID, const ExportedFieldData&, Environment* instance) const;
     Environment* ensureInstance(ModuleID);
     enum class MockMode : bool { Use, Bypass };
     JSValue readExport(ModuleID, unsigned index, MockMode = MockMode::Use, Environment* instance = nullptr);
@@ -700,11 +702,11 @@ public:
     bool isLoaderInMiddleOfGraph() const;
     bool isImportedByModuleThatRequireAnswered(ModuleID) const;
     void keepErrorOfLoad(ModuleID root, JSValue error, const ScopedLambda<bool(ModuleID)>& endedLoad);
-    void keepErrorOfFactoryThatRequireLeft(ModuleID required, JSValue error);
-    void didSettleFactoryThatRequireLeft(unsigned number);
-    void didFailFactoryThatRequireLeft(unsigned number, JSValue error);
+    void cacheDetachedFactoryError(ModuleID required, JSValue error);
+    void didSettleDetachedFactory(unsigned number);
+    void didFailDetachedFactory(unsigned number, JSValue error);
     unsigned subscribeToPendingFactories(ModuleID required, unsigned number);
-    bool isWaitThatRequireLeftKept(ModuleID required) const { return m_detachedLoads.containsIf([&](const auto& left) { return left.required == required && left.keepsError; }); }
+    bool hasErrorCachingDetachedLoad(ModuleID required) const { return m_detachedLoads.containsIf([&](const auto& left) { return left.required == required && left.keepsError; }); }
     void clearMockLoadError(ModuleID);
     void clearCachedMockError(ModuleID);
     void clearLoadErrorsForMock(ModuleID mocked);
@@ -941,7 +943,7 @@ public:
     bool isLinkedToOriginalOf(ModuleID fileOrModule, ModuleID importer) const;
     void keepUnderActualKey(ModuleID fileOrModule);
     void noteWhereOriginalLiesBehindEndOfMock(ModuleID fileOrModule);
-    bool hasImporterBelowThatGetsOriginal(ModuleID root, ModuleID moduleOrFacade) const;
+    bool hasBypassingImporterBelow(ModuleID root, ModuleID moduleOrFacade) const;
     bool wasOriginalEvaluated(ModuleID mocked) const;
     bool isMockedByFactoryThatTakesOriginal(ModuleID) const;
     bool getsOriginalBesideMock(ModuleID, ModuleID referrer);
@@ -1127,17 +1129,17 @@ public:
     void popHostRequest() { m_currentHostRequest = m_savedHostRequests.takeLast(); }
     bool isStatementHostRequest() const { return m_isStatementHostRequest; }
     bool setIsStatementHostRequest(bool isAsking) { return std::exchange(m_isStatementHostRequest, isAsking); }
-    bool wasImportedWhileItRan(ModuleID file) const;
+    bool wasImportedDuringEvaluation(ModuleID file) const;
     bool loaderHasFileThatThrew(ModuleID file);
     bool isAwaitedByImport(ModuleID file);
     bool isAwaitedByImportFromBeforeItRan(ModuleID file);
     void dropErrorOfFile(ModuleID moduleOrFacade);
     void didDiscardModuleError(const Identifier& key);
     void evaluateCommonJSForLoader(ModuleID file);
-    JSValue execute(ModuleID);
+    JSValue execute(ModuleID, ReadsExports = ReadsExports::Yes);
 
     enum class RequiredBy : uint8_t { Referrer, Program };
-    JSValue require(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer, JSObject* staleRequirerObject = nullptr);
+    JSValue require(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer, JSObject* staleRequirerObject = nullptr, ReadsExports = ReadsExports::Yes);
     ModuleID formThatRequireFinds(ModuleID);
     void didMockEvictDataModule(ModuleID);
     bool wasEvictedByRemovedMock(ModuleID) const;
@@ -1464,7 +1466,14 @@ private:
     bool isLeftOut(ModuleID, unsigned exportIndex, TablesBehindStars, SearchBehindStars&) const;
     bool namesBehindStarsAreInTables(ModuleID, SearchBehindStars&) const;
     bool isVariableOfExportEmpty(ModuleID, unsigned exportIndex) const;
-    Environment* instanceForField(ModuleID, const ExportedFieldData&, Environment* instance) const;
+    struct ReleasedLink {
+        Environment* instance { nullptr };
+        JSObject* namespaceObject { nullptr };
+    };
+    ReleasedLink findLinkToReleasedInstance(ModuleID, ModuleID target, Environment* boundInstance) const;
+    std::span<const uint32_t> modulesReexportingFrom(ModuleID);
+    void addLinkToReleasedInstance(ModuleID importer, ModuleID target, ReleasedLink);
+    void retainLinks(ModuleID);
     Environment* ensureInstanceForField(ModuleID, const ExportedFieldData&, Environment* instance);
     JSValue readField(ModuleID, const ModuleExportData&, Environment* instance) const;
     JSValue readField(const Environment* instance, SlotData) const;
@@ -1519,7 +1528,7 @@ private:
     JSObject* moduleObjectIfCreated(ModuleID);
     void notePrototypeOfModuleObjects(JSObject* freshModuleObject);
     enum class FormThatAnswers : bool { TheOneAskedFor, TheOneThatLoaderFinds };
-    JSValue answerRequire(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer, FormThatAnswers = FormThatAnswers::TheOneAskedFor);
+    JSValue answerRequire(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer, FormThatAnswers = FormThatAnswers::TheOneAskedFor, ReadsExports = ReadsExports::Yes);
     bool standsForFileOutsideImage(ModuleID) const;
     JSValue settledAnswerOfRequire(ModuleID, RequiredBy) const;
     void addToRequireCache(ModuleID, JSValue exports);
@@ -1573,6 +1582,9 @@ private:
     mutable LoadedModule* m_loadedFoundLast { nullptr };
     mutable ModuleID m_moduleOfLoadedFoundLast;
     RememberedSlotSet m_storedReferences;
+    Reference<JSWeakMap*> m_linksOfReleasedInstances;
+    bool m_hasLinksToReleasedInstances { false };
+    Vector<Vector<uint32_t, 2>> m_reexporters;
     std::unique_ptr<ModuleLinkWalk> takeLinkWalk(ModuleID root);
     std::unique_ptr<ModuleLinkWalk> takeKeptLinkWalk(ModuleID root);
     void keepLinkWalk(std::unique_ptr<ModuleLinkWalk>&&);
@@ -2424,16 +2436,18 @@ private:
         BitVector modulesToRetry;
         bool wasEndedByLaterMock { false };
         ModuleID orphanedFetchModule;
+        Vector<ModuleID, 1> laterRootsBelow;
         bool isForOriginal { false };
         bool hasWaitedForLoader { false };
     };
     bool hasEnded(const DetachedLoad& left) const { return left.wasEndedByLaterMock || (left.orphanedFetchModule && !hasOrphanedFetch(left.orphanedFetchModule)); }
     bool hasOnlyStaleFactoryCalls(const DetachedLoad&);
+    Vector<ModuleID, 2> rootsInEvaluationOrder(const DetachedLoad&) const;
     bool isUnmockedInDetachedLoad(ModuleID root, ModuleID module) const;
     bool isFetchedByPendingFactoryCall(ModuleID root, ModuleID mocked) const;
     const BitVector* m_modulesBeingRetried { nullptr };
     Vector<DetachedLoad> m_detachedLoads;
-    unsigned m_numberOfWaitsThatRequiresHaveLeft { 0 };
+    unsigned m_lastDetachedLoadNumber { 0 };
     BitVector m_blockedRequiresWithError;
     BitVector m_modulesLoadedBeforeMockThatWaited;
     BitVector m_modulesEvaluatedBeforeMock;

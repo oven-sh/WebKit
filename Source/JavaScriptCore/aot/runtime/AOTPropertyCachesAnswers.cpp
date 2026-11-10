@@ -405,7 +405,7 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     State& state = State::of(query.structureBefore->realm());
     const ModuleExportData& moduleExport = state.modules->table().exports(moduleNamespace->module())[*index];
     if (moduleExport.kind() == ModuleExportKind::Namespace) {
-        JSValue inner = state.modules->readExportIfInitialized(moduleNamespace->module(), *index);
+        JSValue inner = state.modules->readExportIfInitialized(moduleNamespace->module(), *index, moduleNamespace->boundModuleInstance());
         if (!inner)
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
@@ -417,7 +417,7 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
             return PropertyAnswer::uncacheable(SlotAccess::Read);
         bool isOfOtherModule = field.declaringModule() != moduleNamespace->module();
         Environment* bound = moduleNamespace->boundModuleInstance();
-        Environment* instance = isOfOtherModule ? state.modules->currentInstance(field.declaringModule()) : bound;
+        Environment* instance = isOfOtherModule ? state.modules->instanceForField(moduleNamespace->module(), field, bound) : bound;
         if (!instance || !state.modules->readExportIfInitialized(moduleNamespace->module(), *index, bound))
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .isInModuleInstance = true, .instanceOfOtherModule = isOfOtherModule ? instance : nullptr, .variable = field.slot };

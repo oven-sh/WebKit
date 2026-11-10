@@ -417,10 +417,10 @@ JSObject* Modules::evaluateOriginalUnderMock(ModuleID module)
         if (!isReady)
             return nullptr;
         didRemoveMock(module);
-        bool mockWaits = m_modulesWithPendingMock.get(module.index());
+        bool wasMockPending = m_modulesWithPendingMock.get(module.index());
         m_modulesWithPendingMock.clear(module.index());
         evaluateSynchronously(module, SynchronousEvaluationReason::Require);
-        m_modulesWithPendingMock.set(module.index(), mockWaits);
+        m_modulesWithPendingMock.set(module.index(), wasMockPending);
         willMock(module);
         if (status(module) == ModuleStatus::Evaluated || status(module) == ModuleStatus::Failed)
             m_originalsEvaluatedUnderMock.set(module.index());
@@ -725,7 +725,7 @@ void Modules::keepErrorOfLoad(ModuleID root, JSValue error, const ScopedLambda<b
             ended.quickSet(module.index());
             continue;
         }
-        if (isMocked(module) || hasStartedLoading(module))
+        if (isMocked(module) || (module != root && hasStartedLoading(module)))
             continue;
         for (const ModuleRequestData& request : m_table.imports(module)) {
             if (request.isHoisted)
@@ -1557,8 +1557,10 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
             SetForScope isDueModuleBlocked(m_isDueModuleBlocked, false);
             evaluateModulesOwedBelow(root);
             isRequireBlocked = m_isDueModuleBlocked && vm.aotState().requireRunsMocks;
-            if (scope.exception()) [[unlikely]] {
+            if (Exception* exception = scope.exception()) [[unlikely]] {
                 bringBackLinks(before, LinksOfLoad::AreForgotten);
+                if (!vm.isTerminationException(exception))
+                    keepErrorOfLoad(root, exception->value(), [&](ModuleID each) { return isMocked(fileOf(each)) && m_modulesWithCachedMockError.get(fileOf(each).index()); });
                 return false;
             }
         }
@@ -1618,7 +1620,7 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
         else if (isRequestedByOwnFactory) [[unlikely]]
             m_originalsDueUnderMock.set(module.index());
         if (kept) [[unlikely]] {
-            keepErrorOfLoad(root, kept, [&](ModuleID each) { return each == module; });
+            keepErrorOfLoad(root, kept, [&](ModuleID each) { return fileOf(each) == fileOf(module); });
             throwException(m_instance.globalObject, scope, kept);
             return false;
         }
@@ -1645,7 +1647,7 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
             if (Exception* exception = scope.exception()) [[unlikely]] {
                 if (vm.isTerminationException(exception) || m_mocksRetriedAfterFailure.get(module.index()))
                     return false;
-                keepErrorOfLoad(root, exception->value(), [&](ModuleID each) { return each == module; });
+                keepErrorOfLoad(root, exception->value(), [&](ModuleID each) { return fileOf(each) == fileOf(module); });
                 if (isImportedByStatement) {
                     m_modulesWithCachedMockError.set(module.index());
                     ensureLoaded(module).cachedMockError.set(*this, exception->value());

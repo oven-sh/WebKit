@@ -1424,7 +1424,7 @@ bool CallInWalkBuiltins::mayBelieveRows() const
 {
     if (m_mode == BuiltinCallMode::Get || m_mode == BuiltinCallMode::Set)
         return m_table.dispatchOf(m_builtin, m_mode) && !mayBeTrimmed();
-    if (!isCallableBuiltin(m_table, m_builtin) || isCallThatTheWalkMustLower(m_table, m_builtin))
+    if (!isCallableBuiltin(m_table, m_builtin) || requiresWalkLowering(m_table, m_builtin))
         return false;
     return !mayBeTrimmed() && constructorFindsItsAdderUnchanged();
 }
@@ -2702,6 +2702,8 @@ void CallInWalkBuiltins::fillCodeInLine(CallDraft& call, std::span<const Referen
     Vector<uint32_t, 4> parameters;
     for (uint8_t parameter : std::span(m_overload->code.implementation.inlineParameters).first(numberOfParametersOf(*m_inlineBuiltin)))
         parameters.append(parameter);
+    if (*m_inlineBuiltin == InlineBuiltin::ObjectCreate && m_call.opcode() == Opcode::Call && arguments.size() == 1 && m_call.argumentsOperands().size() == 2)
+        parameters.append(numberOfDescriptorsWrittenFor(m_walker, m_call));
     call.setInlineBuiltin(*m_inlineBuiltin);
     call.setInlineParameters(parameters.span());
     call.setOverload(m_overloadID);
@@ -3567,7 +3569,7 @@ static bool goOverListPassedInPlaceOfCall(Walker& walker, const BodyValue& call)
     Draft written = walker.draftOf(call);
     if (walker.hasFailed())
         return false;
-    Reference list = findListThatCallWouldTakeInPlaceOfItsCopy(walker, call, written.listOperand());
+    Reference list = findElidableSpreadSource(walker, call, written.listOperand());
     if (list)
         written.setListOperand(list);
     else if (Reference made = written.listOperand(); !made || !made.isValue() || walker.code().at(made.id()).opcode != Opcode::NewArray)

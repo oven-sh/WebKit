@@ -309,7 +309,7 @@ public:
         BasicBlock* LEGACY_NODELETE targetBlockForBranch()
         {
             if (blockType() == BlockType::Loop) {
-                m_isLoopHeaderBranchedTo = true;
+                m_hasBranchToHeader = true;
                 return special;
             }
             return continuation;
@@ -419,7 +419,7 @@ public:
         CatchKind m_catchKind;
         Variable* m_exception;
         TargetList m_tryTableTargets;
-        bool m_isLoopHeaderBranchedTo { false };
+        bool m_hasBranchToHeader { false };
     };
 
     using ControlType = ControlData;
@@ -1060,8 +1060,8 @@ private:
     void unify(Value* phi, const ExpressionType& source);
     void unifyValuesWithBlock(std::span<const TypedExpression> resultStack, const ControlData& block);
     BasicBlock* targetBlockForBranch(ControlData&);
-    static SwitchValue* dispatchOfStateMachine(BasicBlock* loopHeader);
-    void testFirstStateBeforeTable(const ControlData& loop);
+    static SwitchValue* stateMachineDispatch(BasicBlock* loopHeader);
+    void emitFirstStateTest(const ControlData& loop);
 
     void emitChecksForModOrDiv(B3::Opcode, Value* left, Value* right);
 
@@ -5684,7 +5684,7 @@ auto OMGIRGenerator::addReturn(const ControlData&, std::span<const TypedExpressi
 }
 
 // A loop whose header only switches on a local is a state machine.
-SwitchValue* OMGIRGenerator::dispatchOfStateMachine(BasicBlock* loopHeader)
+SwitchValue* OMGIRGenerator::stateMachineDispatch(BasicBlock* loopHeader)
 {
     if (loopHeader->size() != 2)
         return nullptr;
@@ -5696,7 +5696,7 @@ SwitchValue* OMGIRGenerator::dispatchOfStateMachine(BasicBlock* loopHeader)
 
 BasicBlock* OMGIRGenerator::targetBlockForBranch(ControlData& data)
 {
-    auto* dispatch = ControlData::isLoop(data) ? dispatchOfStateMachine(data.special) : nullptr;
+    auto* dispatch = ControlData::isLoop(data) ? stateMachineDispatch(data.special) : nullptr;
     if (!dispatch)
         return data.targetBlockForBranch();
 
@@ -5720,11 +5720,11 @@ BasicBlock* OMGIRGenerator::targetBlockForBranch(ControlData& data)
 
 // When every branch to a state machine went straight to its case, the switch runs once, on the way in.
 // A machine starts in its first state unless it is being resumed, so that state is tested for before the table.
-void OMGIRGenerator::testFirstStateBeforeTable(const ControlData& loop)
+void OMGIRGenerator::emitFirstStateTest(const ControlData& loop)
 {
     BasicBlock* header = loop.special;
-    auto* dispatch = dispatchOfStateMachine(header);
-    if (!dispatch || loop.m_isLoopHeaderBranchedTo || !dispatch->numCaseValues())
+    auto* dispatch = stateMachineDispatch(header);
+    if (!dispatch || loop.m_hasBranchToHeader || !dispatch->numCaseValues())
         return;
 
     if (auto* code = m_context.codeForImage)
@@ -5850,7 +5850,7 @@ auto OMGIRGenerator::endBlock(ControlEntry& entry, std::span<TypedExpression> en
     m_currentBlock = data.continuation;
 
     if (data.blockType() == BlockType::Loop)
-        testFirstStateBeforeTable(data);
+        emitFirstStateTest(data);
     else if (data.blockType() == BlockType::If) {
         data.special->setSuccessors(m_currentBlock);
         data.special->appendNew<Value>(m_proc, Jump, origin());
@@ -5892,7 +5892,7 @@ auto OMGIRGenerator::addEndToUnreachable(ControlEntry& entry, std::span<TypedExp
     m_currentBlock = data.continuation;
 
     if (data.blockType() == BlockType::Loop)
-        testFirstStateBeforeTable(data);
+        emitFirstStateTest(data);
     else if (data.blockType() == BlockType::If) {
         data.special->setSuccessors(m_currentBlock);
         data.special->appendNew<Value>(m_proc, Jump, origin());

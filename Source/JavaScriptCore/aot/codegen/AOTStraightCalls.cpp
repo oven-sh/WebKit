@@ -98,7 +98,7 @@ static bool walkReplacesCallByValue(StraightEmitter& emitter, const BodyValue& v
     BodyValue callee = index.value(index.stripCasts(value.calleeOperand()));
     if (callee.opcode() != Opcode::Builtin)
         return false;
-    if (isCallThatTheWalkMustLower(emitter.program().builtins(), callee.builtin()))
+    if (requiresWalkLowering(emitter.program().builtins(), callee.builtin()))
         return true;
     return value.opcode() == Opcode::Call && (value.isDoneInPlace() || value.callNumber());
 }

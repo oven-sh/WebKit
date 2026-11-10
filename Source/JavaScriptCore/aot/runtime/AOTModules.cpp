@@ -47,6 +47,7 @@
 #include "JSMicrotask.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
+#include "JSWeakMapInlines.h"
 #include "MicrotaskQueueInlines.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleRegistryEntry.h"
@@ -137,6 +138,7 @@ void Modules::visitRoots(Visitor& visitor)
                 visitor.appendUnbarriered(value);
             }
         }
+        visitor.appendUnbarriered(m_linksOfReleasedInstances.get());
         visitor.appendUnbarriered(m_namespaceStructure);
         visitor.appendUnbarriered(m_prototypeOfModuleObjects);
         visitor.appendUnbarriered(m_errorsOfExportsThatBuildFoundAbsent);
@@ -506,6 +508,22 @@ void Modules::resetFailedEvaluation(ModuleID module)
     m_modulesLoadedBesideGroups.clear(module.index());
 }
 
+static std::optional<ModuleID> reexportedModule(const ModuleTable& table, ModuleID module, const ModuleExportData& moduleExport)
+{
+    if (moduleExport.kind() == ModuleExportKind::Namespace)
+        return moduleExport.targetModule();
+    if (moduleExport.kind() != ModuleExportKind::Field || table.exportedField(moduleExport).declaringModule() == module)
+        return std::nullopt;
+    return table.exportedField(moduleExport).declaringModule();
+}
+
+static bool reexportsNamespaceOf(const ModuleTable& table, ModuleID module, ModuleID target)
+{
+    return std::ranges::any_of(table.exports(module), [&](const ModuleExportData& moduleExport) {
+        return moduleExport.kind() == ModuleExportKind::Namespace && moduleExport.targetModule() == target;
+    });
+}
+
 void Modules::resetFailedEvaluations()
 {
     Vector<ModuleID, 4> failed;
@@ -527,9 +545,121 @@ void Modules::releaseInstance(ModuleID module)
     std::optional<SlotData> guard = m_table.instanceGuard(module);
     if (!guard)
         return;
+    retainLinks(module);
     ProgramStatics::writeVariable(m_instance, *guard, jsUndefined());
     ProgramStatics::writeVariable(m_instance, *m_table.instanceVariable(module), JSValue());
     discardNamespace(module);
+}
+
+std::span<const uint32_t> Modules::modulesReexportingFrom(ModuleID module)
+{
+    if (m_reexporters.isEmpty()) {
+        m_reexporters.grow(m_table.size());
+        for (unsigned index = 0; index < m_table.size(); ++index) {
+            for (const ModuleExportData& moduleExport : m_table.exports(ModuleID(index))) {
+                std::optional<ModuleID> target = reexportedModule(m_table, ModuleID(index), moduleExport);
+                if (target && (m_reexporters[target->index()].isEmpty() || m_reexporters[target->index()].last() != index))
+                    m_reexporters[target->index()].append(index);
+            }
+        }
+    }
+    return m_reexporters[module.index()].span();
+}
+
+static constexpr unsigned wordsOfLink = 3;
+
+void Modules::addLinkToReleasedInstance(ModuleID importer, ModuleID target, ReleasedLink link)
+{
+    VM& vm = *m_instance.vm;
+    JSCellButterfly* links = ensureLoaded(importer).linksToReleasedInstances;
+    if (!links) {
+        UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> targets;
+        for (const ModuleExportData& moduleExport : m_table.exports(importer)) {
+            if (std::optional<ModuleID> reexported = reexportedModule(m_table, importer, moduleExport))
+                targets.add(reexported->index());
+        }
+        links = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, targets.size() * wordsOfLink);
+        for (unsigned index = 0; index < links->length(); ++index)
+            links->setIndex(vm, index, jsUndefined());
+        ensureLoaded(importer).linksToReleasedInstances.set(*this, links);
+        m_hasLinksToReleasedInstances = true;
+    }
+    for (unsigned index = 0; index < links->length(); index += wordsOfLink) {
+        JSValue module = links->get(index);
+        if (module.isInt32() && module.asInt32() == static_cast<int32_t>(target.index()))
+            return;
+        if (module.isInt32())
+            continue;
+        links->setIndex(vm, index, jsNumber(static_cast<int32_t>(target.index())));
+        links->setIndex(vm, index + 1, link.instance ? JSValue(link.instance) : jsUndefined());
+        links->setIndex(vm, index + 2, link.namespaceObject ? JSValue(link.namespaceObject) : jsUndefined());
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+auto Modules::findLinkToReleasedInstance(ModuleID module, ModuleID target, Environment* boundInstance) const -> ReleasedLink
+{
+    if (!m_hasLinksToReleasedInstances) [[likely]]
+        return { };
+    JSCellButterfly* links = nullptr;
+    if (boundInstance && boundInstance != currentInstance(module)) {
+        JSValue retained = m_linksOfReleasedInstances ? m_linksOfReleasedInstances->get(boundInstance) : jsUndefined();
+        links = retained.isCell() ? uncheckedDowncast<JSCellButterfly>(retained.asCell()) : nullptr;
+    } else if (const LoadedModule* loaded = loadedIfExists(module))
+        links = loaded->linksToReleasedInstances;
+    if (!links)
+        return { };
+    for (unsigned index = 0; index < links->length(); index += wordsOfLink) {
+        JSValue linked = links->get(index);
+        if (!linked.isInt32() || linked.asInt32() != static_cast<int32_t>(target.index()))
+            continue;
+        JSValue instance = links->get(index + 1);
+        JSValue namespaceObject = links->get(index + 2);
+        return { instance.isCell() ? uncheckedDowncast<Environment>(instance.asCell()) : nullptr, namespaceObject.isObject() ? asObject(namespaceObject) : nullptr };
+    }
+    return { };
+}
+
+void Modules::retainLinks(ModuleID module)
+{
+    Environment* instance = currentInstance(module);
+    if (!instance)
+        return;
+    VM& vm = *m_instance.vm;
+    auto linkTo = [&](ModuleID target) -> ReleasedLink {
+        auto* namespaceObject = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(target, ModulePhase::Evaluation));
+        if (namespaceObject && currentInstance(target))
+            namespaceObject->bindModuleInstance();
+        return { currentInstance(target), namespaceObject };
+    };
+    ReleasedLink released = linkTo(module);
+    for (uint32_t index : modulesReexportingFrom(module)) {
+        ModuleID importer(index);
+        if (importer == module || (status(importer) <= ModuleStatus::Linked && !namespaceIfCreated(importer, ModulePhase::Evaluation)))
+            continue;
+        if (!released.namespaceObject && reexportsNamespaceOf(m_table, importer, module)) {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            moduleNamespace(module, ModulePhase::Evaluation);
+            RELEASE_ASSERT(!scope.exception());
+            released = linkTo(module);
+        }
+        addLinkToReleasedInstance(importer, module, released);
+    }
+    if (!released.namespaceObject)
+        return;
+    for (const ModuleExportData& moduleExport : m_table.exports(module)) {
+        std::optional<ModuleID> target = reexportedModule(m_table, module, moduleExport);
+        if (target && *target != module && currentInstance(*target))
+            addLinkToReleasedInstance(module, *target, linkTo(*target));
+    }
+    LoadedModule& loaded = ensureLoaded(module);
+    if (JSCellButterfly* links = loaded.linksToReleasedInstances) {
+        if (!m_linksOfReleasedInstances)
+            m_linksOfReleasedInstances.set(*this, JSWeakMap::create(vm, m_instance.globalObject->weakMapStructure()));
+        m_linksOfReleasedInstances->set(vm, instance, links);
+        loaded.linksToReleasedInstances.set(*this, nullptr);
+    }
 }
 
 void Modules::makeESModuleReadyToRunAgain(ModuleID module)
@@ -1180,12 +1310,17 @@ JSValue Modules::readField(const Environment* instance, SlotData field) const
 
 Environment* Modules::instanceForField(ModuleID module, const ExportedFieldData& field, Environment* instance) const
 {
-    return instance && field.module == module.index() ? instance : currentInstance(ModuleID(field.module));
+    if (instance && field.module == module.index())
+        return instance;
+    Environment* linked = findLinkToReleasedInstance(module, ModuleID(field.module), instance).instance;
+    return linked ? linked : currentInstance(ModuleID(field.module));
 }
 
 Environment* Modules::ensureInstanceForField(ModuleID module, const ExportedFieldData& field, Environment* instance)
 {
-    return instance && field.module == module.index() ? instance : ensureInstance(ModuleID(field.module));
+    if (Environment* existing = instanceForField(module, field, instance))
+        return existing;
+    return ensureInstance(ModuleID(field.module));
 }
 
 JSValue Modules::readField(ModuleID module, const ModuleExportData& moduleExport, Environment* instance) const
@@ -1218,6 +1353,8 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index, Enviro
     case ModuleExportKind::Namespace: {
         if (handedOnInPlaceOfNamespace(moduleExport)) [[unlikely]]
             return { };
+        if (JSObject* released = activeMock(moduleExport.targetModule()) ? nullptr : findLinkToReleasedInstance(module, moduleExport.targetModule(), instance).namespaceObject)
+            return released;
         if (JSObject* linkedWith = namespaceThatCompiledCodeHolds(moduleExport.targetModule(), targetPhaseOf(moduleExport)))
             return linkedWith;
         if (hasIntactOriginal(moduleExport.targetModule()) || indexOfEndedMockSeenBy(fileOf(moduleExport.targetModule()), module)) [[unlikely]]
@@ -1272,6 +1409,8 @@ JSValue Modules::readExport(ModuleID module, unsigned index, MockMode mockOfModu
     case ModuleExportKind::Namespace:
         if (JSValue ofMock = handedOnInPlaceOfNamespace(moduleExport)) [[unlikely]]
             return ofMock;
+        if (JSObject* released = activeMock(moduleExport.targetModule()) ? nullptr : findLinkToReleasedInstance(module, moduleExport.targetModule(), instance).namespaceObject)
+            return released;
         if (JSObject* linkedWith = namespaceThatCompiledCodeHolds(moduleExport.targetModule(), targetPhaseOf(moduleExport)))
             return linkedWith;
         if (targetPhaseOf(moduleExport) == ModulePhase::Evaluation && !seesMockOf(moduleExport.targetModule(), module)) [[unlikely]]
@@ -7310,14 +7449,14 @@ bool mayExport(JSGlobalObject* realm, ModuleID module, UniquedStringImpl* name)
     return !modules || modules->refusesRequestFromHost(module) || modules->mayExport(module, name);
 }
 
-JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> referrer)
+JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> referrer, ReadsExports readsExports)
 {
     Modules* modules = modulesForEvaluation(realm, module);
     if (!modules)
         return { };
     modules->stopWhereExportsLeaveCompiledCode(module);
     modules->noteLoadBehindMock(module, true);
-    return modules->require(module, referrer.value_or(ModuleID()), Modules::RequiredBy::Program, modules->takeHostRequestRequirerObject());
+    return modules->require(module, referrer.value_or(ModuleID()), Modules::RequiredBy::Program, modules->takeHostRequestRequirerObject(), readsExports);
 }
 
 bool hasCommonJSEvaluationStarted(JSGlobalObject* realm, ModuleID module)

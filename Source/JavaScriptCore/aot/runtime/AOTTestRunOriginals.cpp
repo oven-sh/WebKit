@@ -131,7 +131,7 @@ void Modules::noteWhereOriginalLiesBehindEndOfMock(ModuleID fileOrModule)
         keepUnderActualKey(fileOrModule);
 }
 
-bool Modules::hasImporterBelowThatGetsOriginal(ModuleID root, ModuleID moduleOrFacade) const
+bool Modules::hasBypassingImporterBelow(ModuleID root, ModuleID moduleOrFacade) const
 {
     ModuleID file = fileOf(moduleOrFacade);
     if (!isMocked(file) || hasIntactOriginal(file) || moduleWithExportsOf(file) == file)
@@ -189,15 +189,15 @@ void Modules::evaluatePastPendingMock(ModuleID facade)
     if (file == facade || !isMocked(file) || activeMock(file) || hasIntactOriginal(file) || status(file) >= ModuleStatus::Evaluating)
         return;
     didRemoveMock(file);
-    bool mockWaits = m_modulesWithPendingMock.get(file.index());
+    bool wasMockPending = m_modulesWithPendingMock.get(file.index());
     m_modulesWithPendingMock.clear(file.index());
     evaluateCommonJS(file);
     if (scope.exception()) [[unlikely]] {
-        if (!wasImportedWhileItRan(file))
+        if (!wasImportedDuringEvaluation(file))
             discardFailedEvaluation(file);
     } else
         captureExports(facade);
-    m_modulesWithPendingMock.set(file.index(), mockWaits);
+    m_modulesWithPendingMock.set(file.index(), wasMockPending);
     willMock(file);
     ensureRecord(file);
     if (scope.exception() || status(file) != ModuleStatus::Evaluated)

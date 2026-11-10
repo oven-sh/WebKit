@@ -106,7 +106,7 @@ bool foldOperation(Walker&, const BodyValue&);
 bool buildFreshObject(Walker&, const BodyValue&);
 bool callBuiltin(Walker&, const BodyValue&);
 void nameMethodOfReceiverAsMade(Walker&, const BodyValue& call, Draft&);
-Reference findListThatCallWouldTakeInPlaceOfItsCopy(Walker&, const BodyValue& call, Reference copy);
+Reference findElidableSpreadSource(Walker&, const BodyValue& call, Reference copy);
 bool goOverListInPlaceOfCallOfBuiltin(Walker&, const BodyValue& call, Draft& written);
 bool isAskedForNameThatNoBuiltinAnswers(Walker&, ValueID);
 bool isExpectedToBeArgumentsObject(Walker&, ValueID);
@@ -355,7 +355,7 @@ bool inlineConstructionHandedOn(Walker&, const BodyValue& call, const Draft& sit
 bool listOfSuperCallCanBeHandedOver(Walker&, const BodyValue& call, FunctionID constructor);
 bool listSpreadBehindArgumentsIsRestListOf(Walker&, const BodyValue& call, FunctionID callee);
 bool spreadAppendsElementsOfListAsMade(Walker&, ValueID spreadValue);
-void letCallTakeListCopiedForItAlone(Walker&, const BodyValue& call, Draft& written);
+void elideSpreadCopy(Walker&, const BodyValue& call, Draft& written);
 bool callBuiltinForwarded(Walker&, const BodyValue& call, const Draft& forwarded);
 TailCallRequirement requirementOfTailCall(const Walker&, Reference call);
 bool calleeOfTailCallComesBack(const Walker&, FunctionID callee, std::span<const Reference> arguments);
@@ -1598,7 +1598,7 @@ public:
     bool visitBodyFromEntry(std::span<const Reference> entryArguments, BlockID whereListsAreMade, const RestArrayAllocator&);
     bool walksBodyBehindEntry() const { return m_restArrayAllocator && m_frames.last().isOfUnit; }
     Reference argumentOfEntry(uint32_t position, Origin);
-    Reference makeHiddenListOfEntryAgain();
+    Reference rematerializeHiddenRestArray();
     void endLifetimesAtThrow(std::span<const Reference> thrown);
     bool walkInlineUnderHandlerMade(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft& writtenOut, BlockID handler);
     bool walkInlineMethodThatProtocolCalls(const BodyValue& step, FunctionID callee, std::span<const Reference> arguments);

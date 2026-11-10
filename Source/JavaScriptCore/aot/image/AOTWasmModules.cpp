@@ -40,6 +40,7 @@
 #include "WasmCalleeGroup.h"
 #include "WasmCodeInImage.h"
 #include "WasmCompilationContext.h"
+#include "WasmIPIntPlan.h"
 #include "WasmLimits.h"
 #include "WasmModule.h"
 #include "WasmModuleInformation.h"
@@ -47,6 +48,7 @@
 #include "WasmToJS.h"
 #include "WasmTypeDefinition.h"
 #include "WasmTypeDefinitionInlines.h"
+#include "WasmWorklist.h"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -211,6 +213,8 @@ public:
         return insertionSet.insert<B3::Value>(index, B3::Add, origin, address, addend);
     }
 
+    bool isOutOfReach() const { return m_isOutOfReach; }
+
     void fillJumpTables(B3::Procedure& procedure, ImageLinkBuffer& buffer)
     {
         std::span<uint8_t> bytes = buffer.bytes();
@@ -270,11 +274,7 @@ private:
                         jit.m_assembler.buffer().putInt(0);
                 });
             }
-            CCallHelpers::Label site = jit.movePCRelativeAddress(params[0].gpr(), PCRelativeReach::Near);
-            jit.addLinkTask([site, start](LinkBuffer& linkBuffer) {
-                bool isInReach = linkBuffer.link(site, RelocationKind::AddressNear, *start);
-                RELEASE_ASSERT(isInReach);
-            });
+            linkAddress(jit, params[0].gpr(), start);
         });
         return patchpoint;
     }
@@ -304,17 +304,23 @@ private:
                         jit.m_assembler.buffer().putInt(word);
                 });
             }
-            CCallHelpers::Label site = jit.movePCRelativeAddress(params[0].gpr(), PCRelativeReach::Near);
-            jit.addLinkTask([site, start](LinkBuffer& linkBuffer) {
-                bool isInReach = linkBuffer.link(site, RelocationKind::AddressNear, *start);
-                RELEASE_ASSERT(isInReach);
-            });
+            linkAddress(jit, params[0].gpr(), start);
         });
         return patchpoint;
     }
 
+    void linkAddress(CCallHelpers& jit, GPRReg destination, Box<CCallHelpers::Label> target)
+    {
+        CCallHelpers::Label site = jit.movePCRelativeAddress(destination, PCRelativeReach::Far);
+        jit.addLinkTask([this, site, target](LinkBuffer& linkBuffer) {
+            if (!linkBuffer.link(site, RelocationKind::AddressFar, *target))
+                m_isOutOfReach = true;
+        });
+    }
+
     Vector<std::pair<unsigned, Box<CCallHelpers::Label>>> m_tables;
     Vector<std::pair<unsigned, Box<CCallHelpers::Label>>> m_constants;
+    bool m_isOutOfReach { false };
 };
 
 struct WasmModuleCompiler {
@@ -407,6 +413,8 @@ struct WasmModuleCompiler {
         buffer.finalize(false, "WebAssembly function"_s);
         if (context.procedure->report().failure)
             return { .wasRefusedByGenerator = true };
+        if (lowering.isOutOfReach())
+            return { .failure = Wasm::ImageCodeFailure::OutOfPCRelativeReach };
         lowering.fillJumpTables(*context.procedure, buffer);
         auto relocations = recorder.link(buffer, &buildContext);
         if (!relocations)
@@ -612,17 +620,20 @@ static std::expected<std::unique_ptr<PendingWasmModule>, Wasm::ImageDeclineReaso
 {
     if (source.size() > Wasm::maxModuleSize)
         return makeUnexpected(Wasm::ImageDeclineReason::InvalidModule);
-    auto validated = Wasm::Module::validateSync(vm, Vector<uint8_t>(source));
-    if (!validated)
+    Ref<Wasm::IPIntPlan> plan = adoptRef(*new Wasm::IPIntPlan(vm, Vector<uint8_t>(source), Wasm::CompilerMode::Validation, Wasm::Plan::dontFinalize(), Wasm::IPIntPlan::UsesCodeInImage::No));
+    Wasm::ensureWorklist().enqueue(plan.get());
+    plan->waitForCompletion();
+    if (plan->failed())
         return makeUnexpected(Wasm::ImageDeclineReason::InvalidModule);
-    size_t numberOfFunctions = (*validated)->moduleInformation().internalFunctionCount();
+    Ref<Wasm::Module> validated = Wasm::Module::create(plan.get());
+    size_t numberOfFunctions = validated->moduleInformation().internalFunctionCount();
     if (!numberOfFunctions)
         return makeUnexpected(Wasm::ImageDeclineReason::None);
-    Ref<Wasm::CalleeGroup> group = (*validated)->compileSync(vm, MemoryMode::BoundsChecking);
+    Ref<Wasm::CalleeGroup> group = validated->compileSync(vm, MemoryMode::BoundsChecking);
     if (!group->runnable())
         return makeUnexpected(Wasm::ImageDeclineReason::InvalidModule);
 
-    std::unique_ptr<PendingWasmModule> module { new PendingWasmModule { { WTF::move(*validated), WTF::move(group) } } };
+    std::unique_ptr<PendingWasmModule> module { new PendingWasmModule { { WTF::move(validated), WTF::move(group) } } };
     module->compiler.numberTypes();
     module->location = location;
     module->code.digest = Wasm::CodeInImage::digestOf(source);

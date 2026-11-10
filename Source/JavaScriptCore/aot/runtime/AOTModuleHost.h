@@ -230,7 +230,8 @@ JS_EXPORT_PRIVATE JSPromise* importModule(JSGlobalObject*, ModuleID, std::option
 JS_EXPORT_PRIVATE void evaluateModuleSynchronously(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* moduleNamespace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool mayExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name);
-JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional<ModuleID> referrer = std::nullopt);
+enum class ReadsExports : bool { No, Yes };
+JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional<ModuleID> referrer = std::nullopt, ReadsExports = ReadsExports::Yes);
 JS_EXPORT_PRIVATE bool hasCommonJSEvaluationStarted(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSValue evaluateForDefaultLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void throwCompileOverrideError(JSGlobalObject*, ModuleID);

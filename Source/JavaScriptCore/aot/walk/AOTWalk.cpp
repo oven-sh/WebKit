@@ -1061,7 +1061,7 @@ Reference Walker::argumentOfEntry(uint32_t position, Origin origin)
     return build(WTF::move(read));
 }
 
-Reference Walker::makeHiddenListOfEntryAgain()
+Reference Walker::rematerializeHiddenRestArray()
 {
     const Function& function = program().at(unit().function);
     for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index) {
@@ -4554,7 +4554,7 @@ bool Walker::copy(const BodyValue& value)
         if (draft.opcode == Opcode::Call && has(Mechanism::BuiltinCalls))
             nameMethodOfReceiverAsMade(*this, value, draft);
         if ((draft.opcode == Opcode::CallList || draft.opcode == Opcode::ConstructList || draft.opcode == Opcode::SuperConstructList) && has(Mechanism::EscapeAnalysis))
-            letCallTakeListCopiedForItAlone(*this, value, draft);
+            elideSpreadCopy(*this, value, draft);
         if (draft.opcode == Opcode::StrictEq && has(Mechanism::Guesses) && m_opensGuesses)
             sayWhatIsExpectedOfComparedOperands(*this, value, draft);
         if (draft.opcode == Opcode::ToBoolean && has(Mechanism::Guesses) && m_opensGuesses)

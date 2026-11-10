@@ -440,7 +440,7 @@ static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, cons
     if (elements)
         again.setElementsOperands(elements->span());
     if (again.opcode == Opcode::CreateUnmappedArguments && walker.walksBodyBehindEntry()) {
-        if (Reference list = walker.makeHiddenListOfEntryAgain())
+        if (Reference list = walker.rematerializeHiddenRestArray())
             again.setRestOperand(list);
     }
     walker.chooseConservativeFields(again);

@@ -372,7 +372,7 @@ static bool isAnsweredByDirectFunction(const BuiltinTable& table, BuiltinOverloa
     return !!BuiltinBindings::directFunctionNumberOf(overload);
 }
 
-bool isCallThatTheWalkMustLower(const BuiltinTable& table, BuiltinID builtin)
+bool requiresWalkLowering(const BuiltinTable& table, BuiltinID builtin)
 {
     BuiltinID called = table.canonicalID(builtin);
     const Builtin& entry = table.at(called);

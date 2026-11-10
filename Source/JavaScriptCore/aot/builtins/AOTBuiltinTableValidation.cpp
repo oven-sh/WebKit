@@ -333,7 +333,7 @@ static void checkPrivateAliases(RealmComparison& comparison)
     });
 }
 
-static void checkMembersReportedAsReadOnly(RealmComparison& comparison)
+static void checkReadOnlyMembers(RealmComparison& comparison)
 {
     VM& vm = comparison.vm();
     for (const BuiltinMarkedEntry& marked : comparison.table.marked(BuiltinMark::IsReportedAsReadOnly)) {
@@ -636,7 +636,7 @@ Vector<String> BuiltinTable::mismatches(JSGlobalObject* realm) const
     checkEntries(comparison);
     checkNativeFunctions(comparison);
     checkPrivateAliases(comparison);
-    checkMembersReportedAsReadOnly(comparison);
+    checkReadOnlyMembers(comparison);
     checkInheritance(comparison);
     checkObjectIdentities(comparison);
     checkClosedHolders(comparison);

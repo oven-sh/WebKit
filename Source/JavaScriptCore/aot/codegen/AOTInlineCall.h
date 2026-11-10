@@ -52,6 +52,7 @@ public:
 
     InlineBuiltin builtin() const { return m_builtin; }
     BuiltinOverloadID overload() const { return m_overload; }
+    unsigned numberOfParameters() const { return m_parameters.size(); }
     uint32_t parameterWord(unsigned index) const { return m_parameters[index]; }
     template<typename Enum> Enum parameter(unsigned index) const { return static_cast<Enum>(m_parameters[index]); }
 

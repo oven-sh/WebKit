@@ -38,7 +38,7 @@ runtime NewSetFromIterable, NewMapFromEntries : JSCell* (EncodedJSValue iterable
 runtime PropertyIsEnumerable : size_t (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime GetOwnPropertyDescriptor : EncodedJSValue (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime ObjectAssignWithoutCode, ObjectAssignWithoutGetters : size_t (JSCell* target, EncodedJSValue source) ; unknownCode
-runtime ObjectCreate : JSCell* (JSCell* prototype) ; reads(all) writes(PrototypeLinks, ShapeWords, AllocatorState, RuntimeState) collects
+runtime ObjectCreate : JSCell* (JSCell* prototype, uint32_t isSmall) ; reads(all) writes(PrototypeLinks, ShapeWords, AllocatorState, RuntimeState) collects
 
 runtime IsConstructor : size_t (EncodedJSValue value) ; reads(all)
 runtime ReadsIteratorOfListUnseen : size_t (EncodedJSValue value) ; reads(all)

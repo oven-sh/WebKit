@@ -50,7 +50,7 @@ struct CallInWalkCalls {
     bool restListIsCopied { false };
     Reference listOfUnknownLength;
     Reference borrowedHiddenRest;
-    Reference lengthOfBorrowedHiddenRest;
+    Reference borrowedHiddenRestLength;
     std::span<const Reference> writtenInFrontOfList;
     BuiltinID calledBuiltin;
     bool isConstruction { false };
@@ -261,7 +261,7 @@ static bool planOperandsInWalkCalls(Walker& walker, const CallInWalkCalls& reque
             break;
         case EntryParameter::ArgumentCount:
             if (request.borrowedHiddenRest) {
-                operand = { Source::Given, request.lengthOfBorrowedHiddenRest, 0 };
+                operand = { Source::Given, request.borrowedHiddenRestLength, 0 };
                 break;
             }
             if (request.restList)
@@ -365,7 +365,7 @@ static Reference buildOperandInWalkCalls(Walker& walker, const CallInWalkCalls& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<uint32_t> firstArgumentOfEntryRestArray(Walker& walker, Reference array)
+static std::optional<uint32_t> restArrayFirstArgument(Walker& walker, Reference array)
 {
     if (!array || !array.isValue() || !walker.program().at(walker.unit().function).has(FunctionFlags::HasHiddenRest))
         return std::nullopt;
@@ -376,20 +376,20 @@ static std::optional<uint32_t> firstArgumentOfEntryRestArray(Walker& walker, Ref
     return allocation.firstArgument();
 }
 
-static Reference allocateEntryRestArrayAgain(Walker& walker, Reference array)
+static Reference sinkRestArrayAllocation(Walker& walker, Reference array)
 {
-    if (!firstArgumentOfEntryRestArray(walker, array))
+    if (!restArrayFirstArgument(walker, array))
         return array;
-    Reference again = walker.makeHiddenListOfEntryAgain();
+    Reference again = walker.rematerializeHiddenRestArray();
     if (!again)
         return array;
     walker.count(StatisticID::RestArrayAllocationsSunk);
     return again;
 }
 
-static Reference buildLengthOfArrayInWalkCalls(Walker& walker, Reference array, Origin origin)
+static Reference buildSpreadArrayLength(Walker& walker, Reference array, Origin origin)
 {
-    if (std::optional<uint32_t> firstArgument = firstArgumentOfEntryRestArray(walker, array)) {
+    if (std::optional<uint32_t> firstArgument = restArrayFirstArgument(walker, array)) {
         Draft count(Opcode::GetRestLength, origin);
         count.setFirstArgument(*firstArgument);
         walker.chooseConservativeFields(count);
@@ -408,7 +408,7 @@ static bool buildCallAsWrittenForLongListInWalkCalls(Walker& walker, const Draft
 
     Draft test(Opcode::LessEq, originInFrontOfCall);
     walker.chooseConservativeFields(test);
-    test.setLeftOperand(buildLengthOfArrayInWalkCalls(walker, request.listOfUnknownLength, originInFrontOfCall));
+    test.setLeftOperand(buildSpreadArrayLength(walker, request.listOfUnknownLength, originInFrontOfCall));
     test.setRightOperand(walker.constant(WTF::move(lengthOfShortList)));
     if (!test.leftOperand() || !test.rightOperand())
         return false;
@@ -429,7 +429,7 @@ static bool buildCallAsWrittenForLongListInWalkCalls(Walker& walker, const Draft
     else if (!request.writtenInFrontOfList.empty())
         asWritten.setListOperand(buildListOfArgumentsAndListInWalkCalls(walker, originInFrontOfCall, request.writtenInFrontOfList, request.listOfUnknownLength));
     else
-        asWritten.setListOperand(allocateEntryRestArrayAgain(walker, asWritten.listOperand()));
+        asWritten.setListOperand(sinkRestArrayAllocation(walker, asWritten.listOperand()));
     walker.chooseConservativeFields(asWritten);
     Reference result = walker.build(WTF::move(asWritten));
     walker.leaveAnythingAt(request.callee);
@@ -1108,7 +1108,7 @@ static bool readParametersOutOfListInWalkCalls(Walker& walker, const Function& c
 {
     unsigned numberOfParameters = callee.numberOfPositionalParameters();
     unsigned numberWrittenInFront = elements.size();
-    std::optional<uint32_t> firstArgument = firstArgumentOfEntryRestArray(walker, list);
+    std::optional<uint32_t> firstArgument = restArrayFirstArgument(walker, list);
     for (unsigned position = numberWrittenInFront; position < numberOfParameters; ++position) {
         if (firstArgument) {
             Draft argument(Opcode::GetArgument, originInFrontOfCall);
@@ -1137,11 +1137,11 @@ static bool readParametersOutOfListInWalkCalls(Walker& walker, const Function& c
     return true;
 }
 
-static Reference findArrayBorrowedAsHiddenRest(Walker& walker, const BodyValue& call, const Function& callee, Reference copy)
+static Reference findBorrowableSpreadSource(Walker& walker, const BodyValue& call, const Function& callee, Reference copy)
 {
     if (!callee.has(FunctionFlags::HasHiddenRest) || callee.numberOfPositionalParameters() || !walker.has(Mechanism::TypedOperations))
         return { };
-    Reference source = findListThatCallWouldTakeInPlaceOfItsCopy(walker, call, copy);
+    Reference source = findElidableSpreadSource(walker, call, copy);
     return source && isFreshPristineArray(walker, source) ? source : Reference();
 }
 
@@ -1153,7 +1153,7 @@ bool listOfSuperCallCanBeHandedOver(Walker& walker, const BodyValue& call, Funct
     const Function& constructor = walker.program().at(callee);
     if (!isClassConstructorOf(constructor.kind) || constructor.has(FunctionFlags::HasThis))
         return false;
-    return elementsOfFreshList(walker, list) || parametersAreReadOutOfListInWalkCalls(walker, constructor, list) || findArrayBorrowedAsHiddenRest(walker, call, constructor, list);
+    return elementsOfFreshList(walker, list) || parametersAreReadOutOfListInWalkCalls(walker, constructor, list) || findBorrowableSpreadSource(walker, call, constructor, list);
 }
 
 static bool walkConstructionOfListInWalkCalls(Walker& walker, const BodyValue& call)
@@ -1171,8 +1171,8 @@ static bool walkConstructionOfListInWalkCalls(Walker& walker, const BodyValue& c
     Vector<Reference, 8> elements;
     if (!written) {
         written = walker.draftOf(call);
-        Reference borrowed = isSuperCall ? findArrayBorrowedAsHiddenRest(walker, call, constructor, written->listOperand()) : Reference();
-        if (Reference source = borrowed ? borrowed : findListThatCallWouldTakeInPlaceOfItsCopy(walker, call, written->listOperand()); source && (borrowed || parametersAreReadOutOfListInWalkCalls(walker, constructor, source))) {
+        Reference borrowed = isSuperCall ? findBorrowableSpreadSource(walker, call, constructor, written->listOperand()) : Reference();
+        if (Reference source = borrowed ? borrowed : findElidableSpreadSource(walker, call, written->listOperand()); source && (borrowed || parametersAreReadOutOfListInWalkCalls(walker, constructor, source))) {
             written->setListOperand(source);
             walker.count(StatisticID::SpreadCallArrayCopiesElided);
         }
@@ -1181,8 +1181,8 @@ static bool walkConstructionOfListInWalkCalls(Walker& walker, const BodyValue& c
         request.listOfUnknownLength = written->listOperand();
         if (borrowed) {
             request.borrowedHiddenRest = borrowed;
-            request.lengthOfBorrowedHiddenRest = buildLengthOfArrayInWalkCalls(walker, borrowed, written->origin());
-            if (!request.lengthOfBorrowedHiddenRest)
+            request.borrowedHiddenRestLength = buildSpreadArrayLength(walker, borrowed, written->origin());
+            if (!request.borrowedHiddenRestLength)
                 return true;
         } else if (!readParametersOutOfListInWalkCalls(walker, constructor, request.listOfUnknownLength, written->origin(), elements))
             return true;
@@ -1250,7 +1250,7 @@ static ValueID findLastOperationThatIsObservedInWalkCalls(const Code& code, Bloc
 
 enum class WrittenInFrontOfListInWalkCalls : bool { Nothing, Values };
 
-static Reference findListCopiedForCallAloneInWalkCalls(Walker& walker, const BodyValue& call, Reference copy, WrittenInFrontOfListInWalkCalls written = WrittenInFrontOfListInWalkCalls::Nothing)
+static Reference findSpreadCopySource(Walker& walker, const BodyValue& call, Reference copy, WrittenInFrontOfListInWalkCalls written = WrittenInFrontOfListInWalkCalls::Nothing)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID list = call.listOperand();
@@ -1266,17 +1266,17 @@ static Reference findListCopiedForCallAloneInWalkCalls(Walker& walker, const Bod
     return Reference::value(append.sourceOperand());
 }
 
-Reference findListThatCallWouldTakeInPlaceOfItsCopy(Walker& walker, const BodyValue& call, Reference copy)
+Reference findElidableSpreadSource(Walker& walker, const BodyValue& call, Reference copy)
 {
-    return findListCopiedForCallAloneInWalkCalls(walker, call, copy);
+    return findSpreadCopySource(walker, call, copy);
 }
 
-void letCallTakeListCopiedForItAlone(Walker& walker, const BodyValue& call, Draft& written)
+void elideSpreadCopy(Walker& walker, const BodyValue& call, Draft& written)
 {
-    Reference list = findListCopiedForCallAloneInWalkCalls(walker, call, written.listOperand());
+    Reference list = findSpreadCopySource(walker, call, written.listOperand());
     if (!list)
         return;
-    written.setListOperand(allocateEntryRestArrayAgain(walker, list));
+    written.setListOperand(sinkRestArrayAllocation(walker, list));
     walker.count(StatisticID::SpreadCallArrayCopiesElided);
 }
 
@@ -1351,9 +1351,9 @@ static bool walkCallListInWalkCalls(Walker& walker, const BodyValue& call)
         if (callee.numberOfPositionalParameters() || callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest })) {
             if (callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter }) || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::EscapeAnalysis))
                 return false;
-            request.listOfUnknownLength = findListCopiedForCallAloneInWalkCalls(walker, call, walker.referenceOf(list));
+            request.listOfUnknownLength = findSpreadCopySource(walker, call, walker.referenceOf(list));
             Vector<Reference, 8> writtenInFront;
-            if (!request.listOfUnknownLength && (request.listOfUnknownLength = findListCopiedForCallAloneInWalkCalls(walker, call, walker.referenceOf(list), WrittenInFrontOfListInWalkCalls::Values))) {
+            if (!request.listOfUnknownLength && (request.listOfUnknownLength = findSpreadCopySource(walker, call, walker.referenceOf(list), WrittenInFrontOfListInWalkCalls::Values))) {
                 for (ValueID element : index.value(list).as<Opcode::NewArray>().elementsOperands()) {
                     Reference reference = walker.referenceOf(element);
                     if (!reference)
@@ -1966,7 +1966,7 @@ static BuiltinID findBuiltinWithoutFunctionObjectInWalkCalls(const Walker& walke
         return { };
     Type type = walker.types().at(typeOfCallee);
     BuiltinID builtin = type.isObject() ? singleBuiltinOf(walker.types(), type) : BuiltinID();
-    return builtin && isCallThatTheWalkMustLower(walker.program().builtins(), builtin) ? builtin : BuiltinID();
+    return builtin && requiresWalkLowering(walker.program().builtins(), builtin) ? builtin : BuiltinID();
 }
 
 FunctionID findFunctionBehindCompiledBuiltin(const Walker& walker, TypeID typeOfCallee)

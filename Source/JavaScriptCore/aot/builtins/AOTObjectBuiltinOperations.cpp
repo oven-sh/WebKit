@@ -462,10 +462,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutGetters, size_t, (Instan
     return assignSource<Entry::operationAOTObjectAssignWithoutGetters, false>(instance, AOT_OPERATION_FRAME_RECORD(), target, encodedSource);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTObjectCreate, JSCell*, (Instance* instance, JSCell* prototypeOrNull))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTObjectCreate, JSCell*, (Instance* instance, JSCell* prototypeOrNull, uint32_t isSmall))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectCreate);
     DeferTerminationForAWhile deferTermination(vm);
+    if (!prototypeOrNull && isSmall) {
+        auto& data = instance->allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::SmallNullPrototypeObject)];
+        if (!data.allocator) [[unlikely]]
+            prepareFinalObjectAllocation(instance, InlineAllocation::SmallNullPrototypeObject, JSFinalObject::createStructure(vm, globalObject, jsNull(), smallObjectInlineCapacity));
+        OPERATION_RETURN(scope, constructEmptyObject(vm, std::bit_cast<StructureID>(static_cast<uint32_t>(data.header)).decode()));
+    }
     if (!prototypeOrNull) {
         Structure* structure = globalObject->nullPrototypeObjectStructure();
         prepareFinalObjectAllocation(instance, InlineAllocation::NullPrototypeObject, structure);

@@ -134,7 +134,7 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
         all.standsForNoValueOfInput = true;
         all.setContents(TypeTable::anything);
         all.setVariadicOperands(parameters.span().first(behind->firstPosition));
-        Reference listBehindParameters = readsArgumentsOfEntry ? walker.makeHiddenListOfEntryAgain() : behind->list;
+        Reference listBehindParameters = readsArgumentsOfEntry ? walker.rematerializeHiddenRestArray() : behind->list;
         if (!listBehindParameters) {
             walker.fail("the list of arguments of an entry cannot be made again"_s);
             return true;

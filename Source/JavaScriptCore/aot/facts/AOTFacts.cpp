@@ -746,13 +746,13 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
         BuiltinID member = findOwnMember(program, Builtins::FunctionPrototype, call.calleeKey());
         return member && program.builtins().canonicalID(member) == Builtins::FunctionPrototypeApply;
     };
-    static constexpr OpcodeSet callsThatTakeArray { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList };
-    auto isSpreadIntoCallAlone = [&](BodyValue spread) {
+    static constexpr OpcodeSet arrayCallOpcodes { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList };
+    auto isElidableCallSpread = [&](BodyValue spread) {
         ValueID array = spread.as<Opcode::AppendSpread>().arrayOperand();
         ValueID call(spread.id().index() + 1);
         if (lists.contains(array) || body.isParameter(array) || body.opcodeOf(array) != Opcode::NewArray || body.useCount(array) != 2 || !body.value(array).as<Opcode::NewArray>().elementsOperands().empty())
             return false;
-        if (call.index() >= body.numberOfValues() || body.isParameter(call) || body.blockOf(call) != body.blockOf(spread.id()) || !callsThatTakeArray.contains(body.opcodeOf(call)))
+        if (call.index() >= body.numberOfValues() || body.isParameter(call) || body.blockOf(call) != body.blockOf(spread.id()) || !arrayCallOpcodes.contains(body.opcodeOf(call)))
             return false;
         return body.value(call).listOperand() == array;
     };
@@ -775,7 +775,7 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
             });
             names |= isNamedHere;
             if (isNamedHere && isOnlyForwarded)
-                isOnlyForwarded = (value.opcode() == Opcode::Call && handsObjectToApply(value.as<Opcode::Call>())) || (value.opcode() == Opcode::AppendSpread && isSpreadIntoCallAlone(value));
+                isOnlyForwarded = (value.opcode() == Opcode::Call && handsObjectToApply(value.as<Opcode::Call>())) || (value.opcode() == Opcode::AppendSpread && isElidableCallSpread(value));
         }
         bool isNamedAtEnd = false;
         BodyTerminator terminator = block.terminator();

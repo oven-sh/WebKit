@@ -165,9 +165,10 @@ struct LazyStringWords {
     uint64_t capacity;
 };
 
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject };
-static constexpr unsigned numberOfInlineAllocations = 12;
-static_assert(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + 1 == numberOfInlineAllocations);
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject, SmallNullPrototypeObject };
+static constexpr unsigned numberOfInlineAllocations = 13;
+static_assert(static_cast<unsigned>(InlineAllocation::SmallNullPrototypeObject) + 1 == numberOfInlineAllocations);
+static constexpr unsigned smallObjectInlineCapacity = 2;
 
 struct InlineAllocationData {
     void* allocator;
