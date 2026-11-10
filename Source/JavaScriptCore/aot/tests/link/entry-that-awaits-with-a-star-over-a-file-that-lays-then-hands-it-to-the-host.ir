@@ -3,6 +3,7 @@
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions modules lookups mechanisms=all
 # CHECK-NOT: function f2 unreached
+# CHECK-NOT: lookup entry-hands-host-nothing 0
 # CHECK: lookup name-read "then"
 # CHECK-NOT: lookup entry-hands-host-nothing 0
 

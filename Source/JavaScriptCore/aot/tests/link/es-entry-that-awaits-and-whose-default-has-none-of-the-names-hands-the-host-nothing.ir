@@ -3,6 +3,7 @@
 # The controls: es-entry-that-awaits-and-whose-default-has-one-of-the-names-hands-it-to-the-host.ir, es-entry-whose-default-has-none-of-the-names-hands-the-host-nothing.ir.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions modules lookups mechanisms=all
+# CHECK-NOT: lookup called-out-of-sight ObjectKeys
 # CHECK: lookup entry-hands-host-nothing 0
 # CHECK-NOT: lookup called-out-of-sight ObjectKeys
 

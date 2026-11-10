@@ -5,6 +5,7 @@
 # CHECK-NOT: function f1 unreached
 # CHECK-NOT: lookup entry-hands-host-nothing 0
 # CHECK: lookup called-out-of-sight ObjectKeys
+# CHECK-NOT: lookup entry-hands-host-nothing 0
 
 layout L0 module=m0 fields=[{key="fetch" declared={type=anything} flags=[IsRequired, IsMethod]}, {key="port" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
 variable g0 name="default" module=m0 declared={type=anything|absent} flags=[IsImmutable]

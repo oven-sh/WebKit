@@ -2,6 +2,7 @@
 # The control: es-entry-that-awaits-and-whose-default-has-none-of-the-names-hands-the-host-nothing.ir.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions modules lookups mechanisms=all
+# CHECK-NOT: lookup entry-hands-host-nothing 0
 # CHECK: lookup name-read "fetch"
 # CHECK-NOT: lookup entry-hands-host-nothing 0
 
