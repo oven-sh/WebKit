@@ -1182,6 +1182,7 @@ static void checkDirectoryTakesNoBlockThatItsListHasNoRoomFor()
     // One directory gets as many blocks as its list has room for, each full of cells that stay.
     MarkedArgumentBuffer kept;
     BlockDirectory* directory;
+    BlockDirectory* directoryOfDropped;
     {
         DeferGCForAWhile deferGC(vm);
         auto createKept = [&] {
@@ -1211,17 +1212,22 @@ static void checkDirectoryTakesNoBlockThatItsListHasNoRoomFor()
         // Another directory of the same allocator gets blocks of cells that go.
         for (unsigned count = 0; count < 200; ++count)
             create(lengthOfDropped);
+        directoryOfDropped = &directoryOf(create(lengthOfDropped));
     }
     // No sweep follows, so the blocks without cells stay where another directory finds them.
     vm.heap.collectSync(CollectionScope::Full);
     AOT_TEST_CHECK(numberOfBlocks(*directory) == capacityOfLargeListOfBlocks);
+    unsigned blocksOfDropped = numberOfBlocks(*directoryOfDropped);
+    AOT_TEST_CHECK(blocksOfDropped);
     // The set has room for more blocks, so the list is what has none.
     AOT_TEST_CHECK(vm.heap.objectSpace().blocks().set().size() < 4000);
 
+    // A collection gives memory back to malloc, and the list could grow with that.
+    DeferGCForAWhile deferGC(vm);
     LargePiecesOfMalloc pieces;
     // The list cannot grow. The directory takes no block of the other one, and no new one.
     AOT_TEST_CHECK(!JSBigInt::tryCreateWithLength(vm, lengthOfKept));
-    AOT_TEST_CHECK(numberOfBlocks(*directory) == capacityOfLargeListOfBlocks);
+    AOT_TEST_CHECK(numberOfBlocks(*directory) == capacityOfLargeListOfBlocks && numberOfBlocks(*directoryOfDropped) == blocksOfDropped);
 
     pieces.giveBack();
     AOT_TEST_CHECK(JSBigInt::tryCreateWithLength(vm, lengthOfKept));
