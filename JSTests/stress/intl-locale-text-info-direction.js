@@ -23,18 +23,32 @@ shouldHaveDirection(["dv", "dv-MV", "arc", "glk", "bal", "bgn", "prd", "sdh", "r
 shouldHaveDirection(["en", "es", "pt", "zh", "ja", "ko", "de", "fr", "it", "ru", "nl", "pl", "th", "tr", "sv", "hi", "el", "la", "ku", "az", "pa", "und"], "ltr");
 
 // The region is enough where it changes the likely script.
-shouldHaveDirection(["und-MV", "und-IL", "und-IR", "und-PK", "und-AF", "und-EG", "ku-IQ", "az-IR", "az-IQ", "ha-SD", "pa-PK", "uz-AF"], "rtl");
-shouldHaveDirection(["und-US", "en-US", "ar-Latn-EG", "ku-TR", "az-AZ", "pa-IN", "sd-IN", "zh-TW", "en-IL", "fa-Latn-IR"], "ltr");
+shouldHaveDirection(["und-MV", "und-IL", "und-IR", "und-PK", "und-AF", "und-EG", "az-IR", "az-IQ", "ha-SD", "pa-PK", "uz-AF"], "rtl");
+shouldHaveDirection(["und-US", "en-US", "ar-Latn-EG", "ku-TR", "az-AZ", "pa-IN", "zh-TW", "en-IL", "fa-Latn-IR"], "ltr");
 
 // Variants and keywords change nothing.
-shouldHaveDirection(["dv-u-nu-latn", "ar-u-nu-latn", "und-Arab-u-ca-gregory", "az-IR-u-nu-arab-hc-h23", "ar-EG-fonipa", "dv-fonipa-u-nu-latn-x-private", "sl-Arab-rozaj-biske-1994"], "rtl");
-shouldHaveDirection(["en-u-ca-hebrew", "en-u-nu-arab", "de-1996-u-co-phonebk", "ar-Latn-u-nu-arab", "sl-rozaj-biske-1994"], "ltr");
+shouldHaveDirection(["dv-u-nu-latn", "ar-u-nu-latn", "und-Arab-u-ca-gregory", "und-MV-u-nu-latn", "az-IR-u-nu-arab-hc-h23", "ar-EG-fonipa", "dv-fonipa-u-nu-latn-x-private", "sl-Arab-rozaj-biske-1994"], "rtl");
+shouldHaveDirection(["en-u-ca-hebrew", "en-u-nu-arab", "und-u-nu-arab", "und-x-private", "de-1996-u-co-phonebk", "fil-u-ca-hebrew", "ar-Latn-u-nu-arab", "sl-rozaj-biske-1994"], "ltr");
+
+// Only the language and the region reach Add Likely Subtags, so a long tag gets the answer of a short one.
+{
+    let variants = Array.from({ length: 19 }, (_, index) => `v${1000000 + index}`).join("-");
+    let privateUse = Array.from({ length: 24 }, (_, index) => `p${1000000 + index}`).join("-");
+    shouldHaveDirection([`dv-${variants}`, `az-IR-${variants}`, `und-MV-${variants}`, `und-Arab-${variants}`, `dv-x-${privateUse}`], "rtl");
+    shouldHaveDirection([`sv-${variants}`, `sv-x-${privateUse}`], "ltr");
+    shouldHaveDirection([`xx-${variants}`], undefined);
+}
+
+// A code for one style of a script has the direction of the script. Add Likely Subtags gives some languages such a
+// code: Urdu gets Aran from the ICU of macOS.
+shouldHaveDirection(["ur-Aran", "ks-Aran", "und-Aran", "syr-Syre", "und-Syrj", "und-Syrn"], "rtl");
+shouldHaveDirection(["de-Latf", "und-Latf", "ga-Latg", "und-Latg", "cu-Cyrs", "und-Cyrs"], "ltr");
 
 // The direction is not known: no likely script, a script without a direction in CLDR's scriptMetadata.txt, or no
 // registered script.
 shouldHaveDirection(["xx", "tlh", "qfz", "abcdefgh", "xx-ZZ"], undefined);
 shouldHaveDirection(["und-Zyyy", "und-Zinh", "und-Zzzz", "und-Brai", "en-Zzzz", "ar-Zyyy"], undefined);
-shouldHaveDirection(["ar-Zxxx", "ur-Aran", "und-Zsym", "und-Zmth", "und-Zsye", "und-Hrkt", "und-Latf", "und-Syre"], undefined);
+shouldHaveDirection(["ar-Zxxx", "und-Zsym", "und-Zmth", "und-Zsye", "und-Hrkt", "ka-Geok"], undefined);
 shouldHaveDirection(["und-Aaaa", "und-Qaaq", "und-True", "und-Qaai", "und-Qaac", "und-Miao"], undefined);
 
 // Deprecated language codes are the ones that replace them.
@@ -50,8 +64,8 @@ shouldBe(direction("ar", { language: "en" }), "ltr", "ar with language en");
 shouldBe(direction(new Intl.Locale("und-Arab")), "rtl", "a Locale of und-Arab");
 shouldBe(direction(new Intl.Locale("dv"), { numberingSystem: "latn" }), "rtl", "a Locale of dv");
 
-// maximize() and minimize() keep the direction.
-for (let tag of ["und-Arab", "und-IL", "ku-IQ", "dv", "az-IR", "en", "und", "pa", "pa-PK", "sd-IN", "xx", "tlh", "ur-Aran"]) {
+// maximize() and minimize() keep the direction. Which script ku-IQ, sd-IN, gml and mga get depends on the ICU.
+for (let tag of ["und-Arab", "und-IL", "ku-IQ", "dv", "az-IR", "en", "und", "pa", "pa-PK", "sd-IN", "ur", "ks", "gml", "mga", "xx", "tlh", "ur-Aran"]) {
     let locale = new Intl.Locale(tag);
     shouldBe(locale.maximize().getTextInfo().direction, locale.getTextInfo().direction, `maximize() of ${tag}`);
     shouldBe(locale.minimize().getTextInfo().direction, locale.getTextInfo().direction, `minimize() of ${tag}`);
@@ -95,9 +109,9 @@ shouldBe(JSON.stringify(new Intl.Locale("xx").getTextInfo()), `{}`, "xx as JSON"
             shouldBe(direction(`${language}-${script}`), undefined, `${language}-${script}`);
     }
 
-    // script-metadata-unlisted-language-script-is-rtl.js accepts "rtl" and undefined. This engine gives undefined.
+    // script-metadata-unlisted-language-script-is-rtl.js accepts "rtl" and undefined for both.
     shouldBe(direction("ar-Zxxx"), undefined, "ar-Zxxx");
-    shouldBe(direction("ur-Aran"), undefined, "ur-Aran");
+    shouldBe(direction("ur-Aran"), "rtl", "ur-Aran");
 
     // script-subtag-missing.js
     for (let tag of ["und", "en", "ar", "tlh", "qfz", "pa", "pa-PK"]) {

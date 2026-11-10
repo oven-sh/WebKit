@@ -994,9 +994,31 @@ JSValue IntlLocale::timeZones(JSGlobalObject* globalObject)
 
 enum class TextDirection : uint8_t { Unknown, LeftToRight, RightToLeft };
 
-// The RTL field of a script in CLDR's scriptMetadata.txt: YES, NO or UNKNOWN.
-static TextDirection directionOfScript(const char* script)
+// ISO 15924 has codes for one style of a script: "Aran" is Arabic in the Nastaliq style, "Latf" is Latin in Fraktur.
+// Unicode encodes a style as its script, so CLDR's scriptMetadata.txt has no row for these codes, and a style is
+// written in the direction of its script. The likely script of Urdu is Aran in the ICU of macOS.
+static const char* scriptOfVariant(const char* script)
 {
+    static constexpr std::array<std::pair<const char*, const char*>, 7> variants { {
+        { "Aran", "Arab" },
+        { "Cyrs", "Cyrl" },
+        { "Latf", "Latn" },
+        { "Latg", "Latn" },
+        { "Syre", "Syrc" },
+        { "Syrj", "Syrc" },
+        { "Syrn", "Syrc" },
+    } };
+    for (auto& [variant, base] : variants) {
+        if (equalSpans(unsafeSpan(script), unsafeSpan(variant)))
+            return base;
+    }
+    return script;
+}
+
+// The RTL field of a script in CLDR's scriptMetadata.txt: YES, NO or UNKNOWN.
+static TextDirection directionOfScript(const char* subtag)
+{
+    const char* script = scriptOfVariant(subtag);
     int32_t value = u_getPropertyValueEnum(UCHAR_SCRIPT, script);
     if (value < 0)
         return TextDirection::Unknown;
@@ -1004,15 +1026,22 @@ static TextDirection directionOfScript(const char* script)
 
     // ICU also takes the aliases of the Script property ("Qaai" for Zinh, "Miao" for Plrd). They are not script subtags.
     const char* shortName = uscript_getShortName(code);
-    if (!shortName || strcmp(shortName, script))
+    if (!shortName || !equalSpans(unsafeSpan(shortName), unsafeSpan(script)))
         return TextDirection::Unknown;
 
-    // ICU keeps the field as one bit, so NO and UNKNOWN read the same. The UNKNOWN rows are Zyyy, Zinh, Zzzz and Brai,
-    // and the usage of the last two is UNKNOWN too. A script that the file does not list (Zxxx, Aran) is NOT_ENCODED.
-    if (code == USCRIPT_COMMON || code == USCRIPT_INHERITED)
+    // ICU keeps the field as one bit, so NO and UNKNOWN read the same. These four are the rows with UNKNOWN.
+    switch (code) {
+    case USCRIPT_COMMON:
+    case USCRIPT_INHERITED:
+    case USCRIPT_UNKNOWN:
+    case USCRIPT_BRAILLE:
         return TextDirection::Unknown;
-    auto usage = uscript_getUsage(code);
-    if (usage == USCRIPT_USAGE_NOT_ENCODED || usage == USCRIPT_USAGE_UNKNOWN)
+    default:
+        break;
+    }
+
+    // A script without a row (Zxxx, Hrkt) is not encoded in Unicode.
+    if (uscript_getUsage(code) == USCRIPT_USAGE_NOT_ENCODED)
         return TextDirection::Unknown;
 
     return uscript_isRightToLeft(code) ? TextDirection::RightToLeft : TextDirection::LeftToRight;
@@ -1070,11 +1099,13 @@ static TextDirection textDirectionOfLocale(const char* localeID)
     if (scriptLength)
         return directionOfScript(script.data());
 
-    std::array<char, ULOC_LANG_CAPACITY> language;
-    int32_t languageLength = uloc_getLanguage(localeID, language.data(), language.size(), &status);
-    if (failed(status))
-        return TextDirection::Unknown;
-    if (auto direction = directionOfCommonLanguage(std::span { language }.first(languageLength)))
+    // The ID begins with the language, which is empty for "und". uloc_getLanguage() is not called for it: for each
+    // language of three letters it searches a list of about 600 for a code of two letters.
+    size_t languageLength = 0;
+    while (isASCIIAlpha(localeID[languageLength]))
+        ++languageLength;
+    auto language = unsafeMakeSpan(localeID, languageLength);
+    if (auto direction = directionOfCommonLanguage(language))
         return direction.value();
 
     std::array<char, ULOC_COUNTRY_CAPACITY> region;
@@ -1085,7 +1116,7 @@ static TextDirection textDirectionOfLocale(const char* localeID)
     // Add Likely Subtags reads the language and the region only. Without the variants and the keywords the ID has a
     // length that every ICU takes.
     Vector<char, ULOC_LANG_CAPACITY + ULOC_COUNTRY_CAPACITY> languageAndRegion;
-    languageAndRegion.append(std::span { language }.first(languageLength));
+    languageAndRegion.append(language);
     if (regionLength) {
         languageAndRegion.append('_');
         languageAndRegion.append(std::span { region }.first(regionLength));
