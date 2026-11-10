@@ -297,8 +297,8 @@ JS_EXPORT_PRIVATE bool wasDisplacedDuringEvaluation(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRegisteredByFailedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLinkedByFailedGraph(JSGlobalObject*, ModuleID, bool byEarlierTestFile = false);
 JS_EXPORT_PRIVATE bool wasLinkedBeforeLinkFailure(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE bool isLinkedForImporterYetToRun(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
-JS_EXPORT_PRIVATE bool isFailedImportRoot(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool isLinkedForPendingImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
+JS_EXPORT_PRIVATE bool isFailedLoadRoot(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasDisplacedAfterFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLoadedBeforeTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void clearLoadedBeforeTestFile(JSGlobalObject*, ModuleID);
@@ -340,7 +340,7 @@ JS_EXPORT_PRIVATE bool hasDelayedImport(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isRequestedByDetachedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void retryMockInDetachedLoads(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool needsRetryInDetachedLoad(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE uint64_t resumingLoadFactoryCall(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE uint64_t factoryCallOfResumedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void removeUnusedLingeringMocks(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool importsStatically(JSGlobalObject*, ModuleID importer, ModuleID imported);
 JS_EXPORT_PRIVATE void setNeedsMockReinstall(JSGlobalObject*, ModuleID, bool waits = true);
@@ -400,7 +400,7 @@ JS_EXPORT_PRIVATE AbstractModuleRecord* originalModuleRecord(JSGlobalObject*, Mo
 JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasActiveMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasUnevaluatedActiveMockImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
-JS_EXPORT_PRIVATE bool tryKeepActiveMock(JSGlobalObject*, ModuleID, bool staysTheOriginal, bool keepsCurrentTestFileLoads);
+JS_EXPORT_PRIVATE bool tryKeepActiveMock(JSGlobalObject*, ModuleID, bool remainsOriginal, bool keepsCurrentTestFileLoads);
 struct ActiveMockExports {
     JSObject* namespaceObject { nullptr };
     JSValue requiredValue;

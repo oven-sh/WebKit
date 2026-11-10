@@ -703,6 +703,10 @@ struct ThinSummary : SummaryWithoutLists {
     JS_EXPORT_PRIVATE Effects ownEffects() const;
     JS_EXPORT_PRIVATE std::optional<Effects> ownEffectsOfOperators() const;
 
+    bool holdsWrittenList(DataID data) const
+    {
+        return std::ranges::any_of(writtenListsOfVariables, [&](const SummaryWrittenListOfVariable& written) { return written.data == data; });
+    }
     const SummaryWrittenListOfVariable* findWrittenListOf(VariableID variable) const LIFETIME_BOUND
     {
         auto found = std::ranges::lower_bound(writtenListsOfVariables, variable.index(), { }, [](const SummaryWrittenListOfVariable& each) { return each.variable.index(); });

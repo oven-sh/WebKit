@@ -183,7 +183,7 @@ public:
     void* exceptionCatcherStackPointer { nullptr };
     const void* returnAddressOfCallThatCollected { nullptr };
     void* stackPointerOfImport { nullptr };
-    CallFrame* frameOfImportThatAsksLoader { nullptr };
+    CallFrame* importFrameInLoader { nullptr };
     bool requesterRejectsUncompiledCode { false };
     bool isResolvingImportCall { false };
     bool isResolvingImportCallWithoutAttributes { false };

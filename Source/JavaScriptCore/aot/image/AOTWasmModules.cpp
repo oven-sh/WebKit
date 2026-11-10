@@ -386,53 +386,6 @@ struct WasmModuleCompiler {
         return layout;
     }
 
-    static uint32_t findZeroBranchTarget(std::span<const uint8_t> code)
-    {
-#if CPU(X86_64)
-        static_assert(GPRInfo::argumentGPR0 == X86Registers::edi);
-        auto displacementAt = [&](size_t offset, size_t size) {
-            int32_t displacement = static_cast<int8_t>(code[offset]);
-            if (size == sizeof(int32_t))
-                memcpySpan(asMutableByteSpan(displacement), code.subspan(offset, size));
-            return displacement;
-        };
-        constexpr uint8_t shortJumpIfZero = 0x74;
-        constexpr uint8_t shortJumpIfNotZero = 0x75;
-        constexpr std::array<uint8_t, 2> testEDI { 0x85, 0xff };
-        if (code.size() < 16 || !spanHasPrefix(code, std::span { testEDI }))
-            return 0;
-        size_t offset = testEDI.size();
-        size_t size = 1;
-        uint8_t opcode = code[offset++];
-        if (opcode == 0x0f) {
-            opcode = code[offset++] - 0x10;
-            size = sizeof(int32_t);
-        }
-        uint32_t next = static_cast<uint32_t>(offset + size);
-        if (opcode == shortJumpIfNotZero)
-            return next;
-        if (opcode == shortJumpIfZero)
-            return next + displacementAt(offset, size);
-        return 0;
-#elif CPU(ARM64)
-        uint32_t instruction;
-        if (code.size() < sizeof(instruction))
-            return 0;
-        memcpySpan(asMutableByteSpan(instruction), code.first(sizeof(instruction)));
-        constexpr uint32_t compareAndBranchOfW0 = 0xfe00001f;
-        constexpr uint32_t branchIfZero = 0x34000000;
-        static_assert(GPRInfo::argumentGPR0 == ARM64Registers::x0);
-        if ((instruction & compareAndBranchOfW0 & ~0x01000000u) != branchIfZero)
-            return 0;
-        bool branchesIfNotZero = instruction & 0x01000000;
-        int32_t displacement = static_cast<int32_t>(instruction << 8) >> 13 << 2;
-        return branchesIfNotZero ? sizeof(instruction) : displacement;
-#else
-        UNUSED_PARAM(code);
-        return 0;
-#endif
-    }
-
     static Vector<Wasm::FramelessRangeInImage> findFramelessRanges(const B3::Air::Code& code, ImageLinkBuffer& buffer)
     {
         Vector<Wasm::FramelessRangeInImage> result;
@@ -538,10 +491,7 @@ struct WasmModuleCompiler {
         result.firstStateTests = codeForImage.firstStateTests;
         if (codeForImage.passedGlobal) {
             result.directEntry = buffer.linkBuffer().offsetOf(context.directEntry);
-            if (auto& withZero = context.directEntryWithZero)
-                result.directEntryWithZero = buffer.linkBuffer().offsetOf(*withZero);
-            else
-                result.directEntryWithZero = result.directEntry + findZeroBranchTarget(buffer.bytes().subspan(result.directEntry));
+            result.directEntryWithZero = buffer.linkBuffer().offsetOf(*context.directEntryWithZero);
         }
         for (size_t directCallee : (*compiled)->outgoingJITDirectCallees)
             result.directCallees.set(directCallee);

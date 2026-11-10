@@ -75,7 +75,7 @@ struct CompilationContext {
     Box<PCToCodeOriginMapBuilder> pcToCodeOriginMapBuilder;
     Vector<CCallHelpers::Label> catchEntrypoints;
     CCallHelpers::Label directEntry;
-    // The direct entry for callers that omit a zero argument.
+    // The direct entry for callers whose first argument is zero. They omit the argument of a resumable function.
     Box<CCallHelpers::Label> directEntryWithZero;
     SegmentedVector<WasmOrigin> origins;
     CodeForImage* codeForImage { nullptr };

@@ -747,6 +747,63 @@ static void testBranchOnExtendedValueTestsNarrowValue()
     }
 }
 
+static void testTrappingLoadReadsAllBytes()
+{
+    enum class Use { Mask, ExtendByte, ExtendHalf, BranchOnMask };
+    auto build = [](Graph& graph, Type type, Use use, int64_t mask) {
+        Procedure& proc = graph.proc;
+        BasicBlock* root = proc.addBlock();
+        Value* load = root->appendNew<MemoryValue>(proc, trapping(Load), type, Origin(), cCallArgumentValues<int64_t*>(proc, root)[0], 8);
+        Value* masked = graph.make(root, BitAnd, load, root->appendIntConstant(proc, Origin(), type, mask));
+        Value* low = type == Int64 ? graph.make(root, Trunc, load) : load;
+        switch (use) {
+        case Use::Mask:
+            graph.ret(root, masked);
+            return;
+        case Use::ExtendByte:
+            graph.ret(root, graph.make(root, SExt8, low));
+            return;
+        case Use::ExtendHalf:
+            graph.ret(root, graph.make(root, SExt16, low));
+            return;
+        case Use::BranchOnMask: {
+            BasicBlock* taken = proc.addBlock();
+            BasicBlock* notTaken = proc.addBlock();
+            graph.branch(root, masked, taken, notTaken);
+            graph.ret(taken, graph.int64(taken, 1));
+            graph.ret(notTaken, graph.int64(notTaken, 2));
+            return;
+        }
+        }
+    };
+    for (bool usesPolicy : { false, true }) {
+        for (Type type : { Int32, Int64 }) {
+            for (Use use : { Use::Mask, Use::ExtendByte, Use::ExtendHalf, Use::BranchOnMask }) {
+                for (int64_t mask : { 1ll, 0xffll, 0x80ll, 0x100ll, 0xff00ll, 0xffffll, 0x7fffffffll }) {
+                    Procedure proc(usesPolicy ? selectionPolicy() : Policy());
+                    Graph graph { proc };
+                    build(graph, type, use, mask);
+                    proc.resetReachability();
+                    generateToAir(proc);
+                    unsigned numberOfTrappingInsts = 0;
+                    for (Air::BasicBlock* block : proc.code()) {
+                        for (Air::Inst& inst : *block) {
+                            inst.forEachArg([&](Air::Arg& arg, Air::Arg::Role, Bank, Width width) {
+                                if (!arg.isMemory())
+                                    return;
+                                CHECK(inst.kind.effects);
+                                CHECK_EQ(width, type == Int64 ? Width64 : Width32);
+                                ++numberOfTrappingInsts;
+                            });
+                        }
+                    }
+                    CHECK_EQ(numberOfTrappingInsts, 1u);
+                }
+            }
+        }
+    }
+}
+
 static void buildBranchOnLoad16(Graph& graph)
 {
     Procedure& proc = graph.proc;
@@ -1413,6 +1470,7 @@ void addBunSelectionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testFMinAndFMax());
     RUN(testSelectAsMinOrMax());
     RUN(testBranchOnExtendedValueTestsNarrowValue());
+    RUN(testTrappingLoadReadsAllBytes());
     RUN(testBranchOnLoad16());
     RUN(testLoadsFarFromTheirUsers());
     RUN(testPinnedRegisterIsNamedDirectly());

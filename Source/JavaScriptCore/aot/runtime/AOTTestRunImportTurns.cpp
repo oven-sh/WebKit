@@ -637,7 +637,7 @@ void didDrainDeferredFetchJobs(VM& vm)
 
 bool shouldDeferFetchFulfillment(JSGlobalObject* realm, ModuleID module)
 {
-    if (!realm->vm().aotState().frameOfImportThatAsksLoader) [[likely]]
+    if (!realm->vm().aotState().importFrameInLoader) [[likely]]
         return false;
     Modules* modules = modulesOf(realm);
     return modules && modules->isTestRun() && !modules->hasTextAtHand() && modules->textOfImportComesInLaterTurn(module, Modules::AskedBy::Loader);

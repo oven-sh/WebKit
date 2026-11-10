@@ -32,6 +32,8 @@
 #include "AirArgInlines.h"
 #include "AirCode.h"
 #include "AirInstInlines.h"
+#include "AirOpcodeUtils.h"
+#include "AirReuseConditionFlags.h"
 #include "AllowMacroScratchRegisterUsageIf.h"
 #include "B3AbstractHeapRepository.h"
 #include "B3BasicBlockInlines.h"
@@ -1236,6 +1238,7 @@ private:
     Variable* m_passedGlobal { nullptr };
     bool m_accessesPassedGlobal { false };
     bool m_isResumable { false };
+    bool m_isFirstParameterI32 { false };
     bool m_hasLoop { false };
     Box<CCallHelpers::JumpList> m_stackOverflows;
     bool m_makesTailCalls { false };
@@ -1537,6 +1540,8 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
     if (m_context.codeForImage && m_context.codeForImage->passedGlobal && emitsShrinkWrappedFrame()) {
         m_passedGlobal = m_proc.addVariable(Int32);
         m_isResumable = isResumable(m_info, FunctionCodeIndex(m_functionIndex), *m_context.codeForImage->passedGlobal);
+        const RTT& signature = m_info.rtt(m_info.internalFunctionTypeSignatureIndices[m_functionIndex]);
+        m_isFirstParameterI32 = signature.argumentCount() && signature.argumentType(0).isI32();
         Value* argument = m_topLevelBlock->appendNew<ArgumentRegValue>(m_proc, Origin(), passedGlobalGPR);
         m_topLevelBlock->appendNew<VariableValue>(m_proc, Set, Origin(), m_passedGlobal, m_topLevelBlock->appendNew<Value>(m_proc, Trunc, Origin(), argument));
     }
@@ -1780,29 +1785,25 @@ void OMGIRGenerator::emitCallToThrowStub(CCallHelpers& jit)
     jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwExceptionFromOMGThunkGenerator).code()));
 }
 
-static bool mayRead(B3::Air::BasicBlock* start, Reg reg)
+enum class AccessKind : uint8_t { None, Read, Write };
+
+// Whether a path from the head of the block reads what is there before it writes it.
+static bool mayRead(B3::Air::BasicBlock* start, NOESCAPE const Invocable<AccessKind(B3::Air::Inst&)> auto& findAccess)
 {
     IndexSet<B3::Air::BasicBlock*> seen;
     Vector<B3::Air::BasicBlock*, 8> worklist { start };
     seen.add(start);
     while (!worklist.isEmpty()) {
         B3::Air::BasicBlock* block = worklist.takeLast();
-        bool isWritten = false;
+        AccessKind access = AccessKind::None;
         for (B3::Air::Inst& inst : *block) {
-            bool isRead = false;
-            inst.forEach<Reg>([&](Reg& used, B3::Air::Arg::Role role, Bank, Width) {
-                if (used != reg)
-                    return;
-                isRead |= B3::Air::Arg::isAnyUse(role);
-                isWritten |= B3::Air::Arg::isAnyDef(role);
-            });
-            if (isRead)
-                return true;
-            isWritten |= inst.kind.opcode == B3::Air::Patch && inst.extraClobberedRegs().contains(reg, IgnoreVectors);
-            if (isWritten)
+            access = findAccess(inst);
+            if (access != AccessKind::None)
                 break;
         }
-        if (isWritten)
+        if (access == AccessKind::Read)
+            return true;
+        if (access == AccessKind::Write)
             continue;
         for (B3::Air::BasicBlock* successor : block->successorBlocks()) {
             if (seen.add(successor))
@@ -1812,28 +1813,98 @@ static bool mayRead(B3::Air::BasicBlock* start, Reg reg)
     return false;
 }
 
-// The successor taken for zero, if the entry block only tests the register and nothing reads it afterward.
-static B3::Air::BasicBlock* findZeroSuccessor(B3::Air::BasicBlock* entry, Reg reg)
+static bool mayReadRegister(B3::Air::BasicBlock* start, Reg reg)
 {
-    B3::Air::Inst& branch = entry->last();
-    bool isReadBeforeTest = false;
-    for (B3::Air::Inst& inst : *entry) {
+    return mayRead(start, [&](B3::Air::Inst& inst) {
+        bool isRead = false;
+        bool isWritten = inst.kind.opcode == B3::Air::Patch && inst.extraClobberedRegs().contains(reg, IgnoreVectors);
+        inst.forEach<Reg>([&](Reg& used, B3::Air::Arg::Role role, Bank, Width) {
+            if (used != reg)
+                return;
+            isRead |= B3::Air::Arg::isAnyUse(role);
+            isWritten |= B3::Air::Arg::isAnyDef(role);
+        });
+        return isRead ? AccessKind::Read : isWritten ? AccessKind::Write : AccessKind::None;
+    });
+}
+
+static bool mayReadFlags(B3::Air::BasicBlock* start)
+{
+    return mayRead(start, [](B3::Air::Inst& inst) {
+        if (B3::Air::usesFlags(inst.kind.opcode))
+            return AccessKind::Read;
+        return B3::Air::preservesFlags(inst.kind.opcode) || B3::Air::isFlagPreservingMove(inst) ? AccessKind::None : AccessKind::Write;
+    });
+}
+
+struct ZeroTest {
+    unsigned index;
+    B3::Air::BasicBlock* zeroSuccessor;
+};
+
+// The instructions from the index to the end of the block branch on whether the register is zero and do nothing else.
+static std::optional<ZeroTest> findZeroTest(B3::Air::BasicBlock* block, Reg reg)
+{
+    using B3::Air::Arg;
+    const Arg tested { B3::Air::Tmp(reg) };
+    auto isTest = [&](const Arg& value, const Arg& mask) {
+        return value == tested && (mask == tested || mask == Arg::bitImm(-1));
+    };
+    auto isComparison = [&](const Arg& left, const Arg& right) {
+        return left == tested && right == Arg::imm(0);
+    };
+    unsigned index = block->size() - 1;
+    std::span<const Arg> args = block->last().args();
+    switch (block->last().kind.opcode) {
+    case B3::Air::BranchTest32:
+        if (!isTest(args[1], args[2]))
+            return std::nullopt;
+        break;
+    case B3::Air::Branch32:
+        if (!isComparison(args[1], args[2]))
+            return std::nullopt;
+        break;
+    case B3::Air::BranchOnFlags: {
+        if (!index)
+            return std::nullopt;
+        B3::Air::Inst& definer = block->at(--index);
+        bool testsRegister = definer.kind.opcode == B3::Air::TestOnFlags32 && isTest(definer.args()[0], definer.args()[1]);
+        bool comparesRegister = definer.kind.opcode == B3::Air::CompareOnFlags32 && isComparison(definer.args()[0], definer.args()[1]);
+        if (!testsRegister && !comparesRegister)
+            return std::nullopt;
+        break;
+    }
+    default:
+        return std::nullopt;
+    }
+    if (args[0] == Arg::resCond(MacroAssembler::Zero) || args[0] == Arg::relCond(MacroAssembler::Equal))
+        return ZeroTest { index, block->successorBlock(0) };
+    if (args[0] == Arg::resCond(MacroAssembler::NonZero) || args[0] == Arg::relCond(MacroAssembler::NotEqual))
+        return ZeroTest { index, block->successorBlock(1) };
+    return std::nullopt;
+}
+
+// The successor taken for zero, if the block ends in a test of the register before which it only moves others, and the successor does not read the flags of the test.
+static B3::Air::BasicBlock* findZeroSuccessor(B3::Air::BasicBlock* block, Reg reg)
+{
+    std::optional<ZeroTest> test = findZeroTest(block, reg);
+    if (!test || test->zeroSuccessor == block || mayReadFlags(test->zeroSuccessor))
+        return nullptr;
+    for (unsigned index = 0; index < test->index; ++index) {
+        B3::Air::Inst& inst = block->at(index);
         auto* patchpoint = inst.kind.opcode == B3::Air::Patch ? inst.origin->as<PatchpointValue>() : nullptr;
         bool isMove = inst.isMoveBetweenRegisters() && inst.args()[1] != B3::Air::Arg(B3::Air::Tmp(reg));
-        if (&inst != &branch && !isMove && (!patchpoint || !patchpoint->emitsNoCode))
+        if (!isMove && (!patchpoint || !patchpoint->emitsNoCode))
             return nullptr;
-        isReadBeforeTest |= isMove && inst.args()[0] == B3::Air::Arg(B3::Air::Tmp(reg));
     }
-    if (branch.kind.opcode != B3::Air::BranchTest32 || branch.args()[1] != B3::Air::Arg(B3::Air::Tmp(reg)))
-        return nullptr;
-    B3::Air::Arg mask = branch.args()[2];
-    if (mask != branch.args()[1] && mask != B3::Air::Arg::bitImm(-1))
-        return nullptr;
-    MacroAssembler::ResultCondition condition = branch.args()[0].asResultCondition();
-    if (condition != MacroAssembler::Zero && condition != MacroAssembler::NonZero)
-        return nullptr;
-    B3::Air::BasicBlock* block = entry->successorBlock(condition == MacroAssembler::Zero ? 0 : 1);
-    return isReadBeforeTest || mayRead(block, reg) ? nullptr : block;
+    return test->zeroSuccessor;
+}
+
+static bool movesRegister(B3::Air::BasicBlock* block, Reg reg)
+{
+    return std::ranges::any_of(*block, [&](const B3::Air::Inst& inst) {
+        return inst.isMoveBetweenRegisters() && inst.args()[0] == B3::Air::Arg(B3::Air::Tmp(reg));
+    });
 }
 
 void OMGIRGenerator::emitZeroEntry(CCallHelpers& jit, B3::Air::GenerationContext& context, const Box<CCallHelpers::Label>& zeroSuccessor)
@@ -1862,22 +1933,28 @@ void OMGIRGenerator::emitZeroEntry(CCallHelpers& jit, B3::Air::GenerationContext
 void OMGIRGenerator::emitDirectEntry(CCallHelpers& jit, B3::Air::GenerationContext& context)
 {
     jit.load32(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, *m_context.codeForImage->passedGlobal))), passedGlobalGPR);
+    GPRReg firstParameter = wasmCallingConvention().gprArgs[0];
+    B3::Air::BasicBlock* zeroSuccessor = m_isFirstParameterI32 ? findZeroSuccessor(context.currentBlock, firstParameter) : nullptr;
+    auto labelOf = [&](B3::Air::BasicBlock* block) -> const Box<CCallHelpers::Label>& {
+        auto& label = context.blockLabels[block];
+        if (!label)
+            label = Box<CCallHelpers::Label>::create();
+        return label;
+    };
     if (m_isResumable) {
-        GPRReg state = wasmCallingConvention().gprArgs[0];
-        if (B3::Air::BasicBlock* block = findZeroSuccessor(context.currentBlock, state)) {
-            auto& label = context.blockLabels[block];
-            if (!label)
-                label = Box<CCallHelpers::Label>::create();
-            emitZeroEntry(jit, context, label);
-        } else if (mayRead(context.currentBlock, state)) {
+        // The callers that enter there omit the argument.
+        if (zeroSuccessor && !movesRegister(context.currentBlock, firstParameter) && !mayReadRegister(zeroSuccessor, firstParameter))
+            emitZeroEntry(jit, context, labelOf(zeroSuccessor));
+        else if (mayReadRegister(context.currentBlock, firstParameter)) {
             auto hasState = jit.jump();
             m_context.directEntryWithZero = Box<CCallHelpers::Label>::create(jit.label());
-            jit.move(CCallHelpers::TrustedImm32(0), state);
+            jit.move(CCallHelpers::TrustedImm32(0), firstParameter);
             hasState.link(&jit);
         }
-    }
+    } else if (zeroSuccessor && std::ranges::none_of(*context.currentBlock, &B3::Air::Inst::isMoveBetweenRegisters))
+        m_context.directEntryWithZero = labelOf(zeroSuccessor);
     m_context.directEntry = jit.label();
-    if (m_isResumable && !m_context.directEntryWithZero)
+    if (!m_context.directEntryWithZero)
         m_context.directEntryWithZero = Box<CCallHelpers::Label>::create(m_context.directEntry);
 }
 

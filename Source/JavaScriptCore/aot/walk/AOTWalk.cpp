@@ -2582,6 +2582,8 @@ void Walker::checkProof(Reference value, TypeID proven, TypeWithoutProof without
 
 std::optional<Origin> Walker::leaveCheckOfWhatContainerHasJustGivenToTestBehind(Reference given)
 {
+    if (Representation form = representationOf(given); form != Representation::JSValue && form != Representation::Cell)
+        return std::nullopt;
     auto isCheckOfGiven = [&](const Operation& record) {
         return record.opcode == Opcode::CheckProof && record.valueOperand() == given.id();
     };

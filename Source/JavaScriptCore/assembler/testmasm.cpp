@@ -6700,6 +6700,14 @@ static void testBlindedAdditions()
         });
         CHECK_EQ(result.values[0], operands.values[0] + static_cast<int64_t>(immediate));
     }
+
+    CCallHelpers jit;
+    for (int32_t immediate : { 0, 1, -1, 2, -2, 0x100, -0x100, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() }) {
+        for (unsigned i = 0; i < 100; ++i) {
+            auto parts = jit.additionBlindedConstant(CCallHelpers::Imm32(immediate));
+            CHECK_EQ(static_cast<int64_t>(parts.value1.m_value) + parts.value2.m_value, static_cast<int64_t>(immediate));
+        }
+    }
 }
 
 static void testMaskedWordSign()

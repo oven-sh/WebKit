@@ -1416,7 +1416,7 @@ bool CodeVerifier::treatsUndefinedAsNaN(ValueID id, const Operation& user, uint3
     }
     if (arithmeticOnTwoNumbersInCodeVerifier.contains(user.opcode) || allRelations.contains(user.opcode))
         return operandIndex < 2;
-    if (user.opcode == Opcode::ToInt32 || user.opcode == Opcode::ToUint32 || user.opcode == Opcode::IntegerBound || allBitwiseOperators.contains(user.opcode))
+    if (user.opcode == Opcode::ToInt32 || user.opcode == Opcode::ToUint32 || user.opcode == Opcode::ToNumber || user.opcode == Opcode::IntegerBound || allBitwiseOperators.contains(user.opcode))
         return true;
     if (user.opcode == Opcode::TypeTest) {
         const Type& tested = m_types.at(user.testedType());

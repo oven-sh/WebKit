@@ -617,7 +617,7 @@ private:
                 [&] (MemoryValue* candidate) -> bool {
                     return candidate->opcode() == Store
                         && candidate->offset() == offset
-                        && candidate->accessWidth() >= clobberWidth;
+                        && (candidate->accessWidth() == clobberWidth || (candidate->accessWidth() > clobberWidth && !candidate->traps()));
                 });
             break;
         }
@@ -687,6 +687,10 @@ private:
         worklist.pushAll(m_block->successorBlocks());
 
         while (BasicBlock* block = worklist.pop()) {
+            // The next iteration computes another address.
+            if (block == ptr->owner)
+                return false;
+
             ImpureBlockData& data = m_impureBlockData[block];
 
             MemoryValue* match = data.memoryStoresAtHead.find(ptr, filter);

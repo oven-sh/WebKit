@@ -2434,6 +2434,8 @@ LoadedBy Modules::evaluatedBy(ModuleID module)
 
 LoadedBy Modules::fetchedBy(ModuleID module)
 {
+    if (m_refetchedFailures.get(module.index()) && isFailedESModule(module))
+        return LoadedBy::ThisTestFile;
     LoadedBy loadedBy = evaluatedBy(module);
     if (loadedBy != LoadedBy::Nobody || !m_hasBegunTestFile || isEvicted(module) || m_momentsOfLoads.isEmpty() || !m_momentsOfLoads[module.index()])
         return loadedBy;
@@ -4530,7 +4532,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     if (isNewCallAfterTests && shouldLeaveImportPending(module)) [[unlikely]]
         return promiseForCaller();
     if (m_loadsModulesIndividually) [[unlikely]]
-        m_importCallRoots.set(module.index());
+        m_loadRoots.set(module.index());
     if (m_loadsModulesIndividually) [[unlikely]]
         recordVariantRequest(module);
     if (m_mocks) [[unlikely]]
@@ -5242,7 +5244,7 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     VM& vm = *m_instance.vm;
     auto askLoader = [&] {
-        SetForScope frameOfImportThatAsksLoader(vm.aotState().frameOfImportThatAsksLoader, vm.topCallFrame);
+        SetForScope importFrameInLoader(vm.aotState().importFrameInLoader, vm.topCallFrame);
         return loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
     };
     std::optional<ModuleID> found = fetchParameters ? std::nullopt : m_table.findByPath(key.string());
@@ -5833,9 +5835,9 @@ JSObject* Modules::uncompiledNamespace(ModuleID external, ModulePhase phase, Nam
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (phase != ModulePhase::Evaluation)
         return namespaceObject;
-    bool wasAskedFor = m_uncompiledNamespacesAskedFor.set(external.index());
+    bool wasRequested = m_uncompiledNamespacesAskedFor.set(external.index());
     if (!isShown) {
-        if (!wasAskedFor)
+        if (!wasRequested)
             m_uncompiledNamespacesNotShownYet.set(external.index());
         return namespaceObject;
     }
@@ -7362,7 +7364,7 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID module)
     modules->releaseRemovedMock(module);
     RETURN_IF_EXCEPTION(scope, nullptr);
     VMState& state = realm->vm().aotState();
-    bool isFirstAskedForByImport = state.frameOfImportThatAsksLoader && (!state.stackPointerOfImport || state.stackPointerOfImport > static_cast<void*>(state.frameOfImportThatAsksLoader));
+    bool isFirstAskedForByImport = state.importFrameInLoader && (!state.stackPointerOfImport || state.stackPointerOfImport > static_cast<void*>(state.importFrameInLoader));
     SetForScope stackPointerOfImport(state.stackPointerOfImport, isFirstAskedForByImport ? currentStackPointer() : state.stackPointerOfImport);
     if (!modules->isInHostRequest()) {
         if (std::optional<ModuleFailureID> failure = modules->loadFailure(module); failure && !modules->statementThatEndsLoad(module)) [[unlikely]] {
@@ -7772,12 +7774,12 @@ bool hasUnevaluatedActiveMockImporter(JSGlobalObject* realm, ModuleID module, st
     return modules->isGraphRunning() && modules->hasUnevaluatedLinkedImporter(module, asking);
 }
 
-bool tryKeepActiveMock(JSGlobalObject* realm, ModuleID module, bool staysTheOriginal, bool keepsCurrentTestFileLoads)
+bool tryKeepActiveMock(JSGlobalObject* realm, ModuleID module, bool remainsOriginal, bool keepsCurrentTestFileLoads)
 {
     if (!hasActiveMock(realm, module))
         return false;
     Modules* modules = modulesOf(realm);
-    if (staysTheOriginal || (keepsCurrentTestFileLoads && modules->wasLoadedUnderMockInPlaceByThisTestFile(module))) {
+    if (remainsOriginal || (keepsCurrentTestFileLoads && modules->wasLoadedUnderMockInPlaceByThisTestFile(module))) {
         modules->noteCallOfMock(module, true);
         modules->releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
         return true;
@@ -7886,10 +7888,10 @@ bool wasLinkedByFailedGraph(JSGlobalObject* realm, ModuleID module, bool byEarli
     return modules && modules->wasLinkedByFailedGraph(module, byEarlierTestFile);
 }
 
-bool isLinkedForImporterYetToRun(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> asking)
+bool isLinkedForPendingImporter(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> asking)
 {
     Modules* modules = modulesOf(realm);
-    return modules && modules->isLinkedForImporterYetToRun(module, asking);
+    return modules && modules->isLinkedForPendingImporter(module, asking);
 }
 
 bool wasLinkedBeforeLinkFailure(JSGlobalObject* realm, ModuleID module)
@@ -7904,10 +7906,10 @@ bool wasDisplacedAfterFailure(JSGlobalObject* realm, ModuleID module)
     return modules && modules->wasDisplacedAfterFailure(module);
 }
 
-bool isFailedImportRoot(JSGlobalObject* realm, ModuleID module)
+bool isFailedLoadRoot(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
-    return modules && modules->isFailedImportRoot(module);
+    return modules && modules->isFailedLoadRoot(module);
 }
 
 void clearLoadedBeforeTestFile(JSGlobalObject* realm, ModuleID module)

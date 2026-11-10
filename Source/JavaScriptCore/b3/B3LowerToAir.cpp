@@ -1239,7 +1239,7 @@ private:
     // An instruction that reads fewer bytes than the load does not trap where only the other bytes are out of bounds.
     bool canReadInPlace(Value* value, Width width)
     {
-        if (!m_procedure.policy().selection.extendsInstructionSelection || !value->traps())
+        if (!value->traps())
             return true;
         auto* memory = value->as<MemoryValue>();
         return !memory || memory->accessWidth() <= width;

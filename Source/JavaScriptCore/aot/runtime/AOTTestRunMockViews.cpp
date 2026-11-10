@@ -541,7 +541,9 @@ void Modules::bringBackLinks(const LinksBeforeLoad& before, LinksOfLoad links)
         } else
             m_momentsLoadedAnew.remove(module);
     }
-    m_modulesReleasedByLoader.merge(before.modulesReleasedByLoader);
+    BitVector released = before.modulesReleasedByLoader;
+    released.exclude(m_refetchedFailures);
+    m_modulesReleasedByLoader.merge(released);
     m_importersOfMockThatEnded.merge(before.importersOfMockThatEnded);
 }
 

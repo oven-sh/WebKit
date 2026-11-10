@@ -4443,6 +4443,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         evaluateModulesOwedBelow(target);
     RETURN_IF_EXCEPTION(scope, { });
     auto hearsHowRequireEnds = makeScopeExit([&] {
+        if (scope.exception() && isFailedESModule(target)) [[unlikely]]
+            m_loadRoots.set(target.index());
         if (wasHeldBeforeWalk || !holdsLinksOfLoadThatMayFail(target)) [[likely]]
             return;
         if (scope.exception())

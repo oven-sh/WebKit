@@ -217,6 +217,7 @@ public:
         }
         runScheduledVariantRestores();
         m_variantsFetchedByTestFile.clearAll();
+        m_refetchedFailures.clearAll();
         BitVector evictedFailures = m_modulesReleasedByLoader;
         evictedFailures.filter(m_loadedInPreload);
         for (BitVector* letGo : { &m_modulesReleasedByLoader, &m_importersOfMockThatEnded }) {
@@ -446,7 +447,7 @@ public:
     bool isMockLingering(ModuleID module) const { return m_modulesWithLingeringMock.get(module.index()); }
     bool isRequestedByDetachedLoad(ModuleID mocked) const { return m_resumingDetachedLoad && staticImportClosure(*m_resumingDetachedLoad, MockTraversal::Stop).get(mocked.index()); }
     void retryMockInDetachedLoads(ModuleID mocked);
-    uint64_t resumingLoadFactoryCall(ModuleID mocked) const;
+    uint64_t factoryCallOfResumedLoad(ModuleID mocked) const;
     bool needsRetryInDetachedLoad(ModuleID mocked) const { return m_detachedLoads.containsIf([&](const auto& left) { return left.wait->status() == JSPromise::Status::Pending && left.modulesToRetry.get(mocked.index()); }); }
     void didResumeAfterFactories() { m_hasImportsBlockedOnFactories = false; }
     bool tryMarkMockLingering(ModuleID module, bool wasInstalledOnPreloadMock)
@@ -521,11 +522,18 @@ public:
     }
     bool wasReleasedByLoader(ModuleID module) const { return m_modulesReleasedByLoader.get(module.index()); }
     void releaseFailedESModules();
+    void forgetFailedLoad(ModuleID module)
+    {
+        m_refetchedFailures.clear(module.index());
+        m_loadRoots.clear(module.index());
+    }
     bool hasFailedESModule(ModuleID module) const { return isFailedESModule(module) || errorOfModuleThatRanBesideMock(module); }
     void releaseFailedESModule(ModuleID module)
     {
-        if (hasFailedESModule(module))
-            m_modulesReleasedByLoader.set(module.index());
+        if (!hasFailedESModule(module))
+            return;
+        m_modulesReleasedByLoader.set(module.index());
+        forgetFailedLoad(module);
     }
     void forgetFailuresOfExportsThatBuildFoundAbsent();
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
@@ -740,12 +748,12 @@ public:
     bool wasRegisteredByFailedLoad(ModuleID) const;
     bool wasLinkedByFailedGraph(ModuleID, bool byEarlierTestFile);
     bool isImportedByFailedRoot(ModuleID, bool ofEarlierTestFile = false) const;
-    bool isFailedImportRoot(ModuleID module) const { return m_importCallRoots.get(module.index()) && status(module) == ModuleStatus::Failed; }
+    bool isFailedLoadRoot(ModuleID module) const { return m_loadRoots.get(module.index()) && status(module) == ModuleStatus::Failed; }
     std::optional<ModuleID> moduleThatFailedToLink(ModuleID root) const;
     bool hasLinkFailures() const { return m_errorsOfExportsThatBuildFoundAbsent || !m_linkFailures.isEmpty(); }
     bool wasLinkedAheadOfFailure(ModuleID root, ModuleID) const;
     bool wasLinkedBeforeLinkFailure(ModuleID) const;
-    bool isLinkedForImporterYetToRun(ModuleID, std::optional<ModuleID> asking) const;
+    bool isLinkedForPendingImporter(ModuleID, std::optional<ModuleID> asking) const;
     std::optional<ModuleFailureID> failureByAbsentExport(ModuleID) const;
     bool tryEvaluateESModuleBeforeMock(ModuleID);
     bool startDetachedOriginalLoad(ModuleID);
@@ -2383,6 +2391,7 @@ private:
     BitVector m_modulesWhoseMockOfPreloadIsPatched;
     BitVector m_mocksOfPreloadThatCameBackBeforeAnyImport;
     BitVector m_modulesReleasedByLoader;
+    BitVector m_refetchedFailures;
     BitVector m_importersOfMockThatEnded;
     BitVector m_modulesLoadedAnewWhoseNamesAreOwed;
     BitVector m_modulesWithNoNamesOwedBelow;
@@ -2666,7 +2675,7 @@ private:
     void takeBackFromHost(std::span<const ModuleID> files);
     BitVector m_keysWithoutEntryBehindMock;
     BitVector m_rootsOfImportsThatFailedUnderMocks;
-    BitVector m_importCallRoots;
+    BitVector m_loadRoots;
     BitVector m_modulesWithUnevictableFailure;
     BitVector m_mocksWhoseEntryProgramDeleted;
     BitVector m_keysWithFalsyEntryOfProgram;

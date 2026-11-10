@@ -2025,7 +2025,7 @@ public:
         uint32_t magnitude = value < 0 ? -static_cast<uint32_t>(value) : value;
         uint32_t key = keyForConstant(magnitude);
         if (key > magnitude)
-            key %= magnitude;
+            key = magnitude ? key % magnitude : 0;
         key &= maskTable[magnitude & 3];
         uint32_t rest = magnitude - key;
         return value < 0 ? BlindedImm32(-rest, -key) : BlindedImm32(rest, key);

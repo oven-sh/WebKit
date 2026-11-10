@@ -245,8 +245,10 @@ void Modules::releaseFailedESModules()
         return;
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID module(index);
-        if (isFailedESModule(module) && !isMocked(module) && !activeMock(module))
+        if (isFailedESModule(module) && !isMocked(module) && !activeMock(module)) {
             m_modulesReleasedByLoader.set(index);
+            forgetFailedLoad(module);
+        }
     }
 }
 
@@ -312,8 +314,11 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
             wasLetGo |= take(m_modulesReleasedByLoader, &LinksBeforeLoad::modulesReleasedByLoader, *file);
         if (!wasLetGo && status(module) > ModuleStatus::Linked)
             continue;
-        if (wasLetGo)
+        if (wasLetGo) {
             tellThatFileDidNotRunAgain(module);
+            if (m_hasBegunTestFile && isFailedESModule(module))
+                m_refetchedFailures.set(module.index());
+        }
         bool sawMockThatEnded = wasLetGo && take(m_importersOfMockThatEnded, &LinksBeforeLoad::importersOfMockThatEnded, module);
         if (wasLetGo && file)
             sawMockThatEnded |= take(m_importersOfMockThatEnded, &LinksBeforeLoad::importersOfMockThatEnded, *file);

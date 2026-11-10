@@ -227,7 +227,7 @@ bool Modules::wasLinkedBeforeLinkFailure(ModuleID module) const
     return false;
 }
 
-bool Modules::isLinkedForImporterYetToRun(ModuleID module, std::optional<ModuleID> asking) const
+bool Modules::isLinkedForPendingImporter(ModuleID module, std::optional<ModuleID> asking) const
 {
     if (!hasLinkFailures() || status(module) > ModuleStatus::Linked || !wasLinkedBeforeLinkFailure(module))
         return false;
@@ -522,8 +522,8 @@ void Modules::deferMock(ModuleID module, FactoryFailurePolicy failurePolicy)
     finishLoadsAwaitingLoader(module);
     keepMockForPendingImports(module, MockChange::Replaced);
     noteDeedOnMockUnderCallsOfImport(module, DeedOnMock::LaysAnother);
-    bool ranAheadOfThisTestFile = data(module).kind == ModuleKind::CommonJs && wasLoadedBeforeTestFile(module);
-    if ((m_modulesWithDeferredMock.get(module.index()) || ranAheadOfThisTestFile) && !activeMock(module) && !isPatchedByMock(module))
+    bool wasEvaluatedBeforeTestFile = data(module).kind == ModuleKind::CommonJs && wasLoadedBeforeTestFile(module);
+    if ((m_modulesWithDeferredMock.get(module.index()) || wasEvaluatedBeforeTestFile) && !activeMock(module) && !isPatchedByMock(module))
         releaseImportersOf(module, ReleasedImporters::All);
     if (hasDeferredFetchOf(fileOf(module)))
         m_filesToEvictOnceFetched.set(fileOf(module).index());
@@ -1009,7 +1009,7 @@ bool Modules::runMocksInFetchedGraphSlow(ModuleID module)
     scope.release();
     if (m_modulesWithPendingMock.isEmpty()) [[likely]]
         return false;
-    bool isAskedForByImportCall = m_instance.vm->aotState().frameOfImportThatAsksLoader;
+    bool isAskedForByImportCall = m_instance.vm->aotState().importFrameInLoader;
     if (isAskedForByImportCall)
         clearCachedMockError(module);
     m_mocksWhoseFactoriesRanInsideTheirFetch.set(module.index(), m_modulesWithPendingMock.get(module.index()));
@@ -1021,7 +1021,7 @@ bool Modules::runMocksInFetchedGraphSlow(ModuleID module)
 
 void Modules::willFetchAfterTick(ModuleID module)
 {
-    m_statementFetchesDelayedByTick.set(module.index(), !m_instance.vm->aotState().frameOfImportThatAsksLoader && isFetchedForImportStatement(module));
+    m_statementFetchesDelayedByTick.set(module.index(), !m_instance.vm->aotState().importFrameInLoader && isFetchedForImportStatement(module));
 }
 
 bool Modules::didMockFailForImportStatement(ModuleID module)
@@ -1889,7 +1889,7 @@ void retryMockInDetachedLoads(JSGlobalObject* realm, ModuleID mocked)
         modules->retryMockInDetachedLoads(mocked);
 }
 
-uint64_t Modules::resumingLoadFactoryCall(ModuleID mocked) const
+uint64_t Modules::factoryCallOfResumedLoad(ModuleID mocked) const
 {
     if (!m_resumingDetachedLoad)
         return 0;
@@ -1904,10 +1904,10 @@ uint64_t Modules::resumingLoadFactoryCall(ModuleID mocked) const
     return 0;
 }
 
-uint64_t resumingLoadFactoryCall(JSGlobalObject* realm, ModuleID mocked)
+uint64_t factoryCallOfResumedLoad(JSGlobalObject* realm, ModuleID mocked)
 {
     Modules* modules = modulesOf(realm);
-    return modules ? modules->resumingLoadFactoryCall(mocked) : 0;
+    return modules ? modules->factoryCallOfResumedLoad(mocked) : 0;
 }
 
 bool needsRetryInDetachedLoad(JSGlobalObject* realm, ModuleID mocked)
