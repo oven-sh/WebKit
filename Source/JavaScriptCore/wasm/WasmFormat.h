@@ -745,7 +745,7 @@ struct Segment {
     std::span<const uint8_t> bytes;
 };
 
-// The data segments of a module. There may be a hundred thousand of a few bytes each, so they are in one buffer, each behind a short header.
+// The data segments of a module, in one buffer with a short header each, because there may be very many short ones.
 class Segments {
 public:
     // Only a module with a Data Count section names its segments by index.
@@ -754,7 +754,7 @@ public:
 
     size_t size() const { return m_size; }
     size_t sizeInBytes() const { return m_buffer.size(); }
-    // Moves the place to the next segment.
+    // Advances the offset to the next segment.
     Segment readAt(size_t& place) const
     {
         Header header = read<Header>(place);
@@ -768,12 +768,12 @@ public:
     }
     Segment operator[](size_t index) const
     {
-        size_t place = m_placeOfIndex[index];
+        size_t place = m_segmentOffsets[index];
         return readAt(place);
     }
 
 private:
-    // An active segment of the first memory at a constant offset of 32 bits has this alone.
+    // The whole header of an active segment of memory 0 at a constant 32-bit offset.
     struct Header {
         uint32_t size;
         uint32_t offset;
@@ -798,7 +798,7 @@ private:
     void readLongHeader(size_t& place, Segment&) const;
 
     Vector<uint8_t> m_buffer;
-    Vector<uint32_t> m_placeOfIndex;
+    Vector<uint32_t> m_segmentOffsets;
     size_t m_size { 0 };
     bool m_hasIndices { false };
 };

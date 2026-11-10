@@ -4049,7 +4049,7 @@ private:
             return a.tmp1.tmpIndex(bank) < b.tmp1.tmpIndex(bank);
         });
 
-        // Groups only grow, so two that interfere still do at the next move between them.
+        // Groups only grow, so two groups that interfere keep interfering.
         UncheckedKeyHashSet<std::pair<GroupIndex, GroupIndex>> interferingGroups;
 
         for (Move& move : moves) {

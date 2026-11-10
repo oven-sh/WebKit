@@ -6540,7 +6540,7 @@ static MacroOperands runOnOperands(MacroOperands operands, std::span<const GPRRe
     return operands;
 }
 
-static void testSubtractWithEqualRegisters()
+static void testSubtractAliasedRegisters()
 {
     constexpr GPRReg registers[] = { GPRInfo::argumentGPR1, GPRInfo::argumentGPR2, GPRInfo::argumentGPR3 };
     for (GPRReg left : registers) {
@@ -6567,7 +6567,7 @@ static void testSubtractWithEqualRegisters()
     }
 }
 
-static void testClearBitsWithEqualRegisters()
+static void testClearBitsAliasedRegisters()
 {
     constexpr GPRReg registers[] = { GPRInfo::argumentGPR1, GPRInfo::argumentGPR2, GPRInfo::argumentGPR3 };
     for (GPRReg source : registers) {
@@ -6583,11 +6583,11 @@ static void testClearBitsWithEqualRegisters()
                         jit.clearBits64WithMask(source, mask, dest, attributes);
                     });
                     CHECK_EQ(result.values[2], operands.values[0] & ~operands.values[1]);
-                    GPRReg twoGPRs[] = { mask, dest };
+                    GPRReg operandGPRs[] = { mask, dest };
                     MacroOperands two;
                     two.values[0] = operands.values[1];
                     two.values[1] = dest == mask ? operands.values[1] : operands.values[0];
-                    result = runOnOperands(two, twoGPRs, { }, [&](CCallHelpers& jit) {
+                    result = runOnOperands(two, operandGPRs, { }, [&](CCallHelpers& jit) {
                         jit.clearBits64WithMask(mask, dest, attributes);
                     });
                     CHECK_EQ(result.values[1], two.values[1] & ~two.values[0]);
@@ -6597,7 +6597,7 @@ static void testClearBitsWithEqualRegisters()
     }
 }
 
-static void testRelaxedDotProductWithEqualRegisters()
+static void testRelaxedDotProductAliasedRegisters()
 {
     constexpr FPRReg registers[] = { FPRInfo::fpRegT0, FPRInfo::fpRegT1, FPRInfo::fpRegT2, FPRInfo::fpRegT3 };
     const v128_t values[] = { v128_t { 0x0102030405060708, 0x7f7e7d7c01000203 }, v128_t { 0x1112131415161718, 0x0f0e0d0c0b0a0908 }, v128_t { 0x0000000100000002, 0x7fffffff00000003 }, v128_t { 42, 43 } };
@@ -6639,7 +6639,7 @@ static void testRelaxedDotProductWithEqualRegisters()
     }
 }
 
-static void testImmediatesOfMemoryOperations()
+static void testMemoryOperationImmediates()
 {
     for (uint32_t immediate : { 0u, 1u, 0x12345678u, 0x80000000u, 0xffffffffu, 0x00010203u, 0xff00u }) {
         for (int32_t offset : { 0, 8, 100000 }) {
@@ -6702,7 +6702,7 @@ static void testBlindedAdditions()
     }
 }
 
-static void testSignOfMaskedWords()
+static void testMaskedWordSign()
 {
     constexpr GPRReg value = GPRInfo::argumentGPR0;
     for (uint32_t mask : { 0x1u, 0x7fu, 0x80u, 0xffu, 0x8000u, 0xff00u, 0x800000u, 0x80000000u, 0xff000000u, 0xffffffffu }) {
@@ -6740,7 +6740,7 @@ static void testSignOfMaskedWords()
             auto branchOnMemory = branchCode([=](CCallHelpers& jit) {
                 return jit.branchTest32(condition, CCallHelpers::Address(GPRInfo::argumentGPR1), CCallHelpers::TrustedImm32(mask));
             });
-            auto setFromRegister = compile([=](CCallHelpers& jit) {
+            auto setForRegister = compile([=](CCallHelpers& jit) {
                 emitFunctionPrologue(jit);
                 jit.move(value, GPRInfo::returnValueGPR);
                 jit.test32(condition, GPRInfo::returnValueGPR, CCallHelpers::TrustedImm32(mask), GPRInfo::returnValueGPR);
@@ -6767,7 +6767,7 @@ static void testSignOfMaskedWords()
             for (uint32_t word : { 0u, 1u, 0x80u, 0x7fu, 0xffu, 0x8000u, 0x800000u, 0x80000000u, 0xffffffffu, 0x7fffffffu, 0x12345678u }) {
                 CHECK_EQ(invoke<int>(branchOnRegister, word, &word), expected(word));
                 CHECK_EQ(invoke<int>(branchOnMemory, word, &word), expected(word));
-                CHECK_EQ(invoke<int>(setFromRegister, word, &word), expected(word));
+                CHECK_EQ(invoke<int>(setForRegister, word, &word), expected(word));
                 CHECK_EQ(invoke<int>(movedImmediate, word, &word), expected(word) ? 7 : 0);
                 CHECK_EQ(invoke<int>(moved, word, &word), expected(word));
             }
@@ -6790,7 +6790,7 @@ static void testSignOfMaskedWords()
 }
 
 #if CPU(X86_64)
-static void testBranchAddOfMemoryIntoItsBase()
+static void testBranchAddMemoryIntoBase()
 {
     for (GPRReg dest : { GPRInfo::argumentGPR1, GPRInfo::argumentGPR2, GPRInfo::argumentGPR3 }) {
         uint64_t word = 0x1122334400000001;
@@ -6806,7 +6806,7 @@ static void testBranchAddOfMemoryIntoItsBase()
     }
 }
 
-static void testNarrowVectorOperationsWithEqualRegisters()
+static void testNarrowVectorAliasedRegisters()
 {
     CPUFeatureSet withoutAVX = CPUFeatureSet::fromBits(CPUFeatureSet::host().bits() & ~(CPUFeatureSet().with(CPUFeature::AVX).with(CPUFeature::AVX2).bits()));
     constexpr FPRReg registers[] = { FPRInfo::fpRegT0, FPRInfo::fpRegT1, FPRInfo::fpRegT2 };
@@ -6835,7 +6835,7 @@ static void testNarrowVectorOperationsWithEqualRegisters()
     }
 }
 
-static void testMovesOfAbsoluteAddressesEncodeEveryRegister()
+static void testAbsoluteAddressMoveRegisters()
 {
     for (int reg = X86Registers::eax; reg <= X86Registers::r15; ++reg) {
         X86Assembler assembler;
@@ -6858,13 +6858,13 @@ static void testMovesOfAbsoluteAddressesEncodeEveryRegister()
 #endif // CPU(X86_64)
 
 #if CPU(ARM64)
-static void testPairsOfFloats()
+static void testFloatPairs()
 {
     for (int32_t offset : { 0, 8, -256, 252, 256, 1000, -1000, 100000 }) {
         uint32_t words[] = { 1, 0x3f800000, 0x40490fdb, 4, 5 };
         uintptr_t base = std::bit_cast<uintptr_t>(&words[1]) - offset;
         uint32_t copies[] = { 11, 12, 13, 14, 15 };
-        uintptr_t baseOfCopies = std::bit_cast<uintptr_t>(&copies[1]) - offset;
+        uintptr_t copiesBase = std::bit_cast<uintptr_t>(&copies[1]) - offset;
         auto code = compile([=](CCallHelpers& jit) {
             emitFunctionPrologue(jit);
             jit.loadPair32(GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(offset), FPRInfo::fpRegT0, FPRInfo::fpRegT1);
@@ -6872,7 +6872,7 @@ static void testPairsOfFloats()
             emitFunctionEpilogue(jit);
             jit.ret();
         });
-        invoke<void>(code, base, baseOfCopies);
+        invoke<void>(code, base, copiesBase);
         CHECK_EQ(copies[0], 11u);
         CHECK_EQ(copies[1], words[1]);
         CHECK_EQ(copies[2], words[2]);
@@ -12630,21 +12630,21 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #endif
 
 #if CPU(X86_64) || CPU(ARM64)
-    RUN(testSubtractWithEqualRegisters());
-    RUN(testClearBitsWithEqualRegisters());
-    RUN(testRelaxedDotProductWithEqualRegisters());
-    RUN(testImmediatesOfMemoryOperations());
+    RUN(testSubtractAliasedRegisters());
+    RUN(testClearBitsAliasedRegisters());
+    RUN(testRelaxedDotProductAliasedRegisters());
+    RUN(testMemoryOperationImmediates());
     RUN(testShiftedImmediates());
     RUN(testBlindedAdditions());
-    RUN(testSignOfMaskedWords());
+    RUN(testMaskedWordSign());
 #endif
 #if CPU(X86_64)
-    RUN(testBranchAddOfMemoryIntoItsBase());
-    RUN(testNarrowVectorOperationsWithEqualRegisters());
-    RUN(testMovesOfAbsoluteAddressesEncodeEveryRegister());
+    RUN(testBranchAddMemoryIntoBase());
+    RUN(testNarrowVectorAliasedRegisters());
+    RUN(testAbsoluteAddressMoveRegisters());
 #endif
 #if CPU(ARM64)
-    RUN(testPairsOfFloats());
+    RUN(testFloatPairs());
 #endif
 
     RUN(testOrImmMem());

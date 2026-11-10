@@ -122,17 +122,17 @@ void IPIntPlan::compileFunction(FunctionCodeIndex functionIndex)
     auto functionIndexSpace = m_moduleInformation->toSpaceIndex(functionIndex);
     ASSERT_UNUSED(functionIndexSpace, &m_moduleInformation->rtt(functionIndexSpace) == &m_moduleInformation->rtt(typeSignatureIndex));
 
-    std::optional<FunctionIPIntMetadataGenerator> metadataOfImageFunction;
+    std::optional<FunctionIPIntMetadataGenerator> imageFunctionMetadata;
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     if (m_moduleInImage) {
         if (CodeInImage::functionsOf(*m_moduleInImage, ImageCodeFlavor::Checking)[functionIndex.rawIndex()].usesVectors)
             m_moduleInformation->markUsesSIMD(functionIndex);
         m_moduleInformation->doneSeeingFunction(functionIndex);
         static constexpr std::array<uint8_t, 1> noBytecode { };
-        metadataOfImageFunction.emplace(functionIndex, function.data.isEmpty() ? std::span<const uint8_t> { noBytecode } : function.data.span());
+        imageFunctionMetadata.emplace(functionIndex, function.data.isEmpty() ? std::span<const uint8_t> { noBytecode } : function.data.span());
     }
 #endif
-    if (!metadataOfImageFunction && !m_wasmInternalFunctions[functionIndex]) {
+    if (!imageFunctionMetadata && !m_wasmInternalFunctions[functionIndex]) {
         beginCompilerSignpost(CompilationMode::IPIntMode, functionIndexSpace);
         auto parseAndCompileResult = parseAndCompileMetadata(function.data, signature, m_moduleInformation.get(), functionIndex);
         endCompilerSignpost(CompilationMode::IPIntMode, functionIndexSpace);
@@ -147,7 +147,7 @@ void IPIntPlan::compileFunction(FunctionCodeIndex functionIndex)
     }
 
     {
-        auto callee = IPIntCallee::create(metadataOfImageFunction ? *metadataOfImageFunction : *m_wasmInternalFunctions[functionIndex], functionIndexSpace, signature, { });
+        auto callee = IPIntCallee::create(imageFunctionMetadata ? *imageFunctionMetadata : *m_wasmInternalFunctions[functionIndex], functionIndexSpace, signature, { });
         ASSERT(!callee->entrypoint());
         bool usesSIMD = m_moduleInformation->usesSIMD(functionIndex);
         // Immediately tier up to BBQ for SIMD, if necesary.

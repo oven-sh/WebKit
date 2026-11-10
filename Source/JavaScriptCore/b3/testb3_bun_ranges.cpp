@@ -653,7 +653,7 @@ static void checkComparisonOfExtensions(B3::Opcode opcode, ExtendedOperand left,
     }
 }
 
-static void testComparisonOfExtensionsIsNarrow()
+static void testNarrowExtensionComparison()
 {
     for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Below, BelowEqual, Above, AboveEqual }) {
         for (B3::Opcode leftExtension : { SExt32, ZExt32 }) {
@@ -669,7 +669,7 @@ static void testComparisonOfExtensionsIsNarrow()
     }
 }
 
-static void checkComparisonOfExtensionWithConstant(B3::Opcode opcode, ExtendedOperand left, int64_t constant, bool reducesWithRanges)
+static void checkExtensionConstantComparison(B3::Opcode opcode, ExtendedOperand left, int64_t constant, bool reducesWithRanges)
 {
     constexpr int32_t maxInt32 = std::numeric_limits<int32_t>::max();
     constexpr int32_t minInt32 = std::numeric_limits<int32_t>::min();
@@ -700,14 +700,14 @@ static void checkComparisonOfExtensionWithConstant(B3::Opcode opcode, ExtendedOp
     }
 }
 
-static void testComparisonOfExtensionWithConstantIsNarrow()
+static void testNarrowExtensionConstantComparison()
 {
     for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Below, BelowEqual, Above, AboveEqual }) {
         for (B3::Opcode extension : { SExt32, ZExt32 }) {
             for (bool isNonNegative : { false, true }) {
                 for (int64_t constant : { 0ll, 1ll, 7ll, 128ll, 0x7fffffffll, 0x80000000ll, 0xfffffff9ll, 0xffffffffll, 0x100000000ll, 0x100000007ll, -1ll, -7ll, -128ll, -0x80000000ll, -0x80000001ll, std::numeric_limits<long long>::max(), std::numeric_limits<long long>::min() }) {
                     for (bool reducesWithRanges : { true, false })
-                        checkComparisonOfExtensionWithConstant(opcode, { extension, isNonNegative }, constant, reducesWithRanges);
+                        checkExtensionConstantComparison(opcode, { extension, isNonNegative }, constant, reducesWithRanges);
                 }
             }
         }
@@ -911,8 +911,8 @@ void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testExtensionOfTruncationFoldsByRange());
     RUN(testSumOfIntegersBehindDoublesIsAddedInIntegers());
     RUN(testSignExtensionOfNonNegativeIsZeroExtension());
-    RUN(testComparisonOfExtensionsIsNarrow());
-    RUN(testComparisonOfExtensionWithConstantIsNarrow());
+    RUN(testNarrowExtensionComparison());
+    RUN(testNarrowExtensionConstantComparison());
     RUN(testMaskFoldsByRange());
     RUN(testVariableShiftRanges());
     RUN(testTruncOfVariableShiftLeftAndBack());

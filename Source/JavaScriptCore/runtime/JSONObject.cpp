@@ -823,8 +823,8 @@ private:
     bool isMemberWrittenByItsFields(JSObject&);
     bool writeListedFieldsOfMember(Cursor&, JSObject&, std::span<const AOT::FieldAsProperty>, unsigned reservation);
     void appendElementsInCompiledProgram(JSArray&);
-    enum class ArrayWritten : uint8_t { No, Yes, Failed };
-    ArrayWritten writeArrayOfPrimitives(Cursor&, JSArray&);
+    enum class ArrayResult : uint8_t { No, Yes, Failed };
+    ArrayResult writePrimitiveArray(Cursor&, JSArray&);
     bool isCompiledStructureKnown(const JSObject& object) const { return (m_compiledStructuresKnown & knowsCompiledStructure) && object.structureID().bits() == m_compiledStructureWithoutToJSON; }
 #endif
     String result();
@@ -2856,14 +2856,14 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
             } else if constexpr (writesLatin1 && hasGap == HasGap::No) {
                 if (type == ArrayType) {
                     appendKey();
-                    switch (writeArrayOfPrimitives(cursor, *asArray(&cell))) {
-                    case ArrayWritten::Yes:
+                    switch (writePrimitiveArray(cursor, *asArray(&cell))) {
+                    case ArrayResult::Yes:
                         if (!reserve(cursor, reservation)) [[unlikely]]
                             return false;
                         continue;
-                    case ArrayWritten::Failed:
+                    case ArrayResult::Failed:
                         return false;
-                    case ArrayWritten::No:
+                    case ArrayResult::No:
                         cursor.next = buffer() + positionOfMember;
                         break;
                     }
@@ -2923,37 +2923,37 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
     return true;
 }
 
-// Writes an array of strings, numbers, booleans, null and undefined. Nothing is written for an array that holds anything else, or a string that takes more than a copy.
+// Writes an array of strings, numbers, booleans, null and undefined. Writes nothing if there are other elements, or strings that cannot be copied verbatim.
 template<typename CharType, BufferMode bufferMode>
-NEVER_INLINE auto FastStringifier<CharType, bufferMode>::writeArrayOfPrimitives(Cursor& cursor, JSArray& array) -> ArrayWritten
+NEVER_INLINE auto FastStringifier<CharType, bufferMode>::writePrimitiveArray(Cursor& cursor, JSArray& array) -> ArrayResult
 {
     if constexpr (std::same_as<CharType, Latin1Character>) {
         // append() checks the prototype of arrays at the first array.
         if (!m_checkedArrayPrototype || !m_globalObject.isOriginalArrayStructure(array.structure()))
-            return ArrayWritten::No;
+            return ArrayResult::No;
         IndexingType indexingType = array.indexingType();
         if (!hasInt32(indexingType) && !hasContiguous(indexingType))
-            return ArrayWritten::No;
+            return ArrayResult::No;
         auto* butterfly = array.butterfly();
         const unsigned length = butterfly->publicLength();
         if (length > butterfly->vectorLength()) [[unlikely]]
-            return ArrayWritten::No;
+            return ArrayResult::No;
 
-        // A comma, a value that is no string and the closing bracket.
+        // A comma, a non-string value and the closing bracket.
         constexpr size_t maxShortElementLength = 1 + std::max<size_t>(AOT::maxJSONNumberLength, maxInt32StringLength) + 1;
         auto elements = butterfly->contiguous();
-        const size_t positionOfArray = cursor.next - buffer();
+        const size_t arrayOffset = cursor.next - buffer();
         if (!enterHolder<HasGap::No>() || !reserve(cursor, 2)) [[unlikely]]
-            return ArrayWritten::Failed;
-        auto leaveUnwritten = [&] {
+            return ArrayResult::Failed;
+        auto rollBack = [&] {
             leaveHolder<HasGap::No>();
-            cursor.next = buffer() + positionOfArray;
-            return ArrayWritten::No;
+            cursor.next = buffer() + arrayOffset;
+            return ArrayResult::No;
         };
         *cursor.next++ = '[';
         for (unsigned i = 0; i < length; ++i) {
             if (!reserve(cursor, maxShortElementLength)) [[unlikely]]
-                return ArrayWritten::Failed;
+                return ArrayResult::Failed;
             if (i)
                 *cursor.next++ = ',';
             JSValue element = elements.at(&array, i).get();
@@ -2962,19 +2962,19 @@ NEVER_INLINE auto FastStringifier<CharType, bufferMode>::writeArrayOfPrimitives(
                 continue;
             }
             if (!element) [[unlikely]]
-                return leaveUnwritten();
+                return rollBack();
             if (element.isCell()) {
                 if (element.asCell()->type() != StringType)
-                    return leaveUnwritten();
+                    return rollBack();
                 const StringImpl* string = asString(element.asCell())->tryGetValueImpl();
                 if (!string || !string->is8Bit()) [[unlikely]]
-                    return leaveUnwritten();
+                    return rollBack();
                 const size_t stringLength = string->length();
                 if (!reserve(cursor, 1 + stringLength + 1 + 1)) [[unlikely]]
-                    return ArrayWritten::Failed;
+                    return ArrayResult::Failed;
                 *cursor.next = '"';
                 if (stringCopySameType<CharType, true>(string->span8(), cursor.next + 1)) [[unlikely]]
-                    return leaveUnwritten();
+                    return rollBack();
                 cursor.next[1 + stringLength] = '"';
                 cursor.next += 1 + stringLength + 1;
                 continue;
@@ -2986,15 +2986,15 @@ NEVER_INLINE auto FastStringifier<CharType, bufferMode>::writeArrayOfPrimitives(
             else if (element.isUndefinedOrNull())
                 cursor.next = AOT::appendJSONLiteral(cursor.next, "null"_s);
             else
-                return leaveUnwritten();
+                return rollBack();
         }
         *cursor.next++ = ']';
         leaveHolder<HasGap::No>();
-        return ArrayWritten::Yes;
+        return ArrayResult::Yes;
     } else {
         UNUSED_PARAM(cursor);
         UNUSED_PARAM(array);
-        return ArrayWritten::No;
+        return ArrayResult::No;
     }
 }
 

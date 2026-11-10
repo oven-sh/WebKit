@@ -39,7 +39,7 @@ struct RegisterPolicy {
     RegisterSet savedByCallee;
     RegisterSet calleeSavesClobberedAtSuspensions;
     RegisterSet pinned;
-    // A 32-bit argument or result of a patchpoint in one of these has zeros in its upper half.
+    // 32-bit patchpoint arguments and results in these registers are zero-extended.
     RegisterSet zeroExtended;
 };
 

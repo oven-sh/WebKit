@@ -466,7 +466,7 @@ static void testThreadJumpsDemotesPhiWithUpsilonBeforeBranch()
     CHECK_EQ(invoke<int64_t>(*code, 0, 4, memory), 20);
 }
 
-static void testThreadJumpsReadsUpsilonInBlockOfPhi()
+static void testThreadJumpsUpsilonBeforePhi()
 {
     Procedure proc(policyWithMaxTailSize(1));
     Graph graph { proc };
@@ -1598,7 +1598,7 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testThreadJumpsKeepsBlockLocalPhi());
     RUN(testThreadJumpsDemotesPhiUsedByAnotherBlock());
     RUN(testThreadJumpsDemotesPhiWithUpsilonBeforeBranch());
-    RUN(testThreadJumpsReadsUpsilonInBlockOfPhi());
+    RUN(testThreadJumpsUpsilonBeforePhi());
     RUN(testThreadJumpsKeepsUndecidedTest());
     RUN(testThreadJumpsSkipsTailWithUncloneablePatchpoint());
     RUN(testThreadJumpsSkipsLoopHeader());

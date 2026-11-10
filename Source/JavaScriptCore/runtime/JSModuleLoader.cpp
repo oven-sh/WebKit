@@ -1217,7 +1217,7 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     // there is no need to attach a ModuleGraphLoadingError reaction, so we skip it.
                     bool needsErrorReaction = module->loadedModules().size() == loadedModulesCountBefore;
 #if ENABLE(AOT)
-                    // Making the record of a CommonJS module runs the module. Its require() may load other requests of this module inside the call.
+                    // Creating the record of a CommonJS module evaluates it, and its require() may load other requests of this module meanwhile.
                     if (vm.hasCompiledCode())
                         needsErrorReaction = !module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() });
 #endif

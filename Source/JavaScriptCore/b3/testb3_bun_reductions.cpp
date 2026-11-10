@@ -977,7 +977,7 @@ enum class ExtendedForm : uint8_t {
 } // anonymous namespace
 
 static constexpr int64_t factorOfProduct = 1000003;
-static constexpr int64_t boundOfLoad = 300;
+static constexpr int64_t loadBound = 300;
 
 static Air::Opcode airOpcodeOf(ExtendedForm form)
 {
@@ -1001,8 +1001,8 @@ static Air::Opcode airOpcodeOf(ExtendedForm form)
     return Air::Oops;
 }
 
-// Eight times this is in the reach of a load on arm64.
-static constexpr int32_t indexOfLoad = 31;
+// Scaled by eight this is in the range of load offsets on ARM64.
+static constexpr int32_t loadIndex = 31;
 
 static void buildUserOfExtendedForm(Graph& graph, ExtendedForm form)
 {
@@ -1033,14 +1033,14 @@ static void buildUserOfExtendedForm(Graph& graph, ExtendedForm form)
     case ExtendedForm::Branch64OnIndexedLoadAndImmediate: {
         Type type = airOpcodeOf(form) == Air::Branch32 ? Int32 : Int64;
         Value* address = graph.make(root, Add, pointer, graph.make(root, Shl, other, graph.int32(root, 3)));
-        Value* loaded = graph.load(root, type, address, -indexOfLoad * 8, firstHeap);
-        Value* compared = form == ExtendedForm::Branch64OnIndexedLoadAndImmediate ? graph.int64(root, boundOfLoad) : type == Int32 ? graph.make(root, Trunc, operand) : operand;
+        Value* loaded = graph.load(root, type, address, -loadIndex * 8, firstHeap);
+        Value* compared = form == ExtendedForm::Branch64OnIndexedLoadAndImmediate ? graph.int64(root, loadBound) : type == Int32 ? graph.make(root, Trunc, operand) : operand;
         bool isBefore = form == ExtendedForm::Branch32BeforeIndexedLoad || form == ExtendedForm::Branch64BeforeIndexedLoad;
         Value* comparison = isBefore ? graph.make(root, LessThan, compared, loaded) : graph.make(root, LessThan, loaded, compared);
-        BasicBlock* whereLess = graph.proc.addBlock();
+        BasicBlock* lessThanBlock = graph.proc.addBlock();
         BasicBlock* otherwise = graph.proc.addBlock();
-        graph.branch(root, comparison, whereLess, otherwise);
-        graph.ret(whereLess, graph.int64(whereLess, 1));
+        graph.branch(root, comparison, lessThanBlock, otherwise);
+        graph.ret(lessThanBlock, graph.int64(lessThanBlock, 1));
         graph.ret(otherwise, graph.int64(otherwise, 0));
         return;
     }
@@ -1066,7 +1066,7 @@ static int64_t resultOfExtendedForm(ExtendedForm form, int64_t loaded, int64_t o
     case ExtendedForm::Branch64BeforeIndexedLoad:
         return operand < loaded;
     case ExtendedForm::Branch64OnIndexedLoadAndImmediate:
-        return loaded < boundOfLoad;
+        return loaded < loadBound;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return 0;
@@ -1101,7 +1101,7 @@ static void testExtendedFormsAreSelectedOnRequest()
             for (int64_t loaded : { 0ll, 6ll, -1ll, 0x180000001ll }) {
                 int64_t memory[1] = { loaded };
                 for (int64_t operand : { 0ll, 1ll, 2ll, -5ll }) {
-                    CHECK_EQ(invoke<int64_t>(*code, memory, operand, indexOfLoad), resultOfExtendedForm(form, loaded, operand, indexOfLoad));
+                    CHECK_EQ(invoke<int64_t>(*code, memory, operand, loadIndex), resultOfExtendedForm(form, loaded, operand, loadIndex));
                 }
             }
         }

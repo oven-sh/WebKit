@@ -654,8 +654,8 @@ private:
         return true;
     }
 
-    // A block that was merged into its predecessor may have a Phi behind the Upsilon that feeds it.
-    void addPhiValuesFromOwnBlock(BasicBlock* block)
+    // In a block that was merged into its predecessor, a Phi may follow the Upsilon that feeds it.
+    void addLocalPhiValues(BasicBlock* block)
     {
         for (unsigned index = 0; index < block->size(); ++index) {
             Value* phi = block->at(index);
@@ -687,7 +687,7 @@ private:
             if (upsilon->phi()->owner == block)
                 m_phiValuesOnPath.append({ upsilon->phi(), upsilon->child(0) });
         }
-        addPhiValuesFromOwnBlock(block);
+        addLocalPhiValues(block);
         m_path.append(block);
         addUpsilonsAndSetsFrom(block);
     }

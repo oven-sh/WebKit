@@ -878,14 +878,6 @@ static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array&
     return std::ranges::all_of(array.elements, canLieInSharedStorageInChoices);
 }
 
-static bool isBornToBeFilledInChoices(const DataNode::Array& array)
-{
-    return array.elements.size() > 1 && std::ranges::all_of(array.elements, [](const DataNode& element) {
-        const auto* number = element.tryAs<DataNode::Number>();
-        return number && !number->value;
-    });
-}
-
 static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
 {
     RootOfConstant whereRootEnds = walker.constantEndsWhereItLeaves(data.inputValueGiven, data.data()) ? RootOfConstant::EndsWhereItLeaves : RootOfConstant::IsAsked;
@@ -896,10 +888,6 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
     SetForScope makingObjectsOfConstant = walker.makingObjectsOfConstant();
     const DataNode& root = walker.program().at(data.data()).root;
     if (const auto* array = root.tryAs<DataNode::Array>(); array && sharesStorageOfArrayInChoices(walker, *array)) {
-        if (array->elements.size() <= maxNodesOfExpandedData && isBornToBeFilledInChoices(*array)) {
-            becomeNodeOfDataInChoices(walker, data, root);
-            return;
-        }
         bool isStoredIntoInLoop = data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
         data.setEncoding(isStoredIntoInLoop ? DataEncoding::TreeWithOwnStorage : DataEncoding::CopyOnWriteArray);
         return;

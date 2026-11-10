@@ -86,7 +86,7 @@ static bool tryMaterializeBitsBesidePinnedRegister(CCallHelpers& jit, uint64_t b
 
 static void materializeBitsInGPR(CCallHelpers& jit, uint64_t bits, Width width, GPRReg destination)
 {
-    bool hasOnlyLowHalf = !encodedMoveIsWide(width) || isRepresentableAs<uint32_t>(bits);
+    bool hasOnlyLowHalf = !encodedMoveIsWide(width) || isRepresentableAs<uint32_t>(static_cast<size_t>(bits));
     if (bits && hasOnlyLowHalf && tryMoveSmallConstant(jit, static_cast<int32_t>(static_cast<uint32_t>(bits)), destination))
         return;
     if (!encodedMoveIsWide(width)) {
@@ -111,7 +111,7 @@ static void materializeBitsInGPR(CCallHelpers& jit, uint64_t bits, Width width, 
 #if CPU(X86_64)
 static bool isLoadedIntoGPR(uint64_t bits)
 {
-    if (isRepresentableAs<uint32_t>(bits) || isRepresentableAs<int32_t>(static_cast<int64_t>(bits)))
+    if (isRepresentableAs<uint32_t>(static_cast<size_t>(bits)) || isRepresentableAs<int32_t>(static_cast<int64_t>(bits)))
         return false;
     constexpr unsigned shiftOfTag = 48;
     constexpr uint64_t lowBytesOfLongDouble = (1ull << 40) - 1;

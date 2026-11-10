@@ -1225,7 +1225,7 @@ private:
     InsertionSet m_constantInsertionValues;
     // Indexed by local. Entries are restored at the end of the scope that proved them.
     Vector<ProvenBytes> m_provenBytes;
-    Vector<unsigned> m_indexOfLastSet;
+    Vector<unsigned> m_lastSetIndex;
     Vector<std::pair<unsigned, ProvenBytes>> m_provenInScopes;
     bool m_nextAccessIsInBounds { false };
     // Facts proven before a loop do not hold in its body.
@@ -2955,9 +2955,9 @@ void OMGIRGenerator::didSetLocal(Value* set)
     if (!m_context.codeForImage)
         return;
     unsigned variable = set->as<VariableValue>()->variable()->index();
-    while (variable >= m_indexOfLastSet.size())
-        m_indexOfLastSet.append(0);
-    m_indexOfLastSet[variable] = set->index();
+    while (variable >= m_lastSetIndex.size())
+        m_lastSetIndex.append(0);
+    m_lastSetIndex[variable] = set->index();
 }
 
 // The local that the value was read from, unless it was set since.
@@ -2969,7 +2969,7 @@ Variable* OMGIRGenerator::currentLocal(Value* value) const
     unsigned local = variable->index() - m_locals[0]->index();
     if (local >= m_locals.size() || m_locals[local] != variable)
         return nullptr;
-    if (variable->index() < m_indexOfLastSet.size() && m_indexOfLastSet[variable->index()] > value->index())
+    if (variable->index() < m_lastSetIndex.size() && m_lastSetIndex[variable->index()] > value->index())
         return nullptr;
     return variable;
 }
@@ -2979,7 +2979,7 @@ auto OMGIRGenerator::provenBytes(Variable* local) const -> ProvenBytes
     if (local->index() >= m_provenBytes.size())
         return { };
     ProvenBytes proven = m_provenBytes[local->index()];
-    bool wasSetSince = local->index() < m_indexOfLastSet.size() && m_indexOfLastSet[local->index()] > proven.index;
+    bool wasSetSince = local->index() < m_lastSetIndex.size() && m_lastSetIndex[local->index()] > proven.index;
     return wasSetSince || proven.index < m_firstIndexInLoop ? ProvenBytes() : proven;
 }
 

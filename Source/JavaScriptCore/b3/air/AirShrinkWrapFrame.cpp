@@ -863,7 +863,7 @@ void FrameShrinkWrapper::insertSetups()
     }
 }
 
-// A patch that ends the function and runs without a frame: a tail call.
+// A terminal patch that runs without a frame, such as a tail call.
 bool FrameShrinkWrapper::leavesFunction(BasicBlock* block)
 {
     return isReturn(block->last().kind.opcode) || (block->last().kind.opcode == Patch && !block->numSuccessors() && !block->last().needsFrame());

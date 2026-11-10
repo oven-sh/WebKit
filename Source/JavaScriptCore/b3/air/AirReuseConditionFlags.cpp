@@ -287,13 +287,13 @@ private:
             Inst& inst = block->at(index);
             if (std::optional<MacroAssembler::ResultCondition> condition = conditionOnResultOf(inst, branch))
                 return condition;
-            if (!isFlagPreservingMove(inst) || writesOperandOf(inst, branch))
+            if (!isFlagPreservingMove(inst) || overwritesOperandOf(inst, branch))
                 return std::nullopt;
         }
         return std::nullopt;
     }
 
-    static bool writesOperandOf(Inst& move, Inst& branch)
+    static bool overwritesOperandOf(Inst& move, Inst& branch)
     {
         bool result = false;
         branch.forEachTmpFast([&](Tmp& tmp) {

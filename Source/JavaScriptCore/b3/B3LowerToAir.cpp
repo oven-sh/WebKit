@@ -1245,7 +1245,7 @@ private:
         return !memory || memory->accessWidth() <= width;
     }
 
-    static bool hasBitsOfOneByte(uint32_t mask)
+    static bool isWithinOneByte(uint32_t mask)
     {
         return !(mask & ~0xffu) || !(mask & ~0xff00u) || !(mask & ~0xff0000u) || !(mask & ~0xff000000u);
     }
@@ -2833,7 +2833,7 @@ private:
                     if (!hasRightConst || left->opcode() != loadOpcode || !canReadInPlace(left, width))
                         return Inst();
                     // MacroAssemblerX86_64::generateTest32(Address, ..) reads the one byte that the mask has bits in.
-                    if (isX86() && width == Width32 && left->traps() && loadPromise(left, loadOpcode).kind() == Arg::Addr && hasBitsOfOneByte(static_cast<uint32_t>(rightConst)))
+                    if (isX86() && width == Width32 && left->traps() && loadPromise(left, loadOpcode).kind() == Arg::Addr && isWithinOneByte(static_cast<uint32_t>(rightConst)))
                         return Inst();
                     // Signed loads will create high bits, so if the immediate has high bits
                     // then we cannot proceed. Consider BitAnd(Load8S(ptr), 0x101). This cannot

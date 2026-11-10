@@ -52,7 +52,7 @@ public:
     JS_EXPORT_PRIVATE void addWrite(Reg, Tmp, unsigned instIndex);
     JS_EXPORT_PRIVATE void addClobber(Reg, unsigned instIndex);
 
-    // Returns false, with the procedure marked as failed, if a read does not see the value of its slot.
+    // Returns false if a read does not see the value of its slot. The procedure is then marked as failed.
     JS_EXPORT_PRIVATE bool check(ASCIILiteral where);
 
 private:

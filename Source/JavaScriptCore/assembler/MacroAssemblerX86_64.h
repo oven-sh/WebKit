@@ -10409,7 +10409,7 @@ public:
     Label loadPCRelativeDouble(FPRegisterID dest)
     {
         m_assembler.movsd_rip(dest);
-        // A relocation of this kind ends with the instruction. Only a Jump makes a Label of a place other than the end of the buffer.
+        // Relocations of this kind are the last bytes of the instruction. Only a Jump creates a Label that is not at the end of the buffer.
         return Jump(m_assembler.buffer().label().labelAtOffset(-static_cast<int>(relocationSize(RelocationKind::Load64)))).label();
     }
 

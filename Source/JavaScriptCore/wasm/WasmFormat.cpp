@@ -49,14 +49,14 @@ bool WasmCallableFunction::isJS() const
 bool Segments::tryReserve(size_t numberOfSegments, size_t numberOfBytes, size_t numberOfIndices)
 {
     m_hasIndices = numberOfIndices;
-    return m_buffer.tryReserveInitialCapacity(numberOfSegments * sizeof(Header) + numberOfBytes) && m_placeOfIndex.tryReserveInitialCapacity(numberOfIndices);
+    return m_buffer.tryReserveInitialCapacity(numberOfSegments * sizeof(Header) + numberOfBytes) && m_segmentOffsets.tryReserveInitialCapacity(numberOfIndices);
 }
 
 void Segments::append(const Segment& segment)
 {
     ++m_size;
     if (m_hasIndices)
-        m_placeOfIndex.append(m_buffer.size());
+        m_segmentOffsets.append(m_buffer.size());
 
     Header header { static_cast<uint32_t>(segment.bytes.size()), 0 };
     if (segment.isActive() && segment.offsetIfActive->isConst() && segment.offsetIfActive->bits() <= std::numeric_limits<uint32_t>::max() && !segment.memoryIndex) [[likely]] {
