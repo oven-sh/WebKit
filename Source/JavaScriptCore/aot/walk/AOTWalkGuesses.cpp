@@ -2865,7 +2865,10 @@ static bool isStableAcrossIterations(Walker& walker, ValueID input)
     ValueID read = built.id();
     while (valuePreservingOpcodes.contains(code.at(read).opcode) || code.at(read).opcode == Opcode::CheckInitialized)
         read = code.at(read).operand(0);
-    return code.at(read).opcode == Opcode::GetModuleVariable && walker.program().at(code.at(read).variable()).flags.contains(VariableFlags::IsImmutable);
+    if (code.at(read).opcode != Opcode::GetModuleVariable)
+        return false;
+    VariableID variable = code.at(read).variable();
+    return !walker.plan().promotedEnvironments().find(variable) && walker.program().at(variable).flags.contains(VariableFlags::IsImmutable);
 }
 
 static bool isListThatFrontEndGuessedByNamesAloneForGuesses(Walker& walker, ValueID list)
