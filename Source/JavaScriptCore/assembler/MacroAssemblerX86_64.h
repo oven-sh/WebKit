@@ -4910,6 +4910,8 @@ private:
             m_assembler.cmpl_im(0, address.offset, address.base);
         else if (!(mask.m_value & ~0xff))
             m_assembler.testb_im(mask.m_value, address.offset, address.base);
+        else if (address.offset > std::numeric_limits<int32_t>::max() - 3)
+            m_assembler.testl_i32m(mask.m_value, address.offset, address.base);
         else if (!(mask.m_value & ~0xff00))
             m_assembler.testb_im(mask.m_value >> 8, address.offset + 1, address.base);
         else if (!(mask.m_value & ~0xff0000))

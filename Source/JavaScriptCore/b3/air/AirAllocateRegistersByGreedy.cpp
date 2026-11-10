@@ -6361,13 +6361,13 @@ private:
             // FIXME: reconsider that, see https://bugs.webkit.org/show_bug.cgi?id=288122
             ASSERT(hole.begin() > positionOfHead(block));
             // Model gapTmp interference with any other tmp split at this location by starting
-            // the gapTmp's range one position before the hole. Otherwise, the same register
+            // the gapTmp's range where the instruction begins. Otherwise, the same register
             // may be chosen for the gapTmp and another splitTmp, which wouldn't be valid
             // since there could be a cycle among the set of fixup Move instructions.
             // An alternative would be to use the Shuffle opcode (which can handle that
             // rotation of register assignments) but that would trigger an extra liveness
             // analysis (see lowerAfterRegAlloc()), and that's unlikely to be worth it.
-            Interval gapInterval = hole | Interval(hole.begin() - 1);
+            Interval gapInterval = hole | Interval(pointAtOffset(hole.begin(), PointOffsets::Pre));
             if (spansStretches)
                 gapInterval = Interval(pointAtOffset(hole.begin(), PointOffsets::Pre), pointAtOffset(hole.end() - 1, PointOffsets::Post) + 1);
             Tmp gapTmp = addSplitTmp(tmp, UseDefCost(freq), gapInterval);

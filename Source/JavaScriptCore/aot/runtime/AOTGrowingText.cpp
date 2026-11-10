@@ -212,10 +212,22 @@ JSString* tryAppendToGrowingText(Instance& instance, JSString* text, std::span<J
     if (!lengthOfPieces)
         return text;
 
+    constexpr uint64_t maxLengthPerAddition = 256;
+    constexpr uint64_t lengthInAdvance = 64 * maxLengthPerAddition;
+    constexpr uint32_t additionsPerQuestion = 16;
+    if (lengthOfPieces > lengthInAdvance)
+        return nullptr;
     uint32_t numberOfAdditions = 0;
     JSString* bottom = text;
-    for (; bottom->isNonSubstringRope(); bottom = firstPartOf(bottom))
-        ++numberOfAdditions;
+    auto areAdditionsLong = [&] {
+        return length - bottom->length() + lengthOfPieces > lengthInAdvance + numberOfAdditions * maxLengthPerAddition;
+    };
+    for (; bottom->isNonSubstringRope(); bottom = firstPartOf(bottom)) {
+        if (!(++numberOfAdditions % additionsPerQuestion) && areAdditionsLong())
+            return nullptr;
+    }
+    if (numberOfAdditions && areAdditionsLong())
+        return nullptr;
 
     if (JSString* buffer = bottom->isRope() ? bufferThatEndsWith(instance, bottom) : nullptr) {
         StringImpl& characters = *buffer->tryGetValueImpl();

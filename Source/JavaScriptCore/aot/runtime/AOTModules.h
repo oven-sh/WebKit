@@ -752,6 +752,7 @@ public:
     std::optional<ModuleID> moduleThatFailedToLink(ModuleID root) const;
     bool hasLinkFailures() const { return m_errorsOfExportsThatBuildFoundAbsent || !m_linkFailures.isEmpty(); }
     bool wasLinkedAheadOfFailure(ModuleID root, ModuleID) const;
+    bool wasFetchedByFailedLoad(ModuleID) const;
     bool wasLinkedBeforeLinkFailure(ModuleID) const;
     bool isLinkedForPendingImporter(ModuleID, std::optional<ModuleID> asking) const;
     std::optional<ModuleFailureID> failureByAbsentExport(ModuleID) const;

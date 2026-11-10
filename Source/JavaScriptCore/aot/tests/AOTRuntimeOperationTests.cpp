@@ -480,13 +480,22 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
     AOT_TEST_CHECK(numberOfBuffers == maxNumberOfBuffers);
     AOT_TEST_CHECK(charactersOf(text) == repeated("ab"_s, numberOfPieces));
 
-    JSString* longPiece = jsNontrivialString(vm, repeated("0123456789"_s, 100 * minLengthOfGrowingText));
-    JSString* longText = piece;
-    for (unsigned additions = 0; additions < minAdditionsToGrowingText; ++additions) {
-        longText = joinFromNativeCode(program, longText, additions == 1 ? longPiece : piece);
-        AOT_TEST_CHECK(longText->isNonSubstringRope());
+    for (unsigned timesOfMinLength : { 10u, 100u }) {
+        JSString* longPiece = jsNontrivialString(vm, repeated("0123456789"_s, timesOfMinLength * minLengthOfGrowingText));
+        JSString* longText = piece;
+        for (unsigned additions = 0; additions < minAdditionsToGrowingText; ++additions) {
+            longText = joinFromNativeCode(program, longText, additions == 1 ? longPiece : piece);
+            AOT_TEST_CHECK(longText->isNonSubstringRope());
+        }
+        bool additionsAreShort = timesOfMinLength == 10;
+        JSString* longer = joinFromNativeCode(program, longText, piece);
+        AOT_TEST_CHECK(canGrowInPlace(instance, longer) == additionsAreShort && longer->length() == longText->length() + piece->length());
     }
-    AOT_TEST_CHECK(canGrowInPlace(instance, joinFromNativeCode(program, longText, piece)));
+    JSString* sharedPiece = jsNontrivialString(vm, repeated("0123456789"_s, 100 * minLengthOfGrowingText));
+    JSString* textOfLongPieces = text;
+    for (unsigned additions = 0; additions < 4; ++additions)
+        textOfLongPieces = joinFromNativeCode(program, textOfLongPieces, sharedPiece);
+    AOT_TEST_CHECK(textOfLongPieces->isNonSubstringRope() && canGrowInPlace(instance, text));
 
     AOT_TEST_CHECK(!canGrowInPlace(instance, older) && charactersOf(older) == repeated("ab"_s, numberOfPiecesOfOlderText));
     JSString* other = joinFromNativeCode(program, older, jsNontrivialString(vm, "XY"_s));

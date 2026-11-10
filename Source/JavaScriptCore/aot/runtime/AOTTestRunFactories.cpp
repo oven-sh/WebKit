@@ -215,6 +215,18 @@ bool Modules::wasRegisteredByFailedLoad(ModuleID module) const
     return wasPulledIn;
 }
 
+bool Modules::wasFetchedByFailedLoad(ModuleID module) const
+{
+    if (!hasLinkFailures()) [[likely]]
+        return false;
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID root(index);
+        if (root != module && moduleThatFailedToLink(root) && modulesInLoadGraph(root).get(module.index()))
+            return true;
+    }
+    return false;
+}
+
 bool Modules::wasLinkedBeforeLinkFailure(ModuleID module) const
 {
     if (!hasLinkFailures())

@@ -48,23 +48,14 @@ bool WasmCallableFunction::isJS() const
 
 bool Segments::tryReserve(size_t numberOfSegments, size_t numberOfBytes, size_t numberOfIndices)
 {
-    m_expectedSize = numberOfSegments;
     m_hasIndices = numberOfIndices;
-    return m_buffer.tryReserveInitialCapacity(numberOfSegments * sizeof(Header) + numberOfBytes) && m_segmentOffsets.tryReserveInitialCapacity(numberOfIndices);
-}
-
-// Most modules have no long headers. The first one reserves for all segments that follow it.
-bool Segments::tryReserveLongHeaders()
-{
-    if (m_hasReservedLongHeaders)
-        return true;
-    m_hasReservedLongHeaders = m_buffer.tryReserveCapacity(m_buffer.capacity() + (m_expectedSize - m_size) * sizeof(LongHeader));
-    return m_hasReservedLongHeaders;
+    // Passive segments are the usual ones with a long header, and only an index can name them.
+    size_t sizeOfHeaders = numberOfSegments * sizeof(Header) + numberOfIndices * sizeof(LongHeader);
+    return m_buffer.tryReserveInitialCapacity(sizeOfHeaders + numberOfBytes) && m_segmentOffsets.tryReserveInitialCapacity(numberOfIndices);
 }
 
 bool Segments::tryAppend(const Segment& segment)
 {
-    ASSERT(m_size < m_expectedSize);
     if (m_hasIndices && !m_segmentOffsets.tryAppend(static_cast<uint32_t>(m_buffer.size())))
         return false;
 
@@ -83,7 +74,7 @@ bool Segments::tryAppend(const Segment& segment)
             longHeader.isExtendedExpression = segment.offsetIfActive->isExtendedExpression();
         }
         header.size |= hasLongHeaderBit;
-        if (!tryReserveLongHeaders() || !m_buffer.tryAppend(asByteSpan(header)) || !m_buffer.tryAppend(asByteSpan(longHeader)))
+        if (!m_buffer.tryAppend(asByteSpan(header)) || !m_buffer.tryAppend(asByteSpan(longHeader)))
             return false;
     }
     if (!m_buffer.tryAppend(segment.bytes))

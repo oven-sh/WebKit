@@ -796,14 +796,11 @@ private:
         return result;
     }
     void readLongHeader(size_t& place, Segment&) const;
-    bool tryReserveLongHeaders();
 
     Vector<uint8_t> m_buffer;
     Vector<uint32_t> m_segmentOffsets;
     size_t m_size { 0 };
-    size_t m_expectedSize { 0 };
     bool m_hasIndices { false };
-    bool m_hasReservedLongHeaders { false };
 };
 
 struct Element {
