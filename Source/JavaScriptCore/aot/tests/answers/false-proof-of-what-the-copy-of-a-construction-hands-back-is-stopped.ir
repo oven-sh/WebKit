@@ -1,16 +1,20 @@
 # function Crate() { this.kept = 1; return id({ kept: 2 }); }
 # function make() { return new Crate().kept; }
 # print(make()); print("went on");
-# testing=CheckProofsAtRunTime: a construction with a plain function takes `this` where Link has proven that the body hands back no object, with no look at what came back.
-# The lie, testing=UnseenCodeAnswersUndefined (false-proofs-are-stopped-where-the-value-comes-in.ir): Link takes what the shell's `id` gives for undefined, so the body of Crate is proven to return undefined.
-# Without the net the program prints 1 for 2 and goes on. Entered by a call, the body asks at its return. Copied, the caller asks what the copy hands back, at a construction as at a call.
-# OPTIONS: testing=CheckProofsAtRunTime,UnseenCodeAnswersUndefined
+# testing=CheckProofsAtRunTime: where Link has proven that the body of a plain function returns no object, a construction with that function produces `this` without looking at what the body returned.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined (see false-proofs-are-stopped-where-the-value-comes-in.ir): Link assumes that the shell's `id` returns undefined.
+# So the body of Crate is proven to return undefined.
+# Without the proof checks the program prints 1 instead of 2 and continues. A body that is entered by a call checks the value at its return.
+# Where the body is inlined, the caller checks what the inlined copy returns, at a construction as at a call.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeUnknownCallsReturnUndefined
 # RUN(COPY): run-in-shell mechanisms=all
-# COPY: AOT: f{{*}} at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# COPY: bun: internal AOT error: type check failed
+# COPY-NEXT: found object in a call result
 # COPY-NOT: went on
 # COPY: crashed with
 # RUN(CALL): run-in-shell mechanisms=-Inlining
-# CALL: AOT: f{{*}} at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# CALL: bun: internal AOT error: type check failed
+# CALL-NEXT: found object in a call result
 # CALL-NOT: went on
 # CALL: crashed with
 

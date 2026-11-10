@@ -5,7 +5,7 @@
 # code f0:CoroutineBody {
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
 #     v2: Array @Cell = CreateRest firstArgument=0 storage=Frame
-#     v3: anything @JSValue = AwaitCallBySavingFrame v1, v0, v0, v2 function=f1 numberOfHeld=1 role=CoroutineBody traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = AwaitCallBySavingFrame v1, v0, v0, v2 function=f1 numberOfHeld=1 role=CoroutineBody traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v3
 # }
 # -- end of code

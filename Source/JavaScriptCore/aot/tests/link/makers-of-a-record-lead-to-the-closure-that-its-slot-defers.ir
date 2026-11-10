@@ -87,7 +87,7 @@ function f2 name="takes" module=m0 position=233 flags=[IsChecked, HasExplicitNam
     v6 = PropGet v0 key="name" @283
     Return v6 @283
 }
-function f3 name="one" module=m0 position=293 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f3 name="one" module=m0 position=293 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: anything, v1: number):
     Jump -> next b1() @293
   b1():
@@ -107,7 +107,7 @@ function f3 name="one" module=m0 position=293 flags=[IsAsync, HasThis, IsChecked
     v15 = Call v7, -, v13, v14 calleeName="runs" @355
     Return v15 @355
 }
-function f4 name="two" module=m0 position=422 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f4 name="two" module=m0 position=422 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] syntax=[HasLiveAwait] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @422
   b1():

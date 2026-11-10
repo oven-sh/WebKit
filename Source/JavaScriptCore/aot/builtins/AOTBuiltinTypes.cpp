@@ -153,8 +153,8 @@ static TypeID typeOfBuiltinInstance(const BuiltinTypeReading& reading, const Bui
         TypeID held = typeOfBuiltinTypeRead(readingOfContents, declared.type);
         if (reading.operands && holdsResolvedValueOfPromise(slot))
             held = typeOfAwaited(typingContextOfBuiltinTypes(context), held);
-        bool saysNothing = types.at(held).isAnything() || (isNeverType(held) && !holdsResolvedValueOfPromise(slot));
-        contents[*position] = saysNothing ? TypeTable::anything : held;
+        bool isUninformative = types.at(held).isAnything() || (isNeverType(held) && !holdsResolvedValueOfPromise(slot));
+        contents[*position] = isUninformative ? TypeTable::anything : held;
         numberOfContents = std::max<unsigned>(numberOfContents, *position + 1);
     }
     return types.builtinClass(part.builtinClass, std::span<const TypeID>(contents).first(numberOfContents));

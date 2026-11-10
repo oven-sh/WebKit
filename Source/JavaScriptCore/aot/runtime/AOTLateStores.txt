@@ -2,7 +2,7 @@
 # <late store or behind finishCreation> | <file> | <function> | <how many lines> | <why each is right>. Every line counts, so a new store beside a listed one is asked about.
 # late store: a line with setWithoutWriteBarrier(, ..WithoutBarrier(, storeWordOf..(, atUnsafe(..) =, tryWriteSlot(, storeBitsOfWidth( or *reinterpret_cast<..*>(..) =, or a copy whose line names words as wide as a cell, and no fence, barrier, remembering or creation in the text between it and the next return. The return right behind `if (!tryWriteSlot(` is passed over: a try that failed has stored nothing.
 # behind finishCreation: a finishCreation() whose last store into a field of its own stands behind Base::finishCreation() with no .set(, barrier or fence behind it.
-# It reads text: it knows no paths and not whose barrier it sees, other spellings of a store pass it, and so do the emitters and the stubs. The emitters have InternalErrorKind::NoFenceBehindLateStores.
+# It reads text: it knows no paths and not whose barrier it sees, other spellings of a store pass it, and so do the emitters and the stubs. The emitters have InternalErrorKind::MissingFenceAfterLateStores.
 late store | builtins/AOTBuiltinArrayAllocationOperations.cpp | operationAOTNewArrayFromDoubles | 1 | numbers into a list of doubles
 late store | builtins/AOTEngineIntrinsicOperations.cpp | resumeBytecodeGenerator | 1 | a number
 late store | builtins/AOTEngineIntrinsicOperations.cpp | resumeIteratorHelperOfEitherKind | 1 | a number

@@ -1003,7 +1003,7 @@ static void emitArraySplice(StubAssembler& jit, GPRReg scratch, JumpList& callsH
     for (unsigned i = count; i--;)
         jit.move(argumentGPR(i), jit.reuseScratch(operands[i + 1]));
     jit.move(thisGPR, jit.reuseScratch(operands[0]));
-    jit.jumpToCallOfOperation(count == 3 ? Entry::operationAOTArraySpliceItemIntoAnyList : Entry::operationAOTArraySpliceOfAnyList);
+    jit.jumpToCallOfOperation(count == 3 ? Entry::operationAOTArraySpliceItemGeneric : Entry::operationAOTArraySpliceGeneric);
 }
 
 static void emitFunctionBind(StubAssembler& jit, GPRReg allocator, JumpList& callsHostFunction)
@@ -1236,11 +1236,11 @@ static constexpr auto aFunction = ArgumentGuard::IsFunction;
 static constexpr auto aPattern = ArgumentGuard::IsUntouchedRegExp;
 static constexpr CallWithoutHostFunction arrayJoinCalls[] = { { { anything, anything }, Entry::operationAOTArrayJoinOfAnyReceiver, { }, std::nullopt, true } };
 static constexpr CallWithoutHostFunction arrayToStringCalls[] = { { { anything, anything }, Entry::operationAOTArrayToStringOfAnyReceiver, { }, std::nullopt, true } };
-static constexpr CallWithoutHostFunction arrayPopCalls[] = { { { anything, anything }, Entry::operationAOTArrayPopOfAnyList } };
-static constexpr CallWithoutHostFunction arrayShiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayShiftOfAnyList } };
-static constexpr CallWithoutHostFunction arrayUnshiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayUnshiftOfAnyList } };
-static constexpr CallWithoutHostFunction mapClearCalls[] = { { { anything, anything }, Entry::operationAOTMapClearOfAnyMap } };
-static constexpr CallWithoutHostFunction setClearCalls[] = { { { anything, anything }, Entry::operationAOTSetClearOfAnySet } };
+static constexpr CallWithoutHostFunction arrayPopCalls[] = { { { anything, anything }, Entry::operationAOTArrayPopGeneric } };
+static constexpr CallWithoutHostFunction arrayShiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayShiftGeneric } };
+static constexpr CallWithoutHostFunction arrayUnshiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayUnshiftGeneric } };
+static constexpr CallWithoutHostFunction mapClearCalls[] = { { { anything, anything }, Entry::operationAOTMapClearGeneric } };
+static constexpr CallWithoutHostFunction setClearCalls[] = { { { anything, anything }, Entry::operationAOTSetClearGeneric } };
 static constexpr CallWithoutHostFunction regExpExecCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::Array) } };
 static constexpr CallWithoutHostFunction regExpTestCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::BoxedBoolean) } };
 static constexpr CallWithoutHostFunction stringEndsWithCalls[] = { { { aText, anything }, Entry::operationAOTStringEndsWith } };

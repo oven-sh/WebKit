@@ -149,12 +149,13 @@ public:
     bool valueOfRuntimeSourceStaysWithCompiledCode(uint32_t registryID) const;
     bool recordOfRuntimeSourceIsHandedOutFrozen(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
-    std::optional<ModuleID> fileBehindFace(ModuleID module) const { return data(module).isFaceOfFile() ? std::optional(requests(module).front().targetModule()) : std::nullopt; }
-    std::optional<ModuleID> faceOfFile(ModuleID) const;
+    std::optional<unsigned> findExport(ModuleID, uint32_t identifier) const;
+    std::optional<ModuleID> moduleBehindFacade(ModuleID module) const { return data(module).isFacade() ? std::optional(requests(module).front().targetModule()) : std::nullopt; }
+    std::optional<ModuleID> facadeOf(ModuleID) const;
     const CompiledRuntimeFunctionData* findRuntimeFunction(uint32_t id) const;
     bool isRuntimeFunction(FunctionID) const;
 
-    String pathText(ModuleID) const;
+    String fullPath(ModuleID) const;
     String displayPathText(ModuleID) const;
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
@@ -168,6 +169,7 @@ private:
     PiecesOfPath piecesOfPath(ModuleID) const;
     std::strong_ordering comparePath(ModuleID, StringView) const;
     ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
+    std::optional<unsigned> findExport(ModuleID, StringView name) const;
     template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;
 
     const ProgramTables* m_tables;
@@ -191,6 +193,47 @@ struct CyclesOfImports {
     Vector<Member> membersByModule;
     Vector<uint32_t> members;
     Vector<uint32_t> firstMemberOf;
+};
+
+struct ReexportedNames {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ReexportedNames);
+
+    enum class Answer : uint8_t { Unknown, Found, NotFound };
+
+    explicit ReexportedNames(const ModuleTable&);
+
+    Answer resolve(const ModuleTable&, const RequiredNameData&);
+    BitVector transitiveReexportersOf(Vector<ModuleID, 16>&&) const;
+
+private:
+    struct Resolution {
+        Answer answer { Answer::Unknown };
+        const ModuleExportData* binding { nullptr };
+    };
+
+    struct Stars {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Stars);
+
+        Vector<ModuleID, 4> reexporters;
+        UncheckedKeyHashMap<uint32_t, const ModuleExportData*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bindings;
+        bool listsEveryName { true };
+    };
+
+    const Stars& starsOf(const ModuleTable&, ModuleID exporter);
+    Resolution resolve(const ModuleTable&, ModuleID exporter, uint32_t name);
+    Resolution resolveHere(const ModuleTable&, ModuleID exporter, uint32_t name, const Stars&);
+    bool areNamesBehindStarsInTables(const ModuleTable&, ModuleID);
+
+    Vector<uint32_t> m_reexporters;
+    Vector<uint32_t> m_firstReexporterOf;
+    Vector<std::optional<Answer>> m_answers;
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<Stars>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_stars;
+    UncheckedKeyHashMap<uint64_t, Resolution, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_resolutions;
+    BitVector m_seen;
+    Vector<ModuleID, 16> m_visited;
+    bool m_isOnCycle { false };
+    BitVector m_modulesWithNamesInTables;
+    BitVector m_modulesWithOtherNames;
 };
 
 inline size_t ModuleTable::checkedIndex(ModuleID module) const

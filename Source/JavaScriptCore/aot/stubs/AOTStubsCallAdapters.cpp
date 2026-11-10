@@ -147,6 +147,7 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
         jit.add64(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfStructureIDBase()), instance);
         jit.loadPtr(Address(instance, Structure::realmOffset()), instance);
         jit.loadPtr(Address(instance, JSGlobalObject::offsetOfAOTInstance()), instance);
+        jit.store8(TrustedImm32(1), Address(instance, AOT_INSTANCE_OFFSET(propertyCaches.hasRunSinceClear)));
         jit.jump().linkTo(hasInstance, &jit);
     });
 
@@ -509,7 +510,7 @@ void generateStartModule(StubAssembler& jit)
     hasTarget.link(&jit);
     jit.storePtr(nextStep, nextStepInFrame);
     jit.call(target, JSEntryPtrTag);
-    Label behindCall = jit.bindReturnLabel(StubFrameKind::ModuleStart);
+    Label afterCall = jit.bindReturnLabel(StubFrameKind::ModuleStart);
     jit.addPtr(TrustedImm32(-static_cast<int32_t>(ModuleStartFrame::size)), fp, sp);
     jit.loadPtr(nextStepInFrame, nextStep);
     jit.branchTestPtr(CCallHelpers::NonZero, nextStep).linkTo(takesNextStep, &jit);
@@ -581,7 +582,7 @@ void generateStartModule(StubAssembler& jit)
     jit.returnToCaller();
 
     hasThrown.link(&jit);
-    emitThrowFromAdapter(jit, behindCall, handleException(false));
+    emitThrowFromAdapter(jit, afterCall, handleException(false));
 }
 
 Address emitLocateRememberedConstructWord(StubAssembler& jit, GPRReg wordOfCall, GPRReg entry)

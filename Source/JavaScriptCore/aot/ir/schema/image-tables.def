@@ -41,7 +41,7 @@ packed PositionRow {
 }
 packed ConstructionStartRow { isOnSameLine: Bool if isOnSameLine { columnsBack: UInt32 } else { linesBack: UInt32 } ; column: UInt32 unless isOnSameLine }
 
-packed QuotedTextRow {
+packed QuotedSourceRow {
     isOnSameLine: Bool if isOnSameLine { columnChange: UInt32 } else { lineChange: UInt32 }
     ; column: UInt32 unless isOnSameLine
     ; startChange: Signed

@@ -1,12 +1,12 @@
 # function title(task) { try { return task.title; } catch (error) { return error.message; } }
 # report(title(undefined));
-# The run time searches the rows of quoted texts by line and column, so the places of the texts of a module ascend as their positions do
+# The run time searches the quoted source rows by line and column, so the locations of a module's quoted sources must ascend as their positions do
 # Here the column adjustment at 60 begins the line anew: 36 is column 37 and 73 is column 14. No front end makes that. The build stops and writes no rows that nobody would find
 # RUN: image
 # DIAGNOSTIC: ProgramTableCheckFailed 1
 # CHECK: image empty
 
-module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 92] columnAdjustments=[{offset=60}] quotedTexts=[{position=36 end=10}, {position=73 start=10 end=23}] textOfQuotes="task.titleerror.message"}
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 92] columnAdjustments=[{offset=60}] quotedSources=[{position=36 end=10}, {position=73 start=10 end=23}] quotedSourceText="task.titleerror.message"}
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():

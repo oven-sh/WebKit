@@ -11,10 +11,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-struct CounterTestedInFrontOfLoop {
+struct HoistedCounterCheck {
     uint32_t position { 0 };
     TypeID tested;
-    bool isHeldWhereItComesRound { false };
+    bool isCheckedOnBackEdge { false };
     bool testMayWellFail { false };
     bool isSum { false };
 };
@@ -37,15 +37,15 @@ struct CounterHeldBelowRoomOfViews {
 
 CounterHeldBelowRoomOfViews findCounterHeldBelowRoomOfViews(Walker&, BlockID inputHead, NOESCAPE const ScopedLambda<TypeID(uint32_t position)>& typeThatEnters, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront, NOESCAPE const ScopedLambda<bool(ValueID)>& isListOnlyReadInLoop);
 BitVector namesOfCountersAskedForInt32InFrontOfLoop(Walker&, BlockID inputHead, std::span<const Reference> entering);
-Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
+Vector<HoistedCounterCheck, 2> findHoistedCounterChecks(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses);
 bool isNumberCarriedBesideTextOrBigInt(const Walker&, Reference enters, TypeID carried);
 
-struct VariableAskedInFrontOfLoop {
+struct HoistedVariableCheck {
     VariableID variable;
     TypeID tested;
     StatisticID counted;
 };
-void guessDivisorsOfIntegersInFrontOfLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses, Vector<VariableAskedInFrontOfLoop, 2>& variables);
+void guessDivisorsOfIntegersInFrontOfLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses, Vector<HoistedVariableCheck, 2>& variables);
 
 enum class WhatEntersHead : uint8_t { IsInteger, MayBeAskedInFront };
 struct NumberThatDivisionsBringRound {
@@ -56,12 +56,12 @@ struct NumberThatDivisionsBringRound {
 std::optional<NumberThatDivisionsBringRound> findNumberThatDivisionsBringRound(Walker&, BlockID inputHead, uint32_t position, std::span<const TypeID> entering, WhatEntersHead);
 bool operatorsOnBitsAloneBringRound(Walker&, BlockID inputHead, uint32_t position, std::span<const TypeID> entering);
 
-struct RelationOfHeadOnNumber {
+struct LoopBoundComparison {
     ValueID relation;
     ValueID number;
     VariableID variable;
 };
-RelationOfHeadOnNumber findRelationOfHeadBetweenCounterThatEntersAsInt32AndNumber(Walker&, BlockID inputHead, const Effects& ofTurns, std::span<const Reference> entering, std::span<const CounterTestedInFrontOfLoop> askedInFront);
+LoopBoundComparison findLoopBoundComparison(Walker&, BlockID inputHead, const Effects& ofTurns, std::span<const Reference> entering, std::span<const HoistedCounterCheck> askedInFront);
 
 } } } // namespace JSC::AOT::Typed
 

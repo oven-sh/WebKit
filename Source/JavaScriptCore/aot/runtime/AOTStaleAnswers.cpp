@@ -22,6 +22,7 @@
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRealmStartup.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSchemaRuntimeOperations.h"
@@ -31,6 +32,7 @@
 #include "JSCInlines.h"
 #include "NullGetterFunction.h"
 #include <cmath>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -50,13 +52,13 @@ static ASCIILiteral textOf(KindOfAnswer kind)
     case KindOfAnswer::Value:
         return "a value"_s;
     case KindOfAnswer::Absent:
-        return "nothing"_s;
+        return "no property"_s;
     case KindOfAnswer::Accessor:
         return "an accessor"_s;
     case KindOfAnswer::Present:
-        return "something"_s;
+        return "a property"_s;
     case KindOfAnswer::AbsentFromObjectItself:
-        return "nothing on the object itself"_s;
+        return "no own property"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -65,42 +67,42 @@ static constexpr ASCIILiteral textOf(StubThatAnswers stub)
 {
     switch (stub) {
     case StubThatAnswers::CallMethodAtSite:
-        return "the place of a call by name"_s;
+        return "a method call cache"_s;
     case StubThatAnswers::FindsNoExtraPropertyAtSite:
-        return "the place of a question whether a lookup finds nothing"_s;
+        return "an absent property cache"_s;
     case StubThatAnswers::ReadByName:
     case StubThatAnswers::ReadByNameUnlessAsMade:
-        return "a closed read by name"_s;
+        return "an untyped property read"_s;
     case StubThatAnswers::TruthByName:
-        return "a closed read by name that gives the truth of what it finds"_s;
+        return "an untyped property read that is used as a condition"_s;
     case StubThatAnswers::PresenceByName:
-        return "a closed question whether a name is there"_s;
+        return "an untyped `in` check"_s;
     case StubThatAnswers::PresenceOfOwnName:
-        return "a closed question whether an object has a name of its own"_s;
+        return "an untyped own property check"_s;
     case StubThatAnswers::GetterOfPendingRead:
-        return "a closed read by name that is about to enter a getter"_s;
+        return "an untyped property read that is about to call a getter"_s;
     case StubThatAnswers::CachedGetterByName:
-        return "a lookup of the getter that a name finds"_s;
+        return "a cached getter lookup"_s;
     case StubThatAnswers::ProofThatLookupFindsNothing:
-        return "a proof that a lookup on an object finds nothing"_s;
+        return "a proof that a property is absent"_s;
     case StubThatAnswers::TypedReadByName:
-        return "a typed read by name"_s;
+        return "a typed property read"_s;
     case StubThatAnswers::TypedPresenceOfOwnName:
-        return "a typed question whether an object has a name of its own"_s;
+        return "a typed own property check"_s;
     case StubThatAnswers::StateOfWalk:
-        return "what the compiler remembers in place of a read by name"_s;
+        return "a property read that the compiler replaced with a known value"_s;
     case StubThatAnswers::FunctionThatNameFinds:
-        return "the function that the compiler takes a name to find"_s;
+        return "a devirtualized method call"_s;
     case StubThatAnswers::StoreIntoSlot:
-        return "a store by name that is laid into a slot"_s;
+        return "a property store to a fixed slot"_s;
     case StubThatAnswers::DoorOfPlainInstance:
-        return "the yes to the question whether an object is a plain instance of its class"_s;
+        return "the plain instance check"_s;
     case StubThatAnswers::HolderWithoutAddedNames:
-        return "the yes to the question whether no name was added to a built-in object"_s;
+        return "the check that a built-in object has no added properties"_s;
     case StubThatAnswers::ChainAbovePrototype:
-        return "the yes to the question whether the chain above the prototype of a class is plain"_s;
+        return "the check that the prototype chain of a class is unchanged"_s;
     case StubThatAnswers::MemberAsBuilt:
-        return "the yes to the question whether a member of a built-in object is as it was built"_s;
+        return "the check that a built-in member is unmodified"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -165,7 +167,7 @@ static std::optional<FreshAnswer> askAgain(Instance& instance, JSValue receiver,
     if (!asksObjectItself && receiver.isObject()) {
         LazyPrototypeRead lazy = classifyReadThroughLazyPrototypes(instance.globalObject, asObject(receiver), name);
         if (lazy.result == LazyPrototypeReadResult::Answered) {
-            countEvent(vm, RuntimeCounterID::AnswersAskedAgain);
+            countEvent(vm, RuntimeCounterID::FastPathResultsVerified);
             if (lazy.answer.kind == PropertyAnswerKind::Absent)
                 return FreshAnswer { };
             JSValue held = valueAtOffset(lazy.answer.holder, lazy.answer.offset);
@@ -190,7 +192,7 @@ static std::optional<FreshAnswer> askAgain(Instance& instance, JSValue receiver,
         return std::nullopt;
     if (isFound && !slot.isValue() && !slot.isAccessor())
         return std::nullopt;
-    countEvent(vm, RuntimeCounterID::AnswersAskedAgain);
+    countEvent(vm, RuntimeCounterID::FastPathResultsVerified);
     if (!isFound)
         return FreshAnswer { };
     if (slot.isValue())
@@ -198,9 +200,24 @@ static std::optional<FreshAnswer> askAgain(Instance& instance, JSValue receiver,
     return FreshAnswer { KindOfAnswer::Accessor, slot.getterSetter()->isGetterNull() ? JSValue() : JSValue(slot.getterSetter()->getter()) };
 }
 
-[[noreturn]] static void stop(ASCIILiteral whoAnswered, UniquedStringImpl* name, KindOfAnswer kind, JSValue value, const FreshAnswer& fresh)
+static String describeKey(Instance& instance, UniquedStringImpl* key)
 {
-    dataLogLn("AOT: ", whoAnswered, " answered ", textOf(kind), " under the name ", String(name), ", and the object, asked again, answers ", fresh.kind == kind ? "another"_s : textOf(fresh.kind), ". Answered: ", value, ". Asked again: ", fresh.value, ". This is a bug in Bun.");
+    if (identifiersOf(instance).numberOf(key) || BuiltinTable::singleton().nameOf(*instance.vm, key))
+        return makeString('\'', StringView(key), '\'');
+    return "a computed key"_s;
+}
+
+template<typename... Parts>
+static void reportFailedLookupCheck(const Parts&... detail)
+{
+    RuntimeCheckFailure failure("property lookup check failed"_s);
+    failure.detail(detail...);
+    failure.report();
+}
+
+[[noreturn]] static void stop(Instance& instance, ASCIILiteral whoAnswered, UniquedStringImpl* name, KindOfAnswer kind, const FreshAnswer& fresh)
+{
+    reportFailedLookupCheck(whoAnswered, " found ", textOf(kind), " for ", describeKey(instance, name), ", but a full lookup finds ", fresh.kind == kind ? "another one"_s : textOf(fresh.kind));
     CRASH();
 }
 
@@ -211,7 +228,7 @@ void stopAtStaleAnswer(Instance& instance, JSValue receiver, UniquedStringImpl* 
         return;
     if (kind == KindOfAnswer::Present ? fresh->kind != KindOfAnswer::Absent : kind == KindOfAnswer::AbsentFromObjectItself ? fresh->kind == KindOfAnswer::Absent : kind == fresh->kind && (kind != KindOfAnswer::Value || areSameAnswer(fresh->value, value)))
         return;
-    stop(whoAnswered, name, kind, value, *fresh);
+    stop(instance, whoAnswered, name, kind, *fresh);
 }
 
 void stopAtStaleGetterOfPendingRead(Instance& instance, JSValue receiver, JSValue accessorOrGetter)
@@ -224,13 +241,13 @@ void stopAtStaleGetterOfPendingRead(Instance& instance, JSValue receiver, JSValu
     constexpr ASCIILiteral whoAnswered = textOf(StubThatAnswers::GetterOfPendingRead);
     UniquedStringImpl* name = state.propertyCaches->nameOf(state.keyOfPendingRead).uid;
     if (!accessorOrGetter || !accessorOrGetter.isCell() || (!accessorOrGetter.isObject() && accessorOrGetter.asCell()->type() != GetterSetterType))
-        stop(whoAnswered, name, KindOfAnswer::Accessor, JSValue(), FreshAnswer { });
+        stop(instance, whoAnswered, name, KindOfAnswer::Accessor, FreshAnswer { });
     JSValue getter = accessorOrGetter;
     if (auto* accessor = dynamicDowncast<GetterSetter>(accessorOrGetter.asCell()))
         getter = accessor->isGetterNull() ? JSValue() : JSValue(accessor->getter());
     std::optional<FreshAnswer> fresh = askAgain(instance, receiver, name);
     if (fresh && (fresh->kind != KindOfAnswer::Accessor || fresh->value != getter))
-        stop(whoAnswered, name, KindOfAnswer::Accessor, getter, *fresh);
+        stop(instance, whoAnswered, name, KindOfAnswer::Accessor, *fresh);
 }
 
 static void stopAtNameAddedToHolder(Instance& instance, BuiltinID holder)
@@ -244,7 +261,7 @@ static void stopAtNameAddedToHolder(Instance& instance, BuiltinID holder)
     if (!object)
         return;
     VM& vm = *instance.vm;
-    countEvent(vm, RuntimeCounterID::AnswersAskedAgain);
+    countEvent(vm, RuntimeCounterID::FastPathResultsVerified);
     for (const PropertyTableEntry& entry : object->structure()->getPropertiesConcurrently()) {
         UniquedStringImpl* key = entry.key();
         if (key->isSymbol() && static_cast<SymbolImpl*>(key)->isPrivate())
@@ -252,7 +269,7 @@ static void stopAtNameAddedToHolder(Instance& instance, BuiltinID holder)
         BuiltinName name = table.nameOf(vm, key);
         if (name && table.findOwnMember(holder, name))
             continue;
-        dataLogLn("AOT: ", textOf(StubThatAnswers::HolderWithoutAddedNames), " is held to the object, and the object holds the name ", String(entry.key()), ", which it was not built with. This is a bug in Bun.");
+        reportFailedLookupCheck(textOf(StubThatAnswers::HolderWithoutAddedNames), " passed, but the object has an added property, ", describeKey(instance, entry.key()));
         CRASH();
     }
 }
@@ -293,7 +310,7 @@ static void stopAtMemberThatIsNotAsBuilt(Instance& instance, BuiltinID member)
     JSObject* object = holder ? holder->getObject() : nullptr;
     if (!object)
         return;
-    countEvent(vm, RuntimeCounterID::AnswersAskedAgain);
+    countEvent(vm, RuntimeCounterID::FastPathResultsVerified);
     Identifier name = table.identifierOf(vm, table.at(member).name);
     JSValue found = object->getDirect(vm, name);
     if (!found && reportsCreationOfMember(object, name.impl()))
@@ -303,7 +320,7 @@ static void stopAtMemberThatIsNotAsBuilt(Instance& instance, BuiltinID member)
     if (isAccessor && !BuiltinCellKey::getter(canonical).hasCell(table)) {
         if (found ? isAccessorLaidByHostOrEngine(found) : isYetToBeLaidOutOfTableOfClass(object, name.impl()))
             return;
-        dataLogLn("AOT: ", textOf(StubThatAnswers::MemberAsBuilt), " is held to the object, and under the name ", String(name.impl()), " the object holds ", found ? "what it was not built with"_s : "nothing"_s, ". This is a bug in Bun.");
+        reportFailedLookupCheck(textOf(StubThatAnswers::MemberAsBuilt), " passed, but '", String(name.impl()), "' ", found ? "is not the built-in accessor"_s : "is missing"_s);
         CRASH();
     }
     JSCell* built = isAccessor ? instance.state->builtinCells->findGetter(canonical) : instance.state->builtinCells->findObject(canonical);
@@ -313,7 +330,7 @@ static void stopAtMemberThatIsNotAsBuilt(Instance& instance, BuiltinID member)
         found = accessor->isGetterNull() ? JSValue() : JSValue(accessor->getter());
     if (found == JSValue(built))
         return;
-    dataLogLn("AOT: ", textOf(StubThatAnswers::MemberAsBuilt), " is held to the object, and under the name ", String(name.impl()), " the object holds ", found ? "another value"_s : "nothing"_s, ". This is a bug in Bun.");
+    reportFailedLookupCheck(textOf(StubThatAnswers::MemberAsBuilt), " passed, but '", String(name.impl()), "' ", found ? "has another value"_s : "is missing"_s);
     CRASH();
 }
 
@@ -348,10 +365,10 @@ static void stopAtFalseYesOfDoor(Instance& instance, JSObject* asked, uint32_t i
             if (isHeldByClass) {
                 if (fresh->kind != KindOfAnswer::Accessor)
                     continue;
-                dataLogLn("AOT: ", textOf(StubThatAnswers::DoorOfPlainInstance), " promises that no accessor lies on the prototype of a class below the class asked under the name of a field of that class, and such a prototype, asked under the name ", String(name), ", answers ", textOf(fresh->kind), ". This is a bug in Bun.");
+                reportFailedLookupCheck(textOf(StubThatAnswers::DoorOfPlainInstance), " passed, but the prototype of a subclass has ", textOf(fresh->kind), " for the field '", String(name), "'");
                 CRASH();
             }
-            dataLogLn("AOT: ", textOf(StubThatAnswers::DoorOfPlainInstance), " promises that nothing lies between the object and the prototype of its class under the name of a field, and an object between them, asked under the name ", String(name), ", answers ", textOf(fresh->kind), ". This is a bug in Bun.");
+            reportFailedLookupCheck(textOf(StubThatAnswers::DoorOfPlainInstance), " passed, but an object between the instance and the prototype of its class has ", textOf(fresh->kind), " for the field '", String(name), "'");
             CRASH();
         }
     }
@@ -369,18 +386,18 @@ static void stopAtChangedChainAbovePrototype(Instance& instance, uint32_t number
     JSObject* object = stored ? stored.getObject() : classes.classPrototypeIfExists(*current);
     if (!stored && !object)
         return;
-    countEvent(vm, RuntimeCounterID::AnswersAskedAgain);
-    auto stopAt = [&](ASCIILiteral promise) {
-        dataLogLn("AOT: ", textOf(StubThatAnswers::ChainAbovePrototype), " promises that ", promise, ", and the objects, walked in step with the records of the classes, are others. A class above which the records name no class is held to stand below Object.prototype. This is a bug in Bun.");
+    countEvent(vm, RuntimeCounterID::FastPathResultsVerified);
+    auto stopAt = [&](ASCIILiteral finding) {
+        reportFailedLookupCheck(textOf(StubThatAnswers::ChainAbovePrototype), " passed, but ", finding);
         CRASH();
     };
     for (bool isClassAsked = true; current; current = classes.assumedBaseOf(*current), isClassAsked = false) {
         if (!object || classes.classPrototypeIfExists(*current) != object)
-            stopAt(isClassAsked ? "the prototype of the class is the object that it was"_s : "no link above the prototype of the class has changed"_s);
+            stopAt(isClassAsked ? "the prototype of the class was replaced"_s : "a link above the prototype of the class has changed"_s);
         object = object->getPrototypeDirect().getObject();
     }
     if (object != instance.globalObject->objectPrototype())
-        stopAt("no link above the prototype of the class has changed"_s);
+        stopAt("a link above the prototype of the class has changed"_s);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleAnswer, void, (Instance* instance, EncodedJSValue receiver, EncodedJSValue answer, uint32_t key, uint32_t kindAndStub))
@@ -389,7 +406,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleAnswer, void, (Instance
     StubThatAnswers stub = static_cast<StubThatAnswers>(kindAndStub >> 8 & 0xff);
     JSValue answered = JSValue::decode(answer);
     if (kindAndStub & answerIsYesOfQuestionOfLibrary)
-        countEvent(*instance->vm, RuntimeCounterID::QuestionsOfLibraryThatSaidYes);
+        countEvent(*instance->vm, RuntimeCounterID::LibraryFastPathChecksPassed);
     if (stub == StubThatAnswers::GetterOfPendingRead) {
         stopAtStaleGetterOfPendingRead(*instance, JSValue::decode(receiver), answered);
         return;
@@ -423,7 +440,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleAnswer, void, (Instance
     if (stub == StubThatAnswers::StoreIntoSlot) {
         std::optional<FreshAnswer> fresh = askAgain(*instance, JSValue::decode(receiver), name);
         if (fresh && (fresh->kind == KindOfAnswer::Accessor || fresh->isReadOnly)) {
-            dataLogLn("AOT: ", textOf(stub), " takes the name ", String(name), " to find nothing that stands in its way, and the object, asked in front of the store, answers ", fresh->isReadOnly ? "a value that is read only"_s : textOf(fresh->kind), ". This is a bug in Bun.");
+            reportFailedLookupCheck(textOf(stub), " assumes that '", String(name), "' is a writable data property, but a full lookup finds ", fresh->isReadOnly ? "a read-only property"_s : textOf(fresh->kind));
             CRASH();
         }
         return;
@@ -435,7 +452,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleAnswer, void, (Instance
         KindOfAnswer wanted = static_cast<KindOfAnswer>(kindAndStub & 0xff);
         std::optional<uint32_t> found = fresh->kind == wanted && fresh->value && fresh->value.isCell() ? closureNumberOf(fresh->value.asCell()) : std::nullopt;
         if (!found || *found != static_cast<uint32_t>(answered.asInt32()))
-            stop(textOf(stub), name, wanted, answered, *fresh);
+            stop(*instance, textOf(stub), name, wanted, *fresh);
         return;
     }
     if (stub == StubThatAnswers::CachedGetterByName) {
@@ -444,7 +461,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleAnswer, void, (Instance
         JSValue getter = dynamicDowncast<NullGetterFunction>(answered.asCell()) ? JSValue() : answered;
         std::optional<FreshAnswer> fresh = askAgain(*instance, JSValue::decode(receiver), name);
         if (fresh && (fresh->kind != KindOfAnswer::Accessor || fresh->value != getter))
-            stop(textOf(stub), name, KindOfAnswer::Accessor, getter, *fresh);
+            stop(*instance, textOf(stub), name, KindOfAnswer::Accessor, *fresh);
         return;
     }
     if ((kindAndStub & emptySlotAnswersNothingByItself) && (!answered || answered.isUndefined()))
@@ -452,7 +469,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleAnswer, void, (Instance
     if (stub == StubThatAnswers::StateOfWalk && (!answered || (answered.isCell() && !answered.isObject() && !answered.isString() && !answered.isSymbol() && !answered.isHeapBigInt()) || (answered.isString() && asString(answered)->isRope())))
         return;
     if (!answered || (answered.isCell() && !answered.isObject() && !answered.isString() && !answered.isSymbol() && !answered.isHeapBigInt()))
-        stop(textOf(stub), name, KindOfAnswer::Value, JSValue(), FreshAnswer { });
+        stop(*instance, textOf(stub), name, KindOfAnswer::Value, FreshAnswer { });
     if (kindAndStub & answerMayComeFromSlowPath)
         return;
     bool asksForOwnName = stub == StubThatAnswers::PresenceOfOwnName || stub == StubThatAnswers::TypedPresenceOfOwnName;
@@ -461,7 +478,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleAnswer, void, (Instance
         return;
     if (stub == StubThatAnswers::PresenceByName || asksForOwnName) {
         if (answered.isTrue() != (fresh->kind != KindOfAnswer::Absent))
-            stop(textOf(stub), name, answered.isTrue() ? KindOfAnswer::Present : KindOfAnswer::Absent, JSValue(), *fresh);
+            stop(*instance, textOf(stub), name, answered.isTrue() ? KindOfAnswer::Present : KindOfAnswer::Absent, *fresh);
         return;
     }
     if (stub == StubThatAnswers::StateOfWalk && fresh->kind == KindOfAnswer::Accessor && !(kindAndStub & accessorIsNoAnswerOfWalk))
@@ -469,12 +486,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleAnswer, void, (Instance
     if (fresh->kind == KindOfAnswer::Accessor && fresh->value) {
         auto* function = dynamicDowncast<JSFunction>(fresh->value);
         if (!function || !function->isHostOrBuiltinFunction())
-            stop(textOf(stub), name, KindOfAnswer::Value, answered, *fresh);
+            stop(*instance, textOf(stub), name, KindOfAnswer::Value, *fresh);
         return;
     }
     JSValue found = fresh->kind == KindOfAnswer::Value ? fresh->value : jsUndefined();
     if (stub == StubThatAnswers::TruthByName ? answered.isTrue() != found.toBoolean(instance->globalObject) : !areSameAnswer(found, answered))
-        stop(textOf(stub), name, KindOfAnswer::Value, answered, *fresh);
+        stop(*instance, textOf(stub), name, KindOfAnswer::Value, *fresh);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleMemberOfBuiltinClass, void, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedReadInFront, uint32_t form))
@@ -495,11 +512,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleMemberOfBuiltinClass, v
         }
         return someCellIsKnown ? Verdict::IsAnother : Verdict::CannotSay;
     };
-    constexpr ASCIILiteral whoAnswered = "a stub that takes a member of a built-in class to be as the class was made"_s;
+    constexpr ASCIILiteral whoAnswered = "a stub that assumes an unmodified built-in method"_s;
     if (JSValue readInFront = JSValue::decode(encodedReadInFront)) {
-        countEvent(vm, RuntimeCounterID::AnswersAskedAgain);
+        countEvent(vm, RuntimeCounterID::FastPathResultsVerified);
         if (holdAgainstClassAsMade(KindOfAnswer::Value, readInFront) == Verdict::IsAnother) {
-            dataLogLn("AOT: a stub took the method that was read in front of a call to be the one of a built-in class as the class was made (", members.isEmpty() ? String() : table.identifierOf(vm, table.at(members[0]).name).string(), "), and what was read is another: ", readInFront, ". This is a bug in Bun.");
+            reportFailedLookupCheck(whoAnswered, " was called for '", members.isEmpty() ? String() : table.identifierOf(vm, table.at(members[0]).name).string(), "', but the callee that was read before the call is another function");
             CRASH();
         }
         return;
@@ -513,7 +530,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleMemberOfBuiltinClass, v
         Identifier identifier = table.identifierOf(vm, name);
         std::optional<FreshAnswer> fresh = askAgain(*instance, JSValue::decode(encodedReceiver), identifier.impl());
         if (fresh && (fresh->kind == KindOfAnswer::Absent || holdAgainstClassAsMade(fresh->kind, fresh->value) == Verdict::IsAnother))
-            stop(whoAnswered, identifier.impl(), fresh->kind == KindOfAnswer::Accessor ? KindOfAnswer::Accessor : KindOfAnswer::Value, JSValue(), *fresh);
+            stop(*instance, whoAnswered, identifier.impl(), fresh->kind == KindOfAnswer::Accessor ? KindOfAnswer::Accessor : KindOfAnswer::Value, *fresh);
     }
 }
 

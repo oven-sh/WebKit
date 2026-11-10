@@ -120,10 +120,10 @@ size_t BodyIndexTable::sizeInBytes() const
     for (const std::unique_ptr<Worker>& worker : m_workers) {
         result += sizeof(Worker) + worker->allocatedBytes;
         result += capacityInBytes(worker->chunks) + capacityInBytes(worker->constructionStarts);
-        result += capacityInBytes(worker->edges) + capacityInBytes(worker->retreatingEdges) + capacityInBytes(worker->argumentLinks);
+        result += capacityInBytes(worker->edges) + capacityInBytes(worker->retreatingEdges);
         result += capacityInBytes(worker->firstPredecessor) + capacityInBytes(worker->predecessors);
         result += capacityInBytes(worker->sizesOfSubtrees) + capacityInBytes(worker->nextNumbersBelow);
-        result += capacityInBytes(worker->worklist) + capacityInBytes(worker->loops) + capacityInBytes(worker->releaseHints) + capacityInBytes(worker->mentionsOfIterations);
+        result += capacityInBytes(worker->worklist) + capacityInBytes(worker->loops) + capacityInBytes(worker->mentionsOfIterations);
     }
     return result;
 }
@@ -199,7 +199,6 @@ const BodyIndex& BodyIndexBuilder::finish()
 {
     m_index->m_opcodes = m_opcodes;
     adoptMentionsOfIterations();
-    findParametersReadByReleaseHintsAlone();
     computeDominators();
     numberDominatorTree();
     m_index->m_blocksInDominatorOrder = m_blocksInDominatorOrder.first(m_blocks[entryBlock.index()].lastDominatorNumberBelow + 1);
@@ -238,102 +237,22 @@ void BodyIndexBuilder::begin()
 
     m_worker.edges.shrink(0);
     m_worker.retreatingEdges.shrink(0);
-    m_worker.argumentLinks.shrink(0);
     m_worker.firstPredecessor.shrink(0);
     m_worker.predecessors.shrink(0);
     m_worker.sizesOfSubtrees.shrink(0);
     m_worker.nextNumbersBelow.shrink(0);
     m_worker.worklist.shrink(0);
     m_worker.loops.shrink(0);
-    m_worker.releaseHints.shrink(0);
     m_worker.mentionsOfIterations.shrink(0);
-}
-
-void BodyIndexBuilder::findParametersReadByReleaseHintsAlone()
-{
-    std::span<const BodyArgumentLink> links = m_worker.argumentLinks.span();
-    if (m_worker.releaseHints.isEmpty() || links.empty() || !m_function.isCoroutine())
-        return;
-
-    auto parameterFilledBy = [&](const BodyArgumentLink& link) -> std::optional<uint32_t> {
-        if (link.indexOfParameter >= m_index->block(link.to).numberOfParameters())
-            return std::nullopt;
-        return m_blocks[link.to.index()].firstParameter + link.indexOfParameter;
-    };
-
-    uint32_t numberOfValues = m_function.body.numberOfValues();
-    Vector<uint32_t> numberOfMentionsByHintsAndEdges;
-    numberOfMentionsByHintsAndEdges.fill(0, numberOfValues);
-    Vector<uint32_t> firstArgument;
-    firstArgument.fill(0, numberOfValues + 1);
-    for (ValueID hint : m_worker.releaseHints) {
-        if (ValueID released = m_index->value(hint).as<Opcode::ReleaseHint>().valueOperand())
-            ++numberOfMentionsByHintsAndEdges[released.index()];
-    }
-    for (const BodyArgumentLink& link : links) {
-        std::optional<uint32_t> parameter = parameterFilledBy(link);
-        if (!parameter)
-            continue;
-        ++numberOfMentionsByHintsAndEdges[link.argument.index()];
-        ++firstArgument[*parameter];
-    }
-    for (uint32_t index = 1; index <= numberOfValues; ++index)
-        firstArgument[index] += firstArgument[index - 1];
-    Vector<ValueID> arguments;
-    arguments.grow(firstArgument.last());
-    for (const BodyArgumentLink& link : links) {
-        if (std::optional<uint32_t> parameter = parameterFilledBy(link))
-            arguments[--firstArgument[*parameter]] = link.argument;
-    }
-
-    auto takesArguments = [&](uint32_t value) {
-        return firstArgument[value] != firstArgument[value + 1];
-    };
-    Vector<bool> isRead;
-    isRead.fill(false, numberOfValues);
-    Vector<uint32_t, 32> parametersToFollow;
-    auto noteRead = [&](uint32_t value) {
-        if (!std::exchange(isRead[value], true) && takesArguments(value))
-            parametersToFollow.append(value);
-    };
-    for (uint32_t value = 0; value < numberOfValues; ++value) {
-        uint32_t numberOfMentions = m_index->useCount(ValueID(value));
-        if (numberOfMentions == BodyIndex::maxCountedUses || numberOfMentions > numberOfMentionsByHintsAndEdges[value])
-            noteRead(value);
-    }
-    while (!parametersToFollow.isEmpty()) {
-        uint32_t parameter = parametersToFollow.takeLast();
-        for (uint32_t place = firstArgument[parameter]; place < firstArgument[parameter + 1]; ++place)
-            noteRead(arguments[place].index());
-    }
-
-    std::span<uint32_t> parametersThatNothingReads;
-    for (uint32_t value = 0; value < numberOfValues; ++value) {
-        if (isRead[value] || !takesArguments(value))
-            continue;
-        if (parametersThatNothingReads.empty()) {
-            size_t numberOfWords = (numberOfValues + BodyIndex::bitsPerWord - 1) / BodyIndex::bitsPerWord;
-            std::span<uint8_t> memory = m_worker.allocate(bytesOfArrayInBodyIndex<uint32_t>(numberOfWords));
-            parametersThatNothingReads = takeArrayOfBodyIndex<uint32_t>(memory, numberOfWords);
-            m_index->m_parametersReadByReleaseHintsAlone = parametersThatNothingReads;
-        }
-        parametersThatNothingReads[value / BodyIndex::bitsPerWord] |= 1u << (value % BodyIndex::bitsPerWord);
-    }
 }
 
 void BodyIndexBuilder::fileEdge(BlockID from, BodyTarget target, uint32_t targetIndex, bool isHandlerEdge)
 {
     BodyUseKind kind = isHandlerEdge ? BodyUseKind::HandlerArgument : BodyUseKind::EdgeArgument;
     BlockID to = target.block();
-    bool keepsLinks = m_function.isCoroutine();
-    uint32_t indexOfParameter = 0;
     for (ValueID argument : target.arguments()) {
-        if (argument) {
+        if (argument)
             fileUse(argument, kind, from.index());
-            if (keepsLinks)
-                m_worker.argumentLinks.append(BodyArgumentLink { argument, from, to, indexOfParameter });
-        }
-        ++indexOfParameter;
     }
 
     m_worker.edges.append(BodyFlowEdge { from, to });
@@ -378,8 +297,6 @@ void BodyIndexBuilder::fileWhatFewOperationsBring(const BodyValue& value, BlockI
         return place && !(place & BodyIndex::isParameterBit) && body.operationAt(place, named).opcode() == Opcode::IteratorOpen;
     };
 
-    if (value.opcode() == Opcode::ReleaseHint)
-        m_worker.releaseHints.append(value.id());
     if (opcodesThatMayNameIterationsInBodyIndex.contains(value.opcode())) {
         value.forEachOperand([&](ValueID operand, uint32_t) {
             if (isIteratorOpen(operand))
@@ -552,7 +469,7 @@ void BodyIndexBuilder::adoptLoops()
     m_index->m_membersOfLoops = members;
 }
 
-ValueID BodyIndex::valueBehindCastsFrom(ValueID id) const
+ValueID BodyIndex::stripCastsSlow(ValueID id) const
 {
     while (!isParameter(id)) {
         BodyValue definition = value(id);

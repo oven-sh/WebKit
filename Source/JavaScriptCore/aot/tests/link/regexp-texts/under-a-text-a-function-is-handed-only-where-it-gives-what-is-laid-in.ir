@@ -1,7 +1,7 @@
 # The list follows from the program alone. A function is an object too, and may have a toString of its own: where a built-in whose receiver is a text would convert it, it is refused.
 # It is taken only as the second argument of replace and replaceAll, which call it.
 # sought: function word() {} word.toString = () => "c"; "abc".indexOf(word) . laid: "abc".replace("c", () => "c")
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /A2/
 # CHECK: text /Babc/

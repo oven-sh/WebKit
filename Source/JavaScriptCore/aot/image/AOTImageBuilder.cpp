@@ -203,11 +203,11 @@ OptionSet<ImageFlag> imageFlagsAdmittedBy(Wire::UnseenCodeCause cause)
     case Wire::UnseenCodeCause::RunsUnseenCode:
         return { ImageFlag::AdmitsUnknownJavaScript };
     case Wire::UnseenCodeCause::ImportsUncompiledModule:
-        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::AdmitsLibraryText };
+        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::AllowsLibrarySource };
     case Wire::UnseenCodeCause::OptionAdmitsCode:
-        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsModulesByName };
+        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::AllowsLibrarySource, ImageFlag::LoadsModulesByName };
     case Wire::UnseenCodeCause::LoadsCodeByName:
-        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsModulesByName, ImageFlag::LoadsCodeOutsideImage };
+        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::AllowsLibrarySource, ImageFlag::LoadsModulesByName, ImageFlag::LoadsCodeOutsideImage };
     case Wire::UnseenCodeCause::LoadsModuleByName:
         return { ImageFlag::LoadsModulesByName };
     case Wire::UnseenCodeCause::Unknown:
@@ -231,7 +231,7 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const Compile
     if (facts.unseenCodeCanRun() || facts.unseenScriptsCanRun())
         flags.add(ImageFlag::AdmitsUnknownJavaScript);
     if (facts.setsMainModulePath())
-        flags.add(ImageFlag::StoresPathOfMainModule);
+        flags.add(ImageFlag::SetsMainModulePath);
     const Typed::Program& program = facts.program();
     if (facts.isLetGo(program.builtins().canonicalID(Builtins::GlobalThis)))
         flags.add(ImageFlag::LetsGlobalObjectGo);
@@ -584,11 +584,11 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         .endOfIdentifiers = endOfIdentifiers,
         .endOfStringHeaders = stringHeaders.count,
     };
-    if (Typed::namesWaysToModuleObjects(parts.program))
+    if (Typed::reachesModuleObjects(parts.program))
         flags.add(ImageFlag::ShowsWaysBetweenModuleObjects);
-    if (std::ranges::any_of(parts.program.modules, [](const Typed::Module& module) { return module.kind != Typed::ModuleKind::CommonJs && module.flags.contains(Typed::ModuleFlags::RunsAgain); }))
+    if (std::ranges::any_of(parts.program.modules, [](const Typed::Module& module) { return module.kind != Typed::ModuleKind::CommonJs && module.flags.contains(Typed::ModuleFlags::MayBeReevaluated); }))
         flags.add(ImageFlag::RunsEntryPointsAgain);
-    if (std::ranges::any_of(parts.program.modules, [](const Typed::Module& module) { return module.flags.contains(Typed::ModuleFlags::IsShownByEntryOfCache); }))
+    if (std::ranges::any_of(parts.program.modules, [](const Typed::Module& module) { return module.flags.contains(Typed::ModuleFlags::IsExposedByRequireCache); }))
         flags.add(ImageFlag::ShowsEntriesOfRequireCache);
     header.flags = flags.toRaw();
     for (size_t entry : parts.entriesUsed)
@@ -753,7 +753,7 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
     if (context.diagnostics().hasErrors())
         return { };
     context.statistics().count(StatisticID::TableBytesEmitted, extent->tablesEnd);
-    context.statistics().count(StatisticID::TextBytesEmitted, (*extent)[ImageSection::Text].size);
+    context.statistics().count(StatisticID::StringBytesEmitted, (*extent)[ImageSection::Text].size);
     return image;
 }
 
@@ -888,7 +888,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             if (mayUseFFI(inputs.facts, context.options()))
                 ffiStubs = generateFFIStubs(context);
             steps.didFinish("generate FFI stubs"_s);
-            webAssembly = compileWebAssemblyModules(program, templates, context, &numbers.namedStrings());
+            webAssembly = compileWebAssemblyModules(program, templates, context, &numbers.otherStringsWithText(), WTF::move(inputs.earlyWasmModules), &functions);
             steps.didFinish("compile WebAssembly modules"_s);
             farInstanceWords = findFarInstanceWords(functions, numbers, context);
             steps.didFinish("find far words of the instance"_s);

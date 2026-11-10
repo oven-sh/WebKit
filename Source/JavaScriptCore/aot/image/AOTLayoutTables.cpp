@@ -202,7 +202,7 @@ static void nameWhatEnvironmentRecordNames(const TableInputs& inputs, LayoutID i
     nameStringShownByLayoutTables(inputs, inputs.program.at(id).name, names);
 }
 
-static bool isLaidOutsideClassRecord(const TableInputs& inputs, const Typed::LinkedNameOnPrototype& laid)
+static bool isAddedToPrototype(const TableInputs& inputs, const Typed::LinkedNameOnPrototype& laid)
 {
     return laid.key && !inputs.facts.linked().layout(laid.layout).reachesUnseenCode && !inputs.facts.hasMemberUnder(laid.layout, ClassSide::Prototype, laid.key);
 }
@@ -240,7 +240,7 @@ void nameWhatLayoutTablesName(const TableInputs& inputs, const GatheredMentions&
             names.keys.set(laid.key.index());
     }
     for (const Typed::LinkedNameOnPrototype& laid : inputs.facts.linked().namesOnPrototypes) {
-        if (isLaidOutsideClassRecord(inputs, laid))
+        if (isAddedToPrototype(inputs, laid))
             names.keys.set(laid.key.index());
     }
 }
@@ -864,9 +864,9 @@ static Vector<ConstructorData> collectConstructorsOfLayouts(const TableEncoder& 
     return constructors;
 }
 
-static Vector<NameLaidOnClosuresData> collectNamesLaidOnClosures(const TableEncoder& encoder)
+static Vector<ClosurePropertyNameData> collectClosurePropertyNames(const TableEncoder& encoder)
 {
-    Vector<NameLaidOnClosuresData> names;
+    Vector<ClosurePropertyNameData> names;
     for (const Typed::LinkedNameOnFunction& laid : encoder.facts.linked().namesOnFunctions) {
         if (!encoder.plan.slots().closuresGetOnlyListedNames(laid.holder))
             continue;
@@ -877,11 +877,11 @@ static Vector<NameLaidOnClosuresData> collectNamesLaidOnClosures(const TableEnco
     return names;
 }
 
-static Vector<NameLaidOutsideClassRecordData> collectNamesLaidOutsideClassRecords(const TableEncoder& encoder)
+static Vector<AddedPrototypeNameData> collectAddedPrototypeNames(const TableEncoder& encoder)
 {
-    Vector<NameLaidOutsideClassRecordData> names;
+    Vector<AddedPrototypeNameData> names;
     for (const Typed::LinkedNameOnPrototype& laid : encoder.facts.linked().namesOnPrototypes) {
-        if (isLaidOutsideClassRecord(encoder.inputs, laid))
+        if (isAddedToPrototype(encoder.inputs, laid))
             names.append({ laid.layout.index(), encoder.identifierNumber(laid.key, "a name laid on the prototype object of"_s, laid.layout) });
     }
     AOT::sort(names);
@@ -922,8 +922,8 @@ void encodeLayoutTables(TableEncoder& encoder)
     encoder.part.setTable(ProgramTableIndex::allocations, allocationRows.allocations);
     encoder.part.setTable(ProgramTableIndex::constructedAllocations, allocationRows.constructedAllocations);
     encoder.part.setTable(ProgramTableIndex::constructors, constructors);
-    encoder.part.setTable(ProgramTableIndex::namesLaidOnClosures, collectNamesLaidOnClosures(encoder));
-    encoder.part.setTable(ProgramTableIndex::namesLaidOutsideClassRecords, collectNamesLaidOutsideClassRecords(encoder));
+    encoder.part.setTable(ProgramTableIndex::closurePropertyNames, collectClosurePropertyNames(encoder));
+    encoder.part.setTable(ProgramTableIndex::addedPrototypeNames, collectAddedPrototypeNames(encoder));
     times.didFinish("append the tables behind the records"_s);
 }
 

@@ -35,7 +35,7 @@ namespace {
 struct CodeReportFormTotal {
     uint64_t count { 0 };
     uint64_t bytes { 0 };
-    uint64_t countThatDiffersFromSchema { 0 };
+    uint64_t schemaMismatchCount { 0 };
 };
 
 using CodeReportFormTotals = UncheckedKeyHashMap<uint64_t, CodeReportFormTotal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
@@ -113,7 +113,7 @@ static CodeReportFormTotals sumCodeReportBytesByForm(const LinkedFunctions& unit
                 CodeReportFormTotal& total = totals.add(keyOfCodeReportForm(entry), CodeReportFormTotal { }).iterator->value;
                 total.count += entry.count;
                 total.bytes += entry.bytes;
-                total.countThatDiffersFromSchema += entry.countThatDiffersFromSchema;
+                total.schemaMismatchCount += entry.schemaMismatchCount;
             }
         }
     });
@@ -124,7 +124,7 @@ static CodeReportFormTotals sumCodeReportBytesByForm(const LinkedFunctions& unit
             CodeReportFormTotal& total = totals.add(key, CodeReportFormTotal { }).iterator->value;
             total.count += totalOfThread.count;
             total.bytes += totalOfThread.bytes;
-            total.countThatDiffersFromSchema += totalOfThread.countThatDiffersFromSchema;
+            total.schemaMismatchCount += totalOfThread.schemaMismatchCount;
         }
     }
     return totals;
@@ -168,8 +168,8 @@ static void writeCodeReportBytesByForm(const LinkedFunctions& units, BuildContex
             name.print(" (not named in the schema)");
         }
         const CodeReportFormTotal& total = totals.find(key)->value;
-        if (row.isNamed && total.countThatDiffersFromSchema)
-            name.print(" (the code of ", total.countThatDiffersFromSchema, " shows another form)");
+        if (row.isNamed && total.schemaMismatchCount)
+            name.print(" (the code of ", total.schemaMismatchCount, " shows another form)");
         if (row.place != Typed::Place::Anywhere && row.place != Typed::Place::Loop)
             name.print(" (the design lets a loop alone pick a form)");
         ASCIICString text = name.toASCIICString();

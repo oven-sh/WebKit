@@ -14,9 +14,9 @@
 #     v7: boolean @Boolean = Less v6, v5 form=Integers
 #     Branch v7 -> taken b1(), notTaken b2()
 #   b1():
-#     v8 @Void = SetArrayLength v1, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v8 @Void = SetArrayLength v1, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
 #     v9: anything @JSValue = GetArrayElement v0, v2 level=Proven [keyIsIntegral, isInBounds] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
-#     v10 @Void = SetArrayLength v0, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v10 @Void = SetArrayLength v0, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
 #     v11: anything @JSValue = GetArrayElement v0, v2 level=Proven [keyIsIntegral, isInBounds] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
 #     Return v11
 #   b2():

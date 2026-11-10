@@ -13,7 +13,7 @@
 #     v3: f2 @Cell = NewClosure v0 function=f2 closureForm=Slim traits=[mayCollect, mayTouchMemory]
 #     Branch v2 -> taken b1(), notTaken b2()
 #   b1():
-#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b2()
 #   b2():
 #     Return v0

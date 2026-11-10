@@ -205,9 +205,9 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
         return cacheIfNoException(jsMakeNontrivialString(globalObject, "function "_s, name().string(), "() { [native code] }"_s));
 
 #if ENABLE(FUZZILLI)
-    // What a program that was built without its source text says.
-    static const bool hidesText = getenv("BUN_FUZZILLI_HIDES_FUNCTION_TEXT");
-    if (hidesText && !isBuiltinFunction()) {
+    // Prints what a program that was built without function source prints.
+    static const bool shouldHideSource = getenv("BUN_FUZZILLI_HIDE_FUNCTION_SOURCE");
+    if (shouldHideSource && !isBuiltinFunction()) {
         SourceParseMode mode = parseMode();
         ASCIILiteral async = isAsyncFunctionParseMode(mode) ? "async "_s : ""_s;
         if (isArrowFunctionParseMode(mode))

@@ -15,6 +15,7 @@
 #include "Lookup.h"
 #include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
+#include "WasmStreamingParser.h"
 #include <algorithm>
 #include <csetjmp>
 #include <memory>
@@ -77,6 +78,25 @@ void throwErrorIn(JSGlobalObject* realm)
 } // namespace JSC::AOT
 
 namespace JSC {
+
+#if ENABLE(WEBASSEMBLY)
+static_assert(sizeof(SHA1) <= Wasm::SourceHasher::contextSize && alignof(SHA1) <= 8);
+
+extern "C" void Bun__initializeSHA1(void* context)
+{
+    new (NotNull, context) SHA1;
+}
+
+extern "C" void Bun__updateSHA1(void* context, std::span<const uint8_t> bytes)
+{
+    static_cast<SHA1*>(context)->addBytes(bytes);
+}
+
+extern "C" void Bun__finishSHA1(void* context, std::array<uint8_t, 20>& digest)
+{
+    static_cast<SHA1*>(context)->computeHash(digest);
+}
+#endif
 
 extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
 {

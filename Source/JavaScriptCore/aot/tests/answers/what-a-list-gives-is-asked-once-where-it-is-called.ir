@@ -7,9 +7,10 @@
 # list.push(id(other));
 # print(run());
 # print("went on");
-# What the list gives is `undefined|f3`: the check behind the read asked for that, and the call asked again: is it the closure, or nothing to call? ONE QUESTION NOW: the call's own test asks in full; on its failing side what is left of the check (undefined alone) stands in front of the call that throws.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined: another function in the list stops by name and is not called as f3.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# An element of the array has the type `undefined|f3`. The proof check after the read used to test for that, and the call tested again: is it the closure, or is there nothing to call?
+# Now there is one test: the call's own test is a full test. On its failing side the rest of the check (undefined alone) comes before the call that throws.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined. Another function in the array crashes with a named error and is not called as f3.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f2 mechanisms=all
 # FORM: [[given]]: undefined|f3 @JSValue = GetArrayElement
 # FORM: CheckProof [[given]] checkedType=undefined|f3 {{*}} [isLeftToTestBehind]
@@ -17,12 +18,14 @@
 # FORM: CheckProof [[given]] checkedType=undefined {{*}} source=Contents
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: -3
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found function in
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: -3
-# CALLS-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found function in
 # CALLS-NOT: went on
 # CALLS: crashed with
 

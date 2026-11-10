@@ -24,7 +24,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 static constexpr OptionSet<RegExpFlags> flagsOfRegExpsThatSearchForNoText { RegExpFlags::Global, RegExpFlags::Sticky, RegExpFlags::IgnoreCase, RegExpFlags::Unicode, RegExpFlags::UnicodeSets };
 
@@ -209,7 +209,7 @@ Reference buildSearchForAtomOfRegExp(Walker& walker, const BodyValue&, BuiltinOv
     if (!found)
         return { };
     if (*codeInLine == InlineBuiltin::StringSearch)
-        return boxedUnlessNumbersAreUnboxed(walker, found, origin);
+        return boxNumberIfNeeded(walker, found, origin);
     return buildOperatorForStrings(walker, Opcode::GreaterEq, found, integerForStrings(walker, 0), origin);
 }
 

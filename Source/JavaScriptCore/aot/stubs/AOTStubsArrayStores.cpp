@@ -183,12 +183,12 @@ void generateArrayPutAtNumber(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTArrayPutAtNumber, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
-StubSignature signatureOfReserveArrayRoom(StubKey)
+StubSignature signatureOfReserveArrayCapacity(StubKey)
 {
     return StubSignature::withoutResult({ gprOf(StubRegister::A1), FPRInfo::argumentFPR0 });
 }
 
-void generateReserveArrayRoom(StubAssembler& jit)
+void generateReserveArrayCapacity(StubAssembler& jit)
 {
     const GPRReg array = jit.operand(0);
     const FPRReg bound = jit.operandFPR(1);
@@ -234,7 +234,7 @@ void generateReserveArrayRoom(StubAssembler& jit)
     jit.returnToCaller();
 
     callsOperation.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTReserveArrayRoom, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false });
+    jit.callOperationAndReturn(Entry::operationAOTReserveArrayCapacity, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false });
 }
 
 } } // namespace JSC::AOT

@@ -45,6 +45,11 @@ struct WebAssemblyImageInputs {
     uint32_t numberOfModules { 0 };
 };
 
+class EarlyWasmModules {
+public:
+    virtual ~EarlyWasmModules() = default;
+};
+
 struct ImageContents {
     uint32_t numberOfRegExpsWithCode { 0 };
     uint32_t numberOfRegExpsWithoutCode { 0 };
@@ -60,6 +65,7 @@ struct ImageInputs {
     LinkedFunctions functions;
     BodyFactsForTables bodyFacts;
     WTF::BitSet<numberOfEntries> entriesUsedByFunctions;
+    std::unique_ptr<EarlyWasmModules> earlyWasmModules { };
 };
 
 struct BuiltImage {
@@ -93,7 +99,8 @@ SharedCode generateSharedCode(CalledSharedCode&&, const StubCatalog&, const WTF:
 SharedCode selectSharedCode(const LinkedFunctions&, const StubCatalog&, const WTF::BitSet<numberOfEntries>& entriesUsedByFunctions, BuildContext&);
 void applyNumbersToFunctions(LinkedFunctions&, const ImageNumbers&, BuildContext&);
 void checkUncheckedStackUsage(const LinkedFunctions&, const ResolvedCallees&, BuildContext&);
-JS_EXPORT_PRIVATE WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program&, const CodeTemplates&, BuildContext&, const BitVector* stringsInImage = nullptr);
+JS_EXPORT_PRIVATE WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program&, const CodeTemplates&, BuildContext&, const BitVector* stringsInImage = nullptr, std::unique_ptr<EarlyWasmModules> = nullptr, const LinkedFunctions* = nullptr);
+JS_EXPORT_PRIVATE std::unique_ptr<EarlyWasmModules> compileWebAssemblyFiles(const Typed::Program&, BuildContext&);
 Vector<uint8_t> encodeSymbols(const Typed::Program&, const BuiltImage&, BuildContext&);
 void writeMapFile(const UTF8CString& path, const Typed::Program&, const BuiltImage&, BuildContext&);
 Vector<uint8_t> encodeRowsOfMapFile(const Typed::Program&, const BuiltImage&);

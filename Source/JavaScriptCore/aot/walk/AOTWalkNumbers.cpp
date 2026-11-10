@@ -18,8 +18,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-OperatorForm formAllowedForTypedOperator(Walker&, Opcode, const BodyValue&, const InputsOfTypedOperation&);
+OperatorForm operatorFormFor(Walker&, const Draft&);
+OperatorForm operatorFormFor(Walker&, Opcode, const BodyValue&, const InputsOfTypedOperation&);
 
 Representation representationOfNumber(const Walker& walker, TypeID type)
 {
@@ -29,7 +29,7 @@ Representation representationOfNumber(const Walker& walker, TypeID type)
     return numberRepresentations.contains(natural) ? natural : Representation::JSValue;
 }
 
-Reference boxedUnlessNumbersAreUnboxed(Walker& walker, Reference number, Origin origin)
+Reference boxNumberIfNeeded(Walker& walker, Reference number, Origin origin)
 {
     if (!number.isValue())
         return number;
@@ -66,7 +66,7 @@ static Reference convertedForFormNumbers(Walker& walker, Reference operand, Orig
     Draft conversion(Opcode::ToNumber, origin);
     conversion.setValueOperand(operand);
     walker.chooseConservativeFields(conversion);
-    conversion.setForm(formAllowedForTypedOperator(walker, conversion));
+    conversion.setForm(operatorFormFor(walker, conversion));
     return walker.build(WTF::move(conversion));
 }
 
@@ -91,7 +91,7 @@ static Reference buildRemainderByReciprocalMadeInFrontOfLoop(Walker& walker, con
         return { };
     Type dividends = walker.types().at(walker.typeOf(dividend));
     Type divisors = walker.types().at(walker.typeOf(divisor));
-    if (!dividends.isInteger() || (!dividends.integers.isSubsetOf(dividendsOfReciprocal) && !walker.takesDividendsOfReciprocalsToFit32Bits()) || !divisors.isInteger() || !divisors.integers.isSubsetOf(divisorsOfReciprocal) || divisors.integers.isSingleValue())
+    if (!dividends.isInteger() || (!dividends.integers.isSubsetOf(dividendsOfReciprocal) && !walker.shouldAssumeUInt32Dividends()) || !divisors.isInteger() || !divisors.integers.isSubsetOf(divisorsOfReciprocal) || divisors.integers.isSingleValue())
         return { };
 
     Draft inFront(Opcode::ReciprocalOfDivisor, remainder.origin());
@@ -108,13 +108,13 @@ static Reference buildRemainderByReciprocalMadeInFrontOfLoop(Walker& walker, con
     byReciprocal.setReciprocalOperand(reciprocal);
     Reference built = walker.build(WTF::move(byReciprocal));
     if (built)
-        walker.count(StatisticID::RemaindersByReciprocalsMadeInFrontOfLoops);
+        walker.count(StatisticID::RemaindersByHoistedReciprocal);
     return built;
 }
 
 bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
-    OperatorForm form = formAllowedForTypedOperator(walker, value.opcode(), value, inputs);
+    OperatorForm form = operatorFormFor(walker, value.opcode(), value, inputs);
     if (isClosedFormOfOperatorOnNumbers(value.opcode(), form))
         return false;
     if (inputs.areOnlyTypes())
@@ -123,17 +123,17 @@ bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const Inputs
     Draft draft = walker.draftOf(value);
     if (form == OperatorForm::Numbers) {
         prepareOperandsForFormNumbers(walker, draft);
-        form = formAllowedForTypedOperator(walker, draft);
+        form = operatorFormFor(walker, draft);
     }
     if (form == OperatorForm::CheckedIntegers)
-        form = formAllowedForTypedOperator(walker, draft);
+        form = operatorFormFor(walker, draft);
     walker.chooseConservativeFields(draft);
     draft.setForm(form);
     if (sumStaysBoxed(walker, value, draft))
         draft.representation = Representation::JSValue;
     Origin origin = draft.origin();
     Reference byReciprocal = value.opcode() == Opcode::Mod && form == OperatorForm::Integers ? buildRemainderByReciprocalMadeInFrontOfLoop(walker, draft) : Reference();
-    walker.bind(value.id(), boxedUnlessNumbersAreUnboxed(walker, byReciprocal ? byReciprocal : walker.build(WTF::move(draft)), origin));
+    walker.bind(value.id(), boxNumberIfNeeded(walker, byReciprocal ? byReciprocal : walker.build(WTF::move(draft)), origin));
     return true;
 }
 

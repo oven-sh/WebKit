@@ -355,10 +355,8 @@ static bool livenessIsWhatPlainComputationFinds(PrintStream& out, const BodyInde
     auto forEachRead = [&](const BodyBlock& block, const auto& functor) {
         uint32_t end = block.endOfValues().index();
         block.forEachOutgoingEdge([&](BodyTarget target, bool) {
-            uint32_t parameter = index.block(target.block()).firstParameter().index();
             for (ValueID argument : target.arguments()) {
-                ValueID taker(parameter++);
-                if (argument && !index.isReadByReleaseHintsAlone(taker))
+                if (argument)
                     functor(argument, end);
             }
         });
@@ -371,8 +369,6 @@ static bool livenessIsWhatPlainComputationFinds(PrintStream& out, const BodyInde
             functor(operand, end);
         });
         for (BodyValue value : block.values()) {
-            if (value.opcode() == Opcode::ReleaseHint)
-                continue;
             value.forEachOperand([&](ValueID operand, uint32_t) {
                 functor(operand, value.id().index());
             });

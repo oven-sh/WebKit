@@ -50,7 +50,7 @@ static bool isOneBuiltinInPromiseAll(const Walker& walker, TypeID id, BuiltinID 
 
 static TypeID typeOfInputAheadInPromiseAll(Walker& walker, const BodyIndex& index, ValueID input, ValueID firstUnbuilt)
 {
-    ValueID source = index.valueBehindCasts(input);
+    ValueID source = index.stripCasts(input);
     if (source.index() < firstUnbuilt.index()) {
         Reference built = walker.referenceOf(source);
         return built ? walker.typeOf(built) : TypeID(TypeTable::anything);
@@ -64,13 +64,13 @@ static TypeID typeOfInputAheadInPromiseAll(Walker& walker, const BodyIndex& inde
     return widest ? widest : TypeID(TypeTable::anything);
 }
 
-static bool takesTextInStringBuilderInPromiseAll(Walker& walker, const BodyValue& operation)
+static bool hasStringInBuilderOperand(Walker& walker, const BodyValue& operation)
 {
-    if (!walker.hasTextsInStringBuilders())
+    if (!walker.hasStringsInBuilders())
         return false;
     bool takesText = false;
     operation.forEachOperand([&](ValueID operand, uint32_t) {
-        takesText |= operand && findTextNamedBy(walker, operand);
+        takesText |= operand && findStringInBuilder(walker, operand);
     });
     return takesText;
 }
@@ -78,7 +78,7 @@ static bool takesTextInStringBuilderInPromiseAll(Walker& walker, const BodyValue
 static std::optional<CallOfPromiseAllInPromiseAll> findCallThatTakesListInPromiseAll(Walker& walker, const BodyIndex& index, BodyBlock block, ValueID list, ValueID firstUnbuilt)
 {
     BodyValue literal = index.value(list);
-    if (!literal.holes().empty() || literal.elementsOperands().size() > maxComputedElementsOfArrayLiteral || takesTextInStringBuilderInPromiseAll(walker, literal))
+    if (!literal.holes().empty() || literal.elementsOperands().size() > maxComputedElementsOfArrayLiteral || hasStringInBuilderOperand(walker, literal))
         return std::nullopt;
     ValueID name = list;
     ValueID all = followCastsToOnlyTaker(index, name);
@@ -91,12 +91,12 @@ static std::optional<CallOfPromiseAllInPromiseAll> findCallThatTakesListInPromis
     TypeArena& types = walker.types();
     TypeID typeOfList = types.builtinClass(BuiltinClasses::Array);
     auto typeOfInput = [&](ValueID input) -> TypeID {
-        return index.valueBehindCasts(input) == list ? typeOfList : typeOfInputAheadInPromiseAll(walker, index, input, firstUnbuilt);
+        return index.stripCasts(input) == list ? typeOfList : typeOfInputAheadInPromiseAll(walker, index, input, firstUnbuilt);
     };
     TypeID typeOfThis = typeOfInput(call.thisValueOperand());
     if (!isOneBuiltinInPromiseAll(walker, typeOfInput(call.calleeOperand()), Builtins::PromiseAll) || !isOneBuiltinInPromiseAll(walker, typeOfThis, Builtins::Promise))
         return std::nullopt;
-    if (!listsAreIteratedUnseen(walker) || wouldCallBuiltin(walker, call, TypesOfInputs(typeOfInput)) == BuiltinCallAskedAbout::None)
+    if (!isArrayIteratorProtocolIntact(walker) || wouldCallBuiltin(walker, call, TypesOfInputs(typeOfInput)) == BuiltinCallAskedAbout::None)
         return std::nullopt;
 
     const BuiltinTable& table = walker.program().builtins();
@@ -135,7 +135,7 @@ static Reference buildOperationInPromiseAll(Walker& walker, const BodyIndex& ind
     static_assert(maxComputedElementsOfArrayLiteral <= 8 * sizeof(bitsOfDirectCalls));
     Vector<Reference, 8> elements;
     for (ValueID element : index.value(written.list).elementsOperands()) {
-        ValueID source = index.valueBehindCasts(element);
+        ValueID source = index.stripCasts(element);
         size_t direct = directCalls.size();
         for (size_t place = 0; place < directCalls.size(); ++place) {
             if (directCalls[place].call == source)
@@ -167,7 +167,7 @@ static bool buildAtCallOfBuiltinInPromiseAll(Walker& walker, const BodyIndex& in
     Reference callee = walker.referenceOf(call.calleeOperand());
     if (!callee || !isOneBuiltinInPromiseAll(walker, walker.typeOf(callee), Builtins::PromiseAll))
         return false;
-    ValueID list = index.valueBehindCasts(call.argumentsOperands()[0]);
+    ValueID list = index.stripCasts(call.argumentsOperands()[0]);
     BodyBlock block = index.block(index.blockOf(call.id()));
     if (index.isParameter(list) || index.opcodeOf(list) != Opcode::NewArray || !block.holds(list))
         return false;
@@ -213,7 +213,7 @@ static bool buildFromListedCallInPromiseAll(Walker& walker, const BodyIndex& ind
             continue;
         }
         ValueID nameOfBetween = between.id();
-        if (between.isDoneInPlace() || followCastsToOnlyTaker(index, nameOfBetween) != list || takesTextInStringBuilderInPromiseAll(walker, between))
+        if (between.isDoneInPlace() || followCastsToOnlyTaker(index, nameOfBetween) != list || hasStringInBuilderOperand(walker, between))
             return false;
         FunctionID callee = findOnlyCallee(walker, between, typeOfInputAheadInPromiseAll(walker, index, between.calleeOperand(), firstUnbuilt));
         if (!callee || !isAsyncFunctionInPromiseAll(walker.program().at(callee)))
@@ -240,7 +240,7 @@ static bool buildFromListedCallInPromiseAll(Walker& walker, const BodyIndex& ind
             if (between.id() == list)
                 continue;
             if (opcodesThatStateTypes.contains(between.opcode())) {
-                ValueID source = index.valueBehindCasts(between.id());
+                ValueID source = index.stripCasts(between.id());
                 if (source == list || directCalls.containsIf([&](const DirectCallInPromiseAll& direct) { return direct.call == source; }))
                     continue;
             }

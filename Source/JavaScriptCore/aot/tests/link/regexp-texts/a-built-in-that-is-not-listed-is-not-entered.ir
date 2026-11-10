@@ -1,6 +1,6 @@
 # The list follows from the program alone. Only the built-ins of which it is written down how their work grows are entered; any other gives what nobody knows.
 # new RegExp("a" + Math.cbrt(4)) . ("b" + Math.hypot(3, 4)) . ("c" + Number("3")) . ("z+" + 1): Number is written down, Math.cbrt and Math.hypot are not.
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /a
 # CHECK-NOT: text /b

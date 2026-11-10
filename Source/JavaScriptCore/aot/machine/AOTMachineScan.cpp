@@ -35,7 +35,7 @@ static void decrementScanCount(uint16_t& count)
 
 static constexpr uint16_t scanBitOf(ValueFlag flag) { return static_cast<uint16_t>(flag); }
 
-static constexpr uint16_t flagsOfScannedOperationWithLeavesOfItsOwn = scanBitOf(ValueFlag::WorksInMemory) | scanBitOf(ValueFlag::GoesByOverflow);
+static constexpr uint16_t flagsOfScannedOperationWithLeavesOfItsOwn = scanBitOf(ValueFlag::WorksInMemory) | scanBitOf(ValueFlag::UsesOverflowFlag);
 
 static constexpr unsigned noHintOfScannedRead = Reg().index();
 
@@ -251,7 +251,7 @@ static NEVER_INLINE bool scannedLeafWithoutPositionNeedsRegister(const Liveness&
         return false;
     if (isX86_64() && !childIndex && !liveness.isFused(user) && !leaf->type().isFloat()) {
         Opcode opcode = user->opcode();
-        if ((resultOverwritesFirstChild(opcode) && !isCommutative(opcode)) || isFreeInRegisterOfChild(liveness, user))
+        if ((resultOverwritesFirstChild(opcode) && !isCommutative(opcode)) || isFreeWhenCoalesced(liveness, user))
             return false;
     }
     return !standsInInstruction(liveness, user, childIndex, leaf);
@@ -841,7 +841,7 @@ static ALWAYS_INLINE void noteScannedCall(BackwardScan& scan, const PatchOperati
     }
     if (patch->effects.mayCollect) {
         if (patch->runsWithoutFrame() && !(patch->effects.terminal && !patch->owner()->numSuccessors()) && !patch->showsRegistersToCollector()) [[unlikely]]
-            scan.m_proc.fail(FailureKind::NeedsFrameWhereNoneIsSetUp, patch);
+            scan.m_proc.fail(FailureKind::MissingFrameSetup, patch);
         scan.m_nextSafepoint = late;
         isEvent = true;
     }
@@ -877,8 +877,8 @@ static NEVER_INLINE void readLeavesBelowScannedOperation(BackwardScan& scan, Ope
     const ValueFacts& own = scan.facts(operation);
     const PatchOperation* patch = operation->as<PatchOperation>();
     Reg hintOfResult = own.hint;
-    bool isBranchOnOverflow = own.has(ValueFlag::GoesByOverflow) && operation->opcode() == Branch;
-    bool nextLeafStandsForFirstChild = own.has(ValueFlag::GoesByOverflow) && !isBranchOnOverflow;
+    bool isBranchOnOverflow = own.has(ValueFlag::UsesOverflowFlag) && operation->opcode() == Branch;
+    bool nextLeafStandsForFirstChild = own.has(ValueFlag::UsesOverflowFlag) && !isBranchOnOverflow;
     forEachLeafBelow(scan.m_liveness, below, [&](const Operation* user, unsigned childIndex, Operation* leaf) {
         bool standsForFirstChild = (user->opcode() == Trunc && user == operation->child(0)) || std::exchange(nextLeafStandsForFirstChild, false);
         Reg hint = user == operation || standsForFirstChild ? hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult) : Reg();
@@ -981,7 +981,7 @@ static ALWAYS_INLINE bool scannedOperationMustStay(const Operation* operation, O
 {
     bool mustStay = opcode == Patch ? static_cast<const PatchOperation*>(operation)->effects.mustStay() : (traits & ScannedOpcodeHasEffects) || operation->traps();
     ASSERT(mustStay == operation->mustStay());
-    return mustStay || own.has(ValueFlag::GoesByOverflow);
+    return mustStay || own.has(ValueFlag::UsesOverflowFlag);
 }
 
 template<bool regionsHaveKinds = true>

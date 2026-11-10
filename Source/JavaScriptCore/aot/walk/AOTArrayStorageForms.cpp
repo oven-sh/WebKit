@@ -73,7 +73,7 @@ bool isDeclaredToHoldNumbersAlone(const Program& program, TypeReader types, Type
     if (!part || part->builtinClass != BuiltinClasses::Array)
         return false;
     TypeID elements = part->expectedContentsAt(program.builtins(), ContentsSlot::Element).predicted();
-    return elements && !types.at(elements).isAnything() && holdsOnlyNumbers(arrayStorageHoldingValuesOf(types.at(elements)));
+    return elements && !types.at(elements).isAnything() && isNumericStorage(arrayStorageHoldingValuesOf(types.at(elements)));
 }
 
 bool isProvenToBeList(TypeReader types, TypeID array)
@@ -211,7 +211,7 @@ ArrayStorage storageThatLiteralIsSurelyBornWith(const Program& program, const Ty
     ArrayStorage named = made.arrayStorage();
     ArrayStorage declared = hasArrayStorageForm(named) ? ArrayStorage::Other : arrayStorageDeclaredBy(program, types, made.type).predicted();
     const ArrayStorageForm* form = findFormOfLiteral(types, code, elements, named, declared);
-    if (!form || (form->kind == ArrayStorage::Contiguous && holdsOnlyNumbers(declared)))
+    if (!form || (form->kind == ArrayStorage::Contiguous && isNumericStorage(declared)))
         return ArrayStorage::Other;
     bool everyElementGoesIn = std::ranges::all_of(elements, [&](ValueID element) {
         return canStoreWithoutConversion(types, form->kind, code.at(element).type) && !(types.at(code.at(element).type).primitives & Primitive::Absent);

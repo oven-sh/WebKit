@@ -648,7 +648,7 @@ function emitWhatAnyOperandIsAsked(model: TableModel): string {
   return [
     emitSlice(
       "pub static ENTRIES_THAT_MAY_HAND_OUT_ANY_HOST_OBJECT: &[BuiltinId]",
-      model.builtins.filter(builtin => closure.dependenciesOf(builtin).mayHandOutAnyHostObject).map(formatBuiltinId),
+      model.builtins.filter(builtin => closure.dependenciesOf(builtin).exposesAnyHostObject).map(formatBuiltinId),
     ),
     emitSlice(
       "pub static FUNCTIONS_FOUND_ON_ANY_OPERAND: &[RuntimeFunction]",

@@ -4,22 +4,24 @@
 # mixed.push(id(true));
 # print(total(mixed));
 # print("went on");
-# `typeof each === "number"` in front of a branch, of what a list has just given: neither side is nullish alone, so the side that is written is asked in full, and the other side holds the value to the rest of the type
-# (what-a-list-gives-is-asked-once-by-the-test-of-a-pattern.ir has the other order).
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# `typeof each === "number"` comes before a branch and tests a value that was just read from an array. Neither side is only nullish, so the side that the program names is tested in full,
+# and the other side checks the value against the rest of the type (what-a-list-gives-is-asked-once-by-the-test-of-a-pattern.ir has the other order).
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f1 mechanisms=all
 # FORM: CheckProof [[given]] checkedType=undefined|i32|fractional|string {{*}} source=Contents [isLeftToTestBehind]
 # FORM-NEXT: TypeTest [[given]] testedType=i32|fractional [asksInFull]
 # FORM: CheckProof [[given]] checkedType=undefined|string {{*}} source=Contents
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 7.5
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: boolean. This is a bug in Bun.
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found boolean in
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: 7.5
-# CALLS-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: boolean. This is a bug in Bun.
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found boolean in
 # CALLS-NOT: went on
 # CALLS: crashed with
 

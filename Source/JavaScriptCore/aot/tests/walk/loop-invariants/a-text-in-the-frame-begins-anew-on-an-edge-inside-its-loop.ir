@@ -8,7 +8,7 @@
 # CHECK: StackStringBuilderDiscard [[text]]
 # CHECK-NOT: = Add {{*}}form=Strings
 # layout L909 kind=Closure
-module m0 path="/$bunfs/root/line.mjs" displayPath="line.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 181, 207] quotedTexts=[{position=125 start=31 end=42}, {position=166 start=48 end=59}, {position=181 end=15}, {position=192 end=24}, {position=197 start=16 end=23}] textOfQuotes="globalThis.sink(run(20))sum += line.lengthsum + line.length"} functionText="function run(count) { let line = \x22\x22; let sum = 0; for (let i = 0; i < count; i++) { line += \x22x\x22; if ((i & 7) === 7) { sum += line.length; line = \x22\x22; } } return sum + line.length; }\x0aglobalThis.sink(run(20));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/line.mjs" displayPath="line.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 181, 207] quotedSources=[{position=125 start=31 end=42}, {position=166 start=48 end=59}, {position=181 end=15}, {position=192 end=24}, {position=197 start=16 end=23}] quotedSourceText="globalThis.sink(run(20))sum += line.lengthsum + line.length"} functionSource="function run(count) { let line = \x22\x22; let sum = 0; for (let i = 0; i < count; i++) { line += \x22x\x22; if ((i & 7) === 7) { sum += line.length; line = \x22\x22; } } return sum + line.length; }\x0aglobalThis.sink(run(20));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -23,7 +23,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v9 = Undefined @181
     Return v9 @181
 }
-function f1 name="run" module=m0 text={end=180} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="run" module=m0 sourceRange={end=180} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = String string="" @33
     v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @33

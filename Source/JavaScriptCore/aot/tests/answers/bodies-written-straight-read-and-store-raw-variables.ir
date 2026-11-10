@@ -4,14 +4,14 @@
 # show();  scale(2);  forget();  show();  print(probe());  let late = 7;  print(probe());
 # The four variables hold numbers alone and lie raw, in both forms. With every body written straight that can be, the body of the module stores written numbers into them, `forget` a marker, and `show` and `early` read them:
 # a number comes out of its form boxed, `undefined` and the dead zone come out as what they are. `scale` stores what it computes, which fits by no making: it is walked.
-# OPTIONS: testing=WritesBodiesStraight
+# OPTIONS: testing=ForceStraightCompilation
 # RUN(PLAN): plan variables mechanisms=all
 # PLAN: variable g1 {{*}}OptionalDouble
 # PLAN-NEXT: variable g2 {{*}}OptionalInt64
 # PLAN-NEXT: variable g3 {{*}}OptionalInt64
 # PLAN-NEXT: variable g4 {{*}}OptionalInt64
-# RUN(COUNT): compile UnitsWrittenStraight mechanisms=all
-# COUNT: statistic UnitsWrittenStraight 5
+# RUN(COUNT): compile StraightUnitsCompiled mechanisms=all
+# COUNT: statistic StraightUnitsCompiled 5
 # RUN: run-in-shell mechanisms=all
 # CHECK: 0.5
 # CHECK-NEXT: 3

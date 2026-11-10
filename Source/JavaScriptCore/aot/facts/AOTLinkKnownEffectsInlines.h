@@ -36,7 +36,7 @@ static uint32_t nodeThatCallWaitsForForLinkKnownEffects(const Call& call)
 
 uint64_t CalleeSummarizerForLinkEffects::bitsOfLayoutsAt(const LinkType& type)
 {
-    if (type.functions != LinkType::Functions::None || type.builtin || type.holdsUnseen)
+    if (type.functions != LinkType::Functions::None || type.builtin || type.hasUnknownObjects)
         return objectsOfAnyLayout;
     switch (type.objects) {
     case LinkType::Objects::None:
@@ -200,13 +200,13 @@ bool CalleeSummarizerForLinkEffects::copyMayRunCode(FunctionID id, const Summary
 
 bool CalleeSummarizerForLinkEffects::membersOfInstancesAreAsTableLists(const LinkType& receiver, PropertyKeyID key) const
 {
-    if (!key || receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || receiver.builtin || receiver.holdsUnseen)
+    if (!key || receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || receiver.builtin || receiver.hasUnknownObjects)
         return false;
     if (m_flow.hasEscaped(receiver.site))
         return false;
     auto holdsNothing = [&](SlotOfContents slot) {
         FlowNodeID node = m_flow.findContentsOf(receiver, slot);
-        return !node || m_flow.typeAt(node).isNothing();
+        return !node || m_flow.typeAt(node).isNever();
     };
     return holdsNothing(SlotOfContents::under(key)) && holdsNothing(SlotOfContents::underUnknownNames()) && holdsNothing(SlotOfContents::underAnyName());
 }
@@ -223,7 +223,7 @@ bool CalleeSummarizerForLinkEffects::addLibraryFunctionBehindRow(const BuiltinOv
 bool CalleeSummarizerForLinkEffects::callStillWaits(FunctionID id, const SummaryCall& call) const
 {
     uint32_t awaited = nodeThatCallWaitsForForLinkKnownEffects(call);
-    return awaited != noSummaryNode && typeAt(id, awaited).isNothing();
+    return awaited != noSummaryNode && typeAt(id, awaited).isNever();
 }
 
 bool CalleeSummarizerForLinkEffects::callNeverRuns(FunctionID id, const SummaryCall& call) const
@@ -232,9 +232,9 @@ bool CalleeSummarizerForLinkEffects::callNeverRuns(FunctionID id, const SummaryC
     case SummaryCall::Callee::Binding:
         return callStillWaits(id, call);
     case SummaryCall::Callee::Name:
-        return typeAt(id, call.receiver).isNothing();
+        return typeAt(id, call.receiver).isNever();
     case SummaryCall::Callee::Value:
-        return typeAt(id, call.subject).isNothing();
+        return typeAt(id, call.subject).isNever();
     case SummaryCall::Callee::Builtin:
         return false;
     }
@@ -298,7 +298,7 @@ void CalleeSummarizerForLinkEffects::addEffectsOfOperatorsLeftApart(FunctionID i
     bool mayTakeOtherValues = false;
     for (uint32_t node : summary.operandsOfOperatorsLeftApart) {
         LinkType type = typeAt(id, summary, node);
-        mayTakeOtherValues |= type.isNothing() || mayBeObjectForLinkEffects(type) || (type.primitives & ~plainPrimitives);
+        mayTakeOtherValues |= type.isNever() || mayBeObjectForLinkEffects(type) || (type.primitives & ~plainPrimitives);
         mayTakeStrings |= !!(type.primitives & ~whatBecomesNumber);
     }
 
@@ -350,7 +350,7 @@ void CalleeSummarizerForLinkEffects::addEffectsOfAccessItself(FunctionID id, con
     case SummaryAccess::Kind::Store:
     case SummaryAccess::Kind::Define:
         if (access.isPartOfConstruction && summary.nodes[access.subject].kind == SummaryNode::Kind::Allocation) {
-            ofLookup.writes = ofLookup.writes.restrictedTo(heapsWhoseWritesNobodySees);
+            ofLookup.writes = ofLookup.writes.restrictedTo(unobservableWriteHeaps);
             break;
         }
         layouts = bitsOfLayoutsAt(subject);
@@ -556,7 +556,7 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
                 effects.layoutsWritten |= bitsOfLayoutsAt(subject);
             continue;
         }
-        if (subject.isNothing())
+        if (subject.isNever())
             continue;
         const CodeEntered& code = codeOfAccess(id, index);
         PropertyKeyID key = m_flow.keyOf(id, access);

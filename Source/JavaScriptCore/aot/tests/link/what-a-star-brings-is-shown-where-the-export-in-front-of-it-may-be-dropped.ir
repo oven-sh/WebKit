@@ -2,14 +2,14 @@
 # main.js: import * as t from "./t.js"; import * as plain from "./plain.js"; out = t.sep; other = plain.read
 # The run drops the entry `sep` of t.js while its variable is empty, and reads `sep` off the namespace object of stars.js.
 # showExport() showed the variable behind the entry and returned, so `sep` of stars.js was marked as an export that stays in compiled code, and the run refused the read:
-# "Cannot read 'sep' from the namespace object of stars.js: it hands out only the exports that the build saw somebody read from it."
+# "Cannot read 'sep' from the namespace object of stars.js: the build kept only the exports that it saw your code read."
 # the control: plain.js stands behind no star of t.js, and what nobody reads off it stays in
 # RUN: link modules mechanisms=all
 # CHECK-NOT: export g1 stays-in
 # CHECK: export g3 stays-in
 
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m4 completes=true}]
-module m1 path="/t.js" displayPath="t.js" body=f1 requests=[{target=m2 isDynamicStarExport=true completes=true}, {target=m3 completes=true}] exports=[{name="sep" variable=g0 isDroppedWhileEmpty=true}]
+module m1 path="/t.js" displayPath="t.js" body=f1 requests=[{target=m2 isDynamicStarExport=true completes=true}, {target=m3 completes=true}] exports=[{name="sep" variable=g0 isHiddenUntilInitialized=true}]
 module m2 path="/stars.js" displayPath="stars.js" body=f2 exports=[{name="sep" variable=g1}]
 module m3 path="/lacks.js" displayPath="lacks.js" body=f3
 module m4 path="/plain.js" displayPath="plain.js" body=f4 exports=[{name="read" variable=g4}, {name="unread" variable=g3}]

@@ -23,7 +23,7 @@ function f0 name="f" parameters=[{type=anything}] results=[{type=anything}] {
 #     v2: boolean @Boolean = TypeTest v0 testedType=undefined
 #     Jump -> next b1()
 #   b1() handler=b2(v1):
-#     v3: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v3
 #   b2(v4: boolean @Boolean) role=CatchHandler:
 #     Branch v4 -> taken b3(), notTaken b4()

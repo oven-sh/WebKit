@@ -127,7 +127,7 @@ void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std
         bool integerIsOnRight = right.is<Integer>();
         Integer integer = (integerIsOnRight ? right : left).as<Integer>();
         Boxed boxed = (integerIsOnRight ? left : right).as<Boxed>();
-        build().statistics().count(StatisticID::IntegersOf64BitsHeldAgainstBoxedNumbers);
+        build().statistics().count(StatisticID::Int64ComparisonsWithBoxedNumbers);
         defineTestByBranching(value, [&](BranchTargets targets) {
             LBasicBlock int32Case = newBlock();
             LBasicBlock numberCase = newBlock();
@@ -182,14 +182,14 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
     case OperatorForm::Integers: {
         m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
         bool areBothNonNegative = typeOf(left).integers.minimum >= 0 && typeOf(right).integers.minimum >= 0;
-        if (relation == Relation::Less && AOT::hasFlag(build().options().testing, Wire::TestingSwitch::EqualIntegersAreTakenToBeLess)) [[unlikely]]
+        if (relation == Relation::Less && AOT::hasFlag(build().options().testing, Wire::TestingSwitch::TreatEqualIntegersAsLess)) [[unlikely]]
             relation = Relation::LessOrEqual;
         Representation width = widthOfComparedIntegers(m_generator, value.value());
         Operand leftInteger = m_generator.getIn(left, width);
         Operand rightInteger = m_generator.getIn(right, width);
         result = withIntegerOperands(leftInteger, rightInteger, [&](auto x, auto y) {
             if (areBothNonNegative && emittersCheckProofs())
-                emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, greaterThanOrEqual(bitOr(x, y), 0), std::nullopt, ProofSource::OtherOperation);
+                emitter<ThrowEmitter>().requireOrCrash(value, greaterThanOrEqual(bitOr(x, y), 0), std::nullopt, ProofSource::OtherOperation);
             return areBothNonNegative ? compareNonNegative(m_out, relation, x.value(), y.value()) : compare(relation, x, y);
         });
         break;

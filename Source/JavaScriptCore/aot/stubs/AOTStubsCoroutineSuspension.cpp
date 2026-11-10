@@ -393,26 +393,6 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     jit.sub32(skippedAtBottom, count);
     needsOperation.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(SavedFrame::maxWordsAllocatedInStub)));
 
-    Jump clearsNothing = jit.branchTest32(CCallHelpers::Zero, siteWord, TrustedImm32(SavedFrame::maxClearedWords << SavedFrame::clearedWordsShift));
-    const GPRReg belowWordsKept = saved;
-    const GPRReg wordsToClear = allocator;
-#if CPU(X86_64)
-    jit.getEffectiveAddress(BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight), belowWordsKept);
-#else
-    jit.move(sp, belowWordsKept);
-    jit.addLeftShift64(belowWordsKept, skippedAtBottom, TrustedImm32(3), belowWordsKept);
-    jit.subPtr(TrustedImm32(sizeof(uint64_t)), belowWordsKept);
-#endif
-    extractBits(jit, siteWord, SavedFrame::clearedWordsShift, SavedFrame::clearedWordsBits, wordsToClear);
-    Label clearsNext = jit.label();
-#if CPU(ARM64)
-    jit.store64(ARM64Registers::zr, BaseIndex(belowWordsKept, wordsToClear, CCallHelpers::TimesEight));
-#else
-    jit.store64(TrustedImm32(0), BaseIndex(belowWordsKept, wordsToClear, CCallHelpers::TimesEight));
-#endif
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), wordsToClear).linkTo(clearsNext, &jit);
-    clearsNothing.link(&jit);
-
     static_assert(MarkedSpace::sizeStep == 2 * sizeof(uint64_t) && !(sizeof(SavedFrame) % MarkedSpace::sizeStep));
     constexpr ptrdiff_t offsetOfAllocatorWithoutWords = CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(SavedFrame) / MarkedSpace::sizeStep * sizeof(Allocator);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);

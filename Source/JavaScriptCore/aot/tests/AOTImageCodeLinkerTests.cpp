@@ -236,7 +236,7 @@ static size_t expectedTarget(const Steps& steps, const ImageNumbers& numbers, ui
     return 0;
 }
 
-static bool liesInside(const CodeBody& body, const Relocation& relocation)
+static bool fitsInBody(const CodeBody& body, const Relocation& relocation)
 {
     return relocation.offset + MacroAssembler::relocationSize(relocation.kind) <= body.bytes.size();
 }
@@ -249,7 +249,7 @@ static void checkLinkedBody(const Steps& steps, const ImageNumbers& numbers, uin
     Vector<uint8_t> expected(FillWith { }, code.size(), static_cast<uint8_t>(0));
     memcpySpan(expected.mutableSpan().subspan(start), body.bytes.span());
     for (const Relocation& relocation : body.relocations) {
-        if (liesInside(body, relocation))
+        if (fitsInBody(body, relocation))
             AOT_TEST_CHECK(applyRelocation(expected.mutableSpan(), start, relocation, expectedTarget(steps, numbers, position, relocation)));
     }
     AOT_TEST_CHECK(equalSpans(code.subspan(start, body.bytes.size()), expected.span().subspan(start, body.bytes.size())));
@@ -354,7 +354,7 @@ static void testRelocationPastEnd()
     CodeBody& body = steps.functions[0].body;
     Relocation& relocation = body.relocations.last();
     relocation.offset = static_cast<uint32_t>(body.bytes.size() - codeOffsetUnit);
-    AOT_TEST_CHECK(!liesInside(body, relocation));
+    AOT_TEST_CHECK(!fitsInBody(body, relocation));
     Vector<uint8_t> code = link(steps, numbers);
     checkLinkerReported(steps, relocation);
     checkLinkedBodies(steps, numbers, code.span());

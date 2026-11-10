@@ -6,10 +6,10 @@
 
 layout L0 module=m0 fields=[{key="default" declared={type=anything}}] ownFieldCount=1
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
-module m1 path="#1" displayPath="lib.cjs" flags=[KeepsError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}]
-module m2 path="/barrel.mjs" displayPath="barrel.mjs" flags=[KeepsError, IsImportedAsNamespace] body=f3 requests=[{target=m1 isDynamicStarExport=true completes=true}]
-module m3 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f4 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true}]
+module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="#1" displayPath="lib.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}]
+module m2 path="/barrel.mjs" displayPath="barrel.mjs" flags=[CachesEvaluationError, IsImportedAsNamespace] body=f3 requests=[{target=m1 isDynamicStarExport=true completes=true}]
+module m3 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f4 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true}]
 function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = NewObject layout=L0
@@ -28,7 +28,7 @@ function f1 module=m0 kind=Module flags=[IsHiddenInStackTraces] thisType={type=a
     v1 = Undefined
     Return v1
 }
-function f2 name="taken" module=m0 text={start=18 end=59} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+function f2 name="taken" module=m0 sourceRange={start=18 end=59} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: undefined|null|function):
     v1 = Call v0 calleeName="given"
     Return v1
@@ -58,12 +58,12 @@ function f4 module=m3 kind=Module thisType={type=anything} results=[{type=anythi
     v12 = Undefined
     Return v12
 }
-function f5 name="handed" module=m3 text={start=37 end=68} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f5 name="handed" module=m3 sourceRange={start=37 end=68} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
     Return v0
 }
-function f6 name="pick" module=m3 text={start=69 end=115} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+function f6 name="pick" module=m3 sourceRange={start=69 end=115} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="default"
     Return v1

@@ -1,7 +1,7 @@
 # JSON.parse converts what it is handed to a text. A text that an object gives by its toString is counted by nobody in front of the call, so an object is not parsed: the answer is what nobody knows, and the rehearsal goes on.
 # const giver = { toString() { return "[12]"; } }; new RegExp("a" + JSON.parse(giver)[0]); new RegExp("b" + JSON.parse("[34]")[0]);
 # RUN: regexp-texts mechanisms=all
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # CHECK-NOT: text /a12/
 # CHECK: text /b34/
 

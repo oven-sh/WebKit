@@ -56,7 +56,7 @@ constexpr ImageFrame frameAtStubReturnSite(StubFrameKind kind)
     return kind == StubFrameKind::AtStubEntry ? ImageFrame::empty() : ImageFrame { };
 }
 
-ALWAYS_INLINE void* stackPointerOfCaller(const CallFrame* frame, unsigned bytesAboveReturnAddress = 0)
+ALWAYS_INLINE void* callerStackPointer(const CallFrame* frame, unsigned bytesAboveReturnAddress = 0)
 {
     return std::bit_cast<void*>(std::bit_cast<uintptr_t>(frame) + sizeof(CallerFrameAndPC) + bytesAboveReturnAddress);
 }
@@ -116,7 +116,7 @@ public:
         const void* pc = removeCodePtrTag(record->returnPC);
         CodeLocation code = m_image->locate(pc);
         ImageFrame imageFrame = imageFrameAt(code);
-        CallFrame* callFrame = frameAtReturnSite(imageFrame, stackPointerOfCaller(m_frame.callFrame, m_frame.bytesAboveReturnAddress), framePointer);
+        CallFrame* callFrame = frameAtReturnSite(imageFrame, callerStackPointer(m_frame.callFrame, m_frame.bytesAboveReturnAddress), framePointer);
         if (callFrame <= m_frame.callFrame || !m_stack.contains(callFrame)) {
             m_frame = { };
             return *this;
@@ -236,7 +236,7 @@ public:
     enum class OperationState : bool { MayNotHaveCalled, HasCalled };
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreate(VM&, CallFrame* framePointer, const void* returnAddress, EntryFrame*, OperationState = OperationState::MayNotHaveCalled, void* stackPointer = nullptr);
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtTop(VM&);
-    static const void* findReturnAddressInFunctionAtTop(VM&);
+    static const void* topFrameReturnAddress(VM&);
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtCallerOf(VM&, CallFrame* callee, EntryFrame*);
 
     bool isAtEnd() const { return m_isAtEnd; }
@@ -283,8 +283,8 @@ public:
     }
     JS_EXPORT_PRIVATE bool isAboveFramesThatWait() const;
     JS_EXPORT_PRIVATE bool isConstructCall();
-    JS_EXPORT_PRIVATE void listConstructedFunctionsThatLeft();
-    const std::optional<TraceFrame>& constructedFunctionThatLeft() const { return m_constructedFunctionThatLeft; }
+    JS_EXPORT_PRIVATE void collectElidedConstructorFrame();
+    const std::optional<TraceFrame>& elidedConstructorFrame() const { return m_elidedConstructorFrame; }
     bool hasNoMachineFrame() const { return m_hasNoMachineFrame; }
     bool isAtFirstReadSite() const { return m_cursor.isAtFirstReadSite && m_callSite.site.firstReadSite; }
     bool calleeWasEntered() const { return m_calleeWasEntered; }
@@ -338,7 +338,7 @@ private:
     const CallSiteCache::Entry* findFunctionFrame(Cursor&, Exit&, RunEnd&);
     const CallSiteCache::Entry* findCallerFunctionFrame(Cursor&, Exit&, RunEnd&);
     void enterMachineFrame(const CallSiteCache::Entry*);
-    void listFunctionWhoseThisTheAdapterMakes();
+    void collectAdapterConstructorFrame();
     JS_EXPORT_PRIVATE void readFrame() const;
 
     VM* m_vm;
@@ -353,7 +353,7 @@ private:
     bool m_calleeWasEntered;
     bool m_isAtEnd { false };
     bool m_hasNoMachineFrame { false };
-    std::optional<TraceFrame> m_constructedFunctionThatLeft;
+    std::optional<TraceFrame> m_elidedConstructorFrame;
     Exit m_exit;
     RunEnd m_runEnd;
     InlineFrameReader m_inlineFrames;

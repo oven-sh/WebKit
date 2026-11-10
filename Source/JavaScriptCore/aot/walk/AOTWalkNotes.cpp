@@ -147,7 +147,6 @@ static UnprovenCause causeInWalkNote(AccessKind access)
     case AccessKind::Call:
     case AccessKind::Construct:
         return UnprovenCause::UnknownCallee;
-    case AccessKind::Unknown:
     case AccessKind::Truthiness:
     case AccessKind::Equality:
     case AccessKind::Arithmetic:
@@ -157,6 +156,8 @@ static UnprovenCause causeInWalkNote(AccessKind access)
     case AccessKind::InstanceOf:
     case AccessKind::Iteration:
     case AccessKind::Spread:
+        return UnprovenCause::Untracked;
+    case AccessKind::Unknown:
         return UnprovenCause::Unknown;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -216,7 +217,6 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
                 continue;
             note.kind = WalkNoteKind::TestThatLeaves;
             note.cost = costOfWalkNoteKind(note.kind);
-            note.cause = UnprovenCause::UnknownObject;
             note.layout = singleLayoutOf(types, types.at(operation.testedType()));
             result.notes.append(note);
             continue;
@@ -224,7 +224,6 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
         if (testsInWalkNotes.contains(operation.opcode)) {
             note.kind = WalkNoteKind::TestThatRejoins;
             note.cost = costOfWalkNoteKind(note.kind);
-            note.cause = UnprovenCause::UnknownObject;
             if (ValueID tested = operation.child(0))
                 note.layout = layoutOfValueInWalkNote(types, code, tested);
             result.notes.append(note);
@@ -255,7 +254,6 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
         note.kind = WalkNoteKind::TestThatLeaves;
         note.opcode = operation.opcode;
         note.cost = costOfWalkNoteKind(note.kind);
-        note.cause = UnprovenCause::UnknownObject;
         note.loopDepth = code.at(block).isInLoop;
         note.origin = Origin { noted.positionOfCallee, 0, false, false };
         note.writtenIn = noted.callee;

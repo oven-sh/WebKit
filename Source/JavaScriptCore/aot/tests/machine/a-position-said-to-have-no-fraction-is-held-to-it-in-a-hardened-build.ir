@@ -1,7 +1,7 @@
 # function whole(view: Int32Array, n: unknown) { let total = 0; for (let at = 0; at < n; at += 5) total = (total + view[at] + view[at + 2]) | 0; return total; }
 # What `bun build --aot-harden=ignore-told-ranges` asks for. A position that is said to have no fraction is truncated without a test: walk/loops/a-counter-that-steps-by-a-whole-number-has-no-fraction.ir.
 # Here the truncation stays as it ships, and in front of it the process stops where the position has a fraction. What is no number passes: it lies outside every view.
-# OPTIONS: testing=TestsEveryPosition
+# OPTIONS: testing=CheckBoundsAtRunTime
 # REQUIRES: x86_64
 # RUN: emit f1:Body mechanisms=all
 # CHECK: Double @[[whole]] = FTrunc(@[[position]],

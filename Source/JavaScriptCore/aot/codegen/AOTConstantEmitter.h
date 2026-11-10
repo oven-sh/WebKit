@@ -94,7 +94,6 @@ private:
     CellPointer newCopyOnWriteArrayByStub(const ValueContext&);
 
     CellPointer closureCreatedBy(const ValueContext&);
-    void noteWhatClosureLentHolds(ValueID closure);
     bool canUseClosureStub(const NewClosureRequest&) const;
     CellPointer newFullClosure(const ValueContext&, const NewClosureRequest&);
     CellPointer newSlimClosure(const ValueContext&, const NewClosureRequest&);

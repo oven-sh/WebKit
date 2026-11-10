@@ -24,6 +24,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTPropertyWalk.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
@@ -523,7 +524,10 @@ void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globa
 [[noreturn]] static void crashOnFalseProofOfClosure(uint32_t closureNumber, ASCIILiteral mutation)
 {
     FunctionID function = closureFunctionWithNumber(closureNumber);
-    dataLogLn("AOT: ", mutation, " of a closure of the function f", function.index(), " (", initialNameProperty(function), "): the compiler has proven that it never happens, and compiled code takes such closures to be as they were made without a look. This is a bug in Bun.");
+    RuntimeCheckFailure failure("object mutation check failed"_s);
+    failure.inFunction(function);
+    failure.detail(mutation, " on a closure of ", reportedFunctionName(function), ", but the compiler proved that this never happens");
+    failure.report();
     CRASH_WITH_INFO(function.index());
 }
 
@@ -570,14 +574,14 @@ void holdClosureToLackingNameSlowCase(VM& vm, const JSCell* closure, UniquedStri
     if (uid->isSymbol() && static_cast<SymbolImpl*>(uid)->isPrivate())
         return;
     std::optional<uint32_t> name = identifiersOf(*Instance::owning(closure)).numberOf(uid);
-    if (name && std::ranges::binary_search(programTables().namesLaidOnClosures(), NameLaidOnClosuresData { closureFunctionWithNumber(*number).index(), *name }))
+    if (name && std::ranges::binary_search(programTables().closurePropertyNames(), ClosurePropertyNameData { closureFunctionWithNumber(*number).index(), *name }))
         return;
     const JSObject* object = static_cast<const JSObject*>(closure);
     unsigned attributes = 0;
     JSValue value = object->getDirect(vm, PropertyName(uid), attributes);
     if (!value || holdsWhatIsFoundAbove(vm, object, uid, value, attributes))
         return;
-    crashOnFalseProofOfClosure(*number, "AddName"_s);
+    crashOnFalseProofOfClosure(*number, "AddProperty"_s);
 }
 
 void holdClosureToItsPrototype(VM& vm, const JSCell* closure)
@@ -671,13 +675,13 @@ bool Closure::refusesOwnProperty(VM& vm, PropertyName name) const
 
 bool Closure::isBuiltinFunction() const
 {
-    return ModuleTable(state().instance.tables()).isRuntimeFunction(function());
+    return kind().isInRuntimeModule && ModuleTable(state().instance.tables()).isRuntimeFunction(function());
 }
 
-static bool storesPropertyOfClosureBelowClosure(VM& vm, Closure& closure, PropertyName name, const PutPropertySlot& slot)
+static bool canPutDirectly(VM& vm, Closure& closure, PropertyName name, const PutPropertySlot& slot)
 {
     JSObject* above = closure.getPrototypeDirect().getObject();
-    if (!above || above->type() != CompiledClosureType || slot.thisValue() != JSValue(&closure))
+    if (!above || (above->type() != CompiledClosureType && !isCompiledObject(above)) || slot.thisValue() != JSValue(&closure))
         return false;
     const CommonIdentifiers& names = *vm.propertyNames;
     if (name == names.prototype || name == names.name || name == names.length)
@@ -745,7 +749,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     closure->ensureClassObject(vm);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
-    bool result = storesPropertyOfClosureBelowClosure(vm, *closure, name, slot) ? closure->putInlineFast(globalObject, name, value, slot) : Base::put(cell, globalObject, name, value, slot);
+    bool result = canPutDirectly(vm, *closure, name, slot) ? closure->putInlineFast(globalObject, name, value, slot) : Base::put(cell, globalObject, name, value, slot);
     if (slot.thisValue() == JSValue(closure))
         holdClosureToLackingNameSlowCase(vm, closure, name.uid());
     if (isStoreToClassObject) {

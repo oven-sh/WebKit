@@ -102,7 +102,7 @@ static TypeID typeWrittenOfValueInEnvironmentsHandedBack(const BodyOfMakerInEnvi
         BodyValue made = index.value(value);
         if (made.opcode() == Opcode::Convert)
             return made.as<Opcode::Convert>().declared().written();
-        if (!inputOperationsThatHandOn.contains(made.opcode()))
+        if (!inputPassThroughOpcodes.contains(made.opcode()))
             return { };
         value = made.operand(0);
     }
@@ -129,7 +129,7 @@ static std::optional<CallThatClosureIsMadeFor> findCallThatClosureIsMadeFor(cons
         BodyValue user = index.value(taker);
         Opcode opcode = user.opcode();
         if (opcode != Opcode::Call && opcode != Opcode::CallDirect) {
-            if (!inputOperationsThatHandOn.contains(opcode) || user.operand(0) != name)
+            if (!inputPassThroughOpcodes.contains(opcode) || user.operand(0) != name)
                 return std::nullopt;
             name = taker;
             continue;
@@ -163,8 +163,6 @@ static bool leavesCellToItsFrames(const BodyOfMakerInEnvironmentsHandedBack& bod
         return true;
     case Opcode::NewClosure:
         return callThatClosureIsMadeFor && callBorrowsClosureMadeForIt(body, *callThatClosureIsMadeFor);
-    case Opcode::ReleaseHint:
-        return true;
     default:
         return false;
     }

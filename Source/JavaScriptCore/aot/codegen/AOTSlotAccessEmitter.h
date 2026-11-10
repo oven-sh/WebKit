@@ -39,7 +39,7 @@ public:
 
     CellPointer baseOfSlot(CellPointer, const FieldAccess&);
     CellPointer baseOfSlot(CellPointer, const FieldAccess&, LayoutSetID receivers);
-    std::optional<CellPointer> baseOfSlotWhereOneTableTellsShapeAndDistance(CellPointer, const FieldAccess&, LayoutSetID receivers, bool refusesMarkedObjects, LBasicBlock whereShapeIsNoReceiver);
+    std::optional<CellPointer> baseOfSlotWhereOneTableTellsShapeAndDistance(CellPointer, const FieldAccess&, LayoutSetID receivers, bool rejectsMarkedObjects, LBasicBlock whereShapeIsNoReceiver);
     LayoutSetID layoutsThatTestAgainstEveryShapeLetThrough(ValueID) const;
 
     struct CreationByDefinition {

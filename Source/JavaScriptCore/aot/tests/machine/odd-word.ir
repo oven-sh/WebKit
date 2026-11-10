@@ -7,8 +7,8 @@
 # CHECK-NOT: at -48
 # CHECK: s3 at -40
 # CHECK-NOT: at -48
-# CHECK: suspension {{*}}: dead words [6, 7, 8, 9, 10], lowest words cleared at first suspension = 1, holds s1 s2 s3
-# CHECK-NEXT: suspension {{*}}: dead words [3, 6, 7, 8, 9, 10], lowest words cleared at first suspension = 1, holds s2 s3
+# CHECK: suspension {{*}}: dead words [6, 7, 8, 9, 10], holds s1 s2 s3
+# CHECK-NEXT: suspension {{*}}: dead words [3, 6, 7, 8, 9, 10], holds s2 s3
 # CHECK-NEXT: bytesKeptAtSuspensions = 24
 
 module m0 path="main.js" displayPath="main.js" body=f0

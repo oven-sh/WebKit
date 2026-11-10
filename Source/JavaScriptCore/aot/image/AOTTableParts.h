@@ -42,7 +42,7 @@ enum class TablePartID : uint8_t {
     FieldTable,
     Statics,
     Functions,
-    FunctionTexts,
+    FunctionSources,
     Modules,
     Requests,
     Constants,
@@ -135,7 +135,7 @@ public:
     template<typename T, size_t inlineCapacity>
     uint32_t setTable(ProgramTableIndex index, const Vector<T, inlineCapacity>& items) { return setTable(index, items.span()); }
     template<typename T>
-    uint32_t setTableWrittenInPlace(ProgramTableIndex index, size_t count, const Invocable<void(std::span<T>)> auto& write)
+    uint32_t setTableInPlace(ProgramTableIndex index, size_t count, const Invocable<void(std::span<T>)> auto& write)
     {
         static_assert(std::has_unique_object_representations_v<T>, "Padding would make the bytes differ from build to build.");
         const size_t alignment = sizeof(T) == 1 ? 8 : alignof(T);
@@ -309,7 +309,7 @@ struct MethodTableRow;
 std::array<uint32_t, 4> keyOfClassGuardUnderMethodTableRow(const Typed::MethodFamily&, const Typed::MethodTableRow&);
 void nameWhatFunctionTablesName(const TableInputs&, const GatheredMentions&, NamesOfTables&);
 void encodeFunctionProgramTables(TableEncoder&);
-void encodeFunctionTexts(TableEncoder&);
+void encodeFunctionSources(TableEncoder&);
 void nameWhatModuleTablesName(const TableInputs&, const GatheredMentions&, NamesOfTables&);
 void encodeModuleTables(TableEncoder&);
 void nameWhatRequestTablesName(const TableInputs&, const GatheredMentions&, NamesOfTables&);

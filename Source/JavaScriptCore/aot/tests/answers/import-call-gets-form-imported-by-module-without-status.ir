@@ -7,10 +7,10 @@
 # CHECK-NEXT: exited with 0
 
 module m0 path="/conf.toml?toml" displayPath="conf.toml" kind=Data requireResult=DefaultExport body=f0 data=d0 exports=[{name="default" variable=g0}]
-module m1 path="/inner.mjs" displayPath="inner.mjs" flags=[KeepsError] body=f1 requests=[{target=m0 completes=true}]
-module m2 path="/mid.mjs" displayPath="mid.mjs" flags=[KeepsError] body=f2 requests=[{target=m1 completes=true}]
-module m3 path="/conf.toml?text" displayPath="conf.toml" kind=Data flags=[AnswersLoaderWithNamespace] requireResult=DefaultExport body=f3 exports=[{name="default" variable=g3}]
-module m4 path="/main.mjs" displayPath="main.mjs" flags=[HasTopLevelAwait, KeepsError] body=f4 requests=[{target=m2 completes=true}]
+module m1 path="/inner.mjs" displayPath="inner.mjs" flags=[CachesEvaluationError] body=f1 requests=[{target=m0 completes=true}]
+module m2 path="/mid.mjs" displayPath="mid.mjs" flags=[CachesEvaluationError] body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/conf.toml?text" displayPath="conf.toml" kind=Data flags=[LoaderReturnsNamespace] requireResult=DefaultExport body=f3 exports=[{name="default" variable=g3}]
+module m4 path="/main.mjs" displayPath="main.mjs" flags=[HasTopLevelAwait, CachesEvaluationError] body=f4 requests=[{target=m2 completes=true}]
 entry module=m4
 layout L0 module=m0 fields=[{key="port" declared={type=anything}}] ownFieldCount=1
 layout L1 fields=[{key="with" declared={type=anything}}] ownFieldCount=1

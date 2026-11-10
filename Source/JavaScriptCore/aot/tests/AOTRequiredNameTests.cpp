@@ -32,7 +32,7 @@ module m6 path="/two.js" displayPath="two.js" body=f6 exports=[{name="shared" va
 module m7 path="/exports-absent.js" displayPath="exports-absent.js" body=f7 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="absent" exportName="renamed" specifier="./barrel"}, {module=m4 name="alsoAbsent"}]
 module m8 path="/exports-ambiguous.js" displayPath="exports-ambiguous.js" body=f8 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="single"}, {module=m4 name="shared" exportName="shared" specifier="./barrel.js"}]
 module m9 path="/exports-ambiguous-found-unless-mocked.js" displayPath="exports-ambiguous-found-unless-mocked.js" body=f9 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="shared" mayBeAbsent=true exportName="shared" specifier="./barrel.js"}]
-module m10 path="/stars-ambiguous.js" displayPath="stars-ambiguous.js" body=f10 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="shared" mayBeAbsent=true exportName="shared" specifier="./barrel.js" isAskedForByStar=true}]
+module m10 path="/stars-ambiguous.js" displayPath="stars-ambiguous.js" body=f10 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="shared" mayBeAbsent=true exportName="shared" specifier="./barrel.js" isRequestedByStarExport=true}]
 entry module=m0
 entry module=m1
 entry module=m2

@@ -12,7 +12,7 @@
 # ADDS-NOT: adds FunctionPrototype "marked"
 
 module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}]
-module m1 path="/src/mark.js" displayPath="src/mark.js" flags=[FindsBuiltinsReadOnly] body=f4
+module m1 path="/src/mark.js" displayPath="src/mark.js" flags=[HasReadOnlyBuiltins] body=f4
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():

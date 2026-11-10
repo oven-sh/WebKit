@@ -3,8 +3,8 @@
 # DIAGNOSTIC: LockedBuiltinWriteMayRun 1
 # RUN: locks
 
-module m0 path="/fails.cjs" displayPath="fails.cjs" kind=CommonJs flags=[KeepsError, IsModuleToImports] exportRule=CommonJs requireResult=ModuleExports body=f0 positions={lineStarts=[0]}
-module m1 path="/main.js" displayPath="main.js" flags=[KeepsError] body=f1 requests=[{target=m0 kind=Require completes=true}] positions={lineStarts=[0]}
+module m0 path="/fails.cjs" displayPath="fails.cjs" kind=CommonJs flags=[CachesEvaluationError, IsImportedAsESModule] exportRule=CommonJs requireResult=ModuleExports body=f0 positions={lineStarts=[0]}
+module m1 path="/main.js" displayPath="main.js" flags=[CachesEvaluationError] body=f1 requests=[{target=m0 kind=Require completes=true}] positions={lineStarts=[0]}
 entry module=m1
 function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
   b0():

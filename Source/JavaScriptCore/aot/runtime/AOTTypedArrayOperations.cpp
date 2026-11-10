@@ -15,6 +15,7 @@
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTRealmStartup.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
 #include "AOTUnwinding.h"
@@ -67,6 +68,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewTypedArray, JSCell*, (Instance* instance
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+static BufferStructureProvider bufferStructureProvider;
+
+void setBufferStructureProvider(BufferStructureProvider provider)
+{
+    bufferStructureProvider = provider;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCopyByteLiteral, JSCell*, (Instance* instance, const uint8_t* bytes, uint32_t size, uint32_t isBuffer))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyByteLiteral);
+    RELEASE_ASSERT_WITH_MESSAGE(!isBuffer || bufferStructureProvider, "The host encodes literals for Buffer and has not called setBufferStructureProvider().");
+    Structure* structure = isBuffer ? bufferStructureProvider(globalObject) : globalObject->typedArrayStructure(TypeUint8, false);
+    JSUint8Array* array = JSUint8Array::createUninitialized(globalObject, structure, size);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (size)
+        memcpy(array->typedVector(), bytes, size);
+    OPERATION_RETURN(scope, array);
 }
 
 static ALWAYS_INLINE bool isFixed(const JSArrayBufferView* view)

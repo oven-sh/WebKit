@@ -12,7 +12,7 @@ variable g0 name="LIMIT" module=m0 declared={type=anything|absent} flags=[IsImmu
 variable g1 name="count" module=m0 declared={type=anything|absent}
 variable g2 name="AGAIN" module=m1 declared={type=anything|absent} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}] exports=[{name="LIMIT" variable=g0}, {name="count" variable=g1}]
-module m1 path="again.js" displayPath="again.js" flags=[RunsAgain] body=f3 exports=[{name="AGAIN" variable=g2}]
+module m1 path="again.js" displayPath="again.js" flags=[MayBeReevaluated] body=f3 exports=[{name="AGAIN" variable=g2}]
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():

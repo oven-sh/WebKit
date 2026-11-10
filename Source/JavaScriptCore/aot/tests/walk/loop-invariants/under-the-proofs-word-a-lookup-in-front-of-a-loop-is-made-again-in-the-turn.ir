@@ -6,7 +6,7 @@
 # CHECK: inlineBuiltin=MapGet
 # CHECK: isLoopHead=true
 # CHECK-NOT: inlineBuiltin=MapGet
-# CHECK-NOT: source=WhatIsRemembered
+# CHECK-NOT: source=RememberedFact
 # THE FORM IS THE SAME UNDER THE WORD: the lookup still stands in front, and what the turn computes with is that one.
 # RUN(HELD): walk f1 mechanisms=all testing=CheckProofsAtRunTime
 # HELD-LABEL: code f1:Body
@@ -15,7 +15,7 @@
 # HELD: [[again]]: {{*}}inlineBuiltin=MapGet
 # HELD: [[same]]: boolean @Boolean = StrictEq [[again]], [[front]]
 # HELD: Branch [[same]]
-# HELD: source=WhatIsRemembered
+# HELD: source=RememberedFact
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

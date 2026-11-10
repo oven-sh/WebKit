@@ -63,8 +63,6 @@ static CodeOfBackEnd codeOfBackEndIn(StepKind kind)
         return CodeOfBackEnd::Materialize;
     case StepKind::Swap:
         return CodeOfBackEnd::Swap;
-    case StepKind::ClearSpill:
-        return CodeOfBackEnd::ClearSpill;
     case StepKind::KeepPointer:
         return CodeOfBackEnd::KeepPointer;
     case StepKind::Execute:
@@ -698,8 +696,8 @@ void Encoder::run()
             RELEASE_ASSERT(target.isSet());
     }
 
-    if (m_marksOfSlotsRead & Frame::markOfSlotThatNoStepReads) [[unlikely]]
-        failBecauseSlotThatNoStepReadsIsRead();
+    if (m_readSlotTags & Frame::deadSlotTag) [[unlikely]]
+        reportDeadSlotRead();
 }
 
 bool Encoder::fallsThroughToSlowCase(const Block* from, const Block* target) const
@@ -917,7 +915,6 @@ static NEVER_INLINE PatchOperation* findCalleeThatDoesMoveOutOfResultItself(cons
                 return nullptr;
             continue;
         case StepKind::Swap:
-        case StepKind::ClearSpill:
         case StepKind::KeepPointer:
             return nullptr;
         }
@@ -1000,9 +997,6 @@ void Encoder::encodeSteps(uint32_t begin, uint32_t end)
             continue;
         case StepKind::Swap:
             encodeSwap(step);
-            continue;
-        case StepKind::ClearSpill:
-            encodeClearSpill(step);
             continue;
         case StepKind::KeepPointer:
             encodeKeepPointer(step);
@@ -1157,12 +1151,12 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeExecuteInline(const Step& ste
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void Encoder::failBecauseSlotThatNoStepReadsIsRead() const
+void Encoder::reportDeadSlotRead() const
 {
     std::span<const SpillFacts> spills = m_allocation.spills();
     const Operation* valueOfSlot = nullptr;
     auto look = [&](Location location) {
-        if (!valueOfSlot && location.isSpill() && spills[location.spillIndex()].isReadByNoStep)
+        if (!valueOfSlot && location.isSpill() && spills[location.spillIndex()].isDeadSlot)
             valueOfSlot = spills[location.spillIndex()].value;
     };
     for (const Step& step : m_allocation.steps()) {
@@ -1175,10 +1169,10 @@ void Encoder::failBecauseSlotThatNoStepReadsIsRead() const
             look(operand);
     }
     for (const SpillFacts& spill : spills) {
-        if (!valueOfSlot && spill.isReadByNoStep)
+        if (!valueOfSlot && spill.isDeadSlot)
             valueOfSlot = spill.value;
     }
-    m_proc.fail(FailureKind::SpillSlotLacksItsValue, valueOfSlot);
+    m_proc.fail(FailureKind::WrongValueInSpillSlot, valueOfSlot);
 }
 
 void Encoder::storeToSpill(const Operation* value)
@@ -1186,7 +1180,9 @@ void Encoder::storeToSpill(const Operation* value)
     SpillIndex spill = m_allocation.spillOf(value);
     ASSERT(spill != noSpill);
     Reg source = m_allocation.registerAtDefinitionOf(value);
-    if (!source || m_allocation.spills()[spill].isStoredAtHeadOfFramedPart || m_allocation.spills()[spill].isReadByNoStep || m_allocation.isWrittenByEdges(value) || setupHasPushed(spill))
+    if (!source || m_allocation.spills()[spill].isStoredAtHeadOfFramedPart || m_allocation.spills()[spill].isDeadSlot || m_allocation.isWrittenByEdges(value))
+        return;
+    if (setupHasPushed(spill) && m_allocation.spills()[spill].value == value)
         return;
 
     RELEASE_ASSERT(m_frameIsSetUp);

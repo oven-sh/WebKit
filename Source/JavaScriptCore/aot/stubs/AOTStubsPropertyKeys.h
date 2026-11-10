@@ -18,7 +18,7 @@
 namespace JSC { namespace AOT {
 
 enum class PresenceQuestion : uint8_t { In, HasOwn };
-enum class InstanceOfOperand : uint8_t { Constructor, Prototype, PrototypeUnlessTrapped, NameSeenByScripts, NameOfGlobalObject, PrototypeThatIsBuiltin };
+enum class InstanceOfOperand : uint8_t { Constructor, Prototype, PrototypeWithoutTraps, NameSeenByScripts, NameOfGlobalObject, PrototypeThatIsBuiltin };
 constexpr int32_t answerOfChainWalkAtTrap = 2;
 enum class SlotExit : uint8_t { Miss, Uncached };
 enum class SlotFinisher : uint8_t { ReadField, CallGetter, StoreField, CreateField, CallSetterStrict, CallSetterSloppy, GrowStorage };

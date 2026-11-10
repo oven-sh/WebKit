@@ -19,11 +19,11 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 # code f0:Body {
 #   b0(v0: anything @JSValue, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
 #     v3: L0 @Cell = NewObject -, v0 layout=L0 fields=[0] traits=[mayCollect, mayTouchMemory]
-#     v4 @Void = PutSlotOrAdd v3, v1 key="late" receivers=[L0] level=Proven traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = PutSlotOrAdd v3, v1 key="late" receivers=[L0] level=Proven traits=[mayWriteObservableState, mayTouchMemory]
 #     Branch v2 -> taken b1(), notTaken b2()
 #   b1():
 #     v5: L0 @JSValue = Box v3
-#     v6: anything @JSValue = Call v1, -, v5 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v6: anything @JSValue = Call v1, -, v5 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b2()
 #   b2():
 #     Return v0

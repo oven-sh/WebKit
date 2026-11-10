@@ -7,7 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHostFunctionTexts.h"
+#include "AOTHostFunctionSources.h"
 #include "AOTSchemaEnums.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
@@ -60,13 +60,13 @@ private:
     std::array<Vector<uint8_t>, numberOfResultSections> m_sections;
 };
 
-// The owner itself outlives the call of the engine: the texts of functions are asked of it in Image.
 struct ProgramOwner {
     void (*release)(void* owner) { nullptr };
     void* owner { nullptr };
     const ExternalFunctionBodies* externalBodies { nullptr };
-    HostFunctionTexts functionTexts { };
+    HostFunctionSources functionSources { };
     void (*releaseBytes)(void* owner) { nullptr };
+    HostStringEncoders stringEncoders { };
 };
 
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions&, const HostThreadPool* = nullptr, ProgramOwner = { });

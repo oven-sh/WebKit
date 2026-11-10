@@ -64,7 +64,7 @@ static ValueID valueBehindNamesInTailCallPlan(const BodyIndex& index, ValueID va
         ValueID named;
         if (index.isParameter(value))
             named = index.valueNarrowedInto(value);
-        else if (BodyValue definition = index.value(value); inputOperationsThatHandOn.contains(definition.opcode()))
+        else if (BodyValue definition = index.value(value); inputPassThroughOpcodes.contains(definition.opcode()))
             named = definition.operand(0);
         if (!named)
             return value;

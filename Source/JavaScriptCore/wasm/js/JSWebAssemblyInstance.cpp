@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRuntimeReporter.h"
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSModuleNamespaceObject.h"
@@ -39,6 +40,7 @@
 #include "JSWebAssemblyModule.h"
 #include "JSWebAssemblyStruct.h"
 #include "JSWebAssemblyTag.h"
+#include "WasmCodeInImage.h"
 #include "Register.h"
 #include "VMTrapsInlines.h"
 #include "WasmBaselineData.h"
@@ -308,6 +310,15 @@ void JSWebAssemblyInstance::finalizeCreation(VM& vm, JSGlobalObject* globalObjec
 void JSWebAssemblyInstance::adoptCalleeGroup(const CalleeGroup& calleeGroup)
 {
     m_imageCodePointers = calleeGroup.imageCodePointers();
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode()) [[unlikely]] {
+        AOT::countEvent(vm(), m_imageCodePointers ? AOT::RuntimeCounterID::WasmInstancesUsingImageCode : AOT::RuntimeCounterID::WasmInstancesInterpreted);
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+        if (m_imageCodePointers && Wasm::CodeInImage::flavorFor(module().moduleInformation(), calleeGroup.mode()) == Wasm::ImageCodeFlavor::Checking)
+            AOT::countEvent(vm(), AOT::RuntimeCounterID::WasmInstancesUsingCheckingCode);
+#endif
+    }
+#endif
     module().createInterpreterMetadataIfNeeded(calleeGroup);
 }
 

@@ -1,7 +1,7 @@
 # What `bun build --aot-harden=ignore-told-ranges` asks for. The library's own reads and stores of elements test nothing by themselves: its code says that the position lies below the length.
 # Here each of the eight holds its position against the length that the list has there, and the kind of storage that its name says against the byte of the list, and the process stops where either is false.
 # Two of the reads hold what they have read as well: a boxed word is not the empty word, and a whole number lies in the box of an int32: a list made of a length and filled to a count holds the empty word inside its length.
-# OPTIONS: testing=TestsEveryPosition
+# OPTIONS: testing=CheckBoundsAtRunTime
 # RUN: emit f1 mechanisms=all
 # CHECK: JSArray_indexingTypeAndMisc
 # CHECK: Butterfly_publicLength

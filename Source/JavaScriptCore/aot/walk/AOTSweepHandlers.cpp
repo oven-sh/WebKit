@@ -229,7 +229,7 @@ static BarrierOfSweptStore describeBarrierOfSweptStore(const Code& code, const T
         }
         bool isStringOfVM = stored.opcode == Opcode::String && hasCellOfVM(types.bytesOf(stored.string()));
         storesCells |= !isStringOfVM && types.at(stored.type).hasCells();
-        const Operation& made = code.at(rootOfCellInSweptCode(code, operand));
+        const Operation& made = code.at(underlyingCellOf(code, operand));
         mayOmitBarrier |= made.opcode == Opcode::NewClosure && made.closureForm() == ClosureForm::Deferred;
     });
     if (!ownerIndex || !hasOneOwner || !everyStoredTypeIsKnown)
@@ -240,7 +240,7 @@ static BarrierOfSweptStore describeBarrierOfSweptStore(const Code& code, const T
     ValueID ownerOperand = store.operand(*ownerIndex);
     if (!ownerOperand)
         return { };
-    ValueID owner = rootOfCellInSweptCode(code, ownerOperand);
+    ValueID owner = underlyingCellOf(code, ownerOperand);
     if (code.isConstant(owner))
         return { };
     const Operation& definition = code.at(owner);
@@ -383,7 +383,7 @@ static_assert(everyOperandUseIsInExactlyOneOf({ usesThatLetSweptCellBeSeenOrGive
 
 static constexpr OperandUses usesThatEndYouthOfOperandOf(Opcode opcode)
 {
-    return opcodesThatGiveSameCell.contains(opcode) ? usesThatLetSweptCellBeSeen : usesThatLetSweptCellBeSeenOrGiveAnotherName;
+    return cellPreservingOpcodes.contains(opcode) ? usesThatLetSweptCellBeSeen : usesThatLetSweptCellBeSeenOrGiveAnotherName;
 }
 
 static bool sweptOperationMayEndYouthOfOperand(Opcode opcode)
@@ -426,7 +426,7 @@ void Sweep::lookForBirthOfOwner(ValueID id, const Operation& operation)
         operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
             if (!operation.operandUses(operandIndex).containsAny(uses) || code.isConstant(operand))
                 return;
-            ValueID seen = rootOfCellInSweptCode(code, operand);
+            ValueID seen = underlyingCellOf(code, operand);
             if (!m_birthsAwaited.quickGet(seen.index()))
                 return;
             m_birthsAwaited.quickClear(seen.index());

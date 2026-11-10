@@ -26,7 +26,7 @@ bool mayUseFFI(const Typed::Facts& facts, const CompileOptions& options)
     if (options.excludesForeignCalls())
         return false;
     OptionSet<ImageFlag> flags = flagsForUnseenCode(facts, options);
-    if (flags.contains(ImageFlag::AdmitsUnknownJavaScript) && (!options.excludesForeignCallsOfUnseenCode() || flags.contains(ImageFlag::AdmitsLibraryText)))
+    if (flags.contains(ImageFlag::AdmitsUnknownJavaScript) && (!options.excludesForeignCallsOfUnseenCode() || flags.contains(ImageFlag::AllowsLibrarySource)))
         return true;
     return facts.isUsedByOperation(Builtins::BunFFI) || facts.isUsedByOperation(Builtins::NativeBindgenFfiBindTsCc);
 }

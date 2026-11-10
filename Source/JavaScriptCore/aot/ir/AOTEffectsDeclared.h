@@ -84,6 +84,8 @@ inline constexpr AbstractHeapSet heapsThatOnlyFlagsOfLooksAtCellRead { AbstractH
 template<typename Operation>
 ALWAYS_INLINE bool lookAtCellHasNoFlagThatReads(Opcode opcode, const Operation& operation)
 {
+    if (opcode == Opcode::ShapeTest)
+        return !operation.rejectsMarkedObjects();
     if (opcode == Opcode::IsNotFrozen)
         return !operation.hasNoExtraProperties() && !operation.hasNoFieldOutsideSlot();
     return opcode == Opcode::HasLayoutPrototype && !operation.hasNoFieldOutsideSlot();
@@ -102,6 +104,8 @@ Effects declaredEffectsOfOperation(const Program& program, Opcode opcode, const 
     Effects effects = Effects::none();
     EffectsBuilder builder(program, effects);
     forEachDeclaredEffect(operation, builder);
+    if (lookAtCellHasNoFlagThatReads(opcode, operation))
+        effects.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
     if (effects.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
     return effects;
@@ -120,6 +124,8 @@ const Effects& declaredEffectsOfOperation(const Program& program, Opcode opcode,
     storage = Effects::none();
     EffectsBuilder builder(program, storage);
     forEachDeclaredEffect(operation, builder);
+    if (lookAtCellHasNoFlagThatReads(opcode, operation))
+        storage.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
     if (storage.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))
         storage.mayThrow = ThrowEffect::onlyForLackOfMemory();
     return storage;

@@ -2,7 +2,7 @@
 # No operation names what it hands on: only the flow knows that the constructors of the two instances are Date and Map
 # put(new Date().constructor, name, f); same(new Map().constructor); Date.now(); Date.parse("0"); Map.groupBy("0", f);
 # Date has members that the table locks, and nobody can read the name: the build says so at the store
-# DIAGNOSTIC: LockedBuiltinWriteUnderUnreadName 1
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 1
 # RUN: locks open
 # CHECK: locked MapGroupBy constant
 # CHECK: open DateNow holder-written-under-any-name

@@ -65,7 +65,8 @@ Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation represe
         ThrowSite packed = site;
         packed.sourceOfFalseProof = std::nullopt;
         packed.calleeIsReadFromReceiver = true;
-        packed.a = static_cast<uint32_t>(*site.sourceOfFalseProof);
+        packed.expectedProofType = 0;
+        packed.a = FalseProofWord::encode(static_cast<uint32_t>(*site.sourceOfFalseProof), site.expectedProofType);
         return throwSiteWords(packed, representation, registerNumber);
     }
     bool hasWideA = site.aIsMention || (site.a > ThrowSiteWord::maxNarrowA && site.a != ThrowSiteWord::none);
@@ -159,7 +160,7 @@ static ThrowSite checkedThrowSite(const ThrowSite& site)
     std::optional<uint32_t> b = site.b == ThrowSiteWord::none ? std::nullopt : site.b;
     RELEASE_ASSERT(site.a == ThrowSiteWord::none ? !site.aIsMention : !(site.a >> 31));
     RELEASE_ASSERT(!(b.value_or(0) >> 31));
-    return { .kind = site.kind, .a = site.a, .b = b, .aIsMention = site.aIsMention, .bIsMention = b && site.bIsMention, .sourceOfFalseProof = site.sourceOfFalseProof };
+    return { .kind = site.kind, .a = site.a, .b = b, .aIsMention = site.aIsMention, .bIsMention = b && site.bIsMention, .sourceOfFalseProof = site.sourceOfFalseProof, .expectedProofType = site.expectedProofType };
 }
 
 static ThrowSite throwSiteWithName(MentionList& mentions, ThrowKind kind, StringID name)
@@ -284,7 +285,7 @@ Machine::PatchGenerator* ThrowEmitter::generatorOfCheckedThrowSite(const Operati
 {
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
     RecordedSite position = calls.recordedSiteOf(context);
-    auto& generators = m_checkedThrowSites.add(computeHash(site.kind, site.a, site.b, site.sourceOfFalseProof, representation, position.origin.position, position.origin.inlineFrame), Vector<CheckedThrowSite, 1>()).iterator->value;
+    auto& generators = m_checkedThrowSites.add(computeHash(site.kind, site.a, site.b, site.sourceOfFalseProof, site.expectedProofType, representation, position.origin.position, position.origin.inlineFrame), Vector<CheckedThrowSite, 1>()).iterator->value;
     for (const CheckedThrowSite& known : generators) {
         if (known.site == site && known.representation == representation && known.position == position)
             return known.generator;
@@ -300,42 +301,43 @@ void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, S
     throwAt(context, throwSiteWithName(m_mentions, ThrowKind::ErrorWithMessage, message), std::nullopt, NewError { kind, throwPosition });
 }
 
-static ThrowSite siteOfFalseProof(ProofSource source)
+static ThrowSite siteOfFalseProof(ProofSource source, uint32_t expectedType)
 {
-    static_assert(numberOfEnumerators<ProofSource> <= ThrowSiteWord::maxNarrowA);
-    return { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source };
+    static_assert(numberOfEnumerators<ProofSource> <= 1u << FalseProofWord::sourceBits);
+    static_assert(FalseProofWord::encode(numberOfEnumerators<ProofSource>, FalseProofWord::everyBit) <= ThrowSiteWord::maxNarrowA);
+    return { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source, .expectedProofType = expectedType };
 }
 
-void ThrowEmitter::requireOrStopAtFalseProof(const OperationContext& context, Condition holds, std::optional<Boxed> found, ProofSource source)
+void ThrowEmitter::requireOrCrash(const OperationContext& context, Condition holds, std::optional<Boxed> found, ProofSource source, uint32_t expectedType)
 {
     LBasicBlock stops = newBlock();
     LBasicBlock continuation = newBlock();
     ScopeFork fork = m_out.forkScope();
     m_out.branch(holds.value(), normalEdge(continuation), rareEdge(stops));
     m_out.appendToArm(stops, fork);
-    stopAtFalseProof(context, found, source);
+    crashOnFalseProof(context, found, source, expectedType);
     m_out.appendToArm(continuation, fork);
 }
 
-void ThrowEmitter::checkOrStopAtFalseProof(const OperationContext& context, Condition holds, ProofSource source)
+void ThrowEmitter::checkOrCrash(const OperationContext& context, Condition holds, ProofSource source, uint32_t expectedType)
 {
     if (generator().isInitializingCell())
-        requireOrStopAtFalseProof(context, holds, std::nullopt, source);
+        requireOrCrash(context, holds, std::nullopt, source, expectedType);
     else
-        requireOrThrow(context, holds, siteOfFalseProof(source), std::nullopt);
+        requireOrThrow(context, holds, siteOfFalseProof(source, expectedType), std::nullopt);
 }
 
-void ThrowEmitter::stopAtFalseProof(const OperationContext& context, std::optional<Boxed> found, ProofSource source)
+void ThrowEmitter::crashOnFalseProof(const OperationContext& context, std::optional<Boxed> found, ProofSource source, uint32_t expectedType)
 {
     if (!generator().isInitializingCell()) {
-        throwAt(context, siteOfFalseProof(source), found ? std::optional<Operand>(*found) : std::nullopt);
+        throwAt(context, siteOfFalseProof(source, expectedType), found ? std::optional<Operand>(*found) : std::nullopt);
         m_out.unreachable();
         return;
     }
     Origin origin = context.origin();
     FunctionID writtenIn = generator().code().inlineFrames()[origin.inlineFrame].callee;
     m_out.suspendDeclaredAccesses();
-    callVoidOperation(context, RuntimeOperation::StopAtFalseProof, { found ? *found : Boxed(m_out.constInt64(JSValue::encode(JSValue()))), word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(origin.position)), word32(static_cast<int32_t>(source)) });
+    callVoidOperation(context, RuntimeOperation::StopAtFalseProof, { found ? *found : Boxed(m_out.constInt64(JSValue::encode(JSValue()))), word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(origin.position)), word32(static_cast<int32_t>(FalseProofWord::encode(static_cast<uint32_t>(source), expectedType))) });
     m_out.resumeDeclaredAccesses();
     m_out.unreachable();
 }

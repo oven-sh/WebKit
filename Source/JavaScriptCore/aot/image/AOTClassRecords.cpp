@@ -112,32 +112,32 @@ void askRowsOfClassesForClassRecords(TableEncoder& encoder)
     encoder.classesWhosePrivateNamesTextsKnow = findClassesWhosePrivateNamesTextsKnow(encoder.program);
 }
 
-static bool recordHoldsSideToStayingAsWritten(const TableEncoder& encoder, LayoutID classLayout, ClassSide side)
+static bool isClosedClassSide(const TableEncoder& encoder, LayoutID classLayout, ClassSide side)
 {
     return encoder.classesWithRecordsAllTheWayUp.quickGet(classLayout.index()) && encoder.facts.linked().holderIsChangedInSightAlone(encoder.program, classLayout, side);
 }
 
-static void countWhatIsHeldToStayingAsWritten(const TableEncoder& encoder)
+static void countClosedObjects(const TableEncoder& encoder)
 {
     size_t numberOfSides[numberOfClassSides] { };
-    size_t numberBelowNamesDefinedPastLists = 0;
+    size_t sidesInheritingAddedNames = 0;
     for (size_t index = 0; index < encoder.program.layouts.size(); ++index) {
         for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
-            bool isHeld = recordHoldsSideToStayingAsWritten(encoder, LayoutID(index), side);
+            bool isHeld = isClosedClassSide(encoder, LayoutID(index), side);
             numberOfSides[static_cast<unsigned>(side)] += isHeld;
-            numberBelowNamesDefinedPastLists += isHeld && encoder.facts.linked().layout(LayoutID(index)).namesAreDefinedPastLists[static_cast<unsigned>(side)];
+            sidesInheritingAddedNames += isHeld && encoder.facts.linked().layout(LayoutID(index)).namesAreDefinedPastLists[static_cast<unsigned>(side)];
         }
     }
-    encoder.build.statistics().count(StatisticID::SidesOfClassesBelowNamesDefinedPastLists, numberBelowNamesDefinedPastLists);
-    encoder.build.statistics().count(StatisticID::PrototypeObjectsHeldToStayingAsWritten, numberOfSides[static_cast<unsigned>(ClassSide::Prototype)]);
-    encoder.build.statistics().count(StatisticID::ClassObjectsHeldToStayingAsWritten, numberOfSides[static_cast<unsigned>(ClassSide::Static)]);
-    encoder.build.statistics().count(StatisticID::FunctionsWhoseClosuresAreHeldToListedNames, encoder.plan.slots().numberOfFunctionsWhoseClosuresGetOnlyListedNames());
+    encoder.build.statistics().count(StatisticID::ClosedSidesInheritingAddedNames, sidesInheritingAddedNames);
+    encoder.build.statistics().count(StatisticID::ClosedPrototypeObjects, numberOfSides[static_cast<unsigned>(ClassSide::Prototype)]);
+    encoder.build.statistics().count(StatisticID::ClosedClassObjects, numberOfSides[static_cast<unsigned>(ClassSide::Static)]);
+    encoder.build.statistics().count(StatisticID::FunctionsWithClosedClosures, encoder.plan.slots().closedClosureFunctionCount());
 }
 
 void groupClassesByParentInClassRecords(TableEncoder& encoder, std::span<const LayoutID> parentsThatListClasses)
 {
     encoder.sidesWithClassGuardsHereOrBelow = findSidesWithClassGuardsHereOrBelow(encoder, parentsThatListClasses);
-    countWhatIsHeldToStayingAsWritten(encoder);
+    countClosedObjects(encoder);
     Vector<uint32_t> firstClassBelow(FillWith { }, parentsThatListClasses.size() + 1, 0);
     for (LayoutID parent : parentsThatListClasses) {
         if (parent)
@@ -196,6 +196,12 @@ static bool memberCapturesAtMostEnvironmentOfClassObject(const Typed::Program& p
     return environmentOfClassObject && captures.size() == 1 && captures[0].written() == program.at(layout.constructor).captures[0].written();
 }
 
+static bool codeCreatesClass(const TableEncoder& encoder, LayoutID classLayout)
+{
+    uint32_t request[] { static_cast<uint32_t>(RequestKind::NewClass), classLayout.index() };
+    return !!encoder.numbers.numberOf(NumberSpace::Request, request);
+}
+
 static MethodData describeMemberInClassRecord(const TableEncoder& encoder, LayoutID classLayout, LayoutID environmentOfClassObject, const Typed::ClassMember& member, Typed::MemberCreation creation, bool holdsOneFunction)
 {
     const Typed::Program& program = encoder.program;
@@ -216,6 +222,10 @@ static MethodData describeMemberInClassRecord(const TableEncoder& encoder, Layou
     case Typed::MemberCreation::ByClassRecord:
         if (!member.key || !member.function || !memberCapturesAtMostEnvironmentOfClassObject(program, program.at(classLayout), environmentOfClassObject, member.function)) {
             encoder.fail("ClassRecordCannotCreateMember"_s, classLayout);
+            break;
+        }
+        if (std::optional<FunctionID> entrypoint = encoder.findEntrypoint(member.function); entrypoint || !codeCreatesClass(encoder, classLayout)) {
+            method.function = entrypoint.value_or(FunctionID()).index();
             break;
         }
         method.function = encoder.entrypointOf(member.function, "a member that the run time creates for"_s, classLayout);
@@ -363,7 +373,7 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
     data.guardsOfPrototypeSideHoldWhileClear = encoder.plan.bitsOfClassGuardsAreClearWhileTheyHold(classLayout, ClassSide::Prototype);
     data.guardsOfNamesAwaitBeginning = guardsOfNamesAwaitBeginningOf(program, encoder.plan, classLayout);
     for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
-        if (recordHoldsSideToStayingAsWritten(encoder, classLayout, side))
+        if (isClosedClassSide(encoder, classLayout, side))
             data.sidesChangedInSightAlone |= 1u << static_cast<unsigned>(side);
     }
     const Typed::LinkTables& linked = encoder.facts.linked();

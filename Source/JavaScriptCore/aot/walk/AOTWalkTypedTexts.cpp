@@ -152,7 +152,7 @@ static bool takePartsInWalkTexts(Walker& walker, const BodyValue& join, ValueID 
             return;
         }
         Reference part = walker.referenceOf(operand);
-        if (walker.hasTextsInStringBuilders() && isTextInStringBuilder(walker, part)) {
+        if (walker.hasStringsInBuilders() && isStringInBuilder(walker, part)) {
             joinsTexts = true;
             parts.append(part);
             return;
@@ -198,7 +198,7 @@ static std::optional<TextsJoinedInFrontInWalkTexts> findTextsJoinedInFrontInWalk
     int64_t room = Range::length().maximum;
     int64_t numberOfTexts = 0;
     for (Reference part : parts) {
-        if (!walker.standsInFrontOfTypedCopy(part))
+        if (!walker.isInvariantInSpecializedVersion(part))
             return std::nullopt;
         if (StringID text = textKnownForStrings(walker, part)) {
             room -= lengthOfTextForStrings(walker, text);
@@ -226,20 +226,20 @@ static std::optional<TextsJoinedInFrontInWalkTexts> findTextsJoinedInFrontInWalk
     return found;
 }
 
-static bool goOnInFrontOfTypedCopyWhereJoinCannotFailInWalkTexts(Walker& walker, TextsJoinedInFrontInWalkTexts& found, PartsOfJoinedText& parts, Origin origin)
+static bool tryHoistConcatenationChecks(Walker& walker, TextsJoinedInFrontInWalkTexts& found, PartsOfJoinedText& parts, Origin origin)
 {
     origin.isTailCall = false;
-    if (!walker.goOnInFrontOfTypedCopyWhereItsFirstTurnBegins())
+    if (!walker.tryHoistEntryTest())
         return false;
     for (Reference expected : found.expectedToBeTexts) {
         Reference isText;
         {
-            Walker::InFrontOfTypedCopy inFront(walker, true);
+            Walker::SpecializedPreheaderScope preheaderScope(walker, true);
             isText = buildTypeTestForStrings(walker, expected, TypeTable::string, origin);
         }
-        if (!isText || !walker.branchInFrontOfTypedCopy(isText, true))
+        if (!isText || !walker.tryBranchInPreheader(isText, true))
             return false;
-        Walker::InFrontOfTypedCopy inFront(walker, true);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true);
         Reference text = buildProofBehindTestForStrings(walker, expected, isText, OperandIndex::TypeTest::value, origin);
         if (!text)
             return false;
@@ -248,7 +248,7 @@ static bool goOnInFrontOfTypedCopyWhereJoinCannotFailInWalkTexts(Walker& walker,
     }
     Reference areShort;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true);
         Reference lengths;
         for (Reference text : found.texts) {
             Reference length = buildLengthOfString(walker, text, origin);
@@ -258,7 +258,7 @@ static bool goOnInFrontOfTypedCopyWhereJoinCannotFailInWalkTexts(Walker& walker,
         }
         areShort = buildOperatorForStrings(walker, Opcode::Less, lengths, integerForStrings(walker, found.limit), origin);
     }
-    return areShort && walker.branchInFrontOfTypedCopy(areShort, true);
+    return areShort && walker.tryBranchInPreheader(areShort, true);
 }
 
 static Reference buildJoinedTextInWalkTexts(Walker& walker, const BodyValue& join, std::span<const Reference> parts, UseOfTextAsKey use)
@@ -268,21 +268,21 @@ static Reference buildJoinedTextInWalkTexts(Walker& walker, const BodyValue& joi
     if (merged.size() == 1 && walker.types().at(walker.typeOf(merged[0])).isAnyString())
         return merged[0];
     std::optional<TextsJoinedInFrontInWalkTexts> inFrontOfLoop = findTextsJoinedInFrontInWalkTexts(walker, merged.span());
-    bool isMadeInFront = inFrontOfLoop && goOnInFrontOfTypedCopyWhereJoinCannotFailInWalkTexts(walker, *inFrontOfLoop, merged, walker.originOf(join));
+    bool isMadeInFront = inFrontOfLoop && tryHoistConcatenationChecks(walker, *inFrontOfLoop, merged, walker.originOf(join));
     Draft joined(Opcode::Strcat, walker.originOf(join));
     joined.inputValueGiven = join.id();
     joined.setPartsOperands(merged.span());
     walker.chooseConservativeFields(joined);
     joined.setIsLikelyKey(use > UseOfTextAsKey::None);
     joined.setIsLikelyName(use == UseOfTextAsKey::NameOfProperty);
-    std::optional<Draft> joinedAgain = isMadeInFront && walker.makesCallsMadeInFrontAgainInTurns() ? std::optional<Draft>(joined) : std::nullopt;
+    std::optional<Draft> joinedAgain = isMadeInFront && walker.checksHoistedCalls() ? std::optional<Draft>(joined) : std::nullopt;
     Reference built;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, isMadeInFront);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, isMadeInFront);
         built = walker.build(WTF::move(joined));
     }
     if (joinedAgain)
-        walker.holdLookupInFrontAgainstLookupInTurn(built, WTF::move(*joinedAgain), declaredBoundInTable(Opcode::Strcat), ProofSource::CallMadeInFront);
+        walker.holdLookupInFrontAgainstLookupInTurn(built, WTF::move(*joinedAgain), declaredBoundInTable(Opcode::Strcat), ProofSource::HoistedCall);
     return built;
 }
 
@@ -299,7 +299,7 @@ static bool bindKeyOfTextAndValueInWalkTexts(Walker& walker, const BodyIndex& in
     std::array<Reference, 2> addends { walker.referenceOf(sum.operand(0)), walker.referenceOf(sum.operand(1)) };
     if (!addends[0] || !addends[1])
         return false;
-    if (walker.hasTextsInStringBuilders() && (isTextInStringBuilder(walker, addends[0]) || isTextInStringBuilder(walker, addends[1])))
+    if (walker.hasStringsInBuilders() && (isStringInBuilder(walker, addends[0]) || isStringInBuilder(walker, addends[1])))
         return false;
     bool textIsOnLeft = isProvenString(walker, walker.typeOf(addends[0]));
     if (textIsOnLeft == isProvenString(walker, walker.typeOf(addends[1])))
@@ -339,7 +339,7 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
             parts.clear();
             takePartsInWalkTexts(walker, first, { }, { }, parts, nullptr);
         }
-        if (convertPartsAndAppendToTextInStringBuilder(walker, first, parts.span()))
+        if (tryConvertAndAppendParts(walker, first, parts.span()))
             return true;
         UseOfTextAsKey use = first.opcode() == Opcode::Strcat && !parts.contains(Reference()) ? useAsKeyInWalkTexts(walker, index, first.id()) : UseOfTextAsKey::None;
         if (use <= UseOfTextAsKey::None)
@@ -368,7 +368,7 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
             walker.leaveAnythingAt(callee);
     }
 
-    if (walker.hasTextsInStringBuilders() && appendRowToTextInStringBuilder(walker, last, parts)) {
+    if (walker.hasStringsInBuilders() && tryAppendJoinToStringInBuilder(walker, last, parts)) {
         letJoinsFailWhereReaderFailsInWalkTexts(walker, last, joinsThatFailWhereReaderFails.span());
         uint32_t behindGrowth = last.id().index() + 1 - firstValue;
         walker.walkStretch(block.id(), behindGrowth, behindGrowth);

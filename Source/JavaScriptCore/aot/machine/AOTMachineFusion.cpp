@@ -54,7 +54,7 @@ static ALWAYS_INLINE void fusionMark(ValueFacts* values, const Operation* operat
     values[operation->index()].flags |= static_cast<uint16_t>(flag);
 }
 
-static constexpr uint16_t fusionFlagsOfSettledLeaves = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::GoesByOverflow);
+static constexpr uint16_t fusionFlagsOfSettledLeaves = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::UsesOverflowFlag);
 
 namespace FusionTrait {
 enum : uint8_t {
@@ -173,7 +173,7 @@ static unsigned fuseAddressBelow(ValueFacts* values, unsigned numberOfLeaves, co
         const Operation* leaf = fusedExtension ? extended : fusedShift ? shifted : index;
         unsigned amount = fusedShift ? amountOfShift : 0;
         IndexExtension kind = fusionExtensionOf(fusedExtension);
-        if (kind == IndexExtension::ZeroExtend32 && clearsUpperHalfOfRegister(leaf))
+        if (kind == IndexExtension::ZeroExtend32 && clearsUpperHalf(leaf))
             kind = IndexExtension::None;
         unsigned numberOfLeavesAdded = fusedShift ? 2 : 1;
         bool hasRoomForLeaves = !leaf->hasNoPosition() && numberOfLeaves + numberOfLeavesAdded <= maxLeaves;
@@ -646,7 +646,7 @@ static ALWAYS_INLINE bool fuseScaledIndexBelow(ValueFacts* values, const Operati
         auto tryForm = [&](const Operation* fusedExtension) ALWAYS_INLINE_LAMBDA {
             const Operation* leaf = fusedExtension ? fusionChildrenOf(fusedExtension)[0] : shifted;
             IndexExtension kind = fusionExtensionOf(fusedExtension);
-            if (kind == IndexExtension::ZeroExtend32 && clearsUpperHalfOfRegister(leaf))
+            if (kind == IndexExtension::ZeroExtend32 && clearsUpperHalf(leaf))
                 kind = IndexExtension::None;
             if (leaf->hasNoPosition() || !isEncodableScaledSum(amount, kind))
                 return false;
@@ -1320,7 +1320,7 @@ static void findOperandOfSumOfExtendedWords(const Operation* sum, unsigned index
         user = word;
 }
 
-static bool parseSumTestedByOverflow(const Operation* branch, SumTestedByOverflow& result)
+static bool parseOverflowCheckedSum(const Operation* branch, OverflowCheckedSum& result)
 {
     if (branch->opcode() != Branch || branch->isUnconditionalJump())
         return false;
@@ -1372,17 +1372,17 @@ static bool parseSumTestedByOverflow(const Operation* branch, SumTestedByOverflo
     int64_t maxSum = lefts.max + (subtracts ? -rights.min : rights.max);
 
     bool isTestedByOverflow = false;
-    for (uint8_t successorThatPasses : { 0, 1 }) {
-        Opcode relationThatPasses = successorThatPasses ? invertedComparison(relation) : relation;
+    for (uint8_t passingSuccessor : { 0, 1 }) {
+        Opcode passingRelation = passingSuccessor ? invertedComparison(relation) : relation;
         std::optional<MemoryUpdatePassingSums> passing;
         if (!test.lowHalf)
-            passing = memoryUpdateSumsThatPass(relationThatPasses, test.bias, test.bound, false);
-        else if (relationThatPasses == Equal)
+            passing = memoryUpdateSumsThatPass(passingRelation, test.bias, test.bound, false);
+        else if (passingRelation == Equal)
             passing = MemoryUpdatePassingSums { memoryUpdateMinInt32, memoryUpdateMaxInt32 };
         std::optional<int32_t> leastResult;
         if (!passing || !sumIsTestedByOverflow(*passing, minSum, maxSum, leastResult))
             continue;
-        result.successorThatPasses = successorThatPasses;
+        result.passingSuccessor = passingSuccessor;
         result.leastResult = leastResult;
         isTestedByOverflow = true;
         break;
@@ -1404,18 +1404,18 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool mayTestSumByOverflow(const Operation* branch
 {
     if (!branchMayReadSumOfExtendedWords(branch))
         return false;
-    SumTestedByOverflow result;
-    return parseSumTestedByOverflow(branch, result);
+    OverflowCheckedSum result;
+    return parseOverflowCheckedSum(branch, result);
 }
 
-SumTestedByOverflow sumTestedByOverflowOf(const Liveness& liveness, const Operation* sumOrBranch)
+OverflowCheckedSum overflowCheckedSumOf(const Liveness& liveness, const Operation* sumOrBranch)
 {
-    ASSERT(liveness.goesByOverflow(sumOrBranch));
-    SumTestedByOverflow result;
+    ASSERT(liveness.usesOverflowFlag(sumOrBranch));
+    OverflowCheckedSum result;
     const Operation* branch = sumOrBranch->opcode() == Branch ? sumOrBranch : sumOrBranch->owner()->last();
-    bool isAsScanned = parseSumTestedByOverflow(branch, result) && (branch == sumOrBranch || result.sum == sumOrBranch);
+    bool isAsScanned = parseOverflowCheckedSum(branch, result) && (branch == sumOrBranch || result.sum == sumOrBranch);
     RELEASE_ASSERT(isAsScanned);
-    result.isWidenedWhereTestFails = !result.registerHoldsWholeSum && liveness.of(result.sum).has(ValueFlag::UpperHalfIsRead);
+    result.isWidenedOnFailure = !result.registerHoldsWholeSum && liveness.of(result.sum).has(ValueFlag::UpperHalfIsRead);
     return result;
 }
 
@@ -1448,8 +1448,8 @@ bool BackwardScan::tryTestSumByOverflow(Operation* branch)
     ASSERT(branch->opcode() == Branch && !m_liveness.worksInMemory(branch));
     if (!branchMayReadSumOfExtendedWords(branch))
         return false;
-    SumTestedByOverflow test;
-    if (!parseSumTestedByOverflow(branch, test))
+    OverflowCheckedSum test;
+    if (!parseOverflowCheckedSum(branch, test))
         return false;
 
     const Block* block = branch->owner();
@@ -1462,15 +1462,15 @@ bool BackwardScan::tryTestSumByOverflow(Operation* branch)
     const ValueFacts& sum = facts(test.sum);
     ASSERT(sum.definition == noPosition && !sum.has(ValueFlag::IsFused));
     if (!test.registerHoldsWholeSum && sum.has(ValueFlag::UpperHalfIsRead)) {
-        WayOutOfBranch failingSide = wayOutOfBranchThrough(m_order, block->successor(!test.successorThatPasses).block());
+        WayOutOfBranch failingSide = wayOutOfBranchThrough(m_order, block->successor(!test.passingSuccessor).block());
         for (uint32_t use = sum.firstUse; use; use = m_liveness.use(use).next) {
             if (m_liveness.isUseOfUpperHalf(use) && !failingSide.holds(m_liveness.use(use).position))
                 return false;
         }
     }
 
-    set(test.sum, ValueFlag::GoesByOverflow);
-    set(branch, ValueFlag::GoesByOverflow);
+    set(test.sum, ValueFlag::UsesOverflowFlag);
+    set(branch, ValueFlag::UsesOverflowFlag);
     return true;
 }
 

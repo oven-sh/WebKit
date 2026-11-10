@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 OpcodeSet StraightEmitter::opcodesOfCasts()
 {
-    return inputOperationsThatOnlyHandOn | OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject, Opcode::TypeTest };
+    return inputIdentityOpcodes | OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject, Opcode::TypeTest };
 }
 
 static ThrowKind throwKindOfStraightForm(NullishAccess access)
@@ -112,7 +112,7 @@ void StraightEmitter::generateCast(const BodyValue& value)
             return;
         }
     }
-    if (inputOperationsThatOnlyHandOn.contains(value.opcode())) {
+    if (inputIdentityOpcodes.contains(value.opcode())) {
         defineSameAs(value, value.operand(0));
         return;
     }

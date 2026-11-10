@@ -7,7 +7,7 @@
 #   b0(v0: env L0 @Cell, v1: anything @JSValue) entry=0:
 #     v2: f3 @Cell = NewClosure v0 function=f3 storage=Frame closureForm=Slim loan=LeftToStubOfCall
 #     v3 @Void = ReleaseEnvironment v0
-#     v4: anything @JSValue = Call v1, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v1, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v4
 # }
 # -- end of code

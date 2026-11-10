@@ -371,7 +371,6 @@ bool MachineBlockMerger::areEqual(const PatchOperation* a, const PatchOperation*
         || a->needsFrameRecord() != b->needsFrameRecord()
         || a->findsOperandsInFrameWithoutRecord() != b->findsOperandsInFrameWithoutRecord()
         || a->isSuspension() != b->isSuspension()
-        || a->releasesDeadValues() != b->releasesDeadValues()
         || a->sharesLatePath() != b->sharesLatePath()
         || a->failsWhenPredicateIsZero() != b->failsWhenPredicateIsZero()
         || !areEqual(a->effects, b->effects)

@@ -84,7 +84,7 @@ struct ModuleEvaluationParts {
     Vector<StepsOfLateModuleSites> stepsOfLateSites;
     BitVector modulesCalledWhereRequired;
     BitVector modulesThatStartThemselves;
-    BitVector modulesWhoseRequiresRecordNothingThatIsSeen;
+    BitVector modulesSkippingRecordRequire;
     BitVector modulesEvaluatedByCodeAlone;
     BitVector modulesWhosePathNoSiteNames;
     BitVector bodiesThatRowsLeaveOut;
@@ -113,7 +113,7 @@ public:
     bool leavesOutCallOf(FunctionID body) const { return m_parts.bodiesThatRowsLeaveOut.get(body.index()); }
     bool isCalledWhereRequired(ModuleID module) const { return m_parts.modulesCalledWhereRequired.get(module.index()); }
     bool startsItself(ModuleID module) const { return m_parts.modulesThatStartThemselves.get(module.index()); }
-    bool recordsNothingThatIsSeen(ModuleID module) const { return m_parts.modulesWhoseRequiresRecordNothingThatIsSeen.get(module.index()); }
+    bool canSkipRecordRequire(ModuleID module) const { return m_parts.modulesSkippingRecordRequire.get(module.index()); }
     static bool beginAsksRunTime(const Program&, ModuleID);
     bool finishLeavesStatusInRecord(const Program&, ModuleID) const;
     ModuleID moduleThatBeginsIn(FunctionID body) const

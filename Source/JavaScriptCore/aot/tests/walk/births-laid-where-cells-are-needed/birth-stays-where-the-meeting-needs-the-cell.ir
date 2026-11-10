@@ -18,10 +18,10 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 # code f0:Body {
 #   b0(v0: anything @JSValue, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
 #     v3: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
-#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Branch v2 -> taken b1(), notTaken b2()
 #   b1():
-#     v5: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b2()
 #   b2():
 #     Return v3

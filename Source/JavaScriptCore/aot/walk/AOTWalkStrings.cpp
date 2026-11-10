@@ -21,8 +21,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+OperatorForm operatorFormFor(Walker&, const Draft&);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet accessesUnderKeysInWalkStrings { Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine };
 static constexpr OpcodeSet conversionsToNumbersInWalkStrings { Opcode::ToNumber, Opcode::ToNumeric };
@@ -43,7 +43,7 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
         bool somethingIsProven = false;
         for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode) && !somethingIsProven; ++operandIndex) {
             if (ValueID operand = value.operand(operandIndex))
-                somethingIsProven |= !walker.nothingIsProvenOf(walker.referenceOf(operand));
+                somethingIsProven |= !walker.hasUninformativeType(walker.referenceOf(operand));
         }
         if (!somethingIsProven)
             return false;
@@ -127,7 +127,7 @@ Reference rootForStrings(const Walker& walker, Reference reference)
 {
     if (!reference.isValue())
         return reference;
-    ValueID root = walker.code().valueBehindNames<opcodesThatGiveSameCell>(reference.id());
+    ValueID root = walker.code().valueBehindNames<cellPreservingOpcodes>(reference.id());
     return root == reference.id() ? reference : referenceToRecordForStrings(walker, root);
 }
 
@@ -273,7 +273,7 @@ static void addToSumInWalkStrings(const Walker& walker, SumInWalkStrings& sum, V
         added.greatest = std::min(added.greatest, type.integers.maximum);
     };
     holdToTypeOfName();
-    while (opcodesThatGiveSameValue.contains(record->opcode)) {
+    while (valuePreservingOpcodes.contains(record->opcode)) {
         if (record->opcode == Opcode::Narrowed && record->testOperand() && !record->narrowsHolderOfOperand() && !record->narrowsOtherResultOfOperand() && !record->narrowsTermOfOperand() && allRelations.contains(code.at(record->testOperand()).opcode))
             sum.passedTests.append({ record->testOperand(), record->isOnTakenEdge() });
         value = record->operand(0);
@@ -496,7 +496,7 @@ static bool relationSaysPositionBelowLengthInWalkStrings(const Walker& walker, c
 bool nameProvesPositionBelowLengthForStrings(const Walker& walker, Reference position, Reference string)
 {
     const Code& code = walker.code();
-    while (position.isValue() && opcodesThatGiveSameCell.contains(code.at(position.id()).opcode)) {
+    while (position.isValue() && cellPreservingOpcodes.contains(code.at(position.id()).opcode)) {
         const Operation& name = code.at(position.id());
         if (name.opcode == Opcode::Narrowed && name.testOperand() && !name.narrowsTermOfOperand()) {
             uint32_t placeOfPosition = 0;
@@ -510,7 +510,7 @@ bool nameProvesPositionBelowLengthForStrings(const Walker& walker, Reference pos
 
 void bindForStrings(Walker& walker, ValueID input, Reference built, Origin origin)
 {
-    walker.bind(input, built ? boxedUnlessNumbersAreUnboxed(walker, built, origin) : built);
+    walker.bind(input, built ? boxNumberIfNeeded(walker, built, origin) : built);
 }
 
 Reference buildOperatorForStrings(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
@@ -523,9 +523,9 @@ Reference buildOperatorForStrings(Walker& walker, Opcode opcode, Reference left,
     if (right)
         operation.setOperand(1, right);
     if (hasOperatorForm(opcode))
-        operation.setForm(formAllowedForTypedOperator(walker, operation));
+        operation.setForm(operatorFormFor(walker, operation));
     Reference built = walker.build(WTF::move(operation));
-    return built ? boxedUnlessNumbersAreUnboxed(walker, built, origin) : built;
+    return built ? boxNumberIfNeeded(walker, built, origin) : built;
 }
 
 Reference buildNegationForStrings(Walker& walker, Reference boolean, Origin origin)
@@ -634,10 +634,10 @@ bool buildArmsForStrings(Walker& walker, Reference test, BlockFrequency ofFailin
     BlockID meetingBlock = walker.addBlock();
     walker.branch(test, passingBlock, failingBlock);
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     auto buildArm = [&](BlockID block, const ArmForStrings& arm) {
         walker.continueIn(block);
-        Walker::ArmThatMeets built;
+        Walker::JoinArm built;
         built.values.fill(Reference(), met.size());
         arm(built.values.mutableSpan());
         if (walker.isUnreachable() || walker.hasFailed())
@@ -652,7 +652,7 @@ bool buildArmsForStrings(Walker& walker, Reference test, BlockFrequency ofFailin
         buildArm(failingBlock, failing);
     if (walker.hasFailed() || arms.isEmpty())
         return false;
-    return walker.letArmsMeet(arms.span(), meetingBlock, met);
+    return walker.joinArms(arms.span(), meetingBlock, met);
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -22,9 +22,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, Opcode, const BodyValue&, const InputsOfTypedOperation&);
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+OperatorForm operatorFormFor(Walker&, Opcode, const BodyValue&, const InputsOfTypedOperation&);
+OperatorForm operatorFormFor(Walker&, const Draft&);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet operatorsOfNumberPaths = allSums | allBitwiseOperators | allRelations | OpcodeSet { Opcode::Mul, Opcode::Negate, Opcode::StrictEq };
 static constexpr OpcodeSet operatorsThatGiveNumbersOnNumberPaths { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Negate, Opcode::Increment, Opcode::Decrement };
@@ -159,7 +159,7 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, cons
             }
         } else if (opcode == Opcode::Integer)
             result.kind = KindOnNumberPath::Integer;
-        else if (primitiveConstants.contains(opcode) || opcode == Opcode::ReleaseHint) {
+        else if (primitiveConstants.contains(opcode)) {
         } else {
             if (!operatorsOfNumberPaths.contains(opcode) || numberOfOperators == mostOperatorsOfNumberPath)
                 break;
@@ -243,7 +243,7 @@ static bool buildNumberPath(Walker& walker, const BodyValue& firstOperator)
             taker = index.onlyUsingValue(taker);
         bool givesSameInEveryTurn = taker && allBitwiseOperators.contains(index.opcodeOf(taker));
         firstOperator.forEachOperand([&](ValueID operand, uint32_t) {
-            ValueID written = index.valueBehindCasts(operand);
+            ValueID written = index.stripCasts(operand);
             givesSameInEveryTurn &= !index.isInLoop(index.blockOf(written), loop) || (!index.isParameter(written) && primitiveConstants.contains(index.opcodeOf(written)));
         });
         if (givesSameInEveryTurn)
@@ -405,7 +405,7 @@ bool buildOperatorBesideOneNumberOfItsOpcodes(Walker& walker, const BodyValue& v
 {
     if (!operatorsBesideOneNumber.contains(value.opcode()) || !walker.has(Mechanism::TypedOperations) || walker.isUnreachable())
         return false;
-    OperatorForm form = formAllowedForTypedOperator(walker, value.opcode(), value, InputsOfTypedOperation(walker, nullptr));
+    OperatorForm form = operatorFormFor(walker, value.opcode(), value, InputsOfTypedOperation(walker, nullptr));
     std::optional<uint32_t> turnedInFront = form == OperatorForm::Generic && walker.has(Mechanism::UnboxedNumbers) ? findOperandThatIsNumberOrUndefinedBesideAnyValue(walker, value) : std::nullopt;
     bool takesNumberRaw = form == OperatorForm::NumberAndValue && walker.has(Mechanism::UnboxedNumbers);
     if (!takesNumberRaw && form != OperatorForm::MayBeString && !turnedInFront)
@@ -419,21 +419,21 @@ bool buildOperatorBesideOneNumberOfItsOpcodes(Walker& walker, const BodyValue& v
         Draft conversion(Opcode::ToNumber, draft.origin());
         conversion.setValueOperand(draft.operand(*turnedInFront));
         walker.chooseConservativeFields(conversion);
-        conversion.setForm(formAllowedForTypedOperator(walker, conversion));
+        conversion.setForm(operatorFormFor(walker, conversion));
         draft.setOperand(*turnedInFront, walker.build(WTF::move(conversion)));
-        form = formAllowedForTypedOperator(walker, draft);
+        form = operatorFormFor(walker, draft);
         if (walker.hasFailed())
             return false;
     }
-    if (form == OperatorForm::NumberAndValue && holdOperandBesideNumberToNumberOrBeginTurnAgain(walker, draft, value.id()))
-        form = formAllowedForTypedOperator(walker, draft);
+    if (form == OperatorForm::NumberAndValue && tryGuardNumericOperand(walker, draft, value.id()))
+        form = operatorFormFor(walker, draft);
     else if (Walker::NumberAskedBesideNumber asked = form == OperatorForm::NumberAndValue && !turnedInFront ? walker.askValueBesideNumberForNumber(value) : Walker::NumberAskedBesideNumber()) {
         draft.setOperand(asked.operandIndex, asked.proven);
-        form = formAllowedForTypedOperator(walker, draft);
+        form = operatorFormFor(walker, draft);
     }
     draft.setForm(form);
     Origin origin = draft.origin();
-    walker.bind(value.id(), boxedUnlessNumbersAreUnboxed(walker, walker.build(WTF::move(draft)), origin));
+    walker.bind(value.id(), boxNumberIfNeeded(walker, walker.build(WTF::move(draft)), origin));
     return true;
 }
 

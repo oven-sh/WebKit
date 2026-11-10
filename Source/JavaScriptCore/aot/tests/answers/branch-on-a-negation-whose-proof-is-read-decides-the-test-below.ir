@@ -1,7 +1,7 @@
 # a branch asks a negation, and each side reads the proof that its edge hands on, so the walk leaves the negation where it is (Walker::branchOnTestBelowNegations()). The test below the negation is written again on each side
 # function pick(x) { const no = !x; if (no) return x ? "no and yes" : no; return x ? no : "neither"; }
 # what holds today is that the test is found again and asked once, and that each side still branches on it. It is not decided, whatever the name of this file says. The condition in Code is the written ToBoolean of the negation, which stays a record
-# (form=Generic, with TypedOperations form=Booleans), and noteWhatBranchDecidesOnEdge() passes no ToBoolean on its way down, so it notes the outcome of that record alone
+# (form=Generic, with TypedOperations form=Booleans), and recordEdgeOutcome() passes no ToBoolean on its way down, so it notes the outcome of that record alone
 # the answers are what counts. Whoever teaches that way down to pass a ToBoolean of a boolean reaches the negation, and with the two sides confused pick(0) answers "no and yes" and pick(1) "neither"
 # the records are written by hand, because no front end reads the proof of an edge
 # RUN(SHELL): run-in-shell globalThis.sink = pick => { print(pick(0)); print(pick(1)); print(pick("")); print(pick("a")); print(pick(null)); print(pick({})); };

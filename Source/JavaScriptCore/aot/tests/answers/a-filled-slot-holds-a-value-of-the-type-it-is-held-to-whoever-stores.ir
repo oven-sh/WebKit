@@ -2,14 +2,14 @@
 # Whatever that code stores, by whatever road, a slot that is filled holds a value of its type: a value of another type takes the field out of its slot, and a later value that fits brings it back. Every answer is that of the language.
 # The last run is the red control of what the other runs look at: a door left open on purpose leaves a number in the slot of `label`, and aotPlaceOfProperty() says "slot".
 # OPTIONS: mechanisms=all
-# RUN: run-in-shell --aotCountsPath=/dev/null const counted = () => { const lines = aotRuntimeCounters().split("\n"), kept = []; for (let i = 0; i < lines.length; i++) { const line = lines[i]; if (!line.startsWith("0") && line.includes("FieldsLeft")) kept[kept.length] = line.split("\t").join(" "); } return kept.join(", "); }; globalThis.register = (make, read, between, inLoop, belowCalls, copyLabel, storeAgain) => { const h = make(); h.label = 5; print(aotPlaceOfProperty(h, "label"), aotMarksOfObject(h), read(h)); h.label = "back"; print(aotPlaceOfProperty(h, "label"), aotMarksOfObject(h), read(h)); h.count = 1.5; print(aotPlaceOfProperty(h, "count"), read(h)); h.count = 2147483648; print(aotPlaceOfProperty(h, "count"), read(h)); h.count = -4; print(aotPlaceOfProperty(h, "count"), read(h)); h.point = null; print(aotPlaceOfProperty(h, "point")); print(counted()); };
+# RUN: run-in-shell --aotCountsPath=/dev/null const counted = () => { const lines = aotRuntimeCounters().split("\n"), kept = []; for (let i = 0; i < lines.length; i++) { const line = lines[i]; if (!line.startsWith("0") && line.includes("FieldsEvicted")) kept[kept.length] = line.split("\t").join(" "); } return kept.join(", "); }; globalThis.register = (make, read, between, inLoop, belowCalls, copyLabel, storeAgain) => { const h = make(); h.label = 5; print(aotPlaceOfProperty(h, "label"), aotMarksOfObject(h), read(h)); h.label = "back"; print(aotPlaceOfProperty(h, "label"), aotMarksOfObject(h), read(h)); h.count = 1.5; print(aotPlaceOfProperty(h, "count"), read(h)); h.count = 2147483648; print(aotPlaceOfProperty(h, "count"), read(h)); h.count = -4; print(aotPlaceOfProperty(h, "count"), read(h)); h.point = null; print(aotPlaceOfProperty(h, "point")); print(counted()); };
 # CHECK: beside its slot extraProperties fieldOutsideSlot NaN
 # CHECK-NEXT: slot extraProperties fieldOutsideSlot 7
 # CHECK-NEXT: slot 8.5
 # CHECK-NEXT: slot 6442450948
 # CHECK-NEXT: slot -8
 # CHECK-NEXT: slot
-# CHECK-NEXT: 1 counter:FieldsLeftSlotByStoreOfOtherType, 1 field:L1.1:FieldsLeftSlotByStoreOfOtherType:int32
+# CHECK-NEXT: 1 counter:FieldsEvictedByTypeMismatch, 1 field:L1.1:FieldsEvictedByTypeMismatch:int32
 # CHECK-NEXT: exited with 0
 # RUN(ROADS): run-in-shell globalThis.register = (make, read, between, inLoop, belowCalls, copyLabel, storeAgain) => { const roads = [h => { h["la" + "bel"] = 5; }, h => { Reflect.set(h, "label", 5); }, h => { Reflect.set({ }, "label", 5, h); }, h => { Object.defineProperty(h, "label", { value: 5 }); }, h => { Object.assign(h, { label: 5 }); }, h => { new Proxy(h, { }).label = 5; }, h => { delete h.label; h.label = 5; }, h => { for (let i = 0; i < 40; i++) h.label = i; }]; for (let i = 0; i < roads.length; i++) { const h = make(); print(between(h, roads[i]), aotPlaceOfProperty(h, "label"), typeof h.label, storeAgain(h), typeof h.label); } };
 # ROADS-COUNT-8: NaN beside its slot number 12 string

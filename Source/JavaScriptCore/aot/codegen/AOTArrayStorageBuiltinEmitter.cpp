@@ -52,7 +52,7 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     ArrayStorageFormList forms = elements().candidateFormsFor(pushed, expected);
     if (!hasArrayStorageForm(declared) && representationOf(pushed) == Representation::Int32) {
         ValueID birth = call.receiver();
-        while (opcodesThatGiveSameValue.contains(opcodeOf(birth)))
+        while (valuePreservingOpcodes.contains(opcodeOf(birth)))
             birth = operationAt(birth).operand(0);
         bool isBornInSightWithElements = opcodeOf(birth) == Opcode::NewArray && operationAt(birth).numberOfVariadicOperands();
         size_t place = forms.findIf([](const ArrayStorageForm* form) {
@@ -75,7 +75,7 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     LBasicBlock slowPath = newBlock();
     OperandJoin join(m_out, resultRepresentationOf(call));
 
-    build().statistics().count(StatisticID::PushesLaidInLine);
+    build().statistics().count(StatisticID::ArrayPushesInlined);
     ArrayElements storage = elements().elementsOf(array);
     Word32 length = elements().publicLengthAsWord(storage);
     branchUnless(below(length, elements().vectorLengthAsWord(storage)), slowPath);

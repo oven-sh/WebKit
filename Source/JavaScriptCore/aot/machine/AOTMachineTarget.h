@@ -311,7 +311,7 @@ constexpr bool resultOverwritesFirstChild(Opcode opcode)
         || opcode == BitAnd || opcode == BitOr || opcode == BitXor || opcode == Shl || opcode == SShr || opcode == ZShr || opcode == RotR;
 }
 
-constexpr bool clearsUpperHalfOfRegister(Opcode opcode)
+constexpr bool clearsUpperHalf(Opcode opcode)
 {
     switch (opcode) {
     case Add:
@@ -357,12 +357,12 @@ constexpr bool clearsUpperHalfOfRegister(Opcode opcode)
 
 inline bool handsOnClearUpperHalf(const Operation* value, const Operation* phi)
 {
-    return value == phi || (value->hasInt32() ? value->asInt32() >= 0 : clearsUpperHalfOfRegister(value->opcode()));
+    return value == phi || (value->hasInt32() ? value->asInt32() >= 0 : clearsUpperHalf(value->opcode()));
 }
 
-inline bool clearsUpperHalfOfRegister(const Operation* value)
+inline bool clearsUpperHalf(const Operation* value)
 {
-    return value->opcode() == Phi ? !value->has(OperationFlag::UpperHalfMayBeSet) : clearsUpperHalfOfRegister(value->opcode());
+    return value->opcode() == Phi ? !value->has(OperationFlag::UpperHalfMayBeSet) : clearsUpperHalf(value->opcode());
 }
 
 JS_EXPORT_PRIVATE unsigned numberOfScratchGPRsOf(const ProcedureTraits&, const Operation&);

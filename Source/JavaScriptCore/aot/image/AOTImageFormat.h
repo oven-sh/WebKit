@@ -118,14 +118,14 @@ enum class ImageFlag : uint32_t {
     IsObfuscated = 1 << 0,
     AdmitsUnknownJavaScript = 1 << 1,
     LoadsModulesByName = 1 << 2,
-    AdmitsLibraryText = 1 << 3,
+    AllowsLibrarySource = 1 << 3,
     ShowsWaysBetweenModuleObjects = 1 << 4,
     LoadsCodeOutsideImage = 1 << 5,
     IsBuiltWithLibrary = 1 << 6,
     ShowsEntriesOfRequireCache = 1 << 7,
     RunsEntryPointsAgain = 1 << 8,
     LetsGlobalObjectGo = 1 << 9,
-    StoresPathOfMainModule = 1 << 10,
+    SetsMainModulePath = 1 << 10,
     RefusesOriginalsBesideMocks = 1 << 12,
 };
 

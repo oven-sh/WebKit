@@ -5,7 +5,7 @@
 # CHECK: flags
 # CHECK-NOT: LoadsModulesByName
 
-module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 entry module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {

@@ -63,6 +63,7 @@ public:
     using AsyncValidationCallback = RefPtr<SharedTask<CallbackType>>;
 
     static ValidationResult validateSync(VM&, Vector<uint8_t>&& source);
+    static ValidationResult validateSync(VM&, std::span<const uint8_t> source);
     static void validateAsync(VM&, Vector<uint8_t>&& source, Module::AsyncValidationCallback&&);
     static void validateAsync(VM&, Vector<uint8_t>&& source, Name&& sourceURL, Module::AsyncValidationCallback&&);
 

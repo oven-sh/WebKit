@@ -47,9 +47,6 @@ public:
     static constexpr unsigned bytesStoredInTurnOfLoop = 8 * sizeof(uint64_t);
     void storeWordInLoop(CellPointer, const Layout&, unsigned begin, unsigned end, int64_t word);
     CellPointer allocateInFrame(const OperationContext&, size_t size);
-    void clearWhatCellLentHolds(ValueID cell);
-    void noteWordsThatCellLentHolds(ValueID cell, std::span<const uint32_t> offsets);
-    void clearWhatWasLentUnderHandler(BlockID handler);
 
     std::pair<CellPointer, Pointer> allocateArray(const OperationContext&, Word32 length, Word32 vectorLength, IndexingType, LBasicBlock slowPath);
     CellPointer allocateArrayOfLength(const OperationContext&, IndexingType, unsigned length);
@@ -66,19 +63,8 @@ private:
         Machine::StackSlot* slot { nullptr };
         uint32_t blockIndex { 0 };
         ValueID call;
-        ValueID cell;
-        std::span<const uint32_t> wordsThatMayHoldCells;
     };
     Vector<SlotOfClosuresLent, 4> m_slotsOfClosuresLent;
-
-    struct WordLentOutOfFrame {
-        Machine::StackSlot* slot;
-        uint32_t offset;
-    };
-    using WordsLentOutOfFrame = Machine::ArenaVector<WordLentOutOfFrame>;
-    WordsLentOutOfFrame& wordsLentUnderHandler(BlockID handler);
-    Machine::PatchOperation* patchThatZeroesWordsOfFrame();
-    Vector<WordsLentOutOfFrame*> m_wordsLentUnderHandlers;
 };
 
 } } } // namespace JSC::AOT::Typed

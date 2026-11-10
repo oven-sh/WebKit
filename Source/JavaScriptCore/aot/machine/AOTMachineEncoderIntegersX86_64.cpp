@@ -500,7 +500,7 @@ static void encodeX86IntegerExtension(Encoder& encoder, const Step& step, X86Int
         moveX86IntegerOperand(jit, Width32, source, destination);
         source = X86IntegerOperand::inRegister(destination);
     }
-    if (source.isInRegister() && source.gpr == destination && isFreeInRegisterOfChild(encoder.m_liveness, step.operation))
+    if (source.isInRegister() && source.gpr == destination && isFreeWhenCoalesced(encoder.m_liveness, step.operation))
         return;
 
     switch (extension) {
@@ -693,7 +693,7 @@ bool Encoder::tryEncodeSumAndConstant(const Step& sumStep, const Step& outerStep
         return false;
     if (sum->useCount() != 1 || sum->isNarrowReference() || m_liveness.of(sum).has(ValueFlag::IsKeptForCollector))
         return false;
-    if (m_allocation.isSpilled(sum) || m_liveness.worksInMemory(sum) || m_liveness.worksInMemory(outer) || m_liveness.goesByOverflow(outer))
+    if (m_allocation.isSpilled(sum) || m_liveness.worksInMemory(sum) || m_liveness.worksInMemory(outer) || m_liveness.usesOverflowFlag(outer))
         return false;
     for (const Operation* child : sum->children()) {
         if (child->isConstant() || (m_liveness.isFused(child) && child->opcode() != Trunc))
@@ -761,7 +761,7 @@ static void applyX86InstructionThatSetsFlags(CCallHelpers& jit, bool subtracts, 
 
 void Encoder::encodeSumThatSetsFlags(const Step& step)
 {
-    SumTestedByOverflow test = sumTestedByOverflowOf(m_liveness, step.operation);
+    OverflowCheckedSum test = overflowCheckedSumOf(m_liveness, step.operation);
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     GPRReg destination = step.destination.gpr();
     bool subtracts = test.subtracts();
@@ -794,7 +794,7 @@ void Encoder::encodeInteger(const Step& step)
 
     switch (step.operation->opcode()) {
     case Add:
-        if (m_liveness.goesByOverflow(step.operation))
+        if (m_liveness.usesOverflowFlag(step.operation))
             encodeSumThatSetsFlags(step);
         else if (addsScaledIndex(m_liveness, step.operation))
             encodeX86ScaledSum(*this, step);
@@ -802,7 +802,7 @@ void Encoder::encodeInteger(const Step& step)
             encodeX86IntegerBinary(*this, step, X86IntegerInstruction::Add);
         return;
     case Sub:
-        if (m_liveness.goesByOverflow(step.operation))
+        if (m_liveness.usesOverflowFlag(step.operation))
             encodeSumThatSetsFlags(step);
         else
             encodeX86IntegerBinary(*this, step, X86IntegerInstruction::Subtract);

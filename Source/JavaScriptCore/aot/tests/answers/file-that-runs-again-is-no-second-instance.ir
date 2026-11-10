@@ -12,7 +12,7 @@ variable g2 name="Other" module=m0 declared={type=absent|f3 flags=[IsFromCompile
 variable g3 name="Box" module=m0 declared={type=absent|f5 flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g4 name="exports" module=m1 declared={type=anything} initialization=Undefined
 module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
-module m1 path="/again.cjs" displayPath="again.cjs" kind=CommonJs flags=[KeepsError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f15 exportsVariable=g4
+module m1 path="/again.cjs" displayPath="again.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f15 exportsVariable=g4
 entry module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():

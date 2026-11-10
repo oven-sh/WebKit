@@ -87,7 +87,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral facesOfCommonJSModules = R"IR(module m4 path="#4" displayPath="function.cjs" exportRule=CommonJs body=f5 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g3}, {name="tag" variable=g4}]
+static constexpr ASCIILiteral commonJSFacades = R"IR(module m4 path="#4" displayPath="function.cjs" exportRule=CommonJs body=f5 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g3}, {name="tag" variable=g4}]
 module m5 path="#5" displayPath="filled.cjs" exportRule=CommonJs body=f6 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="a" variable=g5}, {name="default" variable=g6}]
 module m6 path="#6" displayPath="chained.cjs" exportRule=CommonJs body=f7 requests=[{target=m3 kind=Require completes=true}] syntheticExports=[{name="sum" variable=g7}]
 variable g3 name="default" module=m4 declared={type=anything}
@@ -95,23 +95,23 @@ variable g4 name="tag" module=m4 declared={type=anything}
 variable g5 name="a" module=m5 declared={type=anything}
 variable g6 name="default" module=m5 declared={type=anything}
 variable g7 name="sum" module=m6 declared={type=anything}
-function f5 name="faceOfFunctionModule" module=m1 kind=Module results=[{type=anything}] {
+function f5 name="facadeOfFunctionModule" module=m1 kind=Module results=[{type=anything}] {
     EvaluateModule module=m1 referrer=m4 [isBare]
     Return
 }
-function f6 name="faceOfFilledModule" module=m2 kind=Module results=[{type=anything}] {
+function f6 name="facadeOfFilledModule" module=m2 kind=Module results=[{type=anything}] {
     EvaluateModule module=m2 referrer=m5 [isBare]
     Return
 }
-function f7 name="faceOfChainedModule" module=m3 kind=Module results=[{type=anything}] {
+function f7 name="facadeOfChainedModule" module=m3 kind=Module results=[{type=anything}] {
     EvaluateModule module=m3 referrer=m6 [isBare]
     Return
 }
 )IR"_s;
 
-static constexpr ASCIILiteral commonJSModules = R"IR(module m1 path="/function.cjs" displayPath="function.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
-module m2 path="/filled.cjs" displayPath="filled.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1
-module m3 path="/chained.cjs" displayPath="chained.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2 requests=[{target=m2 kind=Require completes=true}, {target=m1 kind=Require completes=true}]
+static constexpr ASCIILiteral commonJSModules = R"IR(module m1 path="/function.cjs" displayPath="function.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="/filled.cjs" displayPath="filled.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1
+module m3 path="/chained.cjs" displayPath="chained.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2 requests=[{target=m2 kind=Require completes=true}, {target=m1 kind=Require completes=true}]
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
 variable g2 name="exports" module=m3 declared={type=anything} initialization=Undefined
@@ -176,8 +176,8 @@ function f4 name="exported" module=m1 results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral commonJSEntryPoint = R"IR(module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
-module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1
+static constexpr ASCIILiteral commonJSEntryPoint = R"IR(module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1
 entry module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="a" module=m1 declared={type=anything} initialization=Undefined
@@ -207,8 +207,8 @@ function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] result
 }
 )IR"_s;
 
-static constexpr ASCIILiteral recordsOfRequire = R"IR(module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
-module m1 path="/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+static constexpr ASCIILiteral recordsOfRequire = R"IR(module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
 entry module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
@@ -256,10 +256,10 @@ function f1 name="child" module=m1 kind=CommonJsModule flags=[IsSloppy] results=
 )IR"_s;
 
 static constexpr ASCIILiteral parentsByLevel = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m4 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
-module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
-module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1
+module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
+module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1
 module m3 path="/deeper.js" displayPath="deeper.js" body=f3 requests=[{target=m4 completes=true}]
-module m4 path="/below.cjs" displayPath="below.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g2
+module m4 path="/below.cjs" displayPath="below.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g2
 entry module=m0
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
@@ -308,12 +308,12 @@ function f4 name="below" module=m4 kind=CommonJsModule flags=[IsSloppy] results=
 )IR"_s;
 
 static constexpr ASCIILiteral cacheByLevel = R"IR(module m0 path="/main.js" displayPath="main.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m3 completes=true isHoisted=true}, {target=m5 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}]
-module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m6 kind=Require completes=true}]
-module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1 requests=[{target=m3 kind=Require completes=true}]
-module m3 path="/last.cjs" displayPath="last.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2
+module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[CachesEvaluationError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m6 kind=Require completes=true}]
+module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[CachesEvaluationError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1 requests=[{target=m3 kind=Require completes=true}]
+module m3 path="/last.cjs" displayPath="last.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2
 module m4 path="/deeper.js" displayPath="deeper.js" flags=[IsListedInCache] body=f4 requests=[{target=m5 completes=true}]
-module m5 path="/below.cjs" displayPath="below.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g3
-module m6 path="/own.cjs" displayPath="own.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g4
+module m5 path="/below.cjs" displayPath="below.cjs" kind=CommonJs flags=[CachesEvaluationError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g3
+module m6 path="/own.cjs" displayPath="own.cjs" kind=CommonJs flags=[CachesEvaluationError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g4
 entry module=m0
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
@@ -469,7 +469,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 )IR"_s;
 
 static constexpr ASCIILiteral moduleBuiltinsInEveryPosition = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
-module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g4
+module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g4
 entry module=m0
 layout L0 name="Holder" fields=[{key="meta" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Wrapper" fields=[{key="exports" declared={type=anything} flags=[IsRequired]}, {key="require" declared={type=anything} flags=[IsRequired]}, {key="module" declared={type=anything} flags=[IsRequired]}]
@@ -571,7 +571,7 @@ function f5 name="describesWrapper" module=m1 captures=[{type=anything}] results
 
 static constexpr ASCIILiteral fileThatImportsAheadOfLoader = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m3 completes=true}, {target=m4 completes=true}]
-module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
+module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
 module m3 path="#3" displayPath="asks.cjs" exportRule=CommonJs body=f3 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
 module m4 path="/beside.js" displayPath="beside.js" body=f4
 module m5 path="/late.js" displayPath="late.js" body=f5
@@ -609,7 +609,7 @@ function f2 name="asks" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[
     PutModuleVariable v8 variable=g0
     Return
 }
-function f3 name="faceOfAsks" module=m2 kind=Module results=[{type=anything}] {
+function f3 name="facadeOfAsks" module=m2 kind=Module results=[{type=anything}] {
     EvaluateModule module=m2 referrer=m3 [isBare]
     Return
 }
@@ -667,7 +667,7 @@ function f10 name="importsLateUnderHandler" module=m2 results=[{type=anything}] 
 
 static constexpr ASCIILiteral importCalledDuringLoad = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m5 completes=true}]
-module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
+module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
 module m3 path="/late.js" displayPath="late.js" body=f3
 module m4 path="/later.js" displayPath="later.js" body=f4
 module m5 path="#5" displayPath="asks.cjs" exportRule=CommonJs body=f5 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
@@ -717,7 +717,7 @@ function f4 name="later" module=m4 kind=Module results=[{type=anything}] {
     v4 = Call v1, -, v2, v3
     Return
 }
-function f5 name="faceOfAsks" module=m2 kind=Module results=[{type=anything}] {
+function f5 name="facadeOfAsks" module=m2 kind=Module results=[{type=anything}] {
     EvaluateModule module=m2 referrer=m5 [isBare]
     Return
 }
@@ -729,7 +729,7 @@ function f6 name="importRoot" results=[{type=anything}] {
 
 static constexpr ASCIILiteral textsInTurns = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m7 completes=true}, {target=m3 completes=true}]
-module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
+module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
 module m3 path="/first.js" displayPath="first.js" body=f3 requests=[{target=m4 completes=true}]
 module m4 path="/second.js" displayPath="second.js" body=f4 requests=[{target=m5 completes=true}]
 module m5 path="/third.js" displayPath="third.js" body=f5
@@ -796,7 +796,7 @@ function f6 name="late" module=m6 kind=Module results=[{type=anything}] {
     v4 = Call v1, -, v2, v3
     Return
 }
-function f7 name="faceOfAsks" module=m2 kind=Module results=[{type=anything}] {
+function f7 name="facadeOfAsks" module=m2 kind=Module results=[{type=anything}] {
     EvaluateModule module=m2 referrer=m7 [isBare]
     Return
 }
@@ -944,7 +944,7 @@ a second require answers the same object: true
 
 static void testImportedCommonJSModules()
 {
-    checkShellOutput(makeString(mainThatImports, commonJSModules, facesOfCommonJSModules), { }, R"(the function of the other module, called: called
+    checkShellOutput(makeString(mainThatImports, commonJSModules, commonJSFacades), { }, R"(the function of the other module, called: called
 module.exports === exports: true
 module.id: /chained.cjs
 typeof require: function

@@ -5,15 +5,15 @@
 # OPTIONS: exclude=FunctionSource
 # RUN: image ProgramTables
 # CHECK-LABEL: ProgramTables:
-# CHECK-NOT: quotedText
-# CHECK-NOT: textOfQuotes
+# CHECK-NOT: quotedSource
+# CHECK-NOT: quotedSourceText
 # RUN(SHELL): run-in-shell globalThis.report = message => print(message);
 # SHELL: undefined is not an object (evaluating 'undefined.title')
 # SHELL-NEXT: task.run is not a function. (In 'task.run()', 'task.run' is undefined)
 # SHELL-NEXT: null is not an object (evaluating 'null.run')
 # SHELL-NEXT: exited with 0
 
-module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 92, 183] quotedTexts=[{position=36 end=10}, {position=126 start=10 end=18}, {position=131 start=10 end=21}] textOfQuotes="task.titletask.run(1)"}
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 92, 183] quotedSources=[{position=36 end=10}, {position=126 start=10 end=18}, {position=131 start=10 end=21}] quotedSourceText="task.titletask.run(1)"}
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():

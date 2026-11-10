@@ -452,7 +452,7 @@ void encodeFieldTable(TableEncoder& encoder)
     constexpr size_t mostBytesInFrontOfTable = 8;
     encoder.part.reserveRoomFor(numberOfWords * sizeof(uint32_t) + numberOfEntries * sizeof(uint16_t) + firstEntryOfClass.size() * sizeof(uint32_t) + accessors.size() * sizeof(uint64_t) + 4 * mostBytesInFrontOfTable);
 
-    encoder.part.setTableWrittenInPlace<uint32_t>(ProgramTableIndex::fieldTable, numberOfWords, [&](std::span<uint32_t> table) {
+    encoder.part.setTableInPlace<uint32_t>(ProgramTableIndex::fieldTable, numberOfWords, [&](std::span<uint32_t> table) {
         static_assert(!fieldTableRowWithoutEntries);
         zeroWordsOfFieldTable(loops, table);
         forEachIndexInParallel(loops, static_cast<unsigned>(rows.rows.size()), [&](unsigned index) {
@@ -462,7 +462,7 @@ void encodeFieldTable(TableEncoder& encoder)
         });
         writeEntriesOfFieldTableRows(loops, rows, table.subspan(highestObjectShape), &FieldTableRowEntry::entry);
     });
-    encoder.part.setTableWrittenInPlace<uint16_t>(ProgramTableIndex::fieldRecordIndices, numberOfEntries, [&](std::span<uint16_t> recordIndices) {
+    encoder.part.setTableInPlace<uint16_t>(ProgramTableIndex::fieldRecordIndices, numberOfEntries, [&](std::span<uint16_t> recordIndices) {
         zeroWordsOfFieldTable(loops, recordIndices);
         writeEntriesOfFieldTableRows(loops, rows, recordIndices, &FieldTableRowEntry::recordIndex);
     });

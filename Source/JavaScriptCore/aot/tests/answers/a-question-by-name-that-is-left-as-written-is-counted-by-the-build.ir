@@ -6,8 +6,8 @@
 # class Heir extends Base { emit = () => 3; }
 # class Quiet extends Base { }
 # function ask(object) { return $isPlainHeirOf(object, Base) ? "yes " + $findsDeclaredMember(object, "madeUp") + " " + $findsDeclaredMember(object, "end") + " " + object.emit() : "no " + object.emit(); }            in a file of the library
-# RUN(COUNT): compile QuestionsByNameLeftAsWritten mechanisms=all
-# COUNT: statistic QuestionsByNameLeftAsWritten 1
+# RUN(COUNT): compile MemberLookupChecksLeftGeneric mechanisms=all
+# COUNT: statistic MemberLookupChecksLeftGeneric 1
 # RUN(ANSWERS): run-in-shell mechanisms=all keep = x => x; lay = function () { };
 # ANSWERS: yes false true 1 | yes false true 3 | yes false true 1
 

@@ -42,7 +42,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v8 = Call v7, -, v4, v6 calleeName="start"
     Return v8
 }
-function f1 name="worth" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f1 name="worth" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     v1 = Null
     v2 = Await v1, v0

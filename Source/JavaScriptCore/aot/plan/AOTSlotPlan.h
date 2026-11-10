@@ -447,7 +447,7 @@ public:
     ClosureForm closureFormOf(FunctionID id) const { return id.index() < m_parts.closureForms.size() ? m_parts.closureForms[id.index()] : ClosureForm::Full; }
     bool closuresGetOnlyListedNames(FunctionID id) const { return m_parts.functionsWhoseClosuresGetOnlyListedNames.get(id.index()); }
     bool prototypePropertyStaysAsMade(FunctionID id) const { return m_parts.functionsWhosePrototypePropertyStaysAsMade.get(id.index()); }
-    size_t numberOfFunctionsWhoseClosuresGetOnlyListedNames() const { return m_parts.functionsWhoseClosuresGetOnlyListedNames.bitCount(); }
+    size_t closedClosureFunctionCount() const { return m_parts.functionsWhoseClosuresGetOnlyListedNames.bitCount(); }
     const ClassCreationPlan& classCreation(LayoutID id) const { return id.index() < m_parts.classCreation.size() ? m_parts.classCreation[id.index()] : m_unplannedClass; }
 
     bool someSlotUnderKeyHoldsMark(PropertyKeyID key) const { return m_parts.keysOfSlotsThatHoldMarks.get(key.index()); }

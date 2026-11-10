@@ -6,21 +6,24 @@
 # kinds.push(id(Second));
 # print(run(kinds));
 # print("went on");
-# What a list gives is asked where it comes out. The check widened a class's closure to `function`, and the record kept the class: `new list[at](1)` went by the record, and First's constructor ran for Second: `number;number;`, silently.
-# The check names the class now; and where a unit may not name what Link claims, the read is typed as far as the unit may ask and no further.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# An element of an array is checked where it is read. The check used to widen a class's closure to `function`, while the read operation kept the class as its type.
+# `new list[at](1)` relied on the operation's type, so First's constructor ran for Second and the program silently printed `number;number;`.
+# The check now names the class. Where a unit may not name what Link claims, the read's type is only as narrow as what the unit may check.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f1 mechanisms=all
 # FORM: [[given]]: undefined|f2 @JSValue = GetArrayElement
 # FORM: CheckProof [[given]] checkedType=undefined|f2 {{*}} source=
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: number;
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what a {{*}} holds is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found function in
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: number;
-# CALLS-NEXT: AOT: f{{*}} at {{*}}: what a {{*}} holds is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found function in
 # CALLS-NOT: went on
 # CALLS: crashed with
 

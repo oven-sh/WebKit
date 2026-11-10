@@ -6,7 +6,7 @@
 #   b0(v0: Uint32Array @Cell, v1: Uint32Array @Cell, v2: int[0, 100] @Int32, v3: anything @JSValue) entry=0:
 #     v4: int[0, 1073741824] @Int64 = GetTypedArrayLength v1 typedArrayType=7 traits=[mayTouchMemory]
 #     v5: opaque(ViewVector) @RawWord = GetTypedArrayVector v0 traits=[mayTouchMemory]
-#     v6 @Void = PutTypedArrayElement v0, v2, v2, v5, v4 typedArrayType=7 level=Proven [keyIsIntegral] traits=[mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v6 @Void = PutTypedArrayElement v0, v2, v2, v5, v4 typedArrayType=7 level=Proven [keyIsIntegral] traits=[mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v3
 # }
 # -- end of code

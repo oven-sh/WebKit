@@ -36,7 +36,7 @@ v(DestructureIterable, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, N
 
 v(ArrayPutAtIndex, CalledByCode, (Value, Number, ValueInSloppyCode), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPutAtIndex)
 v(ArrayPutAtNumber, CalledByCode, (Value, Number), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPutAtNumber)
-v(ReserveArrayRoom, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReserveArrayRoom)
+v(ReserveArrayCapacity, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReserveArrayCapacity)
 v(SetArrayLength, CalledByCode, (InStrictCode, InSloppyCode), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, SetArrayLength)
 
 v(ArrayGetAtIndex, CalledByCode, (OfListAsMade, OfAnyList), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtIndex)

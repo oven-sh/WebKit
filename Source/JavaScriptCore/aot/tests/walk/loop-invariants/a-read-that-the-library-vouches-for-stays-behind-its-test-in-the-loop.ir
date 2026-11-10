@@ -7,7 +7,7 @@
 # CHECK-NOT: = GetOwnContiguousIndex
 # CHECK: isLoopHead=true
 # CHECK: = GetOwnContiguousIndex
-# RUN(EMPTY): run-in-shell mechanisms=all testing=TestsEveryPosition globalThis.after = () => print(each.call([], null, 3), each.call(["a", "b"], null, 3));
+# RUN(EMPTY): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime globalThis.after = () => print(each.call([], null, 3), each.call(["a", "b"], null, 3));
 # EMPTY: undefined b
 # EMPTY-NEXT: exited with 0
 

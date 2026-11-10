@@ -91,7 +91,7 @@ StringID textOfKnownPartOfStringBuilder(Walker& walker, Reference part)
     }
 }
 
-static void buildPartInTextBuilderParts(Walker& walker, TextInStringBuilder& text, Reference name, Opcode form, Reference value, StringID constant, Origin origin)
+static void buildPartInTextBuilderParts(Walker& walker, StringInBuilder& text, Reference name, Opcode form, Reference value, StringID constant, Origin origin)
 {
     Draft part(form, origin);
     walker.chooseConservativeFields(part);
@@ -123,7 +123,7 @@ static Reference codeUnitThatTextIsMadeOfInTextBuilderParts(Walker& walker, Refe
     return buildOperatorForStrings(walker, Opcode::BitAnd, number, integerForStrings(walker, UINT16_MAX), origin);
 }
 
-static bool appendCharacterByItsCodeUnitInTextBuilderParts(Walker& walker, TextInStringBuilder& text, Reference name, Reference part, const Type& type, Origin origin)
+static bool appendCharacterByItsCodeUnitInTextBuilderParts(Walker& walker, StringInBuilder& text, Reference name, Reference part, const Type& type, Origin origin)
 {
     if (!type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined))
         return false;
@@ -137,7 +137,7 @@ static bool appendCharacterByItsCodeUnitInTextBuilderParts(Walker& walker, TextI
         buildPartInTextBuilderParts(walker, text, name, Opcode::StringBuilderAppendCodeUnit, codeUnit, { }, origin);
         return true;
     }
-    if (!units.isSubsetOf(Range { -1, UINT16_MAX }) || handlerInForceReadsTextInStringBuilder(walker, text))
+    if (!units.isSubsetOf(Range { -1, UINT16_MAX }) || handlerReadsStringInBuilder(walker, text))
         return false;
     bool isUndefinedOutside = walker.types().at(walker.code().at(rootForStrings(walker, part).id()).type).primitives & Primitive::Undefined;
     Reference isInside = buildOperatorForStrings(walker, Opcode::LessEq, integerForStrings(walker, 0), codeUnit, origin);
@@ -149,10 +149,10 @@ static bool appendCharacterByItsCodeUnitInTextBuilderParts(Walker& walker, TextI
     }, { });
 }
 
-static void appendPartInTextBuilderParts(Walker& walker, TextInStringBuilder& text, Reference name, Reference part, Origin origin)
+static void appendPartInTextBuilderParts(Walker& walker, StringInBuilder& text, Reference name, Reference part, Origin origin)
 {
     if (!part || !part.isRecord()) {
-        walker.fail("a part of a text in a builder names no record of Code"_s);
+        walker.fail("a part of a string in a builder is not a record of Code"_s);
         return;
     }
     if (StringID known = textOfKnownPartOfStringBuilder(walker, part)) {
@@ -164,7 +164,7 @@ static void appendPartInTextBuilderParts(Walker& walker, TextInStringBuilder& te
     TypeID proven = walker.typeOf(part);
     Type type = proven ? walker.types().at(proven) : Type();
     if (!proven || !type.hasOnlyPrimitives(primitivesTakenInTextBuilderParts)) {
-        walker.fail("a part of a text in a builder may run code"_s);
+        walker.fail("a part of a string in a builder may run code"_s);
         return;
     }
     if (const Operation& record = walker.code().at(part.id()); record.opcode == Opcode::Double && !record.number()) {
@@ -188,7 +188,7 @@ static void appendPartInTextBuilderParts(Walker& walker, TextInStringBuilder& te
     buildPartInTextBuilderParts(walker, text, name, form, part, { }, origin);
 }
 
-void appendPartsToStringBuilder(Walker& walker, TextInStringBuilder& text, Reference name, std::span<const Reference> parts, Origin origin)
+void appendPartsToStringBuilder(Walker& walker, StringInBuilder& text, Reference name, std::span<const Reference> parts, Origin origin)
 {
     origin.isTailCall = false;
     for (Reference part : parts) {

@@ -184,7 +184,7 @@ struct AssignmentPlan {
     Vector<uint16_t> storesInSourceOrder;
     bool servesDefinitionsOnly { false };
     bool addsExtraProperties { false };
-    bool storesNameBehindSymbol { false };
+    bool storesNameAfterSymbol { false };
     bool storesOnlyFieldsThatFit { false };
     bool mayStoreCells { false };
     bool readsOutOfLineFields { false };
@@ -436,7 +436,9 @@ JSFinalObject* tryCopyDictionary(VM&, JSObject* source);
 JSFinalObject* tryCopyWithElements(VM&, JSObject* source);
 bool flattenOnceUnlessCopiedAsDictionary(VM&, JSObject* source);
 std::optional<MappedCopy::MoveKind> moveKindOutOfOrdinaryObject(const RuntimeLayoutTable&, const AssignmentPlan::FieldStore&);
+bool takesPlainPropertiesDirectly(Structure* target);
 bool tryDefinePropertiesOnOrdinaryObject(VM&, State&, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
+bool tryAssignToOrdinaryObject(VM&, State&, JSObject* target, JSObject* source);
 JSFinalObject* tryCopyTwoObjects(VM&, State&, JSGlobalObject*, JSValue first, JSValue second);
 
 } } // namespace JSC::AOT

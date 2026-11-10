@@ -21,9 +21,9 @@
 # CHECK-NOT: = PropGet
 # CHECK: = Mul {{*}}form=Numbers
 # CHECK: = Add [[sum]], {{*}}form=Numbers
-# RUN(COUNT): compile LoopsBuiltTwice TurnsThatBeginAgain mechanisms=all
-# COUNT: statistic LoopsBuiltTwice 1
-# COUNT: statistic TurnsThatBeginAgain 3
+# RUN(COUNT): compile WalkLoopsVersioned IterationRestartsEmitted mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 1
+# COUNT: statistic IterationRestartsEmitted 3
 # RUN(ONCE): walk f1 mechanisms=all-LoopInvariants
 # ONCE: isLoopHead=true:
 # ONCE-NOT: isLoopHead=true:

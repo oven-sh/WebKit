@@ -160,11 +160,11 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
 
     BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
     BlockID meeting = walker.addBlock();
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
 
     Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1);
     Walker::ArmsThatMeet arms;
-    auto goOnWhereTestPasses = [&](Reference test, BlockID whereTestFails) {
+    auto continueIfCheckPasses = [&](Reference test, BlockID whereTestFails) {
         if (!test)
             return false;
         BlockID passed = walker.addBlock();
@@ -201,7 +201,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
         test.setObjectOperand(object);
         test.setLayouts(types.at(types.forLayout(layout)).layouts);
         Reference hasShape = walker.build(WTF::move(test));
-        goesOn = goOnWhereTestPasses(hasShape, asWritten);
+        goesOn = continueIfCheckPasses(hasShape, asWritten);
         if (goesOn) {
             object = buildProof(object, hasShape, OperandIndex::ShapeTest::object);
             goesOn = !!object;
@@ -216,7 +216,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
     if (goesOn) {
         Draft look(Opcode::IsSlotFilled, origin);
         fillSlotOperationInKeyOrdersAccessors(walker, look, object, *field, key);
-        goesOn = goOnWhereTestPasses(walker.build(WTF::move(look)), asWritten);
+        goesOn = continueIfCheckPasses(walker.build(WTF::move(look)), asWritten);
     }
     Reference half;
     if (goesOn) {
@@ -254,7 +254,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
             isExpected = walker.build(WTF::move(test));
         }
         if (isExpected) {
-            Reference closure = goOnWhereTestPasses(isExpected, otherFunction) ? buildProof(half, isExpected, OperandIndex::TypeTest::value) : Reference();
+            Reference closure = continueIfCheckPasses(isExpected, otherFunction) ? buildProof(half, isExpected, OperandIndex::TypeTest::value) : Reference();
             if (closure && callAccessor(walker, access, expected, object, stored, closure))
                 walker.listArm(stretch, arms);
             else if (closure)
@@ -271,7 +271,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
 
     walker.walkClosedArm(asWritten, stretch, arms);
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 
@@ -358,8 +358,8 @@ static bool fieldStillLiesWhereArmHasSeenIt(Walker& walker, Walker::StaticFieldS
 static bool namesSameHolderInKeyOrdersAccessors(const BodyIndex& index, ValueID one, ValueID other)
 {
     auto holder = [&](ValueID named) {
-        named = index.valueBehindCasts(named);
-        return !index.isParameter(named) && index.opcodeOf(named) == Opcode::CheckInitialized ? index.valueBehindCasts(index.value(named).operand(0)) : named;
+        named = index.stripCasts(named);
+        return !index.isParameter(named) && index.opcodeOf(named) == Opcode::CheckInitialized ? index.stripCasts(index.value(named).operand(0)) : named;
     };
     one = holder(one);
     other = holder(other);
@@ -396,7 +396,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     origin.isTailCall = false;
 
     if (Walker::StaticFieldSeenInVariable* seen = walker.staticFieldSeenInVariableByArm(); seen && seen->variable == variable && fieldStillLiesWhereArmHasSeenIt(walker, *seen)) {
-        walker.count(StatisticID::StaticFieldsAccessedOnLookOfTheirArms);
+        walker.count(StatisticID::StaticFieldGuardsReused);
         if (!isStore) {
             Reference held = seen->held;
             if (Reference asArmKnowsIt = seen->readThatNamesIt && seen->inlineFrameOfRead == origin.inlineFrame ? walker.referenceOf(seen->readThatNamesIt) : Reference())
@@ -421,10 +421,10 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     Reference held = walker.build(WTF::move(read));
     if (!held || walker.hasFailed())
         return true;
-    bool turnMayBeginAgain = !isStore && walker.mayBeginTurnAgainInClosedCopy();
+    bool mayRestartIteration = !isStore && walker.canRestartIteration();
     Reference isAbsent;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, turnMayBeginAgain && walker.standsInFrontOfTypedCopy(held));
+        Walker::SpecializedPreheaderScope preheaderScope(walker, mayRestartIteration && walker.isInvariantInSpecializedVersion(held));
         Draft test(Opcode::TypeTest, origin);
         test.setValueOperand(held);
         test.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
@@ -432,21 +432,21 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     }
     if (!isAbsent || walker.hasFailed())
         return true;
-    if (turnMayBeginAgain && walker.branchInFrontOfTypedCopy(isAbsent, false, Walker::TurnOfTypedCopy::HasDoneNothing, Walker::TurnsThatAsk::SomeBesideCopyWithoutGuess)) {
-        Walker::InFrontOfTypedCopy inFront(walker, true);
+    if (mayRestartIteration && walker.tryBranchInPreheader(isAbsent, false, Walker::IterationPurity::EffectFree, Walker::GuardedIterations::SomeWithUnguardedVersion)) {
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true);
         Draft proof(Opcode::Narrowed, origin);
         proof.setValueOperand(held);
         proof.setTestOperand(isAbsent);
         proof.setOperandIndex(OperandIndex::TypeTest::value);
         proof.setIsOnTakenEdge(false);
-        walker.noteGuessOpened();
+        walker.recordSpeculation();
         walker.bind(access.id(), walker.build(WTF::move(proof)));
-        walker.count(StatisticID::StaticFieldsAskedInFrontOfLoops);
+        walker.count(StatisticID::StaticFieldGuardsHoisted);
         return true;
     }
 
     uint32_t end = place + 1;
-    static constexpr OpcodeSet operationsBetweenAccessesOfOneLook = constantsInFormOfUses | inputOperationsThatOnlyHandOn | allNumericOperators | allRelations | allEqualities | OpcodeSet { Opcode::GetModuleVariable, Opcode::CheckInitialized };
+    static constexpr OpcodeSet operationsBetweenAccessesOfOneLook = constantsInFormOfUses | inputIdentityOpcodes | allNumericOperators | allRelations | allEqualities | OpcodeSet { Opcode::GetModuleVariable, Opcode::CheckInitialized };
     bool mayTakeMore = walker.isInLoop() && !walker.staticFieldSeenInVariableByArm() && !walker.isNestedTooDeeply();
     for (uint32_t later = end, limit = mayTakeMore ? limitOfStretchOfArms(walker, block) : 0; later < limit; ++later) {
         BodyValue other = index.value(ValueID(block.firstValue().index() + later));
@@ -459,7 +459,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
     BlockID liesInVariable = walker.addBlock();
     BlockID meeting = walker.addBlock();
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     walker.branch(isAbsent, asWritten, liesInVariable);
 
     Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, end);
@@ -498,7 +498,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
 
     walker.walkClosedArm(asWritten, stretch, arms);
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 

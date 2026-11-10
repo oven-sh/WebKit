@@ -1,7 +1,7 @@
 # sink(process.mainModule.require(name));
 # process.mainModule can be written, so nobody follows what a read of it gives. The table says which object it hands out, and require above that object is a loader: a call of that name off a value that nobody follows may be a call of it.
 # OPTIONS: exclude=CodeOutsideImage
-# DIAGNOSTIC: ModuleNamedAtRunTimeIsRefused 1
+# DIAGNOSTIC: NonConstantModuleName 1
 # RUN: causes mechanisms=all
 # CHECK: cause LoadsModuleByName ModuleRequire
 

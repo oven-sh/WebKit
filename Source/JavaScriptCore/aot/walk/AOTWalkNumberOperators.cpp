@@ -90,9 +90,9 @@ static bool bindWhatIsNegatedTwice(Walker& walker, const BodyValue& negation)
     if (!walker.has(Mechanism::Folding))
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID inner = index.valueBehindCasts(negation.valueOperand());
+    ValueID inner = index.stripCasts(negation.valueOperand());
     if (inner && !index.isParameter(inner) && index.opcodeOf(inner) == Opcode::ToBoolean)
-        inner = index.valueBehindCasts(index.value(inner).valueOperand());
+        inner = index.stripCasts(index.value(inner).valueOperand());
     if (!inner || index.isParameter(inner) || index.opcodeOf(inner) != Opcode::LogicalNot)
         return false;
     Reference negatedTwice = walker.referenceOf(index.value(inner).valueOperand());
@@ -382,7 +382,7 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
     if (allEqualities.contains(opcode) || allRelations.contains(opcode) || opcode == Opcode::ToBoolean) {
         bool somethingIsProven = false;
         for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode) && !somethingIsProven; ++operandIndex)
-            somethingIsProven |= !walker.nothingIsProvenOf(walker.referenceOf(value.operand(operandIndex)));
+            somethingIsProven |= !walker.hasUninformativeType(walker.referenceOf(value.operand(operandIndex)));
         if (!somethingIsProven)
             return false;
     }

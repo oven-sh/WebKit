@@ -266,8 +266,8 @@ Frame* planFrame(Procedure& proc)
             const uint32_t distance = slots.distanceOf(spill);
             ASSERT(distance && distance <= slots.bytesInAll() && !(distance % bytesForWidth(spills[spill].width)));
             const int32_t offset = form.topOfSlots - static_cast<int32_t>(distance);
-            RELEASE_ASSERT(!(offset & Frame::markOfSlotThatNoStepReads));
-            offsetOfSpill[spill] = spills[spill].isReadByNoStep ? offset | Frame::markOfSlotThatNoStepReads : offset;
+            RELEASE_ASSERT(!(offset & Frame::deadSlotTag));
+            offsetOfSpill[spill] = spills[spill].isDeadSlot ? offset | Frame::deadSlotTag : offset;
         }
         frame->m_offsetOfSpill = std::span<int32_t>(offsetOfSpill, spills.size());
     }
@@ -308,7 +308,7 @@ static bool someLeafNamesFrameToBePlanned(const Liveness& liveness, const Operat
 {
     if (operation->isUnconditionalJump())
         return false;
-    constexpr uint16_t hasLeavesOfItsOwn = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::GoesByOverflow);
+    constexpr uint16_t hasLeavesOfItsOwn = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::UsesOverflowFlag);
     if (liveness.of(operation).flags & hasLeavesOfItsOwn) [[unlikely]] {
         bool namesFrame = false;
         forEachLeaf(liveness, operation, [&](const Operation*, unsigned, const Operation* leaf) {
@@ -325,7 +325,7 @@ static bool someLeafNamesFrameToBePlanned(const Liveness& liveness, const Operat
 
 static ALWAYS_INLINE bool everyLeafIsValueOrConstantAheadOfFrame(const ValueFacts* valueFacts, const Operation* operation)
 {
-    constexpr uint16_t hasLeavesOfItsOwn = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::GoesByOverflow);
+    constexpr uint16_t hasLeavesOfItsOwn = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::UsesOverflowFlag);
     if (valueFacts[operation->index()].flags & hasLeavesOfItsOwn)
         return false;
     for (const Operation* child : operation->children()) {
@@ -872,6 +872,7 @@ void Allocator::findFramedPart()
         return;
     }
 
+    m_untilByRareRegion.fill(m_arena, static_cast<uint32_t>(m_order.rareRegions().size()), 0);
     for (size_t index = 0; index < numberOfBlocksInOrder;) {
         const BlockPlace& place = placeOf(blocks[index]);
         Position first = noPosition;
@@ -892,8 +893,13 @@ void Allocator::findFramedPart()
                 first = facts.firstSafepoint;
             last = facts.lastSafepoint;
         } while (++end < numberOfBlocksInOrder && place.isRare() && placeOf(blocks[end]).rareRegion == place.rareRegion);
-        if (first != noPosition)
-            m_safepointsAheadOfFramedPart.append(m_arena, SafepointsAheadOfFramedPart { first, last, comesBack ? endOfWhatWaysLeadToFromSafepoints : m_order.endOf(blocks[end - 1]), place.rareRegion });
+        if (first != noPosition) {
+            const Position until = comesBack ? endOfWhatWaysLeadToFromSafepoints : m_order.endOf(blocks[end - 1]);
+            if (place.isRare())
+                m_untilByRareRegion[place.rareRegion] = std::max(m_untilByRareRegion[place.rareRegion], until);
+            else
+                m_safepointsAheadOfFramedPart.append(m_arena, SafepointsAheadOfFramedPart { first, last, until });
+        }
         index = end;
     }
 
@@ -941,7 +947,7 @@ void Allocator::settleFramedPart()
         if (spill.isSaveInRareRegion || spill.isPointerBesideNarrowReference || m_liveness.isSunk(value))
             continue;
         const Block* blockOfStore = value->endsBlock() ? value->owner()->successor(0).block() : value->owner();
-        spill.isStoredAtHeadOfFramedPart = isAheadOfFramedPart(blockOfStore) && !m_order.of(blockOfStore).isRare();
+        spill.isStoredAtHeadOfFramedPart = isOutsideFramedPart(blockOfStore) && !m_order.of(blockOfStore).isRare();
         someSpillIsStoredAtHead |= spill.isStoredAtHeadOfFramedPart;
     }
     auto setUpFrameAtEntryAfterAll = [&] {
@@ -972,7 +978,7 @@ void Allocator::settleFramedPart()
         return true;
     };
     for (const Block* block : m_order.blocksInOrder()) {
-        if (!isAheadOfFramedPart(block))
+        if (!isOutsideFramedPart(block))
             continue;
         const BlockPlace& place = m_order.of(block);
         const BlockSteps& steps = m_allocation.stepsOf(block);
@@ -1095,7 +1101,7 @@ void Allocator::settleFramedPart()
                     return false;
             }
         }
-        if (step.kind != StepKind::Execute || step.patchAssignment == UINT32_MAX || m_proc.traits().leavesOutSavesThatPatchesAloneRead)
+        if (step.kind != StepKind::Execute || step.patchAssignment == UINT32_MAX || m_proc.traits().shouldDropPatchOnlySaves)
             return true;
         return std::ranges::all_of(m_allocation.patchAssignment(step.patchAssignment).locations, [&](Location location) {
             return isSavedAbove(block, location);
@@ -1123,7 +1129,7 @@ void Allocator::settleFramedPart()
     for (Allocation::HeadOfFramedPart& head : m_allocation.m_headsOfFramedPart) {
         const uint32_t beginOfSavesThatAreRead = endOfSavesThatAreRead;
         for (uint32_t index = head.beginOfSteps; index < head.endOfSteps; ++index) {
-            if (!saveIsRead[index - begin] && !isReadByMoreThanSteps(spills[m_allocation.m_steps[index].destination.spillIndex()]))
+            if (!saveIsRead[index - begin] && !hasImplicitReader(spills[m_allocation.m_steps[index].destination.spillIndex()]))
                 continue;
             if (endOfSavesThatAreRead != index)
                 m_allocation.m_steps[endOfSavesThatAreRead] = m_allocation.m_steps[index];
@@ -1138,11 +1144,8 @@ void Allocator::settleFramedPart()
 
 Position Allocator::endOfWhatWaysLeadToFromSafepointsOfRareRegion() const
 {
-    for (const SafepointsAheadOfFramedPart& safepoints : m_safepointsAheadOfFramedPart) {
-        if (safepoints.rareRegion == m_rareRegion)
-            return safepoints.until;
-    }
-    return noPosition;
+    const Position until = m_untilByRareRegion.isEmpty() ? 0 : m_untilByRareRegion[m_rareRegion];
+    return until ? until : noPosition;
 }
 
 bool Allocator::pointerWaitsForFramedPart(Operation* reference)
@@ -1151,7 +1154,7 @@ bool Allocator::pointerWaitsForFramedPart(Operation* reference)
         return false;
     const ValueFacts& facts = m_liveness.of(reference);
     for (const SafepointsAheadOfFramedPart& safepoints : m_safepointsAheadOfFramedPart) {
-        if (safepoints.rareRegion != noRareRegion || facts.definition >= safepoints.last)
+        if (facts.definition >= safepoints.last)
             continue;
         if (safepoints.until == noPosition || facts.has(ValueFlag::IsKeptForCollector)) {
             if (facts.lastUse != noPosition && facts.lastUse > safepoints.first)

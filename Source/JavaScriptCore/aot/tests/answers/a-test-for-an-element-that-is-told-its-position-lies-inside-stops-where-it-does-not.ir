@@ -1,23 +1,26 @@
-# `for (; i < bound && $hasContiguousIndex(array, i); i++);` counts the elements in front of the first hole or the end. Behind the row in front of the loop the test names the storage that was read there.
-# Where the walk has found the position below the length, the record says isInBounds and the test loads the element without asking for the length.
-# The lie, testing=PositionsAreTakenToLieInside: every position from zero up counts as found so. As built the loop would count on into whatever lies behind the list.
-# Under testing=TestsEveryPosition (--aot-harden=ignore-told-ranges) and testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same record is built, and what it is told is held against the list: the process stops by name.
-# It was asked as a branch: false went the way of an absent element, which is right, so that a false word was never seen.
-# RUN(EVENT): walk f1 mechanisms=all testing=TestsEveryPosition,PositionsAreTakenToLieInside
+# `for (; i < bound && $hasContiguousIndex(array, i); i++);` counts the elements before the first hole or the end. After the hoisted guard, the test names the storage that was read in the preheader.
+# Where the walk has found that the index is below the length, the operation says isInBounds and the test loads the element without reading the length.
+# Fault injection, testing=AssumeIndexesInBounds: every index from zero up counts as in bounds. In a default build the loop would keep counting into whatever follows the array in memory.
+# With testing=CheckBoundsAtRunTime (--aot-harden=ignore-told-ranges) and with testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same operation is built,
+# and its claim is checked against the array: the process crashes with a named error.
+# The check used to be a branch: a false result took the path of an absent element, which gives the right result, so a false claim was never noticed.
+# RUN(EVENT): walk f1 mechanisms=all testing=CheckBoundsAtRunTime,AssumeIndexesInBounds
 # EVENT: [[storage]]: {{*}} = GetArrayStorage
 # EVENT: isLoopHead=true
 # EVENT: = HasContiguousIndex {{*}} storage=[[storage]] [isInBounds]
 # RUN(RIGHT): run-in-shell mechanisms=all globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
 # RIGHT: 3
 # RIGHT-NEXT: exited with 0
-# RUN(HARDENED): run-in-shell mechanisms=all testing=TestsEveryPosition,CheckProofsAtRunTime globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,CheckProofsAtRunTime globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
 # HARDENED: 3
 # HARDENED-NEXT: exited with 0
-# RUN(POSITIONS): run-in-shell mechanisms=all testing=TestsEveryPosition,PositionsAreTakenToLieInside globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
-# POSITIONS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,AssumeIndexesInBounds globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
+# POSITIONS: bun: internal AOT error: redundancy elimination check failed
+# POSITIONS-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # POSITIONS: crashed with
-# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,PositionsAreTakenToLieInside globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
-# PROOFS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeIndexesInBounds globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
+# PROOFS: bun: internal AOT error: redundancy elimination check failed
+# PROOFS-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # PROOFS: crashed with
 
 module m0 path="main.mjs" displayPath="main.mjs" body=f0

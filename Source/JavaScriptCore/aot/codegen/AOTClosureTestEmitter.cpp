@@ -148,7 +148,7 @@ void ClosureTestEmitter::branchOnClosureNumberInRuns(Word32 closureNumber, std::
             m_out.branch(below(closureNumber, closureNumberOf(run.first, addend)).value(), targets.notTaken, normalEdge(isNotBelowRun));
             m_out.appendToContinuation(isNotBelowRun);
         }
-        takeIf(belowOrEqual(closureNumber, closureNumberOf(run.last, addend + AOT::hasFlag(build().options().lies, Wire::TestingLie::RunsOfClosureNumbersTakeInTheNextFunction))), isLastRun);
+        takeIf(belowOrEqual(closureNumber, closureNumberOf(run.last, addend + AOT::hasFlag(build().options().injectedFaults, Wire::FaultInjection::OverstateClosureNumberRuns))), isLastRun);
     }
 }
 
@@ -247,7 +247,7 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
 
     m_out.appendTo(isChangedClosure);
     closureNumber.add(numberOfChangedClosure(cell));
-    build().statistics().count(StatisticID::TestsOfClosuresByRunsOfNumbers);
+    build().statistics().count(StatisticID::ClosureChecksByNumberRanges);
     branchOnClosureNumberInRuns(closureNumber.finish(), runs.span(), 0, true, targets);
 }
 

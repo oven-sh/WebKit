@@ -13,11 +13,15 @@
 # if (which === 1) behindATest(holder, new Other(), false);
 # print(read(holder));
 # print("went on");
-# The code of a TypeTest goes by the type that its operand had in front of it. Where a typed store leans on such a test, the test is made the whole test: it is planned from `anything`, and its failing side is the arm that stands already.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so what get() gives is a text or undefined, and `typeof got === "string"` comes down to "is it not undefined". An Other passes that.
-# Without the whole test the Other comes to a slot that is held to `string | undefined`, and the check in front of the store stops the program by name. With it the test fails, nothing is stored, and the program prints what the shell prints.
-# As a user builds, the run prints 4fits twice and goes on. Where a run adds testing=CheckProofsAtRunTime the check of the result stops it in front of the test. In neither does the check at the store stop it, and in neither does it crash wild.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# The code of a TypeTest depends on the type that its operand had before the test.
+# Where a typed store relies on such a test, the test becomes a full test: it is planned from `anything`, and its failing side is the branch that already exists.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So the result of get() is a string or undefined, and `typeof got === "string"` reduces to "is it not undefined". An Other passes that.
+# Without the full test the Other reaches a slot that is restricted to `string | undefined`, and the check before the store crashes the program with a named error.
+# With the full test the test fails, nothing is stored, and the program prints what the shell prints.
+# In a user's build the run prints 4fits twice and continues. Where a run adds testing=CheckProofsAtRunTime, the check of the result crashes it before the test.
+# In neither case does the check at the store fail, and in neither case is there an uncontrolled crash.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(TRUE): run-in-shell mechanisms=-Inlining globalThis.which = 0;
 # TRUE: 4fits
 # TRUE: 4fits

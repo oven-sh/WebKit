@@ -1,6 +1,6 @@
 # The list follows from the program alone. A number costs a built-in nothing, however large it is, unless the work of that built-in grows with it.
 # new RegExp("abcdef".slice(4, 4294967296) + "abc".slice(0 / 0, 1)); new RegExp(Array(4294967296).length + "long");
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /efa/
 # CHECK-NOT: long

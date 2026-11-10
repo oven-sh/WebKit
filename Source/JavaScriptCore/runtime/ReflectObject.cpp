@@ -58,6 +58,24 @@ namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(ReflectObject);
 
+bool reportIfLocked(JSObject* holder, PropertyName propertyName, PropertyDescriptor& descriptor)
+{
+#if ENABLE(AOT)
+    if (!descriptor.isDataDescriptor() || !descriptor.writable())
+        return false;
+    ImmutablePropertyNames* names = holder->structure()->listedImmutablePropertyNames();
+    if (!names || !names->refusesWrite(propertyName.uid()) || !AOT::RuntimeHooks::isReportedAsReadOnly(holder, propertyName.uid()))
+        return false;
+    descriptor.setWritable(false);
+    return true;
+#else
+    UNUSED_PARAM(holder);
+    UNUSED_PARAM(propertyName);
+    UNUSED_PARAM(descriptor);
+    return false;
+#endif
+}
+
 const ClassInfo ReflectObject::s_info = { "Reflect"_s, &Base::s_info, &reflectObjectTable, nullptr, CREATE_METHOD_TABLE(ReflectObject) };
 
 /* Source for ReflectObject.lut.h

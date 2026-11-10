@@ -4,11 +4,11 @@
 # a.test.js: import "./src/polyfill.js"; function lay(name) { Object.prototype[name] = () => 7; delete Object.prototype[name]; }   src/polyfill.js, of the product: the same function
 # locked-writes/a-name-that-nobody-reads-on-an-object-that-is-locked-whole.ir is the control: the same store in an executable
 # OPTIONS: admit=ReplacedBuiltins
-# DIAGNOSTIC: LockedBuiltinWriteUnderUnreadName 2
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 2
 # RUN: locks
 
 module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}] positions={lineStarts=[0]}
-module m1 path="/src/polyfill.js" displayPath="src/polyfill.js" flags=[FindsBuiltinsReadOnly] body=f3 positions={lineStarts=[0]}
+module m1 path="/src/polyfill.js" displayPath="src/polyfill.js" flags=[HasReadOnlyBuiltins] body=f3 positions={lineStarts=[0]}
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():

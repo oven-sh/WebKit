@@ -1,9 +1,11 @@
 # class Holder { #kept = id("text"); kind() { return typeof this.#kept; } }
 # const holder = new Holder();   globalThis.seen = holder;   print(holder.kind());   print("went on");
-# The lie: Link takes what the shell's `id` gives for undefined. Only the class stores under the name, so the proof stands though code that nobody saw has got hold of the object.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# Fault injection: Link assumes that the shell's `id` returns undefined.
+# Only the class stores under the private name, so the proof holds even though the object has escaped to code that the compiler never saw.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN: run-in-shell mechanisms=all
-# CHECK: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# CHECK: bun: internal AOT error: object mutation check failed
+# CHECK-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # CHECK-NOT: went on
 # CHECK: crashed with
 

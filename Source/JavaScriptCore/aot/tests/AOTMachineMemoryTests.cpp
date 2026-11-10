@@ -320,7 +320,7 @@ static void testMemoryTableOfImageIsBaseOfIndexedLoad()
     static constexpr uint32_t words[] = { 0x11111111, 0x22222222, 0x33333333, 0x44444444 };
     TestProcedure test;
     Output& out = test.out();
-    LValue table = out.relocatable(SymbolSpace::Constant, out.addConstantData(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(words), sizeof(words)), ConstantKind::BitSetOverKnownShapes));
+    LValue table = out.relocatable(SymbolSpace::Constant, out.addConstantData(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(words), sizeof(words)), ConstantKind::ShapeBitmap));
     LValue element = out.lShr(out.castToInt32(test.argumentGPR(0)), 5);
     LValue extended = out.zeroExtPtr(element);
     LValue shifted = out.shl(extended, 2);
@@ -404,7 +404,7 @@ static void testMemoryExtensionOfIndexIsFusedWhereRegisterHoldsIt()
         compileOrFail(test);
 
         const Liveness& liveness = test.procedure().liveness();
-        AOT_TEST_CHECK(extended->opcode() == ZExt32 && clearsUpperHalfOfRegister(index->opcode()) == upperHalfIsClear);
+        AOT_TEST_CHECK(extended->opcode() == ZExt32 && clearsUpperHalf(index->opcode()) == upperHalfIsClear);
         AOT_TEST_CHECK(liveness.isFused(address) && liveness.isFused(extended) == (upperHalfIsClear || isARM64()));
 
         uint64_t words[4] = { 10, 11, 12, 13 };

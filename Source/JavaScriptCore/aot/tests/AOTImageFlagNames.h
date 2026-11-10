@@ -23,13 +23,13 @@ inline constexpr NamedImageFlag namedImageFlags[] {
     AOT_NAMED_IMAGE_FLAG(IsObfuscated),
     AOT_NAMED_IMAGE_FLAG(AdmitsUnknownJavaScript),
     AOT_NAMED_IMAGE_FLAG(LoadsModulesByName),
-    AOT_NAMED_IMAGE_FLAG(AdmitsLibraryText),
+    AOT_NAMED_IMAGE_FLAG(AllowsLibrarySource),
     AOT_NAMED_IMAGE_FLAG(ShowsWaysBetweenModuleObjects),
     AOT_NAMED_IMAGE_FLAG(LoadsCodeOutsideImage),
     AOT_NAMED_IMAGE_FLAG(IsBuiltWithLibrary),
     AOT_NAMED_IMAGE_FLAG(RunsEntryPointsAgain),
     AOT_NAMED_IMAGE_FLAG(LetsGlobalObjectGo),
-    AOT_NAMED_IMAGE_FLAG(StoresPathOfMainModule),
+    AOT_NAMED_IMAGE_FLAG(SetsMainModulePath),
     AOT_NAMED_IMAGE_FLAG(RefusesOriginalsBesideMocks),
 };
 

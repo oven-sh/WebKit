@@ -117,10 +117,10 @@ static Vector<StubEntryRange> findEntriesInFrontOfSingleReturnSites(const StubBl
     for (const StubReturnSite& site : blob.returnSites) {
         if (!hasSingleReturnSite(site.kind))
             continue;
-        auto behindCall = std::ranges::lower_bound(byOffset, site.offset, { }, &StubPlacement::offset);
-        RELEASE_ASSERT(behindCall != byOffset.begin());
-        StubKey body = bodyOf(std::prev(behindCall)->key);
-        for (auto entry = byOffset.begin(); entry != behindCall; ++entry) {
+        auto nextStub = std::ranges::lower_bound(byOffset, site.offset, { }, &StubPlacement::offset);
+        RELEASE_ASSERT(nextStub != byOffset.begin());
+        StubKey body = bodyOf(std::prev(nextStub)->key);
+        for (auto entry = byOffset.begin(); entry != nextStub; ++entry) {
             if (bodyOf(entry->key) != body)
                 continue;
             auto next = std::find_if(std::next(entry), byOffset.end(), [&](const StubPlacement& placement) {

@@ -2,27 +2,33 @@
 # Who is not shown to be the console stops: a false proof that the program runs into by such a job stays loud. So the console can still end the process by handing an object out of the heap to a native function that runs later.
 # OPTIONS: mechanisms=all admit=Inspector
 # RUN(FREEZES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { const kept = aotFindObjectOfLayout(0); return Promise.resolve(kept).then(Object.freeze).then(() => print("taken"), error => print(error.constructor.name, error.message.split(" because")[0])).then(() => print(kept.count, kept.label, Object.keys(kept).join(), Object.isExtensible(kept), "went on")); });
-# FREEZES: AOT: ChangeIntegrity of an object of layout L0
+# FREEZES: bun: internal AOT error: object mutation check failed
+# FREEZES-NEXT: ChangeIntegrity on an instance of class 'Closed'
 # FREEZES-NOT: went on
 # FREEZES: crashed with
 # RUN(PREVENTS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { const kept = aotFindObjectOfLayout(0); return Promise.resolve(kept).then(Object.preventExtensions).then(() => print("taken"), error => print(error.constructor.name, error.message.split(" because")[0])).then(() => print(kept.count, kept.label, Object.keys(kept).join(), Object.isExtensible(kept), "went on")); });
-# PREVENTS: AOT: ChangeIntegrity of an object of layout L0
+# PREVENTS: bun: internal AOT error: object mutation check failed
+# PREVENTS-NEXT: ChangeIntegrity on an instance of class 'Closed'
 # PREVENTS-NOT: went on
 # PREVENTS: crashed with
 # RUN(BOUND): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { const kept = aotFindObjectOfLayout(0); return Promise.resolve().then(Object.freeze.bind(null, kept)).then(() => print("taken"), error => print(error.constructor.name, error.message.split(" because")[0])).then(() => print(kept.count, kept.label, Object.keys(kept).join(), Object.isExtensible(kept), "went on")); });
-# BOUND: AOT: ChangeIntegrity of an object of layout L0
+# BOUND: bun: internal AOT error: object mutation check failed
+# BOUND-NEXT: ChangeIntegrity on an instance of class 'Closed'
 # BOUND-NOT: went on
 # BOUND: crashed with
 # RUN(RELINKS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { const kept = aotFindObjectOfLayout(0); return Promise.resolve().then(Object.setPrototypeOf.bind(null, kept, null)).then(() => print("taken"), error => print(error.constructor.name, error.message.split(" because")[0])).then(() => print(kept.count, kept.label, Object.keys(kept).join(), Object.isExtensible(kept), "went on")); });
-# RELINKS: AOT: ChangePrototype of an object of layout L0
+# RELINKS: bun: internal AOT error: object mutation check failed
+# RELINKS-NEXT: ChangePrototype on an instance of class 'Closed'
 # RELINKS-NOT: went on
 # RELINKS: crashed with
 # RUN(ASSIGNS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { const kept = aotFindObjectOfLayout(0); return Promise.resolve().then(Object.assign.bind(null, kept, { other: 1 })).then(() => print("taken"), error => print(error.constructor.name, error.message.split(" because")[0])).then(() => print(kept.count, kept.label, Object.keys(kept).join(), Object.isExtensible(kept), "went on")); });
-# ASSIGNS: AOT: AddProperty of an object of layout L0
+# ASSIGNS: bun: internal AOT error: object mutation check failed
+# ASSIGNS-NEXT: AddProperty on an instance of class 'Closed'
 # ASSIGNS-NOT: went on
 # ASSIGNS: crashed with
 # RUN(DELETES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { const kept = aotFindObjectOfLayout(0); return Promise.resolve().then(Reflect.deleteProperty.bind(null, kept, "label")).then(() => print("taken"), error => print(error.constructor.name, error.message.split(" because")[0])).then(() => print(kept.count, kept.label, Object.keys(kept).join(), Object.isExtensible(kept), "went on")); });
-# DELETES: AOT: DeleteField of an object of layout L0
+# DELETES: bun: internal AOT error: object mutation check failed
+# DELETES-NEXT: DeleteField on an instance of class 'Closed'
 # DELETES-NOT: went on
 # DELETES: crashed with
 

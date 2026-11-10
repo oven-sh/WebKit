@@ -14,10 +14,12 @@
 # CHECK-NEXT: exited with 0
 # The row of the operation, then that of the operation of the run time, as each was before: under testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h) the process stops by name.
 # The key is put together out of three pairs of parts. The net keeps two bytes a heap of what it hashes, and of a text it hashes addresses: one pair of words, in front and behind, reads alike in one process of 65,536. While it kept one byte, this file with one pair was red once in 256.
-# RUN(OPERATION): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Operation/DefineGetter/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
-# OPERATION: AOT: f{{*}} at {{*}}: the rows of effects of operation:DefineGetter and of runtime:operationAOTDefineAccessor say that the call will not write StringStorage, and those words of operand 2 are others behind it. This is a bug in Bun.
-# RUN(RUNTIME): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:RuntimeOperation/DefineAccessor/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
-# RUNTIME: AOT: f{{*}} at {{*}}: the rows of effects of operation:DefineGetter and of runtime:operationAOTDefineAccessor say that the call will not write StringStorage, and those words of operand 2 are others behind it. This is a bug in Bun.
+# RUN(OPERATION): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Operation/DefineGetter/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
+# OPERATION: bun: internal AOT error: effects check failed
+# OPERATION-NEXT: the declared effects of operation:DefineGetter and of runtime:operationAOTDefineAccessor say that the call does not write StringStorage, but operand 2 changed there
+# RUN(RUNTIME): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:RuntimeOperation/DefineAccessor/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
+# RUNTIME: bun: internal AOT error: effects check failed
+# RUNTIME-NEXT: the declared effects of operation:DefineGetter and of runtime:operationAOTDefineAccessor say that the call does not write StringStorage, but operand 2 changed there
 
 layout L0 kind=Instance name="Crate" module=m0 constructor=f6
 module m0 path="main.js" displayPath="main.js" body=f0

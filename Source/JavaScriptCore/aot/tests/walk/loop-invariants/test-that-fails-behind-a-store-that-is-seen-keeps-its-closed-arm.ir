@@ -5,8 +5,8 @@
 # CHECK: isInLoop=true isLoopHead=true:
 # CHECK: PutModuleVariable
 # CHECK: = GetSlot{{*}}key="price" {{*}}level=Expected
-# RUN(COUNT): compile TurnsThatBeginAgain mechanisms=all
-# COUNT: statistic TurnsThatBeginAgain 0
+# RUN(COUNT): compile IterationRestartsEmitted mechanisms=all
+# COUNT: statistic IterationRestartsEmitted 0
 # RUN(SHELL): run-in-shell globalThis.sink = (sum, item) => { const list = [item, item]; print(sum(list)); list[1] = { count: "2", price: 7 }; print(sum(list)); list[0] = { get price() { print("read"); return 1; }, count: 1 }; print(sum(list)); list[1] = item; print(sum(list)); };
 # SHELL: 12
 # SHELL-NEXT: 20

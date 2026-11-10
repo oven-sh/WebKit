@@ -41,7 +41,7 @@ public:
 
     void generateGetArrayLength(const ValueContext&);
     void generateGetArrayStorage(const ValueContext&);
-    void generateGetArrayRoom(const ValueContext&);
+    void generateGetArrayCapacity(const ValueContext&);
     void generateExtendArrayLength(const ValueContext&);
     void generateSetArrayLength(const ValueContext&);
     void generateGetArrayElement(const ValueContext&);
@@ -50,7 +50,7 @@ public:
     void generateAppendElements(const ValueContext&);
     void generateAppendMembers(const ValueContext&);
     void generateAppendValuesOfMap(const ValueContext&);
-    void generateReserveArrayRoom(const ValueContext&);
+    void generateReserveArrayCapacity(const ValueContext&);
     void generateConvertToDoubleStorage(const ValueContext&);
     void generateGetTypedArrayLength(const ValueContext&);
     void generateGetTypedArrayVector(const ValueContext&);
@@ -63,13 +63,13 @@ public:
     void generateGetStringLength(const ValueContext&);
     void generateGetStringCodeUnit(const ValueContext&);
 
-    bool testsEveryPosition();
+    bool checksBounds();
     std::optional<ArrayStorage> kindOfListFoundInFrontOfTurns(const ValueContext& access, ValueID list, bool isStoredInto = false);
     std::optional<TypedArrayType> kindOfViewFoundInFrontOfTurns(const ValueContext& access, ValueID view);
     enum class StorageIsWritten : bool { No, Yes };
     void holdKindOfList(const ValueContext& access, StorageIsWritten = StorageIsWritten::No);
     void stopUnlessInside(const ValueContext& access, Condition isInside);
-    void holdElementToldToBeThere(const ValueContext& read, Condition isThere, StatisticID counted = StatisticID::ElementsToldToBeThereHeldAgainstHoles);
+    void checkElementPresenceProof(const ValueContext& read, Condition isThere, StatisticID counted = StatisticID::ElementPresenceProofsChecked);
     void stopWhereHoleWouldBeStored(const OperationContext& store, const ArrayStorageForm&, Operand rawElement);
     void stopUnlessListIsAsMadeWhereNothingIsFound(const ValueContext& access, CellPointer list);
 

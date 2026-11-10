@@ -38,7 +38,7 @@
 # ONCE-NOT: = ToIntegerOrInfinity
 # ONCE: inlineBuiltin=ParseInt
 # layout L908 kind=Closure
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 167, 307, 446, 497, 558, 761] quotedTexts=[{position=95 start=208 end=223}, {position=113 start=226 end=239}, {position=129 start=242 end=257}, {position=136 start=242 end=264}, {position=276 start=271 end=286}, {position=413 start=293 end=310}, {position=481 start=311 end=322}, {position=538 start=324 end=339}, {position=558 end=15}, {position=569 end=201}, {position=574 start=16 end=42}, {position=580 start=22 end=39}, {position=591 start=22 end=41}, {position=602 start=44 end=94}, {position=611 start=53 end=70}, {position=622 start=53 end=72}, {position=632 start=74 end=91}, {position=643 start=74 end=93}, {position=654 start=96 end=143}, {position=660 start=102 end=119}, {position=671 start=102 end=121}, {position=681 start=123 end=140}, {position=692 start=123 end=142}, {position=703 start=145 end=173}, {position=711 start=153 end=170}, {position=722 start=153 end=172}, {position=733 start=175 end=200}, {position=738 start=180 end=197}, {position=749 start=180 end=199}] textOfQuotes="globalThis.sink(whole(globalThis.source()), fraction(globalThis.source(), globalThis.source()), float(globalThis.source(), globalThis.source()), sixteen(globalThis.source()), once(globalThis.source()))sum += parseInt(i * 7) + parseFloat(i) + Number.parseInt(i, 10)sum += parseInt(x / i)sum += parseFloat(x + i)[parseInt(x)][parseInt(x, 16)]"} functionText="function whole(count) { count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseInt(i * 7) + parseFloat(i) + Number.parseInt(i, 10); return sum; }\x0afunction fraction(x, count) { x = +x; count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseInt(x / i); return sum; }\x0afunction float(x, count) { x = +x; count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseFloat(x + i); return sum; }\x0afunction once(x) { x = +x; return [parseInt(x)]; }\x0afunction sixteen(x) { x = x | 0; return [parseInt(x, 16)]; }\x0aglobalThis.sink(whole(globalThis.source()), fraction(globalThis.source(), globalThis.source()), float(globalThis.source(), globalThis.source()), sixteen(globalThis.source()), once(globalThis.source()));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 167, 307, 446, 497, 558, 761] quotedSources=[{position=95 start=208 end=223}, {position=113 start=226 end=239}, {position=129 start=242 end=257}, {position=136 start=242 end=264}, {position=276 start=271 end=286}, {position=413 start=293 end=310}, {position=481 start=311 end=322}, {position=538 start=324 end=339}, {position=558 end=15}, {position=569 end=201}, {position=574 start=16 end=42}, {position=580 start=22 end=39}, {position=591 start=22 end=41}, {position=602 start=44 end=94}, {position=611 start=53 end=70}, {position=622 start=53 end=72}, {position=632 start=74 end=91}, {position=643 start=74 end=93}, {position=654 start=96 end=143}, {position=660 start=102 end=119}, {position=671 start=102 end=121}, {position=681 start=123 end=140}, {position=692 start=123 end=142}, {position=703 start=145 end=173}, {position=711 start=153 end=170}, {position=722 start=153 end=172}, {position=733 start=175 end=200}, {position=738 start=180 end=197}, {position=749 start=180 end=199}] quotedSourceText="globalThis.sink(whole(globalThis.source()), fraction(globalThis.source(), globalThis.source()), float(globalThis.source(), globalThis.source()), sixteen(globalThis.source()), once(globalThis.source()))sum += parseInt(i * 7) + parseFloat(i) + Number.parseInt(i, 10)sum += parseInt(x / i)sum += parseFloat(x + i)[parseInt(x)][parseInt(x, 16)]"} functionSource="function whole(count) { count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseInt(i * 7) + parseFloat(i) + Number.parseInt(i, 10); return sum; }\x0afunction fraction(x, count) { x = +x; count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseInt(x / i); return sum; }\x0afunction float(x, count) { x = +x; count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseFloat(x + i); return sum; }\x0afunction once(x) { x = +x; return [parseInt(x)]; }\x0afunction sixteen(x) { x = x | 0; return [parseInt(x, 16)]; }\x0aglobalThis.sink(whole(globalThis.source()), fraction(globalThis.source(), globalThis.source()), float(globalThis.source(), globalThis.source()), sixteen(globalThis.source()), once(globalThis.source()));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -99,7 +99,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v55 = Undefined @558
     Return v55 @558
 }
-function f1 name="whole" module=m0 text={end=166} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="whole" module=m0 sourceRange={end=166} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):
     v1 = Integer @40
     v2 = BitOr v0, v1 @40
@@ -139,7 +139,7 @@ function f1 name="whole" module=m0 text={end=166} flags=[HasExplicitName] length
   b3():
     Return v8 @160
 }
-function f2 name="fraction" module=m0 position=167 text={start=167 end=306} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="fraction" module=m0 position=167 sourceRange={start=167 end=306} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: number):
     v2 = ToNumber v0 @202
     v3 = Integer @221
@@ -168,7 +168,7 @@ function f2 name="fraction" module=m0 position=167 text={start=167 end=306} flag
   b3():
     Return v10 @300
 }
-function f3 name="float" module=m0 position=307 text={start=307 end=445} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="float" module=m0 position=307 sourceRange={start=307 end=445} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: number):
     v2 = ToNumber v0 @339
     v3 = Integer @358
@@ -197,7 +197,7 @@ function f3 name="float" module=m0 position=307 text={start=307 end=445} flags=[
   b3():
     Return v10 @439
 }
-function f4 name="once" module=m0 position=446 text={start=446 end=496} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 name="once" module=m0 position=446 sourceRange={start=446 end=496} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|number|string):
     v1 = ToNumber v0 @470
     v2 = Convert v1 declared={type=undefined|null|number|string flags=[IsExpected]} @465
@@ -208,7 +208,7 @@ function f4 name="once" module=m0 position=446 text={start=446 end=496} flags=[H
     v7 = NewArray v6 contents=anything @480
     Return v7 @480
 }
-function f5 name="sixteen" module=m0 position=497 text={start=497 end=557} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f5 name="sixteen" module=m0 position=497 sourceRange={start=497 end=557} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|number|string):
     v1 = Integer @527
     v2 = BitOr v0, v1 @527

@@ -91,7 +91,7 @@ CodeGenerator::CodeGenerator(const FunctionInputs& inputs, Machine::Procedure& p
     , m_out(proc)
     , m_checksAllocation(proc.traits().checksAllocation)
     , m_checksEffects(AOT::hasFlag(inputs.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime))
-    , m_rowThatSaysLess(inputs.build.options().rowThatSaysLess)
+    , m_understatedEffects(inputs.build.options().understatedEffects)
 {
     if (proc.traits().notesRangesOfOrigins) {
         records.formsSaid.beginNoting();
@@ -104,7 +104,7 @@ CodeGenerator::CodeGenerator(const FunctionInputs& inputs, Machine::Procedure& p
             static constexpr OperationCall stop { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters };
             Origin origin = m_operation ? m_operation->origin() : Origin();
             uint32_t function = code().inlineFrames()[origin.inlineFrame].callee.index();
-            build().statistics().count(StatisticID::LoadsReadAgainBehindNumbering);
+            build().statistics().count(StatisticID::ReusedLoadsVerified);
             m_out.check(m_out.isZero32(readSameBits))->setGenerator([records = &m_records, function, position = origin.position](CCallHelpers& jit, const Machine::PatchParameters& params) {
                 if (params.frameIsSetUp()) {
                     AllowMacroScratchRegisterUsage allowScratch(jit);

@@ -20,6 +20,7 @@ public:
     void generateTypedArrayByteOffset(const InlineCall&);
     void generateTypedArrayWithLength(const InlineCall&);
     void generateTypedArraySet(const InlineCall&);
+    void generateByteLiteral(const InlineCall&);
 
     Condition hasFixedLength(CellPointer view);
     Integer lengthOf(CellPointer view);

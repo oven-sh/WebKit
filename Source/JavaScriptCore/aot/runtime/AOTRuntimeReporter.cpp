@@ -86,13 +86,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RuntimeCounts);
 void printRowOfEffectsNet(PrintStream& out, unsigned row)
 {
     if (row == Typed::noRowInEffectsNet)
-        out.print("what Link says of the callee");
-    else if (row >= Typed::firstRowOfBuiltinsInEffectsNet)
-        out.print("built-in:", BuiltinTable::singleton().textOf(BuiltinID(row - Typed::firstRowOfBuiltinsInEffectsNet)));
-    else if (row >= Typed::firstRowOfStubsInEffectsNet)
-        out.print("stub:", descriptorOf(static_cast<StubFamily>(row - Typed::firstRowOfStubsInEffectsNet)).name);
-    else if (row >= Typed::firstRowOfRuntimeOperationsInEffectsNet)
-        out.print("runtime:", nameOf(static_cast<Entry>(row - Typed::firstRowOfRuntimeOperationsInEffectsNet)));
+        out.print("the callee's effect summary");
+    else if (row >= Typed::firstBuiltinRowInEffectsNet)
+        out.print("built-in:", BuiltinTable::singleton().textOf(BuiltinID(row - Typed::firstBuiltinRowInEffectsNet)));
+    else if (row >= Typed::firstStubRowInEffectsNet)
+        out.print("stub:", descriptorOf(static_cast<StubFamily>(row - Typed::firstStubRowInEffectsNet)).name);
+    else if (row >= Typed::firstRuntimeOperationRowInEffectsNet)
+        out.print("runtime:", nameOf(static_cast<Entry>(row - Typed::firstRuntimeOperationRowInEffectsNet)));
     else
         out.print("operation:", Typed::nameOf(static_cast<Typed::Opcode>(row)));
 }
@@ -184,15 +184,15 @@ RuntimeCounts::~RuntimeCounts()
 static constexpr ASCIILiteral kindOf(RuntimeCounterID counter)
 {
     switch (counter) {
-    case RuntimeCounterID::StackListingsAfterGivenUpCaptures:
+    case RuntimeCounterID::ReturnAddressTraceFallbacks:
         return "made:"_s;
-    case RuntimeCounterID::ModulesForRequireCache:
-    case RuntimeCounterID::ModulesForWhatHasRun:
-    case RuntimeCounterID::ModulesForCyclesThatWait:
+    case RuntimeCounterID::ModulesScannedForRequireCache:
+    case RuntimeCounterID::ModulesScannedForEvaluationStatus:
+    case RuntimeCounterID::ModulesScannedForPendingCycles:
     case RuntimeCounterID::RecordsForStatesOfLoads:
-    case RuntimeCounterID::LinksBelowRoots:
-    case RuntimeCounterID::StacksOfThrows:
-    case RuntimeCounterID::RunsBelowListedFrames:
+    case RuntimeCounterID::ModuleLinkWalksCreated:
+    case RuntimeCounterID::ThrowStackTracesCaptured:
+    case RuntimeCounterID::StackWalksToCompiledFrames:
         return "sought:"_s;
     default:
         return "counter:"_s;

@@ -15,7 +15,7 @@ layout L0 module=m0 position=10 fields=[{key="id" declared={type=number} flags=[
 # layout L905 kind=Closure
 variable g0 name="rows" module=m0 declared={type=undefined|null|absent|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
 variable g1 name="pairs" module=m0 declared={type=undefined|null|absent|Map<undefined|null|string, number> flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsImmutable]
-module m0 path="/$bunfs/root/between.ts" displayPath="between.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 29, 53, 103, 144, 225, 258] quotedTexts=[{position=81 end=9}, {position=86 end=20}, {position=121 start=20 end=27}, {position=173 start=56 end=65}, {position=179 start=56 end=104}, {position=183 start=66 end=77}, {position=192 start=66 end=80}, {position=207 start=89 end=100}, {position=216 start=89 end=103}, {position=226 start=27 end=42}, {position=245 start=27 end=49}] textOfQuotes="rows.push({ id: i })new MapglobalThis.sink(found)(i) => pairs.get(rows[i & 7].id + \x22,\x22 + rows[i & 3].id)"} functionText="\x0aconst rows = [];\x0afor (let i = 0; i < 8; i++) rows.push({ id: i });\x0aconst pairs = new Map();\x0aconst found = (i) => pairs.get(rows[i & 7].id + \x22,\x22 + rows[i & 3].id);\x0a(globalThis).sink(found);\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/between.ts" displayPath="between.ts" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 29, 53, 103, 144, 225, 258] quotedSources=[{position=81 end=9}, {position=86 end=20}, {position=121 start=20 end=27}, {position=173 start=56 end=65}, {position=179 start=56 end=104}, {position=183 start=66 end=77}, {position=192 start=66 end=80}, {position=207 start=89 end=100}, {position=216 start=89 end=103}, {position=226 start=27 end=42}, {position=245 start=27 end=49}] quotedSourceText="rows.push({ id: i })new MapglobalThis.sink(found)(i) => pairs.get(rows[i & 7].id + \x22,\x22 + rows[i & 3].id)"} functionSource="\x0aconst rows = [];\x0afor (let i = 0; i < 8; i++) rows.push({ id: i });\x0aconst pairs = new Map();\x0aconst found = (i) => pairs.get(rows[i & 7].id + \x22,\x22 + rows[i & 3].id);\x0a(globalThis).sink(found);\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Data data=d0 @49
@@ -53,7 +53,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v27 = Undefined @225
     Return v27 @225
 }
-function f1 name="found" module=m0 position=158 text={start=107 end=162} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="found" module=m0 position=158 sourceRange={start=107 end=162} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):
     v1 = GetModuleVariable variable=g1 @173
     v2 = CheckInitialized v1 name="pairs" @173

@@ -36,18 +36,18 @@ Reader::Reader(Program& program, BuildContext& build)
 bool Reader::run()
 {
     m_program.admitsReplacedBuiltins = m_build.options().admitsReplacedBuiltins();
-    m_program.rowsOfNativeCodeWriteNullish = AOT::hasFlag(m_build.options().testing, Wire::TestingSwitch::NativeCodeAnswersNullish);
-    RowThatSaysLess rowThatSaysLess = RowThatSaysLess::decode(m_build.options().rowThatSaysLess);
-    if (rowThatSaysLess.part == PartOfEffects::RangeOfResult)
-        m_program.builtinWhoseRowWritesItsLeastIntegerAlone = rowThatSaysLess.row;
-    if (rowThatSaysLess.part == PartOfEffects::KindOfResult && rowThatSaysLess.kind == KindOfEffectsRow::Operation)
-        m_program.operationWhoseRuleWritesAnotherKind = rowThatSaysLess.row + 1;
-    else if (rowThatSaysLess.part == PartOfEffects::KindOfResult)
-        m_program.builtinWhoseRowWritesNullAlone = rowThatSaysLess.row;
-    if (rowThatSaysLess.part == PartOfEffects::ContentsOfResult)
-        m_program.builtinWhoseRowWritesThatItsResultHoldsNullAlone = rowThatSaysLess.row;
-    if (rowThatSaysLess.part == PartOfEffects::FreshnessOfResult)
-        m_program.builtinInjectedAsFresh = rowThatSaysLess.row;
+    m_program.shouldAssumeNullishHostResults = AOT::hasFlag(m_build.options().testing, Wire::TestingSwitch::AssumeNullishHostResults);
+    UnderstatedEffects understatedEffects = UnderstatedEffects::decode(m_build.options().understatedEffects);
+    if (understatedEffects.part == PartOfEffects::RangeOfResult)
+        m_program.builtinInjectedAsMinimumInteger = understatedEffects.row;
+    if (understatedEffects.part == PartOfEffects::KindOfResult && understatedEffects.kind == KindOfEffectsRow::Operation)
+        m_program.opcodeInjectedAsOtherKind = understatedEffects.row + 1;
+    else if (understatedEffects.part == PartOfEffects::KindOfResult)
+        m_program.builtinInjectedAsNull = understatedEffects.row;
+    if (understatedEffects.part == PartOfEffects::ContentsOfResult)
+        m_program.builtinInjectedAsHoldingNull = understatedEffects.row;
+    if (understatedEffects.part == PartOfEffects::FreshnessOfResult)
+        m_program.builtinInjectedAsFresh = understatedEffects.row;
     m_program.admitsInspector = m_build.options().admitsUnseenCode();
     m_program.excludedCode = m_build.options().excludedCode;
 

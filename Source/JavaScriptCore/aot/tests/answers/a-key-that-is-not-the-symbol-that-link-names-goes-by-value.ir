@@ -12,10 +12,12 @@
 # print(has(box, pick()));
 # print(remove(box, pick()), width in box, depth in box);
 # print("went on");
-# Of a parameter the walk derives nothing by itself. So the key is compared with the symbol that Link names, where the access stands: behind the comparison the access goes by the name, and the closed arm is the access by value.
-# THE RED CONTROL. The lie, testing=UnseenCodeAnswersUndefined (false-proofs-are-stopped-where-the-value-comes-in.ir): Link takes what the shell's `id` gives for undefined, so nothing passes the test for a symbol,
-# and `depth` is the one symbol that Link names. It printed "deep", then "wide wider". Now a fault of Link costs speed: the answers are those of the program.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# The walk derives nothing about a parameter by itself. So the key is compared with the symbol that Link names, at the access.
+# After a successful comparison the access uses the name. The generic branch is the access by key value.
+# This is the failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined (see false-proofs-are-stopped-where-the-value-comes-in.ir): Link assumes that the shell's `id` returns undefined.
+# So nothing passes the program's test for a symbol, and `depth` is the only symbol that Link names. The program used to print "deep", then "wide wider".
+# Now a mistake in Link only costs speed: the program prints what it should.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(LINK): link accesses mechanisms=all
 # LINK: access f2 v2 under symbol("depth")@m0:0
 # LINK: access f3 v3 under symbol("depth")@m0:0

@@ -5,24 +5,24 @@
 # Room that is asked for in front of a loop and never filled is memory: the first loop ends at its thirtieth turn, where the text has grown too long, and its list of twenty-nine elements held the room of a hundred and fifty million (1,195 MB for 23).
 # So room is asked for only where the count alone ends the loop. Nothing in a turn writes but the stores that fill, so nothing but the counter comes round, neither by a parameter of the head nor by a variable; and all that the operators of a turn take is added up, so no joining can come to a text that is too long: what is written in the turn is added up where the program is built, and the texts from in front, whose lengths nobody knows there, are handed to the reservation, which reads their lengths and asks for nothing where the sum is over the longest text there may be.
 # RUN: walk f1 mechanisms=all
-# CHECK-NOT: ReserveArrayRoom
+# CHECK-NOT: ReserveArrayCapacity
 # RUN(COUNTER): walk f2 mechanisms=all
-# COUNTER-NOT: ReserveArrayRoom
+# COUNTER-NOT: ReserveArrayCapacity
 # RUN(JOINS): walk f3 mechanisms=all
-# JOINS: ReserveArrayRoom {{*}}, {{*}}, v0, {{*}}, v1, 
+# JOINS: ReserveArrayCapacity {{*}}, {{*}}, v0, {{*}}, v1, 
 # RUN(LENGTHS): emit f3 mechanisms=all
 # LENGTHS: JSRopeString_length
 # A text is handed on once, with the number of times that the turns join it behind it, however often that is: the operands of the reservation do not grow with the joins.
 # RUN(ONCE): walk f5 mechanisms=all
-# ONCE: ReserveArrayRoom {{*}}, {{*}}, v0, 
+# ONCE: ReserveArrayCapacity {{*}}, {{*}}, v0, 
 # RUN(TWICE): walk f5 mechanisms=all
-# TWICE-NOT: ReserveArrayRoom {{*}}, v0, {{*}}, v0
+# TWICE-NOT: ReserveArrayCapacity {{*}}, v0, {{*}}, v0
 # RUN(TIMES): emit f5 mechanisms=all
 # TIMES: = Mul(
 # A text made of what is written in the turn and of the counter hands nothing on.
 # RUN(WRITTEN): walk f4 mechanisms=all
 # WRITTEN-LABEL: code f4:Body
-# WRITTEN: ReserveArrayRoom
+# WRITTEN: ReserveArrayCapacity
 # WRITTEN: isLoopHead=true
 # RUN(ANSWER): run-in-shell globalThis.sink = (doubles, doublesUnderTheCounter, joinsTextsFromInFront, joinsWhatIsWritten, joinsOneTextManyTimes) => { try { doubles(); } catch (error) { print(error.constructor.name); } try { doublesUnderTheCounter(150000000); } catch (error) { print(error.constructor.name); } print(joinsTextsFromInFront("a", "b")); print(joinsWhatIsWritten()); print(joinsOneTextManyTimes("ab", 3)); };
 # ANSWER: RangeError

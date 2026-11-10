@@ -22,8 +22,8 @@ struct SweepInputs {
     const Facts& facts;
     const Plan& plan;
     TypeArena& types;
-    bool turnsBranchThatDecidesIntoJump { false };
-    bool letsGoEdgeThatIsTaken { false };
+    bool shouldMisfoldBranch { false };
+    bool shouldDropEdge { false };
 };
 
 struct ReadOfSweptValue {
@@ -37,7 +37,7 @@ struct SweepTotals {
     uint32_t operationsDropped { 0 };
     uint32_t branchesThatDecideNothing { 0 };
     uint32_t doorsDroppedWithTheirValues { 0 };
-    uint32_t birthsMoved { 0 };
+    uint32_t allocationsSunk { 0 };
 };
 
 inline constexpr uint8_t neededMarkOfSweep = static_cast<uint8_t>(SweepMark::IsNeeded);
@@ -94,8 +94,8 @@ private:
     void noteThatBlockDoesSomething(BlockID);
     void noteArgumentNeededFrom(BlockID, BlockID entered, size_t position);
     void turnBranchesThatDecideNothingIntoJumps();
-    void turnBranchThatDecidesIntoJump();
-    void letGoEdgeThatIsTaken();
+    void misfoldBranch();
+    void dropTakenEdge();
     void leadJumpPastBlocksThatHoldNothing(BlockID);
 
     bool isStoreIntoOwnObject(const Operation&, ValueID& object);
@@ -139,7 +139,6 @@ private:
     void beginFollowingLiveness();
     void noteNeededOperationForLiveness(ValueID, const Operation&);
     void noteReadForLiveness(ValueID read, BlockID, ValueID reader);
-    void noteValueHeldByCopiedBody(ValueID);
     void followIfEnvironmentIsHandedBack(ValueID needed);
     void noteIfMayHoldEnvironmentInFrame(ValueID needed);
     void followCellsThatHoldEnvironmentsInFrames();
@@ -147,7 +146,6 @@ private:
     void findLiveSets(std::span<const ValueID> releaseHints, const SweepBits* valuesToFollow);
     SweepValueSets::Set liveThroughLoopsAround(BlockID) const;
     void markReleasesBehindLastUsesBySets();
-    bool markReleasesBehindLastUsesByValue(std::span<const ValueID> releaseHints);
     void listLiveValuesAtSuspensionsBySets();
 
     const SweepInputs* m_inputs { nullptr };
@@ -189,8 +187,6 @@ private:
         ValueID operation;
         ValueID operand;
         Opcode opcode { Opcode::Undefined };
-        bool standsInOrder { false };
-        bool isBehindCopiedBody { false };
     };
     Vector<OperationKeptForOperand>& m_operationsKeptForOperands;
     uint32_t m_numberOfOperationsInOrder { 0 };
@@ -213,22 +209,11 @@ private:
     Vector<EnvironmentHandedBack>& m_environmentsHandedBack;
     Vector<ValueID>& m_namesOfCellsThatMayHoldEnvironments;
     bool m_followsLiveness { false };
-    bool m_mayHoldHints { false };
     bool m_mayHandBackEnvironments { false };
-    bool m_looksForLastReads { false };
     bool m_hasInteriorPointers { false };
-    bool m_holdsHintsBehindCopiedBodies { false };
     SweepBits& m_environmentsFollowed;
     SweepBits& m_blocksThatSuspend;
     SweepBits& m_blocksWithHints;
-    Vector<ValueID>& m_lastSuspensions;
-    SweepBits& m_valuesLetGo;
-    SweepBits& m_valuesHeldByCopiedBodies;
-    struct OtherNameOfValue {
-        ValueID valueNamedByHint;
-        ValueID name;
-    };
-    Vector<OtherNameOfValue>& m_otherNames;
     Vector<uint32_t>& m_lastReads;
     Vector<ReadOfSweptValue>& m_reads;
     std::unique_ptr<SweepLivenessStorage> m_liveness;
@@ -272,10 +257,6 @@ struct RoomsOfSweep {
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_environmentsFollowed)>> roomOfEnvironmentsFollowed;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_blocksThatSuspend)>> roomOfBlocksThatSuspend;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_blocksWithHints)>> roomOfBlocksWithHints;
-    RoomOnly<std::remove_reference_t<decltype(Sweep::m_lastSuspensions)>> roomOfLastSuspensions;
-    RoomOnly<std::remove_reference_t<decltype(Sweep::m_valuesLetGo)>> roomOfValuesLetGo;
-    RoomOnly<std::remove_reference_t<decltype(Sweep::m_valuesHeldByCopiedBodies)>> roomOfValuesHeldByCopiedBodies;
-    RoomOnly<std::remove_reference_t<decltype(Sweep::m_otherNames)>> roomOfOtherNames;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_lastReads)>> roomOfLastReads;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_reads)>> roomOfReads;
     RoomOnly<std::remove_reference_t<decltype(Sweep::m_lastReadersInOwnBlocks)>> roomOfLastReadersInOwnBlocks;
@@ -295,9 +276,9 @@ bool staysInSweptCodeByItself(const Operation&);
 
 bool objectOfLayoutMayLieInFrame(const PlannedLayout&);
 
-inline ValueID rootOfCellInSweptCode(const Code& code, ValueID cell)
+inline ValueID underlyingCellOf(const Code& code, ValueID cell)
 {
-    return code.valueBehindNames<opcodesThatGiveSameCell>(cell);
+    return code.valueBehindNames<cellPreservingOpcodes>(cell);
 }
 
 template<typename Functor>
@@ -344,7 +325,7 @@ ALWAYS_INLINE void forEachArgumentCountedBySweepAtEndOf(const Code& code, const 
 
 inline bool stringBuilderIsCellOfHeap(const Code& code, ValueID builder)
 {
-    return code.at(rootOfCellInSweptCode(code, builder)).opcode == Opcode::StringBuilderBegin;
+    return code.at(underlyingCellOf(code, builder)).opcode == Opcode::StringBuilderBegin;
 }
 
 inline constexpr OpcodeSet sweptOperationsWithOwnerBarriers = opcodesWhere([](Opcode opcode) {

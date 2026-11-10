@@ -123,7 +123,7 @@ bool isCellOfFrameInCoroutineCalls(const Walker& walker, Reference operand)
     if (!operand || !operand.isValue())
         return false;
     const Code& code = walker.code();
-    const Operation& made = code.at(rootOfCellInSweptCode(code, operand.id()));
+    const Operation& made = code.at(underlyingCellOf(code, operand.id()));
     return PayloadWord::storage(made.opcode) && made.storage() != AllocationStorage::Heap;
 }
 

@@ -1164,7 +1164,7 @@ public:
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
 #if ENABLE(AOT)
-    // Compiled code runs some jobs without queueing them. True where a job would go straight into the queue and the queue would run it.
+    // Compiled code runs some jobs without queueing them: true if the queue would run one right away.
     bool canFastQueueMicrotask() const { return m_canFastQueueMicrotask && m_microtaskRunnability == QueuedTaskResult::Executed; }
     AOT::Instance* aotInstance() const { return m_aotInstance; }
     void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }

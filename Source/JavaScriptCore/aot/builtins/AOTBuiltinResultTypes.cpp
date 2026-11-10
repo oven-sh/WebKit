@@ -139,14 +139,14 @@ static ALWAYS_INLINE TypeID resultTypeOfWholeBuiltinCall(const BuiltinTypeContex
     const BuiltinOverload& overload = context.program.builtins().at(id);
     if (overload.isUndeclared() || (overload.resultIsDeclaredOnly() && context.level == TypeLevel::Proven))
         return context.types.anything(UnknownSeed::UndescribedNativeResult);
-    if (context.program.rowsOfNativeCodeWriteNullish && overload.code.implementation.kind == BuiltinImplementationKind::HostCall)
+    if (context.program.shouldAssumeNullishHostResults && overload.code.implementation.kind == BuiltinImplementationKind::HostCall)
         return TypeArena::fromPrimitives(Primitive::UndefinedOrNull);
-    if (context.program.builtinWhoseRowWritesNullAlone == overload.builtin.index()) [[unlikely]]
+    if (context.program.builtinInjectedAsNull == overload.builtin.index()) [[unlikely]]
         return TypeArena::fromPrimitives(Primitive::Null);
 
     TypeID declared = typeOfBuiltinType(context, overload.result.type, operands);
     TypeID written = operands ? applyRangeRuleToBuiltinResult(context, overload, *operands, declared) : declared;
-    if (context.program.builtinWhoseRowWritesItsLeastIntegerAlone == overload.builtin.index()) [[unlikely]] {
+    if (context.program.builtinInjectedAsMinimumInteger == overload.builtin.index()) [[unlikely]] {
         Range integers = context.types.at(written).integers;
         if (!integers.isEmpty())
             return context.types.withIntegers(written, Range::one(integers.minimum));
@@ -372,7 +372,7 @@ static bool isAnsweredByDirectFunction(const BuiltinTable& table, BuiltinOverloa
     return !!BuiltinBindings::directFunctionNumberOf(overload);
 }
 
-bool isCallThatTheWalkMustLower(const BuiltinTable& table, BuiltinID builtin)
+bool requiresWalkLowering(const BuiltinTable& table, BuiltinID builtin)
 {
     BuiltinID called = table.canonicalID(builtin);
     const Builtin& entry = table.at(called);

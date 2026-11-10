@@ -802,7 +802,7 @@ std::optional<Object*> sourceOfPendingBinding(VM& vm, const Object& target, Uniq
     return findBindingOfStars(vm, target.state(), last, target.layout(), name).holderOfField;
 }
 
-JSObject* extraPropertiesIfMade(const Object& object)
+JSObject* extraPropertiesIfCreated(const Object& object)
 {
     if (!object.hasExtraProperties())
         return nullptr;

@@ -220,12 +220,21 @@ void Arena::reset()
     if (!m_chunk)
         return;
 
-
     for (Chunk* chunk = std::exchange(m_chunk->previous, nullptr); chunk;) {
         ASSERT(chunk->size < m_chunk->size);
         Chunk* previous = chunk->previous;
         freeMachineArenaChunk(chunk, chunk->size);
         chunk = previous;
+    }
+
+    if (m_chunk->size > largestChunkKept) {
+        freeMachineArenaChunk(m_chunk, m_chunk->size);
+        m_chunk = nullptr;
+        m_bytesInFullChunks = 0;
+        m_begin = 0;
+        m_cursor = 0;
+        m_end = 0;
+        return;
     }
 
 #if ASSERT_ENABLED

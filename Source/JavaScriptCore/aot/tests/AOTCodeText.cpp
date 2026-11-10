@@ -32,7 +32,7 @@ static constexpr TraitInCodeText traitsInCodeText[] = {
     { "mayCallUnknownCode"_s, &EffectTraits::mayCallUnknownCode },
     { "maySuspend"_s, &EffectTraits::maySuspend },
     { "mayBeTerminated"_s, &EffectTraits::mayBeTerminated },
-    { "mayWriteWhatIsSeen"_s, &EffectTraits::mayWriteWhatIsSeen },
+    { "mayWriteObservableState"_s, &EffectTraits::mayWriteObservableState },
     { "mayTouchMemory"_s, &EffectTraits::mayTouchMemory },
     { "mayWriteOutsideObjects"_s, &EffectTraits::mayWriteOutsideObjects },
 };
@@ -277,21 +277,8 @@ void CodeTextWriter::writeBlock(BlockID id)
     for (ValueID parameter : block.parameters())
         writeFactUsesOf(parameter);
     std::span<const ValueID> operations = m_isSwept ? m_code.valuesOf(id) : m_operations.span();
-    std::span<const ReleaseBehindLastRead> releases;
-    if (m_isSwept)
-        releases = m_code.releasesBehindLastReadsIn(id);
-    auto writeReleasesBehind = [&](ValueID lastRead) {
-        for (; !releases.empty() && releases.front().behind == lastRead; releases = releases.subspan(1)) {
-            m_out.print("    # releases "_s);
-            m_printer.print(releases.front().released);
-            m_printer.endLine();
-        }
-    };
-    writeReleasesBehind(ValueID());
-    for (ValueID operation : operations) {
+    for (ValueID operation : operations)
         writeRecord(operation);
-        writeReleasesBehind(operation);
-    }
     writeTerminator(block.terminator);
 }
 

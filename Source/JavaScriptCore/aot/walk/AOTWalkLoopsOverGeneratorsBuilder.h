@@ -22,8 +22,8 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool canCallCompilerHelper(Walker&, FunctionID helper);
 Reference callCompilerHelper(Walker&, FunctionID helper, std::span<const Reference> arguments, Origin);
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+OperatorForm operatorFormFor(Walker&, const Draft&);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 class BuilderForGenerators {
     WTF_MAKE_NONCOPYABLE(BuilderForGenerators);
@@ -149,8 +149,8 @@ public:
         m_walker.chooseConservativeFields(operation);
         operation.setOperand(0, number);
         operation.setOperand(1, integer(asked));
-        operation.setForm(formAllowedForTypedOperator(m_walker, operation));
-        return boxedUnlessNumbersAreUnboxed(m_walker, m_walker.build(WTF::move(operation)), m_origin);
+        operation.setForm(operatorFormFor(m_walker, operation));
+        return boxNumberIfNeeded(m_walker, m_walker.build(WTF::move(operation)), m_origin);
     }
 
     BlockID addBlock(BlockFrequency frequency = BlockFrequency::Normal) { return m_walker.addBlock(frequency); }
@@ -178,14 +178,14 @@ public:
         return buildAsItIs(WTF::move(proof));
     }
 
-    std::optional<PassedTest> goOnWhereTestPasses(Reference test, BlockID otherwise)
+    std::optional<PassedTest> continueIfCheckPasses(Reference test, BlockID otherwise)
     {
-        std::optional<PassedTest> passed = m_walker.goOnWhereTestPasses(test, otherwise);
+        std::optional<PassedTest> passed = m_walker.continueIfCheckPasses(test, otherwise);
         standUnderHandler();
         return passed;
     }
 
-    Reference goOnWhereTypeTestPasses(Reference value, TypeID tested, BlockID otherwise)
+    Reference continueIfTypeMatches(Reference value, TypeID tested, BlockID otherwise)
     {
         Reference test = testType(value, tested);
         BlockID passed = addBlock();
@@ -287,7 +287,7 @@ public:
             continueIn(missing);
             throwNotIterable(iterable);
             continueIn(callable);
-            iterator = requireObject(call(method, iterable), RuntimeErrorKind::IteratorIsNotAnObject);
+            iterator = requireObject(call(method, iterable), RuntimeErrorKind::IteratorNotObject);
         }
         Reference next = read(iterator, BuiltinNames::next);
 
@@ -318,10 +318,10 @@ public:
     void stepByProtocol(Reference iterator, Reference next, const MeetingOfStep& after)
     {
         if (FunctionID steps = findHelper(IterationHelper::StepIterator)) {
-            Reference handedOut = callHelper(steps, { iterator, next });
+            Reference stepValue = callHelper(steps, { iterator, next });
             Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
-            isClosed.setTableOperand(handedOut);
-            endStep(build(WTF::move(isClosed)), handedOut, after);
+            isClosed.setTableOperand(stepValue);
+            endStep(build(WTF::move(isClosed)), stepValue, after);
             return;
         }
         readAnswerOfStep(requireObject(call(next, iterator), RuntimeErrorKind::IteratorResultNotObject), after);

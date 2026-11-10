@@ -44,7 +44,7 @@ static bool markModulesThatMayBeMockedInTestRunsOfProgram(const Program& program
         const Module& module = program.modules[index];
         if (mocked.quickGet(index) || module.requests.isEmpty() || !namesModuleInTestRunsOfProgram(program, module.requests[0].target))
             continue;
-        if (mocked.quickGet(module.requests[0].target.index()) && isFaceOfCommonJSFile(program, module))
+        if (mocked.quickGet(module.requests[0].target.index()) && isCommonJSFacade(program, module))
             mocked.quickSet(index);
     }
     return true;
@@ -62,7 +62,7 @@ static BitVector namespacesHandedOnInTestRunsOfProgram(const Program& program, c
     return handedOn;
 }
 
-static BitVector modulesThatLeadToMocksInTestRunsOfProgram(const Program& program, const BitVector& mocked)
+static BitVector findModulesReachingMocks(const Program& program, const BitVector& mocked)
 {
     size_t numberOfModules = program.modules.size();
     Vector<uint32_t> firstImporter;
@@ -109,7 +109,7 @@ MocksOfProgram findMocksOfProgram(const Program& program)
         return mocks;
     mocks.isAnyModuleMocked = true;
     mocks.namespacesHandedOnByMockedModules = namespacesHandedOnInTestRunsOfProgram(program, mocks.modulesThatMayBeMocked);
-    mocks.modulesThatLeadToMocks = modulesThatLeadToMocksInTestRunsOfProgram(program, mocks.modulesThatMayBeMocked);
+    mocks.modulesReachingMocks = findModulesReachingMocks(program, mocks.modulesThatMayBeMocked);
     return mocks;
 }
 
@@ -121,14 +121,14 @@ bool mayComeThroughMock(const Program& program, const MocksOfProgram& mocks, Mod
         return true;
     const auto& exports = program.at(exporter).exports;
     if (indexOfExport >= exports.size())
-        return mocks.modulesThatLeadToMocks.get(exporter.index());
+        return mocks.modulesReachingMocks.get(exporter.index());
 
     const ModuleExport& entry = exports[indexOfExport];
     switch (entry.kind) {
     case ModuleExportKind::Variable:
         if (!entry.variable || entry.variable.index() >= program.variables.size())
             return true;
-        if (program.at(entry.variable).module != exporter && mocks.modulesThatLeadToMocks.get(exporter.index()))
+        if (program.at(entry.variable).module != exporter && mocks.modulesReachingMocks.get(exporter.index()))
             return true;
         return false;
     case ModuleExportKind::Namespace:
@@ -246,7 +246,7 @@ void openNamesFoundByLink(Program& program, BuildContext& build, LinkTables& lin
     Vector<UserDiagnostic> diagnostics;
     for (const NameAddedByTests& added : leftShut) {
         if (std::ranges::binary_search(followed, added) && (!program.isOpenedSomewhere(added.name) || !program.isOpened(added.holder, added.name)))
-            diagnostics.append(UserDiagnostic { .kind = UserDiagnosticKind::NameAddedToBuiltinWasNotOpened, .text = added.name });
+            diagnostics.append(UserDiagnostic { .kind = UserDiagnosticKind::UndetectedBuiltinAddition, .text = added.name });
     }
     build.diagnostics().append(WTF::move(diagnostics));
     openNamesThatTestsAdd(program, WTF::move(opened), { });
@@ -273,7 +273,7 @@ static bool isWrittenByUserInTestRunsOfProgram(const Program& program, ModuleID 
 static UserDiagnostic reportOfExportInTestRunsOfProgram(const Program& program, VariableID id)
 {
     const Variable& variable = program.at(id);
-    UserDiagnostic diagnostic { .kind = UserDiagnosticKind::SpiedExportWasNotOpened, .text = variable.name };
+    UserDiagnostic diagnostic { .kind = UserDiagnosticKind::UndetectedExportSpy, .text = variable.name };
     if (isWrittenByUserInTestRunsOfProgram(program, variable.module)) {
         diagnostic.location = { variable.module.index(), 0 };
         SourceLocation declaration = variable.function ? program.at(variable.function).declarationLocation() : noSourceLocation;
@@ -316,7 +316,7 @@ bool isFileOfProductInTestRun(const Program& program, FunctionID writer)
     if (!program.admitsReplacedBuiltins || !writer)
         return false;
     ModuleID module = program.at(writer).module;
-    return module && program.at(module).flags.contains(ModuleFlags::FindsBuiltinsReadOnly);
+    return module && program.at(module).flags.contains(ModuleFlags::HasReadOnlyBuiltins);
 }
 
 bool writeOpensNothingInTestRun(const Program& program, FunctionID writer, BuiltinID member)

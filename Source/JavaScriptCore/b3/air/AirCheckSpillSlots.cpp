@@ -128,7 +128,7 @@ void PlacesOfValues::fail(ASCIILiteral where, const ReadFromOutside& read, std::
         out.print("and nothing writes it on the path ");
     for (unsigned i = 0; i < path.size(); ++i)
         out.print(i ? " > #" : "#", path[i]);
-    m_code.proc().fail(isRegister ? FailureKind::RegisterLacksItsValue : FailureKind::SpillSlotLacksItsValue, reader.origin ? reader.origin->origin() : Origin(), out.toString());
+    m_code.proc().fail(isRegister ? FailureKind::WrongValueInRegister : FailureKind::WrongValueInSpillSlot, reader.origin ? reader.origin->origin() : Origin(), out.toString());
 }
 
 bool PlacesOfValues::check(ASCIILiteral where)

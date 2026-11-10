@@ -1,6 +1,6 @@
 # The list follows from the program alone, and finding it ends. What a built-in does with a RegExp is paid for by the characters of the subject; that holds only while the object is as it was made.
 # const r = /a/; Object.defineProperty(r, "flags", { value: "g" }); new RegExp("x" + "aa".replace(r, "b")); new RegExp("z+" + 1);
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /z+1/
 # CHECK-NOT: text /
