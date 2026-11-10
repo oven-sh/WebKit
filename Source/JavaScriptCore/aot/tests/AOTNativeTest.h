@@ -135,7 +135,6 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(moduleProgramTests) \
     v(moduleRequestListTests) \
     v(nakedConstructorTests) \
-    v(nativeModuleExportTests) \
     v(objectCreateProgramTests) \
     v(originalBesideMockTests) \
     v(privateAccessorProgramTests) \
@@ -213,6 +212,10 @@ FOR_EACH_AOT_IMAGE_NATIVE_TEST_PROVIDER(AOT_DECLARE_NATIVE_TEST_PROVIDER)
 FOR_EACH_AOT_ENGINE_NATIVE_TEST_PROVIDER(AOT_DECLARE_NATIVE_TEST_PROVIDER)
 #undef AOT_DECLARE_NATIVE_TEST_PROVIDER
 
+using NativeTestProvider = std::span<const NativeTest> (*)();
+
+std::span<const NativeTestProvider> nativeTestProvidersOfHost();
+
 class ChildProcessLauncher;
 
 struct NativeTestPart {
@@ -234,7 +237,6 @@ struct NativeTestSummary {
     unsigned passed { 0 };
     unsigned failed { 0 };
     unsigned todo { 0 };
-    unsigned leftOut { 0 };
 };
 
 NativeTestSummary runNativeTests(const NativeTestRequest&, PrintStream&);

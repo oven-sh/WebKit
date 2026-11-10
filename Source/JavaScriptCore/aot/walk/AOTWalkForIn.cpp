@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTIRProgram.h"
+#include "AOTSweep.h"
 #include <array>
 #include <optional>
 #include <utility>
@@ -111,14 +112,18 @@ static Reference narrowedInWalkForIn(Walker& walker, Reference value, Reference 
     return walker.isUnreachable() ? Reference() : walker.build(WTF::move(proof));
 }
 
-static void noteKeysAreAsEnumeratorFoundThemInWalkForIn(Walker& walker, Reference enumerator)
+void noteKeysAreAsEnumeratorFoundThem(Walker& walker, Reference enumerator, Reference object)
 {
-    walker.state().noteFactsOfCell(enumerator, FactOfCell::IsLikelyAsAllocated);
+    if (object.isValue() && walker.state().isFresh(Reference::value(rootOfCellInSweptCode(walker.code(), object.id())))) {
+        walker.fail("the keys of an object that is still fresh are noted on its enumerator"_s, InternalErrorKind::KeysOfFreshObjectNotedOnEnumerator);
+        return;
+    }
+    walker.state().noteFactsOfCell(enumerator, FactOfCell::KeysAreAsEnumeratorFoundThem);
 }
 
 static bool keysAreAsEnumeratorFoundThemInWalkForIn(Walker& walker, Reference enumerator)
 {
-    return walker.state().factsOfCell(enumerator).contains(FactOfCell::IsLikelyAsAllocated);
+    return walker.state().factsOfCell(enumerator).contains(FactOfCell::KeysAreAsEnumeratorFoundThem);
 }
 
 bool countOfNamesComesRound(Walker& walker, const Walker::IterationByIndex& iteration)
@@ -127,7 +132,7 @@ bool countOfNamesComesRound(Walker& walker, const Walker::IterationByIndex& iter
         return false;
     if (iteration.head)
         return keysAreAsEnumeratorFoundThemInWalkForIn(walker, iteration.list);
-    noteKeysAreAsEnumeratorFoundThemInWalkForIn(walker, iteration.list);
+    noteKeysAreAsEnumeratorFoundThem(walker, iteration.list, iteration.subject);
     return true;
 }
 
@@ -204,7 +209,7 @@ static bool openInWalkForIn(Walker& walker, const BodyValue& open)
     }
     if (!iteration.list)
         return true;
-    noteKeysAreAsEnumeratorFoundThemInWalkForIn(walker, iteration.list);
+    noteKeysAreAsEnumeratorFoundThem(walker, iteration.list, iteration.subject);
 
     iteration.position = integerInWalkForIn(walker, 0, origin);
     iteration.inputHead = loop->head;
@@ -234,7 +239,7 @@ static StepInWalkForIn buildStepFromInWalkForIn(Walker& walker, const Walker::It
     if (iteration.count)
         built.count = resultAtInWalkForIn(walker, results, static_cast<uint32_t>(ForInStepResult::CurrentNames), origin);
     built.next = buildOperatorInWalkForIn(walker, Opcode::Increment, built.foundAt, { }, origin);
-    noteKeysAreAsEnumeratorFoundThemInWalkForIn(walker, iteration.list);
+    noteKeysAreAsEnumeratorFoundThem(walker, iteration.list, iteration.subject);
     return built;
 }
 

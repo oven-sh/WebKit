@@ -29,6 +29,7 @@
 #include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "GlobalObjectMethodTable.h"
+#include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
 #include "JSModuleLoader.h"
@@ -217,7 +218,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         didBeginWalkOnEmptyStack(root);
     else if (passImporterEnteredAboveMock(root, root, context.stack)) [[unlikely]]
         return;
-    runMocksBelow(root);
+    runMocksInGraph(root);
     RETURN_IF_EXCEPTION(scope, void());
     noteModulesLoadedWith(root);
     noteThatGraphBegins(root);
@@ -235,7 +236,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     auto pushRecord = [&](EvaluationFrame& frame, ModuleRecord* record) {
         RELEASE_ASSERT(frame.stackPosition <= context.stack.size());
         frame.record = record;
-        record->setHoldsStatus();
+        record->setOwnsStatus();
         setStoredStatus(frame.module, StoredModuleStatus::InRecord);
         record->setStatus(CyclicModuleRecord::Status::Evaluating);
         record->setDFSAncestorIndex(frame.dfsIndex);
@@ -252,7 +253,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         if (frames.isEmpty())
             return true;
         unsigned importer = frames.last().module.index();
-        if (!m_modulesThatRanBesideMock.get(importer) && !isBelowModuleThatRunsBesideMock.get(importer))
+        if (!m_originalsEvaluatedUnderMock.get(importer) && !isBelowModuleThatRunsBesideMock.get(importer))
             return true;
         isBelowModuleThatRunsBesideMock.set(module.index());
         return false;
@@ -306,12 +307,12 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             return false;
         if (!frames.isEmpty() && status(module) == ModuleStatus::Linked && passImporterEnteredAboveMock(module, root, context.stack)) [[unlikely]]
             return false;
-        if (isMocked(module) && !runsBesideMock && !hasMockLaidOver(module)) [[unlikely]] {
+        if (isMocked(module) && !runsBesideMock && !isPatchedByMock(module)) [[unlikely]] {
             setStatus(module, ModuleStatus::Evaluated);
             return false;
         }
         if (runsBesideMock) [[unlikely]] {
-            m_modulesThatRanBesideMock.set(module.index());
+            m_originalsEvaluatedUnderMock.set(module.index());
             m_modulesOwedBesideMock.clear(module.index());
             m_importsMadeByOwnFactory.removeAll(module);
             m_modulesThatOwnFactoryMayLoad.clear(module.index());
@@ -467,7 +468,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
                     continue;
                 const ModuleData& requiredData = data(required);
                 bool isLinked = !runsBesideMock && (stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked);
-                if (isLinked && isMocked(required) && !hasMockLaidOver(required)) [[unlikely]] {
+                if (isLinked && isMocked(required) && !isPatchedByMock(required)) [[unlikely]] {
                     setStoredStatus(required, StoredModuleStatus::Evaluated);
                     continue;
                 }
@@ -516,7 +517,7 @@ JSValue Modules::callBody(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
     std::optional<FunctionID> body = moduleData.bodyFunction();
-    if (!body || (isMocked(module) && !m_filesWhoseOriginalRuns.get(module.index()) && !m_modulesThatRanBesideMock.get(module.index()) && !hasMockLaidOver(module)))
+    if (!body || (isMocked(module) && !m_filesWhoseOriginalRuns.get(module.index()) && !m_originalsEvaluatedUnderMock.get(module.index()) && !isPatchedByMock(module)))
         return jsUndefined();
 
     VM& vm = *m_instance.vm;
@@ -579,6 +580,14 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     ASSERT(!bodyStoresStatus || data(module).evaluatesItself());
+    if (std::optional<ModuleID> file = m_table.fileBehindFace(module)) {
+        unbindModuleObjectOfRunThatThrew(*file);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    auto releasesSteps = makeScopeExit([&] {
+        if (!m_deferredLinkSteps.isEmpty()) [[unlikely]]
+            resumeDeferredLinkSteps(m_table.fileBehindFace(module).value_or(module));
+    });
     SetForScope rootWhoseFilesRun(m_rootWhoseFilesRun, runsImportedFilesAlone ? std::optional(module) : std::nullopt);
     SetForScope wordOfCompiledCode(m_instance.modules.runsImportedFilesAlone, runsImportedFilesAlone ? 1u : 0u);
 
@@ -654,17 +663,17 @@ void Modules::leaveModuleObjectToRunThatThrew(ModuleID file)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
     JSObject* objectOfRun = objectThatStandsForModuleIfMade(file);
     for (const FirstRequire& first : m_firstRequires) {
-        if (first.requirer != file || firstRequirerOf(first.required) != file || ensureLoaded(first.required).firstRequirerOutsideImage)
+        if (first.requirer != file || firstRequirerOf(first.required) != file || ensureLoaded(first.required).firstUncompiledRequirer)
             continue;
         if (!objectOfRun) {
             objectOfRun = objectThatStandsForModule(file);
             if (scope.exception()) [[unlikely]]
                 return;
         }
-        ensureLoaded(first.required).firstRequirerOutsideImage.set(*this, objectOfRun);
+        ensureLoaded(first.required).firstUncompiledRequirer.set(*this, objectOfRun);
     }
-    if (objectOfRun && !keepsModuleObjectToItself(file) && host().didForgetRunOfModuleObject) {
-        host().didForgetRunOfModuleObject(m_instance.globalObject, objectOfRun, false);
+    if (objectOfRun && !keepsModuleObjectToItself(file) && host().didDiscardModuleEvaluation) {
+        host().didDiscardModuleEvaluation(m_instance.globalObject, objectOfRun, false);
         ensureLoaded(file).moduleObjectOfRunThatThrew.set(*this, objectOfRun);
     }
     static_cast<void>(scope.exception());
@@ -679,10 +688,10 @@ void Modules::unbindModuleObjectOfRunThatThrew(ModuleID file)
     JSObject* objectOfRun = loaded->moduleObjectOfRunThatThrew;
     loaded->moduleObjectOfRunThatThrew.set(*this, nullptr);
     for (const FirstRequire& first : m_firstRequires) {
-        if (first.requirer == file && firstRequirerOf(first.required) == file && !ensureLoaded(first.required).firstRequirerOutsideImage)
-            ensureLoaded(first.required).firstRequirerOutsideImage.set(*this, objectOfRun);
+        if (first.requirer == file && firstRequirerOf(first.required) == file && !ensureLoaded(first.required).firstUncompiledRequirer)
+            ensureLoaded(first.required).firstUncompiledRequirer.set(*this, objectOfRun);
     }
-    host().didForgetRunOfModuleObject(m_instance.globalObject, objectOfRun, true);
+    host().didDiscardModuleEvaluation(m_instance.globalObject, objectOfRun, true);
     RETURN_IF_EXCEPTION(scope, void());
     forgetWhatFileRequired(file);
 }
@@ -694,8 +703,51 @@ void Modules::forgetWhatFileRequired(ModuleID file)
         ways->numberOfChildrenShown = 0;
     }
     m_recordedRequires.removeIf([&](const auto& recorded) {
-        return recorded.key >> 32 == static_cast<uint64_t>(file.index()) + 1;
+        return (recorded.key << 1) >> 33 == static_cast<uint64_t>(file.index()) + 1;
     });
+}
+
+bool Modules::hasSynchronousLoadFetched(ModuleID file)
+{
+    std::optional<ModuleID> face = m_table.faceOfFile(file);
+    if (!m_activeSynchronousLoad || !face)
+        return false;
+    for (EagerLoad* load = m_innermostEagerLoad; load; load = load->outer) {
+        std::optional<ModuleID> running = load->isAheadOfStepsOfLoader ? fileOrFaceEvaluatedIn(*load) : std::nullopt;
+        if (running && fileOf(*running) != file && wasRequestedByLoad(*load, file))
+            return true;
+    }
+    if (!m_instance.vm->synchronousModuleQueue())
+        return false;
+    ModuleRegistryEntry* entry = loader()->registryEntry(moduleKey(*face));
+    return entry && entry->status() == ModuleRegistryEntry::Status::Fetching && !entry->record();
+}
+
+bool Modules::forgetRunWhoseFailureLoaderHasYetToStore(ModuleID file)
+{
+    std::optional<ModuleID> face = data(file).kind == ModuleKind::CommonJs ? m_table.faceOfFile(file) : std::nullopt;
+    ModuleRegistryEntry* entry = face ? loader()->registryEntry(moduleKey(*face)) : nullptr;
+    if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetching)
+        return false;
+    forgetRunThatThrew(file);
+    recordIfExists(file)->setEvaluationError(*m_instance.vm, JSValue());
+    return true;
+}
+
+bool Modules::takeThrowBehindFetch(ModuleID fileOrFace)
+{
+    LoadedModule* loaded = loadedIfExists(fileOf(fileOrFace));
+    if (!loaded || !loaded->outermostSynchronousLoadWhenItThrewBehindFetch) [[likely]]
+        return false;
+    uint32_t load = std::exchange(loaded->outermostSynchronousLoadWhenItThrewBehindFetch, 0);
+    return load == m_outermostSynchronousLoad && fileOf(fileOrFace) != fileOrFace && hasNotBegunAsFile(fileOf(fileOrFace));
+}
+
+void Modules::makeRecordWithoutExports(ModuleID face)
+{
+    captureNoExports(fileOf(face));
+    ensureLoaded(face).didDropError = true;
+    setStatus(face, ModuleStatus::Evaluated);
 }
 
 void Modules::forgetRunThatThrew(ModuleID file)
@@ -705,7 +757,7 @@ void Modules::forgetRunThatThrew(ModuleID file)
     forgetTemplateObjects(file);
     if (LoadedModule* loaded = loadedIfExists(file)) {
         loaded->requiredValue.set(*this, JSValue());
-        loaded->firstRequirerOutsideImage.set(*this, nullptr);
+        loaded->firstUncompiledRequirer.set(*this, nullptr);
         loaded->synchronousLoadCountAtStart = std::nullopt;
         loaded->hasFirstRequireOfRunThatThrew = true;
     }
@@ -745,8 +797,11 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
     if (data(module).kind == ModuleKind::CommonJs && (mayBeEvicted(module) || (data(module).runsAgainAfterThrow() && !isAwaitedByImportFromBeforeItRan(module))) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
         if (mayBeEvicted(module))
             evict(module);
-        else
+        else {
+            if (hasSynchronousLoadFetched(module))
+                ensureLoaded(module).outermostSynchronousLoadWhenItThrewBehindFetch = m_outermostSynchronousLoad;
             forgetRunThatThrew(module);
+        }
         return;
     }
     if (data(module).keepsError())
@@ -850,7 +905,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
             m_storedStatuses[module.index()] = static_cast<uint8_t>(m_instance.modules.evaluatingMark);
             return true;
         }
-        m_filesChangedOutOfSightOfBuild.set(file.index());
+        m_filesModifiedSinceBuild.set(file.index());
         JSGlobalObject* realm = m_instance.globalObject;
         auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
         JSPromise* loaded = nullptr;
@@ -868,7 +923,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
         return false;
     }
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    endMocksThatStoodForLoadsInFlight();
+    removeUnusedLingeringMocks();
     RETURN_IF_EXCEPTION(scope, false);
     if (m_filesThatStayLoadedAboveMock.get(module.index())) [[unlikely]]
         tellOfFilesThatStayedLoadedBelow(module);
@@ -876,39 +931,39 @@ bool Modules::beginModuleInRecord(ModuleID module)
         return false;
     if (storedStatus(module) != StoredModuleStatus::InRecord) [[unlikely]]
         RELEASE_AND_RETURN(scope, beginModuleInRecord(module));
-    if (m_modulesWithMockToRun.get(module.index()) && !(standsForLoadsInFlight(module) && isEvaluatedByLoader(module))) [[unlikely]] {
+    if (m_modulesWithPendingMock.get(module.index()) && !(isMockLingering(module) && isEvaluatedByLoader(module))) [[unlikely]] {
         SetForScope requireRunsMocks(m_instance.vm->aotState().requireRunsMocks, true);
-        SetForScope moduleThatRequireAsksFor(m_moduleThatRequireAsksFor, module);
-        SetForScope moduleThatRequires(m_moduleThatRequires, ModuleID());
+        SetForScope moduleThatRequireAsksFor(m_currentRequireTarget, module);
+        SetForScope moduleThatRequires(m_requiringModule, ModuleID());
         auto waiting = m_momentsWaitingMocksWereLaid.find(module);
-        bool liesInRequireMap = waiting != m_momentsWaitingMocksWereLaid.end() && waiting->value.importersKeepMockThatStands && wasRequiredUnderMockInPlace(module);
-        bool factoryHasNotSettled = runMockThatWaits(module);
+        bool liesInRequireMap = waiting != m_momentsWaitingMocksWereLaid.end() && waiting->value.importersKeepMockThatStands && wasRequiredUnderActiveMock(module);
+        bool factoryHasNotSettled = runPendingMock(module);
         RETURN_IF_EXCEPTION(scope, false);
         if (factoryHasNotSettled) [[unlikely]] {
             throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(module)));
             return false;
         }
-        if (mockInPlace(module)) {
-            ensureLoaded(module).wasRequiredUnderMockInPlace = true;
+        if (activeMock(module)) {
+            ensureLoaded(module).wasRequiredUnderActiveMock = true;
             noteRequireOfMockLaidInPreload(module);
         }
-        if (!liesInRequireMap && m_modulesWithMockToRun.get(module.index()) && getsOriginalBesideMock(module, module)) {
+        if (!liesInRequireMap && m_modulesWithPendingMock.get(module.index()) && getsOriginalBesideMock(module, module)) {
             JSValue original = answerRequireWithOriginal(module, module);
             RETURN_IF_EXCEPTION(scope, false);
             setCommonJSExports(module, original);
         }
     }
     if (someFactoryHasNotSettled) [[unlikely]] {
-        bool refusesEveryRequire = false;
-        if (callOfFactoryThatHasNotSettled(module, &refusesEveryRequire) && refusesEveryRequire) {
+        bool shouldRejectEveryRequire = false;
+        if (pendingFactoryCallID(module, &shouldRejectEveryRequire) && shouldRejectEveryRequire) {
             throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(module)));
             return false;
         }
     }
-    if (mockInPlace(module)) [[unlikely]] {
+    if (activeMock(module)) [[unlikely]] {
         noteAskUnderMockInPlace(module);
-        if (!m_innermostFilesBeingRun)
-            ensureLoaded(module).wasRequiredUnderMockInPlace = true;
+        if (!m_innermostEagerLoad)
+            ensureLoaded(module).wasRequiredUnderActiveMock = true;
         if (!isBegunForStatement(module))
             noteRequireOfMockLaidInPreload(module);
     }
@@ -932,6 +987,8 @@ bool Modules::beginModuleInRecord(ModuleID module)
     if (isRunningFilesAheadOfLoader(module))
         return false;
     ModuleStatus moduleStatus = status(module);
+    if (moduleStatus == ModuleStatus::Failed && forgetRunWhoseFailureLoaderHasYetToStore(module)) [[unlikely]]
+        moduleStatus = status(module);
     if (moduleStatus == ModuleStatus::Evaluated || moduleStatus == ModuleStatus::EvaluatingAsync) {
         BitVector isPassed;
         scope.release();
@@ -942,7 +999,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
     if (hasNotBegun && (!data(module).bodyFunction() || (moduleStatus == ModuleStatus::Linked && !data(module).capturesExportsBehindEvaluation()))) {
         ModuleRecord* record = recordIfExists(module);
         record->setStatus(CyclicModuleRecord::Status::Evaluating);
-        record->clearHoldsStatus();
+        record->clearOwnsStatus();
         m_storedStatuses[module.index()] = static_cast<uint8_t>(m_instance.modules.evaluatingMark);
         return true;
     }
@@ -960,7 +1017,7 @@ void Modules::forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&
 
 void Modules::forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)> auto& functor) const
 {
-    for (const FilesBeingRun* load = m_innermostFilesBeingRun; load; load = load->outer) {
+    for (const EagerLoad* load = m_innermostEagerLoad; load; load = load->outer) {
         if (std::optional<ModuleID> fileOrFace = fileOrFaceEvaluatedIn(*load))
             functor(*fileOrFace);
     }
@@ -975,7 +1032,7 @@ bool Modules::isBegunForStatement(ModuleID fileOrFace) const
     return face && status(*face) == ModuleStatus::Evaluating;
 }
 
-std::optional<ModuleID> Modules::fileOrFaceEvaluatedIn(const FilesBeingRun& load) const
+std::optional<ModuleID> Modules::fileOrFaceEvaluatedIn(const EagerLoad& load) const
 {
     auto isBeingEvaluated = [&](ModuleID fileOrFace) {
         return status(fileOrFace) == ModuleStatus::Evaluating || status(fileOf(fileOrFace)) == ModuleStatus::Evaluating;
@@ -1011,22 +1068,16 @@ bool Modules::isEvaluatedByLoader(ModuleID file) const
     return found;
 }
 
-bool Modules::importsFileThatRunsAhead(ModuleID root) const
+bool Modules::anyImportedModule(ModuleID root, ModulesThatRan modulesThatRan, const Invocable<bool(ModuleID)> auto& predicate) const
 {
-    Vector<ModuleID, 4> running;
-    forEachFileEvaluatedByLoader([&](ModuleID file) {
-        running.append(file);
-    });
-    if (running.isEmpty())
-        return false;
     BitVector seen(m_table.size());
     seen.quickSet(root.index());
     Vector<uint32_t, 32> found { root.index() };
     for (size_t index = 0; index < found.size(); ++index) {
         ModuleID module(found[index]);
-        if (running.contains(fileOf(module)))
+        if (predicate(module))
             return true;
-        if (!data(module).isESModuleOfProgram())
+        if (!data(module).isESModuleOfProgram() || (modulesThatRan == ModulesThatRan::ArePassedOver && status(module) == ModuleStatus::Evaluated))
             continue;
         for (const ModuleRequestData& request : m_table.requests(module)) {
             if (!request.isRequire && !request.isHoisted && !seen.quickSet(request.target()))
@@ -1036,7 +1087,70 @@ bool Modules::importsFileThatRunsAhead(ModuleID root) const
     return false;
 }
 
-bool Modules::comesToLoadOf(FilesBeingRun& files, ModuleID required)
+bool Modules::importsFileThatRunsAhead(ModuleID root) const
+{
+    Vector<ModuleID, 4> running;
+    forEachFileEvaluatedByLoader([&](ModuleID file) {
+        running.append(file);
+    });
+    return !running.isEmpty() && anyImportedModule(root, ModulesThatRan::AreWalked, [&](ModuleID module) {
+        return running.contains(fileOf(module));
+    });
+}
+
+bool Modules::importsEvaluatingCommonJSModule(ModuleID root) const
+{
+    return anyImportedModule(root, ModulesThatRan::ArePassedOver, [&](ModuleID module) {
+        return isCommonJSFileOrFace(module) && (status(module) == ModuleStatus::Evaluating || status(fileOf(module)) == ModuleStatus::Evaluating);
+    });
+}
+
+bool Modules::isLinkStepBlocked(const VM::SynchronousModuleTask& step, std::optional<ModuleID> finishedModule) const
+{
+    if (static_cast<JSPromise::Status>(step.payload) != JSPromise::Status::Fulfilled)
+        return false;
+    auto* compiled = dynamicDowncast<ModuleRecord>(step.task == InternalMicrotask::ModuleLoadLinkEvaluateSettled ? step.arg1 : step.arg0);
+    if (!compiled)
+        return false;
+    ModuleID root = compiled->module();
+    if (root == m_rootOfInnermostSynchronousLoad)
+        return false;
+    return anyImportedModule(root, ModulesThatRan::ArePassedOver, [&](ModuleID module) {
+        if (module == root || !isCommonJSFileOrFace(module))
+            return false;
+        ModuleID file = fileOf(module);
+        if (file == finishedModule || status(file) != ModuleStatus::Evaluating)
+            return false;
+        LoadedModule* loaded = loadedIfExists(file);
+        return !loaded || !loaded->wasLoadedWhileItRan;
+    });
+}
+
+bool Modules::tryDeferLinkStep(const VM::SynchronousModuleTask& step)
+{
+    if (!isLinkStepBlocked(step, std::nullopt))
+        return false;
+    VM& vm = *m_instance.vm;
+    m_deferredLinkSteps.append({ step.task, step.payload, { Strong<Unknown>(vm, step.arg0), Strong<Unknown>(vm, step.arg1), Strong<Unknown>(vm, step.arg2), Strong<Unknown>(vm, step.arg3) } });
+    return true;
+}
+
+bool Modules::resumeDeferredLinkSteps(std::optional<ModuleID> finishedModule)
+{
+    VM& vm = *m_instance.vm;
+    return m_deferredLinkSteps.removeAllMatching([&](const DeferredLinkStep& held) {
+        VM::SynchronousModuleTask step { held.task, held.payload, held.arguments[0].get(), held.arguments[1].get(), held.arguments[2].get(), held.arguments[3].get() };
+        if (isLinkStepBlocked(step, finishedModule))
+            return false;
+        if (VM::SynchronousModuleQueue* queue = vm.synchronousModuleQueue())
+            queue->tasks.append(step);
+        else
+            m_instance.globalObject->queueMicrotask(vm, step.task, step.payload, step.arg0, step.arg1, step.arg2, step.arg3);
+        return true;
+    });
+}
+
+bool Modules::comesToLoadOf(EagerLoad& files, ModuleID required)
 {
     auto forEachImportOfModuleOnItsWay = [&](ModuleID module, const Invocable<void(ModuleID)> auto& functor) {
         if (!isLoadedWithRequests(module) || !isNotLoaded(module))
@@ -1075,7 +1189,7 @@ bool Modules::comesToLoadOf(FilesBeingRun& files, ModuleID required)
 
 bool Modules::importsFileBeingEvaluated(ModuleID root) const
 {
-    if (!m_innermostFilesBeingRun) [[likely]]
+    if (!m_innermostEagerLoad) [[likely]]
         return false;
     for (const ModuleRequestData& request : m_table.requests(root)) {
         if (request.isRequire)
@@ -1098,13 +1212,13 @@ bool Modules::hasKey(ModuleID file, const Identifier& key)
     return moduleKey(file) == key || (face && moduleKey(*face) == key);
 }
 
-std::optional<ModuleID> Modules::fileToWaitFor(const Identifier& key)
+std::optional<ModuleID> Modules::findEvaluatingCommonJSModule(const Identifier& key)
 {
-    if (!m_innermostFilesBeingRun || m_instance.vm->synchronousModuleQueue()) [[likely]]
+    if (!m_innermostEagerLoad || m_instance.vm->synchronousModuleQueue()) [[likely]]
         return std::nullopt;
     std::optional<ModuleID> found;
     forEachFileEvaluatedByLoader([&](ModuleID file) {
-        if (file != m_fileBeingHandedToLoader && hasKey(file, key))
+        if (file != m_moduleBeingTransferred && hasKey(file, key))
             found = file;
     });
     return found;
@@ -1250,6 +1364,45 @@ void Modules::resumeDeferredLoadsOfFinishedFiles()
     }
 }
 
+void Modules::collectOuterRequests(EagerLoad& files)
+{
+    Vector<EagerLoad*, 8> loads;
+    for (EagerLoad* load = &files; load->outer && !load->hasCollectedOuterRequests; load = load->outer)
+        loads.append(load);
+    for (EagerLoad* load : loads | std::views::reverse) {
+        EagerLoad& outer = *load->outer;
+        load->hasCollectedOuterRequests = true;
+        load->requestedByOuterLoads = outer.requestedByOuterLoads;
+        if (!outer.transferredModule && wasRequestedByLoad(outer, fileOf(outer.root)))
+            load->requestedByOuterLoads.merge(outer.requested);
+    }
+}
+
+bool Modules::wasRequestedByEnclosingLoad(const Identifier& key)
+{
+    EagerLoad* around = m_innermostEagerLoad;
+    if (around && m_moduleBeingTransferred)
+        around = around->outer;
+    std::optional<ModuleID> asked = around ? findByKey(key) : std::nullopt;
+    if (!asked)
+        return false;
+    if (!around->hasCollectedOuterRequests)
+        collectOuterRequests(*around);
+    ModuleID file = fileOf(*asked);
+    return around->requestedByOuterLoads.get(file.index()) || (!around->transferredModule && wasRequestedByLoad(*around, file));
+}
+
+bool Modules::wasRequestedByOuterLoad(ModuleID module)
+{
+    EagerLoad& files = *m_innermostEagerLoad;
+    if (!files.hasCollectedOuterRequests)
+        collectOuterRequests(files);
+    if (files.requestedByOuterLoads.get(fileOf(module).index()))
+        return true;
+    ModuleRegistryEntry* entry = loader()->registryEntry(moduleKey(module));
+    return entry && entry->status() == ModuleRegistryEntry::Status::Fetching && !entry->record();
+}
+
 Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places)
 {
     enum class State : uint8_t { Unrequested, Requested, Fetched, Made, Recorded, Settled };
@@ -1260,9 +1413,10 @@ Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID r
     auto stateOf = [&](ModuleID module) {
         if (auto found = states.find(module.index()); found != states.end())
             return found->value;
-        if (isCommonJSFileOrFace(module))
-            return hasNotBegunAsFile(module) ? State::Unrequested : State::Recorded;
-        return isNotLoaded(module) && !isMocked(module) ? State::Unrequested : State::Settled;
+        bool isFile = isCommonJSFileOrFace(module);
+        if (isFile ? !hasNotBegunAsFile(module) : !isNotLoaded(module) || isMocked(module))
+            return isFile ? State::Recorded : State::Settled;
+        return wasRequestedByOuterLoad(module) ? State::Requested : State::Unrequested;
     };
     Vector<std::pair<Job, ModuleID>, 64> jobs;
     Vector<ModuleID, 32> toWalk;
@@ -1350,7 +1504,7 @@ Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID r
     return inOrder;
 }
 
-bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles jobs, ErrorOfImportedFile error, ModuleGraphLoadingState* load)
+bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles jobs, ErrorOfImportedFile error, ModuleGraphLoadingState* load, FilesBehindFactories behindFactories)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1393,19 +1547,20 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     }
 
     bool didRunFile = false;
-    FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun, jobs == JobsOfImportedFiles::WaitForLoader, load };
-    filesBeingRun.isAheadOfStepsOfLoader = jobs == JobsOfImportedFiles::StepsOfLoaderWaitForLoader;
+    EagerLoad eagerLoad { root, std::nullopt, m_innermostEagerLoad, jobs == JobsOfImportedFiles::WaitForLoader, load };
+    eagerLoad.isAheadOfStepsOfLoader = jobs == JobsOfImportedFiles::StepsOfLoaderWaitForLoader;
+    eagerLoad.queueOfLoad = vm.synchronousModuleQueue();
     JSValue asyncContextOfLoad = load ? load->asyncContext() : JSValue();
-    SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
-    SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
+    SetForScope innermostEagerLoad(m_innermostEagerLoad, &eagerLoad);
+    SetForScope modulesWithEagerLoads(vm.aotState().modulesWithEagerLoads, eagerLoad.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWithEagerLoads);
     if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && !doOtherJobsWait() && !m_rootWhoseFilesRun && !ModuleLoaderAsyncContextScope::wouldEnter(vm, asyncContextOfLoad)) {
         ensureRecord(root)->retain();
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
             bool hadQueuedTicks = hasQueuedTicks();
             callBodyUnderOwnMark(root, false, true);
             didRunFile = true;
-            if (filesBeingRun.fileHandedToLoader) [[unlikely]] {
-                ModuleID file = *filesBeingRun.fileHandedToLoader;
+            if (eagerLoad.transferredModule) [[unlikely]] {
+                ModuleID file = *eagerLoad.transferredModule;
                 if (Exception* exception = scope.exception()) {
                     if (vm.isTerminationException(exception))
                         return true;
@@ -1439,9 +1594,9 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                     return true;
                 }
                 if (doOtherJobsWait()) {
-                    handGraphToLoader(filesBeingRun, *failedFile);
+                    transferGraphToLoader(eagerLoad, *failedFile);
                     RETURN_IF_EXCEPTION(scope, true);
-                    if (filesBeingRun.fileHandedToLoader) {
+                    if (eagerLoad.transferredModule) {
                         JSValue errorOfFile;
                         if (wasImportedWhileItRan(fileOf(*failedFile)))
                             dropErrorOfFile(*failedFile);
@@ -1471,9 +1626,9 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                         lastFile = request.targetModule();
                 }
                 if (lastFile) {
-                    handGraphToLoader(filesBeingRun, *lastFile);
+                    transferGraphToLoader(eagerLoad, *lastFile);
                     RETURN_IF_EXCEPTION(scope, true);
-                    if (filesBeingRun.fileHandedToLoader) {
+                    if (eagerLoad.transferredModule) {
                         finishStepInWhichFileRan(*lastFile, JSValue());
                         return true;
                     }
@@ -1494,7 +1649,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         if (nextFile < placesOfFiles.size() && placesOfFiles[nextFile] == place)
             index = placesInOrder[nextFile++];
         const ModuleRequestData& request = requests[index];
-        if (request.isHoisted && m_storedStatuses[request.target()] == static_cast<uint8_t>(StoredModuleStatus::Evaluated) && !mockInPlace(request.targetModule()))
+        if (request.isHoisted && m_storedStatuses[request.target()] == static_cast<uint8_t>(StoredModuleStatus::Evaluated) && !activeMock(request.targetModule()))
             continue;
         if (request.isRequire)
             continue;
@@ -1506,15 +1661,21 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         }
         if (mocks.hides(imported)) [[unlikely]]
             continue;
-        bool isOwedBesideMock = mockInPlace(imported) && hasImporterBelowThatGetsOriginal(root, imported);
+        if (ModuleID file = fileOf(imported); behindFactories == FilesBehindFactories::AreLeftOut && isMocked(file) && !activeMock(file) && pendingFactoryCallID(file)) [[unlikely]]
+            continue;
+        bool isOwedBesideMock = activeMock(imported) && hasImporterBelowThatGetsOriginal(root, imported);
         ModuleStatus statusAtStart = status(imported);
         if (!isOwedBesideMock && statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
             continue;
+        if (takeThrowBehindFetch(imported)) [[unlikely]] {
+            makeRecordWithoutExports(imported);
+            continue;
+        }
         didRunFile |= statusAtStart != ModuleStatus::Failed;
         size_t numberOfJobs = numberOfJobsThatWouldWait(jobs);
         bool hadQueuedTicks = hasQueuedTicks();
-        filesBeingRun.fileOrFace = imported;
-        filesBeingRun.numberOfJobsInFrontOfFile = numberOfJobs;
+        eagerLoad.fileOrFace = imported;
+        eagerLoad.numberOfJobsInFrontOfFile = numberOfJobs;
         std::optional<ModuleLoaderAsyncContextScope> asyncContextOfFile;
         if (jobs == JobsOfImportedFiles::WaitForLoader)
             asyncContextOfFile.emplace(vm, m_instance.globalObject, asyncContextOfLoad);
@@ -1523,7 +1684,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 evaluateByCallingBody(imported);
             else
                 evaluateModuleInRecord(imported);
-            isOwedBesideMock = !scope.exception() && mockInPlace(imported) && hasImporterBelowThatGetsOriginal(root, imported);
+            isOwedBesideMock = !scope.exception() && activeMock(imported) && hasImporterBelowThatGetsOriginal(root, imported);
         }
         if (isOwedBesideMock) [[unlikely]] {
             runFileBesideMock(fileOf(imported));
@@ -1531,15 +1692,15 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         }
         asyncContextOfFile.reset();
         Exception* exception = scope.exception();
-        bool didQueueJobsAheadOfLoader = filesBeingRun.isAheadOfJobsOfLoader && (numberOfJobsThatWouldWait(jobs) != numberOfJobs || (!hadQueuedTicks && hasQueuedTicks()));
+        bool didQueueJobsAheadOfLoader = eagerLoad.isAheadOfJobsOfLoader && (numberOfJobsThatWouldWait(jobs) != numberOfJobs || (!hadQueuedTicks && hasQueuedTicks()));
         if (didQueueJobsAheadOfLoader && !(exception && vm.isTerminationException(exception))) [[unlikely]] {
             TRY_CLEAR_EXCEPTION(scope, didRunFile);
-            handGraphToLoader(filesBeingRun, imported);
+            transferGraphToLoader(eagerLoad, imported);
             RETURN_IF_EXCEPTION(scope, didRunFile);
-            if (exception && !filesBeingRun.fileHandedToLoader)
+            if (exception && !eagerLoad.transferredModule)
                 throwException(m_instance.globalObject, scope, exception);
         }
-        if (filesBeingRun.fileHandedToLoader) [[unlikely]] {
+        if (eagerLoad.transferredModule) [[unlikely]] {
             JSValue errorOfFile;
             if (exception) {
                 if (vm.isTerminationException(exception))
@@ -1566,6 +1727,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             if (statusAtStart == ModuleStatus::Failed || vm.isTerminationException(exception) || !wasImportedWhileItRan(m_table.fileBehindFace(imported).value_or(imported))) {
                 if (error == ErrorOfImportedFile::IsLeftToLoader && !vm.isTerminationException(exception)) {
                     TRY_CLEAR_EXCEPTION(scope, didRunFile);
+                    if (jobs == JobsOfImportedFiles::StepsOfLoaderWaitForLoader && imported != fileOf(imported) && status(imported) != ModuleStatus::Failed)
+                        setFailed(imported, exception->value());
                     if (numberOfJobsThatWouldWait(jobs) != numberOfJobs)
                         holdJobsBehind(numberOfJobs, imported, jobs);
                     m_rootWhoseFilesRanAhead = root;
@@ -1599,7 +1762,7 @@ void Modules::holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedF
     }
     if (!m_jobsThatWaitForLoader)
         m_jobsThatWaitForLoader = MicrotaskQueue::create(vm);
-    vm.defaultMicrotaskQueue().moveTasksBehind(numberOfJobs, *m_jobsThatWaitForLoader);
+    vm.defaultMicrotaskQueue().moveTasksAfter(numberOfJobs, *m_jobsThatWaitForLoader);
 }
 
 size_t Modules::numberOfJobsThatWouldWait(JobsOfImportedFiles jobs) const
@@ -1616,21 +1779,21 @@ size_t Modules::numberOfJobsThatWouldWait(JobsOfImportedFiles jobs) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void Modules::handGraphsToLoader()
+void Modules::transferGraphsToLoader()
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    Vector<FilesBeingRun*, 2> ahead;
-    for (FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
+    Vector<EagerLoad*, 2> ahead;
+    for (EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
         if (files->isAheadOfJobsOfLoader)
             ahead.append(files);
     }
-    for (FilesBeingRun* files : ahead | std::views::reverse) {
-        handGraphToLoader(*files);
+    for (EagerLoad* files : ahead | std::views::reverse) {
+        transferGraphToLoader(*files);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
 
-void Modules::handGraphToLoader(FilesBeingRun& files, std::optional<ModuleID> finishedFile)
+void Modules::transferGraphToLoader(EagerLoad& files, std::optional<ModuleID> finishedFile)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1641,27 +1804,27 @@ void Modules::handGraphToLoader(FilesBeingRun& files, std::optional<ModuleID> fi
 
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     Ref<MicrotaskQueue> jobsOfFile = MicrotaskQueue::create(vm);
-    queue.moveTasksBehind(files.numberOfJobsInFrontOfFile, jobsOfFile.get());
+    queue.moveTasksAfter(files.numberOfJobsInFrontOfFile, jobsOfFile.get());
     m_canJobsOfFileTellWhenTextsCome |= !jobsOfFile->isEmpty() && isTestRun();
     m_rootWhoseFilesRanAhead = files.root;
-    files.fileHandedToLoader = running;
+    files.transferredModule = running;
     {
         DeferTerminationForAWhile deferTermination(vm);
-        SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(*running));
-        SetForScope noSynchronousLoad(vm.m_synchronousModuleQueueSetAside, vm.m_synchronousModuleQueue);
+        SetForScope moduleBeingTransferred(m_moduleBeingTransferred, fileOf(*running));
+        SetForScope noSynchronousLoad(vm.m_suspendedSynchronousModuleQueue, vm.m_synchronousModuleQueue);
         ModuleRecord* record = recordIfExists(files.root);
-        files.load->forgetVisited(record);
+        files.load->removeVisited(record);
         files.load->setDrainingInnerLoad(false);
         loader()->innerModuleLoading(m_instance.globalObject, files.load, record);
-        record->didGoOnWithLoadWhileRequestsWereListed(*files.load);
+        record->didResumeLoadReentrantly(*files.load);
         scope.assertNoException();
         runStepsOfLoaderInFrontOf(fileOf(*running));
         scope.assertNoException();
     }
-    jobsOfFile->moveTasksBehind(0, queue);
+    jobsOfFile->moveTasksAfter(0, queue);
 }
 
-void Modules::handSynchronousLoadToLoader(FilesBeingRun& files)
+void Modules::transferSynchronousLoad(EagerLoad& files)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1670,16 +1833,18 @@ void Modules::handSynchronousLoadToLoader(FilesBeingRun& files)
         return;
     ModuleID running = *files.fileOrFace;
     m_rootWhoseFilesRanAhead = files.root;
-    files.fileHandedToLoader = running;
+    files.transferredModule = running;
     DeferTerminationForAWhile deferTermination(vm);
-    SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(running));
+    SetForScope moduleBeingTransferred(m_moduleBeingTransferred, fileOf(running));
     SetForScope isAskingHost(m_isAskingHost, true);
     takeUpWaysOfLoads();
     JSPromise* promise = loader()->loadModule(m_instance.globalObject, moduleKey(files.root), nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Synchronous });
     scope.assertNoException();
-    m_synchronousLoadsHandedToLoader.append({ files.root, Strong<JSPromise>(vm, promise) });
+    m_transferredSynchronousLoads.append({ files.root, Strong<JSPromise>(vm, promise) });
     runSynchronousStepsInFrontOf(fileOf(running));
     scope.assertNoException();
+    if (VM::SynchronousModuleQueue* innermost = vm.synchronousModuleQueue(); files.queueOfLoad && innermost != files.queueOfLoad)
+        files.queueOfLoad->tasks.appendVector(std::exchange(innermost->tasks, { }));
 }
 
 void Modules::runSynchronousStepsInFrontOf(ModuleID file)
@@ -1726,7 +1891,7 @@ void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
         return fetched && isCommonJSFileOrFace(*fetched) && status(fileOf(*fetched)) < ModuleStatus::Evaluated;
     };
     while (!queue.isEmpty()) {
-        queue.moveTasksBehind(0, turn.get());
+        queue.moveTasksAfter(0, turn.get());
         size_t stepsTaken = 0;
         bool hasComeToFile = !turn->allOf([&](const QueuedTask& job) {
             if (job.globalObject()->microtaskRunnability() == QueuedTaskResult::Discard) {
@@ -1751,16 +1916,16 @@ void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
         });
         if (hasComeToFile) {
             Ref<MicrotaskQueue> queuedInThisTurn = MicrotaskQueue::create(vm);
-            queue.moveTasksBehind(0, queuedInThisTurn.get());
-            stepsOfFilesYetToEnd->moveTasksBehind(0, queue);
-            turn->moveTasksBehind(stepsTaken + 1, queue);
-            queuedInThisTurn->moveTasksBehind(0, queue);
+            queue.moveTasksAfter(0, queuedInThisTurn.get());
+            stepsOfFilesYetToEnd->moveTasksAfter(0, queue);
+            turn->moveTasksAfter(stepsTaken + 1, queue);
+            queuedInThisTurn->moveTasksAfter(0, queue);
         }
         turn->clear();
         if (hasComeToFile)
             return;
     }
-    stepsOfFilesYetToEnd->moveTasksBehind(0, queue);
+    stepsOfFilesYetToEnd->moveTasksAfter(0, queue);
 }
 
 void Modules::finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error)
@@ -1786,10 +1951,10 @@ void Modules::finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error)
     }
 }
 
-void RuntimeHooks::runFilesThatWaitInLoader(VM& vm)
+void RuntimeHooks::transferEagerLoadsToLoader(VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    vm.aotState().modulesWhoseFilesRunAheadOfLoader->handGraphsToLoader();
+    vm.aotState().modulesWithEagerLoads->transferGraphsToLoader();
     static_cast<void>(scope.exception());
 }
 
@@ -1797,9 +1962,9 @@ bool Modules::stopLoadingBehindFile(ModuleID file)
 {
     if (!m_rootWhoseFilesRun)
         return false;
-    if (m_innermostFilesBeingRun && m_innermostFilesBeingRun->isAheadOfJobsOfLoader)
-        handGraphToLoader(*m_innermostFilesBeingRun, file);
-    if (m_innermostFilesBeingRun && m_innermostFilesBeingRun->fileHandedToLoader)
+    if (m_innermostEagerLoad && m_innermostEagerLoad->isAheadOfJobsOfLoader)
+        transferGraphToLoader(*m_innermostEagerLoad, file);
+    if (m_innermostEagerLoad && m_innermostEagerLoad->transferredModule)
         return true;
     holdJobsBehind(0, file);
     return true;
@@ -1815,7 +1980,7 @@ void Modules::queueJobsThatWaitForLoader()
             m_instance.vm->m_synchronousModuleQueue->tasks.appendVector(std::exchange(steps->tasks, { }));
         return;
     }
-    m_jobsThatWaitForLoader->moveTasksBehind(0, m_instance.vm->defaultMicrotaskQueue());
+    m_jobsThatWaitForLoader->moveTasksAfter(0, m_instance.vm->defaultMicrotaskQueue());
 }
 
 void Modules::didFailToLoadGraph(ModuleID root)
@@ -1826,7 +1991,7 @@ void Modules::didFailToLoadGraph(ModuleID root)
             return entry.value->plan->found[0].module == root;
         });
     }
-    letGoGraphsHeldBehindEarlierCalls();
+    resumeGraphsDeferredForImports();
     if (m_rootWhoseFilesRanAhead != root)
         return;
     m_rootWhoseFilesRanAhead = std::nullopt;
@@ -1841,7 +2006,7 @@ void Modules::didLoadGraph(ModuleID root)
         resumeDeferredLoadsOfFinishedFiles();
     }
     m_loadsInFlight.didLoad(root);
-    letGoGraphsHeldBehindEarlierCalls();
+    resumeGraphsDeferredForImports();
 }
 
 unsigned Modules::numberOfGraphsBeingLoaded()
@@ -1944,7 +2109,7 @@ void Modules::didStartLoad(JSPromise* load, ModuleID root, SettlingOfLoad settli
     m_loadsInFlight.removeSettledIf([&](const LoadInFlight& earlier) {
         return m_rootWhoseFilesRanAhead != earlier.root;
     });
-    m_loadsInFlight.append(*m_instance.vm, load, root, settling).stepsOfLoaderAtCall = m_stepsOfLoaderAtCallWhoseTextHasCome.value_or(m_stepsOfLoader);
+    m_loadsInFlight.append(*m_instance.vm, load, root, settling).stepsOfLoaderAtCall = m_stepsOfLoaderAtCallWhoseTextHasCome.value_or(m_loaderStepCount);
 }
 
 Modules::LoaderForRequire Modules::loaderForRequire(ModuleID module)
@@ -1955,7 +2120,7 @@ Modules::LoaderForRequire Modules::loaderForRequire(ModuleID module)
         return LoaderForRequire::IsNeeded;
     if (numberOfGraphsBeingLoaded() && (m_rootWhoseFilesRanAhead || comesToLoadInFlight(module)))
         return LoaderForRequire::IsNeeded;
-    for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
+    for (const EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
         if (files->fileOrFace == files->root)
             return LoaderForRequire::ComesBehindImportedFiles;
     }
@@ -2036,10 +2201,11 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
                 imported = moduleLoadedBy(request);
             if (isAheadOfTestFiles && data(imported).isOfLibrary())
                 m_libraryModulesAskedForInPreload.set(imported.index());
+            noteAskForForm(imported);
             if (!data(imported).isESModuleOfProgram())
                 continue;
-            noteAskForKey(imported, ModuleID(module), LoadByName::Import);
-            if (mockInPlace(imported))
+            noteAskForKey(imported, ModuleID(module), LoadKind::Import);
+            if (activeMock(imported))
                 noteImportUnderMockInPlace(imported);
             if (!m_modulesLoadedBesideGroups.quickSet(imported.index()))
                 found.append(imported.index());
@@ -2416,7 +2582,7 @@ void Modules::countStepsOfLevel(PlanOfLoad& plan, size_t depth)
     uint32_t stepsToLevel = depth * PlanOfLoad::jobsOfLevel;
     plan.steps = plan.isWhole && plan.stepsOfWholeGraph ? plan.stepsOfWholeGraph : std::max(plan.steps, stepsToLevel + laterRequests);
     if (ModuleRecord* root = recordIfExists(plan.found[0].module))
-        root->setStepsBehindLoad(plan.steps - stepsToLevel);
+        root->setExtraLoadSteps(plan.steps - stepsToLevel);
 }
 
 bool Modules::isLeftToLoad(PlanOfLoad& plan, PlanOfLoad::Found& found)
@@ -2506,9 +2672,9 @@ void Modules::noteLoadOfFile(ModuleID module, LoadOfFile load)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     ModuleID file = m_table.fileBehindFace(module).value_or(module);
-    if ((status(file) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluating) || asyncLoadMustWaitFor(file) || file == m_fileBeingHandedToLoader)
+    if ((status(file) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluating) || asyncLoadMustWaitFor(file) || file == m_moduleBeingTransferred)
         return;
-    bool isFetchedInsideCall = load == LoadOfFile::IsRootOfImport && (hostLoadsSynchronously(file) || (host().keepsTexts && host().keepsTexts(m_instance.globalObject)));
+    bool isFetchedInsideCall = load == LoadOfFile::IsRootOfImport && (hostLoadsSynchronously(file) || (host().hasSourceCache && host().hasSourceCache(m_instance.globalObject)));
     if (load == LoadOfFile::IsRootOfImport && isFileOfProgram(file) && !m_instance.vm->synchronousModuleQueue() && !isFetchedInsideCall)
         return;
     ensureLoaded(file).wasLoadedWhileItRan = true;
@@ -2592,15 +2758,17 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
         }
         return;
     }
+    if (takeThrowBehindFetch(module)) [[unlikely]]
+        return makeRecordWithoutExports(module);
     noteLoadOfFile(module);
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
-    if (statusAtStart == ModuleStatus::Failed && loader()->isMakingRecordInline(moduleKey(module)))
+    if (statusAtStart == ModuleStatus::Failed && loader()->isMakingModuleInline(moduleKey(module)))
         return;
     if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
         return;
     {
-        FilesBeingRun filesBeingRun { module, module, m_innermostFilesBeingRun };
-        SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
+        EagerLoad eagerLoad { module, module, m_innermostEagerLoad };
+        SetForScope innermostEagerLoad(m_innermostEagerLoad, &eagerLoad);
         m_loadsInFlight.didRunFile();
         if (storedStatus(module) < StoredModuleStatus::InRecord && data(module).evaluatesItself())
             evaluateByCallingBody(module);
@@ -2624,7 +2792,7 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
     dropErrorOfFile(module);
 }
 
-void Modules::didLoseErrorOfModule(const Identifier& key)
+void Modules::didDiscardModuleError(const Identifier& key)
 {
     std::optional<ModuleID> module = findByKey(key);
     if (!module || !isCommonJSFileOrFace(*module))
@@ -2724,7 +2892,7 @@ void Modules::settleImportsOfModulesThatHaveRun(ModuleID rootOfEvaluation)
         JSPromise* capability = record ? record->topLevelCapability() : nullptr;
         if (!capability || capability->status() != JSPromise::Status::Pending)
             return true;
-        record->takeStatus();
+        record->adoptStatusIfNeeded();
         if (record->status() != CyclicModuleRecord::Status::Evaluated)
             return true;
         if (JSValue error = record->evaluationError())
@@ -2751,7 +2919,7 @@ void Modules::evaluateWithOwnStack(ModuleID root)
         capability = nullptr;
     if (!exception) {
         if (capability) [[unlikely]] {
-            record->takeStatus();
+            record->adoptStatusIfNeeded();
             capability->fulfill(vm, jsUndefined());
         }
         return;
@@ -2797,7 +2965,7 @@ JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsync
         noteModulesLoadedWith(root);
         setStoredStatus(root, StoredModuleStatus::Evaluated);
         if (runsBesideMockFor(root, std::nullopt)) [[unlikely]] {
-            m_modulesThatRanBesideMock.set(root.index());
+            m_originalsEvaluatedUnderMock.set(root.index());
             m_modulesOwedBesideMock.clear(root.index());
             m_importsMadeByOwnFactory.removeAll(root);
             m_modulesThatOwnFactoryMayLoad.clear(root.index());
@@ -2814,7 +2982,7 @@ JSPromise* Modules::evaluateMainModule(ModuleID entryPoint, JSPromise* evaluatio
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!host().isImportOfMainModule || mainModuleWaitsForItsImport() || !host().isImportOfMainModule(realm, entryPoint))
+    if (!host().isMainModuleImport || mainModuleWaitsForItsImport() || !host().isMainModuleImport(realm, entryPoint))
         return evaluation;
 
     switch (evaluation->status()) {
@@ -2827,7 +2995,7 @@ JSPromise* Modules::evaluateMainModule(ModuleID entryPoint, JSPromise* evaluatio
         return capability;
     }
     case JSPromise::Status::Fulfilled:
-        host().runMainModule(realm, entryPoint);
+        host().didEvaluateMainModule(realm, entryPoint);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         return evaluation;
     case JSPromise::Status::Rejected:
@@ -2845,7 +3013,7 @@ void Modules::runMainModuleThatWaited()
     JSPromise* capability = m_capabilityOfMainModule.get();
     m_evaluationOfImportOfMainModule.clear();
     m_capabilityOfMainModule.clear();
-    host().runMainModule(m_instance.globalObject, m_importOfMainModule);
+    host().didEvaluateMainModule(m_instance.globalObject, m_importOfMainModule);
     if (scope.exception()) [[unlikely]] {
         capability->rejectWithCaughtException(vm, scope);
         return;
@@ -2897,7 +3065,7 @@ void Modules::noteThatGraphBegins(ModuleID root)
         return;
     Vector<ModuleID, 32> toFollow;
     auto begins = [&](ModuleID file) {
-        if (isMocked(file) || mockInPlace(file) || m_modulesWithMockToRun.get(file.index()))
+        if (isMocked(file) || activeMock(file) || m_modulesWithPendingMock.get(file.index()))
             return;
         if (!m_filesWhoseGraphHasBegun.set(file.index()))
             toFollow.append(file);
@@ -2981,38 +3149,58 @@ void Modules::didSettleFactoryThatRequireLeft(unsigned number)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto find = [&] { return m_waitsThatRequiresLeft.findIf([&](const auto& each) { return each.number == number && each.wait->status() == JSPromise::Status::Pending; }); };
+    auto find = [&] { return m_detachedLoads.findIf([&](const auto& each) { return each.number == number && each.wait->status() == JSPromise::Status::Pending; }); };
     size_t left = find();
     if (left == notFound)
         return;
-    --m_waitsThatRequiresLeft[left].factoriesYetToSettle;
-    ModuleID required = m_waitsThatRequiresLeft[left].required;
-    bool isForgotten = !m_waitsThatRequiresLeft[left].keepsError;
-    didGoOnBehindFactories();
-    runMocksBelow(required);
+    --m_detachedLoads[left].factoriesYetToSettle;
+    ModuleID required = m_detachedLoads[left].required;
+    bool isForgotten = !m_detachedLoads[left].keepsError;
+    didResumeAfterFactories();
+    BitVector modulesToRetry = std::exchange(m_detachedLoads[left].modulesToRetry, BitVector());
+    for (size_t file : modulesToRetry)
+        clearLoadErrorsForMock(ModuleID(file));
+    bool factoryHasNotSettled;
+    {
+        SetForScope resumingDetachedLoad(m_resumingDetachedLoad, std::optional(required));
+        factoryHasNotSettled = runMocksInGraph(required);
+    }
     Exception* thrown = scope.exception();
     if (thrown && (vm.isTerminationException(thrown) || !scope.tryClearException()))
         return;
     if (isForgotten)
-        dropErrorsOfLoadsEndedByMocks();
+        clearMockLoadErrors();
     left = find();
     if (left == notFound)
         return;
     if (thrown) {
-        m_waitsThatRequiresLeft[left].wait->reject(vm, thrown->value());
+        m_detachedLoads[left].wait->reject(vm, thrown->value());
         return;
     }
-    if (m_waitsThatRequiresLeft[left].factoriesYetToSettle)
+    if (factoryHasNotSettled && !modulesToRetry.isEmpty()) {
+        unsigned heard = hearFactoriesBelowLoadThatRequireLeft(required, number);
+        RETURN_IF_EXCEPTION(scope, void());
+        left = find();
+        if (left == notFound)
+            return;
+        m_detachedLoads[left].factoriesYetToSettle += heard;
+        for (size_t file : modulesToRetry) {
+            m_detachedLoads[left].callsOfFactories.removeAllMatching([&](const auto& call) { return call.first.index() == file; });
+            if (uint64_t call = pendingFactoryCallID(ModuleID(file)))
+                m_detachedLoads[left].callsOfFactories.append({ ModuleID(file), call });
+        }
+    }
+    if (m_detachedLoads[left].factoriesYetToSettle)
         return;
     ModuleStatus current = status(required);
     bool wasMockLaidSince = false;
-    for (size_t fetched : m_waitsThatRequiresLeft[left].fetchedAsThemselves)
+    for (size_t fetched : m_detachedLoads[left].fetchedAsThemselves)
         wasMockLaidSince |= isMocked(ModuleID(fetched));
     bool liesOnCycle = false;
     bool someMockBelowIsNotInPlace = false;
-    for (size_t below : reachedByStatements(required, AtMock::Stops)) {
-        liesOnCycle |= below != required.index() && reachedByStatements(ModuleID(below), AtMock::Stops).get(required.index());
-        someMockBelowIsNotInPlace |= m_modulesWithMockToRun.get(below) || (isMocked(ModuleID(below)) && !mockInPlace(ModuleID(below)));
+    for (size_t below : staticImportClosure(required, AtMock::Stops)) {
+        liesOnCycle |= below != required.index() && staticImportClosure(ModuleID(below), AtMock::Stops).get(required.index());
+        someMockBelowIsNotInPlace |= m_modulesWithPendingMock.get(below) || (isMocked(ModuleID(below)) && !activeMock(ModuleID(below)));
     }
     if ((current == ModuleStatus::Unlinked || current == ModuleStatus::Linked) && !isEvicted(required) && !isMocked(required) && !wasMockLaidSince && !liesOnCycle && !someMockBelowIsNotInPlace) {
         JSPromise* evaluation = evaluate(required, std::nullopt, nullptr);
@@ -3025,18 +3213,18 @@ void Modules::didSettleFactoryThatRequireLeft(unsigned number)
         if (left == notFound)
             return;
     }
-    m_waitsThatRequiresLeft[left].wait->fulfill(vm, jsUndefined());
+    m_detachedLoads[left].wait->fulfill(vm, jsUndefined());
 }
 
 void Modules::didFailFactoryThatRequireLeft(unsigned number, JSValue error)
 {
-    size_t left = m_waitsThatRequiresLeft.findIf([&](const auto& each) { return each.number == number && each.wait->status() == JSPromise::Status::Pending; });
+    size_t left = m_detachedLoads.findIf([&](const auto& each) { return each.number == number && each.wait->status() == JSPromise::Status::Pending; });
     if (left == notFound)
         return;
-    didGoOnBehindFactories();
-    JSPromise* wait = m_waitsThatRequiresLeft[left].wait.get();
-    if (m_waitsThatRequiresLeft[left].keepsError)
-        keepErrorOfFactoryThatRequireLeft(m_waitsThatRequiresLeft[left].required, error);
+    didResumeAfterFactories();
+    JSPromise* wait = m_detachedLoads[left].wait.get();
+    if (m_detachedLoads[left].keepsError)
+        keepErrorOfFactoryThatRequireLeft(m_detachedLoads[left].required, error);
     wait->reject(*m_instance.vm, error);
 }
 
@@ -3048,7 +3236,7 @@ unsigned Modules::hearFactoriesBelowLoadThatRequireLeft(ModuleID required, unsig
     JSValue state;
     Vector<JSPromise*, 4> heard;
     while (true) {
-        JSPromise* factory = factoryThatWaitsBelow(required, FactoryAskedForBy::LoadThatRequireLeft, state);
+        JSPromise* factory = pendingFactoryInGraph(required, PendingFactoryRequester::DetachedLoad, state);
         RETURN_IF_EXCEPTION(scope, 0);
         if (!factory || heard.contains(factory))
             break;
@@ -3065,23 +3253,46 @@ unsigned Modules::hearFactoriesBelowLoadThatRequireLeft(ModuleID required, unsig
 void Modules::keepErrorOfFactoryThatRequireLeft(ModuleID required, JSValue error)
 {
     keepErrorOfLoad(required, error, [&](ModuleID each) { return isMocked(each) && m_modulesWithMockThatWaited.get(each.index()); });
-    if (!m_modulesWithLoadEndedByMock.set(required.index()))
+    if (!m_modulesWithMockLoadError.set(required.index()))
         ensureLoaded(required).errorKeptByLoader.set(*this, error);
 }
 
 bool Modules::stillWaitsForWhatItGaveUpOn(ModuleID required) const
 {
-    bool isInFlight = m_waitsThatRequiresLeft.containsIf([&](const auto& left) { return left.required == required && left.wait->status() == JSPromise::Status::Pending; });
+    bool isInFlight = m_detachedLoads.containsIf([&](const auto& left) { return left.required == required && left.wait->status() == JSPromise::Status::Pending; });
     bool waits = false;
     for (const RequireThatGaveUp& pair : m_requiresThatGaveUp) {
-        if (pair.required != required || pair.mocked == required || m_modulesWithMockInPlace.get(pair.mocked.index()))
+        if (pair.required != required || pair.mocked == required || m_modulesWithActiveMock.get(pair.mocked.index()))
             continue;
-        uint64_t call = callOfFactoryThatHasNotSettled(pair.mocked);
+        uint64_t call = pendingFactoryCallID(pair.mocked);
         if (!call || (!isInFlight && !m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& other) { return other.required == required && other.mocked == pair.mocked && other.call == call; })))
             return false;
         waits = true;
     }
     return waits;
+}
+
+bool Modules::isOfCallsThatAreGone(const DetachedLoad& left)
+{
+    return !left.callsOfFactories.isEmpty() && std::ranges::none_of(left.callsOfFactories, [&](const auto& call) { return pendingFactoryCallID(call.first) == call.second; });
+}
+
+void Modules::endWaitsThatWentOnForLaterMockOf(ModuleID mocked)
+{
+    if (m_detachedLoads.isEmpty()) [[likely]]
+        return;
+    uint64_t callThatSettles = pendingFactoryCallID(mocked);
+    for (DetachedLoad& left : m_detachedLoads)
+        left.hasEndedWithLaterMock |= left.callsOfFactories.containsIf([&](const auto& call) { return call.first == mocked && call.second != callThatSettles; });
+}
+
+void Modules::markFetchOrphaned(ModuleID file)
+{
+    m_modulesWithOrphanedFetch.set(file.index());
+    for (DetachedLoad& left : m_detachedLoads) {
+        if (left.callsOfFactories.containsIf([&](const auto& call) { return call.first == file; }))
+            left.fileWhoseMockWasTakenOff = file;
+    }
 }
 
 void Modules::refuseRequireAgain(ModuleID asked, ModuleID above)
@@ -3090,17 +3301,17 @@ void Modules::refuseRequireAgain(ModuleID asked, ModuleID above)
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     m_filesWhoseRequireThrewBesideFactories.clear(asked.index());
-    m_waitsThatRequiresLeft.removeAllMatching([](const auto& left) { return left.wait->status() != JSPromise::Status::Pending; });
-    if (!m_waitsThatRequiresLeft.containsIf([&](const auto& left) { return left.required == above; })) {
-        scope.release();
-        waitForFactoriesThatRequireLeft(above);
-        return;
+    m_detachedLoads.removeAllMatching([](const auto& left) { return left.wait->status() != JSPromise::Status::Pending; });
+    bool isHeardByWait = m_detachedLoads.containsIf([&](const auto& left) { return left.required == above && !isOfCallsThatAreGone(left); });
+    if (isHeardByWait || m_detachedLoads.containsIf([&](const auto& left) { return left.required == above && !hasEnded(left); })) {
+        JSValue state;
+        JSPromise* original = pendingFactoryInGraph(asked, PendingFactoryRequester::RejectedRequire, state);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (original)
+            original->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), JSPromise::create(vm, realm->promiseStructure()));
     }
-    JSValue state;
-    JSPromise* original = factoryThatWaitsBelow(asked, FactoryAskedForBy::RequireThatIsRefused, state);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (original)
-        original->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), JSPromise::create(vm, realm->promiseStructure()));
+    if (!isHeardByWait)
+        RELEASE_AND_RETURN(scope, waitForFactoriesThatRequireLeft(above));
 }
 
 void Modules::waitForFactoriesThatRequireLeft(ModuleID required)
@@ -3108,9 +3319,9 @@ void Modules::waitForFactoriesThatRequireLeft(ModuleID required)
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    m_waitsThatRequiresLeft.removeAllMatching([](const auto& left) { return left.wait->status() != JSPromise::Status::Pending; });
-    if (size_t left = m_waitsThatRequiresLeft.findIf([&](const auto& each) { return each.required == required; }); left != notFound) {
-        m_waitsThatRequiresLeft[left].wait->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), JSPromise::create(vm, realm->promiseStructure()));
+    m_detachedLoads.removeAllMatching([](const auto& left) { return left.wait->status() != JSPromise::Status::Pending; });
+    if (size_t left = m_detachedLoads.findIf([&](const auto& each) { return each.required == required && !isOfCallsThatAreGone(each); }); left != notFound) {
+        m_detachedLoads[left].wait->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), JSPromise::create(vm, realm->promiseStructure()));
         return;
     }
     unsigned number = ++m_numberOfWaitsThatRequiresHaveLeft;
@@ -3121,11 +3332,16 @@ void Modules::waitForFactoriesThatRequireLeft(ModuleID required)
     JSPromise* wait = JSPromise::create(vm, realm->promiseStructure());
     wait->markAsHandled();
     BitVector fetchedAsThemselves(m_table.size());
-    for (size_t below : reachedByStatements(required, AtMock::Stops)) {
+    for (size_t below : staticImportClosure(required, AtMock::Stops)) {
         if (!isMocked(ModuleID(below)))
             fetchedAsThemselves.set(below);
     }
-    m_waitsThatRequiresLeft.append({ required, Strong<JSPromise>(vm, wait), true, number, heard, WTF::move(fetchedAsThemselves) });
+    Vector<std::pair<ModuleID, uint64_t>, 1> callsOfFactories;
+    for (size_t below : staticImportClosure(required, AtMock::Stops)) {
+        if (uint64_t call = isMocked(ModuleID(below)) ? pendingFactoryCallID(ModuleID(below)) : 0)
+            callsOfFactories.append({ ModuleID(below), call });
+    }
+    m_detachedLoads.append({ required, Strong<JSPromise>(vm, wait), true, number, heard, WTF::move(fetchedAsThemselves), WTF::move(callsOfFactories) });
 }
 
 void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason reason)
@@ -3137,12 +3353,16 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         SetForScope evaluatesSynchronously(m_evaluatesSynchronously, true);
         bool& requireRunsMocks = m_instance.vm->aotState().requireRunsMocks;
         SetForScope requireRunsMocksBelow(requireRunsMocks, requireRunsMocks || reason == SynchronousEvaluationReason::Require);
-        factoryHasNotSettled = runMocksBelow(module);
+        factoryHasNotSettled = runMocksInGraph(module);
     }
     RETURN_IF_EXCEPTION(scope, void());
     const ModuleData& moduleData = data(module);
 
     auto throwAsyncModuleError = [&] {
+        if (reason == SynchronousEvaluationReason::Require) {
+            takeBackMarkOfRequireThatWaits(module);
+            forgetFirstRequireThatWasRefused(module);
+        }
         throwException(realm, scope, host().createAsyncModuleRequiredError(realm, m_table.pathText(module)));
     };
     if (factoryHasNotSettled && reason == SynchronousEvaluationReason::Require) [[unlikely]] {
@@ -3191,7 +3411,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         }
         RELEASE_AND_RETURN(scope, captureExportsOfFilesBeingEvaluated(module));
     case ModuleStatus::EvaluatingAsync:
-        if (!isMocked(module) || !m_modulesThatRanBesideMock.get(module.index()))
+        if (!isMocked(module) || !m_originalsEvaluatedUnderMock.get(module.index()))
             throwAsyncModuleError();
         return;
     case ModuleStatus::Unlinked:
@@ -3202,9 +3422,9 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         break;
     }
 
-    bool givesLoaderFileThatRunsAhead = reason == SynchronousEvaluationReason::Require && m_innermostFilesBeingRun && importsFileThatRunsAhead(module);
-    if (reason == SynchronousEvaluationReason::Require && m_innermostFilesBeingRun && m_innermostFilesBeingRun->isAheadOfStepsOfLoader && (givesLoaderFileThatRunsAhead || comesToLoadOf(*m_innermostFilesBeingRun, module))) [[unlikely]] {
-        handSynchronousLoadToLoader(*m_innermostFilesBeingRun);
+    bool givesLoaderFileThatRunsAhead = reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && importsFileThatRunsAhead(module);
+    if (reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && m_innermostEagerLoad->isAheadOfStepsOfLoader && (givesLoaderFileThatRunsAhead || comesToLoadOf(*m_innermostEagerLoad, module))) [[unlikely]] {
+        transferSynchronousLoad(*m_innermostEagerLoad);
         RETURN_IF_EXCEPTION(scope, void());
     }
     givesLoaderFileThatRunsAhead &= !m_rootWhoseFilesRanAhead;
@@ -3221,6 +3441,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     if (runsStepsOfLoader)
         queue.emplace(*m_instance.vm);
     SetForScope activeSynchronousLoad(m_activeSynchronousLoad, ++m_synchronousLoadCount);
+    SetForScope rootOfInnermostSynchronousLoad(m_rootOfInnermostSynchronousLoad, std::optional(module));
+    SetForScope outermostSynchronousLoad(m_outermostSynchronousLoad, m_outermostSynchronousLoad ? m_outermostSynchronousLoad : m_activeSynchronousLoad);
     auto leaveLoad = [&] {
         if (!queue)
             return;
@@ -3244,9 +3466,9 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     }
 
     JSPromise* promise = nullptr;
-    if (size_t handed = m_synchronousLoadsHandedToLoader.findIf([&](const LoadHandedToLoader& load) { return load.root == module; }); handed != notFound) [[unlikely]] {
-        promise = m_synchronousLoadsHandedToLoader[handed].promise.get();
-        m_synchronousLoadsHandedToLoader.removeAt(handed);
+    if (size_t handed = m_transferredSynchronousLoads.findIf([&](const TransferredLoad& load) { return load.root == module; }); handed != notFound) [[unlikely]] {
+        promise = m_transferredSynchronousLoads[handed].promise.get();
+        m_transferredSynchronousLoads.removeAt(handed);
         SetForScope isAskingHost(m_isAskingHost, true);
         JSModuleLoader::drainSynchronousModuleQueue(realm);
     } else if (needsLoader) {
@@ -3256,7 +3478,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     } else if (statusAtStart == ModuleStatus::Unlinked && moduleData.reachesUncompiledCode()) {
         ModuleRecord* record = registerWithLoader(module);
         RETURN_IF_EXCEPTION(scope, void());
-        SetForScope rootThatCompiledCodeLoads(m_rootThatCompiledCodeLoads, std::optional(module));
+        SetForScope rootThatCompiledCodeLoads(m_rootLoadedByCompiledCode, std::optional(module));
         promise = loader()->loadModuleSync(realm, record->moduleKey(), nullptr, nullptr);
     } else {
         link(module);
@@ -3275,7 +3497,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
             if (exception) [[unlikely]]
                 throwException(realm, scope, exception);
             else if (givesLoaderFileThatRunsAhead) [[unlikely]]
-                RELEASE_AND_RETURN(scope, evaluateRootThatWaitedForFile(m_innermostFilesBeingRun->root));
+                RELEASE_AND_RETURN(scope, evaluateRootThatWaitedForFile(m_innermostEagerLoad->root));
             return;
         }
         promise = evaluate(module, std::nullopt, nullptr);
@@ -3290,7 +3512,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
 
     if (promise->status() == JSPromise::Status::Fulfilled) {
         if (givesLoaderFileThatRunsAhead) [[unlikely]]
-            RELEASE_AND_RETURN(scope, evaluateRootThatWaitedForFile(m_innermostFilesBeingRun->root));
+            RELEASE_AND_RETURN(scope, evaluateRootThatWaitedForFile(m_innermostEagerLoad->root));
         return;
     }
     promise->markAsHandled();
@@ -3320,7 +3542,7 @@ JSValue Modules::requireNativeModule(ModuleID module)
         return cached;
     JSValue exports;
     if (host().requireNativeModule) {
-        RequestToHostScope requestToHost(*this);
+        HostRequestScope requestToHost(*this);
         exports = host().requireNativeModule(realm, pathString(module));
     } else if (auto* requireBuiltinModule = realm->globalObjectMethodTable()->requireBuiltinModule)
         exports = requireBuiltinModule(realm, *data(module).registryID());
@@ -3424,7 +3646,7 @@ JSValue Modules::execute(ModuleID module)
         JSObject* requirer = moduleObject(*moduleData.referrerModule());
         RETURN_IF_EXCEPTION(scope, { });
         setStatus(module, ModuleStatus::Evaluating);
-        RequestToHostScope requestToHost(*this);
+        HostRequestScope requestToHost(*this);
         value = host().requireSpecifier(realm, requirer, pathString(module));
     }
     if (scope.exception()) [[unlikely]] {
@@ -3447,7 +3669,7 @@ void Modules::didMockTakeDataFileOutOfLoader(ModuleID file)
 
 bool Modules::isOutOfLoaderBehindMock(ModuleID file) const
 {
-    return m_dataFilesThatMockTookOutOfLoader.get(file.index()) && !hasMockLaidOver(file) && !mockInPlace(file) && !hasMockThatWaitsOrRuns(file);
+    return m_dataFilesThatMockTookOutOfLoader.get(file.index()) && !isPatchedByMock(file) && !activeMock(file) && !hasPendingMock(file);
 }
 
 ModuleID Modules::formThatRequireFinds(ModuleID target)
@@ -3459,7 +3681,7 @@ ModuleID Modules::formThatRequireFinds(ModuleID target)
     if (wasRequired(target) || isEvicted(target))
         return target;
     Identifier key = keyWithoutForm(target);
-    Vector<ModuleID, 2> forms = m_table.formsThatAttributesAskFor(key.string());
+    Vector<ModuleID, 2> forms = m_table.importAttributeVariants(key.string());
     forms.removeAllMatching([&](ModuleID form) {
         return isEvicted(form);
     });
@@ -3489,23 +3711,32 @@ ModuleID Modules::formThatRequireFinds(ModuleID target)
     return target;
 }
 
-JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
+JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy requiredBy, JSObject* objectOfEarlierRun)
 {
-    SetForScope noImportAsks(m_moduleThatWroteImportThatAsks, ModuleID());
+    SetForScope noImportAsks(m_currentImportCallerModule, ModuleID());
+    ModuleID recordedAhead = m_targetOfRequireRecordedAhead == target ? m_requirerRecordedAhead : ModuleID();
+    m_targetOfRequireRecordedAhead = ModuleID();
+    m_requirerRecordedAhead = ModuleID();
+    SetForScope requirerOfRequireUnderWay(m_requirerOfRequireUnderWay, referrer ? referrer : recordedAhead);
+    auto notesAnswer = makeScopeExit([&] {
+        m_targetOfRequireJustAnswered = recordedAhead && !m_instance.vm->exceptionForInspection() ? target : ModuleID();
+    });
+    if (m_goesModuleByModule) [[unlikely]]
+        noteAskForForm(target);
     if (m_mocks) [[unlikely]]
-        noteAskForKey(target, referrer, LoadByName::Require);
+        noteAskForKey(target, referrer, LoadKind::Require);
     if (auto* willLoad = m_mocks || m_hasBegunTestFile ? host().willLoad : nullptr) [[unlikely]]
-        willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadByName::Require);
+        willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadKind::Require);
     if (referrer && m_goesModuleByModule) [[unlikely]]
         noteRequireThatRunTimeAnswers(target, referrer);
     if (!referrer || !m_showsWaysBetweenModuleObjects) [[likely]]
         return answerRequire(target, referrer, requiredBy, FormThatAnswers::TheOneThatLoaderFinds);
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    recordRequire<RequireAnsweredBy::RunTime>(target, referrer);
+    recordRequire<RequireAnsweredBy::RunTime>(target, referrer, false, objectOfEarlierRun, false);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue required = answerRequire(target, referrer, requiredBy, FormThatAnswers::TheOneThatLoaderFinds);
     RETURN_IF_EXCEPTION(scope, { });
-    recordRequire<RequireAnsweredBy::RunTime>(target, referrer);
+    recordRequire<RequireAnsweredBy::RunTime>(target, referrer, false, objectOfEarlierRun, true);
     RETURN_IF_EXCEPTION(scope, { });
     return required;
 }
@@ -3519,7 +3750,7 @@ bool Modules::isHeldForImport(ModuleID target) const
     uint32_t momentMockInItsPlaceEnded = m_momentsMocksInPlaceOfLibraryModulesEnded.get(target);
     return std::ranges::any_of(m_table.importsOfHeldFile(target), [&](const ImportOfHeldFileData& import) {
         ModuleID importer(import.importer);
-        if (mockInPlace(importer) && !hasRunItself(importer))
+        if (activeMock(importer) && !wasOriginalEvaluated(importer))
             return false;
         return wasImporterLoaded(importer) && momentLinked(importer) >= momentMockInItsPlaceEnded;
     });
@@ -3553,7 +3784,7 @@ bool Modules::isBelowRootWhoseFilesRun(ModuleID wanted) const
     forEachFileEvaluatedByLoader([&](ModuleID file) {
         running.append(file);
     });
-    for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
+    for (const EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
         BitVector seen(m_table.size());
         seen.quickSet(files->root.index());
         Vector<uint32_t, 32> found { files->root.index() };
@@ -3613,7 +3844,7 @@ JSValue Modules::loadEvictedFile(ModuleID file, ModuleID referrer)
     if (storesStatus)
         setStoredStatus(file, StoredModuleStatus::Evaluated);
     if (storesExports) {
-        captureExportsAgain(file);
+        recaptureExports(file);
         RETURN_IF_EXCEPTION(scope, { });
     }
     return value;
@@ -3621,7 +3852,7 @@ JSValue Modules::loadEvictedFile(ModuleID file, ModuleID referrer)
 
 JSValue Modules::exportsOnObjectMadeByRequire(const LoadedModule& loaded)
 {
-    JSObject* entry = loaded.objectMadeByRequire;
+    JSObject* entry = loaded.moduleObjectFromRequire;
     if (!entry)
         return { };
     return entry->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
@@ -3692,17 +3923,17 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         target = formThatRequireFinds(target);
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    endMocksThatStoodForLoadsInFlight();
+    removeUnusedLingeringMocks();
     RETURN_IF_EXCEPTION(scope, { });
     if (!m_importsWhoseMocksRunWhenTheirTextsHaveCome.isEmpty()) [[unlikely]] {
         walkInPlaceOfCallsHeldForTextOf(fileOf(target));
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (standsForLoadsInFlight(target) && m_modulesWithMockToRun.get(target.index()) && !isEvaluatedByLoader(target) && haveLoadsInFlightTakenAnswerThatStandsOn(target)) [[unlikely]] {
-        endMockThatStandsForLoadsInFlight(target);
+    if (isMockLingering(target) && m_modulesWithPendingMock.get(target.index()) && !isEvaluatedByLoader(target) && isResolvedForInFlightLoads(target)) [[unlikely]] {
+        removeLingeringMock(target);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (JSValue error = errorOfLoadEndedByMock(target); error && !hasBegunToLoad(target)) [[unlikely]] {
+    if (JSValue error = mockLoadError(target); error && !hasStartedLoading(target)) [[unlikely]] {
         throwException(m_instance.globalObject, scope, error);
         return { };
     }
@@ -3710,13 +3941,24 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     if (m_mocks) [[unlikely]]
         noteLoadBegunByFactories(target);
     bool someFactoryHasNotSettled = tellHostOfRequire(target);
-    if (isAskedForByOwnFactory(target)) [[unlikely]]
+    if (m_mocks && referrer && host().isRequiredByOwnFactory && waitsForFactoryThatLoadInFlightCalled(target)) [[unlikely]] {
+        if (host().isRequiredByOwnFactory(m_instance.globalObject, target, referrer))
+            RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
+        throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(target)));
+        return { };
+    }
+    bool isWrittenByBodyBelow = referrer && isMocked(target) && status(fileOf(referrer)) == ModuleStatus::Evaluating && importsStatically(target, fileOf(referrer));
+    if (m_mockWhoseOriginalIsEvaluated == target || (isWrittenByBodyBelow && m_modulesWhoseFactoryRuns.get(target.index()))) [[unlikely]] {
+        throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(target)));
+        return { };
+    }
+    if (isRequestedByOwnFactory(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
-    if (m_mocks && referrer && isMocked(target) && targetData.isESModuleOfProgram() && !targetData.isFaceOfFile() && isOfPackage(referrer) && host().isLeftToItselfByMock && host().isLeftToItselfByMock(m_instance.globalObject, m_table.pathText(target), m_table.pathText(referrer))) [[unlikely]]
+    if (m_mocks && referrer && isMocked(target) && targetData.isESModuleOfProgram() && !targetData.isFaceOfFile() && isOfPackage(referrer) && host().isMockHiddenFromRequirer && host().isMockHiddenFromRequirer(m_instance.globalObject, m_table.pathText(target), m_table.pathText(referrer))) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
-    if (m_mocks && isMocked(target) && targetData.isESModuleOfProgram() && !targetData.isFaceOfFile() && m_modulesWithMockToRun.get(target.index()) && !isLeftAloneByMock(target) && hasRunItself(target) && host().givesOriginalBesideMock && host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(target), String(), false)) [[unlikely]]
+    if (m_mocks && isMocked(target) && targetData.isESModuleOfProgram() && !targetData.isFaceOfFile() && m_modulesWithPendingMock.get(target.index()) && !hasIntactOriginal(target) && wasOriginalEvaluated(target) && host().shouldBypassMock && host().shouldBypassMock(m_instance.globalObject, m_table.pathText(target), String(), false)) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
-    if (m_mocks && targetData.kind == ModuleKind::CommonJs && isMocked(target) && !targetData.isOfLibrary() && status(target) == ModuleStatus::Linked && !mockInPlace(target) && (m_modulesWhoseFactoryRuns.get(target.index()) || (!m_modulesWithMockToRun.get(target.index()) && host().isCalledFromFactoryThatWaits && host().isCalledFromFactoryThatWaits(m_instance.globalObject, target)))) [[unlikely]] {
+    if (m_mocks && targetData.kind == ModuleKind::CommonJs && isMocked(target) && !targetData.isOfLibrary() && status(target) == ModuleStatus::Linked && !activeMock(target) && (m_modulesWhoseFactoryRuns.get(target.index()) || (!m_modulesWithPendingMock.get(target.index()) && host().isRequestedByPendingFactory && host().isRequestedByPendingFactory(m_instance.globalObject, target)))) [[unlikely]] {
         m_filesWhoseOriginalRuns.set(target.index());
         evaluateCommonJS(target);
         m_filesWhoseOriginalRuns.clear(target.index());
@@ -3726,16 +3968,16 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         }
         return commonJSExports(target);
     }
-    if (m_mocks && needsOriginalAheadOfFactory(target) && host().givesOriginalBesideMock && host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(target), String(), false)) [[unlikely]] {
+    if (m_mocks && needsOriginalAheadOfFactory(target) && host().shouldBypassMock && host().shouldBypassMock(m_instance.globalObject, m_table.pathText(target), String(), false)) [[unlikely]] {
         JSObject* original = originalThatLoaderHolds(target);
         RETURN_IF_EXCEPTION(scope, { });
         if (original)
             return original;
     }
     bool isRequiredByProgram = requiredBy == RequiredBy::Program || (referrer && !data(referrer).isOfLibrary());
-    if (m_mocks && (isMocked(target) || m_modulesWithMockToRun.get(target.index())) && hasFailedWithoutMock(target)) [[unlikely]]
+    if (m_mocks && (isMocked(target) || m_modulesWithPendingMock.get(target.index())) && hasFailedWithoutMock(target)) [[unlikely]]
         forgetLoadThatFailed(target);
-    if (!m_requiresThatGaveUp.isEmpty() && (!targetData.isOfLibrary() || isRequiredByProgram) && targetData.kind == ModuleKind::SourceText && !isMocked(target) && !vm.m_synchronousModuleQueue && !m_filesWhoseRequireThrewBesideFactories.get(target.index()) && stillWaitsForWhatItGaveUpOn(target)) [[unlikely]] {
+    if (!m_requiresThatGaveUp.isEmpty() && (!targetData.isOfLibrary() || isRequiredByProgram) && targetData.kind == ModuleKind::SourceText && !isMocked(target) && !vm.m_synchronousModuleQueue && !m_filesWhoseRequireThrewBesideFactories.get(target.index()) && !m_importOfFactorysOwnAsks && stillWaitsForWhatItGaveUpOn(target)) [[unlikely]] {
         refuseRequireAgain(target, target);
         RETURN_IF_EXCEPTION(scope, { });
         throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(target)));
@@ -3744,13 +3986,15 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(target);
     if (!targetData.isOfLibrary() || isRequiredByProgram) {
         SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
-        SetForScope moduleThatRequireAsksFor(m_moduleThatRequireAsksFor, target);
-        SetForScope moduleThatRequires(m_moduleThatRequires, referrer);
+        SetForScope moduleThatRequireAsksFor(m_currentRequireTarget, target);
+        SetForScope moduleThatRequires(m_requiringModule, referrer);
         std::optional<VM::SynchronousModuleQueueScope> loadsOfFactories;
         if (m_mocks && targetData.kind == ModuleKind::SourceText && !isMocked(target) && !vm.m_synchronousModuleQueue) [[unlikely]]
             loadsOfFactories.emplace(vm);
         SetForScope walkGoesOnPastFactoriesThatHaveNotSettled(m_walkGoesOnPastFactoriesThatHaveNotSettled, !!loadsOfFactories);
-        bool factoryHasNotSettled = runMocksBelow(target);
+        bool factoryHasNotSettled = runMocksInGraph(target);
+        if (factoryHasNotSettled && !scope.exception()) [[unlikely]]
+            evaluateImportedCommonJSFiles(target, JobsOfImportedFiles::StayQueued, ErrorOfImportedFile::IsThrown, nullptr, FilesBehindFactories::AreLeftOut);
         if (loadsOfFactories) [[unlikely]] {
             if (!scope.exception())
                 JSModuleLoader::drainSynchronousModuleQueue(m_instance.globalObject);
@@ -3788,6 +4032,10 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         else
             letLinksOfLoadStand(target);
     });
+    if (someFactoryHasNotSettled || !m_requiresThatGaveUp.isEmpty()) [[unlikely]] {
+        askLoaderForNamesBelow(target);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (someFactoryHasNotSettled) [[unlikely]]
         noteThatRequireGaveUpOn(target, false);
     if (!m_requiresThatGaveUp.isEmpty() && (!targetData.isOfLibrary() || isRequiredByProgram)) [[unlikely]] {
@@ -3799,14 +4047,14 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     if (m_numberOfMocksInPlace) [[unlikely]] {
         if (getsOriginalBesideMock(target, referrer))
             RELEASE_AND_RETURN(scope, answerRequireWithOriginal(target, referrer));
-        if (m_filesWhoseOriginalRuns.get(target.index()) && mockInPlace(target))
+        if (m_filesWhoseOriginalRuns.get(target.index()) && activeMock(target))
             return ensureLoaded(target).answerOfMockWhileOriginalRuns.get();
-        if (mockInPlace(target)) {
+        if (activeMock(target)) {
             noteAskUnderMockInPlace(target);
             noteRequireOfMockLaidInPreload(target);
         }
     }
-    if (isLeftToHost(target)) [[unlikely]]
+    if (delegatesToHost(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target), referrer));
     if (targetData.isOfLibrary() && isRequiredByProgram && isKeptInRequireCache(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireThroughCache(target, referrer));
@@ -3820,20 +4068,16 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     if (standsForFileOutsideImage(target)) {
         JSObject* requirer = moduleObject(*targetData.referrerModule());
         RETURN_IF_EXCEPTION(scope, { });
-        RequestToHostScope requestToHost(*this);
+        HostRequestScope requestToHost(*this);
         RELEASE_AND_RETURN(scope, host().requireSpecifier(m_instance.globalObject, requirer, pathString(target)));
     }
     if (!targetData.hasExportTable()) {
-        if (LoadedModule* loaded = loadedIfExists(target); loaded && loaded->isAnsweredWithNamespace && !isMocked(target) && !mockInPlace(target)) [[unlikely]] {
+        if (LoadedModule* loaded = loadedIfExists(target); loaded && loaded->isAnsweredWithNamespace && !isMocked(target) && !activeMock(target)) [[unlikely]] {
             JSValue held = exportsOnObjectMadeByRequire(*loaded);
             RETURN_IF_EXCEPTION(scope, { });
             if (held && held != loaded->exportsGivenToObjectMadeByRequire.get())
                 return held;
-            JSObject* namespaceObject = moduleNamespace(target, ModulePhase::Evaluation, false);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (auto* names = uncheckedDowncast<ModuleNamespace>(namespaceObject); !names->hasExport(vm.propertyNames->__esModule.impl()))
-                names->setESModuleMarker(true);
-            return namespaceObject;
+            RELEASE_AND_RETURN(scope, namespaceThatAnswersRequire(target));
         }
         JSValue executed = execute(target);
         RETURN_IF_EXCEPTION(scope, { });
@@ -3841,7 +4085,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         return executed;
     }
 
-    if (JSValue thrownByBody = isLeftAloneByMock(target) && !mockInPlace(target) ? errorOfModuleThatRanBesideMock(target) : JSValue()) [[unlikely]] {
+    if (JSValue thrownByBody = hasIntactOriginal(target) && !activeMock(target) ? errorOfModuleThatRanBesideMock(target) : JSValue()) [[unlikely]] {
+        tellThatFailureStayedBehindMock(target);
         throwException(m_instance.globalObject, scope, thrownByBody);
         return { };
     }
@@ -3864,20 +4109,21 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         evaluateSynchronously(target, SynchronousEvaluationReason::Require);
         loaded.isBeingRequired = false;
         if (scope.exception()) [[unlikely]] {
+            noteThatRequireGaveUpOn(target);
             loaded.isKeptByRequire = wasKeptByRequire;
             if (!wasKeptByRequire)
-                loaded.objectMadeByRequire.set(*this, nullptr);
+                loaded.moduleObjectFromRequire.set(*this, nullptr);
             return { };
         }
     }
     auto answer = [&](JSValue answered) {
-        if (wasBeingRequired && loaded.isKeptByRequire && loaded.objectMadeByRequire) [[unlikely]] {
-            loaded.objectMadeByRequire->putDirect(vm, vm.propertyNames->exports, answered);
+        if (wasBeingRequired && loaded.isKeptByRequire && loaded.moduleObjectFromRequire) [[unlikely]] {
+            loaded.moduleObjectFromRequire->putDirect(vm, vm.propertyNames->exports, answered);
             loaded.exportsGivenToObjectMadeByRequire.set(*this, answered);
         }
         return answered;
     };
-    if (!wasBeingRequired && loaded.requiredValue && loaded.objectMadeByRequire) [[unlikely]] {
+    if (!wasBeingRequired && loaded.requiredValue && loaded.moduleObjectFromRequire) [[unlikely]] {
         JSValue held = exportsOnObjectMadeByRequire(loaded);
         RETURN_IF_EXCEPTION(scope, { });
         if (held && held != loaded.exportsGivenToObjectMadeByRequire.get())
@@ -3928,8 +4174,11 @@ void Modules::evaluateCommonJS(ModuleID module)
     ModuleStatus moduleStatus = status(module);
     if (moduleStatus == ModuleStatus::Evaluating || moduleStatus == ModuleStatus::Evaluated)
         return;
-    if (moduleStatus == ModuleStatus::Failed)
-        RELEASE_AND_RETURN(scope, throwEvaluationError(module));
+    if (moduleStatus == ModuleStatus::Failed) {
+        if (!forgetRunWhoseFailureLoaderHasYetToStore(module))
+            RELEASE_AND_RETURN(scope, throwEvaluationError(module));
+        moduleStatus = status(module);
+    }
     RELEASE_ASSERT(moduleStatus == ModuleStatus::Unlinked || moduleStatus == ModuleStatus::Linked);
     unbindModuleObjectOfRunThatThrew(module);
     RETURN_IF_EXCEPTION(scope, void());
@@ -3976,7 +4225,7 @@ JSValue Modules::exportsGivenBackToCompiledCode(ModuleID module) const
 JSValue Modules::exportsSeenByLoader(ModuleID module)
 {
     LoadedModule* loaded = loadedIfExists(module);
-    bool isVariableLaidOnObject = loaded && loaded->moduleObjectOverExportsVariable.get() == loaded->requirer.get();
+    bool isVariableLaidOnObject = loaded && loaded->moduleObjectBoundToExports.get() == loaded->requirer.get();
     if (!loaded || !loaded->requirer || (data(module).hasValue() && !isVariableLaidOnObject) || data(module).exportsStayInCompiledCode()) [[likely]]
         return exportsGivenBackToCompiledCode(module);
     return loaded->requirer->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
@@ -4050,7 +4299,7 @@ void Modules::didImportFileFromUncompiledCode(ModuleID fileOrFace)
     noteLoadOfGraph(fileOrFace);
 }
 
-std::optional<OptionSet<ModuleObjectTrait>> Modules::traitsOfModuleObjectYetToBeMade(ModuleID module)
+std::optional<OptionSet<ModuleObjectTrait>> Modules::newModuleObjectTraits(ModuleID module)
 {
     if (data(module).kind != ModuleKind::CommonJs || ensureLoaded(module).requirer)
         return std::nullopt;
@@ -4063,7 +4312,7 @@ std::optional<OptionSet<ModuleObjectTrait>> Modules::traitsOfModuleObjectYetToBe
     return traits;
 }
 
-void Modules::takeModuleObject(ModuleID module, const ModuleObjects& objects)
+void Modules::adoptModuleObject(ModuleID module, const ModuleObjects& objects)
 {
     LoadedModule& loaded = ensureLoaded(module);
     RELEASE_ASSERT(!loaded.requirer && objects.module);
@@ -4072,13 +4321,13 @@ void Modules::takeModuleObject(ModuleID module, const ModuleObjects& objects)
     loaded.requireFunction.set(*this, objects.require);
 }
 
-void Modules::giveBackModuleObject(ModuleID module)
+void Modules::releaseModuleObject(ModuleID module)
 {
     if (status(module) > ModuleStatus::Linked || isEvicted(module))
         return;
     LoadedModule& loaded = ensureLoaded(module);
     loaded.requirer.set(*this, nullptr);
-    loaded.moduleObjectOverExportsVariable.set(*this, nullptr);
+    loaded.moduleObjectBoundToExports.set(*this, nullptr);
     loaded.exportsWhenVariableAndModuleObjectAgreed.set(*this, JSValue());
     loaded.structureOfModuleObjectLastLookedAt.set(*this, nullptr);
     loaded.idOfStructureOfModuleObjectLastLookedAt = StructureID();
@@ -4087,16 +4336,16 @@ void Modules::giveBackModuleObject(ModuleID module)
     loaded.requireFunction.set(*this, JSValue());
 }
 
-JSObject* Modules::moduleObjectOverExportsVariableIfMade(ModuleID module) const
+JSObject* Modules::moduleObjectWithExportsVariable(ModuleID module) const
 {
     LoadedModule* loaded = loadedIfExists(module);
     return loaded && data(module).kind == ModuleKind::CommonJs && data(module).hasValue() ? loaded->requirer.get() : nullptr;
 }
 
-void Modules::didLayExportsVariableOnModuleObject(ModuleID module)
+void Modules::didBindExportsVariable(ModuleID module)
 {
     LoadedModule& loaded = ensureLoaded(module);
-    loaded.moduleObjectOverExportsVariable.set(*this, loaded.requirer.get());
+    loaded.moduleObjectBoundToExports.set(*this, loaded.requirer.get());
     if (data(module).kind == ModuleKind::CommonJs)
         loaded.exportsWhenVariableAndModuleObjectAgreed.set(*this, exportsGivenBackToCompiledCode(module));
 }
@@ -4118,7 +4367,7 @@ JSObject* Modules::moduleObject(ModuleID module)
 
     ModuleObjects objects;
     if (data(module).kind == ModuleKind::CommonJs) {
-        host().createModuleObject(realm, pathString(module), module, *traitsOfModuleObjectYetToBeMade(module), objects);
+        host().createModuleObject(realm, pathString(module), module, *newModuleObjectTraits(module), objects);
     } else {
         JSObject* meta = importMeta(module);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -4128,7 +4377,7 @@ JSObject* Modules::moduleObject(ModuleID module)
     notePrototypeOfModuleObjects(objects.module);
     loaded.requirer.set(*this, objects.module);
     if (data(module).kind == ModuleKind::CommonJs) {
-        loaded.moduleObjectOverExportsVariable.set(*this, objects.module);
+        loaded.moduleObjectBoundToExports.set(*this, objects.module);
         loaded.exportsWhenVariableAndModuleObjectAgreed.set(*this, exportsGivenBackToCompiledCode(module));
     }
     loaded.requireFunction.set(*this, objects.require);
@@ -4141,14 +4390,14 @@ JSObject* Modules::moduleObjectMadeByRequire(ModuleID module)
         return moduleObject(module);
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSObject* made = ensureLoaded(module).objectMadeByRequire)
+    if (JSObject* made = ensureLoaded(module).moduleObjectFromRequire)
         return made;
 
     JSValue answered = answerRequire(module);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (JSObject* made = ensureLoaded(module).objectMadeByRequire)
+    if (JSObject* made = ensureLoaded(module).moduleObjectFromRequire)
         return made;
-    OptionSet<ModuleObjectTrait> traits { ModuleObjectTrait::IsNoCommonJSFile };
+    OptionSet<ModuleObjectTrait> traits { ModuleObjectTrait::IsNotCommonJSModule };
     if (data(module).kind == ModuleKind::SourceText)
         traits.add(ModuleObjectTrait::IsESModule);
     ModuleObjects objects;
@@ -4156,7 +4405,7 @@ JSObject* Modules::moduleObjectMadeByRequire(ModuleID module)
     RETURN_IF_EXCEPTION(scope, nullptr);
     notePrototypeOfModuleObjects(objects.module);
     objects.module->putDirect(vm, vm.propertyNames->exports, answered);
-    ensureLoaded(module).objectMadeByRequire.set(*this, objects.module);
+    ensureLoaded(module).moduleObjectFromRequire.set(*this, objects.module);
     ensureLoaded(module).exportsGivenToObjectMadeByRequire.set(*this, answered);
     return objects.module;
 }
@@ -4268,17 +4517,17 @@ JSObject* Modules::objectThatStandsForModuleIfMade(ModuleID module)
         return nullptr;
     if (keepsModuleObjectToItself(module))
         return loaded->standInForModuleObject;
-    return data(module).kind == ModuleKind::CommonJs ? loaded->requirer.get() : loaded->objectMadeByRequire.get();
+    return data(module).kind == ModuleKind::CommonJs ? loaded->requirer.get() : loaded->moduleObjectFromRequire.get();
 }
 
 JSObject* Modules::mainModuleObject(ModuleID main)
 {
     ModuleID file = fileOf(main);
-    if (!data(file).isEntryPoint() && !m_storesPathOfMainModule)
+    if (!data(file).isEntryPoint() && !m_setsMainModulePath)
         return nullptr;
     if (data(file).kind == ModuleKind::CommonJs)
-        return mayHandOutModuleObject(file) && wasRequestedByLoader(file) ? moduleObject(file) : nullptr;
-    bool hasObjectMadeByRequire = m_storesPathOfMainModule && !data(file).isOfLibrary() && m_modulesWithMarkOfRequire.get(file.index());
+        return canExposeModuleObject(file) && wasRequestedByLoader(file) ? moduleObject(file) : nullptr;
+    bool hasObjectMadeByRequire = m_setsMainModulePath && !data(file).isOfLibrary() && m_modulesWithMarkOfRequire.get(file.index());
     return hasObjectMadeByRequire ? moduleObjectMadeByRequire(file) : nullptr;
 }
 
@@ -4286,11 +4535,11 @@ bool Modules::findWhetherExportsVariableIsTakenOffModuleObject(ModuleID module)
 {
     LoadedModule* loaded = loadedIfExists(module);
     bool isCommonJSFile = data(module).kind == ModuleKind::CommonJs;
-    JSObject* moduleObject = !loaded ? nullptr : isCommonJSFile ? loaded->requirer.get() : loaded->objectMadeByRequire.get();
+    JSObject* moduleObject = !loaded ? nullptr : isCommonJSFile ? loaded->requirer.get() : loaded->moduleObjectFromRequire.get();
     if (!moduleObject)
         return false;
     VM& vm = *m_instance.vm;
-    if (isCommonJSFile && loaded->moduleObjectOverExportsVariable.get() == moduleObject && !loaded->isModuleObjectHeldByCompiledCode && !isMocked(module) && data(module).hasValue() && !data(module).exportsStayInCompiledCode()) {
+    if (isCommonJSFile && loaded->moduleObjectBoundToExports.get() == moduleObject && !loaded->isModuleObjectHeldByCompiledCode && !isMocked(module) && data(module).hasValue() && !data(module).exportsStayInCompiledCode()) {
         JSValue laid = moduleObject->getDirect(vm, vm.propertyNames->exports);
         if (!laid || !laid.isCustomGetterSetter()) {
             loaded->isExportsVariableTakenOffModuleObject = true;
@@ -4341,13 +4590,20 @@ NEVER_INLINE void Modules::lookAtExportsOfModuleObject(ModuleID module, RequireA
 }
 
 template<Modules::RequireAnsweredBy answeredBy>
-void Modules::recordRequire(ModuleID target, ModuleID referrer)
+void Modules::recordRequire(ModuleID target, ModuleID referrer, bool isByMadeRequire, JSObject* objectOfEarlierRun, bool isBehindLoad)
 {
     if constexpr (answeredBy == RequireAnsweredBy::CompiledCode) {
-        if (m_mocks) [[unlikely]]
-            noteAskForKey(target, referrer, LoadByName::Require);
+        if (m_goesModuleByModule) [[unlikely]]
+            noteAskForForm(target);
+        if (m_mocks) [[unlikely]] {
+            noteAskForKey(target, referrer, LoadKind::Require);
+            bool comesBehindRequire = m_targetOfRequireRecordedAhead == target || m_targetOfRequireJustAnswered == target;
+            m_targetOfRequireJustAnswered = ModuleID();
+            m_targetOfRequireRecordedAhead = comesBehindRequire ? ModuleID() : target;
+            m_requirerRecordedAhead = comesBehindRequire ? ModuleID() : referrer;
+        }
         if (auto* willLoad = m_mocks || m_hasBegunTestFile ? host().willLoad : nullptr) [[unlikely]]
-            willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadByName::Require);
+            willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadKind::Require);
     }
     const ModuleData& targetData = data(target);
     bool isCommonJSFile = targetData.kind == ModuleKind::CommonJs;
@@ -4365,16 +4621,36 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
             unbindModuleObjectOfRunThatThrew(target);
             RETURN_IF_EXCEPTION(scope, void());
             if (referrer == target)
-                required->firstRequirerOutsideImage.set(*this, objectOfRunThatThrew);
+                required->firstUncompiledRequirer.set(*this, objectOfRunThatThrew);
         }
     }
-    uint64_t pair = (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
+    bool isChildOfOtherObject = isByMadeRequire && data(referrer).kind == ModuleKind::CommonJs;
+    if (objectOfEarlierRun) [[unlikely]] {
+        unbindModuleObjectOfRunThatThrew(referrer);
+        RETURN_IF_EXCEPTION(scope, void());
+        uint64_t pairOfEarlierRun = 1ull << 62 | (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
+        bool wasFirstRequireOfESModule = m_recordedRequires.remove(pairOfEarlierRun);
+        if (!isBehindLoad) {
+            LoadedModule* required = loadedIfExists(target);
+            bool isFirstRequireOfESModule = targetData.kind == ModuleKind::SourceText && (wasFirstRequireOfESModule || (!firstRequirerOf(target) && !(required && required->firstUncompiledRequirer)));
+            recordRequireFromUncompiledCode(target, objectOfEarlierRun);
+            if (isFirstRequireOfESModule)
+                m_recordedRequires.set(pairOfEarlierRun, RecordedRequire::BegunAndMadeObjectOfESModule);
+            return;
+        }
+        if (wasFirstRequireOfESModule || isChildOfOtherObject || !host().appendModuleChildren)
+            return;
+        JSObject* objectOfRequired = objectThatStandsForModule(target);
+        RETURN_IF_EXCEPTION(scope, void());
+        RELEASE_AND_RETURN(scope, host().appendModuleChildren(m_instance.globalObject, objectOfEarlierRun, objectOfRequired));
+    }
+    uint64_t pair = static_cast<uint64_t>(isChildOfOtherObject) << 63 | (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
     auto recorded = m_recordedRequires.add(pair, isEvicted(target) ? RecordedRequire::BegunAndLeftToHost : RecordedRequire::Begun);
     if (recorded.isNewEntry) {
         findWhetherExportsVariableIsTakenOffModuleObject(referrer);
         lookForMainCommonJSModule();
         LoadedModule* required = loadedIfExists(target);
-        if (firstRequirerOf(target) || (required && required->firstRequirerOutsideImage) || (isCommonJSFile && wasRequestedByLoader(target)))
+        if (firstRequirerOf(target) || (required && required->firstUncompiledRequirer) || (isCommonJSFile && wasRequestedByLoader(target)))
             return;
         ensureWaysTo(target).firstRequirer = referrer;
         bool isListed = required && std::exchange(required->hasFirstRequireOfRunThatThrew, false) && m_firstRequires.containsIf([&](const FirstRequire& first) {
@@ -4407,14 +4683,14 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         recorded.iterator->value = RecordedRequire::Returned;
         if (!m_isMainCommonJSModuleDecided)
             decideMainCommonJSModule(std::nullopt);
-        if (!isListedByHost)
+        if (!isListedByHost && !isChildOfOtherObject)
             ensureWaysTo(referrer).requiredModules.append(target);
         findWhetherExportsVariableIsTakenOffModuleObject(referrer);
         lookAtExportsOfModuleObject(target, answeredBy);
         RETURN_IF_EXCEPTION(scope, void());
         LoadedModule* requirer = loadedIfExists(referrer);
-        if (requirer && requirer->requirer && host().showChildren)
-            RELEASE_AND_RETURN(scope, host().showChildren(m_instance.globalObject, requirer->requirer, nullptr));
+        if (requirer && requirer->requirer && host().appendModuleChildren && !isChildOfOtherObject)
+            RELEASE_AND_RETURN(scope, host().appendModuleChildren(m_instance.globalObject, requirer->requirer, nullptr));
         return;
     }
     case RecordedRequire::Returned: {
@@ -4426,8 +4702,8 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
             requirer = loadedIfExists(referrer);
             objectOfRequired = objectThatStandsForModuleIfMade(target);
         }
-        if (requirer && requirer->requirer && objectOfRequired && !isEvicted(target) && host().showChildren) {
-            host().showChildren(m_instance.globalObject, requirer->requirer, objectOfRequired);
+        if (requirer && requirer->requirer && objectOfRequired && !isEvicted(target) && host().appendModuleChildren && !isChildOfOtherObject) {
+            host().appendModuleChildren(m_instance.globalObject, requirer->requirer, objectOfRequired);
             RETURN_IF_EXCEPTION(scope, void());
         }
         m_recordedRequires.set(pair, RecordedRequire::BegunAgain);
@@ -4439,23 +4715,38 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
     }
 }
 
-template void Modules::recordRequire<Modules::RequireAnsweredBy::CompiledCode>(ModuleID, ModuleID);
-template void Modules::recordRequire<Modules::RequireAnsweredBy::RunTime>(ModuleID, ModuleID);
+template void Modules::recordRequire<Modules::RequireAnsweredBy::CompiledCode>(ModuleID, ModuleID, bool, JSObject*, bool);
+template void Modules::recordRequire<Modules::RequireAnsweredBy::RunTime>(ModuleID, ModuleID, bool, JSObject*, bool);
 
-void Modules::recordRequireFromOutsideImage(ModuleID target, JSObject* moduleObjectOfRequirer)
+bool Modules::isMadeRequire(JSValue value)
+{
+    auto* bound = dynamicDowncast<JSBoundFunction>(value);
+    return bound && bound->boundThis().isObject();
+}
+
+JSObject* Modules::objectIfOfEarlierRun(ModuleID file, JSValue moduleObjectOfRun)
+{
+    JSObject* object = moduleObjectOfRun.getObject();
+    if (isMadeRequire(moduleObjectOfRun))
+        return uncheckedDowncast<JSBoundFunction>(object)->boundThis().getObject();
+    bool isOfLatestRun = !object || object == objectThatStandsForModuleIfMade(file);
+    return isOfLatestRun ? nullptr : object;
+}
+
+void Modules::recordRequireFromUncompiledCode(ModuleID target, JSObject* requirerModuleObject)
 {
     bool isCommonJSFile = data(target).kind == ModuleKind::CommonJs;
     if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || data(target).kind == ModuleKind::Data))
         return;
     if (isCommonJSFile)
         noteRequireOfFile(target);
-    if (!mayHandOutModuleObject(target))
+    if (!canExposeModuleObject(target))
         return;
     lookForMainCommonJSModule();
     LoadedModule& required = ensureLoaded(target);
-    if (firstRequirerOf(target) || required.firstRequirerOutsideImage || (isCommonJSFile && wasRequestedByLoader(target)))
+    if (firstRequirerOf(target) || required.firstUncompiledRequirer || (isCommonJSFile && wasRequestedByLoader(target)))
         return;
-    required.firstRequirerOutsideImage.set(*this, moduleObjectOfRequirer);
+    required.firstUncompiledRequirer.set(*this, requirerModuleObject);
     if (!m_isMainCommonJSModuleDecided)
         m_modulesFirstRequiredByCallsInProgress.append(target);
 }
@@ -4478,8 +4769,8 @@ bool Modules::wasRequestedByLoader(ModuleID file)
         std::optional<ModuleID> face = m_table.faceOfFile(file);
         wasRequested = face && status(*face) > ModuleStatus::Linked;
         if (face || data(file).isImportedByModule()) {
-            for (FilesBeingRun* load = m_innermostFilesBeingRun; load && !wasRequested; load = load->outer)
-                wasRequested = hasLoaderAskedFor(*load, file);
+            for (EagerLoad* load = m_innermostEagerLoad; load && !wasRequested; load = load->outer)
+                wasRequested = wasRequestedByLoad(*load, file);
         }
     }
     if (wasRequested)
@@ -4487,7 +4778,7 @@ bool Modules::wasRequestedByLoader(ModuleID file)
     return wasRequested;
 }
 
-bool Modules::hasLoaderAskedFor(FilesBeingRun& load, ModuleID file)
+bool Modules::wasRequestedByLoad(EagerLoad& load, ModuleID file)
 {
     std::optional<ModuleID> running = fileOrFaceEvaluatedIn(load);
     if (!running)
@@ -4495,16 +4786,16 @@ bool Modules::hasLoaderAskedFor(FilesBeingRun& load, ModuleID file)
     if (load.requested.isEmpty()) {
         load.requested.ensureSize(m_table.size());
         load.requested.quickSet(fileOf(load.root).index());
-        load.importersOfNextLevel.append(load.root);
+        load.nextLevelImporters.append(load.root);
     }
-    while (!load.requested.quickGet(fileOf(*running).index()) && !load.importersOfNextLevel.isEmpty()) {
-        for (ModuleID importer : std::exchange(load.importersOfNextLevel, { })) {
+    while (!load.requested.quickGet(fileOf(*running).index()) && !load.nextLevelImporters.isEmpty()) {
+        for (ModuleID importer : std::exchange(load.nextLevelImporters, { })) {
             for (const ModuleRequestData& request : m_table.requests(importer)) {
                 if (request.isHoisted || request.isRequire)
                     continue;
                 ModuleID target = fileOf(request.targetModule());
                 if (!load.requested.quickSet(target.index()) && isLoadedWithRequests(target) && !(m_mocks && m_mocks->modules.quickGet(target.index())))
-                    load.importersOfNextLevel.append(target);
+                    load.nextLevelImporters.append(target);
             }
         }
     }
@@ -4532,8 +4823,8 @@ void Modules::layValueInPlaceOfExportsVariable(ModuleID file)
 void Modules::letGoOfModuleObject(ModuleID file)
 {
     m_filesRequestedByLoader.clear(file.index());
-    for (FilesBeingRun* load = m_innermostFilesBeingRun; load; load = load->outer) {
-        if (hasLoaderAskedFor(*load, file))
+    for (EagerLoad* load = m_innermostEagerLoad; load; load = load->outer) {
+        if (wasRequestedByLoad(*load, file))
             load->requested.quickClear(file.index());
     }
     LoadedModule* loaded = loadedIfExists(file);
@@ -4543,7 +4834,7 @@ void Modules::letGoOfModuleObject(ModuleID file)
         return;
     layValueInPlaceOfExportsVariable(file);
     loaded->requirer.set(*this, nullptr);
-    loaded->moduleObjectOverExportsVariable.set(*this, nullptr);
+    loaded->moduleObjectBoundToExports.set(*this, nullptr);
     loaded->exportsWhenVariableAndModuleObjectAgreed.set(*this, JSValue());
     loaded->structureOfModuleObjectLastLookedAt.set(*this, nullptr);
     loaded->idOfStructureOfModuleObjectLastLookedAt = StructureID();
@@ -4581,7 +4872,7 @@ bool Modules::isFetchedInsideCall(ModuleID file) const
 {
     if (hostLoadsSynchronously(file))
         return true;
-    return m_instance.vm->aotState().filesWhoseTextHostKeeps.get(file.index()) && host().keepsTexts && host().keepsTexts(m_instance.globalObject);
+    return m_instance.vm->aotState().filesWhoseTextHostKeeps.get(file.index()) && host().hasSourceCache && host().hasSourceCache(m_instance.globalObject);
 }
 
 bool Modules::isOfKindWhoseTextHostKeeps(ModuleID file) const
@@ -4592,7 +4883,7 @@ bool Modules::isOfKindWhoseTextHostKeeps(ModuleID file) const
     return kind == ModuleKind::SourceText || kind == ModuleKind::CommonJs || m_dataFilesThatHostPrintsAsJavaScript.get(file.index());
 }
 
-bool Modules::isLeftToHostThatStarts(ModuleID module)
+bool Modules::delegatesToStartingHost(ModuleID module)
 {
     m_instance.vm->aotState().filesStartedByHost.set(fileOf(module).index());
     return isEvicted(module);
@@ -4608,7 +4899,7 @@ void Modules::noteTextsThatHostKeeps()
         if (m_storedStatuses[index] <= static_cast<uint8_t>(StoredModuleStatus::Linked) || m_filesWhoseTextHostDropped.get(file.index()))
             continue;
         state.filesWhoseTextHostKeeps.set(file.index());
-        bool isUnderMock = isMocked(file) || m_modulesWithMockInPlace.get(file.index()) || m_modulesWithMockToRun.get(file.index()) || m_modulesThatRanBesideMock.get(file.index());
+        bool isUnderMock = isMocked(file) || m_modulesWithActiveMock.get(file.index()) || m_modulesWithPendingMock.get(file.index()) || m_originalsEvaluatedUnderMock.get(file.index());
         if (!isEvicted(file) && isOfKindWhoseTextHostKeeps(file) && !isUnderMock)
             state.filesWhoseKeptTextWasCompiled.set(file.index());
     }
@@ -4624,13 +4915,13 @@ void Modules::forgetFirstLoad(ModuleID module)
     ModuleID file = fileOf(module);
     m_instance.vm->aotState().filesWhoseTextHostKeeps.clear(file.index());
     m_instance.vm->aotState().filesWhoseKeptTextWasCompiled.clear(file.index());
-    m_instance.vm->aotState().filesWhoseTextHostHoldsItself.clear(file.index());
+    m_instance.vm->aotState().modulesWithHostCachedSource.clear(file.index());
     m_filesWhoseTextHostDropped.set(file.index());
     if (m_instance.vm->aotState().filesWithKnownFirstLoad.clear(file.index()))
         m_filesWhoseNextLoadIsFirst.set(file.index());
 }
 
-void Modules::willLoadCopyFromDisk(ModuleID module, LoadByName way)
+void Modules::willLoadCopyFromDisk(ModuleID module, LoadKind way)
 {
     ModuleID file = fileOf(module);
     m_filesWhoseTextHostDropped.clear(file.index());
@@ -4638,14 +4929,14 @@ void Modules::willLoadCopyFromDisk(ModuleID module, LoadByName way)
         return;
     VMState& state = m_instance.vm->aotState();
     state.filesWithKnownFirstLoad.set(file.index());
-    state.filesFirstLoadedSynchronously.set(file.index(), way == LoadByName::Require || m_instance.vm->synchronousModuleQueue() || hostLoadsSynchronously(file));
+    state.filesFirstLoadedSynchronously.set(file.index(), way == LoadKind::Require || m_instance.vm->synchronousModuleQueue() || hostLoadsSynchronously(file));
 }
 
 JSObject* Modules::parentModuleObject(ModuleID module)
 {
     LoadedModule* loaded = loadedIfExists(module);
-    if (loaded && loaded->firstRequirerOutsideImage && mainCommonJSModule() != module)
-        return loaded->firstRequirerOutsideImage;
+    if (loaded && loaded->firstUncompiledRequirer && mainCommonJSModule() != module)
+        return loaded->firstUncompiledRequirer;
     std::optional<ModuleID> firstRequirer = firstRequirerOf(module);
     if (!firstRequirer || mainCommonJSModule() == module)
         return nullptr;
@@ -4672,13 +4963,13 @@ bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*
     return true;
 }
 
-void Modules::dropNewChildren(ModuleID module)
+void Modules::clearNewChildren(ModuleID module)
 {
     if (WaysToModule* ways = waysToIfRecorded(module))
         ways->numberOfChildrenShown = ways->requiredModules.size();
 }
 
-JSValue Modules::requireSpecifier(JSValue specifier, ModuleID referrer, NamedByBuild namedByBuild)
+JSValue Modules::requireSpecifier(JSValue specifier, ModuleID referrer, NamedByBuild namedByBuild, JSObject* objectOfEarlierRun)
 {
     bool isNamedByBuild = namedByBuild != NamedByBuild::No;
     JSGlobalObject* realm = m_instance.globalObject;
@@ -4691,8 +4982,15 @@ JSValue Modules::requireSpecifier(JSValue specifier, ModuleID referrer, NamedByB
     RETURN_IF_EXCEPTION(scope, { });
     JSObject* requirer = moduleObject(referrer);
     RETURN_IF_EXCEPTION(scope, { });
-    SetForScope isAskingHost(m_isAskingHost, namedByBuild == NamedByBuild::FileOfImage ? RequestToHost(true) : isNamedByBuild ? RequestToHost::forWhatLiesOutsideImage() : this->isAskingHost() ? m_isAskingHost : RequestToHost());
+    SetForScope isAskingHost(m_isAskingHost, namedByBuild == NamedByBuild::FileOfImage ? HostRequest(true) : isNamedByBuild ? HostRequest::forWhatLiesOutsideImage() : this->isAskingHost() ? m_isAskingHost : HostRequest());
     SetForScope askerLoadsCompiledFilesAlone(m_instance.vm->aotState().askerLoadsCompiledFilesAlone, !isNamedByBuild && loadsCompiledFilesAlone(referrer));
+    auto recordsWhatIsPutBack = makeScopeExit([&] {
+        if (m_objectOfEarlierRunThatAsksHost)
+            m_storedReferences.recordAll();
+    });
+    SetForScope earlierRunAsksHost(m_objectOfEarlierRunThatAsksHost, objectOfEarlierRun);
+    if (objectOfEarlierRun)
+        m_storedReferences.recordAll();
     RELEASE_AND_RETURN(scope, host().requireSpecifier(realm, requirer, specifier));
 }
 
@@ -4721,9 +5019,60 @@ void Modules::markNamespaceAsRequired(ModuleID module)
         return;
     willRequireESModule(module);
     m_modulesWithMarkOfRequire.set(module.index());
+    ModuleStatus current = status(module);
+    bool waitsForRun = current != ModuleStatus::Evaluated && (current != ModuleStatus::Evaluating || data(module).hasTopLevelAwait());
+    m_modulesWhoseMarkOfRequireWaitsForRun.set(module.index(), waitsForRun);
     auto* namespaceObject = uncheckedDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation));
-    if (namespaceObject && !namespaceObject->hasExport(m_instance.vm->propertyNames->__esModule.impl()))
+    if (!namespaceObject || namespaceObject->hasExport(m_instance.vm->propertyNames->__esModule.impl()))
+        return;
+    if (waitsForRun)
+        namespaceObject->letESModuleMarkerWaitForRun(true);
+    else
         namespaceObject->setESModuleMarker(true);
+}
+
+void Modules::takeBackMarkOfRequireThatWaits(ModuleID module)
+{
+    if (!m_modulesWhoseMarkOfRequireWaitsForRun.get(module.index()) || status(module) == ModuleStatus::Evaluated)
+        return;
+    m_modulesWhoseMarkOfRequireWaitsForRun.clear(module.index());
+    m_modulesWithMarkOfRequire.clear(module.index());
+    if (auto* namespaceObject = uncheckedDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation)))
+        namespaceObject->letESModuleMarkerWaitForRun(false);
+}
+
+void Modules::forgetFirstRequireThatWasRefused(ModuleID required)
+{
+    std::optional<ModuleID> requirer = firstRequirerOf(required);
+    LoadedModule* loaded = loadedIfExists(required);
+    bool isFirstRequiredByEarlierRun = !requirer && loaded && loaded->firstUncompiledRequirer;
+    if (!requirer && !isFirstRequiredByEarlierRun)
+        return;
+    bool hadNotReturned = m_recordedRequires.removeIf([&](const auto& recorded) {
+        return static_cast<uint32_t>(recorded.key) == required.index() && recorded.value == RecordedRequire::BegunAndMadeObjectOfESModule;
+    });
+    if (!hadNotReturned)
+        return;
+    if (isFirstRequiredByEarlierRun) {
+        loaded->firstUncompiledRequirer.set(*this, nullptr);
+        return;
+    }
+    forgetFirstRequirerOf(required);
+    m_firstRequires.removeAllMatching([&](const FirstRequire& first) {
+        return first.requirer == *requirer && first.required == required;
+    });
+    m_modulesFirstRequiredByCallsInProgress.removeAll(required);
+}
+
+JSObject* Modules::namespaceThatAnswersRequire(ModuleID module)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* namespaceObject = moduleNamespace(module, ModulePhase::Evaluation, false);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (auto* names = uncheckedDowncast<ModuleNamespace>(namespaceObject); !names->hasExport(vm.propertyNames->__esModule.impl()))
+        names->setESModuleMarker(true);
+    return namespaceObject;
 }
 
 JSValue Modules::whatRequireMakesOfNamespace(JSObject* namespaceObject)

@@ -100,7 +100,7 @@ ALWAYS_INLINE Latin1Character* appendJSONNumber(Latin1Character* cursor, double 
     return cursor + numberToShortestString(number, std::span<char, numberToShortestStringBufferSize> { std::bit_cast<char*>(cursor), numberToShortestStringBufferSize });
 }
 
-constexpr size_t maxLengthOfEscapedJSONString(size_t length) { return 6 * length + 2; }
+constexpr size_t maxEscapedJSONStringLength(size_t length) { return 6 * length + 2; }
 Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* cursor, std::span<const Latin1Character>);
 
 } } // namespace JSC::AOT

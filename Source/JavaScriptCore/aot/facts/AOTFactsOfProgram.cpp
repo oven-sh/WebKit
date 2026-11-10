@@ -6156,7 +6156,7 @@ void BuilderOfProgramFacts::run()
     AOT::sort(m_program.loadsOfMachineCode, { }, orderOf);
     m_program.unseenCodeCanRun = hasRecordThat(admitsUnknownJavaScriptInProgramFacts);
     m_program.unseenScriptsCanRun = hasRecordThat(admitsScriptsInProgramFacts);
-    m_program.storesPathOfMainModule = frontEndLeavesMainModuleOpen();
+    m_program.setsMainModulePath = frontEndLeavesMainModuleOpen();
     m_program.hasOneInstance = needsOneInstanceAtMost();
 
     listBuiltinUses();

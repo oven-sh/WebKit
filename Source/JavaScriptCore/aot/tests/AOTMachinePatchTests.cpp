@@ -11,6 +11,7 @@
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
 #include "AOTEntryEmitter.h"
+#include "AOTGrowthOfWork.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "JSCJSValueInlines.h"
 #include <array>
@@ -1049,6 +1050,116 @@ static void testMachinePatchClearsSpillThatAnotherArmReads()
     }
 }
 
+static void testMachinePatchCheckerRejectsClearedRead()
+{
+    enum class Rejecter : uint8_t { None, Allocator, Checker };
+    for (Rejecter rejecter : { Rejecter::None, Rejecter::Allocator, Rejecter::Checker }) {
+        ProcedureTraits traits;
+        traits.takesWaysOnToReadNothing = rejecter != Rejecter::None;
+        traits.skipsReleaseCheck = rejecter == Rejecter::Checker;
+        traits.checksAllocation = true;
+        TestProcedure test(traits);
+        Output& out = test.out();
+        Block* releasing = out.newBlock();
+        Block* made = out.newBlock();
+        Block* waited = out.newBlock();
+        Block* joined = out.newBlock();
+        Block* reading = out.newBlock();
+        Block* done = out.newBlock();
+
+        Operation* a = test.argumentGPR(0);
+        Operation* cell = out.opaque(out.add(a, 5));
+        PatchOperation* call = out.patch(Void);
+        call->clobberLate(allocatableRegistersOfPatchTest(test));
+        call->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+        out.branch(out.testNonZero64(a, 2), normalEdge(releasing), normalEdge(reading));
+
+        out.appendTo(releasing);
+        out.branch(out.testNonZero64(a, 1), normalEdge(made), normalEdge(waited));
+        out.appendTo(made);
+        ValueFromBlock fromMade = out.anchor(out.opaque(out.add(a, 100)));
+        out.jump(joined);
+        out.appendTo(waited);
+        ValueFromBlock fromWaited = out.anchor(cell);
+        out.jump(joined);
+
+        out.appendTo(joined);
+        PatchTestObservation seen;
+        RegisterMask cleared = 0;
+        appendPatchTestReleaseHint(out, out.phi(Int64, fromMade, fromWaited), seen, cleared);
+        ValueFromBlock fromJoined = out.anchor(out.constInt64(0));
+        out.jump(done);
+
+        out.appendTo(reading);
+        ValueFromBlock fromReading = out.anchor(out.add(cell, 1));
+        out.jump(done);
+
+        out.appendTo(done);
+        out.ret(out.add(out.phi(Int64, fromJoined, fromReading), cell));
+
+        if (rejecter == Rejecter::None) {
+            compileOrFail(test);
+            AOT_TEST_CHECK(test.call<int64_t>(int64_t { 2 }) == 7);
+            AOT_TEST_CHECK(test.call<int64_t>(int64_t { 0 }) == 11);
+            continue;
+        }
+        AOT_TEST_CHECK(!test.prepare());
+        AOT_TEST_CHECK(test.procedure().failure());
+        FailureKind kind = test.procedure().failure()->kind;
+        if (rejecter == Rejecter::Allocator) {
+            AOT_TEST_CHECK(kind == FailureKind::ReleasedValueIsReadOnWayOn);
+            continue;
+        }
+        AOT_TEST_CHECK(kind == FailureKind::RegisterLacksItsValue || kind == FailureKind::SpillSlotLacksItsValue);
+    }
+}
+
+enum class HintPlacement : uint8_t { AfterJoin, InReplacingArm };
+
+static std::optional<uint64_t> measurePhiChainRelease(unsigned length, HintPlacement placement, bool& isPrepared)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* selector = test.argumentGPR(1);
+    PatchTestObservation seen;
+    RegisterMask cleared = 0;
+    Operation* previous = out.opaque(out.add(test.argumentGPR(0), 5));
+    for (unsigned link = 0; link < length; ++link) {
+        Block* replacing = out.newBlock();
+        Block* joined = out.newBlock();
+        ValueFromBlock kept = out.anchor(previous);
+        out.branch(out.testNonZero64(selector, 1), normalEdge(replacing), normalEdge(joined));
+        out.appendTo(replacing);
+        if (placement == HintPlacement::InReplacingArm && previous->opcode() == Phi)
+            appendPatchTestReleaseHint(out, previous, seen, cleared);
+        ValueFromBlock replaced = out.anchor(out.opaque(out.add(selector, 7)));
+        out.jump(joined);
+        out.appendTo(joined);
+        Operation* current = out.phi(Int64, kept, replaced);
+        if (placement == HintPlacement::AfterJoin && previous->opcode() == Phi)
+            appendPatchTestReleaseHint(out, previous, seen, cleared);
+        previous = current;
+    }
+    out.ret(previous);
+    return instructionsOfCurrentThreadIn([&] {
+        isPrepared = test.prepare();
+    });
+}
+
+static void testMachinePatchPhiChainReleaseIsLinear()
+{
+    constexpr unsigned length = 2500;
+    InstructionCounts::begin();
+    for (HintPlacement placement : { HintPlacement::AfterJoin, HintPlacement::InReplacingArm }) {
+        bool isSmallerPrepared = false;
+        bool isLargerPrepared = false;
+        std::optional<uint64_t> smaller = measurePhiChainRelease(length, placement, isSmallerPrepared);
+        std::optional<uint64_t> larger = measurePhiChainRelease(4 * length, placement, isLargerPrepared);
+        AOT_TEST_CHECK(isSmallerPrepared && isLargerPrepared);
+        AOT_TEST_CHECK(growsAsSizeDoes(smaller, larger));
+    }
+}
+
 static void testMachinePatchStopsWhereEdgeHandsOnWhatHintLetGo()
 {
     for (bool takesWaysOnToReadNothing : { false, true }) {
@@ -1296,6 +1407,8 @@ static std::span<const NativeTest> listOfMachinePatchTests()
         { "machine/patch/releases-register-of-another-name"_s, testMachinePatchReleasesRegisterOfAnotherName },
         { "machine/patch/releases-register-that-native-callees-alone-keep"_s, testMachinePatchReleasesRegisterThatNativeCalleesAloneKeep },
         { "machine/patch/clears-spill-that-another-arm-reads"_s, testMachinePatchClearsSpillThatAnotherArmReads },
+        { "machine/patch/checker-rejects-cleared-read"_s, testMachinePatchCheckerRejectsClearedRead },
+        { "machine/patch/phi-chain-release-is-linear"_s, testMachinePatchPhiChainReleaseIsLinear },
         { "machine/patch/stops-where-an-edge-hands-on-what-a-hint-let-go"_s, testMachinePatchStopsWhereEdgeHandsOnWhatHintLetGo },
         { "machine/patch/searches-for-ways-through-block-split-late"_s, testMachinePatchSearchesForWaysThroughBlockSplitLate },
         { "machine/patch/wants-too-many-registers"_s, testMachinePatchThatWantsTooManyRegisters },

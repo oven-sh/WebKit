@@ -238,7 +238,7 @@ private:
 
 } // anonymous namespace
 
-size_t describeWhereThisThreadStopped(std::span<char> buffer)
+size_t describeCurrentThreadWork(std::span<char> buffer)
 {
     const CurrentWork& record = *CurrentWorkInternal::recordOfThread;
     if (&record == &CurrentWorkInternal::sharedRecord)
@@ -253,7 +253,7 @@ size_t describeWhereThisThreadStopped(std::span<char> buffer)
     return text.size();
 }
 
-size_t describeWhatThreadsAreCompiling(std::span<char> buffer)
+size_t describeAllThreadsWork(std::span<char> buffer)
 {
     CurrentWorkText text(buffer);
     for (const CurrentWork& record : CurrentWorkInternal::allCurrentWorkRecords()) {

@@ -72,28 +72,28 @@ public:
 
     void appendVisited(VM&, CyclicModuleRecord*);
 #if ENABLE(AOT)
-    // Of the module that was appended last.
-    void forgetVisited(CyclicModuleRecord* cyclic)
+    // Removes the most recent entry for this module.
+    void removeVisited(CyclicModuleRecord* cyclic)
     {
-        if (m_wholeLoad)
-            m_wholeLoad->forgetVisited(cyclic);
+        if (m_rootState)
+            m_rootState->removeVisited(cyclic);
         Locker locker { cellLock() };
         bool wasVisited = m_visited.removeLastMatching([&](const auto& visited) { return visited.get() == cyclic; });
         ASSERT_UNUSED(wasVisited, wasVisited);
         m_visitedSet.remove(cyclic);
     }
 
-    // Each module gets a state of its own (moduleLoadStep()), and each state walks through every record that is still New: on a cycle, through all of it.
-    // The state of a compiled record that was asked for by a graph load knows that load: a compiled record is walked once a load, by the first state that comes to it.
-    // Whatever such a state walks, compiled or not, lies in the [[Visited]] of the load's first state too.
-    void setWholeLoad(VM& vm, ModuleGraphLoadingState* askedBy) { m_wholeLoad.set(vm, this, askedBy->m_wholeLoad ? askedBy->m_wholeLoad.get() : askedBy); }
-    bool isPartOfWholeLoad() const { return !!m_wholeLoad; }
-    // Whether this state is the first of its load that comes to the record. If so the record counts as walked from here on.
-    bool beginWalkForWholeLoad(VM& vm, CyclicModuleRecord* cyclic)
+    // moduleLoadStep() gives each module its own state, and each state visits every record that is still New. On a cycle that is the whole cycle.
+    // When a graph load requests a compiled record, the record's state points to the load's root state, so each compiled record is visited once per load, by the first state that reaches it.
+    // Every record such a state visits, compiled or not, is also added to the root state's [[Visited]] list.
+    void setRootState(VM& vm, ModuleGraphLoadingState* parentState) { m_rootState.set(vm, this, parentState->m_rootState ? parentState->m_rootState.get() : parentState); }
+    bool hasRootState() const { return !!m_rootState; }
+    // Returns true if no other state of this load has visited the record yet, and marks it visited.
+    bool markVisitedInRootState(VM& vm, CyclicModuleRecord* cyclic)
     {
-        if (m_wholeLoad->containsVisited(cyclic))
+        if (m_rootState->containsVisited(cyclic))
             return false;
-        m_wholeLoad->appendVisited(vm, cyclic);
+        m_rootState->appendVisited(vm, cyclic);
         return true;
     }
 #endif
@@ -138,7 +138,7 @@ private:
     UncheckedKeyHashSet<const AbstractModuleRecord*> m_visitedSet;
     Vector<AbstractModuleRecord*, 8> m_innerLoadQueue;
 #if ENABLE(AOT)
-    WriteBarrier<ModuleGraphLoadingState> m_wholeLoad;
+    WriteBarrier<ModuleGraphLoadingState> m_rootState;
 #endif
     // Slot used only at top-level loadModule to AND-join loadPromise and statePromise into combinedPromise.
     WriteBarrier<Unknown> m_fulfillment;

@@ -34,14 +34,14 @@ using AOT::didCreateStaticProperty;
 using AOT::didRejectWrite;
 using AOT::lockedObjectErrorMessage;
 using AOT::reflectThrowsOnLockedProperty;
-using AOT::takeStaticPropertyMadeAhead;
+using AOT::takePreallocatedStaticProperty;
 
 void willInitializeRealm(JSGlobalObject*);
-Structure* structureOfHostFunctions(JSGlobalObject*, Structure*);
-bool refusesNameOnNativeConstructor(JSGlobalObject*, PropertyName);
-inline bool keepsPrototypeOfNativeConstructors(JSGlobalObject* realm) { return locksBuiltins(realm); }
-String messageOfNameRefusedOnBuiltinFunction(PropertyName);
-String messageOfPrototypeRefusedOnBuiltinFunction();
+Structure* structureForHostFunctions(JSGlobalObject*, Structure*);
+bool rejectsNativeConstructorProperty(JSGlobalObject*, PropertyName);
+inline bool locksNativeConstructorPrototypes(JSGlobalObject* realm) { return locksBuiltins(realm); }
+String lockedBuiltinPropertyErrorMessage(PropertyName);
+String lockedBuiltinPrototypeErrorMessage();
 void didCreateRealm(JSGlobalObject*);
 enum class DeferredWatchpointKind : bool { Structure, PropertyChange };
 void willWatchBuiltins(JSGlobalObject*);
@@ -49,18 +49,18 @@ void didWatchBuiltins(JSGlobalObject*);
 bool defersWatchpoints(JSGlobalObject*);
 bool deferWatchpoint(JSGlobalObject*, const ObjectPropertyCondition&, InlineWatchpointSet&, DeferredWatchpointKind);
 void installDeferredWatchpoints(JSGlobalObject*);
-[[noreturn]] void stopBecauseRealmHasABadTime();
+[[noreturn]] void crashOnHavingABadTime();
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
-bool becomesDictionaryByAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
-void didMakeStructureForAddition(VM&, Structure* made);
+bool shouldUseDictionaryForAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
+void didCreateAdditionTransition(VM&, Structure* made);
 Structure* addBrandForSuperCall(VM&, JSFunction* newTarget, Structure*);
 void finishFillingObjects(VM&);
-void runFilesThatWaitInLoader(VM&);
+void transferEagerLoadsToLoader(VM&);
 void didStartWatchingReplacements(VM&);
 void didChangeMicrotaskQueueing(VM&);
 void didChangeGlobalLexicalBindings(JSGlobalObject*);
 void setLoopPollsEnabled(VM&, bool);
-JSObject* targetThatProxyDefinesOn(VM&, JSValue receiver);
+JSObject* proxyDefinePropertyTarget(VM&, JSValue receiver);
 
 JSArray* tryCreateArrayOfPairs(JSGlobalObject*, JSCell* items);
 

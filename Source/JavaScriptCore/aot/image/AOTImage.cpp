@@ -60,14 +60,14 @@ const Image** Image::addressOfCurrentOfThread()
     return &t_currentImage;
 }
 
-void Image::useNoneOnThisThread()
+void Image::disableOnThisThread()
 {
     t_currentImage = nullptr;
     t_usesNoImage = true;
     s_current.store(differsByThread(), std::memory_order_release);
 }
 
-bool Image::usesNoneOnThisThread()
+bool Image::isDisabledOnThisThread()
 {
     return t_usesNoImage;
 }
@@ -461,7 +461,7 @@ std::optional<uint32_t> imageCodeOffset(const void* address)
     return static_cast<uint32_t>(offset);
 }
 
-bool isInStubOfImage(const void* address)
+bool isInImageStub(const void* address)
 {
     const Image* image = imageWithCodeAt(address);
     return image && image->locate(address).kind == CodeKind::Stub;

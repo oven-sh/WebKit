@@ -185,7 +185,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 #if USE(BUN_JSC_ADDITIONS)
             if (m_isTypeScript) break;
 #if ENABLE(AOT)
-            if (globalObject->aotInstance() && AOT::ModuleRecord::throwIfExportWasLeftOut(globalObject, this, hostResolveImportedModule(globalObject, e.moduleName, e.moduleRequestType), e.importName))
+            if (globalObject->aotInstance() && AOT::ModuleRecord::throwIfExportWasOmitted(globalObject, this, hostResolveImportedModule(globalObject, e.moduleName, e.moduleRequestType), e.importName))
                 return;
 #endif
             throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(e.exportName.impl()), "' not found in '"_s, StringView(e.moduleName.impl()), "'"_s));
@@ -277,7 +277,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 if (in.type == ImportEntryType::SingleTypeScript)
                     break;
 #if ENABLE(AOT)
-                if (globalObject->aotInstance() && AOT::ModuleRecord::throwIfExportWasLeftOut(globalObject, this, importedModule, in.importName))
+                if (globalObject->aotInstance() && AOT::ModuleRecord::throwIfExportWasOmitted(globalObject, this, importedModule, in.importName))
                     return;
 #endif
                 if (!(in.localName.isNull() || in.localName.isPrivateName() || in.localName.isSymbol())) {
@@ -930,8 +930,8 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
         return left->asyncEvaluationOrder().order() < right->asyncEvaluationOrder().order();
     });
 #if ENABLE(AOT)
-    // require(esm) in the body of one element evaluates modules while the list runs. One of them may come to wait for a later
-    // element, whose parents are gathered already, so the parents that joined since are gathered when that element has run.
+    // require(esm) in the body of one element evaluates modules while the list is being executed. One of them may start waiting for a later
+    // element whose parents were already gathered, so the parents added since then are gathered after that element has run.
     Vector<size_t, 8> gatheredParents;
     auto noteGatheredParents = [&] {
         while (vm.hasCompiledCode() && gatheredParents.size() < execList.size())
@@ -980,7 +980,7 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
                 }
 #if ENABLE(AOT)
                 if (vm.hasCompiledCode() && m->asyncParentModules().size() > gatheredParents[index]) [[unlikely]] {
-                    // They began after everything in the list, so they sort behind it.
+                    // They started after everything in the list, so they sort after it.
                     size_t sorted = execList.size();
                     gatherAvailableAncestors(m, execList, gatheredParents[index]);
                     std::ranges::sort(execList.mutableSpan().subspan(sorted), [](CyclicModuleRecord* left, CyclicModuleRecord* right) {

@@ -37,7 +37,7 @@ public:
         HasOnlyPlainSlots = 1 << 4,
         HasOnlyFieldsBelowObjectPrototype = 1 << 5,
         IsCopiedByWords = 1 << 6,
-        EveryFieldIsBornConfigurable = 1 << 7,
+        HasOnlyConfigurableFields = 1 << 7,
     };
     enum class HeldKeyOrder : uint8_t {
         IsOfOneObject = 1 << 0,
@@ -92,8 +92,8 @@ public:
     bool hasOutOfLineKeyOrder() const { return m_flags.contains(Flag::HasOutOfLineKeyOrder); }
     bool hasOnlyPlainSlots() const { return m_flags.contains(Flag::HasOnlyPlainSlots); }
     bool isCopiedByWords() const { return m_flags.contains(Flag::IsCopiedByWords); }
-    bool isKnownThatEveryFieldIsBornConfigurable() const { return m_flags.contains(Flag::EveryFieldIsBornConfigurable); }
-    void didFindEveryFieldBornConfigurable() { m_flags.add(Flag::EveryFieldIsBornConfigurable); }
+    bool hasOnlyConfigurableFields() const { return m_flags.contains(Flag::HasOnlyConfigurableFields); }
+    void setHasOnlyConfigurableFields() { m_flags.add(Flag::HasOnlyConfigurableFields); }
 
     StructureID extraPropertiesStructureID() const { return std::bit_cast<StructureID>(hasExtraProperties() ? m_namedStructureAndRareData.extraPropertiesStructureID : 0); }
     Structure* extraPropertiesStructure() const

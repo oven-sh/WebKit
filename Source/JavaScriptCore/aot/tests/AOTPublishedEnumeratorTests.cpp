@@ -51,7 +51,7 @@ static Object* createPair(LoadedProgram& program, std::initializer_list<unsigned
     const ProgramTables& tables = program.state().tables;
     for (uint32_t number = 0; number < tables.allocations().size(); ++number) {
         uint32_t shape = tables.allocations()[number].shape;
-        if (!tables.hasLayoutForShape(shape) || !Image::current()->text().equals(StringID(tables.layoutForShape(shape).name), "Pair"_s))
+        if (!tables.hasLayoutForShape(shape) || !isNamedInTextOfLoadedProgram(tables.layoutForShape(shape), "Pair"_s))
             continue;
         Object* pair = uncheckedDowncast<Object>(program.state().objects->structures.allocate(program.vm(), number));
         for (unsigned field : fieldsInOrder) {

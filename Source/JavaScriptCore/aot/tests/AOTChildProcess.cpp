@@ -474,7 +474,7 @@ static void reportTrap(int signal, siginfo_t*, void* context)
     printToStandardError("%s in thread \"%s\" at 0x%llx\n", signalName(signal).characters(), threadName.data(), static_cast<unsigned long long>(pc));
 
     std::array<char, 1024> work;
-    if (size_t size = describeWhereThisThreadStopped(work)) {
+    if (size_t size = describeCurrentThreadWork(work)) {
         ssize_t written = write(STDERR_FILENO, work.data(), size);
         UNUSED_VARIABLE(written);
     }

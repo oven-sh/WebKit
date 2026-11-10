@@ -1084,7 +1084,8 @@ void RuntimeCallEmitter::beginWatchOfOperation(const ValueContext& context, Watc
             rowOfCallee = firstRowOfBuiltinsInEffectsNet + builtin;
     }
     EntersCompiledCode entersCompiledCode = effectRuleOf(operation.opcode) == EffectRule::Call || operation.opcode == Opcode::CallTable ? EntersCompiledCode::Yes : EntersCompiledCode::No;
-    beginWatchOfEffects(context, *believed, entersCompiledCode, (firstRowOfOperationsInEffectsNet + static_cast<unsigned>(operation.opcode)) | rowOfCallee << 16, watch);
+    uint8_t countsThatBeliefLeavesOpen = operation.opcode == Opcode::GetConstructPrototype ? 1u << static_cast<unsigned>(CountInEffectsNet::GuardsOfMembersArmedOrBegun) : 0;
+    beginWatchOfEffects(context, *believed, entersCompiledCode, (firstRowOfOperationsInEffectsNet + static_cast<unsigned>(operation.opcode)) | rowOfCallee << 16, watch, countsThatBeliefLeavesOpen);
     if (entersCompiledCode == EntersCompiledCode::Yes)
         digestVariablesThatUnitReads(*believed, watch);
     m_watchOfOperation = &watch;
@@ -1212,7 +1213,7 @@ void RuntimeCallEmitter::abandonWatchOfOperation(const WatchOfEffects& watch)
         m_watchOfOperation = watch.around;
 }
 
-void RuntimeCallEmitter::beginWatchOfEffects(const OperationContext& context, const Effects& effects, EntersCompiledCode entersCompiledCode, uint32_t rows, WatchOfEffects& watch)
+void RuntimeCallEmitter::beginWatchOfEffects(const OperationContext& context, const Effects& effects, EntersCompiledCode entersCompiledCode, uint32_t rows, WatchOfEffects& watch, uint8_t countsThatBeliefLeavesOpen)
 {
     watch.rows = rows;
     watch.around = m_watchOfOperation;
@@ -1225,7 +1226,7 @@ void RuntimeCallEmitter::beginWatchOfEffects(const OperationContext& context, co
     if (operationAt(context.valueID()).opcode != Opcode::EndLifeOfCell)
         watch.secondLanesNotWritten = secondLanesNotWrittenInEffectsNet(effects);
     if (!effects.mayRunOtherCode() && !generator().isInitializingCell())
-        watch.countsHeld = countsHeldInEffectsNet(effects);
+        watch.countsHeld = countsHeldInEffectsNet(effects) & ~countsThatBeliefLeavesOpen;
     if (watch.countsHeld)
         watch.countsInFront = readCountsForEffectsNet(watch.countsHeld, nullptr);
     if ((watch.lanesNotWritten || watch.secondLanesNotWritten) && !generator().isInitializingCell()) {

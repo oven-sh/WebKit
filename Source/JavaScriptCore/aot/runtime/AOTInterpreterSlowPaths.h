@@ -51,7 +51,7 @@ namespace AOT {
 
 void willRunInInterpreter(CodeBlock*);
 
-inline constexpr uint32_t kindsOfPresentProperties = [] {
+inline constexpr uint32_t presentPropertyKinds = [] {
     uint32_t kinds = 0;
     for (Slot::Kind kind : allSlotKinds) {
         if (Slot::presenceOf(kind) == SlotPresence::Present)
@@ -74,18 +74,18 @@ static_assert(sizeof(JSRopeString) == 4 * sizeof(uint64_t) && JSRopeString::offs
 static_assert(JSRopeString::CompactFibers::shiftOfFiber1LowerInLengthWord == 32 && JSRopeString::CompactFibers::widthOfFiber1LowerInLengthWord == 32);
 static_assert(JSRopeString::is8BitInPointer == StringImpl::flagIs8Bit() && JSString::MaxLength == static_cast<unsigned>(INT32_MAX));
 
-inline constexpr unsigned maxLengthOfArrayLiteralAllocatedInline = (MarkedSpace::preciseCutoff - sizeof(IndexingHeader)) / sizeof(EncodedJSValue);
+inline constexpr unsigned maxFastPathArrayLiteralLength = (MarkedSpace::preciseCutoff - sizeof(IndexingHeader)) / sizeof(EncodedJSValue);
 static_assert(MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(IndexingHeader) == sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
-static_assert(maxLengthOfArrayLiteralAllocatedInline % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN_EMPTY % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN_EMPTY <= maxLengthOfArrayLiteralAllocatedInline);
+static_assert(maxFastPathArrayLiteralLength % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN_EMPTY % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN_EMPTY <= maxFastPathArrayLiteralLength);
 static_assert(MarkedSpace::sizeClassToIndex(MarkedSpace::preciseCutoff) * MarkedSpace::sizeStep == MarkedSpace::preciseCutoff);
 static_assert(!IndexingHeader::offsetOfPublicLength() && IndexingHeader::offsetOfVectorLength() == 4);
 static_assert(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY == 5);
 inline constexpr uint64_t holeInDoubleArray = std::bit_cast<uint64_t>(PNaN);
 
-inline constexpr unsigned bitsOfPointerInArrayAllocationProfile = 48;
-inline constexpr unsigned bitsOfTypeInArrayAllocationProfile = 64 - bitsOfPointerInArrayAllocationProfile;
-inline constexpr unsigned shiftOfIndexingTypeInArrayAllocationProfile = bitsOfPointerInArrayAllocationProfile + 8;
-static_assert(sizeof(JSC::ArrayAllocationProfile) == sizeof(uint64_t) && CompactPointerTuple<JSArray*, uint16_t>::maxNumberOfBitsInPointer == bitsOfPointerInArrayAllocationProfile);
+inline constexpr unsigned arrayAllocationProfilePointerBits = 48;
+inline constexpr unsigned arrayAllocationProfileTypeBits = 64 - arrayAllocationProfilePointerBits;
+inline constexpr unsigned arrayAllocationProfileIndexingTypeShift = arrayAllocationProfilePointerBits + 8;
+static_assert(sizeof(JSC::ArrayAllocationProfile) == sizeof(uint64_t) && CompactPointerTuple<JSArray*, uint16_t>::maxNumberOfBitsInPointer == arrayAllocationProfilePointerBits);
 static_assert(ArrayWithUndecided < ArrayWithContiguous && ArrayWithInt32 < ArrayWithContiguous && ArrayWithDouble < ArrayWithContiguous && ArrayWithArrayStorage > ArrayWithContiguous && CopyOnWrite > ArrayWithContiguous);
 
 namespace Interpreter {
@@ -103,9 +103,9 @@ void didGetById(JSGlobalObject*, JSObject* base, Structure* structureBefore, con
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;
 inline constexpr PropertyOffset extraPropertyInSiteCache = 1 << 29;
 inline constexpr uint32_t maxHiddenWordOffsetInSiteCache = (extraPropertyInSiteCache >> 16) - 1;
-std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject*, Structure* before, const Identifier&);
+std::optional<PropertyOffset> fieldOffsetForSiteCache(JSGlobalObject*, Structure* before, const Identifier&);
 
-bool sharesStructureWithClassesThatLackTheirMembers(VM&, JSCell* closure);
+bool isClassWithLazyMembers(VM&, JSCell* closure);
 
 struct FusedClosureVariableRead {
     static constexpr unsigned typeBits = 8;
@@ -169,18 +169,18 @@ private:
 void didLinkNewObject(ObjectAllocationProfile&);
 void planObjectLiteral(JSGlobalObject*, CodeBlock*, const JSInstruction*, ObjectAllocationProfile&);
 
-struct PlacesInSymbolTable {
+struct SymbolTableOffsets {
     static constexpr ptrdiff_t offsetOfMaxScopeOffset = OBJECT_OFFSETOF(SymbolTable, m_lock) - sizeof(ScopeOffset);
     static constexpr ptrdiff_t offsetOfSingleton = sizeof(SymbolTable) - 2 * sizeof(void*);
     static constexpr uintptr_t invalidatedSingleton = IsInvalidated << 1 | 1;
 };
-void checkPlacesInSymbolTable(SymbolTable&);
+void checkSymbolTableOffsets(SymbolTable&);
 
 inline constexpr unsigned customAccessorRecordShift = 5;
 static_assert(sizeof(CustomAccessorRecord) == 1u << customAccessorRecordShift);
 JSValue callCustomGetter(const CustomAccessorRecord&, JSCell* base, const Identifier&);
 
-inline constexpr uint8_t flagsOfInheritedValuesLeftToSlowPath = Slot::inheritsGetter | Slot::emptySlotMayBeUndefined;
+inline constexpr uint8_t inheritedValueSlowPathFlags = Slot::inheritsGetter | Slot::emptySlotMayBeUndefined;
 
 inline constexpr ptrdiff_t offsetOfPromiseAllocator = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].allocator);
 inline constexpr ptrdiff_t offsetOfPromiseHeader = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].header);

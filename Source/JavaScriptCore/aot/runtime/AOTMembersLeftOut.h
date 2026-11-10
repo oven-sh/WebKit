@@ -21,30 +21,30 @@ class VM;
 
 namespace AOT {
 
-void noteErrorOfCodeLeftOut(JSGlobalObject*, JSObject* error);
-JS_EXPORT_PRIVATE JSValue takeStandInForMemberLeftOut(JSGlobalObject*, const String& nameOfMember);
-struct FunctionLeftOut {
+void noteOmittedCodeError(JSGlobalObject*, JSObject* error);
+JS_EXPORT_PRIVATE JSValue takeOmittedMemberPlaceholder(JSGlobalObject*, const String& nameOfMember);
+struct OmittedFunction {
     ASCIILiteral name;
     unsigned length { 0 };
     bool canBeConstructed { false };
     bool hasPrototype { true };
 };
-JS_EXPORT_PRIVATE JSValue takeStandInForFunctionLeftOut(JSGlobalObject*, const FunctionLeftOut&, JSObject* answeredBy);
-bool standsInForFunction(JSCell*);
+JS_EXPORT_PRIVATE JSValue takeOmittedFunctionPlaceholder(JSGlobalObject*, const OmittedFunction&, JSObject* answeredBy);
+bool isOmittedFunctionPlaceholder(JSCell*);
 JS_EXPORT_PRIVATE bool isPlaceholderForOmittedBuiltin(JSCell*);
-class MakingOfMemberForLook {
+class MemberReificationScope {
 public:
-    explicit MakingOfMemberForLook(bool lookOnlyTests);
-    ~MakingOfMemberForLook();
+    explicit MemberReificationScope(bool isPresenceCheck);
+    ~MemberReificationScope();
 
 private:
     bool m_previous;
     bool m_previousForRead;
 };
-bool isMakingMemberForLookThatOnlyTests();
-void explainErrorBehindMemberLeftOut(JSGlobalObject*, JSObject* error, JSValue base);
-void forgetErrorOfCodeLeftOut(VM&);
-bool isAnythingNotedOfMembersLeftOut(const VM*);
+bool isReifyingForPresenceCheck();
+void explainOmittedMemberError(JSGlobalObject*, JSObject* error, JSValue base);
+void clearOmittedCodeError(VM&);
+bool hasOmittedMemberNotes(const VM*);
 
 } } // namespace JSC::AOT
 

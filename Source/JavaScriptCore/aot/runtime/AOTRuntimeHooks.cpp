@@ -32,12 +32,12 @@ void willInitializeRealm(JSGlobalObject* realm)
         reserveInstance(realm);
 }
 
-String messageOfNameRefusedOnBuiltinFunction(PropertyName name)
+String lockedBuiltinPropertyErrorMessage(PropertyName name)
 {
     return assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid());
 }
 
-String messageOfPrototypeRefusedOnBuiltinFunction()
+String lockedBuiltinPrototypeErrorMessage()
 {
     return prototypeChangeOfLockedBuiltinMessage("a built-in function"_s);
 }
@@ -47,14 +47,14 @@ namespace {
 class RefusalsOfHostFunctions final : public ImmutablePropertyNames::OutsideNames {
 public:
     bool contains(UniquedStringImpl*) const final { return false; }
-    String storeErrorMessage(UniquedStringImpl* uid) const final { return messageOfNameRefusedOnBuiltinFunction(uid); }
-    String setPrototypeErrorMessage() const final { return messageOfPrototypeRefusedOnBuiltinFunction(); }
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return lockedBuiltinPropertyErrorMessage(uid); }
+    String setPrototypeErrorMessage() const final { return lockedBuiltinPrototypeErrorMessage(); }
     bool throwsInSloppyMode() const final { return true; }
 };
 
 } // anonymous namespace
 
-Structure* structureOfHostFunctions(JSGlobalObject* realm, Structure* structure)
+Structure* structureForHostFunctions(JSGlobalObject* realm, Structure* structure)
 {
     if (!locksBuiltins(realm))
         return structure;
@@ -66,12 +66,12 @@ Structure* structureOfHostFunctions(JSGlobalObject* realm, Structure* structure)
     return Structure::makeListedPropertiesImmutableTransition(vm, structure, closed.get());
 }
 
-bool refusesNameOnNativeConstructor(JSGlobalObject* realm, PropertyName name)
+bool rejectsNativeConstructorProperty(JSGlobalObject* realm, PropertyName name)
 {
     return !name.isPrivateName() && Closure::isNameThatBuiltinFunctionsRefuse(realm->vm(), name.uid()) && locksBuiltins(realm);
 }
 
-void stopBecauseRealmHasABadTime()
+void crashOnHavingABadTime()
 {
     dataLogLn("AOT: the realm of a compiled program is having a bad time: an indexed accessor or a read-only index has come to lie above its arrays, which its locked built-ins refuse. Compiled code would go on making arrays that pass it by.");
     CRASH();
@@ -164,7 +164,7 @@ void installDeferredWatchpoints(JSGlobalObject* realm)
 
 void didCreateRealm(JSGlobalObject* realm)
 {
-    refuseEvaluationUnlessAdmitted(realm);
+    rejectEvaluationUnlessAllowed(realm);
     Instance* instance = Instance::of(realm);
     if (!instance || (!BuiltinBindings::hasHost() && !hasBuiltinFunction(realm->vm(), static_cast<uint32_t>(BuiltinCodeIndex::generatorPrototypeNextCode))))
         installGeneratorMethodsForCompiledGenerators(realm);
@@ -187,8 +187,8 @@ void didChangeMicrotaskQueueing(VM& vm)
         if (instance->awaitMustSuspend)
             takeAwayRightToContinue(*instance);
     }
-    if (vm.hostObservesMicrotaskBoundaries() && vm.aotState().modulesWhoseFilesRunAheadOfLoader) [[unlikely]]
-        runFilesThatWaitInLoader(vm);
+    if (vm.hostObservesMicrotaskBoundaries() && vm.aotState().modulesWithEagerLoads) [[unlikely]]
+        transferEagerLoadsToLoader(vm);
 }
 
 CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)

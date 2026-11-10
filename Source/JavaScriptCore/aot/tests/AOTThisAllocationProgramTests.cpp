@@ -589,7 +589,7 @@ static const LayoutData& classNamed(LoadedProgram& program, ASCIILiteral name)
 {
     const ProgramTables& tables = program.state().tables;
     for (uint32_t shape = 1; shape < tables.firstEnvironmentShape; ++shape) {
-        if (tables.hasLayoutForShape(shape) && Image::current()->text().equals(StringID(tables.layoutForShape(shape).name), name))
+        if (tables.hasLayoutForShape(shape) && isNamedInTextOfLoadedProgram(tables.layoutForShape(shape), name))
             return tables.layoutForShape(shape);
     }
     failNativeTest(__FILE__, __LINE__, name.characters());

@@ -390,7 +390,11 @@ static bool fusionCanRunAheadOfTrap(const Operation* between)
 {
     if (fusionIsLoad(between->opcode()))
         return !between->traps() && fusionChildrenOf(between)[0]->hasNoPosition();
-    return between->opcode() != Patch && !between->mustStay();
+    if (between->opcode() == Patch) {
+        const PatchOperation* patch = between->as<PatchOperation>();
+        return patch->effects.maySink() && !patch->isSuspension() && std::ranges::all_of(patch->children(), [](const Operation* operand) { return operand->type().isFloat(); });
+    }
+    return !between->mustStay();
 }
 
 static ALWAYS_INLINE bool comparisonMayReadSumOfExtendedWords(const Operation* comparison)

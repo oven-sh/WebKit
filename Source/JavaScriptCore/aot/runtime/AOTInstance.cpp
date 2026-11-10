@@ -488,7 +488,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     VM& vm = realm->vm();
     RELEASE_ASSERT(vm.hasCompiledCode());
     if (const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost)
-        vm.aotState().image->setOpenCompressedText(host->openCompressedText);
+        vm.aotState().image->setDecompressText(host->decompressText);
     takeFaultsOfThisThreadOnAnotherStack();
     DeferGCForAWhile deferGC(vm);
     destroyDeadInstances(vm);
@@ -1039,7 +1039,7 @@ void VMState::countWithoutImage(VM& vm)
 void VMState::releaseImage(VM& vm)
 {
     counts = nullptr;
-    forgetErrorOfCodeLeftOut(vm);
+    clearOmittedCodeError(vm);
     if (!hasCompiledCode)
         return;
     ASSERT(vm.heap.isShuttingDown());
@@ -1601,7 +1601,7 @@ const ClassInfo ModuleEnvironment::s_info = { "JSModuleEnvironment"_s, nullptr, 
 
 } // anonymous namespace
 
-bool HeapHooks::standsForModuleInHeapSnapshots(JSCell* cell)
+bool HeapHooks::representsModuleInHeapSnapshot(JSCell* cell)
 {
     return cell->classInfo() == ModuleEnvironment::info();
 }

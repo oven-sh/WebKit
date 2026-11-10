@@ -27,10 +27,10 @@ constexpr bool isConstructorThatIsNewTarget(uint32_t rememberedConstructor) { re
 
 namespace Interpreter {
 
-inline constexpr uint8_t highBitsOfConstructorThatOnlyReturns = constructorIsNewTargetAndOnlyReturns >> 16;
+inline constexpr uint8_t trivialConstructorHighBits = constructorIsNewTargetAndOnlyReturns >> 16;
 inline constexpr size_t sizeOfDefaultFinalObject = sizeof(JSObjectWithButterfly) + JSFinalObject::defaultInlineCapacity * sizeof(EncodedJSValue);
 static_assert(JSFinalObject::defaultInlineCapacity == 6, "llint_aot_op_construct clears them one by one");
-inline constexpr ptrdiff_t offsetOfAllocatorOfDefaultFinalObject = OBJECT_OFFSETOF(VM, heap) + OBJECT_OFFSETOF(Heap, cellSpace) + CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeOfDefaultFinalObject) * sizeof(Allocator);
+inline constexpr ptrdiff_t offsetOfDefaultFinalObjectAllocator = OBJECT_OFFSETOF(VM, heap) + OBJECT_OFFSETOF(Heap, cellSpace) + CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeOfDefaultFinalObject) * sizeof(Allocator);
 
 } // namespace Interpreter
 

@@ -477,7 +477,7 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
             return false;
         if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeCodePtrTag(exit.returnPC))))
             return false;
-        if (void* taker = vm.aotState().stackPointerOfExceptionTaker; taker && taker < static_cast<void*>(exit.callFrame))
+        if (void* taker = vm.aotState().exceptionCatcherStackPointer; taker && taker < static_cast<void*>(exit.callFrame))
             return false;
         if (findHandlerInRun<HandlerSearch::NearestThatEndsThrow>(vm, exit.callFrame, stackPointerOfCaller(exit.callFrame), exit.callFrame->callerFrameOrEntryFrame(), exit.entryFrame))
             return true;

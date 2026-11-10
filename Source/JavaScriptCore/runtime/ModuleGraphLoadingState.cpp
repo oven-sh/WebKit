@@ -71,7 +71,7 @@ void ModuleGraphLoadingState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_asyncContext);
 #endif
 #if ENABLE(AOT)
-    visitor.append(thisObject->m_wholeLoad);
+    visitor.append(thisObject->m_rootState);
 #endif
     Locker locker { thisObject->cellLock() };
     visitor.append(thisObject->m_visited.begin(), thisObject->m_visited.end());

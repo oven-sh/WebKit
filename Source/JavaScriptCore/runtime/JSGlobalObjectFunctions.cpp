@@ -872,7 +872,7 @@ static CodeBlock* getCallerCodeBlock(CallFrame* callFrame)
 }
 
 #if ENABLE(AOT)
-// False, with nothing copied, where listing the own properties of the compiled object may run code, or one of them is named __proto__.
+// Returns false without copying anything if listing the compiled object's own properties may run code, or if one of them is named __proto__.
 static bool tryCopyDataPropertiesOfCompiledObject(VM& vm, JSObject* target, JSObject* source, const Invocable<bool(PropertyName)> auto& isExcluded)
 {
     Vector<UniquedStringImpl*, 8> properties;

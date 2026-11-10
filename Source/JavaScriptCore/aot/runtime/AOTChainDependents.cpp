@@ -300,7 +300,7 @@ static State* stateOrNull(Structure* structure)
     return instance ? instance->state : nullptr;
 }
 
-bool RuntimeHooks::becomesDictionaryByAddition(VM& vm, JSObject* object, Structure* structure, UniquedStringImpl* uid)
+bool RuntimeHooks::shouldUseDictionaryForAddition(VM& vm, JSObject* object, Structure* structure, UniquedStringImpl* uid)
 {
     JSType type = structure->typeInfo().type();
     if (type != FinalObjectType && type != CompiledClosureType && type != SlimClosureWithPropertiesType)
@@ -329,7 +329,7 @@ void RuntimeHooks::finishFillingObjects(VM& vm)
     }
 }
 
-void RuntimeHooks::didMakeStructureForAddition(VM&, Structure* made)
+void RuntimeHooks::didCreateAdditionTransition(VM&, Structure* made)
 {
     State* state = stateOrNull(made);
     if (state && state->firstAdditions)

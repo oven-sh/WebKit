@@ -215,7 +215,14 @@ static std::optional<LinkedFunctions> linkCodeOfCompileThreads(std::span<OutputO
         return WTF::move(outputs[index].blocks);
     });
 
-    return LinkedFunctions(WTF::move(linked), describeFusedCallEntries(fusedCallEntries, inputs, loops));
+    Vector<FusedCallEntry> described = describeFusedCallEntries(fusedCallEntries, inputs, loops);
+    if (AOT::hasFlag(build.options().lies, Wire::TestingLie::FusedCallEntriesAreListedBackwards))
+        described.reverse();
+    if (!std::ranges::is_sorted(described, { }, &FusedCallEntry::unitIndex) || !std::ranges::is_sorted(described, { }, &FusedCallEntry::place)) {
+        build.diagnostics().add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .detail = "TableNotSorted: fusedCallEntries"_s });
+        return std::nullopt;
+    }
+    return LinkedFunctions(WTF::move(linked), WTF::move(described));
 }
 
 static Vector<Typed::WalkNotes> takeNotesOfCompileThreads(std::span<OutputOfCompileThread> outputs, const ParallelLoops& loops)

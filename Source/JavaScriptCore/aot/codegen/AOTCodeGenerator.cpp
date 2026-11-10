@@ -1396,7 +1396,12 @@ bool CodeGenerator::leavesKindToTurnsLaidOut(BlockID block, ValueID id, const Op
         ++next;
     if (next == end)
         return false;
-    std::optional<CountedLoop> loop = findCountedLoopAt(next);
+    if (m_positionOfHeadLastAskedForKinds != next || m_positionLastAskedForKindsFrom != m_positionInOrder) {
+        m_positionOfHeadLastAskedForKinds = next;
+        m_positionLastAskedForKindsFrom = m_positionInOrder;
+        m_loopLastAskedForKinds = findCountedLoopAt(next);
+    }
+    const std::optional<CountedLoop>& loop = m_loopLastAskedForKinds;
     if (!loop)
         return false;
     auto told = std::ranges::find(loop->kindsToldToReads, id, &KindToldToReads::holdsDoubles);

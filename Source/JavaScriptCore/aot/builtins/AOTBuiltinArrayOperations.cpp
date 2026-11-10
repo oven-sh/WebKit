@@ -433,7 +433,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshift, EncodedJSValue, (Instance* in
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayUnshift);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayUnshift);
-    if (shouldUseSlowPut(array->indexingType()) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
+    if (mayRefuseOrRunOtherCode(array) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
         OPERATION_RETURN(scope, encodedJSValue());
     uint64_t length = array->length();
     unshift(globalObject, array, 0, 0, 1, length);
@@ -456,7 +456,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayIterator, JSCell*, (Instan
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayPopOfAnyList, EncodedJSValue, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayPopOfAnyList);
-    OPERATION_RETURN(scope, JSValue::encode(cellArgument<JSArray>(cell, Entry::operationAOTArrayPopOfAnyList)->pop(globalObject)));
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayPopOfAnyList);
+    unsigned length = array->length();
+    bool popsByItself = length ? array->canGetIndexQuickly(length - 1) : hasIndexedProperties(array->indexingType()) && !hasAnyArrayStorage(array->indexingType());
+    if (!popsByItself || mayRefuseOrRunOtherCode(array)) [[unlikely]]
+        OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypePop, array)));
+    OPERATION_RETURN(scope, JSValue::encode(array->pop(globalObject)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayShiftOfAnyList, EncodedJSValue, (Instance* instance, JSCell* cell))
@@ -472,7 +477,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshiftOfAnyList, EncodedJSValue, (Ins
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayUnshiftOfAnyList);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayUnshiftOfAnyList);
-    if (shouldUseSlowPut(array->indexingType()) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
+    if (mayRefuseOrRunOtherCode(array) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
         OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeUnshift, array, JSValue::decode(item))));
     uint64_t length = array->length();
     unshift(globalObject, array, 0, 0, 1, length);

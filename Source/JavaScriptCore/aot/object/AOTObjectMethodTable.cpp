@@ -1040,7 +1040,7 @@ static bool hasNeitherTrapOfDefinitions(VM& vm, State& state, JSObject* handler)
     return true;
 }
 
-JSObject* RuntimeHooks::targetThatProxyDefinesOn(VM& vm, JSValue receiver)
+JSObject* RuntimeHooks::proxyDefinePropertyTarget(VM& vm, JSValue receiver)
 {
     if (!receiver.isCell() || receiver.asCell()->type() != ProxyObjectType)
         return nullptr;
@@ -1073,7 +1073,7 @@ JSObject* RuntimeHooks::targetThatProxyDefinesOn(VM& vm, JSValue receiver)
 
 static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
 {
-    return RuntimeHooks::targetThatProxyDefinesOn(vm, receiver) == target;
+    return RuntimeHooks::proxyDefinePropertyTarget(vm, receiver) == target;
 }
 
 bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)

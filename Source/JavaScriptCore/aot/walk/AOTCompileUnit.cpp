@@ -64,10 +64,16 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .makesCallsMadeInFrontAgainInTurns = AOT::hasFlag(options.testing, Wire::TestingSwitch::CallsMadeInFrontOfTurnsAreMadeAgainInThem),
         .takesEveryBuiltinInLineToAnswerOutOfItsOperands = AOT::hasFlag(options.testing, Wire::TestingSwitch::EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands),
         .takesNumbersStoredIntoListsOfDoublesToBeNoNaN = AOT::hasFlag(options.testing, Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN),
+        .takesRoomsAskedInFrontForGiven = AOT::hasFlag(options.lies, Wire::TestingLie::RoomsAskedInFrontAreTakenForGiven),
+        .takesLengthsAskedInTurnsForGiven = AOT::hasFlag(options.lies, Wire::TestingLie::LengthsAskedInTurnsAreTakenForGiven),
+        .takesStoresOfLengthsToEndNothing = AOT::hasFlag(options.lies, Wire::TestingLie::StoresOfLengthsAreTakenToEndNothing),
+        .takesReadsOfConstructorsPrototypesToEndNoGuard = AOT::hasFlag(options.lies, Wire::TestingLie::ReadsOfConstructorsPrototypesAreTakenToEndNoGuard),
+        .takesKeysOfForInToBeAsStepFoundThem = AOT::hasFlag(options.lies, Wire::TestingLie::KeysOfForInAreTakenToBeAsTheStepFoundThem),
         .takesOneRowToSpeakForAll = AOT::hasFlag(options.testing, Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake),
         .takesNothingToBeDoneToFreshLists = AOT::hasFlag(options.testing, Wire::TestingSwitch::NothingIsDoneToFreshLists),
         .typedTurnsPassStoresIntoListsOver = AOT::hasFlag(options.lies, Wire::TestingLie::TypedTurnsPassStoresIntoListsOver),
         .takesBoundFunctionsToBindOneMore = AOT::hasFlag(options.lies, Wire::TestingLie::BoundFunctionsAreTakenToBindOneMore),
+        .handsGroundsOfPositionsBelowSumsOverUnproven = AOT::hasFlag(options.lies, Wire::TestingLie::GroundsOfPositionsBelowSumsAreHandedOverUnproven),
         .sweepTurnsBranchThatDecidesIntoJump = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepTurnsBranchThatDecidesIntoJump),
         .sweepLetsGoEdgeThatIsTaken = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepLetsGoEdgeThatIsTaken),
         .takesCalleesToKeepNothing = AOT::hasFlag(options.testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded),
@@ -97,9 +103,30 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .takesValuesThatComeLaterForOthersThanWhatIsMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere),
         .takesReceiversOfMethodsOfListsToBeMadeHere = AOT::hasFlag(options.lies, Wire::TestingLie::ReceiversOfMethodsOfListsAreTakenToBeMadeHere),
         .takesElementsBesideSumsToComeOffListsOfNumbers = AOT::hasFlag(options.lies, Wire::TestingLie::ElementsBesideSumsAreTakenToComeOffListsOfNumbers),
+        .shouldAssumeArithmeticUsers = AOT::hasFlag(options.lies, Wire::TestingLie::AssumeArithmeticElementUsers),
         .takesIterablesOfPatternsToStayAsMade = AOT::hasFlag(options.lies, Wire::TestingLie::IterablesOfPatternsAreTakenToStayAsMade),
+        .takesValuesThatPatternsTakeApartInTurnsForListsAsMade = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesThatPatternsTakeApartInTurnsAreTakenForListsAsMade),
+        .takesTurnsToHaveDoneNothingWherePatternsAreHeld = AOT::hasFlag(options.lies, Wire::TestingLie::TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld),
+        .letsMarkedObjectsPassTestsOfLinks = AOT::hasFlag(options.lies, Wire::TestingLie::MarkedObjectsPassTestsOfLinks),
+        .takesPartsOfPairsWhateverIsStepped = AOT::hasFlag(options.lies, Wire::TestingLie::PartsOfPairsAreTakenWhateverIsStepped),
+        .takesListsSteppedByMethodsToBeAsMade = AOT::hasFlag(options.lies, Wire::TestingLie::ListsSteppedByMethodsAreTakenToBeAsMade),
+        .takesKindsAskedInFrontForGiven = AOT::hasFlag(options.lies, Wire::TestingLie::KindsAskedInFrontAreTakenForGiven),
+        .takesVariablesReadInFrontOfLoopsToHoldWhatIsProven = AOT::hasFlag(options.lies, Wire::TestingLie::VariablesReadInFrontOfLoopsAreTakenToHoldWhatIsProven),
+        .takesSlotsReadInFrontOfLoopsToFollowTheirStores = AOT::hasFlag(options.lies, Wire::TestingLie::SlotsReadInFrontOfLoopsAreTakenToFollowTheirStores),
+        .takesWhatLoopsAskOfVariablesInFrontToHold = AOT::hasFlag(options.lies, Wire::TestingLie::WhatLoopsAskOfVariablesInFrontIsTakenToHold),
+        .leavesLastArmOutOfRowsOfShapeTests = AOT::hasFlag(options.lies, Wire::TestingLie::RowsOfShapeTestsLeaveOutTheirLastArm),
         .passesGuardOfNameOverAtCallsThroughSuper = AOT::hasFlag(options.lies, Wire::TestingLie::GuardOfNameIsPassedOverAtCallsThroughSuper),
+        .leavesLinksOfKinUnguarded = AOT::hasFlag(options.lies, Wire::TestingLie::LinksOfKinAreLeftUnguarded),
+        .leavesConditionsOfClassAskedForUnguarded = AOT::hasFlag(options.lies, Wire::TestingLie::ConditionsOfClassAskedForAreLeftUnguarded),
+        .asksNoStrangerAmongKinWhereItStands = AOT::hasFlag(options.lies, Wire::TestingLie::StrangersAmongKinAreNotAskedWhereTheyStand),
+        .asksNoObjectOfClassAskedForWhereItStands = AOT::hasFlag(options.lies, Wire::TestingLie::ObjectsOfClassAskedForAreNotAskedWhereTheyStand),
+        .takesValuesAskedForClassesToStandWhereTheyWereMade = AOT::hasFlag(options.lies, Wire::TestingLie::ValuesAskedForClassesAreTakenToStandWhereTheyWereMade),
+        .takesLayoutsAboveClassAskedForForStrangers = AOT::hasFlag(options.lies, Wire::TestingLie::LayoutsAboveClassAskedForAreTakenForStrangers),
         .passesGuardOfLinkOverAtCallsThroughSuper = AOT::hasFlag(options.lies, Wire::TestingLie::GuardOfLinkIsPassedOverAtCallsThroughSuper),
+        .loopsAreTakenToNameNothingFromInFront = AOT::hasFlag(options.lies, Wire::TestingLie::LoopsAreTakenToNameNothingFromInFront),
+        .objectsWrittenInLoopsAreTakenToBeOnlyForgotten = AOT::hasFlag(options.lies, Wire::TestingLie::ObjectsWrittenInLoopsAreTakenToBeOnlyForgotten),
+        .objectsNamedInLoopsAreTakenToBeOnlyForgotten = AOT::hasFlag(options.lies, Wire::TestingLie::ObjectsNamedInLoopsAreTakenToBeOnlyForgotten),
+        .takesWhatConditionsOfArmsInFrontOfLoopsSpeakOfToStandInFront = AOT::hasFlag(options.lies, Wire::TestingLie::WhatConditionsOfArmsInFrontOfLoopsSpeakOfIsTakenToStandInFront),
     };
 }
 
@@ -464,6 +491,16 @@ private:
         return asked;
     }
 
+    bool checksInFrontOfCallLetNothingPass(ValueID value, ValueID call) const
+    {
+        while (!isNeverType(typeThatChecksInFrontOfCallAskOf(value, call))) {
+            if (m_code.isConstant(value) || !conversionsOfForm.contains(m_code.at(value).opcode))
+                return false;
+            value = m_code.at(value).operand(0);
+        }
+        return true;
+    }
+
     TypeID typeThatTestsAndChecksLeaveOf(ValueID value, ValueID call) const
     {
         TypeID left = typeThatChecksInFrontOfCallAskOf(value, call);
@@ -549,7 +586,7 @@ private:
                     continue;
             }
             if (isNeverType(left)) {
-                if (operand && isNeverType(typeThatChecksInFrontOfCallAskOf(operand, id)))
+                if (operand && checksInFrontOfCallLetNothingPass(operand, id))
                     continue;
                 return sentence(id, callee, place, operand, "and all that its unit has left there is never"_s, { });
             }
@@ -630,6 +667,125 @@ static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, TypeArena& 
     return { };
 }
 
+static bool operationOnVariableStandsInFrontOnEveryWay(const Code& code, ValueID read)
+{
+    const Operation& asked = code.at(read);
+    auto namesSamePlace = [&](const Operation& operation) {
+        if (asked.opcode == Opcode::GetModuleVariable)
+            return (operation.opcode == Opcode::GetModuleVariable || operation.opcode == Opcode::PutModuleVariable) && operation.variable() == asked.variable();
+        return (operation.opcode == Opcode::GetEnvironmentField || operation.opcode == Opcode::PutEnvironmentField) && operation.layout() == asked.layout() && operation.field() == asked.field() && operation.environmentOperand() == asked.environmentOperand();
+    };
+    auto isNamedAtOrInFrontOf = [&](ValueID last) {
+        for (ValueID id = last; id; id = code.at(id).previous) {
+            if (namesSamePlace(code.at(id)))
+                return true;
+        }
+        return false;
+    };
+    if (isNamedAtOrInFrontOf(code.at(read).previous))
+        return true;
+    BitVector seen;
+    Vector<BlockID, 16> blocksWithoutIt { code.blockOf(read) };
+    seen.add(code.blockOf(read).index());
+    while (!blocksWithoutIt.isEmpty()) {
+        BlockID block = blocksWithoutIt.takeLast();
+        if (code.at(block).isEntry)
+            return false;
+        code.allEdgesIntoBlockOfFinishedCode(block).forEach([&](const Edge& edge) {
+            if (seen.add(edge.from.index()) && !isNamedAtOrInFrontOf(code.lastOperationOf(edge.from)))
+                blocksWithoutIt.append(edge.from);
+        });
+    }
+    return true;
+}
+
+static bool linkLetsUnitRunOnlyBehindFirstStoreOf(const WalkInputs& inputs, FunctionID unit, VariableID variable)
+{
+    ModuleID module = inputs.program.at(variable).module;
+    if (inputs.program.at(unit).isModuleBody() || inputs.program.at(unit).module != module)
+        return false;
+    BitVector seen;
+    Vector<FunctionID, 16> toVisit { unit };
+    while (!toVisit.isEmpty()) {
+        FunctionID function = toVisit.takeLast();
+        if (inputs.program.at(function).module != module || inputs.program.at(function).isModuleBody() || seen.set(function.index()))
+            continue;
+        const ThinSummary& summary = inputs.facts.summaries().at(function);
+        for (const SummaryNode& node : summary.nodes) {
+            if (node.kind == SummaryNode::Kind::Closure)
+                toVisit.append(FunctionID(node.first));
+            if (node.kind != SummaryNode::Kind::Variable)
+                continue;
+            if (node.first == variable.index())
+                return true;
+            if (FunctionID declared = inputs.program.variables[node.first].function)
+                toVisit.append(declared);
+        }
+        for (const SummaryCall& call : summary.calls) {
+            if (call.callee == SummaryCall::Callee::Binding && call.function)
+                toVisit.append(call.function);
+        }
+    }
+    return false;
+}
+
+static bool allocationInCodeFillsSlot(const TypeArena& types, const Code& code, const Operation& read)
+{
+    const Operation& made = code.at(read.environmentOperand());
+    if (made.opcode != Opcode::NewObject || made.layout() != read.layout())
+        return false;
+    auto fields = made.fields();
+    std::span<const ValueID> values = made.valuesOperands();
+    for (size_t index = 0; index < fields.size() && index < values.size(); ++index) {
+        if (fields[index] == read.field())
+            return values[index] && !(types.at(code.at(values[index]).type).primitives & Primitive::Absent);
+    }
+    return false;
+}
+
+static String findReadLaidWithProofThatNothingVouchesFor(const WalkInputs& inputs, TypeArena& types, const Code& code)
+{
+    if (code.readsOfVariablesThatStandForNoValueOfText().empty())
+        return { };
+    BitVector valuesTakenByMoreThanChecks;
+    auto take = [&](std::span<const ValueID> operands) {
+        for (ValueID operand : operands) {
+            if (operand)
+                valuesTakenByMoreThanChecks.set(operand.index());
+        }
+    };
+    for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
+        if (const Operation& operation = code.at(ValueID(index)); operation.block() && operation.opcode != Opcode::CheckProof)
+            take(operation.operands());
+    }
+    for (uint32_t index = 0; index < code.numberOfBlocks(); ++index)
+        take(code.at(BlockID(index)).terminator.operands());
+    for (uint32_t index = 0; index < code.numberOfEdges(); ++index)
+        take(code.at(EdgeID(index)).arguments());
+    for (ValueID read : code.readsOfVariablesThatStandForNoValueOfText()) {
+        const Operation& operation = code.at(read);
+        if (!operation.block() || !valuesTakenByMoreThanChecks.get(read.index()))
+            continue;
+        if (operation.opcode == Opcode::GetEnvironmentField) {
+            TypeID written = inputs.program.at(operation.layout()).fields[operation.field()].declared.written();
+            if (operation.followsItsStore() && written && (inputs.program.at(written).primitives & Primitive::Absent) && !allocationInCodeFillsSlot(types, code, operation) && !operationOnVariableStandsInFrontOnEveryWay(code, read))
+                return makeString('f', code.unit().function.index(), " v"_s, read.index(), " (GetEnvironmentField) stands for no value of the text, says that it follows its store, and nothing vouches for it: no operation on the slot stands in front of it on every way"_s);
+            continue;
+        }
+        if (operation.opcode != Opcode::GetModuleVariable || operation.givesWordAsItLies())
+            continue;
+        if (operation.variable().index() >= inputs.program.variables.size() || inputs.plan.variable(operation.variable()).function)
+            continue;
+        if (operation.followsItsStore() && operationOnVariableStandsInFrontOnEveryWay(code, read))
+            continue;
+        if (linkLetsUnitRunOnlyBehindFirstStoreOf(inputs, code.unit().function, operation.variable()))
+            continue;
+        if (uint16_t word = Walker::wordThatVariableIsBornWith(inputs.program, operation.variable()); word && !(types.at(operation.type).primitives & word))
+            return makeString('f', code.unit().function.index(), " v"_s, read.index(), " (GetModuleVariable) stands for no value of the text, is typed by a proof that leaves out the word that its variable is born with, and nothing vouches for it: no operation on the variable stands in front of it on every way"_s);
+    }
+    return { };
+}
+
 static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const PositionTypes& positions, const PositionTypes& whatFunctionsHandBack, const Code& code, std::span<const Walker::ArrivalHeld> arrivalsHeld)
 {
     InternalErrorKind kindOfBrokenRule { InternalErrorKind::OpcodeNotInForm };
@@ -647,6 +803,10 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::OpcodeNotInForm;
         brokenRule = findStoreOfWhatCallerMayLend(inputs, types, code);
+    }
+    if (brokenRule.isNull()) {
+        kindOfBrokenRule = InternalErrorKind::TypeOutOfDate;
+        brokenRule = findReadLaidWithProofThatNothingVouchesFor(inputs, types, code);
     }
     if (brokenRule.isNull())
         return true;

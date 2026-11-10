@@ -83,7 +83,7 @@ static bool buildKeptForCompiledCode(JSGlobalObject* globalObject, uint32_t id)
     return instance && instance->state && instance->state->modules->table().valueOfRuntimeSourceStaysWithCompiledCode(id) && !instance->state->modules->table().recordOfRuntimeSourceIsHandedOutFrozen(id);
 }
 
-void willHandBuiltinModuleToNativeCode(JSGlobalObject* globalObject, uint32_t id)
+void willExposeBuiltinModuleToNativeCode(JSGlobalObject* globalObject, uint32_t id)
 {
     if (!buildKeptForCompiledCode(globalObject, id))
         return;
@@ -91,13 +91,13 @@ void willHandBuiltinModuleToNativeCode(JSGlobalObject* globalObject, uint32_t id
     CRASH();
 }
 
-void willHandExportOfBuiltinModuleToNativeCode(JSGlobalObject* globalObject, uint32_t id, ASCIILiteral exportName)
+void willExposeBuiltinExportToNativeCode(JSGlobalObject* globalObject, uint32_t id, ASCIILiteral exportName)
 {
     if (!buildKeptForCompiledCode(globalObject, id))
         return;
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(byteCast<uint8_t>(exportName.span()));
-    if (name && std::ranges::contains(table.at(RuntimeModuleID(id)).exportsReadByNativeCode, name))
+    if (name && std::ranges::contains(table.at(RuntimeModuleID(id)).exportsReadByNativeCode, name) && !std::ranges::contains(table.at(RuntimeModuleID(id)).exportsOfWhichMembersAloneAreKept, name))
         return;
     dataLogLn("AOT: native code reads the export ", exportName, " of the library module ", table.tokenOf(RuntimeModuleID(id)), ", and no row of the table of built-ins lists that read. The build has kept the module for compiled code alone: what it has proven of it no longer holds.");
     CRASH();
@@ -251,15 +251,15 @@ NativeExecutable* builtinExecutable(JSGlobalObject* globalObject, uint32_t id)
         ImplementationVisibility::Private, functionLengthOf(*function), initialNameProperty(*function));
 }
 
-bool refusesLibraryText()
+bool rejectsLibrarySource()
 {
     const Image* image = Image::current();
-    return image && !image->admitsLibraryText();
+    return image && !image->allowsLibrarySource();
 }
 
-bool refusesLibraryText(JSGlobalObject* realm)
+bool rejectsLibrarySource(JSGlobalObject* realm)
 {
-    return Instance::of(realm) && refusesLibraryText();
+    return Instance::of(realm) && rejectsLibrarySource();
 }
 
 static std::optional<uint32_t> builtinFunctionHolding(const FunctionExecutable& executable)
@@ -283,7 +283,7 @@ static Vector<uint32_t, 1>& functionsOfTestRunner() WTF_REQUIRES_LOCK(s_function
     return functions;
 }
 
-void admitFunctionOfTestRunner(VM& vm, FunctionExecutable& function)
+void allowTestRunnerFunction(VM& vm, FunctionExecutable& function)
 {
     if (!vm.hasCompiledCode())
         return;
@@ -300,23 +300,23 @@ static bool isOfTestRunner(ScriptExecutable& executable)
     return id && functionsOfTestRunner().contains(*id);
 }
 
-bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
+bool isInterpretationDisallowed(JSGlobalObject* realm, ScriptExecutable& executable)
 {
-    return refusesLibraryText(realm) && isTextOfLibrary(executable, Image::current()->isBuiltWithLibrary()) && !isOfTestRunner(executable);
+    return rejectsLibrarySource(realm) && isTextOfLibrary(executable, Image::current()->isBuiltWithLibrary()) && !isOfTestRunner(executable);
 }
 
-bool refusesToRun(JSFunction* function)
+bool isFunctionDisallowed(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
-    return executable && refusesToInterpret(function->realm(), *executable);
+    return executable && isInterpretationDisallowed(function->realm(), *executable);
 }
 
-bool isNeededByNothingThatRuns(JSFunction* function)
+bool isUnreachableLibraryFunction(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
     if (!executable || !Instance::of(function->realm()) || !isTextOfLibrary(*executable, false))
         return false;
-    return !Image::current()->admitsLibraryText();
+    return !Image::current()->allowsLibrarySource();
 }
 
 static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
@@ -369,11 +369,11 @@ void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject* realm)
 void throwBuiltinNotCompiled(JSGlobalObject* realm, const String& builtin)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests();
+    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isReifyingForPresenceCheck();
     if (isMissOfReach && !t_eventMayExposeGlobalObject)
         stopAtMissOfReach(builtin);
     JSObject* error = isMissOfReach ? createBuiltinBehindTargetOfEventNotCompiledError(realm, builtin) : createBuiltinNotCompiledError(realm, builtin);
-    noteErrorOfCodeLeftOut(realm, error);
+    noteOmittedCodeError(realm, error);
     throwException(realm, scope, error);
 }
 
@@ -386,7 +386,7 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
     Vector<String, 4> names = id ? globalBuiltinsThatRun(RuntimeFunctionID(*id)) : Vector<String, 4>();
     if (id && std::ranges::contains(table.moduleLoaderFunctions(), RuntimeFunctionID(*id)))
         names = { "The module loader"_str };
-    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests();
+    bool isMissOfReach = lacksOnlyWhatReachMissed(*Image::current()) && !isReifyingForPresenceCheck();
     String leftOut = !isMissOfReach ? String() : names.isEmpty() ? makeString("The built-in function '"_s, function.name().string(), '\'') : makeStringByJoining(names.span(), " or "_s);
     if (isMissOfReach && !t_eventMayExposeGlobalObject)
         stopAtMissOfReach(leftOut);
@@ -395,7 +395,7 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
         return table.at(builtin).kind == BuiltinKind::Accessor;
     });
     if (!isGetterOfAccessor)
-        noteErrorOfCodeLeftOut(realm, error);
+        noteOmittedCodeError(realm, error);
     throwException(realm, scope, error);
 }
 

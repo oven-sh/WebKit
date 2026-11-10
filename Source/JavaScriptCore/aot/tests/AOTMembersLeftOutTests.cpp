@@ -25,7 +25,7 @@ static void refuse(Realms& realms)
     JSGlobalObject* realm = realms.plain();
     auto scope = DECLARE_THROW_SCOPE(realms.vm());
     JSObject* error = createError(realm, String(sentence));
-    noteErrorOfCodeLeftOut(realm, error);
+    noteOmittedCodeError(realm, error);
     throwException(realm, scope, error);
 }
 
@@ -75,9 +75,9 @@ static void testStandInForFunctionKnowsNameAndLengthAlone()
 {
     Realms realms;
     refuse(realms);
-    layOnGlobalObject(realms, takeStandInForFunctionLeftOut(realms.plain(), { "made"_s, 2 }, realms.plain()));
+    layOnGlobalObject(realms, takeOmittedFunctionPlaceholder(realms.plain(), { "made"_s, 2 }, realms.plain()));
     checkWhatEveryStandInRefuses(realms);
-    AOT_TEST_CHECK(standsInForFunction(asObject(realms.evaluate(realms.plain(), "made"_s))));
+    AOT_TEST_CHECK(isOmittedFunctionPlaceholder(asObject(realms.evaluate(realms.plain(), "made"_s))));
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("made.name"), "made"_s));
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("made.length"), "2"_s));
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("'prototype' in made"), "false"_s));
@@ -88,7 +88,7 @@ static void testStandInForConstructorHasPrototype()
 {
     Realms realms;
     refuse(realms);
-    layOnGlobalObject(realms, takeStandInForFunctionLeftOut(realms.plain(), { "made"_s, 0, true }, realms.plain()));
+    layOnGlobalObject(realms, takeOmittedFunctionPlaceholder(realms.plain(), { "made"_s, 0, true }, realms.plain()));
     checkWhatEveryStandInRefuses(realms);
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("made.name"), "made"_s));
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("typeof made.prototype"), "object"_s));
@@ -99,7 +99,7 @@ static void testStandInForFunctionThatConstructsWithoutPrototype()
 {
     Realms realms;
     refuse(realms);
-    layOnGlobalObject(realms, takeStandInForFunctionLeftOut(realms.plain(), { "made"_s, 2, true, false }, realms.plain()));
+    layOnGlobalObject(realms, takeOmittedFunctionPlaceholder(realms.plain(), { "made"_s, 2, true, false }, realms.plain()));
     checkWhatEveryStandInRefuses(realms);
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("'prototype' in made"), "false"_s));
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("new made()"), sentence));
@@ -109,9 +109,9 @@ static void testStandInForValueRefusesReads()
 {
     Realms realms;
     refuse(realms);
-    layOnGlobalObject(realms, takeStandInForMemberLeftOut(realms.plain(), "made"_s));
+    layOnGlobalObject(realms, takeOmittedMemberPlaceholder(realms.plain(), "made"_s));
     checkWhatEveryStandInRefuses(realms);
-    AOT_TEST_CHECK(!standsInForFunction(asObject(realms.evaluate(realms.plain(), "made"_s))));
+    AOT_TEST_CHECK(!isOmittedFunctionPlaceholder(asObject(realms.evaluate(realms.plain(), "made"_s))));
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("made.name"), sentence));
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("made.length"), sentence));
     AOT_TEST_CHECK(says(realms, AOT_TEST_ATTEMPT("'prototype' in made"), sentence));
@@ -120,17 +120,17 @@ static void testStandInForValueRefusesReads()
 
 static void testInnermostMakingSaysWhetherLookOnlyTests()
 {
-    AOT_TEST_CHECK(!isMakingMemberForLookThatOnlyTests());
+    AOT_TEST_CHECK(!isReifyingForPresenceCheck());
     {
-        MakingOfMemberForLook test(true);
-        AOT_TEST_CHECK(isMakingMemberForLookThatOnlyTests());
+        MemberReificationScope test(true);
+        AOT_TEST_CHECK(isReifyingForPresenceCheck());
         {
-            MakingOfMemberForLook read(false);
-            AOT_TEST_CHECK(!isMakingMemberForLookThatOnlyTests());
+            MemberReificationScope read(false);
+            AOT_TEST_CHECK(!isReifyingForPresenceCheck());
         }
-        AOT_TEST_CHECK(isMakingMemberForLookThatOnlyTests());
+        AOT_TEST_CHECK(isReifyingForPresenceCheck());
     }
-    AOT_TEST_CHECK(!isMakingMemberForLookThatOnlyTests());
+    AOT_TEST_CHECK(!isReifyingForPresenceCheck());
 }
 
 static void testWhatIsNotedGoesWithItsVM()
@@ -140,10 +140,10 @@ static void testWhatIsNotedGoesWithItsVM()
         Realms realms;
         gone = &realms.vm();
         refuse(realms);
-        layOnGlobalObject(realms, takeStandInForMemberLeftOut(realms.plain(), "made"_s));
-        AOT_TEST_CHECK(isAnythingNotedOfMembersLeftOut(gone));
+        layOnGlobalObject(realms, takeOmittedMemberPlaceholder(realms.plain(), "made"_s));
+        AOT_TEST_CHECK(hasOmittedMemberNotes(gone));
     }
-    AOT_TEST_CHECK(!isAnythingNotedOfMembersLeftOut(gone));
+    AOT_TEST_CHECK(!hasOmittedMemberNotes(gone));
 }
 
 static void testOrdinaryFunctionStandsInForNothing()

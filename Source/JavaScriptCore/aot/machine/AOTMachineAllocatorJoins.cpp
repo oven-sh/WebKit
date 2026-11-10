@@ -1322,7 +1322,7 @@ void Allocator::enterBlock(Block* block)
     if (isInRareRegion() && m_rareRegion != placeOfBlock.rareRegion)
         leaveRareRegionBetweenBlocks(*this);
 
-    const bool mayBePlain = !block->isEntry() && !block->isLandingPad() && !m_allocation.hasFramedPart()
+    const bool mayBePlain = !block->isEntry() && !block->isLandingPad() && !headIsAheadOfFramedPart(block)
         && (m_operandsTakenBackAtHeads.isEmpty() || !m_operandsTakenBackAtHeads[block->index()].value);
     if (mayBePlain && placeOfBlock.predecessors.size() != 1) {
         const Snapshot& taken = m_heads[block->index()];
@@ -1914,11 +1914,10 @@ void Allocator::leaveBlock(Block* from)
                 return;
             if (edgeIsServedWithHead)
                 continue;
-        } else if (hasFramedPart) {
-            if (!end.isSet())
-                takeSnapshotBetweenBlocks(*this, end);
-        } else if (registersMatchEndOfBlock && registersHoldWhatHeadExpects(*this, target, head.bindings()))
+        } else if (registersMatchEndOfBlock && !(hasFramedPart && frameMayChangeOnEdge(from, target)) && registersHoldWhatHeadExpects(*this, target, head.bindings()))
             continue;
+        else if (hasFramedPart && !end.isSet())
+            takeSnapshotBetweenBlocks(*this, end);
 
         appendEdgeMoves(from, successorIndex, end);
         if (m_proc.failure()) [[unlikely]]
@@ -2340,7 +2339,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Allocator::appendEdgeMoves(Block* blockOfEdg
     ASSERT(m_heads[targetOfEdge->index()].isSet());
     ASSERT(!registersAreEndOfBlockOfEdge || (blockOfEdge == m_block && &endOfBlockOfEdge == &m_ends[blockOfEdge->index()] && !m_allocation.hasFramedPart()));
     const bool edgeBringsEverything = !registersAreEndOfBlockOfEdge && edgeBringsEverythingWhereHeadExpectsIt(m_valueFacts, targetOfEdge, m_heads[targetOfEdge->index()], endOfBlockOfEdge);
-    if (edgeBringsEverything && !m_allocation.hasFramedPart())
+    if (edgeBringsEverything && !frameMayChangeOnEdge(blockOfEdge, targetOfEdge))
         return;
 
     auto appendTheLongWay = [this]<bool registersAreEndOfFrom>(Block* from, unsigned successorIndex, const Snapshot& endOfFrom, Block* target, bool bringsEverything, ArenaVector<BlockSteps>& stepsOfBlocks, ArenaVector<Step>& allSteps) NEVER_INLINE {
