@@ -4100,7 +4100,7 @@ bool askWhetherHolderOfStoreInClosedArmOfLoopIsListOfItsOpcodes(Walker& walker, 
     walker.count(StatisticID::ArraysSpeculatedFromIndexedStores);
     walker.listArm(stretch, arms);
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 
@@ -5457,7 +5457,7 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     BlockID meetingBlock = walker.addBlock();
     walker.recordSpeculation();
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     auto endArm = [&](bool isClosedArm) {
         if (takesInBranch)
             walker.threadBranchOf(inputBlock);
@@ -5479,7 +5479,7 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
                     walker.noteTypeOfSumLeftInArm(sum);
             }
         }
-        Walker::ArmThatMeets arm { walker.currentBlock(), { } };
+        Walker::JoinArm arm { walker.currentBlock(), { } };
         for (ValueID mentioned : valuesMentionedLater) {
             Reference built = walker.referenceOf(mentioned);
             if (!built || !built.isRecord())
@@ -5576,7 +5576,7 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     }
 
     Vector<Reference, 8> met(valuesMentionedLater.size());
-    walker.letArmsMeet(arms.span(), meetingBlock, met.mutableSpan());
+    walker.joinArms(arms.span(), meetingBlock, met.mutableSpan());
     for (size_t position = 0; position < met.size() && !arms.isEmpty() && !walker.hasFailed(); ++position) {
         if (met[position] != arms.first().values[position]) {
             TypeID broughtByTypedRun = code.at(arms.last().values[position].id()).type;
@@ -6657,7 +6657,7 @@ static bool callEachFunctionOfProvenSetForGuesses(Walker& walker, const BodyValu
     else if (!walker.isUnreachable())
         walkArmWith(left);
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, built, meeting);
+        walker.joinArms(stretch, built, meeting);
     return true;
 }
 
@@ -6840,7 +6840,7 @@ static bool tellRowsApartWhereTheyMayBeToldApart(Walker& walker, const BodyValue
             walker.restartIteration();
     }
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, built, meeting);
+        walker.joinArms(stretch, built, meeting);
     return true;
 }
 
@@ -7156,7 +7156,7 @@ bool askRowOnceWhereStretchStoresIntoItOfItsOpcodes(Walker& walker, const BodyVa
         walker.listArm(stretch, built);
     }
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, built, meeting);
+        walker.joinArms(stretch, built, meeting);
     return true;
 }
 

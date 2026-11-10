@@ -388,7 +388,7 @@ void Encoder::encodeInteger(const Step& step)
     case SExt32: {
         ASSERT(operation->type() == Int64 && operation->child(0)->type() == Int32);
         GPRReg source = integerSourceInRegister(*this, step);
-        if (source != destination || !isFreeInRegisterOfChild(m_liveness, operation))
+        if (source != destination || !isFreeWhenCoalesced(m_liveness, operation))
             m_jit.signExtend32To64(source, destination);
         return;
     }
@@ -396,7 +396,7 @@ void Encoder::encodeInteger(const Step& step)
     case ZExt32: {
         ASSERT(operation->type() == Int64 && operation->child(0)->type() == Int32);
         GPRReg source = integerSourceInRegister(*this, step);
-        if (source != destination || !isFreeInRegisterOfChild(m_liveness, operation))
+        if (source != destination || !isFreeWhenCoalesced(m_liveness, operation))
             m_jit.zeroExtend32ToWord(source, destination);
         return;
     }

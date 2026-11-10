@@ -356,7 +356,7 @@ static void buildArmsAroundCallUnderPieceForStringPieces(Walker& walker, const C
     BlockID meeting = walker.addBlock();
     walker.branch(isAnswered, answering, calling);
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     walker.continueIn(answering);
     Reference answer = answerWithoutCall();
     if (walker.hasFailed())
@@ -364,7 +364,7 @@ static void buildArmsAroundCallUnderPieceForStringPieces(Walker& walker, const C
     if (!walker.isUnreachable()) {
         if (!answer)
             return walker.fail("a lookup under a piece of a text has no answer"_s);
-        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { answer } });
+        arms.append(Walker::JoinArm { walker.currentBlock(), { answer } });
     }
 
     walker.continueIn(calling);
@@ -379,11 +379,11 @@ static void buildArmsAroundCallUnderPieceForStringPieces(Walker& walker, const C
         if (walker.hasFailed())
             return;
         if (!walker.isUnreachable())
-            arms.append(Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceOf(written) } });
+            arms.append(Walker::JoinArm { walker.currentBlock(), { walker.referenceOf(written) } });
     }
 
     std::array<Reference, 1> met;
-    if (!arms.isEmpty() && walker.letArmsMeet(arms.span(), meeting, met))
+    if (!arms.isEmpty() && walker.joinArms(arms.span(), meeting, met))
         walker.bind(written, met[0]);
 }
 

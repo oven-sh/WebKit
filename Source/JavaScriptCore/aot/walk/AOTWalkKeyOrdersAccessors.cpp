@@ -271,7 +271,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
 
     walker.walkClosedArm(asWritten, stretch, arms);
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 
@@ -498,7 +498,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
 
     walker.walkClosedArm(asWritten, stretch, arms);
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 

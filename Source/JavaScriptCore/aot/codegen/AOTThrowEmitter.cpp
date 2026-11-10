@@ -65,8 +65,8 @@ Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation represe
         ThrowSite packed = site;
         packed.sourceOfFalseProof = std::nullopt;
         packed.calleeIsReadFromReceiver = true;
-        packed.expectedTypeOfFalseProof = 0;
-        packed.a = FalseProofWord::encode(static_cast<uint32_t>(*site.sourceOfFalseProof), site.expectedTypeOfFalseProof);
+        packed.expectedProofType = 0;
+        packed.a = FalseProofWord::encode(static_cast<uint32_t>(*site.sourceOfFalseProof), site.expectedProofType);
         return throwSiteWords(packed, representation, registerNumber);
     }
     bool hasWideA = site.aIsMention || (site.a > ThrowSiteWord::maxNarrowA && site.a != ThrowSiteWord::none);
@@ -160,7 +160,7 @@ static ThrowSite checkedThrowSite(const ThrowSite& site)
     std::optional<uint32_t> b = site.b == ThrowSiteWord::none ? std::nullopt : site.b;
     RELEASE_ASSERT(site.a == ThrowSiteWord::none ? !site.aIsMention : !(site.a >> 31));
     RELEASE_ASSERT(!(b.value_or(0) >> 31));
-    return { .kind = site.kind, .a = site.a, .b = b, .aIsMention = site.aIsMention, .bIsMention = b && site.bIsMention, .sourceOfFalseProof = site.sourceOfFalseProof, .expectedTypeOfFalseProof = site.expectedTypeOfFalseProof };
+    return { .kind = site.kind, .a = site.a, .b = b, .aIsMention = site.aIsMention, .bIsMention = b && site.bIsMention, .sourceOfFalseProof = site.sourceOfFalseProof, .expectedProofType = site.expectedProofType };
 }
 
 static ThrowSite throwSiteWithName(MentionList& mentions, ThrowKind kind, StringID name)
@@ -285,7 +285,7 @@ Machine::PatchGenerator* ThrowEmitter::generatorOfCheckedThrowSite(const Operati
 {
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
     RecordedSite position = calls.recordedSiteOf(context);
-    auto& generators = m_checkedThrowSites.add(computeHash(site.kind, site.a, site.b, site.sourceOfFalseProof, site.expectedTypeOfFalseProof, representation, position.origin.position, position.origin.inlineFrame), Vector<CheckedThrowSite, 1>()).iterator->value;
+    auto& generators = m_checkedThrowSites.add(computeHash(site.kind, site.a, site.b, site.sourceOfFalseProof, site.expectedProofType, representation, position.origin.position, position.origin.inlineFrame), Vector<CheckedThrowSite, 1>()).iterator->value;
     for (const CheckedThrowSite& known : generators) {
         if (known.site == site && known.representation == representation && known.position == position)
             return known.generator;
@@ -305,7 +305,7 @@ static ThrowSite siteOfFalseProof(ProofSource source, uint32_t expectedType)
 {
     static_assert(numberOfEnumerators<ProofSource> <= 1u << FalseProofWord::sourceBits);
     static_assert(FalseProofWord::encode(numberOfEnumerators<ProofSource>, FalseProofWord::everyBit) <= ThrowSiteWord::maxNarrowA);
-    return { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source, .expectedTypeOfFalseProof = expectedType };
+    return { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source, .expectedProofType = expectedType };
 }
 
 void ThrowEmitter::requireOrCrash(const OperationContext& context, Condition holds, std::optional<Boxed> found, ProofSource source, uint32_t expectedType)

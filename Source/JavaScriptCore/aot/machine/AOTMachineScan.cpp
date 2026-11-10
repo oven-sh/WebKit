@@ -251,7 +251,7 @@ static NEVER_INLINE bool scannedLeafWithoutPositionNeedsRegister(const Liveness&
         return false;
     if (isX86_64() && !childIndex && !liveness.isFused(user) && !leaf->type().isFloat()) {
         Opcode opcode = user->opcode();
-        if ((resultOverwritesFirstChild(opcode) && !isCommutative(opcode)) || isFreeInRegisterOfChild(liveness, user))
+        if ((resultOverwritesFirstChild(opcode) && !isCommutative(opcode)) || isFreeWhenCoalesced(liveness, user))
             return false;
     }
     return !standsInInstruction(liveness, user, childIndex, leaf);

@@ -1056,6 +1056,17 @@ String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedString
     return change == RejectedWrite::Deletion ? deletionFromLockedBuiltinMessage(vm, id, key, lockedIn) : assignmentToLockedBuiltinMessage(vm, id, key, lockedIn);
 }
 
+bool isReportedAsReadOnly(JSObject* lockedObject, UniquedStringImpl* key)
+{
+    BuiltinID holder = builtinOfLockedObject(instanceOfRealmOf(lockedObject), lockedObject);
+    if (!holder)
+        return false;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(lockedObject->vm(), key);
+    BuiltinID member = name ? table.findOwnMember(holder, name) : BuiltinID();
+    return member && table.has(BuiltinMark::IsReportedAsReadOnly, member);
+}
+
 bool rejectsOwnPropertyOnLibraryFunction(JSObject* object, UniquedStringImpl* key)
 {
     auto* closure = dynamicDowncast<Closure>(object);

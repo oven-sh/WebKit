@@ -89,7 +89,7 @@ struct ThrowSite {
     bool aIsMention { false };
     bool bIsMention { false };
     std::optional<ProofSource> sourceOfFalseProof { };
-    uint32_t expectedTypeOfFalseProof { 0 };
+    uint32_t expectedProofType { 0 };
 };
 
 struct TrapSite {

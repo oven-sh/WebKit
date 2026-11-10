@@ -45,6 +45,7 @@ struct WasmFunctionCode {
     bool dependsOnFlavor { false };
     bool isOptimized { false };
     unsigned threadedJumps { 0 };
+    unsigned firstStateTests { 0 };
 };
 
 struct WasmJSEntrypointCode {

@@ -23,7 +23,7 @@ bool Modules::keepsOriginalAfterRemoval(ModuleID mocked, ModuleID importer) cons
     if (m_importersLinkedToOriginal.isEmpty()) [[likely]]
         return false;
     auto got = m_importersLinkedToOriginal.find(static_cast<uint64_t>(mocked.index()) << 32 | importer.index());
-    if (got == m_importersLinkedToOriginal.end() || (got->value.isGivenItNoMore && !got->value.staysUnderKeyOfOriginal))
+    if (got == m_importersLinkedToOriginal.end() || (got->value.isGivenItNoMore && !got->value.staysUnderActualKey))
         return false;
     for (const ModuleRequestData& request : m_table.imports(importer)) {
         if (fileOf(moduleLoadedBy(request)) == mocked)
@@ -75,7 +75,7 @@ bool Modules::keepsOriginalAfterReplacement(ModuleID fileOrModule, ModuleID impo
     auto got = m_importersLinkedToOriginal.find(static_cast<uint64_t>(mocked.index()) << 32 | importer.index());
     if (got == m_importersLinkedToOriginal.end() || !got->value.isGivenItNoMore || !isMocked(mocked))
         return false;
-    if (got->value.timesMocked != m_timesMocked.get(mocked) && !got->value.staysUnderKeyOfOriginal)
+    if (got->value.timesMocked != m_timesMocked.get(mocked) && !got->value.staysUnderActualKey)
         return false;
     if (!m_originalsEvaluatedUnderMock.get(mocked.index()) && !m_mocksWithIntactOriginal.contains(mocked))
         return false;
@@ -91,7 +91,7 @@ bool Modules::isLinkedToOriginalOf(ModuleID fileOrModule, ModuleID importer) con
     auto got = m_importersLinkedToOriginal.find(static_cast<uint64_t>(mocked.index()) << 32 | importer.index());
     if (got == m_importersLinkedToOriginal.end() || !got->value.isGivenByHost)
         return false;
-    if (got->value.isGivenItNoMore && got->value.timesMocked != m_timesMocked.get(mocked) && !got->value.staysUnderKeyOfOriginal)
+    if (got->value.isGivenItNoMore && got->value.timesMocked != m_timesMocked.get(mocked) && !got->value.staysUnderActualKey)
         return false;
     auto anew = m_momentsLoadedAnew.find(importer);
     return anew == m_momentsLoadedAnew.end() || anew->value.moment <= got->value.moment;
@@ -103,7 +103,7 @@ bool Modules::isOfPackage(ModuleID module) const
     return path.contains("/node_modules/"_s) || path.contains("\\node_modules\\"_s);
 }
 
-bool Modules::wasLoadedUnderKeyOfOriginal(ModuleID fileOrModule) const
+bool Modules::wasLoadedUnderActualKey(ModuleID fileOrModule) const
 {
     ModuleID mocked = fileOf(fileOrModule);
     if (m_importersLinkedToOriginal.isEmpty() || (!isMocked(mocked) && !isOfPackage(mocked)))
@@ -115,12 +115,12 @@ bool Modules::wasLoadedUnderKeyOfOriginal(ModuleID fileOrModule) const
     return false;
 }
 
-void Modules::didLeaveOriginalUnderKeyOfOriginal(ModuleID fileOrModule)
+void Modules::keepUnderActualKey(ModuleID fileOrModule)
 {
     uint64_t mocked = fileOf(fileOrModule).index();
     for (auto& got : m_importersLinkedToOriginal) {
         if (got.key >> 32 == mocked)
-            got.value.staysUnderKeyOfOriginal = true;
+            got.value.staysUnderActualKey = true;
     }
 }
 
@@ -128,7 +128,7 @@ void Modules::noteWhereOriginalLiesBehindEndOfMock(ModuleID fileOrModule)
 {
     ModuleID module = moduleWithExportsOf(fileOrModule);
     if (m_originalsEvaluatedUnderMock.get(module.index()) && !m_originalsRetainedAfterMock.get(module.index())) [[unlikely]]
-        didLeaveOriginalUnderKeyOfOriginal(fileOrModule);
+        keepUnderActualKey(fileOrModule);
 }
 
 bool Modules::hasImporterBelowThatGetsOriginal(ModuleID root, ModuleID moduleOrFacade) const
@@ -192,9 +192,10 @@ void Modules::evaluatePastPendingMock(ModuleID facade)
     bool mockWaits = m_modulesWithPendingMock.get(file.index());
     m_modulesWithPendingMock.clear(file.index());
     evaluateCommonJS(file);
-    if (scope.exception()) [[unlikely]]
-        discardFailedEvaluation(file);
-    else
+    if (scope.exception()) [[unlikely]] {
+        if (!wasImportedWhileItRan(file))
+            discardFailedEvaluation(file);
+    } else
         captureExports(facade);
     m_modulesWithPendingMock.set(file.index(), mockWaits);
     willMock(file);
@@ -298,11 +299,11 @@ void Modules::captureEvaluatingRequirer(ModuleID requirer, ModuleID target)
     ModuleID facade = moduleWithExportsOf(requirer);
     if (data(requirer).kind != ModuleKind::CommonJs || facade == requirer || status(requirer) != ModuleStatus::Evaluating || !data(facade).capturesExports())
         return;
-    JSObject* mock = m_filesWhoseOriginalRuns.get(requirer.index()) ? activeMock(requirer) : nullptr;
+    JSObject* mock = m_originalsBeingEvaluated.get(requirer.index()) ? activeMock(requirer) : nullptr;
     LoadedModule& exporting = ensureLoaded(facade);
     if (mock ? exporting.earlyCapturedExports || exporting.earlyCapturedFields : didCaptureExports(facade))
         return;
-    if (!modulesThatTakeNamesOf(requirer).quickGet(target.index()))
+    if (!transitiveImportersOf(requirer).quickGet(target.index()))
         return;
     if (!mock)
         RELEASE_AND_RETURN(scope, captureExports(facade));
@@ -348,9 +349,9 @@ JSValue Modules::answerRequireWithOriginal(ModuleID file, ModuleID referrer)
     setStatus(file, ModuleStatus::Unlinked);
     setCommonJSExports(file, jsUndefined());
     ensureLoaded(file).requiredValue.set(*this, JSValue());
-    m_filesWhoseOriginalRuns.set(file.index());
+    m_originalsBeingEvaluated.set(file.index());
     evaluateCommonJS(file);
-    m_filesWhoseOriginalRuns.clear(file.index());
+    m_originalsBeingEvaluated.clear(file.index());
     bool hasThrown = !!scope.exception();
     JSValue original = commonJSExports(file);
     JSValue answerOfMock = ensureLoaded(file).answerOfMockWhileOriginalRuns.get();
@@ -515,7 +516,10 @@ void Modules::evaluateModuleItself(ModuleID module)
 JSValue Modules::requireOriginalUnderMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    if (ModuleRecord* record = displacedRecord(module); (record && record->status() == CyclicModuleRecord::Status::EvaluatingAsync) || (wasOriginalEvaluated(module) && status(module) == ModuleStatus::EvaluatingAsync) || m_rejectedRequires.containsIf([&](const RejectedRequire& pair) { return pair.required == module && pair.mocked != module && pair.call == pendingFactoryCallID(pair.mocked); })) [[unlikely]] {
+    size_t detached = m_detachedLoads.findIf([&](const DetachedLoad& left) { return left.isForOriginal && left.required == module && left.wait->status() == JSPromise::Status::Pending; });
+    if (ModuleRecord* record = displacedRecord(module); detached != notFound || (record && record->status() == CyclicModuleRecord::Status::EvaluatingAsync) || (wasOriginalEvaluated(module) && status(module) == ModuleStatus::EvaluatingAsync) || m_rejectedRequires.containsIf([&](const RejectedRequire& pair) { return pair.required == module && pair.mocked != module && pair.call == pendingFactoryCallID(pair.mocked); })) [[unlikely]] {
+        if (detached != notFound)
+            m_detachedLoads[detached].wait->performPromiseThen(*m_instance.vm, m_instance.globalObject, jsUndefined(), jsUndefined(), JSPromise::create(*m_instance.vm, m_instance.globalObject->promiseStructure()));
         throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, makeString(m_table.fullPath(module), "?actual"_s)));
         return { };
     }

@@ -236,11 +236,11 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
     BlockID meetingBlock = walker.addBlock();
     walker.recordSpeculation();
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     auto endArm = [&] {
         if (walker.isUnreachable())
             return;
-        Walker::ArmThatMeets arm { walker.currentBlock(), { } };
+        Walker::JoinArm arm { walker.currentBlock(), { } };
         for (ValueID mentioned : valuesMentionedLater) {
             Reference built = walker.referenceOf(mentioned);
             if (!built || !built.isRecord())
@@ -286,7 +286,7 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
             walker.bind(ValueID(first + place), Reference());
     }
     Vector<Reference, 8> met(valuesMentionedLater.size());
-    walker.letArmsMeet(arms.span(), meetingBlock, met.mutableSpan());
+    walker.joinArms(arms.span(), meetingBlock, met.mutableSpan());
     for (size_t position = 0; position < met.size() && !arms.isEmpty() && !walker.hasFailed(); ++position)
         walker.bind(valuesMentionedLater[position], met[position]);
     return true;

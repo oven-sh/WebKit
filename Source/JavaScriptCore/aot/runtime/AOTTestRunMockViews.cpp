@@ -525,7 +525,7 @@ void Modules::noteLoadedAnew(ModuleID module, ModuleID root)
     m_modulesLoadedAnewWhoseNamesAreOwed.set(module.index());
     m_modulesWithNoNamesOwedBelow.clearAll();
     if (data(module).hasDynamicStarExport())
-        letGoOfNamespaceMadeUnderMock(module);
+        discardNamespace(module);
 }
 
 void Modules::bringBackLinks(const LinksBeforeLoad& before, LinksOfLoad links)
@@ -836,7 +836,7 @@ bool Modules::tryRestorePreloadMock(ModuleID fileOrModule)
     if (standing != ofPreload) {
         ModuleID module = moduleWithExportsOf(fileOrModule);
         keepMockThatStoodInPlace(fileOrModule, module, standing, exportsLeftOutOf(module));
-        letGoOfNamespaceMadeUnderMock(module);
+        discardNamespace(module);
         setActiveMock(fileOrModule, ofPreload, held.preloadMockRequireValue.get());
     } else
         m_mocksOfPreloadThatCameBackBeforeAnyImport.set(fileOrModule.index(), !ensureLoaded(moduleWithExportsOf(fileOrModule)).wasImportedUnderActiveMock);
@@ -888,7 +888,7 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
             m_removedMocksInUse.find(fileOrModule)->value[*ended].isRetainedForLinkedImporters = isKeptByImportersOfThisTestFile;
         if (waiting && waiting->hadNamespace && (isKeptByImportersOfThisTestFile || waiting->moment == m_instance.vm->aotState().momentOfLoads)) {
             keepNamespacesMadeUnder(fileOrModule, module, earlier, ended);
-            letGoOfNamespaceMadeUnderMock(module);
+            discardNamespace(module);
         }
     }
     MomentMockWasLaid laid = waiting && !stoodInPlace ? *waiting : momentOfNow();
@@ -953,7 +953,7 @@ void Modules::retainMockForLinkedImporters(ModuleID fileOrModule)
     if (ended)
         m_removedMocksInUse.find(file)->value[*ended].isRetainedForLinkedImporters = true;
     keepNamespacesMadeUnder(file, module, mock, ended);
-    letGoOfNamespaceMadeUnderMock(module);
+    discardNamespace(module);
     laid->moment = momentOfNow().moment;
     moments.set(file, *laid);
 }

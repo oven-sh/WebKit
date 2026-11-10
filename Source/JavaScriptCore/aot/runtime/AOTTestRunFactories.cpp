@@ -46,7 +46,7 @@ bool Modules::wasLoadedWhenMockWasMade(ModuleID module)
 
 void Modules::forgetLoadThatFailed(ModuleID file)
 {
-    forgetFailedRunOfESModuleThatMayRunAgain(file);
+    resetPackageFailureIfNeeded(file);
     if (!data(file).runsAgainAfterThrow())
         return;
     bool hasFailed = false;
@@ -95,7 +95,7 @@ bool Modules::isImportedByGraphUnderEvaluation(ModuleID module, bool forIntactOr
         ModuleStatus current = status(each);
         return current == ModuleStatus::Unlinked || current == ModuleStatus::Linked;
     };
-    bool shouldCountFailedImporters = !m_modulesWhoseFailedRunWasForgotten.get(module.index());
+    bool shouldCountFailedImporters = !m_modulesWithResetFailure.get(module.index());
     BitVector isReached(m_table.size());
     Vector<ModuleID, 16> importers;
     for (unsigned index = 0; index < m_table.size(); ++index) {
@@ -327,6 +327,10 @@ JSPromise* Modules::pendingEvaluation(ModuleID module, bool hasAlreadyWaited)
 {
     if (!data(module).isESModuleOfProgram() || data(module).isFacade())
         return nullptr;
+    for (const DetachedLoad& left : m_detachedLoads) {
+        if (left.isForOriginal && left.required == module && left.wait->status() == JSPromise::Status::Pending)
+            return left.wait.get();
+    }
     if (status(module) == ModuleStatus::EvaluatingAsync) {
         JSPromise* evaluation = evaluate(module, std::nullopt, nullptr, nullptr, true);
         return evaluation && evaluation->status() == JSPromise::Status::Pending ? behindStepsOfImportThatWaitsFor(evaluation, module) : nullptr;
@@ -380,12 +384,23 @@ bool Modules::tryEvaluateESModuleBeforeMock(ModuleID module)
         return false;
     forgetMockThatWaits(module);
     RETURN_IF_EXCEPTION(scope, false);
+    SetForScope shouldContinuePastPendingFactories(m_shouldContinuePastPendingFactories, true);
     evaluateSynchronously(module, SynchronousEvaluationReason::Require);
     if (scope.exception()) [[unlikely]] {
         m_failedOriginals.set(module.index());
         return false;
     }
     return true;
+}
+
+bool Modules::startDetachedOriginalLoad(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!isStillBlockedOnFactories(module))
+        return false;
+    startDetachedLoad(module, true);
+    RETURN_IF_EXCEPTION(scope, false);
+    return m_detachedLoads.containsIf([&](const DetachedLoad& left) { return left.isForOriginal && left.required == module; });
 }
 
 JSObject* Modules::evaluateOriginalUnderMock(ModuleID module)
@@ -672,7 +687,7 @@ bool Modules::runPendingMockSlow(ModuleID module)
     bool ranAlready = m_modulesWithRunningFactory.set(module.index());
     SetForScope factoryCallImportTarget(m_factoryCallImportTarget, m_currentImportTarget);
     if (m_currentImportTarget && !m_importsAwaitingFirstStep.isEmpty()) [[unlikely]]
-        takeFirstStepsOfCallsOfImportThrough(m_numberOfCallsOfImportMadeUnderMocks);
+        advanceMockedImportsThrough(m_lastMockedImportSerial);
     bool factoryHasNotSettled = host().runMock(m_instance.globalObject, module);
     if (!ranAlready)
         m_modulesWithRunningFactory.clear(module.index());
@@ -687,8 +702,8 @@ bool Modules::runPendingMockSlow(ModuleID module)
         if ((!rootsAwaitingOriginal.isEmpty() || hasInFlightMockImport(module)) && !isCurrentRequireTarget(module) && !m_instance.vm->isTerminationException(exception))
             m_failuresOfFactories.append(FailureOfFactory { module, Strong<Unknown>(*m_instance.vm, exception->value()), momentOfNow().moment, WTF::move(rootsAwaitingOriginal) });
         if (m_importsMadeByOwnFactory.contains(module) && !m_instance.vm->isTerminationException(exception)) {
-            m_mockedModulesWithErrorKeptByLoader.set(module.index());
-            ensureLoaded(module).errorOfMockKeptByLoader.set(*this, exception->value());
+            m_modulesWithCachedMockError.set(module.index());
+            ensureLoaded(module).cachedMockError.set(*this, exception->value());
         }
         return false;
     }
@@ -734,7 +749,7 @@ void Modules::keepErrorOfLoad(ModuleID root, JSValue error, const ScopedLambda<b
             work.append(importer);
             if (m_modulesWithMockLoadError.set(importer.index()))
                 continue;
-            ensureLoaded(importer).errorKeptByLoader.set(*this, error);
+            ensureLoaded(importer).cachedLoadError.set(*this, error);
         }
     }
 }
@@ -786,15 +801,15 @@ void Modules::forgetImportFailedUnderMock(ModuleID root)
         ensureLoaded(root).errorOfImportThatFailedUnderMock.set(*this, JSValue());
 }
 
-void Modules::settleImportsThatFailedUnder(ModuleID mocked, FailedImports failedImports)
+void Modules::settleFailedImportsUnder(ModuleID mocked, FailedImports failedImports)
 {
-    if (failedImports == FailedImports::LoseEntryThatEvictsThem && (m_mocksRetriedAfterFailure.get(mocked.index()) || m_mocksRetriedAfterFailure.get(fileOf(mocked).index())))
+    if (failedImports == FailedImports::MakeUnevictable && (m_mocksRetriedAfterFailure.get(mocked.index()) || m_mocksRetriedAfterFailure.get(fileOf(mocked).index())))
         return;
-    if (failedImports == FailedImports::LoseEntryThatEvictsThem) {
-        dropErrorOfMockKeptByLoader(mocked);
+    if (failedImports == FailedImports::MakeUnevictable) {
+        clearCachedMockError(mocked);
         m_mocksWhoseEntryProgramDeleted.set(mocked.index());
-        for (ModuleID module : failedLoadsThatEndOfMockEvicts([&](ModuleID each) { return fileOf(each) == fileOf(mocked); }))
-            m_modulesWhoseFailedLoadNothingEvicts.set(module.index());
+        for (ModuleID module : evictableFailedLoads([&](ModuleID each) { return fileOf(each) == fileOf(mocked); }))
+            m_modulesWithUnevictableFailure.set(module.index());
     }
     if (m_rootsOfImportsThatFailedUnderMocks.isEmpty()) [[likely]]
         return;
@@ -812,8 +827,8 @@ void Modules::settleImportsThatFailedUnder(ModuleID mocked, FailedImports failed
             continue;
         m_rootsOfImportsThatFailedUnderMocks.clear(index);
         ensureLoaded(root).errorOfImportThatFailedUnderMock.set(*this, JSValue());
-        if (failedImports == FailedImports::LoseEntryThatEvictsThem) {
-            m_modulesWhoseFailedLoadNothingEvicts.merge(kept);
+        if (failedImports == FailedImports::MakeUnevictable) {
+            m_modulesWithUnevictableFailure.merge(kept);
             continue;
         }
         for (size_t module : kept)
@@ -823,30 +838,30 @@ void Modules::settleImportsThatFailedUnder(ModuleID mocked, FailedImports failed
 
 void Modules::didFailMockImportRoot(ModuleID mocked)
 {
-    bool hasImporterErrors = !failedLoadsThatEndOfMockEvicts([&](ModuleID each) { return fileOf(each) == fileOf(mocked); }).isEmpty();
-    if (hasImporterErrors || !m_mockedModulesWithErrorKeptByLoader.get(mocked.index()))
-        settleImportsThatFailedUnder(mocked, FailedImports::LoseEntryThatEvictsThem);
+    bool hasImporterErrors = !evictableFailedLoads([&](ModuleID each) { return fileOf(each) == fileOf(mocked); }).isEmpty();
+    if (hasImporterErrors || !m_modulesWithCachedMockError.get(mocked.index()))
+        settleFailedImportsUnder(mocked, FailedImports::MakeUnevictable);
 }
 
 void Modules::clearMockLoadError(ModuleID module)
 {
-    m_modulesWhoseFailedLoadNothingEvicts.clear(module.index());
+    m_modulesWithUnevictableFailure.clear(module.index());
     if (m_modulesWithMockLoadError.clear(module.index()))
-        ensureLoaded(module).errorKeptByLoader.set(*this, JSValue());
-    dropErrorOfMockKeptByLoader(module);
+        ensureLoaded(module).cachedLoadError.set(*this, JSValue());
+    clearCachedMockError(module);
 }
 
-void Modules::dropErrorOfMockKeptByLoader(ModuleID module)
+void Modules::clearCachedMockError(ModuleID module)
 {
-    if (m_mockedModulesWithErrorKeptByLoader.clear(module.index())) [[unlikely]]
-        ensureLoaded(module).errorOfMockKeptByLoader.set(*this, JSValue());
+    if (m_modulesWithCachedMockError.clear(module.index())) [[unlikely]]
+        ensureLoaded(module).cachedMockError.set(*this, JSValue());
 }
 
 void Modules::clearLoadErrorsForMock(ModuleID mocked)
 {
-    if (m_mockedModulesWithErrorKeptByLoader.get(mocked.index())) [[unlikely]]
+    if (m_modulesWithCachedMockError.get(mocked.index())) [[unlikely]]
         clearMockLoadErrors();
-    dropErrorOfMockKeptByLoader(mocked);
+    clearCachedMockError(mocked);
     dropErrorsOfLoadsThatCameTo([&](ModuleID module) { return module == mocked; });
     if (!m_loaderMayHoldLoadsThatFactoryEnded || m_modulesWithRunningFactory.get(mocked.index()) || isLoaderInMiddleOfGraph()) [[likely]]
         return;
@@ -885,11 +900,11 @@ void Modules::takeFailedLoadsOutOfLoader(const ScopedLambda<bool(ModuleID)>& isM
         loader()->removeEntry(key);
 }
 
-Vector<ModuleID, 8> Modules::failedLoadsThatEndOfMockEvicts(const ScopedLambda<bool(ModuleID)>& isMocked)
+Vector<ModuleID, 8> Modules::evictableFailedLoads(const ScopedLambda<bool(ModuleID)>& isMocked)
 {
     Vector<ModuleID, 8> above;
     for (size_t kept : m_modulesWithMockLoadError) {
-        if (m_modulesWhoseFailedLoadNothingEvicts.get(kept))
+        if (m_modulesWithUnevictableFailure.get(kept))
             continue;
         BitVector seen(m_table.size());
         Vector<ModuleID, 16> work { ModuleID(kept) };
@@ -910,7 +925,7 @@ Vector<ModuleID, 8> Modules::failedLoadsThatEndOfMockEvicts(const ScopedLambda<b
 
 void Modules::dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& isMocked)
 {
-    for (ModuleID module : failedLoadsThatEndOfMockEvicts(isMocked))
+    for (ModuleID module : evictableFailedLoads(isMocked))
         clearMockLoadError(module);
 }
 
@@ -927,7 +942,7 @@ bool Modules::hasPermanentFailureInPackage(ModuleID root)
     if (status(root) != ModuleStatus::Failed)
         return false;
     for (size_t below : staticImportClosure(root, MockTraversal::Stop)) {
-        if (below != root.index() && (m_modulesWhoseFailedRunWasForgotten.get(below) || hasFailedWithoutMock(ModuleID(below))))
+        if (below != root.index() && (m_modulesWithResetFailure.get(below) || hasFailedWithoutMock(ModuleID(below))))
             return true;
     }
     return false;
@@ -947,7 +962,7 @@ bool Modules::hasPermanentFailureInProject(ModuleID root)
 void Modules::clearMockLoadErrors()
 {
     BitVector kept = m_modulesWithMockLoadError;
-    kept.merge(m_mockedModulesWithErrorKeptByLoader);
+    kept.merge(m_modulesWithCachedMockError);
     for (size_t module : kept)
         clearMockLoadError(ModuleID(module));
     BitVector roots = m_rootsOfImportsThatFailedUnderMocks;
@@ -975,7 +990,7 @@ bool Modules::runMocksInFetchedGraphSlow(ModuleID module)
         return false;
     bool isAskedForByImportCall = m_instance.vm->aotState().frameOfImportThatAsksLoader;
     if (isAskedForByImportCall)
-        dropErrorOfMockKeptByLoader(module);
+        clearCachedMockError(module);
     m_mocksWhoseFactoriesRanInsideTheirFetch.set(module.index(), m_modulesWithPendingMock.get(module.index()));
     SetForScope moduleBeingFetched(m_moduleBeingFetched, loadOfFetch(module));
     bool wasFetchedForStatement = m_statementFetchesDelayedByTick.get(module.index());
@@ -1514,7 +1529,7 @@ bool Modules::isUnmockedInDetachedLoad(ModuleID root, ModuleID module) const
 
 bool Modules::isFetchedByPendingFactoryCall(ModuleID root, ModuleID mocked) const
 {
-    if (m_resumingDetachedLoad != root || !host().isFactoryCallPending || (m_filesAskedAgainInWalk && m_filesAskedAgainInWalk->get(mocked.index())))
+    if (m_resumingDetachedLoad != root || !host().isFactoryCallPending || (m_modulesBeingRetried && m_modulesBeingRetried->get(mocked.index())))
         return false;
     return m_detachedLoads.containsIf([&](const DetachedLoad& left) {
         return left.required == root && left.wait->status() == JSPromise::Status::Pending && left.awaitedFactoryCalls.containsIf([&](const auto& call) {
@@ -1595,11 +1610,11 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
             continue;
         bool isImportedByStatement = (module != root && module != fileOfRoot) || rootOfLoad == LoadRootKind::ImportStatement;
         JSValue kept = mockLoadError(module);
-        if (!kept && isImportedByStatement && m_mockedModulesWithErrorKeptByLoader.get(module.index()))
-            kept = loadedIfExists(module)->errorOfMockKeptByLoader.get();
-        bool isRequestedByOwnFactory = !kept && !isImportedByStatement && m_moduleThatProgramImportsNow != module && m_mockedModulesWithErrorKeptByLoader.get(module.index()) && m_importsMadeByOwnFactory.removeFirst(module);
+        if (!kept && isImportedByStatement && m_modulesWithCachedMockError.get(module.index()))
+            kept = loadedIfExists(module)->cachedMockError.get();
+        bool isRequestedByOwnFactory = !kept && !isImportedByStatement && m_moduleThatProgramImportsNow != module && m_modulesWithCachedMockError.get(module.index()) && m_importsMadeByOwnFactory.removeFirst(module);
         if (isRequestedByOwnFactory && importsItselfByStatementsInTestRunFactories(m_table, module)) [[unlikely]]
-            kept = loadedIfExists(module)->errorOfMockKeptByLoader.get();
+            kept = loadedIfExists(module)->cachedMockError.get();
         else if (isRequestedByOwnFactory) [[unlikely]]
             m_originalsDueUnderMock.set(module.index());
         if (kept) [[unlikely]] {
@@ -1632,8 +1647,8 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
                     return false;
                 keepErrorOfLoad(root, exception->value(), [&](ModuleID each) { return each == module; });
                 if (isImportedByStatement) {
-                    m_mockedModulesWithErrorKeptByLoader.set(module.index());
-                    ensureLoaded(module).errorOfMockKeptByLoader.set(*this, exception->value());
+                    m_modulesWithCachedMockError.set(module.index());
+                    ensureLoaded(module).cachedMockError.set(*this, exception->value());
                 }
                 return false;
             }
@@ -1763,6 +1778,18 @@ JSObject* evaluateOriginalUnderMock(JSGlobalObject* realm, ModuleID module)
         return nullptr;
     MockDoor door(modules, module, "evaluateOriginalUnderMock"_s);
     return modules->evaluateOriginalUnderMock(module);
+}
+
+bool startDetachedOriginalLoad(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->startDetachedOriginalLoad(module);
+}
+
+bool wasOriginalEvaluated(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasOriginalEvaluated(module);
 }
 
 bool tryEvaluateESModuleBeforeMock(JSGlobalObject* realm, ModuleID module)

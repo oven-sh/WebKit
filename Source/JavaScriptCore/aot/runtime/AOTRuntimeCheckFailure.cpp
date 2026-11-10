@@ -71,7 +71,7 @@ RuntimeCheckFailure& RuntimeCheckFailure::atTopCall(VM& vm, CallerFrameAndPC* op
     if (!Image::current() || !top || !Thread::currentSingleton().stack().contains(top))
         return *this;
     SetForScope topCallFrame(vm.topCallFrame, top);
-    return atReturnAddress(CompiledFrameIterator::findReturnAddressInFunctionAtTop(vm));
+    return atReturnAddress(CompiledFrameIterator::topFrameReturnAddress(vm));
 }
 
 RuntimeCheckFailure& RuntimeCheckFailure::inFunction(FunctionID function)
@@ -127,7 +127,7 @@ void RuntimeCheckFailure::crashInHost(JSGlobalObject* realm) const
     crashWithReason(byteCast<char>(reason.span()));
 }
 
-ASCIILiteral typeNameForCheckFailure(JSValue value)
+ASCIILiteral reportedTypeName(JSValue value)
 {
     if (!value)
         return "an empty value"_s;
@@ -152,21 +152,21 @@ ASCIILiteral typeNameForCheckFailure(JSValue value)
     return asObject(value)->isCallable() ? "function"_s : "object"_s;
 }
 
-String functionNameForCheckFailure(FunctionID function)
+String reportedFunctionName(FunctionID function)
 {
     String name = writtenNameOf(function);
     return name.isEmpty() ? String("a function"_s) : makeString('\'', name, '\'');
 }
 
-String classNameForCheckFailure(const LayoutData& classLayout)
+String reportedClassName(const LayoutData& classLayout)
 {
     String name = classLayout.isClass() ? writtenNameOf(FunctionID(classLayout.classData().classConstructor)) : String();
     return name.isEmpty() ? String("a class"_s) : makeString("class '"_s, name, '\'');
 }
 
-String objectNameForCheckFailure(const LayoutData& layout)
+String reportedObjectName(const LayoutData& layout)
 {
-    return layout.isClass() ? makeString("an instance of "_s, classNameForCheckFailure(layout)) : String("an object"_s);
+    return layout.isClass() ? makeString("an instance of "_s, reportedClassName(layout)) : String("an object"_s);
 }
 
 } } // namespace JSC::AOT

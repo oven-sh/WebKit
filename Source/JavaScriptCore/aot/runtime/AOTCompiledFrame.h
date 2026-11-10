@@ -236,7 +236,7 @@ public:
     enum class OperationState : bool { MayNotHaveCalled, HasCalled };
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreate(VM&, CallFrame* framePointer, const void* returnAddress, EntryFrame*, OperationState = OperationState::MayNotHaveCalled, void* stackPointer = nullptr);
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtTop(VM&);
-    static const void* findReturnAddressInFunctionAtTop(VM&);
+    static const void* topFrameReturnAddress(VM&);
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtCallerOf(VM&, CallFrame* callee, EntryFrame*);
 
     bool isAtEnd() const { return m_isAtEnd; }

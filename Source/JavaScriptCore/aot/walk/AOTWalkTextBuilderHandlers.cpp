@@ -297,7 +297,7 @@ static bool writesCharactersInTextBuilderHandlers(const Walker& walker, Referenc
 
 static bool handlerInForceReadsTextInTextBuilderHandlers(Walker& walker, const StringInBuilder& text)
 {
-    if (walker.indexOfFrameOnTop() != text.frameIndex)
+    if (walker.topFrameIndex() != text.frameIndex)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(walker.inputBlockBeingWalked());

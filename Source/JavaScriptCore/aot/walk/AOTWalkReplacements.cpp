@@ -1156,7 +1156,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     } else if (!isUnreachable() && !hasFailed())
         walkArmWith(left);
     if (!hasFailed())
-        letArmsMeet(stretch, built, meeting);
+        joinArms(stretch, built, meeting);
     return KeyOfAccess::ArmsHaveWalkedAccess;
 }
 

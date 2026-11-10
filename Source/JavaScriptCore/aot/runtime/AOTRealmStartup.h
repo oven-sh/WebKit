@@ -41,6 +41,7 @@ JS_EXPORT_PRIVATE bool rejectsOwnPropertyOnLibraryFunction(JSObject*, UniquedStr
 JS_EXPORT_PRIVATE bool isMemberUnlockedForTests(JSObject*, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE bool isMemberFoldedAsConstant(JSObject*, UniquedStringImpl* key);
 bool reflectThrowsOnLockedProperty(JSObject* lockedObject);
+bool isReportedAsReadOnly(JSObject* lockedObject, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE ASCIILiteral rejectedEvaluationMessage();
 void rejectEvaluationUnlessAllowed(JSGlobalObject*);
 Instance* reserveInstance(JSGlobalObject*);

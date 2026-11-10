@@ -572,7 +572,7 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         static constexpr OpcodeSet writtenNumbers { Opcode::Integer, Opcode::Double };
         auto isKeyOfReadAlone = [&] {
             const BodyIndex& text = currentBodyIndex();
-            ValueID user = isWrittenInFrameOnTop(draft) && draft.inputValueGiven ? text.onlyUsingValue(draft.inputValueGiven) : ValueID();
+            ValueID user = isWrittenInTopFrame(draft) && draft.inputValueGiven ? text.onlyUsingValue(draft.inputValueGiven) : ValueID();
             return user && text.opcodeOf(user) == Opcode::ElemGet && text.value(user).propertyOperand() == draft.inputValueGiven;
         };
         bool isSumWithWrittenNumber = sums.contains(draft.opcode) && effects.reads.isEmpty() && !effects.mayCollect && isKeyOfReadAlone() && std::ranges::any_of(draft.operands(), [&](Reference operand) {
@@ -966,7 +966,7 @@ Reference Walker::buildOnFirstArrival(ValueID site, const Draft& call, const Eff
         fail("a call made on its first arrival in a loop has no result"_s);
         return { };
     }
-    Vector<ArmThatMeets, 2> arms { ArmThatMeets { currentBlock(), { computed } } };
+    Vector<JoinArm, 2> arms { JoinArm { currentBlock(), { computed } } };
 
     continueIn(laterArrival);
     Draft proof(Opcode::Narrowed, origin);
@@ -981,10 +981,10 @@ Reference Walker::buildOnFirstArrival(ValueID site, const Draft& call, const Eff
         fail("a result passed around a loop cannot be narrowed"_s);
         return { };
     }
-    arms.append(ArmThatMeets { currentBlock(), { passedOn } });
+    arms.append(JoinArm { currentBlock(), { passedOn } });
 
     Reference result;
-    if (!letArmsMeet(arms.span(), meeting, singleElementSpan(result)))
+    if (!joinArms(arms.span(), meeting, singleElementSpan(result)))
         return { };
     count(StatisticID::ResultsCarriedAroundLoops);
     return result;

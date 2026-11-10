@@ -184,7 +184,7 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
         walker.listArm(stretch, arms);
     }
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 

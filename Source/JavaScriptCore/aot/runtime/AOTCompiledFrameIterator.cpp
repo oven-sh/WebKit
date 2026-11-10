@@ -492,7 +492,7 @@ std::optional<CompiledFrameIterator> CompiledFrameIterator::tryCreateAtTop(VM& v
     return tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
 }
 
-const void* CompiledFrameIterator::findReturnAddressInFunctionAtTop(VM& vm)
+const void* CompiledFrameIterator::topFrameReturnAddress(VM& vm)
 {
     if (!isTopFrameCompiled(vm))
         return nullptr;

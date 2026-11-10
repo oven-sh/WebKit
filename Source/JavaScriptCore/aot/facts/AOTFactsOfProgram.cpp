@@ -3408,7 +3408,7 @@ private:
     BuiltinID builtinReadByPath(const BodyIndex&, ValueID) const;
     BuiltinID builtinSpelledByPath(const BodyIndex&, ValueID) const;
     bool isSurelyNot(const BodyIndex&, ValueID, BuiltinID member) const;
-    bool isBehindTestThatMemberFails(const BodyIndex&, ValueID site, BuiltinID member) const;
+    bool isGuardedByFailingTest(const BodyIndex&, ValueID site, BuiltinID member) const;
     bool changesMember(const BodyIndex&, ValueID descriptor, BuiltinID member, bool& isCertain) const;
     bool holdsNoCodeOfProgram(const BodyIndex&, ValueID) const;
     bool namesBuiltinThatEndsProcess(const BodyIndex&, const BodyValue&) const;
@@ -4975,7 +4975,7 @@ bool BuilderOfProgramFacts::isSurelyNot(const BodyIndex& index, ValueID value, B
     return value && !index.isParameter(value) && valuesMadeInBodyInProgramFacts.contains(index.opcodeOf(value));
 }
 
-bool BuilderOfProgramFacts::isBehindTestThatMemberFails(const BodyIndex& index, ValueID site, BuiltinID member) const
+bool BuilderOfProgramFacts::isGuardedByFailingTest(const BodyIndex& index, ValueID site, BuiltinID member) const
 {
     std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(index.blockOf(site));
     if (!edge || !index.terminator(edge->from).isConditionalBranch())
@@ -5614,7 +5614,7 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOf(const BodyInd
             return std::nullopt;
         if (BuiltinID stored = member ? builtinReadByPath(index, brought) : BuiltinID(); stored && m_builtins.canonicalID(stored) == m_builtins.canonicalID(member))
             return std::nullopt;
-        if (member && isBehindTestThatMemberFails(index, ValueID(site.value), member))
+        if (member && isGuardedByFailingTest(index, ValueID(site.value), member))
             return std::nullopt;
         isCertain = isSurelyNot(index, brought, member);
         break;

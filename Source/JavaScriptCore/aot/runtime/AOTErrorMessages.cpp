@@ -268,7 +268,7 @@ JSObject* createBuiltinNotCompiledError(JSGlobalObject* globalObject, const Stri
 
 JSObject* createBuiltinBehindTargetOfEventNotCompiledError(JSGlobalObject* globalObject, const String& builtin)
 {
-    return createError(globalObject, withAOTErrorNote(makeString(builtin, " was not compiled into this executable because the compiler saw no use of it. Your code called addEventListener() or dispatchEvent() without a receiver, so the `target` of an event is the global object, and the compiler didn't see that call. To keep everything that the global object leads to, write `void dispatchEvent` once anywhere in your code."_s)));
+    return createError(globalObject, withAOTErrorNote(makeString(builtin, " was not compiled into this executable because the compiler saw no use of it. Your code reached it through the `target` of an event on the global object. To keep it, write `void dispatchEvent` anywhere in your code."_s)));
 }
 
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject* globalObject, const String& functionName)
@@ -309,7 +309,7 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
     bool isModuleOfBun = name.startsWith("node:"_s) || name.startsWith("bun:"_s);
     const Image* image = Image::current();
     if (!isModuleOfBun && image && hasFlag(image->header().options.admitted(), AdmittedCode::ReplacedBuiltins))
-        return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': the build saw no import() or require() of a computed path that can reach it, so it answers only to the paths the build saw. The build can't see code from a string, as in eval() or new Function(). An executable refuses this too, unless you build it with this file as another entry point. Import the file by a constant path, or add --aot-allow-code-from-disk."_s)), code);
+        return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': no import() or require() that the build saw can reach it by a dynamic path. Import the file by a constant path, or add --aot-allow-code-from-disk."_s)), code);
     if (!isModuleOfBun && image && image->loadsCodeOutsideImage())
         return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': it was compiled into this executable, and a dynamic path finds a compiled file only if the path is a string somewhere in your code. Pass the file to bun compile as another entry point."_s)), code);
     ASCIILiteral advice = isModuleOfBun ? "The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s : "Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk."_s;
@@ -318,7 +318,7 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
 
 JSObject* createCompiledModuleAccessError(JSGlobalObject* globalObject, StringView path, ASCIILiteral code)
 {
-    return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, path, "': code that this executable loads from disk can't load the files that were compiled into it. It can use globals, built-in modules, files and packages on disk, and what the program hands it."_s)), code);
+    return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, path, "': code that is loaded from disk can't import files that were compiled into this executable. Pass it what it needs as arguments or globals."_s)), code);
 }
 
 JSObject* createFormNotHeldError(JSGlobalObject* globalObject, StringView path, ASCIILiteral type)
@@ -328,7 +328,7 @@ JSObject* createFormNotHeldError(JSGlobalObject* globalObject, StringView path, 
 
 JSObject* createExportNotHandedOutError(JSGlobalObject* globalObject, StringView path, StringView name)
 {
-    return withCode(globalObject, createReferenceError(globalObject, withAOTErrorNote(makeString("Cannot read '"_s, name, "' from the namespace object of '"_s, path, "': it hands out only the exports that the build saw somebody read from it. Import '"_s, name, "' by name."_s))), "ERR_MODULE_NOT_FOUND"_s);
+    return withCode(globalObject, createReferenceError(globalObject, withAOTErrorNote(makeString("Cannot read '"_s, name, "' from the namespace object of '"_s, path, "': the build kept only the exports that it saw your code read. Import '"_s, name, "' by name."_s))), "ERR_MODULE_NOT_FOUND"_s);
 }
 
 JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView path)
@@ -339,30 +339,30 @@ JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView
 JSObject* createLoaderChangeError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
 {
     if (change == LoaderChange::TakeOutOfRequireCache)
-        return createError(globalObject, makeString("Cannot take '"_s, changed, "' out of require.cache: the build found nothing that does, so the code that imports it was compiled for a module that loads once. Spell the path where it is deleted, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
+        return createError(globalObject, makeString("Cannot delete '"_s, changed, "' from require.cache: the build saw no code that deletes it, so the module was compiled to load once. Write the path out where you delete it, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
     if (change == LoaderChange::StoreUnderNameOfModuleInRequireCache)
-        return createError(globalObject, withAOTErrorNote(makeString("Cannot store an entry under '"_s, changed, "' in require.cache: the build read no store under that key, so require(\""_s, changed, "\") was compiled to answer with the module. Spell the key where it is stored: require.cache[\""_s, changed, "\"] = entry. In a test, mock.module(\""_s, changed, "\", () => ({ .. })) replaces the module too."_s)));
+        return createError(globalObject, withAOTErrorNote(makeString("Cannot store an entry under '"_s, changed, "' in require.cache: the build saw no store under that key, so require(\""_s, changed, "\") always returns the compiled module. Write the key out where you store it, as in require.cache[\""_s, changed, "\"] = entry, or use mock.module() in a test."_s)));
     if (change == LoaderChange::EvaluateModuleAgain)
-        return createError(globalObject, withAOTErrorNote(makeString("Cannot run '"_s, changed, "' a second time: the loader in Module._extensions runs the text of a file into the module object that it is handed, and this executable holds the file compiled, once. require() answers with what the file exports."_s)));
+        return createError(globalObject, withAOTErrorNote(makeString("Cannot run '"_s, changed, "' a second time: a loader in Module._extensions evaluates the source of a file, and this executable has only the compiled file. Use require() to get its exports."_s)));
     if (change == LoaderChange::PassSourceToCompile)
-        return createError(globalObject, withAOTErrorNote(makeString("Cannot hand the source text of '"_s, changed, "' to module._compile: a loader in Module._extensions has replaced module._compile, and this executable holds the file compiled, without its text. The build has compiled TypeScript and JSX already. If the program depends on what the loader does to the text, build it with --no-aot."_s)));
+        return createError(globalObject, withAOTErrorNote(makeString("Cannot pass the source of '"_s, changed, "' to module._compile: the file was compiled, and its source isn't in this executable. If your program depends on a loader that replaces module._compile, build it with --no-aot."_s)));
     bool isInRequireCache = change == LoaderChange::ReplaceInRequireCache;
     return createError(globalObject, withAOTErrorNote(makeString("Cannot replace "_s, isInRequireCache ? "'"_s : ""_s, changed, isInRequireCache ? "' in require.cache"_s : ""_s, ": imports in this executable were resolved at build time, so the module loader can't be patched."_s)));
 }
 
 JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject* globalObject, StringView path)
 {
-    return createError(globalObject, makeString("Cannot read the entry of '"_s, path, "' in require.cache: the build found nothing that reads the cache, so the module was compiled for the code that imports it. Spell the read in a file that the tests import: require.cache[require.resolve(\"./module\")]"_s));
+    return createError(globalObject, makeString("Cannot read the entry of '"_s, path, "' in require.cache: the build saw no code that reads the cache, so the module has no entry. Write the read out in a file that the tests import: require.cache[require.resolve(\"./module\")]"_s));
 }
 
 String moduleObjectRefusedMessage(StringView path)
 {
-    return withAOTErrorNote(makeString("Cannot get at the module object of '"_s, path, "': the build found nothing that does, so the file was compiled into the code that requires it. Write `void module.children;` in one of your files."_s));
+    return withAOTErrorNote(makeString("Cannot access the module object of '"_s, path, "': the build saw no code that uses it, so the file has none. To keep it, write `void module.children;` in one of your files."_s));
 }
 
 JSObject* createComparisonOfPrivateFieldRefusedError(JSGlobalObject* globalObject, const String& field)
 {
-    return createError(globalObject, withAOTErrorNote(makeString("Cannot compare what the private field "_s, field, " holds: the build followed no object with this field to Bun.deepMatch(), toMatchObject() or expect.objectContaining(), so what the field holds was compiled for its class alone. Call the comparison by its own name, and make one of the two objects where it is called."_s)));
+    return createError(globalObject, withAOTErrorNote(makeString("Cannot compare the private field "_s, field, ": the build saw no object with this field reach Bun.deepMatch(), toMatchObject() or expect.objectContaining(). Call the comparison directly, and create one of the two objects where you call it."_s)));
 }
 
 JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const String& specifier, const String& importer, ASCIILiteral code)

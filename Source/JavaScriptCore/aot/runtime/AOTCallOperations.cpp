@@ -204,7 +204,7 @@ void throwNotAFunctionError(JSGlobalObject* globalObject, ThrowScope& scope, JSV
 
 static StringView nameOfCalleeAtCallSite(VM& vm)
 {
-    const void* returnAddress = CompiledFrameIterator::findReturnAddressInFunctionAtTop(vm);
+    const void* returnAddress = CompiledFrameIterator::topFrameReturnAddress(vm);
     if (!returnAddress)
         return { };
     std::optional<FaultSite> site = Image::current()->faultSiteAt(static_cast<const uint8_t*>(returnAddress) - sizeOfNearCall);

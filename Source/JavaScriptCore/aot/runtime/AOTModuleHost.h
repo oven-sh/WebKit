@@ -339,6 +339,8 @@ JS_EXPORT_PRIVATE JSPromise* pendingEvaluationInGraph(JSGlobalObject*, ModuleID 
 JS_EXPORT_PRIVATE void countMockCall(JSGlobalObject*, std::optional<ModuleID>, ASCIILiteral otherwise, ASCIILiteral call, ASCIILiteral factory);
 JS_EXPORT_PRIVATE void evaluateCommonJSModuleBeforeMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool tryEvaluateESModuleBeforeMock(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool startDetachedOriginalLoad(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool wasOriginalEvaluated(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* evaluateOriginalUnderMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSPromise* pendingFactoryInGraph(JSGlobalObject*, ModuleID, JSValue& state);
 JS_EXPORT_PRIVATE bool didMockFailForImportStatement(JSGlobalObject*, ModuleID);

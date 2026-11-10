@@ -308,8 +308,10 @@ public:
 
         BasicBlock* LEGACY_NODELETE targetBlockForBranch()
         {
-            if (blockType() == BlockType::Loop)
+            if (blockType() == BlockType::Loop) {
+                m_isLoopHeaderBranchedTo = true;
                 return special;
+            }
             return continuation;
         }
 
@@ -417,6 +419,7 @@ public:
         CatchKind m_catchKind;
         Variable* m_exception;
         TargetList m_tryTableTargets;
+        bool m_isLoopHeaderBranchedTo { false };
     };
 
     using ControlType = ControlData;
@@ -450,7 +453,7 @@ public:
         if (condition) [[unlikely]]                  \
             return fail(__VA_ARGS__);             \
     } while (0)
-#define WASM_DECLINE_FOR_IMAGE_IF(condition, reason) do { \
+#define WASM_DECLINE_FOR_IMAGE_IF(condition) do { \
         if (m_context.codeForImage && (condition)) [[unlikely]] \
             return declineForImage(); \
     } while (0)
@@ -1057,6 +1060,8 @@ private:
     void unify(Value* phi, const ExpressionType& source);
     void unifyValuesWithBlock(std::span<const TypedExpression> resultStack, const ControlData& block);
     BasicBlock* targetBlockForBranch(ControlData&);
+    static SwitchValue* dispatchOfStateMachine(BasicBlock* loopHeader);
+    void testFirstStateBeforeTable(const ControlData& loop);
 
     void emitChecksForModOrDiv(B3::Opcode, Value* left, Value* right);
 
@@ -1611,10 +1616,12 @@ void OMGIRGenerator::emitCallInImage(CCallHelpers& jit, uint32_t symbol)
 
 void OMGIRGenerator::emitCallToThrowStub(CCallHelpers& jit)
 {
+#if ENABLE(AOT)
     if (m_context.codeForImage) {
         m_context.codeForImage->recorder.jump({ AOT::SymbolSpace::WebAssembly, imageSymbolOf(ImageStub::ThrowException) });
         return;
     }
+#endif
     jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwExceptionFromOMGThunkGenerator).code()));
 }
 
@@ -2159,7 +2166,7 @@ static void emitWasmCallStackResultsAndSPRestore(CCallHelpers& jit,
 
 auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, Value* calleeCodeLocation, Value* boxedCalleeCallee, const RTT& signature, const ArgumentList& args, ValueResults& results, CallType callType) -> PartialResult
 {
-    WASM_DECLINE_FOR_IMAGE_IF(callType == CallType::TailCall, UsesTailCalls);
+    WASM_DECLINE_FOR_IMAGE_IF(callType == CallType::TailCall);
     const bool isTailCallRootCaller = callType == CallType::TailCall && !m_inlineParent;
 
     m_makesCalls = true;
@@ -4491,7 +4498,7 @@ auto OMGIRGenerator::addRefCast(TypedExpression reference, bool allowNull, int32
 
 auto OMGIRGenerator::emitRefTestOrCast(CastKind castKind, TypedExpression reference, bool allowNull, int32_t toHeapType, bool shouldNegate, ExpressionType& result) -> PartialResult
 {
-    WASM_DECLINE_FOR_IMAGE_IF(true, TestsReferenceTypes);
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     Value* value = get(reference);
 
     RefPtr<const Wasm::RTT> targetRTT;
@@ -5193,7 +5200,7 @@ auto OMGIRGenerator::addElseToUnreachable(ControlData& data) -> PartialResult
 
 auto OMGIRGenerator::addTry(BlockSignature&& signature, std::span<TypedExpression> args, ControlType& result) -> PartialResult
 {
-    WASM_DECLINE_FOR_IMAGE_IF(true, UsesExceptions);
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     UNUSED_PARAM(args);
     ++m_tryCatchDepth;
     TRACE_CF("TRY");
@@ -5206,7 +5213,7 @@ auto OMGIRGenerator::addTry(BlockSignature&& signature, std::span<TypedExpressio
 
 auto OMGIRGenerator::addTryTable(BlockSignature&& signature, std::span<TypedExpression> args, const Vector<CatchHandler>& targets, ControlType& result) -> PartialResult
 {
-    WASM_DECLINE_FOR_IMAGE_IF(true, UsesExceptions);
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     UNUSED_PARAM(args);
     ++m_tryCatchDepth;
     TRACE_CF("TRY");
@@ -5543,7 +5550,7 @@ auto OMGIRGenerator::addDelegateToUnreachable(ControlType& target, ControlType& 
 
 auto OMGIRGenerator::addThrow(unsigned exceptionIndex, ArgumentList& args, std::span<const TypedExpression>) -> PartialResult
 {
-    WASM_DECLINE_FOR_IMAGE_IF(true, UsesExceptions);
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     TRACE_CF("THROW");
 
     advanceCallSiteIndex();
@@ -5572,7 +5579,7 @@ auto OMGIRGenerator::addThrow(unsigned exceptionIndex, ArgumentList& args, std::
 
 [[nodiscard]] auto OMGIRGenerator::addThrowRef(TypedExpression exnref, std::span<const TypedExpression>) -> PartialResult
 {
-    WASM_DECLINE_FOR_IMAGE_IF(true, UsesExceptions);
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     TRACE_CF("THROW_REF");
 
     Value* exception = get(exnref);
@@ -5599,7 +5606,7 @@ auto OMGIRGenerator::addThrow(unsigned exceptionIndex, ArgumentList& args, std::
 
 auto OMGIRGenerator::addRethrow(unsigned, ControlType& data) -> PartialResult
 {
-    WASM_DECLINE_FOR_IMAGE_IF(true, UsesExceptions);
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     TRACE_CF("RETHROW");
 
     advanceCallSiteIndex();
@@ -5676,32 +5683,61 @@ auto OMGIRGenerator::addReturn(const ControlData&, std::span<const TypedExpressi
     return { };
 }
 
+// A loop whose header only switches on a local is a state machine.
+SwitchValue* OMGIRGenerator::dispatchOfStateMachine(BasicBlock* loopHeader)
+{
+    if (loopHeader->size() != 2)
+        return nullptr;
+    auto* dispatch = loopHeader->last()->as<SwitchValue>();
+    if (!dispatch || dispatch->child(0) != loopHeader->at(0) || dispatch->child(0)->opcode() != B3::Get)
+        return nullptr;
+    return dispatch;
+}
+
 BasicBlock* OMGIRGenerator::targetBlockForBranch(ControlData& data)
 {
-    BasicBlock* target = data.targetBlockForBranch();
-    if (!ControlData::isLoop(data) || target->size() != 2)
-        return target;
+    auto* dispatch = ControlData::isLoop(data) ? dispatchOfStateMachine(data.special) : nullptr;
+    if (!dispatch)
+        return data.targetBlockForBranch();
 
-    // A loop whose header only switches on a local is a state machine. A branch to it from a block that
-    // has stored a constant in that local can reach one case only, so it goes there directly.
-    auto* dispatch = target->last()->as<SwitchValue>();
-    auto* state = target->at(0)->as<VariableValue>();
-    if (!dispatch || !state || state->opcode() != B3::Get || dispatch->child(0) != state)
-        return target;
-
+    // A branch to the state machine from a block that has stored a constant in the local can reach one
+    // case only, so it goes there directly.
+    Variable* state = dispatch->child(0)->as<VariableValue>()->variable();
     for (unsigned index = m_currentBlock->size(); index--;) {
         auto* store = m_currentBlock->at(index)->as<VariableValue>();
-        if (!store || store->opcode() != B3::Set || store->variable() != state->variable())
+        if (!store || store->opcode() != B3::Set || store->variable() != state)
             continue;
         if (!store->child(0)->hasInt32())
-            return target;
+            break;
         // addSwitch() appends the case for each index in order. The fall-through is the last successor.
         uint32_t selected = store->child(0)->asInt32();
         if (auto* code = m_context.codeForImage)
             ++code->threadedJumps;
-        return target->successorBlock(std::min<uint32_t>(selected, dispatch->numCaseValues()));
+        return data.special->successorBlock(std::min<uint32_t>(selected, dispatch->numCaseValues()));
     }
-    return target;
+    return data.targetBlockForBranch();
+}
+
+// When every branch to a state machine went straight to its case, the switch runs once, on the way in.
+// A machine starts in its first state unless it is being resumed, so that state is tested for before the table.
+void OMGIRGenerator::testFirstStateBeforeTable(const ControlData& loop)
+{
+    BasicBlock* header = loop.special;
+    auto* dispatch = dispatchOfStateMachine(header);
+    if (!dispatch || loop.m_isLoopHeaderBranchedTo || !dispatch->numCaseValues())
+        return;
+
+    if (auto* code = m_context.codeForImage)
+        ++code->firstStateTests;
+    Value* state = dispatch->child(0);
+    BasicBlock* table = m_proc.addBlock();
+    header->values().removeLast();
+    dispatch->child(0) = table->appendNew<VariableValue>(m_proc, B3::Get, dispatch->origin(), state->as<VariableValue>()->variable());
+    table->append(dispatch);
+    table->successors() = header->successors();
+    header->appendNew<Value>(m_proc, B3::Branch, dispatch->origin(),
+        header->appendNew<Value>(m_proc, B3::Equal, dispatch->origin(), state, constant(Int32, 0)));
+    header->setSuccessors(table->successor(0), FrequentedBlock(table));
 }
 
 auto OMGIRGenerator::addBranch(ControlData& data, ExpressionType condition, std::span<const TypedExpression> returnValues) -> PartialResult
@@ -5813,7 +5849,9 @@ auto OMGIRGenerator::endBlock(ControlEntry& entry, std::span<TypedExpression> en
 
     m_currentBlock = data.continuation;
 
-    if (data.blockType() == BlockType::If) {
+    if (data.blockType() == BlockType::Loop)
+        testFirstStateBeforeTable(data);
+    else if (data.blockType() == BlockType::If) {
         data.special->setSuccessors(m_currentBlock);
         data.special->appendNew<Value>(m_proc, Jump, origin());
     } else if (data.blockType() == BlockType::Try || data.blockType() == BlockType::Catch)
@@ -5853,7 +5891,9 @@ auto OMGIRGenerator::addEndToUnreachable(ControlEntry& entry, std::span<TypedExp
 
     m_currentBlock = data.continuation;
 
-    if (data.blockType() == BlockType::If) {
+    if (data.blockType() == BlockType::Loop)
+        testFirstStateBeforeTable(data);
+    else if (data.blockType() == BlockType::If) {
         data.special->setSuccessors(m_currentBlock);
         data.special->appendNew<Value>(m_proc, Jump, origin());
     } else if (data.blockType() == BlockType::Try || data.blockType() == BlockType::Catch)
@@ -6684,7 +6724,7 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
 
     const bool isTailCallRootCaller = callType == CallType::TailCall && !m_inlineParent;
     ASSERT(signature.argumentCount() == args.size());
-    WASM_DECLINE_FOR_IMAGE_IF(callType == CallType::TailCall, UsesTailCalls);
+    WASM_DECLINE_FOR_IMAGE_IF(callType == CallType::TailCall);
 
     const auto& callingConvention = wasmCallingConvention();
     Checked<int32_t> tailCallStackOffsetFromFP;
@@ -7095,7 +7135,7 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
 
 auto OMGIRGenerator::addCallRef(unsigned callProfileIndex, const RTT& signature, ArgumentList& args, ResultList& results, CallType callType) -> PartialResult
 {
-    WASM_DECLINE_FOR_IMAGE_IF(true, CallsReferences);
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     UNUSED_PARAM(callProfileIndex);
     TypedExpression calleeArg = args.takeLast();
     Value* callee = get(calleeArg);

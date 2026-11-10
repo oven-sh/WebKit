@@ -62,7 +62,7 @@ static BitVector namespacesHandedOnInTestRunsOfProgram(const Program& program, c
     return handedOn;
 }
 
-static BitVector modulesThatLeadToMocksInTestRunsOfProgram(const Program& program, const BitVector& mocked)
+static BitVector findModulesReachingMocks(const Program& program, const BitVector& mocked)
 {
     size_t numberOfModules = program.modules.size();
     Vector<uint32_t> firstImporter;
@@ -109,7 +109,7 @@ MocksOfProgram findMocksOfProgram(const Program& program)
         return mocks;
     mocks.isAnyModuleMocked = true;
     mocks.namespacesHandedOnByMockedModules = namespacesHandedOnInTestRunsOfProgram(program, mocks.modulesThatMayBeMocked);
-    mocks.modulesThatLeadToMocks = modulesThatLeadToMocksInTestRunsOfProgram(program, mocks.modulesThatMayBeMocked);
+    mocks.modulesReachingMocks = findModulesReachingMocks(program, mocks.modulesThatMayBeMocked);
     return mocks;
 }
 
@@ -121,14 +121,14 @@ bool mayComeThroughMock(const Program& program, const MocksOfProgram& mocks, Mod
         return true;
     const auto& exports = program.at(exporter).exports;
     if (indexOfExport >= exports.size())
-        return mocks.modulesThatLeadToMocks.get(exporter.index());
+        return mocks.modulesReachingMocks.get(exporter.index());
 
     const ModuleExport& entry = exports[indexOfExport];
     switch (entry.kind) {
     case ModuleExportKind::Variable:
         if (!entry.variable || entry.variable.index() >= program.variables.size())
             return true;
-        if (program.at(entry.variable).module != exporter && mocks.modulesThatLeadToMocks.get(exporter.index()))
+        if (program.at(entry.variable).module != exporter && mocks.modulesReachingMocks.get(exporter.index()))
             return true;
         return false;
     case ModuleExportKind::Namespace:
@@ -144,7 +144,7 @@ bool mayComeThroughMock(const Program& program, const MocksOfProgram& mocks, Mod
     case ModuleExportKind::Field:
         if (!entry.layout || entry.layout.index() >= program.layouts.size())
             return true;
-        return program.at(entry.layout).module != exporter && mocks.modulesThatLeadToMocks.get(exporter.index());
+        return program.at(entry.layout).module != exporter && mocks.modulesReachingMocks.get(exporter.index());
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

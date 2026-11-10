@@ -791,10 +791,10 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     if (guardsHold)
         noteGuardsShownByTest(walker, listed.conditions.span(), guardsHold);
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     auto endArm = [&](Reference value) {
         if (!walker.isUnreachable() && !walker.hasFailed())
-            arms.append(Walker::ArmThatMeets { walker.currentBlock(), { value } });
+            arms.append(Walker::JoinArm { walker.currentBlock(), { value } });
     };
     auto walkAsWritten = [&] {
         Walker::ClosedArm closedArm(walker);
@@ -847,7 +847,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
 
     BlockID meeting = walker.addBlock();
     Reference met;
-    if (walker.letArmsMeet(arms.span(), meeting, singleElementSpan(met)))
+    if (walker.joinArms(arms.span(), meeting, singleElementSpan(met)))
         walker.bind(call.id(), met);
     return true;
 }

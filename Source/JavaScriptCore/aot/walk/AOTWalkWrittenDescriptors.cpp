@@ -270,7 +270,7 @@ static std::optional<PartsOfWrittenDescriptor> readDescriptorWrittenOut(Walker& 
     return properties ? partsOfDescriptorWith(walker, *properties) : std::nullopt;
 }
 
-static std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfLiteralHeldBy(Walker& walker, Reference holder, Reference literal)
+static std::optional<Vector<PropertyOfFreshObject, 8>> nestedLiteralProperties(Walker& walker, Reference holder, Reference literal)
 {
     static constexpr OpcodeSet storesIntoSlots { Opcode::PutSlot, Opcode::PutSlotOrAdd };
     const Code& code = walker.code();
@@ -350,7 +350,7 @@ static std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfLiteralHeldBy
     return properties;
 }
 
-static std::optional<BuiltinOverloadID> findOnlyRowOfCallOfBuiltinInWrittenDescriptors(Walker& walker, const BodyValue& call)
+static std::optional<BuiltinOverloadID> findUniqueBuiltinOverload(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call)
         return std::nullopt;
@@ -422,7 +422,7 @@ bool expandObjectCreateDescriptorsOfItsOpcodes(Walker& walker, const BodyValue& 
 {
     if (walker.isUnreachable() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis) || call.argumentsOperands().size() != numberOfArgumentsOfObjectCreate)
         return false;
-    if (!callsBuiltinInWrittenDescriptors(walker, call, Builtins::ObjectCreate) || !findOnlyRowOfCallOfBuiltinInWrittenDescriptors(walker, call))
+    if (!callsBuiltinInWrittenDescriptors(walker, call, Builtins::ObjectCreate) || !findUniqueBuiltinOverload(walker, call))
         return false;
     Draft written = walker.draftOf(call);
     if (walker.hasFailed())
@@ -456,7 +456,7 @@ bool expandObjectCreateDescriptorsOfItsOpcodes(Walker& walker, const BodyValue& 
             return false;
         if (rootOfObjectInWrittenDescriptors(walker, property.value) == rootOfObjectInWrittenDescriptors(walker, prototype))
             return false;
-        std::optional<Vector<PropertyOfFreshObject, 8>> members = propertiesOfLiteralHeldBy(walker, map, property.value);
+        std::optional<Vector<PropertyOfFreshObject, 8>> members = nestedLiteralProperties(walker, map, property.value);
         std::optional<PartsOfWrittenDescriptor> parts = members ? partsOfDescriptorWith(walker, *members) : std::nullopt;
         if (!parts)
             return false;
@@ -503,11 +503,121 @@ bool expandObjectCreateDescriptorsOfItsOpcodes(Walker& walker, const BodyValue& 
     return true;
 }
 
+constinit const OpcodeSet opcodesThatExpandObjectCreateAtDefinitionTakes { Opcode::ElemDefine, Opcode::PropDefine };
+
+bool expandObjectCreateAtDefinitionOfItsOpcodes(Walker& walker, const BodyValue& definition)
+{
+    if (walker.isUnreachable() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis))
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID map = definition.objectOperand();
+    BlockID inputBlock = index.blockOf(definition.id());
+    if (!map || index.isParameter(map) || index.blockOf(map) != inputBlock || index.useCount(map) != 2)
+        return false;
+    if (index.opcodeOf(map) != Opcode::NewObject || index.value(map).as<Opcode::NewObject>().prototypeOperand() || !index.value(map).as<Opcode::NewObject>().fields().empty())
+        return false;
+
+    BodyBlock block = index.block(inputBlock);
+    uint32_t firstValue = block.firstValue().index();
+    uint32_t endOfBlock = block.endOfValues().index();
+    uint32_t next = definition.id().index() + 1;
+    if (next >= endOfBlock || index.opcodeOf(ValueID(next)) != Opcode::FinishObject || index.value(ValueID(next)).operand(0) != map || !index.hasOneUse(ValueID(next)))
+        return false;
+    ValueID argument(next++);
+    if (next >= endOfBlock || index.opcodeOf(ValueID(next)) != Opcode::Call || next - firstValue + 1 > walker.endOfStretchBeingWalked())
+        return false;
+    BodyValue call = index.value(ValueID(next));
+    if (call.argumentsOperands().size() != numberOfArgumentsOfObjectCreate || call.argumentsOperands()[1] != argument || !callsBuiltinInWrittenDescriptors(walker, call, Builtins::ObjectCreate))
+        return false;
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID builtin = table.canonicalID(Builtins::ObjectCreate);
+    if (!isCallableBuiltin(table, builtin) || hasFeatureGuard(table, builtin) || isCallThatTheWalkMustLower(table, builtin))
+        return false;
+    Reference madeMap = walker.referenceOf(map);
+    if (!madeMap || !madeMap.isValue() || !walker.state().isFresh(rootOfObjectInWrittenDescriptors(walker, madeMap)))
+        return false;
+
+    Draft writtenDefinition = walker.draftOf(definition);
+    if (walker.hasFailed())
+        return false;
+    Origin origin = walker.originOf(call);
+    origin.isTailCall = false;
+    Reference key;
+    if (definition.opcode() == Opcode::ElemDefine) {
+        key = writtenDefinition.propertyOperand();
+        TypeID provenOfKey = key ? walker.typeOf(key) : TypeID();
+        if (!provenOfKey)
+            return false;
+        Type typeOfKey = walker.types().at(provenOfKey);
+        if (!typeOfKey.isJavaScriptValue() || typeOfKey.isNever() || !typeOfKey.hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol))
+            return false;
+    } else {
+        PropertyKeyKind kind = walker.program().at(definition.key()).kind;
+        if (kind != PropertyKeyKind::Text && kind != PropertyKeyKind::WellKnownSymbol && kind != PropertyKeyKind::CreatedSymbol && kind != PropertyKeyKind::RegisteredSymbol)
+            return false;
+    }
+    Reference prototype = walker.referenceOf(call.argumentsOperands()[0]);
+    TypeID provenOfPrototype = prototype ? walker.typeOf(prototype) : TypeID();
+    if (!provenOfPrototype)
+        return false;
+    Type typeOfPrototype = walker.types().at(provenOfPrototype);
+    if (!typeOfPrototype.isJavaScriptValue() || typeOfPrototype.isNever() || (typeOfPrototype.primitives & (Primitive::Absent | Primitive::Unspecified)))
+        return false;
+    Reference descriptor = writtenDefinition.valueOperand();
+    if (!descriptor || rootOfObjectInWrittenDescriptors(walker, descriptor) == rootOfObjectInWrittenDescriptors(walker, prototype))
+        return false;
+    std::optional<PartsOfWrittenDescriptor> parts = readDescriptorWrittenOut(walker, definition, definition.valueOperand(), descriptor);
+    if (!parts)
+        return false;
+
+    walker.bind(argument, madeMap);
+    Draft written = walker.draftOf(call);
+    if (walker.hasFailed())
+        return true;
+    if (!key)
+        key = keyConstantInWrittenDescriptors(walker, definition.key(), origin);
+    Draft creation(Opcode::Call, origin);
+    walker.chooseConservativeFields(creation);
+    creation.setCalleeOperand(written.calleeOperand());
+    if (written.thisValueOperand())
+        creation.setThisValueOperand(written.thisValueOperand());
+    creation.setArgumentsOperands(written.argumentsOperands().first(1));
+    creation.setCalleeName(written.calleeName());
+    creation.setExpectedResult(written.expectedResult());
+    creation.expected = written.expected;
+    creation.inputValueGiven = written.inputValueGiven;
+    walker.count(StatisticID::ObjectCreateDescriptorsExpanded);
+    if (!callBuiltinForwarded(walker, call, creation)) {
+        if (Reference result = walker.build(WTF::move(creation)))
+            walker.bind(call.id(), result);
+    }
+    Reference object = walker.referenceOf(call.id());
+    if (object && !walker.isUnreachable() && !walker.hasFailed()) {
+        Draft property(Opcode::DefineOwnProperty, origin);
+        walker.chooseConservativeFields(property);
+        property.setObjectOperand(object);
+        property.setComputedKeyOperand(key);
+        if (parts->value)
+            property.setValueOperand(parts->value);
+        if (parts->getter)
+            property.setGetterOperand(parts->getter);
+        if (parts->setter)
+            property.setSetterOperand(parts->setter);
+        property.setDescriptorFlags(parts->flags);
+        walker.build(WTF::move(property));
+    }
+    if (FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), definition.id()))
+        walker.leaveAnythingAt(callee);
+    uint32_t placeAfterCall = next - firstValue + 1;
+    walker.walkStretch(inputBlock, placeAfterCall, placeAfterCall);
+    return true;
+}
+
 bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
     if (walker.isUnreachable() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis) || call.argumentsOperands().size() != numberOfArgumentsOfDescriptorCall)
         return false;
-    std::optional<BuiltinOverloadID> row = findOnlyRowOfCallOfBuiltinInWrittenDescriptors(walker, call);
+    std::optional<BuiltinOverloadID> row = findUniqueBuiltinOverload(walker, call);
     if (!row)
         return false;
     const BuiltinTable& builtins = walker.program().builtins();

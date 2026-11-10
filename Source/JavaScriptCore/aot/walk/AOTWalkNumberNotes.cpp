@@ -161,19 +161,19 @@ Reference meetInNumberForms(Walker& walker, BlockID meeting, std::span<const Way
     auto isValue = [&](Reference brought) {
         return brought && walker.code().at(brought.id()).type;
     };
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     size_t numberOfValues = 0;
     for (const WayInNumberForms& way : ways) {
         if (!way.end)
             continue;
-        arms.append(Walker::ArmThatMeets { way.end, { way.brought, way.broughtBeside } });
+        arms.append(Walker::JoinArm { way.end, { way.brought, way.broughtBeside } });
         numberOfValues = std::max<size_t>(numberOfValues, !isValue(way.brought) ? 0 : isValue(way.broughtBeside) ? 2 : 1);
     }
     if (arms.isEmpty())
         return { };
 
     std::array<Reference, 2> met;
-    walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(met).first(numberOfValues));
+    walker.joinArms(arms.span(), meeting, std::span<Reference>(met).first(numberOfValues));
     if (metBeside)
         *metBeside = met[1];
     return met[0];

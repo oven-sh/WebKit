@@ -337,7 +337,7 @@ inline bool standsInInstruction(const Liveness& liveness, const Operation* user,
 
 constexpr bool changesWidthOfInteger(Opcode opcode) { return opcode == SExt32 || opcode == ZExt32 || opcode == Trunc; }
 
-inline bool isFreeInRegisterOfChild(const Liveness& liveness, const Operation* operation)
+inline bool isFreeWhenCoalesced(const Liveness& liveness, const Operation* operation)
 {
     Opcode opcode = operation->opcode();
     if (!changesWidthOfInteger(opcode))

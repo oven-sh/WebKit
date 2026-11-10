@@ -217,7 +217,7 @@ void Modules::listImportersAndRequirers()
     }
 }
 
-BitVector Modules::modulesThatTakeNamesOf(std::span<const ModuleID> files)
+BitVector Modules::transitiveImportersOf(std::span<const ModuleID> files)
 {
     listImportersAndRequirers();
     BitVector reaching(m_table.size());

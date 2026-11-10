@@ -188,7 +188,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instanc
 {
     VM& vm = *instance->vm;
     AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
-    const void* returnAddress = CompiledFrameIterator::findReturnAddressInFunctionAtTop(vm);
+    const void* returnAddress = CompiledFrameIterator::topFrameReturnAddress(vm);
     RELEASE_ASSERT(returnAddress);
     return std::bit_cast<uint64_t>(returnAddress);
 }
@@ -280,7 +280,7 @@ static String importableModuleOnTop(VM& vm)
     return url.startsWith("node:"_s) || url.startsWith("bun:"_s) ? url : String();
 }
 
-static void reportCallOfUnreachableFunction(VM& vm, const Identifier* name, ASCIILiteral missingUse)
+static void reportUnreachableCall(VM& vm, const Identifier* name, ASCIILiteral missingUse)
 {
     String called = name ? name->string() : nameOfFunctionOnTop(vm);
     RuntimeCheckFailure failure("reachability check failed"_s);
@@ -338,12 +338,12 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
     case Typed::RuntimeErrorKind::AsyncFromSyncIteratorNotObject:
         return createTypeError(globalObject, "iterator method should return an object"_s);
     case Typed::RuntimeErrorKind::OmittedFromExecutable:
-        reportCallOfUnreachableFunction(globalObject->vm(), name, "refer to"_s);
+        reportUnreachableCall(globalObject->vm(), name, "refer to"_s);
         CRASH();
     case Typed::RuntimeErrorKind::FunctionNotCompiled:
 #if ASSERT_ENABLED || ASAN_ENABLED
         if (isClosedWorld(*Image::current())) {
-            reportCallOfUnreachableFunction(globalObject->vm(), name, "call"_s);
+            reportUnreachableCall(globalObject->vm(), name, "call"_s);
             CRASH();
         }
 #endif
@@ -389,7 +389,7 @@ static void printKindsOfNativeResult(PrintStream& out, uint32_t kinds)
     else if (found.isNumber() && written.kinds & WrittenNativeResult::numberKind)
         failure.detail("a number outside the declared range");
     else
-        failure.detail(typeNameForCheckFailure(found));
+        failure.detail(reportedTypeName(found));
     failure.detail(" in the result of ", written.constructs ? "new " : "", BuiltinTable::singleton().textOf(BuiltinID(written.builtin)));
     failure.report();
     CRASH();
@@ -397,7 +397,7 @@ static void printKindsOfNativeResult(PrintStream& out, uint32_t kinds)
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtNativeResult, void, (Instance* instance, EncodedJSValue found, uint32_t encodedWritten))
 {
-    stopAtNativeResult(*instance, AOT_FRAME_RECORD_OF_THIS_FUNCTION(), JSValue::decode(found), WrittenNativeResult::decode(encodedWritten));
+    stopAtNativeResult(*instance, AOT_OPERATION_FRAME_RECORD(), JSValue::decode(found), WrittenNativeResult::decode(encodedWritten));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopUnlessNativeResultIsIntegerAsWritten, void, (Instance* instance, EncodedJSValue found, uint32_t encodedWritten))
@@ -408,7 +408,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopUnlessNativeResultIsIntegerAsW
         if (number >= static_cast<double>(written.minimum) && number <= static_cast<double>(written.maximum) && std::bit_cast<uint64_t>(static_cast<double>(static_cast<int64_t>(number))) == std::bit_cast<uint64_t>(number))
             return;
     }
-    stopAtNativeResult(*instance, AOT_FRAME_RECORD_OF_THIS_FUNCTION(), JSValue::decode(found), WrittenNativeResult::decode(encodedWritten));
+    stopAtNativeResult(*instance, AOT_OPERATION_FRAME_RECORD(), JSValue::decode(found), WrittenNativeResult::decode(encodedWritten));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCheckFreshResult, void, (Instance* instance, EncodedJSValue encodedResult, uint64_t collectionsBefore, uint32_t builtin, EncodedJSValue receiver, EncodedJSValue firstArgument))
@@ -443,7 +443,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCheckFreshResult, void, (Instance*
     if (finding.isNull())
         return;
     RuntimeCheckFailure failure("fresh result check failed"_s);
-    failure.atTopCall(vm, AOT_FRAME_RECORD_OF_THIS_FUNCTION());
+    failure.atTopCall(vm, AOT_OPERATION_FRAME_RECORD());
     failure.detail(BuiltinTable::singleton().textOf(BuiltinID(static_cast<uint16_t>(builtin))), " is declared to return a fresh object, but ", finding);
     failure.report();
     CRASH();
@@ -460,11 +460,11 @@ static void stopIfSaidNeverToReachUnseenCode(VM& vm, const State& state, JSValue
         const LayoutData& layout = uncheckedDowncast<Object>(cell)->layout();
         if (!layout.isSaidNeverToReachUnseenCode)
             return;
-        escaped = objectNameForCheckFailure(layout);
+        escaped = reportedObjectName(layout);
     } else if (std::optional<FunctionID> function = functionOf(cell)) {
         if (!Image::current()->programTables().traceOfFunction(function->index()).closuresAreSaidNeverToReachUnseenCode)
             return;
-        escaped = makeString("a closure of "_s, functionNameForCheckFailure(sourceFunctionOf(*function)));
+        escaped = makeString("a closure of "_s, reportedFunctionName(sourceFunctionOf(*function)));
     } else if (cell->isObject()) {
         const ClassTable& classes = state.objects->classes;
         ClassSide side = ClassSide::Prototype;
@@ -473,7 +473,7 @@ static void stopIfSaidNeverToReachUnseenCode(VM& vm, const State& state, JSValue
             layout = classes.classOf(*uncheckedDowncast<ClassPrototype>(cell));
         if (!layout || !layout->isSaidNeverToReachUnseenCode)
             return;
-        escaped = makeString(side == ClassSide::Prototype ? "the prototype of "_s : "the constructor of "_s, classNameForCheckFailure(*layout));
+        escaped = makeString(side == ClassSide::Prototype ? "the prototype of "_s : "the constructor of "_s, reportedClassName(*layout));
     } else
         return;
     RuntimeCheckFailure failure("escape check failed"_s);
@@ -569,7 +569,7 @@ static void printExpectedType(PrintStream& out, uint32_t summary)
             printExpectedType(type, expectedType);
             failure.detail("expected ", type.toString(), ", ");
         }
-        failure.detail("found ", found ? typeNameForCheckFailure(found) : source == static_cast<uint32_t>(ProofSource::Field) ? "an empty slot, undefined or null"_s : "an unexpected value"_s, " in ", description);
+        failure.detail("found ", found ? reportedTypeName(found) : source == static_cast<uint32_t>(ProofSource::Field) ? "an empty slot, undefined or null"_s : "an unexpected value"_s, " in ", description);
     }
     failure.report();
     failure.crashInHost(instance.globalObject);
@@ -580,14 +580,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*
 {
     uint32_t source = FalseProofWord::sourceOf(falseProofWord);
     RuntimeCheckFailure failure(failedCheckOf(source));
-    failure.atTopCall(*instance->vm, AOT_FRAME_RECORD_OF_THIS_FUNCTION()).inFunction(FunctionID(function));
+    failure.atTopCall(*instance->vm, AOT_OPERATION_FRAME_RECORD()).inFunction(FunctionID(function));
     stopAtFalseProof(*instance, failure, encodedFound, source, FalseProofWord::expectedTypeOf(falseProofWord));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleLoad, void, (Instance* instance, uint32_t function, uint32_t))
 {
     RuntimeCheckFailure failure("load elimination check failed"_s);
-    failure.atTopCall(*instance->vm, AOT_FRAME_RECORD_OF_THIS_FUNCTION()).inFunction(FunctionID(function));
+    failure.atTopCall(*instance->vm, AOT_OPERATION_FRAME_RECORD()).inFunction(FunctionID(function));
     failure.detail("memory changed between a load and a later load that the compiler replaced with its result");
     failure.report();
     failure.crashInHost(instance->globalObject);
@@ -734,7 +734,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instanc
     if (goesOn && !noteFalseRowOfEffects(makeString(function, ':', position, ':', said.toString())))
         return;
     RuntimeCheckFailure failure("effects check failed"_s);
-    failure.atTopCall(*instance->vm, AOT_FRAME_RECORD_OF_THIS_FUNCTION()).inFunction(FunctionID(function));
+    failure.atTopCall(*instance->vm, AOT_OPERATION_FRAME_RECORD()).inFunction(FunctionID(function));
     failure.detail(said.toString());
     failure.report();
     if (!goesOn)

@@ -5,6 +5,7 @@ enum StatisticID (stage: StatisticStage) {
     [Load]
     SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceBytes SourceLines
     SourceBytesOfPackages SourceLinesOfPackages SourceBytesOfDeclarations SourceLinesOfDeclarations SourceBytesOfBun SourceLinesOfBun
+    DependencyFilesNotVerified
     [Lower]
     FunctionsLowered ValuesLowered
     KnownHelperFunctions KnownHelperCalls FunctionSourcesReparsed
@@ -175,7 +176,7 @@ enum StatisticID (stage: StatisticStage) {
     ClosedPrototypeObjects ClosedClassObjects FunctionsWithClosedClosures ClosedSidesInheritingAddedNames
     ImageFunctionsEmitted CodeBytesEmitted StubBytes ConstantBytesEmitted TableBytesEmitted StringBytesEmitted Veneers StubCopiesEmitted
     RegExpsCompiled RegExpsInterpreted
-    WasmFunctionsCompiled WasmOptimizedCopies WasmBaselineCopies WasmOptimizedCheckingCopies WasmBaselineCheckingCopies WasmJumpsThreaded WasmFunctionsWithTwoCopies WasmCodeBytesEmitted WasmSecondCopyBytesEmitted
+    WasmFunctionsCompiled WasmOptimizedCopies WasmBaselineCopies WasmOptimizedCheckingCopies WasmBaselineCheckingCopies WasmJumpsThreaded WasmFirstStateTests WasmFunctionsWithTwoCopies WasmCodeBytesEmitted WasmSecondCopyBytesEmitted
     FunctionBytesEmitted FarInstanceWordBytesEmitted VeneerBytesEmitted SharedCodeBytesEmitted ArgumentThunkBytes
     FinalJumpBytesRemoved
     FFICodeBytesEmitted FFIDirectoryBytesEmitted RegExpCodeBytesEmitted RegExp16BitCodeBytes RegExpTableBytesEmitted

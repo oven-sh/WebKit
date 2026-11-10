@@ -40,9 +40,9 @@ static void forEachNameLiveAtHeadInTextBuilders(const BodyLiveness& liveness, co
     }
 }
 
-static bool belongsToFrameOnTopInTextBuilders(const Walker& walker, const StringInBuilder& text)
+static bool belongsToTopFrame(const Walker& walker, const StringInBuilder& text)
 {
-    if (text.frameIndex != walker.indexOfFrameOnTop() || !text.builder.isValue() || text.web.names.isEmpty())
+    if (text.frameIndex != walker.topFrameIndex() || !text.builder.isValue() || text.web.names.isEmpty())
         return false;
     uint32_t begunIn = walker.code().at(text.builder.id()).inlineFrame;
     auto frames = walker.code().inlineFrames();
@@ -62,9 +62,9 @@ StringInBuilder* findStringInBuilder(Walker& walker, ValueID input)
 {
     auto& texts = walker.stringsInBuilders();
     for (size_t place = walker.stringInBuilderSearchEnd(input); place--;) {
-        if (texts[place].frameIndex < walker.indexOfFrameOnTop())
+        if (texts[place].frameIndex < walker.topFrameIndex())
             break;
-        if (findNameInTextBuilders(texts[place].web, input) && belongsToFrameOnTopInTextBuilders(walker, texts[place]))
+        if (findNameInTextBuilders(texts[place].web, input) && belongsToTopFrame(walker, texts[place]))
             return &texts[place];
     }
     return nullptr;
@@ -90,7 +90,7 @@ static StringInBuilder* findTextByRecordInTextBuilders(Walker& walker, Reference
     auto& texts = walker.stringsInBuilders();
     for (size_t place = texts.size(); place--;) {
         StringInBuilder& text = texts[place];
-        if (!belongsToFrameOnTopInTextBuilders(walker, text))
+        if (!belongsToTopFrame(walker, text))
             continue;
         bool isNamed = text.builder == name || std::ranges::any_of(text.web.names, [&](const NameOfGrowingText& candidate) {
             return walker.nameLastBoundTo(candidate.value) == name;
@@ -202,7 +202,7 @@ static StringInBuilder* beginTextInTextBuilders(Walker& walker, const BodyIndex&
 {
     StringInBuilder text;
     text.web = WTF::move(web);
-    text.frameIndex = static_cast<uint32_t>(walker.indexOfFrameOnTop());
+    text.frameIndex = static_cast<uint32_t>(walker.topFrameIndex());
     text.liesInFrame = textBegunHereMayLieInFrame(walker, inputHead, text.web);
 
     Draft begin(text.liesInFrame ? Opcode::StackStringBuilderBegin : Opcode::StringBuilderBegin, origin);
@@ -284,7 +284,7 @@ void beginStringsInBuilders(Walker& walker, BlockID inputHead, LoopPreview& prev
             }
             if (std::exchange(before->waitsForNextLoop, false))
                 before->headThatTookIt = inputHead;
-            if (web && (!before->liesInFrame || textBegunHereMayLieInFrame(walker, inputHead, *web)) && (!web->beginsAnewOnSomeEdge || (before->liesInFrame && walker.hasOpenTrialVisit(walker.indexOfFrameOnTop(), inputHead)))) {
+            if (web && (!before->liesInFrame || textBegunHereMayLieInFrame(walker, inputHead, *web)) && (!web->beginsAnewOnSomeEdge || (before->liesInFrame && walker.hasOpenTrialVisit(walker.topFrameIndex(), inputHead)))) {
                 StringInBuilder text;
                 text.web = WTF::move(*web);
                 text.frameIndex = before->frameIndex;
@@ -306,11 +306,11 @@ void beginStringsInBuilders(Walker& walker, BlockID inputHead, LoopPreview& prev
         if (!web || !enters || !enters.isRecord())
             continue;
         Type typeOfWhatEnters = walker.types().at(walker.typeOf(enters));
-        if (!typeOfWhatEnters.isAnyString() && (web->beginsAnewOnSomeEdge || !web->isOnlyConcatenated || !hasTextByItself(typeOfWhatEnters) || !walker.hasOpenTrialVisit(walker.indexOfFrameOnTop(), inputHead)))
+        if (!typeOfWhatEnters.isAnyString() && (web->beginsAnewOnSomeEdge || !web->isOnlyConcatenated || !hasTextByItself(typeOfWhatEnters) || !walker.hasOpenTrialVisit(walker.topFrameIndex(), inputHead)))
             continue;
         if (comesRoundLoopAroundAsStringInTextBuilders(walker, index, inputHead, parameterIndex))
             continue;
-        if (web->beginsAnewOnSomeEdge && (!walker.hasOpenTrialVisit(walker.indexOfFrameOnTop(), inputHead) || !textBegunHereMayLieInFrame(walker, inputHead, *web)))
+        if (web->beginsAnewOnSomeEdge && (!walker.hasOpenTrialVisit(walker.topFrameIndex(), inputHead) || !textBegunHereMayLieInFrame(walker, inputHead, *web)))
             continue;
         StringInBuilder* begun = beginTextInTextBuilders(walker, index, inputHead, waysOut, WTF::move(*web), enters, origin);
         if (!begun)
@@ -433,7 +433,7 @@ Reference referenceOfOperandOfTerminator(Walker& walker, ValueID operand)
 Reference materializeStringInBuilder(Walker& walker, StringInBuilder& text, Reference name, Origin origin)
 {
     origin.isTailCall = false;
-    if (walker.indexOfFrameOnTop() == text.frameIndex) {
+    if (walker.topFrameIndex() == text.frameIndex) {
         const BodyIndex& index = walker.currentBodyIndex();
         if (!index.isInLoop(walker.inputBlockBeingWalked(), index.loopOf(text.web.loopHead))) {
             walker.fail("a string in a builder is read outside the loop that grows it"_s);
@@ -513,9 +513,9 @@ static void forEachTextLeftOnEdgeInTextBuilders(Walker& walker, BlockID from, Bl
     const BodyIndex& index = walker.currentBodyIndex();
     auto& texts = walker.stringsInBuilders();
     BitVector parametersOfHeadsSeen;
-    for (uint32_t place : walker.stringsInBuildersExitedOnEdge(from, to)) {
+    for (uint32_t place : walker.stringsInBuildersAtLoopExit(from, to)) {
         StringInBuilder& text = texts[place];
-        if (!belongsToFrameOnTopInTextBuilders(walker, text))
+        if (!belongsToTopFrame(walker, text))
             continue;
         LoopID loop = index.loopOf(text.web.loopHead);
         if (!index.isInLoop(from, loop) || index.isInLoop(to, loop) || parametersOfHeadsSeen.set(text.web.names.first().value.index()))
@@ -690,7 +690,7 @@ static bool comesRoundAsJoinInTextBuilders(Walker& walker, const BodyIndex& inde
 bool canStayInBuilderOnEdge(Walker& walker, const StringInBuilder& text, BlockID to, BodyTarget target)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    if (text.frameIndex != walker.indexOfFrameOnTop() || text.web.standsUnderHandlers || index.hasIrreducibleFlow())
+    if (text.frameIndex != walker.topFrameIndex() || text.web.standsUnderHandlers || index.hasIrreducibleFlow())
         return false;
     LoopID left = index.loopOf(text.web.loopHead);
     if (!left || index.isInLoop(to, left))
@@ -930,13 +930,13 @@ size_t Walker::stringInBuilderSearchEnd(ValueID name)
     if (m_stringsInBuilders.size() < minStringsInBuildersToIndex)
         return m_stringsInBuilders.size();
     const StringInBuilderIndex& places = stringInBuilderIndex();
-    size_t top = indexOfFrameOnTop();
+    size_t top = topFrameIndex();
     uint32_t end = places.endsByName.get(static_cast<uint64_t>(top) << 32 | name.index());
     auto endsOfFramesBelow = places.endsByFrame.span().first(std::min(top, places.endsByFrame.size()));
     return std::ranges::any_of(endsOfFramesBelow, [&](uint32_t endOfFrameBelow) { return endOfFrameBelow > end; }) ? 0 : end;
 }
 
-Vector<uint32_t, 8> Walker::stringsInBuildersExitedOnEdge(BlockID from, BlockID to)
+Vector<uint32_t, 8> Walker::stringsInBuildersAtLoopExit(BlockID from, BlockID to)
 {
     Vector<uint32_t, 8> found;
     const BodyIndex& index = currentBodyIndex();
@@ -949,7 +949,7 @@ Vector<uint32_t, 8> Walker::stringsInBuildersExitedOnEdge(BlockID from, BlockID 
         return found;
     }
     const StringInBuilderIndex& places = stringInBuilderIndex();
-    uint64_t frame = static_cast<uint64_t>(indexOfFrameOnTop()) << 32;
+    uint64_t frame = static_cast<uint64_t>(topFrameIndex()) << 32;
     for (LoopID loop = innermost; loop && !index.isInLoop(to, loop); loop = index.loop(loop).parent) {
         for (uint32_t end = places.endsByLoopHead.get(frame | index.loop(loop).head.index()); end; end = places.endsBeforeInSameLoop[end - 1])
             found.append(end - 1);

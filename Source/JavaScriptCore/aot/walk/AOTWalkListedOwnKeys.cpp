@@ -221,7 +221,7 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
             return true;
     }
 
-    if (!walker.letArmsMeet(stretch, ends, meeting))
+    if (!walker.joinArms(stretch, ends, meeting))
         return true;
     if (Reference met = end == place + 1 ? walker.referenceBoundTo(call) : Reference(); met && walker.program().builtins().mayHavePristineInstances(BuiltinClasses::Array))
         noteListMadeByCaller(walker, met);

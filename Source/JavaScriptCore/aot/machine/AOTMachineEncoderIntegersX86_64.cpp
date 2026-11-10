@@ -500,7 +500,7 @@ static void encodeX86IntegerExtension(Encoder& encoder, const Step& step, X86Int
         moveX86IntegerOperand(jit, Width32, source, destination);
         source = X86IntegerOperand::inRegister(destination);
     }
-    if (source.isInRegister() && source.gpr == destination && isFreeInRegisterOfChild(encoder.m_liveness, step.operation))
+    if (source.isInRegister() && source.gpr == destination && isFreeWhenCoalesced(encoder.m_liveness, step.operation))
         return;
 
     switch (extension) {

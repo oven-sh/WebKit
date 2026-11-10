@@ -52,10 +52,10 @@ private:
     StringPrintStream m_detail;
 };
 
-JS_EXPORT_PRIVATE ASCIILiteral typeNameForCheckFailure(JSValue);
-String functionNameForCheckFailure(FunctionID);
-String classNameForCheckFailure(const LayoutData& classLayout);
-String objectNameForCheckFailure(const LayoutData&);
+JS_EXPORT_PRIVATE ASCIILiteral reportedTypeName(JSValue);
+String reportedFunctionName(FunctionID);
+String reportedClassName(const LayoutData& classLayout);
+String reportedObjectName(const LayoutData&);
 
 } // namespace AOT
 } // namespace JSC

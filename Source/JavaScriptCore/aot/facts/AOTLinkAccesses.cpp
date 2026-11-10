@@ -287,7 +287,7 @@ private:
     bool tellsWhatMayAnswerUnderAnyNameBelow(BuiltinClassID);
     bool isServedByLightFormOf(BuiltinID) const;
     bool tellsMemberThatTableFindsFrom(BuiltinID) const;
-    bool tableListsNoMemberFrom(BuiltinID) const;
+    bool isKeyAbsentFromChain(BuiltinID) const;
     bool giveWhatLightFormServes(BuiltinID);
     LinkType anythingInPlaceOf(BuiltinID canonical);
     bool mayRunCodeFoundFrom(BuiltinID start);
@@ -1021,7 +1021,7 @@ void AccessInLinkAccesses::resolve()
         if (subject.builtin && (m_shared || !m_flow.isSpelledInBody(m_function, m_access.subject))) {
             BuiltinID member;
             LookupInLinkAccesses outcome = isNamed() ? lookUpFrom(subject.builtin, member) : m_keyCannotNameBuiltin ? LookupInLinkAccesses::Absent : LookupInLinkAccesses::Unknown;
-            if (outcome == LookupInLinkAccesses::Unknown && isNamed() && m_nameClass != NameClass::Proto && tableListsNoMemberFrom(subject.builtin))
+            if (outcome == LookupInLinkAccesses::Unknown && isNamed() && m_nameClass != NameClass::Proto && isKeyAbsentFromChain(subject.builtin))
                 outcome = LookupInLinkAccesses::Absent;
             if (outcome == LookupInLinkAccesses::Found)
                 m_flow.note(LinkFlow::Note::BuiltinRead, member.index());
@@ -2684,7 +2684,7 @@ bool AccessInLinkAccesses::giveWhatOtherNamesHold(const BuiltinHostObject& objec
     return true;
 }
 
-bool AccessInLinkAccesses::tableListsNoMemberFrom(BuiltinID start) const
+bool AccessInLinkAccesses::isKeyAbsentFromChain(BuiltinID start) const
 {
     MembersUnderKey members(m_program, m_access.key);
     for (BuiltinID holder = m_table.canonicalID(start); ; holder = m_table.canonicalID(m_table.at(holder).inheritsFrom)) {
@@ -2703,8 +2703,8 @@ bool AccessInLinkAccesses::tellsMemberThatTableFindsFrom(BuiltinID builtin) cons
     if (!isNamed() || m_nameClass == NameClass::Proto || m_flow.lightFormOf(builtin))
         return false;
     if (isRead())
-        return lookUpFrom(builtin, member) != LookupInLinkAccesses::Unknown || tableListsNoMemberFrom(builtin);
-    return !m_access.isByDescriptor && !m_access.laysAccessorAsWritten && tableListsNoMemberFrom(builtin);
+        return lookUpFrom(builtin, member) != LookupInLinkAccesses::Unknown || isKeyAbsentFromChain(builtin);
+    return !m_access.isByDescriptor && !m_access.laysAccessorAsWritten && isKeyAbsentFromChain(builtin);
 }
 
 bool AccessInLinkAccesses::isServedByLightFormOf(BuiltinID builtin) const

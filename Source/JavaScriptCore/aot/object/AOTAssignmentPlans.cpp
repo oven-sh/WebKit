@@ -572,7 +572,7 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
     }
     bool hasStoredSymbol = false;
     for (auto& property : *properties) {
-        plan.storesNameBehindSymbol |= hasStoredSymbol && !property.name->isSymbol();
+        plan.storesNameAfterSymbol |= hasStoredSymbol && !property.name->isSymbol();
         hasStoredSymbol |= property.name->isSymbol();
         const FieldData* field = record ? layouts.field(vm, *layout, property.name) : nullptr;
         if (!field) {

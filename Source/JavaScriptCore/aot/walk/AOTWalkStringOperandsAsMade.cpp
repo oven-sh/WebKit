@@ -253,7 +253,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
     BlockID meetingBlock = walker.addBlock();
     walker.recordSpeculation();
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     auto walkCallToEndOfArm = [&] {
         walker.walkStretch(inputBlock, firstPlace.value_or(place), place + 1);
         if (isReturnedAtOnce)
@@ -263,7 +263,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         Reference result = isReadBehind ? walker.referenceOf(call.id()) : Reference();
         if (isReadBehind && (!result || !result.isRecord()))
             return walker.fail("an arm of a guess at an operand has no value for what is read behind it"_s);
-        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { result } });
+        arms.append(Walker::JoinArm { walker.currentBlock(), { result } });
     };
 
     walker.continueIn(closedBlock);
@@ -296,7 +296,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         return;
 
     Reference met;
-    if (walker.letArmsMeet(arms.span(), meetingBlock, singleElementSpan(met).first(isReadBehind)) && isReadBehind)
+    if (walker.joinArms(arms.span(), meetingBlock, singleElementSpan(met).first(isReadBehind)) && isReadBehind)
         walker.bind(call.id(), met);
 }
 

@@ -7613,7 +7613,7 @@ static BitVector findTextsThatNameFieldsNeverWrittenForScan(const Program& progr
     return texts;
 }
 
-static bool holdsWhatItsOneStoreLaysThereInScan(const Program& program, VariableID id)
+static bool isWriteOnceModuleVariable(const Program& program, VariableID id)
 {
     const Variable& variable = program.at(id);
     if (variable.owner || !variable.module || variable.initialization != VariableInitialization::Uninitialized || !variable.flags.contains(VariableFlags::IsImmutable) || variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
@@ -7638,13 +7638,13 @@ static void nameKeysOfMembersByVariablesInScan(const Program& program, const Vec
             continue;
         for (const ScanOfBody::MemberUnderVariableInScan& member : scan->membersUnderVariables()) {
             auto stored = std::ranges::equal_range(keys, member.variable, { }, &ScanOfBody::KeyOfVariableInScan::variable);
-            if (stored.size() == 1 && holdsWhatItsOneStoreLaysThereInScan(program, member.variable))
+            if (stored.size() == 1 && isWriteOnceModuleVariable(program, member.variable))
                 summaries.at(member.function).members[member.member].key = stored.front().key;
         }
     }
 }
 
-static void listSymbolsOfVariablesInScan(const Program& program, const Vector<std::unique_ptr<ScanOfBody>>& scans, ThinSummaries& summaries)
+static void collectSymbolValuedVariables(const Program& program, const Vector<std::unique_ptr<ScanOfBody>>& scans, ThinSummaries& summaries)
 {
     Vector<PropertyKeyID> symbols;
     BitVector isStored;
@@ -7654,7 +7654,7 @@ static void listSymbolsOfVariablesInScan(const Program& program, const Vector<st
         for (auto [variable, key] : scan->keysOfVariables()) {
             PropertyKeyKind kind = program.at(key).kind;
             bool isSymbol = kind == PropertyKeyKind::WellKnownSymbol || kind == PropertyKeyKind::CreatedSymbol || kind == PropertyKeyKind::RegisteredSymbol;
-            if (!isSymbol || !holdsWhatItsOneStoreLaysThereInScan(program, variable))
+            if (!isSymbol || !isWriteOnceModuleVariable(program, variable))
                 continue;
             if (symbols.isEmpty())
                 symbols.fill(PropertyKeyID(), program.variables.size());
@@ -7746,7 +7746,7 @@ ThinSummaries scanBodies(const Program& program, Diagnostics& diagnostics, const
     summaries.setNumberOfValuesScanned(numberOfValuesScanned);
 
     nameKeysOfMembersByVariablesInScan(program, scans, summaries);
-    listSymbolsOfVariablesInScan(program, scans, summaries);
+    collectSymbolValuedVariables(program, scans, summaries);
     listFunctionsThatCopyMembersInScan(numberOfFunctions, scans, summaries);
 
     std::optional<InternalError> firstError;

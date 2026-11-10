@@ -379,6 +379,9 @@ struct WasmModuleCompiler {
         policy.upstream.allowsSIMD = true;
         bool usesTraps = flavor == Wasm::ImageCodeFlavor::Trapping && info.memoryCount();
         policy.upstream.usesWasmFaultSignalHandler = usesTraps;
+        policy.optimization.narrowsIntegers = true;
+        policy.selection.extendsInstructionSelection = true;
+        policy.air.layout.mergesIdenticalBlocks = true;
         policy.addressing.isPositionIndependent = true;
         policy.addressing.dataSectionSpace = static_cast<uint32_t>(WasmRelocationSpace::Constants);
         policy.addressing.jumpTableSpace = static_cast<uint32_t>(WasmRelocationSpace::JumpTables);
@@ -417,6 +420,7 @@ struct WasmModuleCompiler {
         result.savedRegisters = *savedRegisters;
         result.dependsOnFlavor = true;
         result.threadedJumps = codeForImage.threadedJumps;
+        result.firstStateTests = codeForImage.firstStateTests;
         for (size_t directCallee : (*compiled)->outgoingJITDirectCallees)
             result.directCallees.set(directCallee);
         return { };
@@ -682,9 +686,11 @@ static WasmModuleOrDecline finishWasmModule(PendingWasmModule& module, const Cod
     unsigned optimizedCheckingCopies = 0;
     unsigned baselineCheckingCopies = 0;
     unsigned threadedJumps = 0;
+    unsigned firstStateTests = 0;
     auto countCopy = [&](const WasmFunctionCode& copy) {
         ++(copy.isOptimized ? optimizedCopies : baselineCopies);
         threadedJumps += copy.threadedJumps;
+        firstStateTests += copy.firstStateTests;
     };
     for (size_t function = 0; function < module.code.functions.size(); ++function) {
         countCopy(module.code.functions[function]);
@@ -699,6 +705,7 @@ static WasmModuleOrDecline finishWasmModule(PendingWasmModule& module, const Cod
     context.statistics().count(StatisticID::WasmOptimizedCheckingCopies, optimizedCheckingCopies);
     context.statistics().count(StatisticID::WasmBaselineCheckingCopies, baselineCheckingCopies);
     context.statistics().count(StatisticID::WasmJumpsThreaded, threadedJumps);
+    context.statistics().count(StatisticID::WasmFirstStateTests, firstStateTests);
     return linkWasmModule(WTF::move(module.code), templates, context);
 }
 

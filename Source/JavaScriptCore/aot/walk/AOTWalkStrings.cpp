@@ -634,10 +634,10 @@ bool buildArmsForStrings(Walker& walker, Reference test, BlockFrequency ofFailin
     BlockID meetingBlock = walker.addBlock();
     walker.branch(test, passingBlock, failingBlock);
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     auto buildArm = [&](BlockID block, const ArmForStrings& arm) {
         walker.continueIn(block);
-        Walker::ArmThatMeets built;
+        Walker::JoinArm built;
         built.values.fill(Reference(), met.size());
         arm(built.values.mutableSpan());
         if (walker.isUnreachable() || walker.hasFailed())
@@ -652,7 +652,7 @@ bool buildArmsForStrings(Walker& walker, Reference test, BlockFrequency ofFailin
         buildArm(failingBlock, failing);
     if (walker.hasFailed() || arms.isEmpty())
         return false;
-    return walker.letArmsMeet(arms.span(), meetingBlock, met);
+    return walker.joinArms(arms.span(), meetingBlock, met);
 }
 
 } } } // namespace JSC::AOT::Typed

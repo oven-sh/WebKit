@@ -193,7 +193,7 @@ private:
     uint32_t m_nextSunk { 0 };
     uint32_t m_nextOperation { 0 };
     ArenaVector<WriteOutsideRange> m_writesOutsideRange;
-    const Step* m_stepThatLeftFlags { nullptr };
+    const Step* m_flagSettingStep { nullptr };
     std::array<ValueID, numberOfRegisters> m_widened { };
     bool m_needsAnotherRound { false };
     bool m_failed { false };
@@ -791,7 +791,7 @@ bool AllocationChecker::checkBranchOnOverflow(const Step& step)
 {
     const Operation* branch = step.operation;
     OverflowCheckedSum test = overflowCheckedSumOf(m_liveness, branch);
-    const Step* stepOfSum = m_stepThatLeftFlags;
+    const Step* stepOfSum = m_flagSettingStep;
     if (!stepOfSum || stepOfSum->operation != test.sum)
         return fail(FailureKind::WrongValueInRegister, branch);
     const Operation* operand = step.other;
@@ -851,7 +851,7 @@ bool AllocationChecker::executeOperation(const Step& step)
     if (usesOverflowFlag && operation->opcode() == Branch && !checkBranchOnOverflow(step))
         return false;
     if (usesOverflowFlag && operation->opcode() != Branch)
-        m_stepThatLeftFlags = &step;
+        m_flagSettingStep = &step;
     if (operation->opcode() == Return && operation->numChildren() == 1) {
         Reg expected = bankOf(operation->child(0)->type()) == Bank::GP ? Reg(GPRInfo::returnValueGPR) : Reg(FPRInfo::returnValueFPR);
         if (sources != maskOf(expected))
@@ -880,7 +880,7 @@ bool AllocationChecker::executeOperation(const Step& step)
     if (!type.isNumeric() || !(registerMaskOf(step.destination) & m_file.allocatableIn(bankOf(type))))
         return fail(FailureKind::WrongValueInRegister, operation);
     Place destination = step.destination.reg().index();
-    bool staysWidened = step.sources[0] == step.destination && isFreeInRegisterOfChild(m_liveness, operation) && isWidened(destination);
+    bool staysWidened = step.sources[0] == step.destination && isFreeWhenCoalesced(m_liveness, operation) && isWidened(destination);
     if (staysWidened && operation->opcode() == ZExt32 && m_liveness.of(operation).has(ValueFlag::UpperHalfIsRead))
         return fail(FailureKind::UpperHalfIsNotClear, operation);
     set(destination, idOf(operation));
@@ -1068,7 +1068,7 @@ bool AllocationChecker::execute(const Step& step)
         return fail(FailureKind::WrongValueInRegister, nullptr);
     if (operation->opcode() == Phi || operation->opcode() == Upsilon)
         return true;
-    if (m_stepThatLeftFlags && operation->opcode() != Trunc && operation != m_block->last())
+    if (m_flagSettingStep && operation->opcode() != Trunc && operation != m_block->last())
         return fail(FailureKind::WrongValueInRegister, operation);
     Position early;
     if (!matchNextOperation(operation, early))
@@ -1087,7 +1087,7 @@ bool AllocationChecker::transfer(const Step& step)
     RegisterMask toRegister = registerMaskOf(step.destination);
     RegisterMask fromRegister = registerMaskOf(step.sources[0]);
     Place place;
-    if (m_stepThatLeftFlags && step.kind != StepKind::Execute && step.kind != StepKind::Move && step.kind != StepKind::Reload && step.kind != StepKind::Save)
+    if (m_flagSettingStep && step.kind != StepKind::Execute && step.kind != StepKind::Move && step.kind != StepKind::Reload && step.kind != StepKind::Save)
         return fail(FailureKind::WrongValueInRegister, step.operation);
     switch (step.kind) {
     case StepKind::Execute:
@@ -1192,7 +1192,7 @@ bool AllocationChecker::enter(Block* block)
     m_nextSunk = 0;
     m_nextOperation = 0;
     m_writesOutsideRange.clear();
-    m_stepThatLeftFlags = nullptr;
+    m_flagSettingStep = nullptr;
 
     clearState();
     for (const Entry& entry : m_heads[block->index()].entries)
@@ -1289,17 +1289,17 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
     if (from->last()->opcode() == Branch && m_liveness.usesOverflowFlag(from->last())) {
         const Operation* operandTakenBack = m_allocation.step(m_allocation.stepsOf(from).terminator).other;
         if (operandTakenBack && successorIndex != overflowCheckedSumOf(m_liveness, from->last()).passingSuccessor)
-            m_onEdge[m_stepThatLeftFlags->destination.reg().index()] = idOf(operandTakenBack);
+            m_onEdge[m_flagSettingStep->destination.reg().index()] = idOf(operandTakenBack);
     }
     RegisterMask widenedOnEdge = 0;
     for (Place place = 0; place < numberOfRegisters; ++place) {
         if (isWidened(place) && m_onEdge[place] == m_state[place])
             widenedOnEdge |= RegisterMask { 1 } << place;
     }
-    if (from->last()->opcode() == Branch && m_liveness.usesOverflowFlag(from->last()) && m_stepThatLeftFlags) {
+    if (from->last()->opcode() == Branch && m_liveness.usesOverflowFlag(from->last()) && m_flagSettingStep) {
         OverflowCheckedSum test = overflowCheckedSumOf(m_liveness, from->last());
         if (test.isWidenedOnFailure && successorIndex != test.passingSuccessor)
-            widenedOnEdge |= registerMaskOf(m_stepThatLeftFlags->destination);
+            widenedOnEdge |= registerMaskOf(m_flagSettingStep->destination);
     }
 
     for (Operation* upsilon : from->upsilons()) {

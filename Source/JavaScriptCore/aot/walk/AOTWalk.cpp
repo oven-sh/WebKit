@@ -1056,7 +1056,7 @@ void Walker::allocateRestArrays()
 Reference Walker::argumentOfEntry(uint32_t position, Origin origin)
 {
     Draft read(Opcode::GetArgument, origin);
-    read.setArgumentIndex(position);
+    read.setArgumentIndex(plan().conventions().genericEntry(unit()).takesNewTarget + position);
     chooseConservativeFields(read);
     return build(WTF::move(read));
 }
@@ -1533,7 +1533,7 @@ bool Walker::allocationHoldsWhatIsHeldFilled(const Draft& allocation)
 {
     if (m_isMakingObjectsOfConstant || program().at(allocation.layout()).kind == LayoutKind::Instance)
         return true;
-    if (isWrittenInFrameOnTop(allocation) && facts().summaries().at(currentFunction()).makerEndsWhereItLeaves(allocation.inputValueGiven))
+    if (isWrittenInTopFrame(allocation) && facts().summaries().at(currentFunction()).makerEndsWhereItLeaves(allocation.inputValueGiven))
         return true;
     Vector<FieldIndex, 8> held = fieldsHeldFilledInSlots(program(), facts().linked(), plan().slots(), allocation.layout());
     if (held.isEmpty())
@@ -1734,7 +1734,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Walker::holdStoredValuesToPlaces(const Draft
 {
     Origin origin = draft.origin();
     bool storesWrittenConstant = false;
-    if ((draft.opcode == Opcode::PutModuleVariable || draft.opcode == Opcode::PutEnvironmentField) && isWrittenInFrameOnTop(draft)) {
+    if ((draft.opcode == Opcode::PutModuleVariable || draft.opcode == Opcode::PutEnvironmentField) && isWrittenInTopFrame(draft)) {
         const BodyIndex& index = currentBodyIndex();
         Opcode written = index.opcodeOf(draft.inputValueGiven);
         ValueID stored = written == Opcode::PutModuleVariable || written == Opcode::PutEnvironmentField ? index.value(draft.inputValueGiven).valueOperand() : ValueID();
@@ -3631,7 +3631,7 @@ void Walker::noteOperationBuiltWhereCodeIsVerified(ValueID id, const Draft& draf
         m_code.recordSyntheticVariableRead(id);
     if (draft.opcode == Opcode::GetEnvironmentField && !draft.inputValueGiven && draft.isKnownInitialized())
         m_code.recordSyntheticVariableRead(id);
-    if (!isWrittenInFrameOnTop(draft) || opcodesThatMakeArguments.contains(draft.opcode) || (resultRuleInWalk(draft.opcode) != ResultRule::Allocation && !closuresAndClassesMade.contains(draft.opcode)))
+    if (!isWrittenInTopFrame(draft) || opcodesThatMakeArguments.contains(draft.opcode) || (resultRuleInWalk(draft.opcode) != ResultRule::Allocation && !closuresAndClassesMade.contains(draft.opcode)))
         return;
     const Frame& frame = m_frames.last();
     Reference earlier = referenceBoundIn(frame, draft.inputValueGiven);
@@ -4100,7 +4100,7 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
             return { };
         }
     }
-    if (m_inputs.options.verifiesCode && isWrittenInFrameOnTop(draft) && takesWhatRowOfInputOperandCannotGive(draft)) [[unlikely]] {
+    if (m_inputs.options.verifiesCode && isWrittenInTopFrame(draft) && takesWhatRowOfInputOperandCannotGive(draft)) [[unlikely]] {
         m_whatJudgeOfOperandsRefused = "an operation that stands for one of the input takes what the row of the input's operand cannot give"_s;
         fail(m_whatJudgeOfOperandsRefused, InternalErrorKind::TypeOutOfDate);
         return { };
@@ -4151,7 +4151,7 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
     bool endsNoGuard = (!m_trialVisits.isEmpty() || m_inputs.options.checksEffects) && effects.writes.contains(AbstractHeap::MemberGuards) && !effects.mayRunOtherCode() && writerEndsNoGuard(*this, draft);
     if (!m_trialVisits.isEmpty() && (!hasNoEffects || m_inputs.options.loopVisitAbortPeriod) && draft.opcode != Opcode::EndCellLifetime && !isIgnoredArrayStore) {
         bool isCall = effects.mayRunOtherCode() && effectRuleOf(draft.opcode) == EffectRule::Call;
-        FunctionID callee = isCall && isWrittenInFrameOnTop(draft) && !facts().linked().calls.isEmpty() ? facts().linked().calleeAt(currentFunction(), draft.inputValueGiven) : FunctionID();
+        FunctionID callee = isCall && isWrittenInTopFrame(draft) && !facts().linked().calls.isEmpty() ? facts().linked().calleeAt(currentFunction(), draft.inputValueGiven) : FunctionID();
         if (callee) {
             Effects ofCallee = facts().linked().function(callee).effectsOnReturn();
             ofCallee.merge(facts().linked().function(callee).effectsOnThrow());
@@ -4998,7 +4998,7 @@ void Walker::continueIn(BlockID block)
         takeStateOfBlockThatIsBegun(m_state, pending->state);
 }
 
-bool Walker::letArmsMeet(std::span<const ArmThatMeets> arms, BlockID meeting, std::span<Reference> met)
+bool Walker::joinArms(std::span<const JoinArm> arms, BlockID meeting, std::span<Reference> met)
 {
     Vector<size_t, 8> positionsOfParameters;
     Vector<Representation, 4> forms;
@@ -5015,7 +5015,7 @@ bool Walker::letArmsMeet(std::span<const ArmThatMeets> arms, BlockID meeting, st
         Reference first = arms.front().values[position];
         met[position] = first;
         bool allBringOneValue = true;
-        for (const ArmThatMeets& arm : arms) {
+        for (const JoinArm& arm : arms) {
             if (!arm.values[position]) {
                 fail("an arm has no value for what meets behind it"_s);
                 return false;
@@ -5027,7 +5027,7 @@ bool Walker::letArmsMeet(std::span<const ArmThatMeets> arms, BlockID meeting, st
 
         TypeID type;
         forms.shrink(0);
-        for (const ArmThatMeets& arm : arms) {
+        for (const JoinArm& arm : arms) {
             TypeID own = m_code.at(arm.values[position].id()).type;
             type = type ? joinOf(types(), facts().families(), type, own) : own;
             forms.append(representationOf(arm.values[position]));
@@ -5039,7 +5039,7 @@ bool Walker::letArmsMeet(std::span<const ArmThatMeets> arms, BlockID meeting, st
     Vector<FieldOfScope, 4> fieldsThatMeet;
     if (unitHasMadeScopes()) {
         Vector<const WalkState*, 4> states;
-        for (const ArmThatMeets& arm : arms) {
+        for (const JoinArm& arm : arms) {
             const PendingBlock* left = arm.last == m_block ? nullptr : findPendingBlock(arm.last);
             if (arm.last != m_block && (!left || !left->hasState)) {
                 states.shrink(0);
@@ -5054,7 +5054,7 @@ bool Walker::letArmsMeet(std::span<const ArmThatMeets> arms, BlockID meeting, st
 
     Vector<Reference, 8> arguments;
     size_t way = 0;
-    for (const ArmThatMeets& arm : arms) {
+    for (const JoinArm& arm : arms) {
         arguments.shrink(0);
         for (size_t position : positionsOfParameters)
             arguments.append(arm.values[position]);
@@ -5104,7 +5104,7 @@ void Walker::listArm(const StretchInArms& stretch, ArmsThatMeet& arms)
         threadReturnOf(stretch.inputBlock);
     if (isUnreachable() || hasFailed())
         return;
-    ArmThatMeets arm { m_block, { } };
+    JoinArm arm { m_block, { } };
     for (ValueID mentioned : stretch.mentionedBehind) {
         Reference built = referenceOf(mentioned);
         if (!built || !built.isRecord())
@@ -5122,7 +5122,7 @@ void Walker::walkClosedArm(BlockID closed, const StretchInArms& stretch, ArmsTha
     listArm(stretch, arms);
 }
 
-bool Walker::letArmsMeet(const StretchInArms& stretch, const ArmsThatMeet& arms, BlockID meeting)
+bool Walker::joinArms(const StretchInArms& stretch, const ArmsThatMeet& arms, BlockID meeting)
 {
     uint32_t firstOfBlock = currentBodyIndex().block(stretch.inputBlock).firstValue().index();
     size_t nextMentionedBehind = 0;
@@ -5133,7 +5133,7 @@ bool Walker::letArmsMeet(const StretchInArms& stretch, const ArmsThatMeet& arms,
             bind(ValueID(firstOfBlock + place), Reference());
     }
     Vector<Reference, 8> met(stretch.mentionedBehind.size());
-    if (!letArmsMeet(arms.span(), meeting, met.mutableSpan()))
+    if (!joinArms(arms.span(), meeting, met.mutableSpan()))
         return false;
     for (size_t position = 0; position < met.size(); ++position)
         bind(stretch.mentionedBehind[position], met[position]);
@@ -7420,6 +7420,7 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         || (has(Mechanism::Folding) && foldOperationOnKnownTexts(*this, value))
         || (has(Mechanism::BuiltinCalls) && buildDefinitionByWrittenDescriptor(*this, value))
         || (has(Mechanism::BuiltinCalls) && expandObjectCreateDescriptors(*this, value))
+        || (has(Mechanism::BuiltinCalls) && expandObjectCreateAtDefinition(*this, value))
         || (has(Mechanism::EscapeAnalysis) && m_opensGuesses && listStoresOfCopiedConstructor(*this, value))
         || (opcodesOfGeneratorsInLoops.contains(value.opcode()) && has(Mechanism::Inlining) && walkOperationOfGeneratorInLoop(value))
         || buildCoroutineOperation(*this, value)

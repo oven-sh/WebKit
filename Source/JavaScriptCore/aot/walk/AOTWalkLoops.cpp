@@ -3145,7 +3145,7 @@ bool Walker::looksAtLoopsAroundHaveCounted(const Draft& draft, const Effects& ef
     if (looksAtLoopsAroundHaveSeen(effects))
         return true;
     const LinkTables& linked = facts().linked();
-    if (effectRuleOf(draft.opcode) != EffectRule::Call || !isWrittenInFrameOnTop(draft) || linked.calls.isEmpty())
+    if (effectRuleOf(draft.opcode) != EffectRule::Call || !isWrittenInTopFrame(draft) || linked.calls.isEmpty())
         return false;
     FunctionID callee = linked.calleeAt(currentFunction(), draft.inputValueGiven);
     if (!callee)

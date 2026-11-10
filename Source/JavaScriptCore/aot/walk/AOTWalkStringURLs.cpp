@@ -491,14 +491,14 @@ static Reference isPlainInStringURLs(Walker& walker, const URLThatIsNeverMade& u
 
 static Reference meetInStringURLs(Walker& walker, BlockID meeting, Reference answer, BlockID endOfPlain, Reference written, BlockID endOfWritten)
 {
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     if (endOfPlain)
-        arms.append(Walker::ArmThatMeets { endOfPlain, { answer } });
+        arms.append(Walker::JoinArm { endOfPlain, { answer } });
     if (endOfWritten)
-        arms.append(Walker::ArmThatMeets { endOfWritten, { written } });
+        arms.append(Walker::JoinArm { endOfWritten, { written } });
     Reference met;
     if (!arms.isEmpty())
-        walker.letArmsMeet(arms.span(), meeting, singleElementSpan(met));
+        walker.joinArms(arms.span(), meeting, singleElementSpan(met));
     return met;
 }
 
@@ -702,14 +702,14 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     url.inlineFrame = walker.originOfOperation().inlineFrame;
     url.made = made;
     url.typeOfObject = typeOfObject;
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     if (endOfWritten) {
         Reference noText = walker.constant(PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
-        arms.append(Walker::ArmThatMeets { endOfWritten, { object, noText, integerForStrings(walker, PlainURL::notPlain) } });
+        arms.append(Walker::JoinArm { endOfWritten, { object, noText, integerForStrings(walker, PlainURL::notPlain) } });
     }
-    arms.append(Walker::ArmThatMeets { plain, { nothing, string, scan } });
+    arms.append(Walker::JoinArm { plain, { nothing, string, scan } });
     std::array<Reference, 3> met;
-    if (!walker.letArmsMeet(arms.span(), meeting, met))
+    if (!walker.joinArms(arms.span(), meeting, met))
         return true;
     url.object = met[0];
     url.text = met[1];

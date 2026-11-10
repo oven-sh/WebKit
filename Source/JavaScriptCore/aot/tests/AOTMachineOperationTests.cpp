@@ -1777,7 +1777,7 @@ static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWithoutCode()
             compileOrFail(test);
 
             checkOperationTest(test.procedure().liveness().usesOverflowFlag(tests->last()), test, opcode, " whose low half is extended goes by overflow");
-            checkOperationTest(extended->opcode() == ZExt32 && isFreeInRegisterOfChild(test.procedure().liveness(), extended), test, opcode, ": the extension of its low half takes code");
+            checkOperationTest(extended->opcode() == ZExt32 && isFreeWhenCoalesced(test.procedure().liveness(), extended), test, opcode, ": the extension of its low half takes code");
             for (uint64_t a : operationTestInt32s) {
                 for (uint64_t b : operationTestInt32s) {
                     int64_t x = static_cast<int32_t>(a);
@@ -1826,8 +1826,8 @@ static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWhereTestFailed()
         const Liveness& liveness = test.procedure().liveness();
         checkOperationTest(liveness.usesOverflowFlag(tests->last()), test, "the Branch goes by overflow");
         checkOperationTest(overflowCheckedSumOf(liveness, sum).isWidenedOnFailure, test, "the sum is widened");
-        checkOperationTest(isFreeInRegisterOfChild(liveness, extendedWhereItPassed), test, "where the test passed the extension of the low half takes code");
-        checkOperationTest(!isFreeInRegisterOfChild(liveness, extendedWhereItFailed), test, "where the test failed the extension of the low half takes no code");
+        checkOperationTest(isFreeWhenCoalesced(liveness, extendedWhereItPassed), test, "where the test passed the extension of the low half takes code");
+        checkOperationTest(!isFreeWhenCoalesced(liveness, extendedWhereItFailed), test, "where the test failed the extension of the low half takes no code");
         for (uint64_t a : operationTestInt32s) {
             int64_t whole = static_cast<int64_t>(static_cast<int32_t>(a)) - 1;
             uint64_t expected = whole == static_cast<int32_t>(whole) ? static_cast<uint32_t>(whole) + tag : std::bit_cast<uint64_t>(static_cast<double>(whole));

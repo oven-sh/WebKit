@@ -3340,7 +3340,7 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
             continueIn(passed);
             return true;
         };
-        Vector<ArmThatMeets, 3> arms;
+        Vector<JoinArm, 3> arms;
         Reference number = bound;
         if (!isNumberByType) {
             BlockID takesBound = addBlock();
@@ -3348,7 +3348,7 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
             branch(isInt32, takesBound, isNoInt32);
             continueIn(takesBound);
             if (Reference held = buildProofOfNumber(*this, bound, isInt32, origin))
-                arms.append(ArmThatMeets { takesBound, { held, held } });
+                arms.append(JoinArm { takesBound, { held, held } });
             else if (!isUnreachable())
                 jumpTo(genericStart);
             continueIn(isNoInt32);
@@ -3367,22 +3367,22 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
             written.setInteger(std::numeric_limits<int32_t>::max());
             Reference greatest = constant(WTF::move(written));
             if (continueIf(buildIntegerOperator(*this, Opcode::Less, greatest, rounded, origin)))
-                arms.append(ArmThatMeets { currentBlock(), { greatest, rounded } });
+                arms.append(JoinArm { currentBlock(), { greatest, rounded } });
             else if (!isUnreachable())
                 jumpTo(genericStart);
             continueIn(takesRounded);
             if (Reference held = buildProofOfNumber(*this, rounded, roundedIsInt32, origin))
-                arms.append(ArmThatMeets { takesRounded, { held, held } });
+                arms.append(JoinArm { takesRounded, { held, held } });
         } else if (!isUnreachable())
             jumpTo(genericStart);
         if (arms.isEmpty())
             return false;
         std::array<Reference, 2> met;
         if (isNumberByType) {
-            for (ArmThatMeets& arm : arms)
+            for (JoinArm& arm : arms)
                 arm.values.shrink(1);
         }
-        if (!letArmsMeet(arms.span(), addBlock(), std::span<Reference>(met).first(isNumberByType ? 1 : 2)))
+        if (!joinArms(arms.span(), addBlock(), std::span<Reference>(met).first(isNumberByType ? 1 : 2)))
             return false;
         lesserOfBoundAndGreatestInt32 = met[0];
         boundRoundedInFront = isNumberByType ? rounded : met[1];
@@ -3558,11 +3558,11 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
                 if (Reference held = build(WTF::move(narrowed)))
                     other = held;
             }
-            Vector<ArmThatMeets, 2> arms;
-            arms.append(ArmThatMeets { takesOne, { one } });
-            arms.append(ArmThatMeets { takesOther, { other } });
+            Vector<JoinArm, 2> arms;
+            arms.append(JoinArm { takesOne, { one } });
+            arms.append(JoinArm { takesOther, { other } });
             Reference lesser;
-            return letArmsMeet(arms.span(), addBlock(), singleElementSpan(lesser)) ? lesser : Reference();
+            return joinArms(arms.span(), addBlock(), singleElementSpan(lesser)) ? lesser : Reference();
         };
         Reference enters = specializedEntryValues[heldBelowRoom.position];
         Reference bound = heldBelowRoom.viewWhoseLengthIsBound ? lengthInFrontOfLoop(builtInFront(heldBelowRoom.viewWhoseLengthIsBound)) : builtInFront(heldBelowRoom.bound);

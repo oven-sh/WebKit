@@ -1203,12 +1203,12 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
     } else {
         const bool firstSourceIsRegister = firstSource.isRegister();
         const RegisterMask registerOfFirstSource = firstSourceIsRegister ? maskOf(firstSource.reg()) : 0;
-        bool isFreeInRegisterOfFirstChild = false;
+        bool canCoalesceFirstChild = false;
         if (firstSourceIsRegister && !(fusedChildren & 1)) {
             overwritesFirstChild = (traits & AllocatedOpcodeOverwritesFirstChild) && !(fusedChildren && addsScaledIndex(m_liveness, operation));
             maySwapChildren = overwritesFirstChild && (traits & AllocatedOpcodeIsCommutative) && !(fusedChildren & 2) && secondSource.isRegister();
-            isFreeInRegisterOfFirstChild = (traits & AllocatedOpcodeChangesWidthOfInteger) && isFreeInRegisterOfChild(m_liveness, operation);
-            if (overwritesFirstChild || isFreeInRegisterOfFirstChild) {
+            canCoalesceFirstChild = (traits & AllocatedOpcodeChangesWidthOfInteger) && isFreeWhenCoalesced(m_liveness, operation);
+            if (overwritesFirstChild || canCoalesceFirstChild) {
                 Operation* first = m_valueIn[firstSource.reg().index()];
                 if (first && factsOfValues[first->index()].has(ValueFlag::IsRematerialized) && !isKeptThroughLoopAround(firstSource.reg(), first, position))
                     unbind(firstSource.reg());
@@ -1220,7 +1220,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
         if (overwritesFirstChild && !maySwapChildren)
             avoided |= operandRegisters & ~registerOfFirstSource;
 
-        if (isFreeInRegisterOfFirstChild)
+        if (canCoalesceFirstChild)
             preferred = registerOfFirstSource & ~bound;
         if (!preferred) {
             if (Reg hint = hintOf(operation))
@@ -1571,8 +1571,8 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
         bool overwritesFirstChild = resultPrefersRegisterOfFirstChild() && resultOverwritesFirstChild(opcode)
             && !isFused(operation->child(0)) && sources[0].isRegister() && !addsScaledIndex(m_liveness, operation);
         bool maySwapChildren = overwritesFirstChild && isCommutative(opcode) && !isFused(operation->child(1)) && sources[1].isRegister();
-        bool isFreeInRegisterOfFirstChild = isFreeInRegisterOfChild(m_liveness, operation) && !isFused(operation->child(0)) && sources[0].isRegister();
-        if (overwritesFirstChild || isFreeInRegisterOfFirstChild) {
+        bool canCoalesceFirstChild = isFreeWhenCoalesced(m_liveness, operation) && !isFused(operation->child(0)) && sources[0].isRegister();
+        if (overwritesFirstChild || canCoalesceFirstChild) {
             Operation* first = m_valueIn[sources[0].reg().index()];
             if (first && factsOfValues[first->index()].has(ValueFlag::IsRematerialized) && !isKeptThroughLoopAround(sources[0].reg(), first, m_position))
                 unbind(sources[0].reg());
@@ -1590,7 +1590,7 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
             avoided |= operandRegisters & ~maskOf(sources[0].reg());
 
         Reg preferred = operandTakenBack.reg;
-        if (!preferred && isFreeInRegisterOfFirstChild)
+        if (!preferred && canCoalesceFirstChild)
             preferred = hintIfAmong(sources[0].reg(), ~m_bound);
         if (!preferred)
             preferred = hintIfAmong(hintOf(operation), ~m_bound);

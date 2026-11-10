@@ -49,13 +49,15 @@ struct CallInWalkCalls {
     bool restListStandsBehindArguments { false };
     bool restListIsCopied { false };
     Reference listOfUnknownLength;
+    Reference borrowedHiddenRest;
+    Reference lengthOfBorrowedHiddenRest;
     std::span<const Reference> writtenInFrontOfList;
     BuiltinID calledBuiltin;
     bool isConstruction { false };
     bool isNeverInlined { false };
     bool isMadeByProtocol { false };
     bool calleeComesBack { false };
-    std::optional<Walker::ArmThatMeets> armWhereGuardOfPrototypeHasEnded;
+    std::optional<Walker::JoinArm> armWhereGuardOfPrototypeHasEnded;
     FunctionID calledWhereNoCopyIsMade;
 };
 
@@ -258,6 +260,10 @@ static bool planOperandsInWalkCalls(Walker& walker, const CallInWalkCalls& reque
             operand = givenOrUndefined(request.newTarget);
             break;
         case EntryParameter::ArgumentCount:
+            if (request.borrowedHiddenRest) {
+                operand = { Source::Given, request.lengthOfBorrowedHiddenRest, 0 };
+                break;
+            }
             if (request.restList)
                 return false;
             operand.source = Source::ArgumentCount;
@@ -274,6 +280,10 @@ static bool planOperandsInWalkCalls(Walker& walker, const CallInWalkCalls& reque
             ++nextParameter;
             break;
         case EntryParameter::HiddenRest:
+            if (request.borrowedHiddenRest) {
+                operand = { Source::Given, request.borrowedHiddenRest, 0 };
+                break;
+            }
             if (request.restList)
                 return false;
             operand.source = request.arguments.size() > numberOfPositionalParameters ? Source::ListOfOtherArguments : Source::SharedEmptyList;
@@ -355,17 +365,50 @@ static Reference buildOperandInWalkCalls(Walker& walker, const CallInWalkCalls& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static std::optional<uint32_t> firstArgumentOfEntryRestArray(Walker& walker, Reference array)
+{
+    if (!array || !array.isValue() || !walker.program().at(walker.unit().function).has(FunctionFlags::HasHiddenRest))
+        return std::nullopt;
+    const Code& code = walker.code();
+    const Operation& allocation = code.at(underlyingCellOf(code, array.id()));
+    if (allocation.opcode != Opcode::CreateRest)
+        return std::nullopt;
+    return allocation.firstArgument();
+}
+
+static Reference allocateEntryRestArrayAgain(Walker& walker, Reference array)
+{
+    if (!firstArgumentOfEntryRestArray(walker, array))
+        return array;
+    Reference again = walker.makeHiddenListOfEntryAgain();
+    if (!again)
+        return array;
+    walker.count(StatisticID::RestArrayAllocationsSunk);
+    return again;
+}
+
+static Reference buildLengthOfArrayInWalkCalls(Walker& walker, Reference array, Origin origin)
+{
+    if (std::optional<uint32_t> firstArgument = firstArgumentOfEntryRestArray(walker, array)) {
+        Draft count(Opcode::GetRestLength, origin);
+        count.setFirstArgument(*firstArgument);
+        walker.chooseConservativeFields(count);
+        return walker.build(WTF::move(count));
+    }
+    Draft length(Opcode::GetArrayLength, origin);
+    walker.chooseConservativeFields(length);
+    length.setArrayOperand(array);
+    return walker.build(WTF::move(length));
+}
+
 static bool buildCallAsWrittenForLongListInWalkCalls(Walker& walker, const Draft& written, const CallInWalkCalls& request, Origin originInFrontOfCall, BlockID& continuationBlock, Reference& mergedResult)
 {
-    Draft length(Opcode::GetArrayLength, originInFrontOfCall);
-    walker.chooseConservativeFields(length);
-    length.setArrayOperand(request.listOfUnknownLength);
     Draft lengthOfShortList(Opcode::Integer, originInFrontOfCall);
     lengthOfShortList.setInteger(lengthOfShortListInWalkCalls);
 
     Draft test(Opcode::LessEq, originInFrontOfCall);
     walker.chooseConservativeFields(test);
-    test.setLeftOperand(walker.build(WTF::move(length)));
+    test.setLeftOperand(buildLengthOfArrayInWalkCalls(walker, request.listOfUnknownLength, originInFrontOfCall));
     test.setRightOperand(walker.constant(WTF::move(lengthOfShortList)));
     if (!test.leftOperand() || !test.rightOperand())
         return false;
@@ -385,6 +428,8 @@ static bool buildCallAsWrittenForLongListInWalkCalls(Walker& walker, const Draft
         asWritten.setListOperand(buildListOfArgumentsAndListInWalkCalls(walker, originInFrontOfCall, request.arguments, request.restList));
     else if (!request.writtenInFrontOfList.empty())
         asWritten.setListOperand(buildListOfArgumentsAndListInWalkCalls(walker, originInFrontOfCall, request.writtenInFrontOfList, request.listOfUnknownLength));
+    else
+        asWritten.setListOperand(allocateEntryRestArrayAgain(walker, asWritten.listOperand()));
     walker.chooseConservativeFields(asWritten);
     Reference result = walker.build(WTF::move(asWritten));
     walker.leaveAnythingAt(request.callee);
@@ -795,7 +840,7 @@ static bool continueIfPrototypeUnchanged(Walker& walker, const BodyValue& call, 
         if (!walker.isUnreachable() && !walkConstructOfFunctionInWalkCalls(walker, call, withoutGuard, { }))
             walker.fail("a construction that is built behind the guard of its prototype is not built without it"_s);
         if (!walker.isUnreachable() && !walker.hasFailed())
-            request.armWhereGuardOfPrototypeHasEnded = Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceBoundTo(call.id()) } };
+            request.armWhereGuardOfPrototypeHasEnded = Walker::JoinArm { walker.currentBlock(), { walker.referenceBoundTo(call.id()) } };
     }
     if (walker.hasFailed())
         return false;
@@ -810,11 +855,11 @@ static void letConstructionMeetArmWhereGuardHasEndedInWalkCalls(Walker& walker, 
 {
     if (!request.armWhereGuardOfPrototypeHasEnded || walker.hasFailed())
         return;
-    Vector<Walker::ArmThatMeets, 2> arms { *request.armWhereGuardOfPrototypeHasEnded };
+    Vector<Walker::JoinArm, 2> arms { *request.armWhereGuardOfPrototypeHasEnded };
     if (!walker.isUnreachable())
-        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceBoundTo(call.id()) } });
+        arms.append(Walker::JoinArm { walker.currentBlock(), { walker.referenceBoundTo(call.id()) } });
     Reference met;
-    if (walker.letArmsMeet(arms.span(), walker.addBlock(), singleElementSpan(met)))
+    if (walker.joinArms(arms.span(), walker.addBlock(), singleElementSpan(met)))
         walker.bind(call.id(), met);
 }
 
@@ -1063,7 +1108,18 @@ static bool readParametersOutOfListInWalkCalls(Walker& walker, const Function& c
 {
     unsigned numberOfParameters = callee.numberOfPositionalParameters();
     unsigned numberWrittenInFront = elements.size();
+    std::optional<uint32_t> firstArgument = firstArgumentOfEntryRestArray(walker, list);
     for (unsigned position = numberWrittenInFront; position < numberOfParameters; ++position) {
+        if (firstArgument) {
+            Draft argument(Opcode::GetArgument, originInFrontOfCall);
+            argument.setArgumentIndex(*firstArgument + position - numberWrittenInFront);
+            walker.chooseConservativeFields(argument);
+            Reference element = walker.build(WTF::move(argument));
+            if (!element)
+                return false;
+            elements.append(element);
+            continue;
+        }
         Draft at(Opcode::Integer, originInFrontOfCall);
         at.setInteger(position - numberWrittenInFront);
         Draft read(Opcode::GetArrayElement, originInFrontOfCall);
@@ -1081,6 +1137,14 @@ static bool readParametersOutOfListInWalkCalls(Walker& walker, const Function& c
     return true;
 }
 
+static Reference findArrayBorrowedAsHiddenRest(Walker& walker, const BodyValue& call, const Function& callee, Reference copy)
+{
+    if (!callee.has(FunctionFlags::HasHiddenRest) || callee.numberOfPositionalParameters() || !walker.has(Mechanism::TypedOperations))
+        return { };
+    Reference source = findListThatCallWouldTakeInPlaceOfItsCopy(walker, call, copy);
+    return source && isFreshPristineArray(walker, source) ? source : Reference();
+}
+
 bool listOfSuperCallCanBeHandedOver(Walker& walker, const BodyValue& call, FunctionID callee)
 {
     Reference list = walker.referenceOf(call.as<Opcode::SuperConstructList>().listOperand());
@@ -1089,7 +1153,7 @@ bool listOfSuperCallCanBeHandedOver(Walker& walker, const BodyValue& call, Funct
     const Function& constructor = walker.program().at(callee);
     if (!isClassConstructorOf(constructor.kind) || constructor.has(FunctionFlags::HasThis))
         return false;
-    return elementsOfFreshList(walker, list) || parametersAreReadOutOfListInWalkCalls(walker, constructor, list);
+    return elementsOfFreshList(walker, list) || parametersAreReadOutOfListInWalkCalls(walker, constructor, list) || findArrayBorrowedAsHiddenRest(walker, call, constructor, list);
 }
 
 static bool walkConstructionOfListInWalkCalls(Walker& walker, const BodyValue& call)
@@ -1107,10 +1171,20 @@ static bool walkConstructionOfListInWalkCalls(Walker& walker, const BodyValue& c
     Vector<Reference, 8> elements;
     if (!written) {
         written = walker.draftOf(call);
-        if (!isSuperCall || !parametersAreReadOutOfListInWalkCalls(walker, constructor, written->listOperand()))
+        Reference borrowed = isSuperCall ? findArrayBorrowedAsHiddenRest(walker, call, constructor, written->listOperand()) : Reference();
+        if (Reference source = borrowed ? borrowed : findListThatCallWouldTakeInPlaceOfItsCopy(walker, call, written->listOperand()); source && (borrowed || parametersAreReadOutOfListInWalkCalls(walker, constructor, source))) {
+            written->setListOperand(source);
+            walker.count(StatisticID::SpreadCallArrayCopiesElided);
+        }
+        if (!isSuperCall || (!borrowed && !parametersAreReadOutOfListInWalkCalls(walker, constructor, written->listOperand())))
             return false;
         request.listOfUnknownLength = written->listOperand();
-        if (!readParametersOutOfListInWalkCalls(walker, constructor, request.listOfUnknownLength, written->origin(), elements))
+        if (borrowed) {
+            request.borrowedHiddenRest = borrowed;
+            request.lengthOfBorrowedHiddenRest = buildLengthOfArrayInWalkCalls(walker, borrowed, written->origin());
+            if (!request.lengthOfBorrowedHiddenRest)
+                return true;
+        } else if (!readParametersOutOfListInWalkCalls(walker, constructor, request.listOfUnknownLength, written->origin(), elements))
             return true;
     }
     if (!isSuperCall && written->newTargetOperand() && written->newTargetOperand() != written->calleeOperand())
@@ -1202,7 +1276,7 @@ void letCallTakeListCopiedForItAlone(Walker& walker, const BodyValue& call, Draf
     Reference list = findListCopiedForCallAloneInWalkCalls(walker, call, written.listOperand());
     if (!list)
         return;
-    written.setListOperand(list);
+    written.setListOperand(allocateEntryRestArrayAgain(walker, list));
     walker.count(StatisticID::SpreadCallArrayCopiesElided);
 }
 
@@ -1666,7 +1740,7 @@ static bool callGetterExpectedUnderKeyInWalkCalls(Walker& walker, const BodyValu
     else
         walker.listArm(stretch, arms);
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 
@@ -1741,7 +1815,7 @@ bool callGetterExpectedAtRead(Walker& walker, const BodyValue& read)
     else
         walker.listArm(stretch, arms);
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 

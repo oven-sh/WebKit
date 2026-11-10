@@ -592,7 +592,7 @@ bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk, NativeModuleLoading
         if (exportsWhatMockNamesAlone(module))
             return;
         LoadedModule* loaded = loadedIfExists(module);
-        if (status(module) != ModuleStatus::Evaluated || (loaded && loaded->errorKeptByLoader)) {
+        if (status(module) != ModuleStatus::Evaluated || (loaded && loaded->cachedLoadError)) {
             didRunModule = true;
             executeForLoader(module);
         }
@@ -826,13 +826,13 @@ JSValue Modules::executeForLoader(ModuleID module)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSValue error = ensureLoaded(module).errorKeptByLoader) {
+    if (JSValue error = ensureLoaded(module).cachedLoadError) {
         throwException(m_instance.globalObject, scope, error);
         return { };
     }
     JSValue value = execute(module);
     if (Exception* exception = scope.exception(); exception && !vm.isTerminationException(exception)) [[unlikely]]
-        ensureLoaded(module).errorKeptByLoader.set(*this, exception->value());
+        ensureLoaded(module).cachedLoadError.set(*this, exception->value());
     return value;
 }
 
@@ -1045,9 +1045,9 @@ void Modules::endMockOfLibraryModule(ModuleID module)
     bool stoodInPlaceOfModule = m_libraryModulesThatMockReplaces.clear(module.index());
     if (stoodInPlaceOfModule)
         m_momentsMocksInPlaceOfLibraryModulesEnded.set(module, ++m_instance.vm->aotState().momentOfLoads);
-    auto letGoOfNamespace = makeScopeExit([&] {
+    auto discardNamespaceOnExit = makeScopeExit([&] {
         if (stoodInPlaceOfModule)
-            letGoOfNamespaceMadeUnderMock(module);
+            discardNamespace(module);
     });
     LoadedModule* found = loadedIfExists(module);
     if (!found)
@@ -1177,9 +1177,9 @@ void Modules::noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displa
     LoadedModule& loaded = ensureLoaded(file);
     loaded.hadThrownWhenMockWasMade = !displacesModule && isFailedESModule(file) && !wasReleasedByLoader(file) && !loaded.holdsValueOfMockThatEnded;
     bool isEvictedAfterFailure = displacesModule && isFailedESModule(file) && !wasLoadedWithImporter(file);
-    if (isEvictedAfterFailure && keepsOriginalIntact && canForgetFailedRun(file) && !m_failedOriginals.get(file.index())) {
+    if (isEvictedAfterFailure && keepsOriginalIntact && canResetFailedEvaluation(file) && !m_failedOriginals.get(file.index())) {
         m_evictedFailedRoots.set(file.index());
-        return forgetFailedRun(file);
+        return resetFailedEvaluation(file);
     }
     loaded.wasDisplacedAfterFailure |= isEvictedAfterFailure;
 }

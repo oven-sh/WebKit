@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSObject.h"
+#include "PropertyDescriptor.h"
 
 namespace JSC {
 
@@ -33,6 +34,31 @@ inline constexpr ASCIILiteral ReflectOwnKeysNonObjectArgumentError { "Reflect.ow
 
 JSC_DECLARE_HOST_FUNCTION(reflectObjectConstruct);
 JSC_DECLARE_HOST_FUNCTION(reflectObjectOwnKeys);
+
+// A locked property (Structure::isImmutableProperty()) refuses every store. Where the owner of the lock says so, reflection reports it as non-writable.
+// Its attributes in the structure stay as they are, so assignment on an object that inherits the property still shadows it.
+// JSObject::getOwnPropertyDescriptor() returns those attributes. [[DefineOwnProperty]] and the invariants of proxies use them.
+JS_EXPORT_PRIVATE bool reportIfLocked(JSObject* holder, PropertyName, PropertyDescriptor&);
+
+// JSObject::getOwnPropertyDescriptor() inlined, and the test for a lock after it. Without the call it costs an ordinary object less than before.
+ALWAYS_INLINE bool getReportedDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, PropertyDescriptor& descriptor)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool isOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
+    EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || !isOwn);
+    if (!isOwn)
+        return false;
+    // The caller checks for an exception, as it does after JSObject::getOwnPropertyDescriptor(). What follows only reads the structure and sets a flag of the descriptor.
+    scope.release();
+    bool isDescribed = descriptor.setPropertySlot(globalObject, propertyName, slot);
+    // The global proxy, and a proxy without a trap, answer with the slot of their target. The length and the characters of a string object have no slot base.
+    JSObject* holder = slot.slotBase() ? slot.slotBase() : object;
+    if (holder->structure()->mayHaveImmutableProperties()) [[unlikely]]
+        reportIfLocked(holder, propertyName, descriptor);
+    return isDescribed;
+}
 
 class ReflectObject final : public JSNonFinalObject {
 public:

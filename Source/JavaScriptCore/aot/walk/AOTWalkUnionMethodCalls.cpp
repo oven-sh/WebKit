@@ -228,7 +228,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         }
     }
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, built, meeting);
+        walker.joinArms(stretch, built, meeting);
     return true;
 }
 

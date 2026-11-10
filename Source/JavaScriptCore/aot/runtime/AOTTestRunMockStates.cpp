@@ -28,7 +28,7 @@ auto Modules::mockState(ModuleID module) -> MockState
     bool isOverModuleThatHasRun = hasIntactOriginal(module);
     bool isToBeLetGo = hasRemovedMock(module);
     bool hasWaited = m_modulesWithDeferredMock.get(module.index());
-    bool hasKeptError = m_modulesWithMockLoadError.get(module.index()) || m_mockedModulesWithErrorKeptByLoader.get(module.index());
+    bool hasKeptError = m_modulesWithMockLoadError.get(module.index()) || m_modulesWithCachedMockError.get(module.index());
     bool isOfLibrary = data(module).isOfLibrary();
     ModuleStatus body = status(module);
     bool hasBegun = body != ModuleStatus::Unlinked && body != ModuleStatus::Linking && body != ModuleStatus::Linked;
@@ -68,7 +68,7 @@ String Modules::describeMockState(ModuleID module)
     MockState state = mockState(module);
     ASCIILiteral kind = data(module).isOfLibrary() ? "library"_s : data(module).kind == ModuleKind::CommonJs ? "CommonJS"_s : data(module).isFacade() ? "facade"_s : data(module).isESModuleOfProgram() ? "ES"_s : "other"_s;
     StringBuilder text;
-    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], m_filesWhoseOriginalRuns.get(module.index()) ? ", its original runs"_s : ""_s, isEvicted(module) ? ", left to the host)"_s : ")"_s);
+    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], m_originalsBeingEvaluated.get(module.index()) ? ", its original runs"_s : ""_s, isEvicted(module) ? ", left to the host)"_s : ")"_s);
     if (state == MockState::NoneOfThem) {
         LoadedModule* loaded = loadedIfExists(module);
         auto say = [&](bool isSet, ASCIILiteral what) {
@@ -85,7 +85,7 @@ String Modules::describeMockState(ModuleID module)
         say(loaded && loaded->isPatchedByMock, "laid-over"_s);
         say(hasIntactOriginal(module), "over-run"_s);
         say(m_modulesWithMockLoadError.get(module.index()), "load-ended"_s);
-        say(m_mockedModulesWithErrorKeptByLoader.get(module.index()), "error-kept"_s);
+        say(m_modulesWithCachedMockError.get(module.index()), "error-kept"_s);
         text.append(" ]"_s);
     }
     return text.toString();

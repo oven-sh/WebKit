@@ -526,7 +526,7 @@ void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globa
     FunctionID function = closureFunctionWithNumber(closureNumber);
     RuntimeCheckFailure failure("object mutation check failed"_s);
     failure.inFunction(function);
-    failure.detail(mutation, " on a closure of ", functionNameForCheckFailure(function), ", but the compiler proved that this never happens");
+    failure.detail(mutation, " on a closure of ", reportedFunctionName(function), ", but the compiler proved that this never happens");
     failure.report();
     CRASH_WITH_INFO(function.index());
 }

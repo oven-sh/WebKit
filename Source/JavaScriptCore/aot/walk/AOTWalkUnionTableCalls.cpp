@@ -389,7 +389,7 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         return true;
     walker.bind(read.id(), Reference());
     Reference met;
-    if (walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(&met, 1).first(isReadBehind)))
+    if (walker.joinArms(arms.span(), meeting, std::span<Reference>(&met, 1).first(isReadBehind)))
         walker.bind(call.id(), met);
     return true;
 }

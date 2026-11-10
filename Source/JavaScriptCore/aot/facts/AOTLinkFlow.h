@@ -814,6 +814,7 @@ public:
         return (key.directPrimitives() & LinkType::oneSymbol) && !(key.directPrimitives() & LinkType::closed(Primitive::All & ~Primitive::UndefinedOrNull) & ~LinkType::oneSymbol);
     }
     void addEdge(FlowNodeID from, FlowNodeID to, TypeID passes = { });
+    void addValueEdge(FlowNodeID from, FlowNodeID to) { addEdge(from, to, TypeTable::anything); }
     void observe(FlowNodeID, const FlowObserver&);
     void run();
     void settleTypes();
@@ -1901,6 +1902,11 @@ private:
     {
         if (!test)
             return type;
+        if (test == TypeTable::anything) {
+            LinkType passed = type;
+            passed.primitives &= LinkType::closed(Primitive::All);
+            return passed;
+        }
         return passedByTestOfEdgeSlowCase(type, test);
     }
     ALWAYS_INLINE void joinObjects(LinkType& into, const LinkType& other) const

@@ -277,9 +277,9 @@ void BuilderOfCharacterRead::meetAndBind(const std::array<Reference, 2>& inside)
         return;
     }
 
-    std::array<Walker::ArmThatMeets, 2> arms { { { lastInside, { inside[0], inside[1] } }, { m_outside, { outside[0], outside[1] } } } };
+    std::array<Walker::JoinArm, 2> arms { { { lastInside, { inside[0], inside[1] } }, { m_outside, { outside[0], outside[1] } } } };
     std::array<Reference, 2> met;
-    if (m_walker.letArmsMeet(arms, m_walker.addBlock(), std::span<Reference>(met).first(count)))
+    if (m_walker.joinArms(arms, m_walker.addBlock(), std::span<Reference>(met).first(count)))
         bindAndNote(met[0], met[1]);
 }
 

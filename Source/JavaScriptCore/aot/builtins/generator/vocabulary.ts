@@ -558,6 +558,7 @@ export const builtinMarks = [
   "PassesOverListWhereItTakesRecordOfHandlers",
   "AsksOptionsForListedNamesAlone",
   "MayLayListenerForUncaughtExceptions",
+  "IsReportedAsReadOnly",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

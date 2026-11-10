@@ -1387,11 +1387,11 @@ static Reference buildIntegerMinimum(Walker& walker, Reference one, Reference ot
     BlockID takesOne = walker.addBlock();
     BlockID takesOther = walker.addBlock();
     walker.branch(isLess, takesOne, takesOther);
-    Vector<Walker::ArmThatMeets, 2> arms;
-    arms.append(Walker::ArmThatMeets { takesOne, { one } });
-    arms.append(Walker::ArmThatMeets { takesOther, { other } });
+    Vector<Walker::JoinArm, 2> arms;
+    arms.append(Walker::JoinArm { takesOne, { one } });
+    arms.append(Walker::JoinArm { takesOther, { other } });
     Reference lesser;
-    return walker.letArmsMeet(arms.span(), walker.addBlock(), singleElementSpan(lesser)) ? lesser : Reference();
+    return walker.joinArms(arms.span(), walker.addBlock(), singleElementSpan(lesser)) ? lesser : Reference();
 }
 
 static Reference bearLiteralAgainBehindItsRoom(Walker& walker, const BodyIndex& index, ValueID written, Reference list, BlockID inputHead)

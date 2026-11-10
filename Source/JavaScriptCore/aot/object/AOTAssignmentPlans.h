@@ -184,7 +184,7 @@ struct AssignmentPlan {
     Vector<uint16_t> storesInSourceOrder;
     bool servesDefinitionsOnly { false };
     bool addsExtraProperties { false };
-    bool storesNameBehindSymbol { false };
+    bool storesNameAfterSymbol { false };
     bool storesOnlyFieldsThatFit { false };
     bool mayStoreCells { false };
     bool readsOutOfLineFields { false };

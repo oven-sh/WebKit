@@ -24,7 +24,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool isUninformativeInNarrowingOfGuesses(const TypeArena& types, TypeID type)
+static bool isUninformativeForNarrowing(const TypeArena& types, TypeID type)
 {
     if (!type || isNeverType(type))
         return true;
@@ -50,7 +50,7 @@ static void meetWithWhatWasSeenToArriveInNarrowingOfGuesses(Walker& walker, uint
     if (walker.program().at(walker.currentFunction()).thisParameterIndex() == entryParameter)
         return;
     TypeID seen = typeSeenToArriveInNarrowingOfGuesses(walker, entryParameter);
-    if (isUninformativeInNarrowingOfGuesses(types, seen))
+    if (isUninformativeForNarrowing(types, seen))
         return;
     TypeID met = types.intersectionOf(found, seen);
     if (!isNeverType(met) && types.at(met).hasObjects())
@@ -132,7 +132,7 @@ static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, V
     LayoutID expected = singleLayoutOf(types, types.at(found));
     if (!expected || (!definition.isParameter() && inputPassThroughOpcodes.contains(definition.opcode())))
         return false;
-    if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && !isUninformativeInNarrowingOfGuesses(types, typeSeenToArriveInNarrowingOfGuesses(walker, input.index())))
+    if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && !isUninformativeForNarrowing(types, typeSeenToArriveInNarrowingOfGuesses(walker, input.index())))
         return false;
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
     if (names.empty() || walker.onlyLayoutInSightWithAllNames(names, walker.isInLoop() && names.size() > 1, { }, walker.numberOfLongListOfNamesUsedOff(input, names)) != expected)
@@ -152,13 +152,6 @@ struct EdgeThatFillsParameterInNarrowingOfExpectations {
 };
 
 } // anonymous namespace
-
-static bool isUninformativeInNarrowingOfExpectations(const TypeArena& types, TypeID type)
-{
-    if (!type || isNeverType(type))
-        return true;
-    return !holdsOnlyPrimitives(type) && types.at(type).hasUnboundedUnknown();
-}
 
 static std::optional<EdgeThatFillsParameterInNarrowingOfExpectations> findEdgeThatFillsInNarrowingOfExpectations(const BodyIndex& index, ValueID parameter)
 {
@@ -186,7 +179,7 @@ static TypeID tagWrittenInMemberInNarrowingOfExpectations(Walker& walker, Layout
     if (field.form.contains(FieldForm::IsAccessor) || !field.flags.contains(FieldFlags::IsRequired))
         return { };
     TypeID written = field.declared.expected().predicted();
-    if (isUninformativeInNarrowingOfExpectations(walker.types(), written))
+    if (isUninformativeForNarrowing(walker.types(), written))
         return { };
     if (asWritten)
         return written;
@@ -248,7 +241,7 @@ static void cutExpectationByTestedField(Walker& walker, ValueID input, TypeID& f
     Reference builtHolder = walker.referenceOf(narrowing.valueOperand());
     std::array<TypeID, 3> whatHolderMayBe { holder.isParameter() ? holder.parameterType() : TypeID(), found, builtHolder ? walker.typeOf(builtHolder) : TypeID() };
     for (TypeID inFront : whatHolderMayBe) {
-        if (isUninformativeInNarrowingOfExpectations(types, inFront) || !types.at(inFront).hasOnlyLayouts() || types.at(inFront).hasOnlyClosures() || holdsOneMember(types.at(inFront).layouts))
+        if (isUninformativeForNarrowing(types, inFront) || !types.at(inFront).hasOnlyLayouts() || types.at(inFront).hasOnlyClosures() || holdsOneMember(types.at(inFront).layouts))
             continue;
         if (!selects && Walker::keepsRoundsOver(types, types.at(inFront).layouts))
             continue;

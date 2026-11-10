@@ -19,6 +19,7 @@ template<Opcode known> ALWAYS_INLINE bool buildDefinitionByWrittenDescriptor(Wal
 
 inline constexpr unsigned numberOfArgumentsOfObjectCreate = 2;
 AOT_LINK_OF_WALK(expandObjectCreateDescriptors, opcodesThatExpandObjectCreateDescriptorsTakes)
+AOT_LINK_OF_WALK(expandObjectCreateAtDefinition, opcodesThatExpandObjectCreateAtDefinitionTakes)
 
 std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfLiteralWrittenForCall(Walker&, const BodyValue& call, ValueID written, Reference literal);
 bool literalsFindNothingUnder(const Program&, PropertyKeyID);

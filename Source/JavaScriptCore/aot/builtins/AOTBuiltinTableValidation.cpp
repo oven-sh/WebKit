@@ -333,6 +333,23 @@ static void checkPrivateAliases(RealmComparison& comparison)
     });
 }
 
+static void checkMembersReportedAsReadOnly(RealmComparison& comparison)
+{
+    VM& vm = comparison.vm();
+    for (const BuiltinMarkedEntry& marked : comparison.table.marked(BuiltinMark::IsReportedAsReadOnly)) {
+        const Builtin& member = comparison.table.at(marked.builtin);
+        JSObject* holder = member.holder ? comparison.objectOf(member.holder) : nullptr;
+        if (!holder)
+            continue;
+        PropertyDescriptor descriptor;
+        bool isOwn = holder->getOwnPropertyDescriptor(comparison.realm, comparison.table.identifierOf(vm, member.name), descriptor);
+        if (!isOwn || !descriptor.isDataDescriptor() || !descriptor.writable() || !descriptor.configurable())
+            comparison.report(marked.builtin, "is reported as read-only, and is no writable and configurable data property"_s);
+        if (holder->type() == FinalObjectType)
+            comparison.report(marked.builtin, "is reported as read-only, and lies on a plain object, whose descriptors AOT__describeUnlessOrdinary() leaves to the structure"_s);
+    }
+}
+
 static bool hasDeclaredPrototype(const RealmComparison& comparison, const Builtin& builtin, JSObject* object)
 {
     JSValue prototype = object->getPrototypeDirect();
@@ -619,6 +636,7 @@ Vector<String> BuiltinTable::mismatches(JSGlobalObject* realm) const
     checkEntries(comparison);
     checkNativeFunctions(comparison);
     checkPrivateAliases(comparison);
+    checkMembersReportedAsReadOnly(comparison);
     checkInheritance(comparison);
     checkObjectIdentities(comparison);
     checkClosedHolders(comparison);

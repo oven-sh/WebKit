@@ -1512,7 +1512,7 @@ void Plan::findCallEntriesThatWalkBodies(const Program& program, const Facts& fa
             continue;
         GenericEntryPlan entry = conventions().genericEntry({ id, CodeRole::GenericCallEntry });
         const BodyIndex* body = facts.bodies().find(id);
-        if (!entry.takesNewTarget && entry.target.role == CodeRole::Body && body && !storesListAtEntry(id, *body))
+        if ((!entry.takesNewTarget || program.at(id).kind == FunctionKind::DerivedConstructor) && entry.target.role == CodeRole::Body && body && !storesListAtEntry(id, *body))
             m_parts.functionsWhoseCallEntryWalksBody.quickSet(index);
     }
 }

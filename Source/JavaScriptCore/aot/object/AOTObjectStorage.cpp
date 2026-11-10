@@ -301,7 +301,7 @@ bool Extension::tryInsert(uint64_t granuleBits)
 {
     RuntimeCheckFailure failure("object mutation check failed"_s);
     failure.atTopCall(object.vm());
-    failure.detail(nameOf(mutation), " on ", objectNameForCheckFailure(object.layout()));
+    failure.detail(nameOf(mutation), " on ", reportedObjectName(object.layout()));
     if (field && field->name && !field->isPrivate())
         failure.detail(", property '", String(propertyNameOf(object.vm(), object, *field)), "'");
     failure.detail(", but the compiler proved that this never happens");

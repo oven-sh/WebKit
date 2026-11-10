@@ -406,7 +406,7 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
             walker.bind(names[place], boundBefore[place]);
     }
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 

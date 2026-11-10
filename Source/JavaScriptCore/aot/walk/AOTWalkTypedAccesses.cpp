@@ -2970,7 +2970,7 @@ bool callThroughSuperBehindGuards(Walker& walker, const BodyValue& superBase)
     walker.listArm(stretch, built);
     walker.walkClosedArm(closed, stretch, built);
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, built, meeting);
+        walker.joinArms(stretch, built, meeting);
     return true;
 }
 

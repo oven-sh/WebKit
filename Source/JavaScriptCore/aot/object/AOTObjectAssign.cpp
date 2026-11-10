@@ -1727,7 +1727,7 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     AssignmentPlan* plan = extra || !excludedNames.empty() ? nullptr : plans.recentPlan(target.structureID(), source->structureID(), assignmentSource->propertyStorageStructureID(), assignmentSource->orderWord, 0);
     if (!plan || !plan->isFor(target.structureID(), StructureID(), *assignmentSource))
         plan = plans.planFor(vm, &target, extra, *assignmentSource);
-    if (!defines && plan->isUsable && plan->storesNameBehindSymbol) {
+    if (!defines && plan->isUsable && plan->storesNameAfterSymbol) {
         if (!PropertyWalk::wouldPerformFastPut(vm, &target))
             return false;
         plan = plans.planFor(vm, &target, extra, *assignmentSource);
@@ -1747,7 +1747,7 @@ bool tryAssignOrdinaryObjectAsBefore(VM& vm, State& state, Object& target, JSObj
         return false;
     StructureID ofSource = source->structureID();
     bool isThePlan = plan->target == target.structureID() && plan->source == ofSource && !plan->sourceOrderWord && plan->sourcePropertyStorage == ofSource && !plan->extraPropertiesBefore
-        && plan->isUsable && !plan->servesDefinitionsOnly && !plan->storesNameBehindSymbol && !plan->excludedList && plan->excludedNames.isEmpty() && plan->orderWordBeforeRun == target.orderWord();
+        && plan->isUsable && !plan->servesDefinitionsOnly && !plan->storesNameAfterSymbol && !plan->excludedList && plan->excludedNames.isEmpty() && plan->orderWordBeforeRun == target.orderWord();
     if (!isThePlan)
         return false;
     DeferGC deferGC(vm);
@@ -1777,7 +1777,7 @@ static ALWAYS_INLINE bool tryCopyFieldsLeavingElementsOut(VM& vm, Object& target
     State& state = target.state();
     JSObject* extra = target.extraProperties();
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, &target, extra, assignmentSource);
-    if (!plan->isUsable || (!defines && plan->storesNameBehindSymbol))
+    if (!plan->isUsable || (!defines && plan->storesNameAfterSymbol))
         return false;
     plan->leavesElementsOut = true;
     assignByPlan(vm, target, state, *plan, extra, assignmentSource);
@@ -1840,7 +1840,7 @@ static bool tryCopyByPlan(VM& vm, State& state, JSObject* target, JSObject* sour
         return false;
     DeferGC deferGC(vm);
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFromSecondCopyOn(vm, target, nullptr, *assignmentSource);
-    if (!plan || !plan->isUsable || (!defines && plan->storesNameBehindSymbol))
+    if (!plan || !plan->isUsable || (!defines && plan->storesNameAfterSymbol))
         return false;
     Vector<EncodedJSValue, 16> values;
     for (auto& store : plan->extraPropertyStores) {

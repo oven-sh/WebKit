@@ -1166,11 +1166,11 @@ public:
     void releaseEndedPendingBlocks();
     Reference addParameter(BlockID, TypeID, Representation);
     Representation formOfParameter(TypeID, std::span<const Representation> arguments);
-    struct ArmThatMeets {
+    struct JoinArm {
         BlockID last;
         Vector<Reference, 8> values;
     };
-    bool letArmsMeet(std::span<const ArmThatMeets>, BlockID meeting, std::span<Reference> met);
+    bool joinArms(std::span<const JoinArm>, BlockID meeting, std::span<Reference> met);
     struct StretchInArms {
         BlockID inputBlock;
         uint32_t begin { 0 };
@@ -1178,11 +1178,11 @@ public:
         bool isReturnedAtOnce { false };
         Vector<ValueID, 8> mentionedBehind;
     };
-    using ArmsThatMeet = Vector<ArmThatMeets, 4>;
+    using ArmsThatMeet = Vector<JoinArm, 4>;
     StretchInArms stretchInArms(BlockID inputBlock, uint32_t begin, uint32_t end) const;
     void listArm(const StretchInArms&, ArmsThatMeet&);
     void walkClosedArm(BlockID closed, const StretchInArms&, ArmsThatMeet&);
-    bool letArmsMeet(const StretchInArms&, const ArmsThatMeet&, BlockID meeting);
+    bool joinArms(const StretchInArms&, const ArmsThatMeet&, BlockID meeting);
     void endWithReturn(std::span<const Reference>, Origin);
     void endWithThrow(Reference, Origin);
     void endWithRethrow(Reference exception, Origin);
@@ -1789,8 +1789,8 @@ public:
             m_parametersThatSomeScanFoundToReadTexts.set(parameter.index());
     }
     bool someScanFoundParameterToReadText(ValueID parameter) const { return m_parametersThatSomeScanFoundToReadTexts.get(parameter.index()); }
-    Vector<uint32_t, 8> stringsInBuildersExitedOnEdge(BlockID from, BlockID to);
-    size_t indexOfFrameOnTop() const { return m_frames.size() - 1; }
+    Vector<uint32_t, 8> stringsInBuildersAtLoopExit(BlockID from, BlockID to);
+    size_t topFrameIndex() const { return m_frames.size() - 1; }
     BlockID inputBlockBeingWalked() const { return m_frames.last().block; }
     bool isLiveAtHeadOf(ValueID, BlockID inputBlock);
     void bindAnewAtEveryBlock(ValueID);
@@ -2814,7 +2814,7 @@ private:
     TypeID climbHeadAroundWith(const TrialVisit&, size_t numberOfTriesAround, size_t parameter, TypeID found);
     void noteOwnParametersThatMeetInValue(TrialVisit&, size_t parameter, ValueID, BlockID head);
     bool walkAroundIsUndone() const;
-    bool isWrittenInFrameOnTop(const Draft& draft) const { return draft.inputValueGiven && m_origin.inlineFrame == m_frames.last().inlineFrame; }
+    bool isWrittenInTopFrame(const Draft& draft) const { return draft.inputValueGiven && m_origin.inlineFrame == m_frames.last().inlineFrame; }
     bool takesWhatRowOfInputOperandCannotGive(const Draft&) const;
     ASCIILiteral m_whatJudgeOfOperandsRefused;
     void letParametersHoldWhatTheyTakeRound(LoopSummary&, const TrialVisit&, BlockID head);

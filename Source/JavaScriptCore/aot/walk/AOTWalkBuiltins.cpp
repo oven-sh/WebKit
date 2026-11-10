@@ -2920,11 +2920,11 @@ Reference CallInWalkBuiltins::buildCodeInLineOrCall(std::span<const Reference> a
             m_walker.build(WTF::move(initialization));
         }
     }
-    Vector<Walker::ArmThatMeets, 2> arms { Walker::ArmThatMeets { m_walker.currentBlock(), { answered } } };
+    Vector<Walker::JoinArm, 2> arms { Walker::JoinArm { m_walker.currentBlock(), { answered } } };
     if (endOfMiss)
-        arms.append(Walker::ArmThatMeets { endOfMiss, { called } });
+        arms.append(Walker::JoinArm { endOfMiss, { called } });
     Reference result;
-    return m_walker.letArmsMeet(arms.span(), join, singleElementSpan(result)) ? result : Reference();
+    return m_walker.joinArms(arms.span(), join, singleElementSpan(result)) ? result : Reference();
 }
 
 } // anonymous namespace

@@ -400,58 +400,58 @@ void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)
         queueStepOfImportInImportTurns(m_promiseOfJobThatMakesCallsAgain.get(), moduleOfJob, 1);
 }
 
-void Modules::noteChangeOfMockUnderCallsOfImport(ModuleID module)
+void Modules::updateRetainedImportNamespaces(ModuleID module)
 {
     bool isChangedByImport = m_currentImportTarget && (m_modulesWithRunningFactory.isEmpty() || m_modulesWithRunningFactory.get(module.index()) || m_currentImportTarget != m_factoryCallImportTarget);
     if (!isChangedByImport)
         m_lastDeedsOnMocksUnderCallsOfImport.remove(fileOf(module));
-    if (m_numberOfCallsOfImportWithNamespaceKept == (isChangedByImport ? m_callsOfImportUnderMocks.size() : 0))
+    if (m_retainedImportNamespaceCount == (isChangedByImport ? m_mockedImports.size() : 0))
         return;
     JSObject* namespaceHeld = isChangedByImport ? namespaceIfCreated(module, ModulePhase::Evaluation) : nullptr;
-    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks.values()) {
+    for (MockedImport& call : m_mockedImports.values()) {
         if (call.module != module)
             continue;
         if (!isChangedByImport) {
             if (call.namespaceBeforeImportChangedMock)
-                --m_numberOfCallsOfImportWithNamespaceKept;
+                --m_retainedImportNamespaceCount;
             call.namespaceBeforeImportChangedMock.clear();
         } else if (!call.namespaceBeforeImportChangedMock) {
             if (JSObject* namespaceObject = namespaceHeld) {
-                ++m_numberOfCallsOfImportWithNamespaceKept;
+                ++m_retainedImportNamespaceCount;
                 call.namespaceBeforeImportChangedMock.set(*m_instance.vm, namespaceObject);
             }
         }
     }
 }
 
-void Modules::noteCallOfImportUnderMock(JSPromise* promise, ModuleID module)
+void Modules::recordMockedImport(JSPromise* promise, ModuleID module)
 {
-    unsigned serial = ++m_numberOfCallsOfImportMadeUnderMocks;
-    m_callsOfImportUnderMocks.add(promise, CallOfImportUnderMock { Strong<JSPromise>(*m_instance.vm, promise), moduleWithExportsOf(module), { }, serial });
+    unsigned serial = ++m_lastMockedImportSerial;
+    m_mockedImports.add(promise, MockedImport { Strong<JSPromise>(*m_instance.vm, promise), moduleWithExportsOf(module), { }, serial });
     m_importsAwaitingFirstStep.append({ serial, promise });
 }
 
-void Modules::didTakeFirstStepOfCallOfImportSlow(JSPromise* promise)
+void Modules::didRunFirstImportStepSlow(JSPromise* promise)
 {
-    auto call = m_callsOfImportUnderMocks.find(promise);
-    if (call != m_callsOfImportUnderMocks.end())
-        takeFirstStepsOfCallsOfImportThrough(call->value.serial);
+    auto call = m_mockedImports.find(promise);
+    if (call != m_mockedImports.end())
+        advanceMockedImportsThrough(call->value.serial);
 }
 
-void Modules::takeFirstStepsOfCallsOfImportThrough(unsigned serial)
+void Modules::advanceMockedImportsThrough(unsigned serial)
 {
     while (!m_importsAwaitingFirstStep.isEmpty() && m_importsAwaitingFirstStep.first().first <= serial) {
-        auto found = m_callsOfImportUnderMocks.find(m_importsAwaitingFirstStep.takeFirst().second);
-        if (found == m_callsOfImportUnderMocks.end())
+        auto found = m_mockedImports.find(m_importsAwaitingFirstStep.takeFirst().second);
+        if (found == m_mockedImports.end())
             continue;
-        CallOfImportUnderMock& call = found->value;
+        MockedImport& call = found->value;
         scheduleImportBinding(call.promise.get());
         auto deed = m_lastDeedsOnMocksUnderCallsOfImport.find(fileOf(call.module));
         if (deed == m_lastDeedsOnMocksUnderCallsOfImport.end() || call.serial > deed->value.lastCallInFrontOfIt)
             continue;
         if (call.namespaceBeforeImportChangedMock) {
             call.namespaceBeforeImportChangedMock.clear();
-            --m_numberOfCallsOfImportWithNamespaceKept;
+            --m_retainedImportNamespaceCount;
         }
         if (deed->value.bringsBackFileThatHadRun || !deed->value.mock)
             continue;
@@ -461,7 +461,7 @@ void Modules::takeFirstStepsOfCallsOfImportThrough(unsigned serial)
             deed->value.viewOfMock.set(*m_instance.vm, view);
         }
         call.namespaceBeforeImportChangedMock.set(*m_instance.vm, deed->value.viewOfMock.get());
-        ++m_numberOfCallsOfImportWithNamespaceKept;
+        ++m_retainedImportNamespaceCount;
     }
     if (m_importsAwaitingFirstStep.isEmpty())
         m_lastDeedsOnMocksUnderCallsOfImport.clear();
@@ -474,16 +474,16 @@ void Modules::noteDeedOnMockUnderCallsOfImportSlow(ModuleID module, DeedOnMock k
         if (JSObject* mock = activeMock(moduleWithExportsOf(module)))
             deed.mock.set(*m_instance.vm, mock);
     }
-    deed.lastCallInFrontOfIt = m_numberOfCallsOfImportMadeUnderMocks;
+    deed.lastCallInFrontOfIt = m_lastMockedImportSerial;
     deed.bringsBackFileThatHadRun = kind == DeedOnMock::Ends && (hasIntactOriginal(module) || wasPatchedAfterEvaluation(module));
 }
 
 void Modules::keepMockForPendingImports(ModuleID module, MockChange change)
 {
-    if (m_callsOfImportUnderMocks.isEmpty()) [[likely]]
+    if (m_mockedImports.isEmpty()) [[likely]]
         return;
     if (change == MockChange::Replaced) {
-        for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks.values()) {
+        for (MockedImport& call : m_mockedImports.values()) {
             if (call.module == moduleWithExportsOf(module))
                 call.hasProvisionalView = false;
         }
@@ -496,7 +496,7 @@ void Modules::keepMockForPendingImports(ModuleID module, MockChange change)
     if (!mock)
         return;
     ModuleNamespace* view = nullptr;
-    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks.values()) {
+    for (MockedImport& call : m_mockedImports.values()) {
         if (call.module != mocked || call.namespaceBeforeImportChangedMock || m_importsAwaitingFirstStep.containsIf([&](const auto& waiting) { return waiting.first == call.serial; }))
             continue;
         if (!view) {
@@ -505,13 +505,13 @@ void Modules::keepMockForPendingImports(ModuleID module, MockChange change)
         }
         call.namespaceBeforeImportChangedMock.set(*m_instance.vm, view);
         call.hasProvisionalView = change == MockChange::Removed && !call.isBoundToMock;
-        ++m_numberOfCallsOfImportWithNamespaceKept;
+        ++m_retainedImportNamespaceCount;
     }
 }
 
-static JSC_DECLARE_HOST_FUNCTION(didBindImportToMockInImportTurns);
+static JSC_DECLARE_HOST_FUNCTION(importBindingJob);
 
-JSC_DEFINE_HOST_FUNCTION(didBindImportToMockInImportTurns, (JSGlobalObject* realm, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(importBindingJob, (JSGlobalObject* realm, CallFrame* callFrame))
 {
     if (Modules* modules = modulesOf(realm))
         modules->didBindImportToMock(uncheckedDowncast<JSPromise>(callFrame->argument(1)));
@@ -524,42 +524,42 @@ void Modules::scheduleImportBinding(JSPromise* importPromise)
     JSGlobalObject* realm = m_instance.globalObject;
     JSPromise* tick = JSPromise::create(vm, realm->promiseStructure());
     tick->fulfill(vm, jsUndefined());
-    JSFunction* didBind = JSFunction::create(vm, realm, 2, String(), didBindImportToMockInImportTurns, ImplementationVisibility::Private);
+    JSFunction* didBind = JSFunction::create(vm, realm, 2, String(), importBindingJob, ImplementationVisibility::Private);
     tick->performPromiseThenWithContext(vm, realm, didBind, didBind, jsUndefined(), importPromise);
 }
 
 void Modules::didBindImportToMock(JSPromise* promise)
 {
-    auto found = m_callsOfImportUnderMocks.find(promise);
-    if (found == m_callsOfImportUnderMocks.end())
+    auto found = m_mockedImports.find(promise);
+    if (found == m_mockedImports.end())
         return;
-    CallOfImportUnderMock& call = found->value;
+    MockedImport& call = found->value;
     call.isBoundToMock = true;
     if (!std::exchange(call.hasProvisionalView, false) || !call.namespaceBeforeImportChangedMock)
         return;
     call.namespaceBeforeImportChangedMock.clear();
-    --m_numberOfCallsOfImportWithNamespaceKept;
+    --m_retainedImportNamespaceCount;
 }
 
-void Modules::forgetNamespacesKeptForCallsOfImport()
+void Modules::clearRetainedImportNamespaces()
 {
     m_lastDeedsOnMocksUnderCallsOfImport.clear();
-    if (!m_numberOfCallsOfImportWithNamespaceKept)
+    if (!m_retainedImportNamespaceCount)
         return;
-    m_numberOfCallsOfImportWithNamespaceKept = 0;
-    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks.values())
+    m_retainedImportNamespaceCount = 0;
+    for (MockedImport& call : m_mockedImports.values())
         call.namespaceBeforeImportChangedMock.clear();
 }
 
-JSObject* Modules::takeNamespaceKeptForCallOfImport(JSPromise* importPromise)
+JSObject* Modules::takeRetainedImportNamespace(JSPromise* importPromise)
 {
-    auto call = m_callsOfImportUnderMocks.find(importPromise);
-    if (call == m_callsOfImportUnderMocks.end())
+    auto call = m_mockedImports.find(importPromise);
+    if (call == m_mockedImports.end())
         return nullptr;
     JSObject* namespaceObject = call->value.namespaceBeforeImportChangedMock.get();
     if (namespaceObject)
-        --m_numberOfCallsOfImportWithNamespaceKept;
-    m_callsOfImportUnderMocks.remove(call);
+        --m_retainedImportNamespaceCount;
+    m_mockedImports.remove(call);
     return namespaceObject;
 }
 
@@ -581,7 +581,7 @@ void Modules::runJobOfRound(ModuleID moduleOfJob)
         queueJobOfRound(moduleOfJob);
 }
 
-static Modules* modulesOfInstanceInImportTurns(Instance* instance)
+static Modules* modulesIfInitialized(Instance* instance)
 {
     return instance->state ? instance->state->modules.get() : nullptr;
 }
@@ -591,7 +591,7 @@ bool fulfillDeferredFetches(VM& vm, uint64_t completedDiskReads)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     VMState& state = vm.aotState();
     for (Instance* instance : state.instances) {
-        Modules* modules = modulesOfInstanceInImportTurns(instance);
+        Modules* modules = modulesIfInitialized(instance);
         if (!modules || !modules->hasDeferredFetches())
             continue;
         if (!modules->isFirstFetchDue(completedDiskReads))
@@ -599,14 +599,14 @@ bool fulfillDeferredFetches(VM& vm, uint64_t completedDiskReads)
         break;
     }
     for (Instance* instance : state.instances) {
-        if (Modules* modules = modulesOfInstanceInImportTurns(instance))
+        if (Modules* modules = modulesIfInitialized(instance))
             modules->willFulfillDeferredFetches();
     }
     bool isDelivered = false;
     while (!isDelivered) {
         Modules* first = nullptr;
         for (Instance* instance : state.instances) {
-            Modules* modules = modulesOfInstanceInImportTurns(instance);
+            Modules* modules = modulesIfInitialized(instance);
             if (modules && modules->hasDeferredFetches()) {
                 first = modules;
                 break;
@@ -630,7 +630,7 @@ bool fulfillDeferredFetches(VM& vm, uint64_t completedDiskReads)
 void didDrainDeferredFetchJobs(VM& vm)
 {
     for (Instance* instance : vm.aotState().instances) {
-        if (Modules* modules = modulesOfInstanceInImportTurns(instance))
+        if (Modules* modules = modulesIfInitialized(instance))
             modules->didDrainDeferredFetchJobs();
     }
 }

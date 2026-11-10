@@ -1006,7 +1006,7 @@ void ClassTable::holdDefinitionToNameInRecord(const LayoutData& layout, ClassSid
         return;
     if (std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid); !key || row->name != *key) {
         RuntimeCheckFailure failure("object mutation check failed"_s);
-        failure.detail("a member of ", classNameForCheckFailure(layout), " was defined under another key than the compiler recorded");
+        failure.detail("a member of ", reportedClassName(layout), " was defined under another key than the compiler recorded");
         failure.report();
         CRASH_WITH_INFO(layout.index, row->name);
     }
@@ -1036,7 +1036,7 @@ static ASCIILiteral nameOfHolderMutation(HolderMutation mutation)
 [[noreturn]] static void crashOnFalseProofOfClassHolder(const LayoutData& classLayout, ClassSide side, HolderMutation mutation)
 {
     RuntimeCheckFailure failure("object mutation check failed"_s);
-    failure.detail(nameOfHolderMutation(mutation), " on the ", side == ClassSide::Prototype ? "prototype"_s : "constructor"_s, " of ", classNameForCheckFailure(classLayout), ", but the compiler proved that this never happens");
+    failure.detail(nameOfHolderMutation(mutation), " on the ", side == ClassSide::Prototype ? "prototype"_s : "constructor"_s, " of ", reportedClassName(classLayout), ", but the compiler proved that this never happens");
     failure.report();
     CRASH_WITH_INFO(classLayout.index, static_cast<uint32_t>(side), static_cast<uint32_t>(mutation));
 }

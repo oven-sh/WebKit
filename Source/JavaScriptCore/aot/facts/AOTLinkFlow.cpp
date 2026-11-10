@@ -5761,7 +5761,7 @@ bool LinkFlow::tieStoresUnderUnknownNames()
     for (auto [layout, aggregate] : waiting) {
         if (m_openLayouts.get(layout))
             continue;
-        addEdge(FlowNodeID(aggregate & ~keyOfStoreToTieIsNumber), unknownKeyStoreNode(LayoutID(layout), aggregate & keyOfStoreToTieIsNumber));
+        addValueEdge(FlowNodeID(aggregate & ~keyOfStoreToTieIsNumber), unknownKeyStoreNode(LayoutID(layout), aggregate & keyOfStoreToTieIsNumber));
         hasTied = true;
     }
     return hasTied;
@@ -6037,7 +6037,7 @@ void LinkFlow::tieStoreOfAnyField(FlowNodeID aggregate, LayoutID layout, bool ke
         deferEscape(layout);
 
     note(Note::ChangeOfLayout, layout.index(), OptionSet<LayoutChange> { LayoutChange::GainsProperty, LayoutChange::ChangesPrototype }.toRaw() | changeIsByStoreInSight);
-    addEdge(aggregate, extraPropertyStoreNode(layout));
+    addValueEdge(aggregate, extraPropertyStoreNode(layout));
     forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
         if (isPrivateNameInLink(program, fieldAt(program, reference).key) || (keyIsNumber && !mayBeNamedByNumber(fieldAt(program, reference).key)))
             return;
@@ -6442,8 +6442,8 @@ FlowNodeID LinkFlow::fieldThroughLost(LayoutID member, PropertyKeyID key, TiesTo
         }
     } else {
         m_hasStoresThroughLost = true;
-        addEdge(aggregate, FlowNodeID(m_lostFamilies[representative].storedBesideFields));
-        addEdge(aggregate, foundBesideFieldsUnder(key));
+        addValueEdge(aggregate, FlowNodeID(m_lostFamilies[representative].storedBesideFields));
+        addValueEdge(aggregate, foundBesideFieldsUnder(key));
         if (!tiesEveryMember && !isAbsentFromObjectPrototype(key)) {
             letsMembersGo = true;
             addEdge(aggregate, unseen());
@@ -6478,7 +6478,7 @@ void LinkFlow::layTie(const TiesToLay& ties, LayoutID member)
     auto lay = [&](Lays lays) {
         bool isListed = tieStore(ties.aggregate, member, ties.key, lays);
         if (isThroughDeclaredFamily && !isListed && mayHaveAppendedFieldsInLinkFlow(program.at(member)))
-            addEdge(ties.aggregate, appendedField(member, ties.key));
+            addValueEdge(ties.aggregate, appendedField(member, ties.key));
     };
     switch (ties.access) {
     case TiesToLay::Access::ReadOfAnyField:
@@ -6802,7 +6802,7 @@ FlowNodeID LinkFlow::findOrMakeAnyFieldStoredThrough(LinkType::Objects objects, 
         auto [aggregate, isNew] = keyIsNumber ? aggregateOfReadsUnderNumbers(m_elementsStoredThroughLayouts, program.layouts.size(), layout.index()) : nodeOnDemand(NodeOnDemand::AnyFieldStoredOfLayout, layout.index(), { });
         if (isNew) {
             m_storesUnderUnknownNamesToTie.append({ layout.index(), aggregate.index() | (keyIsNumber ? keyOfStoreToTieIsNumber : 0) });
-            addEdge(aggregate, elementsSeenOn(layout));
+            addValueEdge(aggregate, elementsSeenOn(layout));
             tieStoreOfAnyField(aggregate, layout, keyIsNumber);
         }
         return aggregate;
@@ -6829,7 +6829,7 @@ FlowNodeID LinkFlow::findOrMakeAnyFieldStoredThrough(LinkType::Objects objects, 
         if (isNew) {
             addEdge(aggregate, unseen());
             for (LayoutID member : program.types.listOf(families.layoutsOf(family))) {
-                addEdge(aggregate, elementsSeenOn(member));
+                addValueEdge(aggregate, elementsSeenOn(member));
                 tieStoreOfAnyField(aggregate, member, keyIsNumber);
                 note(Note::ChangeOfLayout, member.index(), OptionSet<LayoutChange> { LayoutChange::GainsProperty, LayoutChange::ChangesPrototype }.toRaw());
             }
