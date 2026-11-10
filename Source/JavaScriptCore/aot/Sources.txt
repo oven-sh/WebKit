@@ -23,6 +23,7 @@ aot/builtins/AOTBuiltinTableRealm.cpp
 aot/builtins/AOTBuiltinTableValidation.cpp
 aot/builtins/AOTBuiltinTypeFit.cpp
 aot/builtins/AOTBuiltinTypes.cpp
+aot/builtins/AOTByteLiterals.cpp
 aot/builtins/AOTDateBuiltinEmitter.cpp
 aot/builtins/AOTDateBuiltinOperations.cpp
 aot/builtins/AOTEngineIntrinsicEmitter.cpp
@@ -206,8 +207,8 @@ aot/image/AOTDataTable.cpp
 aot/image/AOTFaultTable.cpp
 aot/image/AOTFieldTableEncoder.cpp
 aot/image/AOTFunctionProgramTables.cpp
+aot/image/AOTFunctionSources.cpp
 aot/image/AOTFunctionTable.cpp
-aot/image/AOTFunctionTexts.cpp
 aot/image/AOTGatherMentions.cpp
 aot/image/AOTImage.cpp
 aot/image/AOTImageBuilder.cpp
@@ -432,6 +433,7 @@ aot/runtime/AOTPropertyOperations.cpp
 aot/runtime/AOTPropertyRunOperations.cpp
 aot/runtime/AOTRegExpOperations.cpp
 aot/runtime/AOTRemovableFeature.cpp
+aot/runtime/AOTRuntimeCheckFailure.cpp
 aot/runtime/AOTRuntimeHooks.cpp
 aot/runtime/AOTRuntimeReporter.cpp
 aot/runtime/AOTStackTrace.cpp
@@ -527,7 +529,6 @@ aot/walk/AOTWalkInt32Promises.cpp
 aot/walk/AOTWalkIteration.cpp
 aot/walk/AOTWalkKeyOrdersAccessors.cpp
 aot/walk/AOTWalkKnownAnswers.cpp
-aot/walk/AOTWalkKnownCopiesLetGo.cpp
 aot/walk/AOTWalkKnownEffects.cpp
 aot/walk/AOTWalkKnownElements.cpp
 aot/walk/AOTWalkKnownKeys.cpp

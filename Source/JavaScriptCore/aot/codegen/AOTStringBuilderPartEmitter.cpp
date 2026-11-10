@@ -150,7 +150,7 @@ void StringBuilderPartEmitter::generateStringBuilderAppendConstant(const ValueCo
 
 void StringBuilderPartEmitter::holdIntegerToldToHaveFewDigits(const ValueContext& value, Integer appended)
 {
-    if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.testsEveryPosition())
+    if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.checksBounds())
         elements.stopUnlessInside(value, below(appended, StringBuilderEmitter::firstIntegerWrittenByCall));
 }
 

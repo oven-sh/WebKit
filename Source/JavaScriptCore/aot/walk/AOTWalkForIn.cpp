@@ -17,8 +17,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+OperatorForm operatorFormFor(Walker&, const Draft&);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet opcodesOfWalkForIn { Opcode::ForInOpen, Opcode::ForInStep };
 static constexpr uint32_t closedOperationsOfStepOverListInWalkForIn = 2;
@@ -79,8 +79,8 @@ static Reference buildOperatorInWalkForIn(Walker& walker, Opcode opcode, Referen
     operation.setOperand(0, left);
     if (right)
         operation.setOperand(1, right);
-    operation.setForm(formAllowedForTypedOperator(walker, operation));
-    return boxedUnlessNumbersAreUnboxed(walker, walker.build(WTF::move(operation)), origin);
+    operation.setForm(operatorFormFor(walker, operation));
+    return boxNumberIfNeeded(walker, walker.build(WTF::move(operation)), origin);
 }
 
 static Reference resultAtInWalkForIn(Walker& walker, Reference results, uint32_t index, Origin origin)
@@ -112,27 +112,27 @@ static Reference narrowedInWalkForIn(Walker& walker, Reference value, Reference 
     return walker.isUnreachable() ? Reference() : walker.build(WTF::move(proof));
 }
 
-void noteKeysAreAsEnumeratorFoundThem(Walker& walker, Reference enumerator, Reference object)
+void markEnumeratorCurrent(Walker& walker, Reference enumerator, Reference object)
 {
-    if (object.isValue() && walker.state().isFresh(Reference::value(rootOfCellInSweptCode(walker.code(), object.id())))) {
-        walker.fail("the keys of an object that is still fresh are noted on its enumerator"_s, InternalErrorKind::KeysOfFreshObjectNotedOnEnumerator);
+    if (object.isValue() && walker.state().isFresh(Reference::value(underlyingCellOf(walker.code(), object.id())))) {
+        walker.fail("an enumerator is marked current for an object that is still fresh"_s, InternalErrorKind::EnumeratorCurrentForFreshObject);
         return;
     }
-    walker.state().noteFactsOfCell(enumerator, FactOfCell::KeysAreAsEnumeratorFoundThem);
+    walker.state().recordCellFacts(enumerator, CellFact::EnumeratorIsCurrent);
 }
 
-static bool keysAreAsEnumeratorFoundThemInWalkForIn(Walker& walker, Reference enumerator)
+static bool isEnumeratorKnownCurrent(Walker& walker, Reference enumerator)
 {
-    return walker.state().factsOfCell(enumerator).contains(FactOfCell::KeysAreAsEnumeratorFoundThem);
+    return walker.state().cellFacts(enumerator).contains(CellFact::EnumeratorIsCurrent);
 }
 
-bool countOfNamesComesRound(Walker& walker, const Walker::IterationByIndex& iteration)
+bool countOfNamesComesRound(Walker& walker, const Walker::IndexedIteration& iteration)
 {
-    if (iteration.otherForm != Walker::IterationByIndex::OtherForm::Enumeration || !iteration.count || !iteration.list)
+    if (iteration.otherForm != Walker::IndexedIteration::OtherForm::Enumeration || !iteration.count || !iteration.list)
         return false;
     if (iteration.head)
-        return keysAreAsEnumeratorFoundThemInWalkForIn(walker, iteration.list);
-    noteKeysAreAsEnumeratorFoundThem(walker, iteration.list, iteration.subject);
+        return isEnumeratorKnownCurrent(walker, iteration.list);
+    markEnumeratorCurrent(walker, iteration.list, iteration.subject);
     return true;
 }
 
@@ -154,7 +154,7 @@ static std::optional<LoopOfForInInWalkForIn> findLoopOfForInInWalkForIn(const Bo
     LoopOfForInInWalkForIn found { step, head, false };
     BodyTerminator end = blockOfOpen.terminator();
     found.isEnteredBehindOpen = open.id().index() + 1 == blockOfOpen.endOfValues().index() && end.kind() == TerminatorKind::Jump && end.next().block() == head
-        && index.valueBehindCasts(index.value(step).objectOperand()) == index.valueBehindCasts(open.objectOperand());
+        && index.stripCasts(index.value(step).objectOperand()) == index.stripCasts(open.objectOperand());
     return found;
 }
 
@@ -185,12 +185,12 @@ static bool openInWalkForIn(Walker& walker, const BodyValue& open)
         return false;
     Origin origin = walker.originOf(open);
 
-    Walker::IterationByIndex iteration;
-    iteration.otherForm = Walker::IterationByIndex::OtherForm::Enumeration;
+    Walker::IndexedIteration iteration;
+    iteration.otherForm = Walker::IndexedIteration::OtherForm::Enumeration;
     iteration.subject = object;
-    iteration.isDeadBehindLoop = true;
+    iteration.isDeadAfterLoop = true;
     if (walker.types().at(walker.typeOf(object)).isUndefinedOrNull()) {
-        walker.bind(open.id(), walker.addIterationByIndex(WTF::move(iteration)));
+        walker.bind(open.id(), walker.addIndexedIteration(WTF::move(iteration)));
         return true;
     }
 
@@ -209,17 +209,17 @@ static bool openInWalkForIn(Walker& walker, const BodyValue& open)
     }
     if (!iteration.list)
         return true;
-    noteKeysAreAsEnumeratorFoundThem(walker, iteration.list, iteration.subject);
+    markEnumeratorCurrent(walker, iteration.list, iteration.subject);
 
     iteration.position = integerInWalkForIn(walker, 0, origin);
     iteration.inputHead = loop->head;
     if (isExpectedToBeList)
         iteration.builtinClass = BuiltinClasses::Array;
-    walker.bind(open.id(), walker.addIterationByIndex(WTF::move(iteration)));
+    walker.bind(open.id(), walker.addIndexedIteration(WTF::move(iteration)));
     return true;
 }
 
-static StepInWalkForIn buildStepFromInWalkForIn(Walker& walker, const Walker::IterationByIndex& iteration, Reference object, Reference position, Origin origin)
+static StepInWalkForIn buildStepFromInWalkForIn(Walker& walker, const Walker::IndexedIteration& iteration, Reference object, Reference position, Origin origin)
 {
     StepInWalkForIn built;
     if (walker.isUnreachable())
@@ -229,7 +229,7 @@ static StepInWalkForIn buildStepFromInWalkForIn(Walker& walker, const Walker::It
     step.setObjectOperand(object);
     step.setPositionOperand(position);
     if (iteration.count)
-        step.setCurrentNamesOperand(keysAreAsEnumeratorFoundThemInWalkForIn(walker, iteration.list) ? iteration.count : integerInWalkForIn(walker, 0, origin));
+        step.setCurrentNamesOperand(isEnumeratorKnownCurrent(walker, iteration.list) ? iteration.count : integerInWalkForIn(walker, 0, origin));
     Reference results = walker.build(WTF::move(step));
     if (!results)
         return built;
@@ -239,11 +239,11 @@ static StepInWalkForIn buildStepFromInWalkForIn(Walker& walker, const Walker::It
     if (iteration.count)
         built.count = resultAtInWalkForIn(walker, results, static_cast<uint32_t>(ForInStepResult::CurrentNames), origin);
     built.next = buildOperatorInWalkForIn(walker, Opcode::Increment, built.foundAt, { }, origin);
-    noteKeysAreAsEnumeratorFoundThem(walker, iteration.list, iteration.subject);
+    markEnumeratorCurrent(walker, iteration.list, iteration.subject);
     return built;
 }
 
-static StepInWalkForIn buildStepOverListInWalkForIn(Walker& walker, Walker::IterationByIndex& iteration, Reference object, Origin origin)
+static StepInWalkForIn buildStepOverListInWalkForIn(Walker& walker, Walker::IndexedIteration& iteration, Reference object, Origin origin)
 {
     TypeArena& types = walker.types();
     Draft length(Opcode::GetEnumeratorIndexedLength, origin);
@@ -257,7 +257,7 @@ static StepInWalkForIn buildStepOverListInWalkForIn(Walker& walker, Walker::Iter
     BlockID indexed = walker.addBlock();
     BlockID byStep = walker.addBlock(BlockFrequency::Unlikely);
     BlockID after = walker.addBlock();
-    TypeID positions = types.integer(Range { 0, Walker::positionBehindEveryEnd });
+    TypeID positions = types.integer(Range { 0, Walker::doneIterationPosition });
     StepInWalkForIn met;
     met.done = walker.addParameter(after, { }, walker.formOfParameter(TypeTable::boolean, { }));
     met.key = walker.addParameter(after, { }, walker.formOfParameter(TypeTable::string, { }));
@@ -265,7 +265,7 @@ static StepInWalkForIn buildStepOverListInWalkForIn(Walker& walker, Walker::Iter
     met.next = walker.addParameter(after, { }, walker.formOfParameter(positions, { }));
     Reference keyForAccesses = walker.addParameter(after, { }, Representation::JSValue);
     walker.branch(isInIndexedPart, mayBeIndexed, byStep);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
 
     walker.continueIn(mayBeIndexed);
     Reference inside = narrowedInWalkForIn(walker, iteration.position, isInIndexedPart, OperandIndex::Less::left, origin);
@@ -297,9 +297,9 @@ static StepInWalkForIn buildStepOverListInWalkForIn(Walker& walker, Walker::Iter
 static bool stepInWalkForIn(Walker& walker, const BodyValue& step)
 {
     Reference state = walker.referenceOf(step.enumeratorOperand());
-    if (!state || !state.isVirtual() || walker.iterationByIndex(state).otherForm != Walker::IterationByIndex::OtherForm::Enumeration)
+    if (!state || !state.isVirtual() || walker.indexedIteration(state).otherForm != Walker::IndexedIteration::OtherForm::Enumeration)
         return false;
-    Walker::IterationByIndex& iteration = walker.iterationByIndex(state);
+    Walker::IndexedIteration& iteration = walker.indexedIteration(state);
     Origin origin = walker.originOf(step);
     iteration.newestStep = step.id();
     iteration.keyForAccesses = { };
@@ -313,10 +313,10 @@ static bool stepInWalkForIn(Walker& walker, const BodyValue& step)
         return true;
     }
 
-    if (std::optional<int64_t> turn = integerHeldInWalkForIn(walker, iteration.position); turn && static_cast<uint64_t>(*turn) < iteration.takenAtOpen.size()) {
+    if (std::optional<int64_t> turn = integerHeldInWalkForIn(walker, iteration.position); turn && static_cast<uint64_t>(*turn) < iteration.precomputedSteps.size()) {
         iteration.foundAt = iteration.position;
         iteration.position = integerInWalkForIn(walker, *turn + 1, origin);
-        if (Reference results = resultsInWalkForIn(walker, booleanInWalkForIn(walker, false, origin), iteration.takenAtOpen[static_cast<size_t>(*turn)], origin))
+        if (Reference results = resultsInWalkForIn(walker, booleanInWalkForIn(walker, false, origin), iteration.precomputedSteps[static_cast<size_t>(*turn)], origin))
             walker.bind(step.id(), results);
         return true;
     }
@@ -353,15 +353,15 @@ bool buildTypedForInOfItsOpcodes(Walker& walker, const BodyValue& value)
     return value.opcode() == Opcode::ForInOpen ? openInWalkForIn(walker, value) : stepInWalkForIn(walker, value);
 }
 
-bool Walker::iterationsSteppedAtMayBeBuiltTwice(BlockID inputHead) const
+bool Walker::canVersionLoopWithIterations(BlockID inputHead) const
 {
     uint32_t numberInFront = m_numberOfIterationsInFrontOfTheirLoops;
-    for (size_t place = m_iterationsByIndex.size(); place-- && numberInFront;) {
-        const IterationByIndex& iteration = m_iterationsByIndex[place];
+    for (size_t place = m_indexedIterations.size(); place-- && numberInFront;) {
+        const IndexedIteration& iteration = m_indexedIterations[place];
         if (iteration.head || !iteration.inputHead)
             continue;
         --numberInFront;
-        if (iteration.inputHead == inputHead && iteration.inlineFrame == m_frames.last().inlineFrame && !iteration.isDeadBehindLoop)
+        if (iteration.inputHead == inputHead && iteration.inlineFrame == m_frames.last().inlineFrame && !iteration.isDeadAfterLoop)
             return false;
     }
     return true;
@@ -370,14 +370,14 @@ bool Walker::iterationsSteppedAtMayBeBuiltTwice(BlockID inputHead) const
 bool Walker::iterationsSteppedAtHandOverPositionsAlone(BlockID inputHead) const
 {
     uint32_t numberInFront = m_numberOfIterationsInFrontOfTheirLoops;
-    for (size_t place = m_iterationsByIndex.size(); place-- && numberInFront;) {
-        const IterationByIndex& iteration = m_iterationsByIndex[place];
+    for (size_t place = m_indexedIterations.size(); place-- && numberInFront;) {
+        const IndexedIteration& iteration = m_indexedIterations[place];
         if (iteration.head || !iteration.inputHead)
             continue;
         --numberInFront;
         if (iteration.inputHead != inputHead || iteration.inlineFrame != m_frames.last().inlineFrame)
             continue;
-        if ((!iteration.goesThroughListByIndexAlone() && !iteration.goesThroughViewByIndexAlone() && !iteration.goesThroughTextByIndexAlone()) || !iteration.isDeadBehindLoop)
+        if ((!iteration.isIndexedArrayIteration() && !iteration.isIndexedTypedArrayIteration() && !iteration.isIndexedStringIteration()) || !iteration.isDeadAfterLoop)
             return false;
     }
     return true;
@@ -387,8 +387,8 @@ Walker::IterationsSteppedAtHead Walker::takeIterationsSteppedAt(BlockID inputHea
 {
     IterationsSteppedAtHead taken;
     uint32_t numberInFront = m_numberOfIterationsInFrontOfTheirLoops;
-    for (size_t place = m_iterationsByIndex.size(); place-- && numberInFront;) {
-        const IterationByIndex& iteration = m_iterationsByIndex[place];
+    for (size_t place = m_indexedIterations.size(); place-- && numberInFront;) {
+        const IndexedIteration& iteration = m_indexedIterations[place];
         if (iteration.head || !iteration.inputHead)
             continue;
         --numberInFront;
@@ -401,9 +401,9 @@ Walker::IterationsSteppedAtHead Walker::takeIterationsSteppedAt(BlockID inputHea
 void Walker::putBackIterationsSteppedAt(const IterationsSteppedAtHead& taken)
 {
     for (const auto& [place, iteration] : taken.asTheyEntered) {
-        if (m_iterationsByIndex[place].head)
+        if (m_indexedIterations[place].head)
             ++m_numberOfIterationsInFrontOfTheirLoops;
-        m_iterationsByIndex[place] = iteration;
+        m_indexedIterations[place] = iteration;
     }
 }
 

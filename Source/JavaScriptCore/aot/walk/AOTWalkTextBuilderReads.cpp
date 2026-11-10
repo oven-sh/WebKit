@@ -15,8 +15,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+OperatorForm operatorFormFor(Walker&, const Draft&);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet readersOfLengthInTextBuilderReads { Opcode::PropGet, Opcode::ToBoolean, Opcode::StrictEq, Opcode::Eq };
 static_assert(OperandIndex::StrictEq::left == OperandIndex::Eq::left && OperandIndex::StrictEq::right == OperandIndex::Eq::right);
@@ -29,7 +29,7 @@ static bool isEmptyTextInTextBuilderReads(const Walker& walker, Reference refere
     return constant.opcode == Opcode::String && constant.string() == walker.program().strings.emptyString();
 }
 
-static Reference lengthOfTextInTextBuilderReads(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)
+static Reference lengthOfTextInTextBuilderReads(Walker& walker, StringInBuilder& text, Reference name, Origin origin)
 {
     origin.isTailCall = false;
     if (text.blockOfState != walker.currentBlock()) {
@@ -53,18 +53,18 @@ static Reference lengthOfTextInTextBuilderReads(Walker& walker, TextInStringBuil
     Reference numberOfCodeUnits = walker.build(WTF::move(length));
     if (!numberOfCodeUnits)
         return { };
-    text.lengthOfState = boxedUnlessNumbersAreUnboxed(walker, numberOfCodeUnits, origin);
+    text.lengthOfState = boxNumberIfNeeded(walker, numberOfCodeUnits, origin);
     return text.lengthOfState;
 }
 
 static Reference buildTestOfLengthInTextBuilderReads(Walker& walker, Draft&& test)
 {
     walker.chooseConservativeFields(test);
-    test.setForm(formAllowedForTypedOperator(walker, test));
+    test.setForm(operatorFormFor(walker, test));
     return walker.build(WTF::move(test));
 }
 
-Reference truthOfTextInStringBuilder(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)
+Reference buildTruthinessOfStringInBuilder(Walker& walker, StringInBuilder& text, Reference name, Origin origin)
 {
     origin.isTailCall = false;
     Reference length = lengthOfTextInTextBuilderReads(walker, text, name, origin);
@@ -75,7 +75,7 @@ Reference truthOfTextInStringBuilder(Walker& walker, TextInStringBuilder& text, 
     return buildTestOfLengthInTextBuilderReads(walker, WTF::move(hasCodeUnits));
 }
 
-bool readsTextWithoutString(Walker& walker, const BodyValue& reader, TextInStringBuilder& text, Reference name)
+bool readsTextWithoutString(Walker& walker, const BodyValue& reader, StringInBuilder& text, Reference name)
 {
     Opcode opcode = reader.opcode();
     if (!readersOfLengthInTextBuilderReads.contains(opcode))
@@ -96,7 +96,7 @@ bool readsTextWithoutString(Walker& walker, const BodyValue& reader, TextInStrin
     case Opcode::ToBoolean: {
         if (!namesText(reader.valueOperand()))
             return false;
-        if (Reference truth = truthOfTextInStringBuilder(walker, text, name, origin))
+        if (Reference truth = buildTruthinessOfStringInBuilder(walker, text, name, origin))
             walker.bind(reader.id(), truth);
         return true;
     }

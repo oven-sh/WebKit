@@ -47,24 +47,24 @@ private:
     bool answersWithString() const { return m_method == CharacterReadInWalkStrings::CharAt || m_method == CharacterReadInWalkStrings::At || m_method == CharacterReadInWalkStrings::Element; }
     bool leavesCodeUnit() const { return answersWithString() || m_method == CharacterReadInWalkStrings::CharCodeAt; }
 
-    bool turnMayBeginAgain() const { return m_walker.mayBeginTurnAgainInClosedCopy() && m_walker.opensGuesses(); }
+    bool mayRestartIteration() const { return m_walker.canRestartIteration() && m_walker.opensGuesses(); }
     Reference operate(Opcode opcode, Reference left, Reference right = { })
     {
-        Walker::InFrontOfTypedCopy inFront(m_walker, m_isReadInFront);
+        Walker::SpecializedPreheaderScope preheaderScope(m_walker, m_isReadInFront);
         return buildOperatorForStrings(m_walker, opcode, left, right, m_origin);
     }
     Reference proveBehind(Reference value, Reference test, uint32_t operandIndex)
     {
-        Walker::InFrontOfTypedCopy inFront(m_walker, m_isReadInFront);
+        Walker::SpecializedPreheaderScope preheaderScope(m_walker, m_isReadInFront);
         return buildProofBehindTestForStrings(m_walker, value, test, operandIndex, m_origin);
     }
     Reference integer(int64_t value) { return integerForStrings(m_walker, value); }
     bool textMayBeReadInFront()
     {
         Reference flat = flatStringInSight(m_walker, m_stringRead);
-        if (flat && m_walker.standsInFrontOfTypedCopy(flat))
+        if (flat && m_walker.isInvariantInSpecializedVersion(flat))
             return true;
-        return m_walker.goOnInFrontOfTypedCopyWhereItsFirstTurnBegins() || !flat;
+        return m_walker.tryHoistEntryTest() || !flat;
     }
 
     Reference valueOutside()
@@ -82,12 +82,12 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    void goOnWhere(Reference test)
+    void continueIf(Reference test)
     {
         if (!test || m_walker.isUnreachable())
             return;
-        if (!m_outside && turnMayBeginAgain() && m_method != CharacterReadInWalkStrings::CharAt) {
-            m_isReadInFront = m_isReadInFront && m_walker.branchInFrontOfTypedCopy(test, true);
+        if (!m_outside && mayRestartIteration() && m_method != CharacterReadInWalkStrings::CharAt) {
+            m_isReadInFront = m_isReadInFront && m_walker.tryBranchInPreheader(test, true);
             if (!m_isReadInFront) {
                 BlockID inside = m_walker.addBlock();
                 BlockID leaving = m_walker.addBlock(BlockFrequency::Rare);
@@ -95,10 +95,10 @@ private:
                 m_walker.branch(test, inside, leaving);
                 m_walker.continueIn(leaving);
                 if (!m_walker.isUnreachable())
-                    m_walker.beginTurnAgainInClosedCopy();
+                    m_walker.restartIteration();
                 m_walker.continueIn(inside);
             }
-            m_walker.noteGuessOpened();
+            m_walker.recordSpeculation();
             return;
         }
         m_isReadInFront = false;
@@ -117,7 +117,7 @@ private:
     Reference codeUnitAt(Reference position)
     {
         Reference place = placeInStringRead(position);
-        Walker::InFrontOfTypedCopy inFront(m_walker, m_isReadInFront);
+        Walker::SpecializedPreheaderScope preheaderScope(m_walker, m_isReadInFront);
         return buildCodeUnitOfString(m_walker, m_stringRead, place, m_origin);
     }
 
@@ -277,9 +277,9 @@ void BuilderOfCharacterRead::meetAndBind(const std::array<Reference, 2>& inside)
         return;
     }
 
-    std::array<Walker::ArmThatMeets, 2> arms { { { lastInside, { inside[0], inside[1] } }, { m_outside, { outside[0], outside[1] } } } };
+    std::array<Walker::JoinArm, 2> arms { { { lastInside, { inside[0], inside[1] } }, { m_outside, { outside[0], outside[1] } } } };
     std::array<Reference, 2> met;
-    if (m_walker.letArmsMeet(arms, m_walker.addBlock(), std::span<Reference>(met).first(count)))
+    if (m_walker.joinArms(arms, m_walker.addBlock(), std::span<Reference>(met).first(count)))
         bindAndNote(met[0], met[1]);
 }
 
@@ -330,7 +330,7 @@ bool BuilderOfCharacterRead::build(Reference position)
             bindOutside();
             return true;
         }
-        goOnWhere(isIndex);
+        continueIf(isIndex);
         position = truncated;
     } else if (!types.at(m_walker.typeOf(position)).isInteger()) {
         Reference root = rootForStrings(m_walker, position);
@@ -343,7 +343,7 @@ bool BuilderOfCharacterRead::build(Reference position)
             bindOutside();
             return true;
         }
-        goOnWhere(isInt32);
+        continueIf(isInt32);
         position = buildProofBehindTestForStrings(m_walker, position, isInt32, OperandIndex::TypeTest::value, m_origin);
         if (position && !types.at(m_walker.typeOf(position)).isInteger())
             position = operate(Opcode::ToInt32, position);
@@ -370,21 +370,21 @@ bool BuilderOfCharacterRead::build(Reference position)
 
     bool isInside = type.integers.minimum >= 0 && (isBelowLength || nameProvesPositionBelowLengthForStrings(m_walker, position, m_string));
     isInside = isInside || (m_method != CharacterReadInWalkStrings::At && type.integers.minimum >= 0 && testOfBodyHoldsPositionOfCharacterReadBelowLength(m_walker, m_value));
-    if (isInside && !m_walker.testsEveryPosition())
+    if (isInside && !m_walker.checksBounds())
         m_walker.count(StatisticID::RangeChecksRemoved);
     if (!isInside) {
-        m_isReadInFront = m_method == CharacterReadInWalkStrings::CharCodeAt && !m_outside && turnMayBeginAgain() && m_walker.standsInFrontOfTypedCopy(position)
-            && m_walker.standsInFrontOfTypedCopy(m_length) && m_walker.standsInFrontOfTypedCopy(m_stringRead) && (!m_startOfPiece || m_walker.standsInFrontOfTypedCopy(m_startOfPiece))
+        m_isReadInFront = m_method == CharacterReadInWalkStrings::CharCodeAt && !m_outside && mayRestartIteration() && m_walker.isInvariantInSpecializedVersion(position)
+            && m_walker.isInvariantInSpecializedVersion(m_length) && m_walker.isInvariantInSpecializedVersion(m_stringRead) && (!m_startOfPiece || m_walker.isInvariantInSpecializedVersion(m_startOfPiece))
             && textMayBeReadInFront();
         if (type.integers.minimum < 0 && type.isInt32())
             position = operate(Opcode::URShift, position, integer(0));
         else if (type.integers.minimum < 0) {
             Reference isNotNegative = operate(Opcode::LessEq, integer(0), position);
-            goOnWhere(isNotNegative);
+            continueIf(isNotNegative);
             position = proveBehind(position, isNotNegative, OperandIndex::LessEq::right);
         }
         Reference isBelow = operate(Opcode::Less, position, m_length);
-        goOnWhere(isBelow);
+        continueIf(isBelow);
         position = proveBehind(position, isBelow, OperandIndex::Less::left);
     }
     if (position && !m_walker.isUnreachable() && !types.at(m_walker.typeOf(position)).isInt32())

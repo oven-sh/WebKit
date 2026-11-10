@@ -8,7 +8,7 @@
 layout L0 module=m0 position=38
 # layout L905 kind=Closure
 variable g0 name="table" module=m0 declared={type=undefined|null|object|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
-module m0 path="/$bunfs/root/meeting.ts" displayPath="meeting.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 42, 110, 143] quotedTexts=[{position=71 start=29 end=66}, {position=111 end=15}, {position=130 end=22}] textOfQuotes="globalThis.sink(named)(i) => table[\x22k\x22 + (i & 63) + \x22_\x22 + (i & 7)]"} functionText="const table = {};\x0aconst named = (i) => table[\x22k\x22 + (i & 63) + \x22_\x22 + (i & 7)];\x0a(globalThis).sink(named);\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/meeting.ts" displayPath="meeting.ts" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 42, 110, 143] quotedSources=[{position=71 start=29 end=66}, {position=111 end=15}, {position=130 end=22}] quotedSourceText="globalThis.sink(named)(i) => table[\x22k\x22 + (i & 63) + \x22_\x22 + (i & 7)]"} functionSource="const table = {};\x0aconst named = (i) => table[\x22k\x22 + (i & 63) + \x22_\x22 + (i & 7)];\x0a(globalThis).sink(named);\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Data data=d0 @38
@@ -23,7 +23,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v9 = Undefined @110
     Return v9 @110
 }
-function f1 name="named" module=m0 position=56 text={start=32 end=76} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="named" module=m0 position=56 sourceRange={start=32 end=76} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):
     v1 = GetModuleVariable variable=g0 @71
     v2 = CheckInitialized v1 name="table" @71

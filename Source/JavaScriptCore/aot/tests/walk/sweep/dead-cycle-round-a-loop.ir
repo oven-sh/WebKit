@@ -24,7 +24,7 @@ function f0 name="f" parameters=[{type=anything}] results=[{type=anything}] {
 #     Jump -> next b1(v1)
 #   b1(v2: boolean @Boolean) isInLoop=true isLoopHead=true:
 #     v3: boolean @Boolean = LogicalNot v2
-#     v4: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v5: boolean @Boolean = TypeTest v4 testedType=undefined
 #     Branch v5 -> taken b1(v3), notTaken b2()
 #   b2():

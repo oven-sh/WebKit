@@ -7,7 +7,7 @@
 # CHECK-NOT: = Substring
 # CHECK-NOT: = StackStringBuilderAppendString
 # layout L909 kind=Closure
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 174, 218] quotedTexts=[{position=29 start=49 end=61}, {position=77 start=65 end=76}, {position=107 start=76 end=83}, {position=174 end=15}, {position=185 end=42}, {position=190 start=16 end=41}, {position=195 start=21 end=38}, {position=206 start=21 end=40}] textOfQuotes="globalThis.sink(copy(globalThis.source()))text = String(text)i < text.lengthtext[i]"} functionText="function copy(text) { text = String(text); let out = \x22\x22; for (let i = 0; i < text.length; i++) { const c = text[i]; if (c === \x22,\x22) out += \x22 \x22; else out += c; } return out; }\x0aglobalThis.sink(copy(globalThis.source()));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 174, 218] quotedSources=[{position=29 start=49 end=61}, {position=77 start=65 end=76}, {position=107 start=76 end=83}, {position=174 end=15}, {position=185 end=42}, {position=190 start=16 end=41}, {position=195 start=21 end=38}, {position=206 start=21 end=40}] quotedSourceText="globalThis.sink(copy(globalThis.source()))text = String(text)i < text.lengthtext[i]"} functionSource="function copy(text) { text = String(text); let out = \x22\x22; for (let i = 0; i < text.length; i++) { const c = text[i]; if (c === \x22,\x22) out += \x22 \x22; else out += c; } return out; }\x0aglobalThis.sink(copy(globalThis.source()));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -26,7 +26,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v13 = Undefined @174
     Return v13 @174
 }
-function f1 name="copy" module=m0 text={end=173} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="copy" module=m0 sourceRange={end=173} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
     v1 = Builtin builtin=String @29
     v2 = Call v1, -, v0 calleeName="String" @29

@@ -7,21 +7,26 @@
 # swap(one);
 # print(read(one));
 # print("went on");
-# The values of the Map are held to an int32, so `get` was typed undefined|i32 AND KEPT IN THE RAW FORM OF THAT TYPE (OptionalInt64): the emitter turned the boxed word out of the table into that form by belief, and the check behind the read was left out because "the form tells". 1.5 was read as 1, a text as undefined: in silence.
-# What a container hands out comes boxed where Link says what it holds: then it is asked like everything else, and whoever wants the raw form takes it behind the question.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# Link restricts the Map's values to an int32, so `get` had the type undefined|i32 and its result was kept in the unboxed representation of that type (OptionalInt64).
+# The emitter converted the boxed word from the table to that representation without a test, and the check after the read was omitted because "the representation tells the type".
+# 1.5 was silently read as 1, and a string as undefined.
+# Now a value that is read from a container is boxed where Link says what the container holds.
+# It is then checked like everything else, and a user that wants the unboxed representation converts the value after the check.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f2 mechanisms=all
 # FORM: [[given]]: undefined|i32 @JSValue = CallInline {{*}} inlineBuiltin=MapGet
 # FORM: CheckProof [[given]] checkedType=undefined|i32 {{*}} source=
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 2 2 b
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found double in
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: 2 2 b
-# CALLS-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found double in
 # CALLS-NOT: went on
 # CALLS: crashed with
 

@@ -15,6 +15,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSort.h"
 #include "AOTStubDescriptor.h"
+#include "AOTWasmInterface.h"
 #include "YarrFlags.h"
 #include <algorithm>
 #include <array>
@@ -465,6 +466,48 @@ static void appendRegExpCodeToMap(ImageSymbolTable& table, const Typed::Program&
     }
 }
 
+#if ENABLE(WEBASSEMBLY)
+static void appendWasmCodeToMap(ImageSymbolTable& table, const BuiltImage& built)
+{
+    RELEASE_ASSERT(built.image.size() >= sizeof(ImageHeader));
+    const ImageHeader& header = spanReinterpretCast<const ImageHeader>(built.image.span().first(sizeof(ImageHeader)))[0];
+    ImageSectionRange range = header.sections[static_cast<unsigned>(ImageSection::WebAssemblyDirectory)];
+    if (!range.size)
+        return;
+
+    std::span<const uint8_t> directory = built.image.span().subspan(range.offset, range.size);
+    uint32_t numberOfModules = spanReinterpretCast<const Wasm::DirectoryInImage>(directory.first(sizeof(Wasm::DirectoryInImage)))[0].numberOfModules;
+    auto modules = spanReinterpretCast<const Wasm::ModuleInImage>(directory.subspan(sizeof(Wasm::DirectoryInImage), numberOfModules * sizeof(Wasm::ModuleInImage)));
+    for (uint32_t moduleIndex = 0; moduleIndex < numberOfModules; ++moduleIndex) {
+        const Wasm::ModuleInImage& module = modules[moduleIndex];
+        table.append("WM"_s);
+        appendNumberToMapRow(table, moduleIndex);
+        appendNumberToMapRow(table, module.sourceSize);
+        appendNumberToMapRow(table, module.numberOfImportedFunctions);
+        appendNumberToMapRow(table, module.numberOfFunctions);
+        table.append("\n"_s);
+
+        auto functionsOf = [&](unsigned flavor) {
+            return spanReinterpretCast<const Wasm::FunctionInImage>(directory.subspan(module.functions[flavor], module.numberOfFunctions * sizeof(Wasm::FunctionInImage)));
+        };
+        for (unsigned flavor = 0; flavor < Wasm::numberOfImageCodeFlavors; ++flavor) {
+            auto functions = functionsOf(flavor);
+            for (uint32_t index = 0; index < module.numberOfFunctions; ++index) {
+                if (flavor && functions[index].entry == functionsOf(0)[index].entry)
+                    continue;
+                table.append("W"_s);
+                appendNumberToMapRow(table, built.layout.webAssemblyCodeOffset + functions[index].entry);
+                appendNumberToMapRow(table, functions[index].size);
+                appendNumberToMapRow(table, moduleIndex);
+                appendNumberToMapRow(table, module.numberOfImportedFunctions + index);
+                appendNumberToMapRow(table, flavor);
+                table.append("\n"_s);
+            }
+        }
+    }
+}
+#endif
+
 Vector<uint8_t> encodeRowsOfMapFile(const Typed::Program& program, const BuiltImage& built)
 {
     const CodeLayout& layout = built.layout;
@@ -491,6 +534,9 @@ Vector<uint8_t> encodeRowsOfMapFile(const Typed::Program& program, const BuiltIm
         appendNumberToMapRow(table, layout.ffiCodeSize);
         table.append("\n"_s);
     }
+#if ENABLE(WEBASSEMBLY)
+    appendWasmCodeToMap(table, built);
+#endif
     appendRegExpCodeToMap(table, program, built);
     return table.takeText();
 }

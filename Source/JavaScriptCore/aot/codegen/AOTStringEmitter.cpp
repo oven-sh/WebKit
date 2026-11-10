@@ -85,10 +85,10 @@ Pointer StringEmitter::implOfFlatString(FlatStringCell flatString)
 CharacterView StringEmitter::viewOfSource(const CharacterSource& source, CellPointer owner)
 {
     bool isFoundNarrow = m_flagsFoundNarrow.contains(source.implFlags.value());
-    if (const OperationContext* context = generator().contextBeingGenerated(); context && (isFoundNarrow || m_flagsFoundWide.contains(source.implFlags.value())) && emitter<ElementAccessEmitter>().testsEveryPosition()) {
+    if (const OperationContext* context = generator().contextBeingGenerated(); context && (isFoundNarrow || m_flagsFoundWide.contains(source.implFlags.value())) && emitter<ElementAccessEmitter>().checksBounds()) {
         Word32 flags(m_out.opaque(source.implFlags.value()));
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(*context, isFoundNarrow ? hasBits(flags, StringImpl::flagIs8Bit()) : hasNoBits(flags, StringImpl::flagIs8Bit()), std::nullopt, ProofSource::WhatIsRemembered);
-        build().statistics().count(StatisticID::KindsFoundInFrontOfTurnsHeldAgainstCells);
+        emitter<ThrowEmitter>().requireOrCrash(*context, isFoundNarrow ? hasBits(flags, StringImpl::flagIs8Bit()) : hasNoBits(flags, StringImpl::flagIs8Bit()), std::nullopt, ProofSource::RememberedFact);
+        build().statistics().count(StatisticID::UnrolledLoopTypeProofsChecked);
     }
     Condition is8Bit = m_flagsFoundNarrow.contains(source.implFlags.value()) ? boolean(true) : m_flagsFoundWide.contains(source.implFlags.value()) ? boolean(false) : hasBits(source.implFlags, StringImpl::flagIs8Bit());
     return { source.characters, source.length, is8Bit, owner };
@@ -457,7 +457,7 @@ void StringEmitter::generateSubstring(const ValueContext& value)
     CellPointer string = in<CellPointer>(value->stringOperand());
     Word32 start = word32Of(value->startOperand());
     Word32 end = word32Of(value->endOperand());
-    if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.testsEveryPosition()) {
+    if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.checksBounds()) {
         elements.stopUnlessInside(value, belowOrEqual(start, end));
         elements.stopUnlessInside(value, belowOrEqual(end, lengthOf(string)));
     }
@@ -470,7 +470,7 @@ void StringEmitter::generateSubstringOrUndefined(const ValueContext& value)
     Word32 start = word32Of(value->startOperand());
     Word32 end = word32Of(value->endOperand());
     define(value, selectByBranch<Boxed>(logicalAnd(greaterThanOrEqual(start, word32(0)), greaterThanOrEqual(end, start)), [&] {
-        if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.testsEveryPosition()) {
+        if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.checksBounds()) {
             elements.stopUnlessInside(value, belowOrEqual(start, end));
             elements.stopUnlessInside(value, belowOrEqual(end, lengthOf(string)));
         }

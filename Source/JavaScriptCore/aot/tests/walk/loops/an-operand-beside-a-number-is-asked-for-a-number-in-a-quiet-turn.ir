@@ -13,8 +13,8 @@
 # ASKED: [[isNumber]]: boolean @Boolean = TypeTest [[operand]] testedType=number
 # ASKED: = Narrowed [[operand]], [[isNumber]]
 # ASKED-NOT: form=NumberAndValue
-# RUN(COUNTED): compile OperandsAskedForNumberInQuietTurns mechanisms=all
-# COUNTED: statistic OperandsAskedForNumberInQuietTurns 1
+# RUN(COUNTED): compile NumberOperandsGuardedInIterations mechanisms=all
+# COUNTED: statistic NumberOperandsGuardedInIterations 1
 # RUN(SHELL): run-in-shell mechanisms=all globalThis.after = () => { const list = [crate(3), crate(3), crate(-3), crate(-3)]; print(JSON.stringify(tellAll.call(list))); list[1].stock = { valueOf() { list.length = 2; return 4; } }; print(JSON.stringify(tellAll.call(list)), list.length); };
 # SHELL: [{"positive":true},{"positive":true},{"positive":false},{"positive":false}]
 # SHELL-NEXT: [{"positive":true},{"positive":true},null,null] 2

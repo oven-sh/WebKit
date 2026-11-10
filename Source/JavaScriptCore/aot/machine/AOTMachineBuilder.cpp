@@ -1248,7 +1248,7 @@ Operation* Builder::upsilonOfCompletePhi(Operation* value, Operation* phi)
 
 bool Builder::handOnUpperHalf(const Operation* value, Operation* phi)
 {
-    if (clearsUpperHalfOfRegister(value) || phi->has(OperationFlag::UpperHalfMayBeSet))
+    if (clearsUpperHalf(value) || phi->has(OperationFlag::UpperHalfMayBeSet))
         return false;
     phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
     return true;

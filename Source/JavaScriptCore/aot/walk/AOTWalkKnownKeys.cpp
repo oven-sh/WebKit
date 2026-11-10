@@ -49,9 +49,9 @@ PropertyKeyID nameThatKeyIs(Walker& walker, Reference key)
 PropertyKeyID nameWrittenAsKey(const Walker& walker, ValueID key)
 {
     const BodyIndex& body = walker.currentBodyIndex();
-    ValueID written = key ? body.valueBehindCasts(key) : ValueID();
+    ValueID written = key ? body.stripCasts(key) : ValueID();
     if (written && !body.isParameter(written) && body.opcodeOf(written) == Opcode::ToPropertyKey)
-        written = body.valueBehindCasts(body.value(written).operand(0));
+        written = body.stripCasts(body.value(written).operand(0));
     if (!written || body.isParameter(written) || body.opcodeOf(written) != Opcode::String)
         return { };
     return nameOfTextInKnownKeys(walker, body.value(written).string());

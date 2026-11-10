@@ -17,7 +17,7 @@ class Program;
 struct MocksOfProgram {
     BitVector modulesThatMayBeMocked;
     BitVector namespacesHandedOnByMockedModules;
-    BitVector modulesThatLeadToMocks;
+    BitVector modulesReachingMocks;
     bool isAnyModuleMocked { false };
 };
 MocksOfProgram findMocksOfProgram(const Program&);

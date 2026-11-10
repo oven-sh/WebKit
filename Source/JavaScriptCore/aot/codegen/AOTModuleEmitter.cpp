@@ -143,18 +143,18 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
     ModuleID module = value->module();
     const Module& target = m_program.at(module);
     mentionRequireEdge(value);
-    if (value->ifHeldForImport()) {
-        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireIfHeldForImport, { moduleIndex(module), moduleIndex(value->referrer()) }));
+    if (value->onlyIfImported()) {
+        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireIfImported, { moduleIndex(module), moduleIndex(value->referrer()) }));
         return;
     }
-    if (std::optional<Boxed> objectOfRun = inOptional<Boxed>(value->objectOfRunOperand())) {
+    if (std::optional<Boxed> requirerObject = inOptional<Boxed>(value->requirerObjectOperand())) {
         CallOptions options;
-        options.calledBuiltin = functionOfHostThatRequireCallsFor(target);
-        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireModuleOfRun, { moduleIndex(module), moduleIndex(value->referrer()), *objectOfRun }, options));
+        options.calledBuiltin = hostRequireFunctionFor(target);
+        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireModuleWithRequirer, { moduleIndex(module), moduleIndex(value->referrer()), *requirerObject }, options));
         return;
     }
     auto requireInSlowPath = [&](CallOptions options) {
-        options.calledBuiltin = functionOfHostThatRequireCallsFor(target);
+        options.calledBuiltin = hostRequireFunctionFor(target);
         return callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
     };
     bool addsToRequireCache = requireAddsToRequireCache(m_program, value->referrer(), module);
@@ -174,11 +174,11 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
 
 void ModuleEmitter::generateRecordRequire(const ValueContext& value)
 {
-    if (std::optional<Boxed> objectOfRun = inOptional<Boxed>(value->objectOfRunOperand())) {
-        callVoidOperation(value, RuntimeOperation::RecordRequireOfRun, { moduleIndex(value->module()), moduleIndex(value->referrer()), word32(value->byMadeRequire()), word32(value->behindTheLoad()), *objectOfRun });
+    if (std::optional<Boxed> requirerObject = inOptional<Boxed>(value->requirerObjectOperand())) {
+        callVoidOperation(value, RuntimeOperation::RecordRequireWithRequirer, { moduleIndex(value->module()), moduleIndex(value->referrer()), word32(value->fromCreatedRequire()), word32(value->followsLoad()), *requirerObject });
         return;
     }
-    callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()), word32(value->byMadeRequire()) });
+    callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()), word32(value->fromCreatedRequire()) });
 }
 
 void ModuleEmitter::generateAreLoaderFunctionsStored(const ValueContext& value)
@@ -238,8 +238,8 @@ void ModuleEmitter::generateImportDynamic(const ValueContext& value)
 
 void ModuleEmitter::generateRequireDynamic(const ValueContext& value)
 {
-    if (std::optional<Boxed> objectOfRun = inOptional<Boxed>(value->objectOfRunOperand())) {
-        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireDynamicOfRun, { in<Boxed>(value->specifierOperand()), moduleIndex(value->referrer()), *objectOfRun }));
+    if (std::optional<Boxed> requirerObject = inOptional<Boxed>(value->requirerObjectOperand())) {
+        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireDynamicWithRequirer, { in<Boxed>(value->specifierOperand()), moduleIndex(value->referrer()), *requirerObject }));
         return;
     }
     define(value, callOperation<Boxed>(value, RuntimeOperation::RequireDynamic, { in<Boxed>(value->specifierOperand()), moduleIndex(value->referrer()) }));

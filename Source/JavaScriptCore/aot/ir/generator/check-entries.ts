@@ -321,8 +321,8 @@ function checkExclusiveParameters(entry: Entry, errors: ErrorList): void {
   }
 }
 
-function checkHandedOnOperand(entry: Entry, errors: ErrorList): void {
-  const way = nonzeroMemberOf(entry, "handsOn");
+function checkPassThroughOperand(entry: Entry, errors: ErrorList): void {
+  const way = nonzeroMemberOf(entry, "passThrough");
   const [first, ...others] = operandsOf(entry);
   const returns = (operand: Operand) => operand.uses.uses.some(use => use.name === "Returns");
   if (way === null) {
@@ -331,7 +331,7 @@ function checkHandedOnOperand(entry: Entry, errors: ErrorList): void {
     const givesFirst = rule.rule === "Natural" && rule.natural.tag === "SameAs" && rule.natural.operand.name === first.name;
     const { isUnknownCode, writes, writesAllHeaps } = entry.effects;
     if (givesFirst && !isUnknownCode && !writesAllHeaps && writes.length === 0) {
-      errors.add(entry.location, `${entry.name} gives its first operand, writes nothing and does not say how: handsOn`);
+      errors.add(entry.location, `${entry.name} gives its first operand, writes nothing and does not say how: passThrough`);
     }
     return;
   }
@@ -385,7 +385,7 @@ function checkFormColumns(entry: Entry, errors: ErrorList): void {
 function checkColumns(entry: Entry, errors: ErrorList): void {
   checkAccessColumns(entry, errors);
   checkFormColumns(entry, errors);
-  checkHandedOnOperand(entry, errors);
+  checkPassThroughOperand(entry, errors);
   const proof = nonzeroMemberOf(entry, "proves");
   if (proof !== null && !entry.isTerminator && !isNaturalBoolean(entry.result)) {
     errors.add(entry.location, `${entry.name} proves ${proof.name} and its result is not natural(boolean)`);

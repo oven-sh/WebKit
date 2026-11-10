@@ -1,4 +1,4 @@
-# A graph that comes to a cycle is loaded by the loader, which asks the run time for the record of the file behind the face: the file is answered to the host.
+# A graph that comes to a cycle is loaded by the loader, which asks the run time for the record of the file behind the facade: the file is answered to the host.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions variables mechanisms=all
 # CHECK-NOT: function f2 callers-known
@@ -6,8 +6,8 @@
 # CHECK-NOT: variable g1 {{*}}writers-known
 
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true isHoisted=true}]
-module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
-module m2 path="#2" displayPath="parse.cjs" flags=[KeepsError, IsLoadedByLoader] exportRule=CommonJs body=f3 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="#2" displayPath="parse.cjs" flags=[CachesEvaluationError, IsLoadedByLoader] exportRule=CommonJs body=f3 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
 entry module=m0
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="default" module=m2 declared={type=anything|absent}
@@ -31,7 +31,7 @@ function f2 name="parse" module=m1 length=1 parameters=[{type=anything}] results
   b0(v0: anything):
     Return v0
 }
-function f3 name="face" module=m1 kind=Module results=[{type=anything}] {
+function f3 name="facade" module=m1 kind=Module results=[{type=anything}] {
   b0():
     EvaluateModule module=m1 referrer=m2 [isBare]
     Return

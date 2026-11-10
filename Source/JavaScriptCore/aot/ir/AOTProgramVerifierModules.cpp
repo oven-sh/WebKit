@@ -123,7 +123,7 @@ static bool hasValidInterop(const Program& program, const Module& module)
 {
     if (module.requireResult == RequireResult::NamespaceIfImported && module.kind != ModuleKind::Data)
         return false;
-    if (module.flags.contains(ModuleFlags::AnswersLoaderWithNamespace) && module.kind != ModuleKind::Data)
+    if (module.flags.contains(ModuleFlags::LoaderReturnsNamespace) && module.kind != ModuleKind::Data)
         return false;
     switch (module.kind) {
     case ModuleKind::SourceText:
@@ -162,7 +162,7 @@ static bool handsOnNameThatRunFinds(const Program& program, const Module& module
     return entry != module.exports.end() && entry->kind == ModuleExportKind::Indirect && compareProgramStrings(program.string(entry->name), program.string(name)) == std::strong_ordering::equal;
 }
 
-static bool isLeftOutOfFileOfData(const Program& program, const ModuleExport& entry)
+static bool isOmittedDataExport(const Program& program, const ModuleExport& entry)
 {
     if (entry.kind != ModuleExportKind::Variable || !entry.variable)
         return false;
@@ -172,7 +172,7 @@ static bool isLeftOutOfFileOfData(const Program& program, const ModuleExport& en
 
 static bool hasOneBinding(const Program& program, const ModuleExport& entry, const BitVector& modulesWithVariableThatHoldsMock)
 {
-    if (entry.isLeftOut && !isLeftOutOfFileOfData(program, entry))
+    if (entry.isOmitted && !isOmittedDataExport(program, entry))
         return false;
     switch (entry.kind) {
     case ModuleExportKind::Variable:
@@ -296,7 +296,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         && hasValidPlacesOfStars(module);
     bool hasValidLibraryFlag = !isLibrary || (rules.body != BodyRule::Absent && !module.body && module.exports.isEmpty());
     bool hasValidImportOnlyFlag = !module.flags.contains(ModuleFlags::IsLoadedByImportOnly) || module.runtimeModule;
-    bool hasValidFlagsOfFiles = !module.flags.containsAny({ ModuleFlags::HasNoSideEffects, ModuleFlags::KeepsError, ModuleFlags::NamesWayToModuleObjects }) || isFileOfProgram(module);
+    bool hasValidFlagsOfFiles = !module.flags.containsAny({ ModuleFlags::HasNoSideEffects, ModuleFlags::CachesEvaluationError, ModuleFlags::ReachesModuleObjects }) || isFileOfProgram(module);
     bool hasValidRuntimeModule = module.runtimeModule
         ? rules.hasRuntimeModule && program.builtins().contains(module.runtimeModule)
         : !rules.hasRuntimeModule || isLibrary;
@@ -639,7 +639,7 @@ void ProgramVerifier::verifyModuleFailures()
 {
     for (unsigned index = 0; index < m_program.moduleFailures.size(); ++index) {
         const ModuleFailure& failure = m_program.moduleFailures[index];
-        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter) || (failure.endsLoadOf && failure.exporter))
+        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter) || (failure.failedLoadRoot && failure.exporter))
             fail({ .kind = InternalErrorKind::InvalidModuleFailure, .count = index });
     }
 }

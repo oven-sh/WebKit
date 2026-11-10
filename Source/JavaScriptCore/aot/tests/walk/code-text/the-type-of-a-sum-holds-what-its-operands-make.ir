@@ -6,8 +6,8 @@
 #   constants:
 #     v2: 3 @JSValue = Integer integer=3
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
-#     v3: int[0, 3] @Int32 = BitAnd v0, v2 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
-#     v4: int[0, 3] @Int32 = BitAnd v1, v2 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: int[0, 3] @Int32 = BitAnd v0, v2 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: int[0, 3] @Int32 = BitAnd v1, v2 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v5: int[0, 6] @Int32 = Add v3, v4 form=Integers
 #     v6: int[0, 6] @JSValue = Box v5
 #     Return v6

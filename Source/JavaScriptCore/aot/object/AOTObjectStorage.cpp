@@ -20,6 +20,7 @@
 #include "AOTPendingStars.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTState.h"
 #include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
@@ -244,7 +245,7 @@ void Object::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         if (UniquedStringImpl* name = identifiers.tryGetIdentifierConcurrently(field.name))
             analyzer.analyzePropertyNameEdge(object, target, name);
     }
-    JSObject* extraProperties = extraPropertiesIfMade(*object);
+    JSObject* extraProperties = extraPropertiesIfCreated(*object);
     if (!extraProperties)
         return;
     for (const auto& entry : extraProperties->structure()->getPropertiesConcurrently()) {
@@ -298,10 +299,13 @@ bool Extension::tryInsert(uint64_t granuleBits)
 
 [[noreturn]] static void crashOnFalseProof(const Object& object, ObjectMutation mutation, const FieldData* field)
 {
-    dataLog("AOT: ", nameOf(mutation), " of an object of layout L", object.layout().index);
-    if (field)
-        dataLog(", field ", object.indexOf(*field));
-    dataLogLn(": the compiler has proven that it never happens, and compiled code reads such objects without a look. This is a bug in Bun.");
+    RuntimeCheckFailure failure("object mutation check failed"_s);
+    failure.atTopCall(object.vm());
+    failure.detail(nameOf(mutation), " on ", reportedObjectName(object.layout()));
+    if (field && field->name && !field->isPrivate())
+        failure.detail(", property '", String(propertyNameOf(object.vm(), object, *field)), "'");
+    failure.detail(", but the compiler proved that this never happens");
+    failure.report();
     CRASH_WITH_INFO(std::bit_cast<uintptr_t>(&object));
 }
 
@@ -386,7 +390,7 @@ UniquedStringImpl* propertyNameOf(VM& vm, const Object& object, const FieldData&
 
 static JSObject* extraPropertiesThatMayHold(const Object& object, const FieldData& field)
 {
-    return isBoundByPendingStar(object, field).value_or(false) ? object.extraProperties() : extraPropertiesIfMade(object);
+    return isBoundByPendingStar(object, field).value_or(false) ? object.extraProperties() : extraPropertiesIfCreated(object);
 }
 
 FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& field)
@@ -410,7 +414,7 @@ bool livesInExtraProperties(VM& vm, const Object& object, const FieldData& field
 {
     if (std::optional<bool> isBound = isBoundByPendingStar(object, field))
         return *isBound;
-    JSObject* extra = extraPropertiesIfMade(object);
+    JSObject* extra = extraPropertiesIfCreated(object);
     return extra && extra->getDirect(vm, propertyNameOf(vm, object, field));
 }
 
@@ -448,7 +452,7 @@ void didChangeOwnProperties(VM& vm, Object& object, VM::StructureChainIntegrityE
 
 bool interceptsIndexedAccesses(const Object& object)
 {
-    JSObject* extra = extraPropertiesIfMade(object);
+    JSObject* extra = extraPropertiesIfCreated(object);
     return extra && extra->structure()->mayInterceptIndexedAccesses();
 }
 

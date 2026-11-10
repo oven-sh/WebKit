@@ -1,6 +1,6 @@
 # The list follows from the program alone, and no text is evaluated to find it, by whatever road the text comes to the built-in that would make a function of it.
 # const made = Function.call(null, "return 'a+'"); new RegExp(made()); new RegExp("z+" + 1);   const other = Reflect.construct(Function, ["return 'b+'"]); new RegExp(other());   const third = Reflect.apply(Function, null, ["return 'c+'"]); new RegExp(third());
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /z+1/
 # CHECK-NOT: text /

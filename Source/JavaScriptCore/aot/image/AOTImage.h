@@ -13,7 +13,7 @@
 #include "AOTCallSiteTable.h"
 #include "AOTCodeSites.h"
 #include "AOTFaultTable.h"
-#include "AOTHostFunctionTexts.h"
+#include "AOTHostFunctionSources.h"
 #include "AOTImageFormat.h"
 #include "AOTImageForward.h"
 #include "AOTImageText.h"
@@ -122,15 +122,15 @@ public:
     const std::optional<PlaceInExecutable>& placeInExecutable() const { return m_placeInExecutable; }
     void setPlaceInExecutable(const PlaceInExecutable& place) { m_placeInExecutable = place; }
 
-    struct OpenedBlocksOfText {
+    struct DecompressedSourceBlocks {
         Lock lock;
-        uint8_t* text { nullptr };
-        uint8_t* isOpened { nullptr };
+        uint8_t* bytes { nullptr };
+        uint8_t* isDecompressed { nullptr };
     };
-    void setDecompressText(DecompressTextFunction open) const { m_decompressText.store(open, std::memory_order_release); }
-    DecompressTextFunction decompressText() const { return m_decompressText.load(std::memory_order_acquire); }
-    OpenedBlocksOfText& openedTextOfFunctions() const { return m_openedTextOfFunctions; }
-    OpenedBlocksOfText& openedTextOfQuotes() const { return m_openedTextOfQuotes; }
+    void setDecompressSource(DecompressSourceFunction decompress) const { m_decompressSource.store(decompress, std::memory_order_release); }
+    DecompressSourceFunction decompressSource() const { return m_decompressSource.load(std::memory_order_acquire); }
+    DecompressedSourceBlocks& decompressedFunctionSources() const { return m_decompressedFunctionSources; }
+    DecompressedSourceBlocks& decompressedQuotedSources() const { return m_decompressedQuotedSources; }
     const std::optional<PositionInFile>& positionOfCodeInFile() const { return m_positionOfCodeInFile; }
     void setPositionOfCodeInFile(const std::optional<PositionInFile>& position) { m_positionOfCodeInFile = position; }
     unsigned number() const { return m_number; }
@@ -149,12 +149,12 @@ public:
     bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
-    bool allowsLibrarySource() const { return header().has(ImageFlag::AdmitsLibraryText); }
+    bool allowsLibrarySource() const { return header().has(ImageFlag::AllowsLibrarySource); }
     bool isBuiltWithLibrary() const { return header().has(ImageFlag::IsBuiltWithLibrary); }
     bool refusesOriginalsBesideMocks() const { return header().has(ImageFlag::RefusesOriginalsBesideMocks); }
-    bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
+    bool loadsCodeOutsideImage() const { return !isHardenedBuild && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
-    bool setsMainModulePath() const { return header().has(ImageFlag::StoresPathOfMainModule); }
+    bool setsMainModulePath() const { return header().has(ImageFlag::SetsMainModulePath); }
     bool runsEntryPointsAgain() const { return header().has(ImageFlag::RunsEntryPointsAgain); }
     bool letsGlobalObjectGo() const { return header().has(ImageFlag::LetsGlobalObjectGo); }
     bool showsEntriesOfRequireCache() const { return header().has(ImageFlag::ShowsEntriesOfRequireCache); }
@@ -213,9 +213,9 @@ private:
     static std::atomic<const Image*> s_lastPublished;
 
     mutable std::array<std::atomic<void*>, 8> m_frequentStubs { };
-    mutable std::atomic<DecompressTextFunction> m_decompressText { nullptr };
-    mutable OpenedBlocksOfText m_openedTextOfFunctions;
-    mutable OpenedBlocksOfText m_openedTextOfQuotes;
+    mutable std::atomic<DecompressSourceFunction> m_decompressSource { nullptr };
+    mutable DecompressedSourceBlocks m_decompressedFunctionSources;
+    mutable DecompressedSourceBlocks m_decompressedQuotedSources;
     unsigned m_number { 0 };
     const Image* m_publishedBefore { nullptr };
     std::optional<PlaceInExecutable> m_placeInExecutable;

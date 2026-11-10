@@ -117,7 +117,6 @@ static ALWAYS_INLINE bool holdsNeverAmongOperandsOfRule(OperandTypes operands)
     return false;
 }
 
-static constexpr OpcodeSet checksThatThrowInResultRules = checksThatHandOnOrThrow;
 static_assert(OperandIndex::CheckInitialized::value == OperandIndex::RequireObjectCoercible::value && OperandIndex::CheckInitialized::value == OperandIndex::RequireObject::value);
 
 static ALWAYS_INLINE TypeID resultTypeOfCheckThatThrows(TypeArena& types, Opcode check, TypeID checked)
@@ -168,7 +167,7 @@ static TypeID tryProvenTypeOfReadThatTestsItsOwnGuess(const TypingContext& conte
 }
 
 static constexpr OpcodeSet opcodesLookedAtInFrontOfResultRules = []() consteval {
-    OpcodeSet opcodes = checksThatThrowInResultRules | callsOfNamedFunctionInResultRules | opcodesWithCountedResults;
+    OpcodeSet opcodes = passThroughChecks | callsOfNamedFunctionInResultRules | opcodesWithCountedResults;
     opcodes.add(Opcode::PropGet);
     opcodes.add(Opcode::Call);
     for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
@@ -185,7 +184,7 @@ TypeID resultTypeOf(const TypingContext& context, const Operation& operation, Op
         return TypeTable::never;
 
     Opcode opcode = opcodeOf(operation);
-    if (context.program.operationWhoseRuleWritesAnotherKind == static_cast<unsigned>(opcode) + 1) [[unlikely]]
+    if (context.program.opcodeInjectedAsOtherKind == static_cast<unsigned>(opcode) + 1) [[unlikely]]
         return opcode == Opcode::TypeOf || opcode == Opcode::ToString || opcode == Opcode::Strcat ? TypeTable::symbol : TypeTable::nullish;
     if (opcodesLookedAtInFrontOfResultRules.contains(opcode)) {
         if (context.level == TypeLevel::Proven && (opcode == Opcode::PropGet || opcode == Opcode::Call) && !resultIndex) {
@@ -207,7 +206,7 @@ TypeID resultTypeOf(const TypingContext& context, const Operation& operation, Op
                 return proven ? proven : context.types.anything(seedOfUnknownResultOf(generic));
             }
         }
-        if (checksThatThrowInResultRules.contains(opcode))
+        if (passThroughChecks.contains(opcode))
             return resultTypeOfCheckThatThrows(context.types, opcode, operands[OperandIndex::CheckInitialized::value]);
         if (!hasRuleForResultAt(context.program, operation, resultIndex))
             return context.types.anything(seedOfUnknownResultOf(opcode));

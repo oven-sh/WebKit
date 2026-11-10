@@ -101,9 +101,9 @@ public:
     bool hostIsAskedForValueOfModule() const;
     bool unseenCodeCanRun() const;
     bool loaderOfMachineCodeIsInUse() const;
-    bool holdsBackNamesFromRunTime() const;
+    bool defersRuntimeNames() const;
     Vector<ModuleID> takeModulesSpelledInTexts();
-    bool letInNamesFromRunTime();
+    bool allowRuntimeNames();
     bool objectsMayHaveMethodCalledWithStartupLoads() const;
 
     bool takeForConstant(BuiltinID member);
@@ -127,7 +127,7 @@ public:
     void noteObjectHandedToFormatter(bool isWalked);
     void noteInstancesLoseTheirConstructor();
     void noteTypeHandedToHandler(BuiltinTypeID);
-    void noteUsedWhereFlowBroughtIt(BuiltinID);
+    void recordUsedViaFlow(BuiltinID);
     void noteFoundWhereFlowBroughtHolder(BuiltinID, FunctionID reader);
     void noteStandsAboveClass(BuiltinID, FunctionID constructor);
     void noteEntryHandsHostNothing(uint32_t entry);

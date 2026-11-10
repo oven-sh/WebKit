@@ -20,8 +20,8 @@ enum class FailureKind : uint8_t {
     AbsoluteAddress,
     RelocationNotLowered,
     VariableReadBeforeSet,
-    SpillSlotLacksItsValue,
-    RegisterLacksItsValue,
+    WrongValueInSpillSlot,
+    WrongValueInRegister,
 };
 
 struct Failure {

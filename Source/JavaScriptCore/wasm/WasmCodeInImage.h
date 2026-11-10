@@ -35,6 +35,8 @@ public:
     // Where the unwinder sends a frame whose handler lies at this place in an image. Nothing for a place outside every image.
     static CodePtr<ExceptionHandlerPtrTag> catchRunwayFor(const void* pc);
 
+    // Stores the digest of the bytes, so that the parser does not hash them again.
+    static const ModuleInImage* findBeforeParsing(std::span<const uint8_t> source, ModuleInformation&);
     static const ModuleInImage* find(const ModuleInformation&);
     static bool isModuleOfProgram(const ModuleInformation&);
     static std::span<const FunctionInImage> functionsOf(const ModuleInImage&, ImageCodeFlavor);

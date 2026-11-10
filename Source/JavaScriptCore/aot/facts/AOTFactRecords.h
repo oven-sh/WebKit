@@ -151,7 +151,6 @@ struct RegExpCallWithoutText {
 
 struct WorkerEntry {
     StringID path;
-    bool isGuess { false };
     bool hasOptions { false };
     Witness witness { noWitness };
 };

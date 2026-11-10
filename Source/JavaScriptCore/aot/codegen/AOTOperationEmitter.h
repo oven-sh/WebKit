@@ -91,7 +91,7 @@ protected:
     bool functionSuspends() const { return m_generator.suspends(); }
     bool functionHasHandlers() const { return m_generator.hasHandlers(); }
     bool hasOneInstance() const;
-    bool emittersCheckProofs() const { return AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition); }
+    bool emittersCheckProofs() const { return AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckBoundsInEmittersOnly); }
 
     Operand get(ValueID id) const { return m_generator.get(id); }
     template<typename T> T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }

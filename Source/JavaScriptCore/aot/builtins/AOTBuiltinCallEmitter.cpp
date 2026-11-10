@@ -188,15 +188,28 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
     RELEASE_ASSERT(!value.returnCall());
     BuiltinOverloadID id = value->overload();
     const BuiltinOverload& overload = m_builtins.at(id);
-    if (isCallThatTheWalkMustLower(m_builtins, overload.builtin)) {
+    if (requiresWalkLowering(m_builtins, overload.builtin)) {
         failBuiltinOperationWithZero(generator(), value, InternalErrorKind::RequiredPassLeftOperation);
         return;
     }
     ValueID receiver = value->receiverOperand();
     std::span<const ValueID> arguments = value->argumentsOperands();
 
+    bool isDeclaredFresh = m_builtins.contains(overload.result.type)
+        && (m_builtins.at(overload.result.type).freshness == BuiltinFreshness::Yes || m_program.builtinInjectedAsFresh == overload.builtin.index());
+    bool checksFreshness = ASSERT_ENABLED || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckResultFreshnessAtRunTime);
+    std::optional<Integer> collectionsBefore;
+    if (checksFreshness && isDeclaredFresh && value->builtinCallForm() == BuiltinCallForm::Whole && !value->isDoneInPlace()) {
+        collectionsBefore = Integer(emitter<RuntimeCallEmitter>().readCollectionCount());
+        build().statistics().count(StatisticID::FreshResultsChecked);
+    }
+
     auto defineResult = [&](Boxed result) {
         stopUnlessNativeResultIsAsWritten(value, result, overload.builtin, overload.mode == BuiltinCallMode::Construct);
+        if (collectionsBefore) {
+            Boxed none = boxedConstant(JSValue());
+            callVoidOperation(value, RuntimeOperation::CheckFreshResult, { result, *collectionsBefore, word32(static_cast<int32_t>(overload.builtin.index())), receiver ? boxedOperand(value, receiver) : none, arguments.empty() ? none : boxedOperand(value, arguments[0]) });
+        }
         defineAs(value, result, typeOf(value.id()));
     };
     auto callFunction = [&] {

@@ -112,7 +112,7 @@ void ImageNumbersBuilder::numberFunctions(const NumberingInputs& inputs, ImageNu
     };
     numberUnitsInAscendingOrder(closureEntries);
     numberUnitsInAscendingOrder(otherDerivedUnits);
-    if (hasFlag(context.options().lies, Wire::TestingLie::TwoClosureNumbersChangePlaces) && numberOfClosureFunctions > 1) {
+    if (hasFlag(context.options().injectedFaults, Wire::FaultInjection::SwapClosureNumbers) && numberOfClosureFunctions > 1) {
         std::swap(unitOfDerived[0], unitOfDerived[1]);
         setIDOfUnit(unitOfDerived[0], FunctionID(firstDerived));
         setIDOfUnit(unitOfDerived[1], FunctionID(firstDerived + 1));
@@ -275,7 +275,7 @@ static void putNumbersInThrowWordsOfAccess(const CompiledCode& code, FaultingAcc
 
 void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& numbers, BuildContext& context)
 {
-    if (!numbers.functions().closureNumbersRiseAsTestsOfClosuresInCompiledCodeExpect()) {
+    if (!numbers.functions().hasAscendingClosureNumbers()) {
         context.diagnostics().add(InternalError {
             .kind = InternalErrorKind::PlacementCheckFailed,
             .detail = "closure numbers do not rise with the numbers of the functions, as the tests of closures in compiled code expect"_s,
@@ -283,9 +283,9 @@ void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& num
         return;
     }
     forEachRangeOfIndicesInParallel(context.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
-        uint64_t stubKeysLaidOnSiblings = 0;
+        uint64_t columnStubVariantsSelected = 0;
         auto countAtEnd = makeScopeExit([&] {
-            context.statistics().count(StatisticID::StubKeysLaidOnSiblingsUnderNamesWithColumn, stubKeysLaidOnSiblings);
+            context.statistics().count(StatisticID::ColumnStubVariantsSelected, columnStubVariantsSelected);
         });
         for (size_t position = first; position < end; ++position) {
             CompiledCode& code = functions[position];
@@ -304,7 +304,7 @@ void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& num
                 if (!key.immediate()) {
                     if (mentionIsOfNameWithColumn(code, numbered.mention, numbers)) {
                         key = siblingUnderNameWithColumn(key).value();
-                        ++stubKeysLaidOnSiblings;
+                        ++columnStubVariantsSelected;
                     }
                     continue;
                 }
@@ -320,7 +320,7 @@ void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& num
                 if (moves[1] & (immediateIsMention | mentionNamesSiblingOfCallee)) {
                     if (std::optional<StubKey> sibling = siblingUnderNameWithColumn(StubKey::fromBits(moves[0])); sibling && mentionIsOfNameWithColumn(code, static_cast<uint32_t>(moves[1]), numbers)) {
                         moves[0] = sibling->bits();
-                        ++stubKeysLaidOnSiblings;
+                        ++columnStubVariantsSelected;
                     }
                     if (moves[1] & mentionNamesSiblingOfCallee)
                         moves[1] = 0;

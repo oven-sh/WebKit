@@ -43,12 +43,13 @@ enum class ConstantKind : uint8_t {
     Unlabeled,
     Number,
     ShapeSet,
-    BitSetOverKnownShapes,
+    ShapeBitmap,
     OffsetTable,
     CellTemplate,
+    ByteLiteral,
 };
-static constexpr unsigned numberOfConstantKinds = 6;
-static_assert(static_cast<unsigned>(ConstantKind::CellTemplate) + 1 == numberOfConstantKinds);
+static constexpr unsigned numberOfConstantKinds = 7;
+static_assert(static_cast<unsigned>(ConstantKind::ByteLiteral) + 1 == numberOfConstantKinds);
 
 static constexpr uint16_t primaryEntry = 0;
 static constexpr uint16_t entryInFrontOfStub = 1;
@@ -105,9 +106,16 @@ public:
     std::span<uint8_t> bytes();
     Vector<uint8_t> takeBytes();
     CCallHelpers::Label end() const { return m_end; }
+    bool hasBranchIslands() const { return m_hasBranchIslands; }
 
 private:
+    size_t planBranchIslands(CCallHelpers&);
+
     CCallHelpers::Label m_end;
+#if CPU(ARM64)
+    ARM64BranchIslands m_branchIslands;
+#endif
+    bool m_hasBranchIslands { false };
     Vector<uint8_t> m_storage;
     LinkBuffer m_linkBuffer;
     uint32_t m_sizeOfCode { 0 };
@@ -209,6 +217,10 @@ public:
         m_jit.nearTailCall();
         return append(site, RelocationKind::Jump, symbol);
     }
+
+    bool exceedsBranchReach() const;
+    CCallHelpers::Label returnAddressOf(uint32_t call) const;
+    void routeTransfersThroughEnd();
 
     void moveNumber(CodeSymbol symbol, GPRReg dest) { append(m_jit.moveNumber32WithPatch(dest), RelocationKind::Number32, symbol); }
     void emitNumber32(CodeSymbol);

@@ -105,9 +105,9 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
             Vector<Reference, 8> arguments;
             for (ValueID argument : target.arguments())
                 arguments.append(referenceOf(argument));
-            if (hasTextsInStringBuilders() && edgeLeavesLoopOfTextInStringBuilder(*this, target.block())) {
-                TextsTakenOutOnEdge textsTakenOut;
-                takeTextsOutOfStringBuildersOnEdge(*this, target.block(), target, arguments, textsTakenOut);
+            if (hasStringsInBuilders() && edgeExitsBuilderLoop(*this, target.block())) {
+                StringsFinishedOnEdge textsTakenOut;
+                finishStringsInBuildersOnEdge(*this, target.block(), target, arguments, textsTakenOut);
                 if (isUnreachable())
                     return;
             }
@@ -161,7 +161,7 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
             if (isUnreachable())
                 return;
         }
-        hearEffectsInTries(effects);
+        recordTrialEffects(effects);
         m_state.invalidate(effects);
         if (effects.mayThrow && has(Mechanism::Handlers))
             noteStateAtThrowForHandler(draft.operands());
@@ -318,12 +318,12 @@ static ValueID valueBroughtInWalkBranches(const BodyIndex& index, const WayBehin
 
     ValueID value = way.numberOfPassedBlocks ? way.arrival.arguments()[position] : broughtByEdge(position);
     for (uint32_t place = way.numberOfPassedBlocks; value && place--;) {
-        std::optional<uint32_t> parameter = index.block(way.passed[place]).indexOfParameter(index.valueBehindCasts(value));
+        std::optional<uint32_t> parameter = index.block(way.passed[place]).indexOfParameter(index.stripCasts(value));
         if (!parameter)
             continue;
         value = place ? index.terminator(way.passed[place - 1]).next().arguments()[*parameter] : broughtByEdge(*parameter);
     }
-    return value ? index.valueBehindCasts(value) : value;
+    return value ? index.stripCasts(value) : value;
 }
 
 bool comeToSamePlace(const BodyIndex& index, const WayBehindTerminator& left, const WayBehindTerminator& right, ValueID falseOnLeft, ValueID falseOnRight)

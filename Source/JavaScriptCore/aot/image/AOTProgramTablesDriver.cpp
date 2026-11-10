@@ -41,8 +41,8 @@ static ASCIILiteral phaseNameOfTableGroup(TablePartID part)
         return "image: statics tables"_s;
     case TablePartID::Functions:
         return "image: function tables"_s;
-    case TablePartID::FunctionTexts:
-        return "image: function texts"_s;
+    case TablePartID::FunctionSources:
+        return "image: function sources"_s;
     case TablePartID::Modules:
         return "image: module tables"_s;
     case TablePartID::Requests:
@@ -57,7 +57,7 @@ static ASCIILiteral phaseNameOfTableGroup(TablePartID part)
 
 static constexpr bool runsBehindTypesAndData(TablePartID part)
 {
-    return part != TablePartID::Types && part != TablePartID::Data && part != TablePartID::FunctionTexts;
+    return part != TablePartID::Types && part != TablePartID::Data && part != TablePartID::FunctionSources;
 }
 
 static bool checksJoinedProgramTables()
@@ -183,10 +183,10 @@ Vector<uint8_t> encodeProgramTables(const TableInputs& inputs, ImageNumbers& num
         },
         [&] {
             if (!diagnostics.hasErrors())
-                encode(TablePartID::FunctionTexts, encodeFunctionTexts);
+                encode(TablePartID::FunctionSources, encodeFunctionSources);
         },
     });
-    times.didFinish("the end of the lane of the function texts"_s);
+    times.didFinish("the end of the function sources lane"_s);
     if (diagnostics.hasErrors())
         return { };
 

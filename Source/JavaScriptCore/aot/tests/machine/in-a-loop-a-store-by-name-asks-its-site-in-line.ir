@@ -11,8 +11,8 @@
 # The call of the stub stands outside rare code, so the report finds a call where the emitter says Open. Where shapes take turns at a site every other store goes on to the stub, and a call in rare code saves and restores round itself what the loop keeps in registers.
 # CHECK: looks otherwise: PropSet Always Loop Open 1 found Open 0 Closed 1 Runtime 0
 # CHECK: every form is named
-# RUN(COUNT): compile StoresByNameThatAskTheirSitesInLine
-# COUNT: statistic StoresByNameThatAskTheirSitesInLine 1
+# RUN(COUNT): compile SiteCachedStoresEmittedInline
+# COUNT: statistic SiteCachedStoresEmittedInline 1
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {

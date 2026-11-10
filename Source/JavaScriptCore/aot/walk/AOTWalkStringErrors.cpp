@@ -83,7 +83,7 @@ bool buildThrowOfNewError(Walker& walker, const CallByOneRow& call)
     if (positionOfThrow != DraftWords::noPosition && positionOfThrow != call.origin.position)
         throwPosition = positionOfThrow;
 
-    walker.endLivesAtThrow({ });
+    walker.endLifetimesAtThrow({ });
     if (walker.isUnreachable())
         return true;
     Draft error(Opcode::ThrowNewError, call.origin);

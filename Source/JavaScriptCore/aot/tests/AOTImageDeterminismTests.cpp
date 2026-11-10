@@ -56,7 +56,7 @@ struct PlacedTypes {
     Vector<uint32_t> places;
 };
 
-struct SizeOfProgramWithTexts {
+struct ProgramWithSourcesSize {
     constexpr uint32_t numberOfFunctions() const { return numberOfModules * functionsInModule; }
     constexpr uint32_t moduleOf(uint32_t function) const { return (function - 1) / functionsInModule; }
     constexpr uint32_t placeOf(uint32_t function) const { return (function - 1) % functionsInModule; }
@@ -89,17 +89,17 @@ static constexpr unsigned thingsMentionedByBody = 16;
 static constexpr unsigned firstThingStride = 7;
 static constexpr unsigned mostPartsOfTemplate = 3;
 static constexpr unsigned numberOfTypesBorn = 32;
-static constexpr uint32_t placesOnLineOfProgramWithTexts = 25;
-static constexpr uint32_t kindsOfSharedText = 2;
+static constexpr uint32_t functionsPerSourceLine = 25;
+static constexpr uint32_t numberOfSharedSources = 2;
 static constexpr uint32_t timesEachConstantIsHeld = 3;
-static constexpr SizeOfProgramWithTexts fewTexts { 3, 2 * rowsInGroupOfQuotedTexts + 6 };
-static constexpr SizeOfProgramWithTexts manyTexts { 3, 4400 };
+static constexpr ProgramWithSourcesSize fewSources { 3, 2 * quotedSourceGroupSize + 6 };
+static constexpr ProgramWithSourcesSize manySources { 3, 4400 };
 static constexpr uint32_t closuresHandedOutByCall = 50;
-static constexpr uint32_t numberOfKeysInLongList = manyTexts.numberOfFunctions() / 2 + 1;
+static constexpr uint32_t numberOfKeysInLongList = manySources.numberOfFunctions() / 2 + 1;
 static constexpr size_t fewestSortedOnPool = 1 << 13;
-static_assert(manyTexts.numberOfFunctions() > fewestSortedOnPool && numberOfKeysInLongList > indicesInRangeOfLoop);
-static_assert(manyTexts.numberOfFunctions() / 3 * 2 / kindsOfSharedText > indicesInRangeOfLoop);
-static_assert(indicesInRangeOfLoop % timesEachConstantIsHeld && manyTexts.numberOfFunctions() > 3 * indicesInRangeOfLoop);
+static_assert(manySources.numberOfFunctions() > fewestSortedOnPool && numberOfKeysInLongList > indicesInRangeOfLoop);
+static_assert(manySources.numberOfFunctions() / 3 * 2 / numberOfSharedSources > indicesInRangeOfLoop);
+static_assert(indicesInRangeOfLoop % timesEachConstantIsHeld && manySources.numberOfFunctions() > 3 * indicesInRangeOfLoop);
 static constexpr uint32_t numberOfGroupsOfLayouts = 1100;
 static constexpr uint32_t layoutsInGroup = 4;
 static constexpr uint32_t functionsInGroup = 5;
@@ -301,28 +301,28 @@ static void testTypesBornInTwoOrders()
     AOT_TEST_CHECK(std::ranges::adjacent_find(sortedPlaces) == sortedPlaces.end());
 }
 
-static bool isTextOfPlaceAlone(uint32_t place) { return !(place % 3); }
+static bool hasUniqueSource(uint32_t place) { return !(place % 3); }
 
-static String quotedTextAt(uint32_t module, uint32_t place)
+static String quotedSourceAt(uint32_t module, uint32_t place)
 {
-    if (isTextOfPlaceAlone(place))
+    if (hasUniqueSource(place))
         return makeString("own"_s, module, '_', place, ".member"_s);
-    return makeString("shared"_s, place % kindsOfSharedText, ".member"_s);
+    return makeString("shared"_s, place % numberOfSharedSources, ".member"_s);
 }
 
-static String functionTextAt(uint32_t module, uint32_t place)
+static String functionSourceAt(uint32_t module, uint32_t place)
 {
-    if (isTextOfPlaceAlone(place))
+    if (hasUniqueSource(place))
         return makeString("function own"_s, module, '_', place, "() { }"_s);
-    return makeString("function shared"_s, place % kindsOfSharedText, "() { }"_s);
+    return makeString("function shared"_s, place % numberOfSharedSources, "() { }"_s);
 }
 
 static LineColumn lineColumnOfPlace(uint32_t place)
 {
-    return { place / placesOnLineOfProgramWithTexts + 1, place % placesOnLineOfProgramWithTexts + 1 };
+    return { place / functionsPerSourceLine + 1, place % functionsPerSourceLine + 1 };
 }
 
-static void appendModuleWithTexts(StringBuilder& text, SizeOfProgramWithTexts size, uint32_t module)
+static void appendModuleWithSources(StringBuilder& text, ProgramWithSourcesSize size, uint32_t module)
 {
     text.append("module m"_s, module, " path=\"m"_s, module, ".js\" displayPath=\"m"_s, module, ".js\""_s);
     if (!module) {
@@ -332,26 +332,26 @@ static void appendModuleWithTexts(StringBuilder& text, SizeOfProgramWithTexts si
         text.append(']');
     }
     text.append(" positions={lineStarts=["_s);
-    for (uint32_t start = 0; start < size.functionsInModule; start += placesOnLineOfProgramWithTexts)
+    for (uint32_t start = 0; start < size.functionsInModule; start += functionsPerSourceLine)
         text.append(start ? ", "_s : ""_s, start);
-    text.append("] quotedTexts=["_s);
-    StringBuilder textOfQuotes;
+    text.append("] quotedSources=["_s);
+    StringBuilder quotedSourceText;
     for (uint32_t place = 0; place < size.functionsInModule; ++place) {
-        unsigned start = textOfQuotes.length();
-        textOfQuotes.append(quotedTextAt(module, place));
-        text.append(place ? ", "_s : ""_s, "{position="_s, place, " start="_s, start, " end="_s, textOfQuotes.length(), '}');
+        unsigned start = quotedSourceText.length();
+        quotedSourceText.append(quotedSourceAt(module, place));
+        text.append(place ? ", "_s : ""_s, "{position="_s, place, " start="_s, start, " end="_s, quotedSourceText.length(), '}');
     }
-    text.append("] textOfQuotes=\""_s, textOfQuotes.toString(), "\"} functionText=\""_s);
+    text.append("] quotedSourceText=\""_s, quotedSourceText.toString(), "\"} functionSource=\""_s);
     for (uint32_t place = 0; place < size.functionsInModule; ++place)
-        text.append(functionTextAt(module, place), ' ');
+        text.append(functionSourceAt(module, place), ' ');
     text.append("\"\n"_s);
 }
 
-static String textOfProgramWithTexts(SizeOfProgramWithTexts size)
+static String textOfProgramWithSources(ProgramWithSourcesSize size)
 {
     StringBuilder text;
     for (uint32_t module = 0; module < size.numberOfModules; ++module)
-        appendModuleWithTexts(text, size, module);
+        appendModuleWithSources(text, size, module);
     text.append("entry module=m0\n"
         "function f0 name=\"main\" module=m0 kind=Module results=[{type=anything}] {\n"
         "  b0():\n"
@@ -372,8 +372,8 @@ static String textOfProgramWithTexts(SizeOfProgramWithTexts size)
         uint32_t place = size.placeOf(function);
         if (!place)
             start = 0;
-        unsigned end = start + functionTextAt(size.moduleOf(function), place).length();
-        text.append("function f"_s, function, " name=\"f"_s, function, "\" module=m"_s, size.moduleOf(function), " text={start="_s, start, " end="_s, end, "} results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+        unsigned end = start + functionSourceAt(size.moduleOf(function), place).length();
+        text.append("function f"_s, function, " name=\"f"_s, function, "\" module=m"_s, size.moduleOf(function), " sourceRange={start="_s, start, " end="_s, end, "} results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
         start = end + 1;
     }
     text.append(runtimeFunctionsText(size.numberOfFunctions() + 1));
@@ -386,7 +386,7 @@ static std::array<uint32_t, 2> keyInLongList(uint32_t number)
     return { module, number % numberOfKeysInLongList };
 }
 
-static Vector<CompiledCode> codeOfProgramWithTexts(const TestBuild& build, SizeOfProgramWithTexts size)
+static Vector<CompiledCode> codeOfProgramWithSources(const TestBuild& build, ProgramWithSourcesSize size)
 {
     Vector<CompiledCode> result;
     result.reserveInitialCapacity(2 * size.numberOfFunctions());
@@ -410,51 +410,51 @@ static Vector<CompiledCode> codeOfProgramWithTexts(const TestBuild& build, SizeO
     return result;
 }
 
-static String readQuotedText(const ProgramTables& tables, std::span<const uint8_t> textOfQuotes, uint32_t module, LineColumn place)
+static String readQuotedSource(const ProgramTables& tables, std::span<const uint8_t> quotedSourceText, uint32_t module, LineColumn place)
 {
     std::tuple wanted { module, static_cast<uint32_t>(place.line), static_cast<uint32_t>(place.column) };
-    std::span<const QuotedTextGroupData> groups = tables.quotedTextGroups();
-    auto next = std::ranges::upper_bound(groups, wanted, { }, [](const QuotedTextGroupData& group) {
+    std::span<const QuotedSourceGroupData> groups = tables.quotedSourceGroups();
+    auto next = std::ranges::upper_bound(groups, wanted, { }, [](const QuotedSourceGroupData& group) {
         return std::tuple { group.module, group.line, group.column };
     });
     if (next == groups.begin() || std::prev(next)->module != module)
         return { };
-    const QuotedTextGroupData& group = *std::prev(next);
-    std::span<const uint8_t> rows = tables.quotedTextRows();
+    const QuotedSourceGroupData& group = *std::prev(next);
+    std::span<const uint8_t> rows = tables.quotedSourceRows();
     const uint8_t* cursor = rows.subspan(group.offsetOfRows).data();
     const uint8_t* end = next == groups.end() ? std::to_address(rows.end()) : rows.subspan(next->offsetOfRows).data();
     uint32_t line = group.line;
     uint32_t column = group.column;
     int64_t start = 0;
     while (cursor < end) {
-        QuotedTextRow row = QuotedTextRow::read(cursor);
+        QuotedSourceRow row = QuotedSourceRow::read(cursor);
         line += row.lineChange;
         column = row.isOnSameLine ? column + row.columnChange : row.column;
         start += row.startChange;
         if (line == place.line && column == place.column)
-            return String(byteCast<Latin1Character>(textOfQuotes.subspan(static_cast<size_t>(start), row.length)));
+            return String(byteCast<Latin1Character>(quotedSourceText.subspan(static_cast<size_t>(start), row.length)));
     }
     return { };
 }
 
-static size_t sizeOfDistinctTexts(SizeOfProgramWithTexts size, String (*textAt)(uint32_t module, uint32_t place))
+static size_t distinctSourcesSize(ProgramWithSourcesSize size, String (*sourceAt)(uint32_t module, uint32_t place))
 {
     size_t result = 0;
-    HashSet<String> texts;
+    HashSet<String> sources;
     for (uint32_t function = 1; function <= size.numberOfFunctions(); ++function) {
-        String text = textAt(size.moduleOf(function), size.placeOf(function));
-        if (texts.add(text).isNewEntry)
+        String text = sourceAt(size.moduleOf(function), size.placeOf(function));
+        if (sources.add(text).isNewEntry)
             result += text.length();
     }
     return result;
 }
 
-static size_t mostBytesOfPackedText(size_t sizeOfText)
+static size_t maxPackedSize(size_t sourceSize)
 {
-    return sizeOfText;
+    return sourceSize;
 }
 
-static size_t packTextOfSevenBits(std::span<uint8_t> packed, std::span<const uint8_t> text)
+static size_t packSevenBitBytes(std::span<uint8_t> packed, std::span<const uint8_t> text)
 {
     uint32_t held = 0;
     unsigned numberOfBitsHeld = 0;
@@ -471,7 +471,7 @@ static size_t packTextOfSevenBits(std::span<uint8_t> packed, std::span<const uin
     return written;
 }
 
-static void unpackTextOfSevenBits(std::span<uint8_t> text, std::span<const uint8_t> packed)
+static void unpackSevenBitBytes(std::span<uint8_t> text, std::span<const uint8_t> packed)
 {
     uint32_t held = 0;
     unsigned numberOfBitsHeld = 0;
@@ -488,89 +488,89 @@ static void unpackTextOfSevenBits(std::span<uint8_t> text, std::span<const uint8
     AOT_TEST_CHECK(read == packed.size());
 }
 
-static Vector<uint8_t> unpackBlocksOfText(const uint8_t* packed, std::span<const uint32_t> ends, uint32_t sizeOfText)
+static Vector<uint8_t> unpackSourceBlocks(const uint8_t* packed, std::span<const uint32_t> ends, uint32_t sourceSize)
 {
-    AOT_TEST_CHECK(ends.size() == (sizeOfText + sizeOfBlockOfText - 1) / sizeOfBlockOfText);
+    AOT_TEST_CHECK(ends.size() == (sourceSize + sourceBlockSize - 1) / sourceBlockSize);
     Vector<uint8_t> text;
-    text.grow(sizeOfText);
+    text.grow(sourceSize);
     for (uint32_t block = 0; block < ends.size(); ++block) {
         uint32_t first = block ? ends[block - 1] : 0;
-        size_t offset = static_cast<size_t>(block) * sizeOfBlockOfText;
-        unpackTextOfSevenBits(text.mutableSpan().subspan(offset, std::min<size_t>(sizeOfBlockOfText, sizeOfText - offset)), { packed + first, ends[block] - first });
+        size_t offset = static_cast<size_t>(block) * sourceBlockSize;
+        unpackSevenBitBytes(text.mutableSpan().subspan(offset, std::min<size_t>(sourceBlockSize, sourceSize - offset)), { packed + first, ends[block] - first });
     }
     return text;
 }
 
-static Vector<uint8_t> functionTextOf(const ProgramTables& tables, const FunctionTexts& texts, uint32_t sizeOfText)
+static Vector<uint8_t> unpackFunctionSources(const ProgramTables& tables, const FunctionSources& sources, uint32_t sourceSize)
 {
-    if (!texts.numberOfBlocks)
-        return Vector<uint8_t>(std::span { tables.at<uint8_t>(texts.textOffset), sizeOfText });
-    AOT_TEST_CHECK(texts.sizeOfText == sizeOfText);
-    return unpackBlocksOfText(tables.at<uint8_t>(texts.textOffset), { tables.at<uint32_t>(texts.endsOfBlocksOffset), texts.numberOfBlocks }, sizeOfText);
+    if (!sources.numberOfBlocks)
+        return Vector<uint8_t>(std::span { tables.at<uint8_t>(sources.sourceOffset), sourceSize });
+    AOT_TEST_CHECK(sources.sourceSize == sourceSize);
+    return unpackSourceBlocks(tables.at<uint8_t>(sources.sourceOffset), { tables.at<uint32_t>(sources.blockEndsOffset), sources.numberOfBlocks }, sourceSize);
 }
 
-static Vector<uint8_t> textOfQuotesOf(const ProgramTables& tables)
+static Vector<uint8_t> unpackQuotedSourceText(const ProgramTables& tables)
 {
-    std::span<const uint32_t> blocks = tables.blocksOfTextOfQuotes();
+    std::span<const uint32_t> blocks = tables.quotedSourceBlocks();
     if (blocks.empty())
-        return Vector<uint8_t>(tables.textOfQuotes());
-    AOT_TEST_CHECK(blocks.back() == tables.textOfQuotes().size());
-    return unpackBlocksOfText(tables.textOfQuotes().data(), blocks.subspan(1), blocks[0]);
+        return Vector<uint8_t>(tables.quotedSourceText());
+    AOT_TEST_CHECK(blocks.back() == tables.quotedSourceText().size());
+    return unpackSourceBlocks(tables.quotedSourceText().data(), blocks.subspan(1), blocks[0]);
 }
 
-static void checkTextsReadBack(const TestImage& image, SizeOfProgramWithTexts size)
+static void checkSourcesRoundTrip(const TestImage& image, ProgramWithSourcesSize size)
 {
     const ProgramTables& tables = image.image->programTables();
-    uint32_t groupsInModule = (size.functionsInModule + rowsInGroupOfQuotedTexts - 1) / rowsInGroupOfQuotedTexts;
-    AOT_TEST_CHECK(tables.quotedTextGroups().size() == size.numberOfModules * groupsInModule);
-    Vector<uint8_t> textOfQuotes = textOfQuotesOf(tables);
-    AOT_TEST_CHECK(textOfQuotes.size() == sizeOfDistinctTexts(size, quotedTextAt));
+    uint32_t groupsInModule = (size.functionsInModule + quotedSourceGroupSize - 1) / quotedSourceGroupSize;
+    AOT_TEST_CHECK(tables.quotedSourceGroups().size() == size.numberOfModules * groupsInModule);
+    Vector<uint8_t> quotedSourceText = unpackQuotedSourceText(tables);
+    AOT_TEST_CHECK(quotedSourceText.size() == distinctSourcesSize(size, quotedSourceAt));
     for (uint32_t function = 1; function <= size.numberOfFunctions(); ++function) {
         uint32_t module = size.moduleOf(function);
-        AOT_TEST_CHECK(readQuotedText(tables, textOfQuotes.span(), module, lineColumnOfPlace(size.placeOf(function))) == quotedTextAt(module, size.placeOf(function)));
+        AOT_TEST_CHECK(readQuotedSource(tables, quotedSourceText.span(), module, lineColumnOfPlace(size.placeOf(function))) == quotedSourceAt(module, size.placeOf(function)));
     }
-    AOT_TEST_CHECK(readQuotedText(tables, textOfQuotes.span(), 0, lineColumnOfPlace(size.functionsInModule)).isNull());
-    AOT_TEST_CHECK(readQuotedText(tables, textOfQuotes.span(), size.numberOfModules, lineColumnOfPlace(0)).isNull());
+    AOT_TEST_CHECK(readQuotedSource(tables, quotedSourceText.span(), 0, lineColumnOfPlace(size.functionsInModule)).isNull());
+    AOT_TEST_CHECK(readQuotedSource(tables, quotedSourceText.span(), size.numberOfModules, lineColumnOfPlace(0)).isNull());
 
-    AOT_TEST_CHECK(tables.functionTexts().size() == 1);
-    const FunctionTexts& texts = tables.functionTexts()[0];
-    AOT_TEST_CHECK(texts.numberOfEntries == size.numberOfFunctions());
-    std::span entries { tables.at<FunctionTextEntry>(texts.entriesOffset), texts.numberOfEntries };
-    Vector<uint8_t> textOfFunctions = functionTextOf(tables, texts, static_cast<uint32_t>(sizeOfDistinctTexts(size, functionTextAt)));
+    AOT_TEST_CHECK(tables.functionSources().size() == 1);
+    const FunctionSources& sources = tables.functionSources()[0];
+    AOT_TEST_CHECK(sources.numberOfEntries == size.numberOfFunctions());
+    std::span entries { tables.at<FunctionSourceEntry>(sources.entriesOffset), sources.numberOfEntries };
+    Vector<uint8_t> unpackedFunctionSources = unpackFunctionSources(tables, sources, static_cast<uint32_t>(distinctSourcesSize(size, functionSourceAt)));
     uint32_t endOfText = 0;
     for (uint32_t function = 1; function <= size.numberOfFunctions(); ++function) {
-        const FunctionTextEntry& entry = entries[function - 1];
+        const FunctionSourceEntry& entry = entries[function - 1];
         AOT_TEST_CHECK(tables.sourceFunctionOf(entry.function) == function);
-        String text(byteCast<Latin1Character>(textOfFunctions.span().subspan(entry.start, entry.end - entry.start)));
-        AOT_TEST_CHECK(text == functionTextAt(size.moduleOf(function), size.placeOf(function)));
+        String text(byteCast<Latin1Character>(unpackedFunctionSources.span().subspan(entry.start, entry.end - entry.start)));
+        AOT_TEST_CHECK(text == functionSourceAt(size.moduleOf(function), size.placeOf(function)));
         endOfText = std::max<uint32_t>(endOfText, entry.end);
     }
-    AOT_TEST_CHECK(endOfText == sizeOfDistinctTexts(size, functionTextAt));
+    AOT_TEST_CHECK(endOfText == distinctSourcesSize(size, functionSourceAt));
 }
 
-static void testTextsOfSeveralModulesReadBack()
+static void testSourcesRoundTrip()
 {
-    TestBuild build(textOfProgramWithTexts(fewTexts), { });
-    checkTextsReadBack(builtImage(build, codeOfProgramWithTexts(build, fewTexts)), fewTexts);
+    TestBuild build(textOfProgramWithSources(fewSources), { });
+    checkSourcesRoundTrip(builtImage(build, codeOfProgramWithSources(build, fewSources)), fewSources);
 }
 
-static void testTextsReadBackOutOfBlocksThatTheHostCompressed()
+static void testCompressedSourcesRoundTrip()
 {
-    for (SizeOfProgramWithTexts size : { fewTexts, manyTexts }) {
-        TestBuild build(textOfProgramWithTexts(size), { });
-        build.context().setFunctionTexts({ .mostBytesCompressed = mostBytesOfPackedText, .compress = packTextOfSevenBits });
-        TestImage image = builtImage(build, codeOfProgramWithTexts(build, size));
-        AOT_TEST_CHECK(image.image->programTables().functionTexts()[0].numberOfBlocks >= (size.numberOfFunctions() == manyTexts.numberOfFunctions() ? 2u : 1u));
-        AOT_TEST_CHECK(image.image->programTables().blocksOfTextOfQuotes().size() >= (size.numberOfFunctions() == manyTexts.numberOfFunctions() ? 3u : 2u));
-        checkTextsReadBack(image, size);
+    for (ProgramWithSourcesSize size : { fewSources, manySources }) {
+        TestBuild build(textOfProgramWithSources(size), { });
+        build.context().setFunctionSources({ .maxCompressedSize = maxPackedSize, .compress = packSevenBitBytes });
+        TestImage image = builtImage(build, codeOfProgramWithSources(build, size));
+        AOT_TEST_CHECK(image.image->programTables().functionSources()[0].numberOfBlocks >= (size.numberOfFunctions() == manySources.numberOfFunctions() ? 2u : 1u));
+        AOT_TEST_CHECK(image.image->programTables().quotedSourceBlocks().size() >= (size.numberOfFunctions() == manySources.numberOfFunctions() ? 3u : 2u));
+        checkSourcesRoundTrip(image, size);
     }
 }
 
 static Vector<uint8_t> bytesOfImageWithLongLists(unsigned threadCount, const HostThreadPool* hostPool)
 {
-    TestBuild build(textOfProgramWithTexts(manyTexts), { .threadCount = threadCount, .hostPool = hostPool });
-    TestImage image = builtImage(build, codeOfProgramWithTexts(build, manyTexts));
-    checkTextsReadBack(image, manyTexts);
+    TestBuild build(textOfProgramWithSources(manySources), { .threadCount = threadCount, .hostPool = hostPool });
+    TestImage image = builtImage(build, codeOfProgramWithSources(build, manySources));
+    checkSourcesRoundTrip(image, manySources);
     Vector<uint8_t> bytes = copyBytes(image);
     for (uint32_t number = 0; number < numberOfKeysInLongList; ++number) {
         std::optional<uint32_t> numberOfKey = image.built.numbers->numberOf(NumberSpace::RegExpLiteralCell, std::span<const uint32_t>(keyInLongList(number)));
@@ -938,8 +938,8 @@ std::span<const NativeTest> determinismTests()
         { "image/determinism/two-builds"_s, testDeterminismTwoBuilds },
         { "image/determinism/mentions-in-two-arrival-orders"_s, testMentionsInTwoArrivalOrders },
         { "image/determinism/types-born-in-two-orders"_s, testTypesBornInTwoOrders },
-        { "image/determinism/texts-of-several-modules-read-back"_s, testTextsOfSeveralModulesReadBack },
-        { "image/determinism/texts-read-back-out-of-blocks-that-the-host-compressed"_s, testTextsReadBackOutOfBlocksThatTheHostCompressed },
+        { "image/determinism/sources-round-trip"_s, testSourcesRoundTrip },
+        { "image/determinism/compressed-sources-round-trip"_s, testCompressedSourcesRoundTrip },
         { "image/determinism/lists-longer-than-a-range"_s, testListsLongerThanRange },
         { "image/determinism/records-of-many-layouts"_s, testRecordsOfManyLayouts },
         { "image/determinism/records-of-many-layouts-of-a-validating-build"_s, testRecordsOfManyLayoutsOfValidatingBuild },

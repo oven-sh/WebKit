@@ -253,16 +253,18 @@ void CacheRegistry::addStrongRoots(ASCIILiteral name, std::span<JSCell* const> c
     append(WTF::move(entry));
 }
 
-void CacheRegistry::addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear)
+void CacheRegistry::addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear, const uint8_t* mayBeFilled)
 {
     Entry entry {
         .kind = CacheKind::ClearedEachCollection,
         .name = name,
         .owner = zeroedByClear.data(),
         .size = zeroedByClear.size(),
+        .mayBeFilled = mayBeFilled,
     };
     entry.clear = [](Entry& entry) {
-        zeroNonzeroPieces(unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size));
+        if (!entry.mayBeFilled || *entry.mayBeFilled)
+            zeroNonzeroPieces(unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size));
     };
     append(WTF::move(entry));
 }

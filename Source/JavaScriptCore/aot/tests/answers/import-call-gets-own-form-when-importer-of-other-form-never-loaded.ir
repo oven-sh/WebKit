@@ -6,9 +6,9 @@
 # CHECK-NEXT: exited with 0
 
 module m0 path="/conf.toml?toml" displayPath="conf.toml" kind=Data requireResult=DefaultExport body=f0 data=d0 exports=[{name="default" variable=g0}]
-module m1 path="/inner.mjs" displayPath="inner.mjs" flags=[KeepsError] body=f1 requests=[{target=m0 completes=true}] exports=[{name="port" variable=g1}]
-module m2 path="/conf.toml?text" displayPath="conf.toml" kind=Data flags=[AnswersLoaderWithNamespace] requireResult=DefaultExport body=f2 exports=[{name="default" variable=g2}]
-module m3 path="/main.mjs" displayPath="main.mjs" flags=[HasTopLevelAwait, KeepsError] body=f3
+module m1 path="/inner.mjs" displayPath="inner.mjs" flags=[CachesEvaluationError] body=f1 requests=[{target=m0 completes=true}] exports=[{name="port" variable=g1}]
+module m2 path="/conf.toml?text" displayPath="conf.toml" kind=Data flags=[LoaderReturnsNamespace] requireResult=DefaultExport body=f2 exports=[{name="default" variable=g2}]
+module m3 path="/main.mjs" displayPath="main.mjs" flags=[HasTopLevelAwait, CachesEvaluationError] body=f3
 entry module=m3
 layout L0 module=m0 fields=[{key="port" declared={type=anything}}] ownFieldCount=1
 layout L1 fields=[{key="with" declared={type=anything}}] ownFieldCount=1

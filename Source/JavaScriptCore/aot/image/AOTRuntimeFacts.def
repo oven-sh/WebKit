@@ -4,7 +4,7 @@ AOT_RUNTIME_FACT("the schema of the intermediate representation (high word)", st
 AOT_RUNTIME_FACT("the number of entries in the table of the run time", numberOfEntries)
 AOT_RUNTIME_FACT("the number of operations of the run time", numberOfRuntimeOperations)
 AOT_RUNTIME_FACT("the names of the entries in the table of the run time in the order of their numbers", hashOfNamesOfEntries)
-AOT_RUNTIME_FACT("runsOnlyCodeOfImage", runsOnlyCodeOfImage)
+AOT_RUNTIME_FACT("isHardenedBuild", isHardenedBuild)
 AOT_RUNTIME_FACT("sizeOfLoopPoll", sizeOfLoopPoll)
 
 AOT_RUNTIME_FACT("the built-ins that the engine names (low word)", static_cast<uint32_t>(engineListStamp))

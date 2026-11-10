@@ -27,16 +27,16 @@
 #   constants:
 #     v5: undefined @JSValue = Undefined
 #   b0(v0: Array @Cell, v1: Array @Cell, v2: int[0, 2147483647] @Int32, v3: int[0, 2147483647] @Int32, v4: fractional @Double) entry=0:
-#     v6: int[0, 4294967295] @Int64 = GetArrayRoom v0 traits=[mayTouchMemory]
-#     v7: int[0, 4294967295] @Int64 = GetArrayRoom v1 traits=[mayTouchMemory]
+#     v6: int[0, 4294967295] @Int64 = GetArrayCapacity v0 traits=[mayTouchMemory]
+#     v7: int[0, 4294967295] @Int64 = GetArrayCapacity v1 traits=[mayTouchMemory]
 #     v8: int[0, 2147483647] @Int64 = WidenInteger v2
 #     v9: boolean @Boolean = Less v8, v6 form=Integers
 #     v10: boolean @Boolean = Less v8, v7 form=Integers
 #     Branch v9 -> taken b1(), notTaken b2()
 #   b1():
-#     v11 @Void = ExtendArrayLength v0, v2 traits=[mayWriteWhatIsSeen, mayTouchMemory]
-#     v12 @Void = PutDoubleIndex v0, v2, v4 [isInBounds] traits=[mayWriteWhatIsSeen, mayTouchMemory]
-#     v13 @Void = ExtendArrayLength v0, v2 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v11 @Void = ExtendArrayLength v0, v2 traits=[mayWriteObservableState, mayTouchMemory]
+#     v12 @Void = PutDoubleIndex v0, v2, v4 [isInBounds] traits=[mayWriteObservableState, mayTouchMemory]
+#     v13 @Void = ExtendArrayLength v0, v2 traits=[mayWriteObservableState, mayTouchMemory]
 #     Return v5
 #   b2():
 #     Return v5

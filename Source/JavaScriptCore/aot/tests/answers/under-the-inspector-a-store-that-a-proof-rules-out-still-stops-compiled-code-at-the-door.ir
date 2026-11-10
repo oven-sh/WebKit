@@ -2,40 +2,53 @@
 # function marks(b) { b.count = undefined; }
 # function texts(b) { b.inner = "text"; }
 # function lays(b) { Object.defineProperty(b, "x", { set(v) { this.kept = "other" + v; } }); }
-# function marksBox(b: Box) { b.count = undefined; }   function textsBox(b: Box) { b.inner = "text"; }   the layout of `box` is EXPECTED of the parameter: a typed store behind a guess
-# function assigns(b) { Object.assign(b, { inner: "text" }); }   stranger: a function of the shell's own text, which the interpreter runs
+# function marksBox(b: Box) { b.count = undefined; }   function textsBox(b: Box) { b.inner = "text"; }   the layout of `box` is speculated for the parameter: a typed store after a speculation
+# function assigns(b) { Object.assign(b, { inner: "text" }); }   stranger: a function in the shell's own source, which the interpreter runs
 # function count(b) { return b.count + 1; }   function inner(b) { return b.inner.n; }   function store(b) { b.x = 5; return b.kept; }
 # if (which === 1) id(marks)(box);   if (which === 2) id(texts)(box);   if (which === 3) id(lays)(box);   if (which === 4) id(marksBox)(box);   if (which === 5) id(textsBox)(box);   if (which === 6) id(stranger)(box);   if (which === 7) id(assigns)(box);
 # print(count(box), inner(box), store(box));   print("went on");
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so the call of it has no callee and `box` stays with compiled code, every writer known. The stranger is compiled code that stores by name.
-# The program and the runs of a-store-that-a-proof-rules-out-stops-at-the-door.ir, built to admit the inspector: a false proof that COMPILED code runs into stays the loud stop, by name, behind a guess and through Object.assign alike. The one run where code that is not compiled stores gets a TypeError, and the object stays as it was.
-# A lane that adds testing=CheckProofsAtRunTime leaves this file out: the lie is a false proof made on purpose, and under that word the check of what `id` gives stops first in the runs that call what it gives.
-# Here `assigns` makes its call in TAIL POSITION and `marks` is HIDDEN IN STACK TRACES: neither frame is shown in a stack trace, and each still counts as the program. MARKLATER and HOSTLATER lay them as jobs: nothing else of the image lies below.
-# OPTIONS: testing=UnseenCodeAnswersUndefined admit=Inspector
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So the call of that result has no callee, `box` never escapes from compiled code and every writer is known.
+# The writer that Link does not know about is compiled code that stores by name.
+# The program and the runs are those of a-store-that-a-proof-rules-out-stops-at-the-door.ir, built to allow the inspector.
+# A false proof that compiled code runs into still crashes with a named error, after a speculation and through Object.assign alike.
+# In the one run where uncompiled code stores, the store throws a TypeError and the object stays as it was.
+# A lane that adds testing=CheckProofsAtRunTime skips this file.
+# The injected fault is a false proof made on purpose, and with that option the check of the result of `id` crashes first in the runs that call that result.
+# Here `assigns` makes its call in tail position and `marks` is hidden in stack traces. Neither frame is shown in a stack trace, and each still counts as the program's code.
+# The runs MARKLATER and HOSTLATER start them as jobs, so no other frame of the image is below them on the stack.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined admit=Inspector
 # RUN(MARK): run-in-shell mechanisms=all globalThis.which = 1;
-# MARK: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# MARK: bun: internal AOT error: object mutation check failed
+# MARK-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # MARK-NOT: went on
 # MARK: crashed with
 # RUN(MARKLATER): run-in-shell mechanisms=all globalThis.which = 1; globalThis.id = f => b => { Promise.resolve(b).then(f); };
-# MARKLATER: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# MARKLATER: bun: internal AOT error: object mutation check failed
+# MARKLATER-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # MARKLATER: crashed with
 # RUN(HOSTLATER): run-in-shell mechanisms=all globalThis.which = 7; globalThis.id = f => b => { Promise.resolve(b).then(f); };
-# HOSTLATER: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# HOSTLATER: bun: internal AOT error: object mutation check failed
+# HOSTLATER-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # HOSTLATER: crashed with
 # RUN(TEXT): run-in-shell mechanisms=all globalThis.which = 2;
-# TEXT: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# TEXT: bun: internal AOT error: object mutation check failed
+# TEXT-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # TEXT-NOT: went on
 # TEXT: crashed with
 # RUN(SETTER): run-in-shell mechanisms=all globalThis.which = 3;
-# SETTER: AOT: RedefineProperty of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# SETTER: bun: internal AOT error: object mutation check failed
+# SETTER-NEXT: RedefineProperty on an {{*}}, but the compiler proved that
 # SETTER-NOT: went on
 # SETTER: crashed with
 # RUN(TYPEDMARK): run-in-shell mechanisms=all globalThis.which = 4;
-# TYPEDMARK: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# TYPEDMARK: bun: internal AOT error: object mutation check failed
+# TYPEDMARK-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # TYPEDMARK-NOT: went on
 # TYPEDMARK: crashed with
 # RUN(TYPEDTEXT): run-in-shell mechanisms=all globalThis.which = 5;
-# TYPEDTEXT: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# TYPEDTEXT: bun: internal AOT error: object mutation check failed
+# TYPEDTEXT-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # TYPEDTEXT-NOT: went on
 # TYPEDTEXT: crashed with
 # RUN(RUNTIMECODE): run-in-shell mechanisms=all globalThis.which = 6; globalThis.stranger = function (b) { b.inner = "text"; };
@@ -47,18 +60,23 @@
 # CAUGHT-NEXT: 2 1 first5
 # CAUGHT-NEXT: went on
 # CAUGHT-NEXT: exited with 0
-# Text that the PROGRAM evaluates bears the origin of the compiled file that evaluated it: it counts as the program, and the stop stays. Here the shell lays eval under `id` and a text under `stranger`: compiled code evaluates the text and calls what it makes.
-# The path of the module is relative on purpose: made into a file URL and back it is another path ("/main.js") on every system, as an absolute one is on Windows alone, so the text is known by its origin or not at all.
+# Source that the program evaluates carries the origin of the compiled module that evaluated it. It counts as the program's code, and the crash stays.
+# Here the shell assigns eval to `id` and a string to `stranger`: compiled code evaluates the string and calls the result.
+# The module's path is relative on purpose. Converted to a file URL and back it is a different path ("/main.js") on every system, as an absolute path is on Windows alone.
+# So the source is recognized by its origin or not at all.
 # RUN(OWNTEXT): run-in-shell mechanisms=all globalThis.which = 6; globalThis.id = eval; globalThis.stranger = "(function (b) { try { b.inner = 'text'; } catch { } })";
-# OWNTEXT: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# OWNTEXT: bun: internal AOT error: object mutation check failed
+# OWNTEXT-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # OWNTEXT-NOT: went on
 # OWNTEXT: crashed with
 # RUN(OWNFUNCTION): run-in-shell mechanisms=all globalThis.which = 6; globalThis.id = Function; globalThis.stranger = "try { arguments[0].inner = 'text'; } catch { }";
-# OWNFUNCTION: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# OWNFUNCTION: bun: internal AOT error: object mutation check failed
+# OWNFUNCTION-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # OWNFUNCTION-NOT: went on
 # OWNFUNCTION: crashed with
 # RUN(HOST): run-in-shell mechanisms=all globalThis.which = 7;
-# HOST: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
+# HOST: bun: internal AOT error: object mutation check failed
+# HOST-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
 # HOST-NOT: went on
 # HOST: crashed with
 # RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;

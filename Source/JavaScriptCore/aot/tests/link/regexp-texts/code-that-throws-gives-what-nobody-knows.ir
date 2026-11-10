@@ -1,6 +1,6 @@
 # function refuse() { throw new Error("no"); }      A way that ends in a throw ends, and the call gives what nobody knows. So does a built-in that throws: null.source, Array(-1).
 # export const first = new RegExp("a" + refuse()), second = new RegExp("b" + Array(-1)), third = new RegExp("d" + String("+e"));
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /d+e/
 # CHECK-NOT: text /

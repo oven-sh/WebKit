@@ -17,8 +17,8 @@ module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m6 com
 module m2 path="/x.js" displayPath="x.js" body=f2 requests=[{target=m3 completes=true}]
 module m3 path="/y.js" displayPath="y.js" body=f3 requests=[{target=m2 completes=true}]
 module m4 path="/other.js" displayPath="other.js" body=f4 requests=[{target=m6 completes=true isHoisted=true}, {target=m3 completes=true}, {target=m6 completes=true}]
-module m5 path="/k.cjs" displayPath="k.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g0 requests=[{target=m4 kind=Require completes=true}]
-module m6 path="#6" displayPath="k.cjs" flags=[KeepsError] exportRule=CommonJs body=f6 requests=[{target=m5 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+module m5 path="/k.cjs" displayPath="k.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g0 requests=[{target=m4 kind=Require completes=true}]
+module m6 path="#6" displayPath="k.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f6 requests=[{target=m5 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
 entry module=m0
 variable g0 name="exports" module=m5 declared={type=anything} initialization=Undefined
 variable g1 name="default" module=m6 declared={type=anything}
@@ -69,7 +69,7 @@ function f5 name="k" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{ty
     PutModuleVariable v7 variable=g0
     Return
 }
-function f6 name="faceOfK" module=m5 kind=Module results=[{type=anything}] {
+function f6 name="facadeOfK" module=m5 kind=Module results=[{type=anything}] {
     EvaluateModule module=m5 referrer=m6 [isBare]
     Return
 }

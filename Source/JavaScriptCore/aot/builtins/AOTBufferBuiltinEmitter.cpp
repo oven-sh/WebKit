@@ -159,8 +159,8 @@ void BufferBuiltinEmitter::continueWhereIsNotNegative(const InlineCall& call, Va
     Type type = typeOf(id);
     if (!type.isInteger() || type.integers.minimum < 0)
         branchUnless(greaterThanOrEqual(position, integer(0)), otherwise);
-    else if (emitter<ElementAccessEmitter>().testsEveryPosition())
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(call.context(), greaterThanOrEqual(position, integer(0)), std::nullopt, ProofSource::WhatIsRemembered);
+    else if (emitter<ElementAccessEmitter>().checksBounds())
+        emitter<ThrowEmitter>().requireOrCrash(call.context(), greaterThanOrEqual(position, integer(0)), std::nullopt, ProofSource::RememberedFact);
     else
         build().statistics().count(StatisticID::RangeChecksRemoved);
 }

@@ -138,7 +138,7 @@ void StraightEmitter::trapUnlessOfType(ValueID value, TypeID tested, ProofSource
     GPRReg boxed = temporary(1);
     auto stopByName = [&] {
         AllowMacroScratchRegisterUsage allowScratch(*m_jit);
-        emitStraightThrowSite(*m_jit, m_records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source }, boxed, 0, addSite(origin, { }));
+        emitStraightThrowSite(*m_jit, m_records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source, .expectedProofType = FalseProofWord::summarize(primitives, !holdsOnlyPrimitives(tested) && m_types.recordOf(tested).hasObjects()) }, boxed, 0, addSite(origin, { }));
         m_jit->breakpoint();
     };
     storeWhatWaitsInRegister();

@@ -271,7 +271,7 @@ void TextBuilderWebScan::findCandidates()
         TypeID written = m_head.parameterType(parameterIndex);
         isWrittenWithoutText[parameterIndex] = written && holdsOnlyPrimitives(written) && !(primitivesInID(written) & Primitive::String);
         TypeID inRow = typeInLooks(m_head.parameter(parameterIndex));
-        cannotGrow[parameterIndex] = isNameOfTextInStringBuilder(m_walker, m_head.parameter(parameterIndex)) || (inRow && !m_walker.types().overlap(inRow, TypeTable::string));
+        cannotGrow[parameterIndex] = isBoundToStringInBuilder(m_walker, m_head.parameter(parameterIndex)) || (inRow && !m_walker.types().overlap(inRow, TypeTable::string));
     }
     if (!cannotGrow.contains(false))
         return;
@@ -287,7 +287,7 @@ void TextBuilderWebScan::findCandidates()
                 cannotGrow[parameterIndex] = true;
                 continue;
             }
-            ValueID root = m_index.valueBehindCasts(arguments[parameterIndex]);
+            ValueID root = m_index.stripCasts(arguments[parameterIndex]);
             if (root == m_head.parameter(parameterIndex))
                 continue;
             bool isMadeInLoop = root.index() >= m_head.firstValue().index();
@@ -339,7 +339,7 @@ void TextBuilderWebScan::findParametersThatComeRound()
                 uint32_t text = arguments[argumentIndex] ? textThatComesRoundIn(entered.parameter(argumentIndex)) : none;
                 if (text == none)
                     continue;
-                ValueID root = m_index.valueBehindCasts(arguments[argumentIndex]);
+                ValueID root = m_index.stripCasts(arguments[argumentIndex]);
                 if (m_index.isParameter(root) && root.index() >= m_head.firstValue().index() && textThatComesRoundIn(root) == none)
                     m_textsThatComeRoundInValues[root.index() - m_firstValue] = text;
             }
@@ -376,9 +376,6 @@ bool TextBuilderWebScan::makesTextThatIsOnlyRead(const BodyValue& join)
 void TextBuilderWebScan::scanOperation(const BodyValue& operation)
 {
     Opcode opcode = operation.opcode();
-    if (opcode == Opcode::ReleaseHint)
-        return;
-
     bool joinsTexts = operationsThatJoinTexts.contains(opcode);
     uint32_t textInFront = none;
     uint32_t textPassedThrough = none;
@@ -390,7 +387,7 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
             textInFront = name->text;
         else if (passesOperandThroughInTextBuilderWebs(operation, operandIndex) || opcode == Opcode::ToString) {
             textPassedThrough = name->text;
-            if (opcode == Opcode::Convert || opcode == Opcode::ToString || checksThatHandOnOrThrow.contains(opcode))
+            if (opcode == Opcode::Convert || opcode == Opcode::ToString || passThroughChecks.contains(opcode))
                 noteThatStateIsSeen(*name);
         }
         else if (textInFront == name->text)
@@ -501,11 +498,11 @@ bool TextBuilderWebScan::someEdgeHandsOverWhatNamesNoText(BlockID block, uint32_
         ValueID handed = parameterIndex < arguments.size() ? arguments[parameterIndex] : ValueID();
         if (!handed || !isInLoop(edge.from))
             continue;
-        ValueID root = m_index.valueBehindCasts(handed);
+        ValueID root = m_index.stripCasts(handed);
         if (m_index.isParameter(root) || isOneOfWrittenTexts(root))
             continue;
         Opcode opcode = m_index.opcodeOf(root);
-        if (!operationsThatJoinTexts.contains(opcode) && !castsInTextBuilderWebs.contains(opcode) && !checksThatHandOnOrThrow.contains(opcode) && opcode != Opcode::ToString)
+        if (!operationsThatJoinTexts.contains(opcode) && !castsInTextBuilderWebs.contains(opcode) && !passThroughChecks.contains(opcode) && opcode != Opcode::ToString)
             return true;
     }
     return false;

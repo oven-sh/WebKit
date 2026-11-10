@@ -16,7 +16,7 @@ public:
     ALWAYS_INLINE TypeID turn(const LinkFlow& flow, TypeArena& types, const LinkType& type)
     {
         if (type.holdsPrimitivesAlone())
-            return type.isNothing() ? TypeID() : type.primitivesWithoutLiteralsAsType();
+            return type.isNever() ? TypeID() : type.primitivesWithoutLiteralsAsType();
         size_t hash = hashOf(type);
         std::span<const Slot> slots = m_slots.span();
         if (!slots.empty()) {

@@ -1,7 +1,7 @@
 # The list follows from the program alone. What a function of the program gives back to a built-in that called it is looked at like what is handed to one: under a text an object would be converted, so it is refused;
 # a text is paid for by its characters, each time that it is given.
 # listed: "a".replace("a", () => ["x"]) . sorted: const numeral = doubled("1", 19); [5, 4, 3, 2, 1].sort(() => numeral).length: the engine makes each answer a number . plain: "a".replace("a", () => "z") is entered as ever.   (doubled(text, k): text = text + text, k times)
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /Xx/
 # CHECK-NOT: text /Y5/

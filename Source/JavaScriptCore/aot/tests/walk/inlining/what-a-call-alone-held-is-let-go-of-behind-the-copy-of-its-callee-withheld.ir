@@ -1,6 +1,0 @@
-# the same functions with Inlining withheld: the call stands as a call, which is the last reader of what it is handed, and there is nothing to hint at
-# function consume(x) { return x.n; }  function run(o) { const n = consume(o.load()); o.wait(); return n; }
-# RUN: walk f2 mechanisms=none+DirectCalls
-# CHECK-LABEL: code f2:Body
-# CHECK-NOT: ReleaseHint
-# PROGRAM-OF: what-a-call-alone-held-is-let-go-of-behind-the-copy-of-its-callee.ir

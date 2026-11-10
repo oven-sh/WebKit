@@ -760,7 +760,7 @@ static std::optional<uint64_t> instructionsOfWalkThatMovesBirthsForGrowthTests(u
         AOT_TEST_CHECK(parsed);
         StagedBuild stages(WTF::move(parsed), build);
         AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
-        AOT_TEST_CHECK(build.statistics().values()[static_cast<unsigned>(StatisticID::BirthsLaidWhereCellsAreNeeded)] >= numberOfBirths);
+        AOT_TEST_CHECK(build.statistics().values()[static_cast<unsigned>(StatisticID::AllocationsSunk)] >= numberOfBirths);
         instructions = instructionsOfAllThreadsIn([&] {
             AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
         });
@@ -1024,7 +1024,7 @@ static uint64_t walksOfLoopsForGrowthTests(const String& text, unsigned megabyte
         runBelowMegabytesOfStackForGrowthTests(megabytesOfStackTakenFirst, [&] {
             AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
         });
-        walks = build.statistics().values()[static_cast<unsigned>(StatisticID::WalksOfLoops)];
+        walks = build.statistics().values()[static_cast<unsigned>(StatisticID::LoopVisits)];
     });
     return walks;
 }

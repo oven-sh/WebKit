@@ -719,6 +719,8 @@ static ALWAYS_INLINE Effects declaredEffectsBuiltInPlace(const Program& program,
     Effects effects = Effects::none();
     EffectsBuilderInPlace builder(program, effects);
     forEachDeclaredEffect(operation, builder);
+    if (lookAtCellHasNoFlagThatReads(opcode, operation))
+        effects.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
     if (effects.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
     return effects;

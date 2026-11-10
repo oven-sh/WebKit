@@ -325,6 +325,17 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
     int readPtr = 0;
     int writePtr = 0;
     unsigned jumpCount = jumpsToLink.size();
+#if CPU(ARM64)
+    ARM64BranchIslands* islands = macroAssembler.m_assembler.branchIslands();
+    macroAssembler.m_assembler.setBranchIslands(nullptr);
+    // allocate() has padded the code with as many nops as the pools take.
+    const size_t sizeOfIslands = islands ? islands->size() : 0;
+    size_t nextIslandPool = 0;
+    size_t nextFarBranch = 0;
+    RELEASE_ASSERT(!islands || (m_shouldPerformBranchCompaction && !m_executableMemory && !m_policy.recordsLinkedSites));
+#else
+    constexpr size_t sizeOfIslands = 0;
+#endif
 
     auto read = [&](const InstructionType* ptr) -> InstructionType {
         InstructionType value = *ptr;
@@ -342,9 +353,35 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
     ExecutableAllocator::singleton().startWriting(outData, initialSize);
 #endif
 
+#if CPU(ARM64)
+    auto reserveIslandPoolsUpTo = [&](int64_t emittedOffset) {
+        for (; nextIslandPool < islands->pools.size() && islands->pools[nextIslandPool].emittedOffset <= emittedOffset; ++nextIslandPool) {
+            ARM64BranchIslands::Pool& pool = islands->pools[nextIslandPool];
+            const int begin = readPtr;
+            const int offset = readPtr - writePtr;
+            for (; readPtr < pool.emittedOffset; readPtr += sizeof(InstructionType), writePtr += sizeof(InstructionType))
+                *reinterpret_cast_ptr<InstructionType*>(outData + writePtr) = read(reinterpret_cast_ptr<InstructionType*>(inData + readPtr));
+            recordLinkOffsets(m_assemblerStorage, begin, readPtr, offset);
+            pool.linkedOffset = writePtr;
+            const size_t size = pool.numberOfIslands * sizeof(uint32_t);
+            if (shouldCopyDirectlyToJITRegion)
+                Assembler::fillNops<memcpyRepatch>(outData + writePtr, size);
+            else
+                Assembler::fillNops<jitMemcpyRepatch>(outData + writePtr, size);
+            writePtr += size;
+            // A label at the pool's place names the code after the pool, and executableOffsetFor() reads the word before a label.
+            recordLinkOffsets(m_assemblerStorage, readPtr - sizeof(InstructionType), readPtr, readPtr - writePtr);
+        }
+    };
+#endif
+
     if (m_shouldPerformBranchCompaction) {
         for (unsigned i = 0; i < jumpCount; ++i) {
             auto& linkRecord = jumpsToLink[i];
+#if CPU(ARM64)
+            if (islands) [[unlikely]]
+                reserveIslandPoolsUpTo(linkRecord.from());
+#endif
             int offset = readPtr - writePtr;
             ASSERT(!(offset & 1));
 
@@ -371,7 +408,11 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
             if (linkRecord.isThunk())
                 target = std::bit_cast<uint8_t*>(to);
             else if (to >= linkRecord.from())
+#if CPU(ARM64)
+                target = codeOutData + to - offset + (islands ? islands->sizeOfPoolsBetween(nextIslandPool, to) : 0);
+#else
                 target = codeOutData + to - offset; // Compensate for what we have collapsed so far
+#endif
             else
                 target = codeOutData + to - executableOffsetFor(to);
 
@@ -394,11 +435,16 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
         }
     }
 
+#if CPU(ARM64)
+    if (islands) [[unlikely]]
+        reserveIslandPoolsUpTo(initialSize);
+#endif
+
     // Copy everything after the last jump
     {
         InstructionType* dst = std::bit_cast<InstructionType*>(outData + writePtr);
         InstructionType* src = std::bit_cast<InstructionType*>(inData + readPtr);
-        size_t bytes = initialSize - readPtr;
+        size_t bytes = initialSize - sizeOfIslands - readPtr;
 
         RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(dst) % sizeof(InstructionType)));
         RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(src) % sizeof(InstructionType)));
@@ -421,6 +467,28 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
             target = std::bit_cast<uint8_t*>(to);
         else
             target = codeOutData + to - executableOffsetFor(to);
+#if CPU(ARM64)
+        if (islands && nextFarBranch < islands->farBranches.size() && islands->farBranches[nextFarBranch].record == i) [[unlikely]] {
+            std::span<const ARM64BranchIslands::Island> chain = islands->islandsOf(nextFarBranch++);
+            for (size_t index = chain.size(); index--;) {
+                const size_t offset = islands->pools[chain[index].pool].linkedOffset + chain[index].index * sizeof(uint32_t);
+                if (!Assembler::canEmitJump(codeOutData + offset, target)) [[unlikely]] {
+                    m_hasBranchOutOfReach = true;
+                    break;
+                }
+                if (shouldCopyDirectlyToJITRegion)
+                    Assembler::linkBranchIsland<memcpyRepatch>(outData + offset, codeOutData + offset, target);
+                else
+                    Assembler::linkBranchIsland<jitMemcpyRepatch>(outData + offset, codeOutData + offset, target);
+                target = codeOutData + offset;
+            }
+        }
+        // The executable allocator's jump islands serve its own pool only.
+        if (m_policy.recordsProcessAddresses && !linkRecord.isThunk() && !Assembler::canEmitJump(location, target)) [[unlikely]]
+            m_hasBranchOutOfReach = true;
+        if (m_hasBranchOutOfReach) [[unlikely]]
+            continue;
+#endif
         BranchEncoding encoding;
         if (shouldCopyDirectlyToJITRegion)
             encoding = MacroAssembler::link<memcpyRepatch>(linkRecord, outData + linkRecord.from(), location, target);
@@ -430,7 +498,7 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
             didLinkRecord(linkRecord, to, encoding);
     }
 
-    size_t compactSize = writePtr + initialSize - readPtr;
+    size_t compactSize = writePtr + initialSize - sizeOfIslands - readPtr;
     if (!m_executableMemory) {
         size_t nopSizeInBytes = initialSize - compactSize;
 

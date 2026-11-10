@@ -55,9 +55,9 @@ struct FormOfInstanceOf {
     bool testedIsConstructorFunction { false };
     ConditionsOfInstanceOf conditions;
     LayoutSetID instances;
-    LayoutSetID kin;
-    std::span<const MemberConditionRecord> linksOfKin;
-    bool kinDecideEveryShape { false };
+    LayoutSetID hierarchy;
+    std::span<const MemberConditionRecord> hierarchyGuards;
+    bool hierarchyDecidesEveryShape { false };
     bool missMeansFalse { false };
     bool areAllInstances { false };
     bool valueIsSurelyObject { false };
@@ -67,18 +67,18 @@ struct FormOfInstanceOf {
 
 using NumbersOfClassesForInstanceOf = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
-struct KinInFamilyForInstanceOf {
+struct ClassHierarchyNumbering {
     Vector<LayoutID> candidates;
     Vector<LayoutID> layouts;
-    Vector<uint32_t> placesOfClasses;
-    Vector<uint32_t> endsOfPlacesBelowClasses;
+    Vector<uint32_t> classPreorderNumbers;
+    Vector<uint32_t> classSubtreeEnds;
     Vector<MemberConditionRecord> links;
-    UncheckedKeyHashMap<uint32_t, std::pair<uint32_t, uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placesAtOrBelow;
+    UncheckedKeyHashMap<uint32_t, std::pair<uint32_t, uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> subtreeRanges;
 };
 
 struct KeptByInstanceOf final : Walker::KeptForBuild {
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<KinInFamilyForInstanceOf>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> kinInFamilies;
-    UncheckedKeyHashMap<uint32_t, Vector<std::unique_ptr<KinInFamilyForInstanceOf>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> kinAmongListsOfLayouts;
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<ClassHierarchyNumbering>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberingsByFamily;
+    UncheckedKeyHashMap<uint32_t, Vector<std::unique_ptr<ClassHierarchyNumbering>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberingsByLayoutList;
 };
 
 struct BuiltinTestedByInstanceOf {
@@ -103,7 +103,7 @@ public:
             return;
         if (m_testWhoseArmsEndWithBranch) {
             m_walker.bind(m_testWhoseArmsEndWithBranch->id(), answer);
-            if (!m_walker.endArmWithBranchBehind(*m_testWhoseArmsEndWithBranch))
+            if (!m_walker.threadBranchAfter(*m_testWhoseArmsEndWithBranch))
                 m_walker.fail("an arm of instanceof does not walk the end of its block"_s);
             return;
         }
@@ -149,7 +149,7 @@ static bool classStaysAsWrittenForInstanceOf(const LinkTables& link, LayoutID cl
 
 static bool maySpendBytesForTimeInInstanceOf(const Walker& walker)
 {
-    return walker.isInLoop() || walker.bodyAtWorkCallsItself();
+    return walker.isInLoop() || walker.isCurrentFrameRecursive();
 }
 
 static bool mayBuildArmsForInstanceOf(const Walker& walker)
@@ -176,7 +176,7 @@ static Reference buildInstanceOfAsWritten(Walker& walker, const BodyValue& test)
     return walker.build(WTF::move(written));
 }
 
-static Reference buildProofOfInstanceOf(Walker& walker, Reference value, Reference test, uint32_t operandIndex, Origin origin)
+static Reference buildNarrowedValue(Walker& walker, Reference value, Reference test, uint32_t operandIndex, Origin origin)
 {
     Draft proof(Opcode::Narrowed, origin);
     walker.chooseConservativeFields(proof);
@@ -211,14 +211,14 @@ static Reference buildWalkOfChainThatGivesWayForInstanceOf(Walker& walker, Refer
 {
     if (!prototype)
         return { };
-    Draft chainWalk(Opcode::FindInPrototypeChainUnlessTrapped, origin);
+    Draft chainWalk(Opcode::TryFindInPrototypeChain, origin);
     walker.chooseConservativeFields(chainWalk);
     chainWalk.setValueOperand(value);
     chainWalk.setPrototypeOperand(prototype);
     Reference found = walker.build(WTF::move(chainWalk));
     if (!found)
         return { };
-    walker.count(StatisticID::MissesOfInstanceOfThatStayInTheTurn);
+    walker.count(StatisticID::InstanceOfMissesWalkedInline);
     auto isAnswer = [&](int32_t answer) {
         Draft asked(Opcode::Integer);
         asked.setInteger(answer);
@@ -237,7 +237,7 @@ static Reference buildWalkOfChainThatGivesWayForInstanceOf(Walker& walker, Refer
     walker.branch(isTrapped, givesWay, isAnswered);
     walker.continueIn(givesWay);
     if (!walker.isUnreachable())
-        walker.beginTurnAgainInClosedCopy();
+        walker.restartIteration();
     walker.continueIn(isAnswered);
     return isAnswer(1);
 }
@@ -339,7 +339,7 @@ bool findConditionsOfOrdinaryInstanceOf(const Walker& walker, TypeID typeOfConst
     return true;
 }
 
-bool shapesOfKinMayAnswerInstanceOf(const Walker& walker, TypeID typeOfConstructor)
+bool canDecideInstanceOfByHierarchy(const Walker& walker, TypeID typeOfConstructor)
 {
     std::optional<ClassTestedByInstanceOf> tested = describeClassTestedByInstanceOf(walker, typeOfConstructor);
     return tested && !tested->isConstructorFunction && walker.plan().hasClassRecord(tested->layout) && walker.facts().families().nearestFamilyOf(tested->layout);
@@ -445,7 +445,7 @@ static KeptByInstanceOf& keptByInstanceOf(const Walker& walker)
     return static_cast<KeptByInstanceOf&>(*kept);
 }
 
-static void findKinAmongLayoutsForInstanceOf(const Walker& walker, LayoutSetID candidates, KinInFamilyForInstanceOf& kin)
+static void numberClassHierarchy(const Walker& walker, LayoutSetID candidates, ClassHierarchyNumbering& hierarchy)
 {
     const Program& program = walker.program();
     constexpr uint32_t unknown = std::numeric_limits<uint32_t>::max();
@@ -489,8 +489,8 @@ static void findKinAmongLayoutsForInstanceOf(const Walker& walker, LayoutSetID c
         if (topmost == unknown)
             continue;
         topmostClasses.append(topmost);
-        kin.layouts.append(member);
-        kin.placesOfClasses.append(classLayout.index());
+        hierarchy.layouts.append(member);
+        hierarchy.classPreorderNumbers.append(classLayout.index());
     }
     std::ranges::sort(topmostClasses);
     topmostClasses.shrink(std::ranges::unique(topmostClasses).begin() - topmostClasses.begin());
@@ -522,22 +522,22 @@ static void findKinAmongLayoutsForInstanceOf(const Walker& walker, LayoutSetID c
                 entered.append({ next, nextPlace++, 0 });
                 continue;
             }
-            kin.placesAtOrBelow.set(top.number, std::pair { top.place, nextPlace });
-            kin.links.append({ MemberConditionKind::PrototypeLinkUnchanged, LayoutID(top.number), ClassSide::Prototype, { } });
+            hierarchy.subtreeRanges.set(top.number, std::pair { top.place, nextPlace });
+            hierarchy.links.append({ MemberConditionKind::PrototypeLinkUnchanged, LayoutID(top.number), ClassSide::Prototype, { } });
             entered.removeLast();
         }
     }
-    std::ranges::sort(kin.links, { }, [](const MemberConditionRecord& link) {
+    std::ranges::sort(hierarchy.links, { }, [](const MemberConditionRecord& link) {
         return link.layout.index();
     });
-    for (uint32_t& place : kin.placesOfClasses) {
-        auto [first, end] = kin.placesAtOrBelow.get(place);
+    for (uint32_t& place : hierarchy.classPreorderNumbers) {
+        auto [first, end] = hierarchy.subtreeRanges.get(place);
         place = first;
-        kin.endsOfPlacesBelowClasses.append(end);
+        hierarchy.classSubtreeEnds.append(end);
     }
 }
 
-static const KinInFamilyForInstanceOf* findKinOfClassForInstanceOf(const Walker& walker, LayoutID tested, TypeID expectedOfValue)
+static const ClassHierarchyNumbering* findClassHierarchyNumbering(const Walker& walker, LayoutID tested, TypeID expectedOfValue)
 {
     const Families& families = walker.facts().families();
     TypeArena& types = walker.types();
@@ -550,8 +550,8 @@ static const KinInFamilyForInstanceOf* findKinOfClassForInstanceOf(const Walker&
         return std::ranges::binary_search(membersOf(types, candidates), layout);
     }));
     KeptByInstanceOf& kept = keptByInstanceOf(walker);
-    auto holdsTested = [&](const KinInFamilyForInstanceOf& kin) {
-        return kin.placesAtOrBelow.contains(tested.index()) ? &kin : nullptr;
+    auto holdsTested = [&](const ClassHierarchyNumbering& hierarchy) {
+        return hierarchy.subtreeRanges.contains(tested.index()) ? &hierarchy : nullptr;
     };
     if (!familyHoldsAllExpected) {
         Vector<LayoutID, 16> all { tested };
@@ -567,29 +567,29 @@ static const KinInFamilyForInstanceOf* findKinOfClassForInstanceOf(const Walker&
         uint32_t hash = 0;
         for (LayoutID layout : all)
             hash = pairIntHash(hash, layout.index());
-        auto& keptUnderHash = kept.kinAmongListsOfLayouts.ensure(hash, [] {
-            return Vector<std::unique_ptr<KinInFamilyForInstanceOf>, 1> { };
+        auto& keptUnderHash = kept.numberingsByLayoutList.ensure(hash, [] {
+            return Vector<std::unique_ptr<ClassHierarchyNumbering>, 1> { };
         }).iterator->value;
-        for (const auto& kin : keptUnderHash) {
-            if (std::ranges::equal(kin->candidates, all))
-                return holdsTested(*kin);
+        for (const auto& hierarchy : keptUnderHash) {
+            if (std::ranges::equal(hierarchy->candidates, all))
+                return holdsTested(*hierarchy);
         }
-        auto found = makeUniqueWithoutFastMallocCheck<KinInFamilyForInstanceOf>();
+        auto found = makeUniqueWithoutFastMallocCheck<ClassHierarchyNumbering>();
         found->candidates.append(all.span());
-        findKinAmongLayoutsForInstanceOf(walker, types.layoutSets().ofSorted(all.span()), *found);
+        numberClassHierarchy(walker, types.layoutSets().ofSorted(all.span()), *found);
         keptUnderHash.append(WTF::move(found));
         return holdsTested(*keptUnderHash.last());
     }
     if (!candidates)
         return nullptr;
-    return holdsTested(*kept.kinInFamilies.ensure(families.topmostFamilyAtOrAbove(nearest).index(), [&] {
-        auto found = makeUniqueWithoutFastMallocCheck<KinInFamilyForInstanceOf>();
-        findKinAmongLayoutsForInstanceOf(walker, candidates, *found);
+    return holdsTested(*kept.numberingsByFamily.ensure(families.topmostFamilyAtOrAbove(nearest).index(), [&] {
+        auto found = makeUniqueWithoutFastMallocCheck<ClassHierarchyNumbering>();
+        numberClassHierarchy(walker, candidates, *found);
         return found;
     }).iterator->value);
 }
 
-bool callsItselfUnderNameThatStatementLaysOnPrototype(const Walker& walker, const BodyIndex& index, FunctionID id)
+bool isRecursiveThroughPrototype(const Walker& walker, const BodyIndex& index, FunctionID id)
 {
     const Function& function = walker.program().at(id);
     if (function.kind != FunctionKind::Plain || !index.opcodes().contains(Opcode::Call) || !index.opcodes().contains(Opcode::PropGet))
@@ -602,13 +602,13 @@ bool callsItselfUnderNameThatStatementLaysOnPrototype(const Walker& walker, cons
         for (BodyValue value : block.values()) {
             if (callsItself || value.opcode() != Opcode::Call)
                 continue;
-            ValueID callee = index.valueBehindCasts(value.as<Opcode::Call>().calleeOperand());
+            ValueID callee = index.stripCasts(value.as<Opcode::Call>().calleeOperand());
             if (!callee || index.isParameter(callee) || index.opcodeOf(callee) != Opcode::PropGet)
                 continue;
             BodyValue read = index.value(callee);
-            ValueID receiver = index.valueBehindCasts(read.as<Opcode::PropGet>().objectOperand());
+            ValueID receiver = index.stripCasts(read.as<Opcode::PropGet>().objectOperand());
             if (receiver && !index.isParameter(receiver) && index.opcodeOf(receiver) == Opcode::ToThis)
-                receiver = index.valueBehindCasts(index.value(receiver).operand(0));
+                receiver = index.stripCasts(index.value(receiver).operand(0));
             if (read.isFreeName() || !receiver || !index.isParameter(receiver) || index.blockOf(receiver) != entryBlock || receiver.index() >= function.numberOfEntryParameters() || function.entryParameterKind(receiver.index()) != EntryParameter::This)
                 continue;
             callsItself = std::ranges::any_of(laidUnder, [&](const auto& name) {
@@ -637,7 +637,7 @@ static bool isTestableByShapeForInstanceOf(const Walker& walker, std::span<const
     });
 }
 
-static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker, TypeID typeOfValue, TypeID typeOfConstructor, bool valueStandsWhereMade, TypeID expectedOfValue)
+static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker, TypeID typeOfValue, TypeID typeOfConstructor, bool valueHasLayoutPrototype, TypeID expectedOfValue)
 {
     if (!walker.plan().hasOneInstance())
         return std::nullopt;
@@ -665,50 +665,50 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
     }
 
     ChainsForInstanceOf chains = followChainsForInstanceOf(walker, considered.span(), tested->layout);
-    Vector<LayoutID, 8> instancesBesideKin = chains.instances;
-    const KinInFamilyForInstanceOf* kin = nullptr;
-    bool kinMayAnswer = maySpendBytesForTimeInInstanceOf(walker) && mayBuildArmsForInstanceOf(walker) && (!tested->isConstructorFunction || (walker.plan().hasClassRecord(tested->layout) && hasOneClassObjectForInstanceOf(walker, tested->layout)));
-    if ((!areAllConsidered || chains.hasUndecidedLayouts) && kinMayAnswer && (!chains.instances.isEmpty() || areAllConsidered))
-        kin = findKinOfClassForInstanceOf(walker, tested->layout, expectedOfValue);
-    bool kinHoldStrangers = false;
-    bool kinDecideEveryShape = false;
-    if (areAllConsidered && chains.hasUndecidedLayouts && valueStandsWhereMade && value.isObject() && kinMayAnswer) {
-        const KinInFamilyForInstanceOf* found = findKinOfClassForInstanceOf(walker, tested->layout, typeOfValue);
-        kinDecideEveryShape = found && std::ranges::all_of(considered, [&](LayoutID layout) {
+    Vector<LayoutID, 8> instancesOutsideHierarchy = chains.instances;
+    const ClassHierarchyNumbering* hierarchy = nullptr;
+    bool canUseHierarchy = maySpendBytesForTimeInInstanceOf(walker) && mayBuildArmsForInstanceOf(walker) && (!tested->isConstructorFunction || (walker.plan().hasClassRecord(tested->layout) && hasOneClassObjectForInstanceOf(walker, tested->layout)));
+    if ((!areAllConsidered || chains.hasUndecidedLayouts) && canUseHierarchy && (!chains.instances.isEmpty() || areAllConsidered))
+        hierarchy = findClassHierarchyNumbering(walker, tested->layout, expectedOfValue);
+    bool hierarchyHasSiblings = false;
+    bool hierarchyDecidesEveryShape = false;
+    if (areAllConsidered && chains.hasUndecidedLayouts && valueHasLayoutPrototype && value.isObject() && canUseHierarchy) {
+        const ClassHierarchyNumbering* found = findClassHierarchyNumbering(walker, tested->layout, typeOfValue);
+        hierarchyDecidesEveryShape = found && std::ranges::all_of(considered, [&](LayoutID layout) {
             return std::ranges::binary_search(found->layouts, layout);
         });
-        if (kinDecideEveryShape) {
-            uint32_t placeOfTested = found->placesAtOrBelow.get(tested->layout.index()).first;
-            kinDecideEveryShape = std::ranges::none_of(considered, [&](LayoutID layout) {
+        if (hierarchyDecidesEveryShape) {
+            uint32_t placeOfTested = found->subtreeRanges.get(tested->layout.index()).first;
+            hierarchyDecidesEveryShape = std::ranges::none_of(considered, [&](LayoutID layout) {
                 size_t index = std::ranges::lower_bound(found->layouts, layout) - found->layouts.begin();
-                return !walker.takesLayoutsAboveClassAskedForForStrangers() && found->placesOfClasses[index] < placeOfTested && placeOfTested < found->endsOfPlacesBelowClasses[index];
+                return !walker.shouldSkipSuperclassCheck() && found->classPreorderNumbers[index] < placeOfTested && placeOfTested < found->classSubtreeEnds[index];
             });
         }
-        if (kinDecideEveryShape) {
-            auto [first, end] = found->placesAtOrBelow.get(tested->layout.index());
+        if (hierarchyDecidesEveryShape) {
+            auto [first, end] = found->subtreeRanges.get(tested->layout.index());
             chains = { };
             chains.decided = considered;
             for (LayoutID layout : considered) {
-                uint32_t place = found->placesOfClasses[std::ranges::lower_bound(found->layouts, layout) - found->layouts.begin()];
+                uint32_t place = found->classPreorderNumbers[std::ranges::lower_bound(found->layouts, layout) - found->layouts.begin()];
                 if (place >= first && place < end)
                     chains.instances.append(layout);
             }
-            chains.testsObjects = !walker.asksNoObjectOfClassAskedForWhereItStands();
-            instancesBesideKin.shrink(0);
-            kin = found;
+            chains.testsObjects = !walker.shouldSkipPrototypeChecks();
+            instancesOutsideHierarchy.shrink(0);
+            hierarchy = found;
         }
     }
-    if (kin && !kinDecideEveryShape) {
-        auto [first, end] = kin->placesAtOrBelow.get(tested->layout.index());
-        for (size_t index = 0; index < kin->layouts.size(); ++index) {
-            if (kin->placesOfClasses[index] >= first && kin->placesOfClasses[index] < end)
-                chains.instances.append(kin->layouts[index]);
+    if (hierarchy && !hierarchyDecidesEveryShape) {
+        auto [first, end] = hierarchy->subtreeRanges.get(tested->layout.index());
+        for (size_t index = 0; index < hierarchy->layouts.size(); ++index) {
+            if (hierarchy->classPreorderNumbers[index] >= first && hierarchy->classPreorderNumbers[index] < end)
+                chains.instances.append(hierarchy->layouts[index]);
             else
-                kinHoldStrangers = true;
+                hierarchyHasSiblings = true;
         }
         std::ranges::sort(chains.instances);
         chains.instances.shrink(std::ranges::unique(chains.instances).begin() - chains.instances.begin());
-        chains.testsObjects = !walker.asksNoObjectOfClassAskedForWhereItStands();
+        chains.testsObjects = !walker.shouldSkipPrototypeChecks();
     }
     FormOfInstanceOf form;
     form.tested = tested->layout;
@@ -733,24 +733,24 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
             form.areAllInstances = false;
         }
     }
-    form.kinDecideEveryShape = kinDecideEveryShape;
-    if (kin && (form.instances || kinDecideEveryShape)) {
-        form.linksOfKin = kin->links.span();
-        if (!form.missMeansFalse && kinHoldStrangers) {
-            uint32_t placeOfTested = kin->placesAtOrBelow.get(form.tested.index()).first;
-            Vector<LayoutID, 8> kinThatStandNotAbove;
-            for (size_t index = 0; index < kin->layouts.size(); ++index) {
-                if (walker.takesLayoutsAboveClassAskedForForStrangers() || kin->placesOfClasses[index] >= placeOfTested || placeOfTested >= kin->endsOfPlacesBelowClasses[index])
-                    kinThatStandNotAbove.append(kin->layouts[index]);
+    form.hierarchyDecidesEveryShape = hierarchyDecidesEveryShape;
+    if (hierarchy && (form.instances || hierarchyDecidesEveryShape)) {
+        form.hierarchyGuards = hierarchy->links.span();
+        if (!form.missMeansFalse && hierarchyHasSiblings) {
+            uint32_t placeOfTested = hierarchy->subtreeRanges.get(form.tested.index()).first;
+            Vector<LayoutID, 8> nonAncestorLayouts;
+            for (size_t index = 0; index < hierarchy->layouts.size(); ++index) {
+                if (walker.shouldSkipSuperclassCheck() || hierarchy->classPreorderNumbers[index] >= placeOfTested || placeOfTested >= hierarchy->classSubtreeEnds[index])
+                    nonAncestorLayouts.append(hierarchy->layouts[index]);
             }
-            form.kin = types.layoutSets().ofSorted(kinThatStandNotAbove.span());
+            form.hierarchy = types.layoutSets().ofSorted(nonAncestorLayouts.span());
         }
     }
     if (form.instances && chains.testsObjects) {
-        for (LayoutID layout : instancesBesideKin)
+        for (LayoutID layout : instancesOutsideHierarchy)
             addConditionOfInstanceOf(form.conditions, { MemberConditionKind::PrototypeLinkUnchanged, declaredLayoutOf(program, layout), ClassSide::Prototype, { } });
     }
-    if (maySpendBytesForTimeInInstanceOf(walker) && form.testedIsConstructorFunction && (!form.missMeansFalse || kinDecideEveryShape) && walker.plan().hasClassRecord(form.tested) && hasOneClassObjectForInstanceOf(walker, form.tested))
+    if (maySpendBytesForTimeInInstanceOf(walker) && form.testedIsConstructorFunction && (!form.missMeansFalse || hierarchyDecidesEveryShape) && walker.plan().hasClassRecord(form.tested) && hasOneClassObjectForInstanceOf(walker, form.tested))
         addConditionOfInstanceOf(form.conditions, conditionOnPrototypePropertyForInstanceOf(program, form.tested));
     return form;
 }
@@ -761,18 +761,18 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     TypeID typeOfConstructor = inputs.typeOf(test.constructorOperand());
     if (!typeOfValue || !typeOfConstructor)
         return false;
-    bool valueStandsWhereMade = !inputs.areOnlyTypes() && factsOfCellAsPlannerTakesThem(walker, walker.referenceOf(test.valueOperand())).contains(FactOfCell::HasLayoutPrototype);
-    valueStandsWhereMade |= walker.takesValuesAskedForClassesToStandWhereTheyWereMade() && !inputs.areOnlyTypes();
+    bool valueHasLayoutPrototype = !inputs.areOnlyTypes() && knownCellFacts(walker, walker.referenceOf(test.valueOperand())).contains(CellFact::HasLayoutPrototype);
+    valueHasLayoutPrototype |= walker.shouldAssumeLayoutPrototype() && !inputs.areOnlyTypes();
     TypeID expectedOfValue = !inputs.areOnlyTypes() && maySpendBytesForTimeInInstanceOf(walker) ? findExpectation(walker, test.valueOperand()).type : TypeID();
-    std::optional<FormOfInstanceOf> form = planFormOfInstanceOf(walker, typeOfValue, typeOfConstructor, valueStandsWhereMade, expectedOfValue);
+    std::optional<FormOfInstanceOf> form = planFormOfInstanceOf(walker, typeOfValue, typeOfConstructor, valueHasLayoutPrototype, expectedOfValue);
     if (!form)
         return false;
 
     bool isConstant = !form->instances ? form->missMeansFalse : form->areAllInstances && form->valueIsSurelyObject && !form->testsPrototypeOfInstance;
     if (isConstant && !walker.has(Mechanism::Folding)) {
         form->instances = { };
-        form->kin = { };
-        form->linksOfKin = { };
+        form->hierarchy = { };
+        form->hierarchyGuards = { };
         form->missMeansFalse = false;
         form->areAllInstances = false;
     }
@@ -781,8 +781,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         if (!form->conditions.isEmpty())
             return false;
         form->instances = { };
-        form->kin = { };
-        form->linksOfKin = { };
+        form->hierarchy = { };
+        form->hierarchyGuards = { };
         form->missMeansFalse = false;
         form->areAllInstances = false;
     }
@@ -803,45 +803,45 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         if (form->testedIsConstructorFunction || !form->conditions.isEmpty())
             return false;
         form->instances = { };
-        form->kin = { };
-        form->linksOfKin = { };
+        form->hierarchy = { };
+        form->hierarchyGuards = { };
         form->missMeansFalse = false;
         form->areAllInstances = false;
     }
 
     Origin origin = walker.originOf(test);
     AnswersOfInstanceOf answers(walker);
-    if ((form->kin || (form->kinDecideEveryShape && form->instances && !form->areAllInstances)) && walker.armsMayEndWithBranchBehind(test)) {
+    if ((form->hierarchy || (form->hierarchyDecidesEveryShape && form->instances && !form->areAllInstances)) && walker.canThreadBranchAfter(test)) {
         answers.letArmsEndWithBranchBehind(test);
-        walker.count(StatisticID::QuestionsOfInstanceOfWhoseArmsEndWithBranch);
+        walker.count(StatisticID::InstanceOfTestsJumpThreaded);
     }
-    auto noteNameThatArmHasTested = [&](Reference name) {
+    auto recordCheckedName = [&](Reference name) {
         if (answers.armsEndWithBranch() && name && !walker.isUnreachable() && !walker.state().checkedNameOf(value))
             walker.state().noteCheckedName(value, name);
     };
-    if (form->kinDecideEveryShape)
-        walker.count(StatisticID::QuestionsOfInstanceOfThatKinDecideForEveryShape);
+    if (form->hierarchyDecidesEveryShape)
+        walker.count(StatisticID::InstanceOfTestsDecidedByHierarchy);
     bool hasArms = false;
     BlockID asWritten;
-    for (std::span<const MemberConditionRecord> conditions : { std::span<const MemberConditionRecord>(form->conditions.span()), form->linksOfKin }) {
-        if (conditions.empty() || (walker.leavesLinksOfKinUnguarded() && conditions.data() == form->linksOfKin.data()) || (walker.leavesConditionsOfClassAskedForUnguarded() && conditions.data() == form->conditions.span().data()))
+    for (std::span<const MemberConditionRecord> conditions : { std::span<const MemberConditionRecord>(form->conditions.span()), form->hierarchyGuards }) {
+        if (conditions.empty() || (walker.shouldSkipHierarchyGuards() && conditions.data() == form->hierarchyGuards.data()) || (walker.shouldSkipClassGuards() && conditions.data() == form->conditions.span().data()))
             continue;
-        bool asksInFront = prototypeObjectIsInTable && !hasOneClosedArm && walker.mayBeginTurnAgainInClosedCopy() && walker.turnsOfTypedCopyWriteNoMemberGuards();
+        bool asksInFront = prototypeObjectIsInTable && !hasOneClosedArm && walker.canRestartIteration() && walker.iterationsPreserveMemberGuards();
         Reference areUnchanged;
         {
-            Walker::InFrontOfTypedCopy inFront(walker, asksInFront);
+            Walker::SpecializedPreheaderScope preheaderScope(walker, asksInFront);
             Draft guards(Opcode::AreMembersUnchanged, origin);
             guards.setConditions(conditions);
             areUnchanged = walker.isUnreachable() ? Reference() : walker.build(WTF::move(guards));
         }
         if (!areUnchanged)
             return true;
-        walker.noteGuessOpened();
-        if (asksInFront && walker.branchInFrontOfTypedCopy(areUnchanged, true, Walker::TurnOfTypedCopy::HasDoneNothing, Walker::TurnsThatAsk::SomeBesideCopyWithoutGuess))
-            walker.count(StatisticID::GuardsOfInstanceOfAskedInFrontOfTypedCopies);
+        walker.recordSpeculation();
+        if (asksInFront && walker.tryBranchInPreheader(areUnchanged, true, Walker::IterationPurity::EffectFree, Walker::GuardedIterations::SomeWithUnguardedVersion))
+            walker.count(StatisticID::InstanceOfGuardsHoisted);
         else {
             if (asksInFront)
-                walker.count(StatisticID::GuardsOfInstanceOfRefusedInFrontOfTypedCopies);
+                walker.count(StatisticID::InstanceOfGuardsNotHoisted);
             BlockID unchanged = walker.addBlock();
             if (!asWritten)
                 asWritten = walker.addBlock(BlockFrequency::Rare);
@@ -851,7 +851,7 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         }
     }
 
-    auto holdAnswerOfShapesToWalkOfChain = [&](bool answerOfShapes) {
+    auto verifyAgainstChainWalk = [&](bool shapeBasedResult) {
         if (!walker.checksProofs() || !prototypeObjectIsInTable || walker.isUnreachable())
             return;
         WalkState believed = walker.state();
@@ -860,13 +860,13 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         read.setClassObjectOperand(constructor);
         read.setLayout(form->tested);
         if (Reference prototype = walker.build(WTF::move(read))) {
-            Draft chainWalk(Opcode::FindInPrototypeChainUnlessTrapped, origin);
+            Draft chainWalk(Opcode::TryFindInPrototypeChain, origin);
             walker.chooseConservativeFields(chainWalk);
             chainWalk.setValueOperand(value);
             chainWalk.setPrototypeOperand(prototype);
             if (Reference found = walker.buildTestOfCheck(WTF::move(chainWalk))) {
                 Draft answer(Opcode::Integer);
-                answer.setInteger(answerOfShapes);
+                answer.setInteger(shapeBasedResult);
                 Draft comparison(Opcode::StrictEq, origin);
                 walker.chooseConservativeFields(comparison);
                 comparison.setLeftOperand(found);
@@ -877,7 +877,7 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
             }
         }
         if (!walker.isUnreachable()) {
-            Draft look(Opcode::FindsDefaultHasInstanceUnlessTrapped, origin);
+            Draft look(Opcode::HasDefaultHasInstance, origin);
             walker.chooseConservativeFields(look);
             look.setConstructorOperand(constructor);
             if (Reference findsDefault = walker.buildTestOfCheck(WTF::move(look)))
@@ -887,10 +887,10 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
             walker.state() = WTF::move(believed);
     };
 
-    bool holdsAnswersOfKin = walker.checksProofs() && form->valueIsSurelyObject;
+    bool shouldVerifyHierarchyResults = walker.checksProofs() && form->valueIsSurelyObject;
     auto buildAnswerOfMiss = [&]() -> Reference {
-        if (form->missMeansFalse && holdsAnswersOfKin)
-            holdAnswerOfShapesToWalkOfChain(false);
+        if (form->missMeansFalse && shouldVerifyHierarchyResults)
+            verifyAgainstChainWalk(false);
         if (form->missMeansFalse)
             return booleanAnswerOfInstanceOf(walker, false);
         if (!prototypeObjectIsInTable)
@@ -900,25 +900,25 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         read.setClassObjectOperand(constructor);
         read.setLayout(form->tested);
         Reference prototype = walker.build(WTF::move(read));
-        return walker.mayBeginTurnAgainInClosedCopy() ? buildWalkOfChainThatGivesWayForInstanceOf(walker, value, prototype, origin) : buildWalkOfChainForInstanceOf(walker, value, prototype, origin);
+        return walker.canRestartIteration() ? buildWalkOfChainThatGivesWayForInstanceOf(walker, value, prototype, origin) : buildWalkOfChainForInstanceOf(walker, value, prototype, origin);
     };
 
-    bool testsPrototype = form->testsPrototypeOfInstance && !factsOfCellAsPlannerTakesThem(walker, value).contains(FactOfCell::HasLayoutPrototype) && !(walker.takesValuesAskedForClassesToStandWhereTheyWereMade() && form->kinDecideEveryShape);
+    bool testsPrototype = form->testsPrototypeOfInstance && !knownCellFacts(walker, value).contains(CellFact::HasLayoutPrototype) && !(walker.shouldAssumeLayoutPrototype() && form->hierarchyDecidesEveryShape);
     if (form->testsPrototypeOfInstance && !testsPrototype)
-        walker.checkFactsRememberedOfCell(value, origin, FactOfCell::HasLayoutPrototype);
+        walker.checkFactsRememberedOfCell(value, origin, CellFact::HasLayoutPrototype);
     auto buildAnswerWhereClassIsUnchanged = [&]() -> Reference {
         if (!form->instances)
             return buildAnswerOfMiss();
         if (form->areAllInstances && form->valueIsSurelyObject && !testsPrototype && walker.has(Mechanism::Folding)) {
-            if (holdsAnswersOfKin)
-                holdAnswerOfShapesToWalkOfChain(true);
+            if (shouldVerifyHierarchyResults)
+                verifyAgainstChainWalk(true);
             return booleanAnswerOfInstanceOf(walker, true);
         }
         Draft shapeTest(Opcode::ShapeTest, origin);
         walker.chooseConservativeFields(shapeTest);
         shapeTest.setObjectOperand(value);
         shapeTest.setLayouts(form->instances);
-        bool shapeTestIsAnswer = form->missMeansFalse && !testsPrototype && !holdsAnswersOfKin && !answers.armsEndWithBranch();
+        bool shapeTestIsAnswer = form->missMeansFalse && !testsPrototype && !shouldVerifyHierarchyResults && !answers.armsEndWithBranch();
         if (!hasArms && shapeTestIsAnswer)
             shapeTest.inputValueGiven = test.id();
         Reference isInstance = walker.build(WTF::move(shapeTest));
@@ -927,13 +927,13 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
 
         BlockID hasShape = walker.addBlock();
         bool missIsAskedAsWritten = asWritten && (hasOneClosedArm || !prototypeObjectIsInTable);
-        BlockID walksChain = missIsAskedAsWritten ? asWritten : walker.addBlock(walker.mayBeginTurnAgainInClosedCopy() ? BlockFrequency::Normal : BlockFrequency::Rare);
+        BlockID walksChain = missIsAskedAsWritten ? asWritten : walker.addBlock(walker.canRestartIteration() ? BlockFrequency::Normal : BlockFrequency::Rare);
         bool asksWhetherMissIsObject = hasOneClosedArm && !form->missMeansFalse && !form->valueIsSurelyObject;
-        bool asksWhetherMissIsStranger = form->kin && !form->missMeansFalse && !asksWhetherMissIsObject && !missIsAskedAsWritten;
-        BlockID hasOtherShape = form->missMeansFalse || asksWhetherMissIsObject || asksWhetherMissIsStranger ? walker.addBlock() : walksChain;
+        bool testsMissForSibling = form->hierarchy && !form->missMeansFalse && !asksWhetherMissIsObject && !missIsAskedAsWritten;
+        BlockID hasOtherShape = form->missMeansFalse || asksWhetherMissIsObject || testsMissForSibling ? walker.addBlock() : walksChain;
         walker.branch(isInstance, hasShape, hasOtherShape);
         if (!hasArms)
-            walker.noteGuessOpened();
+            walker.recordSpeculation();
         hasArms = true;
         if (asksWhetherMissIsObject) {
             walker.continueIn(hasOtherShape);
@@ -947,65 +947,65 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
 
         walker.continueIn(hasShape);
         if (testsPrototype) {
-            Reference instance = buildProofOfInstanceOf(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
-            Reference standsWhereMade;
+            Reference instance = buildNarrowedValue(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
+            Reference prototypeCheck;
             if (instance) {
-                Draft linkTest(Opcode::HasLayoutPrototype, origin);
-                walker.chooseConservativeFields(linkTest);
-                linkTest.setObjectOperand(instance);
-                standsWhereMade = walker.build(WTF::move(linkTest));
+                Draft prototypeCheckDraft(Opcode::HasLayoutPrototype, origin);
+                walker.chooseConservativeFields(prototypeCheckDraft);
+                prototypeCheckDraft.setObjectOperand(instance);
+                prototypeCheck = walker.build(WTF::move(prototypeCheckDraft));
             }
-            if (standsWhereMade) {
-                BlockID isBelowClass = walker.addBlock();
-                walker.branch(standsWhereMade, isBelowClass, walksChain);
-                walker.continueIn(isBelowClass);
-                holdAnswerOfShapesToWalkOfChain(true);
-                noteNameThatArmHasTested(instance);
-                walker.state().noteFactsOfCell(value, FactOfCell::HasLayoutPrototype);
-                walker.state().noteFactsOfCell(instance, FactOfCell::HasLayoutPrototype);
+            if (prototypeCheck) {
+                BlockID instanceCase = walker.addBlock();
+                walker.branch(prototypeCheck, instanceCase, walksChain);
+                walker.continueIn(instanceCase);
+                verifyAgainstChainWalk(true);
+                recordCheckedName(instance);
+                walker.state().recordCellFacts(value, CellFact::HasLayoutPrototype);
+                walker.state().recordCellFacts(instance, CellFact::HasLayoutPrototype);
             } else
-                holdAnswerOfShapesToWalkOfChain(true);
+                verifyAgainstChainWalk(true);
         } else if (answers.armsEndWithBranch()) {
-            Reference instance = buildProofOfInstanceOf(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
-            holdAnswerOfShapesToWalkOfChain(true);
+            Reference instance = buildNarrowedValue(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
+            verifyAgainstChainWalk(true);
             if (instance) {
-                noteNameThatArmHasTested(instance);
-                walker.state().noteFactsOfCell(instance, FactOfCell::HasLayoutPrototype);
+                recordCheckedName(instance);
+                walker.state().recordCellFacts(instance, CellFact::HasLayoutPrototype);
             }
         } else
-            holdAnswerOfShapesToWalkOfChain(true);
+            verifyAgainstChainWalk(true);
         answers.arrive(booleanAnswerOfInstanceOf(walker, true));
 
-        if (asksWhetherMissIsStranger) {
+        if (testsMissForSibling) {
             walker.continueIn(hasOtherShape);
-            Draft strangerTest(Opcode::ShapeTest, origin);
-            walker.chooseConservativeFields(strangerTest);
-            strangerTest.setObjectOperand(value);
-            strangerTest.setLayouts(form->kin);
-            Reference isStranger = walker.build(WTF::move(strangerTest));
-            Reference standsWhereMade;
-            Reference stranger;
-            if (isStranger) {
-                BlockID hasShapeOfStranger = walker.addBlock();
-                walker.branch(isStranger, hasShapeOfStranger, walksChain);
-                walker.continueIn(hasShapeOfStranger);
-                stranger = buildProofOfInstanceOf(walker, value, isStranger, OperandIndex::ShapeTest::object, origin);
-                if (stranger) {
-                    Draft linkTest(Opcode::HasLayoutPrototype, origin);
-                    walker.chooseConservativeFields(linkTest);
-                    linkTest.setObjectOperand(stranger);
-                    standsWhereMade = walker.build(WTF::move(linkTest));
+            Draft siblingTest(Opcode::ShapeTest, origin);
+            walker.chooseConservativeFields(siblingTest);
+            siblingTest.setObjectOperand(value);
+            siblingTest.setLayouts(form->hierarchy);
+            Reference isSibling = walker.build(WTF::move(siblingTest));
+            Reference prototypeCheck;
+            Reference sibling;
+            if (isSibling) {
+                BlockID siblingShapeCase = walker.addBlock();
+                walker.branch(isSibling, siblingShapeCase, walksChain);
+                walker.continueIn(siblingShapeCase);
+                sibling = buildNarrowedValue(walker, value, isSibling, OperandIndex::ShapeTest::object, origin);
+                if (sibling) {
+                    Draft prototypeCheckDraft(Opcode::HasLayoutPrototype, origin);
+                    walker.chooseConservativeFields(prototypeCheckDraft);
+                    prototypeCheckDraft.setObjectOperand(sibling);
+                    prototypeCheck = walker.build(WTF::move(prototypeCheckDraft));
                 }
             }
-            if (standsWhereMade) {
-                BlockID standsBesideClass = walker.addBlock();
-                walker.branch(standsWhereMade, standsBesideClass, walker.asksNoStrangerAmongKinWhereItStands() ? standsBesideClass : walksChain);
-                walker.continueIn(standsBesideClass);
-                walker.count(StatisticID::MissesOfInstanceOfAnsweredByShapesOfKin);
-                holdAnswerOfShapesToWalkOfChain(false);
-                noteNameThatArmHasTested(stranger);
-                walker.state().noteFactsOfCell(value, FactOfCell::HasLayoutPrototype);
-                walker.state().noteFactsOfCell(stranger, FactOfCell::HasLayoutPrototype);
+            if (prototypeCheck) {
+                BlockID siblingCase = walker.addBlock();
+                walker.branch(prototypeCheck, siblingCase, walker.shouldIgnoreSiblingPrototypes() ? siblingCase : walksChain);
+                walker.continueIn(siblingCase);
+                walker.count(StatisticID::InstanceOfMissesDecidedByHierarchy);
+                verifyAgainstChainWalk(false);
+                recordCheckedName(sibling);
+                walker.state().recordCellFacts(value, CellFact::HasLayoutPrototype);
+                walker.state().recordCellFacts(sibling, CellFact::HasLayoutPrototype);
                 answers.arrive(booleanAnswerOfInstanceOf(walker, false));
             } else if (!walker.isUnreachable())
                 walker.jumpTo(walksChain);
@@ -1013,9 +1013,9 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
 
         if (form->missMeansFalse) {
             walker.continueIn(hasOtherShape);
-            if (form->kinDecideEveryShape)
-                walker.count(StatisticID::MissesOfInstanceOfAnsweredByShapesOfKin);
-            Reference stranger;
+            if (form->hierarchyDecidesEveryShape)
+                walker.count(StatisticID::InstanceOfMissesDecidedByHierarchy);
+            Reference sibling;
             if (answers.armsEndWithBranch() && !walker.isUnreachable()) {
                 Draft left(Opcode::Narrowed, origin);
                 walker.chooseConservativeFields(left);
@@ -1024,13 +1024,13 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
                 left.setOperandIndex(OperandIndex::ShapeTest::object);
                 left.setIsOnTakenEdge(false);
                 if (walker.resultTypeOf(left))
-                    stranger = walker.build(WTF::move(left));
+                    sibling = walker.build(WTF::move(left));
             }
-            if (holdsAnswersOfKin)
-                holdAnswerOfShapesToWalkOfChain(false);
-            if (stranger && !walker.isUnreachable()) {
-                noteNameThatArmHasTested(stranger);
-                walker.state().noteFactsOfCell(stranger, FactOfCell::HasLayoutPrototype);
+            if (shouldVerifyHierarchyResults)
+                verifyAgainstChainWalk(false);
+            if (sibling && !walker.isUnreachable()) {
+                recordCheckedName(sibling);
+                walker.state().recordCellFacts(sibling, CellFact::HasLayoutPrototype);
             }
             answers.arrive(booleanAnswerOfInstanceOf(walker, false));
         }
@@ -1052,8 +1052,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         answers.arrive(answer);
         if (asWritten) {
             walker.continueIn(asWritten);
-            if (prototypeObjectIsInTable && !hasOneClosedArm && !walker.isUnreachable() && walker.mayBeginTurnAgainInClosedCopy())
-                walker.beginTurnAgainInClosedCopy();
+            if (prototypeObjectIsInTable && !hasOneClosedArm && !walker.isUnreachable() && walker.canRestartIteration())
+                walker.restartIteration();
             else if (answers.armsEndWithBranch()) {
                 Walker::ClosedArm closedArm(walker);
                 answers.arrive(buildInstanceOfAsWritten(walker, test));
@@ -1133,7 +1133,7 @@ static Reference buildClassTestsOfBuiltinInstanceOf(Walker& walker, const Builti
     TypeID instances = types.builtinClass(tested.builtinClass);
     AnswersOfInstanceOf answers(walker);
     BlockID walksChain = walker.addBlock(BlockFrequency::Unlikely);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
 
     Reference cell = value;
     if (!types.isSubset(walker.typeOf(value), instances)) {
@@ -1143,7 +1143,7 @@ static Reference buildClassTestsOfBuiltinInstanceOf(Walker& walker, const Builti
         BlockID ofClass = walker.addBlock();
         walker.branch(isOfClass, ofClass, walksChain);
         walker.continueIn(ofClass);
-        cell = buildProofOfInstanceOf(walker, value, isOfClass, OperandIndex::TypeTest::value, origin);
+        cell = buildNarrowedValue(walker, value, isOfClass, OperandIndex::TypeTest::value, origin);
         if (!cell)
             return { };
     }
@@ -1189,9 +1189,9 @@ static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test,
     if (holdsNoObject)
         answer = booleanAnswerOfInstanceOf(walker, false);
     else {
-        bool isSeenAsMade = tested->builtinClass && walker.has(Mechanism::Folding) && walker.plan().hasOneInstance() && walker.types().isSubset(walker.typeOf(value), walker.types().builtinClass(tested->builtinClass)) && isListAsMade(walker, value);
+        bool isSeenAsMade = tested->builtinClass && walker.has(Mechanism::Folding) && walker.plan().hasOneInstance() && walker.types().isSubset(walker.typeOf(value), walker.types().builtinClass(tested->builtinClass)) && isKnownPristine(walker, value);
         if (isSeenAsMade) {
-            walker.askAgainWhetherObjectIsAsMade(value);
+            walker.verifyPristineObject(value);
             answer = booleanAnswerOfInstanceOf(walker, true);
         }
         else if (testsClass && value.isValue())

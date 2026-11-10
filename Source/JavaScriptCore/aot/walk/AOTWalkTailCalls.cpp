@@ -26,7 +26,7 @@ static FunctionID functionOfClosureInTailCalls(const Code& code, ValueID value)
 {
     if (!value)
         return { };
-    const Operation& made = code.at(rootOfCellInSweptCode(code, value));
+    const Operation& made = code.at(underlyingCellOf(code, value));
     return made.opcode == Opcode::NewClosure ? made.function() : FunctionID();
 }
 

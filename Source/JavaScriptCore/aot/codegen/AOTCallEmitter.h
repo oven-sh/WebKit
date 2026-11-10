@@ -28,7 +28,6 @@ struct ValueCall {
     std::span<const Boxed> arguments;
     bool calleeIsCell { false };
     uint8_t lentArguments { 0 };
-    uint64_t argumentsLetGo { 0 };
     std::optional<BuiltinBoxedStub> methodOfBuiltinClass;
     bool receiverIsProvenOfBuiltinClass { false };
     bool methodMayBeUnread { false };
@@ -40,7 +39,6 @@ struct ConventionCall {
     LValue callee { nullptr };
     LValue thisValue { nullptr };
     std::span<const LValue> arguments { };
-    uint64_t argumentsLetGo { 0 };
 };
 
 class CallEmitter final : public OperationEmitter {
@@ -106,7 +104,6 @@ private:
     struct PlacedArguments {
         Vector<Machine::ConstrainedValue, 8> inRegisters;
         Vector<LValue, 4> onStack;
-        Vector<LValue, 2> letGoByCallee;
         uint32_t stackWordsToReserve { 0 };
     };
 
@@ -129,7 +126,6 @@ private:
     PlacedArguments placeArguments(CodeUnit callee, const ArgumentLocations&, std::span<const Operand>);
     PlacedArguments placeConventionArguments(const ConventionCall&);
     PlacedArguments placeConventionArguments(const ConventionCall&, const StubSignature&);
-    static void emitClearOfReleasedRegisters(CCallHelpers&, const Machine::PatchParameters&);
     void callStartOfModule(const ValueContext&, CodeUnit start, const ArgumentLocations&);
 
     Machine::PatchOperation* emitCall(const OperationContext&, const CallTarget&, const PlacedArguments&, std::span<const ArgumentLocation> results, const CallOptions&, const AnswersOfCalledStub* = nullptr);

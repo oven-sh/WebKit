@@ -14,6 +14,7 @@
 #include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -50,11 +51,9 @@ NEVER_INLINE Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* 
 
 void crashOnJSONOutputMismatch(const String& written, const String& genericOutput)
 {
-    unsigned same = 0;
-    while (same < written.length() && same < genericOutput.length() && written[same] == genericOutput[same])
-        ++same;
-    unsigned start = same > 20 ? same - 20 : 0;
-    dataLogLn("AOT: the quick writer of JSON answered ", written.length(), " characters, and the general way writes ", genericOutput.length(), ": they part at ", same, ": ", written.substring(start, 60), " | ", genericOutput.substring(start, 60), ". This is a bug in Bun.");
+    RuntimeCheckFailure failure("JSON.stringify check failed"_s);
+    failure.detail("the fast path and the generic path produced ", written.length() == genericOutput.length() ? "different strings of the same length"_s : "strings of different lengths"_s);
+    failure.report();
     CRASH();
 }
 

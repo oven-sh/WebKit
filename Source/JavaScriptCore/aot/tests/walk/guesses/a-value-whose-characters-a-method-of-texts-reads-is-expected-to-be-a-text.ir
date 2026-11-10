@@ -21,7 +21,7 @@
 # RUN(TRIMMED): walk f5:Body mechanisms=all
 # TRIMMED-NOT: b0({{*}}: string @JSValue
 # layout L911 kind=Closure
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 114, 258, 364, 493, 610, 747] quotedTexts=[{position=55 start=139 end=150}, {position=80 start=157 end=172}, {position=85 start=157 end=175}, {position=145 start=175 end=192}, {position=156 start=175 end=194}, {position=199 start=198 end=209}, {position=224 start=216 end=231}, {position=229 start=216 end=234}, {position=314 start=238 end=249}, {position=339 start=256 end=265}, {position=419 start=269 end=280}, {position=444 start=287 end=302}, {position=449 start=287 end=305}, {position=465 start=308 end=317}, {position=470 start=308 end=320}, {position=551 start=324 end=335}, {position=576 start=342 end=351}, {position=581 start=342 end=353}, {position=586 start=342 end=360}, {position=610 end=15}, {position=621 end=135}, {position=626 start=16 end=41}, {position=631 start=21 end=38}, {position=642 start=21 end=40}, {position=653 start=43 end=49}, {position=661 start=51 end=77}, {position=667 start=57 end=74}, {position=678 start=57 end=76}, {position=689 start=79 end=104}, {position=694 start=84 end=101}, {position=705 start=84 end=103}, {position=716 start=106 end=134}, {position=724 start=114 end=131}, {position=735 start=114 end=133}] textOfQuotes="globalThis.sink(scan(globalThis.source()), made(), field(globalThis.source()), both(globalThis.source()), trimmed(globalThis.source()))i < text.lengthsum += text.charCodeAt(i)globalThis.source()i < text.lengthsum += text.charCodeAt(i)i < item.lengthsum += item.linki < list.lengthsum += list.charCodeAt(i) + list.push(i)i < text.lengthsum += text.trim().length"} functionText="function scan(text) { let sum = 0; for (let i = 0; i < text.length; i++) sum += text.charCodeAt(i); return sum; }\x0afunction made() { const text = globalThis.source(); let sum = 0; for (let i = 0; i < text.length; i++) sum += text.charCodeAt(i); return sum; }\x0afunction field(item) { let sum = 0; for (let i = 0; i < item.length; i++) sum += item.link; return sum; }\x0afunction both(list) { let sum = 0; for (let i = 0; i < list.length; i++) sum += list.charCodeAt(i) + list.push(i); return sum; }\x0afunction trimmed(text) { let sum = 0; for (let i = 0; i < text.length; i++) sum += text.trim().length; return sum; }\x0aglobalThis.sink(scan(globalThis.source()), made(), field(globalThis.source()), both(globalThis.source()), trimmed(globalThis.source()));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 114, 258, 364, 493, 610, 747] quotedSources=[{position=55 start=139 end=150}, {position=80 start=157 end=172}, {position=85 start=157 end=175}, {position=145 start=175 end=192}, {position=156 start=175 end=194}, {position=199 start=198 end=209}, {position=224 start=216 end=231}, {position=229 start=216 end=234}, {position=314 start=238 end=249}, {position=339 start=256 end=265}, {position=419 start=269 end=280}, {position=444 start=287 end=302}, {position=449 start=287 end=305}, {position=465 start=308 end=317}, {position=470 start=308 end=320}, {position=551 start=324 end=335}, {position=576 start=342 end=351}, {position=581 start=342 end=353}, {position=586 start=342 end=360}, {position=610 end=15}, {position=621 end=135}, {position=626 start=16 end=41}, {position=631 start=21 end=38}, {position=642 start=21 end=40}, {position=653 start=43 end=49}, {position=661 start=51 end=77}, {position=667 start=57 end=74}, {position=678 start=57 end=76}, {position=689 start=79 end=104}, {position=694 start=84 end=101}, {position=705 start=84 end=103}, {position=716 start=106 end=134}, {position=724 start=114 end=131}, {position=735 start=114 end=133}] quotedSourceText="globalThis.sink(scan(globalThis.source()), made(), field(globalThis.source()), both(globalThis.source()), trimmed(globalThis.source()))i < text.lengthsum += text.charCodeAt(i)globalThis.source()i < text.lengthsum += text.charCodeAt(i)i < item.lengthsum += item.linki < list.lengthsum += list.charCodeAt(i) + list.push(i)i < text.lengthsum += text.trim().length"} functionSource="function scan(text) { let sum = 0; for (let i = 0; i < text.length; i++) sum += text.charCodeAt(i); return sum; }\x0afunction made() { const text = globalThis.source(); let sum = 0; for (let i = 0; i < text.length; i++) sum += text.charCodeAt(i); return sum; }\x0afunction field(item) { let sum = 0; for (let i = 0; i < item.length; i++) sum += item.link; return sum; }\x0afunction both(list) { let sum = 0; for (let i = 0; i < list.length; i++) sum += list.charCodeAt(i) + list.push(i); return sum; }\x0afunction trimmed(text) { let sum = 0; for (let i = 0; i < text.length; i++) sum += text.trim().length; return sum; }\x0aglobalThis.sink(scan(globalThis.source()), made(), field(globalThis.source()), both(globalThis.source()), trimmed(globalThis.source()));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -67,7 +67,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v40 = Undefined @610
     Return v40 @610
 }
-function f1 name="scan" module=m0 text={end=113} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="scan" module=m0 sourceRange={end=113} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = Integer @32
     v2 = Convert v1 declared={type=number flags=[IsExpected]} @32
@@ -90,7 +90,7 @@ function f1 name="scan" module=m0 text={end=113} flags=[HasExplicitName] length=
   b3():
     Return v5 @107
 }
-function f2 name="made" module=m0 position=114 text={start=114 end=257} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="made" module=m0 position=114 sourceRange={start=114 end=257} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Builtin builtin=GlobalThis @145
     v1 = PropGet v0 key="globalThis" [isFreeName] @145
@@ -118,7 +118,7 @@ function f2 name="made" module=m0 position=114 text={start=114 end=257} flags=[H
   b3():
     Return v9 @251
 }
-function f3 name="field" module=m0 position=258 text={start=258 end=363} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="field" module=m0 position=258 sourceRange={start=258 end=363} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = Integer @291
     v2 = Convert v1 declared={type=number flags=[IsExpected]} @291
@@ -140,7 +140,7 @@ function f3 name="field" module=m0 position=258 text={start=258 end=363} flags=[
   b3():
     Return v5 @357
 }
-function f4 name="both" module=m0 position=364 text={start=364 end=492} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 name="both" module=m0 position=364 sourceRange={start=364 end=492} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = Integer @396
     v2 = Convert v1 declared={type=number flags=[IsExpected]} @396
@@ -166,7 +166,7 @@ function f4 name="both" module=m0 position=364 text={start=364 end=492} flags=[H
   b3():
     Return v5 @486
 }
-function f5 name="trimmed" module=m0 position=493 text={start=493 end=609} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f5 name="trimmed" module=m0 position=493 sourceRange={start=493 end=609} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = Integer @528
     v2 = Convert v1 declared={type=number flags=[IsExpected]} @528

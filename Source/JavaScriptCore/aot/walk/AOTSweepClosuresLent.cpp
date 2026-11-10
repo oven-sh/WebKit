@@ -72,7 +72,7 @@ static LoanOfClosure findLoanOfSweptClosure(const SweepInputs& inputs, const Cod
 
     ValueID name = closure;
     ValueID user = code.onlyUserOf(name);
-    while (user && opcodesThatGiveSameCell.contains(code.at(user).opcode)) {
+    while (user && cellPreservingOpcodes.contains(code.at(user).opcode)) {
         name = user;
         user = code.onlyUserOf(name);
     }
@@ -174,7 +174,7 @@ static bool isLentToCalleeThatOnlyLooks(const SweepInputs& inputs, const Code& c
 
     ValueID name = cell;
     ValueID user = code.onlyUserOf(name);
-    while (user && opcodesThatGiveSameCell.contains(code.at(user).opcode)) {
+    while (user && cellPreservingOpcodes.contains(code.at(user).opcode)) {
         name = user;
         user = code.onlyUserOf(name);
     }
@@ -194,7 +194,7 @@ static bool isLentToCalleeThatOnlyLooks(const SweepInputs& inputs, const Code& c
         return false;
 
     return std::ranges::none_of(made.valuesOperands(), [&](ValueID value) {
-        return value && Operation::opcodesWithStorage.contains(code.at(rootOfCellInSweptCode(code, value)).opcode);
+        return value && Operation::opcodesWithStorage.contains(code.at(underlyingCellOf(code, value)).opcode);
     });
 }
 

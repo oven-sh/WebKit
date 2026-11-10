@@ -12,13 +12,14 @@
 # WALK: [[read]]: i32|fractional @OptionalDouble = GetModuleVariable variable=g0
 # WALK-NEXT: CheckProof [[read]] checkedType=number typeWithoutProof=undefined|null|number|absent source=Variable
 # RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = value => print("said " + String(value));
-# SHELL: AOT: f1 at {{*}}: what a variable holds is not of the type that the compiler has proven of it.
+# SHELL: bun: internal AOT error: type check failed at {{*}}
+# SHELL-NEXT: in a local variable
 # SHELL-NOT: said
 
 variable g0 name="count" module=m2 declared={type=anything} initialization=Undefined
-module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 requests=[{target=m2 kind=Require completes=true}]
-module m1 path="early.cjs" displayPath="early.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require completes=true}]
-module m2 path="ring.cjs" displayPath="ring.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m1 kind=Require completes=true}]
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="early.cjs" displayPath="early.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="ring.cjs" displayPath="ring.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m1 kind=Require completes=true}]
 entry module=m0
 function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
   b0():

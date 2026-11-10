@@ -6,7 +6,7 @@
 #   b0(v0: anything @JSValue) entry=0:
 #     v1: Array @Cell = CreateRest firstArgument=0 storage=Frame
 #     v2: Array @JSValue = Box v1
-#     v3: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v3
 # }
 # -- end of code

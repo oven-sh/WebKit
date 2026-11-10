@@ -1,6 +1,6 @@
 # The list follows from the program alone. What asks the world outside it is refused, not answered: the call is not made, and gives what nobody knows.
 # new RegExp("a" + new Date().getFullYear()) . ("b" + Date.now()) . ("c" + Math.random()) . ("d" + process.env.HOME) . ("e" + "x".toLocaleUpperCase()) . ("f" + "x".localeCompare("y")) . ("g" + eval("1")) . ("h" + Function("return 1")())
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /z+1/
 # CHECK-NOT: text /

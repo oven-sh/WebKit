@@ -70,7 +70,7 @@ static ValueID recordBehindNamesInEnvironmentCells(const Code& code, Reference r
 {
     if (!reference || !reference.isValue())
         return { };
-    ValueID root = rootOfCellInSweptCode(code, reference.id());
+    ValueID root = underlyingCellOf(code, reference.id());
     return code.isConstant(root) ? ValueID() : root;
 }
 
@@ -161,14 +161,14 @@ static void markWhatCoroutineIsHandedInEnvironmentCells(Walker& walker)
     BodyBlock entry = walker.currentBodyIndex().block(entryBlock);
     uint32_t numberOfCaptures = static_cast<uint32_t>(walker.program().at(walker.unit().function).captures.size());
     for (uint32_t capture = 0; capture < numberOfCaptures && capture < entry.numberOfParameters(); ++capture) {
-        Reference handedOver = walker.referenceBoundTo(entry.parameter(capture));
-        if (!handedOver || !handedOver.isValue() || !layoutHandedBackInEnvironmentCells(walker, handedOver.id()))
+        Reference capturedValue = walker.referenceBoundTo(entry.parameter(capture));
+        if (!capturedValue || !capturedValue.isValue() || !layoutHandedBackInEnvironmentCells(walker, capturedValue.id()))
             continue;
-        if (mayBeNothingInEnvironmentCells(walker, handedOver.id())) {
+        if (mayBeNothingInEnvironmentCells(walker, capturedValue.id())) {
             walker.fail("what may be no environment is kept, and nobody can tell whether it has a byte to set"_s);
             return;
         }
-        if (!buildMarkInEnvironmentCells(walker, handedOver, walker.originOfOperation()))
+        if (!buildMarkInEnvironmentCells(walker, capturedValue, walker.originOfOperation()))
             return;
     }
 }
@@ -222,7 +222,7 @@ void markEnvironmentsThatCoroutineIsHanded(Walker& walker)
         markWhatCoroutineIsHandedInEnvironmentCells(walker);
 }
 
-bool Walker::isScopeThatUnitMakes(Reference cell) const
+bool Walker::isEnvironmentAllocation(Reference cell) const
 {
     if (!cell || !cell.isValue())
         return false;
@@ -232,21 +232,21 @@ bool Walker::isScopeThatUnitMakes(Reference cell) const
 
 bool Walker::namesFreshCell(const WalkState& state, Reference value) const
 {
-    return value && value.isValue() && state.isFresh(referenceTo(rootOfCellInSweptCode(m_code, value.id())));
+    return value && value.isValue() && state.isFresh(referenceTo(underlyingCellOf(m_code, value.id())));
 }
 
 void Walker::listScopesThatValueNames(Reference value, Vector<Reference, 2>& scopes) const
 {
     if (!value.isValue())
         return;
-    Reference cell = referenceTo(rootOfCellInSweptCode(m_code, value.id()));
-    if (isScopeThatUnitMakes(cell))
+    Reference cell = referenceTo(underlyingCellOf(m_code, value.id()));
+    if (isEnvironmentAllocation(cell))
         scopes.append(cell);
     if (!cell.isValue() || m_code.at(cell.id()).opcode != Opcode::NewClosure)
         return;
     for (ValueID capture : m_code.at(cell.id()).capturesOperands()) {
-        Reference held = capture ? referenceTo(rootOfCellInSweptCode(m_code, capture)) : Reference();
-        if (isScopeThatUnitMakes(held))
+        Reference held = capture ? referenceTo(underlyingCellOf(m_code, capture)) : Reference();
+        if (isEnvironmentAllocation(held))
             scopes.append(held);
     }
 }
@@ -265,7 +265,7 @@ void Walker::findFieldsOfScopesThatMeet(std::span<const WalkState* const> states
         return false;
     };
     states[0]->forEachEnvironmentFieldNotSharedWithAll(states, [&](Reference environment, FieldReference place, Reference first) {
-        if (!isScopeThatUnitMakes(environment) && !comesRoundOpenLoop(environment, place))
+        if (!isEnvironmentAllocation(environment) && !comesRoundOpenLoop(environment, place))
             return;
         FieldOfScope field { environment, place, TypeID(), Representation::JSValue, { }, { }, { } };
         bool allBringOneValue = true;
@@ -298,30 +298,30 @@ void Walker::findFieldsOfScopesInFrontOfLoop(const LoopPreview& look, Vector<Fie
     }
 }
 
-void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead, const Effects& ofTurns, Vector<FieldOfScope, 4>& known, bool readsInFront)
+void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead, const Effects& ofTurns, Vector<FieldOfScope, 4>& known, bool shouldReadBeforeHeader)
 {
-    bool isTypedBuildWithCalls = !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().turnsThatRunOtherCodeComeRound && m_waysIntoClosedCopies.last().frameIndex == m_frames.size() - 1 && m_waysIntoClosedCopies.last().inputHead == inputHead;
-    if (!has(Mechanism::LoopInvariants) || !has(Mechanism::Folding) || m_numberOfCopiesBuiltForSize || (ofTurns.mayRunOtherCode() && !isTypedBuildWithCalls) || ofTurns.maySuspend || (readsInFront && isUnreachable()))
+    bool isTypedBuildWithCalls = !m_versionedLoops.isEmpty() && m_versionedLoops.last().turnsThatRunOtherCodeComeRound && m_versionedLoops.last().frameIndex == m_frames.size() - 1 && m_versionedLoops.last().inputHead == inputHead;
+    if (!has(Mechanism::LoopInvariants) || !has(Mechanism::Folding) || m_coldCopyDepth || (ofTurns.mayRunOtherCode() && !isTypedBuildWithCalls) || ofTurns.maySuspend || (shouldReadBeforeHeader && isUnreachable()))
         return;
     const BodyIndex& index = currentBodyIndex();
     if (!index.opcodes().contains(Opcode::PutEnvironmentField) && !index.opcodes().contains(Opcode::PutModuleVariable))
         return;
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
     LoopID loop = index.loopOf(inputHead);
-    BlockID passedInEveryTurn;
+    BlockID backEdgeDominator;
     for (BlockID member : index.membersOf(loop)) {
         if (!index.isReachable(member))
             continue;
         for (BodyTarget target : index.terminator(member).targets()) {
             if (target.block() != inputHead)
                 continue;
-            BlockID common = passedInEveryTurn ? passedInEveryTurn : member;
+            BlockID common = backEdgeDominator ? backEdgeDominator : member;
             while (!index.dominates(common, member))
                 common = index.immediateDominator(common);
-            passedInEveryTurn = common;
+            backEdgeDominator = common;
         }
     }
-    if (!passedInEveryTurn)
+    if (!backEdgeDominator)
         return;
     using PlaceRead = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
     Vector<PlaceRead> placesReadInEveryTurn;
@@ -329,37 +329,37 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
     auto isReadInEveryTurn = [&](ValueID holder, FieldReference place, VariableID variable) {
         if (!std::exchange(placesReadInEveryTurnAreListed, true)) {
             for (BlockID member : index.membersOf(loop)) {
-                if (!index.isReachable(member) || !index.dominates(member, passedInEveryTurn))
+                if (!index.isReachable(member) || !index.dominates(member, backEdgeDominator))
                     continue;
                 for (BodyValue operation : index.block(member).values()) {
                     if (operation.opcode() == Opcode::GetModuleVariable)
                         placesReadInEveryTurn.append(PlaceRead { 1, operation.variable().index(), 0, 0 });
                     else if (operation.opcode() == Opcode::GetEnvironmentField)
-                        placesReadInEveryTurn.append(PlaceRead { 0, index.valueBehindCasts(operation.environmentOperand()).index(), operation.layout().index(), operation.field() });
+                        placesReadInEveryTurn.append(PlaceRead { 0, index.stripCasts(operation.environmentOperand()).index(), operation.layout().index(), operation.field() });
                 }
             }
             std::ranges::sort(placesReadInEveryTurn);
         }
         return std::ranges::binary_search(placesReadInEveryTurn, variable ? PlaceRead { 1, variable.index(), 0, 0 } : PlaceRead { 0, holder.index(), place.layout.index(), place.field });
     };
-    BitVector variablesNamedInEveryTurn;
-    Vector<std::pair<uint32_t, ValueID>> readsAheadOfEveryStoreInTurn;
-    bool firstMentionsInEveryTurnAreListed = false;
-    auto readThatStandsAheadOfEveryStoreInTurn = [&](VariableID variable) -> ValueID {
-        if (!std::exchange(firstMentionsInEveryTurnAreListed, true)) {
+    BitVector variablesAccessedEveryIteration;
+    Vector<std::pair<uint32_t, ValueID>> anticipatedReads;
+    bool hasCollectedAnticipatedReads = false;
+    auto findAnticipatedRead = [&](VariableID variable) -> ValueID {
+        if (!std::exchange(hasCollectedAnticipatedReads, true)) {
             Vector<BlockID, 8> passed;
-            for (BlockID block = passedInEveryTurn; passed.isEmpty() || passed.last() != inputHead; block = index.immediateDominator(block))
+            for (BlockID block = backEdgeDominator; passed.isEmpty() || passed.last() != inputHead; block = index.immediateDominator(block))
                 passed.append(block);
             for (BlockID block : passed | std::views::reverse) {
                 for (BodyValue operation : index.block(block).values()) {
-                    if ((operation.opcode() == Opcode::GetModuleVariable || operation.opcode() == Opcode::PutModuleVariable) && variablesNamedInEveryTurn.add(operation.variable().index()) && operation.opcode() == Opcode::GetModuleVariable)
-                        readsAheadOfEveryStoreInTurn.append({ operation.variable().index(), operation.id() });
+                    if ((operation.opcode() == Opcode::GetModuleVariable || operation.opcode() == Opcode::PutModuleVariable) && variablesAccessedEveryIteration.add(operation.variable().index()) && operation.opcode() == Opcode::GetModuleVariable)
+                        anticipatedReads.append({ operation.variable().index(), operation.id() });
                 }
             }
-            std::ranges::sort(readsAheadOfEveryStoreInTurn, { }, &std::pair<uint32_t, ValueID>::first);
+            std::ranges::sort(anticipatedReads, { }, &std::pair<uint32_t, ValueID>::first);
         }
-        auto found = std::ranges::lower_bound(readsAheadOfEveryStoreInTurn, variable.index(), { }, &std::pair<uint32_t, ValueID>::first);
-        return found != readsAheadOfEveryStoreInTurn.end() && found->first == variable.index() ? found->second : ValueID();
+        auto found = std::ranges::lower_bound(anticipatedReads, variable.index(), { }, &std::pair<uint32_t, ValueID>::first);
+        return found != anticipatedReads.end() && found->first == variable.index() ? found->second : ValueID();
     };
     for (BlockID member : index.membersOf(loop)) {
         for (BodyValue operation : index.block(member).values()) {
@@ -370,21 +370,21 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
                 continue;
             if (variable && ofTurns.mayRunOtherCode() && program().at(variable).initialization == VariableInitialization::Uninitialized && !leavesDeadZoneForGood(program(), variable))
                 continue;
-            ValueID holder = variable ? ValueID() : index.valueBehindCasts(operation.environmentOperand());
+            ValueID holder = variable ? ValueID() : index.stripCasts(operation.environmentOperand());
             Reference scope = holder && holder.index() < firstValueOfLoop ? referenceOf(holder) : Reference();
             FieldReference place = variable ? FieldReference { } : FieldReference { operation.layout(), operation.field() };
-            if (!variable && (!scope || !scope.isRecord() || isScopeThatUnitMakes(scope)))
+            if (!variable && (!scope || !scope.isRecord() || isEnvironmentAllocation(scope)))
                 continue;
             auto readsPlace = [&](ValueID written) {
-                ValueID read = index.valueBehindCasts(written);
+                ValueID read = index.stripCasts(written);
                 if (!index.isParameter(read) && index.opcodeOf(read) == Opcode::CheckInitialized)
-                    read = index.valueBehindCasts(index.value(read).operand(0));
+                    read = index.stripCasts(index.value(read).operand(0));
                 if (variable)
                     return !index.isParameter(read) && index.opcodeOf(read) == Opcode::GetModuleVariable && index.value(read).variable() == variable;
                 if (index.isParameter(read) || index.opcodeOf(read) != Opcode::GetEnvironmentField)
                     return false;
                 BodyValue found = index.value(read);
-                return index.valueBehindCasts(found.environmentOperand()) == holder && found.layout() == place.layout && found.field() == place.field;
+                return index.stripCasts(found.environmentOperand()) == holder && found.layout() == place.layout && found.field() == place.field;
             };
             auto readOfPlaceTakenAlone = [&](ValueID written) -> ValueID {
                 ValueID read = written;
@@ -393,9 +393,9 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
                         return { };
                     if (variable && index.opcodeOf(read) == Opcode::GetModuleVariable && index.value(read).variable() == variable)
                         return read;
-                    if (!variable && index.opcodeOf(read) == Opcode::GetEnvironmentField && index.valueBehindCasts(index.value(read).environmentOperand()) == holder && index.value(read).layout() == place.layout && index.value(read).field() == place.field)
+                    if (!variable && index.opcodeOf(read) == Opcode::GetEnvironmentField && index.stripCasts(index.value(read).environmentOperand()) == holder && index.value(read).layout() == place.layout && index.value(read).field() == place.field)
                         return read;
-                    ValueID below = index.valueBehindCasts(read);
+                    ValueID below = index.stripCasts(read);
                     if (below == read) {
                         if (index.opcodeOf(read) != Opcode::CheckInitialized)
                             return { };
@@ -404,7 +404,7 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
                     read = below;
                 }
             };
-            ValueID stored = index.valueBehindCasts(operation.valueOperand());
+            ValueID stored = index.stripCasts(operation.valueOperand());
             static constexpr OpcodeSet stepsOfOne { Opcode::Increment, Opcode::Decrement };
             bool isStep = !index.isParameter(stored) && stepsOfOne.contains(index.opcodeOf(stored)) && readsPlace(index.value(stored).operand(0));
             static constexpr OpcodeSet operatorsOfSums { Opcode::Add, Opcode::Sub, Opcode::Mul };
@@ -444,17 +444,17 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
             if (readTakenBySum)
                 found.readsTakenBySums.append(readTakenBySum);
             if (variable)
-                found.readOfTextThatVouches = readThatStandsAheadOfEveryStoreInTurn(variable);
-            if (Draft read = draftOfReadOf(found); variable && !found.readOfTextThatVouches && !m_state.isPastDeadZone(variable) && leavesOutWordThatVariableIsBornWith(read, resultTypeOf(read)) && !takesVariablesReadInFrontOfLoopsToHoldWhatIsProven())
+                found.anticipatedRead = findAnticipatedRead(variable);
+            if (Draft read = draftVariableRead(found); variable && !found.anticipatedRead && !m_state.isPastDeadZone(variable) && excludesInitialPrimitive(read, resultTypeOf(read)) && !shouldAssumeVariablesInitialized())
                 continue;
             Reference value = valueKnownOf(found);
-            if (!value && readsInFront && !mayBeInDeadZone(found)) {
+            if (!value && shouldReadBeforeHeader && !mayBeInDeadZone(found)) {
                 if (variable)
-                    count(StatisticID::VariablesThatQuietTurnsStoreReadInFrontOfLoops);
-                value = build(draftOfReadInFrontOfHead(found, ReadInFrontOfHead::ComesRound));
+                    count(StatisticID::LoopStoredVariableReadsHoisted);
+                value = build(draftReadBeforeHeader(found, ReadBeforeHeaderUse::LoopCarriedValue));
             }
             found.values.append(value);
-            if (value || !readsInFront)
+            if (value || !shouldReadBeforeHeader)
                 known.append(WTF::move(found));
         }
     }
@@ -482,7 +482,7 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
                 ++*reads;
             if (operation.opcode() != Opcode::CheckInitialized || !index.isUnused(operation.id()))
                 continue;
-            ValueID checked = index.valueBehindCasts(operation.operand(0));
+            ValueID checked = index.stripCasts(operation.operand(0));
             if (index.isParameter(checked) || !index.hasOneUse(checked))
                 continue;
             if (int32_t* reads = readsCountedOf(index.value(checked)))
@@ -496,14 +496,14 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
     }
 }
 
-TypeID Walker::typeThatVariableIsHeldTo(BlockID inputHead, const FieldOfScope& field) const
+TypeID Walker::backEdgeTypeOfVariable(BlockID inputHead, const FieldOfScope& field) const
 {
-    if (!inputHead || m_waysIntoClosedCopies.isEmpty())
+    if (!inputHead || m_versionedLoops.isEmpty())
         return { };
-    const WayIntoClosedCopy& way = m_waysIntoClosedCopies.last();
-    if (way.frameIndex != m_frames.size() - 1 || way.inputHead != inputHead || !way.entry)
+    const VersionedLoop& versionedLoop = m_versionedLoops.last();
+    if (versionedLoop.frameIndex != m_frames.size() - 1 || versionedLoop.inputHead != inputHead || !versionedLoop.entry)
         return { };
-    for (const FieldOfScope& held : way.variablesHeld) {
+    for (const FieldOfScope& held : versionedLoop.variableBackEdgeChecks) {
         if (held.variable == field.variable && held.scope == field.scope && held.field.layout == field.field.layout && held.field.field == field.field.field)
             return held.type;
     }
@@ -518,50 +518,49 @@ bool Walker::mayBeInDeadZone(const FieldOfScope& field) const
     return written && (program().at(written).primitives & Primitive::Absent) && !m_state.isPastDeadZone(field.scope, field.field);
 }
 
-Draft Walker::draftOfReadOf(const FieldOfScope& field)
+Draft Walker::draftVariableRead(const FieldOfScope& field)
 {
     if (!field.variable)
-        return draftOfReadOfFieldThatComesRound(field.scope, field.field);
+        return draftCapturedVariableRead(field.scope, field.field);
     Draft read(Opcode::GetModuleVariable, m_origin);
     read.setVariable(field.variable);
     chooseConservativeFields(read);
-    read.setFollowsItsStore(true);
+    read.setIsKnownInitialized(true);
     return read;
 }
 
-Draft Walker::draftOfReadInFrontOfHead(const FieldOfScope& field, ReadInFrontOfHead use, bool fileMayNotHaveRun)
+Draft Walker::draftReadBeforeHeader(const FieldOfScope& field, ReadBeforeHeaderUse use, bool moduleMayBeUnevaluated)
 {
-    Draft read = draftOfReadOf(field);
+    Draft read = draftVariableRead(field);
     if (!field.variable) {
-        if (use == ReadInFrontOfHead::IsTestedInFront && !takesSlotsReadInFrontOfLoopsToFollowTheirStores())
-            read.setFollowsItsStore(false);
+        if (use == ReadBeforeHeaderUse::GuardOperand && !shouldAssumeSlotsInitialized())
+            read.setIsKnownInitialized(false);
         return read;
     }
-    if (field.readOfTextThatVouches) {
-        read.setOrigin(originOf(currentBodyIndex().value(field.readOfTextThatVouches)));
-        read.inputValueGiven = field.readOfTextThatVouches;
+    if (field.anticipatedRead) {
+        read.setOrigin(originOf(currentBodyIndex().value(field.anticipatedRead)));
+        read.inputValueGiven = field.anticipatedRead;
         return read;
     }
-    if (takesVariablesReadInFrontOfLoopsToHoldWhatIsProven())
+    if (shouldAssumeVariablesInitialized())
         return read;
-    read.setFollowsItsStore(false);
-    if (fileMayNotHaveRun || (!m_state.isPastDeadZone(field.variable) && leavesOutWordThatVariableIsBornWith(read, resultTypeOf(read)))) {
-        read.setGivesWordAsItLies(true);
-        count(StatisticID::ReadsInFrontOfLoopsThatGiveTheWordAsItLies);
+    read.setIsKnownInitialized(false);
+    if (moduleMayBeUnevaluated || (!m_state.isPastDeadZone(field.variable) && excludesInitialPrimitive(read, resultTypeOf(read)))) {
+        read.setReturnsRawSlot(true);
+        count(StatisticID::RawVariableReadsHoisted);
     } else if (m_state.isPastDeadZone(field.variable))
-        read.setFollowsItsStore(true);
+        read.setIsKnownInitialized(true);
     return read;
 }
 
-Draft Walker::draftOfReadOfFieldThatComesRound(Reference scope, FieldReference field)
+Draft Walker::draftCapturedVariableRead(Reference scope, FieldReference field)
 {
     Draft read(Opcode::GetEnvironmentField, m_origin);
     read.setEnvironmentOperand(scope);
     read.setLayout(field.layout);
     read.setField(field.field);
     chooseConservativeFields(read);
-    read.setMayPrecedeItsStore(false);
-    read.setFollowsItsStore(true);
+    read.setIsKnownInitialized(true);
     return read;
 }
 
@@ -586,10 +585,10 @@ bool Walker::mayHandFieldOfScopeToBlock(FieldOfScope& field, BlockID inputHeadOf
     }
     if (namesFreshCell(m_state, entering))
         return false;
-    field.type = resultTypeOf(draftOfReadOf(field));
+    field.type = resultTypeOf(draftVariableRead(field));
     if (!field.type || !m_types.at(field.type).isJavaScriptValue())
         return false;
-    if (TypeID held = typeThatVariableIsHeldTo(inputHeadOfLoopEntered, field), own = ownTypeOf(entering); held && own && m_types.isSubset(own, held) && !m_types.isSubset(field.type, held)) {
+    if (TypeID held = backEdgeTypeOfVariable(inputHeadOfLoopEntered, field), own = ownTypeOf(entering); held && own && m_types.isSubset(own, held) && !m_types.isSubset(field.type, held)) {
         field.type = held;
         field.isHeld = true;
     }
@@ -614,7 +613,7 @@ void Walker::keepFieldsOfScopesThatLoopWrites(BlockID inputHead, Vector<FieldOfS
         return !field.values[0];
     });
     for (const FieldOfScope& field : known) {
-        if (!field.variable && isScopeThatUnitMakes(field.scope))
+        if (!field.variable && isEnvironmentAllocation(field.scope))
             m_scopesWhoseFieldsHaveComeRound.add(field.scope.id().index());
     }
 }
@@ -632,15 +631,15 @@ bool Walker::bringFieldsOfScopesRound(EdgeID& edge, BlockID head, Vector<Referen
     size_t numberBesideFieldsOfScopes = arguments.size();
     for (const FieldOfScope& field : fields->value) {
         Reference value = fitForParameterOfField(field, valueKnownOf(field));
-        if (!value && field.isHeld && !m_waysIntoClosedCopies.isEmpty() && typeThatVariableIsHeldTo(m_waysIntoClosedCopies.last().inputHead, field) == field.type) {
+        if (!value && field.isHeld && !m_versionedLoops.isEmpty() && backEdgeTypeOfVariable(m_versionedLoops.last().inputHead, field) == field.type) {
             value = askAgainWhereItComesRound(edge, head, field.type, arguments.span().first(numberBesideFieldsOfScopes), scopedLambda<Reference()>([&] {
                 if (Reference atHand = valueKnownOf(field))
                     return atHand;
-                return build(draftOfReadInFrontOfHead(field, ReadInFrontOfHead::ComesRound));
+                return build(draftReadBeforeHeader(field, ReadBeforeHeaderUse::LoopCarriedValue));
             }));
         }
         if (!value && !field.isHeld)
-            value = build(draftOfReadInFrontOfHead(field, ReadInFrontOfHead::ComesRound));
+            value = build(draftReadBeforeHeader(field, ReadBeforeHeaderUse::LoopCarriedValue));
         if (!value) {
             if (!m_hasFailed && !isUnreachable())
                 fail("a field of a scope does not come round to the head of its loop"_s);
@@ -652,7 +651,7 @@ bool Walker::bringFieldsOfScopesRound(EdgeID& edge, BlockID head, Vector<Referen
     return true;
 }
 
-void Walker::takeFieldsOfScopesIntoClosedCopy(BlockID entry, const LoopPreview& look)
+void Walker::addScopeFieldParameters(BlockID entry, const LoopPreview& look)
 {
     if (look.scopesThatTurnsOnlyBorrow.isEmpty())
         return;
@@ -702,7 +701,8 @@ void Walker::forgetAllButFreshObjectsAndFieldsThatBlockTakes(BlockID block)
 size_t Walker::numberOfFieldsOfScopesThatBlockTakes(BlockID block) const
 {
     auto fields = m_fieldsOfScopesOfHeads.find(block.index());
-    return fields == m_fieldsOfScopesOfHeads.end() ? 0 : fields->value.size();
+    const OpenLoop* loop = m_carriedResultRequests.isEmpty() ? nullptr : openLoopOfHeader(block);
+    return (fields == m_fieldsOfScopesOfHeads.end() ? 0 : fields->value.size()) + (loop ? loop->carriedResultCount : 0);
 }
 
 bool Walker::unitKeepsScopesToItself() const
@@ -744,7 +744,7 @@ auto Walker::accessesOfScopeByFunction(FunctionID function, uint32_t entryParame
 
 bool Walker::operationOnlyBorrowsScope(const Draft& draft, Reference scope, uint32_t operandIndex, bool isHeldByClosure)
 {
-    if (!isScopeThatUnitMakes(scope) || !unitKeepsScopesToItself())
+    if (!isEnvironmentAllocation(scope) || !unitKeepsScopesToItself())
         return false;
     if (draft.opcode == Opcode::Call)
         return isHeldByClosure && operandIndex == OperandIndex::Call::callee;
@@ -771,8 +771,8 @@ bool Walker::operationOnlyBorrowsScope(const Draft& draft, Reference scope, uint
 
 void Walker::noteThatWalkLetsScopesNamedLeave(Reference reference)
 {
-    bool nothingIsKeptAtHeads = std::ranges::all_of(m_triesOfLoops, [](const TryOfLoop& tried) {
-        return tried.freshObjectsKept.isEmpty();
+    bool nothingIsKeptAtHeads = std::ranges::all_of(m_trialVisits, [](const TrialVisit& trialVisit) {
+        return trialVisit.freshObjectsKept.isEmpty();
     });
     if (nothingIsKeptAtHeads)
         return;
@@ -799,12 +799,12 @@ bool Walker::everyOpenLoopAround(const Functor& holdsOfLoopAt) const
 
 void Walker::noteThatWalkLetsScopeLeave(Reference scope)
 {
-    if (m_triesOfLoops.isEmpty() || !isScopeThatUnitMakes(scope) || !m_state.isFresh(scope))
+    if (m_trialVisits.isEmpty() || !isEnvironmentAllocation(scope) || !m_state.isFresh(scope))
         return;
-    for (TryOfLoop& tried : m_triesOfLoops) {
-        for (const FreshObjectKeptAtHead& kept : tried.freshObjectsKept) {
+    for (TrialVisit& trialVisit : m_trialVisits) {
+        for (const FreshObjectKeptAtHead& kept : trialVisit.freshObjectsKept) {
             if (kept.object == scope)
-                loseObjectKeptAtHead(tried, kept);
+                loseObjectKeptAtHead(trialVisit, kept);
         }
     }
 }
@@ -829,7 +829,7 @@ void Walker::endFieldsOfScopesThatTurnsStore(const LoopPreview& look)
     m_state.invalidate(stores);
 }
 
-void Walker::enterClosedCopy(BlockID entry, const LoopPreview& look)
+void Walker::enterGenericVersion(BlockID entry, const LoopPreview& look)
 {
     if (!has(Mechanism::EscapeAnalysis) || !look.hasLetMentionsLeave || look.effects.maySuspend || !m_state.holdsFreshObjects())
         m_state.clear();
@@ -893,7 +893,7 @@ void Walker::lendCopiesOfScopesTo(Draft& call, Vector<ScopeLentToCall, 1>& lent)
     if (!standsOnRareWay && m_scopesWhoseFieldsHaveComeRound.isEmpty())
         return;
     auto cellNamedBy = [&](ValueID name) {
-        return name ? referenceTo(rootOfCellInSweptCode(m_code, name)) : Reference();
+        return name ? referenceTo(underlyingCellOf(m_code, name)) : Reference();
     };
     auto closureNamedBy = [&](Reference name) {
         Reference cell = cellNamedBy(name.id());
@@ -904,7 +904,7 @@ void Walker::lendCopiesOfScopesTo(Draft& call, Vector<ScopeLentToCall, 1>& lent)
     Vector<Reference, 8> arguments(call.variadicOperands());
     Vector<Reference, 2> takenAsTheyAre;
     auto noteScopeThatCallTakes = [&](Reference cell, uint32_t position, FunctionID accessor, uint32_t capture, bool isHeldByClosure) {
-        if (!isScopeThatUnitMakes(cell) || !m_state.isFresh(cell))
+        if (!isEnvironmentAllocation(cell) || !m_state.isFresh(cell))
             return;
         if (!operationOnlyBorrowsScope(call, cell, numberOfNamedOperands + position, isHeldByClosure) || !functionOnlyReadsAndWritesScopeAt(accessor, capture)) {
             takenAsTheyAre.append(cell);
@@ -1007,7 +1007,7 @@ void Walker::takeBackScopesLentToCall(std::span<const ScopeLentToCall> lent, con
         for (FieldIndex index : loan.fieldsStored) {
             if (!plan().layout(layout).slots[index].hasStorage())
                 continue;
-            Draft read = draftOfReadOfFieldThatComesRound(loan.copy, { layout, index });
+            Draft read = draftCapturedVariableRead(loan.copy, { layout, index });
             if (ofCall && !ofCall->mayRunOtherCode() && !declaredEffectsOfOperation(program(), Opcode::GetEnvironmentField, read).reads.overlaps(ofCall->writes))
                 continue;
             Reference value = build(WTF::move(read));
@@ -1054,7 +1054,7 @@ Reference Walker::buildCallThatMayBorrowScopes(Draft&& call, const Effects* foun
 bool Walker::mentionMayOnlyBorrowScopes(const BodyValue& operation, uint32_t operandIndex)
 {
     Opcode opcode = operation.opcode();
-    if (inputOperationsThatOnlyHandOn.contains(opcode))
+    if (inputIdentityOpcodes.contains(opcode))
         return !operandIndex;
     if (opcode == Opcode::Call && operandIndex == OperandIndex::Call::callee)
         return true;
@@ -1086,8 +1086,8 @@ void Walker::keepScopesAtMentions(Vector<ValueID, 4>& mentions, std::span<const 
     });
     for (ValueID mention : mentions) {
         Reference reference = referenceOf(mention);
-        Reference cell = referenceTo(rootOfCellInSweptCode(m_code, reference.id()));
-        if (!isScopeThatUnitMakes(cell))
+        Reference cell = referenceTo(underlyingCellOf(m_code, reference.id()));
+        if (!isEnvironmentAllocation(cell))
             m_state.markEscaped(cell);
         scopes.shrink(0);
         listScopesThatValueNames(reference, scopes);
@@ -1102,16 +1102,16 @@ void Walker::handBackScopesThatBuildLetsLeave(std::span<const ValueID> mentionsT
 {
     Vector<Reference, 2> scopes;
     for (ValueID mention : mentionsThatLeave) {
-        if (m_mentionsThatLeaveHandedOn.contains(mention))
+        if (m_inheritedEscapingUses.contains(mention))
             continue;
         if (mention == everyFreshObject) {
-            m_mentionsThatLeaveHandedOn.append(mention);
+            m_inheritedEscapingUses.append(mention);
             continue;
         }
         scopes.shrink(0);
         listScopesThatValueNames(referenceOf(mention), scopes);
         if (!scopes.isEmpty())
-            m_mentionsThatLeaveHandedOn.append(mention);
+            m_inheritedEscapingUses.append(mention);
     }
 }
 
@@ -1120,7 +1120,7 @@ void Walker::handScopesKeptAtHeadToPreview(const BodyIndex& index, BlockID input
     Vector<Reference, 2>& scopes = preview.scopesThatTurnsOnlyBorrow;
     scopes.shrink(0);
     for (const FreshObjectKeptAtHead& object : kept) {
-        if (isScopeThatUnitMakes(object.object))
+        if (isEnvironmentAllocation(object.object))
             scopes.append(object.object);
     }
     if (scopes.isEmpty())
@@ -1167,12 +1167,12 @@ void Walker::handScopesKeptAtHeadToPreview(const BodyIndex& index, BlockID input
     preview.fieldsOfScopesThatTurnsStore.shrink(std::ranges::unique(preview.fieldsOfScopesThatTurnsStore).begin() - preview.fieldsOfScopesThatTurnsStore.begin());
 }
 
-bool Walker::learnWhatTurnsStoreIntoScopes(AnswerOfLoop& answer, const TryOfLoop& tried, bool walkIsWhole)
+bool Walker::learnWhatTurnsStoreIntoScopes(LoopSummary& summary, const TrialVisit& trialVisit, bool walkIsWhole)
 {
-    StoresIntoScopes& stores = answer.storesIntoScopes;
+    StoresIntoScopes& stores = summary.storesIntoScopes;
     bool tookEveryField = stores.everyFieldIsTakenForStored;
     bool wereKnown = stores.areKnown && !tookEveryField;
-    if (!tried.keepsScopesAtHead || (!wereKnown && !walkIsWhole))
+    if (!trialVisit.keepsScopesAtHead || (!wereKnown && !walkIsWhole))
         return false;
     stores.everyFieldIsTakenForStored = false;
     stores.everyFieldWasTakenForStored |= tookEveryField;
@@ -1184,18 +1184,18 @@ bool Walker::learnWhatTurnsStoreIntoScopes(AnswerOfLoop& answer, const TryOfLoop
         return fields.size() != numberBefore;
     };
     stores.areKnown = true;
-    bool hasLearnedMore = add(stores.fields, tried.fieldsOfScopesStored);
-    hasLearnedMore |= add(stores.fieldsThatCallsStore, tried.fieldsOfScopesEnded);
-    if (m_headOfRowHandedOn == tried.inputHead && m_frameOfRowHandedOn == tried.frameIndex)
-        add(m_storesIntoScopesHandedOn.fields, stores.fields);
+    bool hasLearnedMore = add(stores.fields, trialVisit.fieldsOfScopesStored);
+    hasLearnedMore |= add(stores.fieldsThatCallsStore, trialVisit.fieldsOfScopesEnded);
+    if (m_inheritedSummaryHeader == trialVisit.inputHead && m_inheritedSummaryFrame == trialVisit.frameIndex)
+        add(m_inheritedScopeStores.fields, stores.fields);
     if (wereKnown) {
         stores.everyFieldIsTakenForStored = hasLearnedMore && !stores.everyFieldWasTakenForStored;
         return hasLearnedMore;
     }
-    BlockID head = inputBlock(tried.frameIndex, tried.inputHead).head;
+    BlockID head = inputBlock(trialVisit.frameIndex, trialVisit.inputHead).head;
     auto carried = head ? m_fieldsOfScopesOfHeads.find(head.index()) : m_fieldsOfScopesOfHeads.end();
     return carried != m_fieldsOfScopesOfHeads.end() && std::ranges::any_of(carried->value, [&](const FieldOfScope& field) {
-        if (field.variable || !isScopeThatUnitMakes(field.scope))
+        if (field.variable || !isEnvironmentAllocation(field.scope))
             return false;
         return !std::ranges::binary_search(stores.fields, field.field) || std::ranges::binary_search(stores.fieldsThatCallsStore, field.field);
     });

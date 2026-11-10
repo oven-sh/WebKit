@@ -463,7 +463,7 @@ Operand SlotEmitter::wordOutOfLine(CellPointer cell, const PlacedSlot& slot, con
     if (LValue known = m_out.findPurePatch(function, machineTypeOf(representation), singleElementSpan(owner))) {
         const OperationContext* context = generator().contextBeingGenerated();
         if (emittersCheckProofs() && context)
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(*context, Condition(m_out.equal(known, read().value)), std::nullopt, ProofSource::OtherOperation);
+            emitter<ThrowEmitter>().requireOrCrash(*context, Condition(m_out.equal(known, read().value)), std::nullopt, ProofSource::OtherOperation);
         return Operand(representation, known);
     }
 

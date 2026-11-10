@@ -31,10 +31,10 @@ struct UseOfKeyInWalkForInKeys {
 
 }
 
-Walker::IterationByIndex* findForInThatHandedOut(Walker& walker, ValueID key)
+Walker::IndexedIteration* findForInOfKey(Walker& walker, ValueID key)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    key = key ? index.valueBehindCasts(key) : ValueID();
+    key = key ? index.stripCasts(key) : ValueID();
     if (!key || index.isParameter(key) || index.opcodeOf(key) != Opcode::ResultAt)
         return nullptr;
     BodyValue read = index.value(key);
@@ -44,22 +44,22 @@ Walker::IterationByIndex* findForInThatHandedOut(Walker& walker, ValueID key)
     Reference state = walker.referenceOf(index.value(step).enumeratorOperand());
     if (!state || !state.isVirtual())
         return nullptr;
-    Walker::IterationByIndex& iteration = walker.iterationByIndex(state);
-    if (iteration.otherForm != Walker::IterationByIndex::OtherForm::Enumeration || iteration.newestStep != step || !iteration.list || !iteration.foundAt)
+    Walker::IndexedIteration& iteration = walker.indexedIteration(state);
+    if (iteration.otherForm != Walker::IndexedIteration::OtherForm::Enumeration || iteration.newestStep != step || !iteration.list || !iteration.foundAt)
         return nullptr;
     return &iteration;
 }
 
-static bool standsInTurnInWalkForInKeys(Walker& walker, const Walker::IterationByIndex& iteration, const BodyValue& operation)
+static bool standsInTurnInWalkForInKeys(Walker& walker, const Walker::IndexedIteration& iteration, const BodyValue& operation)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     return iteration.inputHead && index.isInLoop(index.blockOf(operation.id()), index.loopOf(iteration.inputHead));
 }
 
-static bool asksObjectOfStepInWalkForInKeys(Walker& walker, const Walker::IterationByIndex& iteration, ValueID object)
+static bool asksObjectOfStepInWalkForInKeys(Walker& walker, const Walker::IndexedIteration& iteration, ValueID object)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    return object && index.valueBehindCasts(object) == index.valueBehindCasts(index.value(iteration.newestStep).objectOperand());
+    return object && index.stripCasts(object) == index.stripCasts(index.value(iteration.newestStep).objectOperand());
 }
 
 static std::optional<UseOfKeyInWalkForInKeys> findQuestionOfCallInWalkForInKeys(Walker& walker, const BodyValue& call)
@@ -114,7 +114,7 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     if (!walker.currentBodyIndex().holdsAnyOf(OpcodeSet { Opcode::ForInStep }))
         return false;
     std::optional<UseOfKeyInWalkForInKeys> use = opcode == Opcode::Call ? findQuestionOfCallInWalkForInKeys(walker, operation) : std::optional(UseOfKeyInWalkForInKeys { operation.objectOperand(), operation.propertyOperand() });
-    Walker::IterationByIndex* iteration = use ? findForInThatHandedOut(walker, use->key) : nullptr;
+    Walker::IndexedIteration* iteration = use ? findForInOfKey(walker, use->key) : nullptr;
     if (!iteration || !standsInTurnInWalkForInKeys(walker, *iteration, operation) || !asksObjectOfStepInWalkForInKeys(walker, *iteration, use->object))
         return false;
     if (iteration->keyForAccesses)
@@ -139,9 +139,9 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     test.setEnumeratorOperand(iteration->list);
     test.setObjectOperand(object);
     test.setPositionOperand(iteration->foundAt);
-    if (iteration->count && (walker.takesKeysOfForInToBeAsStepFoundThem() || walker.state().factsOfCell(iteration->list).contains(FactOfCell::KeysAreAsEnumeratorFoundThem))) {
+    if (iteration->count && (walker.shouldAssumeEnumeratorCurrent() || walker.state().cellFacts(iteration->list).contains(CellFact::EnumeratorIsCurrent))) {
         test.setCurrentNamesOperand(iteration->count);
-        walker.count(StatisticID::TestsOfEnumeratorsThatTakeTheWordOfTheStep);
+        walker.count(StatisticID::EnumeratorChecksReusingStepResult);
     }
     Reference isCurrent = walker.build(WTF::move(test));
     if (!isCurrent)
@@ -153,7 +153,7 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     BlockID asWritten = walker.addBlock(BlockFrequency::Unlikely);
     BlockID meeting = walker.addBlock();
     walker.branch(isCurrent, current, asWritten);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
 
     Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1);
     Walker::ArmsThatMeet arms;
@@ -184,7 +184,7 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
         walker.listArm(stretch, arms);
     }
     if (!walker.hasFailed())
-        walker.letArmsMeet(stretch, arms, meeting);
+        walker.joinArms(stretch, arms, meeting);
     return true;
 }
 
@@ -202,14 +202,14 @@ bool buildAccessUnderIndexOfForInOfItsOpcodes(Walker& walker, const BodyValue& a
     if (!accessesUnderKeyInWalkForInKeys.contains(access.opcode()))
         return false;
     ValueID property = access.propertyOperand();
-    Walker::IterationByIndex* iteration = findForInThatHandedOut(walker, property);
+    Walker::IndexedIteration* iteration = findForInOfKey(walker, property);
     if (!iteration || !standsInTurnInWalkForInKeys(walker, *iteration, access))
         return false;
 
     Reference bound = walker.referenceBoundTo(property);
     if (!bound)
         return false;
-    if (!iteration->takenAtOpen.isEmpty() && bound.isConstant() && walker.code().at(bound.id()).opcode == Opcode::String) {
+    if (!iteration->precomputedSteps.isEmpty() && bound.isConstant() && walker.code().at(bound.id()).opcode == Opcode::String) {
         StringID name = walker.code().at(bound.id()).string();
         PropertyKeyID key = liesInThread(name) ? PropertyKeyID() : walker.types().textKey(name);
         if (!key || liesInThread(key) || walker.program().isIndexLike(key))

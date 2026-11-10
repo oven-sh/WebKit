@@ -61,7 +61,7 @@ inline void describeTrappingAccesses(const Procedure& procedure, const LinkBuffe
         describeListedTrappingAccesses(procedure, linkBuffer, accesses);
 }
 
-enum class CodeOfBackEnd : uint8_t { Move, Reload, Save, Materialize, Swap, ClearSpill, KeepPointer, StoreBehindDefinition, FrameSetup, FrameTeardown, StoreToOutgoingWord, LoadFromOutgoingWord };
+enum class CodeOfBackEnd : uint8_t { Move, Reload, Save, Materialize, Swap, KeepPointer, StoreBehindDefinition, FrameSetup, FrameTeardown, StoreToOutgoingWord, LoadFromOutgoingWord };
 enum class PlaceOfCodeOfBackEnd : uint8_t { Nowhere, Operation, Patch, Check, Branch, Return, LastPatch, Edge };
 
 inline constexpr uint32_t firstOriginOfBackEnd = 0xFFFFFF00;

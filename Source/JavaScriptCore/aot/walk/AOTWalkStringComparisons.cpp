@@ -302,7 +302,7 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
     if (!flat && !length) {
         if (!(walker.comparisonWithTextLeavesLoop(comparison)))
             return false;
-        walker.count(StatisticID::ComparisonsWithTextsThatStandInFrontOfLoops);
+        walker.count(StatisticID::StringLiteralComparisonsHoisted);
         comparison.setHasLeftLoop(true);
     }
     if (Reference answer = walker.build(WTF::move(comparison)))
@@ -369,8 +369,8 @@ static bool secondRelationStandsBehindBranchForStringComparisons(Walker& walker,
     std::optional<BodyUser> user = index.onlyUser(value.id());
     if (!user || user->kind != BodyUseKind::TerminatorOperand || index.terminator(user->block).kind() != TerminatorKind::Branch)
         return false;
-    ValueID left = index.valueBehindCasts(value.operand(0));
-    ValueID right = index.valueBehindCasts(value.operand(1));
+    ValueID left = index.stripCasts(value.operand(0));
+    ValueID right = index.stripCasts(value.operand(1));
     for (BodyTarget target : index.terminator(user->block).targets()) {
         if (index.numberOfIncomingEdges(target.block()) != 1)
             continue;
@@ -379,8 +379,8 @@ static bool secondRelationStandsBehindBranchForStringComparisons(Walker& walker,
             ValueID id(place);
             if (index.isParameter(id) || !allRelations.contains(index.opcodeOf(id)))
                 continue;
-            ValueID first = index.valueBehindCasts(index.value(id).operand(0));
-            ValueID second = index.valueBehindCasts(index.value(id).operand(1));
+            ValueID first = index.stripCasts(index.value(id).operand(0));
+            ValueID second = index.stripCasts(index.value(id).operand(1));
             if ((first == left && second == right) || (first == right && second == left))
                 return true;
         }

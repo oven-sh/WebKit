@@ -1,6 +1,6 @@
 # The rehearsal goes through so many operations from one start, and calls so deep. What lies behind that is compiled when the program runs.
 # let n = 0; while (true) n++;  new RegExp("never");      function down(n) { return down(n + 1); }  new RegExp(down(0));      A start of its own: export function other() { return new RegExp("a" + "+b"); }
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /a+b/
 # CHECK-NOT: text /

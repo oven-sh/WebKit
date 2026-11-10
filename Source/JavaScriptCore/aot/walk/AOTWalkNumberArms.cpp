@@ -56,18 +56,18 @@ uint32_t limitOfStretchOfNumbers(const Walker& walker, const BodyBlock& block)
 
 std::optional<uint32_t> findPlaceBehindUpdateOfElement(Walker& walker, const BodyValue& read)
 {
-    static constexpr OpcodeSet operatorsInsideUpdate = operatorsThatMakeNumbers | allSums;
-    static constexpr OpcodeSet passedInsideUpdate = opcodesThatStateTypes | OpcodeSet { Opcode::Integer, Opcode::Double, Opcode::ReleaseHint };
+    static constexpr OpcodeSet operatorsInsideUpdate = numberProducingOperators | allSums;
+    static constexpr OpcodeSet passedInsideUpdate = opcodesThatStateTypes | OpcodeSet { Opcode::Integer, Opcode::Double };
     const BodyIndex& index = walker.currentBodyIndex();
-    if (read.opcode() != Opcode::ElemGet || read.id().index() >= index.numberOfValues() || index.value(read.id()).words() != read.words() || walker.hasTextsInStringBuilders())
+    if (read.opcode() != Opcode::ElemGet || read.id().index() >= index.numberOfValues() || index.value(read.id()).words() != read.words() || walker.hasStringsInBuilders())
         return std::nullopt;
     BodyBlock block = index.block(index.blockOf(read.id()));
     if (walker.inputBlockBeingWalked() != block.id())
         return std::nullopt;
     TypeArena& types = walker.types();
     auto namesSame = [&](ValueID stored, ValueID loaded) {
-        if (index.valueBehindCasts(stored) == index.valueBehindCasts(loaded))
-            return !!index.valueBehindCasts(stored);
+        if (index.stripCasts(stored) == index.stripCasts(loaded))
+            return !!index.stripCasts(stored);
         Reference built = stored < read.id() ? walker.referenceOf(stored) : Reference();
         return built && built.isValue() && built == walker.referenceOf(loaded);
     };
@@ -117,11 +117,11 @@ Reference buildProofOfNumber(Walker& walker, Reference value, Reference test, Or
     return walker.build(WTF::move(narrowed));
 }
 
-bool holdOperandBesideNumberToNumberOrBeginTurnAgain(Walker& walker, Draft& draft, ValueID written)
+bool tryGuardNumericOperand(Walker& walker, Draft& draft, ValueID written)
 {
     if (effectRuleOf(draft.opcode) != EffectRule::Operator || draft.numberOfNamedOperands() != 2)
         return false;
-    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.mayBeginTurnAgainInClosedCopy() || !walker.standsInTurnThatLooksCountOn() || !walker.turnsOfTypedCopyStoreAtPositionOfList())
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.canRestartIteration() || !walker.canBuildIterationGuard() || !walker.hasDirectElementStoreInLoop())
         return false;
     TypeArena& types = walker.types();
     uint32_t asked = types.at(walker.typeOf(draft.operand(0))).isNumber() ? 1 : 0;
@@ -143,15 +143,15 @@ bool holdOperandBesideNumberToNumberOrBeginTurnAgain(Walker& walker, Draft& draf
     walker.branch(isNumber, passed, failed);
     walker.continueIn(failed);
     if (!walker.isUnreachable())
-        walker.beginTurnAgainInClosedCopy();
+        walker.restartIteration();
     walker.continueIn(passed);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     if (walker.isUnreachable() || walker.hasFailed())
         return false;
     Reference number = buildProofOfNumber(walker, operand, isNumber, origin);
     if (!number)
         return false;
-    walker.count(StatisticID::OperandsAskedForNumberInQuietTurns);
+    walker.count(StatisticID::NumberOperandsGuardedInIterations);
     draft.setOperand(asked, number);
     return true;
 }
@@ -234,13 +234,13 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
         return true;
     BlockID blockBehindTests = walker.isUnreachable() ? BlockID() : walker.currentBlock();
     BlockID meetingBlock = walker.addBlock();
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     auto endArm = [&] {
         if (walker.isUnreachable())
             return;
-        Walker::ArmThatMeets arm { walker.currentBlock(), { } };
+        Walker::JoinArm arm { walker.currentBlock(), { } };
         for (ValueID mentioned : valuesMentionedLater) {
             Reference built = walker.referenceOf(mentioned);
             if (!built || !built.isRecord())
@@ -255,7 +255,7 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
         Walker::ClosedArm otherArm(walker);
         walker.walkStretch(inputBlock, begin, end);
         if (takesInCallReturnedAtOnce)
-            walker.endArmWithReturnOf(inputBlock);
+            walker.threadReturnOf(inputBlock);
         endArm();
     }
     if (walker.hasFailed())
@@ -271,7 +271,7 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
         }
         walker.walkStretch(inputBlock, begin, end);
         if (takesInCallReturnedAtOnce)
-            walker.endArmWithReturnOf(inputBlock);
+            walker.threadReturnOf(inputBlock);
         endArm();
         for (NumberTestedInArms& number : numbers) {
             for (size_t place = 0; place < number.names.size(); ++place)
@@ -286,7 +286,7 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
             walker.bind(ValueID(first + place), Reference());
     }
     Vector<Reference, 8> met(valuesMentionedLater.size());
-    walker.letArmsMeet(arms.span(), meetingBlock, met.mutableSpan());
+    walker.joinArms(arms.span(), meetingBlock, met.mutableSpan());
     for (size_t position = 0; position < met.size() && !arms.isEmpty() && !walker.hasFailed(); ++position)
         walker.bind(valuesMentionedLater[position], met[position]);
     return true;

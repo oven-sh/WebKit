@@ -721,14 +721,14 @@ static Reference referenceToRecordInKnownAnswers(const Code& code, ValueID recor
 
 static ALWAYS_INLINE Reference rootInKnownAnswers(const Code& code, Reference name)
 {
-    return name.isValue() ? referenceToRecordInKnownAnswers(code, rootOfCellInSweptCode(code, name.id())) : name;
+    return name.isValue() ? referenceToRecordInKnownAnswers(code, underlyingCellOf(code, name.id())) : name;
 }
 
 static ALWAYS_INLINE Reference valueBehindFormsInKnownAnswers(const Code& code, Reference name)
 {
     if (!name.isValue())
         return name;
-    return referenceToRecordInKnownAnswers(code, code.valueBehindNames<opcodesThatGiveSameValue>(name.id()));
+    return referenceToRecordInKnownAnswers(code, code.valueBehindNames<valuePreservingOpcodes>(name.id()));
 }
 
 static ALWAYS_INLINE void appendValueToKeyOfKnownAnswer(const Code& code, Reference value, uint32_t position, AnswersOfWalk::WordsOfKey& words)
@@ -833,7 +833,7 @@ static bool doesNothingAgainInKnownAnswers(const Walker& walker, const Draft& dr
 static constexpr OpcodeSet readsAnsweredByNotesInKnownAnswers { Opcode::GetArrayLength };
 static constexpr OpcodeSet operationsWithKeysInKnownAnswers = testsNumberedInKnownAnswers | valuesNumberedInKnownAnswers | operationsThatDoNothingAgainInKnownAnswers;
 static constexpr OpcodeSet operationsFoundInKnownAnswers = operationsWithKeysInKnownAnswers | readsAnsweredByNotesInKnownAnswers;
-static_assert(!operationsFoundInKnownAnswers.contains(Opcode::FindInPrototypeChainUnlessTrapped));
+static_assert(!operationsFoundInKnownAnswers.contains(Opcode::TryFindInPrototypeChain));
 static constexpr OpcodeSet operationsThatTakeOperandsInEitherOrderInKnownAnswers = allEqualities | OpcodeSet { Opcode::Add, Opcode::Mul, Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor };
 static_assert(!operationsFoundInKnownAnswers.intersects(conversionsOfForm));
 
@@ -841,7 +841,7 @@ static constexpr AbstractHeapSet heapsThatNoAnswerRestsOnInKnownAnswers { Abstra
 
 static bool givesSameAgainInKnownAnswers(const Effects& effects)
 {
-    return !effects.mayRunOtherCode() && !effects.mayBeTerminated && effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.reads.containsAny(bookkeepingHeaps);
+    return !effects.mayRunOtherCode() && !effects.mayBeTerminated && effects.writes.containsOnly(unobservableWriteHeaps) && !effects.reads.containsAny(bookkeepingHeaps);
 }
 
 static bool givesNewAnswerUnaskedInKnownAnswers(const Walker& walker, const Draft& draft)
@@ -1085,7 +1085,7 @@ static void noteRelationInKnownAnswers(Walker& walker, Reference test, const Ope
     noteKnown(walker, KnownNote::Relation, isWrittenOtherWayRound ? right : left, isWrittenOtherWayRound ? left : right, admitsEqual, LocationMasks(), static_cast<uint64_t>(test.bits()) << 32 | isTrue);
 }
 
-void noteWhatBranchDecidesOnEdge(Walker& walker, BlockID from, uint32_t targetIndex)
+void recordEdgeOutcome(Walker& walker, BlockID from, uint32_t targetIndex)
 {
     if (!walker.has(Mechanism::Folding))
         return;
@@ -1128,7 +1128,7 @@ std::optional<uint32_t> onlyTargetDecidedOnWay(Walker& walker, const BodyTermina
     return target;
 }
 
-std::optional<PassedTest> Walker::findWhatHoldsBelow(Reference value, Reference bound)
+std::optional<PassedTest> Walker::findUpperBoundProof(Reference value, Reference bound)
 {
     TypeID typeOfValue = typeOf(value);
     TypeID typeOfBound = typeOf(bound);
@@ -1149,7 +1149,7 @@ std::optional<PassedTest> Walker::findWhatHoldsBelow(Reference value, Reference 
     return areIntegers ? comparisonThatAnswered(findKnown(*this, KnownNote::Relation, bound, value, 1), false) : std::nullopt;
 }
 
-std::optional<PassedTest> Walker::findWhatHoldsFromZeroUp(Reference value)
+std::optional<PassedTest> Walker::findNonNegativeProof(Reference value)
 {
     TypeID type = typeOf(value);
     if (!type || !m_types.at(type).isInteger() || m_types.at(type).integers.minimum < 0)
@@ -1159,12 +1159,12 @@ std::optional<PassedTest> Walker::findWhatHoldsFromZeroUp(Reference value)
 
 bool isKnownToLieBelow(Walker& walker, Reference value, Reference bound)
 {
-    return !!walker.findWhatHoldsBelow(value, bound);
+    return !!walker.findUpperBoundProof(value, bound);
 }
 
 bool isKnownToLieInside(Walker& walker, Reference position, Reference length)
 {
-    return walker.findWhatHoldsFromZeroUp(position) && walker.findWhatHoldsBelow(position, length);
+    return walker.findNonNegativeProof(position) && walker.findUpperBoundProof(position, length);
 }
 
 } } } // namespace JSC::AOT::Typed

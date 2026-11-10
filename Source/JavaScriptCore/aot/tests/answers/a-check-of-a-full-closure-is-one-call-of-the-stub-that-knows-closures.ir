@@ -4,8 +4,9 @@
 # const first = new made(), second = new other();
 # print(typeof id(take)(given === 1 ? made : given === 2 ? other : given), first.x + second.y);
 # print("went on");
-# THE LIE IS LAID BY HAND IN THE TEXT BELOW: `function f3 name="take" .. parameters=[{type=undefined|f1 flags=[IsFromCompiler]}]`: the front end says that the parameter holds undefined or a closure of `made`, and the function is called by value with whatever the shell's `given` chooses.
-# `made` is constructed, so its closure is a full one. testing=CheckProofsAtRunTime: the check is one call of the stub that knows closures: the type byte, the realm, the number.
+# The fault is written by hand in the IR below: `function f3 name="take" .. parameters=[{type=undefined|f1 flags=[IsFromCompiler]}]`.
+# The front end claims that the parameter holds undefined or a closure of `made`, and the function is called indirectly with whatever the shell's `given` selects.
+# `made` is constructed, so its closure is a full closure. With testing=CheckProofsAtRunTime the check is one call of the stub for closures, which tests the type byte, the realm and the number.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(FORM): walk f3 mechanisms=all-Inlining
 # FORM: CheckProof {{*}} checkedType=undefined|f1 typeWithoutProof={{*}}
@@ -18,16 +19,20 @@
 # UNDEFINED: undefined 3
 # UNDEFINED-NEXT: went on
 # RUN(OTHER): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 2;
-# OTHER: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# OTHER: bun: internal AOT error: type check failed
+# OTHER-NEXT: found function in
 # OTHER-NOT: went on
 # RUN(OFSHELL): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = function () { };
-# OFSHELL: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# OFSHELL: bun: internal AOT error: type check failed
+# OFSHELL-NEXT: found function in
 # OFSHELL-NOT: went on
 # RUN(OBJECT): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = {};
-# OBJECT: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# OBJECT: bun: internal AOT error: type check failed
+# OBJECT-NEXT: found object in
 # OBJECT-NOT: went on
 # RUN(TEXT): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = "text";
-# TEXT: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# TEXT: bun: internal AOT error: type check failed
+# TEXT-NEXT: found string in
 # TEXT-NOT: went on
 
 

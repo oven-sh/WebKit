@@ -50,7 +50,7 @@ RefusedCode refusedCodeOf(const Program& program)
     return {
         .evaluatedText = hasFlag(program.excludedCode, ExcludedCode::EvaluatedText),
         .hostEvaluatedText = hasFlag(program.excludedCode, ExcludedCode::HostEvaluatedText),
-        .codeOutsideImage = !program.admitsInspector && (runsOnlyCodeOfImage || hasFlag(program.excludedCode, ExcludedCode::CodeOutsideImage)),
+        .codeOutsideImage = !program.admitsInspector && (isHardenedBuild || hasFlag(program.excludedCode, ExcludedCode::CodeOutsideImage)),
     };
 }
 
@@ -712,7 +712,7 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
 {
     const Function& function = program.at(id);
     const BodyIndex* found = bodies.find(id);
-    if (!found || found->hasIrreducibleFlow() || function.isCoroutine() || function.isModuleBody() || function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor)
+    if (!found || found->hasIrreducibleFlow() || function.isCoroutine() || function.isModuleBody() || function.kind == FunctionKind::BaseConstructor)
         return { };
     if (function.role == FunctionRole::Library || function.enclosingRuntimeFunction || (function.module && program.at(function.module).kind == ModuleKind::RuntimeSource))
         return { };
@@ -736,7 +736,7 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
     Vector<BlockID, 4> blocksOfLengthsLeftOut;
     PropertyKeyID length = program.keyOf(BuiltinNames::length);
     BlockID whereNamed;
-    bool isOnlyHandedToApply = true;
+    bool isOnlyForwarded = true;
     auto handsObjectToApply = [&](auto call) {
         std::span<const ValueID> arguments = call.argumentsOperands();
         if (arguments.size() != 2 || !call.calleeKey() || lists.contains(call.calleeOperand()) || lists.contains(call.thisValueOperand()) || lists.contains(arguments[0]))
@@ -746,10 +746,20 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
         BuiltinID member = findOwnMember(program, Builtins::FunctionPrototype, call.calleeKey());
         return member && program.builtins().canonicalID(member) == Builtins::FunctionPrototypeApply;
     };
+    static constexpr OpcodeSet arrayCallOpcodes { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList };
+    auto isElidableCallSpread = [&](BodyValue spread) {
+        ValueID array = spread.as<Opcode::AppendSpread>().arrayOperand();
+        ValueID call(spread.id().index() + 1);
+        if (lists.contains(array) || body.isParameter(array) || body.opcodeOf(array) != Opcode::NewArray || body.useCount(array) != 2 || !body.value(array).as<Opcode::NewArray>().elementsOperands().empty())
+            return false;
+        if (call.index() >= body.numberOfValues() || body.isParameter(call) || body.blockOf(call) != body.blockOf(spread.id()) || !arrayCallOpcodes.contains(body.opcodeOf(call)))
+            return false;
+        return body.value(call).listOperand() == array;
+    };
     for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
         BodyBlock block = body.block(BlockID(number));
         bool names = lists.contains(block.subject()) || (block.hasHandler() && takes(block.handler()));
-        isOnlyHandedToApply &= !names;
+        isOnlyForwarded &= !names;
         for (BodyValue value : block.values()) {
             if (value.opcode() == Opcode::CreateUnmappedArguments && std::ranges::contains(lists.span().first(numberOfLists), value.as<Opcode::CreateUnmappedArguments>().restOperand())) {
                 lists.append(value.id());
@@ -764,8 +774,8 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
                 isNamedHere |= lists.contains(operand);
             });
             names |= isNamedHere;
-            if (isNamedHere && isOnlyHandedToApply)
-                isOnlyHandedToApply = value.opcode() == Opcode::Call && handsObjectToApply(value.as<Opcode::Call>());
+            if (isNamedHere && isOnlyForwarded)
+                isOnlyForwarded = (value.opcode() == Opcode::Call && handsObjectToApply(value.as<Opcode::Call>())) || (value.opcode() == Opcode::AppendSpread && isElidableCallSpread(value)) || (arrayCallOpcodes.contains(value.opcode()) && body.hasOneUse(value.listOperand()) && lists.contains(value.listOperand()));
         }
         bool isNamedAtEnd = false;
         BodyTerminator terminator = block.terminator();
@@ -775,7 +785,7 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
         for (BodyTarget target : terminator.targets())
             isNamedAtEnd |= takes(target);
         names |= isNamedAtEnd;
-        isOnlyHandedToApply &= !isNamedAtEnd;
+        isOnlyForwarded &= !isNamedAtEnd;
         if (!names)
             continue;
         BlockID other(number);
@@ -795,7 +805,7 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
             return { };
     }
     if (whereNamed == entryBlock)
-        return isOnlyHandedToApply ? whereNamed : BlockID();
+        return isOnlyForwarded ? whereNamed : BlockID();
 
     if (!blocksOfLengthsLeftOut.isEmpty()) {
         BitVector liesBehind(body.numberOfBlocks());
@@ -817,7 +827,7 @@ BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const Bo
                 return { };
         }
     }
-    if (isOnlyHandedToApply)
+    if (isOnlyForwarded)
         return whereNamed;
 
     BitVector reached(body.numberOfBlocks());
@@ -865,11 +875,11 @@ FunctionID Facts::functionThatCallEntersByBinding(const BodyIndex& index, const 
         return call.function();
     if (call.opcode() != Opcode::Call)
         return { };
-    ValueID read = index.valueBehindCasts(call.calleeOperand());
+    ValueID read = index.stripCasts(call.calleeOperand());
     if (!index.isParameter(read) && index.opcodeOf(read) == Opcode::CheckInitialized) {
         if (checkThatPasses)
             *checkThatPasses = read;
-        read = index.valueBehindCasts(index.value(read).valueOperand());
+        read = index.stripCasts(index.value(read).valueOperand());
     }
     if (index.isParameter(read) || index.opcodeOf(read) != Opcode::GetModuleVariable)
         return { };
@@ -948,8 +958,8 @@ static void orderFunctionsByReferrersForFacts([[maybe_unused]] Program& program,
     layReferrersOfHeldReadingOver(parts.linked, parts.held, loops);
     steps.didFinish("lay referrers over"_s);
     rankReferrersFirst(parts.linked);
-    findParametersThatAreOnlyCalled(program, *parts.bodies, *parts.summaries, loops, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded), parts.linked);
-    findParametersThatAreOnlyLookedAt(program, *parts.bodies, *parts.summaries, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded), parts.linked);
+    findParametersThatAreOnlyCalled(program, *parts.bodies, *parts.summaries, loops, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::AssumeCalleesRetainNothing), parts.linked);
+    findParametersThatAreOnlyLookedAt(program, *parts.bodies, *parts.summaries, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::AssumeCalleesRetainNothing), parts.linked);
     carryExpectationOfThisIntoCaptures(program, *parts.bodies, *parts.summaries, parts.linked);
     steps.didFinish("rank referrers"_s);
 }
@@ -986,7 +996,7 @@ static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodie
     parts.linked.fieldsStoredWhatIsNoInt32 = fieldsStoredWhatIsNoInt32In(*looks);
     parts.linked.fieldsStoredCounts = fieldsStoredCountsIn(*looks, program, parts.linked);
     parts.linked.keysStoredWhatIsNoInt32 = keysStoredWhatIsNoInt32In(*looks);
-    build.statistics().count(StatisticID::FieldsHeldToWhatIsSeen, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
+    build.statistics().count(StatisticID::FieldTypesEnforced, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
     if (parts.mechanisms.contains(Mechanism::Guesses))
         parts.tables.layoutsThatStayWithCompiledCode = layoutsThatStayWithCompiledCodeForFacts(program, parts.linked);
     steps.didFinish("tables of fields"_s);
@@ -1109,7 +1119,7 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     for (const RegExpCallWithoutText& call : parts.tables.program.regExpCallsWithoutText) {
         const BodyIndex& index = *parts.bodies->find(call.function);
         build.diagnostics().add(UserDiagnostic {
-            .kind = UserDiagnosticKind::RegExpTextKnownAtRunTime,
+            .kind = UserDiagnosticKind::RegExpPatternNotConstant,
             .function = call.function,
             .block = index.blockOf(call.site),
             .value = call.site,

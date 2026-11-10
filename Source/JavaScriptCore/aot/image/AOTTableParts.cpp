@@ -73,8 +73,8 @@ static ASCIILiteral nameOfTablePartInMessage(TablePartID id)
         return "Statics"_s;
     case TablePartID::Functions:
         return "Functions"_s;
-    case TablePartID::FunctionTexts:
-        return "FunctionTexts"_s;
+    case TablePartID::FunctionSources:
+        return "FunctionSources"_s;
     case TablePartID::Modules:
         return "Modules"_s;
     case TablePartID::Requests:
@@ -168,21 +168,21 @@ uint32_t TablePart::allocate(size_t size, size_t alignment)
 
 uint32_t TablePart::appendSharedAmong(unsigned kindOfBytes, std::span<const uint8_t> bytes, size_t alignment)
 {
-    auto& handedOut = m_appended.add(keyOfSharedBytesInTablePart(kindOfBytes, bytes), Vector<std::pair<uint32_t, uint32_t>, 1> { }).iterator->value;
-    size_t equal = handedOut.findIf([&](const std::pair<uint32_t, uint32_t>& range) {
+    auto& returnedRanges = m_appended.add(keyOfSharedBytesInTablePart(kindOfBytes, bytes), Vector<std::pair<uint32_t, uint32_t>, 1> { }).iterator->value;
+    size_t equal = returnedRanges.findIf([&](const std::pair<uint32_t, uint32_t>& range) {
         return range.second == bytes.size() && !(range.first % alignment) && equalSpans(m_bytes.span().subspan(range.first, range.second), bytes);
     });
     if (equal != notFound) {
-        std::pair<uint32_t, uint32_t> range = handedOut[equal];
+        std::pair<uint32_t, uint32_t> range = returnedRanges[equal];
         if (range.second)
-            handedOut.append(range);
+            returnedRanges.append(range);
         return range.first;
     }
     std::optional<uint32_t> offset = tryAllocate(bytes.size(), alignment, NewBytes::AreLeftToCaller);
     if (!offset)
         return 0;
     memcpySpan(m_bytes.mutableSpan().subspan(*offset), bytes);
-    handedOut.insert(0, std::pair<uint32_t, uint32_t> { *offset, static_cast<uint32_t>(bytes.size()) });
+    returnedRanges.insert(0, std::pair<uint32_t, uint32_t> { *offset, static_cast<uint32_t>(bytes.size()) });
     return *offset;
 }
 
@@ -192,17 +192,17 @@ uint32_t TablePart::shareBytesWrittenInPlace(size_t endInFront, uint32_t offset,
         return 0;
     RELEASE_ASSERT(endInFront <= offset && offset + size == m_bytes.size());
     std::span<const uint8_t> bytes = m_bytes.span().subspan(offset, size);
-    auto& handedOut = m_appended.add(keyOfSharedBytesInTablePart(0, bytes), Vector<std::pair<uint32_t, uint32_t>, 1> { }).iterator->value;
-    size_t equal = handedOut.findIf([&](const std::pair<uint32_t, uint32_t>& range) {
+    auto& returnedRanges = m_appended.add(keyOfSharedBytesInTablePart(0, bytes), Vector<std::pair<uint32_t, uint32_t>, 1> { }).iterator->value;
+    size_t equal = returnedRanges.findIf([&](const std::pair<uint32_t, uint32_t>& range) {
         return range.second == size && !(range.first % alignment) && equalSpans(m_bytes.span().subspan(range.first, range.second), bytes);
     });
     if (equal == notFound) {
-        handedOut.insert(0, std::pair<uint32_t, uint32_t> { offset, static_cast<uint32_t>(size) });
+        returnedRanges.insert(0, std::pair<uint32_t, uint32_t> { offset, static_cast<uint32_t>(size) });
         return offset;
     }
-    std::pair<uint32_t, uint32_t> range = handedOut[equal];
+    std::pair<uint32_t, uint32_t> range = returnedRanges[equal];
     if (range.second)
-        handedOut.append(range);
+        returnedRanges.append(range);
     m_bytes.shrink(endInFront);
     return range.first;
 }
@@ -235,18 +235,18 @@ void TablePart::setTableRange(ProgramTableIndex index, uint32_t offset, uint32_t
 
 static Vector<SharedBytesOfTablePart> findSharedBytesOfTablePart(const auto& appended)
 {
-    Vector<uint64_t> handedOutAgain;
-    for (const auto& handedOut : appended.values()) {
-        if (handedOut.size() <= 1)
+    Vector<uint64_t> sharedRanges;
+    for (const auto& returnedRanges : appended.values()) {
+        if (returnedRanges.size() <= 1)
             continue;
-        for (auto [offset, size] : handedOut)
-            handedOutAgain.append(static_cast<uint64_t>(offset) << 32 | size);
+        for (auto [offset, size] : returnedRanges)
+            sharedRanges.append(static_cast<uint64_t>(offset) << 32 | size);
     }
-    radixSortKeepingEqualKeysInOrder<64>(handedOutAgain, [](uint64_t offsetAndSize) {
+    radixSortKeepingEqualKeysInOrder<64>(sharedRanges, [](uint64_t offsetAndSize) {
         return offsetAndSize;
     });
     Vector<SharedBytesOfTablePart> shared;
-    for (uint64_t offsetAndSize : handedOutAgain) {
+    for (uint64_t offsetAndSize : sharedRanges) {
         uint32_t offset = static_cast<uint32_t>(offsetAndSize >> 32);
         uint32_t size = static_cast<uint32_t>(offsetAndSize);
         if (!size)

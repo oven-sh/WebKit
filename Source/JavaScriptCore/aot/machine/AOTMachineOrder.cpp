@@ -1876,7 +1876,7 @@ Order* orderBlocks(Procedure& procedure)
         return order;
     };
 
-    if (!procedure.traits().ordersBlocksAsWhenOrderedAgain) [[likely]] {
+    if (!procedure.traits().shouldUseFallbackBlockOrder) [[likely]] {
         BlockOrderBuilder builder(procedure, BlockOrderBuilder::WaysDownFromRareBlocks::LeadAnywhere);
         builder.run();
         builder.letGoOfWorkingLists();

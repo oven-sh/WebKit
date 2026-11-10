@@ -81,10 +81,10 @@ Reference buildRegExpOfKnownTexts(Walker& walker, Reference pattern, Reference f
 
 static bool isMentionedByCallAloneInWalkRegExps(const BodyIndex& index, const BodyValue& call, ValueID operand)
 {
-    ValueID read = index.valueBehindCasts(call.calleeOperand());
+    ValueID read = index.stripCasts(call.calleeOperand());
     ValueID objectOfRead = read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::PropGet ? index.value(read).objectOperand() : ValueID();
 
-    ValueID name = index.valueBehindCasts(operand);
+    ValueID name = index.stripCasts(operand);
     while (!index.isParameter(name)) {
         uint32_t mentionsByCall = 0;
         call.forEachOperand([&](ValueID mentioned, uint32_t) {
@@ -107,12 +107,12 @@ std::optional<RegExpWrittenForCall> findRegExpWrittenForCall(Walker& walker, con
     if (!built || !built.isValue())
         return std::nullopt;
     const Code& code = walker.code();
-    ValueID cell = rootOfCellInSweptCode(code, built.id());
+    ValueID cell = underlyingCellOf(code, built.id());
     if (code.isConstant(cell) || !walker.state().isFresh(Reference::value(cell)))
         return std::nullopt;
     const Operation& made = code.at(cell);
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID written = index.valueBehindCasts(operand);
+    ValueID written = index.stripCasts(operand);
     if (made.opcode != Opcode::NewRegExp || index.isParameter(written) || !isMentionedByCallAloneInWalkRegExps(index, call, operand))
         return std::nullopt;
     Origin whereOperandIsWritten = walker.originOf(index.value(written));

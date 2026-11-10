@@ -312,13 +312,13 @@ static_assert(unknownCode.mayBeTerminated);
 
 static_assert(EffectTraits(noEffects).isPure());
 static_assert(!EffectTraits(readOf(objectFields)).isPure() && EffectTraits(readOf(objectFields)).isUnobservable());
-static_assert(EffectTraits(allocation).isRemovableWhenUnused() && !EffectTraits(allocation).mayWriteWhatIsSeen() && EffectTraits(allocation).mayTouchMemory());
+static_assert(EffectTraits(allocation).isRemovableWhenUnused() && !EffectTraits(allocation).mayWriteObservableState() && EffectTraits(allocation).mayTouchMemory());
 static_assert(!EffectTraits(writeOf(objectFields)).isRemovableWhenUnused());
 static_assert(!EffectTraits(withThrow(allocation)).isRemovableWhenUnused());
 static_assert(EffectTraits(withThrow(noEffects)).alwaysCompletes() && EffectTraits(withThrow(noEffects)).mayExitSideways());
 static_assert(!EffectTraits(withTermination(noEffects)).alwaysCompletes());
 static_assert(EffectTraits(withSuspension(noEffects)).mayRunOtherCode() && EffectTraits(withUnknownCall(noEffects)).mayRunOtherCode());
-static_assert(EffectTraits(writeOf(objectFields)).mayWriteWhatIsSeen() && !EffectTraits(writeOf(objectFields)).mayWriteOutsideObjects());
+static_assert(EffectTraits(writeOf(objectFields)).mayWriteObservableState() && !EffectTraits(writeOf(objectFields)).mayWriteOutsideObjects());
 static_assert(EffectTraits(writeOf(moduleVariables)).mayWriteOutsideObjects() && EffectTraits(unknownCode).mayWriteOutsideObjects());
 static_assert(!EffectTraits(allocation).mayWriteOutsideObjects() && !EffectTraits(runtimeStateUpdate).mayWriteOutsideObjects());
 static_assert(EffectTraits::fromBits(EffectTraits(unknownCode).bits()) == EffectTraits(unknownCode));

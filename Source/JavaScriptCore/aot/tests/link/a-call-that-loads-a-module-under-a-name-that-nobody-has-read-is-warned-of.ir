@@ -2,7 +2,7 @@
 # sink(name => process.getBuiltinModule(name), () => process.getBuiltinModule("node:fs"));  function nobodyCallsThis(name) { return process.getBuiltinModule(name); }
 # One warning, at the first call. The name of the second is written out. Nothing reaches the third
 # OPTIONS: exclude=CodeOutsideImage
-# DIAGNOSTIC: ModuleNamedAtRunTimeIsRefused 1
+# DIAGNOSTIC: NonConstantModuleName 1
 # RUN: link functions mechanisms=all
 # CHECK: function f3 unreached
 

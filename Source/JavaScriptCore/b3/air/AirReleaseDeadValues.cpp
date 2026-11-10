@@ -266,7 +266,7 @@ private:
         m_firstWriteOfBlock[m_code.size()] = m_writes.size();
     }
 
-    using HandedOn = std::pair<unsigned, unsigned>;
+    using CopyEdge = std::pair<unsigned, unsigned>;
 
     void placeJoins(Dominators& dominators)
     {
@@ -349,14 +349,14 @@ private:
     void nameWhatPlacesHold()
     {
         Dominators dominators(m_code);
-        Vector<HandedOn> handedOn;
+        Vector<CopyEdge> copyEdges;
         listWrites();
         placeJoins(dominators);
         Vector<unsigned> numberSeenFor(FillWith { }, m_code.size(), UINT_MAX);
         walkWithNames(dominators, [](BasicBlock*) { }, [&](BasicBlock* block) {
             for (unsigned write = m_firstWriteOfBlock[block->index()]; write < m_firstWriteOfBlock[block->index() + 1]; ++write) {
                 if (m_writes[write].source != noPlace)
-                    handedOn.append({ m_nameIn[m_writes[write].source], nameOfWrite(write) });
+                    copyEdges.append({ m_nameIn[m_writes[write].source], nameOfWrite(write) });
                 give(m_writes[write].place, nameOfWrite(write));
             }
             for (BasicBlock* successor : block->successorBlocks()) {
@@ -371,22 +371,22 @@ private:
                 if (numberSeen == UINT_MAX) {
                     m_steps += joins.size();
                     for (unsigned join : joins)
-                        handedOn.append({ m_nameIn[m_joins[join].place], nameOfJoin(join) });
+                        copyEdges.append({ m_nameIn[m_joins[join].place], nameOfJoin(join) });
                     continue;
                 }
                 m_steps += m_placesWithOtherNames.size() - numberSeen;
                 for (unsigned place : m_placesWithOtherNames.span().subspan(numberSeen)) {
                     auto join = std::ranges::lower_bound(joins, place, { }, [&](unsigned join) { return m_joins[join].place; });
                     if (join != joins.end() && m_joins[*join].place == place)
-                        handedOn.append({ m_nameIn[place], nameOfJoin(*join) });
+                        copyEdges.append({ m_nameIn[place], nameOfJoin(*join) });
                 }
             }
         });
         m_joinsAreBeingFilled = false;
         m_placesWithOtherNames.clear();
-        m_takenFrom.fill(numberOfNames(), handedOn, [](const HandedOn& pair) { return pair.second; }, [](const HandedOn& pair) { return pair.first; });
-        m_handedTo.fill(numberOfNames(), handedOn, [](const HandedOn& pair) { return pair.first; }, [](const HandedOn& pair) { return pair.second; });
-        m_steps += m_writes.size() + m_joins.size() + handedOn.size();
+        m_copySources.fill(numberOfNames(), copyEdges, [](const CopyEdge& pair) { return pair.second; }, [](const CopyEdge& pair) { return pair.first; });
+        m_copyDestinations.fill(numberOfNames(), copyEdges, [](const CopyEdge& pair) { return pair.first; }, [](const CopyEdge& pair) { return pair.second; });
+        m_steps += m_writes.size() + m_joins.size() + copyEdges.size();
 
         m_hintThatCameBackTo.fill(0, numberOfNames());
         m_hintThatWentOnTo.fill(0, numberOfNames());
@@ -429,11 +429,11 @@ private:
             if (!toGoBackFrom.isEmpty()) {
                 unsigned name = toGoBackFrom.takeLast();
                 goOnFrom(name);
-                for (unsigned giver : m_takenFrom.of(name))
+                for (unsigned giver : m_copySources.of(name))
                     goBackFrom(giver);
                 continue;
             }
-            for (unsigned taker : m_handedTo.of(toGoOnFrom.takeLast()))
+            for (unsigned taker : m_copyDestinations.of(toGoOnFrom.takeLast()))
                 goOnFrom(taker);
         }
     }
@@ -778,8 +778,8 @@ private:
     Vector<unsigned> m_firstWriteOfBlock;
     Vector<Join> m_joins;
     Lists m_joinsOfBlock;
-    Lists m_takenFrom;
-    Lists m_handedTo;
+    Lists m_copySources;
+    Lists m_copyDestinations;
     Vector<unsigned> m_nameIn;
     Vector<std::pair<unsigned, unsigned>> m_formerNames;
     Vector<unsigned> m_placesWithOtherNames;

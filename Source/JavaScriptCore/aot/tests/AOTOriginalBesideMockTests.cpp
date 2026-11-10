@@ -21,8 +21,8 @@ std::span<const NativeTest> originalBesideMockTests();
 static constexpr ASCIILiteral programText = R"IR(variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 module=m1 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock]
 module m0 path="/main.js" displayPath="main.js" body=f0
-module m1 path="/node_modules/dep/index.js" displayPath="dep.js" kind=CommonJs flags=[KeepsError, MayBeMocked, MayBeEvicted] requireResult=ModuleExports body=f1 exportsVariable=g0
-module m2 path="/project.cjs" displayPath="project.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f2
+module m1 path="/node_modules/dep/index.js" displayPath="dep.js" kind=CommonJs flags=[CachesEvaluationError, MayBeMocked, MayBeEvicted] requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="/project.cjs" displayPath="project.cjs" kind=CommonJs flags=[CachesEvaluationError] requireResult=ModuleExports body=f2
 entry module=m0
 entry module=m1
 entry module=m2

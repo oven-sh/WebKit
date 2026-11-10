@@ -1,6 +1,6 @@
 # Once the realm of the build holds so many bytes, or so many characters have been made, the rehearsal is over, with what it has found.
 # export const first = new RegExp("a" + String("+b"));   const kept = []; for (let n = 0; ; n++) kept[n] = Array(1000000);   export function other() { return new RegExp("c" + String("+d")); }
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /a+b/
 # CHECK-NOT: text /

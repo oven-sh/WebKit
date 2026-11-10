@@ -204,7 +204,7 @@ void throwNotAFunctionError(JSGlobalObject* globalObject, ThrowScope& scope, JSV
 
 static StringView nameOfCalleeAtCallSite(VM& vm)
 {
-    const void* returnAddress = CompiledFrameIterator::findReturnAddressInFunctionAtTop(vm);
+    const void* returnAddress = CompiledFrameIterator::topFrameReturnAddress(vm);
     if (!returnAddress)
         return { };
     std::optional<FaultSite> site = Image::current()->faultSiteAt(static_cast<const uint8_t*>(returnAddress) - sizeOfNearCall);
@@ -519,7 +519,7 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
     }
     bool isTermination = exception && vm.isTerminationException(exception);
     auto unwind = [&]() ALWAYS_INLINE_LAMBDA {
-        return unwindRunOfThrow(vm, *instance, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame));
+        return unwindRunOfThrow(vm, *instance, { callFrame->rawReturnPC(), callerStackPointer(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame));
     };
     CompiledUnwindResult found = isTermination ? CompiledUnwindResult { } : unwind();
     bool isHandled = found.status == CompiledUnwindStatus::FoundHandler;

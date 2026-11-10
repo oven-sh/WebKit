@@ -35,7 +35,7 @@ void markPristineIfOriginal(Instance&, JSObject*);
 
 JSString* tryConvertListToString(JSGlobalObject*, JSArray*);
 
-ALWAYS_INLINE bool mayRefuseOrRunOtherCode(JSArray* array)
+ALWAYS_INLINE bool mayRejectOrInterceptWrites(JSArray* array)
 {
     IndexingType type = array->indexingType();
     if (hasAnyArrayStorage(type))

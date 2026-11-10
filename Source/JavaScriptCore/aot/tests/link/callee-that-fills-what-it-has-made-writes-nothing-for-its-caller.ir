@@ -5,7 +5,7 @@
 # RUN(NEVER): link functions mechanisms=all
 # NEVER-NOT: function f1 {{*}}mayCallUnknownCode
 # NEVER-NOT: function f1 {{*}}fields-written
-# NEVER-NOT: function f1 {{*}}mayWriteWhatIsSeen
+# NEVER-NOT: function f1 {{*}}mayWriteObservableState
 
 layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 module m0 path="main.js" displayPath="main.js" body=f0

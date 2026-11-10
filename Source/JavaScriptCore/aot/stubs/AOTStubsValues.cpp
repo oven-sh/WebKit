@@ -204,16 +204,14 @@ static void stopAtFalseProofOfKinds(StubAssembler& jit, GPRReg value, GPRReg kin
     word.registerNumber = static_cast<uint32_t>(value);
     word.kind = static_cast<uint32_t>(ThrowKind::ErrorWithMessage);
     word.representation = static_cast<uint32_t>(Typed::Representation::JSValue);
+    word.hasWideA = true;
     word.calleeIsReadFromReceiver = true;
-    ThrowSiteWord wordOfSecondSource = word;
-    wordOfSecondSource.a = 1;
-    jit.urshift32(TrustedImm32(KindsOfProof::shiftOfSource), kindsWithSource);
-    jit.lshift32(TrustedImm32(WTF::ctz(std::bit_cast<uint32_t>(word) ^ std::bit_cast<uint32_t>(wordOfSecondSource))), kindsWithSource);
+    jit.lshift64(TrustedImm32(32), kindsWithSource);
 #if CPU(X86_64)
-    jit.or32(TrustedImm32(static_cast<int32_t>(std::bit_cast<uint32_t>(word))), kindsWithSource);
+    jit.or64(TrustedImm32(static_cast<int32_t>(std::bit_cast<uint32_t>(word))), kindsWithSource);
 #else
     jit.move(TrustedImm32(static_cast<int32_t>(std::bit_cast<uint32_t>(word))), scratch);
-    jit.or32(scratch, kindsWithSource);
+    jit.or64(scratch, kindsWithSource);
 #endif
     jit.jumpToStub(throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame));
 }

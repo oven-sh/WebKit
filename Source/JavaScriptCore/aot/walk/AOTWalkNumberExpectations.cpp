@@ -73,7 +73,7 @@ static TypeID provenTypeInNumberExpectations(const Walker& walker, ValueID input
     return built ? walker.typeOf(built) : TypeID();
 }
 
-static bool saysNothingInNumberExpectations(const TypeArena& types, TypeID type)
+static bool isUninformativeInNumberExpectations(const TypeArena& types, TypeID type)
 {
     if (!type || isNeverType(type))
         return true;
@@ -85,9 +85,9 @@ TypeID typeHeldAtPositionOf(Walker& walker, ValueID input)
     const BodyIndex& index = walker.currentBodyIndex();
     const LinkTables& held = walker.facts().held();
     FunctionID function = walker.currentFunction();
-    ValueID value = index.valueBehindCasts(input);
+    ValueID value = index.stripCasts(input);
     while (value && !index.isParameter(value) && index.opcodeOf(value) == Opcode::CheckInitialized)
-        value = index.valueBehindCasts(index.value(value).operand(0));
+        value = index.stripCasts(index.value(value).operand(0));
     if (!value || function.index() >= held.functions.size())
         return { };
 
@@ -115,9 +115,9 @@ TypeID typeHeldAtPositionOf(Walker& walker, ValueID input)
     if (placeOfReceiver) {
         ValueID object = definition.operand(*placeOfReceiver);
         receiver = provenTypeInNumberExpectations(walker, object);
-        if (saysNothingInNumberExpectations(types, receiver))
+        if (isUninformativeInNumberExpectations(types, receiver))
             receiver = object && object < value ? findExpectation(walker, object).type : TypeID();
-        if (saysNothingInNumberExpectations(types, receiver))
+        if (isUninformativeInNumberExpectations(types, receiver))
             return { };
         receiver = types.withoutNullish(receiver);
     }
@@ -232,9 +232,9 @@ static bool rowsTakeArgumentAsPositionInNumberExpectations(Walker& walker, const
     if (call.opcode() != Opcode::Call || operandIndex < numberOfNamedOperandsOf(Opcode::Call))
         return false;
     TypeID typeOfCallee = provenTypeInNumberExpectations(walker, call.calleeOperand());
-    if (saysNothingInNumberExpectations(walker.types(), typeOfCallee)) {
+    if (isUninformativeInNumberExpectations(walker.types(), typeOfCallee)) {
         const BodyIndex& index = walker.currentBodyIndex();
-        ValueID read = index.valueBehindCasts(call.calleeOperand());
+        ValueID read = index.stripCasts(call.calleeOperand());
         typeOfCallee = { };
         if (read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::PropGet && !index.value(read).isFreeName()) {
             TypeID expected = findExpectation(walker, index.value(read).objectOperand()).type;
@@ -314,7 +314,7 @@ bool usesSpeakForInt32(Walker& walker, ValueID input)
 static ValueID readOfEnvironmentFieldBehindNamesInNumberExpectations(const BodyIndex& index, ValueID value)
 {
     while (value && !index.isParameter(value)) {
-        value = index.valueBehindCasts(value);
+        value = index.stripCasts(value);
         if (index.isParameter(value) || index.opcodeOf(value) != Opcode::CheckInitialized)
             break;
         value = index.value(value).operand(0);
@@ -339,7 +339,7 @@ static bool turnsStepOrUseEnvironmentFieldAsInt32(Walker& walker, const BodyInde
             }
             if (operation.opcode() != Opcode::PutEnvironmentField || operation.layout() != layout || operation.field() != field)
                 continue;
-            ValueID stored = index.valueBehindCasts(operation.valueOperand());
+            ValueID stored = index.stripCasts(operation.valueOperand());
             if (!stored || index.isParameter(stored))
                 continue;
             BodyValue step = index.value(stored);
@@ -404,7 +404,7 @@ static bool isLeftAsFoundInNumberExpectations(const Walker::RememberedExpectatio
 static ValueID readOfSlotBehindNamesInNumberExpectations(const BodyIndex& index, ValueID value)
 {
     if (value)
-        value = index.valueBehindCasts(value);
+        value = index.stripCasts(value);
     return value && !index.isParameter(value) && index.opcodeOf(value) == Opcode::PropGet && !index.value(value).isFreeName() ? value : ValueID();
 }
 
@@ -413,7 +413,7 @@ static bool turnsTakeSlotForInt32(Walker& walker, LoopID loop, ValueID object, P
     const BodyIndex& index = walker.currentBodyIndex();
     auto isReadOfSlot = [&](ValueID value) {
         ValueID read = readOfSlotBehindNamesInNumberExpectations(index, value);
-        return read && index.value(read).key() == key && index.valueBehindCasts(index.value(read).objectOperand()) == object;
+        return read && index.value(read).key() == key && index.stripCasts(index.value(read).objectOperand()) == object;
     };
     auto placeOf = [](ValueID holder, PropertyKeyID name) {
         return static_cast<uint64_t>(holder.index()) << 32 | name.index();
@@ -427,7 +427,7 @@ static bool turnsTakeSlotForInt32(Walker& walker, LoopID loop, ValueID object, P
         for (BlockID member : index.membersOf(loop)) {
             for (BodyValue operation : index.block(member).values()) {
                 if ((operation.opcode() == Opcode::PropGet || operation.opcode() == Opcode::PropSet) && !operation.isFreeName())
-                    listed.underObjectAndName.add(placeOf(index.valueBehindCasts(operation.objectOperand()), operation.key()), Vector<ValueID, 2> { }).iterator->value.append(operation.id());
+                    listed.underObjectAndName.add(placeOf(index.stripCasts(operation.objectOperand()), operation.key()), Vector<ValueID, 2> { }).iterator->value.append(operation.id());
             }
         }
     }
@@ -448,7 +448,7 @@ static bool turnsTakeSlotForInt32(Walker& walker, LoopID loop, ValueID object, P
                 return keep(true);
             continue;
         }
-        ValueID stored = index.valueBehindCasts(operation.valueOperand());
+        ValueID stored = index.stripCasts(operation.valueOperand());
         if (!stored || index.isParameter(stored))
             continue;
         BodyValue step = index.value(stored);
@@ -475,7 +475,7 @@ ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker& walker, ValueID i
     TypeID proven = provenTypeInNumberExpectations(walker, input);
     if (!cut || (proven && !types.overlap(proven, cut)))
         return found;
-    if (!turnsTakeSlotForInt32(walker, loop, index.valueBehindCasts(index.value(read).objectOperand()), index.value(read).key()))
+    if (!turnsTakeSlotForInt32(walker, loop, index.stripCasts(index.value(read).objectOperand()), index.value(read).key()))
         return found;
     return { cut, found.isDeclared, found.isHeld };
 }

@@ -61,7 +61,6 @@ private:
     CellPointer allocateFrameCell(const ValueContext&, const MentionedAllocation&, const PlannedLayout&);
     using EmptySlots = Vector<FieldIndex, 8>;
     EmptySlots collectEmptySlots(LayoutID, const BitVector& isInitialField);
-    EmptySlots collectSlotsThatMayHoldCells(const Operation& made);
     ZeroedBy whoZeroesBodyOfFreshCell(const ValueContext&, const MentionedAllocation&, std::span<const FieldIndex> emptySlots, AllocationStorage);
     template<typename Visitor> void forEachEmptySlot(LayoutID, const BitVector& isInitialField, const Visitor&);
     void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy, bool hasStateOfFrameCell);

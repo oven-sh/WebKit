@@ -44,12 +44,6 @@ struct PlacedExplainNote {
     uint8_t rank { 0 };
 };
 
-struct ExplainedCause {
-    Wire::UnprovenCause cause { Wire::UnprovenCause::Unknown };
-    Wire::IllTypedCause illTypedCause { Wire::IllTypedCause::None };
-    Wire::Witness witness { Typed::noWitness };
-};
-
 struct ExplainedHeapCause {
     uint32_t reasons { 0 };
     Wire::AllocationHeapCause cause { Wire::AllocationHeapCause::None };
@@ -141,7 +135,7 @@ static std::optional<Wire::TypeTestFailure> failureOfExplainedTest(Typed::WalkNo
     case Typed::WalkNoteKind::TestThatRejoins:
         return Wire::TypeTestFailure::TakesGenericPath;
     case Typed::WalkNoteKind::TestThatLeaves:
-        return Wire::TypeTestFailure::Leaves;
+        return Wire::TypeTestFailure::ExitsToSlowVersion;
     case Typed::WalkNoteKind::TestThatThrows:
         return Wire::TypeTestFailure::Throws;
     case Typed::WalkNoteKind::ResolvedOperation:
@@ -153,49 +147,6 @@ static std::optional<Wire::TypeTestFailure> failureOfExplainedTest(Typed::WalkNo
     case Typed::WalkNoteKind::LoopWalkedAgain:
     case Typed::WalkNoteKind::WayEnds:
         return std::nullopt;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static Wire::IllTypedCause illTypedCauseForExplainedCause(Wire::UnprovenCause cause)
-{
-    switch (cause) {
-    case Wire::UnprovenCause::Unknown:
-    case Wire::UnprovenCause::ResultDisabled:
-    case Wire::UnprovenCause::Untracked:
-    case Wire::UnprovenCause::ClassEvaluatedAgain:
-        return Wire::IllTypedCause::None;
-    case Wire::UnprovenCause::UnknownObject:
-    case Wire::UnprovenCause::UncheckedConversionOfUntracked:
-        return Wire::IllTypedCause::FromLooseType;
-    case Wire::UnprovenCause::UndescribedNativeResult:
-        return Wire::IllTypedCause::DeclarationWithoutBody;
-    case Wire::UnprovenCause::DataFromOutside:
-    case Wire::UnprovenCause::ThrownByRunTime:
-        return Wire::IllTypedCause::OutsideData;
-    case Wire::UnprovenCause::LayoutOutsideFamily:
-        return Wire::IllTypedCause::LayoutOutsideFamily;
-    case Wire::UnprovenCause::NonLayoutObject:
-    case Wire::UnprovenCause::ObjectWithoutLayout:
-    case Wire::UnprovenCause::BuiltinBase:
-    case Wire::UnprovenCause::UnknownBase:
-        return Wire::IllTypedCause::MemberWithoutSlot;
-    case Wire::UnprovenCause::ReachesNativeCode:
-        return Wire::IllTypedCause::NativeWritesOperand;
-    case Wire::UnprovenCause::ReachesUnknownJavaScript:
-    case Wire::UnprovenCause::UnknownWriter:
-    case Wire::UnprovenCause::UnseenCode:
-    case Wire::UnprovenCause::ContentsOfEscapedObject:
-        return Wire::IllTypedCause::UnseenWriter;
-    case Wire::UnprovenCause::ParameterOfEscapedFunction:
-        return Wire::IllTypedCause::UnseenCaller;
-    case Wire::UnprovenCause::UnknownCallee:
-    case Wire::UnprovenCause::ResultOfUnknownCallee:
-        return Wire::IllTypedCause::UnprovenCallee;
-    case Wire::UnprovenCause::UnprovenContents:
-        return Wire::IllTypedCause::ContainerWriterUnseen;
-    case Wire::UnprovenCause::OtherNewTarget:
-        return Wire::IllTypedCause::OtherThis;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -241,18 +192,10 @@ static uint8_t rankOfExplainedOutcome(Wire::AllocationOutcome outcome)
     switch (outcome) {
     case Wire::AllocationOutcome::Heap:
         return 0;
-    case Wire::AllocationOutcome::Slim:
-        return 1;
-    case Wire::AllocationOutcome::Deferred:
-        return 2;
-    case Wire::AllocationOutcome::FrameUntilMaterialized:
-        return 3;
-    case Wire::AllocationOutcome::Frame:
-        return 4;
     case Wire::AllocationOutcome::Removed:
-        return 5;
+        return 1;
     case Wire::AllocationOutcome::Unknown:
-        return 6;
+        return 2;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -273,7 +216,7 @@ static ExplainedHeapCause explainedHeapCauseFor(Typed::ObjectBuiltCause cause)
     case Typed::ObjectBuiltCause::OperationNeedsCell:
         return { 0, Wire::AllocationHeapCause::NotTracked };
     case Typed::ObjectBuiltCause::RetainedInLoop:
-        return { 0, Wire::AllocationHeapCause::HeldAcrossIterations };
+        return { 0, Wire::AllocationHeapCause::RetainedAcrossIterations };
     case Typed::ObjectBuiltCause::Suspension:
         return { 0, Wire::AllocationHeapCause::LiveAcrossSuspension };
     }
@@ -282,11 +225,9 @@ static ExplainedHeapCause explainedHeapCauseFor(Typed::ObjectBuiltCause cause)
 
 static ExplainedHeapCause heapCauseOfExplainNote(const Typed::WalkNote& note)
 {
-    Wire::AllocationOutcome outcome = outcomeOfExplainNote(note);
-    if (outcome == Wire::AllocationOutcome::Frame || outcome == Wire::AllocationOutcome::Removed)
+    if (outcomeOfExplainNote(note) == Wire::AllocationOutcome::Removed)
         return { };
-    ExplainedHeapCause why = explainedHeapCauseFor(note.objectBuilt);
-    return why;
+    return explainedHeapCauseFor(note.objectBuilt);
 }
 
 static std::optional<PlacedExplainNote> classifyExplainNote(const Typed::Program& program, const Typed::WalkNote& note, NotesToExplain wanted)
@@ -405,43 +346,7 @@ static uint32_t countExplainedAllocations(std::span<const Typed::WalkNotes> unit
     return numberOfAllocations;
 }
 
-static ExplainedCause explainCauseOfNote(const Typed::Program& program, const Typed::WalkNote& note)
-{
-    ExplainedCause explained;
-    explained.cause = note.cause;
-    explained.illTypedCause = note.illTypedCause != Wire::IllTypedCause::None ? note.illTypedCause : illTypedCauseForExplainedCause(explained.cause);
-    if (Typed::hasFunction(explained.witness) && !hasModule(explained.witness.location))
-        explained.witness.location = program.at(Typed::FunctionID(explained.witness.function)).declarationLocation();
-    return explained;
-}
-
-static bool isExplainedOperator(Wire::AccessKind kind)
-{
-    switch (kind) {
-    case Wire::AccessKind::Truthiness:
-    case Wire::AccessKind::Equality:
-    case Wire::AccessKind::Arithmetic:
-    case Wire::AccessKind::Comparison:
-    case Wire::AccessKind::Conversion:
-    case Wire::AccessKind::TypeOf:
-    case Wire::AccessKind::InstanceOf:
-    case Wire::AccessKind::Iteration:
-    case Wire::AccessKind::Spread:
-        return true;
-    case Wire::AccessKind::Unknown:
-    case Wire::AccessKind::Read:
-    case Wire::AccessKind::Store:
-    case Wire::AccessKind::Define:
-    case Wire::AccessKind::Has:
-    case Wire::AccessKind::Delete:
-    case Wire::AccessKind::Call:
-    case Wire::AccessKind::Construct:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static Wire::AccessRecord makeExplainedAccess(const Typed::Program& program, std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
+static Wire::AccessRecord makeExplainedAccess(std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
 {
     const PlacedExplainNote& place = notesOfPlace.front();
     const Typed::WalkNote& worst = explainedWalkNote(units, place);
@@ -459,17 +364,8 @@ static Wire::AccessRecord makeExplainedAccess(const Typed::Program& program, std
         record.cost = std::min(record.cost, note.cost);
         record.loopDepth = std::max<uint32_t>(record.loopDepth, note.loopDepth);
     }
-    if (!asksForCause || (record.level == Wire::KnowledgeLevel::Proven && record.cost == Wire::AccessCost::Free))
-        return record;
-
-    ExplainedCause explained = explainCauseOfNote(program, worst);
-    if (explained.cause == Wire::UnprovenCause::Unknown && isExplainedOperator(record.kind))
-        explained.cause = Wire::UnprovenCause::Untracked;
-    if (!Typed::hasFunction(explained.witness) || !hasModule(explained.witness.location))
-        explained.witness = { place.function, Wire::none, place.location };
-    record.cause = explained.cause;
-    record.illTypedCause = explained.illTypedCause;
-    record.witness = explained.witness;
+    if (asksForCause)
+        record.cause = worst.cause;
     return record;
 }
 
@@ -478,11 +374,11 @@ static Vector<Wire::AccessRecord> explainAccesses(const Typed::Program& program,
     Vector<PlacedExplainNote> notes = placeExplainNotes(program, units, NotesToExplain::Operations, loops);
     Vector<uint32_t> firstNoteOfPlace = findExplainedPlaces(notes.span());
     return collectInParallel<Wire::AccessRecord>(loops, static_cast<unsigned>(firstNoteOfPlace.size() - 1), [&](unsigned place, Vector<Wire::AccessRecord>& found) {
-        found.append(makeExplainedAccess(program, units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place]), asksForCauses));
+        found.append(makeExplainedAccess(units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place]), asksForCauses));
     });
 }
 
-static Wire::TypeTestRecord makeExplainedTypeTest(const Typed::Program& program, std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
+static Wire::TypeTestRecord makeExplainedTypeTest(std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace)
 {
     const PlacedExplainNote& place = notesOfPlace.front();
     const Typed::WalkNote& worst = explainedWalkNote(units, place);
@@ -493,22 +389,15 @@ static Wire::TypeTestRecord makeExplainedTypeTest(const Typed::Program& program,
     record.failure = *failureOfExplainedTest(worst.kind);
     record.copies = countExplainedCopies(units, notesOfPlace);
     record.layout = worst.layout.index();
-    if (!asksForCause)
-        return record;
-
-    ExplainedCause explained = explainCauseOfNote(program, worst);
-    record.cause = explained.cause;
-    record.illTypedCause = explained.illTypedCause;
-    record.witness = explained.witness;
     return record;
 }
 
-static Vector<Wire::TypeTestRecord> explainTypeTests(const Typed::Program& program, std::span<const Typed::WalkNotes> units, bool asksForCauses, const ParallelLoops& loops)
+static Vector<Wire::TypeTestRecord> explainTypeTests(const Typed::Program& program, std::span<const Typed::WalkNotes> units, const ParallelLoops& loops)
 {
     Vector<PlacedExplainNote> notes = placeExplainNotes(program, units, NotesToExplain::Tests, loops);
     Vector<uint32_t> firstNoteOfPlace = findExplainedPlaces(notes.span());
     return collectInParallel<Wire::TypeTestRecord>(loops, static_cast<unsigned>(firstNoteOfPlace.size() - 1), [&](unsigned place, Vector<Wire::TypeTestRecord>& found) {
-        found.append(makeExplainedTypeTest(program, units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place]), asksForCauses));
+        found.append(makeExplainedTypeTest(units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place])));
     });
 }
 
@@ -591,7 +480,7 @@ static Vector<Wire::AllocationRemarkRecord> explainAllocations(const Typed::Prog
         for (const PlacedExplainNote& placed : notesWithOutcome)
             reasons |= heapCauseOfExplainNote(explainedWalkNote(units, placed)).reasons;
         remark.reasons = static_cast<Wire::AllocationEscapeReason>(reasons);
-        if (worst.neededIn && remark.outcome != Wire::AllocationOutcome::Frame)
+        if (worst.neededIn)
             remark.forcedBy = program.at(worst.neededIn).locationAt(worst.neededAt.position);
         if (worst.opcode != Typed::Opcode::Undefined) {
             Wire::TextRange& name = namesOfOpcodes[static_cast<size_t>(worst.opcode)];
@@ -647,7 +536,7 @@ void writeExplainSections(const Typed::Program& program, std::span<const Typed::
 
     if (explainsFlow || countsAccesses) {
         Vector<Wire::AccessRecord> accesses = explainAccesses(program, units, explainsFlow, loops);
-        Vector<Wire::TypeTestRecord> typeTests = explainTypeTests(program, units, explainsFlow, loops);
+        Vector<Wire::TypeTestRecord> typeTests = explainTypeTests(program, units, loops);
         if (countsAccesses) {
             Vector<Wire::AccessCountRecord> counts = countExplainedAccesses(program, accesses.span(), typeTests.span());
             for (const Wire::AccessCountRecord& record : counts) {
@@ -662,12 +551,10 @@ void writeExplainSections(const Typed::Program& program, std::span<const Typed::
         if (explainsFlow) {
             for (const Wire::AccessRecord& record : accesses) {
                 names.addFunction(record.function);
-                names.addFunction(record.witness.function);
                 names.addLayout(record.layout);
             }
             for (const Wire::TypeTestRecord& record : typeTests) {
                 names.addFunction(record.function);
-                names.addFunction(record.witness.function);
                 names.addLayout(record.layout);
             }
             output.setRecords(Wire::ResultSection::Accesses, accesses.span());

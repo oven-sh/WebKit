@@ -25,7 +25,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
+OperatorForm operatorFormFor(Walker&, const Draft&);
 
 static constexpr uint32_t frontOperandInTextBuilderCallees = 0;
 static_assert(OperandIndex::Add::left == frontOperandInTextBuilderCallees && OperandIndex::Strcat::parts == frontOperandInTextBuilderCallees);
@@ -45,13 +45,13 @@ Reference primitivePartOfStringBuilder(Walker& walker, Opcode join, Reference pa
         conversion.setRightOperand(part);
     } else
         conversion.setValueOperand(part);
-    conversion.setForm(formAllowedForTypedOperator(walker, conversion));
+    conversion.setForm(operatorFormFor(walker, conversion));
     return walker.build(WTF::move(conversion));
 }
 
 static void appendPartsInTextBuilderCallees(Walker& walker, const BodyValue& join, Reference name, std::span<const Reference> parts, Origin origin)
 {
-    TextInStringBuilder& text = *findTextNamedBy(walker, join.id());
+    StringInBuilder& text = *findStringInBuilder(walker, join.id());
     if (text.web.standsUnderHandlers)
         appendPartsRolledBackWhereTheyFail(walker, text, name, parts, origin);
     else
@@ -126,12 +126,12 @@ static bool appendPartsBehindTestsOfWhatIsWrittenInTextBuilderCallees(Walker& wa
         proof.setIsOnTakenEdge(true);
         Reference narrowed = walker.build(WTF::move(proof));
         if (!narrowed) {
-            walker.fail("a part of a text in a builder passes the test of what is written of it, and nothing can be built for it behind the test"_s);
+            walker.fail("a part of a string in a builder passes the check of its declared type, and nothing can be built for it after the check"_s);
             return true;
         }
         appended[guess.place - 1] = narrowed;
     }
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     appendPartsInTextBuilderCallees(walker, join, parts[0], appended.span(), origin);
     if (!walker.isUnreachable())
         walker.jumpTo(meeting);
@@ -153,18 +153,18 @@ static bool appendPartsBehindTestsOfWhatIsWrittenInTextBuilderCallees(Walker& wa
     return true;
 }
 
-bool convertPartsAndAppendToTextInStringBuilder(Walker& walker, const BodyValue& join, std::span<const Reference> parts)
+bool tryConvertAndAppendParts(Walker& walker, const BodyValue& join, std::span<const Reference> parts)
 {
-    if (!walker.hasTextsInStringBuilders() || parts.size() < 2 || !isTextInStringBuilder(walker, parts[0]) || !isGrowthOfTextInStringBuilder(walker, join))
+    if (!walker.hasStringsInBuilders() || parts.size() < 2 || !isStringInBuilder(walker, parts[0]) || !isAppendToStringInBuilder(walker, join))
         return false;
     for (Reference part : parts.subspan(1)) {
-        if (!part || !part.isRecord() || isTextInStringBuilder(walker, part))
+        if (!part || !part.isRecord() || isStringInBuilder(walker, part))
             return false;
     }
-    TextInStringBuilder* grown = findTextNamedBy(walker, join.id());
+    StringInBuilder* grown = findStringInBuilder(walker, join.id());
     if (!grown)
         return false;
-    if (!growthJoinsTextsInStringBuilder(walker, *grown, parts.subspan(1)))
+    if (!ensureAppendIsConcatenation(walker, *grown, parts.subspan(1)))
         return true;
 
     Origin origin = walker.originOf(join);

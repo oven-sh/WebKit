@@ -5,11 +5,11 @@
 # CHECK: isInLoop=true isLoopHead=true:
 # CHECK: PutSlot{{*}}key="seen"
 # CHECK: frequency=Rare
-# CHECK: PutSlot{{*}}key="seen"{{*}}[putsBackWhatTurnStored]
-# RUN(COUNT): compile LoopsBuiltTwice TurnsThatBeginAgain StoresPutBackWhereTurnsBeginAgain mechanisms=all
-# COUNT: statistic LoopsBuiltTwice 1
-# COUNT: statistic TurnsThatBeginAgain 5
-# COUNT: statistic StoresPutBackWhereTurnsBeginAgain 1
+# CHECK: PutSlot{{*}}key="seen"{{*}}[undoesIterationStore]
+# RUN(COUNT): compile WalkLoopsVersioned IterationRestartsEmitted StoresUndoneAtIterationRestarts mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 1
+# COUNT: statistic IterationRestartsEmitted 5
+# COUNT: statistic StoresUndoneAtIterationRestarts 1
 # RUN(SHELL): run-in-shell globalThis.sink = (tally, item) => { const list = [item, item]; print(tally(list), item.seen); const text = { price: 7, count: "2", seen: 10 }; list[1] = text; print(tally(list), item.seen, text.seen); const looks = { price: 1, get count() { print("seen is", this.seen); return 1; }, seen: 20 }; list[0] = looks; print(tally(list), looks.seen, text.seen); list[0] = text; print(tally(list), text.seen); };
 # SHELL: 12 2
 # SHELL-NEXT: 20 3 11

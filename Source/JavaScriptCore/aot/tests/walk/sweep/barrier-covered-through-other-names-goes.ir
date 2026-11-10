@@ -19,9 +19,9 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #   constants:
 #     v0: string @Cell = String string="circle"
 #   b0(v1: anything @Cell, v2: anything @JSValue) entry=0:
-#     v3 @Void = SetMappedArgument v1, v0 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v3 @Void = SetMappedArgument v1, v0 index=0 traits=[mayWriteObservableState, mayTouchMemory]
 #     v4: anything @Cell = FinishObject v1
-#     v5 @Void = SetMappedArgument v4, v2 index=1 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v5 @Void = SetMappedArgument v4, v2 index=1 traits=[mayWriteObservableState, mayTouchMemory]
 #     Return
 # }
 # -- end of code

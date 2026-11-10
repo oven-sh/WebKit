@@ -32,7 +32,6 @@ public:
     Roots appendRoots(Machine::PatchOperation*, const ValueContext& suspension);
     static std::optional<uint64_t> siteWordFor(FrameMapRecords&, const Machine::PatchParameters&, const Roots&, unsigned promiseChild);
     static std::optional<uint64_t> siteWordOfFrameOnHeap(const Machine::PatchParameters&);
-    static bool savesDeadPreservedRegister(const Machine::PatchParameters&);
     static void releaseSavedRegisters(CCallHelpers&, const Machine::PatchParameters&);
 };
 

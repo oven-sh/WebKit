@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLayoutData.h"
+#include "AOTPrimitives.h"
 #include "AOTRecordTypes.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTVarint.h"
@@ -425,6 +426,29 @@ enum class ThrowSiteSource : uint32_t {
     WordsAfterCall,
     WordInRegister,
     FaultSite,
+};
+
+struct FalseProofWord {
+    static constexpr unsigned sourceBits = 4;
+    static constexpr uint32_t primitivesMask = (1u << 10) - 1;
+    static constexpr uint32_t objectBit = 1u << 10;
+    static constexpr uint32_t stringLiteralBit = 1u << 11;
+    static constexpr uint32_t symbolLiteralBit = 1u << 12;
+    static constexpr uint32_t everyBit = (1u << 13) - 1;
+    static_assert(Typed::Primitive::All == primitivesMask);
+
+    static constexpr uint32_t summarize(uint16_t primitives, bool hasObjects)
+    {
+        uint32_t summary = primitives & primitivesMask;
+        if ((primitives & Typed::Primitive::AnyString) == Typed::Primitive::LiteralString)
+            summary |= stringLiteralBit;
+        if ((primitives & Typed::Primitive::AnySymbol) == Typed::Primitive::LiteralSymbol)
+            summary |= symbolLiteralBit;
+        return summary | (hasObjects ? objectBit : 0);
+    }
+    static constexpr uint32_t encode(uint32_t source, uint32_t expectedType) { return source | expectedType << sourceBits; }
+    static constexpr uint32_t sourceOf(uint32_t a) { return a & ((1u << sourceBits) - 1); }
+    static constexpr uint32_t expectedTypeOf(uint32_t a) { return a >> sourceBits; }
 };
 
 struct ThrowSiteWord {

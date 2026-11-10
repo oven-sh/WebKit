@@ -107,7 +107,7 @@ static ALWAYS_INLINE void resolveIndexOfAddress(const Liveness& liveness, Addres
         RELEASE_ASSERT(index->opcode() == ZExt32 || index->opcode() == SExt32);
         form.extension = index->opcode() == ZExt32 ? IndexExtension::ZeroExtend32 : IndexExtension::SignExtend32;
         index = index->child(0);
-        if (form.extension == IndexExtension::ZeroExtend32 && clearsUpperHalfOfRegister(index))
+        if (form.extension == IndexExtension::ZeroExtend32 && clearsUpperHalf(index))
             form.extension = IndexExtension::None;
     }
     RELEASE_ASSERT(!liveness.isFused(index));

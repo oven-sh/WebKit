@@ -82,7 +82,7 @@ private:
         LayoutID layout { };
         uint8_t kindOfObjects { 0 };
         bool holdsLostBuiltins { false };
-        bool holdsUnseen { false };
+        bool hasUnknownObjects { false };
     };
 
     bool mayComeThroughMockOfProgram(ModuleID exporter, uint32_t indexOfExport) const;

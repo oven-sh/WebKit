@@ -12,7 +12,6 @@
 #include "AOTHeldOperands.h"
 #include "AOTInliningAcrossFiles.h"
 #include "AOTPlan.h"
-#include "AOTRepresentation.h"
 #include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
@@ -31,34 +30,12 @@ static constexpr OpcodeSet interiorPointersInSweptCode = [] {
     return opcodes;
 }();
 
-static ALWAYS_INLINE bool liesInPlaceThatSweepMayClear(const Code& code, ValueID value)
-{
-    return value && !code.isConstant(value) && code.isNeeded(value) && holdsCells(code.at(value).representation);
-}
-
-static constexpr OpcodeSet operationsThatReadNothingInSweptCode { Opcode::ReleaseHint, Opcode::ReleaseEnvironment };
-static_assert(OperandIndex::ReleaseHint::value == OperandIndex::ReleaseEnvironment::environment);
-
-static ValueID operationMadeByTerminatorOfSweptBlock(const Terminator& terminator)
-{
-    if (terminator.isConditionalBranch())
-        return terminator.conditionOperand();
-    if (terminator.kind == TerminatorKind::ReturnCall)
-        return terminator.callOperand();
-    return { };
-}
-
 static LayoutID layoutOfSweptEnvironmentHandedBack(const SweepInputs& inputs, TypeID type)
 {
     if (!type || holdsOnlyPrimitives(type))
         return { };
     LayoutID environment = inputs.types.at(type).environment;
     return environment && inputs.plan.layout(environment).cellsAreHandedBack ? environment : LayoutID();
-}
-
-static ValueID valueNamedAnewBySweptOperation(const Operation& operation)
-{
-    return opcodesThatGiveSameCell.contains(operation.opcode) ? operation.operand(0) : ValueID();
 }
 
 static bool namesOnlyEnvironmentsMadeBySweptCode(const Code& code, std::span<const uint32_t> firstIncomingEdge, std::span<const EdgeID> incomingEdges, ValueID named)
@@ -76,7 +53,7 @@ static bool namesOnlyEnvironmentsMadeBySweptCode(const Code& code, std::span<con
                 return false;
             continue;
         }
-        if (opcodesThatGiveSameCell.contains(operation.opcode)) {
+        if (cellPreservingOpcodes.contains(operation.opcode)) {
             worklist.append(operation.operand(0));
             continue;
         }
@@ -135,157 +112,30 @@ static bool isHeldBySweptSuspension(const Operation& suspension, ValueID value)
 
 namespace {
 
-using SweepLetGo = PlaceWhereSweptValueIsLetGo;
-
-using SweepWayOfValue = WayOfSweptValueLetGo;
-
 class SweepLiveRanges {
     WTF_MAKE_NONCOPYABLE(SweepLiveRanges);
 public:
-    SweepLiveRanges(const Code& code, const uint8_t* statesOfBlocks, Vector<uint32_t>& lastReads, Vector<ReadOfSweptValue>& reads, Vector<SweepWayOfValue>& ways)
-        : m_code(code)
-        , m_statesOfBlocks(statesOfBlocks)
-        , m_lastRead(lastReads)
+    SweepLiveRanges(Vector<uint32_t>& lastReads, Vector<ReadOfSweptValue>& reads)
+        : m_lastRead(lastReads)
         , m_reads(reads)
-        , m_ways(ways)
     {
-        m_ways.shrink(0);
     }
 
     bool noteReadInAnyOrder(ValueID value, BlockID block, ValueID reader) { return noteReadOfSweptValueInAnyOrder(m_lastRead, m_reads, value, block, reader); }
 
-    void findLastReads(std::span<const SweepLetGo> letGo, std::span<const ValueID> lastSuspensions, Vector<ReleaseBehindLastRead>& releases, uint32_t& operationsSwept)
-    {
-        ValueID value = letGo.front().value;
-        bool isHeldByCopiedBodiesAlone = std::ranges::all_of(letGo, &SweepLetGo::isBehindCopiedBody);
-        bool isParameter = m_code.at(value).opcode == Opcode::Parameter;
-        if (!isParameter)
-            ++operationsSwept;
-        BlockID definingBlock = m_code.blockOf(value);
-        if (m_ways.isEmpty())
-            m_ways.fill(SweepWayOfValue(), m_code.numberOfBlocks());
-        Vector<BlockID, 32> worklist;
-
-        auto reachHeadOf = [&](BlockID block) {
-            if (block != definingBlock && !std::exchange(wayAt(block, value).isLiveAtHead, true))
-                worklist.append(block);
-        };
-        for (uint32_t read = m_lastRead[value.index()]; read != noRead; read = m_reads[read].previous) {
-            const ReadOfSweptValue& noted = m_reads[read];
-            SweepWayOfValue& way = wayAt(noted.block, value);
-            if (!way.isRead || (way.lastReader && (!noted.reader || noted.reader > way.lastReader)))
-                way.lastReader = noted.reader;
-            way.isRead = true;
-            reachHeadOf(noted.block);
-        }
-        for (uint32_t read = m_lastRead[value.index()]; read != noRead; read = m_reads[read].previous) {
-            BlockID block = m_reads[read].block;
-            SweepWayOfValue& way = wayAt(block, value);
-            if (way.lastReader && way.lastReader == operationMadeByTerminatorOfSweptBlock(m_code.at(block).terminator))
-                way.lastReader = { };
-            way.isLiveAtEnd |= !way.lastReader;
-        }
-        while (!worklist.isEmpty()) {
-            forEachSweptBlockThatLeadsTo(m_code, m_statesOfBlocks, worklist.takeLast(), [&](BlockID from) ALWAYS_INLINE_LAMBDA {
-                wayAt(from, value).isLiveAtEnd = true;
-                reachHeadOf(from);
-            });
-        }
-
-        Vector<BlockID, 16> blocksLetGoAtEnd;
-        auto letGoAtEndOf = [&](BlockID block) {
-            SweepWayOfValue& way = wayAt(block, value);
-            if (way.isLiveAtEnd || std::exchange(way.isLetGoAtEnd, true))
-                return;
-            if (block == letGo.front().blockOfValueNamedByHint && block != definingBlock && !way.isRead)
-                return;
-            blocksLetGoAtEnd.append(block);
-            if (block == definingBlock || way.isRead)
-                return;
-            way.isLetGoAtHead = true;
-            worklist.append(block);
-        };
-        for (const SweepLetGo& place : letGo)
-            letGoAtEndOf(place.block);
-        while (!worklist.isEmpty()) {
-            BlockID block = worklist.takeLast();
-            forEachSweptBlockThatLeadsTo(m_code, m_statesOfBlocks, block, [&](BlockID from) ALWAYS_INLINE_LAMBDA {
-                if (wayAt(from, value).isLiveAtEnd)
-                    wayAt(block, value).isEnteredFromReader = true;
-                else
-                    letGoAtEndOf(from);
-            });
-        }
-
-        auto lastReadIn = [&](BlockID block) {
-            const SweepWayOfValue& way = wayAt(block, value);
-            if (way.isRead)
-                return way.lastReader;
-            return block == definingBlock && !isParameter ? value : ValueID();
-        };
-        auto losesValue = [&](ValueID suspension) {
-            return suspension != value && !isHeldBySweptSuspension(m_code.at(suspension), value);
-        };
-        for (BlockID block : blocksLetGoAtEnd) {
-            ValueID suspension = lastSuspensions[block.index()];
-            if (!suspension)
-                continue;
-            ValueID lastRead = lastReadIn(block);
-            if (!lastRead || suspension > lastRead || (suspension == lastRead && losesValue(suspension)))
-                worklist.append(block);
-        }
-        while (!worklist.isEmpty()) {
-            m_code.forEachEdgeOf(worklist.takeLast(), [&](EdgeID, const Edge& edge) {
-                SweepWayOfValue& way = wayAt(edge.to, value);
-                if (way.isLetGoAtHead && !std::exchange(way.isSuspendedAtHead, true))
-                    worklist.append(edge.to);
-            });
-        }
-
-        for (BlockID block : blocksLetGoAtEnd) {
-            const SweepWayOfValue& way = wayAt(block, value);
-            if (way.isLetGoAtHead) {
-                if (way.isEnteredFromReader && !way.isSuspendedAtHead && !letGo.front().blockOfValueNamedByHint)
-                    releases.append({ block, ValueID(), value });
-                continue;
-            }
-            ValueID lastRead = lastReadIn(block);
-            if (isHeldByCopiedBodiesAlone && lastRead && lastRead != value && effectRuleOf(m_code.at(lastRead).opcode) == EffectRule::Call)
-                continue;
-            if (!lastRead || !m_code.at(lastRead).traits().maySuspend() || !losesValue(lastRead))
-                releases.append({ block, lastRead, value });
-        }
-    }
-
 private:
-    static constexpr uint32_t noRead = noReadOfSweptValue;
-
-    SweepWayOfValue& wayAt(BlockID block, ValueID value)
-    {
-        SweepWayOfValue& way = m_ways.mutableSpan().data()[block.index()];
-        if (way.value != value) {
-            way = { };
-            way.value = value;
-        }
-        return way;
-    }
-
-    const Code& m_code;
-    const uint8_t* m_statesOfBlocks;
     Vector<uint32_t>& m_lastRead;
     Vector<ReadOfSweptValue>& m_reads;
-    Vector<SweepWayOfValue>& m_ways;
 };
 
 class SweepLiveSets {
 public:
-    SweepLiveSets(const Code& code, const uint8_t* marksOfValues, const uint8_t* statesOfBlocks, std::span<const ValueID> releaseHints, const SweepBits& environmentsHandedBack, const SweepBits* valuesLetGo, bool hasInteriorPointers)
+    SweepLiveSets(const Code& code, const uint8_t* marksOfValues, const uint8_t* statesOfBlocks, std::span<const ValueID> releaseHints, const SweepBits& environmentsHandedBack, bool hasInteriorPointers)
         : m_code(code)
         , m_marksOfValues(marksOfValues)
         , m_statesOfBlocks(statesOfBlocks)
         , m_releaseHints(releaseHints)
         , m_environmentsHandedBack(environmentsHandedBack)
-        , m_valuesLetGo(valuesLetGo)
         , m_followsEveryValue(code.hasSuspensions())
         , m_hasInteriorPointers(hasInteriorPointers)
     {
@@ -295,7 +145,7 @@ public:
     {
         forEachValueReadAtEndOf(block, [&](ValueID read) ALWAYS_INLINE_LAMBDA {
             readWithOwners(read, [&](ValueID value, uint32_t definingBlock) ALWAYS_INLINE_LAMBDA {
-                if (definingBlock == block.index() && !(m_valuesLetGo && m_valuesLetGo->get(value.index())))
+                if (definingBlock == block.index())
                     return false;
                 return !ranges.noteReadInAnyOrder(value, block, ValueID());
             });
@@ -303,7 +153,7 @@ public:
     }
 
 private:
-    bool isFollowed(ValueID id) const { return m_followsEveryValue || m_releaseHints[id.index()] || m_environmentsHandedBack.get(id.index()) || (m_valuesLetGo && m_valuesLetGo->get(id.index())); }
+    bool isFollowed(ValueID id) const { return m_followsEveryValue || m_releaseHints[id.index()] || m_environmentsHandedBack.get(id.index()); }
     bool isNeeded(ValueID id) const { return m_marksOfValues[id.index()] & neededMarkOfSweep; }
 
     template<typename Functor>
@@ -358,7 +208,6 @@ private:
     const uint8_t* m_statesOfBlocks;
     std::span<const ValueID> m_releaseHints;
     const SweepBits& m_environmentsHandedBack;
-    const SweepBits* m_valuesLetGo;
     bool m_followsEveryValue;
     bool m_hasInteriorPointers;
 };
@@ -370,12 +219,8 @@ void Sweep::beginFollowingLiveness()
     Code& code = *m_code;
     code.m_suspensions.shrink(0);
     code.m_liveValues.shrink(0);
-    code.m_releasesBehindLastReads.shrink(0);
-    m_mayHoldHints = code.opcodesOfValues().contains(Opcode::ReleaseHint);
     m_mayHandBackEnvironments = code.opcodesOfValues().contains(Opcode::ReleaseEnvironment);
-    m_followsLiveness = code.hasSuspensions() || m_mayHoldHints || m_mayHandBackEnvironments;
-    m_looksForLastReads = m_mayHoldHints && (code.hasSuspensions() || code.inlineFrames().size() > 1);
-    m_holdsHintsBehindCopiedBodies = false;
+    m_followsLiveness = code.hasSuspensions() || m_mayHandBackEnvironments;
     if (!m_followsLiveness)
         return;
 
@@ -390,12 +235,6 @@ void Sweep::beginFollowingLiveness()
     m_blocksThatSuspend.ensureSize(numberOfBlocks);
     m_blocksWithHints.clearAll();
     m_blocksWithHints.ensureSize(numberOfBlocks);
-    m_lastSuspensions.fill(ValueID(), m_looksForLastReads ? numberOfBlocks : 0);
-    m_valuesLetGo.clearAll();
-    if (m_looksForLastReads)
-        m_valuesLetGo.ensureSize(numberOfValues);
-    m_valuesHeldByCopiedBodies.clearAll();
-    m_otherNames.shrink(0);
     m_lastReads.fill(noReadOfSweptValue, numberOfValues);
     m_reads.shrink(0);
     m_lastReadersInOwnBlocks.fill(ValueID(), numberOfValues);
@@ -428,7 +267,7 @@ static bool holdsEnvironmentsWithoutMarkingThemInSweptCode(const Operation& hold
 ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::noteIfMayHoldEnvironmentInFrame(ValueID id)
 {
     const Code& code = *m_code;
-    if (holdsEnvironmentsWithoutMarkingThemInSweptCode(code.at(rootOfCellInSweptCode(code, id))))
+    if (holdsEnvironmentsWithoutMarkingThemInSweptCode(code.at(underlyingCellOf(code, id))))
         m_namesOfCellsThatMayHoldEnvironments.append(id);
 }
 
@@ -450,7 +289,7 @@ void Sweep::followCellsThatHoldEnvironmentsInFrames()
             RELEASE_ASSERT(position < index && names[position] == cell);
             return heldByNames[position];
         };
-        ValueID cell = rootOfCellInSweptCode(code, id);
+        ValueID cell = underlyingCellOf(code, id);
         if (cell != id)
             heldByNames[index] = settledFor(cell);
         else {
@@ -464,7 +303,7 @@ void Sweep::followCellsThatHoldEnvironmentsInFrames()
                     continue;
                 if (LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(held).type))
                     add(layout);
-                ValueID captured = rootOfCellInSweptCode(code, held);
+                ValueID captured = underlyingCellOf(code, held);
                 if (!holdsEnvironmentsWithoutMarkingThemInSweptCode(code.at(captured)))
                     continue;
                 LayoutsHeld below = settledFor(captured);
@@ -480,14 +319,6 @@ void Sweep::followCellsThatHoldEnvironmentsInFrames()
             m_environmentsHandedBack.append({ layouts[held.first + offset], id });
     }
     names.shrink(0);
-}
-
-void Sweep::noteValueHeldByCopiedBody(ValueID value)
-{
-    if (!m_looksForLastReads)
-        return;
-    m_valuesHeldByCopiedBodies.set(value.index());
-    m_holdsHintsBehindCopiedBodies = true;
 }
 
 ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::noteReadForLiveness(ValueID read, BlockID block, ValueID reader)
@@ -511,7 +342,6 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::noteReadForLiveness(ValueID read, Blo
 
 void Sweep::noteNeededOperationForLiveness(ValueID id, const Operation& operation)
 {
-    const Code& code = *m_code;
     BlockID block = operation.block();
     m_liveness->blockOfValue.mutableSpan().data()[id.index()] = block.index();
     if (m_mayHandBackEnvironments) {
@@ -521,22 +351,8 @@ void Sweep::noteNeededOperationForLiveness(ValueID id, const Operation& operatio
     if (operation.traits().maySuspend()) {
         m_blocksThatSuspend.quickSet(block.index());
         m_liveness->operationsThatSuspend.quickSet(id.index());
-        if (m_looksForLastReads) {
-            ValueID& last = m_lastSuspensions[block.index()];
-            if (!last || last < id)
-                last = id;
-        }
     }
-    if (m_holdsHintsBehindCopiedBodies && opcodesThatGiveSameCell.contains(operation.opcode) && !m_valuesHeldByCopiedBodies.get(id.index()) && liesInPlaceThatSweepMayClear(code, id)) {
-        for (ValueID named = valueNamedAnewBySweptOperation(operation); named && !code.isConstant(named); named = valueNamedAnewBySweptOperation(code.at(named))) {
-            if (!m_valuesHeldByCopiedBodies.get(named.index()))
-                continue;
-            m_valuesLetGo.quickSet(id.index());
-            m_otherNames.append({ named, id });
-            break;
-        }
-    }
-    if (operationsThatReadNothingInSweptCode.contains(operation.opcode))
+    if (operation.opcode == Opcode::ReleaseEnvironment)
         return;
     if (operation.opcode == Opcode::Narrowed) {
         noteReadForLiveness(operation.operand(OperandIndex::Narrowed::value), block, id);
@@ -569,65 +385,17 @@ void Sweep::finishLiveness()
     auto releaseStorage = makeScopeExit([&] {
         m_worklist.shrink(0);
     });
-    releaseHints.fill(ValueID(), m_mayHoldHints || m_mayHandBackEnvironments ? code.numberOfValues() : 0);
-
-    Vector<SweepLetGo>& placesLetGo = m_liveness->placesLetGo;
-    placesLetGo.shrink(0);
-    Vector<ValueID>& hintsBehindLastUses = m_liveness->hintsBehindLastUses;
-    hintsBehindLastUses.shrink(0);
-
-    Vector<ValueID>& joinsLetGo = m_liveness->joinsLetGo;
-    joinsLetGo.shrink(0);
-    auto letGoOfWhatFlowsInto = [&](ValueID join) {
-        ensureEdgesThatAreTakenAreListed();
-        joinsLetGo.append(join);
-        while (!joinsLetGo.isEmpty()) {
-            ValueID parameter = joinsLetGo.takeLast();
-            if (!parameter || code.isConstant(parameter) || code.isNeeded(parameter) || code.at(parameter).opcode != Opcode::Parameter || m_valuesLetGo.quickSet(parameter.index()))
-                continue;
-            BlockID block = code.blockOf(parameter);
-            std::span<const ValueID> parameters = code.at(block).parameters();
-            size_t position = std::ranges::find(parameters, parameter) - parameters.begin();
-            for (uint32_t index = m_firstIncomingEdge[block.index()]; index < m_firstIncomingEdge[block.index() + 1]; ++index) {
-                const Edge& edge = code.at(m_incomingEdges[index]);
-                if (position >= edge.arguments().size() || code.at(edge.from).handler == m_incomingEdges[index])
-                    continue;
-                ValueID argument = edge.arguments()[position];
-                if (!liesInPlaceThatSweepMayClear(code, argument)) {
-                    joinsLetGo.append(argument);
-                    continue;
-                }
-                m_valuesLetGo.quickSet(argument.index());
-                placesLetGo.append({ argument, edge.from });
-            }
-        }
-    };
+    releaseHints.fill(ValueID(), m_mayHandBackEnvironments ? code.numberOfValues() : 0);
 
     std::span<const OperationKeptForOperand> operationsKeptForOperands = m_operationsKeptForOperands.span();
     for (const OperationKeptForOperand& noted : operationsKeptForOperands) {
         ValueID id = noted.operation;
-        if (noted.opcode == Opcode::ReleaseEnvironment) {
-            if (!code.isNeeded(id))
-                continue;
-            releaseHints[id.index()] = std::exchange(releaseHints[noted.operand.index()], id);
-            m_blocksWithHints.quickSet(noted.block.index());
-            if (LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(noted.operand).type))
-                m_environmentsHandedBack.append({ layout, id });
+        if (noted.opcode != Opcode::ReleaseEnvironment || !code.isNeeded(id))
             continue;
-        }
-        if (noted.opcode != Opcode::ReleaseHint)
-            continue;
-        if (!code.isNeeded(id)) {
-            if (m_looksForLastReads && code.hasSuspensions())
-                letGoOfWhatFlowsInto(noted.operand);
-            continue;
-        }
         releaseHints[id.index()] = std::exchange(releaseHints[noted.operand.index()], id);
         m_blocksWithHints.quickSet(noted.block.index());
-        if (m_looksForLastReads && (code.hasSuspensions() || noted.isBehindCopiedBody)) {
-            m_valuesLetGo.quickSet(noted.operand.index());
-            hintsBehindLastUses.append(id);
-        }
+        if (LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(noted.operand).type))
+            m_environmentsHandedBack.append({ layout, id });
     }
     RELEASE_ASSERT(code.hasSuspensions() || m_blocksThatSuspend.isEmpty());
     if (m_blocksThatSuspend.isEmpty() && m_blocksWithHints.isEmpty())
@@ -636,79 +404,31 @@ void Sweep::finishLiveness()
         return std::tuple(environment.layout, environment.value);
     });
 
-    SweepLiveSets sets(code, m_arrays.marks, m_states, releaseHints.span(), m_environmentsFollowed, &m_valuesLetGo, m_hasInteriorPointers);
-    SweepLiveRanges ranges(code, m_states, m_lastReads, m_reads, m_liveness->waysOfValueLetGo);
-    m_valuesLetGo.forEachSetBit([&](size_t index) {
-        if (ValueID reader = m_lastReadersInOwnBlocks[index])
-            ranges.noteReadInAnyOrder(ValueID(index), code.blockOf(ValueID(index)), reader);
-    });
+    SweepLiveSets sets(code, m_arrays.marks, m_states, releaseHints.span(), m_environmentsFollowed, m_hasInteriorPointers);
+    SweepLiveRanges ranges(m_lastReads, m_reads);
     for (BlockID block : m_reachedInPostorder)
         sets.noteReadsAtEndOf(block, ranges);
-    bool hasMarkedReleasesByValue = !code.hasSuspensions() && !m_mayHandBackEnvironments && markReleasesBehindLastUsesByValue(releaseHints.span());
-    if (!hasMarkedReleasesByValue) {
-        SweepBits& valuesToFollow = m_liveness->valuesToFollow;
-        valuesToFollow.clearAll();
-        if (!code.hasSuspensions()) {
-            valuesToFollow.merge(m_environmentsFollowed);
-            valuesToFollow.merge(m_valuesLetGo);
-        }
-        for (const OperationKeptForOperand& noted : operationsKeptForOperands) {
-            if (!operationsThatReadNothingInSweptCode.contains(noted.opcode) || !code.isNeeded(noted.operation))
-                continue;
-            if (!code.hasSuspensions()) {
-                valuesToFollow.set(noted.operand.index());
-                valuesToFollow.set(noted.operation.index());
-            }
-            bool hasBitOfItsOwn = code.hasSuspensions() || noted.opcode == Opcode::ReleaseEnvironment;
-            if (hasBitOfItsOwn && code.blockOf(noted.operand) != noted.block)
-                ranges.noteReadInAnyOrder(noted.operation, noted.block, noted.operation);
-        }
-
-        findLiveSets(releaseHints.span(), code.hasSuspensions() ? nullptr : &valuesToFollow);
-        markReleasesBehindLastUsesBySets();
-    }
-    if (m_blocksThatSuspend.isEmpty() && hintsBehindLastUses.isEmpty())
-        return;
-    auto releasesOperand = [&](ValueID hint) {
-        return code.marksOf(hint).contains(SweepMark::ReleasesOperand);
-    };
-    hintsBehindLastUses.removeAllMatching([&](ValueID hint) {
-        return !releasesOperand(hint);
-    });
-    if (!hasMarkedReleasesByValue)
-        listLiveValuesAtSuspensionsBySets();
-    AOT::sort(code.m_suspensions, { }, &LiveAtSuspension::suspension);
-
-    AOT::sort(m_otherNames, { }, [](const OtherNameOfValue& other) {
-        return std::tuple(other.valueNamedByHint, other.name);
-    });
-    for (ValueID hint : hintsBehindLastUses) {
-        ValueID released = code.at(hint).operand(OperandIndex::ReleaseHint::value);
-        if (!code.at(hint).isBehindCopiedBody()) {
-            if (!releasesOperand(hint))
-                placesLetGo.append({ released, code.blockOf(hint) });
+    SweepBits& valuesToFollow = m_liveness->valuesToFollow;
+    valuesToFollow.clearAll();
+    if (!code.hasSuspensions())
+        valuesToFollow.merge(m_environmentsFollowed);
+    for (const OperationKeptForOperand& noted : operationsKeptForOperands) {
+        if (noted.opcode != Opcode::ReleaseEnvironment || !code.isNeeded(noted.operation))
             continue;
+        if (!code.hasSuspensions()) {
+            valuesToFollow.set(noted.operand.index());
+            valuesToFollow.set(noted.operation.index());
         }
-        OptionSet<SweepMark> marks = code.marksOf(hint);
-        marks.remove(SweepMark::ReleasesOperand);
-        code.m_marks[hint.index()] = marks.toRaw();
-        placesLetGo.append({ released, code.blockOf(hint), true });
-        for (const OtherNameOfValue& other : std::ranges::equal_range(m_otherNames.span(), released, { }, &OtherNameOfValue::valueNamedByHint))
-            placesLetGo.append({ other.name, code.blockOf(hint), true, code.blockOf(released) });
+        if (code.blockOf(noted.operand) != noted.block)
+            ranges.noteReadInAnyOrder(noted.operation, noted.block, noted.operation);
     }
-    if (placesLetGo.isEmpty())
+
+    findLiveSets(releaseHints.span(), code.hasSuspensions() ? nullptr : &valuesToFollow);
+    markReleasesBehindLastUsesBySets();
+    if (m_blocksThatSuspend.isEmpty())
         return;
-    AOT::sort(placesLetGo, { }, [](const SweepLetGo& place) {
-        return std::tuple(place.value, place.block);
-    });
-    for (size_t first = 0, end = 0; first < placesLetGo.size(); first = end) {
-        while (end < placesLetGo.size() && placesLetGo[end].value == placesLetGo[first].value)
-            ++end;
-        ranges.findLastReads(placesLetGo.span().subspan(first, end - first), m_lastSuspensions.span(), code.m_releasesBehindLastReads, m_totals.operationsSwept);
-    }
-    AOT::sort(code.m_releasesBehindLastReads, { }, [](const ReleaseBehindLastRead& release) {
-        return std::tuple(release.block, release.behind ? release.behind.index() + 1 : 0u, release.released);
-    });
+    listLiveValuesAtSuspensionsBySets();
+    AOT::sort(code.m_suspensions, { }, &LiveAtSuspension::suspension);
 }
 
 static void forEachValueReadAtEndOfSweptBlock(const Code& code, const Block& block, EdgeID handler, NOESCAPE const Invocable<void(ValueID)> auto& functor)
@@ -793,13 +513,13 @@ void Sweep::findLiveSets(std::span<const ValueID> releaseHints, const SweepBits*
     for (size_t index = keptForOperands.size(); index--;) {
         const OperationKeptForOperand& kept = keptForOperands[index];
         storage.firstKeptForOperandInBlock[kept.block.index()] = static_cast<uint32_t>(index);
-        if (!operationsThatReadNothingInSweptCode.contains(kept.opcode) || !code.isNeeded(kept.operation))
+        if (kept.opcode != Opcode::ReleaseEnvironment || !code.isNeeded(kept.operation))
             continue;
         storage.hintsThatStay.quickSet(kept.operation.index());
         uint32_t blockOfOperand = blockOf(kept.operand);
         RELEASE_ASSERT(blockOfOperand != Operation::noBlock);
         blockOfValue[kept.operation.index()] = blockOfOperand;
-        if ((followsEveryValue || kept.opcode == Opcode::ReleaseEnvironment) && blockOfOperand != kept.block.index())
+        if (blockOfOperand != kept.block.index())
             valuesReadInOtherBlocks.quickSet(kept.operand.index());
     }
 
@@ -860,7 +580,7 @@ void Sweep::findLiveSets(std::span<const ValueID> releaseHints, const SweepBits*
             live = sets.without(live, hint.index());
     };
     auto isFollowed = [&](ValueID id) ALWAYS_INLINE_LAMBDA {
-        return followsEveryValue || releaseHints[id.index()] || m_environmentsFollowed.get(id.index()) || m_valuesLetGo.get(id.index());
+        return followsEveryValue || releaseHints[id.index()] || m_environmentsFollowed.get(id.index());
     };
     auto readAtEndOfBlock = [&](ValueID read) {
         for (ValueID id = read; id && (marksOfValues[id.index()] & neededMarkOfSweep) && blockOf(id) != Operation::noBlock; id = ownerOfSweptPointer(code, id)) {
@@ -949,8 +669,7 @@ void Sweep::findLiveSets(std::span<const ValueID> releaseHints, const SweepBits*
                     }
                     storage.hints.append({ static_cast<uint32_t>(nextKeptForOperand), block, live });
                     sets.keepSetsMadeSoFar();
-                    bool hasNumberOfItsOwn = followsEveryValue || keptForOperands[nextKeptForOperand].opcode == Opcode::ReleaseEnvironment;
-                    live = hasNumberOfItsOwn ? sets.with(live, id.index()) : sets.without(live, id.index());
+                    live = sets.with(live, id.index());
                     for (; nextRead < reads.size() && reads[nextRead].reader == id; ++nextRead) { }
                     continue;
                 }
@@ -999,9 +718,7 @@ void Sweep::markReleasesBehindLastUsesBySets()
         };
 
         bool releasesOperand = false;
-        if (hint.opcode == Opcode::ReleaseHint)
-            releasesOperand = !isLive(hint.operand);
-        else if (LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(hint.operand).type)) {
+        if (LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(hint.operand).type)) {
             ensureEdgesThatAreTakenAreListed();
             auto ofSameLayout = std::ranges::equal_range(m_environmentsHandedBack, layout, { }, &EnvironmentHandedBack::layout);
             releasesOperand = std::ranges::none_of(ofSameLayout, [&](const EnvironmentHandedBack& other) {
@@ -1012,68 +729,6 @@ void Sweep::markReleasesBehindLastUsesBySets()
         marks.set(SweepMark::ReleasesOperand, releasesOperand);
         code.m_marks[hint.operation.index()] = marks.toRaw();
     }
-}
-
-bool Sweep::markReleasesBehindLastUsesByValue(std::span<const ValueID> releaseHints)
-{
-    Code& code = *m_code;
-    Vector<ValueID>& valuesLiveAtHeads = m_liveness->valuesLiveAtHeads;
-    Vector<ValueID>& valuesLiveAtEnds = m_liveness->valuesLiveAtEnds;
-    Vector<BlockID>& blocksToLookAbove = m_liveness->blocksToLookAbove;
-    valuesLiveAtHeads.fill(ValueID(), code.numberOfBlocks());
-    valuesLiveAtEnds.fill(ValueID(), code.numberOfBlocks());
-    blocksToLookAbove.shrink(0);
-    size_t numberOfLooksLeft = m_reachedInPostorder.size() + m_reads.size();
-
-    for (const OperationKeptForOperand& first : m_operationsKeptForOperands) {
-        if (first.opcode != Opcode::ReleaseHint || releaseHints[first.operand.index()] != first.operation)
-            continue;
-        ValueID value = first.operand;
-        BlockID definingBlock = code.blockOf(value);
-        auto reachHeadOf = [&](BlockID block) {
-            if (block != definingBlock && std::exchange(valuesLiveAtHeads[block.index()], value) != value)
-                blocksToLookAbove.append(block);
-        };
-        for (uint32_t read = m_lastReads[value.index()]; read != noReadOfSweptValue; read = m_reads[read].previous)
-            reachHeadOf(m_reads[read].block);
-        while (!blocksToLookAbove.isEmpty()) {
-            if (!numberOfLooksLeft--)
-                return false;
-            forEachSweptBlockThatLeadsTo(code, m_states, blocksToLookAbove.takeLast(), [&](BlockID from) ALWAYS_INLINE_LAMBDA {
-                valuesLiveAtEnds[from.index()] = value;
-                reachHeadOf(from);
-            });
-        }
-
-        for (ValueID hint = first.operation; hint; hint = releaseHints[hint.index()]) {
-            BlockID block = code.blockOf(hint);
-            bool isLive = valuesLiveAtEnds[block.index()] == value;
-            for (uint32_t read = m_lastReads[value.index()]; read != noReadOfSweptValue && !isLive; read = m_reads[read].previous) {
-                if (!numberOfLooksLeft--)
-                    return false;
-                const ReadOfSweptValue& noted = m_reads[read];
-                isLive = noted.block == block && (!noted.reader || noted.reader > hint);
-            }
-            if (!isLive && block == definingBlock) {
-                ValueID lastReader = m_lastReadersInOwnBlocks[value.index()];
-                isLive = lastReader && lastReader > hint;
-            }
-            if (!isLive && block == definingBlock) {
-                const Block& contents = code.at(block);
-                forEachValueReadAtEndOfSweptBlock(code, contents, handlerOfSweptBlock(contents, m_states[block.index()]), [&](ValueID read) {
-                    for (ValueID id = read; id && code.isNeeded(id) && !code.isConstant(id); id = ownerOfSweptPointer(code, id)) {
-                        isLive |= id == value;
-                        if (!m_hasInteriorPointers)
-                            return;
-                    }
-                });
-            }
-            OptionSet<SweepMark> marks = code.marksOf(hint);
-            marks.set(SweepMark::ReleasesOperand, !isLive);
-            code.m_marks[hint.index()] = marks.toRaw();
-        }
-    }
-    return true;
 }
 
 void Sweep::listLiveValuesAtSuspensionsBySets()
@@ -1101,7 +756,7 @@ void Sweep::listLiveValuesAtSuspensionsBySets()
             }
             // A ReleaseEnvironment would hand back a cell that the collector may have freed in the meantime.
             m_totals.operationsSwept += 2;
-            ValueID released = code.at(id).operand(OperandIndex::ReleaseHint::value);
+            ValueID released = code.at(id).operand(OperandIndex::ReleaseEnvironment::environment);
             if (released == suspension || sets.contains(live, released.index()) || isHeldBySweptSuspension(code.at(suspension), released))
                 return;
             OptionSet<SweepMark> marks = code.marksOf(id);

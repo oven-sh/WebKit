@@ -107,7 +107,7 @@ void walkModulesToLink(const World& world, uint32_t root, Steps& steps)
     if (path.isEmpty())
         return;
 
-    bool leavesOutModulesWithNothingToDo = !world.goesModuleByModule() && !world.data(root).reachesUncompiledCode();
+    bool leavesOutModulesWithNothingToDo = !world.loadsModulesIndividually() && !world.data(root).reachesUncompiledCode();
     ModuleNumbers linkRequests = world.linkRequests();
     std::span<const ModuleRequestData> allRequests = world.requests();
     Vector<uint64_t> passedOver;

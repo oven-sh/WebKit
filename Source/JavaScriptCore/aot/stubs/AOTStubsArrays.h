@@ -99,7 +99,7 @@ constexpr StubKey appendIterable() { return StubKey(StubFamily::AppendIterable);
 constexpr StubKey destructureIterable() { return StubKey(StubFamily::DestructureIterable); }
 constexpr StubKey arrayPutAtIndex(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtIndex).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey arrayPutAtNumber(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtNumber).withForm(static_cast<uint8_t>(stored)); }
-constexpr StubKey reserveArrayRoom() { return StubKey(StubFamily::ReserveArrayRoom); }
+constexpr StubKey reserveArrayCapacity() { return StubKey(StubFamily::ReserveArrayCapacity); }
 struct ListWhoseLengthIsStoredWithoutRunTime {
     static constexpr IndexingType firstKind = ArrayWithUndecided;
     static constexpr IndexingType lastKind = ArrayWithContiguous;

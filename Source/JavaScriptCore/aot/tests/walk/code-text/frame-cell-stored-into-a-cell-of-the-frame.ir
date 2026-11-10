@@ -7,7 +7,7 @@
 #     v1: Array @Cell = CreateRest firstArgument=0 storage=Frame
 #     v2: Array @JSValue = Box v1
 #     v3: Array @Cell = CreateRest firstArgument=0 storage=Frame
-#     v4 @Void = AppendElement v3, v2 traits=[mayThrow, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = AppendElement v3, v2 traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
 #     Return v0
 # }
 # -- end of code

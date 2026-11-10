@@ -24,8 +24,8 @@
 # BOTH-NOT: ConvertToDoubleStorage
 # BOTH: = HasArrayStorage
 # BOTH: PutDoubleIndex
-# RUN(COUNTED): compile ListsConvertedInFrontOfTypedCopies mechanisms=all
-# COUNTED: statistic ListsConvertedInFrontOfTypedCopies 2
+# RUN(COUNTED): compile ArraysConvertedToDoubleStorage mechanisms=all
+# COUNTED: statistic ArraysConvertedToDoubleStorage 2
 # A loop that only reads takes either kind and converts nothing: function sum(list: number[]) { let total = 0; for (let i = 0; i < list.length; i++) total += list[i]; return total; }
 # RUN(READ): walk f2 mechanisms=all
 # READ-LABEL: code f2:Body

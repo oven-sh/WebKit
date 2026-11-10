@@ -60,11 +60,11 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
         .chargesForCalleeSaves = isX86_64(),
         .mayOmitFrameRecord = isX86_64(),
         .checksAllocation = runsMachineChecks(build),
-        .ordersBlocksAsWhenOrderedAgain = hasFlag(build.options().testing, Wire::TestingSwitch::OrderBlocksAgain),
-        .leavesOutSavesThatPatchesAloneRead = hasFlag(build.options().testing, Wire::TestingSwitch::SavesAtHeadsThatPatchesAloneReadAreLeftOut),
-        .takesSpillsThatStepsReadToBeReadByNone = hasFlag(build.options().testing, Wire::TestingSwitch::SpillsThatStepsReadAreTakenToBeReadByNone),
-        .takesValuesKeptForCollectorToBeReadByStepsAlone = hasFlag(build.options().lies, Wire::TestingLie::ValuesKeptForTheCollectorAreTakenToBeReadByStepsAlone),
-        .takesWaysOnToReadNothing = hasFlag(build.options().lies, Wire::TestingLie::WaysOnAreTakenToReadNothing),
+        .shouldUseFallbackBlockOrder = hasFlag(build.options().testing, Wire::TestingSwitch::ForceFallbackBlockOrder),
+        .shouldDropPatchOnlySaves = hasFlag(build.options().testing, Wire::TestingSwitch::DropPatchOnlySaves),
+        .shouldAssumeSpillSlotsDead = hasFlag(build.options().testing, Wire::TestingSwitch::AssumeSpillSlotsDead),
+        .shouldAssumeClearUpperHalves = hasFlag(build.options().injectedFaults, Wire::FaultInjection::AssumeClearUpperHalves),
+        .shouldIgnoreCollectorSpillReads = hasFlag(build.options().injectedFaults, Wire::FaultInjection::IgnoreCollectorSpillReads),
         .notesRangesOfOrigins = hasFlag(build.options().reports, ReportSet::Flow) || !build.options().logging.mapFilePath.isNull(),
         .features = build.targetFeatures(),
     };
@@ -107,20 +107,20 @@ static InternalErrorKind internalErrorKindOfMachineFailure(Machine::FailureKind 
         return InternalErrorKind::OutOfRegisters;
     case Machine::FailureKind::AccessOutsideDeclaredEffects:
         return InternalErrorKind::StoreOutsideDeclaredEffects;
-    case Machine::FailureKind::RegisterLacksItsValue:
-        return InternalErrorKind::RegisterLacksItsValue;
-    case Machine::FailureKind::SpillSlotLacksItsValue:
-        return InternalErrorKind::SpillSlotLacksItsValue;
+    case Machine::FailureKind::WrongValueInRegister:
+        return InternalErrorKind::WrongValueInRegister;
+    case Machine::FailureKind::WrongValueInSpillSlot:
+        return InternalErrorKind::WrongValueInSpillSlot;
     case Machine::FailureKind::FrameAddressAcrossSuspension:
         return InternalErrorKind::FrameAddressAcrossSuspension;
     case Machine::FailureKind::NarrowReferenceWithoutPointer:
         return InternalErrorKind::NarrowReferenceWithoutPointer;
     case Machine::FailureKind::InnerPointerWithoutOwner:
         return InternalErrorKind::InnerPointerWithoutOwner;
-    case Machine::FailureKind::ReleasedValueIsReadOnWayOn:
-        return InternalErrorKind::ReleasedValueIsReadOnWayOn;
-    case Machine::FailureKind::NeedsFrameWhereNoneIsSetUp:
-        return InternalErrorKind::FrameNeededWhereNoneIsSetUp;
+    case Machine::FailureKind::MissingFrameSetup:
+        return InternalErrorKind::MissingFrameSetup;
+    case Machine::FailureKind::UpperHalfIsNotClear:
+        return InternalErrorKind::UpperHalfNotClear;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -241,11 +241,11 @@ std::optional<CompiledCode> FunctionCodeGenerator::runStraight(const BodyIndex& 
     if (emitter.hasFailed())
         return std::nullopt;
     if (uint32_t reads = emitter.numberOfRawSlotsOfScopesRead())
-        m_worker.build.statistics().count(StatisticID::RawSlotsOfScopesReadStraight, reads);
+        m_worker.build.statistics().count(StatisticID::StraightUnboxedSlotReads, reads);
     if (uint32_t told = emitter.numberOfNumbersToldByTheirWord())
-        m_worker.build.statistics().count(StatisticID::NumbersToldByTheirWordStraight, told);
+        m_worker.build.statistics().count(StatisticID::StraightNumberTagChecks, told);
     if (uint32_t reads = emitter.numberOfReadsThatAskTheirSite())
-        m_worker.build.statistics().count(StatisticID::ReadsThatAskTheirSiteStraight, reads);
+        m_worker.build.statistics().count(StatisticID::StraightSiteCachedReads, reads);
     return code;
 }
 
@@ -301,8 +301,8 @@ CompiledCode FunctionCodeGenerator::emitCode()
     m_statistics.count(StatisticID::LoopsRotated, m_procedure.order().numberOfLoopsRotated());
     m_statistics.count(StatisticID::MachineOperationsAllocated, allocation.numberOfOperationsAllocated());
     m_statistics.count(StatisticID::ValuesSpilled, allocation.spills().size());
-    m_statistics.count(StatisticID::LaterReadsAskedWhetherTheyCount, allocation.numberOfLaterReadsAskedWhetherTheyCount());
-    m_statistics.count(StatisticID::BlocksReachedBySearchesForWaysToReads, allocation.numberOfBlocksReachedBySearchesForWays());
+    m_statistics.count(StatisticID::LaterUsesScannedForLiveness, allocation.laterUsesScanned());
+    m_statistics.count(StatisticID::BlocksVisitedByLivenessSearches, allocation.livenessSearchBlocksVisited());
     m_statistics.count(StatisticID::InnerPointersAcrossSafepoints, m_procedure.numberOfInnerPointersAcrossSafepoints());
 
     enterStepOfCodeGeneration("encode"_s);
@@ -327,11 +327,12 @@ CompiledCode FunctionCodeGenerator::emitCode()
     else if (holdsFusedCallEntry && isGuard)
         m_records.entries.append(RecordedEntry { fusedCallEntry, m_procedure.entrypointLabel(0) });
     m_statistics.count(StatisticID::MachineOperationsEncoded, m_procedure.numberOfOperationsEncoded());
-    m_statistics.count(StatisticID::SwitchWindowsToldByBits, m_procedure.numberOfSwitchWindowsToldByBits());
+    m_statistics.count(StatisticID::SwitchBitTestsEmitted, m_procedure.switchBitTestCount());
     m_statistics.count(StatisticID::NullChecksFoldedIntoAccesses, m_procedure.numberOfTrapsTakenOver());
 
     if (!m_stackChecks.pending.isEmpty())
         emitStackOverflowPaths(m_jit, m_records, m_stackChecks);
+    m_records.stubCalls.routeTransfersThroughEnd();
     emitPadding(m_jit);
     m_jit.padBeforePatch();
 
