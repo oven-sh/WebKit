@@ -97,6 +97,7 @@ public:
 
     void reserveInitialCapacity(unsigned keyCount) { m_impl.reserveInitialCapacity(keyCount); }
     void reserveCapacity(unsigned keyCount) { m_impl.reserveCapacity(keyCount); }
+    bool tryReserveCapacityForAdd(unsigned numberOfKeys = 1) { return m_impl.tryReserveCapacityForAdd(numberOfKeys); }
 
     iterator begin() const LIFETIME_BOUND;
     iterator end() const LIFETIME_BOUND;

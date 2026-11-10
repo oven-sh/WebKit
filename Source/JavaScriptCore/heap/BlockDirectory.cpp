@@ -144,16 +144,35 @@ MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allo
 MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(JSC::Heap& heap)
 {
     bool hasBlocks = m_blocks.size() > m_freeBlockIndices.size();
-    MarkedBlock::Handle* handle = MarkedBlock::tryCreate(heap, subspace()->alignedMemoryAllocator(), hasBlocks ? MarkedBlock::IsFirstInDirectory::No : MarkedBlock::IsFirstInDirectory::Yes);
+    // With limited address space the heap's set of blocks and this list grow in willAddBlock(), where the request for memory may fail, and not in
+    // didAddBlock() and addBlock(), where it may not. A block that they have no room for is not made.
+    bool hasRoomForBlock = !MarkedBlockCage::isRequired() || heap.cage().willAddBlock(heap.vm(), *this);
+    MarkedBlock::Handle* handle = nullptr;
+    if (hasRoomForBlock) [[likely]]
+        handle = MarkedBlock::tryCreate(heap, subspace()->alignedMemoryAllocator(), hasBlocks ? MarkedBlock::IsFirstInDirectory::No : MarkedBlock::IsFirstInDirectory::Yes);
     if (!handle) {
-        if (MarkedBlockCage::isRequired())
-            heap.cage().didFindNoRoom(heap.vm(), subspace()->alignedMemoryAllocator() == heap.structureAllocator.get() ? MarkedBlockCage::ExhaustedHeap::Structures : MarkedBlockCage::ExhaustedHeap::Cells);
+        if (MarkedBlockCage::isRequired()) {
+            // Where the set or the list has no room, the heap of Structures is not what is full.
+            bool isForStructures = hasRoomForBlock && subspace()->alignedMemoryAllocator() == heap.structureAllocator.get();
+            heap.cage().didFindNoRoom(heap.vm(), isForStructures ? MarkedBlockCage::ExhaustedHeap::Structures : MarkedBlockCage::ExhaustedHeap::Cells);
+        }
         return nullptr;
     }
     
     markedSpace().didAddBlock(handle);
     
     return handle;
+}
+
+bool BlockDirectory::tryMakeRoomForBlock()
+{
+    markedSpace().heap().assertIsAccessHolder();
+    size_t capacity = m_blocks.capacity();
+    if (!m_freeBlockIndices.isEmpty() || m_blocks.size() < capacity) [[likely]]
+        return true;
+    // The list grows as the append() of addBlock() grows it. Its bits grow in addBlock().
+    Locker locker { m_bitvectorLock.grow() };
+    return m_blocks.tryReserveCapacity(std::max<size_t>(16, capacity + capacity / 2));
 }
 
 void BlockDirectory::addBlock(MarkedBlock::Handle* block)
@@ -166,11 +185,10 @@ void BlockDirectory::addBlock(MarkedBlock::Handle* block)
     if (m_freeBlockIndices.isEmpty()) {
         index = m_blocks.size();
 
-        size_t oldCapacity = m_blocks.capacity();
         m_blocks.append({ block, &block->block() });
-        if (m_blocks.capacity() != oldCapacity) {
-            ASSERT(m_bits.numBits() == oldCapacity);
-            ASSERT(m_blocks.capacity() > oldCapacity);
+        // The list grew in this append(), or before it in tryMakeRoomForBlock(). Either way the bits grow here, before one of them is written for the block.
+        if (m_bits.numBits() != m_blocks.capacity()) {
+            ASSERT(m_bits.numBits() < m_blocks.capacity());
             
             subspace()->didResizeBits(m_blocks.capacity());
             m_bits.resize(m_blocks.capacity());
