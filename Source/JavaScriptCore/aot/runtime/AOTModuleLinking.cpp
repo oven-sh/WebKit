@@ -104,6 +104,59 @@ StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const
     return m_table.isAmbiguousExport(exporter, name.string()) ? StarExportResolution::Type::Ambiguous : StarExportResolution::Type::NotFound;
 }
 
+ReexportedNames& Modules::reexportedNames()
+{
+    std::unique_ptr<ReexportedNames>& names = m_instance.vm->aotState().reexportedNames;
+    if (!names)
+        names = makeUnique<ReexportedNames>(m_table);
+    return *names;
+}
+
+bool Modules::reexportsFromMock(ModuleID exporter)
+{
+    ReexportersOfMocks state { m_activeMockCount.timesWritten(), m_timesMocked.size(), m_removedMocksInUse.size(), m_exportsLeftOut.size() };
+    if (state == ReexportersOfMocks { }) [[likely]]
+        return false;
+    if (state != m_stateOfReexportersOfMocks) {
+        Vector<ModuleID, 16> modules;
+        auto append = [&](ModuleID module) {
+            modules.append(module);
+            modules.append(fileOf(module));
+            modules.append(moduleWithExportsOf(fileOf(module)));
+        };
+        for (ModuleID module : m_timesMocked.keys())
+            append(module);
+        for (ModuleID module : m_removedMocksInUse.keys())
+            append(module);
+        for (ModuleID module : m_exportsLeftOut.keys())
+            append(module);
+        for (size_t module : m_modulesWithActiveMock)
+            append(ModuleID(module));
+        m_reexportersOfMocks = reexportedNames().transitiveReexportersOf(WTF::move(modules));
+        m_stateOfReexportersOfMocks = state;
+    }
+    return m_reexportersOfMocks.quickGet(exporter.index());
+}
+
+std::optional<StarExportResolution::Type> Modules::tryResolveRequiredNameInTables(const RequiredNameData& requiredName)
+{
+    ModuleID exporter = requiredName.exporterModule();
+    if (!findsNamesThroughRecords(data(exporter)) || !m_originalsBeingAsked.isEmpty() || identifier(requiredName.name) == m_instance.vm->propertyNames->defaultKeyword)
+        return std::nullopt;
+    if (reexportsFromMock(exporter))
+        return std::nullopt;
+    switch (reexportedNames().resolve(m_table, requiredName)) {
+    case ReexportedNames::Answer::NotAsked:
+    case ReexportedNames::Answer::Unknown:
+        return std::nullopt;
+    case ReexportedNames::Answer::Found:
+        return StarExportResolution::Type::Resolved;
+    case ReexportedNames::Answer::NotFound:
+        return StarExportResolution::Type::NotFound;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 bool Modules::isMockedThroughStarExportsSlow(ModuleID module, MockFilter which)
 {
     auto counts = [&](ModuleID each, ModuleID importer) {
@@ -219,7 +272,7 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
             if (isFoundInTextOfFile(requiredName))
                 continue;
             if (data(exporter).hasExportTable()) {
-                if (!m_exportsLeftOut.isEmpty()) [[unlikely]] {
+                if (!m_exportsLeftOut.isEmpty() && reexportsFromMock(exporter)) [[unlikely]] {
                     std::optional<unsigned> index = m_table.findExport(exporter, identifier(requiredName.name).impl());
                     if (index && isLeftOut(exporter, *index, TablesBehindStars::HaveName)) {
                         if (isMocked(exporter) || findMockForReexport(exporter, m_table.exports(exporter)[*index]) || dropExportThatFindsNothing(module, requiredName))
@@ -237,7 +290,8 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
                     continue;
                 RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
-            StarExportResolution::Type resolution = resolveRequiredName(exporter, identifier(requiredName.name));
+            std::optional<StarExportResolution::Type> inTables = tryResolveRequiredNameInTables(requiredName);
+            StarExportResolution::Type resolution = inTables ? *inTables : resolveRequiredName(exporter, identifier(requiredName.name));
             RETURN_IF_EXCEPTION(scope, void());
             switch (resolution) {
             case StarExportResolution::Type::Resolved:
@@ -1719,6 +1773,8 @@ void Modules::fillDeferredExports(ModuleID importer)
         if (findsNamesThroughRecords(data(exporter))) {
             LoadedModule* loaded = loadedIfExists(exporter);
             if (data(exporter).isUncompiledCode() && (!loaded || !loaded->uncompiledRecord))
+                continue;
+            if (tryResolveRequiredNameInTables(requiredName))
                 continue;
             AbstractModuleRecord* record = recordForResolution(exporter);
             RETURN_IF_EXCEPTION(scope, void());

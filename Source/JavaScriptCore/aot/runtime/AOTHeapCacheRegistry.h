@@ -43,7 +43,7 @@ public:
 
     template<typename Owner> void add(CacheKind, ASCIILiteral name, Owner&, RootVolatility = RootVolatility::GreyedByMarking);
     void addStrongRoots(ASCIILiteral name, std::span<JSCell* const> cellsOrNull, RootVolatility = RootVolatility::GreyedByMarking);
-    void addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear);
+    void addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear, const uint8_t* mayBeFilled = nullptr);
     void addClearedAndGivenBackEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear);
     template<typename Owner> void addObserver(ASCIILiteral name, Owner& owner) { add(CacheKind::Observer, name, owner); }
 
@@ -61,6 +61,7 @@ private:
         ASCIILiteral name;
         void* owner { nullptr };
         size_t size { 0 };
+        const uint8_t* mayBeFilled { nullptr };
         void (*visitWithSlotVisitor)(Entry&, SlotVisitor&) { nullptr };
         void (*visitWithAbstractSlotVisitor)(Entry&, AbstractSlotVisitor&) { nullptr };
         size_t (*removeDeadEntries)(Entry&, VM&, CollectionScope) { nullptr };

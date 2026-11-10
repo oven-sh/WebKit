@@ -3182,6 +3182,13 @@ void Modules::leaveStepsOfLoaderToJobs()
 
 static JSC_DECLARE_HOST_FUNCTION(detachedFactorySettledJob);
 static JSC_DECLARE_HOST_FUNCTION(detachedFactoryFailedJob);
+static JSC_DECLARE_HOST_FUNCTION(loaderWaitFinishedJob);
+
+JSC_DEFINE_HOST_FUNCTION(loaderWaitFinishedJob, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    modulesOf(realm)->didFinishLoaderWait(callFrame->argument(1).asUInt32());
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(detachedFactorySettledJob, (JSGlobalObject* realm, CallFrame* callFrame))
 {
@@ -3212,7 +3219,9 @@ void Modules::didSettleDetachedFactory(unsigned number)
             return;
         bool hasFailedBelow = m_detachedLoads[left].awaitedFactoryCalls.containsIf([&](const auto& call) { return !activeMock(call.first); });
         if (!hasFailedBelow && !std::exchange(m_detachedLoads[left].hasWaitedForLoader, true)) {
-            constexpr unsigned loaderEvaluationJobs = 5;
+            unsigned loaderEvaluationJobs = 5;
+            for (const auto& call : m_detachedLoads[left].awaitedFactoryCalls)
+                loaderEvaluationJobs = std::max(loaderEvaluationJobs, 4 + loaderStepsToMock(required, call.first));
             JSGlobalObject* realm = m_instance.globalObject;
             JSPromise* turn = JSPromise::resolvedPromise(realm, jsUndefined());
             RETURN_IF_EXCEPTION(scope, void());
@@ -3276,6 +3285,11 @@ void Modules::didSettleDetachedFactory(unsigned number)
                 m_detachedLoads[left].awaitedFactoryCalls.append({ ModuleID(file), call });
         }
     }
+    startLoaderWaits(number);
+    RETURN_IF_EXCEPTION(scope, void());
+    left = find();
+    if (left == notFound)
+        return;
     if (m_detachedLoads[left].pendingFactoryCount)
         return;
     ModuleStatus current = status(required);
@@ -3287,6 +3301,22 @@ void Modules::didSettleDetachedFactory(unsigned number)
         someMockBelowIsNotInPlace |= m_modulesWithPendingMock.get(below) || (isMocked(ModuleID(below)) && !activeMock(ModuleID(below)));
     }
     if ((current == ModuleStatus::Unlinked || current == ModuleStatus::Linked) && !isEvicted(required) && !isMocked(required) && !wasMockLaidSince && !someMockBelowIsNotInPlace) {
+        m_detachedLoads[left].isEvaluationDue = true;
+        if (m_detachedLoads[left].pendingLoaderWaits)
+            return;
+    }
+    RELEASE_AND_RETURN(scope, finishDetachedLoad(number));
+}
+
+void Modules::finishDetachedLoad(unsigned number)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto find = [&] { return m_detachedLoads.findIf([&](const auto& each) { return each.number == number && each.wait->status() == JSPromise::Status::Pending; }); };
+    size_t left = find();
+    if (left == notFound)
+        return;
+    if (std::exchange(m_detachedLoads[left].isEvaluationDue, false)) {
         for (ModuleID root : rootsInEvaluationOrder(m_detachedLoads[left])) {
             if (status(root) != ModuleStatus::Unlinked && status(root) != ModuleStatus::Linked)
                 continue;
@@ -3302,6 +3332,106 @@ void Modules::didSettleDetachedFactory(unsigned number)
             return;
     }
     m_detachedLoads[left].wait->fulfill(vm, jsUndefined());
+}
+
+void Modules::didFinishLoaderWait(unsigned number)
+{
+    size_t left = m_detachedLoads.findIf([&](const auto& each) { return each.number == number && each.wait->status() == JSPromise::Status::Pending; });
+    if (left == notFound)
+        return;
+    DetachedLoad& load = m_detachedLoads[left];
+    if (--load.pendingLoaderWaits || load.pendingFactoryCount || !load.isEvaluationDue)
+        return;
+    finishDetachedLoad(number);
+}
+
+void Modules::finishLoadsAwaitingLoader(std::optional<ModuleID> changing)
+{
+    if (m_detachedLoads.isEmpty()) [[likely]]
+        return;
+    Vector<unsigned, 2> due;
+    for (const DetachedLoad& load : m_detachedLoads) {
+        if (load.isEvaluationDue && load.pendingLoaderWaits && load.wait->status() == JSPromise::Status::Pending && (!changing || load.required == *changing || load.timedMocks.get(changing->index())))
+            due.append(load.number);
+    }
+    for (unsigned number : due)
+        finishDetachedLoad(number);
+}
+
+void Modules::startLoaderWaits(unsigned number)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    size_t left = m_detachedLoads.findIf([&](const auto& each) { return each.number == number && each.wait->status() == JSPromise::Status::Pending; });
+    if (left == notFound)
+        return;
+    Vector<unsigned, 2> waits;
+    for (const auto& call : m_detachedLoads[left].awaitedFactoryCalls) {
+        if (!activeMock(call.first) || m_detachedLoads[left].timedMocks.get(call.first.index()))
+            continue;
+        m_detachedLoads[left].timedMocks.set(call.first.index());
+        waits.append(4 + loaderStepsToMock(m_detachedLoads[left].required, call.first));
+    }
+    m_detachedLoads[left].pendingLoaderWaits += waits.size();
+    for (unsigned jobs : waits) {
+        JSPromise* turn = JSPromise::resolvedPromise(realm, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, void());
+        for (unsigned job = 1; job < jobs; ++job) {
+            JSPromise* next = JSPromise::create(vm, realm->promiseStructure());
+            turn->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), next);
+            turn = next;
+        }
+        JSFunction* didFinish = JSFunction::create(vm, realm, 2, String(), loaderWaitFinishedJob, ImplementationVisibility::Private);
+        turn->performPromiseThenWithContext(vm, realm, didFinish, didFinish, jsUndefined(), jsNumber(number));
+    }
+}
+
+unsigned Modules::loaderStepsToMock(ModuleID root, ModuleID mock) const
+{
+    struct Request {
+        uint32_t firstRequester { 0 };
+        unsigned level { 0 };
+    };
+    UncheckedKeyHashMap<uint32_t, Request, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> requests;
+    Vector<ModuleID, 32> inLevelOrder { root };
+    requests.set(root.index(), Request { root.index(), 0 });
+    for (size_t next = 0; next < inLevelOrder.size(); ++next) {
+        ModuleID module = inLevelOrder[next];
+        if (module != root && isMocked(module))
+            continue;
+        unsigned level = requests.get(module.index()).level;
+        for (const ModuleRequestData& request : m_table.requests(module)) {
+            ModuleID requested = moduleLoadedBy(request);
+            if (requests.add(requested.index(), Request { module.index(), level + 1 }).isNewEntry)
+                inLevelOrder.append(requested);
+        }
+    }
+    UncheckedKeyHashMap<uint32_t, std::optional<unsigned>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> steps;
+    BitVector isOpen(m_table.size());
+    auto visit = [&](auto& self, ModuleID module) -> std::optional<unsigned> {
+        if (module == mock)
+            return 0;
+        if (auto known = steps.find(module.index()); known != steps.end())
+            return known->value;
+        if ((module != root && isMocked(module)) || isOpen.quickSet(module.index()))
+            return std::nullopt;
+        std::optional<unsigned> longest;
+        unsigned level = requests.get(module.index()).level;
+        for (const ModuleRequestData& request : m_table.requests(module)) {
+            ModuleID requested = moduleLoadedBy(request);
+            std::optional<unsigned> below = self(self, requested);
+            if (!below)
+                continue;
+            uint32_t first = requests.get(requested.index()).firstRequester;
+            bool isJoiningPendingFetch = first != module.index() && (requested == mock || requests.get(first).level == level);
+            longest = std::max(longest.value_or(0), 1 + *below + isJoiningPendingFetch);
+        }
+        isOpen.quickClear(module.index());
+        steps.set(module.index(), longest);
+        return longest;
+    };
+    return visit(visit, root).value_or(1);
 }
 
 Vector<ModuleID, 2> Modules::rootsInEvaluationOrder(const DetachedLoad& load) const

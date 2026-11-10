@@ -49,6 +49,7 @@ void Modules::bringBackMockOfPreloadThatWasPatched(ModuleID fileOrModule)
 
 void Modules::releaseMockAtNextLoad(ModuleID module)
 {
+    finishLoadsAwaitingLoader(module);
     if (!data(module).isESModuleOfProgram() || data(module).isFacade() || isSomeLoadUnderWay() || isLoaderInMiddleOfGraph() || isImportedByModuleThatRequireAnswered(module)) {
         setActiveMock(module, nullptr, { });
         return;
@@ -251,7 +252,9 @@ void Modules::letGoOfESModulesThatThrew()
 
 void Modules::tellThatFileDidNotRunAgain(ModuleID module)
 {
-    if (status(module) > ModuleStatus::Linked && m_table.hasFilePath(module) && !m_table.moduleBehindFacade(module))
+    if (status(module) <= ModuleStatus::Linked || !m_table.hasFilePath(module) || m_table.moduleBehindFacade(module))
+        return;
+    if (!m_instance.vm->aotState().filesReportedAsKept.set(module.index()))
         notifyRejectedChangeListener(m_instance.globalObject, makeString("Kept the run of '"_s, m_table.fullPath(module), '\''));
 }
 

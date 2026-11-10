@@ -56,6 +56,192 @@ const CyclesOfImports::Member* CyclesOfImports::find(ModuleID module) const
     return found != membersByModule.end() && found->module == module.index() ? &*found : nullptr;
 }
 
+ReexportedNames::ReexportedNames(const ModuleTable& table)
+    : m_answers(FillWith { }, table.programTables().requiredNames().size(), Answer::NotAsked)
+    , m_modulesWithNamesInTables(table.size())
+    , m_modulesWithOtherNames(table.size())
+{
+    Vector<std::pair<uint32_t, uint32_t>> edges;
+    for (uint32_t index = 0; index < table.size(); ++index) {
+        ModuleID reexporter(index);
+        bool hasExportOfOtherModule = table.data(reexporter).hasDynamicStarExport();
+        for (const ModuleExportData& entry : table.exports(reexporter)) {
+            hasExportOfOtherModule |= entry.isFromStarExport;
+            switch (entry.kind()) {
+            case ModuleExportKind::Variable:
+                break;
+            case ModuleExportKind::Field:
+                if (ModuleID declaring = table.exportedField(entry).declaringModule(); declaring != reexporter)
+                    edges.append({ declaring.index(), index });
+                break;
+            case ModuleExportKind::Namespace:
+                edges.append({ entry.targetModule().index(), index });
+                break;
+            case ModuleExportKind::Indirect:
+                edges.append({ table.indirectExport(entry).targetModule().index(), index });
+                break;
+            }
+        }
+        for (const RequiredNameData& requiredName : table.requiredNames(reexporter)) {
+            if (table.findExportStatement(requiredName))
+                edges.append({ requiredName.exporterModule().index(), index });
+        }
+        for (const StarAsWrittenData& star : table.starsAsWritten(reexporter))
+            edges.append({ star.target, index });
+        if (!hasExportOfOtherModule)
+            continue;
+        for (const ModuleRequestData& request : table.requests(reexporter)) {
+            if (!request.isRequire)
+                edges.append({ request.target(), index });
+        }
+    }
+    std::ranges::sort(edges);
+    edges.shrink(std::ranges::unique(edges).begin() - edges.begin());
+    m_reexporters = edges.map([](auto& edge) { return edge.second; });
+    size_t next = 0;
+    for (uint32_t index = 0; index <= table.size(); ++index) {
+        while (next < edges.size() && edges[next].first < index)
+            ++next;
+        m_firstReexporterOf.append(next);
+    }
+}
+
+BitVector ReexportedNames::transitiveReexportersOf(Vector<ModuleID, 16>&& modules) const
+{
+    BitVector found(m_firstReexporterOf.size() - 1);
+    while (!modules.isEmpty()) {
+        uint32_t index = modules.takeLast().index();
+        if (found.quickSet(index))
+            continue;
+        for (uint32_t place = m_firstReexporterOf[index]; place < m_firstReexporterOf[index + 1]; ++place)
+            modules.append(ModuleID(m_reexporters[place]));
+    }
+    return found;
+}
+
+static bool hasNamesInTables(const ModuleData& data)
+{
+    return data.hasExportTable() && !data.capturesExports() && !data.isUncompiledCode();
+}
+
+bool ReexportedNames::areNamesBehindStarsInTables(const ModuleTable& table, ModuleID module)
+{
+    if (m_modulesWithNamesInTables.quickGet(module.index()))
+        return true;
+    if (m_modulesWithOtherNames.quickGet(module.index()))
+        return false;
+    BitVector seen(table.size());
+    Vector<ModuleID, 8> toVisit { module };
+    while (!toVisit.isEmpty()) {
+        ModuleID visited = toVisit.takeLast();
+        if (seen.quickSet(visited.index()) || m_modulesWithNamesInTables.quickGet(visited.index()))
+            continue;
+        if (!hasNamesInTables(table.data(visited)) || m_modulesWithOtherNames.quickGet(visited.index())) {
+            m_modulesWithOtherNames.quickSet(module.index());
+            return false;
+        }
+        for (ModuleRequestData request : table.dynamicStars(visited))
+            toVisit.append(request.targetModule());
+    }
+    m_modulesWithNamesInTables.merge(seen);
+    return true;
+}
+
+static bool haveSameBinding(const ModuleExportData& a, const ModuleExportData& b)
+{
+    if (a.kind() != b.kind())
+        return false;
+    switch (a.kind()) {
+    case ModuleExportKind::Variable:
+        return a.variable == b.variable;
+    case ModuleExportKind::Field:
+        return a.exportedField == b.exportedField;
+    case ModuleExportKind::Namespace:
+        return a.module == b.module && a.isDeferred == b.isDeferred;
+    case ModuleExportKind::Indirect:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool ReexportedNames::tryResolveInTables(const ModuleTable& table, ModuleID exporter, uint32_t name, BitVector& seen, const ModuleExportData*& found)
+{
+    if (seen.quickSet(exporter.index()))
+        return true;
+    if (std::optional<unsigned> index = table.findExport(exporter, name)) {
+        const ModuleExportData& entry = table.exports(exporter)[*index];
+        if (entry.isHiddenUntilInitialized)
+            return false;
+        if (entry.kind() == ModuleExportKind::Indirect) {
+            const IndirectExportData& binding = table.indirectExport(entry);
+            return binding.importName == name && areNamesBehindStarsInTables(table, binding.targetModule())
+                && tryResolveInTables(table, binding.targetModule(), name, seen, found) && found;
+        }
+        if (found && !haveSameBinding(*found, entry))
+            return false;
+        found = &entry;
+        if (!entry.isFromStarExport)
+            return true;
+    } else if (table.isAmbiguousExport(exporter, ProgramStrings::viewInImage(table.programTables(), ProgramStrings::identifierString(table.programTables(), name))))
+        return false;
+    for (ModuleRequestData request : table.dynamicStars(exporter)) {
+        if (!tryResolveInTables(table, request.targetModule(), name, seen, found))
+            return false;
+    }
+    return true;
+}
+
+auto ReexportedNames::bindingsOf(const ModuleTable& table, ModuleID exporter) -> const Bindings&
+{
+    std::unique_ptr<Bindings>& bindings = m_bindings.add(exporter.index(), nullptr).iterator->value;
+    if (bindings)
+        return *bindings;
+    bindings = makeUnique<Bindings>();
+    BitVector seen(table.size());
+    Vector<ModuleID, 8> toVisit { exporter };
+    while (!toVisit.isEmpty()) {
+        ModuleID visited = toVisit.takeLast();
+        if (seen.quickSet(visited.index()))
+            continue;
+        for (const ModuleExportData& entry : table.exports(visited)) {
+            bool isBinding = entry.kind() != ModuleExportKind::Indirect && !entry.isHiddenUntilInitialized;
+            auto added = bindings->byName.add(entry.name, isBinding ? &entry : nullptr);
+            if (added.isNewEntry)
+                continue;
+            const ModuleExportData*& binding = added.iterator->value;
+            if (binding && !(isBinding && haveSameBinding(*binding, entry)))
+                binding = nullptr;
+        }
+        bindings->listsEveryName &= table.ambiguousExports(visited).empty();
+        for (ModuleRequestData request : table.dynamicStars(visited))
+            toVisit.append(request.targetModule());
+    }
+    return *bindings;
+}
+
+auto ReexportedNames::resolve(const ModuleTable& table, const RequiredNameData& requiredName) -> Answer
+{
+    Answer& answer = m_answers[&requiredName - table.programTables().requiredNames().data()];
+    if (answer != Answer::NotAsked)
+        return answer;
+    answer = Answer::Unknown;
+    ModuleID exporter = requiredName.exporterModule();
+    if (areNamesBehindStarsInTables(table, exporter)) {
+        if (const Bindings& bindings = bindingsOf(table, exporter); bindings.listsEveryName) {
+            auto binding = bindings.byName.find(requiredName.name);
+            if (binding == bindings.byName.end())
+                return answer = Answer::NotFound;
+            if (binding->value)
+                return answer = Answer::Found;
+        }
+        BitVector seen(table.size());
+        const ModuleExportData* found = nullptr;
+        if (tryResolveInTables(table, exporter, requiredName.name, seen, found))
+            answer = found ? Answer::Found : Answer::NotFound;
+    }
+    return answer;
+}
+
 static std::strong_ordering compareCodePoints(StringView first, StringView second)
 {
     if (first.is8Bit() || second.is8Bit())
@@ -248,14 +434,21 @@ bool ModuleTable::recordOfRuntimeSourceIsHandedOutFrozen(uint32_t registryID) co
 
 std::optional<unsigned> ModuleTable::findExport(ModuleID module, UniquedStringImpl* name) const
 {
-    if (name->isSymbol())
-        return std::nullopt;
+    return name->isSymbol() ? std::nullopt : findExport(module, StringView { *name });
+}
+
+std::optional<unsigned> ModuleTable::findExport(ModuleID module, uint32_t identifier) const
+{
+    return findExport(module, ProgramStrings::viewInImage(*m_tables, ProgramStrings::identifierString(*m_tables, identifier)));
+}
+
+std::optional<unsigned> ModuleTable::findExport(ModuleID module, StringView name) const
+{
     std::span<const ModuleExportData> entries = exports(module);
-    StringView nameView { *name };
     auto compare = [&](const ModuleExportData& entry) {
         StringID string = ProgramStrings::identifierString(*m_tables, entry.name);
         ASSERT(string);
-        return codePointCompare(ProgramStrings::viewInImage(*m_tables, string), nameView);
+        return codePointCompare(ProgramStrings::viewInImage(*m_tables, string), name);
     };
     unsigned from = 0;
     unsigned to = static_cast<unsigned>(entries.size());

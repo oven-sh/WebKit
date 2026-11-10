@@ -1246,6 +1246,8 @@ public:
         return all;
     }
     void build();
+    bool callsKnownBuiltin() const { return !!m_builtin; }
+    StatisticID statisticOfRow() const;
 
 private:
     enum class Outcome : uint8_t { Planned, NoMoreOperands, GaveUp };
@@ -2557,6 +2559,29 @@ void CallInWalkBuiltins::holdLinksWordAgainstOperands()
     }
 }
 
+StatisticID CallInWalkBuiltins::statisticOfRow() const
+{
+    BuiltinOverloadID widest;
+    uint32_t numberOfRows = 0;
+    for (BuiltinOverloadID id : m_table.overloadIDsOf(m_builtin)) {
+        if (m_table.at(id).mode != m_mode)
+            continue;
+        widest = id;
+        ++numberOfRows;
+    }
+    if (numberOfRows == 1)
+        return StatisticID::BuiltinCallsOnOnlyRow;
+    bool isOneRowReached = m_overload && !m_rowStandsForSeveral && m_rowsThatOneStandsFor.isEmpty();
+    return isOneRowReached && m_overloadID != widest ? StatisticID::BuiltinCallsOnNarrowRow : StatisticID::BuiltinCallsOnWideRow;
+}
+
+static void countBuiltinCallOfProgram(Walker& walker, StatisticID statistic)
+{
+    const Program& program = walker.program();
+    if (!isLibraryCode(program, program.at(walker.currentFunction())))
+        walker.count(statistic);
+}
+
 void CallInWalkBuiltins::build()
 {
     holdLinksWordAgainstOperands();
@@ -3595,8 +3620,10 @@ bool callBuiltinOfItsOpcodes(Walker& walker, const BodyValue& value)
         return true;
     if (buildByteLiteral(walker, value))
         return true;
-    if (callLibraryFunctionBehindRows(walker, value))
+    if (callLibraryFunctionBehindRows(walker, value)) {
+        countBuiltinCallOfProgram(walker, StatisticID::BuiltinCallsOnLibraryFunction);
         return true;
+    }
     if (appendListPassedToPush(walker, value))
         return true;
     if (buildPushOntoLiteralThatLoopFills(walker, value))
@@ -3605,12 +3632,18 @@ bool callBuiltinOfItsOpcodes(Walker& walker, const BodyValue& value)
     if (hearRaiseWherePushIsBuiltAsWritten(walker, value))
         heardAsArm.emplace(walker);
     CallInWalkBuiltins call(walker, value);
-    if (!call.plan())
-        return goOverListPassedInPlaceOfCall(walker, value);
+    if (!call.plan()) {
+        if (goOverListPassedInPlaceOfCall(walker, value))
+            return true;
+        if (call.callsKnownBuiltin())
+            countBuiltinCallOfProgram(walker, StatisticID::BuiltinCallsLeftGeneric);
+        return false;
+    }
     if (!call.goesByOneRow() && openGuessAtOperandOfBuiltinCall(walker, value))
         return true;
     if (call.goesByOneRow() && walker.isInLoop() && call.standsInLine() && call.convertsArgumentThatComesRoundLoop() && openGuessAtOperandOfBuiltinCall(walker, value, OperandsTestedAtBuiltinCall::Arguments))
         return true;
+    countBuiltinCallOfProgram(walker, call.statisticOfRow());
     call.build();
     return true;
 }

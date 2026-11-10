@@ -147,6 +147,7 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
         jit.add64(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfStructureIDBase()), instance);
         jit.loadPtr(Address(instance, Structure::realmOffset()), instance);
         jit.loadPtr(Address(instance, JSGlobalObject::offsetOfAOTInstance()), instance);
+        jit.store8(TrustedImm32(1), Address(instance, AOT_INSTANCE_OFFSET(propertyCaches.hasRunSinceClear)));
         jit.jump().linkTo(hasInstance, &jit);
     });
 

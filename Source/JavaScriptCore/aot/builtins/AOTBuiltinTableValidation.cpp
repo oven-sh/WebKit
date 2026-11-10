@@ -342,7 +342,12 @@ static void checkReadOnlyMembers(RealmComparison& comparison)
         if (!holder)
             continue;
         PropertyDescriptor descriptor;
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         bool isOwn = holder->getOwnPropertyDescriptor(comparison.realm, comparison.table.identifierOf(vm, member.name), descriptor);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            isOwn = false;
+        }
         if (!isOwn || !descriptor.isDataDescriptor() || !descriptor.writable() || !descriptor.configurable())
             comparison.report(marked.builtin, "is reported as read-only, and is no writable and configurable data property"_s);
         if (holder->type() == FinalObjectType)

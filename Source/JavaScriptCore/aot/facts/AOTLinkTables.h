@@ -399,6 +399,7 @@ struct LookupsPastProgramObjects {
     UncheckedKeyHashSet<uint64_t> readsOfProgramUnderKeysNobodyKnows;
     bool namesFromRunTimeWereHeldBack { false };
     BitVector builtinsUsedWithoutNamesFromRunTime;
+    BitVector classesWithObjectsWithoutNamesFromRunTime;
     bool nativeCodeMayHoldObjects { false };
 };
 

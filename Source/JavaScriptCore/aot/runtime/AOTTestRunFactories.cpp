@@ -496,6 +496,7 @@ void Modules::forgetCallOfMock(ModuleID fileOrModule)
 
 void Modules::deferMock(ModuleID module, FactoryFailurePolicy failurePolicy)
 {
+    finishLoadsAwaitingLoader(module);
     keepMockForPendingImports(module, MockChange::Replaced);
     noteDeedOnMockUnderCallsOfImport(module, DeedOnMock::LaysAnother);
     bool ranAheadOfThisTestFile = data(module).kind == ModuleKind::CommonJs && wasLoadedBeforeTestFile(module);
@@ -1887,6 +1888,12 @@ void clearMockLoadErrors(JSGlobalObject* realm)
 {
     if (Modules* modules = modulesOf(realm))
         modules->clearEvictableFailures();
+}
+
+void finishLoadsAwaitingLoader(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->finishLoadsAwaitingLoader(std::nullopt);
 }
 
 void discardDetachedLoadErrors(JSGlobalObject* realm)

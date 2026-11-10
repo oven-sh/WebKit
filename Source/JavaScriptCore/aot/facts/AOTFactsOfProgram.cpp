@@ -3318,9 +3318,21 @@ public:
     }
     void holdBackNamesFromRunTime() { m_holdsBackNamesFromRunTime = true; }
     bool holdsBackNamesFromRunTime() const { return m_holdsBackNamesFromRunTime; }
+    bool holdsBackMembersOf(BuiltinID canonicalHolder) const { return m_holdsBackNamesFromRunTime && (canonicalHolder == m_globalObject); }
+    bool hasHeldBackMembers() const { return m_holdsBackNamesFromRunTime && m_hasHeldBackMembers; }
+    BitVector classesWithObjects() const
+    {
+        BitVector classes(m_builtins.classCount());
+        for (unsigned index = 1; index < m_builtins.classCount(); ++index) {
+            if (objectsMayExist(BuiltinClassID(index)))
+                classes.quickSet(index);
+        }
+        return classes;
+    }
     Vector<ModuleID> takeModulesSpelledInTexts() { return std::exchange(m_modulesSpelledInTexts, { }); }
     BitVector letInNamesFromRunTime();
     BitVector builtinsThatCodeInSightUses() const;
+    bool canBeFoundByNameOfProgram(BuiltinID member) const;
     template<typename Functor>
     bool programLetsUnseenCodeRunWhere(const Functor& counts) const
     {
@@ -3352,6 +3364,8 @@ private:
 
     void noteObjectsMayExist(BuiltinClassID);
     void noteTypeIsMade(BuiltinTypeID, BuiltinOrigin);
+    bool hostMakesInstancesOf(BuiltinClassID) const;
+    bool objectsMayExist(BuiltinClassID) const;
     void noteClassesBelowWhoseFeaturesMakerNames(BuiltinID maker, BuiltinTypeID);
     void noteRowOfHostNames(BuiltinClassID);
     void noteWhatRowsMake(BuiltinID canonical);
@@ -3505,6 +3519,7 @@ private:
     BitVector m_isSpelledInTexts;
     bool m_eventsAreWithheld { true };
     bool m_holdsBackNamesFromRunTime { false };
+    bool m_hasHeldBackMembers { false };
     Vector<ModuleID> m_modulesSpelledInTexts;
     BitVector m_keysAreListedInSight;
     Vector<BuiltinID, 32> m_holdersOfKeysThatPrinterLooksUnder;
@@ -3972,6 +3987,21 @@ void BuilderOfProgramFacts::noteObjectsMayExist(BuiltinClassID builtinClass)
     }
 }
 
+bool BuilderOfProgramFacts::hostMakesInstancesOf(BuiltinClassID builtinClass) const
+{
+    if (builtinClass == BuiltinClasses::IntlSegments || builtinClass == BuiltinClasses::IntlSegmentIterator)
+        return false;
+    BuiltinID constructor = m_builtins.at(builtinClass).constructor;
+    BuiltinID holder = constructor ? m_builtins.at(constructor).holder : BuiltinID();
+    return !holder || (m_builtins.canonicalID(holder) != m_builtins.canonicalID(Builtins::Intl) && m_builtins.canonicalID(holder) != m_builtins.canonicalID(Builtins::Temporal));
+}
+
+bool BuilderOfProgramFacts::objectsMayExist(BuiltinClassID builtinClass) const
+{
+    if (m_classesWithObjects.at(builtinClass.index()))
+        return true;
+    return m_objectsOfAnyClassMayExist && (!m_holdsBackNamesFromRunTime || hostMakesInstancesOf(builtinClass));
+}
 void BuilderOfProgramFacts::noteTypeIsMade(BuiltinTypeID type, BuiltinOrigin origin)
 {
     BitVector& looked = m_notesWhatConstructionsInSightMake ? m_typesMadeByConstructionsInSight : origin == BuiltinOrigin::Host ? m_typesMadeByHost : m_typesMade;
@@ -4260,7 +4290,7 @@ void BuilderOfProgramFacts::lookThroughPrototypesOfClassesWithObjects()
                 if (m_builtins.canonicalID(builtin) != builtin || m_builtins.at(builtin).kind != BuiltinKind::Prototype)
                     continue;
                 BuiltinClassID owner = m_classOfPrototype[index];
-                if (m_objectsOfAnyClassMayExist || !owner || m_classesWithObjects.at(owner.index()))
+                if (!owner || objectsMayExist(owner))
                     lookThrough(builtin);
             }
         }
@@ -4459,6 +4489,10 @@ void BuilderOfProgramFacts::spreadBelow(BuiltinID canonicalHolder)
     const Builtin& holder = m_builtins.at(canonicalHolder);
     if (m_followsClimbsFromWhatIsLetGo && holder.prototypeLink == BuiltinPrototypeLink::Builtin && holder.inheritsFrom)
         letGo(m_builtins.canonicalID(holder.inheritsFrom), witness);
+    if (holdsBackMembersOf(canonicalHolder)) {
+        m_hasHeldBackMembers = true;
+        return;
+    }
     bool handsOutEvents = !m_eventsAreWithheld || standsInTextOfProgram(witness);
     for (BuiltinID member : m_builtins.membersOf(canonicalHolder)) {
         if (!handsOutEvents && m_rows.areEvents.quickGet(m_builtins.canonicalID(member).index()))
@@ -4543,6 +4577,9 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
     if (mayHoldObjectInProgramFacts(m_builtins, canonicalHolder) && !m_builtins.at(objectAnsweredByBindingInProgramFacts(m_builtins, canonicalHolder)).flags.containsAny({ BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject }) && !liesInModuleThatProgramHolds(canonicalHolder) && (m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index()) || m_readsUnderNamesThatLoopsGave || !m_namesRead.isEmpty()))
         m_objectsMayHaveMethodCalledWithStartupLoads = true;
     BuiltinClassID classOfHolder = m_classOfPrototype[canonicalHolder.index()];
+    bool holdsBackMembers = holdsBackMembersOf(canonicalHolder);
+    if (holdsBackMembers && (m_readsUnderComputedKeys || m_readsUnderNamesThatLoopsGave || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index())))
+        m_hasHeldBackMembers = true;
     bool isOfClassThatRowsOfHostName = classOfHolder && m_classesThatRowsOfHostName.get(classOfHolder.index());
     for (BuiltinID member : m_builtins.membersOf(canonicalHolder)) {
         BuiltinName name = m_builtins.at(member).name;
@@ -4556,8 +4593,8 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
         bool isCalledOffWhatRowsOfHostName = key && isOfClassThatRowsOfHostName && m_namesCalledByNativeCodeOffUnseenObjects.get(key.index());
         bool isNamed = isNamedByCode || isCalledOffWhatRowsOfHostName || (m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index())));
         bool canBeListed = m_builtins.at(member).canBeListed && !m_builtins.isSymbolName(name);
-        bool isReadUnderComputedKeys = m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index());
-        bool isValueReadProgramWide = isRead || m_readsUnderComputedKeys || (m_readsUnderNamesThatLoopsGave && (canBeListed || m_loopsMayGiveAnyName));
+        bool isReadUnderComputedKeys = !holdsBackMembers && (m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index()));
+        bool isValueReadProgramWide = isRead || (!holdsBackMembers && (m_readsUnderComputedKeys || (m_readsUnderNamesThatLoopsGave && (canBeListed || m_loopsMayGiveAnyName))));
         bool isValueRead = isValueReadProgramWide || isReadUnderComputedKeys;
         if (!isNamed && !isValueRead)
             continue;
@@ -4688,7 +4725,11 @@ std::optional<UnseenCodeCause> BuilderOfProgramFacts::causeOfLettingCodeIn(Built
 
 void BuilderOfProgramFacts::listBuiltinsThatLetCodeIn()
 {
+    bool someAreNamedAtRunTime = m_inputs.linked.lookups.namesFromRunTimeWereHeldBack;
+    BitVector usedByCodeInSight = someAreNamedAtRunTime ? builtinsThatCodeInSightUses() : BitVector();
     for (size_t index : m_rows.areEvents) {
+        if (someAreNamedAtRunTime && !usedByCodeInSight.quickGet(index))
+            continue;
         BuiltinID builtin(static_cast<uint32_t>(index));
         OptionSet<BuiltinUse> uses = m_uses[index];
         bool readIsEvent = m_builtins.has(BuiltinMark::ReadLoadsCodeByName, builtin) || m_builtins.at(builtin).kind == BuiltinKind::Accessor;
@@ -4735,6 +4776,12 @@ void BuilderOfProgramFacts::listLoadsOfMachineCode()
 BitVector BuilderOfProgramFacts::letInNamesFromRunTime()
 {
     m_holdsBackNamesFromRunTime = false;
+    m_classesWithObjectsHaveGrown |= m_objectsOfAnyClassMayExist;
+    if (m_hasHeldBackMembers) {
+        if (m_isLetGo.quickGet(m_globalObject.index()))
+            m_holdersToSpreadBelow.append(m_globalObject);
+        m_holdersToLookThrough.append(m_globalObject);
+    }
     BitVector used(m_builtins.builtinCount());
     for (uint32_t index = 0; index < m_uses.size(); ++index) {
         if (m_uses[index].isEmpty())
@@ -4745,6 +4792,18 @@ BitVector BuilderOfProgramFacts::letInNamesFromRunTime()
     return used;
 }
 
+bool BuilderOfProgramFacts::canBeFoundByNameOfProgram(BuiltinID member) const
+{
+    const Builtin& entry = m_builtins.at(member);
+    if (!entry.holder)
+        return true;
+    BuiltinID holder = m_builtins.canonicalID(entry.holder);
+    BuiltinClassID classOfPrototype = m_classOfPrototype[holder.index()];
+    BuiltinClassID builtinClass = classOfPrototype ? classOfPrototype : m_builtins.at(holder).instanceClass;
+    if (!builtinClass || hostMakesInstancesOf(builtinClass) || m_inputs.linked.lookups.classesWithObjectsWithoutNamesFromRunTime.get(builtinClass.index()))
+        return true;
+    return !classOfPrototype && entry.kind != BuiltinKind::Constant && entry.kind != BuiltinKind::Prototype;
+}
 BitVector BuilderOfProgramFacts::builtinsThatCodeInSightUses() const
 {
     const LookupsPastProgramObjects& lookups = m_inputs.linked.lookups;
@@ -4754,6 +4813,8 @@ BitVector BuilderOfProgramFacts::builtinsThatCodeInSightUses() const
         BuiltinID member(static_cast<uint32_t>(index));
         BuiltinName name = m_builtins.at(member).name;
         PropertyKeyID key = name ? m_source.keyOf(name) : PropertyKeyID();
+        if (!canBeFoundByNameOfProgram(member))
+            continue;
         if (!key || !lookups.namesSpelledByProgram.get(key.index()))
             continue;
         used.quickSet(index);
@@ -6794,10 +6855,11 @@ Vector<ModuleID> BuiltinsInReach::takeModulesSpelledInTexts()
 
 bool BuiltinsInReach::letInNamesFromRunTime()
 {
-    if (!m_builder->holdsBackNamesFromRunTime() || !m_builder->hasRecordOfUnseenCode())
+    if (!m_builder->holdsBackNamesFromRunTime() || (!m_builder->hasRecordOfUnseenCode() && !m_builder->hasHeldBackMembers()))
         return false;
     LookupsPastProgramObjects& lookups = m_linked->lookups;
     lookups.namesFromRunTimeWereHeldBack = true;
+    lookups.classesWithObjectsWithoutNamesFromRunTime = m_builder->classesWithObjects();
     lookups.builtinsUsedWithoutNamesFromRunTime = m_builder->letInNamesFromRunTime();
     m_wasToldSomethingNew = true;
     return true;

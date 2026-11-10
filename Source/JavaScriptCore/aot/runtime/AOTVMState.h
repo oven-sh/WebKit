@@ -44,6 +44,7 @@ struct CyclesOfImports;
 struct FormatPatternState;
 struct FunctionTables;
 struct Instance;
+struct ReexportedNames;
 
 class StructuresWithFastIndexing {
 public:
@@ -106,6 +107,7 @@ public:
     std::unique_ptr<CallSiteCache> callSiteCache;
     std::unique_ptr<FunctionTables> functionTables;
     std::unique_ptr<CyclesOfImports> cyclesOfImports;
+    std::unique_ptr<ReexportedNames> reexportedNames;
     std::unique_ptr<RegExpLiterals> regExpLiterals;
     std::unique_ptr<FormatPatternState, FormatPatternStateDeleter> formatPatternState;
     BitVector filesWithKnownFirstLoad;
@@ -114,6 +116,7 @@ public:
     BitVector filesWhoseKeptTextWasCompiled;
     BitVector filesWhoseKeptTextWasReadBelowVitest;
     BitVector filesStartedByHost;
+    BitVector filesReportedAsKept;
     BitVector modulesWithHostCachedSource;
     BitVector builtinMembersWrittenInSomeRealm;
     BitVector builtinHoldersWithNamesAddedInSomeRealm;

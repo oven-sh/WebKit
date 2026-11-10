@@ -151,6 +151,7 @@ public:
     bool valueOfRuntimeSourceStaysWithCompiledCode(uint32_t registryID) const;
     bool recordOfRuntimeSourceIsHandedOutFrozen(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
+    std::optional<unsigned> findExport(ModuleID, uint32_t identifier) const;
     std::optional<ModuleID> moduleBehindFacade(ModuleID module) const { return data(module).isFacade() ? std::optional(requests(module).front().targetModule()) : std::nullopt; }
     std::optional<ModuleID> facadeOf(ModuleID) const;
     const CompiledRuntimeFunctionData* findRuntimeFunction(uint32_t id) const;
@@ -170,6 +171,7 @@ private:
     PiecesOfPath piecesOfPath(ModuleID) const;
     std::strong_ordering comparePath(ModuleID, StringView) const;
     ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
+    std::optional<unsigned> findExport(ModuleID, StringView name) const;
     template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;
     std::optional<SlotData> hiddenSlot(ModuleID, uint32_t kindBits) const;
 
@@ -194,6 +196,36 @@ struct CyclesOfImports {
     Vector<Member> membersByModule;
     Vector<uint32_t> members;
     Vector<uint32_t> firstMemberOf;
+};
+
+struct ReexportedNames {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ReexportedNames);
+
+    enum class Answer : uint8_t { NotAsked, Unknown, Found, NotFound };
+
+    explicit ReexportedNames(const ModuleTable&);
+
+    Answer resolve(const ModuleTable&, const RequiredNameData&);
+    BitVector transitiveReexportersOf(Vector<ModuleID, 16>&&) const;
+
+private:
+    struct Bindings {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Bindings);
+
+        UncheckedKeyHashMap<uint32_t, const ModuleExportData*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> byName;
+        bool listsEveryName { true };
+    };
+
+    const Bindings& bindingsOf(const ModuleTable&, ModuleID exporter);
+    bool tryResolveInTables(const ModuleTable&, ModuleID exporter, uint32_t name, BitVector& seen, const ModuleExportData*& found);
+    bool areNamesBehindStarsInTables(const ModuleTable&, ModuleID);
+
+    Vector<uint32_t> m_reexporters;
+    Vector<uint32_t> m_firstReexporterOf;
+    Vector<Answer> m_answers;
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<Bindings>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindings;
+    BitVector m_modulesWithNamesInTables;
+    BitVector m_modulesWithOtherNames;
 };
 
 inline size_t ModuleTable::checkedIndex(ModuleID module) const

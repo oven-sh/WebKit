@@ -1031,13 +1031,20 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
         m_front.clear();
         m_hashedTable.clear();
         for (Instance* earlier : m_vm.aotState().instances) {
+            if (!earlier->propertyCaches.hasRunSinceClear)
+                continue;
             zeroSpan(earlier->keyedValuePlaces());
+            zeroSpan(earlier->acceptedKindsOfValues());
+            earlier->propertyCaches.placesHoldCopiesOfSlots = 0;
             earlier->propertyCaches.accessTable.forgetEverything();
             if (StringKeyCache* keys = earlier->state ? earlier->state->stringKeys.getIfCreated() : nullptr)
                 keys->forgetPlacesOfPairs();
+            bool isRetired = earlier->globalObject && earlier->globalObject->microtaskRunnability() == QueuedTaskResult::Discard;
+            earlier->propertyCaches.hasRunSinceClear = !isRetired || m_vm.entryScope;
         }
     }
     m_hasInstance = true;
+    instance.propertyCaches.hasRunSinceClear = true;
     if (instance.globalObject) {
         m_filteredObjects.add(instance.globalObject->objectPrototype());
         didChangeObjectPrototype(instance.globalObject->objectPrototype(), nullptr);

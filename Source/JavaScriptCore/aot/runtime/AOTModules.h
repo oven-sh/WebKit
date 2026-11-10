@@ -705,6 +705,8 @@ public:
     void cacheDetachedFactoryError(ModuleID required, JSValue error);
     void didSettleDetachedFactory(unsigned number);
     void didFailDetachedFactory(unsigned number, JSValue error);
+    void didFinishLoaderWait(unsigned number);
+    void finishLoadsAwaitingLoader(std::optional<ModuleID> changing);
     unsigned subscribeToPendingFactories(ModuleID required, unsigned number);
     bool hasErrorCachingDetachedLoad(ModuleID required) const { return m_detachedLoads.containsIf([&](const auto& left) { return left.required == required && left.keepsError; }); }
     void clearMockLoadError(ModuleID);
@@ -1458,6 +1460,9 @@ private:
     void fillCapturedExports(ModuleID);
     void fillDeferredExports(ModuleID importer);
     AbstractModuleRecord::Resolution::Type resolveRequiredName(ModuleID exporter, const Identifier&);
+    std::optional<AbstractModuleRecord::Resolution::Type> tryResolveRequiredNameInTables(const RequiredNameData&);
+    bool reexportsFromMock(ModuleID);
+    ReexportedNames& reexportedNames();
     enum class ModulesAsked : bool { ThoseNotLinked, ThoseLoadedAnew };
     void checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked = ModulesAsked::ThoseNotLinked);
     void checkRequiredNamesOfModulesLoadedAnewBelow(ModuleID root);
@@ -2142,6 +2147,16 @@ private:
     mutable UncheckedKeyHashMap<uint64_t, GotOriginal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersLinkedToOriginal;
     mutable UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersLinkedToMock;
     UncheckedKeyHashMap<ModuleID, uint32_t> m_timesMocked;
+    struct ReexportersOfMocks {
+        uint32_t timesMocksInPlaceWereWritten { 0 };
+        uint32_t numberOfModulesMocked { 0 };
+        uint32_t numberOfRemovedMocksInUse { 0 };
+        uint32_t numberOfModulesWithExportsLeftOut { 0 };
+
+        bool operator==(const ReexportersOfMocks&) const = default;
+    };
+    ReexportersOfMocks m_stateOfReexportersOfMocks;
+    BitVector m_reexportersOfMocks;
     BitVector m_originalsEvaluatedUnderMock;
     BitVector m_modulesThatRanBesideMockAlone;
     BitVector m_modulesRetainedByInFlightLoads;
@@ -2435,10 +2450,16 @@ private:
         Vector<ModuleID, 1> laterRootsBelow;
         bool isForOriginal { false };
         bool hasWaitedForLoader { false };
+        BitVector timedMocks;
+        unsigned pendingLoaderWaits { 0 };
+        bool isEvaluationDue { false };
     };
     bool hasEnded(const DetachedLoad& left) const { return left.wasEndedByLaterMock || (left.orphanedFetchModule && !hasOrphanedFetch(left.orphanedFetchModule)); }
     bool hasOnlyStaleFactoryCalls(const DetachedLoad&);
     Vector<ModuleID, 2> rootsInEvaluationOrder(const DetachedLoad&) const;
+    unsigned loaderStepsToMock(ModuleID root, ModuleID mock) const;
+    void startLoaderWaits(unsigned number);
+    void finishDetachedLoad(unsigned number);
     bool isUnmockedInDetachedLoad(ModuleID root, ModuleID module) const;
     bool isFetchedByPendingFactoryCall(ModuleID root, ModuleID mocked) const;
     const BitVector* m_modulesBeingRetried { nullptr };

@@ -323,6 +323,7 @@ JS_EXPORT_PRIVATE void deferMockAfterAsyncFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void retainFactoryLoadedImporters(JSGlobalObject*, ModuleID mocked);
 JS_EXPORT_PRIVATE void clearMockLoadErrors(JSGlobalObject*);
 JS_EXPORT_PRIVATE void discardDetachedLoadErrors(JSGlobalObject*);
+JS_EXPORT_PRIVATE void finishLoadsAwaitingLoader(JSGlobalObject*);
 enum class RetainedOriginalPolicy : uint8_t { DiscardWithMock, Keep };
 JS_EXPORT_PRIVATE void didRemoveMock(JSGlobalObject*, ModuleID, RetainedOriginalPolicy = RetainedOriginalPolicy::DiscardWithMock, bool wasInstalledOnPreloadMock = true, bool restoresDisplacedModule = true);
 JS_EXPORT_PRIVATE void markMockLingering(JSGlobalObject*, ModuleID);

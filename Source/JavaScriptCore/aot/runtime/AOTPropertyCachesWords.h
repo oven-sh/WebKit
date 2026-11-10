@@ -303,6 +303,7 @@ struct PropertyCacheWords {
     uint8_t placesTakeReplacementsAsUnwatched;
     uint8_t pairsHavePlaces;
     uint8_t placesHoldCopiesOfSlots;
+    uint8_t hasRunSinceClear;
     uint32_t timesAbsencesWereForgotten;
     uint32_t slowPathReadCount;
     const void* infoOfClassPrototypes;

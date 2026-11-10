@@ -636,12 +636,12 @@ void Modules::retainLinks(ModuleID module)
         }
         addLinkToReleasedInstance(importer, module, released);
     }
-    if (!released.namespaceObject)
-        return;
-    for (const ModuleExportData& moduleExport : m_table.exports(module)) {
-        std::optional<ModuleID> target = reexportedModule(m_table, module, moduleExport);
-        if (target && *target != module && currentInstance(*target))
-            addLinkToReleasedInstance(module, *target, linkTo(*target));
+    if (released.namespaceObject) {
+        for (const ModuleExportData& moduleExport : m_table.exports(module)) {
+            std::optional<ModuleID> target = reexportedModule(m_table, module, moduleExport);
+            if (target && *target != module && currentInstance(*target))
+                addLinkToReleasedInstance(module, *target, linkTo(*target));
+        }
     }
     LoadedModule& loaded = ensureLoaded(module);
     if (JSCellButterfly* links = loaded.linksToReleasedInstances) {
