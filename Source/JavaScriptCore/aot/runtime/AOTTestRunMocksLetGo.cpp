@@ -337,7 +337,7 @@ bool Modules::evaluateModuleOwed(ModuleID module)
         m_isDueModuleBlocked |= factoryHasNotSettled;
         return factoryHasNotSettled;
     }
-    if (pendingFactoryCallID(fileOf(module))) {
+    if (ModuleID file = fileOf(module); !activeMock(file) && pendingFactoryCallID(file)) {
         m_isDueModuleBlocked = true;
         return true;
     }

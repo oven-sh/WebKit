@@ -301,7 +301,7 @@ void bindNamesBehindFailedTest(Walker& walker, Reference value, Reference test, 
     ValueID root = underlyingCellOf(code, value.id());
     if (walker.state().isFresh(code.isConstant(root) ? Reference::constant(root) : Reference::value(root)))
         return;
-    if (const Operation& asked = code.at(test.id()); asked.opcode == Opcode::ShapeTest) {
+    if (const Operation& asked = code.at(test.id()); asked.opcode == Opcode::ShapeTest && !canFailForMarkedObject(asked)) {
         TypeArena& types = walker.types();
         Type whole = types.at(code.at(value.id()).type);
         if (whole.layouts && types.listOf(whole.layouts).size() > types.listOf(asked.layouts()).size() + 1) {
