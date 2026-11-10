@@ -315,20 +315,26 @@ static ALWAYS_INLINE std::optional<Decimal128::RoundingMode> roundingModeFromNam
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     using Mode = Decimal128::RoundingMode;
-    const std::pair<const Identifier&, Mode> modes[] = { { vm.propertyNames->floor, Mode::Floor }, { vm.propertyNames->halfExpand, Mode::HalfExpand }, { vm.propertyNames->ceil, Mode::Ceil }, { vm.propertyNames->trunc, Mode::Trunc }, { vm.propertyNames->halfEven, Mode::HalfEven } };
+    auto find = [&](const auto& isNamed) -> std::optional<Mode> {
+        if (isNamed(vm.propertyNames->floor))
+            return Mode::Floor;
+        if (isNamed(vm.propertyNames->halfExpand))
+            return Mode::HalfExpand;
+        if (isNamed(vm.propertyNames->ceil))
+            return Mode::Ceil;
+        if (isNamed(vm.propertyNames->trunc))
+            return Mode::Trunc;
+        if (isNamed(vm.propertyNames->halfEven))
+            return Mode::HalfEven;
+        return std::nullopt;
+    };
     // The string of a literal is that of the identifier.
     auto* impl = string->tryGetValueImpl();
-    for (auto& [name, mode] : modes) {
-        if (impl == name.impl())
-            return mode;
-    }
+    if (auto mode = find([&](const Identifier& name) ALWAYS_INLINE_LAMBDA { return impl == name.impl(); })) [[likely]]
+        return mode;
     auto view = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
-    for (auto& [name, mode] : modes) {
-        if (view == name.string())
-            return mode;
-    }
-    return std::nullopt;
+    return find([&](const Identifier& name) { return view == name.string(); });
 }
 
 static ALWAYS_INLINE Decimal128::RoundingMode toRoundingMode(JSGlobalObject* globalObject, JSValue value)
@@ -448,6 +454,32 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncScale10, (JSGlobalObject* globalObject,
     return newDecimal(globalObject, decimal->value().scale10(power));
 }
 
+JSString* DecimalStringCache::add(VM& vm, Set& set, const Decimal128& value, uint32_t format)
+{
+    auto mode = static_cast<Decimal128::RoundingMode>(format >> 2 & 7);
+    unsigned digits = format >> 5;
+    String text;
+    switch (static_cast<Notation>(format & 3)) {
+    case Notation::Standard:
+        text = value.toString();
+        break;
+    case Notation::Exponential:
+        text = value.toExponentialString();
+        break;
+    case Notation::Fixed:
+        text = value.toFixed(digits, mode);
+        break;
+    case Notation::Precision:
+        text = value.toPrecision(digits, mode);
+        break;
+    }
+    ASSERT(!text.isNull());
+    JSString* string = jsString(vm, WTF::move(text));
+    set[1] = set[0];
+    set[0] = { value, string, format };
+    return string;
+}
+
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.tostring
 //
 // Three errors of the steps of the operations below it are not followed. The sign of an integer is kept. A fraction is written whole:
@@ -533,7 +565,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToFixed, (JSGlobalObject* globalObject,
     auto mode = toRoundingMode(globalObject, roundingModeValue);
     RETURN_IF_EXCEPTION(scope, { });
     if (digits <= DecimalStringCache::maximumDigits && decimal->value().isShort()) [[likely]]
-        return JSValue::encode(vm.decimalStringCache().get(vm, decimal->value(), DecimalStringCache::Notation::Fixed, static_cast<unsigned>(digits), mode, [&] { return decimal->value().toFixed(digits, mode); }));
+        return JSValue::encode(vm.decimalStringCache().toFixed(vm, decimal->value(), static_cast<unsigned>(digits), mode));
     RELEASE_AND_RETURN(scope, stringOrOutOfMemory(globalObject, decimal->value().toFixed(digits, mode)));
 }
 
@@ -574,7 +606,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToPrecision, (JSGlobalObject* globalObj
         mode = named.value_or(mode);
     }
     if (precision <= DecimalStringCache::maximumDigits && decimal->value().isShort()) [[likely]]
-        return JSValue::encode(vm.decimalStringCache().get(vm, decimal->value(), DecimalStringCache::Notation::Precision, static_cast<unsigned>(precision), mode, [&] { return decimal->value().toPrecision(precision, mode); }));
+        return JSValue::encode(vm.decimalStringCache().toPrecision(vm, decimal->value(), static_cast<unsigned>(precision), mode));
     RELEASE_AND_RETURN(scope, stringOrOutOfMemory(globalObject, decimal->value().toPrecision(precision, mode)));
 }
 

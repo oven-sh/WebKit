@@ -10,6 +10,8 @@
 #include <compare>
 #include <optional>
 #include <span>
+#include <wtf/HashFunctions.h>
+#include <wtf/Int128.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
@@ -66,7 +68,10 @@ public:
     // As Object.is() of Numbers: NaN is itself, and -0 and +0 differ. The representation of a value is unique.
     bool isSameValueAs(const Decimal128& other) const
     {
-        return words() == other.words();
+        // Word by word: to compare the arrays, the compiler stores them first and waits for that.
+        auto [low, upper] = words();
+        auto [otherLow, otherUpper] = other.words();
+        return low == otherLow && upper == otherUpper;
     }
 
     // For generated code: the coefficient's lower 64 bits, and the rest. See the fields.
@@ -87,10 +92,12 @@ public:
     // 10^i for i < 20.
     static const uint64_t* powersOf10();
 
-    unsigned hash() const
+    // For caches: each of the factors holds one of the words, so in the rare case that one of them is 0 the other word does not matter.
+    unsigned hash(uint64_t seed) const
     {
         auto [low, upper] = words();
-        return static_cast<unsigned>((low ^ upper * 0x9e3779b97f4a7c15ull) * 0xbf58476d1ce4e5b9ull >> 32);
+        UInt128 product = static_cast<UInt128>(low ^ seed ^ WTF::intHashSecrets[0]) * static_cast<UInt128>(upper ^ WTF::intHashSecrets[1]);
+        return static_cast<unsigned>(static_cast<uint64_t>(product) ^ static_cast<uint64_t>(product >> 64));
     }
 
     // Whether its texts are short, with a number of digits after the point or in all that is.
